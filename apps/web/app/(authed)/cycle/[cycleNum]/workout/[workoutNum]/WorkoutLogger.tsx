@@ -210,14 +210,13 @@ function WorkingSetRow({
   const draftStorageKey = buildDraftKey(program, cycleNum, workoutNum, lift, set.setNum);
 
   const [weightInput, setWeightInput] = useState(() => {
-    if (loggedRecord) {
-      return String(formatWorkingWeight(loggedRecord.weight, null, false, unit).value);
-    }
     if (shouldDraft) {
       const draft = readDraft(draftStorageKey);
       if (draft) return draft.weight;
     }
-    return String(defaultWeight);
+    return loggedRecord
+      ? String(formatWorkingWeight(loggedRecord.weight, null, false, unit).value)
+      : String(defaultWeight);
   });
   const [repsInput, setRepsInput] = useState(() => {
     if (shouldDraft) {
