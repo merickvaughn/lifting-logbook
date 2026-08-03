@@ -206,15 +206,24 @@ If `--format json` is not supported by the installed `gh` version, fall back to 
 5. Commit with `Closes #<N>` in the message (see Commit Format)
 6. Push: `git push -u origin <branch>`
 7. Open a PR: `gh pr create --title "<prefix> <title>" --body "..."`
-8. After PR approval, squash merge with a single server-side call — the repo has
-   `delete_branch_on_merge` enabled ([#841](https://github.com/merickvaughn/lifting-logbook/issues/841);
-   verify live with `gh api repos/merickvaughn/lifting-logbook --jq .delete_branch_on_merge` → `true`),
-   so GitHub deletes the remote branch server-side the instant the PR merges:
+8. After PR approval, merge with a single command. `main` has required a GitHub **merge queue**
+   since [#695](https://github.com/merickvaughn/lifting-logbook/issues/695), so this doesn't merge
+   the PR directly. Per `gh pr merge --help`, targeting a merge-queue branch needs no strategy flag
+   at all: if required checks haven't finished, the call enables auto-merge; once they pass, the PR
+   is added to the queue, which performs the actual squash merge (confirmed live on
+   [PR #879](https://github.com/merickvaughn/lifting-logbook/pull/879), 2026-08-01). `--squash` is
+   still accepted and still describes the eventual merge method, so keep passing it:
    ```bash
    gh pr merge <N> --squash
    ```
-   Do **not** add `--delete-branch` or a manual `gh api -X DELETE .../git/refs/heads/<branch>` — the
-   ref is already gone, so an explicit delete now 422s. Omitting `--delete-branch` also retires the
+   Don't expect the PR to be merged the instant the command returns — see "Merge enqueues instead of
+   landing" under Testing for how to check queue position/state, and the `--admin` flag for an
+   emergency bypass. Branch deletion is unaffected either way: the repo has `delete_branch_on_merge`
+   enabled ([#841](https://github.com/merickvaughn/lifting-logbook/issues/841); verify live with
+   `gh api repos/merickvaughn/lifting-logbook --jq .delete_branch_on_merge` → `true`), so GitHub
+   deletes the remote branch server-side the instant the merge lands, queued or direct. Do **not** add
+   `--delete-branch` or a manual `gh api -X DELETE .../git/refs/heads/<branch>` — the ref is already
+   gone by then, so an explicit delete now 422s. Omitting `--delete-branch` also retires the
    worktree-squatting-`main` failure class: without it, the merge does no local checkout, so a
    worktree holding `main` can no longer abort it. Any open PRs stacked on (based on) the merged
    branch are auto-retargeted to `main` by GitHub when the branch is deleted.
@@ -612,9 +621,62 @@ Open the cancelled run's job log — GitHub Actions annotates the cancellation d
 ```bash
 gh run rerun <run-id> --failed
 ```
-This is a known, already-diagnosed CI mechanic, not a new bug — see [#673](https://github.com/merickvaughn/lifting-logbook/issues/673) for the full root-cause analysis and [ADR-030](docs/adr/ADR-030-github-merge-queue-adoption.md) for the accepted structural fix (GitHub merge queue). Activation is tracked in [#695](https://github.com/merickvaughn/lifting-logbook/issues/695); until it lands, re-running after the queue clears is the only workaround.
+This is a known, already-diagnosed CI mechanic, not a new bug — see [#673](https://github.com/merickvaughn/lifting-logbook/issues/673) for the full root-cause analysis and [ADR-030](docs/adr/ADR-030-github-merge-queue-adoption.md) for the accepted structural fix (GitHub merge queue). The queue went live 2026-07-22 ([#695](https://github.com/merickvaughn/lifting-logbook/issues/695)) and now serializes PRs onto staging one at a time, so this starvation pattern shouldn't recur for queue-processed PRs (see "Merge enqueues instead of landing" below) — if it does, that's a regression, not the expected wait.
 
 Motivating incidents: [PR #703](https://github.com/merickvaughn/lifting-logbook/pull/703), [PR #711](https://github.com/merickvaughn/lifting-logbook/pull/711).
+
+### Merge enqueues instead of landing — GitHub merge queue on main
+
+**What changed:** `main` has required a GitHub merge queue since
+[#695](https://github.com/merickvaughn/lifting-logbook/issues/695) (live 2026-07-22; full decision
+record in [ADR-030](docs/adr/ADR-030-github-merge-queue-adoption.md)). `gh pr merge <N> --squash`
+(Standard Issue Workflow step 8) still succeeds, but per `gh pr merge --help` it no longer merges the
+PR directly, and no strategy flag is actually required when targeting a merge-queue branch: if
+required checks haven't finished, the call enables auto-merge; once they pass, the PR is added to the
+queue, which performs the actual squash merge. This isn't a bug
+([#880](https://github.com/merickvaughn/lifting-logbook/issues/880)), but a reader expecting an
+immediate merge has no built-in signal that the PR is queued rather than merged. Confirmed live on
+[PR #879](https://github.com/merickvaughn/lifting-logbook/pull/879) (2026-08-01):
+```
+$ gh pr merge 879 --squash
+! The merge strategy for main is set by the merge queue
+```
+The PR was enqueued anyway — a bare re-run of `gh pr merge 879` afterward reported "already queued to
+merge."
+
+**Checking queue status:** neither `gh pr view --json` (merge-related fields are `autoMergeRequest`,
+`mergeCommit`, `mergeStateStatus`, `mergeable`, `mergedAt`, `mergedBy`, `potentialMergeCommit` — no
+queue-position field) nor `gh pr checks` shows queue state. GraphQL is the only reliable source. To
+check whether a specific PR is queued and its position:
+```bash
+gh api graphql -f query='
+query {
+  repository(owner: "merickvaughn", name: "lifting-logbook") {
+    mergeQueue(branch: "main") {
+      entries(first: 10) {
+        nodes {
+          pullRequest { number }
+          state
+          position
+        }
+      }
+    }
+  }
+}'
+```
+(an empty `nodes` array means nothing is currently queued for `main`). This answers a different
+question than the `mergeQueue` config query in
+[docs/operations/branch-protection.md](docs/operations/branch-protection.md#verifying-the-merge-queue-setting)
+("Verifying the merge queue setting") — that one confirms the queue itself is configured correctly
+(build concurrency, merge limits); this one confirms where a given PR sits in it.
+
+**Emergency bypass:** `gh pr merge <N> --squash --admin` uses admin privileges to merge directly,
+skipping the queue entirely (per `gh pr merge --help`, `--admin` also bypasses any other unmet merge
+requirements) — requires admin access on the repo. Use sparingly: it defeats the queue's one-at-a-time
+staging-validation guarantee (see ADR-030's Rationale section, linked above).
+
+Motivating incident(s): [PR #879](https://github.com/merickvaughn/lifting-logbook/pull/879),
+[#880](https://github.com/merickvaughn/lifting-logbook/issues/880).
 
 ---
 
