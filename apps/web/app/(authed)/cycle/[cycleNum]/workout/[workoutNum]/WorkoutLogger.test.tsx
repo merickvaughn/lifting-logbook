@@ -4,6 +4,7 @@ import type { LiftRecordResponse } from '@lifting-logbook/types';
 import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WorkoutLoggerProps } from './types';
 import { createLiftRecord, recordBodyWeight } from '@/lib/client-api';
+import { buildDraftKey } from './workoutDraftStorage';
 
 // jest.mock is hoisted above the imports, so `createLiftRecord`/`recordBodyWeight`
 // resolve to the jest.fn() mocks below.
@@ -61,6 +62,9 @@ const LOGGED: LiftRecordResponse = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Several tests below share the default program/cycle/workout/lift/set identity
+  // from makeProps()/makeLift() and would otherwise leak drafts across tests.
+  window.localStorage.clear();
 });
 
 describe('WorkoutLogger — weight-unit display preference', () => {
@@ -221,5 +225,86 @@ describe('WorkoutLogger — mutation failure logging (#783)', () => {
       expect.objectContaining({ program: '5-3-1', lift: 'Back Squat', setNum: 1 }),
     );
     errorSpy.mockRestore();
+  });
+});
+
+describe('WorkoutLogger — in-progress set draft persistence (#878)', () => {
+  // Matches makeProps()/makeLift()'s defaults: program '5-3-1', cycleNum 1, workoutNum 1,
+  // lift 'Back Squat', setNum 1.
+  const DRAFT_KEY = buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1);
+
+  it('persists an in-progress (unsubmitted) set to localStorage as the user types', async () => {
+    const user = userEvent.setup();
+    render(<WorkoutLogger {...makeProps()} />);
+
+    await user.clear(screen.getByLabelText('Weight in lbs'));
+    await user.type(screen.getByLabelText('Weight in lbs'), '225');
+
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (raw === null) throw new Error('expected a draft to be persisted');
+    expect(JSON.parse(raw)).toEqual({ weight: '225', reps: '5', notes: '' });
+  });
+
+  it('restores an in-progress set after a full remount (simulating a reload)', async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    const { unmount } = render(<WorkoutLogger {...props} />);
+
+    await user.clear(screen.getByLabelText('Weight in lbs'));
+    await user.type(screen.getByLabelText('Weight in lbs'), '225');
+    await user.type(screen.getByPlaceholderText('Notes (optional)'), 'felt heavy');
+    unmount();
+
+    render(<WorkoutLogger {...props} />);
+    expect(screen.getByLabelText('Weight in lbs')).toHaveValue(225);
+    expect(screen.getByPlaceholderText('Notes (optional)')).toHaveValue('felt heavy');
+  });
+
+  it('clears the persisted draft after a successful log submission', async () => {
+    const user = userEvent.setup();
+    mockCreateLiftRecord.mockResolvedValue(LOGGED);
+    render(<WorkoutLogger {...makeProps()} />);
+
+    await user.clear(screen.getByLabelText('Weight in lbs'));
+    await user.type(screen.getByLabelText('Weight in lbs'), '225');
+    expect(window.localStorage.getItem(DRAFT_KEY)).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    await waitFor(() => expect(mockCreateLiftRecord).toHaveBeenCalledTimes(1));
+
+    expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
+  });
+
+  it('ignores a stale leftover draft when editing an already-logged set', async () => {
+    const user = userEvent.setup();
+    // Simulate a draft typed before this set was logged elsewhere (e.g. a different
+    // tab) — it must never leak into the edit form, which should reflect the real
+    // logged record instead.
+    window.localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ weight: '999', reps: '99', notes: 'stale' }),
+    );
+
+    render(
+      <WorkoutLogger
+        {...makeProps({
+          lifts: [
+            makeLift({
+              workingSets: [{ setNum: 1, totalLoad: 100, reps: 5, amrap: false, existing: LOGGED }],
+            }),
+          ],
+        })}
+      />,
+    );
+
+    // Read-only summary reflects the real logged record, never the stale draft.
+    expect(screen.getByText(/225 lbs/)).toBeInTheDocument();
+    expect(screen.queryByText(/999/)).not.toBeInTheDocument();
+
+    // Entering edit mode also must not pick up the stray draft.
+    await user.click(screen.getByRole('button', { name: 'Edit set 1' }));
+    expect(screen.getByLabelText('Weight in lbs')).toHaveValue(225);
+    expect(screen.getByLabelText('Reps')).toHaveValue(5);
+    expect(screen.getByPlaceholderText('Notes (optional)')).toHaveValue('');
   });
 });

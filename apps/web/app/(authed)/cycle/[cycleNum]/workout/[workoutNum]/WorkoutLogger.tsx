@@ -13,6 +13,7 @@ import {
 import { logClientError } from '@/lib/log-client-error';
 import styles from './WorkoutLogger.module.css';
 import type { LiftData, WorkingSetData, WorkoutLoggerProps } from './types';
+import { buildDraftKey, clearDraft, readDraft, writeDraft } from './workoutDraftStorage';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -197,17 +198,57 @@ function WorkingSetRow({
   // Pre-fill from the logged record when entering edit mode; fall back to plan defaults for new logs.
   // The pre-filled value is always the native lbs number — the input and everything submitted stay
   // in lbs (lift records have no per-record unit); `unit` only drives the read-only ≈ hint below.
-  const [weightInput, setWeightInput] = useState(
-    loggedRecord
+  //
+  // Drafts only ever apply to the fresh "Log" form — never a read-only workout, and never an
+  // edit-in-progress (editingSet resets to null on reload, so a drafted edit has no restoration
+  // path). Gating on isReadOnly matters even though isReadOnly implies loggedRecord in practice
+  // (page.tsx only sets it once every set is logged): WorkingSetRow doesn't itself enforce that
+  // invariant, and hooks run unconditionally before the isReadOnly early-return below, so without
+  // this guard an isReadOnly + unlogged row (exercised directly by the isReadOnly test in
+  // WorkoutLogger.test.tsx) would still read a stray draft into unused state.
+  const shouldDraft = !loggedRecord && !isReadOnly;
+  const draftStorageKey = buildDraftKey(program, cycleNum, workoutNum, lift, set.setNum);
+
+  const [weightInput, setWeightInput] = useState(() => {
+    if (shouldDraft) {
+      const draft = readDraft(draftStorageKey);
+      if (draft) return draft.weight;
+    }
+    return loggedRecord
       ? String(formatWorkingWeight(loggedRecord.weight, null, false, unit).value)
-      : String(defaultWeight),
-  );
-  const [repsInput, setRepsInput] = useState(String(loggedRecord?.reps ?? set.reps));
-  const [notesInput, setNotesInput] = useState(loggedRecord?.notes ?? '');
+      : String(defaultWeight);
+  });
+  const [repsInput, setRepsInput] = useState(() => {
+    if (shouldDraft) {
+      const draft = readDraft(draftStorageKey);
+      if (draft) return draft.reps;
+    }
+    return String(loggedRecord?.reps ?? set.reps);
+  });
+  const [notesInput, setNotesInput] = useState(() => {
+    if (shouldDraft) {
+      const draft = readDraft(draftStorageKey);
+      if (draft) return draft.notes;
+    }
+    return loggedRecord?.notes ?? '';
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isLogged = !!loggedRecord && !isEditing;
+
+  function handleWeightInputChange(value: string) {
+    setWeightInput(value);
+    if (shouldDraft) writeDraft(draftStorageKey, { weight: value, reps: repsInput, notes: notesInput });
+  }
+  function handleRepsInputChange(value: string) {
+    setRepsInput(value);
+    if (shouldDraft) writeDraft(draftStorageKey, { weight: weightInput, reps: value, notes: notesInput });
+  }
+  function handleNotesInputChange(value: string) {
+    setNotesInput(value);
+    if (shouldDraft) writeDraft(draftStorageKey, { weight: weightInput, reps: repsInput, notes: value });
+  }
 
   async function handleLog(e: React.FormEvent) {
     e.preventDefault();
@@ -231,6 +272,7 @@ function WorkingSetRow({
         reps,
         notes: notesInput || undefined,
       });
+      clearDraft(draftStorageKey);
       onLogged(record);
     } catch (err) {
       logClientError('createLiftRecord', err, {
@@ -320,7 +362,7 @@ function WorkingSetRow({
           min="0"
           step="2.5"
           value={weightInput}
-          onChange={(e) => setWeightInput(e.target.value)}
+          onChange={(e) => handleWeightInputChange(e.target.value)}
           disabled={submitting}
           aria-label="Weight in lbs"
         />
@@ -335,7 +377,7 @@ function WorkingSetRow({
           min="0"
           step="1"
           value={repsInput}
-          onChange={(e) => setRepsInput(e.target.value)}
+          onChange={(e) => handleRepsInputChange(e.target.value)}
           disabled={submitting}
           aria-label="Reps"
         />
@@ -348,7 +390,7 @@ function WorkingSetRow({
           type="text"
           placeholder="Notes (optional)"
           value={notesInput}
-          onChange={(e) => setNotesInput(e.target.value)}
+          onChange={(e) => handleNotesInputChange(e.target.value)}
           disabled={submitting}
         />
         {error && <p className={styles.setError}>{error}</p>}
@@ -588,6 +630,18 @@ export default function WorkoutLogger({
   const totalSets = lifts.reduce((n, l) => n + l.workingSets.length, 0);
   const allLogged = loggedSets.size === totalSets && totalSets > 0;
 
+  // Per-set clearDraft (in WorkingSetRow's handleLog) can't reach a draft written on a
+  // different tab/device than the one that logged the set — sweep the whole workout's
+  // drafts here as a backstop before leaving the page.
+  function handleFinishWorkout() {
+    for (const l of lifts) {
+      for (const ws of l.workingSets) {
+        clearDraft(buildDraftKey(program, cycleNum, workoutNum, l.lift, ws.setNum));
+      }
+    }
+    router.push(`/cycle/${cycleNum}`);
+  }
+
   // Body weight gate
   if (!bodyWeightDone) {
     return <BodyWeightGate onSubmit={handleBodyWeightSubmit} unit={unit} />;
@@ -630,7 +684,7 @@ export default function WorkoutLogger({
           <button
             className={styles.finishBtn}
             type="button"
-            onClick={() => router.push(`/cycle/${cycleNum}`)}
+            onClick={handleFinishWorkout}
           >
             Finish workout
           </button>
@@ -747,7 +801,7 @@ export default function WorkoutLogger({
           <button
             className={styles.finishBtn}
             type="button"
-            onClick={() => router.push(`/cycle/${cycleNum}`)}
+            onClick={handleFinishWorkout}
           >
             Finish workout
           </button>
