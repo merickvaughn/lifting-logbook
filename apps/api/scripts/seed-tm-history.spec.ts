@@ -6,6 +6,7 @@ import {
   mapRowToEntry,
   parseArgs,
   parseTMHistoryCsv,
+  REQUIRED_COLUMNS,
   resolveLiftId,
   SeedResult,
 } from './seed-tm-history';
@@ -21,16 +22,17 @@ describe('parseArgs', () => {
       '/tmp/export.csv',
     ]);
     expect(args).toEqual({
+      mode: 'seed',
       program: 'prog-uuid',
       userId: 'user-1',
       input: '/tmp/export.csv',
       dryRun: false,
       force: false,
-      rollback: false,
+      backupDir: null,
     });
   });
 
-  it('parses --dry-run and --force as flags', () => {
+  it('parses --dry-run, --force, and --backup-dir', () => {
     const args = parseArgs([
       '--program',
       'p',
@@ -40,20 +42,48 @@ describe('parseArgs', () => {
       'f.csv',
       '--dry-run',
       '--force',
+      '--backup-dir',
+      '/tmp/backups',
     ]);
     expect(args.dryRun).toBe(true);
     expect(args.force).toBe(true);
+    expect(args.backupDir).toBe('/tmp/backups');
   });
 
-  it('parses a --rollback argument set with no --input', () => {
+  it('accepts --flag=value syntax', () => {
+    const args = parseArgs(['--program=p', '--user-id=u', '--input=f.csv']);
+    expect(args).toMatchObject({ program: 'p', userId: 'u', input: 'f.csv' });
+  });
+
+  it('parses a --rollback argument set with mode "rollback"', () => {
     const args = parseArgs(['--program', 'p', '--user-id', 'u', '--rollback']);
     expect(args).toEqual({
+      mode: 'rollback',
       program: 'p',
       userId: 'u',
-      input: null,
       dryRun: false,
       force: false,
-      rollback: true,
+      backupDir: null,
+    });
+  });
+
+  it('parses a --restore argument set with mode "restore"', () => {
+    const args = parseArgs([
+      '--program',
+      'p',
+      '--user-id',
+      'u',
+      '--restore',
+      '/tmp/backup.json',
+    ]);
+    expect(args).toEqual({
+      mode: 'restore',
+      program: 'p',
+      userId: 'u',
+      restorePath: '/tmp/backup.json',
+      dryRun: false,
+      force: false,
+      backupDir: null,
     });
   });
 
@@ -66,7 +96,7 @@ describe('parseArgs', () => {
       '--rollback',
       '--dry-run',
     ]);
-    expect(args.rollback).toBe(true);
+    expect(args.mode).toBe('rollback');
     expect(args.dryRun).toBe(true);
   });
 
@@ -82,9 +112,9 @@ describe('parseArgs', () => {
     );
   });
 
-  it('throws when neither --input nor --rollback is given', () => {
+  it('throws when none of --input/--rollback/--restore is given', () => {
     expect(() => parseArgs(['--program', 'p', '--user-id', 'u'])).toThrow(
-      /--input.*required unless --rollback/,
+      /exactly one of --input/,
     );
   });
 
@@ -99,7 +129,22 @@ describe('parseArgs', () => {
         '--input',
         'f.csv',
       ]),
-    ).toThrow(/--input is not used with --rollback/);
+    ).toThrow(/mutually exclusive/);
+  });
+
+  it('throws when --input is combined with --restore', () => {
+    expect(() =>
+      parseArgs([
+        '--program',
+        'p',
+        '--user-id',
+        'u',
+        '--input',
+        'f.csv',
+        '--restore',
+        'b.json',
+      ]),
+    ).toThrow(/mutually exclusive/);
   });
 
   it('throws when a flag expecting a value is given none', () => {
@@ -110,6 +155,31 @@ describe('parseArgs', () => {
     expect(() =>
       parseArgs(['--program', '--user-id', 'u']),
     ).toThrow('--program requires a value');
+  });
+
+  it('throws on an unrecognized flag rather than silently ignoring it', () => {
+    // The exact scenario a typo'd --dry-run used to hit: silently parsed as
+    // "flag not set" instead of erroring, turning a preview request into a
+    // real write.
+    expect(() =>
+      parseArgs(['--program', 'p', '--user-id', 'u', '--input', 'f.csv', '--dryrun']),
+    ).toThrow(/Unrecognized flag '--dryrun'/);
+  });
+
+  it('throws on a bare non-flag token', () => {
+    expect(() => parseArgs(['p'])).toThrow(/Unrecognized argument 'p'/);
+  });
+
+  it('throws when a value-flag is passed more than once', () => {
+    expect(() =>
+      parseArgs(['--program', 'a', '--program', 'b', '--user-id', 'u', '--rollback']),
+    ).toThrow(/--program was passed more than once/);
+  });
+
+  it('throws when a boolean flag is given a value via = syntax', () => {
+    expect(() =>
+      parseArgs(['--program', 'p', '--user-id', 'u', '--rollback=true']),
+    ).toThrow(/--rollback does not take a value/);
   });
 });
 
@@ -170,6 +240,14 @@ function validRow(overrides: Record<string, string> = {}): Record<string, string
   };
 }
 
+describe('REQUIRED_COLUMNS', () => {
+  it('is a superset the fixture headers above actually satisfy', () => {
+    for (const col of REQUIRED_COLUMNS) {
+      expect(HEADERS).toContain(col);
+    }
+  });
+});
+
 describe('parseTMHistoryCsv', () => {
   it('parses a well-formed export into row objects', () => {
     const rows = parseTMHistoryCsv(csvOf([validRow()]));
@@ -189,19 +267,41 @@ describe('parseTMHistoryCsv', () => {
     expect(() => parseTMHistoryCsv(content)).toThrow(/missing expected column/);
     expect(() => parseTMHistoryCsv(content)).toThrow(/Will Seed/);
   });
+
+  it('throws when expected columns are missing even on a header-only (zero data row) CSV', () => {
+    // Previously the column check only ran when rows.length > 0, so a
+    // header-only OR fully-empty file skipped validation entirely.
+    const staleHeaders = HEADERS.filter((h) => h !== 'Will Seed');
+    expect(() => parseTMHistoryCsv(staleHeaders.join(','))).toThrow(
+      /missing expected column/,
+    );
+  });
 });
 
 describe('filterWillSeedRows', () => {
-  it('keeps only rows where Will Seed is exactly "true"', () => {
+  it('keeps only rows where Will Seed is exactly "true" (case-insensitive)', () => {
     const rows = parseTMHistoryCsv(
       csvOf([
         validRow({ 'Cycle #': '1', 'Will Seed': 'true' }),
         validRow({ 'Cycle #': '2', 'Will Seed': 'false' }),
-        validRow({ 'Cycle #': '3', 'Will Seed': 'true' }),
+        validRow({ 'Cycle #': '3', 'Will Seed': 'TRUE' }),
       ]),
     );
     const willSeed = filterWillSeedRows(rows);
     expect(willSeed.map((r) => r['Cycle #'])).toEqual(['1', '3']);
+  });
+
+  it('throws on an unrecognized Will Seed value rather than silently treating it as false', () => {
+    // This is the guard against a whole-file format mismatch (e.g. Google
+    // Sheets rendering booleans differently on CSV export) silently
+    // producing an empty seed set, which downstream feeds a full wipe.
+    const rows = parseTMHistoryCsv(csvOf([validRow({ 'Will Seed': 'yes' })]));
+    expect(() => filterWillSeedRows(rows)).toThrow(/not a recognized boolean/);
+  });
+
+  it('throws on a blank Will Seed value (never legitimately empty)', () => {
+    const rows = parseTMHistoryCsv(csvOf([validRow({ 'Will Seed': '' })]));
+    expect(() => filterWillSeedRows(rows)).toThrow(/not a recognized boolean/);
   });
 });
 
@@ -212,11 +312,16 @@ describe('mapRowToEntry', () => {
       lift: 'back-squat',
       weight: 305,
       reps: 1,
-      date: new Date('2026-03-01'),
+      date: new Date(Date.UTC(2026, 2, 1)),
       isPR: true,
       source: 'program',
       goalMet: true,
     });
+  });
+
+  it('accepts uppercase TRUE/FALSE for Is PR (case-insensitive)', () => {
+    expect(mapRowToEntry(validRow({ 'Is PR': 'TRUE' })).isPR).toBe(true);
+    expect(mapRowToEntry(validRow({ 'Is PR': 'FALSE' })).isPR).toBe(false);
   });
 
   it('always sets reps to 1, regardless of the source row', () => {
@@ -239,16 +344,50 @@ describe('mapRowToEntry', () => {
     expect(entry.lift).toBe("Farmer's Carry");
   });
 
+  it('throws on an empty TM', () => {
+    expect(() => mapRowToEntry(validRow({ TM: '' }))).toThrow(/empty TM/);
+  });
+
+  it('throws on a whitespace-only TM', () => {
+    expect(() => mapRowToEntry(validRow({ TM: '   ' }))).toThrow(/empty TM/);
+  });
+
   it('throws on a non-numeric TM', () => {
     expect(() => mapRowToEntry(validRow({ TM: 'not-a-number' }))).toThrow(
-      /non-numeric TM/,
+      /invalid TM/,
     );
+  });
+
+  it('throws on a zero TM (Number("") === 0 must not silently pass as a real value)', () => {
+    expect(() => mapRowToEntry(validRow({ TM: '0' }))).toThrow(/invalid TM/);
+  });
+
+  it('throws on a negative TM', () => {
+    expect(() => mapRowToEntry(validRow({ TM: '-5' }))).toThrow(/invalid TM/);
+  });
+
+  it('throws on a non-finite TM', () => {
+    expect(() => mapRowToEntry(validRow({ TM: 'Infinity' }))).toThrow(/invalid TM/);
   });
 
   it('throws on an invalid Cycle Date', () => {
     expect(() =>
       mapRowToEntry(validRow({ 'Cycle Date': 'not-a-date' })),
-    ).toThrow(/invalid Cycle Date/);
+    ).toThrow(/not in yyyy-MM-dd format/);
+  });
+
+  it('throws on a locale-formatted Cycle Date rather than silently transposing month/day', () => {
+    expect(() =>
+      mapRowToEntry(validRow({ 'Cycle Date': '03/01/2026' })),
+    ).toThrow(/not in yyyy-MM-dd format/);
+  });
+
+  it('parses Cycle Date as UTC midnight, not local midnight', () => {
+    const entry = mapRowToEntry(validRow({ 'Cycle Date': '2026-03-01' }));
+    expect(entry.date.getUTCFullYear()).toBe(2026);
+    expect(entry.date.getUTCMonth()).toBe(2); // 0-indexed: March
+    expect(entry.date.getUTCDate()).toBe(1);
+    expect(entry.date.getUTCHours()).toBe(0);
   });
 });
 
@@ -307,6 +446,13 @@ describe('formatResult', () => {
     expect(out).toContain('Rolled back');
     expect(out).toContain('deleted 5 row(s)');
     expect(out).toContain('wrote 0');
+  });
+
+  it('reports a restore', () => {
+    const out = formatResult({ ...base, mode: 'restored', existingCount: 2, writtenCount: 5 });
+    expect(out).toContain('Restored');
+    expect(out).toContain('deleted 2 row(s)');
+    expect(out).toContain('wrote 5 row(s) from backup');
   });
 
   it('mentions the backup path when one was written', () => {

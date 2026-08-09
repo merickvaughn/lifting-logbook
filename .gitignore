@@ -29,6 +29,12 @@ next-env.d.ts
 scripts/cloud-sql-proxy
 scripts/cloud-sql-proxy.exe
 
+# Phase 2B seed script backups (apps/api/scripts/seed-tm-history.ts) — default
+# outside the repo (os.tmpdir()), but this is a backstop in case --backup-dir
+# ever points inside the tree. Contains a full dump of one user's training-max
+# history keyed to their Clerk id — never committed.
+tm-history-backup-*.json
+
 # Playwright staging auth state — contains real session tokens, never commit
 apps/web/playwright/.auth/
 
