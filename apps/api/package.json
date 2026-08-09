@@ -10,7 +10,8 @@
     "test": "jest",
     "test:db": "jest --testPathPatterns=db\\.e2e",
     "db:generate": "prisma generate",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "seed:tm-history": "ts-node scripts/seed-tm-history.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
@@ -59,6 +60,7 @@
     "@opentelemetry/sdk-trace-base": "^2.7.1",
     "@testcontainers/postgresql": "^12.0.1",
     "@types/pg": "^8.11.0",
+    "csv-parse": "^6.1.0",
     "prisma": "^5.22.0",
     "ts-node": "^10.9.0",
     "tsconfig-paths": "^4.2.0"
