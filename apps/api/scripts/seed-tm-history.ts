@@ -885,6 +885,13 @@ export async function runSeed(prisma: PrismaClient, args: SeedArgs): Promise<See
       // process being killed), so it must be visible on the failure path
       // too, not just on success.
       console.log(`Backed up ${backup?.count} existing row(s) to ${backupPath}`);
+      if (backupDir === DEFAULT_BACKUP_DIR) {
+        console.log(
+          `(Default backup location — os.tmpdir() is purged on a schedule or at reboot on ` +
+            `most platforms. Copy this file somewhere durable, or re-run with --backup-dir ` +
+            `next time, if you need it to outlive this session.)`,
+        );
+      }
     }
   }
 
