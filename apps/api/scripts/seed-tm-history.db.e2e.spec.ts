@@ -158,44 +158,12 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
     });
   });
 
-  describe('backupExistingHistory', () => {
-    it('returns null and writes no file when the program has no existing history', async () => {
-      const program = await prisma.customProgram.create({
-        data: { userId: USER_A, name: 'Empty History' },
-      });
-      const repo = new PrismaTrainingMaxHistoryRepository(prisma, USER_A);
-      const result = await backupExistingHistory(repo, program.id, backupDir);
-      expect(result).toBeNull();
-    });
-
-    it('writes existing history to a JSON file, verifies the write, and returns its path + count', async () => {
-      const program = await prisma.customProgram.create({
-        data: { userId: USER_A, name: 'Has History' },
-      });
-      await prisma.trainingMaxHistory.create({
-        data: {
-          userId: USER_A,
-          program: program.id,
-          lift: 'back-squat',
-          weight: 300,
-          reps: 1,
-          date: new Date('2026-01-01'),
-          isPR: true,
-          source: 'program',
-          goalMet: true,
-        },
-      });
-      const repo = new PrismaTrainingMaxHistoryRepository(prisma, USER_A);
-      const result = assertNotNull(
-        await backupExistingHistory(repo, program.id, backupDir),
-        'backupExistingHistory result',
-      );
-      expect(result.count).toBe(1);
-      const written = JSON.parse(fs.readFileSync(result.path, 'utf8'));
-      expect(written).toHaveLength(1);
-      expect(written[0]).toMatchObject({ lift: 'back-squat', weight: 300 });
-    });
-  });
+  // backupExistingHistory is now fs/JSON-only (no Prisma) and is covered at
+  // the function level in seed-tm-history.spec.ts, including the envelope
+  // shape and read-back verification. The real-DB round trip (a Prisma-
+  // fetched TrainingMaxHistoryEntry[] all the way through to a restorable
+  // file) is exercised by the "--restore" test below via runSeed, which is
+  // this suite's reason to exist — no separate describe block needed here.
 
   describe('runSeed', () => {
     function baseArgs(program: string, input: string): SeedArgs {
@@ -206,7 +174,7 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
         input,
         dryRun: false,
         force: false,
-        backupDir: null,
+        backupDir,
       };
     }
 
@@ -218,7 +186,7 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
       fs.writeFileSync(csvPath, csvOf([willSeedRow()]));
 
       await expect(
-        runSeed(prisma, baseArgs(program.id, csvPath), backupDir),
+        runSeed(prisma, baseArgs(program.id, csvPath)),
       ).rejects.toBeInstanceOf(ProgramOwnershipError);
 
       const rows = await prisma.trainingMaxHistory.findMany({
@@ -241,7 +209,7 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
         ]),
       );
 
-      const result = await runSeed(prisma, baseArgs(program.id, csvPath), backupDir);
+      const result = await runSeed(prisma, baseArgs(program.id, csvPath));
 
       expect(result.mode).toBe('seeded');
       expect(result.existingCount).toBe(0);
@@ -280,7 +248,7 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
       fs.writeFileSync(csvPath, csvOf([willSeedRow({ 'Will Seed': 'false' })]));
 
       await expect(
-        runSeed(prisma, { ...baseArgs(program.id, csvPath), force: true }, backupDir),
+        runSeed(prisma, { ...baseArgs(program.id, csvPath), force: true }),
       ).rejects.toThrow(/zero rows to seed/);
 
       const rows = await prisma.trainingMaxHistory.findMany({
@@ -311,7 +279,7 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
       fs.writeFileSync(csvPath, csvOf([willSeedRow({ TM: '999' })]));
 
       await expect(
-        runSeed(prisma, baseArgs(program.id, csvPath), backupDir),
+        runSeed(prisma, baseArgs(program.id, csvPath)),
       ).rejects.toThrow(/already has 1 history row/);
 
       const rows = await prisma.trainingMaxHistory.findMany({
@@ -344,7 +312,6 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
       const result = await runSeed(
         prisma,
         { ...baseArgs(program.id, csvPath), force: true },
-        backupDir,
       );
 
       expect(result.mode).toBe('seeded');
@@ -352,8 +319,8 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
       expect(result.writtenCount).toBe(1);
       const backupPath = assertNotNull(result.backupPath, 'result.backupPath');
       const backedUp = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
-      expect(backedUp).toHaveLength(1);
-      expect(backedUp[0]).toMatchObject({ weight: 250 }); // the OLD row, preserved in the backup
+      expect(backedUp.entries).toHaveLength(1);
+      expect(backedUp.entries[0]).toMatchObject({ weight: 250 }); // the OLD row, preserved in the backup
 
       const rows = await prisma.trainingMaxHistory.findMany({
         where: { program: program.id },
@@ -372,7 +339,6 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
       const result = await runSeed(
         prisma,
         { ...baseArgs(program.id, csvPath), dryRun: true },
-        backupDir,
       );
 
       expect(result.mode).toBe('dry-run');
@@ -393,7 +359,7 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
       fs.writeFileSync(csvPath, csvOf([willSeedRow({ TM: 'not-a-number' })]));
 
       await expect(
-        runSeed(prisma, { ...baseArgs(program.id, csvPath), dryRun: true }, backupDir),
+        runSeed(prisma, { ...baseArgs(program.id, csvPath), dryRun: true }),
       ).rejects.toThrow(/invalid TM/);
 
       const rows = await prisma.trainingMaxHistory.findMany({
@@ -435,7 +401,7 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
         });
       try {
         await expect(
-          runSeed(prisma, { ...baseArgs(program.id, csvPath), force: true }, backupDir),
+          runSeed(prisma, { ...baseArgs(program.id, csvPath), force: true }),
         ).rejects.toThrow('simulated append failure');
       } finally {
         txSpy.mockRestore();
@@ -493,9 +459,8 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
           userId: USER_A,
           dryRun: false,
           force: true,
-          backupDir: null,
+          backupDir,
         },
-        backupDir,
       );
 
       expect(result.mode).toBe('rolled-back');
@@ -535,9 +500,8 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
           userId: USER_A,
           dryRun: true,
           force: false,
-          backupDir: null,
+          backupDir,
         },
-        backupDir,
       );
 
       expect(result.mode).toBe('dry-run');
@@ -570,8 +534,9 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
         },
       });
       const repo = new PrismaTrainingMaxHistoryRepository(prisma, USER_A);
+      const existingForBackup = await repo.getHistory(program.id);
       const backup = assertNotNull(
-        await backupExistingHistory(repo, program.id, backupDir),
+        await backupExistingHistory(existingForBackup, program.id, USER_A, backupDir),
         'backup of seeded row',
       );
       expect(backup.count).toBe(1);
@@ -601,9 +566,8 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
           restorePath: backup.path,
           dryRun: false,
           force: true,
-          backupDir: null,
+          backupDir,
         },
-        backupDir,
       );
 
       expect(result.mode).toBe('restored');
@@ -642,6 +606,154 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
       await expect(
         verifyProgramOwnership(prisma, program.id, USER_A),
       ).rejects.toThrow(/some rows exist under a different userId/);
+    });
+
+    it('refuses a CSV whose Will Seed=true rows span more than one Program value', async () => {
+      const program = await prisma.customProgram.create({
+        data: { userId: USER_A, name: 'Multi-Program Guard' },
+      });
+      const csvPath = path.join(backupDir, 'export.csv');
+      fs.writeFileSync(
+        csvPath,
+        csvOf([willSeedRow({ Program: 'RPT' }), willSeedRow({ Program: 'nSuns', Lift: 'Bench Press' })]),
+      );
+
+      await expect(
+        runSeed(prisma, baseArgs(program.id, csvPath)),
+      ).rejects.toThrow(/different Program values/);
+
+      const rows = await prisma.trainingMaxHistory.findMany({ where: { program: program.id } });
+      expect(rows).toHaveLength(0);
+    });
+
+    it('the --force-required refusal is mode-aware: --rollback does not get the seed-oriented message', async () => {
+      const program = await prisma.customProgram.create({
+        data: { userId: USER_A, name: 'Rollback Message' },
+      });
+      await prisma.trainingMaxHistory.create({
+        data: {
+          userId: USER_A,
+          program: program.id,
+          lift: 'back-squat',
+          weight: 300,
+          reps: 1,
+          date: new Date('2026-01-01'),
+          isPR: true,
+          source: 'program',
+          goalMet: true,
+        },
+      });
+
+      // The runbook's documented rollback invocation passes no --force —
+      // this is the exact command it tells operators to run, pinned here so
+      // a future divergence between the script and the runbook fails a test
+      // instead of surfacing mid-procedure. One call, two assertions on the
+      // same captured error, rather than two separate rejecting calls.
+      let caught: Error | undefined;
+      try {
+        await runSeed(prisma, {
+          mode: 'rollback',
+          program: program.id,
+          userId: USER_A,
+          dryRun: false,
+          force: false,
+          backupDir,
+        });
+      } catch (e) {
+        caught = e instanceof Error ? e : undefined;
+      }
+      expect(caught?.message).toMatch(/--rollback will delete 1 existing history row/);
+      expect(caught?.message).not.toMatch(/unexpected at the normal Phase 2B timing/);
+
+      const rows = await prisma.trainingMaxHistory.findMany({ where: { program: program.id } });
+      expect(rows).toHaveLength(1); // refused before any delete
+    });
+
+    it('--restore refuses a backup captured for a different program', async () => {
+      const programA = await prisma.customProgram.create({
+        data: { userId: USER_A, name: 'Backup Source' },
+      });
+      const programB = await prisma.customProgram.create({
+        data: { userId: USER_A, name: 'Restore Target (Wrong)' },
+      });
+      await prisma.trainingMaxHistory.create({
+        data: {
+          userId: USER_A,
+          program: programA.id,
+          lift: 'back-squat',
+          weight: 300,
+          reps: 1,
+          date: new Date('2026-01-01'),
+          isPR: true,
+          source: 'program',
+          goalMet: true,
+        },
+      });
+      const repo = new PrismaTrainingMaxHistoryRepository(prisma, USER_A);
+      const existingForBackup = await repo.getHistory(programA.id);
+      const backup = assertNotNull(
+        await backupExistingHistory(existingForBackup, programA.id, USER_A, backupDir),
+        'backup of program A',
+      );
+
+      await expect(
+        runSeed(prisma, {
+          mode: 'restore',
+          program: programB.id,
+          userId: USER_A,
+          restorePath: backup.path,
+          dryRun: false,
+          force: true,
+          backupDir,
+        }),
+      ).rejects.toThrow(/was captured for program/);
+
+      const rowsB = await prisma.trainingMaxHistory.findMany({ where: { program: programB.id } });
+      expect(rowsB).toHaveLength(0);
+    });
+
+    it('--restore refuses an empty backup file rather than silently wiping current history', async () => {
+      const program = await prisma.customProgram.create({
+        data: { userId: USER_A, name: 'Restore Empty Guard' },
+      });
+      await prisma.trainingMaxHistory.create({
+        data: {
+          userId: USER_A,
+          program: program.id,
+          lift: 'back-squat',
+          weight: 300,
+          reps: 1,
+          date: new Date('2026-01-01'),
+          isPR: true,
+          source: 'program',
+          goalMet: true,
+        },
+      });
+      const emptyBackupPath = path.join(backupDir, 'empty-backup.json');
+      fs.writeFileSync(
+        emptyBackupPath,
+        JSON.stringify({
+          program: program.id,
+          userId: USER_A,
+          capturedAt: new Date().toISOString(),
+          entries: [],
+        }),
+      );
+
+      await expect(
+        runSeed(prisma, {
+          mode: 'restore',
+          program: program.id,
+          userId: USER_A,
+          restorePath: emptyBackupPath,
+          dryRun: false,
+          force: true,
+          backupDir,
+        }),
+      ).rejects.toThrow(/zero rows to seed/);
+
+      const rows = await prisma.trainingMaxHistory.findMany({ where: { program: program.id } });
+      expect(rows).toHaveLength(1); // untouched — refused before any delete
     });
   });
 });
