@@ -5,7 +5,17 @@ const localRules = require('./tools/eslint-rules');
 /** @type {import('eslint').Linter.FlatConfig[]} */
 module.exports = [
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/.turbo/**'],
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/.turbo/**',
+      // Plain CommonJS Node utility (require.cache-clearing test harness — can't move to
+      // ESM without breaking its runtime execution). @typescript-eslint/no-require-imports
+      // fires on require() regardless of file extension. Same rationale as
+      // tools/eslint-rules/package.json's "(no lint for eslint-rules workspace)" no-op.
+      // See #887.
+      'apps/api/scripts/**/*.js',
+    ],
   },
   // flat/recommended includes the @typescript-eslint parser and recommended rules
   // scoped to **/*.ts | **/*.tsx | **/*.mts | **/*.cts
@@ -56,7 +66,7 @@ module.exports = [
   // attempt to nest interactive transactions — both silently wrong. See issue #519 /
   // tools/eslint-rules/no-direct-prisma-transaction.js.
   {
-    files: ['apps/api/src/adapters/prisma/**/*.ts'],
+    files: ['apps/api/src/adapters/prisma/**/*.ts', 'apps/api/scripts/**/*.ts'],
     ignores: ['**/*.spec.ts', '**/*.test.ts'],
     plugins: { 'lifting-logbook': localRules },
     rules: { 'lifting-logbook/no-direct-prisma-transaction': 'error' },

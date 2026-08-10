@@ -37,7 +37,7 @@
       "cache": true
     },
     "lint": {
-      "inputs": ["src/**", "app/**", "*.ts", ".eslintrc*", "eslint.config*"]
+      "inputs": ["src/**", "app/**", "scripts/**", "*.ts", ".eslintrc*", "eslint.config*"]
     },
     // typecheck is build-free by design (#651): each workspace's typecheck tsconfig resolves
     // workspace deps to SOURCE, not dist. `dependsOn: ["^typecheck"]` chains upstream source

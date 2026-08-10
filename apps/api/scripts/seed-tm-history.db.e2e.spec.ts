@@ -96,7 +96,13 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
   let backupDir: string;
 
   beforeAll(() => {
-    prisma = new PrismaClient({ datasources: { db: { url: OWNER_DATABASE_URL } } });
+    // Non-null assertion is safe: describeOrSkip (above) only runs this suite's tests
+    // when OWNER_DATABASE_URL is truthy, a runtime guarantee TypeScript can't see across
+    // the closure boundary into this callback. Surfaced by #887's new whole-program
+    // typecheck gate; the identical pattern (same TS2375 shape, unaddressed) predates
+    // this file in apps/api/src/programs/programs.db.e2e.spec.ts, which nest build has
+    // never type-checked since tsconfig.build.json excludes all *.spec.ts.
+    prisma = new PrismaClient({ datasources: { db: { url: OWNER_DATABASE_URL! } } });
   });
 
   beforeEach(async () => {
