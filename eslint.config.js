@@ -13,6 +13,8 @@ module.exports = [
       // ESM without breaking its runtime execution). @typescript-eslint/no-require-imports
       // fires on require() regardless of file extension. Same rationale as
       // tools/eslint-rules/package.json's "(no lint for eslint-rules workspace)" no-op.
+      // Directory glob, not the exact filename, so a future plain-.js utility dropped in
+      // this same directory doesn't silently reproduce the same require()-vs-ESM break.
       // See #887.
       'apps/api/scripts/**/*.js',
     ],

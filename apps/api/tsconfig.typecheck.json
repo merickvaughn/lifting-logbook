@@ -3,10 +3,11 @@
   // Type-check gate for apps/api/scripts/, run by the `typecheck` task as
   // `tsc --noEmit -p tsconfig.typecheck.json`. Deliberately scripts-only, not
   // whole-workspace (unlike the web/core/api-client typecheck precedents this
-  // otherwise mirrors): a whole-workspace include drags in pre-existing, unrelated
-  // type errors in src/**/*.spec.ts (mock shapes trailing behind their interfaces)
+  // otherwise mirrors): a whole-workspace include drags in 31 pre-existing, unrelated
+  // type errors across 12 files in src/**/*.spec.ts (mock shapes trailing behind their
+  // interfaces, exactOptionalPropertyTypes friction, Fastify .inject() typing drift)
   // that nest build has always silently skipped via tsconfig.build.json's
-  // **/*.spec.ts exclusion. Fixing those is out of scope for #887 — see the PR body.
+  // **/*.spec.ts exclusion. Fixing those is out of scope for #887 — tracked in #890.
   // TypeScript still fully checks whatever scripts/ actually imports from src/ or
   // packages/*, transitively, as part of this program. Resolves @lifting-logbook/*
   // to SOURCE (not node_modules -> dist) so the check needs no upstream build,
