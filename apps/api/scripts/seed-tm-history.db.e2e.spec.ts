@@ -96,6 +96,19 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
   let backupDir: string;
 
   beforeAll(() => {
+    // describeOrSkip (above) only runs this suite's tests when OWNER_DATABASE_URL is
+    // truthy, but that's a runtime guarantee TypeScript can't see across the closure
+    // boundary into this callback — surfaced by #887's new typecheck gate. An explicit
+    // guard (rather than a bare non-null assertion) fails with a clear message if this
+    // invariant is ever accidentally broken by a future describeOrSkip refactor, instead
+    // of degrading to Prisma's generic "datasources.db.url is required" error. The
+    // identical pattern (same TS2375 shape, unaddressed) predates this file in
+    // apps/api/src/programs/programs.db.e2e.spec.ts — tracked in #890.
+    if (!OWNER_DATABASE_URL) {
+      throw new Error(
+        'OWNER_DATABASE_URL must be set here — describeOrSkip should have skipped this suite otherwise',
+      );
+    }
     prisma = new PrismaClient({ datasources: { db: { url: OWNER_DATABASE_URL } } });
   });
 
