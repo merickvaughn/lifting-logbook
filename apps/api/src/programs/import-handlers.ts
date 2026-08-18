@@ -3,6 +3,7 @@ import {
   ImportKind,
   ImportPreviewResponse,
   ImportCommitResponse,
+  SkippedRecord,
 } from '@lifting-logbook/types';
 import {
   SpreadsheetCell,
@@ -61,6 +62,15 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     const existingKeys = new Set(
       (await repos.liftRecord.findExistingRecords(program, records)).map(liftRecordNaturalKey),
     );
+    // Pair each record with its 1-based position in this commit batch, mirroring
+    // the legacy `POST /programs/:program/lift-records/import` endpoint's
+    // `SkippedRecord` reporting (issue #891) — `skippedDetail` below needs a row
+    // number per skip, not just a count. "Batch" here is *after* any Phase 3
+    // excludeKeys/splitDest filtering the controller already applied, so for a
+    // plain commit (neither) this matches the original CSV data-row number;
+    // positions shift when rows were excluded or split to a second destination
+    // ahead of this call.
+    const rows = records.map((r, i) => ({ r, row: i + 1 }));
     // Classify (and dedupe in-batch duplicates) in JS before writing, rather
     // than deriving `skipped` by subtracting the DB's insert count from the
     // unique-key count. That subtraction was sensitive to any drift between
@@ -69,11 +79,11 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     // the DB's own `createMany({ skipDuplicates: true })` skip logic is
     // belt-and-suspenders rather than the source of truth for the count.
     const classified = [
-      ...classifyImportRows(records, liftRecordNaturalKey, (_r, k) =>
+      ...classifyImportRows(rows, ({ r }) => liftRecordNaturalKey(r), (_row, k) =>
         existingKeys.has(k) ? 'skip' : 'create',
       ),
     ];
-    const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row);
+    const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row.r);
     const created = await repos.liftRecord.appendLiftRecords(program, toCreate);
     // `skipped` is derived from `created` (the DB's actual insert count), not
     // `toCreate.length` (what JS classification expected to write): a
@@ -85,11 +95,19 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     // for) even under that race; buildLiftRecordsPreImage(toCreate) is a
     // narrower residual — it still records the raced-out row as created for
     // undo purposes, since createMany's count doesn't say which row lost the
-    // race.
+    // race. `skippedDetail` is narrower still: it lists only the rows JS
+    // classified 'skip' up front, so a row that instead lost that race (JS
+    // said 'create', the DB didn't write it) is counted in the aggregate
+    // `skipped` total but has no entry here — createMany's count doesn't say
+    // which row lost the race, so there is no key to report.
+    const skippedDetail: SkippedRecord[] = classified
+      .filter((c) => c.kind === 'skip')
+      .map((c) => ({ row: c.row.row, naturalKey: c.key }));
     return {
       created,
       updated: 0,
       skipped: classified.length - created,
+      skippedDetail,
       preImage: buildLiftRecordsPreImage(toCreate),
     };
   },

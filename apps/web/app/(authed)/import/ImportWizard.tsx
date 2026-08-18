@@ -914,6 +914,20 @@ export function ImportWizard({
                 {commitResult.updated} updated, {commitResult.skipped} skipped.
               </p>
 
+              {/* Per-row skip detail (lift-records only — see ImportCommitResponse.skippedDetail) */}
+              {commitResult.skippedDetail && commitResult.skippedDetail.length > 0 && (
+                <details className={styles.skippedDetailBox}>
+                  <summary>Skipped rows</summary>
+                  <ul className={styles.skippedDetailList}>
+                    {commitResult.skippedDetail.map((s) => (
+                      <li key={`${s.row}-${s.naturalKey}`}>
+                        Row {s.row}: {s.naturalKey}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+
               {/* Undo section */}
               {batchId !== null && undoResult === null && (
                 <div className={styles.undoBanner}>

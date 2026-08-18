@@ -679,6 +679,21 @@ export interface ImportCommitResponse extends ImportWriteResult {
    * (e.g. 1RM Test lift-records rows committed to Training Maxes).
    */
   split?: { destination: ImportKind; created: number; updated: number; skipped: number };
+  /**
+   * Per-row detail for rows skipped during commit, mirroring the legacy
+   * `POST /programs/:program/lift-records/import` endpoint's
+   * `ImportLiftRecordsResponse.skipped` (issue #891). Populated only when
+   * `destination === 'lift-records'` (always present there, possibly empty)
+   * — the other three destinations are upsert kinds where "skipped" means
+   * "identical to the already-stored value" rather than "blocked by a
+   * distinct pre-existing row", so a natural-key skip list isn't meaningful
+   * for them yet; the field is absent (not an empty array) for those.
+   *
+   * `row` is 1-based within the batch actually committed (after any Phase 3
+   * `excludeKeys`/`splitDest` filtering already applied upstream) — for a
+   * plain commit using neither, it matches the original CSV data-row number.
+   */
+  skippedDetail?: SkippedRecord[];
 }
 
 /** Phase 3: Response for `POST /programs/:program/import/:batchId/undo`. */

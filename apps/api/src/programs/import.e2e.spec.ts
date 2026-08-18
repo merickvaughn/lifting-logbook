@@ -135,11 +135,17 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
         await importCsv('import-lr', LIFT_CSV, '?mode=commit&destination=lift-records')
       ).json();
       expect(first).toMatchObject({ destination: 'lift-records', created: 1 });
+      // Nothing skipped on the first commit — detail list is present but empty (issue #891).
+      expect(first.skippedDetail).toEqual([]);
       const second = (
         await importCsv('import-lr', LIFT_CSV, '?mode=commit&destination=lift-records')
       ).json();
       expect(second.created).toBe(0);
       expect(second.skipped).toBe(1);
+      // Row 1 is the only (and thus 1-based-first) data row in LIFT_CSV.
+      expect(second.skippedDetail).toEqual([
+        { row: 1, naturalKey: '1:1:20260101:bench-press:1' },
+      ]);
     });
 
     // Regression for issue #884: before the fix, both rows shared a date-less
@@ -165,6 +171,11 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
         )
       ).json();
       expect(second).toMatchObject({ created: 0, skipped: 2 });
+      // Both rows are reported by row number and full (date-inclusive) natural key.
+      expect(second.skippedDetail).toEqual([
+        { row: 1, naturalKey: '1:1:20251216:bench-press:1' },
+        { row: 2, naturalKey: '1:1:20240112:bench-press:1' },
+      ]);
     });
 
     it('commits training maxes and is idempotent on re-run', async () => {
@@ -177,6 +188,8 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       ).json();
       expect(second.created).toBe(0);
       expect(second.skipped).toBe(1);
+      // skippedDetail is a lift-records-only field (issue #891) — absent here, not [].
+      expect(second.skippedDetail).toBeUndefined();
     });
 
     it('commits strength goals and is idempotent on re-run', async () => {
@@ -300,6 +313,9 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.created).toBe(0);
       expect(res.skipped).toBe(0);
       expect(res.batchId).toBeTruthy();
+      // The excluded row never reaches the classification pass, so it has no
+      // skip detail entry either — excluded is not the same thing as skipped.
+      expect(res.skippedDetail).toEqual([]);
     });
 
     it('routes 1RM rows to training-maxes without double-writing them as lift-records', async () => {
@@ -313,6 +329,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       // Only the Bench P. row goes to lift-records; Squat 1RM goes to training-maxes only
       expect(res.created).toBe(1);
       expect(res.split).toMatchObject({ destination: 'training-maxes', created: 1 });
+      expect(res.skippedDetail).toEqual([]);
 
       // Re-commit: Bench P. lift-record is skipped; Squat TM is also skipped — not created again
       const reCommit = (
@@ -324,6 +341,13 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       ).json();
       expect(reCommit.skipped).toBe(1); // Bench P. as lift-record
       expect(reCommit.split).toMatchObject({ destination: 'training-maxes', skipped: 1 });
+      // Squat was split away before reaching the lift-records commit path, so Bench
+      // P. is the only (and thus row-1) entry in the batch skippedDetail reports
+      // against — see ImportCommitResponse.skippedDetail on row numbering after
+      // splitDest/excludeKeys filtering.
+      expect(reCommit.skippedDetail).toEqual([
+        { row: 1, naturalKey: '1:1:20260101:bench-press:1' },
+      ]);
     });
 
     it('undoes a created lift-record by deleting it', async () => {
