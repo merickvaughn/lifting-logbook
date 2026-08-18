@@ -1674,13 +1674,24 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   // validate against and silently let any JSON object reach the handler unchecked.
   // RecordBodyWeightDto / UpdateTrainingMaxesDto (./record-body-weight.dto /
   // ./update-training-maxes.dto) close that gap — the same one #893 closed for
-  // POST/PATCH /lift-records. Fresh per-test user token against SEED_PROGRAM, so —
-  // like the #893 block above — this block cannot interfere with (or depend on)
-  // state left by the order-sensitive blocks earlier in this file.
+  // POST/PATCH /lift-records.
+  //
+  // Isolation note (#897 review): the fresh per-test bearer token only isolates
+  // the training-maxes half — TrainingMaxesController resolves a per-user
+  // repository via `factory.forUser(user)`, like every other controller in this
+  // file. BodyWeightController does not: it injects BODY_WEIGHT_REPOSITORY
+  // directly (a single app-scoped InMemoryBodyWeightRepository keyed on
+  // `program` alone, with no per-user dimension at all — see issue #904, filed
+  // separately, for the production consequence of that). So the body-weight
+  // sub-block below uses its own dedicated program path instead of SEED_PROGRAM,
+  // to avoid colliding with the earlier 'multi-workout progression scenario'
+  // block, which already POSTs a body-weight entry for SEED_PROGRAM.
   // ---------------------------------------------------------------------------
   describe('POST /body-weight and PATCH /training-maxes — request-body validation (regression for #897)', () => {
     const AS_VALIDATION_897 = { authorization: 'Bearer body-weight-training-max-validation-user' };
-    const BODY_WEIGHT_URL = `/programs/${SEED_PROGRAM}/body-weight`;
+    // Deliberately NOT SEED_PROGRAM — see the isolation note above.
+    const BODY_WEIGHT_PROGRAM = 'bw-validation-897';
+    const BODY_WEIGHT_URL = `/programs/${BODY_WEIGHT_PROGRAM}/body-weight`;
     const TRAINING_MAXES_URL = `/programs/${SEED_PROGRAM}/training-maxes`;
 
     const postBodyWeight = (body: unknown) =>
@@ -1743,6 +1754,15 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
         expect(res.statusCode).toBe(400);
       });
 
+      // Regression for #897 review: matches the client's own validation
+      // (WorkoutLogger.tsx's handleBodyWeightSubmit rejects weight <= 0 before
+      // ever calling this endpoint) — a body-weight observation of 0 is not
+      // meaningful.
+      it('rejects a zero weight with 400', async () => {
+        const res = await postBodyWeight(validBody({ weight: 0 }));
+        expect(res.statusCode).toBe(400);
+      });
+
       it('rejects an unrecognized unit with 400', async () => {
         const res = await postBodyWeight(validBody({ unit: 'stone' }));
         expect(res.statusCode).toBe(400);
@@ -1801,10 +1821,43 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
         expect(res.statusCode).toBe(400);
       });
 
+      // Regression for #897 review: matches the client's own validation
+      // (TrainingMaxesForm.tsx rejects `n <= 0` with "Enter a positive number") —
+      // a training max of 0 is not meaningful.
+      it('rejects an entry with a zero weight with 400', async () => {
+        const res = await patchTrainingMaxes(validBody({ maxes: [{ lift: 'Squat', weight: 0, unit: 'lbs' }] }));
+        expect(res.statusCode).toBe(400);
+      });
+
       it('rejects an entry with an unrecognized unit with 400', async () => {
         const res = await patchTrainingMaxes(
           validBody({ maxes: [{ lift: 'Squat', weight: 315, unit: 'stone' }] }),
         );
+        expect(res.statusCode).toBe(400);
+      });
+
+      // Regression for #897 review: `unit` is validated but never read by
+      // TrainingMaxesController (TrainingMax has no unit field; the response
+      // mapper always reports 'lbs'), so accepting 'kg' would silently mislabel
+      // — not convert — a 140 kg max as 140 lbs. See TrainingMaxEntryDto.unit's
+      // doc comment.
+      it('rejects an entry with a kg unit with 400 (validated-but-unhonored, would silently mislabel)', async () => {
+        const res = await patchTrainingMaxes(
+          validBody({ maxes: [{ lift: 'Squat', weight: 140, unit: 'kg' }] }),
+        );
+        expect(res.statusCode).toBe(400);
+      });
+
+      // Regression for #897 review: each entry becomes one Prisma upsert inside
+      // a single batched transaction (PrismaTrainingMaxRepository.saveTrainingMaxes),
+      // so an unbounded array is an unbounded statement count in one transaction.
+      it('rejects a maxes array above the size ceiling with 400', async () => {
+        const maxes = Array.from({ length: 101 }, (_, i) => ({
+          lift: `Custom Lift ${i}`,
+          weight: 100,
+          unit: 'lbs',
+        }));
+        const res = await patchTrainingMaxes({ maxes });
         expect(res.statusCode).toBe(400);
       });
 

@@ -12,6 +12,10 @@ function dtoWith(overrides: Record<string, unknown>): UpdateTrainingMaxesDto {
   return plainToInstance(UpdateTrainingMaxesDto, { ...VALID_BODY, ...overrides });
 }
 
+function entryWith(overrides: Record<string, unknown>) {
+  return { lift: 'Squat', weight: 315, unit: 'lbs', ...overrides };
+}
+
 // Returns "<path>.<constraintKey>" pairs, walking nested/array children (e.g.
 // "maxes.0.lift.isNotEmpty" for the first array entry's `lift` field) so a test
 // asserting on one entry's field cannot pass because a sibling field, or a
@@ -45,41 +49,33 @@ describe('UpdateTrainingMaxesDto validation', () => {
     const errors = await validate(
       dtoWith({
         maxes: [
-          { lift: 'Squat', weight: 315, unit: 'lbs' },
-          { lift: 'Bench Press', weight: 225, unit: 'lbs' },
+          entryWith({}),
+          entryWith({ lift: 'Bench Press', weight: 225 }),
         ],
       }),
-      { whitelist: true },
+      VALIDATION_PIPE_OPTIONS,
     );
     expect(errors).toHaveLength(0);
   });
 
   it('accepts an empty maxes array (no-op update)', async () => {
-    const errors = await validate(dtoWith({ maxes: [] }), { whitelist: true });
+    const errors = await validate(dtoWith({ maxes: [] }), VALIDATION_PIPE_OPTIONS);
     expect(errors).toHaveLength(0);
   });
 
   it('accepts a fractional weight', async () => {
-    const errors = await validate(
-      dtoWith({ maxes: [{ lift: 'Squat', weight: 317.5, unit: 'lbs' }] }),
-      { whitelist: true },
-    );
+    const errors = await validate(dtoWith({ maxes: [entryWith({ weight: 317.5 })] }), VALIDATION_PIPE_OPTIONS);
     expect(errors).toHaveLength(0);
   });
 
-  it('accepts a zero weight', async () => {
-    const errors = await validate(
-      dtoWith({ maxes: [{ lift: 'Squat', weight: 0, unit: 'lbs' }] }),
-      { whitelist: true },
-    );
+  it('accepts a weight at the sanity ceiling', async () => {
+    const errors = await validate(dtoWith({ maxes: [entryWith({ weight: 10000 })] }), VALIDATION_PIPE_OPTIONS);
     expect(errors).toHaveLength(0);
   });
 
-  it('accepts a kg unit', async () => {
-    const errors = await validate(
-      dtoWith({ maxes: [{ lift: 'Squat', weight: 140, unit: 'kg' }] }),
-      { whitelist: true },
-    );
+  it('accepts a maxes array at the size ceiling (100 entries)', async () => {
+    const maxes = Array.from({ length: 100 }, (_, i) => entryWith({ lift: `Custom Lift ${i}` }));
+    const errors = await validate(dtoWith({ maxes }), VALIDATION_PIPE_OPTIONS);
     expect(errors).toHaveLength(0);
   });
 
@@ -87,8 +83,8 @@ describe('UpdateTrainingMaxesDto validation', () => {
   // different endpoint, identical natural-key-fragmentation failure mode — see
   // TrainingMaxEntryDto.lift's doc comment).
   it('accepts a whitespace-padded lift, trimmed before validation', async () => {
-    const dto = dtoWith({ maxes: [{ lift: '  Squat  ', weight: 315, unit: 'lbs' }] });
-    const errors = await validate(dto, { whitelist: true });
+    const dto = dtoWith({ maxes: [entryWith({ lift: '  Squat  ' })] });
+    const errors = await validate(dto, VALIDATION_PIPE_OPTIONS);
     expect(errors).toHaveLength(0);
     expect(dto.maxes[0].lift).toBe('Squat');
   });
@@ -107,6 +103,14 @@ describe('UpdateTrainingMaxesDto validation', () => {
     expect(await flattenConstraintKeys(dtoWith({ maxes: 'not-an-array' }))).toContain('maxes.isArray');
   });
 
+  // Regression for issue #897 review: each entry becomes one Prisma upsert inside a
+  // single batched transaction (PrismaTrainingMaxRepository.saveTrainingMaxes), so
+  // an unbounded array is an unbounded statement count in one transaction.
+  it('rejects a maxes array above the size ceiling (101 entries)', async () => {
+    const maxes = Array.from({ length: 101 }, (_, i) => entryWith({ lift: `Custom Lift ${i}` }));
+    expect(await flattenConstraintKeys(dtoWith({ maxes }))).toContain('maxes.arrayMaxSize');
+  });
+
   it('rejects a missing lift in an entry', async () => {
     const dto = dtoWith({ maxes: [{ weight: 315, unit: 'lbs' }] });
     expect(await flattenConstraintKeys(dto)).toContain('maxes.0.lift.isString');
@@ -116,49 +120,64 @@ describe('UpdateTrainingMaxesDto validation', () => {
   // TrainingMax row keyed on an empty string, indistinguishable in the UI from a
   // real lift.
   it('rejects an empty lift in an entry', async () => {
-    const dto = dtoWith({ maxes: [{ lift: '', weight: 315, unit: 'lbs' }] });
+    const dto = dtoWith({ maxes: [entryWith({ lift: '' })] });
     expect(await flattenConstraintKeys(dto)).toContain('maxes.0.lift.isNotEmpty');
   });
 
   it('rejects a whitespace-only lift in an entry (trimmed to empty, same failure mode)', async () => {
-    const dto = dtoWith({ maxes: [{ lift: '   ', weight: 315, unit: 'lbs' }] });
+    const dto = dtoWith({ maxes: [entryWith({ lift: '   ' })] });
     expect(await flattenConstraintKeys(dto)).toContain('maxes.0.lift.isNotEmpty');
   });
 
   it('rejects a lift above the length ceiling in an entry', async () => {
-    const dto = dtoWith({ maxes: [{ lift: 'x'.repeat(101), weight: 315, unit: 'lbs' }] });
+    const dto = dtoWith({ maxes: [entryWith({ lift: 'x'.repeat(101) })] });
     expect(await flattenConstraintKeys(dto)).toContain('maxes.0.lift.maxLength');
   });
 
   it('rejects a non-numeric weight in an entry', async () => {
-    const dto = dtoWith({ maxes: [{ lift: 'Squat', weight: 'heavy', unit: 'lbs' }] });
+    const dto = dtoWith({ maxes: [entryWith({ weight: 'heavy' })] });
     expect(await flattenConstraintKeys(dto)).toContain('maxes.0.weight.isNumber');
   });
 
+  // Regression for issue #897 review: matches the client's own validation
+  // (TrainingMaxesForm.tsx rejects `n <= 0` with "Enter a positive number") — a
+  // training max of 0 is not meaningful and makes every derived working/warm-up
+  // weight for that lift compute to 0 with no error anywhere.
+  it('rejects a zero weight in an entry', async () => {
+    const dto = dtoWith({ maxes: [entryWith({ weight: 0 })] });
+    expect(await flattenConstraintKeys(dto)).toContain('maxes.0.weight.isPositive');
+  });
+
   it('rejects a negative weight in an entry', async () => {
-    const dto = dtoWith({ maxes: [{ lift: 'Squat', weight: -5, unit: 'lbs' }] });
-    expect(await flattenConstraintKeys(dto)).toContain('maxes.0.weight.min');
+    const dto = dtoWith({ maxes: [entryWith({ weight: -5 })] });
+    expect(await flattenConstraintKeys(dto)).toContain('maxes.0.weight.isPositive');
   });
 
   it('rejects a weight above the sanity ceiling in an entry', async () => {
-    const dto = dtoWith({ maxes: [{ lift: 'Squat', weight: 1e12, unit: 'lbs' }] });
+    const dto = dtoWith({ maxes: [entryWith({ weight: 1e12 })] });
     expect(await flattenConstraintKeys(dto)).toContain('maxes.0.weight.max');
   });
 
+  // Regression for issue #897 review: `unit` is validated but never read by
+  // TrainingMaxesController (TrainingMax has no unit field; toTrainingMaxResponse
+  // always reports 'lbs'), so accepting 'kg' here would silently mislabel — not
+  // convert — a 140 kg max as 140 lbs. See TrainingMaxEntryDto.unit's doc comment.
+  it('rejects a kg unit (validated-but-unhonored — would silently mislabel, not convert)', async () => {
+    const dto = dtoWith({ maxes: [entryWith({ unit: 'kg' })] });
+    expect(await flattenConstraintKeys(dto)).toContain('maxes.0.unit.isIn');
+  });
+
   it('rejects an unrecognized unit in an entry', async () => {
-    const dto = dtoWith({ maxes: [{ lift: 'Squat', weight: 315, unit: 'stone' }] });
+    const dto = dtoWith({ maxes: [entryWith({ unit: 'stone' })] });
     expect(await flattenConstraintKeys(dto)).toContain('maxes.0.unit.isIn');
   });
 
   it('rejects only the offending entry\'s index, not a sibling valid entry', async () => {
     const dto = dtoWith({
-      maxes: [
-        { lift: 'Squat', weight: 315, unit: 'lbs' },
-        { lift: 'Bench Press', weight: -5, unit: 'lbs' },
-      ],
+      maxes: [entryWith({}), entryWith({ lift: 'Bench Press', weight: -5 })],
     });
     const keys = await flattenConstraintKeys(dto);
-    expect(keys).toContain('maxes.1.weight.min');
+    expect(keys).toContain('maxes.1.weight.isPositive');
     expect(keys.some((k) => k.startsWith('maxes.0.'))).toBe(false);
   });
 
@@ -167,7 +186,7 @@ describe('UpdateTrainingMaxesDto validation', () => {
   });
 
   it('rejects an unrecognized field within an entry under forbidNonWhitelisted', async () => {
-    const dto = dtoWith({ maxes: [{ lift: 'Squat', weight: 315, unit: 'lbs', hacked: true }] });
+    const dto = dtoWith({ maxes: [entryWith({ hacked: true })] });
     expect(await flattenConstraintKeys(dto)).toContain('maxes.0.hacked.whitelistValidation');
   });
 });

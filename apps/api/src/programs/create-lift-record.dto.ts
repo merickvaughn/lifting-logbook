@@ -12,7 +12,14 @@ import {
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { CreateLiftRecordRequest } from '@lifting-logbook/types';
-import { MAX_NOTES_LENGTH, MAX_REPS, MAX_WEIGHT } from './lift-record.limits';
+import {
+  BARE_DATE_MESSAGE,
+  BARE_DATE_PATTERN,
+  BARE_DATE_STRING_OPTIONS,
+  MAX_NOTES_LENGTH,
+  MAX_REPS,
+  MAX_WEIGHT,
+} from './lift-record.limits';
 
 // Implements the shared request contract in @lifting-logbook/types for every field
 // except `program` (see below). For the rest, `implements` catches a required member
@@ -89,8 +96,8 @@ export class CreateLiftRecordDto
    */
   @IsOptional()
   @Transform(({ value }: { value: unknown }) => (value === '' ? undefined : value))
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be a calendar date in YYYY-MM-DD format' })
-  @IsDateString({ strict: true, strictSeparator: true })
+  @Matches(BARE_DATE_PATTERN, { message: BARE_DATE_MESSAGE })
+  @IsDateString(BARE_DATE_STRING_OPTIONS)
   date?: string;
 
   // Trimmed before validation: an untrimmed value (e.g. "Bench Press " from a stray

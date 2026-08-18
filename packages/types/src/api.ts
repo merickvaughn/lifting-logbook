@@ -136,7 +136,7 @@ export interface CreateLiftRecordRequest {
   program: string;
   cycleNum: CycleNumber;
   workoutNum: number;
-  /** ISO 8601 date string. When omitted the server uses the scheduled date for this workout, falling back to today. */
+  /** Bare calendar date ("YYYY-MM-DD", no time/offset — see CreateLiftRecordDto.date in apps/api). When omitted the server uses the scheduled date for this workout, falling back to today. */
   date?: string;
   lift: LiftName;
   setNum: number;
@@ -158,7 +158,7 @@ export interface UpdateLiftRecordRequest {
 
 /** Request body for recording a body weight observation. */
 export interface RecordBodyWeightRequest {
-  date: string; // ISO 8601 date string
+  date: string; // Bare calendar date ("YYYY-MM-DD", no time/offset — see RecordBodyWeightDto.date in apps/api)
   weight: number;
   unit: WeightUnit;
 }

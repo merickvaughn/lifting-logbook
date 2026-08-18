@@ -35,22 +35,17 @@ describe('RecordBodyWeightDto validation', () => {
   });
 
   it('accepts a fractional weight', async () => {
-    const errors = await validate(dtoWith({ weight: 182.5 }), { whitelist: true });
-    expect(errors).toHaveLength(0);
-  });
-
-  it('accepts a zero weight', async () => {
-    const errors = await validate(dtoWith({ weight: 0 }), { whitelist: true });
+    const errors = await validate(dtoWith({ weight: 182.5 }), VALIDATION_PIPE_OPTIONS);
     expect(errors).toHaveLength(0);
   });
 
   it('accepts a kg unit', async () => {
-    const errors = await validate(dtoWith({ unit: 'kg' }), { whitelist: true });
+    const errors = await validate(dtoWith({ unit: 'kg' }), VALIDATION_PIPE_OPTIONS);
     expect(errors).toHaveLength(0);
   });
 
   it('accepts a weight at the sanity ceiling', async () => {
-    const errors = await validate(dtoWith({ weight: 10000 }), { whitelist: true });
+    const errors = await validate(dtoWith({ weight: 10000 }), VALIDATION_PIPE_OPTIONS);
     expect(errors).toHaveLength(0);
   });
 
@@ -92,6 +87,14 @@ describe('RecordBodyWeightDto validation', () => {
     expect(await flattenConstraintKeys(dtoWith({ date: '20260420' }))).toContain('date.matches');
   });
 
+  // Regression for issue #897 review: matches the client's own validation
+  // (WorkoutLogger.tsx's handleBodyWeightSubmit rejects `weight <= 0` before ever
+  // calling this endpoint) — a body-weight observation of 0 is not meaningful the
+  // way a lift's *added* weight of 0 is (bodyweight-only exercises).
+  it('rejects a zero weight', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ weight: 0 }))).toContain('weight.isPositive');
+  });
+
   it('rejects a missing required weight', async () => {
     const body = { ...VALID_BODY } as Record<string, unknown>;
     delete body.weight;
@@ -104,7 +107,7 @@ describe('RecordBodyWeightDto validation', () => {
   });
 
   it('rejects a negative weight', async () => {
-    expect(await flattenConstraintKeys(dtoWith({ weight: -5 }))).toContain('weight.min');
+    expect(await flattenConstraintKeys(dtoWith({ weight: -5 }))).toContain('weight.isPositive');
   });
 
   it('rejects a weight above the sanity ceiling', async () => {
