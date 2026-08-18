@@ -32,6 +32,18 @@ describe("parseStrengthGoals", () => {
     expect(goals[0]!.updatedAt.getFullYear()).toBe(2026);
   });
 
+  // Regression for issue #899, same root cause and fix as parseTrainingMaxes.ts
+  // (#894): a non-ISO cell like "6/9/2026" parsed via bare `new Date(string)`
+  // carried whatever non-midnight local-time offset the host happened to be
+  // at, instead of exact UTC midnight.
+  it("normalizes updatedAt to UTC midnight regardless of the host timezone", () => {
+    const goals = parseStrengthGoals(loadCsvFixture("strength_goals.csv"));
+    expect(goals[0]!.updatedAt.getUTCHours()).toBe(0);
+    expect(goals[0]!.updatedAt.getUTCMinutes()).toBe(0);
+    expect(goals[0]!.updatedAt.getUTCSeconds()).toBe(0);
+    expect(goals[0]!.updatedAt.getUTCMilliseconds()).toBe(0);
+  });
+
   it("targets the numerically lowest tier above Current TM even when tier columns are out of order", () => {
     const goals = parseStrengthGoals([
       ["Lift", "Current TM", "Elite", "Intermediate", "Advanced"],

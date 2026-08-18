@@ -9,10 +9,27 @@ describe("parseCycleDashboard", () => {
       program: "RPT",
       cycleUnit: "Week",
       cycleNum: 1,
-      cycleDate: new Date("1/5/2026"),
+      // UTC midnight of the named day (issue #899) -- `new Date("1/5/2026")`
+      // (local midnight) would itself be host-timezone-dependent here and
+      // silently pass on any host, since both sides of the old assertion
+      // were computed the same locale-dependent way.
+      cycleDate: new Date(Date.UTC(2026, 0, 5)),
       sheetName: "RPT_Cycle_1_20260105",
       cycleStartWeekday: Weekday.Monday,
     });
+  });
+
+  // Regression for issue #899, same root cause and fix as parseTrainingMaxes.ts
+  // (#894): a non-ISO cell like "1/5/2026" parsed via bare `new Date(string)`
+  // carried whatever non-midnight local-time offset the host happened to be
+  // at, instead of exact UTC midnight.
+  it("normalizes cycleDate to UTC midnight regardless of the host timezone", () => {
+    const data = loadCsvFixture("dashboard_20260105.csv");
+    const result = parseCycleDashboard(data);
+    expect(result.cycleDate.getUTCHours()).toBe(0);
+    expect(result.cycleDate.getUTCMinutes()).toBe(0);
+    expect(result.cycleDate.getUTCSeconds()).toBe(0);
+    expect(result.cycleDate.getUTCMilliseconds()).toBe(0);
   });
 
   // Aligned with parseTrainingMaxes (#356): missing required keys now throw a

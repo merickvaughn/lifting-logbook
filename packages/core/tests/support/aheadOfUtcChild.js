@@ -1,7 +1,12 @@
 "use strict";
 /**
  * Plain-JS child-process worker for the "on a host ahead of UTC" regression
- * test (issue #894) in dateParsing.aheadOfUtc.test.ts.
+ * tests in dateParsing.aheadOfUtc.test.ts -- originally written for issue
+ * #894 (parseLiftRecords / parseTrainingMaxes), extended for issue #899
+ * (parseCycleDashboard / parseStrengthGoals): same bug class (bare
+ * `new Date(string)` on a non-ISO cell), same fix (parseDateStringUTC +
+ * toUTCMidnight) at every call site, so one shared child process reports on
+ * all four.
  *
  * WHY THIS EXISTS: mutating `process.env.TZ` mid-process is NOT reliably
  * respected inside a Jest worker on this repo's Windows/Node setup (V8
@@ -69,6 +74,8 @@ require.extensions[".ts"] = function transpileAndCompile(mod, filename) {
 
 const { parseLiftRecords } = require(path.join(CORE_SRC, "utils", "parser", "parseLiftRecords.ts"));
 const { parseTrainingMaxes } = require(path.join(CORE_SRC, "utils", "parser", "parseTrainingMaxes.ts"));
+const { parseCycleDashboard } = require(path.join(CORE_SRC, "utils", "parser", "parseCycleDashboard.ts"));
+const { parseStrengthGoals } = require(path.join(CORE_SRC, "utils", "parser", "parseStrengthGoals.ts"));
 
 // Same fixture shape as parseLiftRecords.test.ts's / parseTrainingMaxes.test.ts's
 // own "normalizes ... regardless of host timezone" tests -- a non-ISO M/D/YYYY
@@ -80,6 +87,25 @@ const [record] = parseLiftRecords([
 const [trainingMax] = parseTrainingMaxes([
   ["Date Updated", "Lift", "Weight"],
   ["12/16/2025", "Bench", "150"],
+]);
+
+// Mirrors tests/fixtures/dashboard_20260105.csv (Cycle Date: "1/5/2026").
+const cycleDashboard = parseCycleDashboard([
+  ["Program", "RPT"],
+  ["Cycle Unit", "Week"],
+  ["Cycle #", "1"],
+  ["Cycle Date", "1/5/2026"],
+  ["Sheet Name", "RPT_Cycle_1_20260105"],
+  ["Start Weekday", "Monday"],
+]);
+
+// Mirrors tests/fixtures/strength_goals.csv (Today's Date: "6/9/2026").
+const [strengthGoal] = parseStrengthGoals([
+  ["Weight", "175", "", "", ""],
+  ["Start Date", "10/24/2022", "", "", ""],
+  ["Today's Date", "6/9/2026", "", "", ""],
+  ["Lift", "Current TM", "Intermediate", "Advanced", "Elite"],
+  ["Squat", "250", "280", "350", "420"],
 ]);
 
 const describeDate = (d) => ({
@@ -98,5 +124,7 @@ process.stdout.write(
     timezoneOffsetMinutes: new Date().getTimezoneOffset(),
     liftRecordDate: describeDate(record.date),
     trainingMaxDate: describeDate(trainingMax.dateUpdated),
+    cycleDashboardDate: describeDate(cycleDashboard.cycleDate),
+    strengthGoalUpdatedAt: describeDate(strengthGoal.updatedAt),
   }),
 );

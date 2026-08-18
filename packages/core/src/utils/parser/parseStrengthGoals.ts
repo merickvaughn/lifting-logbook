@@ -1,4 +1,5 @@
 import { StrengthGoalEntry, SpreadsheetCell } from '../../models';
+import { parseDateStringUTC, toUTCMidnight } from '../jsUtil';
 
 /**
  * Parses the `Strength_Goals` CSV into `StrengthGoalEntry[]`.
@@ -48,7 +49,12 @@ export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry
   // Stamp goals with the export's "Today's Date" when present, else now.
   const todayRow = data.find((r) => norm(r[0]).includes('today'));
   const todayRaw = todayRow ? String(todayRow[1] ?? '').trim() : '';
-  const parsedToday = todayRaw ? new Date(todayRaw) : null;
+  // Non-ISO cells (e.g. "6/9/2026") parse at LOCAL midnight via bare
+  // `new Date(string)`, landing on the WRONG UTC calendar day on any host
+  // ahead of UTC -- same bug class as issue #894. toUTCMidnight normalizes
+  // the time-of-day, matching the convention parseLiftRecords.ts /
+  // parseTrainingMaxes.ts already use (issue #899).
+  const parsedToday = todayRaw ? toUTCMidnight(parseDateStringUTC(todayRaw)) : null;
   const updatedAt = parsedToday && !isNaN(parsedToday.getTime()) ? parsedToday : new Date();
 
   const num = (c: SpreadsheetCell | undefined): number | undefined => {

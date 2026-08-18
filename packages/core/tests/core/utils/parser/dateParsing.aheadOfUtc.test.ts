@@ -28,6 +28,12 @@ import * as path from "node:path";
  * why it isn't itself a spawned Jest/ts-jest process) with
  * TZ=Pacific/Auckland set in the child's environment, and asserts on the
  * real parseLiftRecords / parseTrainingMaxes results it reports back.
+ *
+ * Extended for issue #899: parseCycleDashboard.ts / parseStrengthGoals.ts
+ * had the identical bug (bare `new Date(string)` on a non-ISO cell, no UTC
+ * normalization) at the same call-site shape, fixed the same way. The child
+ * script now reports on all four parsers from one spawn; the second describe
+ * block below asserts on the two added for #899.
  */
 describe("parseLiftRecords / parseTrainingMaxes on a host ahead of UTC (issue #894)", () => {
   it("resolve M/D/YYYY cells to the UTC calendar day the cell names, in a real Pacific/Auckland process", () => {
@@ -63,5 +69,40 @@ describe("parseLiftRecords / parseTrainingMaxes on a host ahead of UTC (issue #8
     // against the pre-fix source.
     expect(parsed.liftRecordDate).toEqual({ year: 2025, month: 11, date: 16, hours: 0 });
     expect(parsed.trainingMaxDate).toEqual({ year: 2025, month: 11, date: 16, hours: 0 });
+  });
+});
+
+describe("parseCycleDashboard / parseStrengthGoals on a host ahead of UTC (issue #899)", () => {
+  it("resolve M/D/YYYY cells to the UTC calendar day the cell names, in a real Pacific/Auckland process", () => {
+    const childScript = path.join(__dirname, "..", "..", "..", "support", "aheadOfUtcChild.js");
+    const result = spawnSync(process.execPath, [childScript], {
+      env: { ...process.env, TZ: "Pacific/Auckland" },
+      encoding: "utf8",
+    });
+
+    if (result.status !== 0) {
+      throw new Error(
+        `aheadOfUtcChild.js exited with status ${String(result.status)}.\n` +
+          `stdout: ${result.stdout}\nstderr: ${result.stderr}`,
+      );
+    }
+
+    const parsed = JSON.parse(result.stdout) as {
+      timezoneOffsetMinutes: number;
+      cycleDashboardDate: { year: number; month: number; date: number; hours: number };
+      strengthGoalUpdatedAt: { year: number; month: number; date: number; hours: number };
+    };
+
+    // Sanity check: confirm the child process is actually configured ahead
+    // of UTC (see the identical check in the #894 describe block above).
+    expect(parsed.timezoneOffsetMinutes).toBeLessThan(0);
+
+    // The bug: on a host ahead of UTC, the OLD code (bare `new Date(string)`,
+    // no UTC normalization at either call site) resolved "1/5/2026" /
+    // "6/9/2026" to the PREVIOUS UTC calendar day at a non-midnight hour.
+    // Confirmed live during development of this test by running this exact
+    // script against the pre-fix source.
+    expect(parsed.cycleDashboardDate).toEqual({ year: 2026, month: 0, date: 5, hours: 0 });
+    expect(parsed.strengthGoalUpdatedAt).toEqual({ year: 2026, month: 5, date: 9, hours: 0 });
   });
 });
