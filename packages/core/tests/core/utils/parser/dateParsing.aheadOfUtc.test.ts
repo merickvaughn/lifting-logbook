@@ -2,60 +2,69 @@ import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 
 /**
- * Regression test for issue #894, run as a genuinely-ahead-of-UTC PROCESS
- * rather than a simulated one.
+ * Regression tests for a host genuinely ahead of UTC -- originally issue
+ * #894 (parseLiftRecords / parseTrainingMaxes), extended for issue #899
+ * (parseCycleDashboard / parseStrengthGoals): same bug class (bare
+ * `new Date(string)` on a non-ISO cell), same fix (parseDateStringUTC +
+ * toUTCMidnight) at every call site.
  *
  * jsUtil.test.ts's `parseDateStringUTC` unit tests already prove the parsing
  * logic itself is host-timezone-independent by construction (it only ever
  * builds dates via `Date.UTC`), which is sufficient to catch a regression to
  * that HELPER on any non-UTC-offset host -- including this repo's dev/CI
- * machines, today, for real. But `toUTCMidnight(...)` wrapping at the
- * parseLiftRecords.ts / parseTrainingMaxes.ts call sites makes old-buggy and
- * new-fixed code produce IDENTICAL output on any host that isn't ITSELF
- * ahead of UTC (truncating either the correct instant or the wrong-hour
- * instant down to midnight of their shared UTC calendar day yields the same
- * result) -- so a call site quietly reverting to bare `new Date(string)`
- * while leaving the well-tested helper untouched would be invisible to any
- * assertion that doesn't run ahead of UTC for real.
+ * machines, today, for real. But `toUTCMidnight(...)` wrapping at each call
+ * site makes old-buggy and new-fixed code produce IDENTICAL output on any
+ * host that isn't ITSELF ahead of UTC (truncating either the correct instant
+ * or the wrong-hour instant down to midnight of their shared UTC calendar
+ * day yields the same result) -- so a call site quietly reverting to bare
+ * `new Date(string)` while leaving the well-tested helper untouched would be
+ * invisible to any assertion that doesn't run ahead of UTC for real.
  *
  * Mutating `process.env.TZ` mid-test does not reliably achieve that here:
  * Jest caches host timezone data before test code runs, so a `beforeEach`
  * that sets `process.env.TZ` is silently a no-op in this repo's Jest/Windows
  * setup (confirmed empirically -- a canary assertion relying on it failed).
  * Setting TZ at process-launch time in a genuinely fresh child process IS
- * reliably respected, so that's what this test does: it spawns
- * tests/support/aheadOfUtcChild.js (a plain-JS worker -- see that file for
- * why it isn't itself a spawned Jest/ts-jest process) with
- * TZ=Pacific/Auckland set in the child's environment, and asserts on the
- * real parseLiftRecords / parseTrainingMaxes results it reports back.
- *
- * Extended for issue #899: parseCycleDashboard.ts / parseStrengthGoals.ts
- * had the identical bug (bare `new Date(string)` on a non-ISO cell, no UTC
- * normalization) at the same call-site shape, fixed the same way. The child
- * script now reports on all four parsers from one spawn; the second describe
- * block below asserts on the two added for #899.
+ * reliably respected, so that's what this file does: a single `beforeAll`
+ * spawns tests/support/aheadOfUtcChild.js (a plain-JS worker -- see that
+ * file for why it isn't itself a spawned Jest/ts-jest process) once, with
+ * TZ=Pacific/Auckland set in the child's environment, and both describe
+ * blocks below assert on the real parser results it reports back --
+ * one spawn covers all four parsers rather than spawning per issue (a
+ * finding from /review on PR #903: two independent per-block spawns of the
+ * same script duplicated boilerplate and doubled process-launch cost for no
+ * benefit, since neither block's assertions depend on the other's).
  */
+type DateParts = { year: number; month: number; date: number; hours: number };
+type AheadOfUtcResult = {
+  timezoneOffsetMinutes: number;
+  liftRecordDate: DateParts;
+  trainingMaxDate: DateParts;
+  cycleDashboardDate: DateParts;
+  strengthGoalUpdatedAt: DateParts;
+};
+
+let parsed: AheadOfUtcResult;
+
+beforeAll(() => {
+  const childScript = path.join(__dirname, "..", "..", "..", "support", "aheadOfUtcChild.js");
+  const result = spawnSync(process.execPath, [childScript], {
+    env: { ...process.env, TZ: "Pacific/Auckland" },
+    encoding: "utf8",
+  });
+
+  if (result.status !== 0) {
+    throw new Error(
+      `aheadOfUtcChild.js exited with status ${String(result.status)}.\n` +
+        `stdout: ${result.stdout}\nstderr: ${result.stderr}`,
+    );
+  }
+
+  parsed = JSON.parse(result.stdout) as AheadOfUtcResult;
+});
+
 describe("parseLiftRecords / parseTrainingMaxes on a host ahead of UTC (issue #894)", () => {
   it("resolve M/D/YYYY cells to the UTC calendar day the cell names, in a real Pacific/Auckland process", () => {
-    const childScript = path.join(__dirname, "..", "..", "..", "support", "aheadOfUtcChild.js");
-    const result = spawnSync(process.execPath, [childScript], {
-      env: { ...process.env, TZ: "Pacific/Auckland" },
-      encoding: "utf8",
-    });
-
-    if (result.status !== 0) {
-      throw new Error(
-        `aheadOfUtcChild.js exited with status ${String(result.status)}.\n` +
-          `stdout: ${result.stdout}\nstderr: ${result.stderr}`,
-      );
-    }
-
-    const parsed = JSON.parse(result.stdout) as {
-      timezoneOffsetMinutes: number;
-      liftRecordDate: { year: number; month: number; date: number; hours: number };
-      trainingMaxDate: { year: number; month: number; date: number; hours: number };
-    };
-
     // Sanity check: confirm the child process is actually configured ahead
     // of UTC. getTimezoneOffset() is negative for zones ahead of UTC. If
     // this ever fails, the assertions below aren't proving what this test
@@ -74,27 +83,7 @@ describe("parseLiftRecords / parseTrainingMaxes on a host ahead of UTC (issue #8
 
 describe("parseCycleDashboard / parseStrengthGoals on a host ahead of UTC (issue #899)", () => {
   it("resolve M/D/YYYY cells to the UTC calendar day the cell names, in a real Pacific/Auckland process", () => {
-    const childScript = path.join(__dirname, "..", "..", "..", "support", "aheadOfUtcChild.js");
-    const result = spawnSync(process.execPath, [childScript], {
-      env: { ...process.env, TZ: "Pacific/Auckland" },
-      encoding: "utf8",
-    });
-
-    if (result.status !== 0) {
-      throw new Error(
-        `aheadOfUtcChild.js exited with status ${String(result.status)}.\n` +
-          `stdout: ${result.stdout}\nstderr: ${result.stderr}`,
-      );
-    }
-
-    const parsed = JSON.parse(result.stdout) as {
-      timezoneOffsetMinutes: number;
-      cycleDashboardDate: { year: number; month: number; date: number; hours: number };
-      strengthGoalUpdatedAt: { year: number; month: number; date: number; hours: number };
-    };
-
-    // Sanity check: confirm the child process is actually configured ahead
-    // of UTC (see the identical check in the #894 describe block above).
+    // Sanity check (see the identical check in the #894 describe block above).
     expect(parsed.timezoneOffsetMinutes).toBeLessThan(0);
 
     // The bug: on a host ahead of UTC, the OLD code (bare `new Date(string)`,
