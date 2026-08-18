@@ -98,10 +98,15 @@ export function formatDateYYYYMMDD(date: string | Date): string {
  * Recognizes the same two delimited shapes as {@link formatDateYYYYMMDD}'s
  * string branch (`M/D/YYYY` and `YYYY-MM-DD`) and constructs the date via
  * `Date.UTC` directly, so the parsed calendar day matches the string on
- * every host. Falls back to `new Date(value)` for any other shape (e.g. a
- * full ISO datetime string, which IS spec'd to parse unambiguously, or
- * malformed input, which should still produce an `Invalid Date` rather than
- * throw).
+ * every host. `Date.UTC` silently rolls over out-of-range components (e.g.
+ * month 99) rather than rejecting them, so the constructed date is checked
+ * against the parsed year/month/day and discarded on any mismatch -- this
+ * also catches a `YYYY/MM/DD`-ordered slash string being misread as
+ * `M/D/YYYY` (the year lands somewhere implausible when read back). Falls
+ * back to `new Date(value)` for any other shape (e.g. a full ISO datetime
+ * string, which IS spec'd to parse unambiguously) or for a rejected
+ * roundtrip, so malformed numeric input still produces `Invalid Date` rather
+ * than a silently-wrong-but-valid-looking one.
  */
 export function parseDateStringUTC(value: string): Date {
   const isIso = value.includes("-");
@@ -112,7 +117,19 @@ export function parseDateStringUTC(value: string): Date {
     const mm = Number(isIso ? second : first);
     const dd = Number(isIso ? third : second);
     if (Number.isFinite(yyyy) && Number.isFinite(mm) && Number.isFinite(dd)) {
-      return new Date(Date.UTC(yyyy, mm - 1, dd));
+      const parsed = new Date(Date.UTC(yyyy, mm - 1, dd));
+      // Round-trip check: Date.UTC rolls out-of-range components over into a
+      // different, still-"valid" Date instead of rejecting them (e.g.
+      // Date.UTC(9999, 98, 99) silently becomes year 10007), so confirm the
+      // constructed date actually reads back as the year/month/day that was
+      // parsed before trusting it.
+      if (
+        parsed.getUTCFullYear() === yyyy &&
+        parsed.getUTCMonth() === mm - 1 &&
+        parsed.getUTCDate() === dd
+      ) {
+        return parsed;
+      }
     }
   }
   return new Date(value);

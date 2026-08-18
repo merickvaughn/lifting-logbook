@@ -69,6 +69,39 @@ describe("jsUtil", () => {
       expect(isNaN(parseDateStringUTC("not-a-date").getTime())).toBe(true);
     });
 
+    // Regression for a finding from /review on PR #900: `Date.UTC` silently
+    // rolls out-of-range month/day components over into a different, still-
+    // "valid" Date instead of rejecting them -- e.g. Date.UTC(9999, 98, 99)
+    // becomes year 10007. The pre-fix code below produced a wrong-but-valid-
+    // looking Date for all three cases (confirmed empirically while writing
+    // this test); each must now fall through to Invalid Date instead, the
+    // same as the bare `new Date(string)` this function replaces.
+    describe("out-of-range or misordered numeric components", () => {
+      it("rejects an out-of-range month/day (99/99/9999) as Invalid Date", () => {
+        expect(isNaN(parseDateStringUTC("99/99/9999").getTime())).toBe(true);
+      });
+
+      it("rejects an out-of-range month (13/45/2025) as Invalid Date", () => {
+        expect(isNaN(parseDateStringUTC("13/45/2025").getTime())).toBe(true);
+      });
+
+      // "2026/01/05" is YYYY/MM/DD-ordered but slash-delimited, so this
+      // function's "slash means M/D/YYYY" assumption misreads it as
+      // month=2026, day=01, year=05 -- an out-of-range month that the
+      // round-trip check must catch. Falls through to `new Date(value)`,
+      // which (like the old bare `new Date(string)` call this function
+      // replaces) correctly recognizes the YYYY/MM/DD order via its
+      // 4-digit-first-component heuristic and resolves the right day --
+      // still not UTC-midnight-normalized here (that's `toUTCMidnight`'s
+      // job at the call site, not this function's), just the right day.
+      it("falls through to new Date(value) for a YYYY/MM/DD-ordered slash string, preserving the correct day", () => {
+        const parsed = parseDateStringUTC("2026/01/05");
+        expect(parsed.getUTCFullYear()).toBe(2026);
+        expect(parsed.getUTCMonth()).toBe(0);
+        expect(parsed.getUTCDate()).toBe(5);
+      });
+    });
+
     // These assertions are exact-UTC-instant checks (not just "same calendar
     // day"), which is what makes them a real regression guard for issue #894
     // on THIS repo's dev/CI machines even though those machines are behind
