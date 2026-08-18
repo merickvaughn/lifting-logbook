@@ -28,6 +28,8 @@ import {
   buildStrengthGoalPreImage,
   buildProgramSpecPreImage,
   classifyImportRows,
+  pairWithRowNumber,
+  buildSkippedDetail,
   liftRecordNaturalKey,
   DEFAULT_SLOT_MAP,
 } from '@lifting-logbook/core';
@@ -61,6 +63,13 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     const existingKeys = new Set(
       (await repos.liftRecord.findExistingRecords(program, records)).map(liftRecordNaturalKey),
     );
+    // Row numbers below are batch-relative — 1-based within *this* commit
+    // batch, i.e. after any Phase 3 excludeKeys/splitDest filtering the
+    // controller already applied. For a plain commit (neither) that matches
+    // the original CSV data-row number; positions shift when rows were
+    // excluded or split to a second destination ahead of this call. See
+    // ImportCommitResponse.skippedDetail (issue #891) for the full contract.
+    const rows = pairWithRowNumber(records);
     // Classify (and dedupe in-batch duplicates) in JS before writing, rather
     // than deriving `skipped` by subtracting the DB's insert count from the
     // unique-key count. That subtraction was sensitive to any drift between
@@ -69,11 +78,11 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     // the DB's own `createMany({ skipDuplicates: true })` skip logic is
     // belt-and-suspenders rather than the source of truth for the count.
     const classified = [
-      ...classifyImportRows(records, liftRecordNaturalKey, (_r, k) =>
+      ...classifyImportRows(rows, ({ r }) => liftRecordNaturalKey(r), (_row, k) =>
         existingKeys.has(k) ? 'skip' : 'create',
       ),
     ];
-    const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row);
+    const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row.r);
     const created = await repos.liftRecord.appendLiftRecords(program, toCreate);
     // `skipped` is derived from `created` (the DB's actual insert count), not
     // `toCreate.length` (what JS classification expected to write): a
@@ -85,11 +94,13 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     // for) even under that race; buildLiftRecordsPreImage(toCreate) is a
     // narrower residual — it still records the raced-out row as created for
     // undo purposes, since createMany's count doesn't say which row lost the
-    // race.
+    // race. `skippedDetail` (via buildSkippedDetail) is narrower still — see
+    // its doc comment for why a raced-out row has no entry there.
     return {
       created,
       updated: 0,
       skipped: classified.length - created,
+      skippedDetail: buildSkippedDetail(classified),
       preImage: buildLiftRecordsPreImage(toCreate),
     };
   },

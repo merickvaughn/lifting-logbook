@@ -1,4 +1,4 @@
-import { classifyAndCount, classifyImportRows } from './classifyAndCount';
+import { buildSkippedDetail, classifyAndCount, classifyImportRows, pairWithRowNumber } from './classifyAndCount';
 import { ImportRowKind } from './buildImportPreview';
 
 type Row = { k: string };
@@ -136,5 +136,55 @@ describe('classifyAndCount', () => {
     // Stopped at the failing row — 'c' was never reached. A caller running this
     // inside a transaction rolls the whole batch back.
     expect(writes).toEqual(['a']);
+  });
+});
+
+describe('pairWithRowNumber', () => {
+  it('pairs each row with its 1-based position', () => {
+    const out = pairWithRowNumber<Row>([{ k: 'a' }, { k: 'b' }, { k: 'c' }]);
+    expect(out).toEqual([
+      { r: { k: 'a' }, row: 1 },
+      { r: { k: 'b' }, row: 2 },
+      { r: { k: 'c' }, row: 3 },
+    ]);
+  });
+
+  it('returns an empty array for an empty input', () => {
+    expect(pairWithRowNumber<Row>([])).toEqual([]);
+  });
+});
+
+describe('buildSkippedDetail', () => {
+  it('extracts row and natural key only for skipped rows, in order', () => {
+    const kindOf = (k: string): ImportRowKind => (k === 'b' ? 'skip' : 'create');
+    const classified = [
+      ...classifyImportRows(
+        pairWithRowNumber<Row>([{ k: 'a' }, { k: 'b' }, { k: 'c' }]),
+        ({ r }) => r.k,
+        ({ r }) => kindOf(r.k),
+      ),
+    ];
+
+    expect(buildSkippedDetail(classified)).toEqual([{ row: 2, naturalKey: 'b' }]);
+  });
+
+  it('returns an empty array when nothing was skipped', () => {
+    const classified = [
+      ...classifyImportRows(pairWithRowNumber<Row>([{ k: 'a' }]), ({ r }) => r.k, () => 'create'),
+    ];
+
+    expect(buildSkippedDetail(classified)).toEqual([]);
+  });
+
+  it('reports an in-batch duplicate at its own (later) row number, not the original occurrence', () => {
+    const classified = [
+      ...classifyImportRows(pairWithRowNumber<Row>([{ k: 'x' }, { k: 'x' }]), ({ r }) => r.k, () => 'create'),
+    ];
+
+    // The second 'x' collides with the first within this batch and is always
+    // yielded as 'skip' regardless of the classifier's answer (classifyImportRows'
+    // own duplicate-detection) — buildSkippedDetail reports it at row 2, its own
+    // batch position, not row 1's.
+    expect(buildSkippedDetail(classified)).toEqual([{ row: 2, naturalKey: 'x' }]);
   });
 });

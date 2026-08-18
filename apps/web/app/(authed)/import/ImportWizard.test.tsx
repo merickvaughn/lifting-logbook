@@ -26,6 +26,34 @@ const PROGRAMS: CustomProgramSummaryResponse[] = [
   { id: 'prog-1', name: 'My Program', description: null, baseTemplate: null, createdAt: '2026-01-01' },
 ];
 
+const LIFT_RECORDS_PREVIEW: ImportPreviewResponse = {
+  classification: {
+    type: 'lift-records',
+    confidence: 0.92,
+    bucket: 'high',
+    reasons: ['Matched required lift-record columns'],
+    alternatives: [],
+  },
+  destination: 'lift-records',
+  columnMappings: [
+    { sourceHeader: 'Program', destinationField: 'program', confidence: 1, required: true },
+    { sourceHeader: 'Cycle #', destinationField: 'cycleNum', confidence: 1, required: true },
+    { sourceHeader: 'Workout #', destinationField: 'workoutNum', confidence: 1, required: true },
+    { sourceHeader: 'Date', destinationField: 'date', confidence: 1, required: true },
+    { sourceHeader: 'Lift', destinationField: 'lift', confidence: 1, required: true },
+    { sourceHeader: 'Set #', destinationField: 'setNum', confidence: 1, required: true },
+    { sourceHeader: 'Weight', destinationField: 'weight', confidence: 1, required: true },
+    { sourceHeader: 'Reps', destinationField: 'reps', confidence: 1, required: true },
+  ],
+  preview: {
+    creates: 0,
+    updates: 0,
+    skips: 1,
+    deltas: [{ key: '1:1:20260101:bench-press:1', label: 'bench-press', kind: 'skip' }],
+  },
+  errors: [],
+};
+
 const TM_PREVIEW: ImportPreviewResponse = {
   classification: {
     type: 'training-maxes',
@@ -265,5 +293,63 @@ describe('ImportWizard', () => {
     // All four destinations are offered as manual picks.
     expect(screen.getByRole('button', { name: /Lift History/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Program/ })).toBeInTheDocument();
+  });
+
+  it('lift-records: DONE step lists per-row skip detail from skippedDetail (#891)', async () => {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(LIFT_RECORDS_PREVIEW);
+    mockCommit.mockResolvedValue({
+      ok: true,
+      data: {
+        destination: 'lift-records',
+        created: 0,
+        updated: 0,
+        skipped: 1,
+        skippedDetail: [{ row: 1, naturalKey: '1:1:20260101:bench-press:1' }],
+        batchId: 'batch-lr-1',
+      },
+    });
+
+    render(<ImportWizard programs={PROGRAMS} />);
+
+    const file = new File(
+      ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n5-3-1,1,1,2026-01-01,Bench P.,1,180,5'],
+      'lifts.csv',
+      { type: 'text/csv' },
+    );
+    await user.upload(screen.getByLabelText('CSV file'), file);
+    await user.click(screen.getByRole('button', { name: 'Analyze' }));
+    await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+
+    await waitFor(() => expect(screen.getByText('Import complete')).toBeInTheDocument());
+    expect(screen.getByText('0 created, 0 updated, 1 skipped.', { exact: false })).toBeInTheDocument();
+
+    // Skipped-rows detail is behind a <details> disclosure — open it, then read the row.
+    await user.click(screen.getByText('Skipped rows'));
+    expect(screen.getByText(/Row 1: 1:1:20260101:bench-press:1/)).toBeInTheDocument();
+  });
+
+  it('training-maxes: DONE step has no skipped-rows disclosure when skippedDetail is absent', async () => {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(TM_PREVIEW);
+    mockCommit.mockResolvedValue({
+      ok: true,
+      data: { destination: 'training-maxes', created: 2, updated: 1, skipped: 0, batchId: 'batch-1' },
+    });
+
+    render(<ImportWizard programs={PROGRAMS} />);
+    const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
+      type: 'text/csv',
+    });
+    await navigateToReview(user, file);
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+
+    await waitFor(() => expect(screen.getByText('Import complete')).toBeInTheDocument());
+    expect(screen.queryByText('Skipped rows')).not.toBeInTheDocument();
   });
 });
