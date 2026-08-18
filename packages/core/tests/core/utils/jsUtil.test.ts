@@ -3,6 +3,7 @@ import {
   formatDateYYYYMMDD,
   getNextDate,
   type LiftingProgramSpec,
+  parseDateStringUTC,
   parseYYYYMMDD,
   toUTCMidnight,
   weekTypeForDate,
@@ -36,6 +37,93 @@ describe("jsUtil", () => {
     it("returns 'NaNNaNNaN' when a 3-part split contains non-numeric tokens (current behavior; not a contract)", () => {
       expect(formatDateYYYYMMDD("not-a-date")).toBe("NaNNaNNaN");
     });
+  });
+
+  describe("parseDateStringUTC", () => {
+    it("parses M/D/YYYY to UTC midnight of the named day", () => {
+      const parsed = parseDateStringUTC("12/16/2025");
+      expect(parsed.getUTCFullYear()).toBe(2025);
+      expect(parsed.getUTCMonth()).toBe(11); // 0-indexed December
+      expect(parsed.getUTCDate()).toBe(16);
+      expect(parsed.getUTCHours()).toBe(0);
+    });
+
+    it("parses YYYY-MM-DD to UTC midnight of the named day", () => {
+      const parsed = parseDateStringUTC("2026-01-05");
+      expect(parsed.getUTCFullYear()).toBe(2026);
+      expect(parsed.getUTCMonth()).toBe(0);
+      expect(parsed.getUTCDate()).toBe(5);
+      expect(parsed.getUTCHours()).toBe(0);
+    });
+
+    it("falls back to new Date(value) for a shape that isn't a 3-part delimited date", () => {
+      // A full ISO datetime string IS spec'd to parse as UTC unambiguously
+      // per ECMA-262, so passing it straight through to `new Date` is
+      // correct here, not just permissive.
+      const parsed = parseDateStringUTC("2026-01-05T12:30:00.000Z");
+      expect(parsed.toISOString()).toBe("2026-01-05T12:30:00.000Z");
+    });
+
+    it("falls back to Invalid Date for garbage input rather than throwing", () => {
+      expect(() => parseDateStringUTC("not-a-date")).not.toThrow();
+      expect(isNaN(parseDateStringUTC("not-a-date").getTime())).toBe(true);
+    });
+
+    // Regression for a finding from /review on PR #900: `Date.UTC` silently
+    // rolls out-of-range month/day components over into a different, still-
+    // "valid" Date instead of rejecting them -- e.g. Date.UTC(9999, 98, 99)
+    // becomes year 10007. The pre-fix code below produced a wrong-but-valid-
+    // looking Date for all three cases (confirmed empirically while writing
+    // this test); each must now fall through to Invalid Date instead, the
+    // same as the bare `new Date(string)` this function replaces.
+    describe("out-of-range or misordered numeric components", () => {
+      it("rejects an out-of-range month/day (99/99/9999) as Invalid Date", () => {
+        expect(isNaN(parseDateStringUTC("99/99/9999").getTime())).toBe(true);
+      });
+
+      it("rejects an out-of-range month (13/45/2025) as Invalid Date", () => {
+        expect(isNaN(parseDateStringUTC("13/45/2025").getTime())).toBe(true);
+      });
+
+      // "2026/01/05" is YYYY/MM/DD-ordered but slash-delimited, so this
+      // function's "slash means M/D/YYYY" assumption misreads it as
+      // month=2026, day=01, year=05 -- an out-of-range month that the
+      // round-trip check must catch. Falls through to `new Date(value)`,
+      // which (like the old bare `new Date(string)` call this function
+      // replaces) correctly recognizes the YYYY/MM/DD order via its
+      // 4-digit-first-component heuristic and resolves the right day --
+      // still not UTC-midnight-normalized here (that's `toUTCMidnight`'s
+      // job at the call site, not this function's), just the right day.
+      it("falls through to new Date(value) for a YYYY/MM/DD-ordered slash string, preserving the correct day", () => {
+        const parsed = parseDateStringUTC("2026/01/05");
+        expect(parsed.getUTCFullYear()).toBe(2026);
+        expect(parsed.getUTCMonth()).toBe(0);
+        expect(parsed.getUTCDate()).toBe(5);
+      });
+    });
+
+    // These assertions are exact-UTC-instant checks (not just "same calendar
+    // day"), which is what makes them a real regression guard for issue #894
+    // on THIS repo's dev/CI machines even though those machines are behind
+    // UTC, not ahead of it: a regression back to bare `new Date(string)`
+    // would produce a non-midnight UTC hour here too (e.g. T05:00 on an
+    // America/New_York host), not just a wrong day on a host ahead of UTC.
+    // parseDateStringUTC is correct-by-construction (it only ever builds
+    // dates via `Date.UTC`, never a local-timezone-dependent constructor),
+    // so its output can't depend on host timezone at all -- there is nothing
+    // further to prove by simulating a positive-offset host for this
+    // function specifically. (A `process.env.TZ` mutation was tried here
+    // during development and dropped: Jest caches host timezone data before
+    // test code runs, so the mutation is silently a no-op in this repo's
+    // Jest/Windows setup -- confirmed by a canary assertion that failed.)
+    //
+    // What a unit-level, host-independent check like this CANNOT prove is
+    // that parseLiftRecords.ts / parseTrainingMaxes.ts still actually CALL
+    // parseDateStringUTC rather than a bare `new Date(string)` -- that
+    // integration only differs in observable output on a host genuinely
+    // ahead of UTC (toUTCMidnight washes out any difference on every other
+    // host). dateParsing.aheadOfUtc.test.ts covers that gap by spawning a
+    // real child process with TZ set to Pacific/Auckland at launch.
   });
 
   describe("parseYYYYMMDD", () => {

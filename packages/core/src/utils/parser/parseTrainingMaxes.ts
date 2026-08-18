@@ -1,5 +1,6 @@
 import { TRAINING_MAX_HEADER_MAP } from "@src/core/constants";
 import { TrainingMax, SpreadsheetCell } from "@src/core/models";
+import { parseDateStringUTC, toUTCMidnight } from "../jsUtil";
 import { tableToObjects } from "./tableToObjects";
 
 /**
@@ -21,7 +22,15 @@ export function parseTrainingMaxes(data: SpreadsheetCell[][]): TrainingMax[] {
         value = Number(value);
       }
       if (key === "dateUpdated") {
-        value = new Date(String(value ?? ""));
+        // Same bug class as parseLiftRecords.ts (issue #894): a non-ISO cell
+        // like "12/29/2025" parsed via bare `new Date(string)` lands on the
+        // WRONG UTC calendar day on any host ahead of UTC, and carries a
+        // non-midnight time-of-day on ANY non-UTC host (this call site had no
+        // toUTCMidnight normalization at all). updateMaxes.ts compares this
+        // value against LiftRecord.date via getTime(), so both parsers must
+        // agree on the same UTC-midnight-of-the-named-day convention or the
+        // comparison silently disagrees with what the sheet says.
+        value = toUTCMidnight(parseDateStringUTC(String(value ?? "")));
       }
       result[key] = value;
     }

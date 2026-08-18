@@ -86,6 +86,56 @@ export function formatDateYYYYMMDD(date: string | Date): string {
 }
 
 /**
+ * Parses a date string explicitly as UTC, rather than delegating to
+ * `new Date(string)`'s locale-dependent behavior. Per ECMA-262, only ISO
+ * 8601 date-only strings (`YYYY-MM-DD`) are spec'd to parse as UTC midnight;
+ * any other shape — including this app's `M/D/YYYY` CSV/sheet cells — parses
+ * at LOCAL midnight, which lands on a *different UTC calendar day* than the
+ * string named on any host whose UTC offset is positive (e.g. Sydney,
+ * Tokyo). Hosts behind UTC (the US, etc.) never surface this, which is why
+ * it went unnoticed (issue #894).
+ *
+ * Recognizes the same two delimited shapes as {@link formatDateYYYYMMDD}'s
+ * string branch (`M/D/YYYY` and `YYYY-MM-DD`) and constructs the date via
+ * `Date.UTC` directly, so the parsed calendar day matches the string on
+ * every host. `Date.UTC` silently rolls over out-of-range components (e.g.
+ * month 99) rather than rejecting them, so the constructed date is checked
+ * against the parsed year/month/day and discarded on any mismatch -- this
+ * also catches a `YYYY/MM/DD`-ordered slash string being misread as
+ * `M/D/YYYY` (the year lands somewhere implausible when read back). Falls
+ * back to `new Date(value)` for any other shape (e.g. a full ISO datetime
+ * string, which IS spec'd to parse unambiguously) or for a rejected
+ * roundtrip, so malformed numeric input still produces `Invalid Date` rather
+ * than a silently-wrong-but-valid-looking one.
+ */
+export function parseDateStringUTC(value: string): Date {
+  const isIso = value.includes("-");
+  const parts = isIso ? value.split("-") : value.split("/");
+  if (parts.length === 3) {
+    const [first, second, third] = parts;
+    const yyyy = Number(isIso ? first : third);
+    const mm = Number(isIso ? second : first);
+    const dd = Number(isIso ? third : second);
+    if (Number.isFinite(yyyy) && Number.isFinite(mm) && Number.isFinite(dd)) {
+      const parsed = new Date(Date.UTC(yyyy, mm - 1, dd));
+      // Round-trip check: Date.UTC rolls out-of-range components over into a
+      // different, still-"valid" Date instead of rejecting them (e.g.
+      // Date.UTC(9999, 98, 99) silently becomes year 10007), so confirm the
+      // constructed date actually reads back as the year/month/day that was
+      // parsed before trusting it.
+      if (
+        parsed.getUTCFullYear() === yyyy &&
+        parsed.getUTCMonth() === mm - 1 &&
+        parsed.getUTCDate() === dd
+      ) {
+        return parsed;
+      }
+    }
+  }
+  return new Date(value);
+}
+
+/**
  * Inverse of {@link formatDateYYYYMMDD}'s `Date` output: parses a compact
  * `YYYYMMDD` string (no separators) into a UTC-midnight `Date`. Returns
  * `null` for anything that isn't exactly 8 digits, so callers splitting a

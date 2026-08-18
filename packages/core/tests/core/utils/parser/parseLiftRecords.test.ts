@@ -30,4 +30,18 @@ describe("parseLiftRecords", () => {
     expect(record?.date.getUTCSeconds()).toBe(0);
     expect(record?.date.getUTCMilliseconds()).toBe(0);
   });
+
+  // Regression for issue #894: `toUTCMidnight` alone (added by #892) only
+  // guarantees the TIME component is exactly midnight -- it does not correct
+  // WHICH DAY local-midnight parsing landed on. On a host whose UTC offset is
+  // POSITIVE (ahead of UTC -- e.g. Auckland, Sydney, Tokyo), local midnight on
+  // "12/16/2025" is actually the previous UTC calendar day, so the parsed
+  // date would silently disagree with the CSV cell by one day. Hosts behind
+  // UTC (the US, this CI/dev machine) never surface this, which is why it
+  // went unnoticed. Proving this requires an actual ahead-of-UTC process --
+  // mutating `process.env.TZ` mid-test does not reliably take effect in this
+  // repo's Jest/Windows setup (Jest caches host timezone data before test
+  // code runs) -- see dateParsing.aheadOfUtc.test.ts, which spawns a real
+  // child process with TZ set to Pacific/Auckland at launch and exercises
+  // this exact fixture through the real parseLiftRecords.
 });
