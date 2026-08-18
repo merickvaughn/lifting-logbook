@@ -1,14 +1,12 @@
 import { Body, Controller, Get, Inject, Param, Patch } from '@nestjs/common';
-import {
-  TrainingMaxResponse,
-  UpdateTrainingMaxesRequest,
-} from '@lifting-logbook/types';
+import { TrainingMaxResponse } from '@lifting-logbook/types';
 import type { TrainingMax } from '@lifting-logbook/core';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { toTrainingMaxResponse } from './mappers';
+import { UpdateTrainingMaxesDto } from './update-training-maxes.dto';
 
 @Controller('programs/:program')
 export class TrainingMaxesController {
@@ -29,7 +27,7 @@ export class TrainingMaxesController {
   @Patch('training-maxes')
   async updateTrainingMaxes(
     @Param('program') program: string,
-    @Body() body: UpdateTrainingMaxesRequest,
+    @Body() body: UpdateTrainingMaxesDto,
     @CurrentUser() user: AuthUser,
   ): Promise<TrainingMaxResponse[]> {
     const { trainingMax } = await this.factory.forUser(user);

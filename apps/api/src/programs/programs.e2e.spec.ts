@@ -732,7 +732,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       method: 'PATCH',
       url: `/programs/${SEED_PROGRAM}/training-maxes`,
       headers: { 'content-type': 'application/json', ...AS_ALICE },
-      payload: JSON.stringify({ maxes: [{ lift: 'Squat', weight: 999 }] }),
+      payload: JSON.stringify({ maxes: [{ lift: 'Squat', weight: 999, unit: 'lbs' }] }),
     });
     expect(patchRes.statusCode).toBe(200);
 
@@ -1664,6 +1664,226 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
       const res = await patchValidation(created.json().id, { weight: null });
       expect(res.statusCode).toBe(400);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /body-weight and PATCH /training-maxes — request-body validation (issue
+  // #897). Both routes declared their @Body() as a plain TypeScript interface,
+  // which is erased at compile time — Nest's ValidationPipe had no metatype to
+  // validate against and silently let any JSON object reach the handler unchecked.
+  // RecordBodyWeightDto / UpdateTrainingMaxesDto (./record-body-weight.dto /
+  // ./update-training-maxes.dto) close that gap — the same one #893 closed for
+  // POST/PATCH /lift-records.
+  //
+  // Isolation note (#897 review): the fresh per-test bearer token only isolates
+  // the training-maxes half — TrainingMaxesController resolves a per-user
+  // repository via `factory.forUser(user)`, like every other controller in this
+  // file. BodyWeightController does not: it injects BODY_WEIGHT_REPOSITORY
+  // directly (a single app-scoped InMemoryBodyWeightRepository keyed on
+  // `program` alone, with no per-user dimension at all — see issue #904, filed
+  // separately, for the production consequence of that). So the body-weight
+  // sub-block below uses its own dedicated program path instead of SEED_PROGRAM,
+  // to avoid colliding with the earlier 'multi-workout progression scenario'
+  // block, which already POSTs a body-weight entry for SEED_PROGRAM.
+  // ---------------------------------------------------------------------------
+  describe('POST /body-weight and PATCH /training-maxes — request-body validation (regression for #897)', () => {
+    const AS_VALIDATION_897 = { authorization: 'Bearer body-weight-training-max-validation-user' };
+    // Deliberately NOT SEED_PROGRAM — see the isolation note above.
+    const BODY_WEIGHT_PROGRAM = 'bw-validation-897';
+    const BODY_WEIGHT_URL = `/programs/${BODY_WEIGHT_PROGRAM}/body-weight`;
+    const TRAINING_MAXES_URL = `/programs/${SEED_PROGRAM}/training-maxes`;
+
+    const postBodyWeight = (body: unknown) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: BODY_WEIGHT_URL,
+        headers: { 'content-type': 'application/json', ...AS_VALIDATION_897 },
+        payload: JSON.stringify(body),
+      });
+
+    const getLatestBodyWeight = () =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'GET',
+        url: `${BODY_WEIGHT_URL}/latest`,
+        headers: AS_VALIDATION_897,
+      });
+
+    const patchTrainingMaxes = (body: unknown) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'PATCH',
+        url: TRAINING_MAXES_URL,
+        headers: { 'content-type': 'application/json', ...AS_VALIDATION_897 },
+        payload: JSON.stringify(body),
+      });
+
+    describe('POST /body-weight', () => {
+      const validBody = (overrides: Record<string, unknown> = {}) => ({
+        date: '2026-05-01',
+        weight: 185,
+        unit: 'lbs',
+        ...overrides,
+      });
+
+      it('rejects a non-date-string date with 400 (previously reached new Date() unchecked)', async () => {
+        const res = await postBodyWeight(validBody({ date: 'not-a-date' }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      // Same class of bug #893's review round 3 fixed for CreateLiftRecordDto.date:
+      // the controller's new Date(body.date) parses a date-time differently than a
+      // bare date (UTC vs. server-local depending on offset presence), which can
+      // silently shift the stored calendar day.
+      it('rejects a date-time with 400 (bare YYYY-MM-DD only, avoids a timezone-dependent day-shift)', async () => {
+        const res = await postBodyWeight(validBody({ date: '2026-05-01T10:30:00Z' }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects a nonexistent calendar date with 400, not a silent day rollover', async () => {
+        const res = await postBodyWeight(validBody({ date: '2026-02-30' }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects a non-numeric weight with 400', async () => {
+        const res = await postBodyWeight(validBody({ weight: 'heavy' }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects a negative weight with 400', async () => {
+        const res = await postBodyWeight(validBody({ weight: -5 }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      // Regression for #897 review: matches the client's own validation
+      // (WorkoutLogger.tsx's handleBodyWeightSubmit rejects weight <= 0 before
+      // ever calling this endpoint) — a body-weight observation of 0 is not
+      // meaningful.
+      it('rejects a zero weight with 400', async () => {
+        const res = await postBodyWeight(validBody({ weight: 0 }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects an unrecognized unit with 400', async () => {
+        const res = await postBodyWeight(validBody({ unit: 'stone' }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects an unrecognized extra field with 400 (forbidNonWhitelisted, matches production)', async () => {
+        const res = await postBodyWeight(validBody({ hacked: true }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('accepts a well-formed body with 201, persisted and reflected by GET /latest (valid-input pass-through)', async () => {
+        const res = await postBodyWeight(validBody());
+        expect(res.statusCode).toBe(201);
+
+        const latest = await getLatestBodyWeight();
+        expect(latest.statusCode).toBe(200);
+        expect(latest.json()).toMatchObject({ date: '2026-05-01', weight: 185, unit: 'lbs' });
+      });
+    });
+
+    describe('PATCH /training-maxes', () => {
+      const validBody = (overrides: Record<string, unknown> = {}) => ({
+        maxes: [{ lift: 'Squat', weight: 315, unit: 'lbs' }],
+        ...overrides,
+      });
+
+      it('rejects a missing maxes field with 400 (previously reached body.maxes.map(...) unguarded and 500)', async () => {
+        const res = await patchTrainingMaxes({});
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects a non-array maxes with 400', async () => {
+        const res = await patchTrainingMaxes({ maxes: 'not-an-array' });
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects an entry missing lift with 400', async () => {
+        const res = await patchTrainingMaxes({ maxes: [{ weight: 315, unit: 'lbs' }] });
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects an entry with an empty lift with 400', async () => {
+        const res = await patchTrainingMaxes(validBody({ maxes: [{ lift: '', weight: 315, unit: 'lbs' }] }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects an entry with a non-numeric weight with 400', async () => {
+        const res = await patchTrainingMaxes(
+          validBody({ maxes: [{ lift: 'Squat', weight: 'heavy', unit: 'lbs' }] }),
+        );
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects an entry with a negative weight with 400', async () => {
+        const res = await patchTrainingMaxes(validBody({ maxes: [{ lift: 'Squat', weight: -5, unit: 'lbs' }] }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      // Regression for #897 review: matches the client's own validation
+      // (TrainingMaxesForm.tsx rejects `n <= 0` with "Enter a positive number") —
+      // a training max of 0 is not meaningful.
+      it('rejects an entry with a zero weight with 400', async () => {
+        const res = await patchTrainingMaxes(validBody({ maxes: [{ lift: 'Squat', weight: 0, unit: 'lbs' }] }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects an entry with an unrecognized unit with 400', async () => {
+        const res = await patchTrainingMaxes(
+          validBody({ maxes: [{ lift: 'Squat', weight: 315, unit: 'stone' }] }),
+        );
+        expect(res.statusCode).toBe(400);
+      });
+
+      // Regression for #897 review: `unit` is validated but never read by
+      // TrainingMaxesController (TrainingMax has no unit field; the response
+      // mapper always reports 'lbs'), so accepting 'kg' would silently mislabel
+      // — not convert — a 140 kg max as 140 lbs. See TrainingMaxEntryDto.unit's
+      // doc comment.
+      it('rejects an entry with a kg unit with 400 (validated-but-unhonored, would silently mislabel)', async () => {
+        const res = await patchTrainingMaxes(
+          validBody({ maxes: [{ lift: 'Squat', weight: 140, unit: 'kg' }] }),
+        );
+        expect(res.statusCode).toBe(400);
+      });
+
+      // Regression for #897 review: each entry becomes one Prisma upsert inside
+      // a single batched transaction (PrismaTrainingMaxRepository.saveTrainingMaxes),
+      // so an unbounded array is an unbounded statement count in one transaction.
+      it('rejects a maxes array above the size ceiling with 400', async () => {
+        const maxes = Array.from({ length: 101 }, (_, i) => ({
+          lift: `Custom Lift ${i}`,
+          weight: 100,
+          unit: 'lbs',
+        }));
+        const res = await patchTrainingMaxes({ maxes });
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects an unrecognized top-level extra field with 400 (forbidNonWhitelisted, matches production)', async () => {
+        const res = await patchTrainingMaxes(validBody({ hacked: true }));
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('rejects an unrecognized field within an entry with 400', async () => {
+        const res = await patchTrainingMaxes({
+          maxes: [{ lift: 'Squat', weight: 315, unit: 'lbs', hacked: true }],
+        });
+        expect(res.statusCode).toBe(400);
+      });
+
+      // Regression precedent: CreateLiftRecordDto.lift's #893 review round 3 trim
+      // (a different endpoint, identical natural-key-fragmentation failure mode —
+      // see TrainingMaxEntryDto.lift's doc comment). Proves the fix end-to-end over
+      // HTTP: this repo's ValidationPipeOptions (whitelist: true) makes the pipe
+      // return the transformed entity even without an explicit `transform: true`.
+      it('accepts a well-formed body with 200, trimming a whitespace-padded lift (valid-input pass-through)', async () => {
+        const res = await patchTrainingMaxes({ maxes: [{ lift: '  Squat  ', weight: 320, unit: 'lbs' }] });
+        expect(res.statusCode).toBe(200);
+        const squat = res.json().find((m: { lift: string }) => m.lift === 'Squat');
+        expect(squat).toMatchObject({ lift: 'Squat', weight: 320 });
+      });
     });
   });
 });
