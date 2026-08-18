@@ -1,7 +1,7 @@
 import { ImportWriteResult } from '@lifting-logbook/types';
 import type { ImportRowKind } from './buildImportPreview';
 
-/** One deduped import row with its computed natural key and classification. */
+/** One import row with its computed natural key and classification. */
 export interface ClassifiedRow<T> {
   row: T;
   kind: ImportRowKind;
@@ -12,19 +12,27 @@ export interface ClassifiedRow<T> {
  * Shared dedupe + classify core for the Smart Import paths (#537).
  *
  * Both the count-only commit path (`classifyAndCount`) and the delta-producing
- * preview path (`buildImportPreview`) walk the incoming rows the same way: collapse
- * duplicate natural keys within the batch (first occurrence wins) and classify each
- * unique row as create / update / skip. That loop used to be copy-pasted in both
- * places, so a change to the dedupe semantics (e.g. first-wins → last-wins, or key
- * normalization) had to be made twice or the two paths would silently disagree.
- * Centralising it here makes that a one-place change — the per-row create/update/skip
- * *decision* is already shared via the `*RowKind` predicates, this shares the
- * surrounding dedupe loop too.
+ * preview path (`buildImportPreview`) walk the incoming rows the same way: the
+ * first row for each natural key is classified as create / update / skip; a
+ * later row reusing an earlier row's key is always yielded as an explicit
+ * skip (issue #884 — previously dropped with no trace at all, not even
+ * counted). That loop used to be copy-pasted in both places, so a change to
+ * the dedupe semantics (e.g. first-wins → last-wins, or key normalization)
+ * had to be made twice or the two paths would silently disagree.
+ * Centralising it here makes that a one-place change — the per-row
+ * create/update/skip *decision* is already shared via the `*RowKind`
+ * predicates, this shares the surrounding dedupe loop too.
  *
  * `keyOf` produces the per-row dedupe/natural key; `rowKind` decides
- * create/update/skip (the key is passed through so a classifier can reuse it
- * instead of recomputing). Each yielded row carries the key it was deduped on so
- * consumers never recompute it.
+ * create/update/skip for a row's first occurrence (the key is passed through
+ * so a classifier can reuse it instead of recomputing; it is not re-invoked
+ * for a later same-key row, which is always 'skip'). Every yielded row
+ * carries the key it was classified on, so consumers never recompute it —
+ * but that key is NOT guaranteed unique across `deltas`/results in one call,
+ * since an in-batch duplicate now yields its own entry sharing the original's
+ * key; `buildImportPreview.ts`'s `dedupeDisplayKey` exists specifically to
+ * give preview consumers a display-unique key without touching this one's
+ * meaning.
  */
 export function* classifyImportRows<T>(
   rows: readonly T[],

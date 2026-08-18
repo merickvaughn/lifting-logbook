@@ -25,7 +25,7 @@ function makePrisma(
 }
 
 describe('PrismaTrainingMaxRepository.importTrainingMaxes', () => {
-  it('classifies create/update/skip from the write and dedupes within the batch', async () => {
+  it('classifies create/update/skip from the write and counts an in-batch duplicate as skipped', async () => {
     const { prisma, findMany, upsert, $transaction } = makePrisma([
       { lift: 'Squat', weight: 300 },
       { lift: 'Deadlift', weight: 350 },
@@ -36,7 +36,7 @@ describe('PrismaTrainingMaxRepository.importTrainingMaxes', () => {
       tm('Squat', 300), // identical → skip
       tm('Deadlift', 400), // weight differs → update
       tm('Bench', 200), // absent → create
-      tm('Squat', 999), // duplicate lift in batch → collapsed (not re-counted)
+      tm('Squat', 999), // duplicate lift in batch → counted as skip, not re-written (#884)
     ]);
 
     // Issue #884: the in-batch duplicate ('Squat', 999) is now counted as

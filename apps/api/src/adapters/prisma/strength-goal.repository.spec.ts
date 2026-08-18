@@ -34,7 +34,7 @@ function makePrisma(
 }
 
 describe('PrismaStrengthGoalRepository.importGoals', () => {
-  it('classifies create/update/skip from the write and dedupes within the batch', async () => {
+  it('classifies create/update/skip from the write and counts an in-batch duplicate as skipped', async () => {
     const { prisma, findMany, upsert, $transaction } = makePrisma([
       { lift: 'Squat', goalType: 'absolute', unit: 'lbs', target: 400, ratio: null, updatedAt: at },
       { lift: 'Deadlift', goalType: 'absolute', unit: 'lbs', target: 500, ratio: null, updatedAt: at },
@@ -45,7 +45,7 @@ describe('PrismaStrengthGoalRepository.importGoals', () => {
       abs('Squat', 400), // identical → skip
       abs('Deadlift', 505), // target differs → update
       rel('Bench', 1.5), // absent → create
-      abs('Squat', 999), // duplicate lift in batch → collapsed
+      abs('Squat', 999), // duplicate lift in batch → counted as skip (#884)
     ]);
 
     // Issue #884: the in-batch duplicate (abs('Squat', 999)) is now counted as

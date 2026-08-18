@@ -22,8 +22,8 @@ import {
 } from '@lifting-logbook/types';
 import {
   DEFAULT_SLOT_MAP,
+  buildLiftRecordId,
   classifyImportRows,
-  formatDateYYYYMMDD,
   liftRecordNaturalKey,
   parseCsvText,
   parseLiftRecords,
@@ -66,16 +66,22 @@ export class LiftRecordsController {
 
     let effectiveDate: Date;
     if (body.date) {
-      effectiveDate = new Date(body.date);
+      // `body.date` is typed as a plain interface field (erased at runtime;
+      // ValidationPipe does not enforce a format on it — see #893), so it may
+      // carry a full ISO datetime rather than a bare date. Normalize
+      // unconditionally rather than trusting the caller to send UTC midnight:
+      // the stored date must round-trip exactly through the YYYYMMDD id/key
+      // encoding (issue #884), or the record becomes unreachable by a later
+      // PATCH.
+      effectiveDate = toUTCMidnight(new Date(body.date));
     } else {
       const scheduled = await cycleScheduledWorkout.getScheduledWorkouts(program, body.cycleNum);
       const match = scheduled.find((s) => s.workoutNum === body.workoutNum);
-      // Bare `new Date()` is the one fallback source not already UTC-midnight by
-      // construction (an explicit body.date parses as UTC midnight per spec; a
-      // scheduled date is `@db.Date`, no time component) — normalize so the
-      // stored date always round-trips exactly through the YYYYMMDD id/key
-      // encoding (issue #884).
-      effectiveDate = match?.scheduledDate ?? toUTCMidnight(new Date());
+      // `scheduledDate` is `@db.Date` (no time component) so it's already
+      // UTC-midnight-equivalent, but normalize it too for defense in depth —
+      // the bare `new Date()` fallback is the one source with no upstream
+      // guarantee at all.
+      effectiveDate = toUTCMidnight(match?.scheduledDate ?? new Date());
     }
 
     const record = {
@@ -93,10 +99,38 @@ export class LiftRecordsController {
     if (written === 0) {
       // Same root cause as issue #884's import-path fix: skipDuplicates silently
       // no-ops when a record's natural key already exists. Surface that instead
-      // of returning 201 for a write that never happened.
+      // of returning 201 for a write that never happened — but this request
+      // carries no idempotency key, so a genuine retry of an earlier write whose
+      // response was lost (timeout, dropped connection, backgrounded tab) is
+      // indistinguishable from a real duplicate-submission attempt except by
+      // comparing payloads: if the already-stored record's mutable fields
+      // exactly match what this request is trying to write, treat it as that
+      // retry succeeding (the record already reflects the caller's intent)
+      // rather than leaving the client stuck on a conflict it cannot resolve.
+      // A payload that collides on the key but differs in content is a genuine
+      // conflict and still 409s.
+      const existing = (await liftRecord.getLiftRecords(program, record.cycleNum)).find(
+        (r) =>
+          r.workoutNum === record.workoutNum &&
+          r.lift === record.lift &&
+          r.setNum === record.setNum &&
+          r.date.getTime() === record.date.getTime(),
+      );
+      if (
+        existing &&
+        existing.weight === record.weight &&
+        existing.reps === record.reps &&
+        existing.notes === record.notes
+      ) {
+        return toLiftRecordResponse(existing);
+      }
+      const existingId = existing ? buildLiftRecordId(program, existing) : null;
       throw new ConflictException(
         `A lift record already exists for ${record.lift}, cycle ${record.cycleNum}, ` +
-          `workout ${record.workoutNum}, set ${record.setNum} on ${formatDateYYYYMMDD(record.date)}.`,
+          `workout ${record.workoutNum}, set ${record.setNum} on ${record.date.toISOString().slice(0, 10)}` +
+          (existingId
+            ? `. Update it with PATCH /programs/${program}/lift-records/${existingId} instead.`
+            : '.'),
       );
     }
     return toLiftRecordResponse(record);

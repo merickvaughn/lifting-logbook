@@ -273,11 +273,33 @@ describe('PrismaLiftRecordRepository', () => {
       );
     });
 
-    it('drops a pre-#884 key with no date segment rather than deleting broadly', async () => {
+    // Regression for issue #884: ImportBatch.preImage rows persisted before
+    // date joined the key still hold this exact 4-segment format. Undo must
+    // still find and delete them (date-blind, matching pre-#884 behavior for
+    // this pre-#884 data) rather than silently deleting nothing and reporting
+    // a false "not found".
+    it('falls back to a date-blind match for a pre-#884 key with no date segment', async () => {
       const prisma = makePrisma();
+      (prisma.liftRecord.deleteMany as jest.Mock).mockResolvedValue({ count: 1 });
       const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
 
       const count = await repo.deleteLiftRecordsByNaturalKeys('5-3-1', ['2:3:Bench Press:1']);
+
+      expect(count).toBe(1);
+      expect(prisma.liftRecord.deleteMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [{ cycleNum: 2, workoutNum: 3, lift: 'Bench Press', setNum: 1 }],
+          }),
+        }),
+      );
+    });
+
+    it('drops a key unparseable in either format rather than deleting broadly', async () => {
+      const prisma = makePrisma();
+      const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
+
+      const count = await repo.deleteLiftRecordsByNaturalKeys('5-3-1', ['not-a-key']);
 
       expect(count).toBe(0);
       expect(prisma.liftRecord.deleteMany).not.toHaveBeenCalled();

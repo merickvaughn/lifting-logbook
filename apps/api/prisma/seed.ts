@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { addDaysUTC, toUTCMidnight } from '@lifting-logbook/core';
 
 const prisma = new PrismaClient();
 
@@ -44,8 +45,14 @@ async function main() {
   console.log('Seeding staging database...');
 
   const now = new Date();
-  const startDate = new Date(now);
-  startDate.setDate(startDate.getDate() - NUM_CYCLES * 3 * DAYS_PER_WORKOUT);
+  // UTC-midnight from the start, and addDaysUTC (not local setDate/getDate) for
+  // every offset below: LiftRecord.date now joins the natural key / public id
+  // (issue #884), which encode it as a UTC calendar day and reconstruct UTC
+  // midnight when parsing a key back apart. A wall-clock-derived date, or a
+  // UTC-midnight date subsequently shifted via *local* Date methods, would make
+  // every seeded record un-PATCHable (the reconstructed lookup date would never
+  // match a stored non-UTC-midnight one) on any non-UTC host.
+  const startDate = addDaysUTC(toUTCMidnight(now), -NUM_CYCLES * 3 * DAYS_PER_WORKOUT);
 
   // UserSettings
   await prisma.userSettings.upsert({
@@ -90,7 +97,7 @@ async function main() {
   }
 
   // TrainingMaxHistory + LiftRecords
-  const workoutDate = new Date(startDate);
+  let workoutDate = new Date(startDate);
 
   // LiftRecord has no single-field unique key to upsert on, and `workoutDate`
   // below is recomputed from `new Date()` each run — so a naive re-run would
@@ -169,7 +176,7 @@ async function main() {
         }
       }
 
-      workoutDate.setDate(workoutDate.getDate() + DAYS_PER_WORKOUT);
+      workoutDate = addDaysUTC(workoutDate, DAYS_PER_WORKOUT);
     }
   }
 

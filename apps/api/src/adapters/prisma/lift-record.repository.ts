@@ -108,22 +108,42 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
 
   async deleteLiftRecordsByNaturalKeys(program: string, naturalKeys: string[]): Promise<number> {
     if (naturalKeys.length === 0) return 0;
-    const parsed = naturalKeys.flatMap((k) => {
+    // ImportBatch.preImage rows persisted before date joined the key (issue
+    // #884) still hold pre-#884 4-segment keys, which parseLiftRecordNaturalKey
+    // now rejects — undoing one of those older batches would otherwise delete
+    // zero rows and report a false "not found" for records that are still
+    // there. Fall back to the legacy date-blind parse (and a date-blind OR
+    // clause) for exactly the keys the new parser rejects, preserving undo's
+    // pre-#884 behavior for pre-#884 data without weakening the current
+    // parser's contract for current data.
+    const clauses: Array<{
+      cycleNum: number;
+      workoutNum: number;
+      date?: Date;
+      lift: string;
+      setNum: number;
+    }> = [];
+    for (const k of naturalKeys) {
       const p = parseLiftRecordNaturalKey(k);
-      return p ? [p] : [];
-    });
-    if (parsed.length === 0) return 0;
-    const { count } = await this.prisma.liftRecord.deleteMany({
-      where: {
-        userId: this.userId,
-        program,
-        OR: parsed.map((p) => ({
+      if (p) {
+        clauses.push({
           cycleNum: p.cycleNum,
           workoutNum: p.workoutNum,
           date: p.date,
           lift: p.lift,
           setNum: p.setNum,
-        })),
+        });
+        continue;
+      }
+      const legacy = parseLegacyLiftRecordNaturalKey(k);
+      if (legacy) clauses.push(legacy);
+    }
+    if (clauses.length === 0) return 0;
+    const { count } = await this.prisma.liftRecord.deleteMany({
+      where: {
+        userId: this.userId,
+        program,
+        OR: clauses,
       },
     });
     return count;
@@ -163,6 +183,25 @@ function parseLiftRecordId(
 
   if (isNaN(cycleNum) || isNaN(workoutNum) || !date || isNaN(setNum) || !lift) return null;
   return { cycleNum, workoutNum, date, lift, setNum };
+}
+
+// Parses a pre-#884 natural key with no date segment:
+// "cycleNum:workoutNum:lift:setNum". Exists only so undo still works against
+// ImportBatch.preImage rows persisted before date joined the key — see the
+// call site in deleteLiftRecordsByNaturalKeys. Returns a date-less clause
+// (matches any date for that cycle/workout/lift/set), the same date-blind
+// behavior undo had before this issue's fix.
+function parseLegacyLiftRecordNaturalKey(
+  key: string,
+): { cycleNum: number; workoutNum: number; lift: string; setNum: number } | null {
+  const parts = key.split(':');
+  if (parts.length < 4) return null;
+  const cycleNum = parseInt(parts[0] ?? '', 10);
+  const workoutNum = parseInt(parts[1] ?? '', 10);
+  const setNum = parseInt(parts[parts.length - 1] ?? '', 10);
+  const lift = parts.slice(2, parts.length - 1).join(':');
+  if (isNaN(cycleNum) || isNaN(workoutNum) || isNaN(setNum) || !lift) return null;
+  return { cycleNum, workoutNum, lift, setNum };
 }
 
 export function rowToLiftRecord(row: {

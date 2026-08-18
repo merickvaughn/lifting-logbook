@@ -1029,9 +1029,35 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     // Regression for issue #884's single-record fix (task 6): a colliding write
-    // (same natural key, including date) must be rejected loudly, not silently
-    // no-op with a 201.
-    it('returns 409 when the write collides with an already-logged set', async () => {
+    // with DIFFERENT data (a genuine conflict, not a retry of the same write)
+    // must be rejected loudly, not silently no-op with a 201.
+    it('returns 409 when the write collides with different data on an already-logged set', async () => {
+      const base = {
+        program: SEED_PROGRAM,
+        cycleNum: 4,
+        workoutNum: 1,
+        date: '2026-04-20',
+        lift: 'Overhead Press',
+        setNum: 1,
+      };
+      const first = await postJson(LIFT_RECORDS_URL, { ...base, weight: 95, reps: 5 });
+      expect(first.statusCode).toBe(201);
+
+      const second = await postJson(LIFT_RECORDS_URL, { ...base, weight: 100, reps: 3 });
+      expect(second.statusCode).toBe(409);
+
+      const rows = await prisma.liftRecord.findMany({
+        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 4, workoutNum: 1, setNum: 1 },
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.weight).toBe(95);
+    });
+
+    // A retry whose response was lost (timeout, dropped connection) resubmits
+    // identical data -- that must succeed idempotently (the existing record,
+    // 201) rather than leave the client permanently stuck on a conflict it has
+    // no way to resolve, and must not create a duplicate row.
+    it('returns the existing record instead of 409 when the retry is identical', async () => {
       const body = {
         program: SEED_PROGRAM,
         cycleNum: 4,
@@ -1046,7 +1072,8 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(first.statusCode).toBe(201);
 
       const second = await postJson(LIFT_RECORDS_URL, body);
-      expect(second.statusCode).toBe(409);
+      expect(second.statusCode).toBe(201);
+      expect((second.json() as { weight: number }).weight).toBe(95);
 
       const count = await prisma.liftRecord.count({
         where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 4, workoutNum: 1, setNum: 1 },

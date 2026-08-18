@@ -75,10 +75,21 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     ];
     const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row);
     const created = await repos.liftRecord.appendLiftRecords(program, toCreate);
+    // `skipped` is derived from `created` (the DB's actual insert count), not
+    // `toCreate.length` (what JS classification expected to write): a
+    // concurrent import racing between findExistingRecords and
+    // appendLiftRecords can insert a colliding row in between, so the DB
+    // writes fewer rows than toCreate — deriving from toCreate.length would
+    // silently drop that row from both totals. This keeps
+    // created + skipped === classified.length (every input row accounted
+    // for) even under that race; buildLiftRecordsPreImage(toCreate) is a
+    // narrower residual — it still records the raced-out row as created for
+    // undo purposes, since createMany's count doesn't say which row lost the
+    // race.
     return {
       created,
       updated: 0,
-      skipped: classified.length - toCreate.length,
+      skipped: classified.length - created,
       preImage: buildLiftRecordsPreImage(toCreate),
     };
   },

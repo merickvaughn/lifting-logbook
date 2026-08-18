@@ -22,6 +22,19 @@ import styles from './import.module.css';
 type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous';
 type EditableMax = { lift: string; weight: string };
 
+// The preview response disambiguates ImportDelta.key with a `#N` suffix when
+// the same natural key is yielded more than once in one batch (issue #884),
+// so React list identity and this component's Set-based select/exclude state
+// never collide across the original and an in-batch duplicate. The server's
+// excludeKeys contract still matches on the bare natural key (it can't
+// distinguish which of two same-keyed rows a suffix would refer to), so strip
+// the suffix before sending — this keeps this component's original
+// coarse-by-natural-key exclude semantics rather than silently excluding
+// nothing when a duplicate row's checkbox is used.
+function stripDeltaKeySuffix(key: string): string {
+  return key.replace(/#\d+$/, '');
+}
+
 function buildTrainingMaxesCsv(rows: EditableMax[]): string {
   const today = new Date().toISOString().slice(0, 10);
   const lines = rows
@@ -274,7 +287,7 @@ export function ImportWizard({
         }
         result = await commitImport(programId, file, destination, {
           overrides: Object.keys(columnOverridesRecord).length > 0 ? columnOverridesRecord : undefined,
-          excludeKeys: excludedKeys.size > 0 ? [...excludedKeys] : undefined,
+          excludeKeys: excludedKeys.size > 0 ? [...excludedKeys].map(stripDeltaKeySuffix) : undefined,
           liftOverrides: liftOverrides.size > 0 ? liftOverridesRecord : undefined,
           splitDest: preview?.split !== undefined,
         });

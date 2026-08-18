@@ -14,7 +14,7 @@ model LiftRecord {
   program    String
   cycleNum   Int
   workoutNum Int
-  date       DateTime
+  date       DateTime @db.Date
   lift       String
   setNum     Int
   weight     Float

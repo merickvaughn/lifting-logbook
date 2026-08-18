@@ -11,9 +11,28 @@
 -- violate the new, strictly more specific 7-column key. This migration prevents
 -- FUTURE loss only -- it cannot resurrect a row the old constraint already
 -- silently dropped before this deployed.
+--
+-- Deploy ordering: this migration must land before (or atomically with, via the
+-- Cloud Run migration job that runs ahead of the new API revision -- see ADR-027)
+-- the application code that references the renamed compound-unique accessor
+-- (userId_program_cycleNum_workoutNum_date_lift_setNum). Do not roll the API
+-- image back alone after this lands without also reverting the index -- the old
+-- code's date-less compound-unique accessor no longer exists once this runs.
+--
+-- Both statements run inside Prisma's normal per-migration transaction, so
+-- there is no window with only one index live; CREATE-before-DROP is kept
+-- anyway as defense in depth for a manual (non-Prisma) apply, where the two
+-- unique indexes coexisting briefly is harmless (the old, more restrictive
+-- 6-column index continues enforcing until it's dropped). lock_timeout bounds
+-- how long this can block behind an unrelated long-running statement on
+-- "lift_record" -- it fails fast and retries cleanly rather than stalling the
+-- table indefinitely; adjust before deploying against a large "lift_record" if
+-- the index build itself needs longer than the timeout to complete.
 
--- DropIndex
-DROP INDEX "lift_record_userId_program_cycleNum_workoutNum_lift_setNum_key";
+SET LOCAL lock_timeout = '5s';
 
 -- CreateIndex
 CREATE UNIQUE INDEX "lift_record_userId_program_cycleNum_workoutNum_date_lift_se_key" ON "lift_record"("userId", "program", "cycleNum", "workoutNum", "date", "lift", "setNum");
+
+-- DropIndex
+DROP INDEX "lift_record_userId_program_cycleNum_workoutNum_lift_setNum_key";

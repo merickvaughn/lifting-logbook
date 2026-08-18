@@ -28,6 +28,24 @@ function tally(deltas: ImportDelta[]): ImportPreview {
   };
 }
 
+/**
+ * Disambiguates a delta's *display* key when the same natural key is yielded
+ * more than once in one preview pass. Since issue #884, `classifyImportRows`
+ * yields an in-batch duplicate as an explicit skip (previously dropped
+ * silently), so `deltas` can now contain two entries sharing a `key` — and
+ * the web import wizard uses `ImportDelta.key` as React list identity and as
+ * Set membership for include/exclude selection, both of which require
+ * uniqueness (a duplicate key otherwise makes toggling one row also toggle
+ * the other, and confuses React's reconciliation). `seenCounts` is scoped to
+ * one preview call by the caller; the first occurrence of a key is left
+ * unsuffixed so the common (non-duplicate) case is unaffected.
+ */
+function dedupeDisplayKey(key: string, seenCounts: Map<string, number>): string {
+  const count = seenCounts.get(key) ?? 0;
+  seenCounts.set(key, count + 1);
+  return count === 0 ? key : `${key}#${count}`;
+}
+
 /** Natural key for a program-spec row: `week:offset:lift:order`. */
 export function programSpecNaturalKey(r: {
   week: number;
@@ -54,7 +72,8 @@ export function parseProgramSpecNaturalKey(
 
 /**
  * Lift records are append-only: a row either creates (new natural key) or skips
- * (key already present). Duplicate keys within the file collapse to one entry.
+ * (key already present, whether already stored or repeated earlier in this
+ * same file — issue #884 — both surface as a 'skip' delta).
  */
 export function buildLiftRecordsPreview(
   incoming: LiftRecord[],
@@ -62,18 +81,20 @@ export function buildLiftRecordsPreview(
 ): ImportPreview {
   const existingKeys = new Set(existing.map(liftRecordNaturalKey));
   const deltas: ImportDelta[] = [];
+  const seenCounts = new Map<string, number>();
 
   for (const { row: r, kind, key } of classifyImportRows(
     incoming,
     liftRecordNaturalKey,
     (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
   )) {
+    const displayKey = dedupeDisplayKey(key, seenCounts);
     const label = `${r.lift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
-        ? { key, label, kind, before: value, after: value }
-        : { key, label, kind, after: value },
+        ? { key: displayKey, label, kind, before: value, after: value }
+        : { key: displayKey, label, kind, after: value },
     );
   }
   return tally(deltas);
@@ -91,6 +112,7 @@ export function buildLiftRecordsPreviewSoft(
 ): ImportPreview {
   const existingKeys = new Set(existing.map(liftRecordNaturalKey));
   const deltas: ImportDelta[] = [];
+  const seenCounts = new Map<string, number>();
 
   // Valid rows — normal create/skip classification
   for (const { row: r, kind, key } of classifyImportRows(
@@ -98,12 +120,13 @@ export function buildLiftRecordsPreviewSoft(
     liftRecordNaturalKey,
     (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
   )) {
+    const displayKey = dedupeDisplayKey(key, seenCounts);
     const label = `${r.lift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
-        ? { key, label, kind, before: value, after: value }
-        : { key, label, kind, after: value },
+        ? { key: displayKey, label, kind, before: value, after: value }
+        : { key: displayKey, label, kind, after: value },
     );
   }
 
@@ -171,18 +194,20 @@ export function buildTrainingMaxPreview(
 ): ImportPreview {
   const existingByLift = new Map(existing.map((m) => [m.lift, m.weight]));
   const deltas: ImportDelta[] = [];
+  const seenCounts = new Map<string, number>();
 
   for (const { row: m, kind, key } of classifyImportRows(
     incoming,
     (m) => m.lift,
     (m) => trainingMaxRowKind(m, existingByLift),
   )) {
+    const displayKey = dedupeDisplayKey(key, seenCounts);
     const after = `${m.weight}`;
     const before = existingByLift.get(m.lift);
     deltas.push(
       before === undefined
-        ? { key, label: m.lift, kind, after }
-        : { key, label: m.lift, kind, before: `${before}`, after },
+        ? { key: displayKey, label: m.lift, kind, after }
+        : { key: displayKey, label: m.lift, kind, before: `${before}`, after },
     );
   }
   return tally(deltas);
@@ -201,18 +226,20 @@ export function buildStrengthGoalPreview(
 ): ImportPreview {
   const existingByLift = new Map(existing.map((g) => [g.lift, g]));
   const deltas: ImportDelta[] = [];
+  const seenCounts = new Map<string, number>();
 
   for (const { row: g, kind, key } of classifyImportRows(
     incoming,
     (g) => g.lift,
     (g) => strengthGoalRowKind(g, existingByLift),
   )) {
+    const displayKey = dedupeDisplayKey(key, seenCounts);
     const after = goalValue(g);
     const prior = existingByLift.get(g.lift);
     deltas.push(
       prior
-        ? { key, label: g.lift, kind, before: goalValue(prior), after }
-        : { key, label: g.lift, kind, after },
+        ? { key: displayKey, label: g.lift, kind, before: goalValue(prior), after }
+        : { key: displayKey, label: g.lift, kind, after },
     );
   }
   return tally(deltas);
@@ -259,19 +286,24 @@ export function buildProgramSpecPreview(
 ): ImportPreview {
   const existingByKey = new Map(existing.map((r) => [programSpecNaturalKey(r), r]));
   const deltas: ImportDelta[] = [];
+  const seenCounts = new Map<string, number>();
 
   for (const { row: r, kind, key } of classifyImportRows(
     incoming,
     programSpecNaturalKey,
     (r) => programSpecRowKind(r, existingByKey),
   )) {
+    // Lookup uses the true natural key `key`, not the disambiguated display
+    // key below — an in-batch duplicate still describes the same stored (or
+    // about-to-be-created) spec row as its first occurrence.
+    const prior = existingByKey.get(key);
+    const displayKey = dedupeDisplayKey(key, seenCounts);
     const label = `Week ${r.week} · ${r.lift} (#${r.order})`;
     const after = specValue(r);
-    const prior = existingByKey.get(key);
     deltas.push(
       prior
-        ? { key, label, kind, before: specValue(prior), after }
-        : { key, label, kind, after },
+        ? { key: displayKey, label, kind, before: specValue(prior), after }
+        : { key: displayKey, label, kind, after },
     );
   }
   return tally(deltas);

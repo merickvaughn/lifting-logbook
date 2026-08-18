@@ -121,10 +121,14 @@ describe('LiftRecordsController', () => {
     });
 
     // Regression for issue #884: the single-record path shares appendLiftRecords'
-    // skipDuplicates semantics with the import path, so a collision here must not
-    // silently no-op and report success.
-    it('throws ConflictException when the write is silently skipped as a duplicate', async () => {
+    // skipDuplicates semantics with the import path, so a collision must not
+    // silently no-op and report success unless it's an idempotent retry (the
+    // payload matches what's already stored — see the next test).
+    it('throws ConflictException when the write collides with different data', async () => {
       liftRecordRepo.appendLiftRecords.mockResolvedValue(0);
+      liftRecordRepo.getLiftRecords.mockResolvedValue([
+        { ...SEED_RECORD, lift: 'Bench Press', setNum: 1, weight: 999, reps: 1 },
+      ]);
 
       await expect(
         controller.createLiftRecord('5-3-1', {
@@ -138,6 +142,29 @@ describe('LiftRecordsController', () => {
           reps: 5,
         }, MOCK_USER),
       ).rejects.toThrow(ConflictException);
+    });
+
+    // A retry whose response was lost (timeout, dropped connection) resubmits
+    // identical data — that must succeed, not stay permanently stuck on a
+    // conflict the client has no way to resolve.
+    it('returns the existing record instead of a conflict when the collision is an idempotent retry', async () => {
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(0);
+      const stored = { ...SEED_RECORD, lift: 'Bench Press', setNum: 1, weight: 180, reps: 5, notes: '' };
+      liftRecordRepo.getLiftRecords.mockResolvedValue([stored]);
+
+      const result = await controller.createLiftRecord('5-3-1', {
+        program: '5-3-1',
+        cycleNum: 4,
+        workoutNum: 1,
+        date: '2026-04-20',
+        lift: 'Bench Press',
+        setNum: 1,
+        weight: 180,
+        reps: 5,
+      }, MOCK_USER);
+
+      expect(result.weight).toBe(180);
+      expect(result.reps).toBe(5);
     });
   });
 

@@ -37,7 +37,7 @@ describe('import-commit count parity (in-memory vs Prisma)', () => {
       { lift: 'Squat', weight: 300, dateUpdated: at }, // identical → skip
       { lift: 'Deadlift', weight: 400, dateUpdated: at }, // differs → update
       { lift: 'Bench', weight: 200, dateUpdated: at }, // absent → create
-      { lift: 'Squat', weight: 999, dateUpdated: at }, // duplicate lift → collapsed
+      { lift: 'Squat', weight: 999, dateUpdated: at }, // duplicate lift in batch → counted as skip (#884)
     ];
 
     const mem = new InMemoryTrainingMaxRepository();
@@ -74,7 +74,7 @@ describe('import-commit count parity (in-memory vs Prisma)', () => {
       { lift: 'Squat', goalType: 'absolute', unit: 'lbs', target: 400, updatedAt: at }, // skip
       { lift: 'Deadlift', goalType: 'absolute', unit: 'lbs', target: 505, updatedAt: at }, // update
       { lift: 'Bench', goalType: 'relative', unit: 'lbs', ratio: 1.5, updatedAt: at }, // create
-      { lift: 'Squat', goalType: 'absolute', unit: 'lbs', target: 999, updatedAt: at }, // collapsed
+      { lift: 'Squat', goalType: 'absolute', unit: 'lbs', target: 999, updatedAt: at }, // duplicate lift in batch → counted as skip (#884)
     ];
 
     const mem = new InMemoryStrengthGoalRepository();
@@ -132,7 +132,7 @@ describe('import-commit count parity (in-memory vs Prisma)', () => {
       spec('Squat', 5), // identical → skip
       spec('Bench', 3), // sets differ → update
       spec('Deadlift', 5), // absent → create
-      spec('Squat', 9), // duplicate natural key → collapsed
+      spec('Squat', 9), // duplicate natural key in batch → counted as skip (#884)
     ];
 
     const mem = new InMemoryLiftingProgramSpecRepository();
