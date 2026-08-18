@@ -7,6 +7,7 @@ import {
   PROGRAM_KEY,
   SHEET_NAME_KEY,
 } from "@src/core/constants";
+import { parseDateStringUTC, toUTCMidnight } from "../jsUtil";
 
 /**
  * Parses a 2D array (from CSV or sheet) into a CycleDashboard object.
@@ -33,7 +34,13 @@ export function parseCycleDashboard(data: SpreadsheetCell[][]): CycleDashboard {
   const program = String(programRaw ?? "");
   const cycleUnit = String(cycleUnitRaw ?? "");
   const cycleNum = Number(cycleNumRaw);
-  const cycleDate = new Date(String(cycleDateRaw ?? ""));
+  // Non-ISO date cells (e.g. "1/5/2026") parse at LOCAL midnight via bare
+  // `new Date(string)`, landing on the WRONG UTC calendar day on any host
+  // ahead of UTC -- same bug class as issue #894 (see jsUtil.ts's
+  // parseDateStringUTC doc comment). toUTCMidnight normalizes the
+  // time-of-day, matching the convention parseLiftRecords.ts /
+  // parseTrainingMaxes.ts already use (issue #899).
+  const cycleDate = toUTCMidnight(parseDateStringUTC(String(cycleDateRaw ?? "")));
   const sheetName = String(sheetNameRaw ?? "");
   const cycleStartWeekday = toTitleCase(
     String(cycleStartWeekdayRaw ?? ""),
