@@ -14,10 +14,8 @@ import {
   Req,
 } from '@nestjs/common';
 import {
-  CreateLiftRecordRequest,
   ImportLiftRecordsResponse,
   LiftRecordResponse,
-  UpdateLiftRecordRequest,
 } from '@lifting-logbook/types';
 import {
   DEFAULT_SLOT_MAP,
@@ -36,6 +34,8 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { CreateLiftRecordDto } from './create-lift-record.dto';
+import { UpdateLiftRecordDto } from './update-lift-record.dto';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
 
@@ -60,21 +60,48 @@ export class LiftRecordsController {
   @HttpCode(HttpStatus.CREATED)
   async createLiftRecord(
     @Param('program') program: string,
-    @Body() body: CreateLiftRecordRequest,
+    @Body() body: CreateLiftRecordDto,
     @CurrentUser() user: AuthUser,
   ): Promise<LiftRecordResponse> {
+    // `body.program` is unused by the write itself (the route param is authoritative
+    // below) but is now a declared, validated part of the accepted contract
+    // (CreateLiftRecordDto) — silently discarding a *conflicting* value would be
+    // worse than the pre-DTO state of ignoring an unvalidated one: a client bug (a
+    // stale route, a mis-wired component) could write real training data into the
+    // wrong program with a 201 giving no indication anything was wrong (issue #893
+    // review round 3).
+    if (body.program !== undefined && body.program !== program) {
+      throw new BadRequestException(
+        `program in the request body ('${body.program}') does not match the route parameter ('${program}')`,
+      );
+    }
+
     const { liftRecord, cycleScheduledWorkout } = await this.factory.forUser(user);
 
     let effectiveDate: Date;
     if (body.date) {
-      // `body.date` is typed as a plain interface field (erased at runtime;
-      // ValidationPipe does not enforce a format on it — see #893), so it may
-      // carry a full ISO datetime rather than a bare date. Normalize
-      // unconditionally rather than trusting the caller to send UTC midnight:
-      // the stored date must round-trip exactly through the YYYYMMDD id/key
-      // encoding (issue #884), or the record becomes unreachable by a later
+      // `CreateLiftRecordDto.date` is validated as a bare calendar date (issue #893).
+      // Normalize unconditionally rather than trusting the caller to send UTC
+      // midnight: the stored date must round-trip exactly through the YYYYMMDD
+      // id/key encoding (issue #884), or the record becomes unreachable by a later
       // PATCH.
       effectiveDate = toUTCMidnight(new Date(body.date));
+      // Last-resort guard, independent of whatever the DTO's decorators do or don't
+      // catch: #893's review found that class-validator's `@IsDateString`/`@Matches`
+      // combination on `body.date` still has edge cases (verified: ISO 8601 week-date
+      // strings like "2026-W05" pass validation but `new Date(...)` can't parse
+      // them). An `Invalid Date` reaching `appendLiftRecords` either crashes later
+      // with an opaque `RangeError: Invalid time value` (from `.toISOString()` on the
+      // conflict path below) or writes a record no id/key can ever address again —
+      // surface a clean 400 here instead, regardless of which upstream validator gap
+      // let it through. Scoped to this branch only: a NaN here can only originate
+      // from client-supplied `body.date`, so a 400 correctly blames the request. The
+      // scheduled-date branch below has no such guard — a bad `scheduledDate` would
+      // be a server-side data defect, not something a 400 (which tells the client to
+      // fix input it never sent) should be blamed on.
+      if (Number.isNaN(effectiveDate.getTime())) {
+        throw new BadRequestException('date must be a valid calendar date');
+      }
     } else {
       const scheduled = await cycleScheduledWorkout.getScheduledWorkouts(program, body.cycleNum);
       const match = scheduled.find((s) => s.workoutNum === body.workoutNum);
@@ -218,7 +245,7 @@ export class LiftRecordsController {
   async updateLiftRecord(
     @Param('program') program: string,
     @Param('id') id: string,
-    @Body() body: UpdateLiftRecordRequest,
+    @Body() body: UpdateLiftRecordDto,
     @CurrentUser() user: AuthUser,
   ): Promise<LiftRecordResponse> {
     const { liftRecord } = await this.factory.forUser(user);

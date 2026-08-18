@@ -10,6 +10,7 @@ import { InMemoryRepositoryFactory } from '../adapters/factory/in-memory-reposit
 import { InMemoryUserSettingsRepository } from '../adapters/in-memory/user-settings.adapter';
 import { SEED_PROGRAM } from '../adapters/in-memory/fixtures';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainNotFoundFilter } from './not-found.filter';
 
 describe('Programs HTTP (e2e, in-memory adapters)', () => {
@@ -22,7 +23,12 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       { logger: false },
     );
     app.useGlobalFilters(new DomainNotFoundFilter());
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+    // Was `{ whitelist: true }` only — didn't match main.ts's production pipe (which
+    // also sets forbidNonWhitelisted), so this harness could never actually prove an
+    // unrecognized body field is rejected over HTTP the way it really is in
+    // production. Now sourced from the same shared constant main.ts uses, so the two
+    // cannot silently diverge again (found during #893's review).
+    app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
   });
@@ -1484,6 +1490,179 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
         headers: { 'content-type': 'application/json', ...AS_SWITCH },
         payload: '{not valid json',
       });
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST/PATCH /lift-records — request-body validation (issue #893). Both routes
+  // declared their @Body() as a plain TypeScript interface, which is erased at
+  // compile time — Nest's ValidationPipe had no metatype to validate against and
+  // silently let any JSON object reach the handler unchecked. CreateLiftRecordDto /
+  // UpdateLiftRecordDto (both in ./create-lift-record.dto / ./update-lift-record.dto)
+  // close that gap. Fresh per-test user token against SEED_PROGRAM with an explicit
+  // `date` on every write, so — like the DELETE-cycles and switch-regression blocks
+  // above — this block cannot interfere with (or depend on) state left by the
+  // order-sensitive blocks earlier in this file.
+  // ---------------------------------------------------------------------------
+  describe('POST/PATCH /lift-records — request-body validation (regression for #893)', () => {
+    const AS_VALIDATION = { authorization: 'Bearer lift-record-validation-user' };
+    const LIFT_RECORDS_URL = `/programs/${SEED_PROGRAM}/lift-records`;
+
+    const validBody = (overrides: Record<string, unknown> = {}) => ({
+      program: SEED_PROGRAM,
+      cycleNum: 1,
+      workoutNum: 1,
+      date: '2026-05-01',
+      lift: 'Bench Press',
+      setNum: 1,
+      weight: 180,
+      reps: 5,
+      notes: '',
+      ...overrides,
+    });
+
+    const postValidation = (body: unknown) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: LIFT_RECORDS_URL,
+        headers: { 'content-type': 'application/json', ...AS_VALIDATION },
+        payload: JSON.stringify(body),
+      });
+
+    const patchValidation = (id: string, body: unknown) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'PATCH',
+        url: `${LIFT_RECORDS_URL}/${id}`,
+        headers: { 'content-type': 'application/json', ...AS_VALIDATION },
+        payload: JSON.stringify(body),
+      });
+
+    it('rejects a non-date-string date with 400 (previously reached the handler unchecked)', async () => {
+      const res = await postValidation(validBody({ date: 'not-a-date' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects a non-numeric weight with 400', async () => {
+      const res = await postValidation(validBody({ weight: 'heavy' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects a non-integer reps with 400', async () => {
+      const res = await postValidation(validBody({ reps: 'five' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects a setNum below 1 with 400', async () => {
+      const res = await postValidation(validBody({ setNum: 0 }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 2: an ISO 8601 week-date string passes
+    // non-strict (and even strict) isISO8601, but `new Date(...)` can't parse it —
+    // without the @Matches decorator this reached the persistence layer as an
+    // Invalid Date and 500'd. Proves the fix end-to-end over HTTP, not just at the
+    // class-validator level.
+    it('rejects an ISO 8601 week-date with 400, not a 500 from Invalid Date downstream', async () => {
+      const res = await postValidation(validBody({ date: '2026-W05' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 2: a shape-valid but nonexistent calendar
+    // date (Feb 30) — without the @IsDateString strict option this silently rolled
+    // over to a different day rather than being rejected.
+    it('rejects a nonexistent calendar date with 400, not a silent day rollover', async () => {
+      const res = await postValidation(validBody({ date: '2026-02-30' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 2: an empty lift would create a record
+    // whose id parser rejects the empty lift segment, permanently unreachable by a
+    // later PATCH — verified against real Postgres in create-lift-record.dto.spec.ts.
+    it('rejects an empty lift with 400', async () => {
+      const res = await postValidation(validBody({ lift: '' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 2: reps is a Postgres Int (32-bit) column —
+    // verified this 500s against real Postgres before the @Max ceiling was added.
+    it('rejects reps above the int32-safe ceiling with 400', async () => {
+      const res = await postValidation(validBody({ reps: 3_000_000_000 }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 2: this harness's ValidationPipe previously
+    // omitted forbidNonWhitelisted, so it could not prove this behavior over HTTP —
+    // only the DTO-level unit specs (calling class-validator's validate() directly)
+    // exercised it. Now that the harness is sourced from the same shared
+    // VALIDATION_PIPE_OPTIONS constant as main.ts, this closes that wiring gap.
+    it('rejects an unrecognized extra field with 400 (forbidNonWhitelisted, matches production)', async () => {
+      const res = await postValidation(validBody({ hacked: true }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 3: date was previously accepted with an
+    // optional time/offset component; the controller's toUTCMidnight(new
+    // Date(body.date)) reads UTC components, so an offset-bearing value silently
+    // shifted to a different calendar day. date is now bare YYYY-MM-DD only.
+    it('rejects a date-time with 400 (bare YYYY-MM-DD only, avoids a timezone-dependent day-shift)', async () => {
+      const res = await postValidation(validBody({ date: '2026-05-01T10:30:00Z' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 3: body.program is unused by the write
+    // itself (the route :program param is authoritative) but is now a declared,
+    // validated part of the accepted contract — silently discarding a *conflicting*
+    // value would let a client bug write real data into the wrong program with a
+    // 201 giving no indication anything was wrong.
+    it('rejects a body.program that conflicts with the route :program param, with 400', async () => {
+      const res = await postValidation(validBody({ program: 'some-other-program' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('accepts a well-formed body with 201 (valid-input pass-through)', async () => {
+      const res = await postValidation(validBody({ setNum: 2 }));
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(body.lift).toBe('Bench Press');
+      expect(body.weight).toBe(180);
+    });
+
+    it('PATCH rejects a negative weight with 400', async () => {
+      const created = await postValidation(validBody({ setNum: 3 }));
+      expect(created.statusCode).toBe(201);
+
+      const res = await patchValidation(created.json().id, { weight: -10 });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('PATCH accepts a well-formed partial update with 200 (valid-input pass-through)', async () => {
+      const created = await postValidation(validBody({ setNum: 4 }));
+      expect(created.statusCode).toBe(201);
+
+      const res = await patchValidation(created.json().id, { reps: 6 });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().reps).toBe(6);
+    });
+
+    // Regression for #893's review round 3: an untrimmed lift is a different
+    // natural key than its trimmed form, silently fragmenting one lift's history.
+    it('accepts a whitespace-padded lift, trimmed before persisting (valid-input pass-through)', async () => {
+      const res = await postValidation(validBody({ setNum: 5, lift: '  Bench Press  ' }));
+      expect(res.statusCode).toBe(201);
+      expect(res.json().lift).toBe('Bench Press');
+    });
+
+    // Regression for #893's review round 3: @IsOptional() (now @ValidateIf) skips
+    // null, not just undefined — an explicit null weight/reps/notes previously
+    // reached the Prisma update as a literal null against a non-nullable column and
+    // 500'd (verified against real Postgres; this in-memory suite alone couldn't
+    // reproduce it, which is exactly why the DB-backed suite matters here too).
+    it('PATCH rejects an explicit null weight with 400', async () => {
+      const created = await postValidation(validBody({ setNum: 6 }));
+      expect(created.statusCode).toBe(201);
+
+      const res = await patchValidation(created.json().id, { weight: null });
       expect(res.statusCode).toBe(400);
     });
   });

@@ -14,6 +14,7 @@ import { resolveCorsOrigins } from './cors.config';
 import { DomainConflictFilter } from './programs/conflict.filter';
 import { DomainNotFoundFilter } from './programs/not-found.filter';
 import { PrismaTransactionTimeoutFilter } from './programs/transaction-timeout.filter';
+import { VALIDATION_PIPE_OPTIONS } from './validation-pipe.config';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -32,7 +33,7 @@ async function bootstrap() {
     new DomainConflictFilter(),
     new PrismaTransactionTimeoutFilter(httpAdapter),
   );
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
+  app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
   // Browser → API calls are cross-origin (ADR-028/ADR-032): the web app calls the API's
   // external URL directly from the browser, so without these CORS headers the browser blocks
   // every client-side write. enableCors registers @fastify/cors, which also answers the

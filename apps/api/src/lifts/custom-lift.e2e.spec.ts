@@ -8,6 +8,7 @@ import {
 import { CustomLiftResponse } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { SEED_PROGRAM } from '../adapters/in-memory/fixtures';
+import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
 
@@ -21,7 +22,9 @@ describe('Custom Lifts HTTP (e2e, in-memory adapters)', () => {
       { logger: false },
     );
     app.useGlobalFilters(new DomainNotFoundFilter(), new DomainConflictFilter());
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
+    // Sourced from the shared constant (previously a byte-identical-by-convention
+    // literal) so it can't silently diverge from main.ts (#893 review).
+    app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
   });
