@@ -14,10 +14,8 @@ import {
   Req,
 } from '@nestjs/common';
 import {
-  CreateLiftRecordRequest,
   ImportLiftRecordsResponse,
   LiftRecordResponse,
-  UpdateLiftRecordRequest,
 } from '@lifting-logbook/types';
 import {
   DEFAULT_SLOT_MAP,
@@ -36,6 +34,8 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { CreateLiftRecordDto } from './create-lift-record.dto';
+import { UpdateLiftRecordDto } from './update-lift-record.dto';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
 
@@ -60,20 +60,19 @@ export class LiftRecordsController {
   @HttpCode(HttpStatus.CREATED)
   async createLiftRecord(
     @Param('program') program: string,
-    @Body() body: CreateLiftRecordRequest,
+    @Body() body: CreateLiftRecordDto,
     @CurrentUser() user: AuthUser,
   ): Promise<LiftRecordResponse> {
     const { liftRecord, cycleScheduledWorkout } = await this.factory.forUser(user);
 
     let effectiveDate: Date;
     if (body.date) {
-      // `body.date` is typed as a plain interface field (erased at runtime;
-      // ValidationPipe does not enforce a format on it — see #893), so it may
-      // carry a full ISO datetime rather than a bare date. Normalize
-      // unconditionally rather than trusting the caller to send UTC midnight:
-      // the stored date must round-trip exactly through the YYYYMMDD id/key
-      // encoding (issue #884), or the record becomes unreachable by a later
-      // PATCH.
+      // `CreateLiftRecordDto.date` is validated as an ISO 8601 date string (issue
+      // #893), but that still permits a full date-time rather than a bare date.
+      // Normalize unconditionally rather than trusting the caller to send UTC
+      // midnight: the stored date must round-trip exactly through the YYYYMMDD
+      // id/key encoding (issue #884), or the record becomes unreachable by a
+      // later PATCH.
       effectiveDate = toUTCMidnight(new Date(body.date));
     } else {
       const scheduled = await cycleScheduledWorkout.getScheduledWorkouts(program, body.cycleNum);
@@ -218,7 +217,7 @@ export class LiftRecordsController {
   async updateLiftRecord(
     @Param('program') program: string,
     @Param('id') id: string,
-    @Body() body: UpdateLiftRecordRequest,
+    @Body() body: UpdateLiftRecordDto,
     @CurrentUser() user: AuthUser,
   ): Promise<LiftRecordResponse> {
     const { liftRecord } = await this.factory.forUser(user);

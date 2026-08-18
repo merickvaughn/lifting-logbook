@@ -1487,4 +1487,94 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // POST/PATCH /lift-records — request-body validation (issue #893). Both routes
+  // declared their @Body() as a plain TypeScript interface, which is erased at
+  // compile time — Nest's ValidationPipe had no metatype to validate against and
+  // silently let any JSON object reach the handler unchecked. CreateLiftRecordDto /
+  // UpdateLiftRecordDto (both in ./create-lift-record.dto / ./update-lift-record.dto)
+  // close that gap. Fresh per-test user token against SEED_PROGRAM with an explicit
+  // `date` on every write, so — like the DELETE-cycles and switch-regression blocks
+  // above — this block cannot interfere with (or depend on) state left by the
+  // order-sensitive blocks earlier in this file.
+  // ---------------------------------------------------------------------------
+  describe('POST/PATCH /lift-records — request-body validation (regression for #893)', () => {
+    const AS_VALIDATION = { authorization: 'Bearer lift-record-validation-user' };
+    const LIFT_RECORDS_URL = `/programs/${SEED_PROGRAM}/lift-records`;
+
+    const validBody = (overrides: Record<string, unknown> = {}) => ({
+      program: SEED_PROGRAM,
+      cycleNum: 1,
+      workoutNum: 1,
+      date: '2026-05-01',
+      lift: 'Bench Press',
+      setNum: 1,
+      weight: 180,
+      reps: 5,
+      notes: '',
+      ...overrides,
+    });
+
+    const postValidation = (body: unknown) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: LIFT_RECORDS_URL,
+        headers: { 'content-type': 'application/json', ...AS_VALIDATION },
+        payload: JSON.stringify(body),
+      });
+
+    const patchValidation = (id: string, body: unknown) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'PATCH',
+        url: `${LIFT_RECORDS_URL}/${id}`,
+        headers: { 'content-type': 'application/json', ...AS_VALIDATION },
+        payload: JSON.stringify(body),
+      });
+
+    it('rejects a non-date-string date with 400 (previously reached the handler unchecked)', async () => {
+      const res = await postValidation(validBody({ date: 'not-a-date' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects a non-numeric weight with 400', async () => {
+      const res = await postValidation(validBody({ weight: 'heavy' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects a non-integer reps with 400', async () => {
+      const res = await postValidation(validBody({ reps: 'five' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects a setNum below 1 with 400', async () => {
+      const res = await postValidation(validBody({ setNum: 0 }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('accepts a well-formed body with 201 (valid-input pass-through)', async () => {
+      const res = await postValidation(validBody({ setNum: 2 }));
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(body.lift).toBe('Bench Press');
+      expect(body.weight).toBe(180);
+    });
+
+    it('PATCH rejects a negative weight with 400', async () => {
+      const created = await postValidation(validBody({ setNum: 3 }));
+      expect(created.statusCode).toBe(201);
+
+      const res = await patchValidation(created.json().id, { weight: -10 });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('PATCH accepts a well-formed partial update with 200 (valid-input pass-through)', async () => {
+      const created = await postValidation(validBody({ setNum: 4 }));
+      expect(created.statusCode).toBe(201);
+
+      const res = await patchValidation(created.json().id, { reps: 6 });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().reps).toBe(6);
+    });
+  });
 });
