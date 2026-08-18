@@ -1,4 +1,4 @@
-import { IsDateString, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsDateString, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { CreateLiftRecordRequest } from '@lifting-logbook/types';
 
 // Implements the shared request contract in @lifting-logbook/types for every field
@@ -22,12 +22,20 @@ export class CreateLiftRecordDto
   @IsString()
   program?: string;
 
+  // Upper bounds are generous (well beyond any realistic program length) — they exist
+  // to turn an obvious client bug (a stray digit, an off-by-orders-of-magnitude loop
+  // index) into a clean 400 at the boundary instead of silently storing garbage that
+  // only surfaces later as a broken dashboard/week layout. Mirrors the precedent set
+  // by CustomProgramSpecRowDto's @Max(20) on `sets`/`reps` for the same controller
+  // family's structural fields — reviewed in #893's PR.
   @IsInt()
   @Min(1)
+  @Max(1000)
   cycleNum!: number;
 
   @IsInt()
   @Min(1)
+  @Max(1000)
   workoutNum!: number;
 
   /**
@@ -44,8 +52,12 @@ export class CreateLiftRecordDto
   @IsString()
   lift!: string;
 
+  // 50, not CustomProgramSpecRowDto's 20 — this is logged performance data (warm-ups,
+  // drop sets, extra work) rather than a prescribed program spec, so it needs more
+  // headroom, but still bounded to catch an obvious bug rather than left unbounded.
   @IsInt()
   @Min(1)
+  @Max(50)
   setNum!: number;
 
   // Float, not Int (matches the `weight Float` column) — fractional plate loads

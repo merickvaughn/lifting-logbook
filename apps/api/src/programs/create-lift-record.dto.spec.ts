@@ -116,6 +116,23 @@ describe('CreateLiftRecordDto validation', () => {
     expect(await flattenConstraintKeys(dtoWith({ workoutNum: 1.5 }))).toContain('isInt');
   });
 
+  it('rejects a cycleNum above the sanity ceiling (obvious client bug, not a legitimate program length)', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ cycleNum: 40000000 }))).toContain('max');
+  });
+
+  it('rejects a workoutNum above the sanity ceiling', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ workoutNum: 40000000 }))).toContain('max');
+  });
+
+  it('rejects a setNum above the sanity ceiling', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ setNum: 40000000 }))).toContain('max');
+  });
+
+  it('accepts a cycleNum at the sanity ceiling', async () => {
+    const errors = await validate(dtoWith({ cycleNum: 1000 }), { whitelist: true });
+    expect(errors).toHaveLength(0);
+  });
+
   it('rejects an unrecognized extra field under forbidNonWhitelisted (matches main.ts pipe config)', async () => {
     expect(await flattenConstraintKeys(dtoWith({ hacked: true }))).toContain('whitelistValidation');
   });
