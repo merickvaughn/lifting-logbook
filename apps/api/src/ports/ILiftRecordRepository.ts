@@ -11,7 +11,10 @@ export interface ILiftRecordRepository {
 
   /**
    * Returns the subset of `candidates` whose natural key
-   * (cycleNum, workoutNum, lift, setNum) already exists for the given program.
+   * (cycleNum, workoutNum, date, lift, setNum) already exists for the given program.
+   * `date` is part of the key (issue #884): two sets can otherwise legitimately
+   * share the same (cycleNum, workoutNum, lift, setNum) tuple on different real
+   * calendar dates and must not be treated as duplicates of each other.
    * Used by the CSV import endpoint to identify which rows will be skipped as duplicates.
    */
   findExistingRecords(program: string, candidates: LiftRecord[]): Promise<LiftRecord[]>;
@@ -24,7 +27,7 @@ export interface ILiftRecordRepository {
 
   /**
    * Deletes lift records by natural key for undo support.
-   * Each key is encoded as `"cycleNum:workoutNum:lift:setNum"`.
+   * Each key is encoded as `"cycleNum:workoutNum:YYYYMMDD:lift:setNum"`.
    * Returns the number of rows deleted.
    */
   deleteLiftRecordsByNaturalKeys(program: string, naturalKeys: string[]): Promise<number>;

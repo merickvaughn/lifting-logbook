@@ -48,7 +48,10 @@ describe('PrismaStrengthGoalRepository.importGoals', () => {
       abs('Squat', 999), // duplicate lift in batch → collapsed
     ]);
 
-    expect(result).toEqual({ created: 1, updated: 1, skipped: 1 });
+    // Issue #884: the in-batch duplicate (abs('Squat', 999)) is now counted as
+    // skipped (was silently dropped, untallied) — skipped: 2 = the pre-existing
+    // "identical to stored" skip + the newly-visible in-batch-duplicate skip.
+    expect(result).toEqual({ created: 1, updated: 1, skipped: 2 });
     expect($transaction).toHaveBeenCalledTimes(1);
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { userId: USER, program: PROGRAM } }),

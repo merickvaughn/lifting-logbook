@@ -34,7 +34,16 @@ export function* classifyImportRows<T>(
   const seen = new Set<string>();
   for (const row of rows) {
     const key = keyOf(row);
-    if (seen.has(key)) continue; // collapse duplicate keys within the batch
+    if (seen.has(key)) {
+      // A later row in this batch reuses an earlier row's key. The earlier
+      // occurrence already won the create/update/skip decision and the write;
+      // this one is always a skip. Surfaced explicitly (issue #884) instead of
+      // silently dropped, so counts/deltas account for every incoming row —
+      // a same-key-within-the-file collision was previously invisible even
+      // when a same-key-vs-already-stored collision already showed as a skip.
+      yield { row, kind: 'skip', key };
+      continue;
+    }
     seen.add(key);
     yield { row, kind: rowKind(row, key), key };
   }

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Get,
   HttpCode,
@@ -21,9 +22,12 @@ import {
 } from '@lifting-logbook/types';
 import {
   DEFAULT_SLOT_MAP,
+  classifyImportRows,
+  formatDateYYYYMMDD,
   liftRecordNaturalKey,
   parseCsvText,
   parseLiftRecords,
+  toUTCMidnight,
   validateLiftImport,
 } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
@@ -66,7 +70,12 @@ export class LiftRecordsController {
     } else {
       const scheduled = await cycleScheduledWorkout.getScheduledWorkouts(program, body.cycleNum);
       const match = scheduled.find((s) => s.workoutNum === body.workoutNum);
-      effectiveDate = match?.scheduledDate ?? new Date();
+      // Bare `new Date()` is the one fallback source not already UTC-midnight by
+      // construction (an explicit body.date parses as UTC midnight per spec; a
+      // scheduled date is `@db.Date`, no time component) — normalize so the
+      // stored date always round-trips exactly through the YYYYMMDD id/key
+      // encoding (issue #884).
+      effectiveDate = match?.scheduledDate ?? toUTCMidnight(new Date());
     }
 
     const record = {
@@ -80,7 +89,16 @@ export class LiftRecordsController {
       reps: body.reps,
       notes: body.notes ?? '',
     };
-    await liftRecord.appendLiftRecords(program, [record]);
+    const written = await liftRecord.appendLiftRecords(program, [record]);
+    if (written === 0) {
+      // Same root cause as issue #884's import-path fix: skipDuplicates silently
+      // no-ops when a record's natural key already exists. Surface that instead
+      // of returning 201 for a write that never happened.
+      throw new ConflictException(
+        `A lift record already exists for ${record.lift}, cycle ${record.cycleNum}, ` +
+          `workout ${record.workoutNum}, set ${record.setNum} on ${formatDateYYYYMMDD(record.date)}.`,
+      );
+    }
     return toLiftRecordResponse(record);
   }
 
@@ -96,10 +114,13 @@ export class LiftRecordsController {
    * program. (Preloaded template programs become custom programs when edited; custom
    * programs have no lift restrictions.)
    *
-   * Rows whose natural key (cycleNum, workoutNum, lift, setNum) already exists for
-   * the program are silently skipped and reported in the `skipped` response field.
-   * The `written` count reflects actual rows inserted by the database (via
-   * `createMany({ skipDuplicates: true })`), not a client-side estimate.
+   * Rows whose natural key (cycleNum, workoutNum, date, lift, setNum) already exist
+   * for the program — or that repeat an earlier row's key within this same file —
+   * are skipped and reported in the `skipped` response field. `written`/`skipped`
+   * both come from one up-front classification pass (issue #884), so a same-key
+   * duplicate within the file is reported rather than silently vanishing, and the
+   * count no longer depends on the database's within-statement `ON CONFLICT`
+   * ordering to decide which of two colliding rows survives.
    */
   @Post('lift-records/import')
   @HttpCode(HttpStatus.CREATED)
@@ -124,23 +145,37 @@ export class LiftRecordsController {
       throw new BadRequestException({ message: 'Validation failed', errors });
     }
 
-    // Stamp each record with the route program before persisting.
-    const records = valid.map((r) => ({ ...r, program }));
+    // Stamp each record with the route program before persisting, and pair each
+    // with its 1-based CSV row number so a skip can be reported against the
+    // original file position after classification (which may reorder nothing but
+    // does filter).
+    const rows = valid.map((r, i) => ({ r: { ...r, program }, row: i + 1 }));
 
     const { liftRecord } = await this.factory.forUser(user);
-    const duplicates = await liftRecord.findExistingRecords(program, records);
+    const dupKeys = new Set(
+      (await liftRecord.findExistingRecords(program, rows.map(({ r }) => r))).map(
+        liftRecordNaturalKey,
+      ),
+    );
+
+    const classified = [
+      ...classifyImportRows(
+        rows,
+        ({ r }) => liftRecordNaturalKey(r),
+        (_x, k) => (dupKeys.has(k) ? 'skip' : 'create'),
+      ),
+    ];
 
     // `written` comes directly from the database's createMany count so it is
     // accurate even if a concurrent import caused additional rows to be skipped.
-    const written = await liftRecord.appendLiftRecords(program, records);
+    const written = await liftRecord.appendLiftRecords(
+      program,
+      classified.filter((c) => c.kind === 'create').map((c) => c.row.r),
+    );
 
-    const dupKeys = new Set(duplicates.map(liftRecordNaturalKey));
-    // Build skipped from `records` (canonical lift IDs), not `parsed` (CSV abbreviations),
-    // so the naturalKey strings match what findExistingRecords returned.
-    const skipped: SkippedRecord[] = records
-      .map((r, i) => ({ r, row: i + 1 }))
-      .filter(({ r }) => dupKeys.has(liftRecordNaturalKey(r)))
-      .map(({ r, row }) => ({ row, naturalKey: liftRecordNaturalKey(r) }));
+    const skipped: SkippedRecord[] = classified
+      .filter((c) => c.kind === 'skip')
+      .map((c) => ({ row: c.row.row, naturalKey: c.key }));
 
     return { written, skipped };
   }

@@ -156,7 +156,10 @@ describe('HybridLiftingProgramSpecRepository.saveProgramSpec', () => {
       spec('Squat', 9), // duplicate natural key → collapsed
     ]);
 
-    expect(result).toEqual({ created: 1, updated: 1, skipped: 1 });
+    // Issue #884: the in-batch duplicate (spec('Squat', 9)) is now counted as
+    // skipped (was silently dropped, untallied) — skipped: 2 = the pre-existing
+    // "identical to stored" skip + the newly-visible in-batch-duplicate skip.
+    expect(result).toEqual({ created: 1, updated: 1, skipped: 2 });
     expect($transaction).toHaveBeenCalledTimes(1);
     expect(findFirst).toHaveBeenCalledTimes(1); // owner guard
     // One up-front snapshot read (not a per-row findFirst), scoped to the program.

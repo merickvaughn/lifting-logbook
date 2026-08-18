@@ -63,6 +63,15 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
   ].join('\n');
 
+  // Two rows sharing every field except date — the exact shape of issue #884's
+  // real-world collisions (e.g. a cycle-numbering reset reusing cycle/workout/set
+  // combos years apart). Both must be created; neither may silently collapse.
+  const LIFT_CSV_SAME_KEY_DIFFERENT_DATE = [
+    'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+    '5-3-1,1,1,2025-12-16,Bench P.,1,175,7,',
+    '5-3-1,1,1,2024-01-12,Bench P.,1,202.5,8,',
+  ].join('\n');
+
   const TM_CSV = ['Date Updated,Lift,Weight', '12/29/2025,Bench P.,182.5'].join('\n');
 
   const GOALS_CSV = [
@@ -131,6 +140,31 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       ).json();
       expect(second.created).toBe(0);
       expect(second.skipped).toBe(1);
+    });
+
+    // Regression for issue #884: before the fix, both rows shared a date-less
+    // key and the second silently collapsed into the first. Re-committing the
+    // identical file afterward — the same idempotency check the sibling test
+    // above uses — proves both rows actually persisted: if only one had been
+    // written, the re-run would show created:1, skipped:1 instead of skipped:2.
+    it('creates both rows when they share every field except date', async () => {
+      const first = (
+        await importCsv(
+          'import-lr-datekey',
+          LIFT_CSV_SAME_KEY_DIFFERENT_DATE,
+          '?mode=commit&destination=lift-records',
+        )
+      ).json();
+      expect(first).toMatchObject({ destination: 'lift-records', created: 2, skipped: 0 });
+
+      const second = (
+        await importCsv(
+          'import-lr-datekey',
+          LIFT_CSV_SAME_KEY_DIFFERENT_DATE,
+          '?mode=commit&destination=lift-records',
+        )
+      ).json();
+      expect(second).toMatchObject({ created: 0, skipped: 2 });
     });
 
     it('commits training maxes and is idempotent on re-run', async () => {
@@ -252,8 +286,9 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     });
 
     it('excludes rows whose natural key matches excludeKeys', async () => {
-      // Natural key for LIFT_CSV row: cycleNum:workoutNum:lift:setNum = 1:1:bench-press:1
-      const excludeParam = encodeURIComponent('1:1:bench-press:1');
+      // Natural key for LIFT_CSV row: cycleNum:workoutNum:YYYYMMDD:lift:setNum
+      // = 1:1:20260101:bench-press:1 (date joined the key in issue #884)
+      const excludeParam = encodeURIComponent('1:1:20260101:bench-press:1');
       const res = (
         await importCsv(
           'p3-lr-exclude',

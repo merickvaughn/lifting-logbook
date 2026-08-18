@@ -8,6 +8,7 @@ import {
 import { classifyImportRows } from './classifyAndCount';
 import { liftRecordNaturalKey } from './liftRecordNaturalKey';
 import { normalizeAmrap } from './normalize-amrap';
+import { formatDateYYYYMMDD } from '../jsUtil';
 import { LiftImportSoftResult } from './validateLiftImportSoft';
 
 /**
@@ -67,7 +68,7 @@ export function buildLiftRecordsPreview(
     liftRecordNaturalKey,
     (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
   )) {
-    const label = `${r.lift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum}`;
+    const label = `${r.lift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
@@ -97,7 +98,7 @@ export function buildLiftRecordsPreviewSoft(
     liftRecordNaturalKey,
     (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
   )) {
-    const label = `${r.lift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum}`;
+    const label = `${r.lift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
@@ -117,7 +118,7 @@ export function buildLiftRecordsPreviewSoft(
   for (const { record: r, rowIndex, originalLift } of softResult.ambiguous) {
     const key = `__ambiguous_${rowIndex}`;
     const value = `${r.weight} × ${r.reps}`;
-    const label = `${originalLift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum}`;
+    const label = `${originalLift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
     deltas.push({
       key,
       label,

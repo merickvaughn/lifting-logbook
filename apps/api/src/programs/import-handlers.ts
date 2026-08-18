@@ -27,6 +27,7 @@ import {
   buildTrainingMaxPreImage,
   buildStrengthGoalPreImage,
   buildProgramSpecPreImage,
+  classifyImportRows,
   liftRecordNaturalKey,
   DEFAULT_SLOT_MAP,
 } from '@lifting-logbook/core';
@@ -60,14 +61,25 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     const existingKeys = new Set(
       (await repos.liftRecord.findExistingRecords(program, records)).map(liftRecordNaturalKey),
     );
-    const created = await repos.liftRecord.appendLiftRecords(program, records);
-    const uniqueKeys = new Set(records.map(liftRecordNaturalKey)).size;
-    const newRecords = records.filter((r) => !existingKeys.has(liftRecordNaturalKey(r)));
+    // Classify (and dedupe in-batch duplicates) in JS before writing, rather
+    // than deriving `skipped` by subtracting the DB's insert count from the
+    // unique-key count. That subtraction was sensitive to any drift between
+    // the JS-side key and the DB-side constraint (issue #884); classifying
+    // first means `toCreate` is already exactly what should be written, so
+    // the DB's own `createMany({ skipDuplicates: true })` skip logic is
+    // belt-and-suspenders rather than the source of truth for the count.
+    const classified = [
+      ...classifyImportRows(records, liftRecordNaturalKey, (_r, k) =>
+        existingKeys.has(k) ? 'skip' : 'create',
+      ),
+    ];
+    const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row);
+    const created = await repos.liftRecord.appendLiftRecords(program, toCreate);
     return {
       created,
       updated: 0,
-      skipped: uniqueKeys - created,
-      preImage: buildLiftRecordsPreImage(newRecords),
+      skipped: classified.length - toCreate.length,
+      preImage: buildLiftRecordsPreImage(toCreate),
     };
   },
 };

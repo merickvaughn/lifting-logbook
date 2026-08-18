@@ -878,6 +878,38 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(dbCount).toBe(body.written);
     });
 
+    // Regression for issue #884, against real fixture data rather than a synthetic
+    // case: this CSV contains a genuine same-key-different-date collision — cycle
+    // 37 / workout 2 / "BB Row" (canonical: "barbell-row") / set 1 exists on both
+    // 12/16/2025 (175x7) and 1/12/2024 (202.5x8), the exact numbers cited in the
+    // issue. Before the fix, the database's own unique constraint made it
+    // physically impossible to store both; this test fails on the pre-fix schema
+    // and passes once `date` joins the constraint.
+    it('imports both sides of a real same-key-different-date collision', async () => {
+      const csvContent = fs.readFileSync(FIXTURE_PATH, 'utf8');
+
+      const res = await postCsv(IMPORT_URL, csvContent);
+      expect(res.statusCode).toBe(201);
+
+      const rows = await prisma.liftRecord.findMany({
+        where: {
+          userId: TEST_USER,
+          program: SEED_PROGRAM,
+          cycleNum: 37,
+          workoutNum: 2,
+          lift: 'barbell-row',
+          setNum: 1,
+        },
+        orderBy: { date: 'asc' },
+      });
+
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => [r.date.toISOString().slice(0, 10), r.weight, r.reps])).toEqual([
+        ['2024-01-12', 202.5, 8],
+        ['2025-12-16', 175, 7],
+      ]);
+    });
+
     it('re-import returns written=0 and skipped=all rows from first import', async () => {
       const csvContent = fs.readFileSync(FIXTURE_PATH, 'utf8');
 
@@ -928,6 +960,120 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
         where: { userId: TEST_USER, program: SEED_PROGRAM },
       });
       expect(after).toBe(before);
+    });
+
+    // Regression for issue #884's in-batch-duplicate fix: a second row within the
+    // SAME file reusing an earlier row's full key (same date too) must be reported
+    // as skipped rather than vanishing with no trace and no count anywhere.
+    it('reports an in-batch duplicate row as skipped rather than silently dropping it', async () => {
+      const csv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        'RPT,90,1,6/1/2026,Squat,1,225,5,',
+        'RPT,90,1,6/1/2026,Squat,1,999,1,', // exact duplicate key of row above
+      ].join('\n');
+
+      const res = await postCsv(IMPORT_URL, csv);
+      expect(res.statusCode).toBe(201);
+
+      const body = res.json() as { written: number; skipped: { row: number; naturalKey: string }[] };
+      expect(body.written).toBe(1);
+      expect(body.skipped).toHaveLength(1);
+      expect(body.skipped[0]?.row).toBe(2);
+
+      const rows = await prisma.liftRecord.findMany({
+        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 90, workoutNum: 1, lift: 'back-squat', setNum: 1 },
+      });
+      // The first occurrence's data won, not the duplicate's.
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.weight).toBe(225);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Single-record POST/PATCH — de-risks the id-format and Prisma compound-unique
+  // accessor rename from issue #884 end-to-end against a real DB, not just mocks.
+  // ---------------------------------------------------------------------------
+
+  describe('POST/PATCH /programs/:program/lift-records (single record, DB)', () => {
+    const LIFT_RECORDS_URL = `/programs/${SEED_PROGRAM}/lift-records`;
+
+    beforeEach(async () => {
+      await prisma.liftRecord.deleteMany({ where: { userId: TEST_USER, program: SEED_PROGRAM } });
+    });
+
+    it('PATCHes the record it just POSTed, addressed by the id the POST returned', async () => {
+      const createRes = await postJson(LIFT_RECORDS_URL, {
+        program: SEED_PROGRAM,
+        cycleNum: 4,
+        workoutNum: 1,
+        date: '2026-04-20',
+        lift: 'Overhead Press',
+        setNum: 1,
+        weight: 95,
+        reps: 5,
+      });
+      expect(createRes.statusCode).toBe(201);
+      const created = createRes.json() as { id: string };
+
+      const patchRes = await patchJson(
+        `${LIFT_RECORDS_URL}/${encodeURIComponent(created.id)}`,
+        { weight: 100 },
+      );
+      expect(patchRes.statusCode).toBe(200);
+      expect((patchRes.json() as { weight: number }).weight).toBe(100);
+
+      const row = await prisma.liftRecord.findFirst({
+        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 4, workoutNum: 1, setNum: 1 },
+      });
+      expect(row?.weight).toBe(100);
+    });
+
+    // Regression for issue #884's single-record fix (task 6): a colliding write
+    // (same natural key, including date) must be rejected loudly, not silently
+    // no-op with a 201.
+    it('returns 409 when the write collides with an already-logged set', async () => {
+      const body = {
+        program: SEED_PROGRAM,
+        cycleNum: 4,
+        workoutNum: 1,
+        date: '2026-04-20',
+        lift: 'Overhead Press',
+        setNum: 1,
+        weight: 95,
+        reps: 5,
+      };
+      const first = await postJson(LIFT_RECORDS_URL, body);
+      expect(first.statusCode).toBe(201);
+
+      const second = await postJson(LIFT_RECORDS_URL, body);
+      expect(second.statusCode).toBe(409);
+
+      const count = await prisma.liftRecord.count({
+        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 4, workoutNum: 1, setNum: 1 },
+      });
+      expect(count).toBe(1);
+    });
+
+    it('does not collide when the same set is logged on a different date', async () => {
+      const base = {
+        program: SEED_PROGRAM,
+        cycleNum: 4,
+        workoutNum: 1,
+        lift: 'Overhead Press',
+        setNum: 1,
+        weight: 95,
+        reps: 5,
+      };
+      const first = await postJson(LIFT_RECORDS_URL, { ...base, date: '2025-12-16' });
+      expect(first.statusCode).toBe(201);
+
+      const second = await postJson(LIFT_RECORDS_URL, { ...base, date: '2024-01-12' });
+      expect(second.statusCode).toBe(201);
+
+      const count = await prisma.liftRecord.count({
+        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 4, workoutNum: 1, setNum: 1 },
+      });
+      expect(count).toBe(2);
     });
   });
 

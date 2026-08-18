@@ -85,6 +85,28 @@ export function formatDateYYYYMMDD(date: string | Date): string {
   return String(date);
 }
 
+/**
+ * Inverse of {@link formatDateYYYYMMDD}'s `Date` output: parses a compact
+ * `YYYYMMDD` string (no separators) into a UTC-midnight `Date`. Returns
+ * `null` for anything that isn't exactly 8 digits, so callers splitting a
+ * delimited key/id apart can tell "this segment is the date" from "this
+ * isn't" (see `liftRecordNaturalKey.ts`).
+ */
+export function parseYYYYMMDD(s: string): Date | null {
+  if (!/^\d{8}$/.test(s)) return null;
+  const year = Number(s.slice(0, 4));
+  const month = Number(s.slice(4, 6));
+  const day = Number(s.slice(6, 8));
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+// Truncates a Date to UTC midnight of its own calendar day.
+export function toUTCMidnight(date: Date): Date {
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+}
+
 // Returns the WeekType for the week containing `today` within a cycle.
 // Week 1 = days 0–6 from cycle start; clamped to max week in spec.
 export function weekTypeForDate(

@@ -32,6 +32,16 @@ describe('buildLiftRecordsPreImage', () => {
     expect(Object.keys(image)).toHaveLength(1);
   });
 
+  // Regression for issue #884: two rows sharing every field except date are
+  // different records and must both get their own pre-image entry, not
+  // collapse into one the way a true same-key duplicate does.
+  it('keeps separate entries for rows with the same key but different dates', () => {
+    const a = liftRecord({ date: new Date('2025-12-16'), weight: 175 });
+    const b = liftRecord({ date: new Date('2024-01-12'), weight: 202.5 });
+    const image = buildLiftRecordsPreImage([a, b]);
+    expect(Object.keys(image)).toHaveLength(2);
+  });
+
   it('returns empty image for empty input', () => {
     expect(buildLiftRecordsPreImage([])).toEqual({});
   });

@@ -3,6 +3,8 @@ import {
   formatDateYYYYMMDD,
   getNextDate,
   type LiftingProgramSpec,
+  parseYYYYMMDD,
+  toUTCMidnight,
   weekTypeForDate,
 } from "@src/core";
 
@@ -33,6 +35,55 @@ describe("jsUtil", () => {
 
     it("returns 'NaNNaNNaN' when a 3-part split contains non-numeric tokens (current behavior; not a contract)", () => {
       expect(formatDateYYYYMMDD("not-a-date")).toBe("NaNNaNNaN");
+    });
+  });
+
+  describe("parseYYYYMMDD", () => {
+    it("round-trips formatDateYYYYMMDD's output", () => {
+      const date = new Date(2026, 7, 17); // Aug 17, 2026
+      const formatted = formatDateYYYYMMDD(date);
+      const parsed = parseYYYYMMDD(formatted);
+      expect(parsed).not.toBeNull();
+      expect(formatDateYYYYMMDD(parsed!)).toBe(formatted);
+    });
+
+    it("parses a compact digit string to UTC midnight", () => {
+      const parsed = parseYYYYMMDD("20260817");
+      expect(parsed?.getUTCFullYear()).toBe(2026);
+      expect(parsed?.getUTCMonth()).toBe(7); // 0-indexed August
+      expect(parsed?.getUTCDate()).toBe(17);
+      expect(parsed?.getUTCHours()).toBe(0);
+    });
+
+    it("returns null for a delimited date string", () => {
+      expect(parseYYYYMMDD("2026-01-01")).toBeNull();
+    });
+
+    it("returns null for non-numeric input", () => {
+      expect(parseYYYYMMDD("abc")).toBeNull();
+    });
+
+    it("returns null for input that isn't exactly 8 digits", () => {
+      expect(parseYYYYMMDD("202611")).toBeNull();
+      expect(parseYYYYMMDD("202608170")).toBeNull();
+    });
+  });
+
+  describe("toUTCMidnight", () => {
+    it("truncates a mid-day timestamp to UTC midnight of the same day", () => {
+      const date = new Date(Date.UTC(2026, 7, 17, 15, 30, 45));
+      const truncated = toUTCMidnight(date);
+      expect(truncated.getUTCFullYear()).toBe(2026);
+      expect(truncated.getUTCMonth()).toBe(7);
+      expect(truncated.getUTCDate()).toBe(17);
+      expect(truncated.getUTCHours()).toBe(0);
+      expect(truncated.getUTCMinutes()).toBe(0);
+      expect(truncated.getUTCSeconds()).toBe(0);
+    });
+
+    it("is a no-op on an already-UTC-midnight value", () => {
+      const date = new Date(Date.UTC(2026, 7, 17));
+      expect(toUTCMidnight(date).getTime()).toBe(date.getTime());
     });
   });
 

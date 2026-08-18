@@ -92,6 +92,14 @@ async function main() {
   // TrainingMaxHistory + LiftRecords
   const workoutDate = new Date(startDate);
 
+  // LiftRecord has no single-field unique key to upsert on, and `workoutDate`
+  // below is recomputed from `new Date()` each run — so a naive re-run would
+  // insert a fresh duplicate row set every time once `date` joined the
+  // natural-key unique constraint (issue #884). Wipe this program's lift
+  // records first so the loop below can use a plain `create` and stay
+  // idempotent across repeated seed runs.
+  await prisma.liftRecord.deleteMany({ where: { userId: SEED_USER_ID, program: PROGRAM } });
+
   for (let cycle = 0; cycle < NUM_CYCLES; cycle++) {
     const weekType = WEEK_TYPES[cycle % 3];
     if (!weekType) throw new Error(`WEEK_TYPES missing index ${cycle % 3}`);
@@ -142,19 +150,10 @@ async function main() {
           const isAmrap = setNum === 3;
           const amrapReps = isAmrap ? 5 + ((cycle * workoutNum + setNum) % 4) : 5;
 
-          await prisma.liftRecord.upsert({
-            where: {
-              userId_program_cycleNum_workoutNum_lift_setNum: {
-                userId: SEED_USER_ID,
-                program: PROGRAM,
-                cycleNum,
-                workoutNum,
-                lift: liftName,
-                setNum,
-              },
-            },
-            update: {},
-            create: {
+          // Plain create, not upsert: the table was wiped for this program above,
+          // so every row here is guaranteed new (see comment at the wipe site).
+          await prisma.liftRecord.create({
+            data: {
               userId: SEED_USER_ID,
               program: PROGRAM,
               cycleNum,

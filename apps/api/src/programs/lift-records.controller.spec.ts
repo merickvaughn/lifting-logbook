@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Weekday } from '@lifting-logbook/core';
 import { ICycleDashboardRepository } from '../ports/ICycleDashboardRepository';
@@ -43,10 +43,12 @@ describe('LiftRecordsController', () => {
       updateLiftRecord: jest.fn(),
       findExistingRecords: jest.fn().mockResolvedValue([]),
       deleteLiftRecordsByNaturalKeys: jest.fn().mockResolvedValue(0),
+      deleteAllLiftRecords: jest.fn().mockResolvedValue(undefined),
     };
     dashboardRepo = {
       getCycleDashboard: jest.fn(),
       saveCycleDashboard: jest.fn(),
+      deleteCycleDashboard: jest.fn().mockResolvedValue(undefined),
     };
     factory = {
       forUser: jest.fn().mockResolvedValue({
@@ -77,7 +79,7 @@ describe('LiftRecordsController', () => {
 
   describe('POST lift-records', () => {
     it('appends the record and returns the serialized response', async () => {
-      liftRecordRepo.appendLiftRecords.mockResolvedValue(undefined);
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(1);
 
       const result = await controller.createLiftRecord('5-3-1', {
         program: '5-3-1',
@@ -96,12 +98,12 @@ describe('LiftRecordsController', () => {
           expect.objectContaining({ lift: 'Bench Press', setNum: 1, notes: '' }),
         ]),
       );
-      expect(result.id).toBe('5-3-1-4-1-Bench Press-1');
+      expect(result.id).toBe('5-3-1-4-1-20260420-Bench Press-1');
       expect(result.notes).toBe('');
     });
 
     it('forwards optional notes to the record', async () => {
-      liftRecordRepo.appendLiftRecords.mockResolvedValue(undefined);
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(1);
 
       const result = await controller.createLiftRecord('5-3-1', {
         program: '5-3-1',
@@ -117,6 +119,26 @@ describe('LiftRecordsController', () => {
 
       expect(result.notes).toBe('felt good');
     });
+
+    // Regression for issue #884: the single-record path shares appendLiftRecords'
+    // skipDuplicates semantics with the import path, so a collision here must not
+    // silently no-op and report success.
+    it('throws ConflictException when the write is silently skipped as a duplicate', async () => {
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(0);
+
+      await expect(
+        controller.createLiftRecord('5-3-1', {
+          program: '5-3-1',
+          cycleNum: 4,
+          workoutNum: 1,
+          date: '2026-04-20',
+          lift: 'Bench Press',
+          setNum: 1,
+          weight: 180,
+          reps: 5,
+        }, MOCK_USER),
+      ).rejects.toThrow(ConflictException);
+    });
   });
 
   describe('PATCH lift-records/:id', () => {
@@ -126,14 +148,14 @@ describe('LiftRecordsController', () => {
 
       const result = await controller.updateLiftRecord(
         '5-3-1',
-        '5-3-1-4-1-Bench Press-1',
+        '5-3-1-4-1-20260420-Bench Press-1',
         { weight: 185, reps: 4 },
         MOCK_USER,
       );
 
       expect(liftRecordRepo.updateLiftRecord).toHaveBeenCalledWith(
         '5-3-1',
-        '5-3-1-4-1-Bench Press-1',
+        '5-3-1-4-1-20260420-Bench Press-1',
         { weight: 185, reps: 4 },
       );
       expect(result.weight).toBe(185);

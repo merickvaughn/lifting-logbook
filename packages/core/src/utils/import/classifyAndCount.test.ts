@@ -21,7 +21,7 @@ describe('classifyImportRows', () => {
     ]);
   });
 
-  it('collapses duplicate keys within the batch (first occurrence wins)', () => {
+  it('yields a duplicate key within the batch as a skip (first occurrence wins the classification)', () => {
     const seen: Array<{ k: string }> = [];
     const out = [
       ...classifyImportRows<Row>(
@@ -34,8 +34,14 @@ describe('classifyImportRows', () => {
       ),
     ];
 
-    // The duplicate 'x' is neither yielded nor re-classified.
-    expect(out.map((c) => c.key)).toEqual(['x', 'y']);
+    // The duplicate 'x' IS yielded (issue #884: previously dropped with zero
+    // trace), but as an unconditional 'skip' — the classifier is not
+    // re-invoked for it, since the first occurrence already decided.
+    expect(out).toEqual([
+      { row: { k: 'x' }, kind: 'create', key: 'x' },
+      { row: { k: 'x' }, kind: 'skip', key: 'x' },
+      { row: { k: 'y' }, kind: 'create', key: 'y' },
+    ]);
     expect(seen).toEqual([{ k: 'x' }, { k: 'y' }]);
   });
 
@@ -80,7 +86,7 @@ describe('classifyAndCount', () => {
     ]);
   });
 
-  it('collapses duplicate keys within the batch (first occurrence wins)', async () => {
+  it('counts a duplicate key within the batch as skipped (first occurrence wins the write)', async () => {
     const writes: string[] = [];
 
     const result = await classifyAndCount<Row>(
@@ -92,8 +98,10 @@ describe('classifyAndCount', () => {
       },
     );
 
-    expect(result).toEqual({ created: 2, updated: 0, skipped: 0 });
-    expect(writes).toEqual(['x', 'y']); // the duplicate 'x' is neither re-written nor re-counted
+    // Issue #884: the duplicate 'x' is now counted as skipped rather than
+    // vanishing untallied. It is still not re-written.
+    expect(result).toEqual({ created: 2, updated: 0, skipped: 1 });
+    expect(writes).toEqual(['x', 'y']);
   });
 
   it('never invokes applyWrite for a skipped row', async () => {

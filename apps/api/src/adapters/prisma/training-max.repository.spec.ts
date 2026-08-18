@@ -39,7 +39,10 @@ describe('PrismaTrainingMaxRepository.importTrainingMaxes', () => {
       tm('Squat', 999), // duplicate lift in batch → collapsed (not re-counted)
     ]);
 
-    expect(result).toEqual({ created: 1, updated: 1, skipped: 1 });
+    // Issue #884: the in-batch duplicate ('Squat', 999) is now counted as
+    // skipped (was silently dropped, untallied) — skipped: 2 = the pre-existing
+    // "identical to stored" skip + the newly-visible in-batch-duplicate skip.
+    expect(result).toEqual({ created: 1, updated: 1, skipped: 2 });
     // The whole batch ran inside one transaction; the existing read happened in it.
     expect($transaction).toHaveBeenCalledTimes(1);
     expect(findMany).toHaveBeenCalledWith(
