@@ -3,7 +3,6 @@ import {
   ImportKind,
   ImportPreviewResponse,
   ImportCommitResponse,
-  SkippedRecord,
 } from '@lifting-logbook/types';
 import {
   SpreadsheetCell,
@@ -29,6 +28,8 @@ import {
   buildStrengthGoalPreImage,
   buildProgramSpecPreImage,
   classifyImportRows,
+  pairWithRowNumber,
+  buildSkippedDetail,
   liftRecordNaturalKey,
   DEFAULT_SLOT_MAP,
 } from '@lifting-logbook/core';
@@ -62,15 +63,13 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     const existingKeys = new Set(
       (await repos.liftRecord.findExistingRecords(program, records)).map(liftRecordNaturalKey),
     );
-    // Pair each record with its 1-based position in this commit batch, mirroring
-    // the legacy `POST /programs/:program/lift-records/import` endpoint's
-    // `SkippedRecord` reporting (issue #891) — `skippedDetail` below needs a row
-    // number per skip, not just a count. "Batch" here is *after* any Phase 3
-    // excludeKeys/splitDest filtering the controller already applied, so for a
-    // plain commit (neither) this matches the original CSV data-row number;
-    // positions shift when rows were excluded or split to a second destination
-    // ahead of this call.
-    const rows = records.map((r, i) => ({ r, row: i + 1 }));
+    // Row numbers below are batch-relative — 1-based within *this* commit
+    // batch, i.e. after any Phase 3 excludeKeys/splitDest filtering the
+    // controller already applied. For a plain commit (neither) that matches
+    // the original CSV data-row number; positions shift when rows were
+    // excluded or split to a second destination ahead of this call. See
+    // ImportCommitResponse.skippedDetail (issue #891) for the full contract.
+    const rows = pairWithRowNumber(records);
     // Classify (and dedupe in-batch duplicates) in JS before writing, rather
     // than deriving `skipped` by subtracting the DB's insert count from the
     // unique-key count. That subtraction was sensitive to any drift between
@@ -95,19 +94,13 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     // for) even under that race; buildLiftRecordsPreImage(toCreate) is a
     // narrower residual — it still records the raced-out row as created for
     // undo purposes, since createMany's count doesn't say which row lost the
-    // race. `skippedDetail` is narrower still: it lists only the rows JS
-    // classified 'skip' up front, so a row that instead lost that race (JS
-    // said 'create', the DB didn't write it) is counted in the aggregate
-    // `skipped` total but has no entry here — createMany's count doesn't say
-    // which row lost the race, so there is no key to report.
-    const skippedDetail: SkippedRecord[] = classified
-      .filter((c) => c.kind === 'skip')
-      .map((c) => ({ row: c.row.row, naturalKey: c.key }));
+    // race. `skippedDetail` (via buildSkippedDetail) is narrower still — see
+    // its doc comment for why a raced-out row has no entry there.
     return {
       created,
       updated: 0,
       skipped: classified.length - created,
-      skippedDetail,
+      skippedDetail: buildSkippedDetail(classified),
       preImage: buildLiftRecordsPreImage(toCreate),
     };
   },

@@ -17,14 +17,15 @@ import {
   CreateLiftRecordRequest,
   ImportLiftRecordsResponse,
   LiftRecordResponse,
-  SkippedRecord,
   UpdateLiftRecordRequest,
 } from '@lifting-logbook/types';
 import {
   DEFAULT_SLOT_MAP,
   buildLiftRecordId,
+  buildSkippedDetail,
   classifyImportRows,
   liftRecordNaturalKey,
+  pairWithRowNumber,
   parseCsvText,
   parseLiftRecords,
   toUTCMidnight,
@@ -180,10 +181,11 @@ export class LiftRecordsController {
     }
 
     // Stamp each record with the route program before persisting, and pair each
-    // with its 1-based CSV row number so a skip can be reported against the
-    // original file position after classification (which may reorder nothing but
-    // does filter).
-    const rows = valid.map((r, i) => ({ r: { ...r, program }, row: i + 1 }));
+    // with its 1-based CSV row number (via pairWithRowNumber, shared with the
+    // Smart Import wizard's liftRecordsHandler — issues #891/#896) so a skip can
+    // be reported against the original file position after classification
+    // (which may reorder nothing but does filter).
+    const rows = pairWithRowNumber(valid.map((r) => ({ ...r, program })));
 
     const { liftRecord } = await this.factory.forUser(user);
     const dupKeys = new Set(
@@ -207,9 +209,7 @@ export class LiftRecordsController {
       classified.filter((c) => c.kind === 'create').map((c) => c.row.r),
     );
 
-    const skipped: SkippedRecord[] = classified
-      .filter((c) => c.kind === 'skip')
-      .map((c) => ({ row: c.row.row, naturalKey: c.key }));
+    const skipped = buildSkippedDetail(classified);
 
     return { written, skipped };
   }

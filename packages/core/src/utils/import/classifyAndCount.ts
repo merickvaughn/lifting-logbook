@@ -1,4 +1,4 @@
-import { ImportWriteResult } from '@lifting-logbook/types';
+import { ImportWriteResult, SkippedRecord } from '@lifting-logbook/types';
 import type { ImportRowKind } from './buildImportPreview';
 
 /** One import row with its computed natural key and classification. */
@@ -97,4 +97,40 @@ export async function classifyAndCount<T>(
   }
 
   return { created, updated, skipped };
+}
+
+/**
+ * Pairs each row with its 1-based position in the given list.
+ *
+ * Both lift-records commit paths — the legacy `POST
+ * /programs/:program/lift-records/import` endpoint and the Smart Import
+ * wizard's `liftRecordsHandler.commit()` — need a row number alongside each
+ * row's classification to report per-row skip detail (`SkippedRecord.row`,
+ * issues #891/#896). Factored out here so a future change to how that number
+ * is derived is made once, not twice — the same reason
+ * {@link classifyImportRows} and {@link classifyAndCount} themselves were
+ * centralized (#537, #532) rather than left copy-pasted across both paths.
+ */
+export function pairWithRowNumber<T>(rows: readonly T[]): Array<{ r: T; row: number }> {
+  return rows.map((r, i) => ({ r, row: i + 1 }));
+}
+
+/**
+ * Extracts a {@link SkippedRecord}-shaped per-row skip-detail list from a
+ * batch classified by {@link classifyImportRows} over
+ * {@link pairWithRowNumber}-wrapped rows.
+ *
+ * Only lists rows JS classified `'skip'` up front — a row that instead loses
+ * the create-vs-DB race documented at each call site (JS said `'create'`, the
+ * DB didn't actually write it) has no entry here, even though it is counted
+ * in an aggregate `skipped` total derived from the DB's actual insert count.
+ * `createMany`'s count doesn't say which row lost that race, so there is no
+ * key to report for it.
+ */
+export function buildSkippedDetail<T>(
+  classified: readonly ClassifiedRow<{ r: T; row: number }>[],
+): SkippedRecord[] {
+  return classified
+    .filter((c) => c.kind === 'skip')
+    .map((c) => ({ row: c.row.row, naturalKey: c.key }));
 }
