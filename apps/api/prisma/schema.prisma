@@ -14,14 +14,14 @@ model LiftRecord {
   program    String
   cycleNum   Int
   workoutNum Int
-  date       DateTime
+  date       DateTime @db.Date
   lift       String
   setNum     Int
   weight     Float
   reps       Int
   notes      String   @default("")
 
-  @@unique([userId, program, cycleNum, workoutNum, lift, setNum])
+  @@unique([userId, program, cycleNum, workoutNum, date, lift, setNum])
   @@index([userId, program, cycleNum])
   @@index([userId, program, cycleNum, workoutNum])
   @@map("lift_record")

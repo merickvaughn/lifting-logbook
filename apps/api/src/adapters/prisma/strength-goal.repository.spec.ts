@@ -34,7 +34,7 @@ function makePrisma(
 }
 
 describe('PrismaStrengthGoalRepository.importGoals', () => {
-  it('classifies create/update/skip from the write and dedupes within the batch', async () => {
+  it('classifies create/update/skip from the write and counts an in-batch duplicate as skipped', async () => {
     const { prisma, findMany, upsert, $transaction } = makePrisma([
       { lift: 'Squat', goalType: 'absolute', unit: 'lbs', target: 400, ratio: null, updatedAt: at },
       { lift: 'Deadlift', goalType: 'absolute', unit: 'lbs', target: 500, ratio: null, updatedAt: at },
@@ -45,10 +45,13 @@ describe('PrismaStrengthGoalRepository.importGoals', () => {
       abs('Squat', 400), // identical → skip
       abs('Deadlift', 505), // target differs → update
       rel('Bench', 1.5), // absent → create
-      abs('Squat', 999), // duplicate lift in batch → collapsed
+      abs('Squat', 999), // duplicate lift in batch → counted as skip (#884)
     ]);
 
-    expect(result).toEqual({ created: 1, updated: 1, skipped: 1 });
+    // Issue #884: the in-batch duplicate (abs('Squat', 999)) is now counted as
+    // skipped (was silently dropped, untallied) — skipped: 2 = the pre-existing
+    // "identical to stored" skip + the newly-visible in-batch-duplicate skip.
+    expect(result).toEqual({ created: 1, updated: 1, skipped: 2 });
     expect($transaction).toHaveBeenCalledTimes(1);
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { userId: USER, program: PROGRAM } }),

@@ -5,6 +5,7 @@ import {
   StrengthGoalEntry,
   TrainingMax,
   TrainingMaxHistoryEntry,
+  buildLiftRecordId,
   expandSpecToLength,
   normalizeAmrap,
   noScheduleWorkoutDateUTC,
@@ -67,7 +68,7 @@ export const toTrainingMaxHistoryEntryResponse = (
 });
 
 export const toLiftRecordResponse = (r: LiftRecord): LiftRecordResponse => ({
-  id: `${r.program}-${r.cycleNum}-${r.workoutNum}-${r.lift}-${r.setNum}`,
+  id: buildLiftRecordId(r.program, r),
   program: r.program,
   cycleNum: r.cycleNum,
   workoutNum: r.workoutNum,

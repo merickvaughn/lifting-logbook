@@ -1,7 +1,8 @@
-import { CycleDashboard, LiftingProgramSpec, Weekday } from '@lifting-logbook/core';
+import { CycleDashboard, LiftRecord, LiftingProgramSpec, Weekday } from '@lifting-logbook/core';
 import {
   applyLiftOverrides,
   buildCycleDashboardResponse,
+  toLiftRecordResponse,
   toWorkoutResponse,
   weekForWorkoutNum,
   workoutKeyForWorkoutNum,
@@ -33,6 +34,39 @@ const spec = (offset: number, lift: string, week?: number): LiftingProgramSpec =
 // workout days (the same orderedWorkoutKeys mapping the web grid uses), so week-2+
 // workouts resolve in no-schedule mode too; undefined now means past the *full*
 // canonical length. These tests replace the old offset-cap assertions.
+describe('toLiftRecordResponse', () => {
+  const liftRecord = (overrides: Partial<LiftRecord> = {}): LiftRecord => ({
+    program: '5-3-1',
+    cycleNum: 4,
+    workoutNum: 1,
+    date: new Date('2026-04-20T00:00:00.000Z'),
+    lift: 'Bench Press',
+    setNum: 1,
+    weight: 180,
+    reps: 5,
+    notes: '',
+    ...overrides,
+  });
+
+  // Regression for issue #884: the public id must include a date segment so two
+  // records sharing every other field on different dates get distinct ids.
+  it('builds an id including the date segment', () => {
+    const response = toLiftRecordResponse(liftRecord());
+    expect(response.id).toBe('5-3-1-4-1-20260420-Bench Press-1');
+  });
+
+  it('builds an id for a hyphenated lift name without ambiguity', () => {
+    const response = toLiftRecordResponse(liftRecord({ lift: 'Romanian Dead-lift' }));
+    expect(response.id).toBe('5-3-1-4-1-20260420-Romanian Dead-lift-1');
+  });
+
+  it('produces different ids for records differing only by date', () => {
+    const a = toLiftRecordResponse(liftRecord({ date: new Date('2025-12-16') }));
+    const b = toLiftRecordResponse(liftRecord({ date: new Date('2024-01-12') }));
+    expect(a.id).not.toBe(b.id);
+  });
+});
+
 describe('weekForWorkoutNum', () => {
   it('returns undefined for empty spec', () => {
     expect(weekForWorkoutNum([], 1)).toBeUndefined();

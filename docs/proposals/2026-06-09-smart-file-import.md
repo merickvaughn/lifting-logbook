@@ -5,6 +5,8 @@
 **Issue:** [#477](https://github.com/merickvaughn/lifting-logbook/issues/477)
 
 > **Phase 1 (MVP) shipped** in [#477](https://github.com/merickvaughn/lifting-logbook/issues/477) — PR [#485](https://github.com/merickvaughn/lifting-logbook/pull/485) (merged `46f9f9c`, 2026-06-09). Open follow-ups: [#483](https://github.com/merickvaughn/lifting-logbook/issues/483) (Phase 2 column-mapper), [#484](https://github.com/merickvaughn/lifting-logbook/issues/484) (Phase 3 split + Undo), [#486](https://github.com/merickvaughn/lifting-logbook/issues/486) (multi-tier strength goals), [#488](https://github.com/merickvaughn/lifting-logbook/issues/488) (commit atomicity / concurrent-import safety), [#489](https://github.com/merickvaughn/lifting-logbook/issues/489) (maintainability consolidation).
+>
+> **[#884](https://github.com/merickvaughn/lifting-logbook/issues/884) fixed a data-integrity gap** in the `skipDuplicates` idempotency this doc describes (lines below on commit idempotency): the lift-record natural key omitted `date`, so two genuinely different real sets could silently collide and one would be dropped whenever a source dataset legitimately reused a `(cycleNum, workoutNum, lift, setNum)` combination on two different real calendar dates (a cycle-numbering reset, a multi-year gap, historical spreadsheet drift). `date` now joins the natural key everywhere it's used — the JS key function, the `LiftRecord` `@@unique` DB constraint, and the public record `id` — so the database can store both. This does not change the *intended* idempotency behavior described below (a true re-import of identical data, including its date, is still recognized as a duplicate and skipped).
 
 ---
 

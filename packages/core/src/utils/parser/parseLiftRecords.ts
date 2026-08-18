@@ -1,5 +1,6 @@
 import { LIFT_RECORD_HEADER_MAP } from "@src/core/constants";
 import { LiftRecord, SpreadsheetCell } from "@src/core/models";
+import { toUTCMidnight } from "../jsUtil";
 import { tableToObjects } from "./tableToObjects";
 
 /**
@@ -20,7 +21,14 @@ export function parseLiftRecords(data: SpreadsheetCell[][]): LiftRecord[] {
         value = Number(value);
       }
       if (key === "date") {
-        value = new Date(String(value ?? ""));
+        // Non-ISO date strings (the common case here -- CSV cells like
+        // "12/16/2025") parse at LOCAL midnight, not UTC midnight (ECMA-262).
+        // The natural key / public id / SkippedRecord.naturalKey all encode
+        // this date as a UTC calendar day and reconstruct UTC midnight when
+        // parsing a key back apart, so normalizing here keeps every ingest
+        // path agreeing on the same calendar day regardless of the parsing
+        // host's timezone (issue #884).
+        value = toUTCMidnight(new Date(String(value ?? "")));
       }
       result[key] = value;
     }

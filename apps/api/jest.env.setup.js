@@ -23,6 +23,15 @@
 // With DEV_USER_ID / DEV_USER_EMAIL = '':
 //   - DevAuthProvider: uses the Bearer token value as user ID (expected by tests) ✓
 
+// Pin the test process to UTC. Several date-sensitive paths touched by issue
+// #884 (CSV date parsing, LiftRecord's YYYYMMDD natural key/id encoding) are
+// only guaranteed correct when the parsing host's local time IS UTC — without
+// this, a test asserting an exact date could pass or fail depending on the
+// machine's timezone rather than on the code being correct, and CI (which
+// already runs UTC) would never catch a host-timezone-dependent regression
+// that a non-UTC contributor's machine could hit.
+process.env.TZ = 'UTC';
+
 const BLOCK = [
   'CLERK_SECRET_KEY',
   'DATABASE_URL',

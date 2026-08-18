@@ -39,6 +39,20 @@ describe("buildLiftRecordsPreview", () => {
     const incoming = [liftRecord({ setNum: 1 }), liftRecord({ setNum: 1 })];
     const preview = buildLiftRecordsPreview(incoming, []);
     expect(preview.creates).toBe(1);
+    expect(preview.skips).toBe(1);
+  });
+
+  // Regression for issue #884: two sets sharing every field except date are
+  // genuinely different records (e.g. a cycle-numbering reset reusing the
+  // same cycle/workout/set combo years apart) and must both be creates, not
+  // collapsed into one the way a true same-key duplicate is.
+  it("treats rows with the same key but different dates as separate creates", () => {
+    const incoming = [
+      liftRecord({ setNum: 1, date: new Date("2025-12-16"), weight: 175, reps: 7 }),
+      liftRecord({ setNum: 1, date: new Date("2024-01-12"), weight: 202.5, reps: 8 }),
+    ];
+    const preview = buildLiftRecordsPreview(incoming, []);
+    expect(preview).toMatchObject({ creates: 2, skips: 0 });
   });
 });
 

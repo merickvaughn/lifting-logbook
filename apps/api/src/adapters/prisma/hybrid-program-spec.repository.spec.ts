@@ -141,7 +141,7 @@ describe('HybridLiftingProgramSpecRepository.saveProgramSpec', () => {
     expect(findMany).not.toHaveBeenCalled();
   });
 
-  it('classifies create/update/skip from one snapshot read and dedupes within the batch', async () => {
+  it('classifies create/update/skip from one snapshot read and counts an in-batch duplicate as skipped', async () => {
     const toRow = (s: LiftingProgramSpec) => ({ ...s, weekType: null });
     const { prisma, findFirst, findMany, upsert, $transaction } = makeSavePrisma([
       toRow(spec('Squat', 5)),
@@ -153,10 +153,13 @@ describe('HybridLiftingProgramSpecRepository.saveProgramSpec', () => {
       spec('Squat', 5), // identical → skip
       spec('Bench', 3), // sets differ → update
       spec('Deadlift', 5), // absent → create
-      spec('Squat', 9), // duplicate natural key → collapsed
+      spec('Squat', 9), // duplicate natural key in batch → counted as skip (#884)
     ]);
 
-    expect(result).toEqual({ created: 1, updated: 1, skipped: 1 });
+    // Issue #884: the in-batch duplicate (spec('Squat', 9)) is now counted as
+    // skipped (was silently dropped, untallied) — skipped: 2 = the pre-existing
+    // "identical to stored" skip + the newly-visible in-batch-duplicate skip.
+    expect(result).toEqual({ created: 1, updated: 1, skipped: 2 });
     expect($transaction).toHaveBeenCalledTimes(1);
     expect(findFirst).toHaveBeenCalledTimes(1); // owner guard
     // One up-front snapshot read (not a per-row findFirst), scoped to the program.

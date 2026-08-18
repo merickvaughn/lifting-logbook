@@ -498,10 +498,14 @@ export interface SkippedRecord {
   row: number;
   /**
    * Stringified natural key identifying the skipped set, in the format:
-   * `"<cycleNum>:<workoutNum>:<lift>:<setNum>"`
+   * `"<cycleNum>:<workoutNum>:<YYYYMMDD>:<lift>:<setNum>"`
    *
-   * All four components use the canonical (post-import, post-slot-map) values.
-   * Example: `"3:2:bench-press:1"` means cycle 3, workout 2, bench-press, set 1.
+   * All components use the canonical (post-import, post-slot-map) values. `date`
+   * is part of the key (issue #884): two sets can otherwise legitimately share
+   * the same (cycleNum, workoutNum, lift, setNum) tuple on different real
+   * calendar dates and must not be treated as duplicates of each other.
+   * Example: `"3:2:20260817:bench-press:1"` means cycle 3, workout 2,
+   * 2026-08-17, bench-press, set 1.
    */
   naturalKey: string;
 }

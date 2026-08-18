@@ -25,7 +25,7 @@ function makePrisma(
 }
 
 describe('PrismaTrainingMaxRepository.importTrainingMaxes', () => {
-  it('classifies create/update/skip from the write and dedupes within the batch', async () => {
+  it('classifies create/update/skip from the write and counts an in-batch duplicate as skipped', async () => {
     const { prisma, findMany, upsert, $transaction } = makePrisma([
       { lift: 'Squat', weight: 300 },
       { lift: 'Deadlift', weight: 350 },
@@ -36,10 +36,13 @@ describe('PrismaTrainingMaxRepository.importTrainingMaxes', () => {
       tm('Squat', 300), // identical → skip
       tm('Deadlift', 400), // weight differs → update
       tm('Bench', 200), // absent → create
-      tm('Squat', 999), // duplicate lift in batch → collapsed (not re-counted)
+      tm('Squat', 999), // duplicate lift in batch → counted as skip, not re-written (#884)
     ]);
 
-    expect(result).toEqual({ created: 1, updated: 1, skipped: 1 });
+    // Issue #884: the in-batch duplicate ('Squat', 999) is now counted as
+    // skipped (was silently dropped, untallied) — skipped: 2 = the pre-existing
+    // "identical to stored" skip + the newly-visible in-batch-duplicate skip.
+    expect(result).toEqual({ created: 1, updated: 1, skipped: 2 });
     // The whole batch ran inside one transaction; the existing read happened in it.
     expect($transaction).toHaveBeenCalledTimes(1);
     expect(findMany).toHaveBeenCalledWith(
