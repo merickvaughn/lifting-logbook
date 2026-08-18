@@ -3,6 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import { PrismaService } from '../adapters/prisma/prisma.service';
+import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { UserSettingsController } from './user-settings.controller';
 import { UpdateSettingsDto } from './update-settings.dto';
 
@@ -304,9 +305,11 @@ describe('UpdateSettingsDto validation', () => {
   // Locks in the production pipe config from apps/api/src/main.ts. If main.ts ever weakens
   // these flags (e.g., drops `forbidNonWhitelisted`), this test fails — without it, the DTO's
   // implicit reliance on whitelist behavior to strip/reject unknown nested keys would silently
-  // degrade. Keep this test's pipe construction byte-identical to main.ts.
+  // degrade. Previously kept in sync by convention (a literal manually kept "byte-identical to
+  // main.ts"); now sourced from the same VALIDATION_PIPE_OPTIONS constant main.ts uses, so this
+  // is a mechanical guarantee rather than a maintained-by-hand one (#893 review).
   describe('production ValidationPipe wiring', () => {
-    const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true });
+    const pipe = new ValidationPipe(VALIDATION_PIPE_OPTIONS);
     const meta = { type: 'body' as const, metatype: UpdateSettingsDto };
 
     it('rejects an unknown top-level sibling field', async () => {

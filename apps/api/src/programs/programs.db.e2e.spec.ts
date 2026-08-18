@@ -35,6 +35,7 @@ import {
   seedLiftRecords,
   seedTrainingMaxes,
 } from '../adapters/in-memory/fixtures';
+import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainNotFoundFilter } from './not-found.filter';
 import { DomainConflictFilter } from './conflict.filter';
 
@@ -225,7 +226,12 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await app.register(multipart as any, { limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
     app.useGlobalFilters(new DomainNotFoundFilter(), new DomainConflictFilter());
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+    // Was `{ whitelist: true }` only — didn't match main.ts's production pipe. This is
+    // the real-Postgres suite — the one harness where that gap mattered most, since
+    // it's the only one that can reproduce a database-level failure (e.g. the
+    // reps/weight int32-overflow and null-value bugs found during #893's review).
+    // Sourced from the shared constant so it can't silently diverge again.
+    app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
   }, DB_E2E_HOOK_TIMEOUT_MS);

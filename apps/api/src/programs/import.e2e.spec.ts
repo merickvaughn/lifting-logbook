@@ -7,6 +7,7 @@ import {
 } from '@nestjs/platform-fastify';
 import multipart from '@fastify/multipart';
 import { AppModule } from '../app.module';
+import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainNotFoundFilter } from './not-found.filter';
 
 /**
@@ -28,7 +29,9 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await app.register(multipart as any, { limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
     app.useGlobalFilters(new DomainNotFoundFilter());
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+    // Was `{ whitelist: true }` only — didn't match main.ts's production pipe.
+    // Sourced from the shared constant so it can't silently diverge (#893 review).
+    app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
   });

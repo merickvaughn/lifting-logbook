@@ -141,6 +141,27 @@ describe('LiftRecordsController', () => {
       expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
     });
 
+    // Regression for #893's review round 3: body.program is unused by the write
+    // itself (the route :program param is authoritative below) but is now a
+    // declared, validated part of the accepted contract — silently discarding a
+    // *conflicting* value would let a client bug write real data into the wrong
+    // program with a 201 giving no indication anything was wrong.
+    it('throws BadRequestException when body.program conflicts with the route :program param', async () => {
+      await expect(
+        controller.createLiftRecord('5-3-1', {
+          program: 'some-other-program',
+          cycleNum: 4,
+          workoutNum: 1,
+          date: '2026-04-20',
+          lift: 'Bench Press',
+          setNum: 1,
+          weight: 180,
+          reps: 5,
+        }, MOCK_USER),
+      ).rejects.toThrow(BadRequestException);
+      expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
+    });
+
     // Regression for issue #884: the single-record path shares appendLiftRecords'
     // skipDuplicates semantics with the import path, so a collision must not
     // silently no-op and report success unless it's an idempotent retry (the

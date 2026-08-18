@@ -89,4 +89,25 @@ describe('UpdateLiftRecordDto validation', () => {
     const keys = await flattenConstraintKeys(plainToInstance(UpdateLiftRecordDto, { hacked: true }));
     expect(keys).toContain('hacked.whitelistValidation');
   });
+
+  // Regression for #893's review round 3: @IsOptional() skips validation for both
+  // `undefined` (absent) *and* `null`, but only absence is a legitimate "leave
+  // unchanged" signal for a PATCH against non-nullable columns. Before switching to
+  // @ValidateIf, { weight: null } passed validation with zero errors and then
+  // crashed Prisma with an unhandled 500 (verified against real Postgres — the
+  // in-memory adapter's `?? current.weight` fallback silently masks this).
+  it('rejects an explicit null weight (only absence, not null, means "leave unchanged")', async () => {
+    const keys = await flattenConstraintKeys(plainToInstance(UpdateLiftRecordDto, { weight: null }));
+    expect(keys).toContain('weight.isNumber');
+  });
+
+  it('rejects an explicit null reps', async () => {
+    const keys = await flattenConstraintKeys(plainToInstance(UpdateLiftRecordDto, { reps: null }));
+    expect(keys).toContain('reps.isInt');
+  });
+
+  it('rejects an explicit null notes', async () => {
+    const keys = await flattenConstraintKeys(plainToInstance(UpdateLiftRecordDto, { notes: null }));
+    expect(keys).toContain('notes.isString');
+  });
 });

@@ -67,9 +67,21 @@ describe('CreateLiftRecordDto validation', () => {
     expect(errors).toHaveLength(0);
   });
 
-  it('accepts a full ISO 8601 date-time for date', async () => {
-    const errors = await validate(dtoWith({ date: '2026-04-20T10:30:00Z' }), { whitelist: true });
+  // Regression for #893's review round 3: an empty string is what <input type="date">
+  // sends when cleared (WorkoutLogger.tsx). The controller's own pre-existing
+  // `if (body.date)` check already treated '' as "not provided" (falls back to the
+  // scheduled date) — this DTO's @Transform preserves that, mapping '' -> undefined
+  // before validation runs, so clearing the date input doesn't newly 400.
+  it('accepts an empty-string date (mapped to not-provided, matching the controller pre-existing truthiness handling)', async () => {
+    const errors = await validate(dtoWith({ date: '' }), { whitelist: true });
     expect(errors).toHaveLength(0);
+  });
+
+  it('accepts a whitespace-padded lift, trimmed before validation', async () => {
+    const dto = dtoWith({ lift: '  Bench Press  ' });
+    const errors = await validate(dto, { whitelist: true });
+    expect(errors).toHaveLength(0);
+    expect(dto.lift).toBe('Bench Press');
   });
 
   // ----- invalid-input rejection (issue #893) -----
@@ -78,8 +90,16 @@ describe('CreateLiftRecordDto validation', () => {
     expect(await flattenConstraintKeys(dtoWith({ date: 'not-a-date' }))).toContain('date.matches');
   });
 
-  it('rejects an empty-string date', async () => {
-    expect(await flattenConstraintKeys(dtoWith({ date: '' }))).toContain('date.matches');
+  // Regression for #893's review round 3: a full ISO 8601 date-time was previously
+  // accepted, but the controller's toUTCMidnight(new Date(body.date)) reads *UTC*
+  // components — an offset-bearing value silently shifts to a different calendar day
+  // (verified: 2026-04-20T23:30:00-07:00 -> stored as 2026-04-21), and an offset-less
+  // date-time depends on the server's local timezone. date is now restricted to a
+  // bare YYYY-MM-DD to eliminate the whole bug class, since no real caller sends a
+  // date-time anyway (the web client's <input type="date"> only ever sends a bare
+  // date).
+  it('rejects a date-time (bare YYYY-MM-DD only, to avoid timezone-dependent day-shift bugs)', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ date: '2026-04-20T10:30:00Z' }))).toContain('date.matches');
   });
 
   // Regression for #893's review round 2: validator.js's isISO8601, even with
@@ -121,6 +141,13 @@ describe('CreateLiftRecordDto validation', () => {
   // permanently unreachable by a later PATCH, verified live against real Postgres.
   it('rejects an empty lift (would create a record unreachable by PATCH)', async () => {
     expect(await flattenConstraintKeys(dtoWith({ lift: '' }))).toContain('lift.isNotEmpty');
+  });
+
+  // Regression for #893's review round 3: whitespace-only survived @IsNotEmpty
+  // (which only checks !== ''/null/undefined) before the trim was added — the trim
+  // now reduces it to '', so the same isNotEmpty rejection catches it.
+  it('rejects a whitespace-only lift (trimmed to empty, same failure mode as an empty lift)', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ lift: '   ' }))).toContain('lift.isNotEmpty');
   });
 
   it('rejects a non-integer cycleNum', async () => {

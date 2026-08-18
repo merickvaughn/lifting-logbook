@@ -1601,6 +1601,25 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    // Regression for #893's review round 3: date was previously accepted with an
+    // optional time/offset component; the controller's toUTCMidnight(new
+    // Date(body.date)) reads UTC components, so an offset-bearing value silently
+    // shifted to a different calendar day. date is now bare YYYY-MM-DD only.
+    it('rejects a date-time with 400 (bare YYYY-MM-DD only, avoids a timezone-dependent day-shift)', async () => {
+      const res = await postValidation(validBody({ date: '2026-05-01T10:30:00Z' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 3: body.program is unused by the write
+    // itself (the route :program param is authoritative) but is now a declared,
+    // validated part of the accepted contract — silently discarding a *conflicting*
+    // value would let a client bug write real data into the wrong program with a
+    // 201 giving no indication anything was wrong.
+    it('rejects a body.program that conflicts with the route :program param, with 400', async () => {
+      const res = await postValidation(validBody({ program: 'some-other-program' }));
+      expect(res.statusCode).toBe(400);
+    });
+
     it('accepts a well-formed body with 201 (valid-input pass-through)', async () => {
       const res = await postValidation(validBody({ setNum: 2 }));
       expect(res.statusCode).toBe(201);
@@ -1624,6 +1643,27 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const res = await patchValidation(created.json().id, { reps: 6 });
       expect(res.statusCode).toBe(200);
       expect(res.json().reps).toBe(6);
+    });
+
+    // Regression for #893's review round 3: an untrimmed lift is a different
+    // natural key than its trimmed form, silently fragmenting one lift's history.
+    it('accepts a whitespace-padded lift, trimmed before persisting (valid-input pass-through)', async () => {
+      const res = await postValidation(validBody({ setNum: 5, lift: '  Bench Press  ' }));
+      expect(res.statusCode).toBe(201);
+      expect(res.json().lift).toBe('Bench Press');
+    });
+
+    // Regression for #893's review round 3: @IsOptional() (now @ValidateIf) skips
+    // null, not just undefined — an explicit null weight/reps/notes previously
+    // reached the Prisma update as a literal null against a non-nullable column and
+    // 500'd (verified against real Postgres; this in-memory suite alone couldn't
+    // reproduce it, which is exactly why the DB-backed suite matters here too).
+    it('PATCH rejects an explicit null weight with 400', async () => {
+      const created = await postValidation(validBody({ setNum: 6 }));
+      expect(created.statusCode).toBe(201);
+
+      const res = await patchValidation(created.json().id, { weight: null });
+      expect(res.statusCode).toBe(400);
     });
   });
 });
