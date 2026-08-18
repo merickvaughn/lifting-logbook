@@ -10,6 +10,7 @@ import { InMemoryRepositoryFactory } from '../adapters/factory/in-memory-reposit
 import { InMemoryUserSettingsRepository } from '../adapters/in-memory/user-settings.adapter';
 import { SEED_PROGRAM } from '../adapters/in-memory/fixtures';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainNotFoundFilter } from './not-found.filter';
 
 describe('Programs HTTP (e2e, in-memory adapters)', () => {
@@ -22,7 +23,12 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       { logger: false },
     );
     app.useGlobalFilters(new DomainNotFoundFilter());
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+    // Was `{ whitelist: true }` only — didn't match main.ts's production pipe (which
+    // also sets forbidNonWhitelisted), so this harness could never actually prove an
+    // unrecognized body field is rejected over HTTP the way it really is in
+    // production. Now sourced from the same shared constant main.ts uses, so the two
+    // cannot silently diverge again (found during #893's review).
+    app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
   });
@@ -1549,6 +1555,49 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
     it('rejects a setNum below 1 with 400', async () => {
       const res = await postValidation(validBody({ setNum: 0 }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 2: an ISO 8601 week-date string passes
+    // non-strict (and even strict) isISO8601, but `new Date(...)` can't parse it —
+    // without the @Matches decorator this reached the persistence layer as an
+    // Invalid Date and 500'd. Proves the fix end-to-end over HTTP, not just at the
+    // class-validator level.
+    it('rejects an ISO 8601 week-date with 400, not a 500 from Invalid Date downstream', async () => {
+      const res = await postValidation(validBody({ date: '2026-W05' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 2: a shape-valid but nonexistent calendar
+    // date (Feb 30) — without the @IsDateString strict option this silently rolled
+    // over to a different day rather than being rejected.
+    it('rejects a nonexistent calendar date with 400, not a silent day rollover', async () => {
+      const res = await postValidation(validBody({ date: '2026-02-30' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 2: an empty lift would create a record
+    // whose id parser rejects the empty lift segment, permanently unreachable by a
+    // later PATCH — verified against real Postgres in create-lift-record.dto.spec.ts.
+    it('rejects an empty lift with 400', async () => {
+      const res = await postValidation(validBody({ lift: '' }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 2: reps is a Postgres Int (32-bit) column —
+    // verified this 500s against real Postgres before the @Max ceiling was added.
+    it('rejects reps above the int32-safe ceiling with 400', async () => {
+      const res = await postValidation(validBody({ reps: 3_000_000_000 }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // Regression for #893's review round 2: this harness's ValidationPipe previously
+    // omitted forbidNonWhitelisted, so it could not prove this behavior over HTTP —
+    // only the DTO-level unit specs (calling class-validator's validate() directly)
+    // exercised it. Now that the harness is sourced from the same shared
+    // VALIDATION_PIPE_OPTIONS constant as main.ts, this closes that wiring gap.
+    it('rejects an unrecognized extra field with 400 (forbidNonWhitelisted, matches production)', async () => {
+      const res = await postValidation(validBody({ hacked: true }));
       expect(res.statusCode).toBe(400);
     });
 

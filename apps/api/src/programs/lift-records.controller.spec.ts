@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Weekday } from '@lifting-logbook/core';
 import { ICycleDashboardRepository } from '../ports/ICycleDashboardRepository';
@@ -118,6 +118,27 @@ describe('LiftRecordsController', () => {
       }, MOCK_USER);
 
       expect(result.notes).toBe('felt good');
+    });
+
+    // Regression for #893's review round 2: a defensive guard independent of
+    // whatever CreateLiftRecordDto's decorators do or don't catch. Calling the
+    // controller directly (as this suite does throughout) bypasses the DTO/pipe
+    // layer entirely, so this is the one place that exercises the controller's own
+    // last-resort check in isolation.
+    it('throws BadRequestException when date produces an Invalid Date, independent of DTO validation', async () => {
+      await expect(
+        controller.createLiftRecord('5-3-1', {
+          program: '5-3-1',
+          cycleNum: 4,
+          workoutNum: 1,
+          date: 'garbage-value',
+          lift: 'Bench Press',
+          setNum: 1,
+          weight: 180,
+          reps: 5,
+        }, MOCK_USER),
+      ).rejects.toThrow(BadRequestException);
+      expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
     });
 
     // Regression for issue #884: the single-record path shares appendLiftRecords'

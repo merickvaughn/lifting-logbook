@@ -67,12 +67,11 @@ export class LiftRecordsController {
 
     let effectiveDate: Date;
     if (body.date) {
-      // `CreateLiftRecordDto.date` is validated as an ISO 8601 date string (issue
-      // #893), but that still permits a full date-time rather than a bare date.
-      // Normalize unconditionally rather than trusting the caller to send UTC
-      // midnight: the stored date must round-trip exactly through the YYYYMMDD
-      // id/key encoding (issue #884), or the record becomes unreachable by a
-      // later PATCH.
+      // `CreateLiftRecordDto.date` is validated as a calendar date (issue #893), but
+      // that still permits a full date-time rather than a bare date. Normalize
+      // unconditionally rather than trusting the caller to send UTC midnight: the
+      // stored date must round-trip exactly through the YYYYMMDD id/key encoding
+      // (issue #884), or the record becomes unreachable by a later PATCH.
       effectiveDate = toUTCMidnight(new Date(body.date));
     } else {
       const scheduled = await cycleScheduledWorkout.getScheduledWorkouts(program, body.cycleNum);
@@ -82,6 +81,18 @@ export class LiftRecordsController {
       // the bare `new Date()` fallback is the one source with no upstream
       // guarantee at all.
       effectiveDate = toUTCMidnight(match?.scheduledDate ?? new Date());
+    }
+    // Last-resort guard, independent of whatever the DTO's decorators do or don't
+    // catch: #893's review found that class-validator's `@IsDateString`/`@Matches`
+    // combination on `body.date` still has edge cases (verified: ISO 8601 week-date
+    // strings like "2026-W05" pass validation but `new Date(...)` can't parse them).
+    // An `Invalid Date` reaching `appendLiftRecords` either crashes later with an
+    // opaque `RangeError: Invalid time value` (from `.toISOString()` on the conflict
+    // path below) or writes a record no id/key can ever address again — surface a
+    // clean 400 here instead, regardless of which upstream validator gap let it
+    // through.
+    if (Number.isNaN(effectiveDate.getTime())) {
+      throw new BadRequestException('date must be a valid calendar date');
     }
 
     const record = {
