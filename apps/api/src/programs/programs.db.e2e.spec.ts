@@ -308,7 +308,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
   describe('write operations', () => {
     it('PATCH /programs/:program/training-maxes updates maxes and returns the full set', async () => {
       const res = await patchJson(`/programs/${SEED_PROGRAM}/training-maxes`, {
-        maxes: [{ lift: 'Squat', weight: 300 }],
+        maxes: [{ lift: 'Squat', weight: 300, unit: 'lbs' }],
       });
       expect(res.statusCode).toBe(200);
       const body = res.json();
@@ -543,7 +543,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       method: 'PATCH',
       url: `/programs/${SEED_PROGRAM}/training-maxes`,
       headers: { 'content-type': 'application/json', ...AS_ALICE },
-      payload: JSON.stringify({ maxes: [{ lift: 'Squat', weight: 999 }] }),
+      payload: JSON.stringify({ maxes: [{ lift: 'Squat', weight: 999, unit: 'lbs' }] }),
     });
     expect(patchRes.statusCode).toBe(200);
 

@@ -1,7 +1,8 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post } from '@nestjs/common';
-import { BodyWeightEntry, BodyWeightResponse, RecordBodyWeightRequest } from '@lifting-logbook/types';
+import { BodyWeightEntry, BodyWeightResponse } from '@lifting-logbook/types';
 import { IBodyWeightRepository } from '../ports/IBodyWeightRepository';
 import { BODY_WEIGHT_REPOSITORY } from '../ports/tokens';
+import { RecordBodyWeightDto } from './record-body-weight.dto';
 
 @Controller('programs/:program')
 export class BodyWeightController {
@@ -14,7 +15,7 @@ export class BodyWeightController {
   @HttpCode(HttpStatus.CREATED)
   async recordBodyWeight(
     @Param('program') program: string,
-    @Body() body: RecordBodyWeightRequest,
+    @Body() body: RecordBodyWeightDto,
   ): Promise<void> {
     const entry: BodyWeightEntry = {
       date: new Date(body.date),

@@ -4,6 +4,11 @@
  * one-sided change to either DTO would silently let POST create a record PATCH
  * cannot produce, or vice versa. Centralized here after that exact drift risk was
  * flagged during #893's review.
+ *
+ * MAX_WEIGHT is additionally reused by RecordBodyWeightDto and TrainingMaxEntryDto
+ * (issue #897) — same real-world quantity (a weight in lbs/kg) reached through
+ * different endpoints, so one shared sanity ceiling avoids near-duplicate magic
+ * numbers drifting apart across the three DTOs.
  */
 
 // Generous but finite — comfortably above any recorded raw lift, in lbs or kg. Exists
