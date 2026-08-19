@@ -691,6 +691,62 @@ staging-validation guarantee (see ADR-030's Rationale section, linked above).
 Motivating incident(s): [PR #879](https://github.com/merickvaughn/lifting-logbook/pull/879),
 [#880](https://github.com/merickvaughn/lifting-logbook/issues/880).
 
+### Auto-merge silently cleared — a non-required check's cancelled run
+
+**Pattern:** `.github/workflows/review-gate.yml` triggers on `issue_comment` (needed because the
+`/review` marker is posted as a PR *comment*, not a push) with `concurrency: cancel-in-progress: true`.
+Posting a second `/review` comment — the "re-run /review to refresh a stale marker" pattern documented
+above under "Merge enqueues instead of landing" — cancels any in-flight run of that same workflow. The
+cancelled run's job id was `review-gate` (lowercase/hyphenated; the job has no `name:` override, so
+GitHub's automatic Check-Run entry displayed literally as `review-gate`) — a *different*,
+**non-required** check from the `Review Gate` (capitalized, space) **commit status** branch protection
+actually requires. The latter is posted separately via the raw Commit Status API (`-f context=Review
+Gate`, hardcoded in the workflow's script step), completely decoupled from the job id —
+[ADR-031](docs/adr/ADR-031-mandatory-review-gate.md) states the design intent directly: "Branch
+protection's required-check matching is API-agnostic — it matches on context/check name, not which API
+reported it" ([GitHub Docs — Troubleshooting required status
+checks](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/defining-the-mergeability-of-pull-requests/troubleshooting-required-status-checks)
+confirms checks and commit statuses share the same name-based matching). Confirmed live:
+`required_status_checks.contexts` lists only the capitalized `Review Gate` context, never `review-gate`.
+Despite being non-required, the cancelled job's "fail" conclusion was enough for GitHub to silently drop
+a standing `gh pr merge --squash` auto-merge request — observed/reproduced behavior, not something
+GitHub's own auto-merge docs document either way (checked live).
+
+**Symptom:** `gh pr view <N> --json autoMergeRequest` reads back `null` — with no error surfaced
+anywhere — even though every *required* check has gone green, and `mergeStateStatus` reads `UNSTABLE`.
+`gh pr checks <N>` shows the near-identical pair side by side with nothing but case and hyphenation to
+tell them apart, e.g. (real output from PR #905):
+```
+review-gate	fail	55s
+Review Gate	pass	0	Clean /review, no findings
+```
+
+**Diagnosis:** Confirm every *required* context is actually green, ignoring any non-required
+lookalike:
+```bash
+gh api repos/merickvaughn/lifting-logbook/branches/main/protection/required_status_checks --jq .contexts
+gh pr checks <N>
+```
+If every listed required context passes despite `autoMergeRequest: null`, the auto-merge request was
+cleared by a non-required check's stale cancelled run, not a real blocker.
+
+**Fix:** Re-issue the merge once required checks are confirmed green — it immediately re-queues with
+no data loss:
+```bash
+gh pr merge <N> --squash
+# "already queued to merge"
+```
+
+As of [#906](https://github.com/merickvaughn/lifting-logbook/issues/906), `review-gate.yml`'s job id
+was renamed `review-gate` → `evaluate-review-marker` specifically to remove the visual collision in
+`gh pr checks` output. The underlying mechanism — a non-required check's cancelled run clearing a
+standing auto-merge request — is a GitHub-level behavior, not specific to this job, and can recur with
+any workflow using `cancel-in-progress: true`; the fix above remains the durable remediation regardless
+of job naming.
+
+Motivating incident: [issue #906](https://github.com/merickvaughn/lifting-logbook/issues/906), found
+while merging [PR #905](https://github.com/merickvaughn/lifting-logbook/pull/905) (2026-08-18).
+
 ---
 
 ## Observability

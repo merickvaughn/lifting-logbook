@@ -29,11 +29,11 @@ permissions:
   statuses: write
 
 concurrency:
-  group: review-gate-${{ github.event.pull_request.number || github.event.issue.number || github.event.merge_group.head_sha }}
+  group: evaluate-review-marker-${{ github.event.pull_request.number || github.event.issue.number || github.event.merge_group.head_sha }}
   cancel-in-progress: true
 
 jobs:
-  review-gate:
+  evaluate-review-marker:
     # issue_comment fires for both issues and PRs -- skip plain issue comments cheaply.
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request != null
     runs-on: ubuntu-latest

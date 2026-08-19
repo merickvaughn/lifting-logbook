@@ -9,9 +9,11 @@
 | `Observability Stack Smoke Test` | `.github/workflows/ci.yml` | `observability-smoke` |
 | `Playwright E2E` | `.github/workflows/ci.yml` | `e2e` |
 | `Staging Integration Tests` | `.github/workflows/staging.yml` | `staging-integration-tests` |
-| `Review Gate` | `.github/workflows/review-gate.yml` | `review-gate` |
+| `Review Gate` | `.github/workflows/review-gate.yml` | `evaluate-review-marker` |
 
 The job `name:` values match the required-check contexts character-for-character — with one exception: `Review Gate` reports via the Commit Status API (`gh api .../statuses/{sha} -f context=Review Gate`), not the Checks API, so its context string is hardcoded in the workflow's script step rather than derived from the job name. See [ADR-031](../adr/ADR-031-mandatory-review-gate.md) ("Why the Commit Status API, not the Checks API") for why. Renaming any job (or, for Review Gate, changing the hardcoded `context=` value) is a breaking change to branch protection.
+
+The job in the table above was renamed `review-gate` → `evaluate-review-marker` in [#906](https://github.com/merickvaughn/lifting-logbook/issues/906) — safe under the rule stated above, since `Review Gate`'s required context comes from the hardcoded `context=` value, not the job id. The rename only removes a visual near-collision between this non-required job's automatic Check-Run entry and the required `Review Gate` commit status in `gh pr checks` output; see `CLAUDE.md`'s `## Testing` section ("Auto-merge silently cleared — a non-required check's cancelled run") for the incident that motivated it.
 
 ## Source of truth
 
