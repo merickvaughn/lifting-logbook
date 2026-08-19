@@ -1676,16 +1676,17 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   // ./update-training-maxes.dto) close that gap — the same one #893 closed for
   // POST/PATCH /lift-records.
   //
-  // Isolation note (#897 review): the fresh per-test bearer token only isolates
-  // the training-maxes half — TrainingMaxesController resolves a per-user
-  // repository via `factory.forUser(user)`, like every other controller in this
-  // file. BodyWeightController does not: it injects BODY_WEIGHT_REPOSITORY
-  // directly (a single app-scoped InMemoryBodyWeightRepository keyed on
-  // `program` alone, with no per-user dimension at all — see issue #904, filed
-  // separately, for the production consequence of that). So the body-weight
-  // sub-block below uses its own dedicated program path instead of SEED_PROGRAM,
-  // to avoid colliding with the earlier 'multi-workout progression scenario'
-  // block, which already POSTs a body-weight entry for SEED_PROGRAM.
+  // Isolation note (#897 review, resolved by #904): the fresh per-test bearer
+  // token isolates both halves — BodyWeightController now resolves a per-user
+  // repository via `factory.forUser(user)`, exactly like TrainingMaxesController
+  // and every other controller in this file (it used to inject
+  // BODY_WEIGHT_REPOSITORY directly, a single app-scoped
+  // InMemoryBodyWeightRepository keyed on `program` alone with no per-user
+  // dimension — see issue #904 for the production consequence that was). The
+  // body-weight sub-block below still uses its own dedicated program path
+  // instead of SEED_PROGRAM, to avoid colliding with the earlier
+  // 'multi-workout progression scenario' block, which already POSTs a
+  // body-weight entry for SEED_PROGRAM.
   // ---------------------------------------------------------------------------
   describe('POST /body-weight and PATCH /training-maxes — request-body validation (regression for #897)', () => {
     const AS_VALIDATION_897 = { authorization: 'Bearer body-weight-training-max-validation-user' };

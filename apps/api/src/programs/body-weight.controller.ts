@@ -1,14 +1,15 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post } from '@nestjs/common';
 import { BodyWeightEntry, BodyWeightResponse } from '@lifting-logbook/types';
-import { IBodyWeightRepository } from '../ports/IBodyWeightRepository';
-import { BODY_WEIGHT_REPOSITORY } from '../ports/tokens';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { AuthUser } from '../ports/auth';
+import { IRepositoryFactory } from '../ports/factory';
+import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { RecordBodyWeightDto } from './record-body-weight.dto';
 
 @Controller('programs/:program')
 export class BodyWeightController {
   constructor(
-    @Inject(BODY_WEIGHT_REPOSITORY)
-    private readonly bodyWeightRepo: IBodyWeightRepository,
+    @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
   ) {}
 
   @Post('body-weight')
@@ -16,20 +17,24 @@ export class BodyWeightController {
   async recordBodyWeight(
     @Param('program') program: string,
     @Body() body: RecordBodyWeightDto,
+    @CurrentUser() user: AuthUser,
   ): Promise<void> {
+    const { bodyWeight } = await this.factory.forUser(user);
     const entry: BodyWeightEntry = {
       date: new Date(body.date),
       weight: body.weight,
       unit: body.unit,
     };
-    await this.bodyWeightRepo.recordBodyWeight(program, entry);
+    await bodyWeight.recordBodyWeight(program, entry);
   }
 
   @Get('body-weight/latest')
   async getLatestBodyWeight(
     @Param('program') program: string,
+    @CurrentUser() user: AuthUser,
   ): Promise<BodyWeightResponse> {
-    const entry = await this.bodyWeightRepo.getLatestBodyWeight(program);
+    const { bodyWeight } = await this.factory.forUser(user);
+    const entry = await bodyWeight.getLatestBodyWeight(program);
     if (!entry) {
       throw new NotFoundException(`No body weight recorded for program '${program}'`);
     }

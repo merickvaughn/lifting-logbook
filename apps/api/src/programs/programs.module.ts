@@ -1,7 +1,5 @@
 import { Module } from '@nestjs/common';
-import { InMemoryBodyWeightRepository } from '../adapters/in-memory/body-weight.adapter';
 import { cyclePlanningAgentProvider } from '../adapters/llm/cycle-planning-provider.factory';
-import { BODY_WEIGHT_REPOSITORY } from '../ports/tokens';
 import { BodyWeightController } from './body-weight.controller';
 import { CycleDashboardController } from './cycle-dashboard.controller';
 import { CycleGenerationController } from './cycle-generation.controller';
@@ -38,7 +36,6 @@ import { WorkoutsController } from './workouts.controller';
     ImportController,
   ],
   providers: [
-    { provide: BODY_WEIGHT_REPOSITORY, useClass: InMemoryBodyWeightRepository },
     cyclePlanningAgentProvider,
     CycleGenerationService,
   ],

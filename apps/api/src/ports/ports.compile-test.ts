@@ -215,6 +215,7 @@ const _importBatchRepo: IImportBatchRepository = {
 };
 
 const _repositoryBundle: RepositoryBundle = {
+  bodyWeight: _bodyWeightRepo,
   customLift: _customLiftRepo,
   cycleDashboard: _cycleDashboardRepo,
   cycleScheduledWorkout: _cycleScheduledWorkoutRepo,
@@ -240,7 +241,6 @@ const _repositoryFactory: IRepositoryFactory = {
 // Suppress "declared but never read" errors — these variables exist solely
 // to trigger structural type checking at compile time.
 void _authProvider;
-void _bodyWeightRepo;
 void _cycleDashboardRepo;
 void _programSpecRepo;
 void _liftRecordRepo;

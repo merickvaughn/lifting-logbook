@@ -1,4 +1,5 @@
 import { AuthUser } from './auth';
+import { IBodyWeightRepository } from './IBodyWeightRepository';
 import { ICustomLiftRepository } from './ICustomLiftRepository';
 import { ICycleDashboardRepository } from './ICycleDashboardRepository';
 import { ICycleScheduledWorkoutRepository } from './ICycleScheduledWorkoutRepository';
@@ -17,6 +18,7 @@ import { IWorkoutRepository } from './IWorkoutRepository';
 import { IWorkoutSkipOverrideRepository } from './IWorkoutSkipOverrideRepository';
 
 export interface RepositoryBundle {
+  bodyWeight: IBodyWeightRepository;
   customLift: ICustomLiftRepository;
   cycleDashboard: ICycleDashboardRepository;
   cycleScheduledWorkout: ICycleScheduledWorkoutRepository;

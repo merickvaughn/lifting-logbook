@@ -5,6 +5,7 @@ import { AuthUser } from '../../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
 import { PrismaService } from './prisma.service';
 import { RLS_TX_CLIENT } from './rls-context';
+import { PrismaBodyWeightRepository } from './body-weight.repository';
 import { PrismaCustomLiftRepository } from './custom-lift.repository';
 import { PrismaCycleDashboardRepository } from './cycle-dashboard.repository';
 import { PrismaCycleScheduledWorkoutRepository } from './cycle-scheduled-workout.repository';
@@ -52,6 +53,7 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
   async forUser(user: AuthUser): Promise<RepositoryBundle> {
     const db = this.client();
     return {
+      bodyWeight: new PrismaBodyWeightRepository(db, user.id),
       customLift: new PrismaCustomLiftRepository(db, user.id),
       cycleDashboard: new PrismaCycleDashboardRepository(db, user.id),
       cycleScheduledWorkout: new PrismaCycleScheduledWorkoutRepository(db, user.id),

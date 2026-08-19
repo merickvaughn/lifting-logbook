@@ -5,7 +5,6 @@ export const LIFT_RECORD_REPOSITORY = Symbol('ILiftRecordRepository');
 export const LIFTING_PROGRAM_SPEC_REPOSITORY = Symbol(
   'ILiftingProgramSpecRepository',
 );
-export const BODY_WEIGHT_REPOSITORY = Symbol('IBodyWeightRepository');
 export const PROGRAM_PHILOSOPHY_REPOSITORY = Symbol(
   'IProgramPhilosophyRepository',
 );
