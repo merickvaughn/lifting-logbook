@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { LiftRecord } from '@lifting-logbook/core';
 import { AuthUser } from '../../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
+import { PrismaBodyWeightRepository } from '../prisma/body-weight.repository';
 import { PrismaCustomLiftRepository } from '../prisma/custom-lift.repository';
 import { PrismaImportBatchRepository } from '../prisma/import-batch.repository';
 import { PrismaLiftRecordRepository } from '../prisma/lift-record.repository';
@@ -15,6 +16,7 @@ import { PrismaLiftMetadataRepository } from '../prisma/lift-metadata.repository
 import { PrismaWorkoutDateOverrideRepository } from '../prisma/workout-date-override.repository';
 import { PrismaWorkoutLiftOverrideRepository } from '../prisma/workout-lift-override.repository';
 import { PrismaWorkoutRepository } from '../prisma/workout.repository';
+import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
 import { InMemoryCycleDashboardRepository } from '../in-memory/cycle-dashboard.adapter';
 import { InMemoryImportBatchRepository } from '../in-memory/import-batch.adapter';
@@ -89,6 +91,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     if (adapterType === 'postgres') {
       const prisma = this.getOrCreatePrisma();
       return {
+        bodyWeight: new PrismaBodyWeightRepository(prisma, userId),
         customLift: new PrismaCustomLiftRepository(prisma, userId),
         cycleDashboard: new PrismaCycleDashboardRepository(prisma, userId),
         cycleScheduledWorkout: new PrismaCycleScheduledWorkoutRepository(prisma, userId),
@@ -113,6 +116,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     // and matches InMemoryRepositoryFactory).
     const sharedRecords: Map<string, LiftRecord[]> = new Map();
     return {
+      bodyWeight: new InMemoryBodyWeightRepository(),
       customLift: new InMemoryCustomLiftRepository(userId),
       cycleDashboard: new InMemoryCycleDashboardRepository(),
       cycleScheduledWorkout: new InMemoryCycleScheduledWorkoutRepository(),

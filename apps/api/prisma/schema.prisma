@@ -74,6 +74,19 @@ model TrainingMaxHistory {
   @@map("training_max_history")
 }
 
+model BodyWeight {
+  id        String   @id @default(uuid())
+  userId    String
+  program   String
+  date      DateTime @db.Date
+  weight    Float
+  unit      String
+  createdAt DateTime @default(now())
+
+  @@index([userId, program])
+  @@map("body_weight")
+}
+
 model StrengthGoal {
   id        String   @id @default(cuid())
   userId    String

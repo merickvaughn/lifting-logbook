@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { LiftRecord } from '@lifting-logbook/core';
 import { AuthUser } from '../../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
+import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
 import { InMemoryCycleDashboardRepository } from '../in-memory/cycle-dashboard.adapter';
 import { InMemoryCycleScheduledWorkoutRepository } from '../in-memory/cycle-scheduled-workout.adapter';
@@ -37,6 +38,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
         ? new Map([[SEED_PROGRAM, seedLiftRecords()]])
         : new Map();
       this.bundles.set(user.id, {
+        bodyWeight: new InMemoryBodyWeightRepository(),
         customLift: new InMemoryCustomLiftRepository(user.id),
         cycleDashboard: new InMemoryCycleDashboardRepository(preSeed),
         cycleScheduledWorkout: new InMemoryCycleScheduledWorkoutRepository(),

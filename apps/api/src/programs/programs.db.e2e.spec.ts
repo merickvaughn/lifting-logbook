@@ -76,6 +76,7 @@ async function cleanTestUsers(prisma: PrismaClient): Promise<void> {
   await prisma.userSettings.deleteMany({ where: { userId: { in: users } } });
   await prisma.customProgram.deleteMany({ where: { userId: { in: users } } });
   await prisma.customLift.deleteMany({ where: { userId: { in: users } } });
+  await prisma.bodyWeight.deleteMany({ where: { userId: { in: users } } });
 }
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
@@ -1111,8 +1112,9 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Body weight — in-memory adapter only (no Prisma adapter exists); exercises
-  // the HTTP contract end-to-end even though no DB assertion is possible.
+  // Body weight — PrismaBodyWeightRepository, scoped by (userId, program) and
+  // enforced by Postgres RLS (issue #904). Exercises the HTTP contract plus
+  // direct DB-layer assertions of persistence and cross-user isolation.
   // ---------------------------------------------------------------------------
 
   describe('body-weight endpoints', () => {
@@ -1125,7 +1127,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(res.statusCode).toBe(404);
     });
 
-    it('POST body-weight returns 201 and GET /latest reflects the entry', async () => {
+    it('POST body-weight returns 201, GET /latest reflects the entry, and it persists to Postgres', async () => {
       const injectRaw = app.getHttpAdapter().getInstance().inject.bind(app.getHttpAdapter().getInstance());
       const postRes = await injectRaw({
         method: 'POST',
@@ -1138,6 +1140,43 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       const getRes = await injectRaw({ method: 'GET', url: `${BW_URL}/latest`, headers: AS_BW });
       expect(getRes.statusCode).toBe(200);
       expect(getRes.json()).toMatchObject({ date: '2026-05-01', weight: 185, unit: 'lbs' });
+
+      const row = await prisma.bodyWeight.findFirst({
+        where: { userId: USER_BW, program: SEED_PROGRAM },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(row?.weight).toBe(185);
+      expect(row?.unit).toBe('lbs');
+    });
+
+    it('user isolation — body weight is scoped to userId', async () => {
+      const injectRaw = app.getHttpAdapter().getInstance().inject.bind(app.getHttpAdapter().getInstance());
+      const AS_ALICE = { authorization: `Bearer ${USER_ALICE}` };
+      const AS_BOB = { authorization: `Bearer ${USER_BOB}` };
+
+      // Alice records a body weight for this program — Bob has recorded none.
+      const alicePost = await injectRaw({
+        method: 'POST',
+        url: BW_URL,
+        headers: { 'content-type': 'application/json', ...AS_ALICE },
+        payload: JSON.stringify({ date: '2026-05-02', weight: 150, unit: 'lbs' }),
+      });
+      expect(alicePost.statusCode).toBe(201);
+
+      // Bob's GET must not see Alice's entry.
+      const bobRes = await injectRaw({ method: 'GET', url: `${BW_URL}/latest`, headers: AS_BOB });
+      expect(bobRes.statusCode).toBe(404);
+
+      // DB layer — Alice's row exists, Bob's does not.
+      const aliceRow = await prisma.bodyWeight.findFirst({
+        where: { userId: USER_ALICE, program: SEED_PROGRAM, weight: 150 },
+      });
+      expect(aliceRow).not.toBeNull();
+
+      const bobRow = await prisma.bodyWeight.findFirst({
+        where: { userId: USER_BOB, program: SEED_PROGRAM, weight: 150 },
+      });
+      expect(bobRow).toBeNull();
     });
   });
 
