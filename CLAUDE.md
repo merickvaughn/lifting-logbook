@@ -581,7 +581,7 @@ on the five `page.test.tsx` files that `import { renderToStaticMarkup } from 're
 
 **Fix:** Set `TZ` in the `env` option of a `child_process.spawnSync`/`execFileSync` call instead, launching a genuinely fresh child process — `TZ` set at process-launch time IS reliably respected. See [`packages/core/tests/core/utils/parser/dateParsing.aheadOfUtc.test.ts`](packages/core/tests/core/utils/parser/dateParsing.aheadOfUtc.test.ts) + [`packages/core/tests/support/aheadOfUtcChild.js`](packages/core/tests/support/aheadOfUtcChild.js) for the reference implementation: a single `beforeAll` spawns the child script once with `TZ=Pacific/Auckland` set in its environment, and assertions run against the real parser results it reports back over stdout.
 
-Motivating incident: discovered while building the regression tests for [#894](https://github.com/merickvaughn/lifting-logbook/issues/894) / [#899](https://github.com/merickvaughn/lifting-logbook/issues/899) (merged in [PR #900](https://github.com/merickvaughn/lifting-logbook/pull/900)); documented in [#901](https://github.com/merickvaughn/lifting-logbook/issues/901).
+Motivating incident: discovered while building the regression tests for [#894](https://github.com/merickvaughn/lifting-logbook/issues/894) (merged in [PR #900](https://github.com/merickvaughn/lifting-logbook/pull/900)) and extended for [#899](https://github.com/merickvaughn/lifting-logbook/issues/899) (merged in [PR #903](https://github.com/merickvaughn/lifting-logbook/pull/903)); documented in [#901](https://github.com/merickvaughn/lifting-logbook/issues/901).
 
 ### CI not firing — merge conflict silences GitHub Actions
 
