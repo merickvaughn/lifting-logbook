@@ -33,7 +33,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  review-gate:
+  evaluate-review-marker:
     # issue_comment fires for both issues and PRs -- skip plain issue comments cheaply.
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request != null
     runs-on: ubuntu-latest

@@ -149,8 +149,10 @@ Revisit if:
   this check reports through, and why it needs only `statuses: write`.
 - [GitHub REST API — Checks](https://docs.github.com/en/rest/checks) — the alternative considered
   and not used, for the reasons in Rationale.
-- [GitHub Docs — About status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repository-settings/about-status-checks) —
-  confirms required-check matching is by context/check name, independent of which API reported it.
+- [GitHub Docs — Troubleshooting required status checks](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/defining-the-mergeability-of-pull-requests/troubleshooting-required-status-checks) —
+  confirms checks and commit statuses are matched in the same name-based namespace, independent of
+  which API reported them (link updated 2026-08-19 — the page originally cited here 404s, confirmed
+  live; GitHub appears to have reorganized its docs since this ADR was written).
 - [GitHub Actions — Events that trigger workflows § `issue_comment`](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#issue_comment) —
   confirms PR comments fire `issue_comment`, not `pull_request`.
 - [GitHub Actions — Events that trigger workflows § `merge_group`](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#merge_group) —
