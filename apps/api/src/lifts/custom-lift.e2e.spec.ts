@@ -122,6 +122,41 @@ describe('Custom Lifts HTTP (e2e, in-memory adapters)', () => {
     expect(res.statusCode).toBe(409);
   });
 
+  // #911 review, third pass: the reserved-alias 409 above and a genuine
+  // same-user duplicate-name 409 must not share a message — the reused
+  // CustomLiftConflictError message ("A custom lift named 'squat' already
+  // exists") asserted something false for the reserved-alias case, since no
+  // custom lift by that name exists at all.
+  it('distinguishes a reserved-alias 409 from a genuine duplicate-name 409 by message', async () => {
+    const reserved = await create({ name: 'squat', classification: 'compound' });
+    expect(reserved.statusCode).toBe(409);
+    expect((reserved.json() as { message: string }).message).toMatch(/reserved exercise name/i);
+    expect((reserved.json() as { message: string }).message).not.toMatch(/already exists/i);
+
+    await create({ name: 'Genuinely Duplicated Lift', classification: 'compound' });
+    const duplicate = await create({ name: 'Genuinely Duplicated Lift', classification: 'compound' });
+    expect(duplicate.statusCode).toBe(409);
+    expect((duplicate.json() as { message: string }).message).toMatch(/already exists/i);
+  });
+
+  // #911 review, third pass: untrimmed whitespace previously defeated the
+  // canonical-alias collision guard entirely (" Squat" !== "squat"
+  // case-insensitively) and would have registered as a live, whitespace-padded
+  // key in buildEffectiveSlotMap.
+  it('rejects a name that only matches a canonical alias after trimming whitespace', async () => {
+    const leading = await create({ name: ' Squat', classification: 'compound' });
+    expect(leading.statusCode).toBe(409);
+
+    const trailing = await create({ name: 'squat ', classification: 'compound' });
+    expect(trailing.statusCode).toBe(409);
+  });
+
+  it('trims whitespace from a genuinely new custom lift name before persisting', async () => {
+    const res = await create({ name: '  Sissy Squat  ', classification: 'accessory' });
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as CustomLiftResponse).name).toBe('Sissy Squat');
+  });
+
   it('updates classification, movementProfile and name via PATCH', async () => {
     const created = await create({ name: 'Belt Squat', classification: 'accessory' });
     const id = (created.json() as CustomLiftResponse).id;

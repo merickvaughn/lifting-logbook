@@ -100,3 +100,32 @@ export function buildEffectiveSlotMap(
   }
   return Object.assign(Object.create(null), custom, DEFAULT_SLOT_MAP) as Record<string, string>;
 }
+
+// Lazily built and cached: ALL_SLOT_MAP_ALIASES is a module-level constant, so
+// the lowercased index never goes stale across calls.
+let aliasesLowerToCanonical: Map<string, string> | undefined;
+
+/**
+ * Case-insensitive collision check against DEFAULT_SLOT_MAP's aliases: does
+ * `name` match one once case is ignored? Returns that alias's own canonical
+ * casing when it does, undefined otherwise.
+ *
+ * Backs the "a custom lift must never register under a name that shadows a
+ * built-in" rule — a case-variant registers successfully (custom-lift name
+ * uniqueness is scoped to the user and is itself exact-case) but
+ * buildEffectiveSlotMap always lets DEFAULT_SLOT_MAP win on an *exact*-case
+ * collision, so a case-variant custom lift is a distinct, valid entry, not a
+ * duplicate — except when the case-*insensitive* match happens to be exact
+ * too, which is what actually makes it unreachable by its own name at import
+ * time (issue #911 review). Exported so every caller that needs this specific
+ * check — currently the custom-lift create/update collision guard in
+ * apps/api/src/lifts/custom-lift.controller.ts — reads from one source
+ * instead of hand-writing its own case-insensitive scan (third review pass:
+ * the guard was duplicated verbatim between create() and update()).
+ */
+export function canonicalAliasFor(name: string): string | undefined {
+  aliasesLowerToCanonical ??= new Map(
+    ALL_SLOT_MAP_ALIASES.map((alias) => [alias.toLowerCase(), alias]),
+  );
+  return aliasesLowerToCanonical.get(name.toLowerCase());
+}

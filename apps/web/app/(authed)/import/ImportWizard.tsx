@@ -114,13 +114,22 @@ function getAllFieldsForKind(kind: ImportKind): FieldOption[] {
   return KIND_FIELDS[kind] ?? [];
 }
 
-// Exhaustive, not hand-duplicated per chip (issue #911 review) — a future
-// LiftClassification value renders automatically instead of silently being
-// unreachable in the "create new exercise" affordance.
-const LIFT_CLASSIFICATIONS: { value: LiftClassification; label: string }[] = [
-  { value: 'compound', label: 'Compound' },
-  { value: 'accessory', label: 'Accessory' },
-];
+// Exhaustive BY CONSTRUCTION (issue #911 review) — LIFT_CLASSIFICATION_LABELS
+// is typed Record<LiftClassification, string>, so the compiler itself rejects
+// an incomplete map if LiftClassification ever gains a member. The earlier
+// hand-written array version made the identical "exhaustive" claim in its own
+// comment but was just a plain array literal — it type-checked fine with a
+// member missing, silently leaving that value unreachable in the "create new
+// exercise" affordance despite the comment (#911 review, third pass — this is
+// the same overclaiming-comment pattern the second pass already corrected
+// once in this same PR, in effective-slot-map.util.ts).
+const LIFT_CLASSIFICATION_LABELS: Record<LiftClassification, string> = {
+  compound: 'Compound',
+  accessory: 'Accessory',
+};
+const LIFT_CLASSIFICATIONS: { value: LiftClassification; label: string }[] = (
+  Object.entries(LIFT_CLASSIFICATION_LABELS) as [LiftClassification, string][]
+).map(([value, label]) => ({ value, label }));
 
 function bucketClass(bucket: 'high' | 'medium' | 'low'): string {
   return bucket === 'high'
@@ -232,15 +241,25 @@ export function ImportWizard({
     [previewBody, reviewFilter],
   );
 
-  // Case-insensitive lowercase set of every built-in canonical alias — used to
-  // (a) keep a custom lift that shadows one out of the remap datalist (picking
-  // it would silently resolve to the canonical built-in instead, per
-  // buildEffectiveSlotMap's own DEFAULT_SLOT_MAP-wins-on-collision precedence)
-  // and (b) build knownLiftNamesCanonical below (#911 review, second pass).
-  const defaultAliasesLower = useMemo(
-    () => new Set(ALL_SLOT_MAP_ALIASES.map((a) => a.toLowerCase())),
-    [],
-  );
+  // Every string an ambiguous-row remap can resolve to via an EXACT-case
+  // match: every canonical alias, plus this user's own custom lift names and
+  // ids. buildEffectiveSlotMap only lets DEFAULT_SLOT_MAP win on an
+  // exact-case collision — a custom lift named "squat" (lowercase) is a
+  // genuinely distinct, reachable key from the canonical "Squat", not a
+  // duplicate — so exact match must be checked, and must win, before ever
+  // falling back to knownLiftNamesCanonical's case-insensitive lookup below
+  // (#911 review, third pass — the second pass's case-insensitive-only
+  // resolution would have silently rewritten a case-variant custom lift's own
+  // name to the canonical built-in instead of honoring it, and hidden it from
+  // the datalist entirely).
+  const exactKnownLiftKeys = useMemo(() => {
+    const set = new Set<string>(ALL_SLOT_MAP_ALIASES);
+    for (const lift of customLifts) {
+      set.add(lift.name);
+      set.add(lift.id);
+    }
+    return set;
+  }, [customLifts]);
 
   // Case-insensitive lookup (lowercased text -> canonical-cased form) of every
   // value an ambiguous-row remap can already resolve to without creating
@@ -267,6 +286,24 @@ export function ImportWizard({
     return map;
   }, [customLifts]);
 
+  // The create-in-flight guard must be keyed by the shared original CSV text,
+  // not by rowIndex: N ambiguous rows sharing the same originalLift each
+  // render their own independently-"busy"-tracked Create button (createDrafts
+  // is keyed by rowIndex), so without this a second click on a DIFFERENT row
+  // for the same name — before the first create resolves — fires a second
+  // POST /lifts/custom for that name. The 409 self-heal refetch already
+  // covers the resulting race, but preventing the redundant write is cheap
+  // and avoids two rows visibly stuck on "Creating…" on a slow network (#911
+  // review, third pass).
+  const busyOriginalLifts = useMemo(() => {
+    const set = new Set<string>();
+    for (const delta of previewBody?.deltas ?? []) {
+      if (delta.rowIndex === undefined || delta.originalLift === undefined) continue;
+      if (createDrafts.get(delta.rowIndex)?.busy) set.add(delta.originalLift);
+    }
+    return set;
+  }, [previewBody, createDrafts]);
+
   async function analyze(override?: ImportKind): Promise<ImportPreviewResponse | null> {
     if (!programId || !file) return null;
     setError(null);
@@ -287,14 +324,22 @@ export function ImportWizard({
       // row 1 collide) — an uncleared exclude would then silently drop an
       // unrelated row from the new file's import with nothing in the UI
       // explaining why. reviewMaxes is the training-maxes REVIEW step's own
-      // editable copy of the previous preview's deltas (#911 review, second
-      // pass — the first-pass fix only cleared the first two).
+      // editable copy of the previous preview's deltas. columnOverrides is
+      // keyed by sourceHeader/__req__:<field>, which collides across files
+      // the same way delta.key does — a stale entry would silently drive
+      // effectiveMappings and the commit `overrides` param off a column
+      // mapping the user chose for a DIFFERENT file (#911 review: second pass
+      // only cleared the first two of what is now seven; third pass added
+      // this one, previously only cleared by handlePickDestination — a
+      // narrower path than analyze() itself, this function's own comment's
+      // stated canonical reset point).
       setLiftOverrides(new Map());
       setCreateDrafts(new Map());
       setExcludedKeys(new Set());
       setSelectedKeys(new Set());
       lastSelectedKey.current = null;
       setReviewMaxes(null);
+      setColumnOverrides(new Map());
       return res;
     } catch (e) {
       logClientError('previewImport', e, { programId });
@@ -312,7 +357,6 @@ export function ImportWizard({
   }
 
   async function handlePickDestination(kind: ImportKind) {
-    setColumnOverrides(new Map());
     setStep(Step.ANALYZING);
     const res = await analyze(kind);
     setStep(res ? Step.MAP_COLUMNS : Step.CLASSIFY);
@@ -378,6 +422,23 @@ export function ImportWizard({
     });
   }
 
+  // Clears a stale creation error (without touching classification/busy) when
+  // the user edits the remap input after a failed create — otherwise
+  // "An exercise with this name already exists." keeps rendering under a
+  // value that no longer matches the name that error was actually about, one
+  // instance of the same "wrong message sends the user down the wrong
+  // recovery path" concern this PR's own 409-vs-refetch-failure distinction
+  // was built to avoid (#911 review, third pass).
+  function clearCreateDraftError(rowIndex: number) {
+    setCreateDrafts((prev) => {
+      const existing = prev.get(rowIndex);
+      if (!existing || existing.error === null) return prev;
+      const next = new Map(prev);
+      next.set(rowIndex, { ...existing, error: null });
+      return next;
+    });
+  }
+
   function clearCreateDraft(rowIndex: number) {
     setCreateDrafts((prev) => {
       const next = new Map(prev);
@@ -415,22 +476,38 @@ export function ImportWizard({
     triggeringRowIndex: number,
   ) {
     const deltas = previewBody?.deltas ?? [];
+    // A blank/missing Lift cell also produces originalLift === '' (not just
+    // "no original text at all" — see showCreateNew's own d.originalLift
+    // !== undefined guard, which lets an empty string through). Matching on
+    // '' would batch-resolve every OTHER blank-cell ambiguous row too — rows
+    // that have nothing in common with the one the user actually typed a name
+    // into, silently assigning them all to it. Blank cells are a realistic
+    // shape for hand-maintained/Sheets-exported CSVs ("blank = same as row
+    // above"), so this is not a hypothetical (#911 review, third pass).
+    const isBatchable = matchOriginalLift.trim() !== '';
     setLiftOverrides((prev) => {
       const next = new Map(prev);
       for (const delta of deltas) {
-        if (
-          delta.status === 'ambiguous' &&
-          delta.rowIndex !== undefined &&
-          delta.originalLift === matchOriginalLift
-        ) {
-          const existing = next.get(delta.rowIndex);
-          if (
-            delta.rowIndex === triggeringRowIndex ||
-            existing === undefined ||
-            existing === liftId
-          ) {
-            next.set(delta.rowIndex, liftId);
-          }
+        if (delta.rowIndex === undefined || delta.status !== 'ambiguous') continue;
+        if (delta.rowIndex === triggeringRowIndex) {
+          next.set(delta.rowIndex, liftId);
+          continue;
+        }
+        if (!isBatchable) continue;
+        // A row the user has explicitly excluded (× button) must not be
+        // silently re-included by batch-resolve — excludedKeys is enforced
+        // via UI/commit-payload filtering elsewhere, not by removing the row
+        // from previewBody, so it still passes every other check here without
+        // this guard (#911 review, third pass). This guard is necessary but
+        // not sufficient on its own — an ambiguous row's exclusion doesn't
+        // actually reach the server correctly at all (its __ambiguous_N key
+        // can never match a natural key), a separate, pre-existing bug
+        // tracked as issue #915.
+        if (excludedKeys.has(delta.key)) continue;
+        if (delta.originalLift !== matchOriginalLift) continue;
+        const existing = next.get(delta.rowIndex);
+        if (existing === undefined || existing === liftId) {
+          next.set(delta.rowIndex, liftId);
         }
       }
       return next;
@@ -496,6 +573,12 @@ export function ImportWizard({
           clearCreateDraft(rowIndex);
           return;
         }
+        // The success-path checks above already bail out on a discarded
+        // preview; the two error/fallthrough branches below must too, or an
+        // error banner (and this beacon's rowIndex context) attaches to a row
+        // belonging to a preview the user has since replaced — a row they
+        // never interacted with (#911 review, third pass).
+        if (previewGeneration.current !== startGeneration) return;
         // Distinguish "confirmed it already exists" from "couldn't confirm
         // either way" — the refetch itself failing is not the same claim as a
         // genuine name collision, and telling the user the wrong one sends
@@ -512,6 +595,7 @@ export function ImportWizard({
       applyResolvedLiftToMatchingRows(matchOriginalLift, created.id, rowIndex);
       clearCreateDraft(rowIndex);
     } catch (e) {
+      if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
       // Never include `name` — see the logClientError comment above.
       logClientError('createCustomLift', e, { programId, rowIndex });
       setCreateDraftError(rowIndex, e instanceof Error ? e.message : 'Failed to create exercise');
@@ -548,13 +632,18 @@ export function ImportWizard({
         // a row is flagged ambiguous, so this set correctly identifies every
         // rowIndex that belongs to the preview actually being committed,
         // resolved or not (#911 review, second pass).
-        const currentAmbiguousRowIndexes = new Set(
-          (previewBody?.deltas ?? [])
-            .filter((d) => d.status === 'ambiguous' && d.rowIndex !== undefined)
-            .map((d) => d.rowIndex as number),
+        const ambiguousDeltas = (previewBody?.deltas ?? []).filter(
+          (d) => d.status === 'ambiguous' && d.rowIndex !== undefined,
+        );
+        const currentAmbiguousRowIndexes = new Set(ambiguousDeltas.map((d) => d.rowIndex as number));
+        // A row the user has explicitly excluded (× button) must not have an
+        // override sent for it either — mirrors the same guard added to
+        // applyResolvedLiftToMatchingRows (#911 review, third pass).
+        const excludedRowIndexes = new Set(
+          ambiguousDeltas.filter((d) => excludedKeys.has(d.key)).map((d) => d.rowIndex as number),
         );
         for (const [rowIdx, liftId] of liftOverrides.entries()) {
-          if (!currentAmbiguousRowIndexes.has(rowIdx)) continue;
+          if (!currentAmbiguousRowIndexes.has(rowIdx) || excludedRowIndexes.has(rowIdx)) continue;
           // The controlled ambiguous-row input now stores the raw (untrimmed)
           // typed value so a just-typed trailing space isn't eaten mid-keystroke
           // — trim here, at the one place the value actually leaves the client
@@ -566,20 +655,32 @@ export function ImportWizard({
           // empty string (#911 review, second pass — see the controlled-input
           // onChange handler for why liftOverrides can now hold '').
           if (!trimmed) continue;
-          // A case-insensitive match against a known alias resolves to its
-          // canonical casing before sending — the server's slot-map lookup is
-          // exact-case, so a user who typed "squat" (matching "Squat"
-          // case-insensitively) must be sent the canonical spelling, not
-          // literally what they typed, or commit would fail with the same
-          // "not recognized" error the create-new gate just correctly avoided
-          // for them (#911 review, second pass).
-          const canonical = knownLiftNamesCanonical.get(trimmed.toLowerCase());
-          liftOverridesRecord[rowIdx] = canonical ?? trimmed;
+          // Exact match first: a custom lift can legitimately be named a
+          // case-variant of a canonical alias (e.g. "squat" alongside
+          // "Squat") — buildEffectiveSlotMap only lets DEFAULT_SLOT_MAP win
+          // on an *exact*-case collision, so "squat" is a distinct, genuinely
+          // reachable server-side key, not a duplicate. Only when the typed
+          // text matches nothing exactly does the case-insensitive canonical
+          // fallback apply — for a user who typed "squat" meaning the
+          // canonical "Squat", the server's slot-map lookup is exact-case, so
+          // sending literally what they typed would fail the same
+          // "not recognized" check the create-new gate just correctly steered
+          // them around (#911 review, second and third passes — the second
+          // pass's case-insensitive-only resolution here would have
+          // mis-sent an exact-case-reachable custom lift's own name instead
+          // of honoring it).
+          if (exactKnownLiftKeys.has(trimmed)) {
+            liftOverridesRecord[rowIdx] = trimmed;
+          } else {
+            const canonical = knownLiftNamesCanonical.get(trimmed.toLowerCase());
+            liftOverridesRecord[rowIdx] = canonical ?? trimmed;
+          }
         }
         result = await commitImport(programId, file, destination, {
           overrides: Object.keys(columnOverridesRecord).length > 0 ? columnOverridesRecord : undefined,
           excludeKeys: excludedKeys.size > 0 ? [...excludedKeys].map(stripDeltaKeySuffix) : undefined,
-          liftOverrides: liftOverrides.size > 0 ? liftOverridesRecord : undefined,
+          liftOverrides:
+            Object.keys(liftOverridesRecord).length > 0 ? liftOverridesRecord : undefined,
           splitDest: preview?.split !== undefined,
         });
       }
@@ -616,6 +717,11 @@ export function ImportWizard({
   }
 
   function reset() {
+    // Bumped so an in-flight handleCreateLift from before this reset (only
+    // reachable from the DONE step, so hard to hit, but not impossible — see
+    // its own generation checks) can't repopulate liftOverrides/createDrafts
+    // after this function just cleared them (#911 review, third pass).
+    previewGeneration.current += 1;
     setStep(Step.SOURCE);
     setFile(null);
     setPreview(null);
@@ -1011,19 +1117,24 @@ export function ImportWizard({
                           its keys and its values, so users are steered onto a
                           name the server actually recognizes, not just its
                           internal id), plus this user's custom lifts (#911).
-                          Custom lifts whose name shadows a canonical alias are
-                          excluded (the server now also refuses to create one
-                          going forward, but a pre-existing one could still
-                          exist) — offering it here would suggest a remap target
-                          that silently resolves to the canonical built-in
-                          instead, per buildEffectiveSlotMap's own precedence
-                          rule (#911 review, second pass). */}
+                          Only an EXACT-case shadow is excluded — a
+                          pre-existing custom lift whose name case-insensitively
+                          but not exactly matches an alias (e.g. "squat" vs.
+                          "Squat") is a distinct, genuinely reachable entry per
+                          buildEffectiveSlotMap's exact-case-only collision
+                          rule, and offering it is correct; only an exact-case
+                          match is truly unreachable by that name (the server
+                          also now refuses to create an exact-case-shadowing
+                          custom lift going forward, but a pre-existing one
+                          could still exist) (#911 review, third pass — an
+                          earlier case-insensitive-only version of this filter
+                          also hid every reachable case-variant custom lift). */}
                       <datalist id="lift-catalog">
                         {ALL_SLOT_MAP_ALIASES.map((alias) => (
                           <option key={alias} value={alias} />
                         ))}
                         {customLifts
-                          .filter((lift) => !defaultAliasesLower.has(lift.name.toLowerCase()))
+                          .filter((lift) => !ALL_SLOT_MAP_ALIASES.includes(lift.name))
                           .map((lift) => (
                             <option key={lift.id} value={lift.name} />
                           ))}
@@ -1112,7 +1223,11 @@ export function ImportWizard({
                                         // resolution — batch-resolve on create, or the 409
                                         // self-heal — is always visibly reflected, and can
                                         // never silently diverge from what's actually
-                                        // submitted at commit (#911 review).
+                                        // submitted at commit (#911 review). Trade-off: every
+                                        // keystroke here now re-renders the full delta table
+                                        // (up to 5,000 rows) — tracked as issue #916, not fixed
+                                        // here since the correctness fix this comment describes
+                                        // must not be reverted to get it back.
                                         value={rawLiftValue}
                                         placeholder="Type a lift name…"
                                         aria-label={`Lift name for row ${d.rowIndex}`}
@@ -1135,6 +1250,11 @@ export function ImportWizard({
                                             next.set(rIdx, raw);
                                             return next;
                                           });
+                                          // A prior failed-create error (e.g. "already
+                                          // exists") is about the OLD value, not
+                                          // whatever the user is now typing — stale
+                                          // otherwise (#911 review, third pass).
+                                          clearCreateDraftError(rIdx);
                                         }}
                                       />
                                       {showCreateNew && rowIndex !== undefined && (
@@ -1158,7 +1278,11 @@ export function ImportWizard({
                                             <button
                                               type="button"
                                               className={styles.createLiftConfirm}
-                                              disabled={!draft?.classification || draft?.busy}
+                                              disabled={
+                                                !draft?.classification ||
+                                                (d.originalLift !== undefined &&
+                                                  busyOriginalLifts.has(d.originalLift))
+                                              }
                                               aria-label={`Create "${currentLiftValue}" as a new exercise`}
                                               onClick={() => {
                                                 // d.originalLift is always populated for a

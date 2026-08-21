@@ -442,6 +442,20 @@ export class ImportController {
     destination: ImportKind,
     table: SpreadsheetCell[][],
   ): { valid: unknown[]; errors: ImportError[] } {
+    // lift-records must never reach here. Its only current caller — preview()
+    // — branches lift-records off to previewLiftRecords before ever calling
+    // this method (see the destination check immediately above this.preview's
+    // call site). liftRecordsHandler.validate throws unconditionally
+    // (import-handlers.ts) rather than silently falling back to a
+    // non-custom-lift-aware slot map, so without this explicit guard a future
+    // refactor that lost that branch would surface as that generic throw
+    // message here instead of a message naming the actual broken invariant
+    // (issue #911 review, third pass).
+    if (destination === 'lift-records') {
+      throw new Error(
+        "parseAndValidate must not be called for 'lift-records' — route through previewLiftRecords instead",
+      );
+    }
     const handler = IMPORT_HANDLERS[destination]!;
     let parsed: unknown[];
     try {
@@ -457,14 +471,6 @@ export class ImportController {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     return handler.validate(parsed as any);
-  }
-
-  private parseAndValidateOrThrow(destination: ImportKind, table: SpreadsheetCell[][]): unknown[] {
-    const { valid, errors } = this.parseAndValidate(destination, table);
-    if (errors.length > 0) {
-      throw new BadRequestException({ message: 'Validation failed', errors });
-    }
-    return valid;
   }
 }
 

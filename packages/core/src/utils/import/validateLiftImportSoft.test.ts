@@ -63,6 +63,17 @@ describe('validateLiftImportSoft', () => {
     expect(result.hardErrors).toHaveLength(0);
   });
 
+  // Regression guard (#911 review, third pass): parity with
+  // validateLiftImport (see its own test) — an untrimmed known lift value
+  // previously failed the exact-case slotMap lookup and landed in the
+  // ambiguous bucket instead of valid.
+  it('trims whitespace before resolving a known lift', () => {
+    const r = record({ lift: `  ${KNOWN_LIFT}  ` });
+    const result = validateLiftImportSoft([r], SLOT_MAP);
+    expect(result.valid).toHaveLength(1);
+    expect(result.ambiguous).toHaveLength(0);
+  });
+
   // Regression guard (#911 review): membership must be Object.hasOwn, not the `in`
   // operator, which walks the prototype chain — "toString"/"constructor"/"__proto__"
   // must land in the ambiguous bucket like any other unrecognized name, not resolve

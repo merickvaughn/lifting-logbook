@@ -57,7 +57,10 @@ export function validateLiftImportSoft(
       return;
     }
 
-    const liftStr = r.lift as unknown as string;
+    // Trimmed for parity with validateLiftImport (see its own comment) and
+    // with validateTrainingMaxImport/validateStrengthGoalImport, both of
+    // which already trim (issue #911 review, third pass).
+    const liftStr = (r.lift as unknown as string).trim();
     // Object.prototype.hasOwnProperty.call, not the `in` operator — see
     // validateLiftImport.ts for why.
     if (!liftStr || !Object.prototype.hasOwnProperty.call(slotMap, liftStr)) {

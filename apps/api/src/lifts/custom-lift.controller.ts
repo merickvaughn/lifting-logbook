@@ -10,13 +10,13 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { ALL_SLOT_MAP_ALIASES } from '@lifting-logbook/core';
+import { canonicalAliasFor } from '@lifting-logbook/core';
 import { CustomLift, CustomLiftResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { UpdateCustomLiftPatch } from '../ports/ICustomLiftRepository';
-import { CustomLiftConflictError } from '../ports/errors';
+import { ReservedLiftNameConflictError } from '../ports/errors';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { CreateCustomLiftDto } from './create-custom-lift.dto';
 import { UpdateCustomLiftDto } from './update-custom-lift.dto';
@@ -60,11 +60,15 @@ export class CustomLiftController {
     // custom lift is never actually reachable by that name at import time —
     // silently fragmenting that lift's history across two ids the moment a
     // user (or a future caller of this API that isn't this PR's own UI, which
-    // has its own client-side guard) creates one. Reject up front, the same
-    // way a same-user duplicate custom-lift name already 409s (issue #911 review).
-    const lowerName = dto.name.toLowerCase();
-    if (ALL_SLOT_MAP_ALIASES.some((alias) => alias.toLowerCase() === lowerName)) {
-      throw new CustomLiftConflictError(dto.name);
+    // has its own client-side guard) creates one. Reject up front, distinctly
+    // from a same-user duplicate custom-lift name (which 409s too, but as a
+    // real conflict against a lift that actually exists) — see
+    // ReservedLiftNameConflictError's own comment (issue #911 review).
+    // dto.name is already trimmed by the DTO's own @Transform before this
+    // runs — see create-custom-lift.dto.ts for why leading/trailing
+    // whitespace must not be allowed to slip past this guard.
+    if (canonicalAliasFor(dto.name) !== undefined) {
+      throw new ReservedLiftNameConflictError(dto.name);
     }
 
     const { customLift } = await this.factory.forUser(user);
@@ -88,11 +92,8 @@ export class CustomLiftController {
   ): Promise<CustomLiftResponse> {
     // Same guard as create() — a rename to a name that case-insensitively
     // shadows a canonical alias has the identical fragmentation risk (#911 review).
-    if (dto.name !== undefined) {
-      const lowerName = dto.name.toLowerCase();
-      if (ALL_SLOT_MAP_ALIASES.some((alias) => alias.toLowerCase() === lowerName)) {
-        throw new CustomLiftConflictError(dto.name);
-      }
+    if (dto.name !== undefined && canonicalAliasFor(dto.name) !== undefined) {
+      throw new ReservedLiftNameConflictError(dto.name);
     }
 
     const { customLift } = await this.factory.forUser(user);

@@ -41,7 +41,11 @@ export function validateLiftImport(
     if (!r.date || isNaN(r.date.getTime()))
       rowErrors.push({ row, field: 'date', message: 'date is invalid' });
 
-    const liftStr = r.lift as unknown as string;
+    // Trimmed for parity with validateTrainingMaxImport/validateStrengthGoalImport,
+    // both of which already trim: an untrimmed " Squat" would otherwise fail to
+    // match the exact-case slotMap key "Squat" and read as unrecognized (issue
+    // #911 review, third pass).
+    const liftStr = (r.lift as unknown as string).trim();
     // Object.prototype.hasOwnProperty.call, not the `in` operator: `in` walks
     // the prototype chain, so a lift string of "toString"/"constructor"/
     // "__proto__"/etc. would otherwise resolve to an inherited Object.prototype

@@ -177,6 +177,93 @@ const AMBIGUOUS_LIFT_CSV = new File(
   { type: 'text/csv' },
 );
 
+// Two blank Lift CELLS (not a missing Lift column, which would leave every
+// row's originalLift undefined) — both parse to originalLift: '' (#911
+// review, third pass regression fixture). Row 3 has real text so at least one
+// row can exercise the batch-resolve path for comparison.
+const BLANK_LIFT_CELL_PREVIEW: ImportPreviewResponse = {
+  classification: {
+    type: 'lift-records',
+    confidence: 0.92,
+    bucket: 'high',
+    reasons: ['Matched required lift-record columns'],
+    alternatives: [],
+  },
+  destination: 'lift-records',
+  columnMappings: AMBIGUOUS_LIFT_COLUMN_MAPPINGS,
+  preview: {
+    creates: 0,
+    updates: 0,
+    skips: 0,
+    deltas: [
+      { key: '__ambiguous_1', label: 'Row 1', kind: 'create', status: 'ambiguous', rowIndex: 1, originalLift: '' },
+      { key: '__ambiguous_2', label: 'Row 2', kind: 'create', status: 'ambiguous', rowIndex: 2, originalLift: '' },
+    ],
+  },
+  errors: [],
+};
+
+const BLANK_LIFT_CELL_CSV = new File(
+  [
+    'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n' +
+      '5-3-1,1,1,2026-01-01,,1,90,10\n' +
+      '5-3-1,1,1,2026-01-01,,2,90,8',
+  ],
+  'lifts.csv',
+  { type: 'text/csv' },
+);
+
+// A custom lift whose name is a lowercase case-variant of a canonical alias
+// ("squat" vs. "Squat") — a distinct, genuinely reachable entry per
+// buildEffectiveSlotMap's exact-case-only collision rule (#911 review, third
+// pass regression fixture).
+const CASE_VARIANT_CUSTOM_LIFT: CustomLiftResponse = {
+  id: 'custom-lowercase-squat',
+  name: 'squat',
+  classification: 'compound',
+  movementProfile: { patterns: [], jointActions: [], complexity: 'simple' },
+  isBodyweightComponent: false,
+  isCustom: true,
+  createdAt: '2026-01-01T00:00:00.000Z',
+};
+
+const CASE_VARIANT_PREVIEW: ImportPreviewResponse = {
+  classification: {
+    type: 'lift-records',
+    confidence: 0.92,
+    bucket: 'high',
+    reasons: ['Matched required lift-record columns'],
+    alternatives: [],
+  },
+  destination: 'lift-records',
+  columnMappings: AMBIGUOUS_LIFT_COLUMN_MAPPINGS,
+  preview: {
+    creates: 0,
+    updates: 0,
+    skips: 0,
+    deltas: [
+      {
+        key: '__ambiguous_1',
+        label: 'Row 1: Some Unknown Lift',
+        kind: 'create',
+        status: 'ambiguous',
+        rowIndex: 1,
+        originalLift: 'Some Unknown Lift',
+      },
+    ],
+  },
+  errors: [],
+};
+
+const CASE_VARIANT_CSV = new File(
+  [
+    'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n' +
+      '5-3-1,1,1,2026-01-01,Some Unknown Lift,1,90,10',
+  ],
+  'lifts.csv',
+  { type: 'text/csv' },
+);
+
 describe('ImportWizard', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -661,6 +748,131 @@ describe('ImportWizard', () => {
       );
       expect(await screen.findByText(failure.message)).toBeInTheDocument();
       errorSpy.mockRestore();
+    });
+
+    it('does not batch-resolve an unrelated blank-cell row when creating from another blank-cell row', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(BLANK_LIFT_CELL_PREVIEW);
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 1, updated: 0, skipped: 0, batchId: 'batch-blank' },
+      });
+      mockCreateCustomLift.mockResolvedValue({
+        id: 'custom-new-blank-lift',
+        name: 'New Lift',
+        classification: 'accessory',
+        movementProfile: { patterns: [], jointActions: [], complexity: 'simple' },
+        isBodyweightComponent: false,
+        isCustom: true,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, BLANK_LIFT_CELL_CSV);
+
+      // Type a name into row 1 only — row 2 stays untouched/blank, sharing
+      // nothing with row 1 except the accidental '' === '' both blank cells
+      // parse to.
+      const row1Input = screen.getByLabelText('Lift name for row 1');
+      await user.type(row1Input, 'New Lift');
+
+      const createButtons = screen.getAllByRole('button', {
+        name: 'Create "New Lift" as a new exercise',
+      });
+      expect(createButtons).toHaveLength(1); // row 2 shows no affordance — still blank
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      await user.click(createButtons[0]!);
+      await waitFor(() => expect(mockCreateCustomLift).toHaveBeenCalledTimes(1));
+
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+
+      const [, , , opts] = mockCommit.mock.calls[0] as [
+        string,
+        File,
+        string,
+        { liftOverrides?: Record<number, string> },
+      ];
+      // Row 2 must NOT be swept into row 1's override — before the fix, both
+      // blank cells' originalLift === '' matched each other, silently
+      // assigning row 2 to whatever row 1 resolved to.
+      expect(opts.liftOverrides).toEqual({ 1: 'custom-new-blank-lift' });
+    });
+
+    it('does not batch-resolve a row the user has explicitly excluded', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 1, updated: 0, skipped: 0, batchId: 'batch-excl' },
+      });
+      mockCreateCustomLift.mockResolvedValue(CUSTOM_LIFT);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      // Exclude row 2 before creating from row 1 — both rows share the same
+      // original text, so row 2 would otherwise be a valid batch-resolve target.
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 2: Wide-Grip CBL Curls' }));
+
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      const createButtons = screen.getAllByRole('button', {
+        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+      });
+      await user.click(createButtons[0]!);
+      await waitFor(() => expect(mockCreateCustomLift).toHaveBeenCalledTimes(1));
+
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+
+      const [, , , opts] = mockCommit.mock.calls[0] as [
+        string,
+        File,
+        string,
+        { liftOverrides?: Record<number, string> },
+      ];
+      // Row 2 was explicitly excluded — it must not receive the batch-resolved
+      // override even though it shares row 1's original text.
+      expect(opts.liftOverrides).toEqual({ 1: 'custom-cbl-curls' });
+    });
+
+    it('resolves an exact-case match to a custom lift over a case-insensitive canonical fallback', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(CASE_VARIANT_PREVIEW);
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 1, updated: 0, skipped: 0, batchId: 'batch-case' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[CASE_VARIANT_CUSTOM_LIFT]} />);
+      await navigateToLiftRecordsReview(user, CASE_VARIANT_CSV);
+
+      const input = screen.getByLabelText('Lift name for row 1');
+      await user.clear(input);
+      await user.type(input, 'squat');
+
+      // Resolves without offering to create a duplicate — 'squat' is known,
+      // either as the custom lift itself or case-insensitively as 'Squat'.
+      expect(screen.queryByText(/No match — create/i)).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+
+      const [, , , opts] = mockCommit.mock.calls[0] as [
+        string,
+        File,
+        string,
+        { liftOverrides?: Record<number, string> },
+      ];
+      // Must resolve to the exact-case custom lift's own name ('squat'), not
+      // the case-insensitively-matched canonical alias ('Squat') —
+      // buildEffectiveSlotMap only lets DEFAULT_SLOT_MAP win on an EXACT-case
+      // collision, so 'squat' is a distinct, genuinely reachable server-side
+      // key for the custom lift, not a duplicate of canonical Squat.
+      expect(opts.liftOverrides).toEqual({ 1: 'squat' });
     });
   });
 
