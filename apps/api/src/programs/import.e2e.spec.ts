@@ -336,9 +336,17 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
           '?mode=preview&destination=lift-records',
         )
       ).json();
-      expect(res.preview.deltas.every((d: { status?: string }) => d.status !== 'ambiguous')).toBe(
-        true,
-      );
+      // Array.prototype.every returns true on an empty array — asserting only
+      // "no delta is ambiguous" would pass just as well if the row vanished
+      // entirely (dropped, or a hard-error response with no preview at all),
+      // which is not what "resolves instead of being ambiguous" means. Assert
+      // the row actually exists, resolved, in the expected shape (#911 review,
+      // second pass).
+      expect(res.errors).toEqual([]);
+      expect(res.preview).not.toBeNull();
+      expect(res.preview.deltas).toHaveLength(1);
+      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create' });
+      expect(res.preview.deltas[0].status).not.toBe('ambiguous');
     });
 
     // #911: liftOverrides may now resolve to a custom lift's id (not just a

@@ -1,4 +1,4 @@
-import { ImportError } from '@lifting-logbook/types';
+import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import { LiftingProgramSpec } from '../../models';
 
 export interface ProgramSpecImportValidationResult {
@@ -29,7 +29,8 @@ export function validateProgramSpecImport(
     if (r.week !== 1 && r.week !== 2 && r.week !== 3)
       rowErrors.push({ row, field: 'week', message: 'week must be 1, 2, or 3' });
     if (!isNum(r.offset)) rowErrors.push({ row, field: 'offset', message: 'offset is not a number' });
-    if (!String(r.lift ?? '').trim()) rowErrors.push({ row, field: 'lift', message: 'lift is empty' });
+    if (!String(r.lift ?? '').trim())
+      rowErrors.push({ row, field: IMPORT_ERROR_FIELD_LIFT, message: 'lift is empty' });
     if (!isNum(r.increment)) rowErrors.push({ row, field: 'increment', message: 'increment is not a number' });
     if (!isNum(r.order)) rowErrors.push({ row, field: 'order', message: 'order is not a number' });
     if (!isNum(r.sets)) rowErrors.push({ row, field: 'sets', message: 'sets is not a number' });

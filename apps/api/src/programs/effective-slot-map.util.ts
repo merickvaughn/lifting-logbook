@@ -9,8 +9,12 @@ import { RepositoryBundle } from '../ports/factory';
  * endpoint) must go through this — never a bare DEFAULT_SLOT_MAP — or a
  * user's custom lifts silently stop being recognized. Centralized here
  * (rather than hand-repeated `repos.customLift.list()` +
- * `buildEffectiveSlotMap(...)` at each call site) so a future fourth call
- * site can't accidentally skip the custom-lift merge and still type-check.
+ * `buildEffectiveSlotMap(...)` at each call site) purely as a convention to
+ * reduce duplication — this is NOT compile-time-enforced (`DEFAULT_SLOT_MAP`
+ * is still a plain, directly-importable `Record<string, string>`, so a call
+ * site that bypasses this helper and passes it directly still type-checks
+ * fine; #911 review, second pass corrected an earlier overclaim here). A
+ * fourth validation call site must still be added deliberately.
  */
 export async function effectiveSlotMapFor(repos: RepositoryBundle): Promise<Record<string, string>> {
   const customLifts = await repos.customLift.list();

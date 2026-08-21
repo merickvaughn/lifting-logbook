@@ -50,10 +50,31 @@ export function validateLiftImport(
     // names since buildEffectiveSlotMap). Object.hasOwn is the modern spelling
     // of this same check but needs an ES2022+ lib target this package doesn't
     // configure.
-    if (!liftStr || !Object.prototype.hasOwnProperty.call(slotMap, liftStr)) {
-      // Kept UI/route-agnostic (no mention of a specific screen or wizard) — this
-      // message is surfaced verbatim by more than one caller, including at least
-      // one with no interactive remap capability of its own (issue #911).
+    if (!liftStr) {
+      // Distinct from the "unrecognized name" case below — interpolating
+      // liftStr here would render as `'undefined' isn't a recognized
+      // exercise` for a blank cell or a missing Lift column, telling the user
+      // to map/create an exercise literally named "undefined" (#911 review,
+      // second pass). A missing column produces this on every row, so the
+      // wrong message would be the dominant experience for that failure mode.
+      rowErrors.push({
+        row,
+        field: IMPORT_ERROR_FIELD_LIFT,
+        message: 'Row has no exercise name — check that your file has a "Lift" column.',
+      });
+    } else if (!Object.prototype.hasOwnProperty.call(slotMap, liftStr)) {
+      // Object.prototype.hasOwnProperty.call, not the `in` operator: `in`
+      // walks the prototype chain, so a lift string of
+      // "toString"/"constructor"/"__proto__"/etc. would otherwise resolve to
+      // an inherited Object.prototype member instead of failing like any
+      // other unrecognized name (issue #911 review — slotMap's keys are
+      // partially user-controlled via custom lift names since
+      // buildEffectiveSlotMap). Object.hasOwn is the modern spelling of this
+      // same check but needs an ES2022+ lib target this package doesn't configure.
+      //
+      // Kept UI/route-agnostic (no mention of a specific screen or wizard) —
+      // this message is surfaced verbatim by more than one caller, including
+      // at least one with no interactive remap capability of its own (issue #911).
       rowErrors.push({
         row,
         field: IMPORT_ERROR_FIELD_LIFT,

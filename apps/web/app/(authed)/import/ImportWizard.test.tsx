@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
   CustomLiftResponse,
@@ -6,7 +6,7 @@ import type {
   ImportPreviewResponse,
 } from '@lifting-logbook/types';
 import { ImportWizard } from './ImportWizard';
-import { commitImport, createCustomLift, previewImport } from '@/lib/client-api';
+import { commitImport, createCustomLift, fetchCustomLifts, previewImport } from '@/lib/client-api';
 
 // File.text() is not implemented in jsdom; use FileReader instead.
 function readFileText(file: File): Promise<string> {
@@ -22,11 +22,13 @@ jest.mock('@/lib/client-api', () => ({
   previewImport: jest.fn(),
   commitImport: jest.fn(),
   createCustomLift: jest.fn(),
+  fetchCustomLifts: jest.fn(),
 }));
 
 const mockPreview = previewImport as jest.MockedFunction<typeof previewImport>;
 const mockCommit = commitImport as jest.MockedFunction<typeof commitImport>;
 const mockCreateCustomLift = createCustomLift as jest.MockedFunction<typeof createCustomLift>;
+const mockFetchCustomLifts = fetchCustomLifts as jest.MockedFunction<typeof fetchCustomLifts>;
 
 const PROGRAMS: CustomProgramSummaryResponse[] = [
   { id: 'prog-1', name: 'My Program', description: null, baseTemplate: null, createdAt: '2026-01-01' },
@@ -180,6 +182,18 @@ describe('ImportWizard', () => {
     jest.clearAllMocks();
   });
 
+  // #911 review, second pass: jest.clearAllMocks() (above) resets call
+  // history but does NOT restore a jest.spyOn(console, 'error') mock — that
+  // was previously only undone by errorSpy.mockRestore() at the end of the
+  // one test using it, so any assertion failing before that line left
+  // console.error permanently mocked for every later test in this file,
+  // turning one real failure into a cascade of confusing, silently-swallowed
+  // ones. jest.restoreAllMocks() here covers it (and any future spy)
+  // unconditionally, regardless of where a test exits.
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('walks Source → Classify → Review → Preview → Done for a confident classification', async () => {
     const user = userEvent.setup();
     mockPreview.mockResolvedValue(TM_PREVIEW);
@@ -188,7 +202,7 @@ describe('ImportWizard', () => {
       data: { destination: 'training-maxes', created: 2, updated: 1, skipped: 0, batchId: 'batch-1' },
     });
 
-    render(<ImportWizard programs={PROGRAMS} />);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
 
     const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
       type: 'text/csv',
@@ -226,7 +240,7 @@ describe('ImportWizard', () => {
       data: { destination: 'training-maxes', created: 2, updated: 1, skipped: 0, batchId: 'batch-1' },
     });
 
-    render(<ImportWizard programs={PROGRAMS} />);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
 
     const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
       type: 'text/csv',
@@ -257,7 +271,7 @@ describe('ImportWizard', () => {
       data: { destination: 'training-maxes', created: 2, updated: 1, skipped: 0, batchId: 'batch-1' },
     });
 
-    render(<ImportWizard programs={PROGRAMS} />);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
 
     const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
       type: 'text/csv',
@@ -287,7 +301,7 @@ describe('ImportWizard', () => {
       data: { destination: 'training-maxes', created: 1, updated: 0, skipped: 0, batchId: 'batch-1' },
     });
 
-    render(<ImportWizard programs={PROGRAMS} />);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
 
     const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
       type: 'text/csv',
@@ -318,7 +332,7 @@ describe('ImportWizard', () => {
       data: { destination: 'training-maxes', created: 2, updated: 1, skipped: 0, batchId: 'batch-1' },
     });
 
-    render(<ImportWizard programs={PROGRAMS} />);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
 
     const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
       type: 'text/csv',
@@ -342,7 +356,7 @@ describe('ImportWizard', () => {
     const user = userEvent.setup();
     mockPreview.mockResolvedValue(TM_PREVIEW);
 
-    render(<ImportWizard programs={PROGRAMS} />);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
 
     const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
       type: 'text/csv',
@@ -368,7 +382,7 @@ describe('ImportWizard', () => {
       errors: [],
     });
 
-    render(<ImportWizard programs={PROGRAMS} />);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
     const file = new File(['Foo,Bar\n1,2'], 'mystery.csv', { type: 'text/csv' });
     await user.upload(screen.getByLabelText('CSV file'), file);
     await user.click(screen.getByRole('button', { name: 'Analyze' }));
@@ -396,7 +410,7 @@ describe('ImportWizard', () => {
       },
     });
 
-    render(<ImportWizard programs={PROGRAMS} />);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
 
     const file = new File(
       ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n5-3-1,1,1,2026-01-01,Bench P.,1,180,5'],
@@ -436,7 +450,55 @@ describe('ImportWizard', () => {
         (o) => (o as HTMLOptionElement).value,
       );
       expect(options).toContain('Wide-Grip CBL Curls');
+      // A canonical *value* (id) — this alone would still pass against the
+      // pre-fix CANONICAL_LIFT_IDS-only implementation, so it is NOT
+      // sufficient proof of the fix by itself; the assertion below on a
+      // canonical *key* (human-typed alias) is what actually distinguishes
+      // ALL_SLOT_MAP_ALIASES from CANONICAL_LIFT_IDS (#911 review, second
+      // pass — this test previously only asserted the former).
       expect(options).toContain('bench-press');
+      expect(options).toContain('Squat');
+    });
+
+    // Regression guard (#911 review, second pass): this is the behavioral
+    // proof the datalist-content assertion above can't fully provide —
+    // CANONICAL_LIFT_IDS (values only) would have let this test fail here,
+    // where the prior version of this describe block had no case that could.
+    it('typing a canonical alias key (not just its id) does not surface "create new"', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      const input = screen.getByLabelText('Lift name for row 1');
+      await user.clear(input);
+      await user.type(input, 'Squat');
+
+      // Scoped to row 1's own <tr>: AMBIGUOUS_LIFT_PREVIEW has two ambiguous
+      // rows sharing the same original text, so row 2's untouched "No match"
+      // prompt is still in the document — a page-wide query would find it and
+      // falsely pass regardless of whether row 1's own state updated.
+      const row = input.closest('tr');
+      expect(row).not.toBeNull();
+      expect(within(row!).queryByText(/No match — create/i)).not.toBeInTheDocument();
+    });
+
+    it('typing a lowercase/case-variant of a canonical alias does not surface "create new"', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      const input = screen.getByLabelText('Lift name for row 1');
+      await user.clear(input);
+      await user.type(input, 'squat');
+
+      // Scoped to row 1's own <tr> — see comment in the sibling test above.
+      const row = input.closest('tr');
+      expect(row).not.toBeNull();
+      expect(within(row!).queryByText(/No match — create/i)).not.toBeInTheDocument();
     });
 
     it('does not show "create new" when a row already matches an existing custom lift by name', async () => {
@@ -516,6 +578,14 @@ describe('ImportWizard', () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
       mockCreateCustomLift.mockResolvedValue(null);
+      // A genuinely successful refetch that still finds no matching name —
+      // the "confirmed not found" branch, distinct from the refetch-failed
+      // branch covered by the sibling test below (#911 review, second pass:
+      // this test previously left fetchCustomLifts entirely unmocked, so it
+      // was silently exercising the refetch-*failed* path by accident — both
+      // branches' messages happen to contain "already exists", which is why
+      // the original loose regex assertion never caught it).
+      mockFetchCustomLifts.mockResolvedValue([]);
 
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
@@ -526,7 +596,41 @@ describe('ImportWizard', () => {
       });
       await user.click(createButtons[0]!);
 
-      expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+      expect(
+        await screen.findByText('An exercise with this name already exists.'),
+      ).toBeInTheDocument();
+      expect(mockFetchCustomLifts).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows a distinct inline error when the 409 self-heal refetch itself fails', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue(null);
+      const fetchFailure = new Error('API 500 Internal Server Error for /lifts/custom');
+      mockFetchCustomLifts.mockRejectedValue(fetchFailure);
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      const createButtons = screen.getAllByRole('button', {
+        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+      });
+      await user.click(createButtons[0]!);
+
+      // "Couldn't confirm" — not "already exists" — since the refetch failing
+      // is not the same claim as a genuine name collision (#911 review).
+      expect(
+        await screen.findByText("Couldn't confirm whether this name already exists — try again."),
+      ).toBeInTheDocument();
+      // Context is { programId, rowIndex } only — no `name`, matching the
+      // createCustomLift-throws logging contract above.
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[client-mutation] fetchCustomLifts failed',
+        fetchFailure,
+        { programId: 'prog-1', rowIndex: 1 },
+      );
     });
 
     it('logs and shows an inline error when creation throws', async () => {
@@ -545,11 +649,14 @@ describe('ImportWizard', () => {
       });
       await user.click(createButtons[0]!);
 
+      // Context is { programId, rowIndex } only — no `name`/raw CSV text, per
+      // the #911 review privacy fix (logClientError must never beacon raw
+      // user-typed exercise names to Grafana).
       await waitFor(() =>
         expect(errorSpy).toHaveBeenCalledWith(
           '[client-mutation] createCustomLift failed',
           failure,
-          expect.objectContaining({ name: 'Wide-Grip CBL Curls' }),
+          { programId: 'prog-1', rowIndex: 1 },
         ),
       );
       expect(await screen.findByText(failure.message)).toBeInTheDocument();
@@ -565,7 +672,7 @@ describe('ImportWizard', () => {
       data: { destination: 'training-maxes', created: 2, updated: 1, skipped: 0, batchId: 'batch-1' },
     });
 
-    render(<ImportWizard programs={PROGRAMS} />);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
     const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
       type: 'text/csv',
     });

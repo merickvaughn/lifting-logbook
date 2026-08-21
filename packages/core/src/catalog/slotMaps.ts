@@ -54,20 +54,16 @@ export const DEFAULT_SLOT_MAP: Readonly<Record<string, string>> = {
 };
 
 /**
- * Unique canonical lift IDs derived from DEFAULT_SLOT_MAP's values.
- * Used by the REVIEW step's lift-catalog autocomplete datalist.
- */
-export const CANONICAL_LIFT_IDS: string[] = [...new Set(Object.values(DEFAULT_SLOT_MAP))];
-
-/**
  * Every string DEFAULT_SLOT_MAP resolves — its keys (the human-readable
  * abbreviations/display names it accepts, e.g. "Squat", "Bench P.") AND its
- * values (the canonical ids CANONICAL_LIFT_IDS already covers). A client-side
- * "is this lift already recognized" check must be built from this, not from
- * CANONICAL_LIFT_IDS alone — checking only the values means a perfectly valid
- * alias like "Squat" reads as unrecognized, offering to create a duplicate
+ * values (the canonical ids, e.g. "back-squat"). Used by the REVIEW step's
+ * lift-catalog autocomplete datalist and its "is this lift already
+ * recognized" check. Checking only the canonical-id values (an earlier
+ * version of this file exported that subset alone as `CANONICAL_LIFT_IDS`,
+ * since removed as unused once this superseded it) meant a perfectly valid
+ * alias like "Squat" read as unrecognized, offering to create a duplicate
  * lift that DEFAULT_SLOT_MAP's own collision precedence then permanently
- * shadows (issue #911 review).
+ * shadowed (issue #911 review).
  */
 export const ALL_SLOT_MAP_ALIASES: string[] = [
   ...new Set([...Object.keys(DEFAULT_SLOT_MAP), ...Object.values(DEFAULT_SLOT_MAP)]),

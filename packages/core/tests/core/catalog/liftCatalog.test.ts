@@ -1,4 +1,4 @@
-import { DEFAULT_SLOT_MAP, LIFT_CATALOG, resolveLift, buildEffectiveSlotMap } from "@src/core";
+import { DEFAULT_SLOT_MAP, ALL_SLOT_MAP_ALIASES, LIFT_CATALOG, resolveLift, buildEffectiveSlotMap } from "@src/core";
 import type { Lift, CustomLift } from "@lifting-logbook/types";
 
 describe("LIFT_CATALOG", () => {
@@ -257,6 +257,34 @@ describe("resolveLift with custom lifts", () => {
     expect(() => resolveLift('Squat', badMap, LIFT_CATALOG, [customSafetyBar])).toThrow(
       /not found in catalog/,
     );
+  });
+});
+
+// Regression guard (#911 review, second pass): a test asserting only that
+// ALL_SLOT_MAP_ALIASES contains a canonical *value* would still pass against
+// a reverted implementation equivalent to the old CANONICAL_LIFT_IDS (values
+// only) — the assertions on a canonical *key* below are what actually prove
+// the fix (a client "is this lift known" check built from this must recognize
+// human-typed aliases like "Squat", not just internal ids like "back-squat").
+describe("ALL_SLOT_MAP_ALIASES", () => {
+  it("contains every DEFAULT_SLOT_MAP key (human-readable aliases), not just its values", () => {
+    for (const key of Object.keys(DEFAULT_SLOT_MAP)) {
+      expect(ALL_SLOT_MAP_ALIASES).toContain(key);
+    }
+  });
+
+  it("contains every DEFAULT_SLOT_MAP value (canonical ids)", () => {
+    for (const value of Object.values(DEFAULT_SLOT_MAP)) {
+      expect(ALL_SLOT_MAP_ALIASES).toContain(value);
+    }
+  });
+
+  it("contains a genuine display-name key that is not also a value", () => {
+    // "Squat" is a key (a human-typed alias) that resolves to "back-squat" —
+    // it is never itself a DEFAULT_SLOT_MAP value, so this specifically
+    // exercises the keys-half of the union, not just overlap with the values.
+    expect(ALL_SLOT_MAP_ALIASES).toContain("Squat");
+    expect(Object.values(DEFAULT_SLOT_MAP)).not.toContain("Squat");
   });
 });
 

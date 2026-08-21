@@ -97,6 +97,31 @@ describe('Custom Lifts HTTP (e2e, in-memory adapters)', () => {
     expect(dup.statusCode).toBe(409);
   });
 
+  // #911 review: a case-variant of a canonical alias (e.g. "squat" for "Squat")
+  // would otherwise create successfully — custom-lift name uniqueness is scoped
+  // to this user and is exact-case — but buildEffectiveSlotMap always lets
+  // DEFAULT_SLOT_MAP win on an exact-case collision, so that lift would never
+  // actually be reachable by that name at import time, silently fragmenting
+  // its history across two ids.
+  it('rejects a name matching a canonical alias case-insensitively with 409', async () => {
+    const exact = await create({ name: 'Squat', classification: 'compound' });
+    expect(exact.statusCode).toBe(409);
+
+    const lower = await create({ name: 'squat', classification: 'compound' });
+    expect(lower.statusCode).toBe(409);
+
+    const mixedAbbreviation = await create({ name: 'bench p.', classification: 'compound' });
+    expect(mixedAbbreviation.statusCode).toBe(409);
+  });
+
+  it('rejects a PATCH rename to a name matching a canonical alias case-insensitively', async () => {
+    const created = await create({ name: 'Rename Target Lift', classification: 'compound' });
+    const { id } = created.json() as CustomLiftResponse;
+
+    const res = await inject('PATCH', `/lifts/custom/${id}`, { body: { name: 'DEADLIFT' } });
+    expect(res.statusCode).toBe(409);
+  });
+
   it('updates classification, movementProfile and name via PATCH', async () => {
     const created = await create({ name: 'Belt Squat', classification: 'accessory' });
     const id = (created.json() as CustomLiftResponse).id;
