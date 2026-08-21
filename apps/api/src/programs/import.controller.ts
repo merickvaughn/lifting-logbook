@@ -19,6 +19,8 @@ import {
 } from '@lifting-logbook/types';
 import {
   LiftRecord,
+  TrainingMax,
+  StrengthGoalEntry,
   classifyImport,
   fuzzyColumnMapper,
   parseCsvText,
@@ -26,6 +28,8 @@ import {
   splitLiftRecordsByDestination,
   validateLiftImportSoft,
   validateLiftImport,
+  validateTrainingMaxImport,
+  validateStrengthGoalImport,
   buildLiftRecordsPreviewSoft,
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
@@ -325,7 +329,7 @@ export class ImportController {
     table: SpreadsheetCell[][],
     repos: RepositoryBundle,
   ): Promise<{ errors: ImportError[]; preview: ImportPreviewResponse['preview'] }> {
-    const { valid, errors } = this.parseAndValidate(destination, table);
+    const { valid, errors } = await this.parseAndValidate(destination, table, repos);
     if (errors.length) return { errors, preview: null };
     const handler = IMPORT_HANDLERS[destination]!;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
@@ -408,13 +412,17 @@ export class ImportController {
       }
     }
 
-    // Strict validation (with overrides applied). Lift-records gets a custom-lift-aware
-    // slot map built fresh per request (#911), special-cased here rather than threading
-    // extra context through the generic ImportHandler.validate signature — matching this
-    // method's other per-destination special cases below (excludeKeys filtering, splitDest
-    // partitioning). liftRecordsHandler.validate (import-handlers.ts) is unreachable for
-    // this destination as a result, but stays in place to satisfy the ImportHandler<T>
-    // interface the other three destinations still use.
+    // Strict validation (with overrides applied). Lift-records, training-maxes, and
+    // strength-goals each get a custom-lift-aware slot map built fresh per request
+    // (#911, extended to the latter two by #914), special-cased here rather than
+    // threading extra context through the generic ImportHandler.validate signature —
+    // matching this method's other per-destination special cases below (excludeKeys
+    // filtering, splitDest partitioning). liftRecordsHandler.validate /
+    // trainingMaxesHandler.validate / strengthGoalsHandler.validate (import-handlers.ts)
+    // are unreachable for their destinations as a result, but stay in place (throwing
+    // unconditionally) to satisfy the ImportHandler<T> interface program-spec still uses.
+    // Only lift-records ever filters rows via survivingRowOriginalIndexes above, so only
+    // its branch needs the row-number remap.
     let rawValid: unknown[];
     let errors: ImportError[];
     if (destination === 'lift-records') {
@@ -423,6 +431,10 @@ export class ImportController {
         const originalIndexes = survivingRowOriginalIndexes;
         errors = errors.map((e) => ({ ...e, row: originalIndexes[e.row - 1] ?? e.row }));
       }
+    } else if (destination === 'training-maxes') {
+      ({ valid: rawValid, errors } = validateTrainingMaxImport(parsed as TrainingMax[], await effectiveSlotMapFor(repos)));
+    } else if (destination === 'strength-goals') {
+      ({ valid: rawValid, errors } = validateStrengthGoalImport(parsed as StrengthGoalEntry[], await effectiveSlotMapFor(repos)));
     } else {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
       ({ valid: rawValid, errors } = handler.validate(parsed as any));
@@ -483,10 +495,11 @@ export class ImportController {
     };
   }
 
-  private parseAndValidate(
+  private async parseAndValidate(
     destination: ImportKind,
     table: SpreadsheetCell[][],
-  ): { valid: unknown[]; errors: ImportError[] } {
+    repos: RepositoryBundle,
+  ): Promise<{ valid: unknown[]; errors: ImportError[] }> {
     // lift-records must never reach here. Its only current caller — preview()
     // — branches lift-records off to previewLiftRecords before ever calling
     // this method (see the destination check immediately above this.preview's
@@ -513,6 +526,18 @@ export class ImportController {
         valid: [],
         errors: [{ row: 0, message: `Import exceeds the ${MAX_IMPORT_ROWS.toLocaleString()}-row limit. Split the file into smaller batches.` }],
       };
+    }
+    // Training-maxes and strength-goals get a custom-lift-aware slot map built
+    // fresh per request (#914), same rationale as lift-records above: special-cased
+    // here rather than threading extra context through the generic
+    // ImportHandler.validate signature (trainingMaxesHandler.validate /
+    // strengthGoalsHandler.validate throw unconditionally as a result — see
+    // import-handlers.ts).
+    if (destination === 'training-maxes') {
+      return validateTrainingMaxImport(parsed as TrainingMax[], await effectiveSlotMapFor(repos));
+    }
+    if (destination === 'strength-goals') {
+      return validateStrengthGoalImport(parsed as StrengthGoalEntry[], await effectiveSlotMapFor(repos));
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     return handler.validate(parsed as any);

@@ -470,6 +470,126 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.created).toBe(1);
     });
 
+    // #914: the slot map used for training-maxes preview/commit is now built fresh
+    // per request from DEFAULT_SLOT_MAP + the user's custom lifts too (previously
+    // only lift-records was custom-lift-aware, #911) — a CSV row whose raw text
+    // matches an existing custom lift's name resolves to that lift's id instead of
+    // passing through as raw display text. buildTrainingMaxPreview's delta `label`
+    // carries the resolved `lift` value, so asserting on it proves resolution
+    // without needing a separate read endpoint.
+    it('resolves an existing custom lift by name for a training-maxes import', async () => {
+      const created = await createCustomLift({
+        name: 'TM Import Custom Lift',
+        classification: 'compound',
+      });
+      expect(created.statusCode).toBe(201);
+      const { id: customLiftId } = created.json();
+
+      const CUSTOM_LIFT_TM_CSV = [
+        'Date Updated,Lift,Weight',
+        '12/29/2025,TM Import Custom Lift,90',
+      ].join('\n');
+      const res = (
+        await importCsv(
+          'p3-custom-lift-tm-preview',
+          CUSTOM_LIFT_TM_CSV,
+          '?mode=preview&destination=training-maxes',
+        )
+      ).json();
+      expect(res.errors).toEqual([]);
+      expect(res.preview).not.toBeNull();
+      expect(res.preview.deltas).toHaveLength(1);
+      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create', label: customLiftId });
+    });
+
+    // Same as above, for strength-goals (buildStrengthGoalPreview's delta `label`
+    // also carries the resolved `lift` value).
+    it('resolves an existing custom lift by name for a strength-goals import', async () => {
+      const created = await createCustomLift({
+        name: 'Goal Import Custom Lift',
+        classification: 'compound',
+      });
+      expect(created.statusCode).toBe(201);
+      const { id: customLiftId } = created.json();
+
+      const CUSTOM_LIFT_GOALS_CSV = [
+        'Weight,175,,,',
+        'Start Date,10/24/2022,,,',
+        "Today's Date,6/9/2026,,,",
+        'Lift,Current TM,Intermediate,Advanced,Elite',
+        'Goal Import Custom Lift,90,105,131.25,157.5',
+      ].join('\n');
+      const res = (
+        await importCsv(
+          'p3-custom-lift-goals-preview',
+          CUSTOM_LIFT_GOALS_CSV,
+          '?mode=preview&destination=strength-goals',
+        )
+      ).json();
+      expect(res.errors).toEqual([]);
+      expect(res.preview).not.toBeNull();
+      expect(res.preview.deltas).toHaveLength(1);
+      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create', label: customLiftId });
+    });
+
+    // #914: this splitDest interaction was the second trigger discovered for this
+    // issue (see effective-slot-map.util.ts's doc comment) — a splitDest commit
+    // partitions a 1RM-noted lift-records row into a training-max write already
+    // keyed by the row's resolved custom-lift id (lift-records has been
+    // custom-lift-aware since #911). Before #914, a *separate* direct
+    // training-maxes import of the same lift by display name would key it
+    // differently (raw display text, since validateTrainingMaxImport wasn't yet
+    // custom-lift-aware) — creating a duplicate entry instead of updating the one
+    // the splitDest commit already wrote. Both paths must now agree.
+    it('keys a splitDest training max the same way a direct training-maxes import of the same custom lift would', async () => {
+      const program = 'p3-split-tm-custom-lift-parity';
+      const created = await createCustomLift({
+        name: 'Custom Front Squat',
+        classification: 'compound',
+      });
+      expect(created.statusCode).toBe(201);
+      const { id: customLiftId } = created.json();
+
+      // Step 1: a splitDest lift-records commit with a 1RM-noted row for the
+      // custom lift — partitions into training-maxes, keyed by the row's
+      // already-resolved custom-lift id.
+      const SPLIT_CUSTOM_LIFT_CSV = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Custom Front Squat,1,300,1,1RM Test',
+      ].join('\n');
+      const splitRes = (
+        await importCsv(
+          program,
+          SPLIT_CUSTOM_LIFT_CSV,
+          '?mode=commit&destination=lift-records&splitDest=1',
+        )
+      ).json();
+      expect(splitRes.split).toMatchObject({ destination: 'training-maxes', created: 1 });
+
+      // Step 2: a direct training-maxes import naming the SAME custom lift by its
+      // display name, with a different weight — must UPDATE the entry the
+      // splitDest commit already created (same key), not create a second,
+      // differently-keyed one.
+      const DIRECT_TM_CSV = ['Date Updated,Lift,Weight', '1/2/2026,Custom Front Squat,315'].join('\n');
+      const directRes = (
+        await importCsv(program, DIRECT_TM_CSV, '?mode=commit&destination=training-maxes')
+      ).json();
+      expect(directRes).toMatchObject({ created: 0, updated: 1 });
+
+      // Exactly one training max exists for this program, keyed by the custom
+      // lift's id, holding the direct import's weight (315) — proving both paths
+      // resolved to the same key rather than creating two entries.
+      const maxes = (
+        await app.getHttpAdapter().getInstance().inject({
+          method: 'GET',
+          url: `/programs/${program}/training-maxes`,
+          headers: AUTH,
+        })
+      ).json() as Array<{ lift: string; weight: number }>;
+      expect(maxes).toHaveLength(1);
+      expect(maxes[0]).toMatchObject({ lift: customLiftId, weight: 315 });
+    });
+
     it('excludes rows whose natural key matches excludeKeys', async () => {
       // Natural key for LIFT_CSV row: cycleNum:workoutNum:YYYYMMDD:lift:setNum
       // = 1:1:20260101:bench-press:1 (date joined the key in issue #884)
