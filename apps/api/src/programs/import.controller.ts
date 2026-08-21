@@ -359,12 +359,41 @@ export class ImportController {
       });
     }
 
-    // Apply lift overrides BEFORE strict validation so remapped names pass the slot map check
+    // Apply lift overrides BEFORE strict validation so remapped names pass the slot map check.
+    // Must run before the ambiguous-row exclusion filter below: both key off
+    // the row's position in `parsed` as originally parsed (1-based), and
+    // .filter() (unlike this .map()) changes array length/indices — reversing
+    // the order would silently apply row N's override to whatever shifted
+    // into row N's old position after an earlier row was removed.
     if (destination === 'lift-records' && Object.keys(liftOverrides).length > 0) {
       parsed = (parsed as LiftRecord[]).map((r, i) => {
         const canonical = liftOverrides[String(i + 1)];
         return canonical ? { ...r, lift: canonical } : r;
       });
+    }
+
+    // An ambiguous lift-records row's excludeKeys entry uses the client's
+    // `__ambiguous_<rowIndex>` key scheme (buildImportPreview.ts) — never a
+    // natural key, so the natural-key excludeKeys filter further below is
+    // structurally unable to match it (issue #915). Before this filter, an
+    // excluded-but-unresolved ambiguous row reached strict validation below
+    // with its raw unrecognized lift text still attached and failed the
+    // WHOLE commit — worse than #915's original silent-bad-import symptom,
+    // discovered as a side effect of ImportWizard.tsx's third review pass
+    // withholding that row's liftOverrides entry. __ambiguous_N keys are
+    // lift-records-only (only validateLiftImportSoft's REVIEW-step preview
+    // produces them), so this fully resolves #915 for its only real trigger
+    // surface (#911 review, fourth pass).
+    if (destination === 'lift-records' && excludeKeys.size > 0) {
+      const excludedRowIndexes = new Set(
+        [...excludeKeys]
+          .map((k) => /^__ambiguous_(\d+)$/.exec(k)?.[1])
+          .filter((s): s is string => s !== undefined)
+          .map(Number),
+      );
+      if (excludedRowIndexes.size > 0) {
+        parsed = (parsed as LiftRecord[]).filter((_, i) => !excludedRowIndexes.has(i + 1));
+      }
     }
 
     // Strict validation (with overrides applied). Lift-records gets a custom-lift-aware

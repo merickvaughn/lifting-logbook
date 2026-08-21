@@ -104,6 +104,30 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(body.preview.creates).toBe(1);
     });
 
+    // Regression guard (#911 review, fourth pass): a CSV whose exercise
+    // column is named something other than "Lift" (the case the MAP_COLUMNS
+    // step exists to let a user fix) leaves r.lift undefined on every row —
+    // distinct from a present-but-blank cell (''). A bare cast + .trim() (the
+    // third review pass's own trim-for-parity fix) threw a TypeError on that
+    // undefined instead of falling through to the ambiguous bucket, turning
+    // this recoverable case into a 500 with no way to reach MAP_COLUMNS at all.
+    it('previews a lift-records file whose exercise column is not named "Lift" without a 500, flagging every row ambiguous', async () => {
+      const nonStandardCsv = [
+        'Program,Cycle #,Workout #,Date,Exercise,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+      ].join('\n');
+      const res = await importCsv(
+        'import-lr-nocol',
+        nonStandardCsv,
+        '?mode=preview&destination=lift-records',
+      );
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.errors).toEqual([]);
+      expect(body.preview.deltas).toHaveLength(1);
+      expect(body.preview.deltas[0]).toMatchObject({ status: 'ambiguous' });
+    });
+
     it('routes a training-maxes file to training-maxes', async () => {
       const body = (await importCsv('import-tm-prev', TM_CSV, '?mode=preview')).json();
       expect(body.destination).toBe('training-maxes');
@@ -299,6 +323,31 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
         '?mode=commit&destination=lift-records',
       );
       expect(failRes.statusCode).toBe(400);
+    });
+
+    // Regression guard (#911 review, fourth pass, resolving issue #915 for
+    // its only real trigger surface): an ambiguous row's excludeKeys entry
+    // uses the client's `__ambiguous_<rowIndex>` key scheme, which can never
+    // equal a natural key — the natural-key excludeKeys filter alone can
+    // never omit it. Before this fix the excluded-but-unresolved row reached
+    // strict validation and failed the WHOLE commit (a regression the third
+    // review pass's own liftOverrides-withholding fix introduced, worse than
+    // #915's original silent-bad-import symptom).
+    it('commits successfully when an ambiguous row is excluded via excludeKeys, omitting only that row', async () => {
+      const twoRowCsv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+        '5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,200,5,',
+      ].join('\n');
+      const res = await importCsv(
+        'p3-lr-exclude-ambiguous',
+        twoRowCsv,
+        '?mode=commit&destination=lift-records&excludeKeys=__ambiguous_2',
+      );
+      expect(res.statusCode).toBe(200);
+      // Only row 1 (Bench P.) committed — row 2 was excluded, not merely left
+      // unresolved, so it must not block or appear in the commit at all.
+      expect(res.json().created).toBe(1);
     });
 
     const createCustomLift = (body: unknown) =>

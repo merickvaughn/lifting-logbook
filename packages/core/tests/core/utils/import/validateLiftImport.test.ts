@@ -135,6 +135,21 @@ describe("validateLiftImport", () => {
     expect(errors[0]!.message).toMatch(/no exercise name/i);
   });
 
+  // Regression guard (#911 review, fourth pass): a genuinely missing Lift
+  // COLUMN (as opposed to a present-but-blank cell) leaves r.lift undefined
+  // — distinct from '' at the type level, and a bare cast + .trim() (the
+  // third pass's own trim-for-parity fix) threw a TypeError on it instead of
+  // falling through to the blank-lift branch, turning the exact case this
+  // validator exists to handle gracefully into an unhandled 500.
+  it("treats an undefined lift (a missing Lift column) the same as a blank one, without throwing", () => {
+    const records = [makeRecord({ lift: undefined as unknown as LiftRecord["lift"] })];
+    expect(() => validateLiftImport(records, TEST_SLOT_MAP)).not.toThrow();
+    const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
+    expect(valid).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.message).toMatch(/no exercise name/i);
+  });
+
   // Regression guard (#911 review): membership must be Object.hasOwn, not the `in`
   // operator, which walks the prototype chain — a lift string of "toString",
   // "constructor", or "__proto__" must fail like any other unrecognized name, not

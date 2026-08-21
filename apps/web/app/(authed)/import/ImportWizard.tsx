@@ -15,7 +15,7 @@ import type {
   LiftClassification,
   WeightUnit,
 } from '@lifting-logbook/types';
-import { ALL_SLOT_MAP_ALIASES, formatWeight } from '@lifting-logbook/core';
+import { ALL_SLOT_MAP_ALIASES, formatWeight, isCanonicalAlias } from '@lifting-logbook/core';
 import {
   commitImport,
   createCustomLift,
@@ -32,10 +32,22 @@ type EditableMax = { lift: string; weight: string };
 
 // Per-row transient state for the "create new exercise" affordance on an
 // ambiguous row (issue #911) — keyed by rowIndex, mirroring liftOverrides.
+// `name` is the exact text a busy (in-flight) draft is creating — set
+// whenever `busy` becomes true, read by busyLiftNames below. It must be the
+// name actually being submitted, not the row's original CSV text: two rows
+// sharing original text can be retyped to different new names (this PR's own
+// batch-resolve treats them as unrelated once retyped), and rows that share
+// NO original text (e.g. two blank Lift cells, both originalLift === '')
+// can still coincidentally be typed to the same new name — the in-flight
+// guard exists to deduplicate the latter, not conflate the former (#911
+// review, fourth pass — round 3 keyed this guard by originalLift instead,
+// which over-blocked unrelated rows sharing blank/duplicate original text and
+// under-blocked genuinely duplicate concurrent creates).
 type CreateLiftDraft = {
   classification: LiftClassification | null;
   busy: boolean;
   error: string | null;
+  name: string | null;
 };
 
 // The preview response disambiguates ImportDelta.key with a `#N` suffix when
@@ -286,23 +298,34 @@ export function ImportWizard({
     return map;
   }, [customLifts]);
 
-  // The create-in-flight guard must be keyed by the shared original CSV text,
-  // not by rowIndex: N ambiguous rows sharing the same originalLift each
-  // render their own independently-"busy"-tracked Create button (createDrafts
-  // is keyed by rowIndex), so without this a second click on a DIFFERENT row
-  // for the same name — before the first create resolves — fires a second
-  // POST /lifts/custom for that name. The 409 self-heal refetch already
-  // covers the resulting race, but preventing the redundant write is cheap
-  // and avoids two rows visibly stuck on "Creating…" on a slow network (#911
-  // review, third pass).
-  const busyOriginalLifts = useMemo(() => {
+  // The create-in-flight guard must be keyed by the NAME actually being
+  // submitted to POST /lifts/custom, not by the row's original CSV text: N
+  // ambiguous rows sharing the same originalLift each render their own
+  // independently-"busy"-tracked Create button (createDrafts is keyed by
+  // rowIndex), so without this a second click on a DIFFERENT row creating the
+  // same name — before the first create resolves — fires a second POST for
+  // it. The 409 self-heal refetch already covers the resulting race, but
+  // preventing the redundant write is cheap and avoids two rows visibly stuck
+  // on "Creating…" on a slow network.
+  //
+  // Deriving this from originalLift (an earlier version of this guard) was
+  // wrong in both directions: two rows sharing original text can be retyped
+  // to different new names (batch-resolve already treats them as unrelated
+  // once retyped, so this guard shouldn't block them either), while two rows
+  // with DIFFERENT original text — most commonly two separate blank Lift
+  // cells, both originalLift === '' — can coincidentally be typed to the SAME
+  // new name, which is exactly the duplicate-POST case this guard exists to
+  // prevent and originalLift-keying couldn't see. Deriving from createDrafts'
+  // own `name` field (set to the exact submitted value whenever `busy`
+  // becomes true) keys this guard on the same thing it's guarding (#911
+  // review, fourth pass).
+  const busyLiftNames = useMemo(() => {
     const set = new Set<string>();
-    for (const delta of previewBody?.deltas ?? []) {
-      if (delta.rowIndex === undefined || delta.originalLift === undefined) continue;
-      if (createDrafts.get(delta.rowIndex)?.busy) set.add(delta.originalLift);
+    for (const draft of createDrafts.values()) {
+      if (draft.busy && draft.name) set.add(draft.name);
     }
     return set;
-  }, [previewBody, createDrafts]);
+  }, [createDrafts]);
 
   async function analyze(override?: ImportKind): Promise<ImportPreviewResponse | null> {
     if (!programId || !file) return null;
@@ -412,7 +435,7 @@ export function ImportWizard({
   function setDraftClassification(rowIndex: number, classification: LiftClassification) {
     setCreateDrafts((prev) => {
       const next = new Map(prev);
-      const existing = next.get(rowIndex) ?? { classification: null, busy: false, error: null };
+      const existing = next.get(rowIndex) ?? { classification: null, busy: false, error: null, name: null };
       next.set(rowIndex, {
         ...existing,
         classification: existing.classification === classification ? null : classification,
@@ -451,7 +474,12 @@ export function ImportWizard({
     setCreateDrafts((prev) => {
       const next = new Map(prev);
       const existing = next.get(rowIndex);
-      next.set(rowIndex, { classification: existing?.classification ?? null, busy: false, error });
+      next.set(rowIndex, {
+        classification: existing?.classification ?? null,
+        busy: false,
+        error,
+        name: existing?.name ?? null,
+      });
       return next;
     });
   }
@@ -534,15 +562,19 @@ export function ImportWizard({
 
     setCreateDrafts((prev) => {
       const next = new Map(prev);
-      const existing = next.get(rowIndex) ?? { classification, busy: false, error: null };
-      next.set(rowIndex, { ...existing, classification, busy: true, error: null });
+      const existing = next.get(rowIndex) ?? { classification, busy: false, error: null, name: null };
+      next.set(rowIndex, { ...existing, classification, busy: true, error: null, name });
       return next;
     });
 
     try {
       const created = await createCustomLift({ name, classification });
-      if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
       if (created === null) {
+        // 409 branch only — the success branch below has its own, narrower
+        // generation gating (a created lift is real, persisted server-side
+        // data and must reach local state regardless of this preview's
+        // fate; #911 review, fourth pass).
+        if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
         // 409 — a lift with this name already exists. Re-fetch the live server
         // list rather than searching the render-scope `customLifts` closure,
         // which can be stale: two ambiguous rows sharing this name each get
@@ -591,7 +623,16 @@ export function ImportWizard({
         );
         return;
       }
+      // Ungated by previewGeneration — reset()'s own comment states the rule
+      // this follows: "any lift created this session is real, persisted
+      // server-side data, not session-local UI state." A generation mismatch
+      // here (the preview was discarded mid-request) must not cost the user
+      // a lift they successfully created just because they hit Back in the
+      // meantime — without this, the wizard would keep offering to "create"
+      // an already-created lift, wasting a POST + 409 self-heal round trip on
+      // the next attempt (#911 review, fourth pass).
       setCustomLifts((prev) => [...prev, created]);
+      if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
       applyResolvedLiftToMatchingRows(matchOriginalLift, created.id, rowIndex);
       clearCreateDraft(rowIndex);
     } catch (e) {
@@ -1134,7 +1175,7 @@ export function ImportWizard({
                           <option key={alias} value={alias} />
                         ))}
                         {customLifts
-                          .filter((lift) => !ALL_SLOT_MAP_ALIASES.includes(lift.name))
+                          .filter((lift) => !isCanonicalAlias(lift.name))
                           .map((lift) => (
                             <option key={lift.id} value={lift.name} />
                           ))}
@@ -1175,13 +1216,16 @@ export function ImportWizard({
                               isAmbiguous &&
                               !excluded &&
                               rowIndex !== undefined &&
-                              // d.originalLift undefined means a blank/missing Lift
-                              // cell — validateLiftImportSoft still flags it
-                              // ambiguous, but there is no original text to create
-                              // a lift FROM. Without this guard, typing any name
-                              // enables an always-no-op Create button (#911 review,
-                              // second pass) — see the click handler below, which
-                              // also requires d.originalLift.
+                              // ImportDelta.originalLift is typed string | undefined
+                              // — validateLiftImportSoft itself never actually
+                              // produces undefined (a blank cell OR a missing Lift
+                              // column both normalize to '', per String(r.lift ??
+                              // '').trim() — #911 review, fourth pass), but a
+                              // future preview-building path could, and without
+                              // this guard typing any name into such a row would
+                              // enable an always-no-op Create button (the click
+                              // handler below also requires d.originalLift, for the
+                              // same type-safety reason) (#911 review, second pass).
                               d.originalLift !== undefined &&
                               currentLiftValue !== '' &&
                               // Case-insensitive: see knownLiftNamesCanonical's doc
@@ -1280,8 +1324,7 @@ export function ImportWizard({
                                               className={styles.createLiftConfirm}
                                               disabled={
                                                 !draft?.classification ||
-                                                (d.originalLift !== undefined &&
-                                                  busyOriginalLifts.has(d.originalLift))
+                                                busyLiftNames.has(currentLiftValue)
                                               }
                                               aria-label={`Create "${currentLiftValue}" as a new exercise`}
                                               onClick={() => {

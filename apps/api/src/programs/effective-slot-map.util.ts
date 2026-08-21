@@ -23,7 +23,18 @@ import { RepositoryBundle } from '../ports/factory';
  * imported as a training max or strength goal. Out of scope for #911 (which
  * is specifically about the lift-records Wizard flow this helper's three
  * call sites serve); extending custom-lift awareness to those two validators
- * is tracked separately as issue #914 (#911 review, third pass).
+ * is tracked separately as issue #914 (#911 review, third pass). This gap
+ * also surfaces WITHOUT a separate training-maxes import: a splitDest commit
+ * partitions a 1RM-noted lift-records row (already resolved to a custom-lift
+ * id, via this helper) into a training-max write keyed by that id
+ * (splitLiftRecordsByDestination), which then disagrees with how a direct
+ * training-maxes import of the same lift would key it — no separate
+ * destination choice by the user required (#911 review, fourth pass; #914's
+ * fix should resolve this as a side effect once it lands).
+ *
+ * See also #917 (createCustomLift discards the api-client-layer conflict
+ * distinction this helper's sibling ReservedLiftNameConflictError exists to
+ * provide — unrelated to this helper directly, but the same review pass).
  *
  * Fetches full CustomLift entities (movementProfile JSON, classification,
  * timestamps) purely to build a name/id lookup map, inside the per-request

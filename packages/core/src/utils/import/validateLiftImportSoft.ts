@@ -57,10 +57,13 @@ export function validateLiftImportSoft(
       return;
     }
 
-    // Trimmed for parity with validateLiftImport (see its own comment) and
-    // with validateTrainingMaxImport/validateStrengthGoalImport, both of
-    // which already trim (issue #911 review, third pass).
-    const liftStr = (r.lift as unknown as string).trim();
+    // String(r.lift ?? ''), not a bare `as unknown as string` cast — see
+    // validateLiftImport.ts's own comment: r.lift is genuinely `undefined`
+    // for a missing Lift column (as opposed to a present-but-blank cell), and
+    // `.trim()` called directly on `undefined` throws instead of falling
+    // through to the ambiguous bucket below (#911 review, fourth pass — a
+    // regression in the third pass's trim-for-parity fix).
+    const liftStr = String(r.lift ?? '').trim();
     // Object.prototype.hasOwnProperty.call, not the `in` operator — see
     // validateLiftImport.ts for why.
     if (!liftStr || !Object.prototype.hasOwnProperty.call(slotMap, liftStr)) {

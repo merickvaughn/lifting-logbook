@@ -41,11 +41,19 @@ export function validateLiftImport(
     if (!r.date || isNaN(r.date.getTime()))
       rowErrors.push({ row, field: 'date', message: 'date is invalid' });
 
-    // Trimmed for parity with validateTrainingMaxImport/validateStrengthGoalImport,
-    // both of which already trim: an untrimmed " Squat" would otherwise fail to
-    // match the exact-case slotMap key "Squat" and read as unrecognized (issue
-    // #911 review, third pass).
-    const liftStr = (r.lift as unknown as string).trim();
+    // String(r.lift ?? ''), not a bare `as unknown as string` cast: r.lift is
+    // genuinely `undefined` whenever the uploaded table has no column mapped
+    // to `lift` (tableToObjects only assigns keys for headers actually
+    // present), and this file's own MAP_COLUMNS step exists precisely to let
+    // a user fix a differently-named exercise column — a `.trim()` called
+    // directly on that `undefined` throws a TypeError instead of falling
+    // through to the blank-lift branch below, turning exactly the recoverable
+    // case this validator is supposed to handle into an unhandled 500 (#911
+    // review, fourth pass — a regression in the third pass's own trim-for-
+    // parity fix, which is otherwise correct: trimmed for parity with
+    // validateTrainingMaxImport/validateStrengthGoalImport, both of which
+    // already use this exact `String(... ?? '').trim()` form).
+    const liftStr = String(r.lift ?? '').trim();
     // Object.prototype.hasOwnProperty.call, not the `in` operator: `in` walks
     // the prototype chain, so a lift string of "toString"/"constructor"/
     // "__proto__"/etc. would otherwise resolve to an inherited Object.prototype

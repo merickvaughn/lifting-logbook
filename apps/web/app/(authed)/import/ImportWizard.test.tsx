@@ -874,6 +874,62 @@ describe('ImportWizard', () => {
       // key for the custom lift, not a duplicate of canonical Squat.
       expect(opts.liftOverrides).toEqual({ 1: 'squat' });
     });
+
+    it('does not disable an unrelated row\'s Create button while a different row (sharing no name) is busy', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(BLANK_LIFT_CELL_PREVIEW); // two rows, both originalLift === ''
+      // Never resolves — row 1's create stays "busy" for the whole test, the
+      // state under test.
+      mockCreateCustomLift.mockReturnValue(new Promise(() => {}));
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, BLANK_LIFT_CELL_CSV);
+
+      // Both rows are blank cells (originalLift === '' for both) but the user
+      // types two DIFFERENT new names into them — the exact case the
+      // originalLift-keyed guard (round 3) over-blocked, since both rows
+      // shared the same (empty) originalLift despite being unrelated (#911
+      // review, fourth pass).
+      await user.type(screen.getByLabelText('Lift name for row 1'), 'First New Lift');
+      await user.type(screen.getByLabelText('Lift name for row 2'), 'Second New Lift');
+
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      const row1Create = screen.getByRole('button', { name: 'Create "First New Lift" as a new exercise' });
+      await user.click(row1Create);
+      await waitFor(() => expect(row1Create).toBeDisabled()); // row 1 now busy
+
+      // Row 2's own Create button must still be reachable — it needs its own
+      // classification pick first (each row's chip state is independent).
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[1]!);
+      const row2Create = screen.getByRole('button', { name: 'Create "Second New Lift" as a new exercise' });
+      expect(row2Create).toBeEnabled();
+    });
+
+    it('disables a different row\'s Create button while a busy row is creating the SAME name', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(BLANK_LIFT_CELL_PREVIEW);
+      mockCreateCustomLift.mockReturnValue(new Promise(() => {})); // never resolves
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, BLANK_LIFT_CELL_CSV);
+
+      // Two rows sharing NO original text (both blank), retyped to the SAME
+      // new name — a genuine duplicate-create risk this guard exists to
+      // prevent, and must still catch even though these rows don't share
+      // originalLift (#911 review, fourth pass).
+      await user.type(screen.getByLabelText('Lift name for row 1'), 'Same New Lift');
+      await user.type(screen.getByLabelText('Lift name for row 2'), 'Same New Lift');
+
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      const createButtons = screen.getAllByRole('button', {
+        name: 'Create "Same New Lift" as a new exercise',
+      });
+      await user.click(createButtons[0]!);
+      await waitFor(() => expect(createButtons[0]).toBeDisabled());
+
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[1]!);
+      expect(createButtons[1]).toBeDisabled();
+    });
   });
 
   it('training-maxes: DONE step has no skipped-rows disclosure when skippedDetail is absent', async () => {

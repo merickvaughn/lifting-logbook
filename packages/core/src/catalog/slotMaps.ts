@@ -65,9 +65,16 @@ export const DEFAULT_SLOT_MAP: Readonly<Record<string, string>> = {
  * lift that DEFAULT_SLOT_MAP's own collision precedence then permanently
  * shadowed (issue #911 review).
  */
-export const ALL_SLOT_MAP_ALIASES: string[] = [
+// readonly + Object.freeze, not a plain mutable string[]: canonicalAliasFor
+// below caches a lowercased index derived from this array under the stated
+// invariant that it "never goes stale" — a type that permits mutation (this
+// is exported through the package barrel, so any consumer could push/sort it)
+// would make that comment a claim the compiler doesn't back, the same
+// overclaiming-comment pattern this PR's review has already had to correct
+// more than once (#911 review, fourth pass).
+export const ALL_SLOT_MAP_ALIASES: readonly string[] = Object.freeze([
   ...new Set([...Object.keys(DEFAULT_SLOT_MAP), ...Object.values(DEFAULT_SLOT_MAP)]),
-];
+]);
 
 /**
  * Builds a per-request slot map that recognizes a user's custom lifts alongside
@@ -128,4 +135,25 @@ export function canonicalAliasFor(name: string): string | undefined {
     ALL_SLOT_MAP_ALIASES.map((alias) => [alias.toLowerCase(), alias]),
   );
   return aliasesLowerToCanonical.get(name.toLowerCase());
+}
+
+// Lazily built and cached, same rationale as aliasesLowerToCanonical above.
+let aliasSet: Set<string> | undefined;
+
+/**
+ * O(1) EXACT-case membership check against DEFAULT_SLOT_MAP's aliases —
+ * deliberately narrower than canonicalAliasFor (case-insensitive) or a set
+ * that also includes a user's custom lift names/ids (as ImportWizard.tsx's
+ * own exactKnownLiftKeys does): a custom lift's *own* name must never test
+ * true here even when exactKnownLiftKeys would include it, or a caller using
+ * this to mean "is this an alias, as opposed to a custom lift" would
+ * incorrectly treat every custom lift as a shadowing alias of itself. Callers
+ * needing "is this ANY known lift" should use their own broader set/map
+ * instead — this answers a narrower, different question (issue #911 review,
+ * fourth pass — replaces a per-call-site ALL_SLOT_MAP_ALIASES.includes(...)
+ * linear scan in ImportWizard.tsx's remap datalist filter).
+ */
+export function isCanonicalAlias(name: string): boolean {
+  aliasSet ??= new Set(ALL_SLOT_MAP_ALIASES);
+  return aliasSet.has(name);
 }
