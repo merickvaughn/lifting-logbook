@@ -763,6 +763,57 @@
   box-shadow: 0 0 0 3px var(--color-accent-glow);
 }
 
+/* ── Ambiguous row: create new exercise (#911) ─────────────── */
+
+.createLiftAffordance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.createLiftPrompt {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Scaled like .chip (not .btnSecondary, which is a 48px full-size action
+   button) so the confirm control sits visually level with the classification
+   chips beside it. */
+.createLiftConfirm {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.createLiftConfirm:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.createLiftConfirm:disabled {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.createLiftError {
+  font-size: var(--font-size-sm);
+  color: var(--color-error, #e74c3c);
+}
+
 .undoExclude {
   width: 28px;
   height: 28px;

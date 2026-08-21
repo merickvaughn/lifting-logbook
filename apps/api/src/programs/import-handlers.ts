@@ -52,6 +52,9 @@ export interface ImportHandler<T> {
 
 const liftRecordsHandler: ImportHandler<LiftRecord> = {
   parse: parseLiftRecords,
+  // Kept to satisfy ImportHandler<T>, but superseded for lift-records at commit time:
+  // ImportController.commit special-cases this destination to validate against a
+  // custom-lift-aware slot map (buildEffectiveSlotMap) instead of calling this closure (#911).
   validate: (parsed) => validateLiftImport(parsed, DEFAULT_SLOT_MAP),
   async preview(valid, program, repos) {
     const records = valid.map((r) => ({ ...r, program }));

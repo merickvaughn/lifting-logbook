@@ -25,11 +25,12 @@ import {
   applyColumnOverrides,
   splitLiftRecordsByDestination,
   validateLiftImportSoft,
+  validateLiftImport,
   buildLiftRecordsPreviewSoft,
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
   liftRecordNaturalKey,
-  DEFAULT_SLOT_MAP,
+  buildEffectiveSlotMap,
 } from '@lifting-logbook/core';
 import type { SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
@@ -284,7 +285,11 @@ export class ImportController {
       };
     }
 
-    const softResult = validateLiftImportSoft(parsed, DEFAULT_SLOT_MAP);
+    // Custom lifts are folded into the slot map fresh per request (#911) so a row whose
+    // raw text already matches an existing custom lift's name resolves immediately
+    // instead of being flagged ambiguous.
+    const customLifts = await repos.customLift.list();
+    const softResult = validateLiftImportSoft(parsed, buildEffectiveSlotMap(customLifts));
     if (softResult.hardErrors.length) {
       return { classification, destination, columnMappings, preview: null, errors: softResult.hardErrors };
     }
@@ -363,9 +368,22 @@ export class ImportController {
       });
     }
 
-    // Strict validation (with overrides applied)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
-    const { valid: rawValid, errors } = handler.validate(parsed as any);
+    // Strict validation (with overrides applied). Lift-records gets a custom-lift-aware
+    // slot map built fresh per request (#911), special-cased here rather than threading
+    // extra context through the generic ImportHandler.validate signature — matching this
+    // method's other per-destination special cases below (excludeKeys filtering, splitDest
+    // partitioning). liftRecordsHandler.validate (import-handlers.ts) is unreachable for
+    // this destination as a result, but stays in place to satisfy the ImportHandler<T>
+    // interface the other three destinations still use.
+    let rawValid: unknown[];
+    let errors: ImportError[];
+    if (destination === 'lift-records') {
+      const customLifts = await repos.customLift.list();
+      ({ valid: rawValid, errors } = validateLiftImport(parsed as LiftRecord[], buildEffectiveSlotMap(customLifts)));
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
+      ({ valid: rawValid, errors } = handler.validate(parsed as any));
+    }
     if (errors.length > 0) {
       throw new BadRequestException({ message: 'Validation failed', errors });
     }

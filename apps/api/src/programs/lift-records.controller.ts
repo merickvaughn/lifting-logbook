@@ -18,7 +18,7 @@ import {
   LiftRecordResponse,
 } from '@lifting-logbook/types';
 import {
-  DEFAULT_SLOT_MAP,
+  buildEffectiveSlotMap,
   buildLiftRecordId,
   buildSkippedDetail,
   classifyImportRows,
@@ -202,7 +202,15 @@ export class LiftRecordsController {
       );
     }
 
-    const { valid, errors } = validateLiftImport(parsed, DEFAULT_SLOT_MAP);
+    // Hoisted ahead of validation (was previously fetched only after it) so the slot
+    // map can recognize this user's custom lifts by name, not just the built-in
+    // DEFAULT_SLOT_MAP (#911) — this endpoint has no interactive remap step of its
+    // own, so an exact-name match against an existing custom lift is the only way a
+    // custom lift can ever resolve here.
+    const { liftRecord, customLift } = await this.factory.forUser(user);
+    const effectiveSlotMap = buildEffectiveSlotMap(await customLift.list());
+
+    const { valid, errors } = validateLiftImport(parsed, effectiveSlotMap);
     if (errors.length > 0) {
       throw new BadRequestException({ message: 'Validation failed', errors });
     }
@@ -214,7 +222,6 @@ export class LiftRecordsController {
     // (which may reorder nothing but does filter).
     const rows = pairWithRowNumber(valid.map((r) => ({ ...r, program })));
 
-    const { liftRecord } = await this.factory.forUser(user);
     const dupKeys = new Set(
       (await liftRecord.findExistingRecords(program, rows.map(({ r }) => r))).map(
         liftRecordNaturalKey,

@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import Link from 'next/link';
 import type {
   ColumnMapping,
+  CustomLiftResponse,
   CustomProgramSummaryResponse,
   ImportCommitResponse,
   ImportDelta,
@@ -11,16 +12,25 @@ import type {
   ImportKind,
   ImportPreviewResponse,
   ImportUndoResponse,
+  LiftClassification,
   WeightUnit,
 } from '@lifting-logbook/types';
 import { CANONICAL_LIFT_IDS, formatWeight } from '@lifting-logbook/core';
-import { commitImport, previewImport, undoImport } from '@/lib/client-api';
+import { commitImport, createCustomLift, previewImport, undoImport } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import { Step, STEP_LABELS } from './steps';
 import styles from './import.module.css';
 
 type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous';
 type EditableMax = { lift: string; weight: string };
+
+// Per-row transient state for the "create new exercise" affordance on an
+// ambiguous row (issue #911) — keyed by rowIndex, mirroring liftOverrides.
+type CreateLiftDraft = {
+  classification: LiftClassification | null;
+  busy: boolean;
+  error: string | null;
+};
 
 // The preview response disambiguates ImportDelta.key with a `#N` suffix when
 // the same natural key is yielded more than once in one batch (issue #884),
@@ -118,9 +128,12 @@ function filterDeltas(deltas: ImportDelta[], filter: ReviewFilter): ImportDelta[
 
 export function ImportWizard({
   programs,
+  customLifts: initialCustomLifts = [],
   unit = 'lbs',
 }: {
   programs: CustomProgramSummaryResponse[];
+  /** The user's custom lifts, for the REVIEW step's ambiguous-row remap datalist (#911). */
+  customLifts?: CustomLiftResponse[];
   /**
    * Display-only preference for a read-only conversion hint. Imported
    * training-max values are directly-known (see
@@ -143,6 +156,11 @@ export function ImportWizard({
   const [reviewMaxes, setReviewMaxes] = useState<EditableMax[] | null>(null);
   const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
   const [liftOverrides, setLiftOverrides] = useState<Map<number, string>>(new Map());
+  // Seeded from the server-fetched prop, then grown locally as the user creates
+  // exercises inline during this session (#911) — no page reload needed to see
+  // a just-created lift reflected in the remap datalist.
+  const [customLifts, setCustomLifts] = useState<CustomLiftResponse[]>(initialCustomLifts);
+  const [createDrafts, setCreateDrafts] = useState<Map<number, CreateLiftDraft>>(new Map());
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('all');
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const lastSelectedKey = useRef<string | null>(null);
@@ -183,6 +201,17 @@ export function ImportWizard({
 
   // Filtered deltas for the REVIEW table
   const visibleDeltas = filterDeltas(previewBody?.deltas ?? [], reviewFilter);
+
+  // Every value an ambiguous-row remap can already resolve to without creating
+  // anything new (issue #911): built-in canonical lifts, this user's custom
+  // lifts by name (the datalist/typed-text path), AND by id (the "just
+  // created" success handler stores the new lift's id, not its name — see
+  // handleCreateLift — so the id must also read as "known" or the create-new
+  // prompt would immediately reappear showing the raw id as a false mismatch).
+  const knownLiftNames = new Set<string>([
+    ...CANONICAL_LIFT_IDS,
+    ...customLifts.flatMap((c) => [c.name, c.id]),
+  ]);
 
   async function analyze(override?: ImportKind): Promise<ImportPreviewResponse | null> {
     if (!programId || !file) return null;
@@ -257,6 +286,103 @@ export function ImportWizard({
       return next;
     });
     setSelectedKeys(new Set());
+  }
+
+  // Toggles the classification chip for an in-progress "create new exercise" draft
+  // (issue #911). Clicking the already-selected chip clears the choice.
+  function setDraftClassification(rowIndex: number, classification: LiftClassification) {
+    setCreateDrafts((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(rowIndex) ?? { classification: null, busy: false, error: null };
+      next.set(rowIndex, {
+        ...existing,
+        classification: existing.classification === classification ? null : classification,
+        error: null,
+      });
+      return next;
+    });
+  }
+
+  function clearCreateDraft(rowIndex: number) {
+    setCreateDrafts((prev) => {
+      const next = new Map(prev);
+      next.delete(rowIndex);
+      return next;
+    });
+  }
+
+  function setCreateDraftError(rowIndex: number, error: string) {
+    setCreateDrafts((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(rowIndex);
+      next.set(rowIndex, { classification: existing?.classification ?? null, busy: false, error });
+      return next;
+    });
+  }
+
+  // Resolves every ambiguous delta whose original (unedited) CSV text matches
+  // matchOriginalLift to liftId — not just the row that triggered creation.
+  // A recurring unrecognized name (the exact scenario issue #911 was filed
+  // over — one CSV export, one name, many set rows) would otherwise force the
+  // user to repeat "create new" once per occurrence.
+  function applyResolvedLiftToMatchingRows(matchOriginalLift: string, liftId: string) {
+    const deltas = previewBody?.deltas ?? [];
+    setLiftOverrides((prev) => {
+      const next = new Map(prev);
+      for (const delta of deltas) {
+        if (
+          delta.status === 'ambiguous' &&
+          delta.rowIndex !== undefined &&
+          delta.originalLift === matchOriginalLift
+        ) {
+          next.set(delta.rowIndex, liftId);
+        }
+      }
+      return next;
+    });
+  }
+
+  // Creates `name` as a new custom lift and resolves this (and every matching)
+  // ambiguous row to it. Only ever fires on an explicit click (issue #911) —
+  // never automatically from typing — since a value that already exactly
+  // matches a known name would either 409 or silently create an unreachable
+  // shadowed lift (buildEffectiveSlotMap lets DEFAULT_SLOT_MAP win on collision).
+  async function handleCreateLift(
+    name: string,
+    matchOriginalLift: string,
+    rowIndex: number,
+    classification: LiftClassification,
+  ) {
+    setCreateDrafts((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(rowIndex) ?? { classification, busy: false, error: null };
+      next.set(rowIndex, { ...existing, classification, busy: true, error: null });
+      return next;
+    });
+
+    try {
+      const created = await createCustomLift({ name, classification });
+      if (created === null) {
+        // 409 — a lift with this name already exists. Self-heal against the
+        // locally-held list (double-click, or an earlier row already created
+        // it this session); only surface an error if genuinely not found
+        // locally (e.g. a cross-tab race).
+        const existing = customLifts.find((c) => c.name === name);
+        if (existing) {
+          applyResolvedLiftToMatchingRows(matchOriginalLift, existing.id);
+          clearCreateDraft(rowIndex);
+          return;
+        }
+        setCreateDraftError(rowIndex, 'An exercise with this name already exists.');
+        return;
+      }
+      setCustomLifts((prev) => [...prev, created]);
+      applyResolvedLiftToMatchingRows(matchOriginalLift, created.id);
+      clearCreateDraft(rowIndex);
+    } catch (e) {
+      logClientError('createCustomLift', e, { programId, rowIndex, name });
+      setCreateDraftError(rowIndex, e instanceof Error ? e.message : 'Failed to create exercise');
+    }
   }
 
   async function handleCommit() {
@@ -334,6 +460,9 @@ export function ImportWizard({
     setReviewMaxes(null);
     setExcludedKeys(new Set());
     setLiftOverrides(new Map());
+    // customLifts is intentionally NOT reset — any lift created this session is
+    // real, persisted server-side data, not session-local UI state (#911).
+    setCreateDrafts(new Map());
     setReviewFilter('all');
     setSelectedKeys(new Set());
     lastSelectedKey.current = null;
@@ -711,10 +840,14 @@ export function ImportWizard({
                         </div>
                       )}
 
-                      {/* Lift catalog datalist for ambiguous rows */}
+                      {/* Lift catalog datalist for ambiguous rows: built-in canonical
+                          lifts plus this user's custom lifts (#911) */}
                       <datalist id="lift-catalog">
                         {CANONICAL_LIFT_IDS.map((id) => (
                           <option key={id} value={id} />
+                        ))}
+                        {customLifts.map((lift) => (
+                          <option key={lift.id} value={lift.name} />
                         ))}
                       </datalist>
 
@@ -734,6 +867,23 @@ export function ImportWizard({
                             const excluded = excludedKeys.has(d.key);
                             const selected = selectedKeys.has(d.key);
                             const isAmbiguous = d.status === 'ambiguous';
+
+                            // #911: derive "no known match" reactively from the current
+                            // typed/selected value (liftOverrides holds it once the user
+                            // has interacted; otherwise it's still the original raw text).
+                            const rowIndex = d.rowIndex;
+                            const currentLiftValue = (
+                              (rowIndex !== undefined ? liftOverrides.get(rowIndex) : undefined) ??
+                              d.originalLift ??
+                              ''
+                            ).trim();
+                            const draft = rowIndex !== undefined ? createDrafts.get(rowIndex) : undefined;
+                            const showCreateNew =
+                              isAmbiguous &&
+                              !excluded &&
+                              rowIndex !== undefined &&
+                              currentLiftValue !== '' &&
+                              !knownLiftNames.has(currentLiftValue);
 
                             return (
                               <tr
@@ -760,25 +910,73 @@ export function ImportWizard({
                                 </td>
                                 <td className={styles.deltaLabel}>
                                   {isAmbiguous && !excluded ? (
-                                    <input
-                                      type="text"
-                                      list="lift-catalog"
-                                      className={styles.ambiguousInput}
-                                      defaultValue={d.originalLift ?? ''}
-                                      placeholder="Type a lift name…"
-                                      aria-label={`Lift name for row ${d.rowIndex}`}
-                                      onChange={(e) => {
-                                        if (d.rowIndex === undefined) return;
-                                        const rowIndex = d.rowIndex;
-                                        const val = e.target.value.trim();
-                                        setLiftOverrides((prev) => {
-                                          const next = new Map(prev);
-                                          if (val) next.set(rowIndex, val);
-                                          else next.delete(rowIndex);
-                                          return next;
-                                        });
-                                      }}
-                                    />
+                                    <>
+                                      <input
+                                        type="text"
+                                        list="lift-catalog"
+                                        className={styles.ambiguousInput}
+                                        defaultValue={d.originalLift ?? ''}
+                                        placeholder="Type a lift name…"
+                                        aria-label={`Lift name for row ${d.rowIndex}`}
+                                        onChange={(e) => {
+                                          if (d.rowIndex === undefined) return;
+                                          const rIdx = d.rowIndex;
+                                          const val = e.target.value.trim();
+                                          setLiftOverrides((prev) => {
+                                            const next = new Map(prev);
+                                            if (val) next.set(rIdx, val);
+                                            else next.delete(rIdx);
+                                            return next;
+                                          });
+                                        }}
+                                      />
+                                      {showCreateNew && rowIndex !== undefined && (
+                                        <div className={styles.createLiftAffordance}>
+                                          <span className={styles.createLiftPrompt}>
+                                            No match — create &quot;{currentLiftValue}&quot; as a
+                                            new exercise
+                                          </span>
+                                          <div className={styles.chipRow}>
+                                            <button
+                                              type="button"
+                                              className={`${styles.chip} ${draft?.classification === 'compound' ? styles.chipActive : ''}`}
+                                              aria-pressed={draft?.classification === 'compound'}
+                                              onClick={() => setDraftClassification(rowIndex, 'compound')}
+                                            >
+                                              Compound
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className={`${styles.chip} ${draft?.classification === 'accessory' ? styles.chipActive : ''}`}
+                                              aria-pressed={draft?.classification === 'accessory'}
+                                              onClick={() => setDraftClassification(rowIndex, 'accessory')}
+                                            >
+                                              Accessory
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className={styles.createLiftConfirm}
+                                              disabled={!draft?.classification || draft?.busy}
+                                              aria-label={`Create "${currentLiftValue}" as a new exercise`}
+                                              onClick={() => {
+                                                if (!draft?.classification) return;
+                                                handleCreateLift(
+                                                  currentLiftValue,
+                                                  d.originalLift ?? currentLiftValue,
+                                                  rowIndex,
+                                                  draft.classification,
+                                                );
+                                              }}
+                                            >
+                                              {draft?.busy ? 'Creating…' : 'Create'}
+                                            </button>
+                                          </div>
+                                          {draft?.error && (
+                                            <span className={styles.createLiftError}>{draft.error}</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </>
                                   ) : (
                                     d.label
                                   )}

@@ -1,11 +1,24 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { FastifyRequest } from 'fastify';
 import { Weekday } from '@lifting-logbook/core';
+import { CustomLift } from '@lifting-logbook/types';
+import { ICustomLiftRepository } from '../ports/ICustomLiftRepository';
 import { ICycleDashboardRepository } from '../ports/ICycleDashboardRepository';
 import { ILiftRecordRepository } from '../ports/ILiftRecordRepository';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { LiftRecordsController } from './lift-records.controller';
+
+/** Builds a fake FastifyRequest whose req.file() resolves to the given CSV text. */
+function csvUploadRequest(csvText: string): FastifyRequest {
+  return {
+    file: async () => ({
+      toBuffer: async () => Buffer.from(csvText, 'utf-8'),
+      file: { truncated: false },
+    }),
+  } as unknown as FastifyRequest;
+}
 
 const MOCK_USER = { id: 'test-user', email: 'test@example.com', provider: 'dev' };
 
@@ -34,6 +47,7 @@ describe('LiftRecordsController', () => {
   let controller: LiftRecordsController;
   let liftRecordRepo: jest.Mocked<ILiftRecordRepository>;
   let dashboardRepo: jest.Mocked<ICycleDashboardRepository>;
+  let customLiftRepo: jest.Mocked<ICustomLiftRepository>;
   let factory: jest.Mocked<IRepositoryFactory>;
 
   beforeEach(async () => {
@@ -50,10 +64,17 @@ describe('LiftRecordsController', () => {
       saveCycleDashboard: jest.fn(),
       deleteCycleDashboard: jest.fn().mockResolvedValue(undefined),
     };
+    customLiftRepo = {
+      list: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    };
     factory = {
       forUser: jest.fn().mockResolvedValue({
         liftRecord: liftRecordRepo,
         cycleDashboard: dashboardRepo,
+        customLift: customLiftRepo,
       }),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -207,6 +228,67 @@ describe('LiftRecordsController', () => {
 
       expect(result.weight).toBe(180);
       expect(result.reps).toBe(5);
+    });
+  });
+
+  // Prior to #911, this endpoint's only coverage was indirect (it shares
+  // validateLiftImport with the Smart Import wizard's tests) — it had zero
+  // dedicated tests of its own despite being a distinct, remap-free code path.
+  describe('POST lift-records/import', () => {
+    const IMPORT_CSV_HEADER = 'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes';
+
+    // Regression for #911: this endpoint has no interactive remap step, so an
+    // unrecognized lift must never leak the strict validator's internal
+    // "... is not in the slot map" wording to the end user.
+    it('surfaces a humanized message for an unrecognized lift, not raw slot-map jargon', async () => {
+      const csv = [
+        IMPORT_CSV_HEADER,
+        '5-3-1,1,1,2026-01-01,Totally Unknown Lift,1,180,5,',
+      ].join('\n');
+
+      let caught: unknown;
+      try {
+        await controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER);
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(BadRequestException);
+      const response = (caught as BadRequestException).getResponse() as {
+        errors: { message: string }[];
+      };
+      expect(response.errors[0]!.message).toContain('Totally Unknown Lift');
+      expect(response.errors[0]!.message).not.toMatch(/slot map/i);
+      expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
+    });
+
+    // #911: the effective slot map now folds in the user's custom lifts, so a row
+    // whose raw text already exactly matches an existing custom lift's name
+    // resolves without requiring any manual remap (this endpoint has no remap UI).
+    it('resolves a row whose lift name matches an existing custom lift, with no override needed', async () => {
+      const customLift: CustomLift = {
+        id: 'custom-wide-grip-cbl-curls',
+        name: 'Wide-Grip CBL Curls',
+        classification: 'accessory',
+        movementProfile: { patterns: [], jointActions: [], complexity: 'simple' },
+        userId: MOCK_USER.id,
+        isCustom: true,
+        createdAt: new Date('2026-01-01'),
+      };
+      customLiftRepo.list.mockResolvedValue([customLift]);
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(1);
+      const csv = [
+        IMPORT_CSV_HEADER,
+        '5-3-1,1,1,2026-01-01,Wide-Grip CBL Curls,1,90,10,',
+      ].join('\n');
+
+      const result = await controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER);
+
+      expect(result.written).toBe(1);
+      expect(liftRecordRepo.appendLiftRecords).toHaveBeenCalledWith(
+        '5-3-1',
+        expect.arrayContaining([expect.objectContaining({ lift: 'custom-wide-grip-cbl-curls' })]),
+      );
     });
   });
 

@@ -114,6 +114,12 @@ function createInitialState() {
     // When true, the import preview response includes columnMappings with one
     // required field unmapped, to exercise the MAP_COLUMNS override flow.
     nonStandardColumns: false,
+    // When true, an /import preview with no explicit destination returns the
+    // low-confidence manual-picker shape, and destination=lift-records returns
+    // a preview with one ambiguous lift row — exercises the #911 remap flow.
+    ambiguousLift: false,
+    // GET/POST /lifts/custom (#911) — a user's custom lifts.
+    customLifts: [],
   };
 }
 
@@ -210,7 +216,42 @@ const server = createServer(async (req, res) => {
     if (url.searchParams.get('withNonStandardColumns') === 'true') {
       state.nonStandardColumns = true;
     }
+    if (url.searchParams.get('withAmbiguousLift') === 'true') {
+      state.ambiguousLift = true;
+    }
     json(res, { ok: true });
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // GET /lifts/custom — list the user's custom lifts (#911)
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && url.pathname === '/lifts/custom') {
+    json(res, state.customLifts);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // POST /lifts/custom — create a custom lift; 409 on a duplicate name (#911)
+  // -------------------------------------------------------------------------
+  if (method === 'POST' && url.pathname === '/lifts/custom') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    if (state.customLifts.some((l) => l.name === body.name)) {
+      json(res, { statusCode: 409, message: `A lift named '${body.name}' already exists` }, 409);
+      return;
+    }
+    const created = {
+      id: `custom-${state.customLifts.length + 1}`,
+      name: body.name,
+      classification: body.classification,
+      movementProfile: body.movementProfile ?? { patterns: [], jointActions: [], complexity: 'simple' },
+      isBodyweightComponent: body.isBodyweightComponent ?? false,
+      isCustom: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    state.customLifts.push(created);
+    json(res, created, 201);
     return;
   }
 
@@ -462,10 +503,98 @@ const server = createServer(async (req, res) => {
     }
 
     // POST /programs/:p/import?mode=preview|commit[&destination=]
-    // Canned Smart Import response (#477) — classifies any upload as training-maxes.
+    // Canned Smart Import response (#477) — classifies any upload as training-maxes,
+    // unless withAmbiguousLift opted the mock into the #911 lift-records remap flow.
     if (method === 'POST' && rest[0] === 'import' && rest.length === 1) {
       const mode = url.searchParams.get('mode') ?? 'preview';
       const destination = url.searchParams.get('destination') ?? 'training-maxes';
+
+      if (state.ambiguousLift && destination === 'lift-records') {
+        if (mode === 'commit') {
+          const liftOverridesParam = url.searchParams.get('liftOverrides');
+          const liftOverrides = liftOverridesParam ? JSON.parse(liftOverridesParam) : {};
+          // Both rows resolve only once every ambiguous row has a remap — mirrors the
+          // real strict validator's all-or-nothing semantics closely enough for this test.
+          const created = liftOverrides['1'] && liftOverrides['2'] ? 2 : 0;
+          json(res, {
+            destination,
+            created,
+            updated: 0,
+            skipped: 0,
+            errors: [],
+            batchId: created > 0 ? 'batch-ambiguous-lift' : null,
+          });
+        } else {
+          // The user explicitly picked "Lift History" from the manual destination
+          // picker (handlePickDestination) — return the real lift-records preview,
+          // with two ambiguous rows sharing one unrecognized name (#911's own
+          // motivating scenario: one recurring name, many set rows).
+          json(res, {
+            classification: {
+              type: 'lift-records',
+              confidence: 0.45,
+              bucket: 'low',
+              reasons: [],
+              alternatives: [],
+            },
+            destination: 'lift-records',
+            columnMappings: [
+              { sourceHeader: 'Program', destinationField: 'program', confidence: 1, required: true },
+              { sourceHeader: 'Cycle #', destinationField: 'cycleNum', confidence: 1, required: true },
+              { sourceHeader: 'Workout #', destinationField: 'workoutNum', confidence: 1, required: true },
+              { sourceHeader: 'Date', destinationField: 'date', confidence: 1, required: true },
+              { sourceHeader: 'Lift', destinationField: 'lift', confidence: 1, required: true },
+              { sourceHeader: 'Set #', destinationField: 'setNum', confidence: 1, required: true },
+              { sourceHeader: 'Weight', destinationField: 'weight', confidence: 1, required: true },
+              { sourceHeader: 'Reps', destinationField: 'reps', confidence: 1, required: true },
+            ],
+            preview: {
+              creates: 0,
+              updates: 0,
+              skips: 0,
+              deltas: [
+                {
+                  key: '__ambiguous_1',
+                  label: 'Row 1: Wide-Grip CBL Curls',
+                  kind: 'create',
+                  status: 'ambiguous',
+                  rowIndex: 1,
+                  originalLift: 'Wide-Grip CBL Curls',
+                },
+                {
+                  key: '__ambiguous_2',
+                  label: 'Row 2: Wide-Grip CBL Curls',
+                  kind: 'create',
+                  status: 'ambiguous',
+                  rowIndex: 2,
+                  originalLift: 'Wide-Grip CBL Curls',
+                },
+              ],
+            },
+            errors: [],
+          });
+        }
+        return;
+      }
+      if (state.ambiguousLift && mode === 'preview' && !url.searchParams.get('destination')) {
+        // Initial classify pass (no destination override yet): low-confidence, so the
+        // frontend renders the manual destination picker (mirrors the block above).
+        json(res, {
+          classification: {
+            type: null,
+            confidence: 0.4,
+            bucket: 'low',
+            reasons: [],
+            alternatives: [{ type: 'lift-records', confidence: 0.45, closeCall: false }],
+          },
+          destination: null,
+          columnMappings: null,
+          preview: null,
+          errors: [],
+        });
+        return;
+      }
+
       if (mode === 'commit') {
         // batchId enables the Phase 3 undo flow.
         json(res, { destination, created: 2, updated: 1, skipped: 0, errors: [], batchId: 'batch-1' });

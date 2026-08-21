@@ -1,5 +1,5 @@
-import { DEFAULT_SLOT_MAP, LIFT_CATALOG, resolveLift } from "@src/core";
-import type { Lift } from "@lifting-logbook/types";
+import { DEFAULT_SLOT_MAP, LIFT_CATALOG, resolveLift, buildEffectiveSlotMap } from "@src/core";
+import type { Lift, CustomLift } from "@lifting-logbook/types";
 
 describe("LIFT_CATALOG", () => {
   it("contains at least 20 lifts", () => {
@@ -257,5 +257,50 @@ describe("resolveLift with custom lifts", () => {
     expect(() => resolveLift('Squat', badMap, LIFT_CATALOG, [customSafetyBar])).toThrow(
       /not found in catalog/,
     );
+  });
+});
+
+describe("buildEffectiveSlotMap", () => {
+  function makeCustomLift(overrides: Partial<CustomLift> = {}): CustomLift {
+    return {
+      id: 'custom-1',
+      name: 'Wide-Grip CBL Curls',
+      classification: 'accessory',
+      movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
+      userId: 'user-1',
+      isCustom: true,
+      createdAt: new Date('2026-01-01'),
+      ...overrides,
+    };
+  }
+
+  it("returns DEFAULT_SLOT_MAP unchanged when there are no custom lifts", () => {
+    expect(buildEffectiveSlotMap([])).toEqual(DEFAULT_SLOT_MAP);
+  });
+
+  it("merges a custom lift by both its display name and its own id", () => {
+    const lift = makeCustomLift();
+    const merged = buildEffectiveSlotMap([lift]);
+    expect(merged[lift.name]).toBe(lift.id);
+    expect(merged[lift.id]).toBe(lift.id);
+    // Built-ins are still present, untouched
+    expect(merged['Squat']).toBe('back-squat');
+  });
+
+  it("lets DEFAULT_SLOT_MAP win when a custom lift's name collides with a built-in key", () => {
+    const lift = makeCustomLift({ name: 'Squat', id: 'custom-squat-id' });
+    const merged = buildEffectiveSlotMap([lift]);
+    // Canonical "Squat" must keep resolving to the shared built-in lift, not this user's custom lift
+    expect(merged['Squat']).toBe('back-squat');
+    // The custom lift is still reachable directly by its own id
+    expect(merged[lift.id]).toBe(lift.id);
+  });
+
+  it("merges multiple custom lifts", () => {
+    const a = makeCustomLift({ id: 'custom-a', name: 'Custom A' });
+    const b = makeCustomLift({ id: 'custom-b', name: 'Custom B' });
+    const merged = buildEffectiveSlotMap([a, b]);
+    expect(merged['Custom A']).toBe('custom-a');
+    expect(merged['Custom B']).toBe('custom-b');
   });
 });

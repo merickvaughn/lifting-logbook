@@ -43,6 +43,9 @@ describe("validateLiftImport", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatchObject({ row: 1, field: "lift" });
     expect(errors[0]!.message).toMatch(/Cable Curls/);
+    // Regression guard (#911): the message must never leak internal jargon —
+    // it's rendered verbatim by a caller with no interactive remap UI of its own.
+    expect(errors[0]!.message).not.toMatch(/slot map/i);
   });
 
   it("flags a NaN weight", () => {

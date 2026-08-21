@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import Link from 'next/link';
 import type { ImportError, SkippedRecord } from '@lifting-logbook/types';
 import { importLiftRecords } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
@@ -63,6 +64,7 @@ export default function LiftRecordsImportForm({ program }: Props) {
           type="file"
           accept=".csv"
           disabled={status === 'loading'}
+          aria-label="CSV file"
           required
         />
         <button type="submit" disabled={status === 'loading'}>
@@ -103,6 +105,14 @@ export default function LiftRecordsImportForm({ program }: Props) {
               </li>
             ))}
           </ul>
+          {errors.some((err) => err.field === 'lift') && (
+            <p style={{ marginTop: '0.5rem' }}>
+              This form can&apos;t map an unrecognized exercise name to an existing
+              one or create it for you. <Link href="/import">Use the Smart Import
+              Wizard</Link> instead — it lets you resolve unrecognized exercises
+              interactively before anything is imported.
+            </p>
+          )}
         </div>
       )}
     </section>

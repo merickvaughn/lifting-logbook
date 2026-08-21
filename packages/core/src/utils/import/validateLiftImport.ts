@@ -43,10 +43,13 @@ export function validateLiftImport(
 
     const liftStr = r.lift as unknown as string;
     if (!liftStr || !(liftStr in slotMap)) {
+      // Kept UI/route-agnostic (no mention of a specific screen or wizard) — this
+      // message is surfaced verbatim by more than one caller, including at least
+      // one with no interactive remap capability of its own (issue #911).
       rowErrors.push({
         row,
         field: 'lift',
-        message: `lift abbreviation '${liftStr}' is not in the slot map`,
+        message: `'${liftStr}' isn't a recognized exercise. Map it to an existing exercise or create a new one before importing.`,
       });
     }
 

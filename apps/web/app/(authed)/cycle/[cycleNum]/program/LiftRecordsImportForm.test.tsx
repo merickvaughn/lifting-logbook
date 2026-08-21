@@ -1,0 +1,81 @@
+import { act, render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { ImportError } from '@lifting-logbook/types';
+import LiftRecordsImportForm from './LiftRecordsImportForm';
+import { importLiftRecords } from '@/lib/client-api';
+
+// #911: this form has no interactive remap step of its own, so an unrecognized
+// lift name must never leak the strict validator's internal "slot map" wording,
+// and the user needs a concrete way forward (a link to the Smart Import Wizard).
+jest.mock('@/lib/client-api', () => ({
+  importLiftRecords: jest.fn(),
+}));
+
+const mockImport = importLiftRecords as jest.MockedFunction<typeof importLiftRecords>;
+
+async function uploadAndSubmit() {
+  const user = userEvent.setup();
+  const { container } = render(<LiftRecordsImportForm program="5-3-1" />);
+  const file = new File(['Program,Lift\n5-3-1,X'], 'upload.csv', { type: 'text/csv' });
+  await user.upload(screen.getByLabelText('CSV file'), file);
+  // fireEvent.submit (not a click on the submit button) — jsdom's native HTML5
+  // constraint validation for a required <input type="file"> doesn't reliably
+  // recognize a user-event-populated FileList as satisfying `required`, which
+  // silently blocks the click-driven submit before React's onSubmit ever runs.
+  // Dispatching the submit event directly sidesteps that jsdom gap while still
+  // exercising the real handleSubmit logic against the file already attached
+  // to the input via user.upload above. Wrapped in an async act() so the
+  // resulting state updates (handleSubmit is itself async) are flushed before
+  // any assertion runs, rather than relying solely on findBy*'s own polling.
+  await act(async () => {
+    fireEvent.submit(container.querySelector('form')!);
+  });
+}
+
+describe('LiftRecordsImportForm — error rendering (#911)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('never renders the raw internal "slot map" wording', async () => {
+    const errors: ImportError[] = [
+      {
+        row: 5,
+        field: 'lift',
+        message:
+          "'Wide-Grip CBL Curls' isn't a recognized exercise. Map it to an existing exercise or create a new one before importing.",
+      },
+    ];
+    mockImport.mockResolvedValue({ ok: false, errors });
+
+    await uploadAndSubmit();
+
+    expect(await screen.findByText(/isn't a recognized exercise/)).toBeInTheDocument();
+    expect(screen.queryByText(/slot map/i)).not.toBeInTheDocument();
+  });
+
+  it('shows a link to the Smart Import Wizard when a lift-field error is present', async () => {
+    const errors: ImportError[] = [
+      { row: 5, field: 'lift', message: "'X' isn't a recognized exercise." },
+    ];
+    mockImport.mockResolvedValue({ ok: false, errors });
+
+    await uploadAndSubmit();
+
+    const link = await screen.findByRole('link', { name: /smart import wizard/i });
+    expect(link).toHaveAttribute('href', '/import');
+  });
+
+  it('does not show the wizard link when every error is a non-lift field', async () => {
+    const errors: ImportError[] = [
+      { row: 2, field: 'weight', message: 'weight is not a number' },
+      { row: 3, field: 'date', message: 'date is invalid' },
+    ];
+    mockImport.mockResolvedValue({ ok: false, errors });
+
+    await uploadAndSubmit();
+
+    await screen.findByText(/weight is not a number/);
+    expect(screen.queryByRole('link', { name: /smart import wizard/i })).not.toBeInTheDocument();
+  });
+});

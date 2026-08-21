@@ -301,6 +301,67 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(failRes.statusCode).toBe(400);
     });
 
+    const createCustomLift = (body: unknown) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: '/lifts/custom',
+        headers: { 'content-type': 'application/json', ...AUTH },
+        payload: JSON.stringify(body),
+      });
+
+    // #911: the slot map used for both preview and commit is now built fresh per
+    // request from DEFAULT_SLOT_MAP + the user's custom lifts, so a CSV row whose
+    // raw text already matches an existing custom lift's name resolves immediately.
+    it('recognizes an existing custom lift by name at preview time — no longer ambiguous', async () => {
+      const created = await createCustomLift({
+        name: 'Wide-Grip CBL Curls',
+        classification: 'accessory',
+      });
+      expect(created.statusCode).toBe(201);
+
+      const CUSTOM_LIFT_CSV = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Wide-Grip CBL Curls,1,90,10,',
+      ].join('\n');
+      // destination is passed explicitly (as the Wizard itself does once a
+      // destination is confirmed) rather than relying on auto-classification —
+      // classifyImport's own confidence heuristic runs BEFORE the custom-lift-aware
+      // slot map is ever built, so it has no way to know this row's raw text is a
+      // recognized custom lift; that resolution is previewLiftRecords' job, not
+      // classification's, and this test is about the former.
+      const res = (
+        await importCsv(
+          'p3-custom-lift-preview',
+          CUSTOM_LIFT_CSV,
+          '?mode=preview&destination=lift-records',
+        )
+      ).json();
+      expect(res.preview.deltas.every((d: { status?: string }) => d.status !== 'ambiguous')).toBe(
+        true,
+      );
+    });
+
+    // #911: liftOverrides may now resolve to a custom lift's id (not just a
+    // built-in canonical id) — the self-mapping half of buildEffectiveSlotMap
+    // must let an already-resolved custom-lift id pass strict validation.
+    it('commits when liftOverrides references an existing custom lift id', async () => {
+      const created = await createCustomLift({
+        name: 'Custom Commit Lift',
+        classification: 'accessory',
+      });
+      const { id: customLiftId } = created.json();
+
+      const overrides = encodeURIComponent(JSON.stringify({ '1': customLiftId }));
+      const res = (
+        await importCsv(
+          'p3-lr-custom-id-override',
+          AMBIGUOUS_LIFT_CSV,
+          `?mode=commit&destination=lift-records&liftOverrides=${overrides}`,
+        )
+      ).json();
+      expect(res.created).toBe(1);
+    });
+
     it('excludes rows whose natural key matches excludeKeys', async () => {
       // Natural key for LIFT_CSV row: cycleNum:workoutNum:YYYYMMDD:lift:setNum
       // = 1:1:20260101:bench-press:1 (date joined the key in issue #884)
