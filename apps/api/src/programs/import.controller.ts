@@ -30,7 +30,6 @@ import {
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
   liftRecordNaturalKey,
-  buildEffectiveSlotMap,
 } from '@lifting-logbook/core';
 import type { SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
@@ -43,6 +42,7 @@ import { RlsTxTimeout } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
+import { effectiveSlotMapFor } from './effective-slot-map.util';
 
 /**
  * Unified Smart Import endpoint (#477, #615).
@@ -288,8 +288,7 @@ export class ImportController {
     // Custom lifts are folded into the slot map fresh per request (#911) so a row whose
     // raw text already matches an existing custom lift's name resolves immediately
     // instead of being flagged ambiguous.
-    const customLifts = await repos.customLift.list();
-    const softResult = validateLiftImportSoft(parsed, buildEffectiveSlotMap(customLifts));
+    const softResult = validateLiftImportSoft(parsed, await effectiveSlotMapFor(repos));
     if (softResult.hardErrors.length) {
       return { classification, destination, columnMappings, preview: null, errors: softResult.hardErrors };
     }
@@ -378,8 +377,7 @@ export class ImportController {
     let rawValid: unknown[];
     let errors: ImportError[];
     if (destination === 'lift-records') {
-      const customLifts = await repos.customLift.list();
-      ({ valid: rawValid, errors } = validateLiftImport(parsed as LiftRecord[], buildEffectiveSlotMap(customLifts)));
+      ({ valid: rawValid, errors } = validateLiftImport(parsed as LiftRecord[], await effectiveSlotMapFor(repos)));
     } else {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
       ({ valid: rawValid, errors } = handler.validate(parsed as any));

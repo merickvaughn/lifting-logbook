@@ -349,6 +349,11 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
         name: 'Custom Commit Lift',
         classification: 'accessory',
       });
+      // Asserted before destructuring (review finding on #911's PR): if creation
+      // ever regresses, customLiftId would silently be undefined, dropping the
+      // liftOverrides key entirely and failing on the unrelated `created` assertion
+      // below instead of pointing at this setup step.
+      expect(created.statusCode).toBe(201);
       const { id: customLiftId } = created.json();
 
       const overrides = encodeURIComponent(JSON.stringify({ '1': customLiftId }));

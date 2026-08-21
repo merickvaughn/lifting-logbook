@@ -62,4 +62,18 @@ describe('validateLiftImportSoft', () => {
     expect(result.ambiguous).toHaveLength(0);
     expect(result.hardErrors).toHaveLength(0);
   });
+
+  // Regression guard (#911 review): membership must be Object.hasOwn, not the `in`
+  // operator, which walks the prototype chain — "toString"/"constructor"/"__proto__"
+  // must land in the ambiguous bucket like any other unrecognized name, not resolve
+  // via an inherited Object.prototype member.
+  it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__'])(
+    "puts a row with lift '%s' in the ambiguous bucket rather than resolving it via the prototype chain",
+    (liftStr) => {
+      const r = record({ lift: liftStr });
+      const result = validateLiftImportSoft([r], SLOT_MAP);
+      expect(result.ambiguous).toHaveLength(1);
+      expect(result.valid).toHaveLength(0);
+    },
+  );
 });

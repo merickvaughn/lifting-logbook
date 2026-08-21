@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type {
   ColumnMapping,
@@ -15,8 +15,14 @@ import type {
   LiftClassification,
   WeightUnit,
 } from '@lifting-logbook/types';
-import { CANONICAL_LIFT_IDS, formatWeight } from '@lifting-logbook/core';
-import { commitImport, createCustomLift, previewImport, undoImport } from '@/lib/client-api';
+import { ALL_SLOT_MAP_ALIASES, formatWeight } from '@lifting-logbook/core';
+import {
+  commitImport,
+  createCustomLift,
+  fetchCustomLifts,
+  previewImport,
+  undoImport,
+} from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import { Step, STEP_LABELS } from './steps';
 import styles from './import.module.css';
@@ -203,15 +209,26 @@ export function ImportWizard({
   const visibleDeltas = filterDeltas(previewBody?.deltas ?? [], reviewFilter);
 
   // Every value an ambiguous-row remap can already resolve to without creating
-  // anything new (issue #911): built-in canonical lifts, this user's custom
-  // lifts by name (the datalist/typed-text path), AND by id (the "just
-  // created" success handler stores the new lift's id, not its name — see
-  // handleCreateLift — so the id must also read as "known" or the create-new
-  // prompt would immediately reappear showing the raw id as a false mismatch).
-  const knownLiftNames = new Set<string>([
-    ...CANONICAL_LIFT_IDS,
-    ...customLifts.flatMap((c) => [c.name, c.id]),
-  ]);
+  // anything new (issue #911). ALL_SLOT_MAP_ALIASES — not CANONICAL_LIFT_IDS,
+  // which is only DEFAULT_SLOT_MAP's *values* (the ~12 canonical ids) — also
+  // covers its *keys* (the human-readable names/abbreviations a user would
+  // actually type, e.g. "Squat", "Bench Press", "OH Press"). Checking ids
+  // alone meant typing a perfectly valid name offered to create a duplicate
+  // lift that DEFAULT_SLOT_MAP's own collision precedence then permanently
+  // shadowed, silently fragmenting that lift's history across two ids
+  // (review finding on #911's PR). Also includes this user's custom lifts by
+  // name (the datalist/typed-text path) AND by id (the "just created" success
+  // handler stores the new lift's id, not its name — see handleCreateLift —
+  // so the id must also read as "known" or the create-new prompt would
+  // immediately reappear showing the raw id as a false mismatch).
+  const knownLiftNames = useMemo(
+    () =>
+      new Set<string>([
+        ...ALL_SLOT_MAP_ALIASES,
+        ...customLifts.flatMap((c) => [c.name, c.id]),
+      ]),
+    [customLifts],
+  );
 
   async function analyze(override?: ImportKind): Promise<ImportPreviewResponse | null> {
     if (!programId || !file) return null;
@@ -220,6 +237,14 @@ export function ImportWizard({
     try {
       const res = await previewImport(programId, file, override);
       setPreview(res);
+      // liftOverrides/createDrafts are keyed by rowIndex against THIS preview's
+      // deltas. analyze() re-runs on the Back → re-pick-destination path
+      // (handlePickDestination), replacing the whole delta set — a stale entry
+      // surviving that would now drive a render-time decision on an unrelated
+      // row of the new preview (suppressing or fabricating its create-new
+      // affordance) and still be sent as its commit override (#911 review).
+      setLiftOverrides(new Map());
+      setCreateDrafts(new Map());
       return res;
     } catch (e) {
       logClientError('previewImport', e, { programId });
@@ -325,7 +350,20 @@ export function ImportWizard({
   // A recurring unrecognized name (the exact scenario issue #911 was filed
   // over — one CSV export, one name, many set rows) would otherwise force the
   // user to repeat "create new" once per occurrence.
-  function applyResolvedLiftToMatchingRows(matchOriginalLift: string, liftId: string) {
+  //
+  // triggeringRowIndex always resolves unconditionally — it's the row whose
+  // "Create" click caused this call, so it must land on liftId regardless of
+  // whatever (if anything) it held before. Every OTHER matching row only
+  // resolves if it's untouched or already agrees with liftId: batch-resolve is
+  // a convenience for identical-text rows the user hasn't separately edited,
+  // not a license to silently overwrite a different, deliberate remap on a
+  // row whose input still visibly shows that different choice (review finding
+  // on #911's PR — the uncontrolled input let the two silently diverge).
+  function applyResolvedLiftToMatchingRows(
+    matchOriginalLift: string,
+    liftId: string,
+    triggeringRowIndex: number,
+  ) {
     const deltas = previewBody?.deltas ?? [];
     setLiftOverrides((prev) => {
       const next = new Map(prev);
@@ -335,7 +373,14 @@ export function ImportWizard({
           delta.rowIndex !== undefined &&
           delta.originalLift === matchOriginalLift
         ) {
-          next.set(delta.rowIndex, liftId);
+          const existing = next.get(delta.rowIndex);
+          if (
+            delta.rowIndex === triggeringRowIndex ||
+            existing === undefined ||
+            existing === liftId
+          ) {
+            next.set(delta.rowIndex, liftId);
+          }
         }
       }
       return next;
@@ -363,13 +408,24 @@ export function ImportWizard({
     try {
       const created = await createCustomLift({ name, classification });
       if (created === null) {
-        // 409 — a lift with this name already exists. Self-heal against the
-        // locally-held list (double-click, or an earlier row already created
-        // it this session); only surface an error if genuinely not found
-        // locally (e.g. a cross-tab race).
-        const existing = customLifts.find((c) => c.name === name);
+        // 409 — a lift with this name already exists. Re-fetch the live server
+        // list rather than searching the render-scope `customLifts` closure,
+        // which can be stale: two ambiguous rows sharing this name each get
+        // their own independently-enabled "Create" button (busy only guards
+        // its own row), so a second click before the first resolves would
+        // otherwise find no local match even for a lift this session just
+        // created — and a genuine cross-tab creation was never in the local
+        // list at all (#911 review).
+        let latest: CustomLiftResponse[] | null = null;
+        try {
+          latest = await fetchCustomLifts();
+          setCustomLifts(latest);
+        } catch (fetchErr) {
+          logClientError('fetchCustomLifts', fetchErr, { programId, rowIndex, name });
+        }
+        const existing = latest?.find((c) => c.name === name);
         if (existing) {
-          applyResolvedLiftToMatchingRows(matchOriginalLift, existing.id);
+          applyResolvedLiftToMatchingRows(matchOriginalLift, existing.id, rowIndex);
           clearCreateDraft(rowIndex);
           return;
         }
@@ -377,7 +433,7 @@ export function ImportWizard({
         return;
       }
       setCustomLifts((prev) => [...prev, created]);
-      applyResolvedLiftToMatchingRows(matchOriginalLift, created.id);
+      applyResolvedLiftToMatchingRows(matchOriginalLift, created.id, rowIndex);
       clearCreateDraft(rowIndex);
     } catch (e) {
       logClientError('createCustomLift', e, { programId, rowIndex, name });
@@ -409,7 +465,12 @@ export function ImportWizard({
       } else {
         const liftOverridesRecord: Record<number, string> = {};
         for (const [rowIdx, liftId] of liftOverrides.entries()) {
-          liftOverridesRecord[rowIdx] = liftId;
+          // The controlled ambiguous-row input now stores the raw (untrimmed)
+          // typed value so a just-typed trailing space isn't eaten mid-keystroke
+          // — trim here, at the one place the value actually leaves the client
+          // (#911 review). A no-op for the common case (a lift id or a
+          // datalist-selected name, neither of which ever carries whitespace).
+          liftOverridesRecord[rowIdx] = liftId.trim();
         }
         result = await commitImport(programId, file, destination, {
           overrides: Object.keys(columnOverridesRecord).length > 0 ? columnOverridesRecord : undefined,
@@ -840,11 +901,15 @@ export function ImportWizard({
                         </div>
                       )}
 
-                      {/* Lift catalog datalist for ambiguous rows: built-in canonical
-                          lifts plus this user's custom lifts (#911) */}
+                      {/* Lift catalog datalist for ambiguous rows: every built-in
+                          canonical lift AND abbreviation/display-name alias
+                          DEFAULT_SLOT_MAP accepts, plus this user's custom lifts
+                          (#911) — ALL_SLOT_MAP_ALIASES, not CANONICAL_LIFT_IDS
+                          alone, so users are steered onto a name the server
+                          actually recognizes rather than just its internal id. */}
                       <datalist id="lift-catalog">
-                        {CANONICAL_LIFT_IDS.map((id) => (
-                          <option key={id} value={id} />
+                        {ALL_SLOT_MAP_ALIASES.map((alias) => (
+                          <option key={alias} value={alias} />
                         ))}
                         {customLifts.map((lift) => (
                           <option key={lift.id} value={lift.name} />
@@ -872,11 +937,15 @@ export function ImportWizard({
                             // typed/selected value (liftOverrides holds it once the user
                             // has interacted; otherwise it's still the original raw text).
                             const rowIndex = d.rowIndex;
-                            const currentLiftValue = (
+                            // rawLiftValue (untrimmed) drives the controlled input's `value` —
+                            // trimming it there would eat a just-typed trailing space on every
+                            // keystroke, breaking multi-word names. currentLiftValue (trimmed)
+                            // is for comparisons only (empty-check, knownLiftNames lookup).
+                            const rawLiftValue =
                               (rowIndex !== undefined ? liftOverrides.get(rowIndex) : undefined) ??
                               d.originalLift ??
-                              ''
-                            ).trim();
+                              '';
+                            const currentLiftValue = rawLiftValue.trim();
                             const draft = rowIndex !== undefined ? createDrafts.get(rowIndex) : undefined;
                             const showCreateNew =
                               isAmbiguous &&
@@ -915,16 +984,21 @@ export function ImportWizard({
                                         type="text"
                                         list="lift-catalog"
                                         className={styles.ambiguousInput}
-                                        defaultValue={d.originalLift ?? ''}
+                                        // Controlled (not defaultValue) so a programmatic
+                                        // resolution — batch-resolve on create, or the 409
+                                        // self-heal — is always visibly reflected, and can
+                                        // never silently diverge from what's actually
+                                        // submitted at commit (#911 review).
+                                        value={rawLiftValue}
                                         placeholder="Type a lift name…"
                                         aria-label={`Lift name for row ${d.rowIndex}`}
                                         onChange={(e) => {
                                           if (d.rowIndex === undefined) return;
                                           const rIdx = d.rowIndex;
-                                          const val = e.target.value.trim();
+                                          const raw = e.target.value;
                                           setLiftOverrides((prev) => {
                                             const next = new Map(prev);
-                                            if (val) next.set(rIdx, val);
+                                            if (raw.trim()) next.set(rIdx, raw);
                                             else next.delete(rIdx);
                                             return next;
                                           });
@@ -959,10 +1033,17 @@ export function ImportWizard({
                                               disabled={!draft?.classification || draft?.busy}
                                               aria-label={`Create "${currentLiftValue}" as a new exercise`}
                                               onClick={() => {
-                                                if (!draft?.classification) return;
+                                                // d.originalLift is always populated for a
+                                                // genuinely ambiguous delta (validateLiftImportSoft
+                                                // only ever produces one alongside it) — guarded
+                                                // explicitly rather than falling back to
+                                                // currentLiftValue, which would silently match no
+                                                // row at all (not even the triggering one) if this
+                                                // were ever undefined (#911 review).
+                                                if (!draft?.classification || d.originalLift === undefined) return;
                                                 handleCreateLift(
                                                   currentLiftValue,
-                                                  d.originalLift ?? currentLiftValue,
+                                                  d.originalLift,
                                                   rowIndex,
                                                   draft.classification,
                                                 );

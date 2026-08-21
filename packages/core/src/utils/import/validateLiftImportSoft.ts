@@ -58,7 +58,9 @@ export function validateLiftImportSoft(
     }
 
     const liftStr = r.lift as unknown as string;
-    if (!liftStr || !(liftStr in slotMap)) {
+    // Object.prototype.hasOwnProperty.call, not the `in` operator — see
+    // validateLiftImport.ts for why.
+    if (!liftStr || !Object.prototype.hasOwnProperty.call(slotMap, liftStr)) {
       ambiguous.push({ record: r, rowIndex, originalLift: liftStr });
       return;
     }

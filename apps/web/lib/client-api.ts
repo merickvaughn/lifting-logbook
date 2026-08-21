@@ -65,4 +65,8 @@ export const {
   commitImport,
   undoImport,
   createCustomLift,
+  // Read, not just a write — but the 409 self-heal path needs to refetch the
+  // live custom-lift list client-side (a stale/absent local copy otherwise
+  // dead-ends the user with no way to recover short of a page reload; #911).
+  fetchCustomLifts,
 } = createApiClient({ baseUrl: getApiUrl, getAuthHeaders: getClientAuthHeaders });

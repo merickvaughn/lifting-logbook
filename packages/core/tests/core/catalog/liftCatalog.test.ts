@@ -303,4 +303,31 @@ describe("buildEffectiveSlotMap", () => {
     expect(merged['Custom A']).toBe('custom-a');
     expect(merged['Custom B']).toBe('custom-b');
   });
+
+  // Regression guard (#911 review): a custom lift literally named "toString",
+  // "constructor", "__proto__", etc. must register (or, once registered, be
+  // absent) exactly like any other name — none of these should silently be
+  // absorbed by Object.prototype's own members instead of being treated as
+  // real, missing, or present keys.
+  it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty'])(
+    "correctly registers a custom lift named '%s'",
+    (name) => {
+      const lift = makeCustomLift({ id: 'custom-weird', name });
+      const merged = buildEffectiveSlotMap([lift]);
+      expect(merged[name]).toBe('custom-weird');
+    },
+  );
+
+  it("registers a custom lift literally named '__proto__' (not silently dropped)", () => {
+    const lift = makeCustomLift({ id: 'custom-proto', name: '__proto__' });
+    const merged = buildEffectiveSlotMap([lift]);
+    expect(Object.prototype.hasOwnProperty.call(merged, '__proto__')).toBe(true);
+    expect(merged['__proto__']).toBe('custom-proto');
+  });
+
+  it("does not resolve an unrecognized name via an inherited Object.prototype member", () => {
+    const merged = buildEffectiveSlotMap([]);
+    expect(Object.prototype.hasOwnProperty.call(merged, 'toString')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(merged, 'constructor')).toBe(false);
+  });
 });

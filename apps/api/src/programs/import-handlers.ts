@@ -15,7 +15,6 @@ import {
   parseTrainingMaxes,
   parseStrengthGoals,
   parseLiftingProgramSpec,
-  validateLiftImport,
   validateTrainingMaxImport,
   validateStrengthGoalImport,
   validateProgramSpecImport,
@@ -31,7 +30,6 @@ import {
   pairWithRowNumber,
   buildSkippedDetail,
   liftRecordNaturalKey,
-  DEFAULT_SLOT_MAP,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
 
@@ -52,10 +50,20 @@ export interface ImportHandler<T> {
 
 const liftRecordsHandler: ImportHandler<LiftRecord> = {
   parse: parseLiftRecords,
-  // Kept to satisfy ImportHandler<T>, but superseded for lift-records at commit time:
-  // ImportController.commit special-cases this destination to validate against a
-  // custom-lift-aware slot map (buildEffectiveSlotMap) instead of calling this closure (#911).
-  validate: (parsed) => validateLiftImport(parsed, DEFAULT_SLOT_MAP),
+  // Never actually called: ImportController.commit special-cases 'lift-records' to
+  // validate against a custom-lift-aware slot map (effectiveSlotMapFor) instead of
+  // calling this closure (#911) — a bare DEFAULT_SLOT_MAP here would silently stop
+  // recognizing a user's custom lifts. Throws rather than falling back to the wrong
+  // slot map, so a future refactor that accidentally drops that special-case (e.g.
+  // "simplifying" commit() to call handler.validate uniformly) fails loudly in tests
+  // instead of silently regressing custom-lift recognition.
+  validate: (): never => {
+    throw new Error(
+      "liftRecordsHandler.validate must not be called directly for 'lift-records' — " +
+        'ImportController.commit validates this destination against a custom-lift-aware ' +
+        'slot map via effectiveSlotMapFor instead (see effective-slot-map.util.ts, issue #911).',
+    );
+  },
   async preview(valid, program, repos) {
     const records = valid.map((r) => ({ ...r, program }));
     const existing = await repos.liftRecord.findExistingRecords(program, records);

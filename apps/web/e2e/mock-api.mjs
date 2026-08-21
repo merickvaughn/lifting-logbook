@@ -87,6 +87,15 @@ const LIFT_RECORDS = [
   { id: 'r2', program: '5-3-1', cycleNum: 1, workoutNum: 1, date: '2025-01-06', lift: 'deadlift', setNum: 1, weight: 230, reps: 5, notes: '' },
 ];
 
+// Single source of truth for the #911 ambiguous-lift preview/commit scenario
+// (withAmbiguousLift) — both the canned preview deltas and the commit branch's
+// "are all rows resolved" check derive from this list, so growing it doesn't
+// require a matching hand-edit at the commit branch too.
+const AMBIGUOUS_LIFT_ROWS = [
+  { rowIndex: 1, originalLift: 'Wide-Grip CBL Curls' },
+  { rowIndex: 2, originalLift: 'Wide-Grip CBL Curls' },
+];
+
 // ---------------------------------------------------------------------------
 // In-memory state (reset between tests via GET /__reset)
 // ---------------------------------------------------------------------------
@@ -513,9 +522,15 @@ const server = createServer(async (req, res) => {
         if (mode === 'commit') {
           const liftOverridesParam = url.searchParams.get('liftOverrides');
           const liftOverrides = liftOverridesParam ? JSON.parse(liftOverridesParam) : {};
-          // Both rows resolve only once every ambiguous row has a remap — mirrors the
-          // real strict validator's all-or-nothing semantics closely enough for this test.
-          const created = liftOverrides['1'] && liftOverrides['2'] ? 2 : 0;
+          // Derived from AMBIGUOUS_LIFT_ROWS (the same list the preview branch
+          // below returns), not a hardcoded row count — growing that fixture no
+          // longer requires a matching hand-edit here (#911 review). Mirrors the
+          // real strict validator's all-or-nothing semantics: resolves only once
+          // every ambiguous row has a remap.
+          const allResolved = AMBIGUOUS_LIFT_ROWS.every(
+            (row) => liftOverrides[String(row.rowIndex)],
+          );
+          const created = allResolved ? AMBIGUOUS_LIFT_ROWS.length : 0;
           json(res, {
             destination,
             created,
@@ -552,24 +567,14 @@ const server = createServer(async (req, res) => {
               creates: 0,
               updates: 0,
               skips: 0,
-              deltas: [
-                {
-                  key: '__ambiguous_1',
-                  label: 'Row 1: Wide-Grip CBL Curls',
-                  kind: 'create',
-                  status: 'ambiguous',
-                  rowIndex: 1,
-                  originalLift: 'Wide-Grip CBL Curls',
-                },
-                {
-                  key: '__ambiguous_2',
-                  label: 'Row 2: Wide-Grip CBL Curls',
-                  kind: 'create',
-                  status: 'ambiguous',
-                  rowIndex: 2,
-                  originalLift: 'Wide-Grip CBL Curls',
-                },
-              ],
+              deltas: AMBIGUOUS_LIFT_ROWS.map((row) => ({
+                key: `__ambiguous_${row.rowIndex}`,
+                label: `Row ${row.rowIndex}: ${row.originalLift}`,
+                kind: 'create',
+                status: 'ambiguous',
+                rowIndex: row.rowIndex,
+                originalLift: row.originalLift,
+              })),
             },
             errors: [],
           });

@@ -54,10 +54,24 @@ export const DEFAULT_SLOT_MAP: Readonly<Record<string, string>> = {
 };
 
 /**
- * Unique canonical lift IDs derived from DEFAULT_SLOT_MAP.
+ * Unique canonical lift IDs derived from DEFAULT_SLOT_MAP's values.
  * Used by the REVIEW step's lift-catalog autocomplete datalist.
  */
 export const CANONICAL_LIFT_IDS: string[] = [...new Set(Object.values(DEFAULT_SLOT_MAP))];
+
+/**
+ * Every string DEFAULT_SLOT_MAP resolves — its keys (the human-readable
+ * abbreviations/display names it accepts, e.g. "Squat", "Bench P.") AND its
+ * values (the canonical ids CANONICAL_LIFT_IDS already covers). A client-side
+ * "is this lift already recognized" check must be built from this, not from
+ * CANONICAL_LIFT_IDS alone — checking only the values means a perfectly valid
+ * alias like "Squat" reads as unrecognized, offering to create a duplicate
+ * lift that DEFAULT_SLOT_MAP's own collision precedence then permanently
+ * shadows (issue #911 review).
+ */
+export const ALL_SLOT_MAP_ALIASES: string[] = [
+  ...new Set([...Object.keys(DEFAULT_SLOT_MAP), ...Object.values(DEFAULT_SLOT_MAP)]),
+];
 
 /**
  * Builds a per-request slot map that recognizes a user's custom lifts alongside
@@ -73,14 +87,20 @@ export const CANONICAL_LIFT_IDS: string[] = [...new Set(Object.values(DEFAULT_SL
  * on, so a custom lift must never be able to shadow a canonical abbreviation
  * (e.g. a custom lift literally named "Squat" must not silently redirect
  * canonical squat imports into that one user's custom lift).
+ *
+ * Built on a null-prototype object, and validateLiftImport/validateLiftImportSoft
+ * check membership with Object.hasOwn rather than the `in` operator — a lift
+ * whose custom name is "toString", "constructor", "__proto__", etc. must not
+ * silently resolve to an inherited Object.prototype member instead of failing
+ * validation like any other unrecognized name (issue #911 review).
  */
 export function buildEffectiveSlotMap(
   customLifts: readonly CustomLift[],
 ): Record<string, string> {
-  const custom: Record<string, string> = {};
+  const custom: Record<string, string> = Object.create(null);
   for (const lift of customLifts) {
     custom[lift.name] = lift.id;
     custom[lift.id] = lift.id;
   }
-  return { ...custom, ...DEFAULT_SLOT_MAP };
+  return Object.assign(Object.create(null), custom, DEFAULT_SLOT_MAP) as Record<string, string>;
 }

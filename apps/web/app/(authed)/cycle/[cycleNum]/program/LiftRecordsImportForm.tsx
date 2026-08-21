@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import Link from 'next/link';
+import { IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import type { ImportError, SkippedRecord } from '@lifting-logbook/types';
 import { importLiftRecords } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
@@ -105,7 +106,7 @@ export default function LiftRecordsImportForm({ program }: Props) {
               </li>
             ))}
           </ul>
-          {errors.some((err) => err.field === 'lift') && (
+          {errors.some((err) => err.field === IMPORT_ERROR_FIELD_LIFT) && (
             <p style={{ marginTop: '0.5rem' }}>
               This form can&apos;t map an unrecognized exercise name to an existing
               one or create it for you. <Link href="/import">Use the Smart Import

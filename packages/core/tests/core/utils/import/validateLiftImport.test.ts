@@ -98,4 +98,21 @@ describe("validateLiftImport", () => {
     expect(valid).toHaveLength(0);
     expect(errors).toHaveLength(0);
   });
+
+  // Regression guard (#911 review): membership must be Object.hasOwn, not the `in`
+  // operator, which walks the prototype chain — a lift string of "toString",
+  // "constructor", or "__proto__" must fail like any other unrecognized name, not
+  // silently resolve to an inherited Object.prototype member.
+  describe("prototype-chain safety", () => {
+    it.each(["toString", "constructor", "valueOf", "hasOwnProperty", "__proto__"])(
+      "flags '%s' as an unrecognized lift rather than resolving it via the prototype chain",
+      (liftStr) => {
+        const records = [makeRecord({ lift: liftStr as LiftRecord["lift"] })];
+        const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
+        expect(valid).toHaveLength(0);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatchObject({ row: 1, field: "lift" });
+      },
+    );
+  });
 });

@@ -1,4 +1,4 @@
-import { ImportError } from '@lifting-logbook/types';
+import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import { LiftRecord } from '../../models';
 
 export interface LiftImportValidationResult {
@@ -42,13 +42,21 @@ export function validateLiftImport(
       rowErrors.push({ row, field: 'date', message: 'date is invalid' });
 
     const liftStr = r.lift as unknown as string;
-    if (!liftStr || !(liftStr in slotMap)) {
+    // Object.prototype.hasOwnProperty.call, not the `in` operator: `in` walks
+    // the prototype chain, so a lift string of "toString"/"constructor"/
+    // "__proto__"/etc. would otherwise resolve to an inherited Object.prototype
+    // member instead of failing like any other unrecognized name (issue #911
+    // review — slotMap's keys are partially user-controlled via custom lift
+    // names since buildEffectiveSlotMap). Object.hasOwn is the modern spelling
+    // of this same check but needs an ES2022+ lib target this package doesn't
+    // configure.
+    if (!liftStr || !Object.prototype.hasOwnProperty.call(slotMap, liftStr)) {
       // Kept UI/route-agnostic (no mention of a specific screen or wizard) — this
       // message is surfaced verbatim by more than one caller, including at least
       // one with no interactive remap capability of its own (issue #911).
       rowErrors.push({
         row,
-        field: 'lift',
+        field: IMPORT_ERROR_FIELD_LIFT,
         message: `'${liftStr}' isn't a recognized exercise. Map it to an existing exercise or create a new one before importing.`,
       });
     }
