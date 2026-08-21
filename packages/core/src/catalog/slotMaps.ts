@@ -108,9 +108,16 @@ export function buildEffectiveSlotMap(
   return Object.assign(Object.create(null), custom, DEFAULT_SLOT_MAP) as Record<string, string>;
 }
 
-// Lazily built and cached: ALL_SLOT_MAP_ALIASES is a module-level constant, so
-// the lowercased index never goes stale across calls.
-let aliasesLowerToCanonical: Map<string, string> | undefined;
+// Eagerly built, not lazily cached behind a mutable `let` — ALL_SLOT_MAP_ALIASES
+// (32 entries) is itself already eagerly computed from the eagerly-computed
+// DEFAULT_SLOT_MAP above, so laziness here bought nothing measurable while
+// costing a mutable module-level binding and an invariant ("never goes
+// stale") that only needed asserting because the binding was mutable in the
+// first place — a plain const makes staleness structurally impossible
+// instead of asserted in a comment (#911 review, fifth pass).
+const aliasesLowerToCanonical: ReadonlyMap<string, string> = new Map(
+  ALL_SLOT_MAP_ALIASES.map((alias) => [alias.toLowerCase(), alias]),
+);
 
 /**
  * Case-insensitive collision check against DEFAULT_SLOT_MAP's aliases: does
@@ -131,14 +138,11 @@ let aliasesLowerToCanonical: Map<string, string> | undefined;
  * the guard was duplicated verbatim between create() and update()).
  */
 export function canonicalAliasFor(name: string): string | undefined {
-  aliasesLowerToCanonical ??= new Map(
-    ALL_SLOT_MAP_ALIASES.map((alias) => [alias.toLowerCase(), alias]),
-  );
   return aliasesLowerToCanonical.get(name.toLowerCase());
 }
 
-// Lazily built and cached, same rationale as aliasesLowerToCanonical above.
-let aliasSet: Set<string> | undefined;
+// Eagerly built const, same rationale as aliasesLowerToCanonical above.
+const aliasSet: ReadonlySet<string> = new Set(ALL_SLOT_MAP_ALIASES);
 
 /**
  * O(1) EXACT-case membership check against DEFAULT_SLOT_MAP's aliases —
@@ -154,6 +158,5 @@ let aliasSet: Set<string> | undefined;
  * linear scan in ImportWizard.tsx's remap datalist filter).
  */
 export function isCanonicalAlias(name: string): boolean {
-  aliasSet ??= new Set(ALL_SLOT_MAP_ALIASES);
   return aliasSet.has(name);
 }

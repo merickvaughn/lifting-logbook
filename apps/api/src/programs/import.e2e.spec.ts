@@ -350,6 +350,52 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.json().created).toBe(1);
     });
 
+    // Regression guard (#911 review, fifth pass): __incomplete_N shares the
+    // identical never-matches-a-natural-key problem __ambiguous_N had — an
+    // earlier version of the fix above (fourth pass) covered only
+    // __ambiguous_, missing this sibling key family entirely.
+    it('commits successfully when an incomplete row is excluded via excludeKeys, omitting only that row', async () => {
+      const twoRowCsv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+        '5-3-1,1,1,2026-01-01,Bench P.,1,NOT_A_NUMBER,5,',
+      ].join('\n');
+      const res = await importCsv(
+        'p3-lr-exclude-incomplete',
+        twoRowCsv,
+        '?mode=commit&destination=lift-records&excludeKeys=__incomplete_2',
+      );
+      expect(res.statusCode).toBe(200);
+      expect(res.json().created).toBe(1);
+    });
+
+    // Regression guard (#911 review, fifth pass): excluding a row shortens
+    // the array validateLiftImport numbers positionally — without correcting
+    // for that, a validation error on a row AFTER the excluded one reports
+    // the wrong (post-filter, shifted-down) row number, pointing the user at
+    // the wrong line in their actual CSV file.
+    it('reports the original (pre-exclusion) row number in a validation error after an earlier row was excluded', async () => {
+      const threeRowCsv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,180,5,', // row 1: ambiguous, excluded
+        '5-3-1,1,1,2026-01-01,Bench P.,2,180,5,', // row 2: valid
+        '5-3-1,1,1,2026-01-01,Bench P.,3,NOT_A_NUMBER,5,', // row 3: invalid weight, NOT excluded
+      ].join('\n');
+      const res = await importCsv(
+        'p3-lr-exclude-row-numbering',
+        threeRowCsv,
+        '?mode=commit&destination=lift-records&excludeKeys=__ambiguous_1',
+      );
+      expect(res.statusCode).toBe(400);
+      const body = res.json() as { errors: { row: number; field: string }[] };
+      expect(body.errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ row: 3, field: 'weight' })]),
+      );
+      // Must not report the post-filter array position (2) instead of the
+      // row's actual original position in the uploaded CSV (3).
+      expect(body.errors.some((e) => e.row === 2)).toBe(false);
+    });
+
     const createCustomLift = (body: unknown) =>
       app.getHttpAdapter().getInstance().inject({
         method: 'POST',

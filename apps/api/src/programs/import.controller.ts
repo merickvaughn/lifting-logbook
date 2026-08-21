@@ -372,27 +372,52 @@ export class ImportController {
       });
     }
 
-    // An ambiguous lift-records row's excludeKeys entry uses the client's
-    // `__ambiguous_<rowIndex>` key scheme (buildImportPreview.ts) — never a
-    // natural key, so the natural-key excludeKeys filter further below is
-    // structurally unable to match it (issue #915). Before this filter, an
-    // excluded-but-unresolved ambiguous row reached strict validation below
-    // with its raw unrecognized lift text still attached and failed the
-    // WHOLE commit — worse than #915's original silent-bad-import symptom,
-    // discovered as a side effect of ImportWizard.tsx's third review pass
-    // withholding that row's liftOverrides entry. __ambiguous_N keys are
-    // lift-records-only (only validateLiftImportSoft's REVIEW-step preview
-    // produces them), so this fully resolves #915 for its only real trigger
-    // surface (#911 review, fourth pass).
+    // An ambiguous OR incomplete lift-records row's excludeKeys entry uses
+    // the client's `__ambiguous_<rowIndex>` / `__incomplete_<rowIndex>` key
+    // schemes (buildImportPreview.ts) — never a natural key, so the
+    // natural-key excludeKeys filter further below is structurally unable to
+    // match either (issue #915). Both statuses share the identical failure
+    // mode and the identical only-recourse-is-exclude UI (the × button
+    // renders for every delta row regardless of status, and neither status
+    // has any other in-wizard repair path for lift-records) — an earlier
+    // version of this fix (#911 review, fourth pass) covered only
+    // `__ambiguous_`, missing `__incomplete_`; without this an excluded
+    // incomplete row (a bad numeric/date field, with no way to fix it short
+    // of excluding and re-uploading) still failed the WHOLE commit exactly
+    // like an unhandled ambiguous row did before this fix existed at all
+    // (#911 review, fifth pass — caught by a subsequent review round on this
+    // same fix).
+    //
+    // Filtering also shortens `parsed`, which would silently mis-number
+    // every SUBSEQUENT row's validation-error `row` field — validateLiftImport's
+    // row numbers are purely positional (1-based index into whatever array
+    // it's given), so after removing row 2 what WAS row 5 becomes position 4
+    // and reports as "row 4" in any resulting error, pointing the user at the
+    // wrong CSV line. survivingRowOriginalIndexes records each kept row's
+    // ORIGINAL 1-based position before filtering; errors are remapped back to
+    // it after validation runs, restoring validateLiftImport's own "row
+    // numbers are 1-based and exclude the header row" contract for its
+    // caller here even though the array it validated was compacted (#911
+    // review, fifth pass).
+    let survivingRowOriginalIndexes: number[] | null = null;
     if (destination === 'lift-records' && excludeKeys.size > 0) {
       const excludedRowIndexes = new Set(
         [...excludeKeys]
-          .map((k) => /^__ambiguous_(\d+)$/.exec(k)?.[1])
+          .map((k) => /^__(?:ambiguous|incomplete)_(\d+)$/.exec(k)?.[1])
           .filter((s): s is string => s !== undefined)
           .map(Number),
       );
       if (excludedRowIndexes.size > 0) {
-        parsed = (parsed as LiftRecord[]).filter((_, i) => !excludedRowIndexes.has(i + 1));
+        const kept: LiftRecord[] = [];
+        const originalIndexes: number[] = [];
+        (parsed as LiftRecord[]).forEach((r, i) => {
+          const originalRowIndex = i + 1;
+          if (excludedRowIndexes.has(originalRowIndex)) return;
+          kept.push(r);
+          originalIndexes.push(originalRowIndex);
+        });
+        parsed = kept;
+        survivingRowOriginalIndexes = originalIndexes;
       }
     }
 
@@ -407,6 +432,10 @@ export class ImportController {
     let errors: ImportError[];
     if (destination === 'lift-records') {
       ({ valid: rawValid, errors } = validateLiftImport(parsed as LiftRecord[], await effectiveSlotMapFor(repos)));
+      if (survivingRowOriginalIndexes) {
+        const originalIndexes = survivingRowOriginalIndexes;
+        errors = errors.map((e) => ({ ...e, row: originalIndexes[e.row - 1] ?? e.row }));
+      }
     } else {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
       ({ valid: rawValid, errors } = handler.validate(parsed as any));

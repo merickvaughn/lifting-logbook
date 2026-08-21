@@ -122,6 +122,33 @@ describe('Custom Lifts HTTP (e2e, in-memory adapters)', () => {
     expect(res.statusCode).toBe(409);
   });
 
+  // Regression guard (#911 review, fifth pass): UpdateCustomLiftDto.name's
+  // @IsOptional() skips class-validator entirely for BOTH undefined and
+  // null, so a request body of {"name": null} reaches the controller with
+  // dto.name === null — a bare `dto.name !== undefined` guard would then
+  // call canonicalAliasFor(null), which throws calling .toLowerCase() on it
+  // (an unhandled TypeError → 500, with no registered filter to catch a bare
+  // TypeError). Confirms the guard's `typeof dto.name === 'string'` check
+  // prevents that crash. Not a full fix for accepting `name: null` at all
+  // (a separate, pre-existing gap this guard didn't introduce — the
+  // repository layer already silently stores it) — this only guards against
+  // that pre-existing looseness becoming an unhandled 500 in the guard this
+  // PR added.
+  it('does not crash (does not throw an unhandled TypeError) on a PATCH with an explicit name: null', async () => {
+    const created = await create({ name: 'Null Rename Target', classification: 'compound' });
+    const { id } = created.json() as CustomLiftResponse;
+
+    const res = await inject('PATCH', `/lifts/custom/${id}`, { body: { name: null } });
+    expect(res.statusCode).not.toBe(500);
+
+    // Clean up: this describe block's app/in-memory store is shared across
+    // every test in the file (beforeAll, not beforeEach), and a lift left
+    // with name: null pollutes any LATER test that lists/serializes every
+    // stored lift (found live: it broke "deletes a custom lift and returns
+    // 204"'s GET /lifts/custom list assertion).
+    await inject('DELETE', `/lifts/custom/${id}`);
+  });
+
   // #911 review, third pass: the reserved-alias 409 above and a genuine
   // same-user duplicate-name 409 must not share a message — the reused
   // CustomLiftConflictError message ("A custom lift named 'squat' already

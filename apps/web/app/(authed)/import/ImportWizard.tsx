@@ -587,7 +587,15 @@ export function ImportWizard({
         let refetchFailed = false;
         try {
           latest = await fetchCustomLifts();
-          if (previewGeneration.current !== startGeneration) return;
+          // Ungated by previewGeneration — same rule as the successful-create
+          // branch above: a freshly refetched list is authoritative server
+          // truth, independent of whether this preview has since been
+          // discarded. Gating it here (an earlier version of this fix) meant
+          // this branch and the create-success branch enforced contradictory
+          // rules for the identical class of data, one asserting the rule the
+          // other violated — the discarded refetch cost the user the exact
+          // extra POST + 409 + refetch round trip this self-heal exists to
+          // avoid (#911 review, fifth pass).
           setCustomLifts(latest);
         } catch (fetchErr) {
           refetchFailed = true;
@@ -1324,6 +1332,24 @@ export function ImportWizard({
                                               className={styles.createLiftConfirm}
                                               disabled={
                                                 !draft?.classification ||
+                                                // This row's own in-flight create (draft?.busy)
+                                                // must disable regardless of what
+                                                // currentLiftValue is NOW — the input above
+                                                // isn't disabled while busy, so a user editing
+                                                // it mid-flight changes currentLiftValue away
+                                                // from busyLiftNames' entry for THIS row,
+                                                // which without this explicit check would
+                                                // re-enable an already-in-flight row's own
+                                                // button (showing "Creating…" while clickable)
+                                                // and let a second click overwrite this row's
+                                                // draft.name, silently freeing a DIFFERENT row
+                                                // to create the first name concurrently (#911
+                                                // review, fifth pass — a regression in the
+                                                // fourth pass's own busyLiftNames rekeying,
+                                                // which fixed the cross-row case this restores
+                                                // but dropped the same-row guarantee the prior,
+                                                // originalLift-keyed version had for free).
+                                                draft?.busy ||
                                                 busyLiftNames.has(currentLiftValue)
                                               }
                                               aria-label={`Create "${currentLiftValue}" as a new exercise`}
