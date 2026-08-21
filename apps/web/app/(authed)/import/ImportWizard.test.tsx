@@ -1064,7 +1064,7 @@ describe('ImportWizard', () => {
         ok: true,
         data: { destination: 'lift-records', created: 2, updated: 0, skipped: 0, batchId: 'batch-cbl' },
       });
-      mockCreateCustomLift.mockResolvedValue(CUSTOM_LIFT);
+      mockCreateCustomLift.mockResolvedValue({ ok: true, data: CUSTOM_LIFT });
 
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
@@ -1101,7 +1101,14 @@ describe('ImportWizard', () => {
     it('shows an inline error when creation 409s with no local match to self-heal against', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
-      mockCreateCustomLift.mockResolvedValue(null);
+      // The server's own conflict message, not a hardcoded client-side string
+      // (#917) — this test's mock stands in for a genuine CustomLiftConflictError
+      // 409 that the refetch below fails to corroborate (e.g. a race where the
+      // colliding lift was renamed/deleted between the 409 and the refetch).
+      mockCreateCustomLift.mockResolvedValue({
+        ok: false,
+        conflictMessage: "A custom lift named 'Wide-Grip CBL Curls' already exists",
+      });
       // A genuinely successful refetch that still finds no matching name —
       // the "confirmed not found" branch, distinct from the refetch-failed
       // branch covered by the sibling test below (#911 review, second pass:
@@ -1120,19 +1127,58 @@ describe('ImportWizard', () => {
       });
       await user.click(createButtons[0]!);
 
-      // #911 review, eighth pass: this message deliberately does not assert
-      // "already exists" unconditionally — a 409 with no local match could
-      // also be a reserved-name collision, not just a genuine duplicate.
+      // #911 review, eighth pass shipped a generic "already exists or is
+      // reserved" hedge here as a stopgap (main didn't yet distinguish the
+      // two 409 causes). #917 supersedes it: the mock above now returns the
+      // server's actual per-cause message, so this asserts that exact string
+      // rather than the old hedge.
       expect(
-        await screen.findByText("This name can't be used — it already exists or is reserved."),
+        await screen.findByText("A custom lift named 'Wide-Grip CBL Curls' already exists"),
       ).toBeInTheDocument();
       expect(mockFetchCustomLifts).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders the server\'s reserved-alias message verbatim, not a hardcoded "already exists" string', async () => {
+      // Issue #917: a 409 caused by ReservedLiftNameConflictError (the name
+      // case-insensitively shadows a built-in canonical alias) must not be
+      // rendered as "already exists" — no custom lift by that name exists;
+      // the true reason is that the name can never become one. The self-heal
+      // refetch below still runs (the client can't tell the two 409 causes
+      // apart before refetching) but — correctly — finds no match, since a
+      // reserved name is never actually held by a custom lift.
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue({
+        ok: false,
+        conflictMessage:
+          "'Wide-Grip CBL Curls' is a reserved exercise name and cannot be used for a custom exercise",
+      });
+      mockFetchCustomLifts.mockResolvedValue([]);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      const createButtons = screen.getAllByRole('button', {
+        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+      });
+      await user.click(createButtons[0]!);
+
+      expect(
+        await screen.findByText(
+          "'Wide-Grip CBL Curls' is a reserved exercise name and cannot be used for a custom exercise",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText('An exercise with this name already exists.')).not.toBeInTheDocument();
     });
 
     it('shows a distinct inline error when the 409 self-heal refetch itself fails', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
-      mockCreateCustomLift.mockResolvedValue(null);
+      mockCreateCustomLift.mockResolvedValue({
+        ok: false,
+        conflictMessage: "A custom lift named 'Wide-Grip CBL Curls' already exists",
+      });
       const fetchFailure = new Error('API 500 Internal Server Error for /lifts/custom');
       mockFetchCustomLifts.mockRejectedValue(fetchFailure);
       const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -1181,12 +1227,14 @@ describe('ImportWizard', () => {
       // one per row's distinct submitted name — so this test controls
       // resolution order directly instead of leaving it to the mock's own
       // scheduling.
-      let resolveCreateZorbingPress: ((v: CustomLiftResponse) => void) | undefined;
-      const createZorbingPressPromise = new Promise<CustomLiftResponse>((resolve) => {
+      let resolveCreateZorbingPress: ((v: { ok: true; data: CustomLiftResponse }) => void) | undefined;
+      const createZorbingPressPromise = new Promise<{ ok: true; data: CustomLiftResponse }>((resolve) => {
         resolveCreateZorbingPress = resolve;
       });
-      let resolveCreateKettleFlys: ((v: CustomLiftResponse | null) => void) | undefined;
-      const createKettleFlysPromise = new Promise<CustomLiftResponse | null>((resolve) => {
+      let resolveCreateKettleFlys:
+        | ((v: { ok: false; conflictMessage: string }) => void)
+        | undefined;
+      const createKettleFlysPromise = new Promise<{ ok: false; conflictMessage: string }>((resolve) => {
         resolveCreateKettleFlys = resolve;
       });
       mockCreateCustomLift.mockImplementation((body) => {
@@ -1217,7 +1265,10 @@ describe('ImportWizard', () => {
 
       // Row 2 (Underwater Kettle Flys) 409s first, kicking off its self-heal refetch —
       // but that refetch's own promise stays unresolved for now.
-      resolveCreateKettleFlys?.(null);
+      resolveCreateKettleFlys?.({
+        ok: false,
+        conflictMessage: "A custom lift named 'Underwater Kettle Flys' already exists",
+      });
       await waitFor(() => expect(mockFetchCustomLifts).toHaveBeenCalledTimes(1));
 
       // Row 1 (Zorbing Machine Press)'s create now resolves successfully — its handler
@@ -1231,7 +1282,7 @@ describe('ImportWizard', () => {
         isCustom: true,
         createdAt: '2026-01-01T00:00:00.000Z',
       };
-      resolveCreateZorbingPress?.(createdZorbingPress);
+      resolveCreateZorbingPress?.({ ok: true, data: createdZorbingPress });
       await waitFor(() =>
         expect(
           screen.queryByText('No match — create "Zorbing Machine Press" as a new exercise'),
@@ -1242,7 +1293,7 @@ describe('ImportWizard', () => {
       // row 1's just-created lift, the exact interleaving #921 describes.
       resolveFetch?.([]);
       expect(
-        await screen.findByText("This name can't be used — it already exists or is reserved."),
+        await screen.findByText("A custom lift named 'Underwater Kettle Flys' already exists"),
       ).toBeInTheDocument();
 
       // The regression assertion: row 1's successfully-created lift must
@@ -1266,7 +1317,10 @@ describe('ImportWizard', () => {
     it('does not resurrect a pre-existing custom lift the refetch no longer returns (#921 review)', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValue(DELETE_RESURRECTION_PREVIEW);
-      mockCreateCustomLift.mockResolvedValue(null); // 409
+      mockCreateCustomLift.mockResolvedValue({
+        ok: false,
+        conflictMessage: "A custom lift named 'Sideways Anvil Curl' already exists",
+      });
       // Simulates the pre-existing lift having been deleted server-side in the
       // interim: the refetch's snapshot no longer includes it.
       mockFetchCustomLifts.mockResolvedValue([]);
@@ -1287,7 +1341,7 @@ describe('ImportWizard', () => {
       );
       await waitFor(() => expect(mockFetchCustomLifts).toHaveBeenCalledTimes(1));
       expect(
-        await screen.findByText("This name can't be used — it already exists or is reserved."),
+        await screen.findByText("A custom lift named 'Sideways Anvil Curl' already exists"),
       ).toBeInTheDocument();
 
       const optionsAfter = Array.from(container.querySelectorAll('#lift-catalog option')).map(
@@ -1400,13 +1454,16 @@ describe('ImportWizard', () => {
         data: { destination: 'lift-records', created: 1, updated: 0, skipped: 0, batchId: 'batch-blank' },
       });
       mockCreateCustomLift.mockResolvedValue({
-        id: 'custom-new-blank-lift',
-        name: 'New Lift',
-        classification: 'accessory',
-        movementProfile: { patterns: [], jointActions: [], complexity: 'simple' },
-        isBodyweightComponent: false,
-        isCustom: true,
-        createdAt: '2026-01-01T00:00:00.000Z',
+        ok: true,
+        data: {
+          id: 'custom-new-blank-lift',
+          name: 'New Lift',
+          classification: 'accessory',
+          movementProfile: { patterns: [], jointActions: [], complexity: 'simple' },
+          isBodyweightComponent: false,
+          isCustom: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
       });
 
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
@@ -1449,7 +1506,7 @@ describe('ImportWizard', () => {
         ok: true,
         data: { destination: 'lift-records', created: 1, updated: 0, skipped: 0, batchId: 'batch-excl' },
       });
-      mockCreateCustomLift.mockResolvedValue(CUSTOM_LIFT);
+      mockCreateCustomLift.mockResolvedValue({ ok: true, data: CUSTOM_LIFT });
 
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
@@ -1619,7 +1676,7 @@ describe('ImportWizard', () => {
     it('discards a create-success result once the preview it was for has been replaced', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValueOnce(RACE_GEN1_PREVIEW).mockResolvedValueOnce(RACE_GEN2_PREVIEW);
-      const createGate = deferred<CustomLiftResponse>();
+      const createGate = deferred<{ ok: true; data: CustomLiftResponse }>();
       mockCreateCustomLift.mockReturnValue(createGate.promise);
 
       const { container } = render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
@@ -1628,9 +1685,8 @@ describe('ImportWizard', () => {
 
       // Resolve the stale create AFTER the preview has already been replaced.
       createGate.resolve({
-        ...CUSTOM_LIFT,
-        id: 'custom-legacy-a',
-        name: 'Legacy Row One Name',
+        ok: true,
+        data: { ...CUSTOM_LIFT, id: 'custom-legacy-a', name: 'Legacy Row One Name' },
       });
 
       // Flush point: setCustomLifts((prev) => [...prev, created]) is
@@ -1650,7 +1706,13 @@ describe('ImportWizard', () => {
     it('discards a 409-found-on-refetch resolution once the preview it was for has been replaced', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValueOnce(RACE_GEN1_PREVIEW).mockResolvedValueOnce(RACE_GEN2_PREVIEW);
-      mockCreateCustomLift.mockResolvedValue(null); // 409
+      // 409 — conflictMessage's exact text isn't asserted by these
+      // discard-guard tests (see the dedicated createCustomLift tests above
+      // for that); only the ok:false shape matters here.
+      mockCreateCustomLift.mockResolvedValue({
+        ok: false,
+        conflictMessage: "A custom lift named 'Legacy Row One Name' already exists",
+      });
       const fetchGate = deferred<CustomLiftResponse[]>();
       mockFetchCustomLifts.mockReturnValue(fetchGate.promise);
 
@@ -1676,7 +1738,13 @@ describe('ImportWizard', () => {
     it('discards a 409-not-found resolution once the preview it was for has been replaced', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValueOnce(RACE_GEN1_PREVIEW).mockResolvedValueOnce(RACE_GEN2_PREVIEW);
-      mockCreateCustomLift.mockResolvedValue(null); // 409
+      // 409 — conflictMessage's exact text isn't asserted by these
+      // discard-guard tests (see the dedicated createCustomLift tests above
+      // for that); only the ok:false shape matters here.
+      mockCreateCustomLift.mockResolvedValue({
+        ok: false,
+        conflictMessage: "A custom lift named 'Legacy Row One Name' already exists",
+      });
       const fetchGate = deferred<CustomLiftResponse[]>();
       mockFetchCustomLifts.mockReturnValue(fetchGate.promise);
 
@@ -1694,8 +1762,11 @@ describe('ImportWizard', () => {
         expect(datalistOptionValues(container)).toContain('Totally Unrelated Lift'),
       );
 
+      // GEN1's conflict message (from the mock above) must not leak into
+      // GEN2's rendering — the discarded request's own error text, whatever
+      // it is, is exactly what this guard exists to keep off-screen.
       expect(
-        screen.queryByText("This name can't be used — it already exists or is reserved."),
+        screen.queryByText("A custom lift named 'Legacy Row One Name' already exists"),
       ).not.toBeInTheDocument();
       expectGen2RowUndisturbed();
     });
@@ -1703,7 +1774,13 @@ describe('ImportWizard', () => {
     it('discards a refetch-failed resolution once the preview it was for has been replaced', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValueOnce(RACE_GEN1_PREVIEW).mockResolvedValueOnce(RACE_GEN2_PREVIEW);
-      mockCreateCustomLift.mockResolvedValue(null); // 409
+      // 409 — conflictMessage's exact text isn't asserted by these
+      // discard-guard tests (see the dedicated createCustomLift tests above
+      // for that); only the ok:false shape matters here.
+      mockCreateCustomLift.mockResolvedValue({
+        ok: false,
+        conflictMessage: "A custom lift named 'Legacy Row One Name' already exists",
+      });
       const fetchGate = deferred<CustomLiftResponse[]>();
       mockFetchCustomLifts.mockReturnValue(fetchGate.promise);
       const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -1735,7 +1812,7 @@ describe('ImportWizard', () => {
     it('discards a createCustomLift-throws error once the preview it was for has been replaced', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValueOnce(RACE_GEN1_PREVIEW).mockResolvedValueOnce(RACE_GEN2_PREVIEW);
-      const createGate = deferred<CustomLiftResponse | null>();
+      const createGate = deferred<{ ok: true; data: CustomLiftResponse } | { ok: false; conflictMessage: string }>();
       mockCreateCustomLift.mockReturnValue(createGate.promise);
       const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
