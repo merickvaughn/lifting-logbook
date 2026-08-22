@@ -363,6 +363,11 @@ export function ImportWizard({
       lastSelectedKey.current = null;
       setReviewMaxes(null);
       setColumnOverrides(new Map());
+      // A commit failure from the PREVIOUS preview must not still be showing
+      // once a new one replaces it — same "canonical reset point" rationale
+      // as the rest of this block, just for the PREVIEW step's own error box
+      // rather than a REVIEW-step field.
+      setCommitErrors(null);
       return res;
     } catch (e) {
       logClientError('previewImport', e, { programId });
@@ -570,11 +575,6 @@ export function ImportWizard({
     try {
       const created = await createCustomLift({ name, classification });
       if (created === null) {
-        // 409 branch only — the success branch below has its own, narrower
-        // generation gating (a created lift is real, persisted server-side
-        // data and must reach local state regardless of this preview's
-        // fate; #911 review, fourth pass).
-        if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
         // 409 — a lift with this name already exists. Re-fetch the live server
         // list rather than searching the render-scope `customLifts` closure,
         // which can be stale: two ambiguous rows sharing this name each get
@@ -1334,6 +1334,11 @@ export function ImportWizard({
                                                 type="button"
                                                 className={`${styles.chip} ${draft?.classification === c.value ? styles.chipActive : ''}`}
                                                 aria-pressed={draft?.classification === c.value}
+                                                // Disabled while busy for the same reason the
+                                                // remap input is: a mid-flight change here
+                                                // would show a classification the in-flight
+                                                // POST doesn't actually carry.
+                                                disabled={draft?.busy ?? false}
                                                 onClick={() => setDraftClassification(rowIndex, c.value)}
                                               >
                                                 {c.label}
@@ -1344,23 +1349,14 @@ export function ImportWizard({
                                               className={styles.createLiftConfirm}
                                               disabled={
                                                 !draft?.classification ||
-                                                // This row's own in-flight create (draft?.busy)
-                                                // must disable regardless of what
-                                                // currentLiftValue is NOW — the input above
-                                                // isn't disabled while busy, so a user editing
-                                                // it mid-flight changes currentLiftValue away
-                                                // from busyLiftNames' entry for THIS row,
-                                                // which without this explicit check would
-                                                // re-enable an already-in-flight row's own
-                                                // button (showing "Creating…" while clickable)
-                                                // and let a second click overwrite this row's
-                                                // draft.name, silently freeing a DIFFERENT row
-                                                // to create the first name concurrently (#911
-                                                // review, fifth pass — a regression in the
-                                                // fourth pass's own busyLiftNames rekeying,
-                                                // which fixed the cross-row case this restores
-                                                // but dropped the same-row guarantee the prior,
-                                                // originalLift-keyed version had for free).
+                                                // draft?.busy: this row's own in-flight create.
+                                                // busyLiftNames: a DIFFERENT row currently
+                                                // creating the same submitted name. The remap
+                                                // input and classification chips above are also
+                                                // disabled while busy, so draft?.busy is
+                                                // defense-in-depth here rather than the only
+                                                // thing preventing a mid-flight retype — but this
+                                                // check doesn't depend on that staying true.
                                                 draft?.busy ||
                                                 busyLiftNames.has(currentLiftValue)
                                               }

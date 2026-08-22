@@ -54,14 +54,6 @@ export function validateLiftImport(
     // validateTrainingMaxImport/validateStrengthGoalImport, both of which
     // already use this exact `String(... ?? '').trim()` form).
     const liftStr = String(r.lift ?? '').trim();
-    // Object.prototype.hasOwnProperty.call, not the `in` operator: `in` walks
-    // the prototype chain, so a lift string of "toString"/"constructor"/
-    // "__proto__"/etc. would otherwise resolve to an inherited Object.prototype
-    // member instead of failing like any other unrecognized name (issue #911
-    // review — slotMap's keys are partially user-controlled via custom lift
-    // names since buildEffectiveSlotMap). Object.hasOwn is the modern spelling
-    // of this same check but needs an ES2022+ lib target this package doesn't
-    // configure.
     if (!liftStr) {
       // Distinct from the "unrecognized name" case below — interpolating
       // liftStr here would render as `'undefined' isn't a recognized

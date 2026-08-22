@@ -257,6 +257,20 @@ describe('Custom Lifts HTTP (e2e, in-memory adapters)', () => {
       const res = await create({ name: 'Primitive Profile', classification: 'compound', movementProfile: 'squat' });
       expect(res.statusCode).toBe(400);
     });
+    // Regression guard (#911 review, seventh pass): CreateCustomLiftDto's
+    // movementProfile/isBodyweightComponent were still @IsOptional() (round
+    // six fixed only the sibling UpdateCustomLiftDto's identical gap) — an
+    // explicit `null` reaches this method's own defaults today rather than a
+    // hard crash, but that's incidental to two adapters' own `?? {}`/`?.`
+    // chains, not enforced at the boundary.
+    it('rejects an explicit movementProfile: null with 400', async () => {
+      const res = await create({ name: 'Null Profile', classification: 'compound', movementProfile: null });
+      expect(res.statusCode).toBe(400);
+    });
+    it('rejects an explicit isBodyweightComponent: null with 400', async () => {
+      const res = await create({ name: 'Null Bodyweight Flag', classification: 'compound', isBodyweightComponent: null });
+      expect(res.statusCode).toBe(400);
+    });
     it('rejects an unknown extra field with 400', async () => {
       const res = await create({ name: 'Extra Field', classification: 'compound', userId: 'hacker' });
       expect(res.statusCode).toBe(400);

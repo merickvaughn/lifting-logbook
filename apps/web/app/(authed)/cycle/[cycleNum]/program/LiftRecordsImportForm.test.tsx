@@ -78,4 +78,23 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
     await screen.findByText(/weight is not a number/);
     expect(screen.queryByRole('link', { name: /smart import wizard/i })).not.toBeInTheDocument();
   });
+
+  // Regression guard (#911 review, seventh pass): this form is all-or-nothing
+  // against up to MAX_IMPORT_ROWS rows, and a CSV whose exercise column isn't
+  // named "Lift" produces one error per row — an uncapped list could render
+  // thousands of <li>s. Capped like ImportWizard.tsx's own commitErrors list.
+  it('caps the rendered error list rather than rendering every row', async () => {
+    const errors: ImportError[] = Array.from({ length: 25 }, (_, i) => ({
+      row: i + 1,
+      field: 'lift',
+      message: `'Row ${i + 1} Lift' isn't a recognized exercise.`,
+    }));
+    mockImport.mockResolvedValue({ ok: false, errors });
+
+    await uploadAndSubmit();
+
+    await screen.findByText(/Row 1 Lift/);
+    expect(screen.getAllByRole('listitem')).toHaveLength(20);
+    expect(screen.queryByText(/Row 25 Lift/)).not.toBeInTheDocument();
+  });
 });

@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsObject, IsOptional, IsString, MaxLength, MinLength, ValidateNested } from 'class-validator';
+import { IsBoolean, IsIn, IsObject, IsString, MaxLength, MinLength, ValidateIf, ValidateNested } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { LiftClassification } from '@lifting-logbook/types';
 import { MovementProfileDto } from './movement-profile.dto';
@@ -26,15 +26,22 @@ export class CreateCustomLiftDto {
   @IsIn(CLASSIFICATIONS)
   classification!: LiftClassification;
 
-  // Reject primitives that would otherwise bypass @ValidateNested (a silent no-op
-  // on non-objects), matching the nested-DTO pattern used elsewhere in the API.
-  @IsOptional()
+  // @ValidateIf, not @IsOptional() — see UpdateCustomLiftDto's comment for
+  // why (@IsOptional() also accepts an explicit `null`, which isn't a
+  // legitimate value for either field here; issue #911 review, seventh
+  // pass — the update DTO was fixed in round six, this create DTO was the
+  // same-shaped sibling that got missed).
+  //
+  // Also rejects primitives that would otherwise bypass @ValidateNested (a
+  // silent no-op on non-objects), matching the nested-DTO pattern used
+  // elsewhere in the API.
+  @ValidateIf((o: CreateCustomLiftDto) => o.movementProfile !== undefined)
   @IsObject()
   @ValidateNested()
   @Type(() => MovementProfileDto)
   movementProfile?: MovementProfileDto;
 
+  @ValidateIf((o: CreateCustomLiftDto) => o.isBodyweightComponent !== undefined)
   @IsBoolean()
-  @IsOptional()
   isBodyweightComponent?: boolean;
 }

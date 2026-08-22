@@ -98,14 +98,6 @@ export default function LiftRecordsImportForm({ program }: Props) {
       {status === 'error' && errors.length > 0 && (
         <div style={{ marginTop: '1rem', color: 'red' }}>
           <strong>Upload rejected — fix the following errors and try again:</strong>
-          <ul style={{ fontFamily: 'monospace', fontSize: '0.85rem', marginTop: '0.5rem' }}>
-            {errors.map((err, i) => (
-              <li key={i}>
-                Row {err.row}
-                {err.field ? ` (${err.field})` : ''}: {err.message}
-              </li>
-            ))}
-          </ul>
           {errors.some((err) => err.field === IMPORT_ERROR_FIELD_LIFT) && (
             <p style={{ marginTop: '0.5rem' }}>
               This form can&apos;t map an unrecognized exercise name to an existing
@@ -114,6 +106,22 @@ export default function LiftRecordsImportForm({ program }: Props) {
               interactively before anything is imported.
             </p>
           )}
+          {/* Capped like ImportWizard.tsx's own commitErrors list — this
+              form is all-or-nothing against up to MAX_IMPORT_ROWS rows, and
+              a CSV whose exercise column isn't named "Lift" produces one
+              error per row, so an uncapped list can run to thousands of
+              <li> nodes in one render. Placed after (not before) the Wizard
+              guidance above, so the most useful next step isn't pushed
+              below the fold by the very list its own error most commonly
+              triggers. */}
+          <ul style={{ fontFamily: 'monospace', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+            {errors.slice(0, 20).map((err, i) => (
+              <li key={i}>
+                Row {err.row}
+                {err.field ? ` (${err.field})` : ''}: {err.message}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </section>
