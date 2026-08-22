@@ -204,13 +204,37 @@ export function createApiClient(config: ApiClientConfig) {
 
   // Like request but returns null on 409 Conflict instead of throwing.
   // Use for POST operations that are idempotent by intent — where a conflict
-  // means the resource already exists in the desired state.
+  // means the resource already exists in the desired state and the caller
+  // doesn't need to know why (only initializeCycle uses this — a single
+  // conflict cause, "a cycle already exists").
   async function requestOrConflict<T>(path: string, init?: FetchInit): Promise<T | null> {
     const res = await rawFetch(path, init);
     if (res.status === 409) return null;
     if (res.status === 204) return undefined as T;
     if (!res.ok) throw new Error(await extractErrorMessage(res, path));
     return (await res.json()) as T;
+  }
+
+  // Like requestOrConflict, but surfaces the 409 body's message instead of
+  // discarding it. Use when an endpoint can 409 for more than one reason and
+  // a caller must tell them apart — e.g. custom-lift creation 409s both for
+  // a duplicate name (CustomLiftConflictError) and for a name that shadows a
+  // built-in canonical alias (ReservedLiftNameConflictError); collapsing
+  // both to bare `null` left a caller unable to state the true cause and
+  // reusing one error's wording for the other's conflict was simply false
+  // (#917). initializeCycle deliberately keeps using requestOrConflict
+  // above, unaffected by this addition.
+  async function requestOrConflictWithReason<T>(
+    path: string,
+    init?: FetchInit,
+  ): Promise<{ ok: true; data: T } | { ok: false; conflictMessage: string }> {
+    const res = await rawFetch(path, init);
+    if (res.status === 409) {
+      return { ok: false, conflictMessage: await extractErrorMessage(res, path) };
+    }
+    if (res.status === 204) return { ok: true, data: undefined as T };
+    if (!res.ok) throw new Error(await extractErrorMessage(res, path));
+    return { ok: true, data: (await res.json()) as T };
   }
 
   // Void request that treats 404 as success — for idempotent deletes, where an
@@ -534,10 +558,14 @@ export function createApiClient(config: ApiClientConfig) {
     fetchCustomLifts(): Promise<CustomLiftResponse[]> {
       return request('/lifts/custom', { cache: 'no-store' });
     },
-    // Returns null on 409 (a custom lift with this name already exists) — the
-    // caller should treat null as "already exists" rather than error (#911).
-    createCustomLift(body: CreateCustomLiftRequest): Promise<CustomLiftResponse | null> {
-      return requestOrConflict('/lifts/custom', {
+    // Returns a discriminated result rather than bare null on 409 (#917) —
+    // the server's message already distinguishes "a custom lift by this name
+    // exists" from "this name is reserved and can never become a custom
+    // lift", and the caller needs that distinction to render something true.
+    createCustomLift(
+      body: CreateCustomLiftRequest,
+    ): Promise<{ ok: true; data: CustomLiftResponse } | { ok: false; conflictMessage: string }> {
+      return requestOrConflictWithReason('/lifts/custom', {
         method: 'POST',
         headers: JSON_HEADERS,
         body: JSON.stringify(body),

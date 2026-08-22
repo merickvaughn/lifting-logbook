@@ -218,6 +218,65 @@ describe('createApiClient', () => {
     });
   });
 
+  describe('conflict-with-reason POSTs (createCustomLift)', () => {
+    // Unlike initializeCycle's single conflict cause, custom-lift creation
+    // 409s for two distinct, both-true reasons (a duplicate name vs. a name
+    // reserved by a canonical alias) — so this endpoint must surface the
+    // server's actual message rather than collapsing to bare null (#917).
+    it('returns { ok: false, conflictMessage } with the server message on 409, without throwing', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({ message: "A custom lift named 'Curls' already exists" }),
+          { status: 409 },
+        ),
+      );
+      const client = makeClient();
+      await expect(
+        client.createCustomLift({ name: 'Curls', classification: 'accessory' }),
+      ).resolves.toEqual({ ok: false, conflictMessage: "A custom lift named 'Curls' already exists" });
+    });
+
+    it('passes through a differently-worded 409 message unchanged (reserved-alias conflict)', async () => {
+      // Same status code as the duplicate-name case above, deliberately
+      // different message — proves the helper forwards whatever the server
+      // says rather than assuming a single fixed wording for every 409.
+      mockFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            message: "'Squat' is a reserved exercise name and cannot be used for a custom exercise",
+          }),
+          { status: 409 },
+        ),
+      );
+      const client = makeClient();
+      await expect(
+        client.createCustomLift({ name: 'Squat', classification: 'compound' }),
+      ).resolves.toEqual({
+        ok: false,
+        conflictMessage: "'Squat' is a reserved exercise name and cannot be used for a custom exercise",
+      });
+    });
+
+    it('returns { ok: true, data } with the parsed body on 201', async () => {
+      const lift = { id: 'custom-1', name: 'Curls', classification: 'accessory' };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(lift), { status: 201 }));
+      const client = makeClient();
+      await expect(
+        client.createCustomLift({ name: 'Curls', classification: 'accessory' }),
+      ).resolves.toEqual({ ok: true, data: lift });
+    });
+
+    it('throws on a non-409 error', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ message: 'server exploded' }), { status: 500 }),
+      );
+      const client = makeClient();
+      await expect(
+        client.createCustomLift({ name: 'Curls', classification: 'accessory' }),
+      ).rejects.toThrow('server exploded');
+    });
+  });
+
   describe('switchProgram', () => {
     it('sends a JSON body alongside the JSON content-type header (issue #665)', async () => {
       mockFetch.mockResolvedValue(

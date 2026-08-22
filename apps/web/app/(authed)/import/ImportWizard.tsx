@@ -472,10 +472,13 @@ export function ImportWizard({
     });
   }
 
-  // Clears any stale draft.error (without touching classification/busy) when
-  // the user edits the remap input after a failed create — otherwise a
-  // handleCreateLift failure message keeps rendering under a value that no
-  // longer matches what the error was actually about (#911 review, third
+  // Clears a stale creation error (without touching classification/busy) when
+  // the user edits the remap input after a failed create — otherwise the
+  // prior attempt's conflict message (e.g. "A custom lift named '…' already
+  // exists") keeps rendering under a value that no longer matches the name
+  // that error was actually about, one instance of the same "wrong message
+  // sends the user down the wrong recovery path" concern this PR's own
+  // 409-vs-refetch-failure distinction was built to avoid (#911 review, third
   // pass).
   function clearCreateDraftError(rowIndex: number) {
     setCreateDrafts((prev) => {
@@ -593,8 +596,13 @@ export function ImportWizard({
     });
 
     try {
-      const created = await createCustomLift({ name, classification });
-      if (created === null) {
+      const result = await createCustomLift({ name, classification });
+      if (!result.ok) {
+        // 409 branch only — the success branch below has its own, narrower
+        // generation gating (a created lift is real, persisted server-side
+        // data and must reach local state regardless of this preview's
+        // fate; #911 review, fourth pass).
+        if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
         // 409 — a lift with this name already exists. Re-fetch the live server
         // list rather than searching the render-scope `customLifts` closure,
         // which can be stale: two ambiguous rows sharing this name each get
@@ -603,6 +611,14 @@ export function ImportWizard({
         // otherwise find no local match even for a lift this session just
         // created — and a genuine cross-tab creation was never in the local
         // list at all (#911 review).
+        //
+        // Runs unconditionally, even for a ReservedLiftNameConflictError 409
+        // (#917 review) — the client can't tell the two 409 causes apart
+        // before refetching, and server-side the reserved-alias check
+        // precedes the duplicate-name check (custom-lift.controller.ts), so a
+        // reserved-name 409 can never actually have a matching custom lift
+        // for this refetch to find. One avoidable GET on that specific error
+        // path; not worth a cause discriminant just to skip it.
         let latest: CustomLiftResponse[] | null = null;
         let refetchFailed = false;
         try {
@@ -683,24 +699,25 @@ export function ImportWizard({
         // genuine name collision, and telling the user the wrong one sends
         // them down the wrong recovery path (#911 review, second pass).
         //
-        // The non-refetch-failed message deliberately does NOT say "already
-        // exists": createCustomLift's 409 collapses two distinct server-side
-        // reasons (CustomLiftConflictError — a genuine duplicate name; and
-        // ReservedLiftNameConflictError — the name collides with a canonical
-        // built-in) into the same `null` return, and `existing` above only
-        // ever finds the first kind (a reserved name is by definition never
-        // in this user's own custom-lift list). Asserting "already exists"
-        // unconditionally would misreport the second case outright. Not
-        // reachable through this UI today — showCreateNew's own gate already
-        // excludes any name the server would treat as reserved — but a wrong
-        // claim here would still be wrong under client/API version skew or a
-        // future non-wizard caller of handleCreateLift's request path (#911
-        // review, eighth pass).
+        // The not-refetch-failed branch renders the server's own conflict
+        // message (result.conflictMessage) rather than a hardcoded string.
+        // createCustomLift's 409 can mean one of two distinct, both-true
+        // reasons — a genuine duplicate name (CustomLiftConflictError) or a
+        // name that shadows a built-in canonical alias and can never become
+        // a custom lift at all (ReservedLiftNameConflictError) — and
+        // `existing` above only ever finds the first kind (a reserved name
+        // is by definition never in this user's own custom-lift list).
+        // Asserting "already exists" unconditionally would misreport the
+        // second case outright (#911 review, eighth pass — which shipped a
+        // generic "already exists or is reserved" hedge as a stopgap, true
+        // for both causes but not distinguishing them). Rendering the
+        // server's own per-cause message instead closes that gap for real
+        // (#917).
         setCreateDraftError(
           rowIndex,
           refetchFailed
             ? "Couldn't confirm whether this name already exists — try again."
-            : "This name can't be used — it already exists or is reserved.",
+            : result.conflictMessage,
         );
         return;
       }
@@ -719,10 +736,10 @@ export function ImportWizard({
       // creation, rather than separately, keeps the two from ever drifting
       // apart) so a sibling row's concurrent 409 self-heal can tell this
       // lift apart from one it should treat as possibly-deleted (#921 review).
-      sessionCreatedLiftIds.current.add(created.id);
-      setCustomLifts((prev) => [...prev, created]);
+      sessionCreatedLiftIds.current.add(result.data.id);
+      setCustomLifts((prev) => [...prev, result.data]);
       if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
-      applyResolvedLiftToMatchingRows(matchOriginalLift, created.id, rowIndex);
+      applyResolvedLiftToMatchingRows(matchOriginalLift, result.data.id, rowIndex);
       clearCreateDraft(rowIndex);
     } catch (e) {
       // Log unconditionally, before the generation check — same rule as the
