@@ -970,9 +970,7 @@ describe('ImportWizard', () => {
       );
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
 
-      const options = Array.from(container.querySelectorAll('#lift-catalog option')).map(
-        (o) => (o as HTMLOptionElement).value,
-      );
+      const options = datalistOptionValues(container);
       expect(options).toContain('Wide-Grip CBL Curls');
       // A canonical *value* (id) — this alone would still pass against the
       // pre-fix CANONICAL_LIFT_IDS-only implementation, so it is NOT
