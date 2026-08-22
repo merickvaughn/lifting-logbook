@@ -461,16 +461,10 @@ export function ImportWizard({
     });
   }
 
-  // Clears a stale creation error (without touching classification/busy) when
-  // the user edits the remap input after a failed create — otherwise the
-  // 409-with-no-local-match message set below (handleCreateLift's catch)
-  // keeps rendering under a value that no longer matches the name that error
-  // was actually about. Referred to by role, not quoted verbatim, so this
-  // comment can't itself go stale the next time that message's wording
-  // changes (#911 review, ninth pass — round 8's own reword already required
-  // a matching hand-edit here). One instance of the same "wrong message sends
-  // the user down the wrong recovery path" concern this PR's own
-  // 409-vs-refetch-failure distinction was built to avoid (#911 review, third
+  // Clears any stale draft.error (without touching classification/busy) when
+  // the user edits the remap input after a failed create — otherwise a
+  // handleCreateLift failure message keeps rendering under a value that no
+  // longer matches what the error was actually about (#911 review, third
   // pass).
   function clearCreateDraftError(rowIndex: number) {
     setCreateDrafts((prev) => {
@@ -1101,13 +1095,9 @@ export function ImportWizard({
                       </li>
                     ))}
                   </ul>
-                  {/* This list already shows the true total in the heading above, unlike
-                      the commitErrors/errors lists below, so an omitted "N more" line here
-                      would not itself be silent — but using the same shared constant (not
-                      a third bare `20`) still matters: it's this file's third `.slice(0,
-                      20)` site, and round 8 only converted two of the three, leaving this
-                      one to silently stop matching a future change to the cap (#911 review,
-                      ninth pass, both subagents independently). */}
+                  {/* The heading above already shows the true total, so this line is
+                      belt-and-suspenders here — kept for consistency with the other two
+                      capped lists in this file, all driven by the one shared constant. */}
                   {preview.errors.length > MAX_RENDERED_IMPORT_ERRORS && (
                     <p className={styles.errorOverflowNote}>
                       …and {preview.errors.length - MAX_RENDERED_IMPORT_ERRORS} more error(s) not
@@ -1678,7 +1668,21 @@ export function ImportWizard({
             <button
               type="button"
               className={styles.btnPrimary}
-              onClick={() => setStep(Step.PREVIEW)}
+              onClick={() => {
+                // Clears a stale "Commit failed:" list from a previous attempt at this
+                // exact step transition — the one seam every path into PREVIEW passes
+                // through (PREVIEW is only ever reached via this button; enterReview()
+                // above is NOT on the Back-from-PREVIEW-then-Next path, since the Back
+                // button decrements `step` directly without calling it). Without this,
+                // a failed commit → Back → fix the named rows → Next re-shows the exact
+                // same error list, unchanged, before the next real Commit click clears
+                // it — the same "stale message under a value the user already fixed"
+                // class this PR has already closed twice elsewhere (round 3's
+                // clearCreateDraftError, round 7's commitErrors-in-analyze() reset;
+                // #911 review, tenth pass).
+                setCommitErrors(null);
+                setStep(Step.PREVIEW);
+              }}
               disabled={
                 !previewBody ||
                 (destination === 'training-maxes' &&

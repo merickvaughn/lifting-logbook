@@ -326,14 +326,9 @@ describe('LiftRecordsController', () => {
   });
 });
 
-// A standalone top-level describe, not nested inside the DI-fixture `describe`
-// above — this asserts only static decorator metadata on the class prototype
-// and needs no TestingModule/repository mocks at all, mirroring
-// import.controller.spec.ts's own two equivalents for the same reason: a test
-// about a decorator should not be coupled to an unrelated DI fixture, or a
-// future required-provider change to LiftRecordsController would break this
-// test for a reason wholly unrelated to what it asserts (#911 review, ninth
-// pass — this was originally nested inside the module-setup beforeEach).
+// Standalone, not nested in the DI-fixture describe above — this asserts only
+// static decorator metadata, so it needs no TestingModule setup, mirroring
+// import.controller.spec.ts's own equivalents.
 describe('LiftRecordsController RLS transaction budget', () => {
   // #911 review, eighth pass: this endpoint runs the same bulk validate +
   // createMany shape of work as ImportController's own import path (which

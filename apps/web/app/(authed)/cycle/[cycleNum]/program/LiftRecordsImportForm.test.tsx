@@ -155,4 +155,25 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
       screen.getByText(new RegExp(`…and ${overflowCount} more skipped row\\(s\\) not shown\\.`)),
     ).toBeInTheDocument();
   });
+
+  // #911 review, tenth pass: mirrors the error list's own "no indicator when
+  // not capped" guard above — without this, a `>` accidentally flipped to
+  // `>=` would render "…and 0 more skipped row(s) not shown." with the rest
+  // of the suite still green.
+  it('does not show a "more skipped rows" indicator when the skipped list is not capped', async () => {
+    const skipped = Array.from({ length: 3 }, (_, i) => ({
+      row: i + 1,
+      naturalKey: `5-3-1-4-1-20260420-Bench Press-${i + 1}`,
+    }));
+    mockImport.mockResolvedValue({ ok: true, data: { written: 1, skipped } });
+
+    const user = userEvent.setup();
+    await uploadAndSubmit();
+
+    await screen.findByText(/Skipped rows/);
+    await user.click(screen.getByText('Skipped rows'));
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+    expect(screen.queryByText(/more skipped row\(s\) not shown/)).not.toBeInTheDocument();
+  });
 });

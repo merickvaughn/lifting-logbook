@@ -46,21 +46,17 @@ export async function runBatch(
  * This single value governs **both** import paths so they can't drift:
  * - **Request path** (the production HTTP import): `runInteractive` reuses the RLS
  *   request transaction and ignores the options below, so every HTTP import handler
- *   carries `@RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)` to widen that enclosing transaction —
- *   `ImportController.import`/`.undoImport`, and (since #911) `LiftRecordsController
- *   .importLiftRecords`. Named individually rather than "ImportController" alone so this
- *   list doesn't go stale again the next time an HTTP import handler is added (#911
- *   review, ninth pass — round 8 added the third carrier without updating this comment).
+ *   carries `@RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)` to widen that enclosing transaction.
+ *   Current carriers are asserted individually by `import.controller.spec.ts` and
+ *   `lift-records.controller.spec.ts` — check those specs, not this comment, for the
+ *   up-to-date set (a prose list here already went stale once, #911 review, ninth pass).
  * - **Self-opened path** (system-DB factory / unit tests, where the repository holds
  *   the base client): `runInteractive` opens its own transaction with the options below.
  *
- * Note the request path only ever receives `timeout`, never `IMPORT_BATCH_TX_OPTIONS`'s
- * `maxWait` — `RlsInterceptor` reads a single `Reflect.getMetadata` number, not an options
- * object, so a busy pool can still P2028 at connection *acquisition* on the request path
- * even though the self-opened path is guarded against exactly that. Pre-existing since
- * `ImportController` first carried this decorator (#532), not introduced by round 8's
- * third carrier — tracked as a follow-up rather than fixed here since correcting it means
- * widening `RlsTxTimeout`'s metadata shape for every existing carrier, not just the new one.
+ * Known gaps in the request path, tracked rather than fixed here: it never receives
+ * `IMPORT_BATCH_TX_OPTIONS`'s `maxWait` (#924), and `RlsInterceptor` opens the transaction
+ * before the handler body runs, so a slow client upload is inside the transaction window
+ * too, not just DB work (#925).
  */
 export const IMPORT_TX_TIMEOUT_MS = 30_000;
 

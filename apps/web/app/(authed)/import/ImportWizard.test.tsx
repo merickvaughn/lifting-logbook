@@ -108,6 +108,17 @@ async function navigateToLiftRecordsReview(user: ReturnType<typeof userEvent.set
   await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
 }
 
+// Full lift-records walkthrough through a successful commit (Review → Preview
+// → Commit import → "Import complete"). Extracted so this exact sequence
+// isn't hand-copied into every DONE-step test — it already had before this
+// (#911 review, tenth pass).
+async function commitLiftRecordsImport(user: ReturnType<typeof userEvent.setup>, file: File) {
+  await navigateToLiftRecordsReview(user, file);
+  await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+  await user.click(screen.getByRole('button', { name: 'Commit import' }));
+  await waitFor(() => expect(screen.getByText('Import complete')).toBeInTheDocument());
+}
+
 const CUSTOM_LIFT: CustomLiftResponse = {
   id: 'custom-cbl-curls',
   name: 'Wide-Grip CBL Curls',
@@ -320,6 +331,40 @@ describe('ImportWizard', () => {
     );
   });
 
+  // #911 review, tenth pass: the REVIEW-step error block had no coverage at
+  // all — round 9 converted its bare `.slice(0, 20)` to the shared constant
+  // and added an "N more" note, matching the two already-tested sites, but
+  // itself went untested.
+  it('REVIEW step shows a capped error list with a "more errors" indicator', async () => {
+    const overflowCount = 5;
+    const totalErrors = MAX_RENDERED_IMPORT_ERRORS + overflowCount;
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue({
+      ...TM_PREVIEW,
+      errors: Array.from({ length: totalErrors }, (_, i) => ({
+        row: i + 1,
+        field: 'weight',
+        message: `Row ${i + 1} failed`,
+      })),
+    });
+
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+
+    const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
+      type: 'text/csv',
+    });
+    await navigateToReview(user, file);
+
+    expect(
+      screen.getByText(`This file has ${totalErrors} problem(s):`),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Row 1\b/)).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(`Row ${totalErrors}\\b`))).not.toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`…and ${overflowCount} more error\\(s\\) not shown\\.`)),
+    ).toBeInTheDocument();
+  });
+
   // #911 review, eighth pass: the commitErrors render path had no coverage at
   // all before this test — for any destination, not just training-maxes.
   // Asserts both the truncation itself and the "N more" indicator required
@@ -478,6 +523,37 @@ describe('ImportWizard', () => {
     expect(screen.getByLabelText('Weight for squat')).toHaveValue(350);
   });
 
+  // #911 review, tenth pass: a failed commit's error list previously survived a
+  // Back → fix the named rows → Next round trip unchanged, contradicting the
+  // very errors it named. Distinct from the round-8/9 truncation tests (which
+  // only ever commit once) — this specifically exercises the two-attempt path.
+  it('training-maxes: a stale "Commit failed" list does not survive Back → Next', async () => {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(TM_PREVIEW);
+    mockCommit.mockResolvedValueOnce({
+      ok: false,
+      errors: [{ row: 1, message: 'First attempt failed' }],
+    });
+
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+
+    const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
+      type: 'text/csv',
+    });
+    await navigateToReview(user, file);
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+
+    await waitFor(() => expect(screen.getByText('Commit failed:')).toBeInTheDocument());
+    expect(screen.getByText(/First attempt failed/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Back' })); // Preview → Review
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+    expect(screen.queryByText('Commit failed:')).not.toBeInTheDocument();
+    expect(screen.queryByText(/First attempt failed/)).not.toBeInTheDocument();
+  });
+
   it('training-maxes: Next is disabled in REVIEW when all rows are removed', async () => {
     const user = userEvent.setup();
     mockPreview.mockResolvedValue(TM_PREVIEW);
@@ -543,15 +619,8 @@ describe('ImportWizard', () => {
       'lifts.csv',
       { type: 'text/csv' },
     );
-    await user.upload(screen.getByLabelText('CSV file'), file);
-    await user.click(screen.getByRole('button', { name: 'Analyze' }));
-    await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
-    await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
-    await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
-    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+    await commitLiftRecordsImport(user, file);
 
-    await waitFor(() => expect(screen.getByText('Import complete')).toBeInTheDocument());
     expect(screen.getByText('0 created, 0 updated, 1 skipped.', { exact: false })).toBeInTheDocument();
 
     // Skipped-rows detail is behind a <details> disclosure — open it, then read the row.
@@ -590,15 +659,7 @@ describe('ImportWizard', () => {
       'lifts.csv',
       { type: 'text/csv' },
     );
-    await user.upload(screen.getByLabelText('CSV file'), file);
-    await user.click(screen.getByRole('button', { name: 'Analyze' }));
-    await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
-    await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
-    await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
-    await user.click(screen.getByRole('button', { name: 'Commit import' }));
-
-    await waitFor(() => expect(screen.getByText('Import complete')).toBeInTheDocument());
+    await commitLiftRecordsImport(user, file);
     await user.click(screen.getByText('Skipped rows'));
 
     expect(screen.getAllByRole('listitem')).toHaveLength(MAX_RENDERED_IMPORT_SKIPS);
@@ -606,6 +667,41 @@ describe('ImportWizard', () => {
     expect(
       screen.getByText(new RegExp(`…and ${overflowCount} more skipped row\\(s\\) not shown\\.`)),
     ).toBeInTheDocument();
+  });
+
+  // #911 review, tenth pass: mirrors the error list's own "no indicator when
+  // not capped" guard — without this, a `>` accidentally flipped to `>=`
+  // would render "…and 0 more skipped row(s) not shown." with the rest of
+  // the suite still green.
+  it('lift-records: DONE step does not show a "more skipped rows" indicator when not capped', async () => {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(LIFT_RECORDS_PREVIEW);
+    mockCommit.mockResolvedValue({
+      ok: true,
+      data: {
+        destination: 'lift-records',
+        created: 0,
+        updated: 0,
+        skipped: 2,
+        skippedDetail: [
+          { row: 1, naturalKey: '1:1:20260101:bench-press:1' },
+          { row: 2, naturalKey: '1:1:20260101:bench-press:2' },
+        ],
+        batchId: 'batch-lr-3',
+      },
+    });
+
+    const file = new File(
+      ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n5-3-1,1,1,2026-01-01,Bench P.,1,180,5'],
+      'lifts.csv',
+      { type: 'text/csv' },
+    );
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await commitLiftRecordsImport(user, file);
+    await user.click(screen.getByText('Skipped rows'));
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+    expect(screen.queryByText(/more skipped row\(s\) not shown/)).not.toBeInTheDocument();
   });
 
   // #911: the REVIEW step's ambiguous-row remap datalist offers the user's
