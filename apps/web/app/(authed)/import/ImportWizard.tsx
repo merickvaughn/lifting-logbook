@@ -202,6 +202,17 @@ export function ImportWizard({
   // exercises inline during this session (#911) — no page reload needed to see
   // a just-created lift reflected in the remap datalist.
   const [customLifts, setCustomLifts] = useState<CustomLiftResponse[]>(initialCustomLifts);
+  // Every lift id created via THIS wizard session's success branch below — not
+  // the initial server-fetched customLifts prop, and not anything a refetch
+  // has ever returned. Scopes the 409 branch's merge (#921): when that merge
+  // keeps a `prev` entry a refetch doesn't know about, it must be because the
+  // entry is a sibling row's just-created lift racing the refetch, not because
+  // the entry was deleted server-side (e.g. via Settings, in another tab)
+  // between when it entered customLifts and when this refetch ran — nothing
+  // else in this component ever removes a customLifts entry, so without this
+  // scope the merge would resurrect a genuinely-deleted lift right alongside
+  // fixing the race it's meant to fix (#921 review).
+  const sessionCreatedLiftIds = useRef<Set<string>>(new Set());
   const [createDrafts, setCreateDrafts] = useState<Map<number, CreateLiftDraft>>(new Map());
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('all');
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -615,10 +626,17 @@ export function ImportWizard({
           // (below) before this refetch resolves, `fetchedLifts` — a snapshot
           // the server returned for a request issued before that append —
           // won't contain it, and replacing wholesale would silently drop a
-          // lift that was genuinely, successfully created just moments ago.
-          // Keeping every `prev` entry `fetchedLifts` doesn't know about (by
-          // id) preserves that sibling's lift without discarding anything
-          // `fetchedLifts` itself added or already agreed on (issue #921).
+          // lift that was genuinely, successfully created just moments ago
+          // (issue #921).
+          //
+          // Restoring a `prev` entry `fetchedLifts` doesn't know about is only
+          // safe when `sessionCreatedLiftIds` confirms it's exactly that kind
+          // of sibling-row race — not the *initial* server-fetched customLifts
+          // prop, and not anything an earlier refetch returned. Without that
+          // scope, this same merge would just as happily resurrect a lift that
+          // was genuinely deleted server-side (e.g. via Settings, in another
+          // tab) between entering local state and this refetch running —
+          // trading #921's bug for the opposite one (#921 review).
           //
           // Captured into a `const` rather than reading the outer `let latest`
           // from inside the updater below: a `let`'s narrowing (non-null, just
@@ -628,7 +646,10 @@ export function ImportWizard({
           const fetchedLifts = latest;
           setCustomLifts((prev) => {
             const fetchedIds = new Set(fetchedLifts.map((l) => l.id));
-            return [...fetchedLifts, ...prev.filter((p) => !fetchedIds.has(p.id))];
+            const missingButSessionCreated = prev.filter(
+              (p) => !fetchedIds.has(p.id) && sessionCreatedLiftIds.current.has(p.id),
+            );
+            return [...fetchedLifts, ...missingButSessionCreated];
           });
         } catch (fetchErr) {
           refetchFailed = true;
@@ -691,6 +712,14 @@ export function ImportWizard({
       // meantime — without this, the wizard would keep offering to "create"
       // an already-created lift, wasting a POST + 409 self-heal round trip on
       // the next attempt (#911 review, fourth pass).
+      //
+      // Recorded in sessionCreatedLiftIds BEFORE the state update below (order
+      // doesn't matter for correctness here — nothing reads the set until a
+      // future 409 branch's merge — but recording the id alongside its own
+      // creation, rather than separately, keeps the two from ever drifting
+      // apart) so a sibling row's concurrent 409 self-heal can tell this
+      // lift apart from one it should treat as possibly-deleted (#921 review).
+      sessionCreatedLiftIds.current.add(created.id);
       setCustomLifts((prev) => [...prev, created]);
       if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
       applyResolvedLiftToMatchingRows(matchOriginalLift, created.id, rowIndex);

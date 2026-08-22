@@ -241,6 +241,58 @@ const TWO_DIFFERENT_AMBIGUOUS_LIFT_CSV = new File(
   { type: 'text/csv' },
 );
 
+// A custom lift present in the INITIAL server-fetched customLifts prop (not
+// created during this wizard session) — used to prove the 409 self-heal merge
+// doesn't resurrect a lift that was genuinely deleted server-side in the
+// interim (#921 review: sessionCreatedLiftIds scopes the merge to lifts this
+// session actually created).
+const PRE_EXISTING_CUSTOM_LIFT: CustomLiftResponse = {
+  id: 'custom-gribble-fly',
+  name: 'Reverse Gribble Fly',
+  classification: 'accessory',
+  movementProfile: { patterns: [], jointActions: [], complexity: 'simple' },
+  isBodyweightComponent: false,
+  isCustom: true,
+  createdAt: '2026-01-01T00:00:00.000Z',
+};
+
+const DELETE_RESURRECTION_PREVIEW: ImportPreviewResponse = {
+  classification: {
+    type: 'lift-records',
+    confidence: 0.92,
+    bucket: 'high',
+    reasons: ['Matched required lift-record columns'],
+    alternatives: [],
+  },
+  destination: 'lift-records',
+  columnMappings: AMBIGUOUS_LIFT_COLUMN_MAPPINGS,
+  preview: {
+    creates: 0,
+    updates: 0,
+    skips: 0,
+    deltas: [
+      {
+        key: '__ambiguous_1',
+        label: 'Row 1: Sideways Anvil Curl',
+        kind: 'create',
+        status: 'ambiguous',
+        rowIndex: 1,
+        originalLift: 'Sideways Anvil Curl',
+      },
+    ],
+  },
+  errors: [],
+};
+
+const DELETE_RESURRECTION_CSV = new File(
+  [
+    'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n' +
+      '5-3-1,1,1,2026-01-01,Sideways Anvil Curl,1,90,10',
+  ],
+  'lifts.csv',
+  { type: 'text/csv' },
+);
+
 // Two blank Lift CELLS (not a missing Lift column, which would leave every
 // row's originalLift undefined) — both parse to originalLift: '' (#911
 // review, third pass regression fixture). Row 3 has real text so at least one
@@ -1058,6 +1110,45 @@ describe('ImportWizard', () => {
         (o) => (o as HTMLOptionElement).value,
       );
       expect(options).toContain('Zorbing Machine Press');
+    });
+
+    // #921 review: the merge fix above must not go too far the OTHER
+    // direction — resurrecting a lift that was genuinely deleted server-side
+    // between page load and a later 409 self-heal refetch. sessionCreatedLiftIds
+    // scopes the merge to lifts this wizard session actually created, so a
+    // `prev` entry from the INITIAL customLifts prop (never session-created)
+    // must NOT survive a refetch that no longer includes it.
+    it('does not resurrect a pre-existing custom lift the refetch no longer returns (#921 review)', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(DELETE_RESURRECTION_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue(null); // 409
+      // Simulates the pre-existing lift having been deleted server-side in the
+      // interim: the refetch's snapshot no longer includes it.
+      mockFetchCustomLifts.mockResolvedValue([]);
+
+      const { container } = render(
+        <ImportWizard programs={PROGRAMS} customLifts={[PRE_EXISTING_CUSTOM_LIFT]} />,
+      );
+      await navigateToLiftRecordsReview(user, DELETE_RESURRECTION_CSV);
+
+      const optionsBefore = Array.from(container.querySelectorAll('#lift-catalog option')).map(
+        (o) => (o as HTMLOptionElement).value,
+      );
+      expect(optionsBefore).toContain('Reverse Gribble Fly');
+
+      await user.click(screen.getByRole('button', { name: 'Accessory' }));
+      await user.click(
+        screen.getByRole('button', { name: 'Create "Sideways Anvil Curl" as a new exercise' }),
+      );
+      await waitFor(() => expect(mockFetchCustomLifts).toHaveBeenCalledTimes(1));
+      expect(
+        await screen.findByText("This name can't be used — it already exists or is reserved."),
+      ).toBeInTheDocument();
+
+      const optionsAfter = Array.from(container.querySelectorAll('#lift-catalog option')).map(
+        (o) => (o as HTMLOptionElement).value,
+      );
+      expect(optionsAfter).not.toContain('Reverse Gribble Fly');
     });
 
     it('logs and shows an inline error when creation throws', async () => {
