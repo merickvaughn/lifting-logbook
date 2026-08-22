@@ -49,7 +49,7 @@ export default function LiftRecordsImportForm({ program }: Props) {
       // "Uploading…" with nothing logged. Surface a generic error and record the cause (#783).
       logClientError('importLiftRecords', err, { program });
       setStatus('error');
-      setErrors([{ row: 0, code: 'UPLOAD_FAILED', message: 'Upload failed. Please try again.' }]);
+      setErrors([{ row: 0, code: 'UNEXPECTED_ERROR', message: 'Upload failed. Please try again.' }]);
     }
   }
 

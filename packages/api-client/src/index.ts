@@ -361,7 +361,7 @@ export function createApiClient(config: ApiClientConfig) {
       const body = (await res.json()) as { errors?: ImportError[] };
       return {
         ok: false,
-        errors: body.errors ?? [{ row: 0, code: 'UPLOAD_FAILED', message: `Unexpected error (HTTP ${res.status})` }],
+        errors: body.errors ?? [{ row: 0, code: 'UNEXPECTED_ERROR', message: `Unexpected error (HTTP ${res.status})` }],
       };
     },
 
@@ -415,7 +415,7 @@ export function createApiClient(config: ApiClientConfig) {
       const body = (await res.json().catch(() => ({}))) as { errors?: ImportError[] };
       return {
         ok: false,
-        errors: body.errors ?? [{ row: 0, code: 'UPLOAD_FAILED', message: `Unexpected error (HTTP ${res.status})` }],
+        errors: body.errors ?? [{ row: 0, code: 'UNEXPECTED_ERROR', message: `Unexpected error (HTTP ${res.status})` }],
       };
     },
 

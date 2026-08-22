@@ -512,7 +512,7 @@ export type ImportErrorCode =
   | 'WEEK_TYPE_INVALID'
   | 'FILE_PARSE_FAILED'
   | 'ROW_LIMIT_EXCEEDED'
-  | 'UPLOAD_FAILED';
+  | 'UNEXPECTED_ERROR';
 
 /** A single validation error from a CSV import attempt. */
 export interface ImportError {

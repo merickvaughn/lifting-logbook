@@ -534,7 +534,7 @@ describe('ImportWizard', () => {
     mockPreview.mockResolvedValue(TM_PREVIEW);
     mockCommit.mockResolvedValueOnce({
       ok: false,
-      errors: [{ row: 1, code: 'UPLOAD_FAILED', message: 'First attempt failed' }],
+      errors: [{ row: 1, code: 'UNEXPECTED_ERROR', message: 'First attempt failed' }],
     });
 
     render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
