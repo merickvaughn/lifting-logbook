@@ -293,20 +293,6 @@ describe('LiftRecordsController', () => {
         expect.arrayContaining([expect.objectContaining({ lift: 'custom-wide-grip-cbl-curls' })]),
       );
     });
-
-    // #911 review, eighth pass: this endpoint runs the same bulk validate +
-    // createMany shape of work as ImportController's own import path (which
-    // already carries this same annotation, asserted by
-    // import.controller.spec.ts) inside the same per-request RLS transaction —
-    // without it, a large (within-limit) import falls through to the 15s
-    // DEFAULT_RLS_TX_TIMEOUT_MS instead of the wider import budget (#532).
-    it('annotates the import handler with the import transaction budget', () => {
-      const timeout = Reflect.getMetadata(
-        RLS_TX_TIMEOUT_KEY,
-        LiftRecordsController.prototype.importLiftRecords,
-      );
-      expect(timeout).toBe(IMPORT_TX_TIMEOUT_MS);
-    });
   });
 
   describe('PATCH lift-records/:id', () => {
@@ -337,5 +323,29 @@ describe('LiftRecordsController', () => {
         controller.updateLiftRecord('5-3-1', 'unknown-id', { weight: 200 }, MOCK_USER),
       ).rejects.toThrow(NotFoundException);
     });
+  });
+});
+
+// A standalone top-level describe, not nested inside the DI-fixture `describe`
+// above — this asserts only static decorator metadata on the class prototype
+// and needs no TestingModule/repository mocks at all, mirroring
+// import.controller.spec.ts's own two equivalents for the same reason: a test
+// about a decorator should not be coupled to an unrelated DI fixture, or a
+// future required-provider change to LiftRecordsController would break this
+// test for a reason wholly unrelated to what it asserts (#911 review, ninth
+// pass — this was originally nested inside the module-setup beforeEach).
+describe('LiftRecordsController RLS transaction budget', () => {
+  // #911 review, eighth pass: this endpoint runs the same bulk validate +
+  // createMany shape of work as ImportController's own import path (which
+  // already carries this same annotation, asserted by
+  // import.controller.spec.ts) inside the same per-request RLS transaction —
+  // without it, a large (within-limit) import falls through to the 15s
+  // DEFAULT_RLS_TX_TIMEOUT_MS instead of the wider import budget (#532).
+  it('annotates the import handler with the import transaction budget', () => {
+    const timeout = Reflect.getMetadata(
+      RLS_TX_TIMEOUT_KEY,
+      LiftRecordsController.prototype.importLiftRecords,
+    );
+    expect(timeout).toBe(IMPORT_TX_TIMEOUT_MS);
   });
 });

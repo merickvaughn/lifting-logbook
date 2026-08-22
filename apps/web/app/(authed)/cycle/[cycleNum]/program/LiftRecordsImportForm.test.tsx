@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { ImportError } from '@lifting-logbook/types';
 import LiftRecordsImportForm from './LiftRecordsImportForm';
 import { importLiftRecords } from '@/lib/client-api';
+import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 
 // #911: this form has no interactive remap step of its own, so an unrecognized
 // lift name must never leak the strict validator's internal "slot map" wording,
@@ -84,7 +85,14 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
   // named "Lift" produces one error per row — an uncapped list could render
   // thousands of <li>s. Capped like ImportWizard.tsx's own commitErrors list.
   it('caps the rendered error list rather than rendering every row', async () => {
-    const errors: ImportError[] = Array.from({ length: 25 }, (_, i) => ({
+    // Fixture size and the expected overflow count are both derived from the
+    // shared constant, not hardcoded — a raw `25`/`toHaveLength(20)` would
+    // silently stop testing the real cap the moment MAX_RENDERED_IMPORT_ERRORS
+    // changes, recreating the exact drift the constant was extracted to
+    // prevent (#911 review, ninth pass).
+    const overflowCount = 5;
+    const totalErrors = MAX_RENDERED_IMPORT_ERRORS + overflowCount;
+    const errors: ImportError[] = Array.from({ length: totalErrors }, (_, i) => ({
       row: i + 1,
       field: 'lift',
       message: `'Row ${i + 1} Lift' isn't a recognized exercise.`,
@@ -94,12 +102,14 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
     await uploadAndSubmit();
 
     await screen.findByText(/Row 1 Lift/);
-    expect(screen.getAllByRole('listitem')).toHaveLength(20);
-    expect(screen.queryByText(/Row 25 Lift/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole('listitem')).toHaveLength(MAX_RENDERED_IMPORT_ERRORS);
+    expect(screen.queryByText(new RegExp(`Row ${totalErrors} Lift`))).not.toBeInTheDocument();
     // #911 review, eighth pass: the cap must be visible, not silent — a user
-    // who fixes only the 20 shown and re-uploads should not be surprised by
-    // a second rejection with no warning more errors existed.
-    expect(screen.getByText(/…and 5 more error\(s\) not shown\./)).toBeInTheDocument();
+    // who fixes only the visible rows and re-uploads should not be surprised
+    // by a second rejection with no warning more errors existed.
+    expect(
+      screen.getByText(new RegExp(`…and ${overflowCount} more error\\(s\\) not shown\\.`)),
+    ).toBeInTheDocument();
   });
 
   // #911 review, eighth pass: the "N more" indicator must not render at all
@@ -118,5 +128,31 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
     await screen.findByText(/Row 1 Lift/);
     expect(screen.getAllByRole('listitem')).toHaveLength(3);
     expect(screen.queryByText(/more error\(s\) not shown/)).not.toBeInTheDocument();
+  });
+
+  // #911 review, ninth pass: the skipped-rows list (a successful-import side
+  // channel, not an error) had the identical unbounded-render risk as the
+  // error lists above — up to MAX_IMPORT_ROWS entries, silently uncapped
+  // before this fix, and never previously covered by any test in this file.
+  it('caps the rendered skipped-rows list and shows a "more" indicator', async () => {
+    const overflowCount = 5;
+    const totalSkipped = MAX_RENDERED_IMPORT_SKIPS + overflowCount;
+    const skipped = Array.from({ length: totalSkipped }, (_, i) => ({
+      row: i + 1,
+      naturalKey: `5-3-1-4-1-20260420-Bench Press-${i + 1}`,
+    }));
+    mockImport.mockResolvedValue({ ok: true, data: { written: 1, skipped } });
+
+    const user = userEvent.setup();
+    await uploadAndSubmit();
+
+    await screen.findByText(/Skipped rows/);
+    await user.click(screen.getByText('Skipped rows'));
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(MAX_RENDERED_IMPORT_SKIPS);
+    expect(screen.queryByText(new RegExp(`Row ${totalSkipped}:`))).not.toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`…and ${overflowCount} more skipped row\\(s\\) not shown\\.`)),
+    ).toBeInTheDocument();
   });
 });

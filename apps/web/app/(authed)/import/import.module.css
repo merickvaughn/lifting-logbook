@@ -409,6 +409,19 @@
   margin: 0;
 }
 
+/* The "…and N more error(s) not shown" line under a capped errorList — distinct from
+   .errorNote (a single top-level error message) since this is a caption about the list
+   above it, not a peer error of its own. Deliberately not the same red-and-plain look as
+   .errorList's own <li> rows, so it doesn't read as "one more error item" (#911 review,
+   ninth pass — this element previously had no class at all and inherited neither red nor
+   small-size styling from its .errorBox/.errorList siblings). */
+.errorOverflowNote {
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  color: var(--color-error, #e74c3c);
+  margin: var(--space-2) 0 0;
+}
+
 .successBanner {
   display: flex;
   flex-direction: column;
@@ -452,6 +465,17 @@
   font-size: var(--font-size-sm);
   font-family: monospace;
   color: var(--color-text-muted);
+}
+
+/* The "…and N more skipped row(s) not shown" line under a capped skippedDetailList —
+   deliberately muted like its list, not red like .errorOverflowNote: a skip is an
+   informational duplicate-record notice, not a validation error (#911 review, ninth
+   pass). */
+.skippedOverflowNote {
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  color: var(--color-text-muted);
+  margin: var(--space-2) 0 0;
 }
 
 /* ── Action row ────────────────────────────────────────────── */

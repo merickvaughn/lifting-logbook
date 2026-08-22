@@ -199,6 +199,18 @@ export class LiftRecordsController {
   // effectiveSlotMapFor query added by #911) inside the same per-request RLS transaction,
   // so it needs the same widened window rather than falling through to the 15s default
   // (#911 review, eighth pass).
+  //
+  // Deliberate trade-off, not an oversight: this widens (15s → 30s) how long a pooled DB
+  // connection can be pinned by an attacker-controlled network read, not just DB work —
+  // RlsInterceptor opens the transaction before this handler's own first line
+  // (readUploadedCsv, below) runs, so a slow multipart upload is inside the transaction
+  // window too, and this app's FastifyAdapter sets no requestTimeout. Same shape already
+  // exists on ImportController's import path at the same 30s value, so this is parity with
+  // an already-shipped property, not a new exposure class. The structural fix (move the
+  // upload read outside the transaction, e.g. via @SkipRlsTransaction — see rls-context.ts)
+  // applies to both endpoints and is tracked as a follow-up rather than done here (#911
+  // review, ninth pass — flagged independently by both the security and reliability review
+  // passes).
   @RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)
   async importLiftRecords(
     @Param('program') program: string,

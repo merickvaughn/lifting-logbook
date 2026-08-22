@@ -24,7 +24,7 @@ import {
   undoImport,
 } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
-import { MAX_RENDERED_IMPORT_ERRORS } from '@/lib/import-constants';
+import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 import { Step, STEP_LABELS } from './steps';
 import styles from './import.module.css';
 
@@ -462,13 +462,16 @@ export function ImportWizard({
   }
 
   // Clears a stale creation error (without touching classification/busy) when
-  // the user edits the remap input after a failed create — otherwise
-  // "This name can't be used — it already exists or is reserved." keeps
-  // rendering under a value that no longer matches the name that error was
-  // actually about, one
-  // instance of the same "wrong message sends the user down the wrong
-  // recovery path" concern this PR's own 409-vs-refetch-failure distinction
-  // was built to avoid (#911 review, third pass).
+  // the user edits the remap input after a failed create — otherwise the
+  // 409-with-no-local-match message set below (handleCreateLift's catch)
+  // keeps rendering under a value that no longer matches the name that error
+  // was actually about. Referred to by role, not quoted verbatim, so this
+  // comment can't itself go stale the next time that message's wording
+  // changes (#911 review, ninth pass — round 8's own reword already required
+  // a matching hand-edit here). One instance of the same "wrong message sends
+  // the user down the wrong recovery path" concern this PR's own
+  // 409-vs-refetch-failure distinction was built to avoid (#911 review, third
+  // pass).
   function clearCreateDraftError(rowIndex: number) {
     setCreateDrafts((prev) => {
       const existing = prev.get(rowIndex);
@@ -1091,13 +1094,26 @@ export function ImportWizard({
                 <div className={styles.errorBox}>
                   <strong>This file has {preview.errors.length} problem(s):</strong>
                   <ul className={styles.errorList}>
-                    {preview.errors.slice(0, 20).map((e, i) => (
+                    {preview.errors.slice(0, MAX_RENDERED_IMPORT_ERRORS).map((e, i) => (
                       <li key={`${e.row}-${e.field}-${i}`}>
                         Row {e.row}
                         {e.field ? ` · ${e.field}` : ''}: {e.message}
                       </li>
                     ))}
                   </ul>
+                  {/* This list already shows the true total in the heading above, unlike
+                      the commitErrors/errors lists below, so an omitted "N more" line here
+                      would not itself be silent — but using the same shared constant (not
+                      a third bare `20`) still matters: it's this file's third `.slice(0,
+                      20)` site, and round 8 only converted two of the three, leaving this
+                      one to silently stop matching a future change to the cap (#911 review,
+                      ninth pass, both subagents independently). */}
+                  {preview.errors.length > MAX_RENDERED_IMPORT_ERRORS && (
+                    <p className={styles.errorOverflowNote}>
+                      …and {preview.errors.length - MAX_RENDERED_IMPORT_ERRORS} more error(s) not
+                      shown.
+                    </p>
+                  )}
                 </div>
               ) : previewBody ? (
                 <>
@@ -1543,7 +1559,7 @@ export function ImportWizard({
                     ))}
                   </ul>
                   {commitErrors.length > MAX_RENDERED_IMPORT_ERRORS && (
-                    <p>
+                    <p className={styles.errorOverflowNote}>
                       …and {commitErrors.length - MAX_RENDERED_IMPORT_ERRORS} more error(s) not
                       shown.
                     </p>
@@ -1562,17 +1578,26 @@ export function ImportWizard({
                 {commitResult.updated} updated, {commitResult.skipped} skipped.
               </p>
 
-              {/* Per-row skip detail (lift-records only — see ImportCommitResponse.skippedDetail) */}
+              {/* Per-row skip detail (lift-records only — see ImportCommitResponse.skippedDetail).
+                  Capped like the error lists above — up to MAX_IMPORT_ROWS rows can be reported
+                  as skipped, and <details> only hides this via UA styling, not by deferring React
+                  from creating every <li> on render (#911 review, ninth pass). */}
               {commitResult.skippedDetail && commitResult.skippedDetail.length > 0 && (
                 <details className={styles.skippedDetailBox}>
                   <summary>Skipped rows</summary>
                   <ul className={styles.skippedDetailList}>
-                    {commitResult.skippedDetail.map((s) => (
+                    {commitResult.skippedDetail.slice(0, MAX_RENDERED_IMPORT_SKIPS).map((s) => (
                       <li key={`${s.row}-${s.naturalKey}`}>
                         Row {s.row}: {s.naturalKey}
                       </li>
                     ))}
                   </ul>
+                  {commitResult.skippedDetail.length > MAX_RENDERED_IMPORT_SKIPS && (
+                    <p className={styles.skippedOverflowNote}>
+                      …and {commitResult.skippedDetail.length - MAX_RENDERED_IMPORT_SKIPS} more
+                      skipped row(s) not shown.
+                    </p>
+                  )}
                 </details>
               )}
 

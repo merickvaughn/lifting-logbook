@@ -6,7 +6,7 @@ import { IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import type { ImportError, SkippedRecord } from '@lifting-logbook/types';
 import { importLiftRecords } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
-import { MAX_RENDERED_IMPORT_ERRORS } from '@/lib/import-constants';
+import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 
 interface Props {
   program: string;
@@ -84,13 +84,24 @@ export default function LiftRecordsImportForm({ program }: Props) {
           {successData.skipped.length > 0 && (
             <details style={{ marginTop: '0.5rem' }}>
               <summary>Skipped rows</summary>
+              {/* Capped like the error list above — a large duplicate-heavy re-upload (a
+                  realistic retry of a partially-imported file) can skip every row, up to
+                  MAX_IMPORT_ROWS. Being inside <details> only hides this via UA styling;
+                  it does not stop React from creating every <li> on render (#911 review,
+                  ninth pass). */}
               <ul style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                {successData.skipped.map((s) => (
+                {successData.skipped.slice(0, MAX_RENDERED_IMPORT_SKIPS).map((s) => (
                   <li key={`${s.row}-${s.naturalKey}`}>
                     Row {s.row}: {s.naturalKey}
                   </li>
                 ))}
               </ul>
+              {successData.skipped.length > MAX_RENDERED_IMPORT_SKIPS && (
+                <p style={{ marginTop: '0.5rem', fontStyle: 'italic' }}>
+                  …and {successData.skipped.length - MAX_RENDERED_IMPORT_SKIPS} more skipped row(s)
+                  not shown.
+                </p>
+              )}
             </details>
           )}
         </div>

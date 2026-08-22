@@ -7,6 +7,7 @@ import type {
 } from '@lifting-logbook/types';
 import { ImportWizard } from './ImportWizard';
 import { commitImport, createCustomLift, fetchCustomLifts, previewImport } from '@/lib/client-api';
+import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 
 // File.text() is not implemented in jsdom; use FileReader instead.
 function readFileText(file: File): Promise<string> {
@@ -325,11 +326,16 @@ describe('ImportWizard', () => {
   // alongside it (without it, a user who fixes only the visible rows and
   // re-submits is rejected again with no warning more errors existed).
   it('shows a capped error list with a "more errors" indicator when commit fails', async () => {
+    // Derived from MAX_RENDERED_IMPORT_ERRORS, not hardcoded — see the identical
+    // rationale in LiftRecordsImportForm.test.tsx's sibling test (#911 review,
+    // ninth pass).
+    const overflowCount = 5;
+    const totalErrors = MAX_RENDERED_IMPORT_ERRORS + overflowCount;
     const user = userEvent.setup();
     mockPreview.mockResolvedValue(TM_PREVIEW);
     mockCommit.mockResolvedValue({
       ok: false,
-      errors: Array.from({ length: 25 }, (_, i) => ({
+      errors: Array.from({ length: totalErrors }, (_, i) => ({
         row: i + 1,
         message: `Row ${i + 1} failed`,
       })),
@@ -346,8 +352,10 @@ describe('ImportWizard', () => {
 
     await waitFor(() => expect(screen.getByText('Commit failed:')).toBeInTheDocument());
     expect(screen.getByText(/Row 1 failed/)).toBeInTheDocument();
-    expect(screen.queryByText(/Row 25 failed/)).not.toBeInTheDocument();
-    expect(screen.getByText(/…and 5 more error\(s\) not shown\./)).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(`Row ${totalErrors} failed`))).not.toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`…and ${overflowCount} more error\\(s\\) not shown\\.`)),
+    ).toBeInTheDocument();
   });
 
   it('training-maxes: edited weight in REVIEW is reflected in the commit payload', async () => {
@@ -549,6 +557,55 @@ describe('ImportWizard', () => {
     // Skipped-rows detail is behind a <details> disclosure — open it, then read the row.
     await user.click(screen.getByText('Skipped rows'));
     expect(screen.getByText(/Row 1: 1:1:20260101:bench-press:1/)).toBeInTheDocument();
+  });
+
+  // #911 review, ninth pass: skippedDetail had the identical unbounded-render
+  // risk as the error lists (up to MAX_IMPORT_ROWS entries), fixed alongside
+  // them but previously covered only by the single-item test above — this
+  // adds coverage for the cap itself.
+  it('lift-records: DONE step caps the skippedDetail list and shows a "more" indicator', async () => {
+    const overflowCount = 5;
+    const totalSkipped = MAX_RENDERED_IMPORT_SKIPS + overflowCount;
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(LIFT_RECORDS_PREVIEW);
+    mockCommit.mockResolvedValue({
+      ok: true,
+      data: {
+        destination: 'lift-records',
+        created: 0,
+        updated: 0,
+        skipped: totalSkipped,
+        skippedDetail: Array.from({ length: totalSkipped }, (_, i) => ({
+          row: i + 1,
+          naturalKey: `1:1:20260101:bench-press:${i + 1}`,
+        })),
+        batchId: 'batch-lr-2',
+      },
+    });
+
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+
+    const file = new File(
+      ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n5-3-1,1,1,2026-01-01,Bench P.,1,180,5'],
+      'lifts.csv',
+      { type: 'text/csv' },
+    );
+    await user.upload(screen.getByLabelText('CSV file'), file);
+    await user.click(screen.getByRole('button', { name: 'Analyze' }));
+    await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+
+    await waitFor(() => expect(screen.getByText('Import complete')).toBeInTheDocument());
+    await user.click(screen.getByText('Skipped rows'));
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(MAX_RENDERED_IMPORT_SKIPS);
+    expect(screen.queryByText(new RegExp(`Row ${totalSkipped}:`))).not.toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`…and ${overflowCount} more skipped row\\(s\\) not shown\\.`)),
+    ).toBeInTheDocument();
   });
 
   // #911: the REVIEW step's ambiguous-row remap datalist offers the user's
