@@ -2,11 +2,11 @@
 
 import { useRef, useState } from 'react';
 import Link from 'next/link';
-import { IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import type { ImportError, SkippedRecord } from '@lifting-logbook/types';
 import { importLiftRecords } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
+import { isLiftNameError } from '@/lib/import-error-codes';
 
 interface Props {
   program: string;
@@ -49,7 +49,7 @@ export default function LiftRecordsImportForm({ program }: Props) {
       // "Uploading…" with nothing logged. Surface a generic error and record the cause (#783).
       logClientError('importLiftRecords', err, { program });
       setStatus('error');
-      setErrors([{ row: 0, message: 'Upload failed. Please try again.' }]);
+      setErrors([{ row: 0, code: 'UPLOAD_FAILED', message: 'Upload failed. Please try again.' }]);
     }
   }
 
@@ -110,7 +110,7 @@ export default function LiftRecordsImportForm({ program }: Props) {
       {status === 'error' && errors.length > 0 && (
         <div style={{ marginTop: '1rem', color: 'red' }}>
           <strong>Upload rejected — fix the following errors and try again:</strong>
-          {errors.some((err) => err.field === IMPORT_ERROR_FIELD_LIFT) && (
+          {errors.some(isLiftNameError) && (
             <p style={{ marginTop: '0.5rem' }}>
               This form can&apos;t map an unrecognized exercise name to an existing
               one or create it for you. <Link href="/import">Use the Smart Import

@@ -344,6 +344,7 @@ describe('ImportWizard', () => {
       errors: Array.from({ length: totalErrors }, (_, i) => ({
         row: i + 1,
         field: 'weight',
+        code: 'WEIGHT_INVALID',
         message: `Row ${i + 1} failed`,
       })),
     });
@@ -382,6 +383,7 @@ describe('ImportWizard', () => {
       ok: false,
       errors: Array.from({ length: totalErrors }, (_, i) => ({
         row: i + 1,
+        code: 'WEIGHT_INVALID',
         message: `Row ${i + 1} failed`,
       })),
     });
@@ -532,7 +534,7 @@ describe('ImportWizard', () => {
     mockPreview.mockResolvedValue(TM_PREVIEW);
     mockCommit.mockResolvedValueOnce({
       ok: false,
-      errors: [{ row: 1, message: 'First attempt failed' }],
+      errors: [{ row: 1, code: 'UPLOAD_FAILED', message: 'First attempt failed' }],
     });
 
     render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);

@@ -780,7 +780,7 @@ export function ImportWizard({
     } catch (e) {
       logClientError('commitImport', e, { programId, destination });
       setCommitErrors([
-        { row: 0, message: e instanceof Error ? e.message : 'Import failed' },
+        { row: 0, code: 'UPLOAD_FAILED', message: e instanceof Error ? e.message : 'Import failed' },
       ]);
     } finally {
       setBusy(false);

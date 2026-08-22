@@ -272,7 +272,7 @@ export class ImportController {
         destination,
         columnMappings,
         preview: null,
-        errors: [{ row: 0, message: `Could not parse file: ${(err as Error).message}` }],
+        errors: [{ row: 0, code: 'FILE_PARSE_FAILED', message: `Could not parse file: ${(err as Error).message}` }],
       };
     }
     if (parsed.length > MAX_IMPORT_ROWS) {
@@ -281,7 +281,7 @@ export class ImportController {
         destination,
         columnMappings,
         preview: null,
-        errors: [{ row: 0, message: `Import exceeds the ${MAX_IMPORT_ROWS.toLocaleString()}-row limit. Split the file into smaller batches.` }],
+        errors: [{ row: 0, code: 'ROW_LIMIT_EXCEEDED', message: `Import exceeds the ${MAX_IMPORT_ROWS.toLocaleString()}-row limit. Split the file into smaller batches.` }],
       };
     }
 
@@ -506,12 +506,12 @@ export class ImportController {
     try {
       parsed = handler.parse(table);
     } catch (err) {
-      return { valid: [], errors: [{ row: 0, message: `Could not parse file: ${(err as Error).message}` }] };
+      return { valid: [], errors: [{ row: 0, code: 'FILE_PARSE_FAILED', message: `Could not parse file: ${(err as Error).message}` }] };
     }
     if (parsed.length > MAX_IMPORT_ROWS) {
       return {
         valid: [],
-        errors: [{ row: 0, message: `Import exceeds the ${MAX_IMPORT_ROWS.toLocaleString()}-row limit. Split the file into smaller batches.` }],
+        errors: [{ row: 0, code: 'ROW_LIMIT_EXCEEDED', message: `Import exceeds the ${MAX_IMPORT_ROWS.toLocaleString()}-row limit. Split the file into smaller batches.` }],
       };
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety

@@ -33,6 +33,7 @@ describe('validateLiftImportSoft', () => {
     const result = validateLiftImportSoft([r], SLOT_MAP);
     expect(result.incomplete).toHaveLength(1);
     expect(result.valid).toHaveLength(0);
+    expect(result.incomplete[0]!.errors).toMatchObject([{ field: 'weight', code: 'WEIGHT_INVALID' }]);
   });
 
   it('puts a row with unknown lift in the ambiguous bucket', () => {

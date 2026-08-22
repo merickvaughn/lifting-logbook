@@ -27,18 +27,18 @@ export function validateProgramSpecImport(
     const rowErrors: ImportError[] = [];
 
     if (r.week !== 1 && r.week !== 2 && r.week !== 3)
-      rowErrors.push({ row, field: 'week', message: 'week must be 1, 2, or 3' });
-    if (!isNum(r.offset)) rowErrors.push({ row, field: 'offset', message: 'offset is not a number' });
+      rowErrors.push({ row, field: 'week', code: 'WEEK_INVALID', message: 'week must be 1, 2, or 3' });
+    if (!isNum(r.offset)) rowErrors.push({ row, field: 'offset', code: 'OFFSET_INVALID', message: 'offset is not a number' });
     if (!String(r.lift ?? '').trim())
-      rowErrors.push({ row, field: IMPORT_ERROR_FIELD_LIFT, message: 'lift is empty' });
-    if (!isNum(r.increment)) rowErrors.push({ row, field: 'increment', message: 'increment is not a number' });
-    if (!isNum(r.order)) rowErrors.push({ row, field: 'order', message: 'order is not a number' });
-    if (!isNum(r.sets)) rowErrors.push({ row, field: 'sets', message: 'sets is not a number' });
-    if (!isNum(r.reps)) rowErrors.push({ row, field: 'reps', message: 'reps is not a number' });
+      rowErrors.push({ row, field: IMPORT_ERROR_FIELD_LIFT, code: 'LIFT_EMPTY', message: 'lift is empty' });
+    if (!isNum(r.increment)) rowErrors.push({ row, field: 'increment', code: 'INCREMENT_INVALID', message: 'increment is not a number' });
+    if (!isNum(r.order)) rowErrors.push({ row, field: 'order', code: 'ORDER_INVALID', message: 'order is not a number' });
+    if (!isNum(r.sets)) rowErrors.push({ row, field: 'sets', code: 'SETS_INVALID', message: 'sets is not a number' });
+    if (!isNum(r.reps)) rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'reps is not a number' });
     if (!isNum(r.wtDecrementPct))
-      rowErrors.push({ row, field: 'wtDecrementPct', message: 'wtDecrementPct is not a number' });
+      rowErrors.push({ row, field: 'wtDecrementPct', code: 'WT_DECREMENT_PCT_INVALID', message: 'wtDecrementPct is not a number' });
     if (r.weekType !== undefined && !['training', 'test', 'deload'].includes(r.weekType))
-      rowErrors.push({ row, field: 'weekType', message: `weekType must be 'training', 'test', or 'deload'` });
+      rowErrors.push({ row, field: 'weekType', code: 'WEEK_TYPE_INVALID', message: `weekType must be 'training', 'test', or 'deload'` });
 
     if (rowErrors.length > 0) errors.push(...rowErrors);
     else valid.push(r);
