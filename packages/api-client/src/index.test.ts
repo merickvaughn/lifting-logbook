@@ -279,7 +279,7 @@ describe('createApiClient', () => {
       const result = await client.importLiftRecords('5-3-1', file);
       expect(result).toEqual({
         ok: false,
-        errors: [{ row: 0, message: 'Unexpected error (HTTP 500)' }],
+        errors: [{ row: 0, code: 'UNEXPECTED_ERROR', message: 'Unexpected error (HTTP 500)' }],
       });
     });
   });
@@ -351,7 +351,7 @@ describe('createApiClient', () => {
       const result = await client.commitImport('5-3-1', file, 'lift-records');
       expect(result).toEqual({
         ok: false,
-        errors: [{ row: 0, message: 'Unexpected error (HTTP 500)' }],
+        errors: [{ row: 0, code: 'UNEXPECTED_ERROR', message: 'Unexpected error (HTTP 500)' }],
       });
     });
   });

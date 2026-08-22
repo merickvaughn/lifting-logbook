@@ -480,12 +480,48 @@ export interface SwitchProgramResponse {
 // Lift Record CSV Import
 // ---------------------------------------------------------------------------
 
+/**
+ * Machine-readable reason for an {@link ImportError}, stable across validator wording
+ * changes. `ImportError.field` is a free-form string with no compile-time guarantee
+ * the producing validator still emits that exact value — #911's `IMPORT_ERROR_FIELD_LIFT`
+ * constant hardens the *value* against typos, but nothing stops a validator from
+ * omitting `field` altogether on a new error site, silently breaking any branch keyed
+ * off it. `code` is required on every `ImportError`, closing that gap: a UI branch
+ * that needs to react to a specific failure (e.g. gating an affordance) should key off
+ * `code`, not `field`. See #913.
+ */
+export type ImportErrorCode =
+  | 'CYCLE_NUM_INVALID'
+  | 'WORKOUT_NUM_INVALID'
+  | 'SET_NUM_INVALID'
+  | 'WEIGHT_INVALID'
+  | 'REPS_INVALID'
+  | 'DATE_INVALID'
+  | 'UNRECOGNIZED_LIFT'
+  | 'LIFT_EMPTY'
+  | 'GOAL_TYPE_INVALID'
+  | 'TARGET_INVALID'
+  | 'RATIO_INVALID'
+  | 'UNIT_INVALID'
+  | 'WEEK_INVALID'
+  | 'OFFSET_INVALID'
+  | 'INCREMENT_INVALID'
+  | 'ORDER_INVALID'
+  | 'SETS_INVALID'
+  | 'WT_DECREMENT_PCT_INVALID'
+  | 'WEEK_TYPE_INVALID'
+  | 'FILE_PARSE_FAILED'
+  | 'ROW_LIMIT_EXCEEDED'
+  | 'UNEXPECTED_ERROR';
+
 /** A single validation error from a CSV import attempt. */
 export interface ImportError {
   /** 1-based data row number (excludes the header row). */
   row: number;
   /** Which field failed, if determinable. */
   field?: string;
+  /** Machine-readable failure reason — see {@link ImportErrorCode}. */
+  code: ImportErrorCode;
   message: string;
 }
 

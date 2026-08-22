@@ -101,8 +101,19 @@ describe("validateProgramSpecImport", () => {
       spec({ week: 4 as LiftingProgramSpec["week"] }),
       spec({ sets: NaN }),
     ]);
-    const fields = errors.map((e) => e.field);
-    expect(fields).toContain("week");
-    expect(fields).toContain("sets");
+    const codesByField = errors.map((e) => ({ field: e.field, code: e.code }));
+    expect(codesByField).toContainEqual({ field: "week", code: "WEEK_INVALID" });
+    expect(codesByField).toContainEqual({ field: "sets", code: "SETS_INVALID" });
+  });
+
+  it("rejects an empty lift and an invalid weekType", () => {
+    const { errors } = validateProgramSpecImport([
+      spec({ lift: "" }),
+      spec({ weekType: "bogus" as NonNullable<LiftingProgramSpec["weekType"]> }),
+    ]);
+    expect(errors).toMatchObject([
+      { row: 1, field: "lift", code: "LIFT_EMPTY" },
+      { row: 2, field: "weekType", code: "WEEK_TYPE_INVALID" },
+    ]);
   });
 });

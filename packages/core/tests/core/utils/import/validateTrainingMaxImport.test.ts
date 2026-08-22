@@ -39,13 +39,13 @@ describe("validateTrainingMaxImport", () => {
       TEST_SLOT_MAP,
     );
     expect(valid).toHaveLength(0);
-    expect(errors[0]).toMatchObject({ row: 1, field: "lift" });
+    expect(errors[0]).toMatchObject({ row: 1, field: "lift", code: "LIFT_EMPTY" });
   });
 
   it("flags a non-numeric weight", () => {
     const { valid, errors } = validateTrainingMaxImport([makeMax({ weight: NaN })], TEST_SLOT_MAP);
     expect(valid).toHaveLength(0);
-    expect(errors[0]).toMatchObject({ row: 1, field: "weight" });
+    expect(errors[0]).toMatchObject({ row: 1, field: "weight", code: "WEIGHT_INVALID" });
   });
 
   // Regression guard (#911 review): membership must be Object.hasOwnProperty,

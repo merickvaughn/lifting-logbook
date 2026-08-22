@@ -43,6 +43,7 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
       {
         row: 5,
         field: 'lift',
+        code: 'UNRECOGNIZED_LIFT',
         message:
           "'Wide-Grip CBL Curls' isn't a recognized exercise. Map it to an existing exercise or create a new one before importing.",
       },
@@ -57,7 +58,7 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
 
   it('shows a link to the Smart Import Wizard when a lift-field error is present', async () => {
     const errors: ImportError[] = [
-      { row: 5, field: 'lift', message: "'X' isn't a recognized exercise." },
+      { row: 5, field: 'lift', code: 'UNRECOGNIZED_LIFT', message: "'X' isn't a recognized exercise." },
     ];
     mockImport.mockResolvedValue({ ok: false, errors });
 
@@ -69,8 +70,8 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
 
   it('does not show the wizard link when every error is a non-lift field', async () => {
     const errors: ImportError[] = [
-      { row: 2, field: 'weight', message: 'weight is not a number' },
-      { row: 3, field: 'date', message: 'date is invalid' },
+      { row: 2, field: 'weight', code: 'WEIGHT_INVALID', message: 'weight is not a number' },
+      { row: 3, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' },
     ];
     mockImport.mockResolvedValue({ ok: false, errors });
 
@@ -95,6 +96,7 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
     const errors: ImportError[] = Array.from({ length: totalErrors }, (_, i) => ({
       row: i + 1,
       field: 'lift',
+      code: 'UNRECOGNIZED_LIFT',
       message: `'Row ${i + 1} Lift' isn't a recognized exercise.`,
     }));
     mockImport.mockResolvedValue({ ok: false, errors });
@@ -119,6 +121,7 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
     const errors: ImportError[] = Array.from({ length: 3 }, (_, i) => ({
       row: i + 1,
       field: 'lift',
+      code: 'UNRECOGNIZED_LIFT',
       message: `'Row ${i + 1} Lift' isn't a recognized exercise.`,
     }));
     mockImport.mockResolvedValue({ ok: false, errors });

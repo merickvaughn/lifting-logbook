@@ -28,18 +28,18 @@ export function validateStrengthGoalImport(
     const rowErrors: ImportError[] = [];
 
     const liftStr = String(g.lift ?? '').trim();
-    if (!liftStr) rowErrors.push({ row, field: IMPORT_ERROR_FIELD_LIFT, message: 'lift is empty' });
+    if (!liftStr) rowErrors.push({ row, field: IMPORT_ERROR_FIELD_LIFT, code: 'LIFT_EMPTY', message: 'lift is empty' });
 
     if (g.goalType !== 'absolute' && g.goalType !== 'relative') {
-      rowErrors.push({ row, field: 'goalType', message: `goalType must be 'absolute' or 'relative'` });
+      rowErrors.push({ row, field: 'goalType', code: 'GOAL_TYPE_INVALID', message: `goalType must be 'absolute' or 'relative'` });
     } else if (g.goalType === 'absolute' && (typeof g.target !== 'number' || isNaN(g.target))) {
-      rowErrors.push({ row, field: 'target', message: 'absolute goal requires a numeric target' });
+      rowErrors.push({ row, field: 'target', code: 'TARGET_INVALID', message: 'absolute goal requires a numeric target' });
     } else if (g.goalType === 'relative' && (typeof g.ratio !== 'number' || isNaN(g.ratio))) {
-      rowErrors.push({ row, field: 'ratio', message: 'relative goal requires a numeric ratio' });
+      rowErrors.push({ row, field: 'ratio', code: 'RATIO_INVALID', message: 'relative goal requires a numeric ratio' });
     }
 
     if (g.unit !== 'lbs' && g.unit !== 'kg') {
-      rowErrors.push({ row, field: 'unit', message: `unit must be 'lbs' or 'kg'` });
+      rowErrors.push({ row, field: 'unit', code: 'UNIT_INVALID', message: `unit must be 'lbs' or 'kg'` });
     }
 
     if (rowErrors.length > 0) {

@@ -41,7 +41,7 @@ describe("validateLiftImport", () => {
     const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
     expect(valid).toHaveLength(0);
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({ row: 1, field: "lift" });
+    expect(errors[0]).toMatchObject({ row: 1, field: "lift", code: "UNRECOGNIZED_LIFT" });
     expect(errors[0]!.message).toMatch(/Cable Curls/);
     // Regression guard (#911): the message must never leak internal jargon —
     // it's rendered verbatim by a caller with no interactive remap UI of its own.
@@ -58,7 +58,7 @@ describe("validateLiftImport", () => {
     const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
     expect(valid).toHaveLength(0);
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({ row: 1, field: "lift" });
+    expect(errors[0]).toMatchObject({ row: 1, field: "lift", code: "LIFT_EMPTY" });
     expect(errors[0]!.message).not.toMatch(/undefined/);
     expect(errors[0]!.message).not.toMatch(/isn't a recognized exercise/);
     expect(errors[0]!.message).toMatch(/no exercise name/i);
@@ -69,13 +69,13 @@ describe("validateLiftImport", () => {
     const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
     expect(valid).toHaveLength(0);
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({ row: 1, field: "weight" });
+    expect(errors[0]).toMatchObject({ row: 1, field: "weight", code: "WEIGHT_INVALID" });
   });
 
   it("flags a NaN reps", () => {
     const records = [makeRecord({ reps: NaN })];
     const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
-    expect(errors.some((e) => e.field === "reps")).toBe(true);
+    expect(errors.some((e) => e.field === "reps" && e.code === "REPS_INVALID")).toBe(true);
   });
 
   it("flags an invalid date", () => {
@@ -83,7 +83,21 @@ describe("validateLiftImport", () => {
     const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
     expect(valid).toHaveLength(0);
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({ row: 1, field: "date" });
+    expect(errors[0]).toMatchObject({ row: 1, field: "date", code: "DATE_INVALID" });
+  });
+
+  it("assigns a distinct code per invalid numeric field (cycleNum, workoutNum, setNum)", () => {
+    const records = [
+      makeRecord({ cycleNum: NaN }),
+      makeRecord({ workoutNum: NaN }),
+      makeRecord({ setNum: NaN }),
+    ];
+    const { errors } = validateLiftImport(records, TEST_SLOT_MAP);
+    expect(errors).toMatchObject([
+      { row: 1, field: "cycleNum", code: "CYCLE_NUM_INVALID" },
+      { row: 2, field: "workoutNum", code: "WORKOUT_NUM_INVALID" },
+      { row: 3, field: "setNum", code: "SET_NUM_INVALID" },
+    ]);
   });
 
   it("collects all errors across multiple bad rows", () => {
@@ -162,7 +176,7 @@ describe("validateLiftImport", () => {
         const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
         expect(valid).toHaveLength(0);
         expect(errors).toHaveLength(1);
-        expect(errors[0]).toMatchObject({ row: 1, field: "lift" });
+        expect(errors[0]).toMatchObject({ row: 1, field: "lift", code: "UNRECOGNIZED_LIFT" });
       },
     );
   });

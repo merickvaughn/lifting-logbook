@@ -29,17 +29,17 @@ export function validateLiftImport(
     const rowErrors: ImportError[] = [];
 
     if (isNaN(r.cycleNum))
-      rowErrors.push({ row, field: 'cycleNum', message: 'cycleNum is not a number' });
+      rowErrors.push({ row, field: 'cycleNum', code: 'CYCLE_NUM_INVALID', message: 'cycleNum is not a number' });
     if (isNaN(r.workoutNum))
-      rowErrors.push({ row, field: 'workoutNum', message: 'workoutNum is not a number' });
+      rowErrors.push({ row, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'workoutNum is not a number' });
     if (isNaN(r.setNum))
-      rowErrors.push({ row, field: 'setNum', message: 'setNum is not a number' });
+      rowErrors.push({ row, field: 'setNum', code: 'SET_NUM_INVALID', message: 'setNum is not a number' });
     if (isNaN(r.weight))
-      rowErrors.push({ row, field: 'weight', message: 'weight is not a number' });
+      rowErrors.push({ row, field: 'weight', code: 'WEIGHT_INVALID', message: 'weight is not a number' });
     if (isNaN(r.reps))
-      rowErrors.push({ row, field: 'reps', message: 'reps is not a number' });
+      rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'reps is not a number' });
     if (!r.date || isNaN(r.date.getTime()))
-      rowErrors.push({ row, field: 'date', message: 'date is invalid' });
+      rowErrors.push({ row, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
 
     // String(r.lift ?? ''), not a bare `as unknown as string` cast: r.lift is
     // genuinely `undefined` whenever the uploaded table has no column mapped
@@ -61,9 +61,13 @@ export function validateLiftImport(
       // to map/create an exercise literally named "undefined" (#911 review,
       // second pass). A missing column produces this on every row, so the
       // wrong message would be the dominant experience for that failure mode.
+      // code: LIFT_EMPTY (not UNRECOGNIZED_LIFT) — same code as the "lift is
+      // empty" case in the other three validators (#913): this is a missing
+      // value, not an unrecognized one.
       rowErrors.push({
         row,
         field: IMPORT_ERROR_FIELD_LIFT,
+        code: 'LIFT_EMPTY',
         message: 'Row has no exercise name — check that your file has a "Lift" column.',
       });
     } else if (!Object.prototype.hasOwnProperty.call(slotMap, liftStr)) {
@@ -82,6 +86,7 @@ export function validateLiftImport(
       rowErrors.push({
         row,
         field: IMPORT_ERROR_FIELD_LIFT,
+        code: 'UNRECOGNIZED_LIFT',
         message: `'${liftStr}' isn't a recognized exercise. Map it to an existing exercise or create a new one before importing.`,
       });
     }

@@ -37,7 +37,7 @@ describe("validateStrengthGoalImport", () => {
   it("flags an empty lift", () => {
     const { valid, errors } = validateStrengthGoalImport([makeGoal({ lift: "" })], TEST_SLOT_MAP);
     expect(valid).toHaveLength(0);
-    expect(errors.some((e) => e.field === "lift")).toBe(true);
+    expect(errors.some((e) => e.field === "lift" && e.code === "LIFT_EMPTY")).toBe(true);
   });
 
   it("flags a relative goal missing a numeric ratio", () => {
@@ -50,7 +50,7 @@ describe("validateStrengthGoalImport", () => {
       TEST_SLOT_MAP,
     );
     expect(valid).toHaveLength(0);
-    expect(errors.some((e) => e.field === "ratio")).toBe(true);
+    expect(errors.some((e) => e.field === "ratio" && e.code === "RATIO_INVALID")).toBe(true);
   });
 
   // Regression guard (#911 review): membership must be Object.hasOwnProperty,
