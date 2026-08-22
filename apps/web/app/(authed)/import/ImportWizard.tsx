@@ -605,7 +605,31 @@ export function ImportWizard({
           // other violated — the discarded refetch cost the user the exact
           // extra POST + 409 + refetch round trip this self-heal exists to
           // avoid (#911 review, fifth pass).
-          setCustomLifts(latest);
+          //
+          // Merge rather than replace wholesale. `fetchedLifts` is
+          // authoritative for every id it contains, but this refetch can be in
+          // flight concurrently with a DIFFERENT ambiguous row's own
+          // handleCreateLift call — two rows with different original text each
+          // get their own independent create, so nothing here serializes them.
+          // If that sibling row's create succeeds and appends to customLifts
+          // (below) before this refetch resolves, `fetchedLifts` — a snapshot
+          // the server returned for a request issued before that append —
+          // won't contain it, and replacing wholesale would silently drop a
+          // lift that was genuinely, successfully created just moments ago.
+          // Keeping every `prev` entry `fetchedLifts` doesn't know about (by
+          // id) preserves that sibling's lift without discarding anything
+          // `fetchedLifts` itself added or already agreed on (issue #921).
+          //
+          // Captured into a `const` rather than reading the outer `let latest`
+          // from inside the updater below: a `let`'s narrowing (non-null, just
+          // assigned above) doesn't survive into a closure, so referencing
+          // `latest` there would need a non-null assertion even though it
+          // provably can't be null at this point in the try block.
+          const fetchedLifts = latest;
+          setCustomLifts((prev) => {
+            const fetchedIds = new Set(fetchedLifts.map((l) => l.id));
+            return [...fetchedLifts, ...prev.filter((p) => !fetchedIds.has(p.id))];
+          });
         } catch (fetchErr) {
           refetchFailed = true;
           // Never include `name` — free text lifted straight from the user's
