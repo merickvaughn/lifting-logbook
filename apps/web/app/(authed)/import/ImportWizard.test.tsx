@@ -550,6 +550,10 @@ describe('ImportWizard', () => {
     await user.click(screen.getByRole('button', { name: 'Back' })); // Preview → Review
     await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
 
+    // Positive anchor first — without it, the two negatives below would also
+    // pass if the second "Next" silently failed to leave REVIEW at all
+    // (#911 review, eleventh pass).
+    expect(screen.getByText('Preview changes')).toBeInTheDocument();
     expect(screen.queryByText('Commit failed:')).not.toBeInTheDocument();
     expect(screen.queryByText(/First attempt failed/)).not.toBeInTheDocument();
   });
