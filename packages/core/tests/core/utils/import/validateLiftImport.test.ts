@@ -43,6 +43,25 @@ describe("validateLiftImport", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatchObject({ row: 1, field: "lift" });
     expect(errors[0]!.message).toMatch(/Cable Curls/);
+    // Regression guard (#911): the message must never leak internal jargon —
+    // it's rendered verbatim by a caller with no interactive remap UI of its own.
+    expect(errors[0]!.message).not.toMatch(/slot map/i);
+  });
+
+  // Regression guard (#911 review, second pass): a blank/missing lift value
+  // must never render the interpolated 'undefined' isn't a recognized
+  // exercise... message — the "unrecognized name" message is for a genuinely
+  // typed-but-unknown name, not a missing Lift column, which would otherwise
+  // produce that confusing message on every single row.
+  it("flags an empty lift with a distinct 'no exercise name' message, not the interpolated unrecognized-name one", () => {
+    const records = [makeRecord({ lift: "" as LiftRecord["lift"] })];
+    const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
+    expect(valid).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ row: 1, field: "lift" });
+    expect(errors[0]!.message).not.toMatch(/undefined/);
+    expect(errors[0]!.message).not.toMatch(/isn't a recognized exercise/);
+    expect(errors[0]!.message).toMatch(/no exercise name/i);
   });
 
   it("flags a NaN weight", () => {
@@ -94,5 +113,57 @@ describe("validateLiftImport", () => {
     const { valid, errors } = validateLiftImport([], TEST_SLOT_MAP);
     expect(valid).toHaveLength(0);
     expect(errors).toHaveLength(0);
+  });
+
+  // Regression guard (#911 review, third pass): parity with
+  // validateTrainingMaxImport/validateStrengthGoalImport, both of which
+  // already trim — an untrimmed " Squat" previously failed the exact-case
+  // slotMap lookup and read as unrecognized.
+  it("trims whitespace before resolving a lift abbreviation", () => {
+    const records = [makeRecord({ lift: " Squat " as LiftRecord["lift"] })];
+    const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
+    expect(errors).toHaveLength(0);
+    expect(valid).toHaveLength(1);
+    expect(valid[0]!.lift).toBe("back-squat");
+  });
+
+  it("treats a whitespace-only lift the same as a blank one", () => {
+    const records = [makeRecord({ lift: "   " as LiftRecord["lift"] })];
+    const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
+    expect(valid).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.message).toMatch(/no exercise name/i);
+  });
+
+  // Regression guard (#911 review, fourth pass): a genuinely missing Lift
+  // COLUMN (as opposed to a present-but-blank cell) leaves r.lift undefined
+  // — distinct from '' at the type level, and a bare cast + .trim() (the
+  // third pass's own trim-for-parity fix) threw a TypeError on it instead of
+  // falling through to the blank-lift branch, turning the exact case this
+  // validator exists to handle gracefully into an unhandled 500.
+  it("treats an undefined lift (a missing Lift column) the same as a blank one, without throwing", () => {
+    const records = [makeRecord({ lift: undefined as unknown as LiftRecord["lift"] })];
+    expect(() => validateLiftImport(records, TEST_SLOT_MAP)).not.toThrow();
+    const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
+    expect(valid).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.message).toMatch(/no exercise name/i);
+  });
+
+  // Regression guard (#911 review): membership must be Object.hasOwn, not the `in`
+  // operator, which walks the prototype chain — a lift string of "toString",
+  // "constructor", or "__proto__" must fail like any other unrecognized name, not
+  // silently resolve to an inherited Object.prototype member.
+  describe("prototype-chain safety", () => {
+    it.each(["toString", "constructor", "valueOf", "hasOwnProperty", "__proto__"])(
+      "flags '%s' as an unrecognized lift rather than resolving it via the prototype chain",
+      (liftStr) => {
+        const records = [makeRecord({ lift: liftStr as LiftRecord["lift"] })];
+        const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
+        expect(valid).toHaveLength(0);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatchObject({ row: 1, field: "lift" });
+      },
+    );
   });
 });

@@ -18,7 +18,6 @@ import {
   LiftRecordResponse,
 } from '@lifting-logbook/types';
 import {
-  DEFAULT_SLOT_MAP,
   buildLiftRecordId,
   buildSkippedDetail,
   classifyImportRows,
@@ -38,6 +37,9 @@ import { CreateLiftRecordDto } from './create-lift-record.dto';
 import { UpdateLiftRecordDto } from './update-lift-record.dto';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
+import { effectiveSlotMapFor } from './effective-slot-map.util';
+import { RlsTxTimeout } from '../adapters/prisma/rls-context';
+import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 
 @Controller('programs/:program')
 export class LiftRecordsController {
@@ -168,12 +170,18 @@ export class LiftRecordsController {
    * Imports historical lift records from a CSV file.
    *
    * Validation is all-or-nothing: if any row fails, the entire upload is rejected
-   * with 400 and no records are written.
+   * with 400 and no records are written. Unlike the Smart Import Wizard
+   * (ImportController), this endpoint has no preview/remap step — an unrecognized
+   * lift name cannot be interactively resolved here.
    *
    * Lift abbreviations (e.g. "Bench P.") are resolved to canonical lift IDs
-   * (e.g. "bench-press") via the DEFAULT_SLOT_MAP. Programs do not restrict which
-   * lifts may be imported — all lifts present in the slot map are accepted for any
-   * program. (Preloaded template programs become custom programs when edited; custom
+   * (e.g. "bench-press") via a slot map built fresh per request:
+   * DEFAULT_SLOT_MAP plus the calling user's own custom lifts, by exact name
+   * (effectiveSlotMapFor / buildEffectiveSlotMap — issue #911). DEFAULT_SLOT_MAP
+   * wins on a name collision, so a custom lift can never shadow a canonical
+   * abbreviation. Programs do not restrict which lifts may be imported — all
+   * lifts present in the effective slot map are accepted for any program.
+   * (Preloaded template programs become custom programs when edited; custom
    * programs have no lift restrictions.)
    *
    * Rows whose natural key (cycleNum, workoutNum, date, lift, setNum) already exist
@@ -186,6 +194,13 @@ export class LiftRecordsController {
    */
   @Post('lift-records/import')
   @HttpCode(HttpStatus.CREATED)
+  // Same import transaction budget as ImportController's own import path (#532) — this
+  // endpoint runs the identical shape of work (bulk validate + createMany, now also an
+  // effectiveSlotMapFor query added by #911) inside the same per-request RLS transaction.
+  // Widens how long a pooled connection can be pinned by a slow client upload too, not
+  // just DB work — parity with an already-shipped property on ImportController's own
+  // import path, not a new exposure class; structural fix tracked in #925.
+  @RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)
   async importLiftRecords(
     @Param('program') program: string,
     @Req() req: FastifyRequest,
@@ -202,7 +217,15 @@ export class LiftRecordsController {
       );
     }
 
-    const { valid, errors } = validateLiftImport(parsed, DEFAULT_SLOT_MAP);
+    // Hoisted ahead of validation (was previously fetched only after it) so the slot
+    // map can recognize this user's custom lifts by name, not just the built-in
+    // DEFAULT_SLOT_MAP (#911) — this endpoint has no interactive remap step of its
+    // own, so an exact-name match against an existing custom lift is the only way a
+    // custom lift can ever resolve here.
+    const repos = await this.factory.forUser(user);
+    const { liftRecord } = repos;
+
+    const { valid, errors } = validateLiftImport(parsed, await effectiveSlotMapFor(repos));
     if (errors.length > 0) {
       throw new BadRequestException({ message: 'Validation failed', errors });
     }
@@ -214,7 +237,6 @@ export class LiftRecordsController {
     // (which may reorder nothing but does filter).
     const rows = pairWithRowNumber(valid.map((r) => ({ ...r, program })));
 
-    const { liftRecord } = await this.factory.forUser(user);
     const dupKeys = new Set(
       (await liftRecord.findExistingRecords(program, rows.map(({ r }) => r))).map(
         liftRecordNaturalKey,

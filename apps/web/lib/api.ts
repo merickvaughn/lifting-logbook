@@ -88,6 +88,7 @@ export const {
   deleteStrengthGoal,
   fetchLiftCatalog,
   fetchLiftMetadata,
+  fetchCustomLifts,
   fetchUserSettings,
   updateUserSettings,
   switchProgram,

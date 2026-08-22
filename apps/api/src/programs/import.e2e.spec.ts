@@ -104,6 +104,30 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(body.preview.creates).toBe(1);
     });
 
+    // Regression guard (#911 review, fourth pass): a CSV whose exercise
+    // column is named something other than "Lift" (the case the MAP_COLUMNS
+    // step exists to let a user fix) leaves r.lift undefined on every row —
+    // distinct from a present-but-blank cell (''). A bare cast + .trim() (the
+    // third review pass's own trim-for-parity fix) threw a TypeError on that
+    // undefined instead of falling through to the ambiguous bucket, turning
+    // this recoverable case into a 500 with no way to reach MAP_COLUMNS at all.
+    it('previews a lift-records file whose exercise column is not named "Lift" without a 500, flagging every row ambiguous', async () => {
+      const nonStandardCsv = [
+        'Program,Cycle #,Workout #,Date,Exercise,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+      ].join('\n');
+      const res = await importCsv(
+        'import-lr-nocol',
+        nonStandardCsv,
+        '?mode=preview&destination=lift-records',
+      );
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.errors).toEqual([]);
+      expect(body.preview.deltas).toHaveLength(1);
+      expect(body.preview.deltas[0]).toMatchObject({ status: 'ambiguous' });
+    });
+
     it('routes a training-maxes file to training-maxes', async () => {
       const body = (await importCsv('import-tm-prev', TM_CSV, '?mode=preview')).json();
       expect(body.destination).toBe('training-maxes');
@@ -299,6 +323,151 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
         '?mode=commit&destination=lift-records',
       );
       expect(failRes.statusCode).toBe(400);
+    });
+
+    // Regression guard (#911 review, fourth pass, resolving issue #915 for
+    // its only real trigger surface): an ambiguous row's excludeKeys entry
+    // uses the client's `__ambiguous_<rowIndex>` key scheme, which can never
+    // equal a natural key — the natural-key excludeKeys filter alone can
+    // never omit it. Before this fix the excluded-but-unresolved row reached
+    // strict validation and failed the WHOLE commit (a regression the third
+    // review pass's own liftOverrides-withholding fix introduced, worse than
+    // #915's original silent-bad-import symptom).
+    it('commits successfully when an ambiguous row is excluded via excludeKeys, omitting only that row', async () => {
+      const twoRowCsv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+        '5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,200,5,',
+      ].join('\n');
+      const res = await importCsv(
+        'p3-lr-exclude-ambiguous',
+        twoRowCsv,
+        '?mode=commit&destination=lift-records&excludeKeys=__ambiguous_2',
+      );
+      expect(res.statusCode).toBe(200);
+      // Only row 1 (Bench P.) committed — row 2 was excluded, not merely left
+      // unresolved, so it must not block or appear in the commit at all.
+      expect(res.json().created).toBe(1);
+    });
+
+    // Regression guard (#911 review, fifth pass): __incomplete_N shares the
+    // identical never-matches-a-natural-key problem __ambiguous_N had — an
+    // earlier version of the fix above (fourth pass) covered only
+    // __ambiguous_, missing this sibling key family entirely.
+    it('commits successfully when an incomplete row is excluded via excludeKeys, omitting only that row', async () => {
+      const twoRowCsv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+        '5-3-1,1,1,2026-01-01,Bench P.,1,NOT_A_NUMBER,5,',
+      ].join('\n');
+      const res = await importCsv(
+        'p3-lr-exclude-incomplete',
+        twoRowCsv,
+        '?mode=commit&destination=lift-records&excludeKeys=__incomplete_2',
+      );
+      expect(res.statusCode).toBe(200);
+      expect(res.json().created).toBe(1);
+    });
+
+    // Regression guard (#911 review, fifth pass): excluding a row shortens
+    // the array validateLiftImport numbers positionally — without correcting
+    // for that, a validation error on a row AFTER the excluded one reports
+    // the wrong (post-filter, shifted-down) row number, pointing the user at
+    // the wrong line in their actual CSV file.
+    it('reports the original (pre-exclusion) row number in a validation error after an earlier row was excluded', async () => {
+      const threeRowCsv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,180,5,', // row 1: ambiguous, excluded
+        '5-3-1,1,1,2026-01-01,Bench P.,2,180,5,', // row 2: valid
+        '5-3-1,1,1,2026-01-01,Bench P.,3,NOT_A_NUMBER,5,', // row 3: invalid weight, NOT excluded
+      ].join('\n');
+      const res = await importCsv(
+        'p3-lr-exclude-row-numbering',
+        threeRowCsv,
+        '?mode=commit&destination=lift-records&excludeKeys=__ambiguous_1',
+      );
+      expect(res.statusCode).toBe(400);
+      const body = res.json() as { errors: { row: number; field: string }[] };
+      expect(body.errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ row: 3, field: 'weight' })]),
+      );
+      // Must not report the post-filter array position (2) instead of the
+      // row's actual original position in the uploaded CSV (3).
+      expect(body.errors.some((e) => e.row === 2)).toBe(false);
+    });
+
+    const createCustomLift = (body: unknown) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: '/lifts/custom',
+        headers: { 'content-type': 'application/json', ...AUTH },
+        payload: JSON.stringify(body),
+      });
+
+    // #911: the slot map used for both preview and commit is now built fresh per
+    // request from DEFAULT_SLOT_MAP + the user's custom lifts, so a CSV row whose
+    // raw text already matches an existing custom lift's name resolves immediately.
+    it('recognizes an existing custom lift by name at preview time — no longer ambiguous', async () => {
+      const created = await createCustomLift({
+        name: 'Wide-Grip CBL Curls',
+        classification: 'accessory',
+      });
+      expect(created.statusCode).toBe(201);
+
+      const CUSTOM_LIFT_CSV = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Wide-Grip CBL Curls,1,90,10,',
+      ].join('\n');
+      // destination is passed explicitly (as the Wizard itself does once a
+      // destination is confirmed) rather than relying on auto-classification —
+      // classifyImport's own confidence heuristic runs BEFORE the custom-lift-aware
+      // slot map is ever built, so it has no way to know this row's raw text is a
+      // recognized custom lift; that resolution is previewLiftRecords' job, not
+      // classification's, and this test is about the former.
+      const res = (
+        await importCsv(
+          'p3-custom-lift-preview',
+          CUSTOM_LIFT_CSV,
+          '?mode=preview&destination=lift-records',
+        )
+      ).json();
+      // Array.prototype.every returns true on an empty array — asserting only
+      // "no delta is ambiguous" would pass just as well if the row vanished
+      // entirely (dropped, or a hard-error response with no preview at all),
+      // which is not what "resolves instead of being ambiguous" means. Assert
+      // the row actually exists, resolved, in the expected shape (#911 review,
+      // second pass).
+      expect(res.errors).toEqual([]);
+      expect(res.preview).not.toBeNull();
+      expect(res.preview.deltas).toHaveLength(1);
+      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create' });
+      expect(res.preview.deltas[0].status).not.toBe('ambiguous');
+    });
+
+    // #911: liftOverrides may now resolve to a custom lift's id (not just a
+    // built-in canonical id) — the self-mapping half of buildEffectiveSlotMap
+    // must let an already-resolved custom-lift id pass strict validation.
+    it('commits when liftOverrides references an existing custom lift id', async () => {
+      const created = await createCustomLift({
+        name: 'Custom Commit Lift',
+        classification: 'accessory',
+      });
+      // Asserted before destructuring (review finding on #911's PR): if creation
+      // ever regresses, customLiftId would silently be undefined, dropping the
+      // liftOverrides key entirely and failing on the unrelated `created` assertion
+      // below instead of pointing at this setup step.
+      expect(created.statusCode).toBe(201);
+      const { id: customLiftId } = created.json();
+
+      const overrides = encodeURIComponent(JSON.stringify({ '1': customLiftId }));
+      const res = (
+        await importCsv(
+          'p3-lr-custom-id-override',
+          AMBIGUOUS_LIFT_CSV,
+          `?mode=commit&destination=lift-records&liftOverrides=${overrides}`,
+        )
+      ).json();
+      expect(res.created).toBe(1);
     });
 
     it('excludes rows whose natural key matches excludeKeys', async () => {

@@ -1,9 +1,12 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import Link from 'next/link';
+import { IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import type { ImportError, SkippedRecord } from '@lifting-logbook/types';
 import { importLiftRecords } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 
 interface Props {
   program: string;
@@ -63,6 +66,7 @@ export default function LiftRecordsImportForm({ program }: Props) {
           type="file"
           accept=".csv"
           disabled={status === 'loading'}
+          aria-label="CSV file"
           required
         />
         <button type="submit" disabled={status === 'loading'}>
@@ -80,13 +84,24 @@ export default function LiftRecordsImportForm({ program }: Props) {
           {successData.skipped.length > 0 && (
             <details style={{ marginTop: '0.5rem' }}>
               <summary>Skipped rows</summary>
+              {/* Capped like the error list above — a large duplicate-heavy re-upload (a
+                  realistic retry of a partially-imported file) can skip every row, up to
+                  MAX_IMPORT_ROWS. Being inside <details> only hides this via UA styling;
+                  it does not stop React from creating every <li> on render (#911 review,
+                  ninth pass). */}
               <ul style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                {successData.skipped.map((s) => (
+                {successData.skipped.slice(0, MAX_RENDERED_IMPORT_SKIPS).map((s) => (
                   <li key={`${s.row}-${s.naturalKey}`}>
                     Row {s.row}: {s.naturalKey}
                   </li>
                 ))}
               </ul>
+              {successData.skipped.length > MAX_RENDERED_IMPORT_SKIPS && (
+                <p style={{ marginTop: '0.5rem', fontStyle: 'italic' }}>
+                  …and {successData.skipped.length - MAX_RENDERED_IMPORT_SKIPS} more skipped row(s)
+                  not shown.
+                </p>
+              )}
             </details>
           )}
         </div>
@@ -95,14 +110,38 @@ export default function LiftRecordsImportForm({ program }: Props) {
       {status === 'error' && errors.length > 0 && (
         <div style={{ marginTop: '1rem', color: 'red' }}>
           <strong>Upload rejected — fix the following errors and try again:</strong>
+          {errors.some((err) => err.field === IMPORT_ERROR_FIELD_LIFT) && (
+            <p style={{ marginTop: '0.5rem' }}>
+              This form can&apos;t map an unrecognized exercise name to an existing
+              one or create it for you. <Link href="/import">Use the Smart Import
+              Wizard</Link> instead — it lets you resolve unrecognized exercises
+              interactively before anything is imported.
+            </p>
+          )}
+          {/* Capped like ImportWizard.tsx's own commitErrors list — this
+              form is all-or-nothing against up to MAX_IMPORT_ROWS rows, and
+              a CSV whose exercise column isn't named "Lift" produces one
+              error per row, so an uncapped list can run to thousands of
+              <li> nodes in one render. Placed after (not before) the Wizard
+              guidance above, so the most useful next step isn't pushed
+              below the fold by the very list its own error most commonly
+              triggers. The "N more" line below is required, not cosmetic —
+              without it, a user who fixes exactly the visible rows and
+              re-uploads is rejected again with no indication more errors
+              exist (#911 review, eighth pass). */}
           <ul style={{ fontFamily: 'monospace', fontSize: '0.85rem', marginTop: '0.5rem' }}>
-            {errors.map((err, i) => (
+            {errors.slice(0, MAX_RENDERED_IMPORT_ERRORS).map((err, i) => (
               <li key={i}>
                 Row {err.row}
                 {err.field ? ` (${err.field})` : ''}: {err.message}
               </li>
             ))}
           </ul>
+          {errors.length > MAX_RENDERED_IMPORT_ERRORS && (
+            <p style={{ marginTop: '0.5rem', fontStyle: 'italic' }}>
+              …and {errors.length - MAX_RENDERED_IMPORT_ERRORS} more error(s) not shown.
+            </p>
+          )}
         </div>
       )}
     </section>

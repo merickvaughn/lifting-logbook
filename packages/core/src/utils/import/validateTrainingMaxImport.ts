@@ -1,4 +1,4 @@
-import { ImportError } from '@lifting-logbook/types';
+import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import { DEFAULT_SLOT_MAP } from '../../catalog/slotMaps';
 import { TrainingMax } from '../../models';
 
@@ -29,7 +29,7 @@ export function validateTrainingMaxImport(
     const rowErrors: ImportError[] = [];
 
     const liftStr = String(m.lift ?? '').trim();
-    if (!liftStr) rowErrors.push({ row, field: 'lift', message: 'lift is empty' });
+    if (!liftStr) rowErrors.push({ row, field: IMPORT_ERROR_FIELD_LIFT, message: 'lift is empty' });
     if (typeof m.weight !== 'number' || isNaN(m.weight))
       rowErrors.push({ row, field: 'weight', message: 'weight is not a number' });
     if (!m.dateUpdated || isNaN(m.dateUpdated.getTime()))
@@ -38,7 +38,15 @@ export function validateTrainingMaxImport(
     if (rowErrors.length > 0) {
       errors.push(...rowErrors);
     } else {
-      const resolved = slotMap[liftStr] ?? liftStr;
+      // Object.prototype.hasOwnProperty.call, not a bare slotMap[liftStr] lookup:
+      // slotMap is a plain object, and `?? liftStr` only catches null/undefined —
+      // an inherited Object.prototype member (from a lift string of "toString",
+      // "constructor", "__proto__", etc.) is neither, so it would otherwise
+      // resolve to that inherited function/object instead of passing the name
+      // through verbatim like any other unmatched name (issue #911 review).
+      const resolved = Object.prototype.hasOwnProperty.call(slotMap, liftStr)
+        ? slotMap[liftStr]!
+        : liftStr;
       valid.push({ ...m, lift: resolved as TrainingMax['lift'] });
     }
   });

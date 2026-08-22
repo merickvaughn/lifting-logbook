@@ -409,6 +409,19 @@
   margin: 0;
 }
 
+/* The "…and N more error(s) not shown" line under a capped errorList — distinct from
+   .errorNote (a single top-level error message) since this is a caption about the list
+   above it, not a peer error of its own. Deliberately not the same red-and-plain look as
+   .errorList's own <li> rows, so it doesn't read as "one more error item" (#911 review,
+   ninth pass — this element previously had no class at all and inherited neither red nor
+   small-size styling from its .errorBox/.errorList siblings). */
+.errorOverflowNote {
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  color: var(--color-error, #e74c3c);
+  margin: var(--space-2) 0 0;
+}
+
 .successBanner {
   display: flex;
   flex-direction: column;
@@ -452,6 +465,17 @@
   font-size: var(--font-size-sm);
   font-family: monospace;
   color: var(--color-text-muted);
+}
+
+/* The "…and N more skipped row(s) not shown" line under a capped skippedDetailList —
+   deliberately muted like its list, not red like .errorOverflowNote: a skip is an
+   informational duplicate-record notice, not a validation error (#911 review, ninth
+   pass). */
+.skippedOverflowNote {
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  color: var(--color-text-muted);
+  margin: var(--space-2) 0 0;
 }
 
 /* ── Action row ────────────────────────────────────────────── */
@@ -761,6 +785,57 @@
 .ambiguousInput:focus {
   outline: none;
   box-shadow: 0 0 0 3px var(--color-accent-glow);
+}
+
+/* ── Ambiguous row: create new exercise (#911) ─────────────── */
+
+.createLiftAffordance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.createLiftPrompt {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Scaled like .chip (not .btnSecondary, which is a 48px full-size action
+   button) so the confirm control sits visually level with the classification
+   chips beside it. */
+.createLiftConfirm {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.createLiftConfirm:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.createLiftConfirm:disabled {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.createLiftError {
+  font-size: var(--font-size-sm);
+  color: var(--color-error, #e74c3c);
 }
 
 .undoExclude {

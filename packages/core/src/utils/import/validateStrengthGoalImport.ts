@@ -1,4 +1,4 @@
-import { ImportError } from '@lifting-logbook/types';
+import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import { DEFAULT_SLOT_MAP } from '../../catalog/slotMaps';
 import { StrengthGoalEntry } from '../../models';
 
@@ -28,7 +28,7 @@ export function validateStrengthGoalImport(
     const rowErrors: ImportError[] = [];
 
     const liftStr = String(g.lift ?? '').trim();
-    if (!liftStr) rowErrors.push({ row, field: 'lift', message: 'lift is empty' });
+    if (!liftStr) rowErrors.push({ row, field: IMPORT_ERROR_FIELD_LIFT, message: 'lift is empty' });
 
     if (g.goalType !== 'absolute' && g.goalType !== 'relative') {
       rowErrors.push({ row, field: 'goalType', message: `goalType must be 'absolute' or 'relative'` });
@@ -45,7 +45,12 @@ export function validateStrengthGoalImport(
     if (rowErrors.length > 0) {
       errors.push(...rowErrors);
     } else {
-      valid.push({ ...g, lift: slotMap[liftStr] ?? liftStr });
+      // Object.prototype.hasOwnProperty.call — see validateTrainingMaxImport.ts
+      // for why a bare `slotMap[liftStr] ?? liftStr` lookup is unsafe here.
+      const resolved = Object.prototype.hasOwnProperty.call(slotMap, liftStr)
+        ? slotMap[liftStr]!
+        : liftStr;
+      valid.push({ ...g, lift: resolved });
     }
   });
 

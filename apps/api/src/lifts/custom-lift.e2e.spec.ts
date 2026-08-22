@@ -97,6 +97,86 @@ describe('Custom Lifts HTTP (e2e, in-memory adapters)', () => {
     expect(dup.statusCode).toBe(409);
   });
 
+  // #911 review: a case-variant of a canonical alias (e.g. "squat" for "Squat")
+  // would otherwise create successfully — custom-lift name uniqueness is scoped
+  // to this user and is exact-case — but buildEffectiveSlotMap always lets
+  // DEFAULT_SLOT_MAP win on an exact-case collision, so that lift would never
+  // actually be reachable by that name at import time, silently fragmenting
+  // its history across two ids.
+  it('rejects a name matching a canonical alias case-insensitively with 409', async () => {
+    const exact = await create({ name: 'Squat', classification: 'compound' });
+    expect(exact.statusCode).toBe(409);
+
+    const lower = await create({ name: 'squat', classification: 'compound' });
+    expect(lower.statusCode).toBe(409);
+
+    const mixedAbbreviation = await create({ name: 'bench p.', classification: 'compound' });
+    expect(mixedAbbreviation.statusCode).toBe(409);
+  });
+
+  it('rejects a PATCH rename to a name matching a canonical alias case-insensitively', async () => {
+    const created = await create({ name: 'Rename Target Lift', classification: 'compound' });
+    const { id } = created.json() as CustomLiftResponse;
+
+    const res = await inject('PATCH', `/lifts/custom/${id}`, { body: { name: 'DEADLIFT' } });
+    expect(res.statusCode).toBe(409);
+  });
+
+  // Regression guard (#911 review, sixth pass): UpdateCustomLiftDto now uses
+  // @ValidateIf rather than @IsOptional() on every field (see the DTO's own
+  // comment) specifically so {"name": null} is REJECTED with 400 — not just
+  // "doesn't crash the in-memory-adapter-backed test harness" (round five's
+  // narrower fix, which left production's Prisma adapter still 500ing on the
+  // identical request; the in-memory adapter can't distinguish the two
+  // outcomes, which is exactly why this must assert the specific status
+  // rather than merely ruling out 500). Asserting a proper 400 is adapter-
+  // independent: class-validator rejects the request in the Nest pipe,
+  // before the controller method — and therefore either repository
+  // implementation — is ever reached, so no cleanup is needed here (the
+  // existing lift is never touched).
+  it('rejects a PATCH with an explicit name: null with 400, not a crash or a silent no-op', async () => {
+    const created = await create({ name: 'Null Rename Target', classification: 'compound' });
+    const { id } = created.json() as CustomLiftResponse;
+
+    const res = await inject('PATCH', `/lifts/custom/${id}`, { body: { name: null } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  // #911 review, third pass: the reserved-alias 409 above and a genuine
+  // same-user duplicate-name 409 must not share a message — the reused
+  // CustomLiftConflictError message ("A custom lift named 'squat' already
+  // exists") asserted something false for the reserved-alias case, since no
+  // custom lift by that name exists at all.
+  it('distinguishes a reserved-alias 409 from a genuine duplicate-name 409 by message', async () => {
+    const reserved = await create({ name: 'squat', classification: 'compound' });
+    expect(reserved.statusCode).toBe(409);
+    expect((reserved.json() as { message: string }).message).toMatch(/reserved exercise name/i);
+    expect((reserved.json() as { message: string }).message).not.toMatch(/already exists/i);
+
+    await create({ name: 'Genuinely Duplicated Lift', classification: 'compound' });
+    const duplicate = await create({ name: 'Genuinely Duplicated Lift', classification: 'compound' });
+    expect(duplicate.statusCode).toBe(409);
+    expect((duplicate.json() as { message: string }).message).toMatch(/already exists/i);
+  });
+
+  // #911 review, third pass: untrimmed whitespace previously defeated the
+  // canonical-alias collision guard entirely (" Squat" !== "squat"
+  // case-insensitively) and would have registered as a live, whitespace-padded
+  // key in buildEffectiveSlotMap.
+  it('rejects a name that only matches a canonical alias after trimming whitespace', async () => {
+    const leading = await create({ name: ' Squat', classification: 'compound' });
+    expect(leading.statusCode).toBe(409);
+
+    const trailing = await create({ name: 'squat ', classification: 'compound' });
+    expect(trailing.statusCode).toBe(409);
+  });
+
+  it('trims whitespace from a genuinely new custom lift name before persisting', async () => {
+    const res = await create({ name: '  Sissy Squat  ', classification: 'accessory' });
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as CustomLiftResponse).name).toBe('Sissy Squat');
+  });
+
   it('updates classification, movementProfile and name via PATCH', async () => {
     const created = await create({ name: 'Belt Squat', classification: 'accessory' });
     const id = (created.json() as CustomLiftResponse).id;
@@ -175,6 +255,20 @@ describe('Custom Lifts HTTP (e2e, in-memory adapters)', () => {
     });
     it('rejects a primitive movementProfile with 400 (no nested no-op bypass)', async () => {
       const res = await create({ name: 'Primitive Profile', classification: 'compound', movementProfile: 'squat' });
+      expect(res.statusCode).toBe(400);
+    });
+    // Regression guard (#911 review, seventh pass): CreateCustomLiftDto's
+    // movementProfile/isBodyweightComponent were still @IsOptional() (round
+    // six fixed only the sibling UpdateCustomLiftDto's identical gap) — an
+    // explicit `null` reaches this method's own defaults today rather than a
+    // hard crash, but that's incidental to two adapters' own `?? {}`/`?.`
+    // chains, not enforced at the boundary.
+    it('rejects an explicit movementProfile: null with 400', async () => {
+      const res = await create({ name: 'Null Profile', classification: 'compound', movementProfile: null });
+      expect(res.statusCode).toBe(400);
+    });
+    it('rejects an explicit isBodyweightComponent: null with 400', async () => {
+      const res = await create({ name: 'Null Bodyweight Flag', classification: 'compound', isBodyweightComponent: null });
       expect(res.statusCode).toBe(400);
     });
     it('rejects an unknown extra field with 400', async () => {

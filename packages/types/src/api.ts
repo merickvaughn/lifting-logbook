@@ -489,6 +489,19 @@ export interface ImportError {
   message: string;
 }
 
+/**
+ * The `ImportError.field` value used for an unrecognized lift name
+ * (validateLiftImport.ts). Shared as a named constant — not a bare `'lift'`
+ * string literal — so a UI keying an affordance off this value (e.g.
+ * LiftRecordsImportForm's Smart Import Wizard link) can't silently stop
+ * matching if the producing end is ever renamed, with no type error at
+ * either end to catch it (issue #911 review). `ImportError.field` stays a
+ * free-form `string`, not a full field-name union, since several other
+ * validators (training-maxes, strength-goals, program-spec) each have their
+ * own distinct field sets this constant does not attempt to enumerate.
+ */
+export const IMPORT_ERROR_FIELD_LIFT = 'lift' as const;
+
 /** A row that was silently skipped because its natural key already exists. */
 export interface SkippedRecord {
   /**

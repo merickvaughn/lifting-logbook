@@ -62,4 +62,42 @@ describe('validateLiftImportSoft', () => {
     expect(result.ambiguous).toHaveLength(0);
     expect(result.hardErrors).toHaveLength(0);
   });
+
+  // Regression guard (#911 review, third pass): parity with
+  // validateLiftImport (see its own test) — an untrimmed known lift value
+  // previously failed the exact-case slotMap lookup and landed in the
+  // ambiguous bucket instead of valid.
+  it('trims whitespace before resolving a known lift', () => {
+    const r = record({ lift: `  ${KNOWN_LIFT}  ` });
+    const result = validateLiftImportSoft([r], SLOT_MAP);
+    expect(result.valid).toHaveLength(1);
+    expect(result.ambiguous).toHaveLength(0);
+  });
+
+  // Regression guard (#911 review, fourth pass): a genuinely missing Lift
+  // COLUMN (r.lift undefined, distinct from a present-but-blank '' cell) must
+  // land in the ambiguous bucket, not throw — see validateLiftImport.test.ts
+  // for the full rationale.
+  it('puts a row with an undefined lift (a missing Lift column) in the ambiguous bucket, without throwing', () => {
+    const r = record({ lift: undefined as unknown as string });
+    expect(() => validateLiftImportSoft([r], SLOT_MAP)).not.toThrow();
+    const result = validateLiftImportSoft([r], SLOT_MAP);
+    expect(result.ambiguous).toHaveLength(1);
+    expect(result.ambiguous[0]!.originalLift).toBe('');
+    expect(result.valid).toHaveLength(0);
+  });
+
+  // Regression guard (#911 review): membership must be Object.hasOwn, not the `in`
+  // operator, which walks the prototype chain — "toString"/"constructor"/"__proto__"
+  // must land in the ambiguous bucket like any other unrecognized name, not resolve
+  // via an inherited Object.prototype member.
+  it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__'])(
+    "puts a row with lift '%s' in the ambiguous bucket rather than resolving it via the prototype chain",
+    (liftStr) => {
+      const r = record({ lift: liftStr });
+      const result = validateLiftImportSoft([r], SLOT_MAP);
+      expect(result.ambiguous).toHaveLength(1);
+      expect(result.valid).toHaveLength(0);
+    },
+  );
 });

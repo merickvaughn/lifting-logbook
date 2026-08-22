@@ -151,3 +151,53 @@ test('import wizard MAP_COLUMNS: fuzzy-matched columns shown; override unmapped 
   await nextButton.click();
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
 });
+
+test('import wizard REVIEW: create a new exercise for an unrecognized lift, resolving every matching row', async ({ page, request }) => {
+  // #911: an unrecognized lift name reaches REVIEW as an ambiguous row (never a
+  // raw internal error), and the inline "create new exercise" affordance lets
+  // the user resolve it — and every other row sharing the same original text —
+  // without leaving the wizard.
+  await request.get(`${MOCK_API}/__reset?withCustomProgram=true&withAmbiguousLift=true`);
+
+  await page.goto('/import');
+  await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
+  await page.getByLabel('CSV file').setInputFiles({
+    name: 'lifts.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(
+      'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n' +
+        '5-3-1,1,1,2026-01-01,Wide-Grip CBL Curls,1,90,10\n' +
+        '5-3-1,1,1,2026-01-01,Wide-Grip CBL Curls,2,90,8',
+    ),
+  });
+  await page.getByRole('button', { name: 'Analyze' }).click();
+
+  // Low-confidence: manual destination picker. Pick "Lift History".
+  await expect(page.getByText(/couldn.t confidently tell/i)).toBeVisible();
+  await page.getByRole('button', { name: /Lift History/ }).click();
+
+  await page.getByRole('button', { name: 'Next', exact: true }).click(); // Map → Review
+  await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
+
+  // Both ambiguous rows surface the create-new affordance for the same name.
+  const prompts = page.getByText('No match — create "Wide-Grip CBL Curls" as a new exercise');
+  await expect(prompts).toHaveCount(2);
+
+  const createButtons = page.getByRole('button', { name: 'Create "Wide-Grip CBL Curls" as a new exercise' });
+  await expect(createButtons.first()).toBeDisabled();
+
+  // Pick a classification, then confirm — only the first row's chips/button are used;
+  // the second row resolves via batch-matching, not a second creation.
+  await page.getByRole('button', { name: 'Accessory' }).first().click();
+  await expect(createButtons.first()).toBeEnabled();
+  await createButtons.first().click();
+
+  // Both rows resolve — the create-new prompt disappears everywhere.
+  await expect(prompts).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Next', exact: true }).click(); // Review → Preview
+  await expect(page.getByRole('heading', { name: 'Preview changes' })).toBeVisible();
+  await page.getByRole('button', { name: 'Commit import' }).click();
+
+  await expect(page.getByText('Import complete')).toBeVisible();
+});

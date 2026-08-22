@@ -45,10 +45,18 @@ export async function runBatch(
  *
  * This single value governs **both** import paths so they can't drift:
  * - **Request path** (the production HTTP import): `runInteractive` reuses the RLS
- *   request transaction and ignores the options below, so `ImportController` carries
- *   `@RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)` to widen that enclosing transaction.
+ *   request transaction and ignores the options below, so every HTTP import handler
+ *   carries `@RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)` to widen that enclosing transaction.
+ *   Current carriers are asserted individually by `import.controller.spec.ts` and
+ *   `lift-records.controller.spec.ts` — check those specs, not this comment, for the
+ *   up-to-date set (a prose list here already went stale once, #911 review, ninth pass).
  * - **Self-opened path** (system-DB factory / unit tests, where the repository holds
  *   the base client): `runInteractive` opens its own transaction with the options below.
+ *
+ * Known gaps in the request path, tracked rather than fixed here: it never receives
+ * `IMPORT_BATCH_TX_OPTIONS`'s `maxWait` (#924), and `RlsInterceptor` opens the transaction
+ * before the handler body runs, so a slow client upload is inside the transaction window
+ * too, not just DB work (#925).
  */
 export const IMPORT_TX_TIMEOUT_MS = 30_000;
 

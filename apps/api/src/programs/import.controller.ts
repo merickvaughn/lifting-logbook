@@ -25,11 +25,11 @@ import {
   applyColumnOverrides,
   splitLiftRecordsByDestination,
   validateLiftImportSoft,
+  validateLiftImport,
   buildLiftRecordsPreviewSoft,
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
   liftRecordNaturalKey,
-  DEFAULT_SLOT_MAP,
 } from '@lifting-logbook/core';
 import type { SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
@@ -42,6 +42,7 @@ import { RlsTxTimeout } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
+import { effectiveSlotMapFor } from './effective-slot-map.util';
 
 /**
  * Unified Smart Import endpoint (#477, #615).
@@ -284,7 +285,10 @@ export class ImportController {
       };
     }
 
-    const softResult = validateLiftImportSoft(parsed, DEFAULT_SLOT_MAP);
+    // Custom lifts are folded into the slot map fresh per request (#911) so a row whose
+    // raw text already matches an existing custom lift's name resolves immediately
+    // instead of being flagged ambiguous.
+    const softResult = validateLiftImportSoft(parsed, await effectiveSlotMapFor(repos));
     if (softResult.hardErrors.length) {
       return { classification, destination, columnMappings, preview: null, errors: softResult.hardErrors };
     }
@@ -355,7 +359,12 @@ export class ImportController {
       });
     }
 
-    // Apply lift overrides BEFORE strict validation so remapped names pass the slot map check
+    // Apply lift overrides BEFORE strict validation so remapped names pass the slot map check.
+    // Must run before the ambiguous-row exclusion filter below: both key off
+    // the row's position in `parsed` as originally parsed (1-based), and
+    // .filter() (unlike this .map()) changes array length/indices — reversing
+    // the order would silently apply row N's override to whatever shifted
+    // into row N's old position after an earlier row was removed.
     if (destination === 'lift-records' && Object.keys(liftOverrides).length > 0) {
       parsed = (parsed as LiftRecord[]).map((r, i) => {
         const canonical = liftOverrides[String(i + 1)];
@@ -363,9 +372,61 @@ export class ImportController {
       });
     }
 
-    // Strict validation (with overrides applied)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
-    const { valid: rawValid, errors } = handler.validate(parsed as any);
+    // An ambiguous OR incomplete lift-records row's excludeKeys entry uses
+    // the client's `__ambiguous_<rowIndex>` / `__incomplete_<rowIndex>` key
+    // schemes (buildImportPreview.ts) — never a natural key, so the
+    // natural-key excludeKeys filter further below can't match either
+    // (issue #915, fully resolved here — both statuses share the identical
+    // failure mode: no other in-wizard repair path, and an excluded row that
+    // still reached strict validation used to fail the WHOLE commit).
+    //
+    // Filtering also shortens `parsed`, which would otherwise mis-number
+    // every subsequent row's validation-error `row` field —
+    // validateLiftImport's row numbers are purely positional. `survivingRowOriginalIndexes`
+    // records each kept row's original 1-based position before filtering;
+    // errors are remapped back to it after validation runs, so a failed
+    // commit still points at the right CSV line.
+    let survivingRowOriginalIndexes: number[] | null = null;
+    if (destination === 'lift-records' && excludeKeys.size > 0) {
+      const excludedRowIndexes = new Set(
+        [...excludeKeys]
+          .map((k) => /^__(?:ambiguous|incomplete)_(\d+)$/.exec(k)?.[1])
+          .filter((s): s is string => s !== undefined)
+          .map(Number),
+      );
+      if (excludedRowIndexes.size > 0) {
+        const kept: LiftRecord[] = [];
+        const originalIndexes: number[] = [];
+        (parsed as LiftRecord[]).forEach((r, i) => {
+          const originalRowIndex = i + 1;
+          if (excludedRowIndexes.has(originalRowIndex)) return;
+          kept.push(r);
+          originalIndexes.push(originalRowIndex);
+        });
+        parsed = kept;
+        survivingRowOriginalIndexes = originalIndexes;
+      }
+    }
+
+    // Strict validation (with overrides applied). Lift-records gets a custom-lift-aware
+    // slot map built fresh per request (#911), special-cased here rather than threading
+    // extra context through the generic ImportHandler.validate signature — matching this
+    // method's other per-destination special cases below (excludeKeys filtering, splitDest
+    // partitioning). liftRecordsHandler.validate (import-handlers.ts) is unreachable for
+    // this destination as a result, but stays in place to satisfy the ImportHandler<T>
+    // interface the other three destinations still use.
+    let rawValid: unknown[];
+    let errors: ImportError[];
+    if (destination === 'lift-records') {
+      ({ valid: rawValid, errors } = validateLiftImport(parsed as LiftRecord[], await effectiveSlotMapFor(repos)));
+      if (survivingRowOriginalIndexes) {
+        const originalIndexes = survivingRowOriginalIndexes;
+        errors = errors.map((e) => ({ ...e, row: originalIndexes[e.row - 1] ?? e.row }));
+      }
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
+      ({ valid: rawValid, errors } = handler.validate(parsed as any));
+    }
     if (errors.length > 0) {
       throw new BadRequestException({ message: 'Validation failed', errors });
     }
@@ -426,6 +487,20 @@ export class ImportController {
     destination: ImportKind,
     table: SpreadsheetCell[][],
   ): { valid: unknown[]; errors: ImportError[] } {
+    // lift-records must never reach here. Its only current caller — preview()
+    // — branches lift-records off to previewLiftRecords before ever calling
+    // this method (see the destination check immediately above this.preview's
+    // call site). liftRecordsHandler.validate throws unconditionally
+    // (import-handlers.ts) rather than silently falling back to a
+    // non-custom-lift-aware slot map, so without this explicit guard a future
+    // refactor that lost that branch would surface as that generic throw
+    // message here instead of a message naming the actual broken invariant
+    // (issue #911 review, third pass).
+    if (destination === 'lift-records') {
+      throw new Error(
+        "parseAndValidate must not be called for 'lift-records' — route through previewLiftRecords instead",
+      );
+    }
     const handler = IMPORT_HANDLERS[destination]!;
     let parsed: unknown[];
     try {
@@ -441,14 +516,6 @@ export class ImportController {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     return handler.validate(parsed as any);
-  }
-
-  private parseAndValidateOrThrow(destination: ImportKind, table: SpreadsheetCell[][]): unknown[] {
-    const { valid, errors } = this.parseAndValidate(destination, table);
-    if (errors.length > 0) {
-      throw new BadRequestException({ message: 'Validation failed', errors });
-    }
-    return valid;
   }
 }
 

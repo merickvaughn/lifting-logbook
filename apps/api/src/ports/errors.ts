@@ -52,3 +52,15 @@ export class CustomLiftConflictError extends Error {
     this.name = 'CustomLiftConflictError';
   }
 }
+
+// Distinct from CustomLiftConflictError: reusing that error's message for a
+// name that case-insensitively shadows a built-in canonical alias asserted
+// something false — no custom lift by that name exists — and made this
+// endpoint's 409 mean two different things with no way to tell them apart
+// from the response alone (issue #911 review, third pass).
+export class ReservedLiftNameConflictError extends Error {
+  constructor(public readonly liftName: string) {
+    super(`'${liftName}' is a reserved exercise name and cannot be used for a custom exercise`);
+    this.name = 'ReservedLiftNameConflictError';
+  }
+}

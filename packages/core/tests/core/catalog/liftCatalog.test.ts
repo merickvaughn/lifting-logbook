@@ -1,5 +1,5 @@
-import { DEFAULT_SLOT_MAP, LIFT_CATALOG, resolveLift } from "@src/core";
-import type { Lift } from "@lifting-logbook/types";
+import { DEFAULT_SLOT_MAP, ALL_SLOT_MAP_ALIASES, LIFT_CATALOG, resolveLift, buildEffectiveSlotMap } from "@src/core";
+import type { Lift, CustomLift } from "@lifting-logbook/types";
 
 describe("LIFT_CATALOG", () => {
   it("contains at least 20 lifts", () => {
@@ -257,5 +257,105 @@ describe("resolveLift with custom lifts", () => {
     expect(() => resolveLift('Squat', badMap, LIFT_CATALOG, [customSafetyBar])).toThrow(
       /not found in catalog/,
     );
+  });
+});
+
+// Regression guard (#911 review, second pass): a test asserting only that
+// ALL_SLOT_MAP_ALIASES contains a canonical *value* would still pass against
+// a reverted implementation equivalent to the old CANONICAL_LIFT_IDS (values
+// only) — the assertions on a canonical *key* below are what actually prove
+// the fix (a client "is this lift known" check built from this must recognize
+// human-typed aliases like "Squat", not just internal ids like "back-squat").
+describe("ALL_SLOT_MAP_ALIASES", () => {
+  it("contains every DEFAULT_SLOT_MAP key (human-readable aliases), not just its values", () => {
+    for (const key of Object.keys(DEFAULT_SLOT_MAP)) {
+      expect(ALL_SLOT_MAP_ALIASES).toContain(key);
+    }
+  });
+
+  it("contains every DEFAULT_SLOT_MAP value (canonical ids)", () => {
+    for (const value of Object.values(DEFAULT_SLOT_MAP)) {
+      expect(ALL_SLOT_MAP_ALIASES).toContain(value);
+    }
+  });
+
+  it("contains a genuine display-name key that is not also a value", () => {
+    // "Squat" is a key (a human-typed alias) that resolves to "back-squat" —
+    // it is never itself a DEFAULT_SLOT_MAP value, so this specifically
+    // exercises the keys-half of the union, not just overlap with the values.
+    expect(ALL_SLOT_MAP_ALIASES).toContain("Squat");
+    expect(Object.values(DEFAULT_SLOT_MAP)).not.toContain("Squat");
+  });
+});
+
+describe("buildEffectiveSlotMap", () => {
+  function makeCustomLift(overrides: Partial<CustomLift> = {}): CustomLift {
+    return {
+      id: 'custom-1',
+      name: 'Wide-Grip CBL Curls',
+      classification: 'accessory',
+      movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
+      userId: 'user-1',
+      isCustom: true,
+      createdAt: new Date('2026-01-01'),
+      ...overrides,
+    };
+  }
+
+  it("returns DEFAULT_SLOT_MAP unchanged when there are no custom lifts", () => {
+    expect(buildEffectiveSlotMap([])).toEqual(DEFAULT_SLOT_MAP);
+  });
+
+  it("merges a custom lift by both its display name and its own id", () => {
+    const lift = makeCustomLift();
+    const merged = buildEffectiveSlotMap([lift]);
+    expect(merged[lift.name]).toBe(lift.id);
+    expect(merged[lift.id]).toBe(lift.id);
+    // Built-ins are still present, untouched
+    expect(merged['Squat']).toBe('back-squat');
+  });
+
+  it("lets DEFAULT_SLOT_MAP win when a custom lift's name collides with a built-in key", () => {
+    const lift = makeCustomLift({ name: 'Squat', id: 'custom-squat-id' });
+    const merged = buildEffectiveSlotMap([lift]);
+    // Canonical "Squat" must keep resolving to the shared built-in lift, not this user's custom lift
+    expect(merged['Squat']).toBe('back-squat');
+    // The custom lift is still reachable directly by its own id
+    expect(merged[lift.id]).toBe(lift.id);
+  });
+
+  it("merges multiple custom lifts", () => {
+    const a = makeCustomLift({ id: 'custom-a', name: 'Custom A' });
+    const b = makeCustomLift({ id: 'custom-b', name: 'Custom B' });
+    const merged = buildEffectiveSlotMap([a, b]);
+    expect(merged['Custom A']).toBe('custom-a');
+    expect(merged['Custom B']).toBe('custom-b');
+  });
+
+  // Regression guard (#911 review): a custom lift literally named "toString",
+  // "constructor", "__proto__", etc. must register (or, once registered, be
+  // absent) exactly like any other name — none of these should silently be
+  // absorbed by Object.prototype's own members instead of being treated as
+  // real, missing, or present keys.
+  it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty'])(
+    "correctly registers a custom lift named '%s'",
+    (name) => {
+      const lift = makeCustomLift({ id: 'custom-weird', name });
+      const merged = buildEffectiveSlotMap([lift]);
+      expect(merged[name]).toBe('custom-weird');
+    },
+  );
+
+  it("registers a custom lift literally named '__proto__' (not silently dropped)", () => {
+    const lift = makeCustomLift({ id: 'custom-proto', name: '__proto__' });
+    const merged = buildEffectiveSlotMap([lift]);
+    expect(Object.prototype.hasOwnProperty.call(merged, '__proto__')).toBe(true);
+    expect(merged['__proto__']).toBe('custom-proto');
+  });
+
+  it("does not resolve an unrecognized name via an inherited Object.prototype member", () => {
+    const merged = buildEffectiveSlotMap([]);
+    expect(Object.prototype.hasOwnProperty.call(merged, 'toString')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(merged, 'constructor')).toBe(false);
   });
 });

@@ -1,8 +1,10 @@
 import type {
   BodyWeightResponse,
+  CreateCustomLiftRequest,
   CreateCustomProgramRequest,
   CreateLiftOverrideRequest,
   CreateLiftRecordRequest,
+  CustomLiftResponse,
   CustomProgramResponse,
   CustomProgramSummaryResponse,
   CycleDashboardResponse,
@@ -502,6 +504,19 @@ export function createApiClient(config: ApiClientConfig) {
     patchLiftMetadata(lift: string, body: PatchLiftMetadataRequest): Promise<LiftMetadataResponse> {
       return request(`/lifts/${enc(lift)}/metadata`, {
         method: 'PATCH',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    fetchCustomLifts(): Promise<CustomLiftResponse[]> {
+      return request('/lifts/custom', { cache: 'no-store' });
+    },
+    // Returns null on 409 (a custom lift with this name already exists) — the
+    // caller should treat null as "already exists" rather than error (#911).
+    createCustomLift(body: CreateCustomLiftRequest): Promise<CustomLiftResponse | null> {
+      return requestOrConflict('/lifts/custom', {
+        method: 'POST',
         headers: JSON_HEADERS,
         body: JSON.stringify(body),
         cache: 'no-store',
