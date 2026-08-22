@@ -375,30 +375,17 @@ export class ImportController {
     // An ambiguous OR incomplete lift-records row's excludeKeys entry uses
     // the client's `__ambiguous_<rowIndex>` / `__incomplete_<rowIndex>` key
     // schemes (buildImportPreview.ts) — never a natural key, so the
-    // natural-key excludeKeys filter further below is structurally unable to
-    // match either (issue #915). Both statuses share the identical failure
-    // mode and the identical only-recourse-is-exclude UI (the × button
-    // renders for every delta row regardless of status, and neither status
-    // has any other in-wizard repair path for lift-records) — an earlier
-    // version of this fix (#911 review, fourth pass) covered only
-    // `__ambiguous_`, missing `__incomplete_`; without this an excluded
-    // incomplete row (a bad numeric/date field, with no way to fix it short
-    // of excluding and re-uploading) still failed the WHOLE commit exactly
-    // like an unhandled ambiguous row did before this fix existed at all
-    // (#911 review, fifth pass — caught by a subsequent review round on this
-    // same fix).
+    // natural-key excludeKeys filter further below can't match either
+    // (issue #915, fully resolved here — both statuses share the identical
+    // failure mode: no other in-wizard repair path, and an excluded row that
+    // still reached strict validation used to fail the WHOLE commit).
     //
-    // Filtering also shortens `parsed`, which would silently mis-number
-    // every SUBSEQUENT row's validation-error `row` field — validateLiftImport's
-    // row numbers are purely positional (1-based index into whatever array
-    // it's given), so after removing row 2 what WAS row 5 becomes position 4
-    // and reports as "row 4" in any resulting error, pointing the user at the
-    // wrong CSV line. survivingRowOriginalIndexes records each kept row's
-    // ORIGINAL 1-based position before filtering; errors are remapped back to
-    // it after validation runs, restoring validateLiftImport's own "row
-    // numbers are 1-based and exclude the header row" contract for its
-    // caller here even though the array it validated was compacted (#911
-    // review, fifth pass).
+    // Filtering also shortens `parsed`, which would otherwise mis-number
+    // every subsequent row's validation-error `row` field —
+    // validateLiftImport's row numbers are purely positional. `survivingRowOriginalIndexes`
+    // records each kept row's original 1-based position before filtering;
+    // errors are remapped back to it after validation runs, so a failed
+    // commit still points at the right CSV line.
     let survivingRowOriginalIndexes: number[] | null = null;
     if (destination === 'lift-records' && excludeKeys.size > 0) {
       const excludedRowIndexes = new Set(

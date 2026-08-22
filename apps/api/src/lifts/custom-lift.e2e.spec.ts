@@ -122,31 +122,24 @@ describe('Custom Lifts HTTP (e2e, in-memory adapters)', () => {
     expect(res.statusCode).toBe(409);
   });
 
-  // Regression guard (#911 review, fifth pass): UpdateCustomLiftDto.name's
-  // @IsOptional() skips class-validator entirely for BOTH undefined and
-  // null, so a request body of {"name": null} reaches the controller with
-  // dto.name === null — a bare `dto.name !== undefined` guard would then
-  // call canonicalAliasFor(null), which throws calling .toLowerCase() on it
-  // (an unhandled TypeError → 500, with no registered filter to catch a bare
-  // TypeError). Confirms the guard's `typeof dto.name === 'string'` check
-  // prevents that crash. Not a full fix for accepting `name: null` at all
-  // (a separate, pre-existing gap this guard didn't introduce — the
-  // repository layer already silently stores it) — this only guards against
-  // that pre-existing looseness becoming an unhandled 500 in the guard this
-  // PR added.
-  it('does not crash (does not throw an unhandled TypeError) on a PATCH with an explicit name: null', async () => {
+  // Regression guard (#911 review, sixth pass): UpdateCustomLiftDto now uses
+  // @ValidateIf rather than @IsOptional() on every field (see the DTO's own
+  // comment) specifically so {"name": null} is REJECTED with 400 — not just
+  // "doesn't crash the in-memory-adapter-backed test harness" (round five's
+  // narrower fix, which left production's Prisma adapter still 500ing on the
+  // identical request; the in-memory adapter can't distinguish the two
+  // outcomes, which is exactly why this must assert the specific status
+  // rather than merely ruling out 500). Asserting a proper 400 is adapter-
+  // independent: class-validator rejects the request in the Nest pipe,
+  // before the controller method — and therefore either repository
+  // implementation — is ever reached, so no cleanup is needed here (the
+  // existing lift is never touched).
+  it('rejects a PATCH with an explicit name: null with 400, not a crash or a silent no-op', async () => {
     const created = await create({ name: 'Null Rename Target', classification: 'compound' });
     const { id } = created.json() as CustomLiftResponse;
 
     const res = await inject('PATCH', `/lifts/custom/${id}`, { body: { name: null } });
-    expect(res.statusCode).not.toBe(500);
-
-    // Clean up: this describe block's app/in-memory store is shared across
-    // every test in the file (beforeAll, not beforeEach), and a lift left
-    // with name: null pollutes any LATER test that lists/serializes every
-    // stored lift (found live: it broke "deletes a custom lift and returns
-    // 204"'s GET /lifts/custom list assertion).
-    await inject('DELETE', `/lifts/custom/${id}`);
+    expect(res.statusCode).toBe(400);
   });
 
   // #911 review, third pass: the reserved-alias 409 above and a genuine

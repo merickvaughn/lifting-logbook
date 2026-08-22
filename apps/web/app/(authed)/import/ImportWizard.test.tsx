@@ -931,12 +931,17 @@ describe('ImportWizard', () => {
       expect(createButtons[1]).toBeDisabled();
     });
 
-    // Regression guard (#911 review, fifth pass): the remap <input> is never
-    // disabled while its own row's create is in flight, so a user can retype
-    // it mid-flight — the row's own busy state must still disable its Create
-    // button even though busyLiftNames no longer contains whatever the input
-    // now shows.
-    it('keeps a row\'s own Create button disabled while its create is in flight, even if the user retypes the input', async () => {
+    // Regression guard (#911 review, fifth AND sixth passes): fifth pass
+    // added draft?.busy to the Create button's own disabled check (the row's
+    // own in-flight state must disable its button even though busyLiftNames
+    // is keyed by submitted name, not row). Sixth pass found that guard was
+    // only a partial fix: the remap <input> itself was still editable while
+    // busy, so applyResolvedLiftToMatchingRows' unconditional
+    // triggering-row write would silently clobber a value the user retyped
+    // mid-flight even with the button correctly disabled. Now the input is
+    // disabled too, which structurally prevents the retype (and the clobber)
+    // rather than just disabling the button around it.
+    it('disables both the row\'s own Create button and its remap input while its create is in flight', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValue(BLANK_LIFT_CELL_PREVIEW);
       mockCreateCustomLift.mockReturnValue(new Promise(() => {})); // never resolves
@@ -951,17 +956,9 @@ describe('ImportWizard', () => {
         name: 'Create "First Attempt" as a new exercise',
       });
       await user.click(firstCreateButton);
-      await waitFor(() => expect(firstCreateButton).toBeDisabled());
 
-      // Retype the same row's input to a name that was never in
-      // busyLiftNames — without the row's own draft?.busy check, this would
-      // re-enable the (still in-flight!) row's own Create button.
-      await user.clear(row1Input);
-      await user.type(row1Input, 'Second Attempt');
-      const secondCreateButton = screen.getByRole('button', {
-        name: 'Create "Second Attempt" as a new exercise',
-      });
-      expect(secondCreateButton).toBeDisabled();
+      await waitFor(() => expect(firstCreateButton).toBeDisabled());
+      expect(row1Input).toBeDisabled();
     });
   });
 

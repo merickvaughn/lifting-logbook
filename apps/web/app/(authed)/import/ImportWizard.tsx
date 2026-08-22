@@ -607,18 +607,23 @@ export function ImportWizard({
           // body content (#911 review, second pass).
           logClientError('fetchCustomLifts', fetchErr, { programId, rowIndex });
         }
+        // setCustomLifts above is deliberately ungated (server truth), but
+        // everything from here on is preview-keyed again — applyResolvedLiftToMatchingRows
+        // reads previewBody.deltas from this closure's (potentially stale)
+        // preview and writes into the CURRENT liftOverrides state, so it must
+        // not run for a preview the user has since discarded (e.g. Back →
+        // re-pick-destination while this refetch was in flight). This check
+        // was previously combined with the (now-ungated) setCustomLifts call
+        // above; removing that combined check for setCustomLifts's sake also
+        // silently dropped protection for this branch (#911 review, sixth
+        // pass).
+        if (previewGeneration.current !== startGeneration) return;
         const existing = latest?.find((c) => c.name === name);
         if (existing) {
           applyResolvedLiftToMatchingRows(matchOriginalLift, existing.id, rowIndex);
           clearCreateDraft(rowIndex);
           return;
         }
-        // The success-path checks above already bail out on a discarded
-        // preview; the two error/fallthrough branches below must too, or an
-        // error banner (and this beacon's rowIndex context) attaches to a row
-        // belonging to a preview the user has since replaced — a row they
-        // never interacted with (#911 review, third pass).
-        if (previewGeneration.current !== startGeneration) return;
         // Distinguish "confirmed it already exists" from "couldn't confirm
         // either way" — the refetch itself failing is not the same claim as a
         // genuine name collision, and telling the user the wrong one sends
@@ -1271,15 +1276,22 @@ export function ImportWizard({
                                         type="text"
                                         list="lift-catalog"
                                         className={styles.ambiguousInput}
+                                        // Disabled while this row's own create is in flight —
+                                        // without this, a mid-flight retype is silently
+                                        // overwritten on resolve (applyResolvedLiftToMatchingRows
+                                        // sets the triggering row unconditionally), discarding
+                                        // whatever the user just typed with no signal (#911
+                                        // review, sixth pass).
+                                        disabled={draft?.busy ?? false}
                                         // Controlled (not defaultValue) so a programmatic
                                         // resolution — batch-resolve on create, or the 409
                                         // self-heal — is always visibly reflected, and can
                                         // never silently diverge from what's actually
-                                        // submitted at commit (#911 review). Trade-off: every
-                                        // keystroke here now re-renders the full delta table
-                                        // (up to 5,000 rows) — tracked as issue #916, not fixed
-                                        // here since the correctness fix this comment describes
-                                        // must not be reverted to get it back.
+                                        // submitted at commit. Trade-off: every keystroke here
+                                        // now re-renders the full delta table (up to 5,000
+                                        // rows) — tracked as issue #916, not fixed here since
+                                        // this correctness fix must not be reverted to get it
+                                        // back.
                                         value={rawLiftValue}
                                         placeholder="Type a lift name…"
                                         aria-label={`Lift name for row ${d.rowIndex}`}

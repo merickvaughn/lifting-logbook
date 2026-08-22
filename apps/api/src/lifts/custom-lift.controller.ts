@@ -92,20 +92,11 @@ export class CustomLiftController {
   ): Promise<CustomLiftResponse> {
     // Same guard as create() — a rename to a name that case-insensitively
     // shadows a canonical alias has the identical fragmentation risk (#911
-    // review). typeof dto.name === 'string', not a bare !== undefined check:
-    // UpdateCustomLiftDto.name's @IsOptional() skips ALL of class-validator's
-    // checks (including @IsString()) for both undefined AND null, so a
-    // request body of {"name": null} reaches here with dto.name === null,
-    // and null !== undefined is true — canonicalAliasFor(null) would then
-    // throw calling .toLowerCase() on it, an unhandled 500 with no filter
-    // registered to catch a bare TypeError. This pre-existing DTO gap
-    // (accepting null at all) predates this guard and stays out of scope
-    // here — patch.name below still silently stores it, matching this
-    // method's behavior before #911 touched this file — but this guard is
-    // the first code in the method to actually ACT on that loose input, so
-    // it must not be the thing that turns it into a crash (#911 review,
-    // fifth pass).
-    if (typeof dto.name === 'string' && canonicalAliasFor(dto.name) !== undefined) {
+    // review). Safe to check dto.name !== undefined alone (not also
+    // typeof === 'string') — UpdateCustomLiftDto's @ValidateIf means a
+    // request carrying `name: null` already 400ed before reaching here; see
+    // that DTO's own comment for why @IsOptional() alone wasn't sufficient.
+    if (dto.name !== undefined && canonicalAliasFor(dto.name) !== undefined) {
       throw new ReservedLiftNameConflictError(dto.name);
     }
 
