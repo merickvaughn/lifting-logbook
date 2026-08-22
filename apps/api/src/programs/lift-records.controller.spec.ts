@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { FastifyRequest } from 'fastify';
@@ -8,6 +9,8 @@ import { ICycleDashboardRepository } from '../ports/ICycleDashboardRepository';
 import { ILiftRecordRepository } from '../ports/ILiftRecordRepository';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { RLS_TX_TIMEOUT_KEY } from '../adapters/prisma/rls-context';
+import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { LiftRecordsController } from './lift-records.controller';
 
 /** Builds a fake FastifyRequest whose req.file() resolves to the given CSV text. */
@@ -289,6 +292,20 @@ describe('LiftRecordsController', () => {
         '5-3-1',
         expect.arrayContaining([expect.objectContaining({ lift: 'custom-wide-grip-cbl-curls' })]),
       );
+    });
+
+    // #911 review, eighth pass: this endpoint runs the same bulk validate +
+    // createMany shape of work as ImportController's own import path (which
+    // already carries this same annotation, asserted by
+    // import.controller.spec.ts) inside the same per-request RLS transaction —
+    // without it, a large (within-limit) import falls through to the 15s
+    // DEFAULT_RLS_TX_TIMEOUT_MS instead of the wider import budget (#532).
+    it('annotates the import handler with the import transaction budget', () => {
+      const timeout = Reflect.getMetadata(
+        RLS_TX_TIMEOUT_KEY,
+        LiftRecordsController.prototype.importLiftRecords,
+      );
+      expect(timeout).toBe(IMPORT_TX_TIMEOUT_MS);
     });
   });
 

@@ -319,6 +319,37 @@ describe('ImportWizard', () => {
     );
   });
 
+  // #911 review, eighth pass: the commitErrors render path had no coverage at
+  // all before this test — for any destination, not just training-maxes.
+  // Asserts both the truncation itself and the "N more" indicator required
+  // alongside it (without it, a user who fixes only the visible rows and
+  // re-submits is rejected again with no warning more errors existed).
+  it('shows a capped error list with a "more errors" indicator when commit fails', async () => {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(TM_PREVIEW);
+    mockCommit.mockResolvedValue({
+      ok: false,
+      errors: Array.from({ length: 25 }, (_, i) => ({
+        row: i + 1,
+        message: `Row ${i + 1} failed`,
+      })),
+    });
+
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+
+    const file = new File(['Date Updated,Lift,Weight\n1/1/2026,Squat,300'], 'tm.csv', {
+      type: 'text/csv',
+    });
+    await navigateToReview(user, file);
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+
+    await waitFor(() => expect(screen.getByText('Commit failed:')).toBeInTheDocument());
+    expect(screen.getByText(/Row 1 failed/)).toBeInTheDocument();
+    expect(screen.queryByText(/Row 25 failed/)).not.toBeInTheDocument();
+    expect(screen.getByText(/…and 5 more error\(s\) not shown\./)).toBeInTheDocument();
+  });
+
   it('training-maxes: edited weight in REVIEW is reflected in the commit payload', async () => {
     const user = userEvent.setup();
     mockPreview.mockResolvedValue(TM_PREVIEW);
@@ -683,8 +714,11 @@ describe('ImportWizard', () => {
       });
       await user.click(createButtons[0]!);
 
+      // #911 review, eighth pass: this message deliberately does not assert
+      // "already exists" unconditionally — a 409 with no local match could
+      // also be a reserved-name collision, not just a genuine duplicate.
       expect(
-        await screen.findByText('An exercise with this name already exists.'),
+        await screen.findByText("This name can't be used — it already exists or is reserved."),
       ).toBeInTheDocument();
       expect(mockFetchCustomLifts).toHaveBeenCalledTimes(1);
     });

@@ -38,6 +38,8 @@ import { UpdateLiftRecordDto } from './update-lift-record.dto';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
 import { effectiveSlotMapFor } from './effective-slot-map.util';
+import { RlsTxTimeout } from '../adapters/prisma/rls-context';
+import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 
 @Controller('programs/:program')
 export class LiftRecordsController {
@@ -192,6 +194,12 @@ export class LiftRecordsController {
    */
   @Post('lift-records/import')
   @HttpCode(HttpStatus.CREATED)
+  // Same import transaction budget as ImportController's own import path (#532) — this
+  // endpoint runs the identical shape of work (bulk validate + createMany, now also an
+  // effectiveSlotMapFor query added by #911) inside the same per-request RLS transaction,
+  // so it needs the same widened window rather than falling through to the 15s default
+  // (#911 review, eighth pass).
+  @RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)
   async importLiftRecords(
     @Param('program') program: string,
     @Req() req: FastifyRequest,

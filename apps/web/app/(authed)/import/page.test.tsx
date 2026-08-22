@@ -58,6 +58,19 @@ describe('ImportPage — custom programs / custom lifts fetch (#911)', () => {
     mockedGetPreferredUnit.mockResolvedValue('lbs');
   });
 
+  // #911 review, eighth pass: jest.clearAllMocks() (above) resets call
+  // history but does NOT restore a jest.spyOn(console, 'error') mock — three
+  // tests below each spy on console.error and only undo it with their own
+  // errSpy.mockRestore() at the end, so any assertion failing before that
+  // line would leave console.error permanently mocked for every later test in
+  // this file (the exact hazard already fixed in ImportWizard.test.tsx's own
+  // afterEach, not carried over when this file was added in the same PR).
+  // jest.restoreAllMocks() here covers it unconditionally, regardless of
+  // where a test exits.
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('passes the fetched programs and custom lifts to the wizard on success', async () => {
     mockedFetchPrograms.mockResolvedValue([PROGRAM]);
     mockedFetchCustomLifts.mockResolvedValue([CUSTOM_LIFT]);

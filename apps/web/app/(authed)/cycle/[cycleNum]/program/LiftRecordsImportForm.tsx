@@ -6,6 +6,7 @@ import { IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import type { ImportError, SkippedRecord } from '@lifting-logbook/types';
 import { importLiftRecords } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import { MAX_RENDERED_IMPORT_ERRORS } from '@/lib/import-constants';
 
 interface Props {
   program: string;
@@ -113,15 +114,23 @@ export default function LiftRecordsImportForm({ program }: Props) {
               <li> nodes in one render. Placed after (not before) the Wizard
               guidance above, so the most useful next step isn't pushed
               below the fold by the very list its own error most commonly
-              triggers. */}
+              triggers. The "N more" line below is required, not cosmetic —
+              without it, a user who fixes exactly the visible rows and
+              re-uploads is rejected again with no indication more errors
+              exist (#911 review, eighth pass). */}
           <ul style={{ fontFamily: 'monospace', fontSize: '0.85rem', marginTop: '0.5rem' }}>
-            {errors.slice(0, 20).map((err, i) => (
+            {errors.slice(0, MAX_RENDERED_IMPORT_ERRORS).map((err, i) => (
               <li key={i}>
                 Row {err.row}
                 {err.field ? ` (${err.field})` : ''}: {err.message}
               </li>
             ))}
           </ul>
+          {errors.length > MAX_RENDERED_IMPORT_ERRORS && (
+            <p style={{ marginTop: '0.5rem', fontStyle: 'italic' }}>
+              …and {errors.length - MAX_RENDERED_IMPORT_ERRORS} more error(s) not shown.
+            </p>
+          )}
         </div>
       )}
     </section>

@@ -96,5 +96,27 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
     await screen.findByText(/Row 1 Lift/);
     expect(screen.getAllByRole('listitem')).toHaveLength(20);
     expect(screen.queryByText(/Row 25 Lift/)).not.toBeInTheDocument();
+    // #911 review, eighth pass: the cap must be visible, not silent — a user
+    // who fixes only the 20 shown and re-uploads should not be surprised by
+    // a second rejection with no warning more errors existed.
+    expect(screen.getByText(/…and 5 more error\(s\) not shown\./)).toBeInTheDocument();
+  });
+
+  // #911 review, eighth pass: the "N more" indicator must not render at all
+  // when the full list already fits — it would otherwise (falsely) suggest
+  // hidden errors exist.
+  it('does not show a "more errors" indicator when the error list is not capped', async () => {
+    const errors: ImportError[] = Array.from({ length: 3 }, (_, i) => ({
+      row: i + 1,
+      field: 'lift',
+      message: `'Row ${i + 1} Lift' isn't a recognized exercise.`,
+    }));
+    mockImport.mockResolvedValue({ ok: false, errors });
+
+    await uploadAndSubmit();
+
+    await screen.findByText(/Row 1 Lift/);
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+    expect(screen.queryByText(/more error\(s\) not shown/)).not.toBeInTheDocument();
   });
 });

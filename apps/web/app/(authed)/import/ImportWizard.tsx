@@ -24,6 +24,7 @@ import {
   undoImport,
 } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import { MAX_RENDERED_IMPORT_ERRORS } from '@/lib/import-constants';
 import { Step, STEP_LABELS } from './steps';
 import styles from './import.module.css';
 
@@ -243,9 +244,19 @@ export function ImportWizard({
     }
   }
 
-  // REVIEW filter chips — only show incomplete/ambiguous when rows exist
-  const hasIncomplete = (previewBody?.deltas ?? []).some((d) => d.status === 'incomplete');
-  const hasAmbiguous = (previewBody?.deltas ?? []).some((d) => d.status === 'ambiguous');
+  // REVIEW filter chips — only show incomplete/ambiguous when rows exist.
+  // Memoized (not two independent .some() scans on every render): the remap
+  // <input> is controlled, so every keystroke re-renders this component, and
+  // each scan walks up to MAX_IMPORT_ROWS deltas — cheap individually, but
+  // wasted work on every keystroke across a large preview (#911 review,
+  // eighth pass).
+  const { hasIncomplete, hasAmbiguous } = useMemo(() => {
+    const deltas = previewBody?.deltas ?? [];
+    return {
+      hasIncomplete: deltas.some((d) => d.status === 'incomplete'),
+      hasAmbiguous: deltas.some((d) => d.status === 'ambiguous'),
+    };
+  }, [previewBody]);
 
   // Filtered deltas for the REVIEW table
   const visibleDeltas = useMemo(
@@ -452,8 +463,9 @@ export function ImportWizard({
 
   // Clears a stale creation error (without touching classification/busy) when
   // the user edits the remap input after a failed create — otherwise
-  // "An exercise with this name already exists." keeps rendering under a
-  // value that no longer matches the name that error was actually about, one
+  // "This name can't be used — it already exists or is reserved." keeps
+  // rendering under a value that no longer matches the name that error was
+  // actually about, one
   // instance of the same "wrong message sends the user down the wrong
   // recovery path" concern this PR's own 409-vs-refetch-failure distinction
   // was built to avoid (#911 review, third pass).
@@ -628,11 +640,25 @@ export function ImportWizard({
         // either way" — the refetch itself failing is not the same claim as a
         // genuine name collision, and telling the user the wrong one sends
         // them down the wrong recovery path (#911 review, second pass).
+        //
+        // The non-refetch-failed message deliberately does NOT say "already
+        // exists": createCustomLift's 409 collapses two distinct server-side
+        // reasons (CustomLiftConflictError — a genuine duplicate name; and
+        // ReservedLiftNameConflictError — the name collides with a canonical
+        // built-in) into the same `null` return, and `existing` above only
+        // ever finds the first kind (a reserved name is by definition never
+        // in this user's own custom-lift list). Asserting "already exists"
+        // unconditionally would misreport the second case outright. Not
+        // reachable through this UI today — showCreateNew's own gate already
+        // excludes any name the server would treat as reserved — but a wrong
+        // claim here would still be wrong under client/API version skew or a
+        // future non-wizard caller of handleCreateLift's request path (#911
+        // review, eighth pass).
         setCreateDraftError(
           rowIndex,
           refetchFailed
             ? "Couldn't confirm whether this name already exists — try again."
-            : 'An exercise with this name already exists.',
+            : "This name can't be used — it already exists or is reserved.",
         );
         return;
       }
@@ -649,9 +675,17 @@ export function ImportWizard({
       applyResolvedLiftToMatchingRows(matchOriginalLift, created.id, rowIndex);
       clearCreateDraft(rowIndex);
     } catch (e) {
-      if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
-      // Never include `name` — see the logClientError comment above.
+      // Log unconditionally, before the generation check — same rule as the
+      // fetchCustomLifts catch above: a genuine POST failure must always reach
+      // Observability, even if the user has since navigated away from this
+      // preview. Gating the log itself (an earlier version of this fix) meant
+      // a real mutation error could be silently dropped with no beacon and no
+      // console line, contradicting this project's own Observability
+      // convention (CLAUDE.md, tracking #783) and this exact function's
+      // sibling catch three branches up (#911 review, eighth pass). Never
+      // include `name` — see the logClientError comment above.
       logClientError('createCustomLift', e, { programId, rowIndex });
+      if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
       setCreateDraftError(rowIndex, e instanceof Error ? e.message : 'Failed to create exercise');
     }
   }
@@ -1502,12 +1536,18 @@ export function ImportWizard({
                 <div className={styles.errorBox}>
                   <strong>Commit failed:</strong>
                   <ul className={styles.errorList}>
-                    {commitErrors.slice(0, 20).map((e, i) => (
+                    {commitErrors.slice(0, MAX_RENDERED_IMPORT_ERRORS).map((e, i) => (
                       <li key={`${e.row}-${i}`}>
                         Row {e.row}: {e.message}
                       </li>
                     ))}
                   </ul>
+                  {commitErrors.length > MAX_RENDERED_IMPORT_ERRORS && (
+                    <p>
+                      …and {commitErrors.length - MAX_RENDERED_IMPORT_ERRORS} more error(s) not
+                      shown.
+                    </p>
+                  )}
                 </div>
               )}
             </>
