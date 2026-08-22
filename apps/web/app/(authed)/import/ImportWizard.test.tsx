@@ -276,6 +276,149 @@ const CASE_VARIANT_CSV = new File(
   { type: 'text/csv' },
 );
 
+// #920: two previews that both place their one ambiguous row at rowIndex 1 —
+// liftOverrides/createDrafts are keyed by rowIndex alone (see analyze()'s own
+// comment on why every rowIndex-keyed map must be cleared on replacement), so
+// a stale write from a request started against GEN1 would land in the exact
+// state slot GEN2's own row 1 reads from if previewGeneration didn't block
+// it. Distinct originalLift text (rather than reusing one fixture for both
+// generations) rules out a lift name accidentally matching across previews
+// as an alternate explanation for a passing assertion.
+const RACE_GEN1_PREVIEW: ImportPreviewResponse = {
+  classification: {
+    type: 'lift-records',
+    confidence: 0.92,
+    bucket: 'high',
+    reasons: ['Matched required lift-record columns'],
+    alternatives: [],
+  },
+  destination: 'lift-records',
+  columnMappings: AMBIGUOUS_LIFT_COLUMN_MAPPINGS,
+  preview: {
+    creates: 0,
+    updates: 0,
+    skips: 0,
+    deltas: [
+      {
+        key: '__ambiguous_1',
+        label: 'Row 1: Legacy Row One Name',
+        kind: 'create',
+        status: 'ambiguous',
+        rowIndex: 1,
+        originalLift: 'Legacy Row One Name',
+      },
+    ],
+  },
+  errors: [],
+};
+
+const RACE_GEN2_PREVIEW: ImportPreviewResponse = {
+  ...RACE_GEN1_PREVIEW,
+  preview: {
+    creates: 0,
+    updates: 0,
+    skips: 0,
+    deltas: [
+      {
+        key: '__ambiguous_1',
+        label: 'Row 1: Fresh Row One Name',
+        kind: 'create',
+        status: 'ambiguous',
+        rowIndex: 1,
+        originalLift: 'Fresh Row One Name',
+      },
+    ],
+  },
+};
+
+const RACE_GEN1_CSV = new File(
+  [
+    'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n' +
+      '5-3-1,1,1,2026-01-01,Legacy Row One Name,1,90,10',
+  ],
+  'legacy.csv',
+  { type: 'text/csv' },
+);
+
+const RACE_GEN2_CSV = new File(
+  [
+    'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n' +
+      '5-3-1,1,1,2026-01-01,Fresh Row One Name,1,95,8',
+  ],
+  'fresh.csv',
+  { type: 'text/csv' },
+);
+
+// Resolves/rejects from outside the mocked call itself — lets a test hold a
+// mocked client-api call open across an intervening UI action (here:
+// replacing the preview mid-request via Back → re-analyze), then settle it
+// afterward to observe what the resolution actually did. A plain function
+// declaration (not an arrow) so the <T> is unambiguous in this .tsx file.
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function datalistOptionValues(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll('#lift-catalog option')).map(
+    (o) => (o as HTMLOptionElement).value,
+  );
+}
+
+// Navigates to REVIEW with RACE_GEN1_PREVIEW, picks "Accessory", and clicks
+// Create for its one ambiguous row — leaving the create in flight against
+// whatever mock implementation the calling test configured beforehand.
+async function startStaleCreate(user: ReturnType<typeof userEvent.setup>) {
+  await navigateToLiftRecordsReview(user, RACE_GEN1_CSV);
+  await user.click(screen.getByRole('button', { name: 'Accessory' }));
+  const createButton = screen.getByRole('button', {
+    name: 'Create "Legacy Row One Name" as a new exercise',
+  });
+  await user.click(createButton);
+  await waitFor(() => expect(createButton).toBeDisabled());
+}
+
+// Bumps previewGeneration past the in-flight create's captured
+// startGeneration by replacing the preview entirely: Back to Source (REVIEW
+// → MAP_COLUMNS → CLASSIFY → SOURCE — global `busy` never gates this, since
+// handleCreateLift tracks its own per-row busy state instead, not the
+// wizard's own), then re-upload and re-analyze with RACE_GEN2_CSV, landing
+// back on REVIEW with GEN2's own (distinctly-named, still-unresolved) row 1
+// showing.
+async function replacePreviewMidRequest(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Back' })); // Review → Map columns
+  await user.click(screen.getByRole('button', { name: 'Back' })); // Map columns → Classify
+  await user.click(screen.getByRole('button', { name: 'Back' })); // Classify → Source
+  await user.upload(screen.getByLabelText('CSV file'), RACE_GEN2_CSV);
+  await user.click(screen.getByRole('button', { name: 'Analyze' }));
+  await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+  await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+  await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
+  expect(
+    screen.getByText('No match — create "Fresh Row One Name" as a new exercise'),
+  ).toBeInTheDocument();
+}
+
+// After the stale request settles, GEN2's own row 1 must still show its own
+// unresolved original text and "create new" prompt — none of the discarded
+// request's outcome (a resolved override, a clobbered draft, an error
+// message) may have been written into the rowIndex-1 slot GEN2 now owns.
+function expectGen2RowUndisturbed() {
+  expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Fresh Row One Name');
+  expect(
+    screen.getByText('No match — create "Fresh Row One Name" as a new exercise'),
+  ).toBeInTheDocument();
+}
+
 describe('ImportWizard', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -1150,6 +1293,163 @@ describe('ImportWizard', () => {
 
       await waitFor(() => expect(firstCreateButton).toBeDisabled());
       expect(row1Input).toBeDisabled();
+    });
+  });
+
+  // #920: previewGeneration (ImportWizard.tsx) is a ref bumped by analyze()
+  // and reset() to detect that an in-flight handleCreateLift request's
+  // preview has since been replaced or discarded, so its result must not be
+  // written into current state. This mechanism was introduced and repeatedly
+  // fixed across PR #912's review rounds 2-6 with no dedicated test actually
+  // exercising the race — every fix so far was verified by manual code
+  // reading only. One test per distinct generation-check branch in
+  // handleCreateLift, each proving the same shape of bug: start a request,
+  // replace the preview before it resolves, then resolve/reject it and
+  // confirm the NEW preview's same-rowIndex row was not mutated by the OLD
+  // request's outcome.
+  describe('previewGeneration mid-request-discard guards (#920)', () => {
+    it('discards a create-success result once the preview it was for has been replaced', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValueOnce(RACE_GEN1_PREVIEW).mockResolvedValueOnce(RACE_GEN2_PREVIEW);
+      const createGate = deferred<CustomLiftResponse>();
+      mockCreateCustomLift.mockReturnValue(createGate.promise);
+
+      const { container } = render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await startStaleCreate(user);
+      await replacePreviewMidRequest(user);
+
+      // Resolve the stale create AFTER the preview has already been replaced.
+      createGate.resolve({
+        ...CUSTOM_LIFT,
+        id: 'custom-legacy-a',
+        name: 'Legacy Row One Name',
+      });
+
+      // Flush point: setCustomLifts((prev) => [...prev, created]) is
+      // deliberately ungated (reset()'s own comment: a lift created this
+      // session is real, persisted data) and runs before the generation
+      // check — waiting for it in the datalist proves the whole synchronous
+      // continuation, including that check, has already run.
+      await waitFor(() =>
+        expect(datalistOptionValues(container)).toContain('Legacy Row One Name'),
+      );
+
+      // The guarded write (applyResolvedLiftToMatchingRows + clearCreateDraft)
+      // must NOT have run for GEN2's row 1.
+      expectGen2RowUndisturbed();
+    });
+
+    it('discards a 409-found-on-refetch resolution once the preview it was for has been replaced', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValueOnce(RACE_GEN1_PREVIEW).mockResolvedValueOnce(RACE_GEN2_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue(null); // 409
+      const fetchGate = deferred<CustomLiftResponse[]>();
+      mockFetchCustomLifts.mockReturnValue(fetchGate.promise);
+
+      const { container } = render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await startStaleCreate(user);
+      await replacePreviewMidRequest(user);
+
+      // The self-heal refetch finds a match for the ORIGINAL submitted name
+      // AFTER the preview has already been replaced.
+      fetchGate.resolve([
+        { ...CUSTOM_LIFT, id: 'custom-legacy-existing', name: 'Legacy Row One Name' },
+      ]);
+
+      // Flush point: setCustomLifts(latest) runs unconditionally on a
+      // successful refetch, before the generation check.
+      await waitFor(() =>
+        expect(datalistOptionValues(container)).toContain('Legacy Row One Name'),
+      );
+
+      expectGen2RowUndisturbed();
+    });
+
+    it('discards a 409-not-found resolution once the preview it was for has been replaced', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValueOnce(RACE_GEN1_PREVIEW).mockResolvedValueOnce(RACE_GEN2_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue(null); // 409
+      const fetchGate = deferred<CustomLiftResponse[]>();
+      mockFetchCustomLifts.mockReturnValue(fetchGate.promise);
+
+      const { container } = render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await startStaleCreate(user);
+      await replacePreviewMidRequest(user);
+
+      // A successful refetch that confirms no match — the "confirmed not
+      // found" branch, distinct from the refetch-FAILED branch below. Named
+      // so it matches neither generation's row text, so its appearance in
+      // the datalist is a clean, unambiguous flush signal.
+      fetchGate.resolve([{ ...CUSTOM_LIFT, id: 'custom-unrelated', name: 'Totally Unrelated Lift' }]);
+
+      await waitFor(() =>
+        expect(datalistOptionValues(container)).toContain('Totally Unrelated Lift'),
+      );
+
+      expect(
+        screen.queryByText("This name can't be used — it already exists or is reserved."),
+      ).not.toBeInTheDocument();
+      expectGen2RowUndisturbed();
+    });
+
+    it('discards a refetch-failed resolution once the preview it was for has been replaced', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValueOnce(RACE_GEN1_PREVIEW).mockResolvedValueOnce(RACE_GEN2_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue(null); // 409
+      const fetchGate = deferred<CustomLiftResponse[]>();
+      mockFetchCustomLifts.mockReturnValue(fetchGate.promise);
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await startStaleCreate(user);
+      await replacePreviewMidRequest(user);
+
+      const fetchFailure = new Error('API 500 Internal Server Error for /lifts/custom');
+      fetchGate.reject(fetchFailure);
+
+      // Flush point: logClientError (and thus console.error) runs
+      // unconditionally in the catch block, synchronously before the
+      // generation check that immediately follows it.
+      await waitFor(() =>
+        expect(errorSpy).toHaveBeenCalledWith(
+          '[client-mutation] fetchCustomLifts failed',
+          fetchFailure,
+          { programId: 'prog-1', rowIndex: 1 },
+        ),
+      );
+
+      expect(
+        screen.queryByText("Couldn't confirm whether this name already exists — try again."),
+      ).not.toBeInTheDocument();
+      expectGen2RowUndisturbed();
+    });
+
+    it('discards a createCustomLift-throws error once the preview it was for has been replaced', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValueOnce(RACE_GEN1_PREVIEW).mockResolvedValueOnce(RACE_GEN2_PREVIEW);
+      const createGate = deferred<CustomLiftResponse | null>();
+      mockCreateCustomLift.mockReturnValue(createGate.promise);
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await startStaleCreate(user);
+      await replacePreviewMidRequest(user);
+
+      const createFailure = new Error('API 500 Internal Server Error for /lifts/custom');
+      createGate.reject(createFailure);
+
+      // Flush point: logClientError runs unconditionally in the outer catch,
+      // synchronously before the generation check that immediately follows it.
+      await waitFor(() =>
+        expect(errorSpy).toHaveBeenCalledWith(
+          '[client-mutation] createCustomLift failed',
+          createFailure,
+          { programId: 'prog-1', rowIndex: 1 },
+        ),
+      );
+
+      expect(screen.queryByText(createFailure.message)).not.toBeInTheDocument();
+      expectGen2RowUndisturbed();
     });
   });
 
