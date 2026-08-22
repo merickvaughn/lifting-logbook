@@ -15,8 +15,6 @@ import {
   parseTrainingMaxes,
   parseStrengthGoals,
   parseLiftingProgramSpec,
-  validateTrainingMaxImport,
-  validateStrengthGoalImport,
   validateProgramSpecImport,
   buildLiftRecordsPreview,
   buildTrainingMaxPreview,
@@ -119,7 +117,21 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
 
 const trainingMaxesHandler: ImportHandler<TrainingMax> = {
   parse: parseTrainingMaxes,
-  validate: validateTrainingMaxImport,
+  // Never actually called: ImportController special-cases 'training-maxes' to
+  // validate against a custom-lift-aware slot map (effectiveSlotMapFor) instead
+  // of calling this closure (#914) — validateTrainingMaxImport's own
+  // DEFAULT_SLOT_MAP default parameter means a bare handler.validate(parsed)
+  // call here would silently succeed with the wrong (non-custom-lift-aware)
+  // result rather than failing loudly, so this throws instead, mirroring
+  // liftRecordsHandler.validate below (issue #911) rather than leaving the
+  // silently-wrong fallback reachable.
+  validate: (): never => {
+    throw new Error(
+      "trainingMaxesHandler.validate must not be called directly for 'training-maxes' — " +
+        'ImportController validates this destination against a custom-lift-aware slot map ' +
+        'via effectiveSlotMapFor instead (see effective-slot-map.util.ts, issue #914).',
+    );
+  },
   async preview(valid, program, repos) {
     const existing = await repos.trainingMax.getTrainingMaxes(program);
     return buildTrainingMaxPreview(valid, existing);
@@ -133,7 +145,17 @@ const trainingMaxesHandler: ImportHandler<TrainingMax> = {
 
 const strengthGoalsHandler: ImportHandler<StrengthGoalEntry> = {
   parse: parseStrengthGoals,
-  validate: validateStrengthGoalImport,
+  // Never actually called: ImportController special-cases 'strength-goals' to
+  // validate against a custom-lift-aware slot map (effectiveSlotMapFor) instead
+  // of calling this closure (#914) — see trainingMaxesHandler.validate above for
+  // why this throws rather than silently falling back to DEFAULT_SLOT_MAP.
+  validate: (): never => {
+    throw new Error(
+      "strengthGoalsHandler.validate must not be called directly for 'strength-goals' — " +
+        'ImportController validates this destination against a custom-lift-aware slot map ' +
+        'via effectiveSlotMapFor instead (see effective-slot-map.util.ts, issue #914).',
+    );
+  },
   async preview(valid, program, repos) {
     const existing = await repos.strengthGoal.getGoals(program);
     return buildStrengthGoalPreview(valid, existing);

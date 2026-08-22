@@ -18,3 +18,31 @@ describe('IMPORT_HANDLERS.lift-records.validate', () => {
     );
   });
 });
+
+// #914: training-maxes and strength-goals now get the same custom-lift-aware
+// slot map treatment as lift-records above — validateTrainingMaxImport and
+// validateStrengthGoalImport both default their `slotMap` parameter to
+// DEFAULT_SLOT_MAP, so unlike liftRecordsHandler.validate (which requires a
+// slotMap argument and therefore couldn't be assigned directly),
+// IMPORT_HANDLERS['training-maxes'].validate / ['strength-goals'].validate
+// COULD have been left as working-but-wrong single-arg-callable references.
+// Asserting the throw directly means a future refactor that routes either
+// destination through the generic handler.validate(parsed) path fails here
+// first, rather than silently reintroducing this issue's bug.
+describe('IMPORT_HANDLERS.training-maxes.validate', () => {
+  it('throws rather than silently falling back to DEFAULT_SLOT_MAP', () => {
+    const handler = IMPORT_HANDLERS['training-maxes'];
+    expect(() => handler.validate([])).toThrow(
+      /must not be called directly/,
+    );
+  });
+});
+
+describe('IMPORT_HANDLERS.strength-goals.validate', () => {
+  it('throws rather than silently falling back to DEFAULT_SLOT_MAP', () => {
+    const handler = IMPORT_HANDLERS['strength-goals'];
+    expect(() => handler.validate([])).toThrow(
+      /must not be called directly/,
+    );
+  });
+});
