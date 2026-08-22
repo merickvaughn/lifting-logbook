@@ -970,9 +970,7 @@ describe('ImportWizard', () => {
       );
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
 
-      const options = Array.from(container.querySelectorAll('#lift-catalog option')).map(
-        (o) => (o as HTMLOptionElement).value,
-      );
+      const options = datalistOptionValues(container);
       expect(options).toContain('Wide-Grip CBL Curls');
       // A canonical *value* (id) — this alone would still pass against the
       // pre-fix CANONICAL_LIFT_IDS-only implementation, so it is NOT
@@ -1227,27 +1225,16 @@ describe('ImportWizard', () => {
       // one per row's distinct submitted name — so this test controls
       // resolution order directly instead of leaving it to the mock's own
       // scheduling.
-      let resolveCreateZorbingPress: ((v: { ok: true; data: CustomLiftResponse }) => void) | undefined;
-      const createZorbingPressPromise = new Promise<{ ok: true; data: CustomLiftResponse }>((resolve) => {
-        resolveCreateZorbingPress = resolve;
-      });
-      let resolveCreateKettleFlys:
-        | ((v: { ok: false; conflictMessage: string }) => void)
-        | undefined;
-      const createKettleFlysPromise = new Promise<{ ok: false; conflictMessage: string }>((resolve) => {
-        resolveCreateKettleFlys = resolve;
-      });
+      const createZorbingPressGate = deferred<{ ok: true; data: CustomLiftResponse }>();
+      const createKettleFlysGate = deferred<{ ok: false; conflictMessage: string }>();
       mockCreateCustomLift.mockImplementation((body) => {
-        if (body.name === 'Zorbing Machine Press') return createZorbingPressPromise;
-        if (body.name === 'Underwater Kettle Flys') return createKettleFlysPromise;
+        if (body.name === 'Zorbing Machine Press') return createZorbingPressGate.promise;
+        if (body.name === 'Underwater Kettle Flys') return createKettleFlysGate.promise;
         throw new Error(`unexpected createCustomLift call: ${body.name}`);
       });
 
-      let resolveFetch: ((v: CustomLiftResponse[]) => void) | undefined;
-      const fetchPromise = new Promise<CustomLiftResponse[]>((resolve) => {
-        resolveFetch = resolve;
-      });
-      mockFetchCustomLifts.mockReturnValue(fetchPromise);
+      const fetchGate = deferred<CustomLiftResponse[]>();
+      mockFetchCustomLifts.mockReturnValue(fetchGate.promise);
 
       const { container } = render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await navigateToLiftRecordsReview(user, TWO_DIFFERENT_AMBIGUOUS_LIFT_CSV);
@@ -1265,7 +1252,7 @@ describe('ImportWizard', () => {
 
       // Row 2 (Underwater Kettle Flys) 409s first, kicking off its self-heal refetch —
       // but that refetch's own promise stays unresolved for now.
-      resolveCreateKettleFlys?.({
+      createKettleFlysGate.resolve({
         ok: false,
         conflictMessage: "A custom lift named 'Underwater Kettle Flys' already exists",
       });
@@ -1282,7 +1269,7 @@ describe('ImportWizard', () => {
         isCustom: true,
         createdAt: '2026-01-01T00:00:00.000Z',
       };
-      resolveCreateZorbingPress?.({ ok: true, data: createdZorbingPress });
+      createZorbingPressGate.resolve({ ok: true, data: createdZorbingPress });
       await waitFor(() =>
         expect(
           screen.queryByText('No match — create "Zorbing Machine Press" as a new exercise'),
@@ -1291,7 +1278,7 @@ describe('ImportWizard', () => {
 
       // Only now does row 2's refetch resolve — with a snapshot that predates
       // row 1's just-created lift, the exact interleaving #921 describes.
-      resolveFetch?.([]);
+      fetchGate.resolve([]);
       expect(
         await screen.findByText("A custom lift named 'Underwater Kettle Flys' already exists"),
       ).toBeInTheDocument();
@@ -1302,9 +1289,7 @@ describe('ImportWizard', () => {
       // from local state — the datalist is rendered directly off customLifts,
       // so it's the most direct observable of that state short of a
       // component-internals reach-in.
-      const options = Array.from(container.querySelectorAll('#lift-catalog option')).map(
-        (o) => (o as HTMLOptionElement).value,
-      );
+      const options = datalistOptionValues(container);
       expect(options).toContain('Zorbing Machine Press');
     });
 
@@ -1330,9 +1315,7 @@ describe('ImportWizard', () => {
       );
       await navigateToLiftRecordsReview(user, DELETE_RESURRECTION_CSV);
 
-      const optionsBefore = Array.from(container.querySelectorAll('#lift-catalog option')).map(
-        (o) => (o as HTMLOptionElement).value,
-      );
+      const optionsBefore = datalistOptionValues(container);
       expect(optionsBefore).toContain('Reverse Gribble Fly');
 
       await user.click(screen.getByRole('button', { name: 'Accessory' }));
@@ -1344,9 +1327,7 @@ describe('ImportWizard', () => {
         await screen.findByText("A custom lift named 'Sideways Anvil Curl' already exists"),
       ).toBeInTheDocument();
 
-      const optionsAfter = Array.from(container.querySelectorAll('#lift-catalog option')).map(
-        (o) => (o as HTMLOptionElement).value,
-      );
+      const optionsAfter = datalistOptionValues(container);
       expect(optionsAfter).not.toContain('Reverse Gribble Fly');
     });
 
