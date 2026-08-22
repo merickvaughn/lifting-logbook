@@ -941,6 +941,72 @@ describe('ImportWizard', () => {
       errorSpy.mockRestore();
     });
 
+    it('unsticks a busy row once a hung create request eventually times out (#922)', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      // Captures the promise's reject function instead of settling immediately —
+      // simulates a request that stays pending (a hung connection) until
+      // packages/api-client's default request timeout eventually fires, rather
+      // than one that fails synchronously (already covered by the sibling test
+      // above).
+      let rejectCreate!: (reason: unknown) => void;
+      mockCreateCustomLift.mockImplementation(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectCreate = reject;
+          }),
+      );
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      const createButtons = screen.getAllByRole('button', {
+        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+      });
+      await user.click(createButtons[0]!);
+
+      // Row goes busy and stays busy while the request is pending — this is the
+      // state a genuinely hung request left it in forever before #922, since the
+      // only way `busy` ever cleared was the request settling. The button's
+      // aria-label is static (`Create "..." as a new exercise`) regardless of
+      // busy state — it takes precedence over text content for the accessible
+      // name — so assert on the visible "Creating…" text rather than a
+      // name-based role query, and reuse the stable `createButtons[0]` element
+      // reference (React keeps the same DOM node across the re-render) for the
+      // disabled check.
+      expect(await screen.findByText('Creating…')).toBeInTheDocument();
+      expect(createButtons[0]).toBeDisabled();
+      expect(screen.getByLabelText('Lift name for row 1')).toBeDisabled();
+      expect(screen.getAllByRole('button', { name: 'Accessory' })[0]).toBeDisabled();
+
+      // Simulate packages/api-client's default request timeout firing on the
+      // still-pending request — the exact error shape AbortSignal.timeout
+      // produces (verified against Node's native fetch: a DOMException named
+      // 'TimeoutError', which is `instanceof Error`).
+      const timeoutError = new DOMException(
+        'The operation was aborted due to timeout',
+        'TimeoutError',
+      );
+      rejectCreate(timeoutError);
+
+      // handleCreateLift's existing catch block (unchanged by #922) now runs:
+      // busy clears, controls re-enable, and the timeout surfaces as an inline
+      // error instead of stranding the row.
+      expect(await screen.findByText(timeoutError.message)).toBeInTheDocument();
+      expect(screen.queryByText('Creating…')).not.toBeInTheDocument();
+      expect(createButtons[0]).toBeEnabled();
+      expect(screen.getByLabelText('Lift name for row 1')).toBeEnabled();
+      expect(screen.getAllByRole('button', { name: 'Accessory' })[0]).toBeEnabled();
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[client-mutation] createCustomLift failed',
+        timeoutError,
+        { programId: 'prog-1', rowIndex: 1 },
+      );
+      errorSpy.mockRestore();
+    });
+
     it('does not batch-resolve an unrelated blank-cell row when creating from another blank-cell row', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValue(BLANK_LIFT_CELL_PREVIEW);

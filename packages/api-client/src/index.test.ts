@@ -113,6 +113,44 @@ describe('createApiClient', () => {
       const client = makeClient();
       await expect(client.unskipWorkout('5-3-1', 1, 2)).resolves.toBeUndefined();
     });
+
+    it('passes an AbortSignal on every request even though no call site supplies one', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+      const client = makeClient();
+      await client.fetchTrainingMaxes('5-3-1');
+      const [, init] = lastCall();
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect((init.signal as AbortSignal).aborted).toBe(false);
+    });
+
+    it('bounds a request that never settles with the configured timeout (#922)', async () => {
+      // global.fetch is fully replaced by mockFetch, so it must mirror real
+      // fetch's own signal contract itself (reject with the abort reason once
+      // the signal aborts) — otherwise a signal nothing listens to would never
+      // cause this mock's returned promise to settle, same as the bug this
+      // guards against: a hung connection with no default timeout left the
+      // caller's `await` pending forever (ImportWizard's remap-row `busy` state
+      // never cleared, permanently disabling that row's controls).
+      mockFetch.mockImplementation(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) return; // no signal wired up at all — would hang forever
+            if (signal.aborted) {
+              reject(signal.reason);
+              return;
+            }
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+          }),
+      );
+      const client = createApiClient({
+        baseUrl: 'http://api.test',
+        getAuthHeaders: async () => ({ ...AUTH }),
+        requestTimeoutMs: 25,
+      });
+
+      await expect(client.fetchTrainingMaxes('5-3-1')).rejects.toThrow(/timeout/i);
+    });
   });
 
   describe('nullable reads', () => {

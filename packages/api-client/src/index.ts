@@ -70,6 +70,13 @@ export interface ApiClientConfig {
    * Encapsulating the split here is the structural mitigation for flag 6 (#464).
    */
   getAuthHeaders: () => Promise<Record<string, string>>;
+  /**
+   * Overrides the default per-request timeout (ms) applied to every request that
+   * doesn't already carry its own `signal`. Defaults to {@link DEFAULT_REQUEST_TIMEOUT_MS}.
+   * Exists mainly so tests can force a bounded request to time out quickly instead
+   * of waiting out the production default — see {@link rawFetch}.
+   */
+  requestTimeoutMs?: number;
 }
 
 // RequestInit augmented with Next.js's ISR `next` extension. The package does not
@@ -80,6 +87,16 @@ type FetchInit = RequestInit & { next?: { revalidate?: number; tags?: string[] }
 
 const enc = encodeURIComponent;
 const JSON_HEADERS: Record<string, string> = { 'Content-Type': 'application/json' };
+
+// Bounds every request this package makes. Before this, no call site anywhere in
+// the package ever passed a `signal`, so a genuinely hung connection (a proxy
+// silently dropping the response, a backend that accepts the connection but never
+// replies) left the calling `await` pending forever — which, via ImportWizard's
+// `disabled={draft?.busy ?? false}` remap-row controls, permanently stranded the
+// row with no recovery short of a full wizard reset (#922). 30s is comfortably
+// above any real request in this app (Cloud Run's own default request timeout is
+// 5 minutes) while still bounding the wait a hung request forces on the caller.
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 // Smart-import endpoint path with mode + optional destination override. Returned
 // relative (rawFetch prepends baseUrl).
@@ -148,7 +165,7 @@ async function extractErrorMessage(res: Response, path: string): Promise<string>
 }
 
 export function createApiClient(config: ApiClientConfig) {
-  const { baseUrl, getAuthHeaders } = config;
+  const { baseUrl, getAuthHeaders, requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS } = config;
   // Resolve per request so a thunk baseUrl picks up a runtime-injected value
   // (e.g. window.__PUBLIC_CONFIG__) that was not available at construction (#396).
   const resolveBaseUrl = (): string => (typeof baseUrl === 'function' ? baseUrl() : baseUrl);
@@ -160,6 +177,11 @@ export function createApiClient(config: ApiClientConfig) {
       // auth-wins: spread auth headers last so a call site's init.headers can
       // never override Authorization / X-Clerk-Authorization.
       headers: { ...(init.headers as Record<string, string> | undefined), ...authHeaders },
+      // Bound every request that doesn't already carry its own signal (#922) — no
+      // call site passes one today, so this always applies in practice, but a
+      // future call site's own signal (e.g. a per-row Cancel affordance) takes
+      // precedence rather than being silently clobbered.
+      signal: init.signal ?? AbortSignal.timeout(requestTimeoutMs),
     };
     return fetch(`${resolveBaseUrl()}${path}`, finalInit as RequestInit);
   }
