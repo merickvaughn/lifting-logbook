@@ -691,6 +691,33 @@ staging-validation guarantee (see ADR-030's Rationale section, linked above).
 Motivating incident(s): [PR #879](https://github.com/merickvaughn/lifting-logbook/pull/879),
 [#880](https://github.com/merickvaughn/lifting-logbook/issues/880).
 
+### `autoMergeRequest: null` during a merge-queue hand-off is expected — not a third "silently cleared" bug
+
+**Pattern:** Watching `gh pr view <N> --json autoMergeRequest` while a PR progresses through the
+flow described in "Merge enqueues instead of landing" above can catch `autoMergeRequest` transition
+from a populated object to `null`, with `mergeStateStatus` reading `UNSTABLE` at that instant — even
+though no force-push happened and `gh pr checks <N>` shows every check `pass` (i.e. neither
+"silently cleared" Pattern below applies). This is the PR completing its hand-off from "auto-merge
+armed, waiting on the PR's own required checks" into "now being processed by the merge queue
+itself," which re-validates against its own temporary merge commit — that hand-off appears to also
+clear the standalone `autoMergeRequest` field, since the intent has been converted into an actual
+queue entry.
+
+**Diagnosis:** Run the `mergeQueue` GraphQL query from "Checking queue status" above *before*
+assuming either "silently cleared" Pattern below applies. If the PR appears in `entries` (`state:
+AWAITING_CHECKS` or later), the hand-off succeeded and `autoMergeRequest: null` is expected — no
+action needed. Only work through the two sections below if the PR is genuinely absent from the
+queue.
+
+**Fix:** None. Do not re-run `gh pr merge --squash` to "re-arm" a `null` you haven't confirmed is a
+real drop — it redundantly resets `enabledAt`/`enabledBy` for no reason, since the PR merges
+normally once the queue processes it.
+
+Motivating incident: [PR #939](https://github.com/merickvaughn/lifting-logbook/pull/939) (issue
+[#936](https://github.com/merickvaughn/lifting-logbook/issues/936)), 2026-08-23 — observed live
+while that very PR was merging; see
+[#942](https://github.com/merickvaughn/lifting-logbook/issues/942) for the full diagnostic trace.
+
 ### Auto-merge silently cleared — a non-required check's cancelled run
 
 **Pattern:** `.github/workflows/review-gate.yml` triggers on `issue_comment` (needed because the
