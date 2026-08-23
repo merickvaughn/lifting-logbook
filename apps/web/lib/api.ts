@@ -3,6 +3,7 @@ import 'server-only';
 import { auth } from '@clerk/nextjs/server';
 import { createApiClient } from '@lifting-logbook/api-client';
 import { getGcpIdentityToken } from './gcp-identity-token';
+import { CLERK_TOKEN_TIMEOUT_MS, withTimeout } from './with-timeout';
 
 const API_URL = process.env.API_URL ?? 'http://localhost:3004';
 const isCloudRun = API_URL.startsWith('https://');
@@ -32,19 +33,29 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   // See infra/terraform/cloud-run.tf (web_invoker_on_api binding).
   // Both fetches are independent — run them in parallel.
   const [clerkToken, identityToken] = await Promise.all([
-    (async (): Promise<string | null> => {
-      try {
-        const { getToken } = await auth();
-        const token = await getToken();
-        if (!token) {
-          console.warn('[getAuthHeaders] No Clerk session token in Cloud Run — request will be unauthenticated');
+    // Bounded via withTimeout — Clerk's getToken() has no native AbortSignal/timeout
+    // option of its own (unlike getGcpIdentityToken's fetch signal below), so this has to
+    // be hand-rolled. See with-timeout.ts for the mechanism and CLERK_TOKEN_TIMEOUT_MS for
+    // the shared bound; a hang here previously blocked getAuthHeaders() (and therefore the
+    // fetch() it precedes) indefinitely, reproducing #922's stuck-row bug via Clerk (#933).
+    withTimeout(
+      (async (): Promise<string | null> => {
+        try {
+          const { getToken } = await auth();
+          const token = await getToken();
+          if (!token) {
+            console.warn('[getAuthHeaders] No Clerk session token in Cloud Run — request will be unauthenticated');
+          }
+          return token;
+        } catch (e) {
+          console.error('[getAuthHeaders] Clerk token acquisition failed:', e);
+          return null;
         }
-        return token;
-      } catch (e) {
-        console.error('[getAuthHeaders] Clerk token acquisition failed:', e);
-        return null;
-      }
-    })(),
+      })(),
+      CLERK_TOKEN_TIMEOUT_MS,
+      null,
+      () => console.warn('[getAuthHeaders] Clerk token acquisition timed out — proceeding unauthenticated'),
+    ),
     getGcpIdentityToken(API_URL),
   ]);
 
