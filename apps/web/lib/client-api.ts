@@ -3,13 +3,12 @@
 
 import { createApiClient } from '@lifting-logbook/api-client';
 import { getClientPublicConfig } from './public-config';
-import { withTimeout } from './with-timeout';
+import { CLERK_TOKEN_TIMEOUT_MS, withTimeout } from './with-timeout';
 
 // Bounds the Clerk token call so a hang doesn't block getClientAuthHeaders() (and
-// therefore the fetch() it precedes) indefinitely — mirrors the server path's own
-// bound in lib/api.ts. Clerk's getToken() accepts no AbortSignal/timeout option of its
-// own, so this has to be hand-rolled via withTimeout rather than passed as a signal (#933).
-const CLERK_TOKEN_TIMEOUT_MS = 2000;
+// therefore the fetch() it precedes) indefinitely — same bound as the server path in
+// lib/api.ts. Clerk's getToken() accepts no AbortSignal/timeout option of its own, so
+// this has to be hand-rolled via withTimeout rather than passed as a signal (#933).
 
 // Base URL and dev token are resolved LAZILY (per request) from the runtime-injected
 // window.__PUBLIC_CONFIG__ rather than read at module-eval time. The values are no longer

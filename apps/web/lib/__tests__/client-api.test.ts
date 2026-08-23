@@ -3,6 +3,10 @@
 // URL is a thunk, so it is read per request — setting the window global before the call
 // is sufficient.
 
+// A plain constant with no module-level mutable state — safe to import statically even
+// though client-api.ts itself is always loaded dynamically below via jest.isolateModulesAsync.
+import { CLERK_TOKEN_TIMEOUT_MS } from '../with-timeout';
+
 describe('client-api runtime base URL', () => {
   const fetchMock = jest.fn<Promise<unknown>, [string, RequestInit?]>();
 
@@ -85,7 +89,7 @@ describe('client-api runtime base URL', () => {
     jest.useFakeTimers();
     try {
       const result = unskipWorkout('5-3-1', 1, 2);
-      await jest.advanceTimersByTimeAsync(2000); // past the 2s Clerk-token bound
+      await jest.advanceTimersByTimeAsync(CLERK_TOKEN_TIMEOUT_MS);
       await expect(result).resolves.toBeUndefined();
 
       const [, init] = firstCall();

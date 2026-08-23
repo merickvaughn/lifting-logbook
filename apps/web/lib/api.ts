@@ -3,18 +3,16 @@ import 'server-only';
 import { auth } from '@clerk/nextjs/server';
 import { createApiClient } from '@lifting-logbook/api-client';
 import { getGcpIdentityToken } from './gcp-identity-token';
-import { withTimeout } from './with-timeout';
+import { CLERK_TOKEN_TIMEOUT_MS, withTimeout } from './with-timeout';
 
 const API_URL = process.env.API_URL ?? 'http://localhost:3004';
 const isCloudRun = API_URL.startsWith('https://');
 
 // Clerk's getToken() accepts no AbortSignal/timeout option of its own (confirmed against
 // Clerk's docs while investigating #933), so this bound has to be hand-rolled via
-// withTimeout rather than passed through like getGcpIdentityToken's fetch signal below.
-// Mirrors that same 2s bound — a Clerk session-token read should be fast, and a hang here
-// previously blocked getAuthHeaders() (and therefore the fetch() it precedes) indefinitely,
-// reproducing #922's stuck-row bug via Clerk instead of the request itself.
-const CLERK_TOKEN_TIMEOUT_MS = 2000;
+// withTimeout rather than passed through like getGcpIdentityToken's fetch signal below. A
+// hang here previously blocked getAuthHeaders() (and therefore the fetch() it precedes)
+// indefinitely, reproducing #922's stuck-row bug via Clerk instead of the request itself.
 
 // ---------------------------------------------------------------------------
 // AUTH HEADER INVARIANT (server path) — read before changing this strategy.
