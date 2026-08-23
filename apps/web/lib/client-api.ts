@@ -3,6 +3,13 @@
 
 import { createApiClient } from '@lifting-logbook/api-client';
 import { getClientPublicConfig } from './public-config';
+import { withTimeout } from './with-timeout';
+
+// Bounds the Clerk token call so a hang doesn't block getClientAuthHeaders() (and
+// therefore the fetch() it precedes) indefinitely — mirrors the server path's own
+// bound in lib/api.ts. Clerk's getToken() accepts no AbortSignal/timeout option of its
+// own, so this has to be hand-rolled via withTimeout rather than passed as a signal (#933).
+const CLERK_TOKEN_TIMEOUT_MS = 2000;
 
 // Base URL and dev token are resolved LAZILY (per request) from the runtime-injected
 // window.__PUBLIC_CONFIG__ rather than read at module-eval time. The values are no longer
@@ -41,7 +48,22 @@ async function getClientAuthHeaders(): Promise<Record<string, string>> {
   const devToken = getDevToken();
   if (devToken) return { Authorization: `Bearer ${devToken}` };
   if (_getToken) {
-    const token = await _getToken();
+    // Snapshot to a local const: _getToken is a mutable module-level `let`, so a
+    // closure referencing it directly loses TS's non-null narrowing from the check above.
+    const getToken = _getToken;
+    const token = await withTimeout(
+      (async (): Promise<string | null> => {
+        try {
+          return await getToken();
+        } catch (e) {
+          console.error('[getClientAuthHeaders] Clerk token acquisition failed:', e);
+          return null;
+        }
+      })(),
+      CLERK_TOKEN_TIMEOUT_MS,
+      null,
+      () => console.warn('[getClientAuthHeaders] Clerk token acquisition timed out — proceeding unauthenticated'),
+    );
     if (token) return { Authorization: `Bearer ${token}` };
   }
   return {};

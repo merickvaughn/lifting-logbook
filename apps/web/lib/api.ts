@@ -3,9 +3,18 @@ import 'server-only';
 import { auth } from '@clerk/nextjs/server';
 import { createApiClient } from '@lifting-logbook/api-client';
 import { getGcpIdentityToken } from './gcp-identity-token';
+import { withTimeout } from './with-timeout';
 
 const API_URL = process.env.API_URL ?? 'http://localhost:3004';
 const isCloudRun = API_URL.startsWith('https://');
+
+// Clerk's getToken() accepts no AbortSignal/timeout option of its own (confirmed against
+// Clerk's docs while investigating #933), so this bound has to be hand-rolled via
+// withTimeout rather than passed through like getGcpIdentityToken's fetch signal below.
+// Mirrors that same 2s bound — a Clerk session-token read should be fast, and a hang here
+// previously blocked getAuthHeaders() (and therefore the fetch() it precedes) indefinitely,
+// reproducing #922's stuck-row bug via Clerk instead of the request itself.
+const CLERK_TOKEN_TIMEOUT_MS = 2000;
 
 // ---------------------------------------------------------------------------
 // AUTH HEADER INVARIANT (server path) — read before changing this strategy.
@@ -32,19 +41,24 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   // See infra/terraform/cloud-run.tf (web_invoker_on_api binding).
   // Both fetches are independent — run them in parallel.
   const [clerkToken, identityToken] = await Promise.all([
-    (async (): Promise<string | null> => {
-      try {
-        const { getToken } = await auth();
-        const token = await getToken();
-        if (!token) {
-          console.warn('[getAuthHeaders] No Clerk session token in Cloud Run — request will be unauthenticated');
+    withTimeout(
+      (async (): Promise<string | null> => {
+        try {
+          const { getToken } = await auth();
+          const token = await getToken();
+          if (!token) {
+            console.warn('[getAuthHeaders] No Clerk session token in Cloud Run — request will be unauthenticated');
+          }
+          return token;
+        } catch (e) {
+          console.error('[getAuthHeaders] Clerk token acquisition failed:', e);
+          return null;
         }
-        return token;
-      } catch (e) {
-        console.error('[getAuthHeaders] Clerk token acquisition failed:', e);
-        return null;
-      }
-    })(),
+      })(),
+      CLERK_TOKEN_TIMEOUT_MS,
+      null,
+      () => console.warn('[getAuthHeaders] Clerk token acquisition timed out — proceeding unauthenticated'),
+    ),
     getGcpIdentityToken(API_URL),
   ]);
 

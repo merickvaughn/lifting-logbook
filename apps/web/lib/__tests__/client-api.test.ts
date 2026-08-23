@@ -72,4 +72,26 @@ describe('client-api runtime base URL', () => {
     const [, init] = firstCall();
     expect((init.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
   });
+
+  // #933: getClientAuthHeaders previously awaited the injected Clerk getToken() with no
+  // timeout and no try/catch at all — a hang there blocked the request indefinitely, the
+  // same externally-observable bug #922/#932 fixed for a hung fetch() itself, just one
+  // layer earlier. It must now degrade to "no token" instead of hanging forever.
+  it('proceeds without an Authorization header when the Clerk token getter hangs past the timeout', async () => {
+    window.__PUBLIC_CONFIG__ = { apiUrl: 'https://api.prod.example', defaultProgram: '5-3-1' };
+    const { unskipWorkout, setAuthTokenGetter } = await importClientApi();
+    setAuthTokenGetter(() => new Promise<string | null>(() => {})); // never resolves
+
+    jest.useFakeTimers();
+    try {
+      const result = unskipWorkout('5-3-1', 1, 2);
+      await jest.advanceTimersByTimeAsync(2000); // past the 2s Clerk-token bound
+      await expect(result).resolves.toBeUndefined();
+
+      const [, init] = firstCall();
+      expect((init.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
