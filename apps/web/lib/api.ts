@@ -8,12 +8,6 @@ import { CLERK_TOKEN_TIMEOUT_MS, withTimeout } from './with-timeout';
 const API_URL = process.env.API_URL ?? 'http://localhost:3004';
 const isCloudRun = API_URL.startsWith('https://');
 
-// Clerk's getToken() accepts no AbortSignal/timeout option of its own (confirmed against
-// Clerk's docs while investigating #933), so this bound has to be hand-rolled via
-// withTimeout rather than passed through like getGcpIdentityToken's fetch signal below. A
-// hang here previously blocked getAuthHeaders() (and therefore the fetch() it precedes)
-// indefinitely, reproducing #922's stuck-row bug via Clerk instead of the request itself.
-
 // ---------------------------------------------------------------------------
 // AUTH HEADER INVARIANT (server path) — read before changing this strategy.
 //
@@ -39,6 +33,11 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   // See infra/terraform/cloud-run.tf (web_invoker_on_api binding).
   // Both fetches are independent — run them in parallel.
   const [clerkToken, identityToken] = await Promise.all([
+    // Bounded via withTimeout — Clerk's getToken() has no native AbortSignal/timeout
+    // option of its own (unlike getGcpIdentityToken's fetch signal below), so this has to
+    // be hand-rolled. See with-timeout.ts for the mechanism and CLERK_TOKEN_TIMEOUT_MS for
+    // the shared bound; a hang here previously blocked getAuthHeaders() (and therefore the
+    // fetch() it precedes) indefinitely, reproducing #922's stuck-row bug via Clerk (#933).
     withTimeout(
       (async (): Promise<string | null> => {
         try {
