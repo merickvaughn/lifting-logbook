@@ -747,6 +747,37 @@ of job naming.
 Motivating incident: [issue #906](https://github.com/merickvaughn/lifting-logbook/issues/906), found
 while merging [PR #905](https://github.com/merickvaughn/lifting-logbook/pull/905) (2026-08-18).
 
+### Auto-merge silently cleared — a force-push to the armed branch
+
+**Pattern:** `gh pr merge <N> --squash` against this repo's merge-queue-protected `main` either
+enqueues the PR immediately or arms `autoMergeRequest` so GitHub enqueues it once required checks
+go green (see "Merge enqueues instead of landing" above). A **force-push** to that branch after the
+request is armed — most commonly a `git rebase origin/main` + `git push --force-with-lease` while
+the PR is still waiting on checks or a queue slot, needed because a sibling PR merged ahead of it
+(a real scenario under this repo's concurrent-session throughput on shared files, not an edge case)
+— silently clears the armed request, with no error or warning anywhere. Root cause (inferred, not
+confirmed against GitHub's own docs): `autoMergeRequest` is presumably tied to the commit SHA it was
+armed against, and a force-push changes `HEAD`'s SHA without GitHub carrying the auto-merge intent
+forward to the new one.
+
+**Symptom:** `gh pr view <N> --json autoMergeRequest` returns `null` after a rebase + force-push,
+even though the identical query returned a populated object immediately after the earlier
+`gh pr merge --squash` call that armed it.
+
+**Fix:** After any force-push to a branch with a previously-armed `autoMergeRequest`, check and
+re-arm — never assume a prior arming survives a subsequent rebase + force-push:
+```bash
+gh pr view <N> --json autoMergeRequest --jq .autoMergeRequest   # null means it was cleared
+gh pr merge <N> --squash                                        # re-arms (or re-enqueues) it
+```
+This matters most for a PR that needs a rebase while it's actively waiting in the queue — check
+`autoMergeRequest` again after every such force-push, not just once after the first `--squash` call.
+
+Motivating incident: [PR #919](https://github.com/merickvaughn/lifting-logbook/pull/919) (issue
+[#917](https://github.com/merickvaughn/lifting-logbook/issues/917)), 2026-08-21 — needed two rounds
+of `git rebase origin/main` while queued behind sibling PRs merging ahead of it; the second rebase +
+force-push cleared the arming unnoticed until `autoMergeRequest` was checked again and found `null`.
+
 ---
 
 ## Observability
