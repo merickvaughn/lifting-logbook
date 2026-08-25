@@ -48,8 +48,19 @@
       "dependsOn": ["^typecheck"],
       "outputs": []
     },
+    // dev must build workspace libraries first. packages/core, packages/types and
+    // packages/api-client each resolve through "main": "dist/index.js", so both dev
+    // servers load the COMPILED dist, never the TypeScript source — without ^build,
+    // `npm run dev` serves whatever dist happens to already be on disk. A checkout
+    // once ran a seven-week-old packages/core that still emitted a lift-validation
+    // message #912 had deleted, with nothing surfaced to say the build was stale.
+    // Same shape of gap as #496, which added db:generate below for the Prisma dev
+    // path. Legal in Turborepo 2.x: a persistent task may depend on non-persistent
+    // ones (build is non-persistent) — the reverse is what is forbidden. ^build
+    // covers only each app's workspace DEPENDENCIES, never its own next/nest build.
+    // Guarded by scripts/check-turbo-dev-build-dep.mjs. See #944.
     "dev": {
-      "dependsOn": ["db:generate"],
+      "dependsOn": ["db:generate", "^build"],
       "persistent": true,
       "cache": false
     }

@@ -372,6 +372,30 @@ requires the worktree-local `turbo` via `TURBO_BINARY_PATH`, not the global one)
 clean **`npm ci`** once the lockfile is back in sync — *not* another `npm install`, which can
 leave the same partial-extract state. Motivating incident: the #570/#571 session (Windows, Node 20).
 
+**Workspace libraries build automatically for `dev` — but not for every path.** `packages/core`,
+`packages/types` and `packages/api-client` are consumed through `"main": "dist/index.js"`, so
+anything importing them loads the **compiled `dist`**, never the TypeScript source. `turbo.json`’s
+`dev` task depends on `^build` ([#944](https://github.com/merickvaughn/lifting-logbook/issues/944)),
+so `npm run dev` builds those libs before starting either server and can no longer serve a stale
+`dist` — a checkout once ran a seven-week-old `packages/core` that still emitted a lift-import
+validation message [#912](https://github.com/merickvaughn/lifting-logbook/pull/912) had already
+deleted. `scripts/check-turbo-dev-build-dep.mjs` guards that dependency in CI. The **e2e** path is
+separate and still manual — build the libs explicitly before running Playwright in a fresh
+worktree (tracked in [#849](https://github.com/merickvaughn/lifting-logbook/issues/849)):
+
+```bash
+npx turbo run build --filter=@lifting-logbook/core --filter=@lifting-logbook/types --filter=@lifting-logbook/api-client
+```
+
+**Purging build artifacts by hand needs `*.tsbuildinfo` too.** Those three packages set
+`composite: true`, so deleting `dist/` alone leaves `tsconfig.tsbuildinfo` behind and `tsc` skips
+emit entirely on the next build — `packages/types/dist` comes back with `api.d.ts` and `index.js`
+but no `index.d.ts`, which then fails `api-client`’s build with a misleading `TS7016`. Remove both:
+
+```bash
+find packages apps -maxdepth 3 -name "*.tsbuildinfo" -not -path "*/node_modules/*" -delete
+```
+
 ---
 
 ## CLI Scripting Checklist

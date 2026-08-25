@@ -100,6 +100,12 @@ jobs:
       - name: Unit test board-ID sync parsing
         run: node --test scripts/check-board-id-sync.test.mjs
 
+      - name: Verify turbo dev task builds workspace libraries
+        run: node scripts/check-turbo-dev-build-dep.mjs
+
+      - name: Unit test turbo dev-build dependency check parsing
+        run: node --test scripts/check-turbo-dev-build-dep.test.mjs
+
       # The OTel sidecar injector is Python (it rewrites the live Cloud Run api manifest at
       # deploy time — a path that cannot be dry-run tested), so its test runs under Python
       # rather than turbo/jest. PyYAML is the injector's own only dependency. See #786.
