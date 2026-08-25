@@ -49,9 +49,11 @@
       "outputs": []
     },
     // dev must build workspace libraries first. packages/core, packages/types and
-    // packages/api-client each resolve through "main": "dist/index.js", so both dev
-    // servers load the COMPILED dist, never the TypeScript source — without ^build,
-    // `npm run dev` serves whatever dist happens to already be on disk. A checkout
+    // packages/api-client each resolve through "main": "dist/index.js", so every dev
+    // target loads the COMPILED dist, never the TypeScript source — without ^build,
+    // `npm run dev` serves whatever dist happens to already be on disk. `npm run dev`
+    // is unfiltered, so this covers all three: apps/api, apps/web, and apps/mobile
+    // (expo start), whose own dev task depends on packages/types. A checkout
     // once ran a seven-week-old packages/core that still emitted a lift-validation
     // message #912 had deleted, with nothing surfaced to say the build was stale.
     // Same shape of gap as #496, which added db:generate below for the Prisma dev
