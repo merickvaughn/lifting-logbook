@@ -372,6 +372,39 @@ requires the worktree-local `turbo` via `TURBO_BINARY_PATH`, not the global one)
 clean **`npm ci`** once the lockfile is back in sync — *not* another `npm install`, which can
 leave the same partial-extract state. Motivating incident: the #570/#571 session (Windows, Node 20).
 
+**Workspace libraries build automatically for `dev` — but not for every path.** `packages/core`,
+`packages/types` and `packages/api-client` are consumed through `"main": "dist/index.js"`, so
+anything importing them loads the **compiled `dist`**, never the TypeScript source. `turbo.json`'s
+`dev` task depends on `^build` ([#944](https://github.com/merickvaughn/lifting-logbook/issues/944)),
+so `npm run dev` builds those libs before starting any dev target and can no longer serve a stale
+`dist` — a checkout once ran a seven-week-old `packages/core` that still emitted a lift-import
+validation message [#912](https://github.com/merickvaughn/lifting-logbook/pull/912) had already
+deleted. `npm run dev` is unfiltered `turbo run dev`, so this covers **all three** dev targets:
+`apps/api` (`nest start --watch`), `apps/web` (`next dev`) and `apps/mobile` (`expo start`, which
+depends on `packages/types`). `scripts/check-turbo-dev-build-dep.mjs` guards that dependency in CI.
+
+> Because `dev` now depends on `^build`, a workspace library that fails to build blocks **every**
+> dev target rather than silently serving a stale `dist` — which is the point, but it also means a
+> torn `node_modules` (see the Windows partial-extract bullet above) or a mid-refactor type error in
+> `packages/core` stops `apps/web` from starting at all. To bypass turbo's graph entirely, run the
+> app's own dev script directly: `cd apps/web && npm run dev` invokes `next dev` with no build step.
+
+The **e2e** path is separate and still manual — build the libs explicitly before running
+Playwright in a fresh worktree (tracked in [#849](https://github.com/merickvaughn/lifting-logbook/issues/849)):
+
+```bash
+npx turbo run build --filter=@lifting-logbook/core --filter=@lifting-logbook/types --filter=@lifting-logbook/api-client
+```
+
+**Purging build artifacts by hand needs `*.tsbuildinfo` too.** Those three packages set
+`composite: true`, so deleting `dist/` alone leaves `tsconfig.tsbuildinfo` behind and `tsc` skips
+emit entirely on the next build — `packages/types/dist` comes back with `api.d.ts` and `index.js`
+but no `index.d.ts`, which then fails `api-client`'s build with a misleading `TS7016`. Remove both:
+
+```bash
+find packages apps -maxdepth 3 -name "*.tsbuildinfo" -not -path "*/node_modules/*" -delete
+```
+
 ---
 
 ## CLI Scripting Checklist
@@ -527,6 +560,26 @@ node scripts/check-board-id-sync.mjs
 ```
 
 It compares the project node ID, the Epic/Status field IDs, all 10 Epic option IDs, the owner, the project number, the Done option ID and the milestone titles, and additionally verifies this file agrees with *itself* (the node ID alone appears six times, so a partial hand-edit is easy to make). It is a **drift** check, not a **liveness** check — three caches stale in lockstep pass by design; confirming they match the live API remains the manual step in the Backup-and-restore procedure. This also runs as a CI step (`ci.yml` → `lint-and-test` → "Verify board-ID caches are in sync (CLAUDE.md ↔ .claude/*.json)"), so a drifting PR fails either way. See [#865](https://github.com/merickvaughn/lifting-logbook/issues/865).
+
+### Turbo dev workspace-library build (`turbo.json`)
+
+`turbo.json`'s `dev` task depends on `^build`, so `turbo run dev` builds `packages/core`,
+`packages/types` and `packages/api-client` before starting any dev target. Each resolves through
+`"main": "dist/index.js"`, so without that dependency the dev servers load whatever compiled output
+is already on disk — arbitrarily stale, with nothing surfaced to say so. A checkout once ran a
+seven-week-old `packages/core` that still emitted a lift-import validation message
+[#912](https://github.com/merickvaughn/lifting-logbook/pull/912) had already deleted, producing a
+user-visible error current source cannot generate. Background: [Worktree Setup](#worktree-setup).
+
+**Run before pushing whenever `turbo.json`'s `dev` task changes:**
+
+```bash
+node scripts/check-turbo-dev-build-dep.mjs
+```
+
+This also runs as a CI step (`ci.yml` → `lint-and-test` → "Verify turbo dev task builds workspace
+libraries"), so a drifting PR fails either way — running it locally just catches the regression
+before waiting on CI. See [#944](https://github.com/merickvaughn/lifting-logbook/issues/944).
 
 ### Coverage Requirements
 
