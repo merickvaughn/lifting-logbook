@@ -144,7 +144,7 @@ First deployable version. Styled web app running against a real database, deploy
 
 | Proposal | Description | Issue | Status |
 |---|---|---|---|
-| *(none yet)* | | | |
+| [Download My Data — Full Logbook Export](docs/proposals/2026-08-26-download-my-data-export.md) | One-click `Settings → Data` export: a timestamped `.zip` holding four re-importable CSVs (one per `ImportKind`, so a backup restores through the existing `/import` wizard) plus a complete `logbook.json` bundle covering every user-scoped table | [#947](https://github.com/merickvaughn/lifting-logbook/issues/947) | draft |
 
 ---
 
