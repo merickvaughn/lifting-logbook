@@ -35,11 +35,19 @@ timestamped `.zip` containing the user's complete logbook:
   custom programs.
 
 The round-trip is the whole point. Because the CSVs match what `/import` already ingests, a
-downloaded backup is restorable through the existing wizard on day one — no new import path to
-build, and no format invented for this feature. `packages/types/src/api.ts` already describes the
-four destinations as mirroring "the four CSV exports the app stores"; this proposal makes that
-sentence true of the app itself rather than only of its predecessor. `logbook.json` carries
-`schemaVersion` and `exportedAt` so a future restore path can migrate older bundles.
+downloaded backup is restorable through the existing wizard on day one **for the four covered
+destinations** — no new import path to build, and no format invented for this feature.
+`packages/types/src/api.ts` already describes the four destinations as mirroring "the four CSV
+exports the app stores"; this proposal makes that sentence true of the app itself rather than only
+of its predecessor. `logbook.json` carries `schemaVersion` and `exportedAt` so a future restore
+path can migrate older bundles.
+
+One gap is worth naming rather than discovering later: the `program-spec` import writes only
+`CustomProgramSpec` rows (`apps/api/src/adapters/prisma/hybrid-program-spec.repository.ts`), while
+the parent `CustomProgram` row — its `name`, `description`, and `baseTemplate` — is written solely
+by the `/custom-programs` CRUD path (`apps/api/src/custom-programs/custom-programs.repository.ts`).
+So a CSV-only restore rebuilds a custom program's spec rows but not its identity. That metadata
+rides in `logbook.json`, which has no import path today; see Open Questions.
 
 The feature is read-only and additive: no schema change, and rollback is deleting the route.
 
@@ -58,9 +66,14 @@ system — which is a different job from keeping two devices in agreement.
 - [ ] Each of the four CSVs re-imports through `/import` on a non-empty account with the correct
       destination auto-classified and zero validation errors — **proven by a test, not by
       inspection**
-- [ ] `logbook.json` contains every user-scoped table in `apps/api/prisma/schema.prisma`
-      (15 models; `ImportBatch` is excluded as internal undo state, not user data), plus
-      `schemaVersion` and `exportedAt`
+- [ ] An account with no data still produces a valid archive — header-only CSVs and empty
+      collections in `logbook.json`, never an error or a zero-byte file (onboarding makes
+      empty accounts a routine state, not an edge case)
+- [ ] Every user-scoped table in `apps/api/prisma/schema.prisma` is represented in
+      `logbook.json` (15 models; `ImportBatch` is excluded as internal undo state, not user
+      data), plus `schemaVersion` and `exportedAt`. Nesting a child under its parent counts as
+      represented — `CustomProgramSpec` belongs under `CustomProgram` — so the contract is
+      coverage, not a flat top-level key count
 - [ ] `packages/core` gains a `serializeCsvText` that round-trips against the existing
       `parseCsvText` — `parse(serialize(x))` equals `x` — with unit tests reusing the existing
       parser fixtures
@@ -90,7 +103,13 @@ system — which is a different job from keeping two devices in agreement.
 ## Open Questions
 
 - **One PR or two?** The four CSVs (with the core serializer) and the JSON bundle are separable.
-  Recommend shipping the CSVs first — they carry the restore story on their own — then the bundle.
+  Recommend shipping the CSVs first — they carry the restore story for the four covered
+  destinations — then the bundle.
+- **Should custom-program metadata get an import path?** Per the gap named in Proposed Solution, a
+  CSV-only restore loses a custom program's `name`/`description`/`baseTemplate`. Options: accept it
+  for now and document the limitation in the export UI; extend the `program-spec` import to upsert
+  the parent row; or fold it into the eventual `logbook.json` restore path. Worth deciding before
+  the CSV-first PR merges, since it determines whether "restorable on day one" needs an asterisk.
 - **Size ceiling.** No cap is proposed; a multi-year history is still tens of thousands of rows.
   If measurement says otherwise, stream rather than paginate: a silently partial backup is worse
   than a slow one.
