@@ -219,6 +219,32 @@ test('a missing ~/.bashrc is created rather than erroring', () => {
   }
 });
 
+test('a failure while sourced returns non-zero without killing the calling shell', () => {
+  requireBash();
+  const home = makeHome();
+  try {
+    // The highest-consequence path in the script: an `exit` reached while sourced would kill
+    // the user's interactive terminal. The caller must survive, observe a non-zero status, and
+    // see nothing saved. Blank address triggers the refusal.
+    const probe = [
+      `. "${SETUP_SCRIPT.replace(/\\/g, '/')}" > /dev/null 2>&1`,
+      'rc=$?',
+      'printf "PROBE_RC=%s\\n" "$rc"',
+      'printf "PROBE_ALIVE=yes\\n"', // only prints if the source did not exit the shell
+    ].join('\n');
+    const res = spawnSync('bash', ['-c', probe], {
+      input: '\n111111\nglc_fixture\n\n',
+      encoding: 'utf8',
+      env: cleanEnv({ HOME: home.replace(/\\/g, '/') }),
+    });
+    assert.match(res.stdout, /PROBE_ALIVE=yes/, 'the calling shell must survive the failure');
+    assert.match(res.stdout, /PROBE_RC=1/, 'the failure must surface as a non-zero status');
+    assert.ok(!bashrcOf(home).includes(BEGIN), 'nothing should have been saved');
+  } finally {
+    cleanup(home);
+  }
+});
+
 test('sourcing the script exports into the calling shell', () => {
   requireBash();
   const home = makeHome();
