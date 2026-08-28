@@ -34,9 +34,7 @@ Usage:
     > rendered.yaml
 
 Required env vars:
-  INGRESS_IMAGE        full ingress-app image ref (registry/<api|web>:<sha>). API_IMAGE is
-                       accepted as a back-compat fallback (the api deploy steps still pass it);
-                       INGRESS_IMAGE wins when both are set.
+  INGRESS_IMAGE        full ingress-app image ref (registry/<api|web>:<sha>)
   OTEL_CONFIG_SECRET   Secret Manager secret holding config.yaml (mounted as a file)
   OTEL_OTLP_ENDPOINT   Grafana Cloud OTLP gateway base URL (traces + metrics)
   OTEL_LOKI_ENDPOINT   Grafana Cloud Loki OTLP base URL (logs)
@@ -98,11 +96,8 @@ def parse_extra_env(raw):
 
 
 def main():
-    # INGRESS_IMAGE is the general name (api or web); API_IMAGE stays accepted as a fallback so
-    # the unchanged api deploy steps keep working. INGRESS_IMAGE wins when both are set.
-    ingress_image = os.environ.get("INGRESS_IMAGE") or os.environ.get("API_IMAGE")
-    if not ingress_image:
-        sys.exit("inject-otel-sidecar: missing required env var INGRESS_IMAGE (or API_IMAGE)")
+    # The general name for the ingress-app image, whichever service is being deployed (api or web).
+    ingress_image = req("INGRESS_IMAGE")
     # `or "api"` (not a plain default) so an explicitly-empty INGRESS_CONTAINER_NAME still
     # resolves to "api" rather than producing an invalid empty container name in the manifest.
     ingress_name = os.environ.get("INGRESS_CONTAINER_NAME") or "api"
