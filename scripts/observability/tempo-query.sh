@@ -35,8 +35,14 @@ Usage: scripts/observability/tempo-query.sh <subcommand> [args]
   tag-values <tag>     List observed values for one (unscoped) tag. Example:
                          tag-values client.origin.check
 
-Target: staging by default; TEMPO_TARGET=prod selects prod (see tempo-query-env.sh).
-Credentials: scripts/observability/.tempo-credentials (see .tempo-credentials.example).
+Target: staging by default. One Grafana Cloud stack serves BOTH environments, so these
+  credentials already read production traces and TEMPO_TARGET=prod falls back to the
+  staging set when no TEMPO_PROD_* is configured. Scope queries to the environment:
+    search '{ resource.deployment.environment.name = "production" }'
+Credentials: run `source scripts/observability/tempo-setup.sh` once to persist them to
+  ~/.bashrc (outside every worktree, so they resolve everywhere). Or use a gitignored
+  scripts/observability/.tempo-credentials (see .tempo-credentials.example) — from a
+  worktree, the canonical checkout's copy is used when there is no local one.
 EOF
 }
 
