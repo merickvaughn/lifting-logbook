@@ -20,7 +20,7 @@
 #            sed -i '/# >>> mimir-query-env >>>/,/# <<< mimir-query-env <<</d' ~/.bashrc
 #
 # BACKUP:    replacing the managed block rewrites the WHOLE of ~/.bashrc, a file this script
-#            does not own and which holds arbitrary unrelated content. Two guards, per the
+#            does not own and which holds arbitrary unrelated content. Three guards, per the
 #            "Back up before you mutate" rule (#954):
 #              1. ~/.bashrc.mimir-setup.orig — a written-if-absent anchor capturing the state
 #                 before this script ever ran. Never overwritten on re-run, so repeated runs
@@ -33,6 +33,11 @@
 #                 disk-full `awk` can emit a short file and still exit 0 (see the global
 #                 CLAUDE.md ENOSPC note — its signature is exactly "truncated output, exit 0"),
 #                 so exit status alone is not sufficient evidence the write is complete.
+#              3. An UNTERMINATED managed block — an opening delimiter with no closing one, which
+#                 is what a run truncated part-way through appending leaves behind — is refused
+#                 outright rather than removed. Guard 2 cannot catch this one: its expected length
+#                 is counted to end-of-file for the same reason the removal would delete to
+#                 end-of-file, so the two agree on a wrong answer. Repair the block by hand.
 
 # NOTE: no `set -e` — this script is meant to be sourced, where `set -e` would leak
 # into and could kill the user's interactive shell.
@@ -95,34 +100,58 @@ fi
 # Drop any previous managed block (exact-line match — no regex escaping headaches).
 if [ "$_mset_abort" = 0 ] && grep -qF "$_mset_begin" "$_mset_bashrc"; then
   # Count what the rewrite should remove: the delimiters and everything between them. This
-  # mirrors the removal awk exactly, so the expected output length is known in advance.
+  # mirrors the removal awk exactly, so the expected output length is known in advance. The
+  # second field reports whether the block is CLOSED — see the refusal below.
   _mset_before="$(wc -l < "$_mset_bashrc")"
-  _mset_blocklines="$(awk -v b="$_mset_begin" -v e="$_mset_end" '
-    $0==b {s=1} s {n++} s && $0==e {s=0} END {print n+0}
+  _mset_blockinfo="$(awk -v b="$_mset_begin" -v e="$_mset_end" '
+    $0==b {s=1} s {n++} s && $0==e {s=0} END {print n+0, (s?0:1)}
   ' "$_mset_bashrc")"
-  _mset_expected=$(( _mset_before - _mset_blocklines ))
+  _mset_blocklines="${_mset_blockinfo%% *}"
+  _mset_terminated="${_mset_blockinfo##* }"
 
-  awk -v b="$_mset_begin" -v e="$_mset_end" '
-    $0==b {skip=1; next}
-    skip && $0==e {skip=0; next}
-    !skip {print}
-  ' "$_mset_bashrc" > "$_mset_bashrc.mset.tmp"
-  _mset_rc=$?
-  _mset_after="$(wc -l < "$_mset_bashrc.mset.tmp" 2>/dev/null || echo -1)"
-
-  # `-ge`, not `-eq`: awk always terminates its final line, so a source file lacking a trailing
-  # newline legitimately yields one MORE line than wc counted for it. A count BELOW the
-  # expectation is a short write — that is the case worth refusing.
-  if [ "$_mset_rc" -eq 0 ] && [ "$_mset_after" -ge "$_mset_expected" ]; then
-    mv "$_mset_bashrc.mset.tmp" "$_mset_bashrc"
-  else
-    rm -f "$_mset_bashrc.mset.tmp"
-    echo "ERROR: rewriting $_mset_bashrc produced $_mset_after lines, expected at least $_mset_expected." >&2
-    echo "The original is UNTOUCHED and nothing was saved. A short write usually means a full disk." >&2
+  if [ "$_mset_terminated" != 1 ]; then
+    # An UNTERMINATED block is the one input the line-count check below cannot catch: the count
+    # above runs to end-of-file for exactly the same reason the removal awk would, so the two
+    # agree on a wrong answer and the comparison passes. Left to run, the rewrite would delete
+    # everything from the opening delimiter to EOF — including anything the user added after a
+    # block a truncated earlier run left open. Refuse instead; a corrupt block is a state a
+    # human should look at, not one a setup script should silently resolve by truncation.
+    echo "ERROR: the managed block in $_mset_bashrc opens with" >&2
+    echo "  $_mset_begin" >&2
+    echo "but has no matching closing line" >&2
+    echo "  $_mset_end" >&2
+    echo "Removing it would delete everything from the opening line to the end of the file, so" >&2
+    echo "nothing was saved and $_mset_bashrc is UNTOUCHED. A run truncated part-way through" >&2
+    echo "appending (usually a full disk) can leave the block open like this. Repair it by hand —" >&2
+    echo "restore the closing line, or delete the block outright — then re-run." >&2
     echo "Backup of the pre-mimir-setup state: $_mset_anchor" >&2
     _mset_abort=1
+  else
+    _mset_expected=$(( _mset_before - _mset_blocklines ))
+
+    awk -v b="$_mset_begin" -v e="$_mset_end" '
+      $0==b {skip=1; next}
+      skip && $0==e {skip=0; next}
+      !skip {print}
+    ' "$_mset_bashrc" > "$_mset_bashrc.mset.tmp"
+    _mset_rc=$?
+    _mset_after="$(wc -l < "$_mset_bashrc.mset.tmp" 2>/dev/null || echo -1)"
+
+    # `-ge`, not `-eq`: awk always terminates its final line, so a source file lacking a trailing
+    # newline legitimately yields one MORE line than wc counted for it. A count BELOW the
+    # expectation is a short write — that is the case worth refusing.
+    if [ "$_mset_rc" -eq 0 ] && [ "$_mset_after" -ge "$_mset_expected" ]; then
+      mv "$_mset_bashrc.mset.tmp" "$_mset_bashrc"
+    else
+      rm -f "$_mset_bashrc.mset.tmp"
+      echo "ERROR: rewriting $_mset_bashrc produced $_mset_after lines, expected at least $_mset_expected." >&2
+      echo "The original is UNTOUCHED and nothing was saved. A short write usually means a full disk." >&2
+      echo "Backup of the pre-mimir-setup state: $_mset_anchor" >&2
+      _mset_abort=1
+    fi
+    unset _mset_expected _mset_rc _mset_after
   fi
-  unset _mset_before _mset_blocklines _mset_expected _mset_rc _mset_after
+  unset _mset_before _mset_blockinfo _mset_blocklines _mset_terminated
 fi
 
 if [ "$_mset_abort" = 0 ]; then

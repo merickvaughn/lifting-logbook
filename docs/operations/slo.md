@@ -195,7 +195,9 @@ Three ways, same queries:
   written-if-absent anchor at `~/.bashrc.mimir-setup.orig` — never overwritten on re-run, so
   repeated runs cannot erode the original — and refuses to proceed if that copy fails. Restore with
   `cp ~/.bashrc.mimir-setup.orig ~/.bashrc`. The rewrite itself is verified by line count before it
-  replaces the original, since a full disk can truncate it and still exit 0
+  replaces the original, since a full disk can truncate it and still exit 0; and an *unterminated*
+  managed block — what a run truncated part-way through appending leaves behind — is refused rather
+  than removed to end-of-file, so repair it by hand and re-run
   ([#954](https://github.com/merickvaughn/lifting-logbook/issues/954)). The runner sources
   [`mimir-query-env.sh`](../../scripts/observability/mimir-query-env.sh), which exports the variables
   (and also honors any already set — including those from `mimir-setup.sh`/`mimir-setup.ps1`, or a

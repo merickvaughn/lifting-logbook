@@ -10,9 +10,11 @@
 // ~/.bashrc, so this check fails loudly rather than letting a silent escape look like a pass.
 // The credentials fed in are fixtures; no real token is involved.
 //
-// Mirrors tempo-setup.test.mjs (#949), which covers the sibling script, and adds two cases that
+// Mirrors tempo-setup.test.mjs (#949), which covers the sibling script, and adds three cases that
 // pin the completeness check itself: the no-trailing-newline boundary that forces `-ge` over
-// `-eq`, and a simulated truncated rewrite that proves the check is not vacuous.
+// `-eq`, a simulated truncated rewrite that proves the check is not vacuous, and an unterminated
+// managed block — the one input the line-count check provably cannot catch, so it is refused
+// before the rewrite rather than by it.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -275,6 +277,15 @@ test('sourcing the script exports into the calling shell', () => {
       encoding: 'utf8',
       env: cleanEnv({ HOME: posix(home) }),
     });
+    // Sandbox check first, and it is load-bearing here specifically: PROBE reads an exported
+    // environment variable, which would read 111111 whether the script wrote to the sandbox or
+    // to the developer's real ~/.bashrc. Every other writing case in this file asserts on
+    // sandbox file content and so catches an escape on its own; this one would not.
+    assert.equal(
+      countOccurrences(bashrcOf(home), BEGIN),
+      1,
+      'the block must have landed in the sandbox HOME, not a real ~/.bashrc',
+    );
     assert.match(res.stdout, /PROBE=111111/);
   } finally {
     cleanup(home);
@@ -350,6 +361,45 @@ test('a truncated rewrite is refused and leaves .bashrc untouched', () => {
     assert.ok(!fs.existsSync(tmpPath(home)), 'the temp file must be cleaned up');
     // The refusal must not have saved the new values anywhere.
     assert.ok(!bashrcOf(home).includes('https://second.invalid'));
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('an unterminated managed block is refused, not removed to end-of-file', () => {
+  requireBash();
+  // The one input the line-count check cannot catch, and the reason it is checked separately.
+  // A run truncated part-way through APPENDING leaves an opening delimiter with no closing one.
+  // The removal awk sets skip=1 at BEGIN and never clears it, so it would drop everything to
+  // EOF — and the expected-length count runs to EOF for the same reason, so the two agree on a
+  // wrong answer and the comparison passes. Anything the user added after the corrupt block is
+  // then destroyed silently, with an exit status of 0.
+  //
+  // The anchor does not save them either: it is written-if-absent, so it holds the state from
+  // before the FIRST run and predates whatever was appended after the block went corrupt.
+  const corrupted = [
+    'alias ll="ls -la"',
+    BEGIN,
+    'export MIMIR_ADDRESS=https://partial.invalid',
+    'export MIMIR_API_USER=111111',
+    // ...truncated here: no END delimiter.
+    'export IMPORTANT_USER_LINE=keepme', // added by the user, after the block went corrupt
+  ].join('\n');
+  const home = makeHome(corrupted);
+  try {
+    const before = bashrcOf(home);
+    const out = runSetup(home, { address: 'https://new.invalid', user: '999999', key: 'glc_new' });
+
+    assert.equal(out.status, 1, 'an unterminated block must be refused, not silently repaired');
+    assert.match(out.stderr, /has no matching closing line/);
+    assert.equal(bashrcOf(home), before, '.bashrc must be byte-identical after a refusal');
+    // The specific regression: content after the corrupt block must survive.
+    assert.ok(
+      bashrcOf(home).includes('export IMPORTANT_USER_LINE=keepme'),
+      'content following an unterminated block must not be deleted',
+    );
+    assert.ok(!bashrcOf(home).includes('https://new.invalid'), 'nothing should have been saved');
+    assert.ok(!fs.existsSync(tmpPath(home)), 'no temp file should be left behind');
   } finally {
     cleanup(home);
   }
