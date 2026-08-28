@@ -31,7 +31,7 @@ FIXTURE = os.path.join(HERE, "testdata", "cloud-run-api-export.yaml")
 # environment before each run so a value set in the caller's shell cannot mask a test that
 # deliberately omits one (e.g. the missing-required-var guard below).
 INJECTOR_VARS = (
-    "API_IMAGE", "OTEL_CONFIG_SECRET", "OTEL_OTLP_ENDPOINT", "OTEL_LOKI_ENDPOINT",
+    "OTEL_CONFIG_SECRET", "OTEL_OTLP_ENDPOINT", "OTEL_LOKI_ENDPOINT",
     "OTEL_OTLP_SECRET", "OTEL_LOKI_SECRET", "COLLECTOR_IMAGE", "COLLECTOR_CPU",
     "COLLECTOR_MEMORY", "OTEL_TAIL_SAMPLE_RATE", "OTEL_DECISION_WAIT",
     "INGRESS_IMAGE", "INGRESS_CONTAINER_NAME", "INGRESS_EXTRA_ENV",
@@ -41,7 +41,7 @@ API_IMAGE = "us-central1-docker.pkg.dev/example-project/lifting-logbook/api:news
 
 # The six required env vars, with representative (synthetic) values.
 REQUIRED_ENV = {
-    "API_IMAGE": API_IMAGE,
+    "INGRESS_IMAGE": API_IMAGE,
     "OTEL_CONFIG_SECRET": "lifting-logbook-prod-otel-collector-config",
     "OTEL_OTLP_ENDPOINT": "https://otlp-gateway.example.grafana.net/otlp",
     "OTEL_LOKI_ENDPOINT": "https://logs.example.grafana.net/otlp",
@@ -50,12 +50,11 @@ REQUIRED_ENV = {
 }
 
 # ── Web service (#804) ──────────────────────────────────────────────────────────────────────
-# The web Cloud Run service reuses this same injector via INGRESS_CONTAINER_NAME=web +
-# INGRESS_IMAGE (the web deploy step passes no API_IMAGE). WEB_ENV drops API_IMAGE so these
-# tests prove INGRESS_IMAGE works as the sole image var.
+# The web Cloud Run service reuses this same injector, differing only by INGRESS_CONTAINER_NAME=web
+# and the image INGRESS_IMAGE points at.
 WEB_FIXTURE = os.path.join(HERE, "testdata", "cloud-run-web-export.yaml")
 WEB_IMAGE = "us-central1-docker.pkg.dev/example-project/lifting-logbook/web:newsha7654321"
-WEB_ENV = {k: v for k, v in REQUIRED_ENV.items() if k != "API_IMAGE"}
+WEB_ENV = dict(REQUIRED_ENV)
 WEB_ENV["INGRESS_IMAGE"] = WEB_IMAGE
 WEB_ENV["INGRESS_CONTAINER_NAME"] = "web"
 
@@ -232,13 +231,12 @@ class GuardTest(unittest.TestCase):
         self.assertIn("ports", proc.stderr)
 
     def test_missing_ingress_image_exits_nonzero(self):
-        # Neither INGRESS_IMAGE nor its API_IMAGE fallback set → hard fail naming both, no manifest.
-        env = clean_env(**{k: v for k, v in REQUIRED_ENV.items() if k != "API_IMAGE"})
+        # INGRESS_IMAGE unset → hard fail naming it, no manifest.
+        env = clean_env(**{k: v for k, v in REQUIRED_ENV.items() if k != "INGRESS_IMAGE"})
         proc = run_injector(FIXTURE, env=env)
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout, "", "no manifest should be emitted on the error path")
         self.assertIn("INGRESS_IMAGE", proc.stderr)
-        self.assertIn("API_IMAGE", proc.stderr)
 
 
 class InjectWebServiceTest(unittest.TestCase):
@@ -310,24 +308,8 @@ class InjectWebServiceTest(unittest.TestCase):
         self.assertNotIn("client.knative.dev/nonce", tmpl_meta.get("labels", {}))
 
 
-class IngressImageResolutionTest(unittest.TestCase):
-    """INGRESS_IMAGE is the canonical image var; API_IMAGE stays a back-compat fallback."""
-
-    def test_ingress_image_wins_over_api_image(self):
-        # Both set → INGRESS_IMAGE takes precedence over the API_IMAGE fallback.
-        env = clean_env(**{**WEB_ENV, "API_IMAGE": API_IMAGE})
-        proc = run_injector(WEB_FIXTURE, env=env)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        doc = yaml.safe_load(proc.stdout)
-        self.assertEqual(containers_by_name(doc)["web"]["image"], WEB_IMAGE)
-
-    def test_api_image_fallback_still_works(self):
-        # The unchanged api deploy steps pass only API_IMAGE (no INGRESS_IMAGE) — must still work.
-        env = clean_env(**REQUIRED_ENV)  # API_IMAGE only, no INGRESS_IMAGE
-        proc = run_injector(FIXTURE, env=env)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        doc = yaml.safe_load(proc.stdout)
-        self.assertEqual(containers_by_name(doc)["api"]["image"], API_IMAGE)
+class IngressContainerNameResolutionTest(unittest.TestCase):
+    """INGRESS_IMAGE is the sole image var; INGRESS_CONTAINER_NAME selects the container it lands on."""
 
     def test_empty_ingress_container_name_defaults_to_api(self):
         # An explicitly-empty INGRESS_CONTAINER_NAME must resolve to "api", not an empty
