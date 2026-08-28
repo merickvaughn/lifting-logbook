@@ -190,7 +190,13 @@ Three ways, same queries:
   ```
 
   [`mimir-setup.sh`](../../scripts/observability/mimir-setup.sh) writes the variables to `~/.bashrc`
-  (plaintext, like any saved credential — it prints the removal one-liner). The runner sources
+  (plaintext, like any saved credential — it prints the removal one-liner). Because replacing its
+  managed block rewrites the whole file, it first copies the pre-run `~/.bashrc` to a
+  written-if-absent anchor at `~/.bashrc.mimir-setup.orig` — never overwritten on re-run, so
+  repeated runs cannot erode the original — and refuses to proceed if that copy fails. Restore with
+  `cp ~/.bashrc.mimir-setup.orig ~/.bashrc`. The rewrite itself is verified by line count before it
+  replaces the original, since a full disk can truncate it and still exit 0
+  ([#954](https://github.com/merickvaughn/lifting-logbook/issues/954)). The runner sources
   [`mimir-query-env.sh`](../../scripts/observability/mimir-query-env.sh), which exports the variables
   (and also honors any already set — including those from `mimir-setup.sh`/`mimir-setup.ps1`, or a
   gitignored `.mimir-credentials` file copied from

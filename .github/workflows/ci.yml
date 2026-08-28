@@ -116,6 +116,11 @@ jobs:
       - name: Unit test Tempo credential setup script
         run: node --test scripts/observability/tempo-setup.test.mjs
 
+      # mimir-setup.sh rewrites ~/.bashrc the same way, so its test does the same — plus the
+      # backup anchor and the rewrite completeness check ported from tempo-setup.sh (see #954).
+      - name: Unit test Mimir credential setup script
+        run: node --test scripts/observability/mimir-setup.test.mjs
+
       # The OTel sidecar injector is Python (it rewrites the live Cloud Run api manifest at
       # deploy time — a path that cannot be dry-run tested), so its test runs under Python
       # rather than turbo/jest. PyYAML is the injector's own only dependency. See #786.
