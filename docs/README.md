@@ -166,6 +166,7 @@ monorepo/
 | [ADR-032](adr/ADR-032-cloud-run-api-public-invoker.md)      | API Cloud Run Service Is Publicly Invokable; Clerk Auth Is the Real Boundary | Accepted |
 | [ADR-033](adr/ADR-033-log-header-allowlist.md)             | Log Header Redaction Is an Allowlist (Redact-by-Default)            | Accepted |
 | [ADR-034](adr/ADR-034-edge-rate-limiting-client-errors.md)  | Edge Rate Limiting for the Unauthenticated `/api/client-errors` Endpoint (Cloud Armor) | Accepted |
+| [ADR-035](adr/ADR-035-client-side-rest-timer-state.md)      | The Rest Timer Keeps Its State Client-Side, on the Wall Clock       | Accepted |
 
 ---
 

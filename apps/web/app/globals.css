@@ -121,6 +121,11 @@ a {
   --color-accent: #3498db;
   --color-accent-hover: #2980b9;
   --color-accent-glow: rgba(52, 152, 219, 0.3);
+  /* Accent-tinted surface — the active row in a timed set list (#958). */
+  --color-accent-soft: #eef7fd;
+  /* The rest timer's "get set" prep phase: amber, distinct from both accent
+     (a set) and success (rest), and from the error red used for overrun. */
+  --color-prep: #e0a800;
   --color-success: #27ae60;
   --color-success-text: #00b894;
   --color-success-bg: #a8e6cf;
@@ -156,6 +161,9 @@ a {
   --color-accent: #22c55e;
   --color-accent-hover: #16a34a;
   --color-accent-glow: rgba(34, 197, 94, 0.3);
+  /* Green-tinted rather than blue, to track this theme's accent (#958). */
+  --color-accent-soft: #f0fdf4;
+  --color-prep: #d97706;
   --color-success: #22c55e;
   --color-success-text: #16a34a;
   --color-success-bg: #f0fdf4;

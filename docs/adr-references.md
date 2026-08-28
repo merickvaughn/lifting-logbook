@@ -76,6 +76,11 @@ Each entry links back to the ADR where it is discussed and provides a brief desc
 | [Next.js — Loading UI and Streaming](https://nextjs.org/docs/app/building-your-application/routing/loading-ui-and-streaming) | [ADR-007](adr/ADR-007-nextjs-app-router-web-frontend.md) | How Suspense boundaries and `loading.tsx` enable progressive rendering of data-heavy pages. |
 | [Next.js — fetch API reference](https://nextjs.org/docs/app/api-reference/functions/fetch) | [ADR-007](adr/ADR-007-nextjs-app-router-web-frontend.md) | Documents the `cache` and `next.revalidate` options for `fetch()` in Server Components; authoritative reference for the explicit cache semantics required by the project coding standard. |
 | [React Testing Library](https://testing-library.com/docs/react-testing-library/intro/) | [ADR-007](adr/ADR-007-nextjs-app-router-web-frontend.md) | The testing approach for Client Components cited in the Consequences section. |
+| [Screen Wake Lock API](https://www.w3.org/TR/screen-wake-lock/) | [ADR-035](adr/ADR-035-client-side-rest-timer-state.md) | W3C spec; §3.3 defines the release-on-hidden behaviour that makes re-acquisition on `visibilitychange` mandatory rather than optional. |
+| [MDN — `OscillatorNode`](https://developer.mozilla.org/en-US/docs/Web/API/OscillatorNode) | [ADR-035](adr/ADR-035-client-side-rest-timer-state.md) | The Web Audio primitive behind the end-of-phase beep, and the user-gesture requirement for resuming a suspended `AudioContext`. |
+| [MDN — `Navigator.vibrate()`](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/vibrate) | [ADR-035](adr/ADR-035-client-side-rest-timer-state.md) | Vibration-pattern support and the desktop no-op behaviour the alert wrapper relies on. |
+| [WAI-ARIA 1.2 — `timer` role](https://www.w3.org/TR/wai-aria-1.2/#timer) | [ADR-035](adr/ADR-035-client-side-rest-timer-state.md) | Defines `timer` as a live region with an implicit `aria-live="off"` — why the 200 ms countdown does not announce on every tick. |
+| [WAI-ARIA APG — Dialog (Modal) Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/) | [ADR-035](adr/ADR-035-client-side-rest-timer-state.md) | Focus-management and Escape behaviour the expanded timer sheet implements. |
 
 ---
 
