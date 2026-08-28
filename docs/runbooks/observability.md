@@ -102,12 +102,9 @@ In the same Explore view, switch to the **TraceQL** tab for structured queries:
 For validation that must run without the Grafana UI — e.g. an agent confirming a span
 tag's values in staging — use the read-only helper
 [`scripts/observability/tempo-query.sh`](../../scripts/observability/tempo-query.sh). It
-mirrors the Mimir `mimir-query-env.sh` pattern: credentials load from a gitignored
-`scripts/observability/.tempo-credentials` (copy `.tempo-credentials.example`; the token
-must be scoped `traces:read`), and every subcommand issues only HTTP GET.
+mirrors the Mimir `mimir-query-env.sh` pattern, and every subcommand issues only HTTP GET.
 
 ```bash
-# staging by default; TEMPO_TARGET=prod selects prod
 scripts/observability/tempo-query.sh tags                         # smoke-test creds
 scripts/observability/tempo-query.sh search '{ span.client.origin.check = "same-origin" }'
 scripts/observability/tempo-query.sh tag-values client.origin.check
@@ -115,6 +112,65 @@ scripts/observability/tempo-query.sh tag-values client.origin.check
 
 This is the path added for #829, so span-tag checks like #809's `client.origin.check`
 guard can be validated autonomously instead of by hand.
+
+#### One stack serves both environments
+
+**The staging read credentials already read production traces**, so there is no separate
+prod credential to obtain. Staging and production push to the **same** Grafana Cloud stack
+(a single OTLP instance) — see the environment-scoping note under
+[Grafana Cloud credential wiring](#grafana-cloud-credential-wiring) — and
+`deployment.environment.name` is the **only** discriminator between them. That means an
+unscoped TraceQL query returns spans from both environments intermixed. Always filter:
+
+```bash
+# Production spans, using the same (staging) credentials
+scripts/observability/tempo-query.sh search \
+  '{ resource.deployment.environment.name = "production" }'
+```
+
+`TEMPO_TARGET=prod` remains available and now falls back to the staging credential set
+when no `TEMPO_PROD_*` block is configured, printing a notice and the filter above. It is
+therefore **redundant on the current stack topology** — it selects the same credentials —
+and exists so that a genuinely separate prod stack, if one is ever provisioned, needs only
+a filled-in `TEMPO_PROD_*` block rather than a code change. Before #949 the documented
+`TEMPO_TARGET=prod` path failed outright, because the credentials template ships that
+block commented out at its placeholders.
+
+#### Getting a credential, and where to keep it
+
+The token must be an Access Policy token scoped to **`traces:read`** (Grafana Cloud
+Account → Access Policies). It cannot be sourced from the deployment pipeline: the OTLP
+push tokens in GCP Secret Manager
+(`lifting-logbook-{stg,prod}-otel-otlp-auth-header`) are **write-only** — their policy
+grants `metrics:write, logs:write, traces:write` with no `traces:read` — so a distinct
+read token is genuinely required (#949).
+
+Persist it once, outside every checkout:
+
+```bash
+# Prompts for the values (token input hidden) and writes them to ~/.bashrc.
+source scripts/observability/tempo-setup.sh
+```
+
+[`tempo-setup.sh`](../../scripts/observability/tempo-setup.sh) is the Tempo counterpart of
+[`mimir-setup.sh`](../../scripts/observability/mimir-setup.sh) and makes the same
+trade-off: the token is stored in **plaintext** in `~/.bashrc`, like any saved credential
+(the script prints the one-line `sed` command to remove it later). This is the recommended
+home because `~/.bashrc` sits outside every checkout and worktree, so the values resolve
+from **any** worktree and no cleanup routine can delete them.
+
+The file-based alternative is a gitignored `scripts/observability/.tempo-credentials`
+(copy [`.tempo-credentials.example`](../../scripts/observability/.tempo-credentials.example)).
+If you use it, **put it in the canonical checkout, not a worktree** — a linked worktree
+carries its own `scripts/observability/`, so a credentials file exists only in the checkout
+it was created in. `tempo-query-env.sh` falls back to the canonical checkout's copy when
+the local one is absent, so one file there serves every worktree.
+
+> **Why this is called out (#949):** the only working read credential on the original
+> machine lived inside a disposable worktree under `.claude/worktrees/`, which a daily
+> prune routine can delete without warning — and because the file is correctly gitignored,
+> it is not recoverable from git. Losing it means minting a fresh `traces:read` token from
+> the Grafana Cloud portal.
 
 ### From a log line
 
@@ -287,6 +343,11 @@ Prometheus container scrapes.)
 > 3. All four `api.yaml` alert rules match `deployment_environment_name="production"`, so a staging
 >    5xx never pages. `infra/observability/alerts/api.test.yaml` locks this with a
 >    staging-does-not-page scenario.
+> 4. **On the read side this cuts the other way:** one stack means one set of read credentials
+>    covers both environments — the staging Tempo credentials return production traces, and an
+>    unscoped query mixes the two. See
+>    [One stack serves both environments](#one-stack-serves-both-environments) for the querying
+>    consequence (#949).
 
 ### Cloud Run (wired — #768 api, #804 web)
 
