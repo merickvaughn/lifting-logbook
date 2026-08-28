@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildTimerQueue,
+  defaultTimerSettings,
   phaseDuration,
   phaseProgress,
   phaseRemaining,
@@ -99,7 +100,11 @@ export function useWorkoutTimer(
   /** Must be referentially stable — memoize it on the route params. */
   workout: TimerWorkoutKey,
 ): UseWorkoutTimerResult {
-  const [settings, setSettings] = useState<TimerSettings>(() => loadTimerSettings());
+  // Seeded with the defaults, NOT with persisted settings: a `useState`
+  // initializer runs during the first client render, so reading storage here
+  // would render a different plan estimate than the server just sent and trip a
+  // hydration mismatch. The mount effect below swaps in the persisted values.
+  const [settings, setSettings] = useState<TimerSettings>(defaultTimerSettings);
   const [run, setRun] = useState<TimerRunState | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [announcement, setAnnouncement] = useState('');

@@ -106,6 +106,12 @@ jobs:
       - name: Unit test turbo dev-build dependency check parsing
         run: node --test scripts/check-turbo-dev-build-dep.test.mjs
 
+      - name: Verify rest-timer dial phases are distinguishable in every theme
+        run: node scripts/check-timer-phase-colors.mjs
+
+      - name: Unit test timer phase-color check parsing
+        run: node --test scripts/check-timer-phase-colors.test.mjs
+
       # tempo-query-env.sh is sourced bash, so its test sources it for real against
       # fixture credentials in a throwaway directory (see #949) rather than importing it.
       - name: Unit test Tempo query credential resolution

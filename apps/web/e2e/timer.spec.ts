@@ -5,12 +5,15 @@ import { test, expect } from '@playwright/test';
 // worktree runs don't collide (#746); the literal is a fallback for a bare `playwright test`.
 const MOCK_API = process.env.PLAYWRIGHT_MOCK_API_URL ?? 'http://127.0.0.1:3004';
 
-test.beforeEach(async ({ page, request }) => {
+test.beforeEach(async ({ request }) => {
   await request.get(`${MOCK_API}/__reset`);
-  // Timer settings and any in-flight run persist in localStorage, so a leftover
-  // session from a prior test would otherwise open the dock before the test acts.
-  await page.addInitScript(() => window.localStorage.removeItem('ll.timer.v1'));
 });
+
+// Timer settings and the in-flight run live in localStorage (`ll.timer.v1`).
+// Playwright gives each test its own BrowserContext, so that storage already
+// starts empty — deliberately NOT cleared via addInitScript, which re-runs on
+// every navigation and would wipe the state the persistence tests below assert
+// survives a reload.
 
 // ---------------------------------------------------------------------------
 // Workout detail — docked timer
@@ -56,8 +59,12 @@ test('start a timed workout — dock appears, expands, pauses and ends', async (
 test('start the timer at a chosen set from the lift list', async ({ page }) => {
   await page.goto('/cycle/1/workout/1/detail');
 
-  // Expand the first lift, then start from one of its sets.
+  // The set rows sit in a `display: none` panel until the lift is expanded, so
+  // the play control is not actionable before this click.
+  await page.getByRole('button', { name: /warm-up/ }).first().click();
+
   const play = page.getByRole('button', { name: /^Start timer at .+ Set 1$/ }).first();
+  await expect(play).toBeVisible();
   await play.click();
 
   await expect(page.getByRole('button', { name: 'Expand timer' })).toBeVisible();

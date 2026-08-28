@@ -58,6 +58,14 @@ clock math) and the browser half in `apps/web` (interval, wake lock, WebAudio, v
 Core takes its own `TimerLiftPlan` input type rather than importing `PlannedSet` from `apps/web`,
 so the dependency arrow keeps pointing inward per [ADR-004](ADR-004-multi-data-store-adapters.md).
 
+**The dial's four phase colors are guarded, not assumed.** The ring paints one of
+set / rest / prep / overrun, so any two resolving to the same value inside a theme silently stops
+the ring carrying information. Rest originally used `--color-success`, which is correct under
+`navy` (accent `#3498db` vs. success `#27ae60`) and collapses under `iron`, where the accent *is*
+green — both resolved to `#22c55e`. `--color-rest` exists to break that tie, and
+`scripts/check-timer-phase-colors.mjs` fails CI if any theme reintroduces a collision. Nothing else
+catches this: both are valid tokens, the page renders, and every test passes.
+
 Two supporting conventions this establishes for future browser-API work:
 
 - **Every browser API is feature-detected and fails open.** `AudioContext` (including the
@@ -138,7 +146,14 @@ lock already covers the "screen off, app still open" case that a lifter actually
 - `apps/web/lib/__tests__/timerSettings.test.ts` — corrupt JSON, a throwing `getItem`/`setItem`,
   and every malformed-run shape degrade to defaults rather than throwing.
 - `apps/web/e2e/timer.spec.ts` — start, dock, expand, pause/resume, Escape, end, and a reload that
-  picks the run back up.
+  picks the run back up. This suite is also what caught the hydration mismatch described above: the
+  server rendered `40:00 estimated` and the client `46:00`, because a `useState` initializer was
+  reading `localStorage` during the first client render.
+- `scripts/check-timer-phase-colors.mjs` — fails CI if any theme paints two dial phases the same
+  color, or omits one. Calibrated against both references: it passes on the current `navy` + `iron`
+  definitions, and fails on the known-bad state (`iron` rest reverted to `--color-success`) naming
+  the exact colliding pair. It asserts at least one theme block was found, so an extraction that
+  silently matched nothing reports a failure rather than a vacuous pass.
 
 ## References
 

@@ -339,6 +339,37 @@ describe('persistence', () => {
     expect(result.current.running).toBe(false);
   });
 
+  it('renders defaults on the first pass, before reading storage', () => {
+    // Regression: a useState initializer that read localStorage would produce a
+    // different plan on the client's first render than the server just sent,
+    // tripping a React hydration mismatch (caught by the timer e2e spec, where
+    // the server said "40:00 estimated" and the client said "46:00"). Persisted
+    // settings must arrive via the mount effect instead.
+    const stored = loadTimerSettings();
+    stored.preset = 'Heavy day';
+    saveTimerSettings(stored);
+
+    let firstRenderPreset: string | null = null;
+    renderHook(() => {
+      const timer = useWorkoutTimer(LIFTS, WORKOUT);
+      firstRenderPreset ??= timer.settings.preset;
+      return timer;
+    });
+
+    expect(firstRenderPreset).toBe('Standard');
+  });
+
+  it('applies persisted settings once hydrated', () => {
+    const stored = loadTimerSettings();
+    stored.preset = 'Heavy day';
+    saveTimerSettings(stored);
+
+    const { result } = render();
+
+    expect(result.current.hydrated).toBe(true);
+    expect(result.current.settings.preset).toBe('Heavy day');
+  });
+
   it('rebuilds the queue when settings change', () => {
     const { result } = render();
     expect(result.current.queue.some((p) => p.set.type === 'warmup')).toBe(true);

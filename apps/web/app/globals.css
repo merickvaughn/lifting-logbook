@@ -123,8 +123,12 @@ a {
   --color-accent-glow: rgba(52, 152, 219, 0.3);
   /* Accent-tinted surface — the active row in a timed set list (#958). */
   --color-accent-soft: #eef7fd;
-  /* The rest timer's "get set" prep phase: amber, distinct from both accent
-     (a set) and success (rest), and from the error red used for overrun. */
+  /* Rest-timer phase colors (#958). The dial paints one of four — set (accent),
+     rest, prep, overrun (error) — so all four must stay mutually distinct within
+     a theme or the ring stops carrying information. `--color-rest` exists rather
+     than reusing `--color-success` precisely because the two collide under iron,
+     where the accent is itself green. */
+  --color-rest: #27ae60;
   --color-prep: #e0a800;
   --color-success: #27ae60;
   --color-success-text: #00b894;
@@ -163,6 +167,9 @@ a {
   --color-accent-glow: rgba(34, 197, 94, 0.3);
   /* Green-tinted rather than blue, to track this theme's accent (#958). */
   --color-accent-soft: #f0fdf4;
+  /* Blue, not green: this theme's accent IS green, so reusing a green for rest
+     would render the "set" and "rest" dial states identically (#958). */
+  --color-rest: #0284c7;
   --color-prep: #d97706;
   --color-success: #22c55e;
   --color-success-text: #16a34a;
