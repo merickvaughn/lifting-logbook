@@ -21,7 +21,17 @@ export default function StartTimedWorkout({ cycleNum, workoutNum }: Props) {
 
   return (
     <>
-      <button type="button" className={`${styles.btnPrimary} focus-ring`} onClick={timer.startSession}>
+      {/*
+        `data-timer-start` marks this as the landing spot for focus when the
+        expanded timer sheet closes because the session ended — at which point
+        the dock control focus came from has already unmounted.
+      */}
+      <button
+        type="button"
+        data-timer-start
+        className={`${styles.btnPrimary} focus-ring`}
+        onClick={timer.startSession}
+      >
         ▶ {timer.running ? 'Restart timed workout' : 'Start timed workout'}
       </button>
       <p className={styles.timerHint}>

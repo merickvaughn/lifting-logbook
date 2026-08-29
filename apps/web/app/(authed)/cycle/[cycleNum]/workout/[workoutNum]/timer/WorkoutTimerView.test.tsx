@@ -68,12 +68,12 @@ describe('WorkoutTimerView', () => {
     expect(screen.queryByText(/^Paused ·/)).not.toBeInTheDocument();
   });
 
-  it('ends the session with Reset session', async () => {
+  it('ends the session with End timer', async () => {
     const user = userEvent.setup();
     renderView();
 
     await user.click(screen.getByRole('button', { name: 'Start' }));
-    await user.click(screen.getByRole('button', { name: 'Reset session' }));
+    await user.click(screen.getByRole('button', { name: 'End timer' }));
 
     expect(screen.getByRole('button', { name: 'Start' })).toBeInTheDocument();
     expect(screen.getByText('Ready')).toBeInTheDocument();

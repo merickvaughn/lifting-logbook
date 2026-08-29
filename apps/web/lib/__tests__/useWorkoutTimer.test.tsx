@@ -228,6 +228,86 @@ describe('advancing', () => {
     act(() => result.current.nudge(30));
     expect(result.current.duration).toBe(setDuration);
   });
+
+  // `phaseDuration` floors the *result* at zero, so without clamping the bonus
+  // itself it kept accumulating below the phase length: the +30s button then
+  // does nothing visible until several presses have climbed back to zero.
+  it('clamps the nudge so +30s is never a no-op', () => {
+    const { result } = render();
+    act(() => result.current.startAt(2)); // rest, 90s
+    const restDuration = result.current.duration;
+
+    for (let i = 0; i < 5; i++) act(() => result.current.nudge(-30));
+    expect(result.current.duration).toBe(0);
+
+    act(() => result.current.nudge(30));
+    expect(result.current.duration).toBe(30);
+    expect(restDuration).toBeGreaterThan(0);
+  });
+
+  // A hidden tab's interval is throttled or stopped. When it finally runs and
+  // finds the phase over, the NEXT phase must start from the moment the previous
+  // one actually ended — not from now, which would hand back a full fresh phase.
+  it('carries the overrun forward when a phase ends while the interval is stopped', () => {
+    const { result, rerender } = render();
+    act(() => result.current.startAt(1)); // 30s warm-up set
+    const setDuration = result.current.duration;
+    expect(setDuration).toBe(30);
+
+    // 100s of wall clock pass with the interval never firing.
+    act(() => {
+      jest.setSystemTime(Date.now() + 100_000);
+    });
+    // One tick: the set ended 70s ago, so its rest is already 70s in.
+    advance(200);
+    rerender();
+
+    expect(result.current.phase?.kind).toBe('rest');
+    const restDuration = result.current.duration;
+    expect(result.current.remaining).toBeCloseTo(restDuration - 70, 0);
+  });
+});
+
+describe('queue rebuilt under a live run', () => {
+  it('re-anchors the run on the same set when skipWarmups renumbers the queue', () => {
+    const { result } = render();
+    act(() => result.current.startAtSet(1)); // the working set (starts at its prep)
+    expect(result.current.phase?.set.setLabel).toBe('Set 1');
+    const kindBefore = result.current.phase?.kind;
+    const idxBefore = result.current.run?.idx;
+
+    act(() => {
+      const next = { ...result.current.settings };
+      next.behavior = { ...next.behavior, skipWarmups: true };
+      result.current.updateSettings(next);
+    });
+
+    // Same phase of the same set, at whatever index it now occupies. Anchoring
+    // on `setIndex` would have failed here: dropping the warm-up renumbers the
+    // timed set list, so the working set's index changes from 1 to 0.
+    expect(result.current.running).toBe(true);
+    expect(result.current.phase?.set.setLabel).toBe('Set 1');
+    expect(result.current.phase?.kind).toBe(kindBefore);
+    expect(result.current.run?.idx).not.toBe(idxBefore);
+  });
+
+  it('ends the session when the phase it was on is removed from the queue', () => {
+    const { result } = render();
+    act(() => result.current.startAtSet(0)); // the warm-up set
+    expect(result.current.phase?.set.setLabel).toBe('Warm-up 1');
+
+    act(() => {
+      const next = { ...result.current.settings };
+      next.behavior = { ...next.behavior, skipWarmups: true };
+      result.current.updateSettings(next);
+    });
+
+    // The warm-up is gone. The run must be cleared, not left pointing past the
+    // end with a live interval and no surface able to stop it.
+    expect(result.current.running).toBe(false);
+    expect(result.current.phase).toBeNull();
+    expect(loadTimerRun(WORKOUT)).toBeNull();
+  });
 });
 
 describe('alerts', () => {

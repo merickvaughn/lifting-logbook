@@ -24,6 +24,9 @@ interface Props {
 
 const ALERT_MODES: TimerAlertMode[] = ['Both', 'Beep', 'Vibrate', 'Silent'];
 
+/** One hour — past any real rest, and a bound on what can reach storage. */
+const MAX_DURATION_SECONDS = 3600;
+
 /** Structural clone — every value in the settings tree is a plain number, string or boolean. */
 function clone(settings: TimerSettings): TimerSettings {
   return {
@@ -63,7 +66,9 @@ function DurationStepper({
   function commit(text: string) {
     const parsed = parseDuration(text);
     // Unparseable input keeps the previous value rather than silently zeroing it.
-    if (parsed !== null) onChange(Math.max(0, parsed));
+    // Clamped at both ends: an hour is already far beyond any real rest, and an
+    // unbounded value persists a phase that never ends.
+    if (parsed !== null) onChange(Math.min(MAX_DURATION_SECONDS, Math.max(0, parsed)));
     setDraft(null);
   }
 

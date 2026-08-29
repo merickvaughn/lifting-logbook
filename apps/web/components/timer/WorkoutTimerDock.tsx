@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { formatDuration } from '@lifting-logbook/core';
+import {
+  END_SESSION_LABEL,
+  phaseLabel,
+  phaseSubLabel,
+  primaryActionLabel,
+  signedTime,
+} from '@/lib/timerLabels';
 import type { UseWorkoutTimerResult } from '@/lib/useWorkoutTimer';
 import TimerDial from './TimerDial';
 import styles from './WorkoutTimerDock.module.css';
@@ -48,8 +54,14 @@ export default function WorkoutTimerDock({ timer, cycleNum, workoutNum }: Props)
   // Escape, and keep Tab inside while it is open.
   useEffect(() => {
     if (!expanded) {
-      restoreFocusRef.current?.focus();
+      const previous = restoreFocusRef.current;
       restoreFocusRef.current = null;
+      // The saved element is a dock control, and the dock unmounts when the
+      // session ends — so closing the sheet by ending the session would focus a
+      // detached node, which is a silent no-op that drops focus to <body>. Fall
+      // back to the start button, which is on the page either way.
+      if (previous && document.contains(previous)) previous.focus();
+      else document.querySelector<HTMLElement>('[data-timer-start]')?.focus();
       return;
     }
 
@@ -84,18 +96,12 @@ export default function WorkoutTimerDock({ timer, cycleNum, workoutNum }: Props)
 
   if (!running || !phase) return null;
 
-  const time = `${overrun ? '+' : ''}${formatDuration(remaining)}`;
-  const phaseLabel = `${paused ? 'Paused · ' : ''}${phase.label}`;
-  const sub =
-    phase.kind === 'rest' ?
-      phase.next ? `Up next: ${phase.next.lift} · ${phase.next.setLabel}`
-      : 'Last set done'
-    : `${phase.set.setLabel} · ${phase.set.spec}`;
-  const nextLabel =
-    phase.kind === 'rest' ?
-      overrun ? 'Next set'
-      : 'Skip rest'
-    : 'Skip';
+  // Derived in @/lib/timerLabels so this and the timer page cannot drift — they
+  // are two views of one session, and they had already diverged on two controls.
+  const time = signedTime(remaining, overrun);
+  const label = phaseLabel(phase, paused);
+  const sub = phaseSubLabel(phase);
+  const nextLabel = primaryActionLabel(true, phase, overrun);
 
   return (
     <>
@@ -118,7 +124,7 @@ export default function WorkoutTimerDock({ timer, cycleNum, workoutNum }: Props)
           </button>
 
           <button type="button" className={`${styles.dockMeta} focus-ring`} onClick={open}>
-            <span className={styles.dockPhase}>{phaseLabel}</span>
+            <span className={styles.dockPhase}>{label}</span>
             <span role="timer" className={styles.dockTime}>
               {time}
             </span>
@@ -171,7 +177,7 @@ export default function WorkoutTimerDock({ timer, cycleNum, workoutNum }: Props)
               kind={phase.kind}
               overrun={overrun}
             >
-              <span className={styles.bigPhase}>{phaseLabel}</span>
+              <span className={styles.bigPhase}>{label}</span>
               <span role="timer" className={styles.bigTime}>
                 {time}
               </span>
@@ -223,7 +229,7 @@ export default function WorkoutTimerDock({ timer, cycleNum, workoutNum }: Props)
                 Previous
               </button>
               <button type="button" className={`${styles.microBtn} focus-ring`} onClick={timer.end}>
-                End timer
+                {END_SESSION_LABEL}
               </button>
             </div>
 

@@ -1,6 +1,6 @@
 # Proposal: Workout Rest Timer
 
-**Status:** `draft`
+**Status:** `shipped`
 **Date:** 2026-08-28
 **Issue:** [#958](https://github.com/merickvaughn/lifting-logbook/issues/958)
 

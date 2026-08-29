@@ -5,6 +5,12 @@ import Link from 'next/link';
 import { formatDuration, queueSummary } from '@lifting-logbook/core';
 import type { TimerLiftPlan } from '@lifting-logbook/core';
 import TimerDial from '@/components/timer/TimerDial';
+import {
+  END_SESSION_LABEL,
+  phaseSubLabel,
+  primaryActionLabel,
+  signedTime,
+} from '@/lib/timerLabels';
 import { playStartChime, useWorkoutTimer } from '@/lib/useWorkoutTimer';
 import TimerSettingsPanel from './TimerSettingsPanel';
 import styles from './timer.module.css';
@@ -46,13 +52,13 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
   const detailHref = `/cycle/${cycleNum}/workout/${workoutNum}/detail`;
 
   const firstPhase = queue[0] ?? null;
-  const timeLabel = running ? `${overrun ? '+' : ''}${formatDuration(remaining)}` : formatDuration(firstPhase?.dur ?? 0);
+  // Derived in @/lib/timerLabels so this and the detail-page dock cannot drift.
+  const timeLabel =
+    running ? signedTime(remaining, overrun) : formatDuration(firstPhase?.dur ?? 0);
 
   const subLabel =
     phase == null ? (queue.length > 0 ? 'Tap start to begin' : 'Nothing scheduled')
-    : phase.kind === 'rest' ?
-      (phase.next ? `Up next: ${phase.next.lift} · ${phase.next.setLabel}` : 'Last set done')
-    : `${phase.set.setLabel} · ${phase.set.spec}`;
+    : phaseSubLabel(phase);
 
   // Last 3 seconds before a set ends: the number grows and takes the accent color,
   // matching the audible countdown.
@@ -62,6 +68,39 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
     phase?.kind !== 'rest' &&
     remaining > 0 &&
     remaining <= 3;
+
+  // The 200ms tick re-renders this whole component, so building 40-60 list items
+  // inline would reconstruct and diff them five times a second for a list whose
+  // only change is which single row is marked current.
+  const activeIdx = timer.run?.idx ?? -1;
+  const queueList = useMemo(
+    () => (
+      <ol className={styles.queue}>
+        {queue.map((item, i) => {
+          const state =
+            !running ? ''
+            : i < activeIdx ? styles.queueRowDone
+            : i === activeIdx ? styles.queueRowCurrent
+            : '';
+          return (
+            <li key={`${item.kind}-${i}`} className={`${styles.queueRow} ${state}`}>
+              <span className={styles.queueLabel}>
+                <span className={styles.queueKind}>
+                  {item.kind === 'prep' ? 'Setup' : item.kind === 'rest' ? 'Rest' : 'Set'}
+                </span>
+                <span>
+                  {item.lift}
+                  {item.kind === 'set' ? ` · ${item.set.spec}` : ''}
+                </span>
+              </span>
+              <span className={styles.queueDur}>{formatDuration(item.dur)}</span>
+            </li>
+          );
+        })}
+      </ol>
+    ),
+    [queue, running, activeIdx],
+  );
 
   function handlePrimary() {
     if (!running) playStartChime(settings);
@@ -173,11 +212,7 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
             onClick={handlePrimary}
             disabled={queue.length === 0}
           >
-            {!running ? 'Start'
-            : phase?.kind === 'rest' ?
-              overrun ? 'Start next set'
-              : 'Skip rest'
-            : 'Skip'}
+            {primaryActionLabel(running, phase, overrun)}
           </button>
         </div>
 
@@ -212,7 +247,7 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
             onClick={timer.end}
             disabled={!running}
           >
-            Reset session
+            {END_SESSION_LABEL}
           </button>
         </div>
 
@@ -221,29 +256,7 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
           <p className={styles.emptyQueue}>
             No timed sets — set a training max to see planned weights.
           </p>
-        : <ol className={styles.queue}>
-            {queue.map((item, i) => {
-              const state =
-                !running ? ''
-                : i < (timer.run?.idx ?? 0) ? styles.queueRowDone
-                : i === timer.run?.idx ? styles.queueRowCurrent
-                : '';
-              return (
-                <li key={`${item.kind}-${i}`} className={`${styles.queueRow} ${state}`}>
-                  <span className={styles.queueLabel}>
-                    <span className={styles.queueKind}>
-                      {item.kind === 'prep' ? 'Setup' : item.kind === 'rest' ? 'Rest' : 'Set'}
-                    </span>
-                    <span>
-                      {item.lift}
-                      {item.kind === 'set' ? ` · ${item.set.spec}` : ''}
-                    </span>
-                  </span>
-                  <span className={styles.queueDur}>{formatDuration(item.dur)}</span>
-                </li>
-              );
-            })}
-          </ol>
+        : queueList
         }
 
         <p className={styles.persistNote}>
@@ -257,11 +270,15 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
         aria-labelledby="timer-tab-settings"
         hidden={tab !== 'settings'}
       >
-        <TimerSettingsPanel
-          settings={settings}
-          onChange={timer.updateSettings}
-          lifts={lifts}
-        />
+        {/*
+          Mounted only while its tab is active. Rendered-but-hidden, this 450-line
+          panel — a stepper per duration field per preset, plus a row per lift —
+          re-rendered on every 200ms tick for a surface nobody is looking at, and
+          the wake lock means the browser never throttles that.
+        */}
+        {tab === 'settings' && (
+          <TimerSettingsPanel settings={settings} onChange={timer.updateSettings} lifts={lifts} />
+        )}
       </section>
     </main>
   );

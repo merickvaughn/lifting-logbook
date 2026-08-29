@@ -167,8 +167,11 @@ export function useWorkoutTimer(
   // stays non-null — the dock unmounts, the page freezes at 0:00, and the
   // interval keeps ticking with no surface left to stop it.
   //
-  // `setIndex` + `kind` identifies the phase across a rebuild; if it no longer
-  // exists (its warm-up was skipped away), the session is over.
+  // The anchor is lift + set label + kind, NOT `setIndex`: `setIndex` addresses
+  // the timed set list, so toggling `skipWarmups` renumbers it and it cannot
+  // identify the same phase either side of exactly the change most likely to
+  // rebuild the queue. If the phase is genuinely gone (its warm-up was skipped
+  // away), the session is over.
   const prevQueueRef = useRef(queue);
   useEffect(() => {
     const prevQueue = prevQueueRef.current;
@@ -181,7 +184,12 @@ export function useWorkoutTimer(
       return;
     }
 
-    const nextIdx = queue.findIndex((p) => p.setIndex === wasOn.setIndex && p.kind === wasOn.kind);
+    const nextIdx = queue.findIndex(
+      (p) =>
+        p.kind === wasOn.kind &&
+        p.lift === wasOn.lift &&
+        p.set.setLabel === wasOn.set.setLabel,
+    );
     if (nextIdx === -1) commitRun(null);
     else if (nextIdx !== run.idx) commitRun({ ...run, idx: nextIdx });
   }, [queue, run, commitRun]);

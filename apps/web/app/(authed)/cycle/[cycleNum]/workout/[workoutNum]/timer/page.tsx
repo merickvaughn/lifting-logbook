@@ -1,9 +1,10 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
 import { computePlannedSets } from '@/lib/workoutPlan';
 import { toTimerLiftPlans } from '@/lib/timerPlan';
+import { isTimeable, statusOf } from '@/lib/workoutStatus';
 import WorkoutTimerView from './WorkoutTimerView';
 
 /**
@@ -39,6 +40,14 @@ export default async function WorkoutTimerPage({
   if (!workout) {
     notFound();
     return null;
+  }
+
+  // The detail page declines to mount the timer for a finished or skipped
+  // workout; this route has to agree, or it would hand out a fully working timer
+  // for a session that is already done — and a run started here would then have
+  // no dock on the detail page able to end it.
+  if (!isTimeable(statusOf(workout))) {
+    redirect(`/cycle/${cycleNum}/workout/${workoutNum}/detail`);
   }
 
   const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
