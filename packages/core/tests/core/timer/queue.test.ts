@@ -161,4 +161,40 @@ describe('setProgress', () => {
 
     expect(setProgress(queue, at(setIndexes, 1))).toEqual({ current: 2, total: 4 });
   });
+
+  // The original implementation counted `set` phases in 0..idx. A prep precedes
+  // the set it belongs to, so that reported the PREVIOUS set's ordinal at every
+  // prep but the first — where a `Math.max(1, …)` floor happened to produce the
+  // right answer, which is the only index the two tests above cover. Assert
+  // every prep, so the general contract is actually exercised.
+  it('reports the upcoming set at EVERY prep phase, not just the first', () => {
+    const queue = buildTimerQueue(plan(), settings());
+    const preps = queue.reduce<number[]>(
+      (acc, p, i) => (p.kind === 'prep' ? [...acc, i] : acc),
+      [],
+    );
+    expect(preps.length).toBeGreaterThan(1);
+
+    for (const idx of preps) {
+      const expected = at(queue, idx).setIndex + 1;
+      expect(setProgress(queue, idx)).toEqual({ current: expected, total: 4 });
+    }
+  });
+
+  it('reports the set just completed during its rest phase', () => {
+    const queue = buildTimerQueue(plan(), settings());
+    const rests = queue.reduce<number[]>(
+      (acc, p, i) => (p.kind === 'rest' ? [...acc, i] : acc),
+      [],
+    );
+
+    for (const idx of rests) {
+      const expected = at(queue, idx).setIndex + 1;
+      expect(setProgress(queue, idx).current).toBe(expected);
+    }
+  });
+
+  it('does not report a set past the end when the queue is empty', () => {
+    expect(setProgress([], -1)).toEqual({ current: 0, total: 0 });
+  });
 });

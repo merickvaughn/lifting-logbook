@@ -113,11 +113,16 @@ export function setProgress(
   let total = 0;
   for (const phase of queue) if (phase.kind === 'set') total++;
 
-  let current = 0;
-  for (let i = 0; i <= idx && i < queue.length; i++) {
-    if (queue[i]?.kind === 'set') current++;
-  }
-  // A prep phase precedes its set, so report the set it is preparing for rather
-  // than the one just finished — otherwise the header reads "Set 0 of 9".
-  return { current: Math.max(1, current), total };
+  // Read the ordinal off the phase itself. Every phase carries the flat index of
+  // the set it belongs to — a prep counts down to that set, a rest follows it —
+  // so this is correct for all three kinds.
+  //
+  // Counting `set` phases in `0..idx` instead reports the *previous* set during
+  // every prep but the first, because a prep precedes the set it belongs to and
+  // so is not yet counted. A `Math.max(1, …)` floor hid that at index 0, which
+  // was the only index covered by a test.
+  const phase = idx >= 0 && idx < queue.length ? queue[idx] : undefined;
+  const current = phase ? phase.setIndex + 1 : Math.min(1, total);
+
+  return { current, total };
 }

@@ -161,4 +161,15 @@ describe('parseDuration', () => {
       expect(parseDuration(text)).toBeNull();
     }
   });
+
+  // `Number` accepts far more than the docstring promises. Each of these used to
+  // parse: '0x10' as 16, '1e3' as 1000, '+5' as 5, ':' and '4:' via an empty
+  // component coercing to 0. The exponent form was the one that mattered — a
+  // typed '1e21' reached storage as a phase that never ends.
+  it.each(['0x10', '0b11', '0o17', '1e3', '1e21', '+5', ':', '4:', ':30', ' 4 : 3 0 '])(
+    'rejects the non-decimal numeric form %p',
+    (text) => {
+      expect(parseDuration(text)).toBeNull();
+    },
+  );
 });

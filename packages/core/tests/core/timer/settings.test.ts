@@ -107,6 +107,52 @@ describe('normalizeTimerSettings', () => {
     expect(result.preset).toBe('Standard');
   });
 
+  // 'Ghost' is not on Object.prototype, so the test above passed even while the
+  // validation walked the prototype chain. These names are the ones that slipped
+  // through: `presets['toString'] != null` is true for every object, so the bad
+  // name was kept and resolved to a *function* — every duration rendered 0:00,
+  // and a stepper edit wrote a property onto Object.prototype.
+  it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__'])(
+    'rejects the inherited Object.prototype member %p as a preset name',
+    (name) => {
+      const result = normalizeTimerSettings({
+        preset: name,
+        presets: { Standard: STANDARD_DURATIONS },
+      });
+
+      expect(result.preset).toBe('Standard');
+      expect(typeof result.presets[result.preset]).toBe('object');
+    },
+  );
+
+  it('does not write onto Object.prototype while normalizing a hostile blob', () => {
+    normalizeTimerSettings(
+      JSON.parse('{"presets":{"__proto__":{"workSet":1}},"overrides":{"__proto__":{"workSet":2}}}'),
+    );
+
+    expect(({} as Record<string, unknown>).workSet).toBeUndefined();
+  });
+
+  it('keeps an override for a lift named __proto__ across a serialization round trip', () => {
+    // Built via JSON.parse, not an object literal: `{ __proto__: … }` in a
+    // literal sets the prototype instead of creating an own key, so a literal
+    // could not reproduce what a persisted blob actually carries.
+    const raw: unknown = JSON.parse(
+      JSON.stringify({ presets: { Standard: STANDARD_DURATIONS } }).replace(
+        /}$/,
+        ',"overrides":{"__proto__":{"workSet":99}}}',
+      ),
+    );
+
+    const once = normalizeTimerSettings(raw);
+    expect(resolveDuration(once, '__proto__', 'workSet')).toBe(99);
+
+    // A plain `overrides[lift] = …` write would have survived in memory and then
+    // serialized to `{}` — the override would vanish on the next reload.
+    const reloaded = normalizeTimerSettings(JSON.parse(JSON.stringify(once)));
+    expect(resolveDuration(reloaded, '__proto__', 'workSet')).toBe(99);
+  });
+
   it('restores the default presets when the blob lost them entirely', () => {
     const result = normalizeTimerSettings({ preset: 'Standard', presets: {} });
     expect(Object.keys(result.presets).sort()).toEqual(

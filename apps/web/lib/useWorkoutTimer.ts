@@ -131,11 +131,17 @@ export function useWorkoutTimer(
   const phase = run && run.idx < queue.length ? (queue[run.idx] ?? null) : null;
 
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const acquiringRef = useRef<Promise<void> | null>(null);
   // Last whole second an alert fired for, so a 200ms tick beeps once per second
   // rather than five times. -1 means "nothing yet this phase".
   const alertedAtRef = useRef(-1);
+  // Written in an effect, not during render: a render-phase ref mutation is not
+  // idempotent, which breaks the moment a Suspense boundary above this component
+  // replays a render.
   const settingsRef = useRef(settings);
-  settingsRef.current = settings;
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   // ---------------------------------------------------------------------------
   // Persistence
@@ -151,6 +157,35 @@ export function useWorkoutTimer(
     saveTimerSettings(next);
   }, []);
 
+  // Re-anchor a live run when the queue is rebuilt underneath it.
+  //
+  // The queue is derived from `settings`, and the Settings tab sits on the same
+  // page as the running dial — so a mid-session change is one click away.
+  // Toggling `skipWarmups`, or moving `prep` across zero (which adds or removes
+  // one phase per set), shifts every index: `run.idx` would then address an
+  // unrelated phase, or fall past the end, where `phase` goes null while `run`
+  // stays non-null — the dock unmounts, the page freezes at 0:00, and the
+  // interval keeps ticking with no surface left to stop it.
+  //
+  // `setIndex` + `kind` identifies the phase across a rebuild; if it no longer
+  // exists (its warm-up was skipped away), the session is over.
+  const prevQueueRef = useRef(queue);
+  useEffect(() => {
+    const prevQueue = prevQueueRef.current;
+    prevQueueRef.current = queue;
+    if (prevQueue === queue || !run) return;
+
+    const wasOn = prevQueue[run.idx];
+    if (!wasOn) {
+      commitRun(null);
+      return;
+    }
+
+    const nextIdx = queue.findIndex((p) => p.setIndex === wasOn.setIndex && p.kind === wasOn.kind);
+    if (nextIdx === -1) commitRun(null);
+    else if (nextIdx !== run.idx) commitRun({ ...run, idx: nextIdx });
+  }, [queue, run, commitRun]);
+
   // ---------------------------------------------------------------------------
   // Wake lock
   // ---------------------------------------------------------------------------
@@ -161,9 +196,38 @@ export function useWorkoutTimer(
     void releaseWakeLock(sentinel);
   }, []);
 
+  // Guard on *liveness*, not presence. Per Screen Wake Lock §3.3 the browser
+  // releases the lock when the document hides, but it leaves the sentinel object
+  // in place with `released` true — so a plain `if (wakeLockRef.current) return`
+  // sees a dead sentinel and never re-acquires. That is precisely the "silently
+  // stops working after the first tab switch" failure this visibility handling
+  // exists to prevent, and it is invisible to a test whose `requestWakeLock`
+  // mock resolves `null`, because the ref then never holds anything at all.
+  //
+  // `acquiringRef` shares the in-flight request so two calls that interleave
+  // before either resolves cannot both acquire, orphaning a sentinel that
+  // nothing is left holding a reference to release.
   const acquireLock = useCallback(async () => {
-    if (wakeLockRef.current) return;
-    wakeLockRef.current = await requestWakeLock();
+    const held = wakeLockRef.current;
+    if (held && !held.released) return;
+    if (acquiringRef.current) return acquiringRef.current;
+
+    const pending = requestWakeLock().then((sentinel) => {
+      const current = wakeLockRef.current;
+      if (current && !current.released) {
+        // Another call won the race while this one awaited.
+        void releaseWakeLock(sentinel);
+        return;
+      }
+      wakeLockRef.current = sentinel;
+    });
+
+    acquiringRef.current = pending;
+    try {
+      await pending;
+    } finally {
+      if (acquiringRef.current === pending) acquiringRef.current = null;
+    }
   }, []);
 
   const wantsLock = run !== null && settings.behavior.awake;
@@ -193,7 +257,12 @@ export function useWorkoutTimer(
   // ---------------------------------------------------------------------------
 
   const startAt = useCallback(
-    (index: number) => {
+    /**
+     * `startedAt` defaults to now, but the auto-advance passes the instant the
+     * previous phase actually ended so a phase boundary crossed while the tab
+     * was hidden does not silently grant a full fresh phase on return.
+     */
+    (index: number, startedAt?: number) => {
       if (index < 0 || index >= queue.length) {
         commitRun(null);
         return;
@@ -201,7 +270,7 @@ export function useWorkoutTimer(
       alertedAtRef.current = -1;
       commitRun({
         idx: index,
-        startedAt: Date.now(),
+        startedAt: startedAt ?? Date.now(),
         pausedMs: 0,
         pausedAt: null,
         bonus: 0,
@@ -241,9 +310,16 @@ export function useWorkoutTimer(
   const nudge = useCallback(
     (seconds: number) => {
       if (!run) return;
-      commitRun({ ...run, bonus: run.bonus + seconds });
+      // Clamp the bonus itself, not just its effect. `phaseDuration` floors the
+      // *result* at zero, so an unbounded negative bonus accumulates invisibly:
+      // after ten −30s presses on a 4:00 rest, the next two +30s presses change
+      // nothing on screen and the button reads as dead.
+      const floor = phase && phase.kind === 'rest' ? -phase.dur : 0;
+      const bonus = Math.max(floor, run.bonus + seconds);
+      if (bonus === run.bonus) return;
+      commitRun({ ...run, bonus });
     },
-    [run, commitRun],
+    [run, phase, commitRun],
   );
 
   const end = useCallback(() => {
@@ -288,9 +364,18 @@ export function useWorkoutTimer(
         buzz(behavior.alert, isRest ? [120, 80, 120] : 200);
       }
 
-      if (phase.kind !== 'rest' || !behavior.countUp) next();
+      if (phase.kind !== 'rest' || !behavior.countUp) {
+        // Start the next phase from the instant this one actually ended, not
+        // from now. A hidden tab's interval is throttled to ~1/s and stopped
+        // outright on mobile Safari, so `Date.now()` here would hand back a
+        // full fresh phase on return: lock the phone during a 60s set, unlock
+        // five minutes later, and the lifter is told to rest the full 4:00
+        // having already stood there for five.
+        const endedAt = run.startedAt + run.pausedMs + phaseDuration(phase, run) * 1000;
+        startAt(run.idx + 1, Math.min(endedAt, Date.now()));
+      }
     };
-  }, [run, phase, next]);
+  }, [run, phase, startAt]);
 
   const active = run !== null && run.pausedAt === null;
 
@@ -303,9 +388,11 @@ export function useWorkoutTimer(
     return () => window.clearInterval(id);
   }, [active]);
 
-  // Returning to a backgrounded tab: recompute immediately rather than waiting up
-  // to a full tick, and let the advance logic catch up on phases that ended while
-  // the interval was throttled.
+  // Returning to a backgrounded tab: settle the phase that ended while hidden
+  // immediately rather than waiting up to a full tick. One phase is settled per
+  // call; because each new phase now starts from the previous one's true end
+  // (see `startAt` above), the interval walks through any further elapsed
+  // phases on its next few ticks rather than granting each a fresh clock.
   useEffect(() => {
     if (!active) return;
     function onVisibility() {
@@ -326,8 +413,6 @@ export function useWorkoutTimer(
     setAnnouncement(`${phase.label}, ${phase.lift}`);
   }, [phase]);
 
-  // Release the lock if the component unmounts mid-session (e.g. route change).
-  useEffect(() => releaseLock, [releaseLock]);
 
   // ---------------------------------------------------------------------------
   // Derived view

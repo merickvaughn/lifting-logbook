@@ -100,7 +100,7 @@ export function resolveDuration(
   lift: string,
   field: TimerDurationField,
 ): number {
-  const override = settings.overrides[lift]?.[field];
+  const override = hasOwn(settings.overrides, lift) ? settings.overrides[lift]?.[field] : undefined;
   if (override != null) return override;
 
   if (settings.context.deloadOn) {
@@ -108,7 +108,9 @@ export function resolveDuration(
     if (deload != null) return deload;
   }
 
-  const preset = settings.presets[settings.preset];
+  const preset = hasOwn(settings.presets, settings.preset)
+    ? settings.presets[settings.preset]
+    : undefined;
   const value = preset?.[field];
   if (value != null) return value;
 
@@ -127,6 +129,37 @@ export function resolveDuration(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Own-property test, so an inherited `Object.prototype` member can never
+ * masquerade as a stored preset or override.
+ *
+ * A plain `presets[name] != null` check is true for `"toString"`,
+ * `"constructor"`, `"valueOf"` and friends even when nothing was ever stored
+ * under that name — which let a persisted `preset: "toString"` pass validation
+ * and resolve to a *function*, rendering every duration as 0:00 and letting a
+ * stepper write a property onto `Object.prototype`.
+ */
+function hasOwn(target: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(target, key);
+}
+
+/**
+ * Writes an own data property, even when the key is `__proto__`.
+ *
+ * `target[key] = value` with `key === "__proto__"` invokes the inherited setter
+ * and reassigns the object's prototype instead of storing anything, so the entry
+ * would survive in memory and then serialize to `{}` — a lift by that name would
+ * silently lose its overrides on reload.
+ */
+function defineOwn<T>(target: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
 }
 
 /** A duration is a finite, non-negative number of seconds. */
@@ -181,14 +214,17 @@ export function normalizeTimerSettings(raw: unknown): TimerSettings {
   const presets: Record<string, TimerPresetDurations> = {};
   if (isRecord(raw.presets)) {
     for (const [name, value] of Object.entries(raw.presets)) {
-      presets[name] = toDurations(value, TIMER_PRESET_DEFAULTS[name] ?? STANDARD_DURATIONS);
+      const shipped = hasOwn(TIMER_PRESET_DEFAULTS, name) ? TIMER_PRESET_DEFAULTS[name] : undefined;
+      defineOwn(presets, name, toDurations(value, shipped ?? STANDARD_DURATIONS));
     }
   }
   // A blob that lost its presets entirely still needs something to fall back to.
   if (Object.keys(presets).length === 0) Object.assign(presets, base.presets);
 
+  // `hasOwn`, not `presets[raw.preset] != null` — the latter walks the prototype
+  // chain, so every `Object.prototype` member passed as a valid preset name.
   const preset =
-    typeof raw.preset === 'string' && presets[raw.preset] != null
+    typeof raw.preset === 'string' && hasOwn(presets, raw.preset)
       ? raw.preset
       : (Object.keys(presets)[0] ?? base.preset);
 
@@ -198,7 +234,7 @@ export function normalizeTimerSettings(raw: unknown): TimerSettings {
       const parsed = toPartialDurations(value);
       // Drop an override that narrowed to nothing — an empty object would render
       // as "0 overrides" in the settings list while still counting as present.
-      if (Object.keys(parsed).length > 0) overrides[lift] = parsed;
+      if (Object.keys(parsed).length > 0) defineOwn(overrides, lift, parsed);
     }
   }
 

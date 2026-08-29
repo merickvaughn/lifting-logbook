@@ -6,14 +6,33 @@ import { TIMER_STORAGE_KEY, loadTimerRun, loadTimerSettings, saveTimerSettings }
 // The alert wrappers reach for AudioContext / navigator.vibrate / wakeLock, none of
 // which jsdom implements. Mocked at the module boundary so the tests assert on the
 // timer's decisions rather than on Web Audio plumbing.
+// Browser-shaped sentinels. The browser flips `released` when the document
+// hides and leaves the object in place, so a mock resolving `null` leaves the
+// hook's ref permanently empty and never exercises its liveness guard — which
+// is exactly how "the wake lock is never re-acquired after the first hide"
+// shipped with two green tests over it.
+const mockSentinels: { released: boolean }[] = [];
+
 jest.mock('../timerAlerts', () => ({
   beep: jest.fn(),
   buzz: jest.fn(),
-  requestWakeLock: jest.fn(async () => null),
-  releaseWakeLock: jest.fn(async () => undefined),
+  requestWakeLock: jest.fn(async () => {
+    const sentinel = { released: false, release: jest.fn(async () => undefined) };
+    mockSentinels.push(sentinel);
+    return sentinel;
+  }),
+  releaseWakeLock: jest.fn(async (sentinel: { released: boolean } | null) => {
+    if (sentinel) sentinel.released = true;
+  }),
 }));
 
 import { beep, buzz, requestWakeLock } from '../timerAlerts';
+
+/** Drives `document.visibilityState` and fires the matching event. */
+function setVisibility(state: 'visible' | 'hidden') {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
 
 const WORKOUT: TimerWorkoutKey = { program: '531', cycleNum: 1, workoutNum: 1 };
 
@@ -279,6 +298,60 @@ describe('wake lock', () => {
     act(() => result.current.startAt(0));
 
     expect(jest.mocked(requestWakeLock)).not.toHaveBeenCalled();
+  });
+
+  // Per Screen Wake Lock §3.3 the browser releases the lock when the document
+  // hides and does NOT restore it, leaving a sentinel whose `released` is true.
+  // A presence-only guard sees that dead sentinel and never re-acquires, so the
+  // lock silently stops working after the first tab switch — the exact bug the
+  // visibility handling was written to avoid.
+  it('re-acquires the lock after the document hides and returns', async () => {
+    const { result } = render();
+    await act(async () => {
+      result.current.startAt(0);
+    });
+    const afterStart = jest.mocked(requestWakeLock).mock.calls.length;
+    expect(afterStart).toBe(1);
+
+    await act(async () => {
+      const held = mockSentinels[mockSentinels.length - 1];
+      if (held) held.released = true; // the browser releases it on hide
+      setVisibility('hidden');
+    });
+    await act(async () => setVisibility('visible'));
+
+    expect(jest.mocked(requestWakeLock).mock.calls.length).toBe(afterStart + 1);
+  });
+
+  it('does not re-acquire while the held lock is still live', async () => {
+    const { result } = render();
+    await act(async () => {
+      result.current.startAt(0);
+    });
+
+    // Visible -> visible with nothing released: the guard must hold.
+    await act(async () => setVisibility('visible'));
+    await act(async () => setVisibility('visible'));
+
+    expect(jest.mocked(requestWakeLock).mock.calls.length).toBe(1);
+  });
+
+  it('does not acquire twice when two requests interleave before either resolves', async () => {
+    const { result } = render();
+    await act(async () => {
+      result.current.startAt(0);
+    });
+    jest.mocked(requestWakeLock).mockClear();
+
+    await act(async () => {
+      const held = mockSentinels[mockSentinels.length - 1];
+      if (held) held.released = true;
+      // Two visibility events in the same frame, before the first await settles.
+      setVisibility('visible');
+      setVisibility('visible');
+    });
+
+    expect(jest.mocked(requestWakeLock).mock.calls.length).toBe(1);
   });
 });
 
