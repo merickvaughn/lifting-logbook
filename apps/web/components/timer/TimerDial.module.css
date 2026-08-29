@@ -1,0 +1,63 @@
+.dial {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  /* Start the ring at 12 o'clock rather than 3. */
+  transform: rotate(-90deg);
+}
+
+.track {
+  fill: none;
+  stroke: var(--color-surface-alt);
+}
+
+.fill {
+  fill: none;
+  stroke-linecap: round;
+  transition:
+    stroke-dashoffset var(--transition-fast),
+    stroke var(--transition-base);
+}
+
+.set {
+  stroke: var(--color-accent);
+}
+
+.rest {
+  stroke: var(--color-rest);
+}
+
+.prep {
+  stroke: var(--color-prep);
+}
+
+.overrun {
+  stroke: var(--color-error-text);
+}
+
+.content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+/*
+ * The ring animates once per tick, which is exactly the kind of continuous
+ * motion prefers-reduced-motion exists to suppress. The countdown itself still
+ * updates — only the interpolation stops.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .fill {
+    transition: none;
+  }
+}

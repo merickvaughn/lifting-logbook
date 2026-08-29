@@ -112,6 +112,9 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
+  /* Keeps the last action clear of the docked mini-timer, which is fixed to the
+     bottom of the viewport while a timed session is running (#958). */
+  padding-bottom: var(--space-16);
 }
 
 .btnPrimary {
@@ -282,10 +285,90 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   background: var(--color-surface);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
+}
+
+/* ===========================================================================
+   Rest timer (#958)
+   =========================================================================== */
+
+/* Pushes the ▶ to the far edge once a row has three children. */
+.setRow .setSpec {
+  margin-left: auto;
+}
+
+.setPlay {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.setPlay:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.setRowActive {
+  background: var(--color-accent-soft);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.setRowActive .setLabel {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.setRowDone {
+  opacity: 0.6;
+}
+
+.setRowDone .setLabel::after {
+  content: ' ✓';
+  color: var(--color-success-text);
+}
+
+.timerHint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin: var(--space-2) 0 0;
+}
+
+.timerHint a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.timerHint a:hover {
+  color: var(--color-accent-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setPlay {
+    transition: none;
+  }
 }
 
 .setLabel {

@@ -1,0 +1,603 @@
+.container {
+  padding: var(--space-4);
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* Visually hidden, still announced. Used for the phase-transition live region. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------------------------------------------------------------- top bar */
+
+.topBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.backLink {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.backLink:hover {
+  color: var(--color-text);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  background: var(--color-surface-alt);
+  padding: 3px;
+  border-radius: var(--radius-md);
+}
+
+.tab {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.tabActive {
+  background: var(--color-bg);
+  color: var(--color-text-heading);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ------------------------------------------------------------ session head */
+
+.sessionHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.sessionName {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold, 600);
+  margin: 0;
+}
+
+.sessionMeta {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.progressTrack {
+  height: 4px;
+  background: var(--color-surface-alt);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: var(--space-2);
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width var(--transition-base);
+}
+
+/* ------------------------------------------------------------------- dial */
+
+.phaseLabel {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--color-text-muted);
+}
+
+.dialTime {
+  font-size: 64px;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-heading);
+  margin: var(--space-2) 0;
+  transition:
+    font-size var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.dialTimeCounting {
+  font-size: 88px;
+  color: var(--color-accent);
+}
+
+.dialSub {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  max-width: 180px;
+  text-wrap: pretty;
+}
+
+.liftLine {
+  text-align: center;
+  margin: var(--space-5) 0;
+}
+
+.liftLineName {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold, 600);
+  margin: 0;
+}
+
+.liftLineSpec {
+  font-size: var(--font-size-base);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+/* --------------------------------------------------------------- controls */
+
+.controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.btnPrimary,
+.btnSecondary {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    opacity var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.btnPrimary {
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.btnSecondary {
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.btnSecondary:hover:not(:disabled) {
+  background: var(--color-surface-alt);
+}
+
+.btnPrimary:disabled,
+.btnSecondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.microRow {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-6);
+}
+
+.microBtn {
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.microBtn:hover:not(:disabled) {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.microBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------------ queue */
+
+.sectionTitle {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-3);
+}
+
+.queue {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.queueRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+.queueRow:first-child {
+  border-top: none;
+}
+
+.queueRowDone {
+  color: var(--color-text-muted);
+}
+
+.queueRowCurrent {
+  background: var(--color-accent-soft);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.queueLabel {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  min-width: 0;
+}
+
+.queueKind {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  min-width: 58px;
+  flex-shrink: 0;
+}
+
+.queueDur {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.emptyQueue,
+.persistNote,
+.footNote {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-wrap: pretty;
+}
+
+.persistNote {
+  text-align: center;
+  margin-bottom: var(--space-6);
+}
+
+/* --------------------------------------------------------------- settings */
+
+.settingsPanel {
+  padding-bottom: var(--space-8);
+}
+
+.settingsTitle {
+  font-size: var(--font-size-xl);
+  margin: 0 0 var(--space-2);
+}
+
+.presetRow {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-6);
+}
+
+.preset {
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full, 999px);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.preset:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.presetActive {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.settingRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.settingRow:first-child {
+  border-top: none;
+}
+
+.settingMeta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.settingName {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.settingHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-wrap: pretty;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.stepBtn {
+  width: 32px;
+  height: 32px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.stepBtn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.durationValue {
+  width: 62px;
+  height: 32px;
+  text-align: center;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  background: var(--color-border-strong);
+  border: none;
+  border-radius: var(--radius-full, 999px);
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  background: var(--color-text-inverted);
+  border-radius: 50%;
+  transition: transform var(--transition-fast);
+  box-shadow: var(--shadow-sm);
+}
+
+.switchOn {
+  background: var(--color-success);
+}
+
+.switchOn::after {
+  transform: translateX(18px);
+}
+
+.segRow {
+  display: flex;
+  gap: 2px;
+  background: var(--color-surface-alt);
+  padding: 3px;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.seg {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.segActive {
+  background: var(--color-bg);
+  color: var(--color-text-heading);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ------------------------------------------------------- per-lift overrides */
+
+.overrideList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.overrideItem {
+  border-top: 1px solid var(--color-border);
+}
+
+.overrideItem:first-child {
+  border-top: none;
+}
+
+.overrideHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.overrideHead:hover {
+  background: var(--color-surface);
+}
+
+.overrideIcon {
+  width: 16px;
+  color: var(--color-text-muted);
+  transition: transform var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.overrideIconOpen {
+  transform: rotate(90deg);
+}
+
+.overrideName {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  min-width: 0;
+}
+
+.overrideState {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.overrideStateSet {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.overrideBody {
+  padding: 0 var(--space-4) var(--space-3);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.clearBtn {
+  font: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  padding: var(--space-2) 0;
+  cursor: pointer;
+}
+
+.clearBtn:hover {
+  color: var(--color-error-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progressFill,
+  .dialTime,
+  .switch::after,
+  .overrideIcon {
+    transition: none;
+  }
+}

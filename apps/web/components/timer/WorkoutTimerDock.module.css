@@ -1,0 +1,291 @@
+/* ------------------------------------------------------------------- dock */
+
+.dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border-strong);
+  box-shadow: 0 -2px 12px rgb(0 0 0 / 6%);
+  z-index: 40;
+  /* Clears the iOS home indicator so the buttons stay tappable. */
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  animation: dockIn var(--transition-base);
+}
+
+@keyframes dockIn {
+  from {
+    transform: translateY(110%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.dockInner {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.dockRing {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 0;
+  border-radius: 50%;
+}
+
+.dockMeta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dockPhase {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.dockTime {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--color-text-heading);
+}
+
+.dockSub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.dockBtns {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.dockBtn {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.dockBtn:hover {
+  background: var(--color-surface-alt);
+}
+
+.dockBtnPrimary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.dockBtnPrimary:hover {
+  background: var(--color-accent-hover);
+}
+
+/* ------------------------------------------------------------------ sheet */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  background: var(--color-bg);
+  z-index: 50;
+  overflow-y: auto;
+}
+
+.sheetInner {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.sheetTop {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.sheetCollapse {
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  padding: var(--space-2) 0;
+  cursor: pointer;
+}
+
+.sheetCollapse:hover {
+  color: var(--color-text);
+}
+
+.sheetProgress {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-muted);
+}
+
+.bigPhase {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--color-text-muted);
+}
+
+.bigTime {
+  font-size: 60px;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-heading);
+  margin: var(--space-2) 0;
+}
+
+.bigSub {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  max-width: 170px;
+  text-wrap: pretty;
+}
+
+.sheetLift {
+  text-align: center;
+  margin: var(--space-4) 0 var(--space-5);
+}
+
+.sheetLiftName {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold, 600);
+  margin: 0;
+}
+
+.sheetLiftSpec {
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.sheetControls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  width: 100%;
+  margin-bottom: var(--space-3);
+}
+
+.btnPrimary,
+.btnSecondary {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    opacity var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.btnPrimary {
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.btnPrimary:hover {
+  opacity: 0.88;
+}
+
+.btnSecondary {
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.btnSecondary:hover {
+  background: var(--color-surface-alt);
+}
+
+.sheetMicro {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-6);
+}
+
+.microBtn {
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.microBtn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.sheetLink {
+  font-size: var(--font-size-sm);
+  color: var(--color-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock {
+    animation: none;
+  }
+
+  .dockBtn,
+  .btnPrimary,
+  .btnSecondary,
+  .microBtn {
+    transition: none;
+  }
+}

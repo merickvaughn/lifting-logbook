@@ -4,22 +4,14 @@ import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
 import { computePlannedSets } from '@/lib/workoutPlan';
+import { toTimerLiftPlans } from '@/lib/timerPlan';
+import { isTimeable, workoutStatus } from '@/lib/workoutStatus';
+import WorkoutTimerProvider from '@/components/timer/WorkoutTimerProvider';
 import CollapsibleLiftList from './CollapsibleLiftList';
+import StartTimedWorkout from './StartTimedWorkout';
 import RescheduleForm from './RescheduleForm';
 import SkipForm from './SkipForm';
 import styles from './detail.module.css';
-
-function workoutStatus(
-  date: string,
-  hasLogs: boolean,
-  skipped: boolean,
-): 'completed' | 'upcoming' | 'missed' | 'skipped' {
-  const today = new Date().toISOString().slice(0, 10);
-  if (hasLogs) return 'completed';
-  if (skipped) return 'skipped';
-  if (date < today) return 'missed';
-  return 'upcoming';
-}
 
 export default async function WorkoutDetailPage({
   params,
@@ -66,6 +58,12 @@ export default async function WorkoutDetailPage({
     return { lift: wl.lift, tm, warmUpCount, workCount, plannedSets };
   });
 
+  // A finished or skipped workout has nothing left to time, so the timer is not
+  // mounted at all rather than being mounted and hidden. The timer route applies
+  // the same check via `isTimeable`, so the two surfaces cannot disagree.
+  const timerAvailable = isTimeable(status);
+  const timerLifts = timerAvailable ? toTimerLiftPlans(liftDetails, unit) : [];
+
   const plannedSets = liftDetails.reduce((acc, d) => acc + d.warmUpCount + d.workCount, 0);
   const actualSets = workout.lifts.reduce((acc, wl) => acc + wl.sets.length, 0);
   const displaySets = status === 'completed' ? actualSets : plannedSets;
@@ -76,8 +74,8 @@ export default async function WorkoutDetailPage({
     : status === 'skipped' ? '⊘ Skipped'
     : 'Missed';
 
-  return (
-    <main className={styles.container}>
+  const body = (
+    <>
       <Link href={`/cycle/${cycleNum}`} className={styles.backLink}>
         ← Back to Cycle
       </Link>
@@ -124,18 +122,19 @@ export default async function WorkoutDetailPage({
       </section>
 
       <section className={styles.actions}>
+        {timerAvailable && <StartTimedWorkout cycleNum={cycleNum} workoutNum={workoutNum} />}
         <Link
           href={`/cycle/${cycleNum}/workout/${workoutNum}/detail/manage-lifts`}
           className={styles.btnSecondary}
         >
           ✏️ Manage Lifts
         </Link>
-        {status !== 'completed' && status !== 'skipped' && (
+        {timerAvailable && (
           <Link
             href={`/cycle/${cycleNum}/workout/${workoutNum}`}
-            className={styles.btnPrimary}
+            className={styles.btnSecondary}
           >
-            Start Logging
+            Start Logging (untimed)
           </Link>
         )}
         <RescheduleForm
@@ -153,6 +152,21 @@ export default async function WorkoutDetailPage({
           />
         )}
       </section>
+    </>
+  );
+
+  return (
+    <main className={styles.container}>
+      {timerAvailable ?
+        <WorkoutTimerProvider
+          lifts={timerLifts}
+          program={program}
+          cycleNum={cycleNum}
+          workoutNum={workoutNum}
+        >
+          {body}
+        </WorkoutTimerProvider>
+      : body}
     </main>
   );
 }
