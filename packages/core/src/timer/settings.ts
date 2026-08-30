@@ -109,8 +109,28 @@ function structuredCloneish(
 }
 
 /**
+ * The resolved duration alone — see {@link resolveDurationEntry}, which this
+ * delegates to and which documents the precedence chain.
+ *
+ * Kept as a separate export because the queue builder only ever wants the number;
+ * `resolveDurationEntry(...).seconds` at all three of its call sites would be
+ * noise for a caller that has no use for the rung.
+ */
+export function resolveDuration(
+  settings: TimerSettings,
+  lift: string,
+  field: TimerDurationField,
+  classification: LiftClassification | undefined,
+): number {
+  return resolveDurationEntry(settings, lift, field, classification).seconds;
+}
+
+/** Which rung of the chain supplied a duration. */
+export type TimerDurationSource = 'override' | 'deload' | 'accessory' | 'preset' | 'standard';
+
+/**
  * Resolves one duration for one lift, applying the precedence the settings UI
- * promises:
+ * promises, and reports which rung supplied it:
  *
  * 1. a per-lift override,
  * 2. the deload context (when the deload toggle is on),
@@ -130,27 +150,16 @@ function structuredCloneish(
  * durations at runtime, which is the hardest kind of regression to notice. There
  * are only a handful of call sites; each is made to answer. Pass `undefined`
  * where the role genuinely is not known.
- */
-export function resolveDuration(
-  settings: TimerSettings,
-  lift: string,
-  field: TimerDurationField,
-  classification: LiftClassification | undefined,
-): number {
-  return resolveDurationEntry(settings, lift, field, classification).seconds;
-}
-
-/** Which rung of the chain supplied a duration. */
-export type TimerDurationSource = 'override' | 'deload' | 'accessory' | 'preset' | 'standard';
-
-/**
- * {@link resolveDuration}, plus the rung the value came from.
  *
- * Exists so the settings panel can *say* what a lift follows rather than assume
- * it follows the preset. It shares one implementation with `resolveDuration`
- * — which delegates here — so the label and the countdown cannot disagree; a
- * panel-local copy of this precedence would be free to drift out of step with
- * the chain it describes.
+ * The `source` exists so the settings panel can *say* what a lift follows rather
+ * than assume it follows the preset. Sharing one implementation with
+ * `resolveDuration` is what keeps the label and the countdown from disagreeing;
+ * a panel-local copy of this precedence would be free to drift.
+ *
+ * Adding a fifth rung means touching seven places — this chain, `TimerDurationSource`,
+ * `TimerContext`, `defaultTimerSettings`, `normalizeTimerSettings`, the panel's
+ * `clone()`, and its `sourceLabel()` — of which only the union and `sourceLabel`
+ * are compiler-enforced.
  */
 export function resolveDurationEntry(
   settings: TimerSettings,

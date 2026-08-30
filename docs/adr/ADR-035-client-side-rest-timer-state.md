@@ -174,21 +174,39 @@ the client, three `string[]`-typed prop chains and the Playwright mock, **and ne
 the detail page calls that endpoint at all**, so it would still have required a new fetch on both.
 
 Classification for built-in lifts was already sitting in `packages/core`, the same package
-`resolveDuration` lives in. `DEFAULT_SLOT_MAP` maps every program-spec slot name — canonical
-("Squat") and CSV-abbreviated ("Bench P.") alike — onto a `LIFT_CATALOG` id, and every catalog entry
-carries a `classification`. `liftClassificationFor` (`packages/core/src/catalog/classify.ts`) joins
-the two into one eagerly-built `Map`, so the lookup is local, synchronous, and free of new data.
-Building that map from `Object.entries` rather than indexing the slot map makes the
-prototype-pollution hazard *structurally impossible* instead of guarded: a lift named `toString`
-simply misses, with no `hasOwnProperty` check to forget. Only custom lifts need the network, and
-they are fetched with the already-existing `fetchCustomLifts()` inside each page's existing
-`Promise.all` — caught there, so a failure narrows classification to built-ins rather than taking
-down a timer someone is standing in the gym waiting on.
+`resolveDuration` lives in: `DEFAULT_SLOT_MAP` maps program-spec slot names onto `LIFT_CATALOG`
+ids, and every catalog entry carries a `classification`. `liftClassificationFor`
+(`packages/core/src/catalog/classify.ts`) joins them into one eagerly-built `Map`, so the lookup is
+local, synchronous, and free of new data. Only custom lifts need the network, and they are fetched
+with the already-existing `fetchCustomLifts()` — bounded by `withTimeout` and caught, so neither a
+failure nor a slow response takes down or holds up a timer someone is standing in the gym waiting
+on.
+
+**Three vocabularies reach that lookup, and seeding it from the slot map alone covers only one.**
+This was caught in review, and it is the part worth remembering. A *built-in* program's spec `lift`
+values are slot names, so `DEFAULT_SLOT_MAP`'s keys look like the complete vocabulary — but they are
+only 8 of the catalog's 23 display names. A *custom* program's spec `lift` values come from
+`ProgramEditor`'s exercise picker, which is built as `LIFT_CATALOG.map((l) => l.name)` and stores the
+selected name verbatim, so it speaks catalog **names**; and a row pre-resolved through `liftOverrides`
+circulates as a catalog **id**. Seeded from the slot map alone, 15 of 23 catalog names resolved to
+`undefined` — 8 of them accessories, including Cable Curl and Lateral Raise, the two most obviously
+accessory lifts in the catalog. The near misses are one character wide (`Cable Curls` is the slot
+name, `Cable Curl` the catalog name), so the feature would have silently not fired for custom-program
+users on exactly the lifts it exists for, with the settings panel reporting "Rest follows Standard".
+The map is now seeded from all three vocabularies, slot-map aliases last so they win a collision.
+
+The test that was supposed to cover this could not: it iterated `Object.keys(DEFAULT_SLOT_MAP)` —
+the very map the lookup was seeded from — so it could only fail if a slot-map *value* named no
+catalog id. A coverage assertion whose domain is the implementation's own input is not a coverage
+assertion. The replacement iterates `LIFT_CATALOG` instead, and fails against the original seeding.
 
 `accessoryOn` defaults to **on**, unlike `deloadOn`. Because `normalizeTimerSettings` merges a
-persisted blob onto the defaults, an existing user's blob inherits it and their accessory rest
-shortens on next load without being asked. That is the intended behavior change: four minutes
-between cable curls is what the preset alone produces, and it is wrong.
+persisted blob onto the defaults, an existing user's blob inherits it and their accessory durations
+shorten on next load without being asked. That is the intended behavior change: four minutes between
+cable curls is what the preset alone produces, and it is wrong. Note the shipped defaults shorten the
+working-set countdown (60s → 45s) as well as rest, which is why the toggle reads "Shorter durations
+for accessories" rather than "shorter rest" — a control that is on by default must not understate
+what it changes.
 
 `resolveDuration` gained a **required** fourth parameter rather than an optional one. An optional
 parameter lets a call site opt out of the new rung by omission — no compile error, and durations

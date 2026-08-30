@@ -12,7 +12,7 @@ function detail(lift: string, overrides: Partial<TimerPlanInput> = {}): TimerPla
 
 describe('toTimerLiftPlans', () => {
   it('formats weights and the training-max caption in the requested unit', () => {
-    const [plan] = toTimerLiftPlans([detail('Bench Press')], 'lbs');
+    const [plan] = toTimerLiftPlans([detail('Bench Press')], 'lbs', []);
 
     expect(plan?.lift).toBe('Bench Press');
     expect(plan?.tm).toBe('TM: 200 lbs');
@@ -23,13 +23,14 @@ describe('toTimerLiftPlans', () => {
     const plans = toTimerLiftPlans(
       [detail('Bench Press'), detail('Deadlift', { plannedSets: [] })],
       'lbs',
+      [],
     );
 
     expect(plans.map((plan) => plan.lift)).toEqual(['Bench Press']);
   });
 
   it('omits the training-max caption when there is no training max', () => {
-    const [plan] = toTimerLiftPlans([detail('Bench Press', { tm: 0 })], 'lbs');
+    const [plan] = toTimerLiftPlans([detail('Bench Press', { tm: 0 })], 'lbs', []);
     expect(plan?.tm).toBeUndefined();
   });
 
@@ -37,11 +38,30 @@ describe('toTimerLiftPlans', () => {
     it('classifies built-in lifts with no custom-lift list at all', () => {
       // The two roles side by side, from one call: a mapper that hard-coded
       // either answer would satisfy half of this and fail the other half.
-      const plans = toTimerLiftPlans([detail('Squat'), detail('Cable Curls')], 'lbs');
+      const plans = toTimerLiftPlans([detail('Squat'), detail('Cable Curls')], 'lbs', []);
 
       expect(plans.map((plan) => [plan.lift, plan.classification])).toEqual([
         ['Squat', 'compound'],
         ['Cable Curls', 'accessory'],
+      ]);
+    });
+
+    it('classifies a lift named the way a custom program names it', () => {
+      // ProgramEditor's exercise picker is built from `LIFT_CATALOG.map(l => l.name)`
+      // and stores the selection verbatim, so a custom program's lifts arrive here
+      // as catalog display names — a different vocabulary from the built-in
+      // templates' slot names, and the one the first implementation missed
+      // entirely for 15 of 23 lifts.
+      const plans = toTimerLiftPlans(
+        [detail('Cable Curl'), detail('Lateral Raise'), detail('Back Squat')],
+        'lbs',
+        [],
+      );
+
+      expect(plans.map((plan) => [plan.lift, plan.classification])).toEqual([
+        ['Cable Curl', 'accessory'],
+        ['Lateral Raise', 'accessory'],
+        ['Back Squat', 'compound'],
       ]);
     });
 
@@ -56,7 +76,7 @@ describe('toTimerLiftPlans', () => {
     it('leaves an unknown lift unclassified rather than dropping it', () => {
       // `undefined` is "no opinion" — the timer falls through to its preset.
       // Dropping the lift instead would silently remove it from the session.
-      const plans = toTimerLiftPlans([detail('Zercher Good Morning')], 'lbs');
+      const plans = toTimerLiftPlans([detail('Zercher Good Morning')], 'lbs', []);
 
       expect(plans).toHaveLength(1);
       expect(plans[0]?.classification).toBeUndefined();

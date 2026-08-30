@@ -39,9 +39,12 @@ function clone(settings: TimerSettings): TimerSettings {
     overrides: Object.fromEntries(
       Object.entries(settings.overrides).map(([lift, fields]) => [lift, { ...fields }]),
     ),
-    // Enumerated field-by-field rather than spread, so every new context section
-    // must be added here too — one omitted line silently discards that section
-    // on every settings edit the panel makes.
+    // Enumerated, not spread, because `setDeloadField`/`setAccessoryField` mutate
+    // the nested duration objects in place: a spread would alias them back to the
+    // caller's settings and edit state the panel does not own. Completeness of the
+    // *required* fields is enforced by the `TimerSettings` return type, not by the
+    // enumeration — but an optional field added to TimerContext later would be
+    // dropped here silently, which the type cannot catch.
     context: {
       deloadOn: settings.context.deloadOn,
       deload: { ...settings.context.deload },
@@ -54,9 +57,17 @@ function clone(settings: TimerSettings): TimerSettings {
 
 /**
  * What a duration row says it is following, given the rung that actually supplied
- * it. `standard` names the shipped fallback a persisted blob lands on when its
- * active preset no longer exists, so the row never claims to follow a preset that
- * is gone.
+ * it.
+ *
+ * `standard` is defense-in-depth for a `TimerSettings` that did not come through
+ * `normalizeTimerSettings` — no app path reaches it, because normalization
+ * re-points a stale `preset` at a live key and rebuilds every preset field-by-field,
+ * so the preset rung always hits for settings loaded from storage.
+ *
+ * The `default` branch is unreachable today and exists for its error message: a
+ * sixth `TimerDurationSource` would otherwise surface as TS2366 ("function lacks
+ * ending return statement"), which reads as a missing `return` rather than a
+ * missing case.
  */
 function sourceLabel(source: TimerDurationSource, presetName: string): string {
   switch (source) {
@@ -70,6 +81,10 @@ function sourceLabel(source: TimerDurationSource, presetName: string): string {
       return presetName;
     case 'standard':
       return 'Standard';
+    default: {
+      const unhandled: never = source;
+      return unhandled;
+    }
   }
 }
 
@@ -281,6 +296,20 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
     onChange(next);
   }
 
+  /**
+   * What a context row shows for a field that context does not set.
+   *
+   * Must be the rung the resolver actually falls through to — the active preset,
+   * then Standard — not `STANDARD_DURATIONS` alone. A persisted context section
+   * can carry a subset of fields (`normalizeTimerSettings` only replaces one that
+   * narrowed to *nothing*), and showing Standard's 1:00 while the timer runs
+   * "Light day"'s 0:45 makes the row disagree with the countdown — and writes the
+   * wrong baseline back the moment a stepper is clicked.
+   */
+  function contextFallback(field: TimerDurationField): number {
+    return activePreset?.[field] ?? STANDARD_DURATIONS[field];
+  }
+
   function durationRow(field: TimerDurationField) {
     const copy = TIMER_FIELD_COPY[field];
     return (
@@ -344,11 +373,17 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           const fields: TimerDurationField[] = hasWarmups ?
             ['warmupSet', 'workSet', 'restWarmup', 'restWork', 'prep']
           : ['workSet', 'restWork', 'prep'];
-          // What this lift follows when it has no overrides of its own. Read off
-          // the rung that actually resolves `restWork` — the duration this whole
-          // feature is about — rather than assuming the preset, which stopped
+          // What this lift's REST follows when it has no overrides of its own —
+          // one field, not the whole lift. Read off the rung that actually
+          // resolves `restWork` rather than assuming the preset, which stopped
           // being true once the deload and accessory contexts existed.
-          const followed = sourceLabel(
+          //
+          // Deliberately a one-field summary: neither context sets `warmupSet`,
+          // `restWarmup` or `prep`, so a label claiming to describe the whole lift
+          // would be wrong for three of its five durations. The copy says "Rest
+          // follows …" so the collapsed row does not overstate its scope; the
+          // per-field `From <rung>` hints inside give the exact answer.
+          const restFollows = sourceLabel(
             resolveDurationEntry(settings, lift.lift, 'restWork', lift.classification).source,
             settings.preset,
           );
@@ -374,7 +409,7 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
                 >
                   {count > 0 ?
                     `${count} override${count > 1 ? 's' : ''}`
-                  : `Follows ${followed}`}
+                  : `Rest follows ${restFollows}`}
                 </span>
               </button>
 
@@ -435,7 +470,7 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           }}
         />
         {/*
-          The fallback is STANDARD_DURATIONS, not TIMER_FIELD_COPY[field].step —
+          The fallback is contextFallback, not TIMER_FIELD_COPY[field].step —
           `step` is the stepper *increment* (5s), so a persisted blob whose
           deload section narrowed to only `restWork` used to render "Working set"
           as 0:05 and write that back on the next edit.
@@ -445,7 +480,7 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           hint="Deload"
           context="Deload"
           step={TIMER_FIELD_COPY.workSet.step}
-          value={settings.context.deload.workSet ?? STANDARD_DURATIONS.workSet}
+          value={settings.context.deload.workSet ?? contextFallback('workSet')}
           onChange={(value) => setDeloadField('workSet', value)}
         />
         <DurationRow
@@ -453,16 +488,22 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           hint="Deload"
           context="Deload"
           step={TIMER_FIELD_COPY.restWork.step}
-          value={settings.context.deload.restWork ?? STANDARD_DURATIONS.restWork}
+          value={settings.context.deload.restWork ?? contextFallback('restWork')}
           onChange={(value) => setDeloadField('restWork', value)}
         />
       </div>
 
       <h2 className={styles.sectionTitle}>Accessory lifts</h2>
       <div className={styles.card}>
+        {/*
+          "durations", not "rest": the shipped accessory defaults shorten the
+          working-set countdown (60s -> 45s) as well as rest, so a label promising
+          only shorter rest would understate what the switch does — and it is on
+          by default, so every existing user gets both.
+        */}
         <ToggleRow
-          label="Shorter rest for accessories"
-          hint="Applies to lifts the catalog classes as accessories"
+          label="Shorter durations for accessories"
+          hint="Working set and rest, for lifts the catalog classes as accessories"
           checked={settings.context.accessoryOn}
           onChange={(value) => {
             const next = clone(settings);
@@ -475,7 +516,7 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           hint="Accessory"
           context="Accessory"
           step={TIMER_FIELD_COPY.workSet.step}
-          value={settings.context.accessory.workSet ?? STANDARD_DURATIONS.workSet}
+          value={settings.context.accessory.workSet ?? contextFallback('workSet')}
           onChange={(value) => setAccessoryField('workSet', value)}
         />
         <DurationRow
@@ -483,7 +524,7 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           hint="Accessory"
           context="Accessory"
           step={TIMER_FIELD_COPY.restWork.step}
-          value={settings.context.accessory.restWork ?? STANDARD_DURATIONS.restWork}
+          value={settings.context.accessory.restWork ?? contextFallback('restWork')}
           onChange={(value) => setAccessoryField('restWork', value)}
         />
       </div>

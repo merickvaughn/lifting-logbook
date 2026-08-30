@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TimerLiftPlan } from '@lifting-logbook/core';
+import { TIMER_STORAGE_KEY } from '@/lib/timerSettings';
 import WorkoutTimerView from './WorkoutTimerView';
 
 jest.mock('@/lib/timerAlerts', () => ({
@@ -203,7 +204,7 @@ describe('WorkoutTimerView', () => {
       await user.click(screen.getByRole('tab', { name: 'Settings' }));
 
       expect(
-        screen.getByRole('switch', { name: 'Shorter rest for accessories' }),
+        screen.getByRole('switch', { name: 'Shorter durations for accessories' }),
       ).toHaveAttribute('aria-checked', 'true');
       expect(
         (screen.getByLabelText('Between working sets (Accessory)') as HTMLInputElement).value,
@@ -215,10 +216,10 @@ describe('WorkoutTimerView', () => {
       renderView();
       await user.click(screen.getByRole('tab', { name: 'Settings' }));
 
-      await user.click(screen.getByRole('switch', { name: 'Shorter rest for accessories' }));
+      await user.click(screen.getByRole('switch', { name: 'Shorter durations for accessories' }));
 
       expect(
-        screen.getByRole('switch', { name: 'Shorter rest for accessories' }),
+        screen.getByRole('switch', { name: 'Shorter durations for accessories' }),
       ).toHaveAttribute('aria-checked', 'false');
     });
 
@@ -241,7 +242,7 @@ describe('WorkoutTimerView', () => {
         (screen.getByLabelText('Between working sets (Accessory)') as HTMLInputElement).value,
       ).toBe('1:15');
       expect(
-        screen.getByRole('switch', { name: 'Shorter rest for accessories' }),
+        screen.getByRole('switch', { name: 'Shorter durations for accessories' }),
       ).toHaveAttribute('aria-checked', 'true');
     });
 
@@ -273,7 +274,7 @@ describe('WorkoutTimerView', () => {
 
       // Rule off: every lift runs on the preset — 310 + 310 + 70 = 11:30.
       await user.click(screen.getByRole('tab', { name: 'Settings' }));
-      await user.click(screen.getByRole('switch', { name: 'Shorter rest for accessories' }));
+      await user.click(screen.getByRole('switch', { name: 'Shorter durations for accessories' }));
       await user.click(screen.getByRole('tab', { name: 'Timer' }));
 
       expect(screen.getByText(/3 timed sets · 11:30 estimated/)).toBeInTheDocument();
@@ -290,10 +291,41 @@ describe('WorkoutTimerView', () => {
       ]);
       await user.click(screen.getByRole('tab', { name: 'Settings' }));
 
-      expect(screen.getByText('Follows Accessory')).toBeInTheDocument();
+      expect(screen.getByText('Rest follows Accessory')).toBeInTheDocument();
 
-      await user.click(screen.getByRole('switch', { name: 'Shorter rest for accessories' }));
-      expect(screen.getByText('Follows Standard')).toBeInTheDocument();
+      await user.click(screen.getByRole('switch', { name: 'Shorter durations for accessories' }));
+      expect(screen.getByText('Rest follows Standard')).toBeInTheDocument();
+    });
+
+    it('shows a context row falling back to the active preset, not to Standard', async () => {
+      const user = userEvent.setup();
+      // A persisted blob whose accessory section carries only `restWork` — the
+      // shape normalizeTimerSettings keeps as-is, since it only replaces a section
+      // that narrowed to *nothing*.
+      window.localStorage.setItem(
+        TIMER_STORAGE_KEY,
+        JSON.stringify({
+          settings: {
+            preset: 'Light day',
+            presets: { 'Light day': { warmupSet: 30, workSet: 45, restWarmup: 60, restWork: 150, prep: 10 } },
+            context: { accessoryOn: true, accessory: { restWork: 90 } },
+          },
+          run: null,
+        }),
+      );
+      renderView();
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+
+      // The accessory context does not set workSet, so it falls through to the
+      // ACTIVE preset (Light day = 0:45). Showing STANDARD_DURATIONS' 1:00 here
+      // would disagree with the countdown the timer actually runs — and write that
+      // wrong baseline back on the next stepper click.
+      expect(
+        (screen.getByLabelText('Working set (Accessory)') as HTMLInputElement).value,
+      ).toBe('0:45');
+      expect(
+        (screen.getByLabelText('Between working sets (Accessory)') as HTMLInputElement).value,
+      ).toBe('1:30');
     });
 
     it('records a per-lift override and can clear it', async () => {
@@ -302,7 +334,7 @@ describe('WorkoutTimerView', () => {
       await user.click(screen.getByRole('tab', { name: 'Settings' }));
 
       await user.click(screen.getByRole('button', { name: /Bench Press/ }));
-      expect(screen.getByText('Follows Standard')).toBeInTheDocument();
+      expect(screen.getByText('Rest follows Standard')).toBeInTheDocument();
 
       const overrideInput = screen.getByLabelText('Working set (Bench Press)');
       await user.clear(overrideInput);
@@ -312,7 +344,7 @@ describe('WorkoutTimerView', () => {
       expect(screen.getByText('1 override')).toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: /Clear overrides for Bench Press/ }));
-      expect(screen.getByText('Follows Standard')).toBeInTheDocument();
+      expect(screen.getByText('Rest follows Standard')).toBeInTheDocument();
     });
   });
 });
