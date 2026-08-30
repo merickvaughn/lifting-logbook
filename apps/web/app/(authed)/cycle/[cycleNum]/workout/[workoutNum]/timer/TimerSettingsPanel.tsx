@@ -2,6 +2,7 @@
 
 import { useId, useState } from 'react';
 import {
+  MAX_TIMER_DURATION_SECONDS,
   STANDARD_DURATIONS,
   TIMER_FIELD_COPY,
   formatDuration,
@@ -33,9 +34,6 @@ interface Props {
 }
 
 const ALERT_MODES: TimerAlertMode[] = ['Both', 'Beep', 'Vibrate', 'Silent'];
-
-/** One hour — past any real rest, and a bound on what can reach storage. */
-const MAX_DURATION_SECONDS = 3600;
 
 /** Structural clone — every value in the settings tree is a plain number, string or boolean. */
 function clone(settings: TimerSettings): TimerSettings {
@@ -121,8 +119,11 @@ function DurationStepper({
     const parsed = parseDuration(text);
     // Unparseable input keeps the previous value rather than silently zeroing it.
     // Clamped at both ends: an hour is already far beyond any real rest, and an
-    // unbounded value persists a phase that never ends.
-    if (parsed !== null) onChange(Math.min(MAX_DURATION_SECONDS, Math.max(0, parsed)));
+    // unbounded value persists a phase that never ends. The same ceiling is
+    // enforced again at the normalization boundary (packages/core's toDuration),
+    // via the shared MAX_TIMER_DURATION_SECONDS constant — this clamp is a UX
+    // nicety (immediate feedback while typing), not the only bound.
+    if (parsed !== null) onChange(Math.min(MAX_TIMER_DURATION_SECONDS, Math.max(0, parsed)));
     setDraft(null);
   }
 
