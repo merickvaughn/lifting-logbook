@@ -36,6 +36,7 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
 
   const timer = useWorkoutTimer(lifts, workout);
   const {
+    effectiveLifts,
     queue,
     phase,
     running,
@@ -104,9 +105,13 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
 
   const settingsPanel = useMemo(
     () => (
-      <TimerSettingsPanel settings={settings} onChange={timer.updateSettings} lifts={lifts} />
+      <TimerSettingsPanel
+        settings={settings}
+        onChange={timer.updateSettings}
+        lifts={effectiveLifts}
+      />
     ),
-    [settings, timer.updateSettings, lifts],
+    [settings, timer.updateSettings, effectiveLifts],
   );
 
   function handlePrimary() {
@@ -285,8 +290,14 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
           run, and the wake lock means the browser never throttles it. Same
           technique and same reason as `queueList` above. All three props are
           referentially stable across ticks (`settings` is state, `updateSettings`
-          is a []-dep useCallback, `lifts` is a page prop), so the memo actually
-          holds rather than recomputing anyway.
+          is a []-dep useCallback, `effectiveLifts` is the hook's own memo over
+          `lifts` — a page prop — and a run's pinned classifications, neither of
+          which a tick touches), so the memo actually holds rather than
+          recomputing anyway. `effectiveLifts`, not `lifts`, deliberately — the
+          panel resolves each lift's "Rest follows …" label from
+          `lift.classification`, and reading the raw page prop here would let
+          this panel disagree with the queue/dial above about a lift a live
+          run has pinned differently (issue #966).
         */}
         {tab === 'settings' && settingsPanel}
       </section>

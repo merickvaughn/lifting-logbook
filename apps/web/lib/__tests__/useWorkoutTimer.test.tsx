@@ -580,22 +580,24 @@ describe('classification pinning across two mounts (issue #966)', () => {
     expect(mountB.result.current.duration).toBe(90);
   });
 
-  // Known, accepted asymmetry, pinned down rather than left to be rediscovered
-  // as a surprise: a pinned "no opinion" (`undefined`) does not survive the
-  // JSON round trip through localStorage — `JSON.stringify` drops an
-  // `undefined`-valued key outright — so it cannot force a *second* mount away
-  // from an opinion that mount's own (successful) fetch already has. This is
-  // the mirror image of the primary case above, and it is the right trade,
-  // not a gap: the mount reporting "no opinion" is definitionally the
-  // degraded one, so preferring a later mount's real answer over an absent
-  // pin means a working fetch is never overridden by a failed one.
-  it('lets a second mount use its own resolution when the pinning mount had no opinion', () => {
+  // The mirror image of the primary case above — the one that motivated
+  // storing a pinned "no opinion" as `null` rather than `undefined` (see the
+  // field doc on `TimerRunState.classifications`). `undefined` doesn't survive
+  // the JSON round trip through localStorage, so an earlier version of this fix
+  // let a second mount's own (successful) resolution silently override an
+  // absent pin — reopening the exact disagreement this test proves closed: the
+  // pin decides, not whichever mount happens to read it, and not whichever
+  // mount's fetch happened to succeed.
+  it('keeps a pinned "no opinion" even when the other mount would have resolved it', () => {
     const mountA = renderHook(() => useWorkoutTimer(liftsClassifiedAs(undefined), WORKOUT));
     act(() => mountA.result.current.startAt(REST_INDEX));
     expect(mountA.result.current.duration).toBe(240); // no opinion -> the preset
 
+    // A fresh mount whose own fetch succeeded: Cable Curls resolves 'accessory'.
     const mountB = renderHook(() => useWorkoutTimer(liftsClassifiedAs('accessory'), WORKOUT));
-    expect(mountB.result.current.duration).toBe(90);
+    // The load-bearing assertion: mount B's own resolution would give 90s, but
+    // the pin says "no opinion" — it must report mount A's pinned 240s instead.
+    expect(mountB.result.current.duration).toBe(240);
   });
 
   // The bonus case the issue calls out: even on a single mount, with no second
@@ -615,5 +617,49 @@ describe('classification pinning across two mounts (issue #966)', () => {
 
     // Still the pinned 90s, not whatever `lifts` resolves to now.
     expect(result.current.duration).toBe(90);
+  });
+
+  // Review finding on issue #966's own PR: `startAt` must key its pin
+  // carry-forward on `run.classifications` specifically, not `run` as a whole.
+  // `WorkoutTimerProvider`'s `rowState` context depends on `startAt` (and
+  // `startAtSet`, which depends on `startAt`) precisely because it was stable
+  // across everything except a phase boundary — see that file's own docblock —
+  // and `nudge`/`togglePause` both spread `run` into a new object on every
+  // press, so keying on the whole object would silently reopen the per-tick
+  // re-render `rowState` exists to avoid.
+  it('keeps startAt and startAtSet stable across a nudge and a pause', () => {
+    // Built once, outside the render callback: `liftsClassifiedAs` returns a
+    // fresh array each call, and passing it inline would make `lifts` itself
+    // churn every render — confounding the one thing this test isolates
+    // (`run` vs `run.classifications` in `startAt`'s own dependency array)
+    // with an unrelated instability in the test's own fixture.
+    const lifts = liftsClassifiedAs('accessory');
+    const { result } = renderHook(() => useWorkoutTimer(lifts, WORKOUT));
+    act(() => result.current.startAt(REST_INDEX));
+
+    const startAtBefore = result.current.startAt;
+    const startAtSetBefore = result.current.startAtSet;
+
+    act(() => result.current.nudge(30));
+    act(() => result.current.togglePause());
+
+    expect(result.current.startAt).toBe(startAtBefore);
+    expect(result.current.startAtSet).toBe(startAtSetBefore);
+  });
+
+  // Review finding on issue #966's own PR: the queue is built from
+  // `effectiveLifts`, but `effectiveLifts` itself wasn't exposed — so a
+  // consumer resolving a per-lift classification for *display* (the timer
+  // page's Settings tab, which reads `lift.classification` to render "Rest
+  // follows …") had no pinned view to read and fell back to the route's raw
+  // `lifts` prop, which can disagree with the queue/dial during a live run.
+  it('exposes effectiveLifts with the pinned classification applied, for consumers other than the queue', () => {
+    const mountA = renderHook(() => useWorkoutTimer(liftsClassifiedAs('accessory'), WORKOUT));
+    act(() => mountA.result.current.startAt(REST_INDEX));
+
+    // The other route's own resolution says "no opinion" — but its
+    // `effectiveLifts`, not just its `queue`, must reflect the pin.
+    const mountB = renderHook(() => useWorkoutTimer(liftsClassifiedAs(undefined), WORKOUT));
+    expect(mountB.result.current.effectiveLifts[0]?.classification).toBe('accessory');
   });
 });

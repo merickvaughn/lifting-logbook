@@ -202,6 +202,21 @@ describe('run persistence — classifications', () => {
 
     expect(loadTimerRun(WORKOUT)?.classifications).toEqual({ 'Cable Curls': 'accessory' });
   });
+
+  // The end-to-end version of the fix: a pinned "no opinion" must survive the
+  // real `saveTimerRun` -> `localStorage` -> `loadTimerRun` round trip through
+  // this module, not just the pure `normalizeClassifications` function
+  // (covered at the core-package level). `null`, not `undefined`, is what
+  // makes that possible — `JSON.stringify` drops an `undefined`-valued key but
+  // keeps a `null`-valued one, so the pin stays distinguishable from "never
+  // pinned" (key absent) on the other side of the round trip.
+  it('round-trips a pinned "no opinion" (null) through save and load', () => {
+    saveTimerRun(makeRun({ classifications: { 'Cable Curls': null } }));
+
+    const run = loadTimerRun(WORKOUT);
+    expect(Object.prototype.hasOwnProperty.call(run?.classifications, 'Cable Curls')).toBe(true);
+    expect(run?.classifications['Cable Curls']).toBeNull();
+  });
 });
 
 describe('sameWorkout', () => {

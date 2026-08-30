@@ -85,19 +85,30 @@ function isWorkoutKey(value: unknown): value is TimerWorkoutKey {
 }
 
 /**
+ * `TimerRunState`, minus the one field {@link isRunShape} does not validate.
+ *
+ * `classifications` is deliberately not checked by that guard — a run persisted
+ * before that field existed, or one whose value is malformed, still passes.
+ * Narrowing to this type instead of `TimerRunState` makes that gap something
+ * the compiler enforces rather than something only this comment says: reading
+ * `.classifications` off a value `isRunShape` alone narrowed is a type error,
+ * not just a documented mistake, and every caller is routed through
+ * `normalizeClassifications` (see `loadTimerRun`) to get a real value.
+ */
+type UnvalidatedRun = Omit<TimerRunState, 'classifications'> & { classifications?: unknown };
+
+/**
  * Runtime narrowing rather than a cast — a persisted run drives array indexing
  * and arithmetic the moment it is restored, so an unvalidated shape would surface
  * as a crash or a frozen dial rather than as a type error.
  *
- * `classifications` is deliberately not checked here — a run persisted before
- * that field existed, or one whose value is malformed, still passes. The type
- * predicate below is therefore optimistic about that one field; `loadTimerRun`
- * closes the gap immediately afterward by overwriting it with
- * `normalizeClassifications`'s output, the same always-succeeds contract
- * `normalizeTimerSettings` already gives the settings half of this blob. Never
- * trust `.classifications` off a value this guard alone narrowed.
+ * Narrows to {@link UnvalidatedRun}, not `TimerRunState` — see that type's doc
+ * for why `classifications` is excluded. `loadTimerRun` closes the gap
+ * immediately afterward by overwriting it with `normalizeClassifications`'s
+ * output, the same always-succeeds contract `normalizeTimerSettings` already
+ * gives the settings half of this blob.
  */
-function isRunShape(value: unknown): value is TimerRunState {
+function isRunShape(value: unknown): value is UnvalidatedRun {
   if (!isRecord(value)) return false;
   return (
     typeof value.idx === 'number' &&
@@ -130,8 +141,8 @@ export function loadTimerRun(workout: TimerWorkoutKey): TimerRunState | null {
   const run = readBlob().run;
   if (!isRunShape(run)) return null;
   if (!sameWorkout(run.workout, workout)) return null;
-  // See the comment on isRunShape: `run.classifications` has not actually been
-  // validated yet at this point, only asserted. This is what validates it.
+  // `run` is `UnvalidatedRun` here — `.classifications` is `unknown`, not yet a
+  // real value. This is what makes it one.
   return { ...run, classifications: normalizeClassifications(run.classifications) };
 }
 

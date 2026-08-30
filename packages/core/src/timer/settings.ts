@@ -344,8 +344,15 @@ export function normalizeTimerSettings(raw: unknown): TimerSettings {
   };
 }
 
-function isLiftClassification(value: unknown): value is LiftClassification {
-  return value === 'compound' || value === 'accessory';
+/**
+ * A stored classification: a known role, or `null` for a lift a run pinned
+ * with no opinion. Distinct from `LiftClassification | undefined` — `undefined`
+ * is never valid *stored* input; see the field doc on
+ * `TimerRunState.classifications` for why the pinned map uses `null` where
+ * `TimerLiftPlan.classification` itself uses `undefined`.
+ */
+function isStoredClassification(value: unknown): value is LiftClassification | null {
+  return value === 'compound' || value === 'accessory' || value === null;
 }
 
 /**
@@ -360,6 +367,12 @@ function isLiftClassification(value: unknown): value is LiftClassification {
  * exactly the independent-resolution behavior every route had before this
  * field existed.
  *
+ * Keeps a `null` value rather than dropping it: `null` is a *pinned* answer
+ * ("no opinion", read back by `applyClassifications` as `undefined`), not a
+ * malformed one — dropping it here would be indistinguishable from the lift
+ * never having been pinned at all, and would reopen the disagreement pinning
+ * exists to close for exactly the lift whose fetch degraded.
+ *
  * Built on `Object.create(null)`, not `{}`, for the same reason
  * `snapshotClassifications` in `./queue` is: the keys are lift names, arbitrary
  * user input, and a literal `"__proto__"` must land as its own entry rather
@@ -367,11 +380,11 @@ function isLiftClassification(value: unknown): value is LiftClassification {
  */
 export function normalizeClassifications(
   raw: unknown,
-): Record<string, LiftClassification | undefined> {
-  const out: Record<string, LiftClassification | undefined> = Object.create(null);
+): Record<string, LiftClassification | null> {
+  const out: Record<string, LiftClassification | null> = Object.create(null);
   if (!isRecord(raw)) return out;
   for (const [lift, value] of Object.entries(raw)) {
-    if (isLiftClassification(value)) out[lift] = value;
+    if (isStoredClassification(value)) out[lift] = value;
   }
   return out;
 }

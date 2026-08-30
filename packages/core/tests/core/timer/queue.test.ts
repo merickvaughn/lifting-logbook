@@ -9,6 +9,15 @@ import {
 } from '@src/core';
 import type { TimerLiftPlan, TimerPhase, TimerSettings } from '@src/core';
 
+/**
+ * A stored classification (what `snapshotClassifications`/`applyClassifications`
+ * traffic in), spelled without importing `LiftClassification` directly — it is
+ * not re-exported from `@src/core` (only ever `import type`-ed within the
+ * package, never re-exported), so every consumer here derives it from
+ * `TimerLiftPlan['classification']` instead.
+ */
+type StoredClassification = Exclude<TimerLiftPlan['classification'], undefined> | null;
+
 function plan(): TimerLiftPlan[] {
   return [
     {
@@ -303,12 +312,17 @@ describe('setProgress', () => {
 // functions are the fix: `snapshotClassifications` pins the answer once when a
 // run starts, and `applyClassifications` reapplies it on every later rebuild.
 describe('snapshotClassifications', () => {
-  it('keys each lift by name, including one with no opinion', () => {
+  it('keys each lift by name, storing null (not undefined) for one with no opinion', () => {
+    // `null`, never `undefined`: `undefined`-valued keys don't survive the
+    // `JSON.stringify` a snapshot is persisted through, so `undefined` here
+    // would make a "no opinion" pin indistinguishable from "never pinned" the
+    // moment a different route reads it back — see the field doc on
+    // `TimerRunState.classifications`.
     const snapshot = snapshotClassifications(mixedPlanWithUnclassified());
     expect(snapshot).toEqual({
       'Bench Press': 'compound',
       'Cable Curls': 'accessory',
-      'Zercher Good Morning': undefined,
+      'Zercher Good Morning': null,
     });
   });
 
@@ -337,7 +351,7 @@ describe('snapshotClassifications', () => {
 describe('applyClassifications', () => {
   it('overrides a pinned lift and leaves an unpinned one as this call resolved it', () => {
     const overridden = applyClassifications(mixedPlanWithUnclassified(), {
-      'Cable Curls': undefined, // pinned by a route whose fetch failed
+      'Cable Curls': null, // pinned by a route whose fetch failed: no opinion
     });
 
     expect(overridden.find((l) => l.lift === 'Cable Curls')?.classification).toBeUndefined();
@@ -367,6 +381,27 @@ describe('applyClassifications', () => {
     expect(curlRest?.dur).toBe(90); // the accessory rest, not the 240s preset
   });
 
+  it('forces a pinned "no opinion" onto a lift the reapplying call resolved differently', () => {
+    // The mirror image of the test above, and the case that motivated storing
+    // `null` instead of `undefined`: the PINNING route's own fetch degraded (no
+    // opinion for Cable Curls), and the REAPPLYING route's own fetch succeeded
+    // (resolves it an accessory). The pin must still win — the first route to
+    // start a run is not privileged just because it started first, and neither
+    // route's own resolution should ever get the last word once a pin exists.
+    const pinnedNoOpinion = snapshotClassifications(
+      mixedPlanWithUnclassified().map((l) =>
+        l.lift === 'Cable Curls' ? { ...l, classification: undefined } : l,
+      ),
+    );
+    const reapplyingRoutesOwnResolution = mixedPlanWithUnclassified(); // Cable Curls: 'accessory'
+
+    const reconciled = applyClassifications(reapplyingRoutesOwnResolution, pinnedNoOpinion);
+    const queue = buildTimerQueue(reconciled, settings());
+    const curlRest = queue.find((p) => p.kind === 'rest' && p.lift === 'Cable Curls');
+
+    expect(curlRest?.dur).toBe(240); // the preset, not the 90s accessory rest
+  });
+
   it('reads a lift literally named __proto__ as its own entry, not the inherited member', () => {
     const lifts: TimerLiftPlan[] = [{ lift: '__proto__', sets: [] }];
 
@@ -376,7 +411,7 @@ describe('applyClassifications', () => {
     // carries.
     const classifications = JSON.parse('{"__proto__":"accessory"}') as Record<
       string,
-      TimerLiftPlan['classification']
+      StoredClassification
     >;
 
     const overridden = applyClassifications(lifts, classifications);

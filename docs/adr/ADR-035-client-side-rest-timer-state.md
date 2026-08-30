@@ -229,7 +229,7 @@ Surfaced in review of [PR #964](https://github.com/merickvaughn/lifting-logbook/
 accessory rung Amendment 1 describes) and filed separately rather than fixed there, because the fix
 is structural — it touches the run schema, not the code that PR changed.
 
-**`TimerRunState` gained a required `classifications: Record<string, LiftClassification | undefined>`
+**`TimerRunState` gained a required `classifications: Record<string, LiftClassification | null>`
 field.** `snapshotClassifications` (`packages/core/src/timer/queue.ts`) captures each lift's resolved
 classification, keyed by name, the moment a run transitions from no session to a live one; every
 later call through `startAt` on that same run — advancing, jumping to a different set, resuming after
@@ -249,16 +249,47 @@ instead of just naming it). Pinning also fixes a second case for free: a custom 
 edited mid-session no longer changes an in-flight run's duration out from under the lifter, on either
 route — the queue rebuild that follows a `lifts` prop change re-applies the same override.
 
-**One accepted, deliberately un-closed asymmetry:** a pinned "no opinion" (`classification: undefined`,
-meaning the pinning route's own fetch had degraded) does not survive the `JSON.stringify` round trip
-through `localStorage` — `undefined`-valued keys are dropped from the serialized blob outright — so it
-cannot force a second mount away from an opinion that mount's own fetch already has. This is the
-mirror image of the primary case and is treated as the right trade, not a gap: the mount reporting "no
-opinion" is definitionally the degraded one, so a later mount's real answer winning over an absent pin
-means a working fetch is never overridden by a failed one. Closing it would mean distinguishing
-"pinned to no opinion" from "no pin recorded" across serialization (a `null` sentinel, threaded through
-`snapshotClassifications`, `normalizeClassifications`, and `applyClassifications`) for a narrower case
-than the one motivating this fix — out of proportion to a bug the issue itself scoped as low severity.
+**A pinned "no opinion" is stored as `null`, not `undefined` — this was wrong in the first draft of
+this fix, and review of this PR caught it before merge.** The first draft snapshotted an unclassified
+lift with `classification: undefined` and reasoned the resulting asymmetry — that `undefined`-valued
+keys don't survive the `JSON.stringify` round trip through `localStorage`, so the pin quietly reverts
+to "unpinned" the moment a *different* route reads it back — was an acceptable trade: "the mount
+reporting no opinion is definitionally the degraded one, so a later mount's real answer winning over
+an absent pin means a working fetch is never overridden by a failed one." That reasoning answered the
+wrong question. The bug this issue exists to fix is not "which mount's answer is more correct" — it is
+"do the two routes still disagree." Under the first draft they did: the pinning route (its own fetch
+degraded) kept reading its own 240s locally, while any other route reading the round-tripped `{}` fell
+back to its own resolution and read 90s — the identical "4:00 on one, 1:30 on the other" split from
+the issue, just reached one hop later, and specifically whenever the *first* route to start a run was
+the degraded one. `null` closes it: `snapshotClassifications` now writes an entry for every lift,
+`null` in place of `undefined`, and `null` — unlike `undefined` — survives `JSON.stringify`. A stored
+`null` is a real pin ("this lift has no opinion, and that is final"), distinct from an absent key ("no
+pin was ever recorded"); `applyClassifications` reads the distinction via `hasOwnProperty` and maps a
+stored `null` back to `undefined` on `TimerLiftPlan.classification` before handing the lift to
+`buildTimerQueue`. `normalizeClassifications` now keeps a `null` value rather than treating it as
+malformed, for the same reason.
+
+**Two more review findings, both fixed in this PR rather than deferred, because both let the two
+routes disagree in a case the fix's own tests didn't cover:**
+
+- `useWorkoutTimer`'s `effectiveLifts` (the pinned override, what the queue is actually built from)
+  was computed but never returned — `UseWorkoutTimerResult` still only exposed the queue and the raw
+  `lifts` prop. The timer page's Settings tab resolves its own per-lift "Rest follows …" label and
+  hints from `lift.classification` (`TimerSettingsPanel.tsx`), and was still reading the unpinned
+  `lifts` prop — so during a live run whose pin disagreed with this route's own resolution, the
+  Session queue and dial (built from `effectiveLifts`) and the Settings tab (built from raw `lifts`)
+  could show different durations for the same lift, on the same page. `effectiveLifts` is now exposed
+  on `UseWorkoutTimerResult`, and `WorkoutTimerView.tsx` passes it to `TimerSettingsPanel` instead of
+  the raw prop.
+- `startAt`'s dependency array closed over `run` (the whole object) where it only ever reads
+  `run?.classifications`. `nudge` and `togglePause` both `commitRun({ ...run, ... })` — a new `run`
+  reference on every ±30s or pause press — so `startAt`, and everything memoized on it
+  (`startAtSet`, and `WorkoutTimerProvider`'s `rowState` context), got a new identity on every one of
+  those presses. `WorkoutTimerProvider`'s own docblock states the point of keeping that context
+  narrow and phase-boundary-stable is exactly to avoid re-rendering every set row in the lift list
+  off the tick-driven dock — a property this PR's `startAt` change silently broke. Fixed by keying on
+  `runClassifications` (already extracted, two lines above `startAt`, for the identical reason) instead
+  of `run`.
 
 **Classification map keys are lift names, which are arbitrary user input** (a custom lift's own name),
 unlike every other `TimerRunState` field. `snapshotClassifications` and `normalizeClassifications`

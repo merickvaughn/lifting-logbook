@@ -373,16 +373,20 @@ describe('normalizeClassifications', () => {
     }
   });
 
-  it('keeps only valid classification values', () => {
+  it('keeps only valid classification values, including a pinned "no opinion"', () => {
     const result = normalizeClassifications({
       'Bench Press': 'compound',
       'Cable Curls': 'accessory',
       'Overhead Press': 'push', // not a LiftClassification
       Deadlift: 42,
-      Row: null,
+      Row: null, // a pinned "no opinion" — valid, and distinct from the key being absent
     });
 
-    expect(result).toEqual({ 'Bench Press': 'compound', 'Cable Curls': 'accessory' });
+    expect(result).toEqual({
+      'Bench Press': 'compound',
+      'Cable Curls': 'accessory',
+      Row: null,
+    });
   });
 
   // The run schema predates this field — a run persisted by an older build (or
@@ -390,6 +394,20 @@ describe('normalizeClassifications', () => {
   // resolve to "no pinned answers" rather than rejecting the run it belongs to.
   it('defaults an absent value to an empty map', () => {
     expect(normalizeClassifications(undefined)).toEqual({});
+  });
+
+  // The behavior the whole `null`-not-`undefined` design rests on: `null`
+  // survives a JSON round trip, so a pinned "no opinion" (key present, value
+  // `null`) stays distinguishable from "never pinned" (key absent) — which is
+  // exactly what lets a later route tell the two apart. See the field doc on
+  // `TimerRunState.classifications`.
+  it('keeps a pinned "no opinion" distinguishable from "never pinned" across a serialization round trip', () => {
+    const pinned = normalizeClassifications({ 'Cable Curls': null });
+    const reloaded = normalizeClassifications(JSON.parse(JSON.stringify(pinned)));
+
+    expect(Object.prototype.hasOwnProperty.call(reloaded, 'Cable Curls')).toBe(true);
+    expect(reloaded['Cable Curls']).toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(reloaded, 'Bench Press')).toBe(false);
   });
 
   // A classification value is always one of two known strings (never an object),

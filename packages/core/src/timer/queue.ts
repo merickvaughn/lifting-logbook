@@ -117,18 +117,34 @@ export function buildTimerQueue(
  * re-resolving it and risking a different result. See the field doc on
  * `TimerRunState.classifications` for why that risk is real.
  *
+ * Every lift gets an entry, including one with no opinion — stored as `null`,
+ * never `undefined`. `undefined` cannot round-trip through the `JSON.stringify`
+ * this snapshot is about to be persisted through (see the field doc on
+ * `TimerRunState.classifications`), so writing it here would pin an answer that
+ * silently reverts to "unpinned" the moment a *different* route reads it back —
+ * reopening the exact disagreement this function exists to prevent, for
+ * whichever lift this route couldn't classify.
+ *
  * Built on `Object.create(null)` rather than `{}`: a lift name is arbitrary
  * user input (a custom lift's own name), and a literal `"__proto__"` or
  * `"toString"` must land as its own entry rather than being read through, or
  * silently reassigning, `Object.prototype` — the same hazard `hasOwn`/`defineOwn`
  * guard against in `./settings`, sidestepped here at the root by giving the
- * accumulator no prototype to collide with.
+ * accumulator no prototype to collide with. Deliberately a second mitigation for
+ * the same hazard in the same package, not an oversight: `hasOwn`/`defineOwn`
+ * protect a plain `{}`'s *writes*, but a caller that forgets the `hasOwn` half
+ * and reads `classifications[key]` directly still walks the prototype chain on
+ * an ordinary object. A null-prototype map protects reads the same way it
+ * protects writes, without depending on every future caller remembering the
+ * paired discipline — worth the inconsistency for a map two functions
+ * (`applyClassifications` here and `normalizeClassifications` in `./settings`)
+ * hand back and forth across a module boundary.
  */
 export function snapshotClassifications(
   lifts: readonly TimerLiftPlan[],
-): Record<string, LiftClassification | undefined> {
-  const out: Record<string, LiftClassification | undefined> = Object.create(null);
-  for (const lift of lifts) out[lift.lift] = lift.classification;
+): Record<string, LiftClassification | null> {
+  const out: Record<string, LiftClassification | null> = Object.create(null);
+  for (const lift of lifts) out[lift.lift] = lift.classification ?? null;
   return out;
 }
 
@@ -140,7 +156,11 @@ export function snapshotClassifications(
  * started, or a `classifications` map normalized from a run persisted before
  * this field existed — keeps whatever classification this call already
  * resolved for it, exactly as every route did before this existed. Pinning is
- * additive, never a reason for a lift to lose an opinion it already has.
+ * additive, never a reason for a lift to lose an opinion it already has. A
+ * lift the snapshot *does* name, but pinned to `null` ("no opinion"), is forced
+ * to `undefined` — overriding this call's own resolution even when this call's
+ * own fetch succeeded, which is the point: the pin, not whichever route reads
+ * it, decides.
  *
  * Reads via a borrowed `hasOwnProperty`, not the `in` operator: both
  * {@link snapshotClassifications} and `normalizeClassifications` (`./settings`)
@@ -152,11 +172,11 @@ export function snapshotClassifications(
  */
 export function applyClassifications(
   lifts: readonly TimerLiftPlan[],
-  classifications: Record<string, LiftClassification | undefined>,
+  classifications: Record<string, LiftClassification | null>,
 ): TimerLiftPlan[] {
   return lifts.map((lift) =>
     Object.prototype.hasOwnProperty.call(classifications, lift.lift) ?
-      { ...lift, classification: classifications[lift.lift] }
+      { ...lift, classification: classifications[lift.lift] ?? undefined }
     : lift,
   );
 }

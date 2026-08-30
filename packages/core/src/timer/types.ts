@@ -157,8 +157,20 @@ export interface TimerRunState {
    * its own. A lift absent from the map (new to the plan since the run started,
    * or the run was persisted before this field existed) falls through to
    * whatever the reapplying route resolves itself — see `applyClassifications`.
+   *
+   * `null`, not `undefined`, is how a pinned "no opinion" is stored: this field
+   * round-trips through `JSON.stringify` on every persist (see `saveTimerRun`),
+   * which drops an `undefined`-valued key outright but keeps a `null`-valued one.
+   * A map entry that used `undefined` for "pinned, but this lift isn't
+   * classified" would vanish across that round trip — indistinguishable from "no
+   * pin was ever recorded" — silently reopening the exact cross-route
+   * disagreement this field exists to close, specifically for whichever lift the
+   * *first* route to start the run couldn't classify. `null` survives the round
+   * trip, so "pinned to no opinion" and "no pin recorded" (key absent) stay
+   * distinguishable — see `applyClassifications`, which maps a stored `null`
+   * back to `undefined` on `TimerLiftPlan.classification`.
    */
-  classifications: Record<string, LiftClassification | undefined>;
+  classifications: Record<string, LiftClassification | null>;
 }
 
 /** Identity of the workout a persisted run belongs to. */
