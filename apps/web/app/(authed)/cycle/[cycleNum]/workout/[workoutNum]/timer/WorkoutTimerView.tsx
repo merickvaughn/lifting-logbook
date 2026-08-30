@@ -102,6 +102,13 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
     [queue, running, activeIdx],
   );
 
+  const settingsPanel = useMemo(
+    () => (
+      <TimerSettingsPanel settings={settings} onChange={timer.updateSettings} lifts={lifts} />
+    ),
+    [settings, timer.updateSettings, lifts],
+  );
+
   function handlePrimary() {
     if (!running) playStartChime(settings);
     timer.next();
@@ -271,14 +278,17 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
         hidden={tab !== 'settings'}
       >
         {/*
-          Mounted only while its tab is active. Rendered-but-hidden, this 450-line
-          panel — a stepper per duration field per preset, plus a row per lift —
-          re-rendered on every 200ms tick for a surface nobody is looking at, and
-          the wake lock means the browser never throttles that.
+          Mounted only while its tab is active, AND memoized. The two guards do
+          different jobs: `tab === 'settings'` controls mounting, but a mounted
+          panel still reconciles on every 200ms tick — ~40 steppers plus a row per
+          lift — because this component re-renders five times a second during a
+          run, and the wake lock means the browser never throttles it. Same
+          technique and same reason as `queueList` above. All three props are
+          referentially stable across ticks (`settings` is state, `updateSettings`
+          is a []-dep useCallback, `lifts` is a page prop), so the memo actually
+          holds rather than recomputing anyway.
         */}
-        {tab === 'settings' && (
-          <TimerSettingsPanel settings={settings} onChange={timer.updateSettings} lifts={lifts} />
-        )}
+        {tab === 'settings' && settingsPanel}
       </section>
     </main>
   );

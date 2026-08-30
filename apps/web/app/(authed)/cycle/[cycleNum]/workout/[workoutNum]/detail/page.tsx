@@ -1,10 +1,11 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes } from '@/lib/api';
+import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes, fetchCustomLifts } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
 import { computePlannedSets } from '@/lib/workoutPlan';
-import { toTimerLiftPlans } from '@/lib/timerPlan';
+import { CUSTOM_LIFTS_TIMEOUT_MS, toTimerLiftPlans } from '@/lib/timerPlan';
+import { withTimeout } from '@/lib/with-timeout';
 import { isTimeable, workoutStatus } from '@/lib/workoutStatus';
 import WorkoutTimerProvider from '@/components/timer/WorkoutTimerProvider';
 import CollapsibleLiftList from './CollapsibleLiftList';
@@ -27,6 +28,29 @@ export default async function WorkoutDetailPage({
   }
 
   const program = await getActiveProgram();
+
+  // Started here rather than inside the Promise.all below, and awaited only if the
+  // timer is actually mounted (see `timerAvailable`). Most views of this page are
+  // of completed workouts, where `timerLifts` is `[]` and this result is discarded
+  // — so awaiting it unconditionally would put a round-trip on the critical path
+  // of the app's most-visited page precisely when it is thrown away. The `.catch`
+  // is attached at creation, so an unawaited rejection is impossible.
+  //
+  // Bounded as well as caught: neither a failure nor a slow response may hold up
+  // the page for an enrichment that only shortens accessory rest. The timeout is
+  // separate from the api-client's own `AbortSignal.timeout(30s)`, which is a
+  // failure bound; `onTimeout` logs distinctly so "slow" and "down" stay tellable
+  // apart in the logs.
+  // fallback-covered-by: apps/web/app/(authed)/cycle/[cycleNum]/workout/[workoutNum]/detail/page.test.tsx
+  const customLiftsPromise = withTimeout(
+    fetchCustomLifts().catch((err: unknown) => {
+      console.error('WorkoutDetailPage: custom lifts fetch failed, classifying built-ins only', err);
+      return [];
+    }),
+    CUSTOM_LIFTS_TIMEOUT_MS,
+    [],
+    () => console.warn('WorkoutDetailPage: custom lifts fetch slow, classifying built-ins only'),
+  );
 
   const [workout, specs, maxes, unit] = await Promise.all([
     fetchWorkout(program, workoutNum),
@@ -62,7 +86,8 @@ export default async function WorkoutDetailPage({
   // mounted at all rather than being mounted and hidden. The timer route applies
   // the same check via `isTimeable`, so the two surfaces cannot disagree.
   const timerAvailable = isTimeable(status);
-  const timerLifts = timerAvailable ? toTimerLiftPlans(liftDetails, unit) : [];
+  const timerLifts =
+    timerAvailable ? toTimerLiftPlans(liftDetails, unit, await customLiftsPromise) : [];
 
   const plannedSets = liftDetails.reduce((acc, d) => acc + d.warmUpCount + d.workCount, 0);
   const actualSets = workout.lifts.reduce((acc, wl) => acc + wl.sets.length, 0);

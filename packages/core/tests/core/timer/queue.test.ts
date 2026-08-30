@@ -5,7 +5,7 @@ import {
   queueSummary,
   setProgress,
 } from '@src/core';
-import type { TimerLiftPlan, TimerSettings } from '@src/core';
+import type { TimerLiftPlan, TimerPhase, TimerSettings } from '@src/core';
 
 function plan(): TimerLiftPlan[] {
   return [
@@ -44,6 +44,101 @@ function at<T>(items: readonly T[], index: number): T {
   }
   return item;
 }
+
+describe('buildTimerQueue — accessory durations', () => {
+  /**
+   * One compound lift and one accessory lift.
+   *
+   * Two working sets each, deliberately: `buildTimerQueue` drops the *trailing*
+   * rest, so a one-set-per-lift plan would leave the final lift with no rest
+   * phase to assert on at all.
+   */
+  function mixedPlan(): TimerLiftPlan[] {
+    return [
+      {
+        lift: 'Bench Press',
+        classification: 'compound',
+        sets: [
+          { type: 'work', setLabel: 'Set 1', spec: '5 × 200 lbs' },
+          { type: 'work', setLabel: 'Set 2', spec: '3 × 230 lbs' },
+        ],
+      },
+      {
+        lift: 'Cable Curls',
+        classification: 'accessory',
+        sets: [
+          { type: 'work', setLabel: 'Set 1', spec: '10 × 40 lbs' },
+          { type: 'work', setLabel: 'Set 2', spec: '10 × 40 lbs' },
+        ],
+      },
+    ];
+  }
+
+  function restAfter(queue: readonly TimerPhase[], lift: string): number {
+    const rest = queue.find((phase) => phase.kind === 'rest' && phase.lift === lift);
+    if (!rest) throw new Error(`no rest phase found for ${lift}`);
+    return rest.dur;
+  }
+
+  it('shortens the accessory lift and leaves the compound one alone, in one queue', () => {
+    // Both lifts, one queue, one settings object. Asserting on an
+    // accessory-only plan would pass equally well against a rung that fires for
+    // every lift; asserting on a compound-only plan would pass against a rung
+    // that never fires at all. The contrast is what has to hold.
+    const queue = buildTimerQueue(mixedPlan(), settings());
+
+    expect(restAfter(queue, 'Cable Curls')).toBe(90);
+    expect(restAfter(queue, 'Bench Press')).toBe(240);
+
+    const curlSet = queue.find((p) => p.kind === 'set' && p.lift === 'Cable Curls');
+    const benchSet = queue.find((p) => p.kind === 'set' && p.lift === 'Bench Press');
+    expect(curlSet?.dur).toBe(45);
+    expect(benchSet?.dur).toBe(60);
+  });
+
+  it('reverts both lifts to the preset when the accessory toggle is off', () => {
+    const s = defaultTimerSettings();
+    s.context.accessoryOn = false;
+
+    const queue = buildTimerQueue(mixedPlan(), s);
+
+    expect(restAfter(queue, 'Cable Curls')).toBe(240);
+    expect(restAfter(queue, 'Bench Press')).toBe(240);
+  });
+
+  it('carries the classification through flattenSets', () => {
+    // The flatten is where the lift object stops being available. If it drops
+    // `classification`, buildTimerQueue silently resolves every lift as
+    // unclassified — a failure with no type error and no visible symptom beyond
+    // durations that look plausible.
+    // One entry per set, so two per lift.
+    const flat = flattenSets(mixedPlan(), false);
+
+    expect(flat.map((entry) => entry.classification)).toEqual([
+      'compound',
+      'compound',
+      'accessory',
+      'accessory',
+    ]);
+  });
+
+  it('leaves an unclassified lift on the preset', () => {
+    const queue = buildTimerQueue(
+      [
+        {
+          lift: 'Zercher Good Morning',
+          sets: [
+            { type: 'work', setLabel: 'Set 1', spec: '8 × 95 lbs' },
+            { type: 'work', setLabel: 'Set 2', spec: '8 × 95 lbs' },
+          ],
+        },
+      ],
+      settings(),
+    );
+
+    expect(restAfter(queue, 'Zercher Good Morning')).toBe(240);
+  });
+});
 
 describe('buildTimerQueue', () => {
   it('expands each set to prep -> set -> rest in performance order', () => {

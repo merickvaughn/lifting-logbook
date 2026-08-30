@@ -1,5 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
-import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes } from '@/lib/api';
+import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes, fetchCustomLifts } from '@/lib/api';
+import { withTimeout } from '@/lib/with-timeout';
+import { CUSTOM_LIFTS_TIMEOUT_MS } from '@/lib/timerPlan';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
 import { computePlannedSets } from '@/lib/workoutPlan';
@@ -30,11 +32,35 @@ export default async function WorkoutTimerPage({
 
   const program = await getActiveProgram();
 
-  const [workout, specs, maxes, unit] = await Promise.all([
+  const [workout, specs, maxes, unit, customLifts] = await Promise.all([
     fetchWorkout(program, workoutNum),
     fetchProgramSpec(program),
     fetchTrainingMaxes(program),
     getPreferredUnit(),
+    // Bounded and caught, unlike its four siblings: this one only enriches the
+    // accessory classification of the user's *own* lifts, so neither a failure
+    // nor a slow response may take down — or hold up — a timer the lifter is
+    // standing in the gym waiting on. The other four are load-bearing and keep
+    // their fail-fast behavior.
+    //
+    // The timeout is separate from the api-client's own `AbortSignal.timeout(30s)`:
+    // that is a failure bound, and 30s of blocked first paint for an optional
+    // enrichment is not a useful outcome. `onTimeout` logs distinctly so "slow"
+    // and "down" stay tellable apart in the logs.
+    // fallback-covered-by: apps/web/app/(authed)/cycle/[cycleNum]/workout/[workoutNum]/timer/page.test.tsx
+    withTimeout(
+      fetchCustomLifts().catch((err: unknown) => {
+        console.error(
+          'WorkoutTimerPage: custom lifts fetch failed, classifying built-ins only',
+          err,
+        );
+        return [];
+      }),
+      CUSTOM_LIFTS_TIMEOUT_MS,
+      [],
+      () =>
+        console.warn('WorkoutTimerPage: custom lifts fetch slow, classifying built-ins only'),
+    ),
   ]);
 
   if (!workout) {
@@ -60,7 +86,7 @@ export default async function WorkoutTimerPage({
 
   return (
     <WorkoutTimerView
-      lifts={toTimerLiftPlans(liftDetails, unit)}
+      lifts={toTimerLiftPlans(liftDetails, unit, customLifts)}
       program={program}
       cycleNum={cycleNum}
       workoutNum={workoutNum}

@@ -6,6 +6,8 @@
  * loop; this package owns what a session *is* and how long each phase lasts.
  */
 
+import type { LiftClassification } from '@lifting-logbook/types';
+
 /** The three things a timed session counts down. */
 export type TimerPhaseKind = 'prep' | 'set' | 'rest';
 
@@ -40,6 +42,15 @@ export interface TimerSetPlan {
 export interface TimerLiftPlan {
   /** Lift name — also the key used to look up a per-lift override. */
   lift: string;
+  /**
+   * Training role, when it is known — what the accessory rest context keys on.
+   *
+   * `undefined` means "no opinion", not "compound": a lift absent from both the
+   * built-in catalog and the user's custom lifts simply falls through to the
+   * preset. The web layer resolves this via `liftClassificationFor`; core never
+   * looks it up itself, so a caller can also state it directly.
+   */
+  classification?: LiftClassification | undefined;
   /** Training-max caption, e.g. `TM: 285 lbs`. Display only. Explicitly `| undefined` for exactOptionalPropertyTypes. */
   tm?: string | undefined;
   sets: TimerSetPlan[];
@@ -61,10 +72,21 @@ export interface TimerBehavior {
   skipWarmups: boolean;
 }
 
-/** Deload-week duration overrides, applied when `deloadOn` is set. */
+/**
+ * Duration overrides that apply to a *situation* rather than to one named lift.
+ *
+ * Deload is a manual week-scoped toggle; accessory is keyed off the lift's own
+ * {@link TimerLiftPlan.classification}, so its toggle says whether the rule is in
+ * force, not which lifts it hits. Deload outranks accessory — a deload week is
+ * the more specific, deliberately-entered state.
+ */
 export interface TimerContext {
   deloadOn: boolean;
   deload: Partial<TimerPresetDurations>;
+  /** Whether accessory lifts take their own shorter durations. */
+  accessoryOn: boolean;
+  /** Applied to a lift whose `classification` is `accessory`, while `accessoryOn`. */
+  accessory: Partial<TimerPresetDurations>;
 }
 
 /** The complete persisted settings blob (`ll.timer.v1`). */

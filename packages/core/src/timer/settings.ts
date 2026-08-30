@@ -1,3 +1,4 @@
+import type { LiftClassification } from '@lifting-logbook/types';
 import type {
   TimerBehavior,
   TimerDurationField,
@@ -63,13 +64,37 @@ const DEFAULT_BEHAVIOR: TimerBehavior = {
   skipWarmups: false,
 };
 
+/**
+ * Accessory-lift durations, applied while `context.accessoryOn` is set.
+ *
+ * Same spirit as {@link SHIPPED_PRESETS}: numbers a lifter can reason about
+ * rather than tuned constants — 90 s is the conventional accessory rest and 45 s
+ * matches "Light day" under the bar. Both are editable in the settings panel, so
+ * this is only where the chain starts.
+ *
+ * Only `workSet` and `restWork` are set. Warm-ups, the between-warm-up rest, and
+ * the setup countdown are unaffected by whether a lift is an accessory, and a
+ * field left unset here falls through to the preset rather than being pinned.
+ */
+const DEFAULT_ACCESSORY_DURATIONS: Partial<TimerPresetDurations> = { workSet: 45, restWork: 90 };
+
 /** A fresh settings blob — what a first-time user, or a corrupt blob, resolves to. */
 export function defaultTimerSettings(): TimerSettings {
   return {
     preset: 'Standard',
     presets: structuredCloneish(TIMER_PRESET_DEFAULTS),
     overrides: {},
-    context: { deloadOn: false, deload: { workSet: 60, restWork: 150 } },
+    context: {
+      deloadOn: false,
+      deload: { workSet: 60, restWork: 150 },
+      // On by default, unlike `deloadOn`: a deload is an occasional week the
+      // lifter enters deliberately, whereas "an accessory gets shorter rest" is
+      // the standing rule this context exists to express. Resting four minutes
+      // between curls — what the preset alone produces — is the behavior worth
+      // changing, and the toggle is one tap away for anyone who disagrees.
+      accessoryOn: true,
+      accessory: { ...DEFAULT_ACCESSORY_DURATIONS },
+    },
     behavior: { ...DEFAULT_BEHAVIOR },
   };
 }
@@ -84,37 +109,84 @@ function structuredCloneish(
 }
 
 /**
- * Resolves one duration for one lift, applying the precedence the settings UI
- * promises:
+ * The resolved duration alone — see {@link resolveDurationEntry}, which this
+ * delegates to and which documents the precedence chain.
  *
- * 1. a per-lift override,
- * 2. the deload context (when the deload toggle is on),
- * 3. the active preset.
- *
- * Falls back to `Standard` when `preset` names a preset that no longer exists —
- * a persisted blob can outlive a renamed preset, and a missing duration should
- * degrade to a sensible countdown rather than to zero.
+ * Kept as a separate export because the queue builder only ever wants the number;
+ * `resolveDurationEntry(...).seconds` at all three of its call sites would be
+ * noise for a caller that has no use for the rung.
  */
 export function resolveDuration(
   settings: TimerSettings,
   lift: string,
   field: TimerDurationField,
+  classification: LiftClassification | undefined,
 ): number {
+  return resolveDurationEntry(settings, lift, field, classification).seconds;
+}
+
+/** Which rung of the chain supplied a duration. */
+export type TimerDurationSource = 'override' | 'deload' | 'accessory' | 'preset' | 'standard';
+
+/**
+ * Resolves one duration for one lift, applying the precedence the settings UI
+ * promises, and reports which rung supplied it:
+ *
+ * 1. a per-lift override,
+ * 2. the deload context (when the deload toggle is on),
+ * 3. the accessory context (when its toggle is on *and* this lift is an accessory),
+ * 4. the active preset.
+ *
+ * Each rung is consulted per *field*, not per rung as a whole, so a context that
+ * sets only `restWork` leaves `workSet` to fall through rather than pinning it.
+ *
+ * Falls back to `Standard` when `preset` names a preset that no longer exists —
+ * a persisted blob can outlive a renamed preset, and a missing duration should
+ * degrade to a sensible countdown rather than to zero.
+ *
+ * `classification` is a required parameter with no default, deliberately. An
+ * optional one would let a call site silently opt out of the accessory rung by
+ * omission — a change that breaks nothing at compile time and produces plausible
+ * durations at runtime, which is the hardest kind of regression to notice. There
+ * are only a handful of call sites; each is made to answer. Pass `undefined`
+ * where the role genuinely is not known.
+ *
+ * The `source` exists so the settings panel can *say* what a lift follows rather
+ * than assume it follows the preset. Sharing one implementation with
+ * `resolveDuration` is what keeps the label and the countdown from disagreeing;
+ * a panel-local copy of this precedence would be free to drift.
+ *
+ * Adding a fifth rung means touching seven places — this chain, `TimerDurationSource`,
+ * `TimerContext`, `defaultTimerSettings`, `normalizeTimerSettings`, the panel's
+ * `clone()`, and its `sourceLabel()` — of which only the union and `sourceLabel`
+ * are compiler-enforced.
+ */
+export function resolveDurationEntry(
+  settings: TimerSettings,
+  lift: string,
+  field: TimerDurationField,
+  classification: LiftClassification | undefined,
+): { seconds: number; source: TimerDurationSource } {
   const override = hasOwn(settings.overrides, lift) ? settings.overrides[lift]?.[field] : undefined;
-  if (override != null) return override;
+  if (override != null) return { seconds: override, source: 'override' };
 
   if (settings.context.deloadOn) {
     const deload = settings.context.deload[field];
-    if (deload != null) return deload;
+    if (deload != null) return { seconds: deload, source: 'deload' };
+  }
+
+  if (settings.context.accessoryOn && classification === 'accessory') {
+    const accessory = settings.context.accessory[field];
+    if (accessory != null) return { seconds: accessory, source: 'accessory' };
   }
 
   const preset = hasOwn(settings.presets, settings.preset)
     ? settings.presets[settings.preset]
     : undefined;
   const value = preset?.[field];
-  if (value != null) return value;
+  if (value != null) return { seconds: value, source: 'preset' };
 
-  return STANDARD_DURATIONS[field];
+  return { seconds: STANDARD_DURATIONS[field], source: 'standard' };
 }
 
 // ---------------------------------------------------------------------------
@@ -245,11 +317,22 @@ export function normalizeTimerSettings(raw: unknown): TimerSettings {
     preset,
     presets,
     overrides,
+    // Both context sections narrow through `toPartialDurations`, which reads only
+    // the five known TIMER_DURATION_FIELDS off the raw value — so unlike
+    // `presets` and `overrides` above there is no `hasOwn` guard here, and none
+    // is needed: these are fixed-key duration objects, not records keyed by a
+    // user-supplied name, so no inherited Object.prototype member is ever
+    // reachable as a key. A section that narrowed to nothing falls back to the
+    // defaults rather than leaving a context that is on but sets no field.
     context: {
       deloadOn: toBool(rawContext.deloadOn, base.context.deloadOn),
       deload: Object.keys(toPartialDurations(rawContext.deload)).length
         ? toPartialDurations(rawContext.deload)
         : { ...base.context.deload },
+      accessoryOn: toBool(rawContext.accessoryOn, base.context.accessoryOn),
+      accessory: Object.keys(toPartialDurations(rawContext.accessory)).length
+        ? toPartialDurations(rawContext.accessory)
+        : { ...base.context.accessory },
     },
     behavior: {
       alert: toAlertMode(rawBehavior.alert),

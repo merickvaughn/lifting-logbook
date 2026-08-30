@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TimerLiftPlan } from '@lifting-logbook/core';
+import { TIMER_STORAGE_KEY } from '@/lib/timerSettings';
 import WorkoutTimerView from './WorkoutTimerView';
 
 jest.mock('@/lib/timerAlerts', () => ({
@@ -184,13 +185,156 @@ describe('WorkoutTimerView', () => {
       );
     });
 
+    it('renders the accessory card with its own accessible names', async () => {
+      const user = userEvent.setup();
+      renderView();
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+
+      // "Working set" now appears under the preset, the deload defaults AND the
+      // accessory defaults. All three must stay individually addressable.
+      expect(screen.getByLabelText('Working set')).toBeInTheDocument();
+      expect(screen.getByLabelText('Working set (Deload)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Working set (Accessory)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Between working sets (Accessory)')).toBeInTheDocument();
+    });
+
+    it('ships the accessory rule switched on', async () => {
+      const user = userEvent.setup();
+      renderView();
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+
+      expect(
+        screen.getByRole('switch', { name: 'Shorter durations for accessories' }),
+      ).toHaveAttribute('aria-checked', 'true');
+      expect(
+        (screen.getByLabelText('Between working sets (Accessory)') as HTMLInputElement).value,
+      ).toBe('1:30');
+    });
+
+    it('toggles the accessory rule off', async () => {
+      const user = userEvent.setup();
+      renderView();
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+
+      await user.click(screen.getByRole('switch', { name: 'Shorter durations for accessories' }));
+
+      expect(
+        screen.getByRole('switch', { name: 'Shorter durations for accessories' }),
+      ).toHaveAttribute('aria-checked', 'false');
+    });
+
+    it('keeps the accessory settings when an unrelated setting is edited', async () => {
+      const user = userEvent.setup();
+      renderView();
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+
+      const accessoryRest = screen.getByLabelText('Between working sets (Accessory)');
+      await user.clear(accessoryRest);
+      await user.type(accessoryRest, '1:15');
+      await user.tab();
+
+      // The panel clones settings field-by-field before every change. An
+      // omitted context field there is invisible until some *other* edit
+      // silently discards it — so edit something unrelated and check.
+      await user.click(screen.getByRole('switch', { name: 'Keep screen awake' }));
+
+      expect(
+        (screen.getByLabelText('Between working sets (Accessory)') as HTMLInputElement).value,
+      ).toBe('1:15');
+      expect(
+        screen.getByRole('switch', { name: 'Shorter durations for accessories' }),
+      ).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('shortens an accessory lift in the plan estimate but not a compound one', async () => {
+      const user = userEvent.setup();
+      // Two sets on the accessory, deliberately: buildTimerQueue drops the
+      // trailing rest, so with one set each the accessory's shortened *rest*
+      // would never reach the estimate and only its 45s set would differ.
+      //   bench   prep 10 + set 60 + rest 240        = 310
+      //   curls 1 prep 10 + set 45 + rest  90        = 145
+      //   curls 2 prep 10 + set 45 (rest dropped)    =  55  -> 8:30
+      renderView([
+        {
+          lift: 'Bench Press',
+          classification: 'compound',
+          sets: [{ type: 'work', setLabel: 'Set 1', spec: '5 × 200 lbs' }],
+        },
+        {
+          lift: 'Cable Curls',
+          classification: 'accessory',
+          sets: [
+            { type: 'work', setLabel: 'Set 1', spec: '10 × 40 lbs' },
+            { type: 'work', setLabel: 'Set 2', spec: '10 × 40 lbs' },
+          ],
+        },
+      ]);
+
+      expect(screen.getByText(/3 timed sets · 8:30 estimated/)).toBeInTheDocument();
+
+      // Rule off: every lift runs on the preset — 310 + 310 + 70 = 11:30.
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+      await user.click(screen.getByRole('switch', { name: 'Shorter durations for accessories' }));
+      await user.click(screen.getByRole('tab', { name: 'Timer' }));
+
+      expect(screen.getByText(/3 timed sets · 11:30 estimated/)).toBeInTheDocument();
+    });
+
+    it('says what a lift follows, rather than always naming the preset', async () => {
+      const user = userEvent.setup();
+      renderView([
+        {
+          lift: 'Cable Curls',
+          classification: 'accessory',
+          sets: [{ type: 'work', setLabel: 'Set 1', spec: '10 × 40 lbs' }],
+        },
+      ]);
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+
+      expect(screen.getByText('Rest follows Accessory')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('switch', { name: 'Shorter durations for accessories' }));
+      expect(screen.getByText('Rest follows Standard')).toBeInTheDocument();
+    });
+
+    it('shows a context row falling back to the active preset, not to Standard', async () => {
+      const user = userEvent.setup();
+      // A persisted blob whose accessory section carries only `restWork` — the
+      // shape normalizeTimerSettings keeps as-is, since it only replaces a section
+      // that narrowed to *nothing*.
+      window.localStorage.setItem(
+        TIMER_STORAGE_KEY,
+        JSON.stringify({
+          settings: {
+            preset: 'Light day',
+            presets: { 'Light day': { warmupSet: 30, workSet: 45, restWarmup: 60, restWork: 150, prep: 10 } },
+            context: { accessoryOn: true, accessory: { restWork: 90 } },
+          },
+          run: null,
+        }),
+      );
+      renderView();
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+
+      // The accessory context does not set workSet, so it falls through to the
+      // ACTIVE preset (Light day = 0:45). Showing STANDARD_DURATIONS' 1:00 here
+      // would disagree with the countdown the timer actually runs — and write that
+      // wrong baseline back on the next stepper click.
+      expect(
+        (screen.getByLabelText('Working set (Accessory)') as HTMLInputElement).value,
+      ).toBe('0:45');
+      expect(
+        (screen.getByLabelText('Between working sets (Accessory)') as HTMLInputElement).value,
+      ).toBe('1:30');
+    });
+
     it('records a per-lift override and can clear it', async () => {
       const user = userEvent.setup();
       renderView();
       await user.click(screen.getByRole('tab', { name: 'Settings' }));
 
       await user.click(screen.getByRole('button', { name: /Bench Press/ }));
-      expect(screen.getByText('Follows Standard')).toBeInTheDocument();
+      expect(screen.getByText('Rest follows Standard')).toBeInTheDocument();
 
       const overrideInput = screen.getByLabelText('Working set (Bench Press)');
       await user.clear(overrideInput);
@@ -200,7 +344,7 @@ describe('WorkoutTimerView', () => {
       expect(screen.getByText('1 override')).toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: /Clear overrides for Bench Press/ }));
-      expect(screen.getByText('Follows Standard')).toBeInTheDocument();
+      expect(screen.getByText('Rest follows Standard')).toBeInTheDocument();
     });
   });
 });
