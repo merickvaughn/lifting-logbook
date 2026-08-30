@@ -5,11 +5,13 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import {
   DIAL_PHASES,
+  NON_KIND_DIAL_STATES,
   declaredThemeNames,
   extractThemeBlocks,
   findConflicts,
   readDialTokens,
   readPhaseColors,
+  readPhaseKinds,
 } from './check-timer-phase-colors.mjs';
 
 // A trimmed stand-in for globals.css carrying only what the guard reads. Shaped
@@ -190,6 +192,33 @@ test('readDialTokens reports a literal stroke rather than treating it as checkab
   );
   assert.equal(problems.length, 1);
   assert.match(problems[0], /literal/);
+});
+
+// --- DIAL_PHASES is cross-checked against core's own phase-kind list ---
+
+test('readPhaseKinds reads TIMER_PHASE_KINDS out of the types source', () => {
+  const src = `
+export const TIMER_PHASE_KINDS = ['prep', 'set', 'rest', 'activation'] as const;
+export type TimerPhaseKind = (typeof TIMER_PHASE_KINDS)[number];
+`;
+  assert.deepEqual(readPhaseKinds(src), ['prep', 'set', 'rest', 'activation']);
+});
+
+test('readPhaseKinds returns null rather than an empty list it cannot verify', () => {
+  // Both shapes must be distinguishable from a successful read of zero kinds —
+  // the guard fails on null, which is the only non-vacuous response to "I could
+  // not find the declaration".
+  assert.equal(readPhaseKinds('export type TimerPhaseKind = string;'), null);
+  assert.equal(readPhaseKinds('export const TIMER_PHASE_KINDS = [] as const;'), null);
+});
+
+test('DIAL_PHASES equals the real TIMER_PHASE_KINDS plus the non-kind paint states', () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const kinds = readPhaseKinds(
+    readFileSync(resolve(repoRoot, 'packages/core/src/timer/types.ts'), 'utf8'),
+  );
+  assert.notEqual(kinds, null, 'TIMER_PHASE_KINDS must be readable from source');
+  assert.deepEqual([...DIAL_PHASES].sort(), [...kinds, ...NON_KIND_DIAL_STATES].sort());
 });
 
 test('the real dial stylesheet resolves to a checkable token per phase', () => {

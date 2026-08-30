@@ -1,4 +1,5 @@
 import { render } from '@testing-library/react';
+import { TIMER_PHASE_KINDS } from '@lifting-logbook/core';
 import type { TimerPhaseKind } from '@lifting-logbook/core';
 import TimerDial from './TimerDial';
 
@@ -26,23 +27,24 @@ function fillClasses(kind: TimerPhaseKind | null, overrun = false): string {
 }
 
 describe('TimerDial phase colours', () => {
-  it.each([
-    ['set', 'set'],
-    ['rest', 'rest'],
-    ['prep', 'prep'],
-    ['activation', 'activation'],
-  ] as const)('paints a %s phase with the %s class', (kind, expected) => {
-    expect(fillClasses(kind)).toContain(expected);
-  });
+  // Driven off TIMER_PHASE_KINDS, not a local literal: a phase kind added to the
+  // union is added to that array by construction (the type is derived from it),
+  // so a new kind enters this table automatically and fails here until it gets a
+  // branch. A hand-written list would silently keep testing the old four.
+  it.each(TIMER_PHASE_KINDS.map((kind) => [kind] as const))(
+    'paints a %s phase with a class of its own name',
+    (kind) => {
+      expect(fillClasses(kind)).toContain(kind);
+    },
+  );
 
-  it('gives every phase kind a class of its own', () => {
-    // The point of the table above is that no two share one. Asserted directly,
-    // because "activation falls through to .set" is exactly the silent failure
-    // this file exists to catch, and it would still satisfy a per-row check that
-    // only looked for a non-empty class.
-    const kinds: TimerPhaseKind[] = ['set', 'rest', 'prep', 'activation'];
-    const painted = kinds.map((kind) => fillClasses(kind));
-    expect(new Set(painted).size).toBe(kinds.length);
+  it('gives every phase kind a distinct class', () => {
+    // The per-kind rows above would each still pass if two kinds shared a class
+    // whose name happened to contain both — and "activation falls through to
+    // .set" is exactly the silent failure this file exists to catch. Assert
+    // distinctness directly, over the same derived list.
+    const painted = TIMER_PHASE_KINDS.map((kind) => fillClasses(kind));
+    expect(new Set(painted).size).toBe(TIMER_PHASE_KINDS.length);
   });
 
   it('paints overrun regardless of the underlying phase', () => {

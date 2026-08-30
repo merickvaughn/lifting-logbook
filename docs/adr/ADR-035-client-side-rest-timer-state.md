@@ -332,7 +332,10 @@ stored and served, so this needed no migration, no new endpoint, and no `package
 queue emits one `activation` phase before each lift's first *timed* set.
 
 **Its duration stays client-side**, as a sixth `TimerDurationField` in `ll.timer.v1`, resolved through
-the unchanged override → deload → preset chain. That split falls straight out of the decision above:
+the unchanged override → deload → accessory → preset chain of Amendment 1 — unchanged in the sense
+that this field needed no new rung, not that the chain is still three rungs long. (In practice
+`DEFAULT_ACCESSORY_DURATIONS` sets no `activation`, so an accessory's activation falls through to the
+preset unless the lifter sets one.) That split falls straight out of the decision above:
 this ADR constrains timer settings and run state, not the plan, which was always server-side.
 
 **The activation attaches to `TimerLiftPlan`, not to a set** — mirroring the mockup, where `kind` is a
@@ -375,6 +378,20 @@ they occur only in unrelated API test fixtures.
 - The per-set ▶ had to learn to skip the activation: it shares the `setIndex` of the lift's first
   timed set, exactly as a `prep` does, so a plain match would have started "Start timer at Squat
   Warm-up 1" on a hip-airplane countdown.
+- **An in-flight run had to be versioned, not just the settings.** `TimerRunState.idx` is a bare
+  index into a queue whose shape this change alters, so a run persisted before it resumed on the
+  activation that now precedes the set it was recorded against — with `startedAt` carried over, so
+  elapsed time measured against a 60 s set was applied to a 240 s rest. The re-anchor effect cannot
+  catch this: it compares against the *previous render's* queue, which on a fresh mount is already
+  the new shape, so it re-finds and then cements the displaced phase. `TIMER_RUN_SHAPE` in
+  `timerSettings.ts` stamps the blob and drops a run written under a different value. A run is
+  minutes of ephemeral position; a silently wrong countdown is indistinguishable from a working one.
+- **Two exhaustiveness mechanisms were added, because this change is the argument for them.**
+  `TimerPhaseKind` is now derived from a `TIMER_PHASE_KINDS` array so tests and the colour guard can
+  iterate it, and `TIMER_DURATION_FIELDS` carries a compile-time completeness assertion. Both exist
+  because the failure they prevent is silent: three of the places that switch on a phase kind end in
+  a fallthrough, and a duration field missing from `TIMER_DURATION_FIELDS` is simply never read back
+  out of storage, so the lifter's saved value reverts to the default on every load.
 - **This closes a latent option Amendment 1 declined to take anyway.** `activation` holds *almost*
   the `LiftClassification` data #961 needed — the built-in presets fill it with
   `'compound'`/`'isolation'` — so squatting on the column was a possibility there. Amendment 1
@@ -387,16 +404,27 @@ they occur only in unrelated API test fixtures.
 
 ### Verification
 
-- `packages/core/tests/core/timer/activation.test.ts` — calibrates the predicate in both directions.
-  The known-good corpus is read **live** from `PRESET_BASE_SPECS` with a non-empty assertion in front
-  of it, so a reshape of that module fails the test rather than passing over an empty list.
+- `packages/core/tests/core/timer/activation.test.ts` — calibrates the predicate in both directions,
+  from **two** corpora read live, each with a non-empty assertion in front of it so a reshape fails
+  the test rather than passing over an empty list. The second corpus was the correction: the first
+  cut calibrated against `PRESET_BASE_SPECS` alone, and the built-in presets carry only
+  classification values — so it never saw `N/A`, which is what `tests/fixtures/rpt_program_spec.csv`
+  (a real exported sheet) uses for "this lift has no drill". Import is one of only two ways to name
+  an activation today, so that was the corpus that mattered most and the one left out; the fixture is
+  also two-sided, carrying markers and genuine names in the same column, and the test asserts *both*
+  halves are non-empty rather than just the corpus overall.
 - `packages/core/tests/core/timer/queue.test.ts` — one phase per lift (not per set), none without a
   movement, none at duration zero, `setIndex` alignment under `skipWarmups`, and a repeated lift name
   getting one activation per occurrence.
 - `apps/web/components/timer/TimerDial.test.tsx` — every phase kind resolves to a *distinct* class.
 - `scripts/check-timer-phase-colors.mjs` — recalibrated at five phases: passes on the current
-  definitions, and fails naming `activation and prep` when `--color-activation` is set to iron's
-  amber.
+  definitions, and fails naming `prep and activation` when `--color-activation` is set to iron's
+  amber. It now also cross-checks `DIAL_PHASES` against `TIMER_PHASE_KINDS` read from
+  `types.ts`, so a phase kind added in core without a colour is a CI failure rather than a phase
+  nothing checks — verified by adding a sixth kind and watching it fail.
+- `apps/web/lib/__tests__/timerSettings.test.ts` — a pre-`TIMER_RUN_SHAPE` blob is dropped, a
+  stamped one round-trips, and a settings write carries the stamp forward (without which changing a
+  duration on the Settings tab would silently end the session).
 
 ## References
 

@@ -117,7 +117,13 @@ export default function CollapsibleLiftList({
         const panelId = `lift-detail-${encodeURIComponent(lift)}`;
         const warmUpSets = plannedSets.filter((s) => s.type === 'warmup');
         const workSets = plannedSets.filter((s) => s.type === 'work');
-        const activationMovement = activationExercise(activation);
+        // Gated on `plannedSets` for the same reason `toTimerLiftPlans` drops
+        // such a lift entirely: with no training max there is nothing to time, so
+        // the queue emits no activation for it. Ungated, the block rendered
+        // directly above "No sets — set a training max…", promising a countdown
+        // that could not happen.
+        const activationMovement =
+          plannedSets.length > 0 ? activationExercise(activation) : undefined;
 
         return (
           <li key={lift} className={styles.liftItem}>

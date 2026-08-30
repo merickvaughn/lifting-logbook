@@ -1,6 +1,7 @@
 import { TIMER_PRESET_DEFAULTS } from '@lifting-logbook/core';
 import type { TimerRunState, TimerWorkoutKey } from '@lifting-logbook/core';
 import {
+  TIMER_RUN_SHAPE,
   TIMER_STORAGE_KEY,
   loadTimerRun,
   loadTimerSettings,
@@ -137,13 +138,57 @@ describe('run persistence', () => {
     ['a non-null non-numeric pausedAt', { ...makeRun(), pausedAt: 'yes' }],
     ['a malformed workout key', { ...makeRun(), workout: { program: '531' } }],
   ])('rejects a persisted run with %s', (_label, run) => {
-    window.localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify({ settings: null, run }));
+    // `runShape` is written deliberately: without it `loadTimerRun` would bail on
+    // the shape-version check before `isRunShape` ever ran, and every case here
+    // would pass even if the field validation were deleted.
+    window.localStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({ settings: null, run, runShape: TIMER_RUN_SHAPE }),
+    );
     expect(loadTimerRun(WORKOUT)).toBeNull();
   });
 
   it('accepts a paused run', () => {
     saveTimerRun(makeRun({ pausedAt: 1_700_000_030_000, pausedMs: 5_000 }));
     expect(loadTimerRun(WORKOUT)?.pausedAt).toBe(1_700_000_030_000);
+  });
+
+  // --- Queue-shape versioning (#960) ---------------------------------------
+
+  it('drops a run recorded against an older queue shape', () => {
+    // Exactly the blob a browser holds from before the activation phase existed:
+    // a structurally valid run for this workout, with no `runShape`. Its `idx`
+    // now addresses a different phase, and `startedAt` would be applied to that
+    // phase's duration — a silently wrong countdown rather than a visible one.
+    window.localStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({ settings: null, run: makeRun() }),
+    );
+    expect(loadTimerRun(WORKOUT)).toBeNull();
+  });
+
+  it('drops a run stamped with a different shape version', () => {
+    window.localStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({ settings: null, run: makeRun(), runShape: TIMER_RUN_SHAPE - 1 }),
+    );
+    expect(loadTimerRun(WORKOUT)).toBeNull();
+  });
+
+  it('stamps the current shape when it writes a run', () => {
+    saveTimerRun(makeRun());
+    const raw: unknown = JSON.parse(window.localStorage.getItem(TIMER_STORAGE_KEY) ?? '{}');
+    expect(raw).toMatchObject({ runShape: TIMER_RUN_SHAPE });
+    expect(loadTimerRun(WORKOUT)?.idx).toBe(2);
+  });
+
+  it('keeps the run resumable across a settings write', () => {
+    // `saveTimerSettings` rewrites the whole blob, so it has to carry `runShape`
+    // forward — dropping it would silently end every session the moment the
+    // lifter changed a duration on the Settings tab.
+    saveTimerRun(makeRun());
+    saveTimerSettings(loadTimerSettings());
+    expect(loadTimerRun(WORKOUT)?.idx).toBe(2);
   });
 });
 

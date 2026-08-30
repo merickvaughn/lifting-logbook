@@ -581,6 +581,36 @@ This also runs as a CI step (`ci.yml` → `lint-and-test` → "Verify turbo dev 
 libraries"), so a drifting PR fails either way — running it locally just catches the regression
 before waiting on CI. See [#944](https://github.com/merickvaughn/lifting-logbook/issues/944).
 
+### Rest-timer dial phase colors (`TimerDial.module.css` ↔ `globals.css`)
+
+The countdown ring paints exactly one of **five** states — set, rest, prep, activation, overrun — so
+if any two resolve to the same value inside a theme, the ring silently stops carrying information
+for that pair. Nothing else catches it: both are valid tokens, the page renders, and every test
+passes. The timer originally used `--color-success` for rest, correct under `navy` but identical to
+the accent under `iron`, where the accent is itself green ([#958](https://github.com/merickvaughn/lifting-logbook/issues/958)).
+
+**Run before pushing whenever you add a theme, retune an accent, add a dial phase, or change what
+the dial strokes:**
+
+```bash
+node scripts/check-timer-phase-colors.mjs && node --test scripts/check-timer-phase-colors.test.mjs
+```
+
+Both also run as CI steps (`ci.yml` → `lint-and-test`). The guard reads **both** halves of the
+pairing from source — which custom property paints each phase from
+[`apps/web/components/timer/TimerDial.module.css`](apps/web/components/timer/TimerDial.module.css),
+and what each resolves to from [`apps/web/app/globals.css`](apps/web/app/globals.css), last-wins to
+match the cascade — so repointing a phase at a colliding token cannot pass.
+
+**It cannot see whether the component applies the class at all.** It reads the *stylesheet*, and
+`TimerDial.tsx`'s phase→class chain ends in `styles.set` as its fallthrough, so a phase kind added
+without a branch paints accent-colored, typechecks, and passes this guard.
+[`apps/web/components/timer/TimerDial.test.tsx`](apps/web/components/timer/TimerDial.test.tsx) is
+what covers that half — it asserts every phase kind resolves to a *distinct* class. Adding a sixth
+phase means touching both, plus `DIAL_PHASES` in the guard and a new token in **each** theme block.
+See [#960](https://github.com/merickvaughn/lifting-logbook/issues/960) and
+[ADR-035](docs/adr/ADR-035-client-side-rest-timer-state.md).
+
 ### Coverage Requirements
 
 <!-- When #259 ships: remove the "until then" clause from the frontend row below. Tracked as a checklist item on issue #259. -->

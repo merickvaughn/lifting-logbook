@@ -107,8 +107,8 @@ without jsdom. Only the browser-bound parts (interval, wake lock, WebAudio, vibr
   `LiftingProgramSpecResponse.activation` already existed, DB-backed and already fetched by both
   timer surfaces; it was simply never read, and the built-in presets fill it with a movement
   *classification* rather than a name. `PlannedSet` did stay as it is: the activation attaches to the
-  lift, not to a set, mirroring the mockup's own shape. See the 2026-08-29 addendum to
-  [ADR-035](../adr/ADR-035-client-side-rest-timer-state.md).
+  lift, not to a set, mirroring the mockup's own shape. See
+  [ADR-035](../adr/ADR-035-client-side-rest-timer-state.md) Amendment 2.
 - **Accessory-lift rest context.** ~~Needs per-lift `LiftClassification`, which the detail page
   cannot cheaply obtain: `fetchLiftCatalog` returns `string[]`, and `fetchLiftMetadata` is one call
   per lift and exposes `foundational`, not `classification`. Per-lift overrides cover the same need

@@ -21,7 +21,13 @@ export interface TimerQueueSet {
    *
    * The lift *name* cannot serve as the boundary marker: one workout can legitimately
    * hold the same lift twice (the program editor keys an instance by position, not by
-   * name), and each occurrence gets its own activation.
+   * name), and each occurrence gets its own activation *in the queue*.
+   *
+   * Note the surrounding UI machinery does not yet distinguish those occurrences —
+   * `WorkoutTimerProvider`'s `setIndexOf` map and `useWorkoutTimer`'s re-anchor
+   * both key on `(lift, setLabel)`, so the second occurrence's rows resolve to the
+   * first. That collision predates the activation phase and applies equally to
+   * prep/set/rest; it is tracked separately rather than widened here.
    */
   liftIndex: number;
   set: TimerSetPlan;
@@ -138,6 +144,13 @@ export function buildTimerQueue(
 
   // Annotate each phase with the next *set* after it, so a rest phase can say
   // what it is resting before. Walked backwards so this stays O(n).
+  //
+  // An activation is deliberately not a candidate, even though one can sit
+  // between a rest and the set it names. "Up next" answers "which set am I
+  // resting before" — the question a lifter decides whether to skip rest on — and
+  // an activation is a transition on the way there, not the destination. The
+  // consequence is that a rest preceding an activation still names the set beyond
+  // it; that is the intended reading, not an oversight.
   let upcoming: TimerPhase['next'] = null;
   for (let i = queue.length - 1; i >= 0; i--) {
     const phase = queue[i];

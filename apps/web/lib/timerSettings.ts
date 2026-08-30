@@ -23,9 +23,35 @@ import type { TimerRunState, TimerSettings, TimerWorkoutKey } from '@lifting-log
 /** Versioned so a future schema change can migrate rather than clobber. */
 export const TIMER_STORAGE_KEY = 'll.timer.v1';
 
+/**
+ * Shape version of the *queue* a persisted run's `idx` addresses.
+ *
+ * `TimerRunState.idx` is a bare index into the built queue, and the queue's shape
+ * is derived from code, not from anything stored — so a release that changes how
+ * many phases a set expands to silently re-points every in-flight run. Adding the
+ * activation phase (#960) did exactly that: a run recorded at the index of
+ * `Set 1` resumes on the activation that now precedes it, and `startedAt` is
+ * carried over, so elapsed time recorded against a 60 s set is applied to a
+ * 240 s rest.
+ *
+ * The re-anchor effect in `useWorkoutTimer` cannot catch this — it compares the
+ * queue against the *previous render's* queue, which on a fresh mount is already
+ * the new shape, so it re-finds and then cements the displaced phase.
+ *
+ * Bump this whenever a change alters the phases `buildTimerQueue` emits for a
+ * given plan. A run written under a different version is dropped rather than
+ * resumed at the wrong phase: a run is minutes of ephemeral position (the lifter
+ * taps Start again), whereas a silently wrong countdown is indistinguishable
+ * from a working one. Settings are stored beside it and are unaffected — they
+ * migrate field-by-field through `normalizeTimerSettings` instead.
+ */
+export const TIMER_RUN_SHAPE = 2;
+
 interface StoredBlob {
   settings: unknown;
   run: unknown;
+  /** {@link TIMER_RUN_SHAPE} at the time `run` was written. Absent pre-#960. */
+  runShape?: unknown;
 }
 
 function isBrowser(): boolean {
@@ -43,7 +69,11 @@ function readBlob(): StoredBlob {
     if (raw === null) return { settings: null, run: null };
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed)) return { settings: null, run: null };
-    return { settings: parsed.settings ?? null, run: parsed.run ?? null };
+    return {
+      settings: parsed.settings ?? null,
+      run: parsed.run ?? null,
+      runShape: parsed.runShape,
+    };
   } catch {
     // Corrupted JSON, or localStorage access itself throwing (e.g. SecurityError in
     // a locked-down browser context). Fail open — see module doc comment above.
@@ -68,7 +98,8 @@ export function loadTimerSettings(): TimerSettings {
 
 /** Persists settings, leaving any in-flight run untouched. */
 export function saveTimerSettings(settings: TimerSettings): void {
-  writeBlob({ settings, run: readBlob().run });
+  const previous = readBlob();
+  writeBlob({ settings, run: previous.run, runShape: previous.runShape });
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +169,12 @@ export function sameWorkout(a: TimerWorkoutKey, b: TimerWorkoutKey): boolean {
  * "shared across routes *for this workout*".
  */
 export function loadTimerRun(workout: TimerWorkoutKey): TimerRunState | null {
-  const run = readBlob().run;
+  const blob = readBlob();
+  // A run whose `idx` was recorded against a different queue shape addresses a
+  // different phase now — see TIMER_RUN_SHAPE. Dropped rather than resumed, and
+  // checked before the shape guard so a stale run never reaches the arithmetic.
+  if (blob.runShape !== TIMER_RUN_SHAPE) return null;
+  const run = blob.run;
   if (!isRunShape(run)) return null;
   if (!sameWorkout(run.workout, workout)) return null;
   // `run` is `UnvalidatedRun` here — `.classifications` is `unknown`, not yet a
@@ -148,5 +184,5 @@ export function loadTimerRun(workout: TimerWorkoutKey): TimerRunState | null {
 
 /** Persists the run, leaving settings untouched. `null` ends the session. */
 export function saveTimerRun(run: TimerRunState | null): void {
-  writeBlob({ settings: readBlob().settings, run });
+  writeBlob({ settings: readBlob().settings, run, runShape: TIMER_RUN_SHAPE });
 }

@@ -374,7 +374,8 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
       <div className={styles.card}>{durationRow('activation')}</div>
       <p className={styles.footNote}>
         The movement itself comes from the program — a lift only gets an activation phase when its
-        program spec names one. Set this to 0:00, or override it on a lift below, to skip it.
+        program spec names one. A duration of 0:00, here or as a per-lift override below, drops the
+        phase from the next session you start.
       </p>
 
       <h2 className={styles.sectionTitle}>Per-lift overrides</h2>
@@ -400,8 +401,10 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           // being true once the deload and accessory contexts existed.
           //
           // Deliberately a one-field summary: neither context sets `warmupSet`,
-          // `restWarmup` or `prep`, so a label claiming to describe the whole lift
-          // would be wrong for three of its five durations. The copy says "Rest
+          // `restWarmup`, `prep` or `activation`, so a label claiming to describe
+          // the whole lift would be wrong for every duration but this one and
+          // `workSet` — four of the six rows a lift with an activation shows, and
+          // three of five without one. The copy says "Rest
           // follows …" so the collapsed row does not overstate its scope; the
           // per-field `From <rung>` hints inside give the exact answer.
           const restFollows = sourceLabel(

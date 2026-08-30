@@ -1,7 +1,13 @@
 import { act, renderHook } from '@testing-library/react';
 import type { TimerLiftPlan, TimerWorkoutKey } from '@lifting-logbook/core';
 import { useWorkoutTimer } from '../useWorkoutTimer';
-import { TIMER_STORAGE_KEY, loadTimerRun, loadTimerSettings, saveTimerSettings } from '../timerSettings';
+import {
+  TIMER_RUN_SHAPE,
+  TIMER_STORAGE_KEY,
+  loadTimerRun,
+  loadTimerSettings,
+  saveTimerSettings,
+} from '../timerSettings';
 
 // The alert wrappers reach for AudioContext / navigator.vibrate / wakeLock, none of
 // which jsdom implements. Mocked at the module boundary so the tests assert on the
@@ -516,12 +522,37 @@ describe('persistence', () => {
           bonus: 0,
           workout: WORKOUT,
         },
+        runShape: TIMER_RUN_SHAPE,
       }),
     );
 
     const { result } = render();
     expect(result.current.run?.idx).toBe(3);
     expect(result.current.running).toBe(true);
+  });
+
+  it('does not restore a run recorded against an older queue shape', () => {
+    // The same blob as above minus the shape stamp — i.e. what a browser holds
+    // from before the activation phase existed. Its `idx` addresses a phase that
+    // has since moved, so resuming it would count down the wrong phase against
+    // the wrong `startedAt` with nothing on screen to say so.
+    window.localStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({
+        settings: null,
+        run: {
+          idx: 3,
+          startedAt: Date.now(),
+          pausedMs: 0,
+          pausedAt: null,
+          bonus: 0,
+          workout: WORKOUT,
+        },
+      }),
+    );
+
+    const { result } = render();
+    expect(result.current.running).toBe(false);
   });
 
   it('ignores a run belonging to a different workout', () => {
@@ -537,6 +568,9 @@ describe('persistence', () => {
           bonus: 0,
           workout: { ...WORKOUT, workoutNum: 99 },
         },
+        // Stamped, so this still exercises the workout-key gate rather than
+        // being rejected earlier by the shape-version check.
+        runShape: TIMER_RUN_SHAPE,
       }),
     );
 

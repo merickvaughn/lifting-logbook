@@ -49,15 +49,45 @@ export const TIMER_PRESET_DEFAULTS: Record<string, TimerPresetDurations> = SHIPP
  */
 export const STANDARD_DURATIONS: TimerPresetDurations = SHIPPED_PRESETS.Standard;
 
-/** Every duration field, in the order the settings UI renders them. */
-export const TIMER_DURATION_FIELDS: readonly TimerDurationField[] = [
+/**
+ * Every duration field, in the order the settings UI renders them.
+ *
+ * `satisfies`, not a `readonly TimerDurationField[]` annotation: the annotation
+ * widens the tuple, so a field added to {@link TimerDurationField} and forgotten
+ * here would compile. That omission is silent and costly —
+ * `normalizeTimerSettings` iterates this array to read a persisted blob, so a
+ * missing field is never read back and the lifter's saved value reverts to the
+ * shipped default on every load. The completeness assertion below is what turns
+ * that into a compile error.
+ */
+export const TIMER_DURATION_FIELDS = [
   'warmupSet',
   'workSet',
   'restWarmup',
   'restWork',
   'prep',
   'activation',
-] as const;
+] as const satisfies readonly TimerDurationField[];
+
+/**
+ * Compile-time proof that {@link TIMER_DURATION_FIELDS} lists every field.
+ *
+ * `satisfies` above proves every listed member is a valid field; this proves the
+ * converse. Unused at runtime by design — it exists to fail `tsc`.
+ *
+ * The tuple wrappers are load-bearing. A bare `Missing extends never ? …` is a
+ * *distributive* conditional, and distributing over `never` yields `never` — so
+ * the healthy case would resolve to `never`, reject the `true`, and fail
+ * permanently. `[Missing] extends [never]` suppresses distribution and gives the
+ * intended `true`/`false`. Verified in both directions: adding a seventh field to
+ * `TimerDurationField` without listing it here fails this line.
+ */
+type _MissingDurationFields = Exclude<
+  TimerDurationField,
+  (typeof TIMER_DURATION_FIELDS)[number]
+>;
+const _durationFieldsAreExhaustive: [_MissingDurationFields] extends [never] ? true : false = true;
+void _durationFieldsAreExhaustive;
 
 /** Label and hint copy for each duration field. */
 export const TIMER_FIELD_COPY: Record<
@@ -338,7 +368,7 @@ export function normalizeTimerSettings(raw: unknown): TimerSettings {
     presets,
     overrides,
     // Both context sections narrow through `toPartialDurations`, which reads only
-    // the five known TIMER_DURATION_FIELDS off the raw value — so unlike
+    // the known TIMER_DURATION_FIELDS off the raw value — so unlike
     // `presets` and `overrides` above there is no `hasOwn` guard here, and none
     // is needed: these are fixed-key duration objects, not records keyed by a
     // user-supplied name, so no inherited Object.prototype member is ever

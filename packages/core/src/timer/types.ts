@@ -9,12 +9,22 @@
 import type { LiftClassification } from '@lifting-logbook/types';
 
 /**
- * The four things a timed session counts down.
+ * The four things a timed session counts down, as a value.
  *
  * `activation` is the pre-lift movement drawn from the program spec's own
  * `activation` column — see {@link TimerLiftPlan.activation}.
+ *
+ * A runtime array rather than a bare type union, because three of the places
+ * that switch on a phase kind end in a *fallthrough* — `TimerDial`'s class chain
+ * defaults to `.set`, `WorkoutTimerView`'s queue badge defaults to `Set` — so a
+ * kind added to a union alone typechecks and renders as the wrong thing. Tests
+ * and the dial-colour CI guard iterate this array, which is what makes a fifth
+ * kind fail loudly instead of silently.
  */
-export type TimerPhaseKind = 'prep' | 'set' | 'rest' | 'activation';
+export const TIMER_PHASE_KINDS = ['prep', 'set', 'rest', 'activation'] as const;
+
+/** The four things a timed session counts down. */
+export type TimerPhaseKind = (typeof TIMER_PHASE_KINDS)[number];
 
 /** A duration field on a preset, in whole seconds. */
 export type TimerDurationField =
