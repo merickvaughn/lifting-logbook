@@ -2,14 +2,16 @@
 
 import { useId, useState } from 'react';
 import {
+  STANDARD_DURATIONS,
   TIMER_FIELD_COPY,
   formatDuration,
   parseDuration,
-  resolveDuration,
+  resolveDurationEntry,
 } from '@lifting-logbook/core';
 import type {
   TimerAlertMode,
   TimerDurationField,
+  TimerDurationSource,
   TimerLiftPlan,
   TimerPresetDurations,
   TimerSettings,
@@ -37,9 +39,38 @@ function clone(settings: TimerSettings): TimerSettings {
     overrides: Object.fromEntries(
       Object.entries(settings.overrides).map(([lift, fields]) => [lift, { ...fields }]),
     ),
-    context: { deloadOn: settings.context.deloadOn, deload: { ...settings.context.deload } },
+    // Enumerated field-by-field rather than spread, so every new context section
+    // must be added here too — one omitted line silently discards that section
+    // on every settings edit the panel makes.
+    context: {
+      deloadOn: settings.context.deloadOn,
+      deload: { ...settings.context.deload },
+      accessoryOn: settings.context.accessoryOn,
+      accessory: { ...settings.context.accessory },
+    },
     behavior: { ...settings.behavior },
   };
+}
+
+/**
+ * What a duration row says it is following, given the rung that actually supplied
+ * it. `standard` names the shipped fallback a persisted blob lands on when its
+ * active preset no longer exists, so the row never claims to follow a preset that
+ * is gone.
+ */
+function sourceLabel(source: TimerDurationSource, presetName: string): string {
+  switch (source) {
+    case 'override':
+      return 'Overridden';
+    case 'deload':
+      return 'Deload';
+    case 'accessory':
+      return 'Accessory';
+    case 'preset':
+      return presetName;
+    case 'standard':
+      return 'Standard';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -121,10 +152,11 @@ function DurationRow({
   /**
    * Disambiguator folded into the accessible name.
    *
-   * "Working set" appears three times on this page — under the preset, under the
-   * deload defaults, and again inside every per-lift override panel. The visible
-   * hint separates them for a sighted user; without this, all three would carry
-   * the identical accessible name and be indistinguishable to a screen reader.
+   * "Working set" appears four times on this page — under the preset, under the
+   * deload defaults, under the accessory defaults, and again inside every
+   * per-lift override panel. The visible hint separates them for a sighted user;
+   * without this, all four would carry the identical accessible name and be
+   * indistinguishable to a screen reader.
    */
   context?: string;
   value: number;
@@ -243,6 +275,12 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
     onChange(next);
   }
 
+  function setAccessoryField(field: TimerDurationField, value: number) {
+    const next = clone(settings);
+    next.context.accessory[field] = value;
+    onChange(next);
+  }
+
   function durationRow(field: TimerDurationField) {
     const copy = TIMER_FIELD_COPY[field];
     return (
@@ -306,6 +344,14 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           const fields: TimerDurationField[] = hasWarmups ?
             ['warmupSet', 'workSet', 'restWarmup', 'restWork', 'prep']
           : ['workSet', 'restWork', 'prep'];
+          // What this lift follows when it has no overrides of its own. Read off
+          // the rung that actually resolves `restWork` — the duration this whole
+          // feature is about — rather than assuming the preset, which stopped
+          // being true once the deload and accessory contexts existed.
+          const followed = sourceLabel(
+            resolveDurationEntry(settings, lift.lift, 'restWork', lift.classification).source,
+            settings.preset,
+          );
 
           return (
             <li key={lift.lift} className={styles.overrideItem}>
@@ -328,22 +374,31 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
                 >
                   {count > 0 ?
                     `${count} override${count > 1 ? 's' : ''}`
-                  : `Follows ${settings.preset}`}
+                  : `Follows ${followed}`}
                 </span>
               </button>
 
               <div id={panelId} className={styles.overrideBody} hidden={!isOpen}>
                 {fields.map((field) => {
                   const copy = TIMER_FIELD_COPY[field];
-                  const isOverridden = overrides?.[field] != null;
+                  const entry = resolveDurationEntry(
+                    settings,
+                    lift.lift,
+                    field,
+                    lift.classification,
+                  );
                   return (
                     <DurationRow
                       key={field}
                       label={copy.label}
-                      hint={isOverridden ? 'Overridden' : `From ${settings.preset}`}
+                      hint={
+                        entry.source === 'override' ?
+                          'Overridden'
+                        : `From ${sourceLabel(entry.source, settings.preset)}`
+                      }
                       context={lift.lift}
                       step={copy.step}
-                      value={resolveDuration(settings, lift.lift, field)}
+                      value={entry.seconds}
                       onChange={(value) => setOverride(lift.lift, field, value)}
                     />
                   );
@@ -363,8 +418,8 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
         })}
       </ul>
       <p className={styles.footNote}>
-        Overrides replace the preset for that lift only. Everything left blank follows the preset
-        above.
+        An override wins over everything else, for that lift only. Anything left alone follows the
+        deload and accessory rules below, then the preset above.
       </p>
 
       <h2 className={styles.sectionTitle}>Deload defaults</h2>
@@ -379,12 +434,18 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
             onChange(next);
           }}
         />
+        {/*
+          The fallback is STANDARD_DURATIONS, not TIMER_FIELD_COPY[field].step —
+          `step` is the stepper *increment* (5s), so a persisted blob whose
+          deload section narrowed to only `restWork` used to render "Working set"
+          as 0:05 and write that back on the next edit.
+        */}
         <DurationRow
           label="Working set"
           hint="Deload"
           context="Deload"
           step={TIMER_FIELD_COPY.workSet.step}
-          value={settings.context.deload.workSet ?? TIMER_FIELD_COPY.workSet.step}
+          value={settings.context.deload.workSet ?? STANDARD_DURATIONS.workSet}
           onChange={(value) => setDeloadField('workSet', value)}
         />
         <DurationRow
@@ -392,8 +453,38 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           hint="Deload"
           context="Deload"
           step={TIMER_FIELD_COPY.restWork.step}
-          value={settings.context.deload.restWork ?? TIMER_FIELD_COPY.restWork.step}
+          value={settings.context.deload.restWork ?? STANDARD_DURATIONS.restWork}
           onChange={(value) => setDeloadField('restWork', value)}
+        />
+      </div>
+
+      <h2 className={styles.sectionTitle}>Accessory lifts</h2>
+      <div className={styles.card}>
+        <ToggleRow
+          label="Shorter rest for accessories"
+          hint="Applies to lifts the catalog classes as accessories"
+          checked={settings.context.accessoryOn}
+          onChange={(value) => {
+            const next = clone(settings);
+            next.context.accessoryOn = value;
+            onChange(next);
+          }}
+        />
+        <DurationRow
+          label="Working set"
+          hint="Accessory"
+          context="Accessory"
+          step={TIMER_FIELD_COPY.workSet.step}
+          value={settings.context.accessory.workSet ?? STANDARD_DURATIONS.workSet}
+          onChange={(value) => setAccessoryField('workSet', value)}
+        />
+        <DurationRow
+          label="Between working sets"
+          hint="Accessory"
+          context="Accessory"
+          step={TIMER_FIELD_COPY.restWork.step}
+          value={settings.context.accessory.restWork ?? STANDARD_DURATIONS.restWork}
+          onChange={(value) => setAccessoryField('restWork', value)}
         />
       </div>
 

@@ -103,10 +103,14 @@ without jsdom. Only the browser-bound parts (interval, wake lock, WebAudio, vibr
 - **Activation phase.** The mockup models a pre-session activation block ("Hip Airplane"), but
   `PlannedSet.type` is only `'warmup' | 'work'` — no activation concept exists in the domain, so a
   settings row for it would control nothing. Follow-up.
-- **Accessory-lift rest context.** Needs per-lift `LiftClassification`, which the detail page
+- **Accessory-lift rest context.** ~~Needs per-lift `LiftClassification`, which the detail page
   cannot cheaply obtain: `fetchLiftCatalog` returns `string[]`, and `fetchLiftMetadata` is one call
   per lift and exposes `foundational`, not `classification`. Per-lift overrides cover the same need
-  today. Follow-up.
+  today.~~ **Shipped in [#961](https://github.com/merickvaughn/lifting-logbook/issues/961)** — the
+  premise above was wrong. Classification never had to come over the wire for built-in lifts:
+  `DEFAULT_SLOT_MAP` + `LIFT_CATALOG` in `packages/core` already carry it, so
+  `liftClassificationFor` resolves it locally, and only custom lifts need a fetch. See
+  [ADR-035](../adr/ADR-035-client-side-rest-timer-state.md) Amendment 1.
 - **Server-side settings sync.** See Open Questions.
 - **App-wide dark mode.** The mockup ships a full dark palette and an Auto/Light/Dark control, but
   `apps/web`'s `[data-theme]` mechanism switches *accent* themes (`navy`, `iron`), not light/dark.

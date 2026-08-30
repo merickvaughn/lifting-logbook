@@ -145,7 +145,7 @@ First deployable version. Styled web app running against a real database, deploy
 | Proposal | Description | Issue | Status |
 |---|---|---|---|
 | [Download My Data — Full Logbook Export](docs/proposals/2026-08-26-download-my-data-export.md) | One-click `Settings → Data` export: a timestamped `.zip` holding four re-importable CSVs (one per `ImportKind`, so a backup restores through the existing `/import` wizard) plus a complete `logbook.json` bundle covering every user-scoped table | [#947](https://github.com/merickvaughn/lifting-logbook/issues/947) | draft |
-| [Workout Rest Timer](docs/proposals/2026-08-28-workout-rest-timer.md) | Plan-driven `prep → set → rest` countdowns on a workout-scoped timer page and a docked mini-timer on the workout-detail page; durations resolve per-lift override > deload > preset, and elapsed time is wall-clock so the timer survives a locked phone | [#958](https://github.com/merickvaughn/lifting-logbook/issues/958) | shipped |
+| [Workout Rest Timer](docs/proposals/2026-08-28-workout-rest-timer.md) | Plan-driven `prep → set → rest` countdowns on a workout-scoped timer page and a docked mini-timer on the workout-detail page; durations resolve per-lift override > deload > accessory > preset, and elapsed time is wall-clock so the timer survives a locked phone | [#958](https://github.com/merickvaughn/lifting-logbook/issues/958), [#961](https://github.com/merickvaughn/lifting-logbook/issues/961) | shipped |
 
 ---
 

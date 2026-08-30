@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes } from '@/lib/api';
+import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes, fetchCustomLifts } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
 import { computePlannedSets } from '@/lib/workoutPlan';
@@ -28,11 +28,21 @@ export default async function WorkoutDetailPage({
 
   const program = await getActiveProgram();
 
-  const [workout, specs, maxes, unit] = await Promise.all([
+  const [workout, specs, maxes, unit, customLifts] = await Promise.all([
     fetchWorkout(program, workoutNum),
     fetchProgramSpec(program),
     fetchTrainingMaxes(program),
     getPreferredUnit(),
+    // Caught inside the array, unlike its four siblings: this one only enriches
+    // the accessory-rest classification of the user's *own* lifts, so a failure
+    // must degrade to built-in-only classification rather than take down the
+    // whole detail page. The other four are load-bearing and keep their
+    // fail-fast behavior.
+    // fallback-covered-by: apps/web/app/(authed)/cycle/[cycleNum]/workout/[workoutNum]/detail/page.test.tsx
+    fetchCustomLifts().catch((err: unknown) => {
+      console.error('WorkoutDetailPage: custom lifts fetch failed, classifying built-ins only', err);
+      return [];
+    }),
   ]);
 
   if (!workout) {
@@ -62,7 +72,7 @@ export default async function WorkoutDetailPage({
   // mounted at all rather than being mounted and hidden. The timer route applies
   // the same check via `isTimeable`, so the two surfaces cannot disagree.
   const timerAvailable = isTimeable(status);
-  const timerLifts = timerAvailable ? toTimerLiftPlans(liftDetails, unit) : [];
+  const timerLifts = timerAvailable ? toTimerLiftPlans(liftDetails, unit, customLifts) : [];
 
   const plannedSets = liftDetails.reduce((acc, d) => acc + d.warmUpCount + d.workCount, 0);
   const actualSets = workout.lifts.reduce((acc, wl) => acc + wl.sets.length, 0);

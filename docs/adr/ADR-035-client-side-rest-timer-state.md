@@ -155,6 +155,47 @@ lock already covers the "screen off, app still open" case that a lifter actually
   the exact colliding pair. It asserts at least one theme block was found, so an extraction that
   silently matched nothing reports a failure rather than a vacuous pass.
 
+## Amendment 1 — the accessory rung, and where classification comes from (2026-08-29, [#961](https://github.com/merickvaughn/lifting-logbook/issues/961))
+
+The shipped chain was **override → deload → preset**. It is now **override → deload → accessory →
+preset**: a lift classified `accessory` takes its own shorter durations while `context.accessoryOn`
+is set. Deload stays ahead of accessory — a deload week is the narrower, deliberately-entered
+state — and each rung is still consulted per *field*, so the accessory context claiming `restWork`
+leaves `restWarmup` to fall through.
+
+The accessory rung was scoped out of #958 because the workout pages "cannot cheaply obtain
+`LiftClassification`". **That premise was wrong, and the correction is the substance of this
+amendment.** It rested on the two paths that go over the wire — `fetchLiftCatalog`, which returns
+bare names, and `fetchLiftMetadata`, which is one call per lift and exposes `foundational` (a
+per-user editable flag on `LiftMetadata`, defaulting to `false` for everyone) rather than a training
+role. Neither is the cheap path, and the obvious remedy — widening `GET /programs/:program/lifts` to
+return `{ name, classification }[]` — was rejected: it touches ~18 files across the API controller,
+the client, three `string[]`-typed prop chains and the Playwright mock, **and neither the timer nor
+the detail page calls that endpoint at all**, so it would still have required a new fetch on both.
+
+Classification for built-in lifts was already sitting in `packages/core`, the same package
+`resolveDuration` lives in. `DEFAULT_SLOT_MAP` maps every program-spec slot name — canonical
+("Squat") and CSV-abbreviated ("Bench P.") alike — onto a `LIFT_CATALOG` id, and every catalog entry
+carries a `classification`. `liftClassificationFor` (`packages/core/src/catalog/classify.ts`) joins
+the two into one eagerly-built `Map`, so the lookup is local, synchronous, and free of new data.
+Building that map from `Object.entries` rather than indexing the slot map makes the
+prototype-pollution hazard *structurally impossible* instead of guarded: a lift named `toString`
+simply misses, with no `hasOwnProperty` check to forget. Only custom lifts need the network, and
+they are fetched with the already-existing `fetchCustomLifts()` inside each page's existing
+`Promise.all` — caught there, so a failure narrows classification to built-ins rather than taking
+down a timer someone is standing in the gym waiting on.
+
+`accessoryOn` defaults to **on**, unlike `deloadOn`. Because `normalizeTimerSettings` merges a
+persisted blob onto the defaults, an existing user's blob inherits it and their accessory rest
+shortens on next load without being asked. That is the intended behavior change: four minutes
+between cable curls is what the preset alone produces, and it is wrong.
+
+`resolveDuration` gained a **required** fourth parameter rather than an optional one. An optional
+parameter lets a call site opt out of the new rung by omission — no compile error, and durations
+that still look plausible at runtime. `resolveDurationEntry` is a sibling that also reports which
+rung won; the settings panel uses it to say what a lift actually follows, instead of the previous
+hard-coded "Follows &lt;preset&gt;", which had been untrue for every lift whenever a deload week was on.
+
 ## References
 
 - [Screen Wake Lock API](https://www.w3.org/TR/screen-wake-lock/) — W3C spec; §3.3 defines the

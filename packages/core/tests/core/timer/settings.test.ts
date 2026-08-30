@@ -1,29 +1,31 @@
 import {
   STANDARD_DURATIONS,
+  TIMER_DURATION_FIELDS,
   TIMER_PRESET_DEFAULTS,
   defaultTimerSettings,
   normalizeTimerSettings,
   resolveDuration,
+  resolveDurationEntry,
 } from '@src/core';
 
 describe('resolveDuration', () => {
   it('falls back to the active preset when nothing overrides it', () => {
     const s = defaultTimerSettings();
-    expect(resolveDuration(s, 'Bench Press', 'restWork')).toBe(240);
+    expect(resolveDuration(s, 'Bench Press', 'restWork', undefined)).toBe(240);
   });
 
   it('reads from the selected preset, not always Standard', () => {
     const s = defaultTimerSettings();
     s.preset = 'Heavy day';
-    expect(resolveDuration(s, 'Bench Press', 'restWork')).toBe(300);
+    expect(resolveDuration(s, 'Bench Press', 'restWork', undefined)).toBe(300);
   });
 
   it('prefers a per-lift override over the preset', () => {
     const s = defaultTimerSettings();
     s.overrides['Bench Press'] = { restWork: 420 };
 
-    expect(resolveDuration(s, 'Bench Press', 'restWork')).toBe(420);
-    expect(resolveDuration(s, 'Barbell Rows', 'restWork')).toBe(240);
+    expect(resolveDuration(s, 'Bench Press', 'restWork', undefined)).toBe(420);
+    expect(resolveDuration(s, 'Barbell Rows', 'restWork', undefined)).toBe(240);
   });
 
   it('prefers a per-lift override over the deload context', () => {
@@ -31,15 +33,15 @@ describe('resolveDuration', () => {
     s.context.deloadOn = true;
     s.overrides['Bench Press'] = { restWork: 420 };
 
-    expect(resolveDuration(s, 'Bench Press', 'restWork')).toBe(420);
+    expect(resolveDuration(s, 'Bench Press', 'restWork', undefined)).toBe(420);
   });
 
   it('applies the deload context only while the toggle is on', () => {
     const s = defaultTimerSettings();
-    expect(resolveDuration(s, 'Bench Press', 'restWork')).toBe(240);
+    expect(resolveDuration(s, 'Bench Press', 'restWork', undefined)).toBe(240);
 
     s.context.deloadOn = true;
-    expect(resolveDuration(s, 'Bench Press', 'restWork')).toBe(150);
+    expect(resolveDuration(s, 'Bench Press', 'restWork', undefined)).toBe(150);
   });
 
   it('falls through a deload context that does not set the field', () => {
@@ -47,17 +49,140 @@ describe('resolveDuration', () => {
     s.context.deloadOn = true;
     s.context.deload = { workSet: 45 };
 
-    expect(resolveDuration(s, 'Bench Press', 'restWork')).toBe(240);
-    expect(resolveDuration(s, 'Bench Press', 'workSet')).toBe(45);
+    expect(resolveDuration(s, 'Bench Press', 'restWork', undefined)).toBe(240);
+    expect(resolveDuration(s, 'Bench Press', 'workSet', undefined)).toBe(45);
   });
 
   it('falls back to Standard when the active preset no longer exists', () => {
     const s = defaultTimerSettings();
     s.preset = 'Deleted preset';
 
-    expect(resolveDuration(s, 'Bench Press', 'restWork')).toBe(
+    expect(resolveDuration(s, 'Bench Press', 'restWork', undefined)).toBe(
       STANDARD_DURATIONS.restWork,
     );
+  });
+});
+
+describe('resolveDuration — the accessory context', () => {
+  it('shortens an accessory lift and leaves everything else on the preset', () => {
+    const s = defaultTimerSettings();
+
+    // The same settings object, the same field, three different lifts: only the
+    // accessory moves. A single-lift assertion would pass just as well against a
+    // rung wired to fire for every lift.
+    expect(resolveDuration(s, 'Cable Curls', 'restWork', 'accessory')).toBe(90);
+    expect(resolveDuration(s, 'Bench Press', 'restWork', 'compound')).toBe(240);
+    expect(resolveDuration(s, 'Some Unknown Lift', 'restWork', undefined)).toBe(240);
+  });
+
+  it('applies only while the accessory toggle is on', () => {
+    const s = defaultTimerSettings();
+    expect(resolveDuration(s, 'Cable Curls', 'restWork', 'accessory')).toBe(90);
+
+    s.context.accessoryOn = false;
+    expect(resolveDuration(s, 'Cable Curls', 'restWork', 'accessory')).toBe(240);
+  });
+
+  it('loses to a per-lift override', () => {
+    const s = defaultTimerSettings();
+    s.overrides['Cable Curls'] = { restWork: 420 };
+
+    expect(resolveDuration(s, 'Cable Curls', 'restWork', 'accessory')).toBe(420);
+  });
+
+  it('loses to the deload context', () => {
+    const s = defaultTimerSettings();
+    s.context.deloadOn = true;
+
+    // Deload is the narrower, deliberately-entered state, so a deload week
+    // overrides the standing accessory rule rather than the other way round.
+    expect(resolveDuration(s, 'Cable Curls', 'restWork', 'accessory')).toBe(150);
+  });
+
+  it('is reached when a deload week is on but does not set the field', () => {
+    const s = defaultTimerSettings();
+    s.context.deloadOn = true;
+    s.context.deload = { workSet: 45 };
+
+    // Per-field fall-through, not per-rung: deload claims workSet, accessory
+    // still gets to claim restWork.
+    expect(resolveDuration(s, 'Cable Curls', 'workSet', 'accessory')).toBe(45);
+    expect(resolveDuration(s, 'Cable Curls', 'restWork', 'accessory')).toBe(90);
+  });
+
+  it('falls through a field the accessory context does not set', () => {
+    const s = defaultTimerSettings();
+    // Values chosen to collide with nothing in the Standard preset. The shipped
+    // default accessory restWork is 90, which is also the preset's restWarmup —
+    // so with the defaults, a bug that applied the accessory restWork to *every*
+    // field would still produce 90 for restWarmup and this test would pass.
+    s.context.accessory = { workSet: 41, restWork: 91 };
+
+    // The accessory context sets workSet and restWork only — warm-ups, the
+    // between-warm-up rest and the setup countdown stay on the preset.
+    expect(resolveDuration(s, 'Cable Curls', 'restWarmup', 'accessory')).toBe(90);
+    expect(resolveDuration(s, 'Cable Curls', 'prep', 'accessory')).toBe(10);
+    expect(resolveDuration(s, 'Cable Curls', 'warmupSet', 'accessory')).toBe(30);
+
+    // ...and the two it does set still come from it.
+    expect(resolveDuration(s, 'Cable Curls', 'workSet', 'accessory')).toBe(41);
+    expect(resolveDuration(s, 'Cable Curls', 'restWork', 'accessory')).toBe(91);
+  });
+
+  it('is on by default', () => {
+    expect(defaultTimerSettings().context.accessoryOn).toBe(true);
+  });
+});
+
+describe('resolveDurationEntry', () => {
+  it('names the rung each value came from', () => {
+    const s = defaultTimerSettings();
+    s.overrides['Bench Press'] = { restWork: 420 };
+
+    expect(resolveDurationEntry(s, 'Bench Press', 'restWork', 'compound')).toEqual({
+      seconds: 420,
+      source: 'override',
+    });
+    expect(resolveDurationEntry(s, 'Cable Curls', 'restWork', 'accessory')).toEqual({
+      seconds: 90,
+      source: 'accessory',
+    });
+    expect(resolveDurationEntry(s, 'Cable Curls', 'restWork', 'compound')).toEqual({
+      seconds: 240,
+      source: 'preset',
+    });
+
+    s.context.deloadOn = true;
+    expect(resolveDurationEntry(s, 'Cable Curls', 'restWork', 'accessory')).toEqual({
+      seconds: 150,
+      source: 'deload',
+    });
+  });
+
+  it('reports the Standard fallback as its own source, not as the preset', () => {
+    const s = defaultTimerSettings();
+    s.preset = 'Deleted preset';
+
+    // The panel labels a row with this source. Calling it 'preset' would have it
+    // claim the lift follows a preset that no longer exists.
+    expect(resolveDurationEntry(s, 'Bench Press', 'restWork', undefined)).toEqual({
+      seconds: STANDARD_DURATIONS.restWork,
+      source: 'standard',
+    });
+  });
+
+  it('agrees with resolveDuration, which delegates to it', () => {
+    const s = defaultTimerSettings();
+    s.context.deloadOn = true;
+    s.overrides.Squat = { workSet: 75 };
+
+    for (const lift of ['Squat', 'Cable Curls', 'Bench Press']) {
+      for (const field of TIMER_DURATION_FIELDS) {
+        expect(resolveDuration(s, lift, field, 'accessory')).toBe(
+          resolveDurationEntry(s, lift, field, 'accessory').seconds,
+        );
+      }
+    }
   });
 });
 
@@ -145,12 +270,47 @@ describe('normalizeTimerSettings', () => {
     );
 
     const once = normalizeTimerSettings(raw);
-    expect(resolveDuration(once, '__proto__', 'workSet')).toBe(99);
+    expect(resolveDuration(once, '__proto__', 'workSet', undefined)).toBe(99);
 
     // A plain `overrides[lift] = …` write would have survived in memory and then
     // serialized to `{}` — the override would vanish on the next reload.
     const reloaded = normalizeTimerSettings(JSON.parse(JSON.stringify(once)));
-    expect(resolveDuration(reloaded, '__proto__', 'workSet')).toBe(99);
+    expect(resolveDuration(reloaded, '__proto__', 'workSet', undefined)).toBe(99);
+  });
+
+  it('keeps a valid accessory context', () => {
+    const result = normalizeTimerSettings({
+      context: { accessoryOn: false, accessory: { workSet: 40, restWork: 75 } },
+    });
+
+    expect(result.context.accessoryOn).toBe(false);
+    expect(result.context.accessory).toEqual({ workSet: 40, restWork: 75 });
+  });
+
+  it('rejects non-numeric, negative, and non-finite accessory durations', () => {
+    const result = normalizeTimerSettings({
+      context: { accessory: { workSet: 'quick', restWork: -1, prep: Infinity } },
+    });
+
+    // Every field narrowed away, so the section falls back to the defaults
+    // rather than staying on but setting nothing.
+    expect(result.context.accessory).toEqual(defaultTimerSettings().context.accessory);
+  });
+
+  it('defaults the accessory context when the blob predates it', () => {
+    // A blob written by the build that shipped the timer has a context with
+    // deload fields only — it must not normalize to an accessory section that is
+    // switched on but empty, which would resolve nothing and read as a no-op.
+    const base = defaultTimerSettings();
+    const result = normalizeTimerSettings({
+      preset: 'Standard',
+      presets: { Standard: STANDARD_DURATIONS },
+      context: { deloadOn: true, deload: { workSet: 60, restWork: 150 } },
+    });
+
+    expect(result.context.deloadOn).toBe(true);
+    expect(result.context.accessoryOn).toBe(base.context.accessoryOn);
+    expect(result.context.accessory).toEqual(base.context.accessory);
   });
 
   it('restores the default presets when the blob lost them entirely', () => {

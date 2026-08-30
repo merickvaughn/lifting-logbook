@@ -1,9 +1,18 @@
+import type { LiftClassification } from '@lifting-logbook/types';
 import { resolveDuration } from './settings';
 import type { TimerLiftPlan, TimerPhase, TimerSettings, TimerSetPlan } from './types';
 
 /** A flattened `(lift, set)` pair, in performance order. */
 export interface TimerQueueSet {
   lift: string;
+  /**
+   * Carried down from the {@link TimerLiftPlan} this set came from.
+   *
+   * The flatten is where the lift object stops being available, so a role
+   * dropped here is a role `buildTimerQueue` can no longer resolve durations
+   * with — every accessory would silently fall through to the preset.
+   */
+  classification?: LiftClassification | undefined;
   tm?: string | undefined;
   set: TimerSetPlan;
 }
@@ -24,7 +33,7 @@ export function flattenSets(
   for (const lift of lifts) {
     for (const set of lift.sets) {
       if (skipWarmups && set.type === 'warmup') continue;
-      out.push({ lift: lift.lift, tm: lift.tm, set });
+      out.push({ lift: lift.lift, classification: lift.classification, tm: lift.tm, set });
     }
   }
   return out;
@@ -49,10 +58,10 @@ export function buildTimerQueue(
   const sets = flattenSets(lifts, settings.behavior.skipWarmups);
   const queue: TimerPhase[] = [];
 
-  sets.forEach(({ lift, tm, set }, setIndex) => {
+  sets.forEach(({ lift, classification, tm, set }, setIndex) => {
     const common = { lift, tm, set, setIndex, next: null };
 
-    const prep = resolveDuration(settings, lift, 'prep');
+    const prep = resolveDuration(settings, lift, 'prep', classification);
     if (prep > 0) {
       queue.push({ ...common, kind: 'prep', label: 'Get set', dur: prep });
     }
@@ -61,14 +70,24 @@ export function buildTimerQueue(
       ...common,
       kind: 'set',
       label: setLabelFor(set),
-      dur: resolveDuration(settings, lift, set.type === 'warmup' ? 'warmupSet' : 'workSet'),
+      dur: resolveDuration(
+        settings,
+        lift,
+        set.type === 'warmup' ? 'warmupSet' : 'workSet',
+        classification,
+      ),
     });
 
     queue.push({
       ...common,
       kind: 'rest',
       label: 'Rest',
-      dur: resolveDuration(settings, lift, set.type === 'warmup' ? 'restWarmup' : 'restWork'),
+      dur: resolveDuration(
+        settings,
+        lift,
+        set.type === 'warmup' ? 'restWarmup' : 'restWork',
+        classification,
+      ),
     });
   });
 
