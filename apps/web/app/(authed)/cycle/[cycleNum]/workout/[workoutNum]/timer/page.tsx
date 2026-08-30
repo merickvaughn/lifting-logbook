@@ -81,7 +81,12 @@ export default async function WorkoutTimerPage({
   const liftDetails = workout.lifts.map((wl) => {
     const tm = maxMap.get(wl.lift) ?? 0;
     const spec = specs.find((s) => s.week === workout.week && s.lift === wl.lift);
-    return { lift: wl.lift, tm, plannedSets: spec ? computePlannedSets(spec, tm) : [] };
+    return {
+      lift: wl.lift,
+      tm,
+      activation: spec?.activation,
+      plannedSets: spec ? computePlannedSets(spec, tm) : [],
+    };
   });
 
   return (

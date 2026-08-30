@@ -59,8 +59,11 @@ const WORKOUT = {
   ],
 };
 
+// `activation` is the spec's own free-text column. Squat carries a real movement
+// name so the timer's activation phase (#960) is exercised end to end; the other
+// three keep the legacy `'none'` placeholder, which must produce no phase at all.
 const PROGRAM_SPEC = [
-  { week: 1, lift: 'squat', order: 1, offset: 0, increment: 5, sets: 3, reps: 5, amrap: true, warmUpPct: '0.4,0.5,0.6', wtDecrementPct: 0, activation: 'none' },
+  { week: 1, lift: 'squat', order: 1, offset: 0, increment: 5, sets: 3, reps: 5, amrap: true, warmUpPct: '0.4,0.5,0.6', wtDecrementPct: 0, activation: 'Hip Airplane' },
   { week: 1, lift: 'deadlift', order: 2, offset: 0, increment: 5, sets: 3, reps: 5, amrap: true, warmUpPct: '0.4,0.5,0.6', wtDecrementPct: 0, activation: 'none' },
   { week: 1, lift: 'bench-press', order: 3, offset: 0, increment: 5, sets: 3, reps: 5, amrap: true, warmUpPct: '0.4,0.5,0.6', wtDecrementPct: 0, activation: 'none' },
   { week: 1, lift: 'overhead-press', order: 4, offset: 0, increment: 5, sets: 3, reps: 5, amrap: true, warmUpPct: '0.4,0.5,0.6', wtDecrementPct: 0, activation: 'none' },

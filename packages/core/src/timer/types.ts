@@ -8,8 +8,13 @@
 
 import type { LiftClassification } from '@lifting-logbook/types';
 
-/** The three things a timed session counts down. */
-export type TimerPhaseKind = 'prep' | 'set' | 'rest';
+/**
+ * The four things a timed session counts down.
+ *
+ * `activation` is the pre-lift movement drawn from the program spec's own
+ * `activation` column — see {@link TimerLiftPlan.activation}.
+ */
+export type TimerPhaseKind = 'prep' | 'set' | 'rest' | 'activation';
 
 /** A duration field on a preset, in whole seconds. */
 export type TimerDurationField =
@@ -17,7 +22,8 @@ export type TimerDurationField =
   | 'workSet'
   | 'restWarmup'
   | 'restWork'
-  | 'prep';
+  | 'prep'
+  | 'activation';
 
 /** Every duration a preset carries, in seconds. */
 export type TimerPresetDurations = Record<TimerDurationField, number>;
@@ -30,8 +36,14 @@ export type TimerPresetDurations = Record<TimerDurationField, number>;
  * than this package reaching outward for it.
  */
 export interface TimerSetPlan {
-  /** Which duration field the set itself draws from. */
-  type: 'warmup' | 'work';
+  /**
+   * Which duration field the set itself draws from.
+   *
+   * `activation` belongs only to the synthetic set the activation phase carries —
+   * it never appears in {@link TimerLiftPlan.sets}, which the web layer maps from
+   * `PlannedSet` (`'warmup' | 'work'` by construction).
+   */
+  type: 'warmup' | 'work' | 'activation';
   /** Display label, e.g. `Warm-up 1` or `Set 3`. */
   setLabel: string;
   /** Human-readable prescription, e.g. `5 × 135 lbs`. Display only. */
@@ -53,6 +65,17 @@ export interface TimerLiftPlan {
   classification?: LiftClassification | undefined;
   /** Training-max caption, e.g. `TM: 285 lbs`. Display only. Explicitly `| undefined` for exactOptionalPropertyTypes. */
   tm?: string | undefined;
+  /**
+   * Activation movement performed once before this lift's first timed set, e.g.
+   * `Hip Airplane`. Absent means the lift has none, and no activation phase is
+   * emitted for it.
+   *
+   * Carried on the *lift* rather than on a set because an activation movement is
+   * not a set: it has no weight and no training max, so it does not fit the web
+   * layer's TM-derived `PlannedSet`. This mirrors the design mockup's own shape,
+   * where `kind` is a property of a lift.
+   */
+  activation?: string | undefined;
   sets: TimerSetPlan[];
 }
 

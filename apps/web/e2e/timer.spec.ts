@@ -129,3 +129,35 @@ test('the timer page links back to the workout detail page', async ({ page }) =>
   await page.getByRole('link', { name: /Week \d+ · Workout \d+/ }).click();
   await expect(page).toHaveURL(/\/cycle\/1\/workout\/1\/detail$/);
 });
+
+// ---------------------------------------------------------------------------
+// Activation (#960)
+// ---------------------------------------------------------------------------
+
+test('an activation the program names appears in the plan and the queue', async ({ page }) => {
+  // The mock spec gives squat `activation: 'Hip Airplane'` and leaves the other
+  // three lifts on the legacy `'none'` placeholder.
+  await page.goto('/cycle/1/workout/1/detail');
+
+  await page.getByRole('button', { name: /warm-up/ }).first().click();
+  await expect(page.getByText('Hip Airplane')).toBeVisible();
+
+  await page.goto('/cycle/1/workout/1/timer');
+
+  const queueRow = page.getByRole('listitem').filter({ hasText: 'Hip Airplane' });
+  await expect(queueRow).toHaveCount(1);
+  await expect(queueRow).toContainText('Activation');
+
+  // It opens the session rather than replacing the first set's setup countdown.
+  await page.getByRole('button', { name: 'Start' }).click();
+  await expect(page.getByText('Activation', { exact: true }).first()).toBeVisible();
+});
+
+test('a legacy activation placeholder produces no phase', async ({ page }) => {
+  await page.goto('/cycle/1/workout/1/timer');
+
+  // 'none' is a classification placeholder, not a movement — rendering it would
+  // put "Activation · none" on the dial for three of the four lifts.
+  await expect(page.getByText('none')).toHaveCount(0);
+  await expect(page.getByRole('listitem').filter({ hasText: 'Activation' })).toHaveCount(1);
+});

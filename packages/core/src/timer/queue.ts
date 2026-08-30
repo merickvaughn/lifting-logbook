@@ -14,6 +14,16 @@ export interface TimerQueueSet {
    */
   classification?: LiftClassification | undefined;
   tm?: string | undefined;
+  /** The lift's activation movement, carried through so the queue can emit its phase. */
+  activation?: string | undefined;
+  /**
+   * Index of the {@link TimerLiftPlan} this set came from.
+   *
+   * The lift *name* cannot serve as the boundary marker: one workout can legitimately
+   * hold the same lift twice (the program editor keys an instance by position, not by
+   * name), and each occurrence gets its own activation.
+   */
+  liftIndex: number;
   set: TimerSetPlan;
 }
 
@@ -30,12 +40,19 @@ export function flattenSets(
   skipWarmups: boolean,
 ): TimerQueueSet[] {
   const out: TimerQueueSet[] = [];
-  for (const lift of lifts) {
+  lifts.forEach((lift, liftIndex) => {
     for (const set of lift.sets) {
       if (skipWarmups && set.type === 'warmup') continue;
-      out.push({ lift: lift.lift, classification: lift.classification, tm: lift.tm, set });
+      out.push({
+        lift: lift.lift,
+        classification: lift.classification,
+        tm: lift.tm,
+        activation: lift.activation,
+        liftIndex,
+        set,
+      });
     }
-  }
+  });
   return out;
 }
 
@@ -50,6 +67,12 @@ function setLabelFor(set: TimerSetPlan): string {
  * `set` itself, then `rest`. The trailing rest is dropped so a session ends on
  * a set rather than leaving the lifter counting down after the last rep; a
  * `prep` of zero is omitted rather than emitted as an instant phase.
+ *
+ * A lift carrying an {@link TimerLiftPlan.activation} movement additionally opens
+ * with one `activation` phase, before its first timed set's `prep`. Emitting it
+ * from inside the *flattened* loop is what makes it inherit the flattening rules
+ * for free: a lift whose sets are all warm-ups gets no activation once
+ * `skipWarmups` is on, because it contributes no timed set to open.
  */
 export function buildTimerQueue(
   lifts: readonly TimerLiftPlan[],
@@ -57,9 +80,29 @@ export function buildTimerQueue(
 ): TimerPhase[] {
   const sets = flattenSets(lifts, settings.behavior.skipWarmups);
   const queue: TimerPhase[] = [];
+  let openedLiftIndex: number | null = null;
 
-  sets.forEach(({ lift, classification, tm, set }, setIndex) => {
+  sets.forEach(({ lift, classification, tm, activation, liftIndex, set }, setIndex) => {
     const common = { lift, tm, set, setIndex, next: null };
+
+    if (liftIndex !== openedLiftIndex) {
+      openedLiftIndex = liftIndex;
+      const dur = resolveDuration(settings, lift, 'activation', classification);
+      // Zero omits the phase, matching `prep` below — that is also the per-lift
+      // "turn this one off" mechanism, via an override of `activation: 0`.
+      if (activation !== undefined && activation !== '' && dur > 0) {
+        queue.push({
+          ...common,
+          kind: 'activation',
+          label: 'Activation',
+          dur,
+          // Its own set rather than the one it precedes: the dial names the
+          // movement, and borrowing the first set's label would announce
+          // "Warm-up 1 · 5 × 135 lbs" while the lifter is doing hip airplanes.
+          set: { type: 'activation', setLabel: activation, spec: '' },
+        });
+      }
+    }
 
     const prep = resolveDuration(settings, lift, 'prep', classification);
     if (prep > 0) {

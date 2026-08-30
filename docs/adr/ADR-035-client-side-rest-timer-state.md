@@ -307,6 +307,96 @@ restores the rest of the run. `loadTimerRun` closes the gap immediately afterwar
 whatever the guard let through with `normalizeClassifications`'s output — the same always-succeeds
 contract `normalizeTimerSettings` already gives the settings half of this blob, extended to the run
 half for the first time.
+## Amendment 3 — the activation phase, and what the spec's `activation` column means (2026-08-31, [#960](https://github.com/merickvaughn/lifting-logbook/issues/960))
+
+This extends the decision above rather than reopening it — the split it records (plan data
+server-side, timer configuration client-side) is what settles where each half of an activation block
+lives.
+
+### The premise #960 inherited was wrong
+
+#958 scoped the mockup's activation block out on the grounds that "no activation concept exists in
+the domain." In fact `LiftingProgramSpecResponse.activation: string` already existed, DB-backed
+(`custom_program_spec.activation`, shipped in migration `20260515151721_add_programs_management`),
+mapped by `toLiftingProgramSpecResponse`, importable via the CSV `Activation` column, and already
+fetched by both timer surfaces. Nothing in `apps/web` read it, which is why the gap went unnoticed.
+
+Its documented meaning is an **exercise name**: `rpt_program_spec.schema.json` describes it as
+"Activation exercise name", it maps to the legacy `"Activ. Ex."` sheet column in `LIFT_SPEC_HEADERS`,
+and the design doc's own example value is `"leg press"`.
+
+### Decision
+
+**An activation movement is program-spec data.** It varies per `(program, week, lift)` and is already
+stored and served, so this needed no migration, no new endpoint, and no `packages/types` change. The
+queue emits one `activation` phase before each lift's first *timed* set.
+
+**Its duration stays client-side**, as a sixth `TimerDurationField` in `ll.timer.v1`, resolved through
+the unchanged override → deload → preset chain. That split falls straight out of the decision above:
+this ADR constrains timer settings and run state, not the plan, which was always server-side.
+
+**The activation attaches to `TimerLiftPlan`, not to a set** — mirroring the mockup, where `kind` is a
+property of a lift. That is what keeps `PlannedSet` and `computePlannedSets` untouched: a `PlannedSet`
+is TM-derived arithmetic (`weight: number`, `reps: number`), and an unweighted "8 each side" movement
+does not fit it. The phase carries its own synthetic set naming the movement rather than borrowing the
+one it precedes, so the dial does not announce "Warm-up 1 · 5 × 135 lbs" during hip airplanes.
+
+**The column is read, not rewritten.** `PRESET_BASE_SPECS` and the program editor's default row store
+a movement *classification* there (`'compound'` / `'isolation'`) instead of a name, so a naive read
+would put "Activation · compound" in front of every lift of every built-in program. Rather than
+rewrite those literals — `presets/index.test.ts` asserts on them, and they are the only classification
+data the repo has — `activationExercise` (`packages/core/src/timer/activation.ts`) treats a closed set
+of legacy values as "no activation". Each member traces to a shipped literal (`''`, `'compound'`,
+`'isolation'`, `'none'`); `'main'` / `'standard'` / `'accessory'` are deliberately excluded because
+they occur only in unrelated API test fixtures.
+
+### Alternatives considered
+
+- **A client-only timer setting** — a movement name and duration configured once in Timer Settings.
+  Rejected: it duplicates a field that already exists, and it cannot vary by program or week, which is
+  exactly what a spec-driven activation is for.
+- **A new per-workout annotation resource** — a Prisma model, endpoints, a repository and a UI.
+  Rejected on the same cost grounds as Option 1 above: four layers and a migration for a countdown
+  ring, when the column is already on the wire.
+- **Rewriting `PRESET_BASE_SPECS` to blank the legacy values.** Rejected: it discards the only
+  classification data in the repo and changes what `GET /programs/:program/spec` returns, for no gain
+  a read-side predicate does not already deliver.
+
+### Consequences
+
+- The dial now paints **five** phases, so `--color-activation` joins the guarded set (navy `#8e44ad`,
+  iron `#7c3aed`) and `DIAL_PHASES` grows. That guard reads the *stylesheet*, so it cannot see whether
+  `TimerDial.tsx` ever applies the class — and that chain ends in `styles.set` as its fallthrough, so
+  an unbranched phase paints accent-coloured and passes. `TimerDial.test.tsx` closes that half.
+- `TimerPresetDurations` is a total `Record`, so adding the field broke every preset literal at
+  compile time — the intended failure mode. A persisted blob written before this change has no
+  `activation` duration; `normalizeTimerSettings` fills it from the shipped preset rather than leaving
+  a hole that would render `NaN`.
+- The per-set ▶ had to learn to skip the activation: it shares the `setIndex` of the lift's first
+  timed set, exactly as a `prep` does, so a plain match would have started "Start timer at Squat
+  Warm-up 1" on a hip-airplane countdown.
+- **This closes a latent option Amendment 1 declined to take anyway.** `activation` holds *almost*
+  the `LiftClassification` data #961 needed — the built-in presets fill it with
+  `'compound'`/`'isolation'` — so squatting on the column was a possibility there. Amendment 1
+  instead sourced classification from `LIFT_CATALOG`, which is the better answer and leaves this one
+  free: `activation` means an exercise name, and the two features do not contend for the field. What
+  remains untidy is the column's *stored* contents, which are a classification in every shipped
+  preset. Disambiguating that — leaving `activation` as the name, and surfacing it in the program
+  editor so a lifter can set one at all — is filed as a follow-up; until then only an imported
+  `Activ. Ex.` column or a hand-authored custom program can name a movement.
+
+### Verification
+
+- `packages/core/tests/core/timer/activation.test.ts` — calibrates the predicate in both directions.
+  The known-good corpus is read **live** from `PRESET_BASE_SPECS` with a non-empty assertion in front
+  of it, so a reshape of that module fails the test rather than passing over an empty list.
+- `packages/core/tests/core/timer/queue.test.ts` — one phase per lift (not per set), none without a
+  movement, none at duration zero, `setIndex` alignment under `skipWarmups`, and a repeated lift name
+  getting one activation per occurrence.
+- `apps/web/components/timer/TimerDial.test.tsx` — every phase kind resolves to a *distinct* class.
+- `scripts/check-timer-phase-colors.mjs` — recalibrated at five phases: passes on the current
+  definitions, and fails naming `activation and prep` when `--color-activation` is set to iron's
+  amber.
 
 ## References
 

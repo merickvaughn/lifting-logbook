@@ -39,10 +39,16 @@ const TIMER_LIFTS: TimerLiftPlan[] = [
   },
 ];
 
-function renderList({ withTimer }: { withTimer: boolean }) {
+function renderList({
+  withTimer,
+  liftDetails = LIFT_DETAILS,
+}: {
+  withTimer: boolean;
+  liftDetails?: LiftDetail[];
+}) {
   const list = (
     <CollapsibleLiftList
-      liftDetails={LIFT_DETAILS}
+      liftDetails={liftDetails}
       cycleNum={1}
       workoutNum={1}
       unit="lbs"
@@ -157,5 +163,58 @@ describe('CollapsibleLiftList with the timer', () => {
     expect(rowFor('Set 1')?.className).toContain('setRowActive');
     expect(rowFor('Warm-up 1')?.className).toContain('setRowDone');
     expect(rowFor('Set 2')?.className).not.toContain('setRowDone');
+  });
+
+  describe('the activation movement (#960)', () => {
+    /** `LIFT_DETAILS` with the raw spec column set, as the detail page passes it. */
+    function withActivation(activation: string): LiftDetail[] {
+      return LIFT_DETAILS.map((detail) => ({ ...detail, activation }));
+    }
+
+    it('shows the movement the program names for the lift', async () => {
+      const user = userEvent.setup();
+      renderList({ withTimer: false, liftDetails: withActivation('Hip Airplane') });
+
+      await user.click(liftHeader());
+
+      expect(screen.getByText('Activation')).toBeInTheDocument();
+      expect(screen.getByText('Hip Airplane')).toBeInTheDocument();
+    });
+
+    it('gives it no play control — an activation is not a set', async () => {
+      const user = userEvent.setup();
+      renderList({ withTimer: true, liftDetails: withActivation('Hip Airplane') });
+
+      await user.click(liftHeader());
+
+      expect(
+        screen.queryByRole('button', { name: /Start timer at Bench Press Hip Airplane/ }),
+      ).not.toBeInTheDocument();
+      // The real sets still have theirs.
+      expect(
+        screen.getByRole('button', { name: 'Start timer at Bench Press Set 1' }),
+      ).toBeInTheDocument();
+    });
+
+    it('shows nothing when the lift has no activation', async () => {
+      const user = userEvent.setup();
+      renderList({ withTimer: false });
+
+      await user.click(liftHeader());
+
+      expect(screen.queryByText('Activation')).not.toBeInTheDocument();
+    });
+
+    it('shows nothing for a legacy classification value in the column', async () => {
+      const user = userEvent.setup();
+      // Every built-in program ships `'compound'` here. Rendering it verbatim
+      // would put "Activation · compound" on every lift of every preset program.
+      renderList({ withTimer: false, liftDetails: withActivation('compound') });
+
+      await user.click(liftHeader());
+
+      expect(screen.queryByText('Activation')).not.toBeInTheDocument();
+      expect(screen.queryByText('compound')).not.toBeInTheDocument();
+    });
   });
 });

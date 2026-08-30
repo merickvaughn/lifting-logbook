@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * Validates that the rest timer's four dial-phase colors stay mutually distinct
+ * Validates that the rest timer's five dial-phase colors stay mutually distinct
  * within every theme defined in apps/web/app/globals.css.
  *
- * The countdown ring paints exactly one of four states — set, rest, prep and
- * overrun — so if any two resolve to the same value inside a theme, the ring
- * silently stops carrying information for that pair. Nothing else catches it:
+ * The countdown ring paints exactly one of five states — set, rest, prep,
+ * activation and overrun — so if any two resolve to the same value inside a
+ * theme, the ring silently stops carrying information for that pair. Nothing
+ * else catches it:
  * both colors are valid tokens, every test passes, and the page renders without
  * complaint.
  *
@@ -34,12 +35,13 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
 /**
- * The four states the dial can paint, per TimerDial.tsx's phase -> class chain.
+ * The states the dial can paint, per TimerDial.tsx's phase -> class chain.
  *
- * This is a contract (the dial has exactly these four states), not a duplicated
- * value — the *colors* are derived from source below.
+ * This is a contract (the dial has exactly these states), not a duplicated
+ * value — the *colors* are derived from source below, and every message that
+ * names the phases is built from this array so the two cannot drift.
  */
-export const DIAL_PHASES = ['set', 'rest', 'prep', 'overrun'];
+export const DIAL_PHASES = ['set', 'rest', 'prep', 'activation', 'overrun'];
 
 // --- Pure parsing helpers (exported for unit testing) ---
 
@@ -163,7 +165,7 @@ function main() {
     fail([
       'FAIL: cannot resolve the dial phase colors from TimerDial.module.css.\n',
       ...problems.map((p) => `  ${p}`),
-      '\nEach of .set/.rest/.prep/.overrun must stroke a var(--custom-property)',
+      `\nEach of ${DIAL_PHASES.map((p) => `.${p}`).join('/')} must stroke a var(--custom-property)`,
       'so this guard can check it against every theme.',
     ]);
   }
@@ -216,8 +218,8 @@ function main() {
     fail([
       'FAIL: rest-timer dial phases are not distinguishable.\n',
       failures.join('\n'),
-      '\nEach theme must give set/rest/prep/overrun four different colors.',
-      'See #958 and docs/adr/ADR-035-client-side-rest-timer-state.md.',
+      `\nEach theme must give ${DIAL_PHASES.join('/')} ${DIAL_PHASES.length} different colors.`,
+      'See #958, #960 and docs/adr/ADR-035-client-side-rest-timer-state.md.',
     ]);
   }
 

@@ -14,9 +14,23 @@ import type {
  * point the override chain falls back to.
  */
 const SHIPPED_PRESETS = {
-  Standard: { warmupSet: 30, workSet: 60, restWarmup: 90, restWork: 240, prep: 10 },
-  'Heavy day': { warmupSet: 30, workSet: 60, restWarmup: 90, restWork: 300, prep: 15 },
-  'Light day': { warmupSet: 30, workSet: 45, restWarmup: 60, restWork: 150, prep: 10 },
+  Standard: { warmupSet: 30, workSet: 60, restWarmup: 90, restWork: 240, prep: 10, activation: 60 },
+  'Heavy day': {
+    warmupSet: 30,
+    workSet: 60,
+    restWarmup: 90,
+    restWork: 300,
+    prep: 15,
+    activation: 60,
+  },
+  'Light day': {
+    warmupSet: 30,
+    workSet: 45,
+    restWarmup: 60,
+    restWork: 150,
+    prep: 10,
+    activation: 45,
+  },
 } satisfies Record<string, TimerPresetDurations>;
 
 /**
@@ -42,6 +56,7 @@ export const TIMER_DURATION_FIELDS: readonly TimerDurationField[] = [
   'restWarmup',
   'restWork',
   'prep',
+  'activation',
 ] as const;
 
 /** Label and hint copy for each duration field. */
@@ -54,6 +69,11 @@ export const TIMER_FIELD_COPY: Record<
   restWarmup: { label: 'Between warm-ups', hint: 'Enough to strip and load plates', step: 15 },
   restWork: { label: 'Between working sets', hint: 'The long one', step: 15 },
   prep: { label: 'Setup countdown', hint: 'Runs before every set — get in position', step: 5 },
+  activation: {
+    label: 'Activation',
+    hint: 'Runs once before each lift that has an activation movement',
+    step: 15,
+  },
 };
 
 const DEFAULT_BEHAVIOR: TimerBehavior = {

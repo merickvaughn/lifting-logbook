@@ -38,6 +38,10 @@
   stroke: var(--color-prep);
 }
 
+.activation {
+  stroke: var(--color-activation);
+}
+
 .overrun {
   stroke: var(--color-error-text);
 }

@@ -99,6 +99,58 @@ describe('queue and startup', () => {
   });
 });
 
+describe('activation', () => {
+  const WITH_ACTIVATION: TimerLiftPlan[] = LIFTS.map((lift) => ({
+    ...lift,
+    activation: 'Hip Airplane',
+  }));
+
+  function renderWithActivation() {
+    return renderHook(() => useWorkoutTimer(WITH_ACTIVATION, WORKOUT));
+  }
+
+  it('opens the queue with the activation phase', () => {
+    const { result } = renderWithActivation();
+    expect(result.current.queue.map((p) => p.kind)).toEqual([
+      'activation',
+      'prep',
+      'set',
+      'rest',
+      'prep',
+      'set',
+    ]);
+  });
+
+  it('starts the whole session on the activation', () => {
+    const { result } = renderWithActivation();
+    act(() => result.current.startAt(0));
+    expect(result.current.phase?.kind).toBe('activation');
+    expect(result.current.phase?.set.setLabel).toBe('Hip Airplane');
+  });
+
+  it('starts a per-set ▶ on that set, not on the lift activation', () => {
+    // The activation shares setIndex 0 with the lift's first timed set (as a prep
+    // does), so a plain `setIndex` match would land the ▶ labelled "Start timer at
+    // Bench Press Warm-up 1" on a hip-airplane countdown instead.
+    const { result } = renderWithActivation();
+    act(() => result.current.startAtSet(0));
+
+    expect(result.current.phase?.kind).toBe('prep');
+    expect(result.current.phase?.set.setLabel).toBe('Warm-up 1');
+  });
+
+  it('auto-advances out of the activation into the first prep', () => {
+    const { result } = renderWithActivation();
+    act(() => result.current.startAt(0));
+
+    const dur = result.current.duration;
+    expect(dur).toBeGreaterThan(0);
+    act(() => advance(dur * 1000 + 200));
+
+    expect(result.current.phase?.kind).toBe('prep');
+  });
+});
+
 describe('wall-clock timekeeping', () => {
   it('counts down from the clock even when the interval never fires', () => {
     const { result, rerender } = render();

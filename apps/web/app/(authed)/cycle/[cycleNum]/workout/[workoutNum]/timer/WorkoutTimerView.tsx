@@ -87,11 +87,16 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
             <li key={`${item.kind}-${i}`} className={`${styles.queueRow} ${state}`}>
               <span className={styles.queueLabel}>
                 <span className={styles.queueKind}>
-                  {item.kind === 'prep' ? 'Setup' : item.kind === 'rest' ? 'Rest' : 'Set'}
+                  {item.kind === 'prep' ? 'Setup'
+                  : item.kind === 'rest' ? 'Rest'
+                  : item.kind === 'activation' ? 'Activation'
+                  : 'Set'}
                 </span>
                 <span>
                   {item.lift}
-                  {item.kind === 'set' ? ` · ${item.set.spec}` : ''}
+                  {item.kind === 'set' ? ` · ${item.set.spec}`
+                  : item.kind === 'activation' ? ` · ${item.set.setLabel}`
+                  : ''}
                 </span>
               </span>
               <span className={styles.queueDur}>{formatDuration(item.dur)}</span>

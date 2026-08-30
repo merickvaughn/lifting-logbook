@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { formatWeight } from '@lifting-logbook/core';
+import { activationExercise, formatWeight } from '@lifting-logbook/core';
 import type { WeightUnit } from '@lifting-logbook/types';
 import type { PlannedSet } from '@/lib/workoutPlan';
 import { useTimerRowState } from '@/components/timer/WorkoutTimerProvider';
@@ -12,6 +12,12 @@ import styles from './detail.module.css';
 export interface LiftDetail {
   lift: string;
   tm: number;
+  /**
+   * The program spec's raw `activation` column. Narrowed here with
+   * `activationExercise`, because the column also carries legacy classification
+   * values (`'compound'` / `'isolation'`) that are not movement names.
+   */
+  activation?: string | undefined;
   warmUpCount: number;
   workCount: number;
   plannedSets: PlannedSet[];
@@ -106,11 +112,12 @@ export default function CollapsibleLiftList({
 
   return (
     <ul className={styles.liftList}>
-      {liftDetails.map(({ lift, tm, warmUpCount, workCount, plannedSets }) => {
+      {liftDetails.map(({ lift, tm, activation, warmUpCount, workCount, plannedSets }) => {
         const isExpanded = expanded.has(lift);
         const panelId = `lift-detail-${encodeURIComponent(lift)}`;
         const warmUpSets = plannedSets.filter((s) => s.type === 'warmup');
         const workSets = plannedSets.filter((s) => s.type === 'work');
+        const activationMovement = activationExercise(activation);
 
         return (
           <li key={lift} className={styles.liftItem}>
@@ -155,6 +162,21 @@ export default function CollapsibleLiftList({
               className={`${styles.liftItemContent} ${isExpanded ? styles.liftItemContentVisible : ''}`}
             >
               <div className={styles.liftItemContentInner}>
+                {activationMovement !== undefined && (
+                  /*
+                    Read-only: an activation is not a set, so it gets no ▶ — the
+                    timer reaches it by starting the session, not by starting a
+                    set. Shown here so the phase the timer counts down has a
+                    visible home in the plan.
+                  */
+                  <div className={styles.setGroup}>
+                    <span className={styles.setGroupLabel}>Activation</span>
+                    <div className={styles.setRow}>
+                      <span className={styles.setLabel}>{activationMovement}</span>
+                    </div>
+                  </div>
+                )}
+
                 {warmUpSets.length > 0 && (
                   <div className={styles.setGroup}>
                     <span className={styles.setGroupLabel}>Warm-up</span>
