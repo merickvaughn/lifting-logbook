@@ -108,6 +108,59 @@ export function buildTimerQueue(
   return queue;
 }
 
+/**
+ * Snapshots each lift's resolved classification, keyed by lift name.
+ *
+ * What a fresh run pins into {@link TimerRunState.classifications} so a later
+ * queue rebuild — on either route, at any point in the run's lifetime — can
+ * reapply the same answer via {@link applyClassifications} instead of
+ * re-resolving it and risking a different result. See the field doc on
+ * `TimerRunState.classifications` for why that risk is real.
+ *
+ * Built on `Object.create(null)` rather than `{}`: a lift name is arbitrary
+ * user input (a custom lift's own name), and a literal `"__proto__"` or
+ * `"toString"` must land as its own entry rather than being read through, or
+ * silently reassigning, `Object.prototype` — the same hazard `hasOwn`/`defineOwn`
+ * guard against in `./settings`, sidestepped here at the root by giving the
+ * accumulator no prototype to collide with.
+ */
+export function snapshotClassifications(
+  lifts: readonly TimerLiftPlan[],
+): Record<string, LiftClassification | undefined> {
+  const out: Record<string, LiftClassification | undefined> = Object.create(null);
+  for (const lift of lifts) out[lift.lift] = lift.classification;
+  return out;
+}
+
+/**
+ * Overrides each lift's classification with the pinned value from a run's
+ * snapshot, where one names that lift.
+ *
+ * A lift the snapshot has no entry for — one new to the plan since the run
+ * started, or a `classifications` map normalized from a run persisted before
+ * this field existed — keeps whatever classification this call already
+ * resolved for it, exactly as every route did before this existed. Pinning is
+ * additive, never a reason for a lift to lose an opinion it already has.
+ *
+ * Reads via a borrowed `hasOwnProperty`, not the `in` operator: both
+ * {@link snapshotClassifications} and `normalizeClassifications` (`./settings`)
+ * hand this a null-prototype map, so `in` would be equally safe against either
+ * — but this function's own safety should not depend on every future caller
+ * remembering that. `in` walks the prototype chain, so on an ordinary `{}`-based
+ * map a lift literally named `"toString"` — absent from the map — would read as
+ * present, sourcing its classification from `Object.prototype.toString`.
+ */
+export function applyClassifications(
+  lifts: readonly TimerLiftPlan[],
+  classifications: Record<string, LiftClassification | undefined>,
+): TimerLiftPlan[] {
+  return lifts.map((lift) =>
+    Object.prototype.hasOwnProperty.call(classifications, lift.lift) ?
+      { ...lift, classification: classifications[lift.lift] }
+    : lift,
+  );
+}
+
 /** Headline numbers for the "Timed plan: N sets · M:SS including rest" hint. */
 export interface TimerQueueSummary {
   sets: number;

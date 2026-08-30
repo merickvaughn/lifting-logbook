@@ -343,3 +343,35 @@ export function normalizeTimerSettings(raw: unknown): TimerSettings {
     },
   };
 }
+
+function isLiftClassification(value: unknown): value is LiftClassification {
+  return value === 'compound' || value === 'accessory';
+}
+
+/**
+ * Sanitizes a run's persisted `classifications` snapshot (see
+ * `TimerRunState.classifications` in `./types`).
+ *
+ * Same contract as {@link normalizeTimerSettings}: a hand-edited, truncated, or
+ * older-schema value — one persisted before this field existed — degrades to an
+ * empty map rather than rejecting the run it belongs to. `applyClassifications`
+ * already treats a lift absent from the map as "no pinned answer, resolve it
+ * yourself", so `{}` is a meaningful default, not a loss of data: it reproduces
+ * exactly the independent-resolution behavior every route had before this
+ * field existed.
+ *
+ * Built on `Object.create(null)`, not `{}`, for the same reason
+ * `snapshotClassifications` in `./queue` is: the keys are lift names, arbitrary
+ * user input, and a literal `"__proto__"` must land as its own entry rather
+ * than being read through, or silently reassigning, `Object.prototype`.
+ */
+export function normalizeClassifications(
+  raw: unknown,
+): Record<string, LiftClassification | undefined> {
+  const out: Record<string, LiftClassification | undefined> = Object.create(null);
+  if (!isRecord(raw)) return out;
+  for (const [lift, value] of Object.entries(raw)) {
+    if (isLiftClassification(value)) out[lift] = value;
+  }
+  return out;
+}

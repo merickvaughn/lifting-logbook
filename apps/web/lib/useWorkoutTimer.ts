@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  applyClassifications,
   buildTimerQueue,
   defaultTimerSettings,
   phaseDuration,
   phaseProgress,
   phaseRemaining,
   setProgress,
+  snapshotClassifications,
 } from '@lifting-logbook/core';
 import type {
   TimerLiftPlan,
@@ -124,7 +126,30 @@ export function useWorkoutTimer(
     setHydrated(true);
   }, [workout]);
 
-  const queue = useMemo(() => buildTimerQueue(lifts, settings), [lifts, settings]);
+  // A live run pins its lifts' classification (see `TimerRunState.classifications`
+  // in @lifting-logbook/core) so that once a run exists, every queue rebuild — on
+  // this route or the other — reapplies that pinned answer rather than whatever
+  // this mount resolved on its own. Without it, the timer page and the
+  // workout-detail dock could independently resolve a custom lift's
+  // classification differently (a `fetchCustomLifts()` failure on one route and
+  // not the other, or a mid-session reclassification) and disagree about the
+  // same in-flight rest's duration — issue #966.
+  //
+  // Keyed on `run?.classifications` rather than `run` itself: that reference is
+  // stable across a pause, nudge, or phase advance (see `commitRun` and `startAt`
+  // below, both of which carry the existing map forward rather than rebuilding
+  // it), and changes only when a run is freshly hydrated or freshly started — so
+  // this does not rebuild the queue on every tick-driven state change.
+  const runClassifications = run?.classifications;
+  const effectiveLifts = useMemo(
+    () => (runClassifications ? applyClassifications(lifts, runClassifications) : lifts),
+    [lifts, runClassifications],
+  );
+
+  const queue = useMemo(
+    () => buildTimerQueue(effectiveLifts, settings),
+    [effectiveLifts, settings],
+  );
 
   // A queue that shrank under a running session (e.g. skipWarmups was switched on
   // mid-workout) would leave idx dangling past the end; treat that as finished.
@@ -283,9 +308,16 @@ export function useWorkoutTimer(
         pausedAt: null,
         bonus: 0,
         workout,
+        // Pinned once, the first time a session starts (`run` is still null),
+        // then carried forward unchanged by every later call this same run makes
+        // through here — advancing, jumping to a different set, resuming after a
+        // backgrounded tab. Re-snapshotting on every call would defeat the pin:
+        // a jump-to-set after the *other* route's fetch resolves differently
+        // would silently re-diverge the two surfaces mid-run.
+        classifications: run?.classifications ?? snapshotClassifications(lifts),
       });
     },
-    [queue.length, commitRun, workout],
+    [queue.length, commitRun, workout, run, lifts],
   );
 
   const startAtSet = useCallback(

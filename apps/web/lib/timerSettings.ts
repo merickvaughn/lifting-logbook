@@ -17,7 +17,7 @@
 // would spam telemetry for something that is not a production incident. Same
 // rationale, and the same shape, as workoutDraftStorage.ts.
 
-import { normalizeTimerSettings } from '@lifting-logbook/core';
+import { normalizeClassifications, normalizeTimerSettings } from '@lifting-logbook/core';
 import type { TimerRunState, TimerSettings, TimerWorkoutKey } from '@lifting-logbook/core';
 
 /** Versioned so a future schema change can migrate rather than clobber. */
@@ -88,6 +88,14 @@ function isWorkoutKey(value: unknown): value is TimerWorkoutKey {
  * Runtime narrowing rather than a cast — a persisted run drives array indexing
  * and arithmetic the moment it is restored, so an unvalidated shape would surface
  * as a crash or a frozen dial rather than as a type error.
+ *
+ * `classifications` is deliberately not checked here — a run persisted before
+ * that field existed, or one whose value is malformed, still passes. The type
+ * predicate below is therefore optimistic about that one field; `loadTimerRun`
+ * closes the gap immediately afterward by overwriting it with
+ * `normalizeClassifications`'s output, the same always-succeeds contract
+ * `normalizeTimerSettings` already gives the settings half of this blob. Never
+ * trust `.classifications` off a value this guard alone narrowed.
  */
 function isRunShape(value: unknown): value is TimerRunState {
   if (!isRecord(value)) return false;
@@ -121,7 +129,10 @@ export function sameWorkout(a: TimerWorkoutKey, b: TimerWorkoutKey): boolean {
 export function loadTimerRun(workout: TimerWorkoutKey): TimerRunState | null {
   const run = readBlob().run;
   if (!isRunShape(run)) return null;
-  return sameWorkout(run.workout, workout) ? run : null;
+  if (!sameWorkout(run.workout, workout)) return null;
+  // See the comment on isRunShape: `run.classifications` has not actually been
+  // validated yet at this point, only asserted. This is what validates it.
+  return { ...run, classifications: normalizeClassifications(run.classifications) };
 }
 
 /** Persists the run, leaving settings untouched. `null` ends the session. */

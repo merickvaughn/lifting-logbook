@@ -536,3 +536,84 @@ describe('persistence', () => {
     expect(result.current.queue.some((p) => p.set.type === 'warmup')).toBe(false);
   });
 });
+
+// Issue #966: the timer page and the workout-detail dock each resolve a custom
+// lift's classification independently — their own `fetchCustomLifts()` call,
+// bounded and caught so neither a failure nor a slow response can hold up a
+// timer. If that fetch fails (or is slow) on one route and not the other, the
+// two mounts of this hook — sharing the same persisted run via `ll.timer.v1` —
+// could disagree about the same in-flight rest's duration. `TimerRunState`
+// pins the classification a run started with so a later mount reapplies it
+// rather than resolving it fresh; these tests mount the hook twice, exactly as
+// the two routes do, to prove the two can no longer disagree.
+describe('classification pinning across two mounts (issue #966)', () => {
+  const CUSTOM_LIFT_SETS = [
+    { type: 'work' as const, setLabel: 'Set 1', spec: '10 × 40 lbs' },
+    { type: 'work' as const, setLabel: 'Set 2', spec: '10 × 40 lbs' },
+  ];
+
+  /** One custom lift, classified however this "route" resolved it. */
+  function liftsClassifiedAs(classification: 'accessory' | undefined): TimerLiftPlan[] {
+    return [{ lift: 'Cable Curls', classification, sets: CUSTOM_LIFT_SETS }];
+  }
+
+  // Queue for a single two-set lift, default settings: prep, set, rest, prep,
+  // set — the trailing rest dropped. Index 2 is the rest after the first set.
+  const REST_INDEX = 2;
+
+  it('keeps a pinned rest duration even when the other mount resolves classification differently', () => {
+    // This mount's own fetchCustomLifts() succeeded: Cable Curls is an accessory.
+    const mountA = renderHook(() => useWorkoutTimer(liftsClassifiedAs('accessory'), WORKOUT));
+    act(() => mountA.result.current.startAt(REST_INDEX));
+    expect(mountA.result.current.duration).toBe(90); // the accessory rest, not 240
+
+    // A fresh mount for the same workout — the other route, whose own fetch
+    // degraded to "no opinion" for this lift. It restores the persisted run on
+    // mount, the same way navigating to the other page would.
+    const mountB = renderHook(() => useWorkoutTimer(liftsClassifiedAs(undefined), WORKOUT));
+
+    expect(mountB.result.current.running).toBe(true);
+    expect(mountB.result.current.phase?.lift).toBe('Cable Curls');
+    // The load-bearing assertion: mount B's own resolution says "no opinion",
+    // which would resolve to the 240s preset. It must report mount A's pinned
+    // 90s instead — the whole point of the fix.
+    expect(mountB.result.current.duration).toBe(90);
+  });
+
+  // Known, accepted asymmetry, pinned down rather than left to be rediscovered
+  // as a surprise: a pinned "no opinion" (`undefined`) does not survive the
+  // JSON round trip through localStorage — `JSON.stringify` drops an
+  // `undefined`-valued key outright — so it cannot force a *second* mount away
+  // from an opinion that mount's own (successful) fetch already has. This is
+  // the mirror image of the primary case above, and it is the right trade,
+  // not a gap: the mount reporting "no opinion" is definitionally the
+  // degraded one, so preferring a later mount's real answer over an absent
+  // pin means a working fetch is never overridden by a failed one.
+  it('lets a second mount use its own resolution when the pinning mount had no opinion', () => {
+    const mountA = renderHook(() => useWorkoutTimer(liftsClassifiedAs(undefined), WORKOUT));
+    act(() => mountA.result.current.startAt(REST_INDEX));
+    expect(mountA.result.current.duration).toBe(240); // no opinion -> the preset
+
+    const mountB = renderHook(() => useWorkoutTimer(liftsClassifiedAs('accessory'), WORKOUT));
+    expect(mountB.result.current.duration).toBe(90);
+  });
+
+  // The bonus case the issue calls out: even on a single mount, with no second
+  // route involved, a live run's classification must not drift if the *same*
+  // page later resolves the lift differently — a settings refresh, or the user
+  // reclassifying it mid-session while a rest is already counting down.
+  it('does not re-resolve classification when the lifts prop changes under a live run', () => {
+    const { result, rerender } = renderHook(
+      ({ classification }: { classification: 'accessory' | undefined }) =>
+        useWorkoutTimer(liftsClassifiedAs(classification), WORKOUT),
+      { initialProps: { classification: 'accessory' } },
+    );
+    act(() => result.current.startAt(REST_INDEX));
+    expect(result.current.duration).toBe(90);
+
+    rerender({ classification: undefined });
+
+    // Still the pinned 90s, not whatever `lifts` resolves to now.
+    expect(result.current.duration).toBe(90);
+  });
+});
