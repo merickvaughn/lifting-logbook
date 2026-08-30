@@ -1,11 +1,22 @@
 import {
+  applyClassifications,
   buildTimerQueue,
   defaultTimerSettings,
   flattenSets,
   queueSummary,
   setProgress,
+  snapshotClassifications,
 } from '@src/core';
 import type { TimerLiftPlan, TimerPhase, TimerSettings } from '@src/core';
+
+/**
+ * A stored classification (what `snapshotClassifications`/`applyClassifications`
+ * traffic in), spelled without importing `LiftClassification` directly — it is
+ * not re-exported from `@src/core` (only ever `import type`-ed within the
+ * package, never re-exported), so every consumer here derives it from
+ * `TimerLiftPlan['classification']` instead.
+ */
+type StoredClassification = Exclude<TimerLiftPlan['classification'], undefined> | null;
 
 function plan(): TimerLiftPlan[] {
   return [
@@ -293,3 +304,150 @@ describe('setProgress', () => {
     expect(setProgress([], -1)).toEqual({ current: 0, total: 0 });
   });
 });
+
+// Issue #966: the timer page and the workout-detail dock each resolve a custom
+// lift's classification independently, so a fetch failure or a mid-session
+// reclassification on one route — and not the other — could change the same
+// in-flight rest's duration depending on which surface you looked at. These two
+// functions are the fix: `snapshotClassifications` pins the answer once when a
+// run starts, and `applyClassifications` reapplies it on every later rebuild.
+describe('snapshotClassifications', () => {
+  it('keys each lift by name, storing null (not undefined) for one with no opinion', () => {
+    // `null`, never `undefined`: `undefined`-valued keys don't survive the
+    // `JSON.stringify` a snapshot is persisted through, so `undefined` here
+    // would make a "no opinion" pin indistinguishable from "never pinned" the
+    // moment a different route reads it back — see the field doc on
+    // `TimerRunState.classifications`.
+    const snapshot = snapshotClassifications(mixedPlanWithUnclassified());
+    expect(snapshot).toEqual({
+      'Bench Press': 'compound',
+      'Cable Curls': 'accessory',
+      'Zercher Good Morning': null,
+    });
+  });
+
+  it('returns an empty map for an empty plan', () => {
+    expect(snapshotClassifications([])).toEqual({});
+  });
+
+  // Same hazard `settings.test.ts` covers for `overrides`/`presets`: a lift name
+  // is arbitrary user input (a custom lift's own name). A plain `{}`
+  // accumulator would silently drop this entry instead of storing it — the
+  // `__proto__` setter no-ops for a non-object value rather than throwing — so
+  // the assertion that actually catches a regression here is that the entry
+  // comes back at all, as an own property.
+  it('stores a lift literally named __proto__ as its own entry', () => {
+    const lifts: TimerLiftPlan[] = [
+      { lift: '__proto__', classification: 'accessory', sets: [] },
+    ];
+
+    const snapshot = snapshotClassifications(lifts);
+
+    expect(Object.prototype.hasOwnProperty.call(snapshot, '__proto__')).toBe(true);
+    expect(snapshot['__proto__']).toBe('accessory');
+  });
+});
+
+describe('applyClassifications', () => {
+  it('overrides a pinned lift and leaves an unpinned one as this call resolved it', () => {
+    const overridden = applyClassifications(mixedPlanWithUnclassified(), {
+      'Cable Curls': null, // pinned by a route whose fetch failed: no opinion
+    });
+
+    expect(overridden.find((l) => l.lift === 'Cable Curls')?.classification).toBeUndefined();
+    // Bench Press has no entry in the map at all — keeps its own resolution.
+    expect(overridden.find((l) => l.lift === 'Bench Press')?.classification).toBe('compound');
+  });
+
+  it('is a no-op for an empty classifications map', () => {
+    const lifts = mixedPlanWithUnclassified();
+    expect(applyClassifications(lifts, {})).toEqual(lifts);
+  });
+
+  it('produces a queue whose durations match the route that pinned them, not the route reapplying them', () => {
+    // The load-bearing case: two lifts, identical shape, that would resolve
+    // Cable Curls differently — one classifies it an accessory, the other has
+    // no opinion (a degraded fetch). Applying the first route's pinned snapshot
+    // to the second route's lifts must produce the first route's durations.
+    const pinnedElsewhere = snapshotClassifications(mixedPlanWithUnclassified());
+    const thisRoutesOwnResolution: TimerLiftPlan[] = mixedPlanWithUnclassified().map((l) =>
+      l.lift === 'Cable Curls' ? { ...l, classification: undefined } : l,
+    );
+
+    const reconciled = applyClassifications(thisRoutesOwnResolution, pinnedElsewhere);
+    const queue = buildTimerQueue(reconciled, settings());
+    const curlRest = queue.find((p) => p.kind === 'rest' && p.lift === 'Cable Curls');
+
+    expect(curlRest?.dur).toBe(90); // the accessory rest, not the 240s preset
+  });
+
+  it('forces a pinned "no opinion" onto a lift the reapplying call resolved differently', () => {
+    // The mirror image of the test above, and the case that motivated storing
+    // `null` instead of `undefined`: the PINNING route's own fetch degraded (no
+    // opinion for Cable Curls), and the REAPPLYING route's own fetch succeeded
+    // (resolves it an accessory). The pin must still win — the first route to
+    // start a run is not privileged just because it started first, and neither
+    // route's own resolution should ever get the last word once a pin exists.
+    const pinnedNoOpinion = snapshotClassifications(
+      mixedPlanWithUnclassified().map((l) =>
+        l.lift === 'Cable Curls' ? { ...l, classification: undefined } : l,
+      ),
+    );
+    const reapplyingRoutesOwnResolution = mixedPlanWithUnclassified(); // Cable Curls: 'accessory'
+
+    const reconciled = applyClassifications(reapplyingRoutesOwnResolution, pinnedNoOpinion);
+    const queue = buildTimerQueue(reconciled, settings());
+    const curlRest = queue.find((p) => p.kind === 'rest' && p.lift === 'Cable Curls');
+
+    expect(curlRest?.dur).toBe(240); // the preset, not the 90s accessory rest
+  });
+
+  it('reads a lift literally named __proto__ as its own entry, not the inherited member', () => {
+    const lifts: TimerLiftPlan[] = [{ lift: '__proto__', sets: [] }];
+
+    // Built via JSON.parse, not an object literal — `{ __proto__: … }` in a
+    // literal sets the prototype instead of creating an own key, so a literal
+    // could not reproduce what a persisted (and re-normalized) run actually
+    // carries.
+    const classifications = JSON.parse('{"__proto__":"accessory"}') as Record<
+      string,
+      StoredClassification
+    >;
+
+    const overridden = applyClassifications(lifts, classifications);
+    expect(overridden[0]?.classification).toBe('accessory');
+  });
+});
+
+/**
+ * Two sets per lift, deliberately, same reason as `mixedPlan()` above:
+ * `buildTimerQueue` drops the trailing rest, so one set would leave the last
+ * lift with no rest phase to assert on.
+ */
+function mixedPlanWithUnclassified(): TimerLiftPlan[] {
+  return [
+    {
+      lift: 'Bench Press',
+      classification: 'compound',
+      sets: [
+        { type: 'work', setLabel: 'Set 1', spec: '5 × 200 lbs' },
+        { type: 'work', setLabel: 'Set 2', spec: '3 × 230 lbs' },
+      ],
+    },
+    {
+      lift: 'Cable Curls',
+      classification: 'accessory',
+      sets: [
+        { type: 'work', setLabel: 'Set 1', spec: '10 × 40 lbs' },
+        { type: 'work', setLabel: 'Set 2', spec: '10 × 40 lbs' },
+      ],
+    },
+    {
+      lift: 'Zercher Good Morning',
+      sets: [
+        { type: 'work', setLabel: 'Set 1', spec: '8 × 95 lbs' },
+        { type: 'work', setLabel: 'Set 2', spec: '8 × 95 lbs' },
+      ],
+    },
+  ];
+}

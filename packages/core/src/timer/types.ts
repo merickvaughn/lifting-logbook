@@ -140,6 +140,37 @@ export interface TimerRunState {
   bonus: number;
   /** Workout this run belongs to — a run is never restored onto another workout. */
   workout: TimerWorkoutKey;
+  /**
+   * Each lift's classification, keyed by lift name, as it resolved when this run
+   * started — snapshotted via {@link snapshotClassifications} and reapplied via
+   * {@link applyClassifications}.
+   *
+   * The timer page and the workout-detail dock each resolve a custom lift's
+   * classification independently (their own `fetchCustomLifts()` call, bounded
+   * and caught so neither a failure nor a slow response can hold up a timer).
+   * Without this, the same in-flight rest could end at a different time on each
+   * surface — 4:00 on one, 1:30 on the other — for a lift one route classified
+   * as an accessory and the other, mid-degrade, did not. Pinning the answer here
+   * once, at the moment the run begins, means every later queue rebuild — on
+   * either route, and including a mid-session reclassification of a custom lift
+   * — reapplies the *same* answer rather than whatever this mount resolved on
+   * its own. A lift absent from the map (new to the plan since the run started,
+   * or the run was persisted before this field existed) falls through to
+   * whatever the reapplying route resolves itself — see `applyClassifications`.
+   *
+   * `null`, not `undefined`, is how a pinned "no opinion" is stored: this field
+   * round-trips through `JSON.stringify` on every persist (see `saveTimerRun`),
+   * which drops an `undefined`-valued key outright but keeps a `null`-valued one.
+   * A map entry that used `undefined` for "pinned, but this lift isn't
+   * classified" would vanish across that round trip — indistinguishable from "no
+   * pin was ever recorded" — silently reopening the exact cross-route
+   * disagreement this field exists to close, specifically for whichever lift the
+   * *first* route to start the run couldn't classify. `null` survives the round
+   * trip, so "pinned to no opinion" and "no pin recorded" (key absent) stay
+   * distinguishable — see `applyClassifications`, which maps a stored `null`
+   * back to `undefined` on `TimerLiftPlan.classification`.
+   */
+  classifications: Record<string, LiftClassification | null>;
 }
 
 /** Identity of the workout a persisted run belongs to. */

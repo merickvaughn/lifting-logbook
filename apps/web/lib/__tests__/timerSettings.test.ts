@@ -19,6 +19,7 @@ function makeRun(overrides: Partial<TimerRunState> = {}): TimerRunState {
     pausedAt: null,
     bonus: 0,
     workout: WORKOUT,
+    classifications: {},
     ...overrides,
   };
 }
@@ -143,6 +144,78 @@ describe('run persistence', () => {
   it('accepts a paused run', () => {
     saveTimerRun(makeRun({ pausedAt: 1_700_000_030_000, pausedMs: 5_000 }));
     expect(loadTimerRun(WORKOUT)?.pausedAt).toBe(1_700_000_030_000);
+  });
+});
+
+// Issue #966: the timer page and the workout-detail dock each resolve a custom
+// lift's classification independently, so the same in-flight rest could end at
+// a different time on each surface. `classifications` pins the answer a run
+// started with so a later `loadTimerRun` — on either route — hands back the
+// same map rather than letting the reapplying route re-resolve it.
+describe('run persistence — classifications', () => {
+  it('round-trips a classifications map for the same workout', () => {
+    saveTimerRun(makeRun({ classifications: { 'Cable Curls': 'accessory' } }));
+    expect(loadTimerRun(WORKOUT)?.classifications).toEqual({ 'Cable Curls': 'accessory' });
+  });
+
+  // A run persisted by a build before this field existed has no `classifications`
+  // key at all — it must still restore (losing only the pinning this field adds,
+  // not the run itself), the same graceful-degrade contract `loadTimerSettings`
+  // already gives the settings half of this blob.
+  it('defaults to an empty map for a run persisted before this field existed', () => {
+    window.localStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({
+        settings: null,
+        run: { idx: 3, startedAt: 1, pausedMs: 0, pausedAt: null, bonus: 0, workout: WORKOUT },
+      }),
+    );
+
+    const run = loadTimerRun(WORKOUT);
+    expect(run).not.toBeNull();
+    expect(run?.classifications).toEqual({});
+  });
+
+  it('degrades a malformed classifications value to an empty map rather than rejecting the run', () => {
+    window.localStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({ settings: null, run: { ...makeRun(), classifications: 'not a map' } }),
+    );
+
+    const run = loadTimerRun(WORKOUT);
+    expect(run).not.toBeNull();
+    expect(run?.classifications).toEqual({});
+  });
+
+  it('drops an invalid classification value while keeping the valid entries', () => {
+    window.localStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({
+        settings: null,
+        run: {
+          ...makeRun(),
+          // 'push' is not a real LiftClassification.
+          classifications: { 'Cable Curls': 'accessory', 'Overhead Press': 'push' },
+        },
+      }),
+    );
+
+    expect(loadTimerRun(WORKOUT)?.classifications).toEqual({ 'Cable Curls': 'accessory' });
+  });
+
+  // The end-to-end version of the fix: a pinned "no opinion" must survive the
+  // real `saveTimerRun` -> `localStorage` -> `loadTimerRun` round trip through
+  // this module, not just the pure `normalizeClassifications` function
+  // (covered at the core-package level). `null`, not `undefined`, is what
+  // makes that possible — `JSON.stringify` drops an `undefined`-valued key but
+  // keeps a `null`-valued one, so the pin stays distinguishable from "never
+  // pinned" (key absent) on the other side of the round trip.
+  it('round-trips a pinned "no opinion" (null) through save and load', () => {
+    saveTimerRun(makeRun({ classifications: { 'Cable Curls': null } }));
+
+    const run = loadTimerRun(WORKOUT);
+    expect(Object.prototype.hasOwnProperty.call(run?.classifications, 'Cable Curls')).toBe(true);
+    expect(run?.classifications['Cable Curls']).toBeNull();
   });
 });
 

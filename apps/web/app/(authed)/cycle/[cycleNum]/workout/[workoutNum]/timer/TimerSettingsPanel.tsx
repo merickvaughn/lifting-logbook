@@ -21,7 +21,15 @@ import styles from './timer.module.css';
 interface Props {
   settings: TimerSettings;
   onChange: (next: TimerSettings) => void;
-  lifts: TimerLiftPlan[];
+  /**
+   * Readonly: the caller passes `useWorkoutTimer`'s `effectiveLifts`, which has
+   * a live run's pinned classification applied — see `TimerRunState.classifications`
+   * in @lifting-logbook/core. Never the route's raw `lifts` prop; this panel's
+   * "Rest follows …" label and per-field hints resolve from `lift.classification`
+   * (below), and reading the unpinned version here could disagree with the
+   * queue/dial about the same lift during a live run (issue #966).
+   */
+  lifts: readonly TimerLiftPlan[];
 }
 
 const ALERT_MODES: TimerAlertMode[] = ['Both', 'Beep', 'Vibrate', 'Silent'];

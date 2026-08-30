@@ -3,6 +3,7 @@ import {
   TIMER_DURATION_FIELDS,
   TIMER_PRESET_DEFAULTS,
   defaultTimerSettings,
+  normalizeClassifications,
   normalizeTimerSettings,
   resolveDuration,
   resolveDurationEntry,
@@ -356,5 +357,78 @@ describe('normalizeTimerSettings', () => {
     // defaults every future load starts from.
     expect(b.presets.Standard?.workSet).toBe(STANDARD_DURATIONS.workSet);
     expect(STANDARD_DURATIONS.workSet).not.toBe(999);
+  });
+});
+
+// Issue #966: `TimerRunState.classifications` pins each lift's classification
+// when a run starts, so a later route rebuilding the queue reapplies that
+// answer instead of resolving it fresh. This is the untrusted-blob half of that
+// — the same always-degrades-to-usable contract `normalizeTimerSettings` gives
+// the rest of `ll.timer.v1`, applied to a run persisted before this field
+// existed, hand-edited, or truncated mid-write.
+describe('normalizeClassifications', () => {
+  it('returns an empty map for every non-object input', () => {
+    for (const value of [null, undefined, 'string', 42, [], true]) {
+      expect(normalizeClassifications(value)).toEqual({});
+    }
+  });
+
+  it('keeps only valid classification values, including a pinned "no opinion"', () => {
+    const result = normalizeClassifications({
+      'Bench Press': 'compound',
+      'Cable Curls': 'accessory',
+      'Overhead Press': 'push', // not a LiftClassification
+      Deadlift: 42,
+      Row: null, // a pinned "no opinion" — valid, and distinct from the key being absent
+    });
+
+    expect(result).toEqual({
+      'Bench Press': 'compound',
+      'Cable Curls': 'accessory',
+      Row: null,
+    });
+  });
+
+  // The run schema predates this field — a run persisted by an older build (or
+  // one degraded to `[]`/absent by `applyClassifications`'s own fallback) must
+  // resolve to "no pinned answers" rather than rejecting the run it belongs to.
+  it('defaults an absent value to an empty map', () => {
+    expect(normalizeClassifications(undefined)).toEqual({});
+  });
+
+  // The behavior the whole `null`-not-`undefined` design rests on: `null`
+  // survives a JSON round trip, so a pinned "no opinion" (key present, value
+  // `null`) stays distinguishable from "never pinned" (key absent) — which is
+  // exactly what lets a later route tell the two apart. See the field doc on
+  // `TimerRunState.classifications`.
+  it('keeps a pinned "no opinion" distinguishable from "never pinned" across a serialization round trip', () => {
+    const pinned = normalizeClassifications({ 'Cable Curls': null });
+    const reloaded = normalizeClassifications(JSON.parse(JSON.stringify(pinned)));
+
+    expect(Object.prototype.hasOwnProperty.call(reloaded, 'Cable Curls')).toBe(true);
+    expect(reloaded['Cable Curls']).toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(reloaded, 'Bench Press')).toBe(false);
+  });
+
+  // A classification value is always one of two known strings (never an object),
+  // so unlike `presets`/`overrides` — whose stored *values* are objects a hostile
+  // `__proto__` key could use to reassign a prototype outright — the failure mode
+  // here if this used a plain `{}` accumulator would be quieter: the
+  // `Object.prototype.__proto__` setter silently no-ops for a non-object value,
+  // so the entry would simply vanish rather than round-trip. That is exactly what
+  // this test would catch.
+  it('keeps a classification for a lift named __proto__ across a serialization round trip', () => {
+    // Built via JSON.parse, not an object literal: `{ __proto__: … }` in a
+    // literal sets the prototype instead of creating an own key, so a literal
+    // could not reproduce what a persisted blob actually carries.
+    const once = normalizeClassifications(JSON.parse('{"__proto__":"accessory"}'));
+    expect(Object.prototype.hasOwnProperty.call(once, '__proto__')).toBe(true);
+    expect(once['__proto__']).toBe('accessory');
+
+    // A plain `out[lift] = …` write would have survived only in memory (if it
+    // survived at all) and then serialized to `{}` — the entry would vanish on
+    // the next reload.
+    const reloaded = normalizeClassifications(JSON.parse(JSON.stringify(once)));
+    expect(reloaded['__proto__']).toBe('accessory');
   });
 });

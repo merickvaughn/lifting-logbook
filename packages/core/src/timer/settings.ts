@@ -343,3 +343,48 @@ export function normalizeTimerSettings(raw: unknown): TimerSettings {
     },
   };
 }
+
+/**
+ * A stored classification: a known role, or `null` for a lift a run pinned
+ * with no opinion. Distinct from `LiftClassification | undefined` — `undefined`
+ * is never valid *stored* input; see the field doc on
+ * `TimerRunState.classifications` for why the pinned map uses `null` where
+ * `TimerLiftPlan.classification` itself uses `undefined`.
+ */
+function isStoredClassification(value: unknown): value is LiftClassification | null {
+  return value === 'compound' || value === 'accessory' || value === null;
+}
+
+/**
+ * Sanitizes a run's persisted `classifications` snapshot (see
+ * `TimerRunState.classifications` in `./types`).
+ *
+ * Same contract as {@link normalizeTimerSettings}: a hand-edited, truncated, or
+ * older-schema value — one persisted before this field existed — degrades to an
+ * empty map rather than rejecting the run it belongs to. `applyClassifications`
+ * already treats a lift absent from the map as "no pinned answer, resolve it
+ * yourself", so `{}` is a meaningful default, not a loss of data: it reproduces
+ * exactly the independent-resolution behavior every route had before this
+ * field existed.
+ *
+ * Keeps a `null` value rather than dropping it: `null` is a *pinned* answer
+ * ("no opinion", read back by `applyClassifications` as `undefined`), not a
+ * malformed one — dropping it here would be indistinguishable from the lift
+ * never having been pinned at all, and would reopen the disagreement pinning
+ * exists to close for exactly the lift whose fetch degraded.
+ *
+ * Built on `Object.create(null)`, not `{}`, for the same reason
+ * `snapshotClassifications` in `./queue` is: the keys are lift names, arbitrary
+ * user input, and a literal `"__proto__"` must land as its own entry rather
+ * than being read through, or silently reassigning, `Object.prototype`.
+ */
+export function normalizeClassifications(
+  raw: unknown,
+): Record<string, LiftClassification | null> {
+  const out: Record<string, LiftClassification | null> = Object.create(null);
+  if (!isRecord(raw)) return out;
+  for (const [lift, value] of Object.entries(raw)) {
+    if (isStoredClassification(value)) out[lift] = value;
+  }
+  return out;
+}

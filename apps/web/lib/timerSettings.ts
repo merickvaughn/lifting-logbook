@@ -17,7 +17,7 @@
 // would spam telemetry for something that is not a production incident. Same
 // rationale, and the same shape, as workoutDraftStorage.ts.
 
-import { normalizeTimerSettings } from '@lifting-logbook/core';
+import { normalizeClassifications, normalizeTimerSettings } from '@lifting-logbook/core';
 import type { TimerRunState, TimerSettings, TimerWorkoutKey } from '@lifting-logbook/core';
 
 /** Versioned so a future schema change can migrate rather than clobber. */
@@ -85,11 +85,30 @@ function isWorkoutKey(value: unknown): value is TimerWorkoutKey {
 }
 
 /**
+ * `TimerRunState`, minus the one field {@link isRunShape} does not validate.
+ *
+ * `classifications` is deliberately not checked by that guard — a run persisted
+ * before that field existed, or one whose value is malformed, still passes.
+ * Narrowing to this type instead of `TimerRunState` makes that gap something
+ * the compiler enforces rather than something only this comment says: reading
+ * `.classifications` off a value `isRunShape` alone narrowed is a type error,
+ * not just a documented mistake, and every caller is routed through
+ * `normalizeClassifications` (see `loadTimerRun`) to get a real value.
+ */
+type UnvalidatedRun = Omit<TimerRunState, 'classifications'> & { classifications?: unknown };
+
+/**
  * Runtime narrowing rather than a cast — a persisted run drives array indexing
  * and arithmetic the moment it is restored, so an unvalidated shape would surface
  * as a crash or a frozen dial rather than as a type error.
+ *
+ * Narrows to {@link UnvalidatedRun}, not `TimerRunState` — see that type's doc
+ * for why `classifications` is excluded. `loadTimerRun` closes the gap
+ * immediately afterward by overwriting it with `normalizeClassifications`'s
+ * output, the same always-succeeds contract `normalizeTimerSettings` already
+ * gives the settings half of this blob.
  */
-function isRunShape(value: unknown): value is TimerRunState {
+function isRunShape(value: unknown): value is UnvalidatedRun {
   if (!isRecord(value)) return false;
   return (
     typeof value.idx === 'number' &&
@@ -121,7 +140,10 @@ export function sameWorkout(a: TimerWorkoutKey, b: TimerWorkoutKey): boolean {
 export function loadTimerRun(workout: TimerWorkoutKey): TimerRunState | null {
   const run = readBlob().run;
   if (!isRunShape(run)) return null;
-  return sameWorkout(run.workout, workout) ? run : null;
+  if (!sameWorkout(run.workout, workout)) return null;
+  // `run` is `UnvalidatedRun` here — `.classifications` is `unknown`, not yet a
+  // real value. This is what makes it one.
+  return { ...run, classifications: normalizeClassifications(run.classifications) };
 }
 
 /** Persists the run, leaving settings untouched. `null` ends the session. */

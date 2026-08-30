@@ -214,6 +214,100 @@ that still look plausible at runtime. `resolveDurationEntry` is a sibling that a
 rung won; the settings panel uses it to say what a lift actually follows, instead of the previous
 hard-coded "Follows &lt;preset&gt;", which had been untrue for every lift whenever a deload week was on.
 
+## Amendment 2 — pinning classification onto the run, so the two routes cannot disagree (2026-08-30, [#966](https://github.com/merickvaughn/lifting-logbook/issues/966))
+
+Amendment 1 gave the timer page and the workout-detail dock each their own `fetchCustomLifts()` call
+— bounded by `CUSTOM_LIFTS_TIMEOUT_MS` and caught, so neither a failure nor a slow response can take
+down or hold up a timer someone is mid-session with. What it did not account for is that the two
+calls **degrade independently**. The run itself is shared (`ll.timer.v1`, restored on both routes by
+workout key, per the Decision above) — but the queue each route builds `phase.dur` from was not,
+because each route was resolving `TimerLiftPlan.classification` fresh from its own fetch. A transient
+failure or a slow response on one route and not the other meant the same in-flight rest could end at
+4:00 on one surface and 1:30 on the other, for a custom lift classified an accessory.
+
+Surfaced in review of [PR #964](https://github.com/merickvaughn/lifting-logbook/pull/964) (the
+accessory rung Amendment 1 describes) and filed separately rather than fixed there, because the fix
+is structural — it touches the run schema, not the code that PR changed.
+
+**`TimerRunState` gained a required `classifications: Record<string, LiftClassification | null>`
+field.** `snapshotClassifications` (`packages/core/src/timer/queue.ts`) captures each lift's resolved
+classification, keyed by name, the moment a run transitions from no session to a live one; every
+later call through `startAt` on that same run — advancing, jumping to a different set, resuming after
+a backgrounded tab — carries the existing map forward rather than re-snapshotting it. On the read
+side, `applyClassifications` overrides `useWorkoutTimer`'s `lifts` with the pinned map before building
+the queue, so the queue a route builds reflects the run's pinned answer rather than that route's own
+resolution, whenever a run is live. A lift the map has no entry for — new to the plan since the run
+started, or a run persisted before this field existed — falls through to whatever the reapplying
+route resolves on its own, exactly as every route did before this existed: pinning is additive, never
+a reason for a lift to lose an opinion it already has.
+
+Chosen over the two other options the issue weighed: resolving classification once in a shared
+layer above both routes (cleanest, but a bigger structural change for a fetch that already succeeds
+the overwhelming majority of the time) and documenting the divergence without fixing it (both pages
+already carried a comment explaining the degradation; this closes the gap that comment described
+instead of just naming it). Pinning also fixes a second case for free: a custom lift's classification
+edited mid-session no longer changes an in-flight run's duration out from under the lifter, on either
+route — the queue rebuild that follows a `lifts` prop change re-applies the same override.
+
+**A pinned "no opinion" is stored as `null`, not `undefined` — this was wrong in the first draft of
+this fix, and review of this PR caught it before merge.** The first draft snapshotted an unclassified
+lift with `classification: undefined` and reasoned the resulting asymmetry — that `undefined`-valued
+keys don't survive the `JSON.stringify` round trip through `localStorage`, so the pin quietly reverts
+to "unpinned" the moment a *different* route reads it back — was an acceptable trade: "the mount
+reporting no opinion is definitionally the degraded one, so a later mount's real answer winning over
+an absent pin means a working fetch is never overridden by a failed one." That reasoning answered the
+wrong question. The bug this issue exists to fix is not "which mount's answer is more correct" — it is
+"do the two routes still disagree." Under the first draft they did: the pinning route (its own fetch
+degraded) kept reading its own 240s locally, while any other route reading the round-tripped `{}` fell
+back to its own resolution and read 90s — the identical "4:00 on one, 1:30 on the other" split from
+the issue, just reached one hop later, and specifically whenever the *first* route to start a run was
+the degraded one. `null` closes it: `snapshotClassifications` now writes an entry for every lift,
+`null` in place of `undefined`, and `null` — unlike `undefined` — survives `JSON.stringify`. A stored
+`null` is a real pin ("this lift has no opinion, and that is final"), distinct from an absent key ("no
+pin was ever recorded"); `applyClassifications` reads the distinction via `hasOwnProperty` and maps a
+stored `null` back to `undefined` on `TimerLiftPlan.classification` before handing the lift to
+`buildTimerQueue`. `normalizeClassifications` now keeps a `null` value rather than treating it as
+malformed, for the same reason.
+
+**Two more review findings, both fixed in this PR rather than deferred, because both let the two
+routes disagree in a case the fix's own tests didn't cover:**
+
+- `useWorkoutTimer`'s `effectiveLifts` (the pinned override, what the queue is actually built from)
+  was computed but never returned — `UseWorkoutTimerResult` still only exposed the queue and the raw
+  `lifts` prop. The timer page's Settings tab resolves its own per-lift "Rest follows …" label and
+  hints from `lift.classification` (`TimerSettingsPanel.tsx`), and was still reading the unpinned
+  `lifts` prop — so during a live run whose pin disagreed with this route's own resolution, the
+  Session queue and dial (built from `effectiveLifts`) and the Settings tab (built from raw `lifts`)
+  could show different durations for the same lift, on the same page. `effectiveLifts` is now exposed
+  on `UseWorkoutTimerResult`, and `WorkoutTimerView.tsx` passes it to `TimerSettingsPanel` instead of
+  the raw prop.
+- `startAt`'s dependency array closed over `run` (the whole object) where it only ever reads
+  `run?.classifications`. `nudge` and `togglePause` both `commitRun({ ...run, ... })` — a new `run`
+  reference on every ±30s or pause press — so `startAt`, and everything memoized on it
+  (`startAtSet`, and `WorkoutTimerProvider`'s `rowState` context), got a new identity on every one of
+  those presses. `WorkoutTimerProvider`'s own docblock states the point of keeping that context
+  narrow and phase-boundary-stable is exactly to avoid re-rendering every set row in the lift list
+  off the tick-driven dock — a property this PR's `startAt` change silently broke. Fixed by keying on
+  `runClassifications` (already extracted, two lines above `startAt`, for the identical reason) instead
+  of `run`.
+
+**Classification map keys are lift names, which are arbitrary user input** (a custom lift's own name),
+unlike every other `TimerRunState` field. `snapshotClassifications` and `normalizeClassifications`
+(`packages/core/src/timer/settings.ts`, alongside `normalizeTimerSettings`) both build their output on
+`Object.create(null)` rather than `{}`, so a lift literally named `"__proto__"` lands as its own entry
+instead of being read through, or silently reassigning, `Object.prototype` — the same hazard class
+`hasOwn`/`defineOwn` guard against for `overrides`/`presets` in the same file, addressed here at the
+root by giving the accumulator no prototype to collide with. `applyClassifications`'s read is
+additionally guarded with a borrowed `hasOwnProperty` rather than the `in` operator, so its own safety
+does not depend on every future caller remembering to hand it a null-prototype map.
+
+`isRunShape` (`apps/web/lib/timerSettings.ts`) deliberately does not validate `classifications` — a
+run persisted before this field existed, or one with a malformed value, still passes the guard and
+restores the rest of the run. `loadTimerRun` closes the gap immediately afterward, overwriting
+whatever the guard let through with `normalizeClassifications`'s output — the same always-succeeds
+contract `normalizeTimerSettings` already gives the settings half of this blob, extended to the run
+half for the first time.
+
 ## References
 
 - [Screen Wake Lock API](https://www.w3.org/TR/screen-wake-lock/) — W3C spec; §3.3 defines the
