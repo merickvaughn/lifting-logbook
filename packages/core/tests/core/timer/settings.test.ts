@@ -1,4 +1,5 @@
 import {
+  MAX_TIMER_DURATION_SECONDS,
   STANDARD_DURATIONS,
   TIMER_DURATION_FIELDS,
   TIMER_PRESET_DEFAULTS,
@@ -493,5 +494,47 @@ describe('normalizeClassifications', () => {
     // the next reload.
     const reloaded = normalizeClassifications(JSON.parse(JSON.stringify(once)));
     expect(reloaded['__proto__']).toBe('accessory');
+  });
+});
+
+// The UI cannot produce an out-of-range duration — DurationStepper.commit in
+// TimerSettingsPanel.tsx clamps on input. These pin the clamp to the loading
+// path itself, so a hand-edited or older-build `ll.timer.v1` blob degrades to
+// the max instead of producing a multi-hour rest phase (#965). One case per
+// section: the whole point of the fix is that the bound applies uniformly,
+// not only to whichever section a prior fix happened to touch.
+describe('normalizeTimerSettings — duration clamp (#965)', () => {
+  const OUT_OF_RANGE = 86400;
+
+  it('clamps an out-of-range preset duration to the max', () => {
+    const result = normalizeTimerSettings({
+      presets: { Standard: { restWork: OUT_OF_RANGE } },
+    });
+
+    expect(result.presets.Standard?.restWork).toBe(MAX_TIMER_DURATION_SECONDS);
+  });
+
+  it('clamps an out-of-range per-lift override duration to the max', () => {
+    const result = normalizeTimerSettings({
+      overrides: { 'Bench Press': { restWork: OUT_OF_RANGE } },
+    });
+
+    expect(result.overrides['Bench Press']).toEqual({ restWork: MAX_TIMER_DURATION_SECONDS });
+  });
+
+  it('clamps an out-of-range deload context duration to the max', () => {
+    const result = normalizeTimerSettings({
+      context: { deload: { restWork: OUT_OF_RANGE } },
+    });
+
+    expect(result.context.deload.restWork).toBe(MAX_TIMER_DURATION_SECONDS);
+  });
+
+  it('clamps an out-of-range accessory context duration to the max', () => {
+    const result = normalizeTimerSettings({
+      context: { accessory: { restWork: OUT_OF_RANGE } },
+    });
+
+    expect(result.context.accessory.restWork).toBe(MAX_TIMER_DURATION_SECONDS);
   });
 });

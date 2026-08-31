@@ -284,10 +284,19 @@ function defineOwn<T>(target: Record<string, T>, key: string, value: T): void {
   });
 }
 
-/** A duration is a finite, non-negative number of seconds. */
+/**
+ * One hour — past any real rest, and the ceiling enforced everywhere a
+ * duration can enter the system. `toDuration` below applies it at the
+ * normalization boundary; the settings panel's `DurationStepper` imports this
+ * same constant rather than declaring its own, so the two bounds cannot drift
+ * the way they did before this was pulled out (see #965).
+ */
+export const MAX_TIMER_DURATION_SECONDS = 3600;
+
+/** A duration is a finite, non-negative number of seconds, clamped to the max. */
 function toDuration(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
-  return Math.round(value);
+  return Math.min(MAX_TIMER_DURATION_SECONDS, Math.round(value));
 }
 
 function toDurations(value: unknown, fallback: TimerPresetDurations): TimerPresetDurations {
