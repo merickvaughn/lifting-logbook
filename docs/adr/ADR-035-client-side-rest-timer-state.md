@@ -386,6 +386,16 @@ they occur only in unrelated API test fixtures.
   the new shape, so it re-finds and then cements the displaced phase. `TIMER_RUN_SHAPE` in
   `timerSettings.ts` stamps the blob and drops a run written under a different value. A run is
   minutes of ephemeral position; a silently wrong countdown is indistinguishable from a working one.
+- **`TIMER_RUN_SHAPE` and Amendment 2's `classifications` compose rather than conflict**, though
+  both landed in the same release and both concern the run blob. Amendment 2's leniency is about one
+  *field*: a run missing or carrying a malformed `classifications` still restores, degrading to `{}`
+  rather than being rejected. This stamp is about the *index*, which is not a field the run can
+  self-describe — a stale `idx` is structurally unsafe no matter how well-formed the rest of the
+  object is. A run stamped for this queue shape but missing `classifications` still restores exactly
+  as Amendment 2 intends; only a run predating the shape change is dropped, and it is dropped for a
+  reason Amendment 2 never spoke to. Amendment 2's three degradation tests were given the stamp so
+  they keep exercising `normalizeClassifications` instead of being rejected earlier for an unrelated
+  reason.
 - **Two exhaustiveness mechanisms were added, because this change is the argument for them.**
   `TimerPhaseKind` is now derived from a `TIMER_PHASE_KINDS` array so tests and the colour guard can
   iterate it, and `TIMER_DURATION_FIELDS` carries a compile-time completeness assertion. Both exist

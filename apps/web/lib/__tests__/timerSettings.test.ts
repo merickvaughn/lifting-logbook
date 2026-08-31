@@ -207,12 +207,20 @@ describe('run persistence — classifications', () => {
   // key at all — it must still restore (losing only the pinning this field adds,
   // not the run itself), the same graceful-degrade contract `loadTimerSettings`
   // already gives the settings half of this blob.
+  // These three carry `runShape` deliberately. Their subject is the
+  // `classifications` field's leniency (#966), not queue-shape versioning
+  // (#960) — and without the stamp `loadTimerRun` would drop each blob before
+  // `normalizeClassifications` ever ran, so they would pass for a reason that
+  // has nothing to do with what they assert. The two guarantees compose rather
+  // than conflict: a run *stamped* for this queue shape but missing or
+  // malformed `classifications` still restores, exactly as #966 intends.
   it('defaults to an empty map for a run persisted before this field existed', () => {
     window.localStorage.setItem(
       TIMER_STORAGE_KEY,
       JSON.stringify({
         settings: null,
         run: { idx: 3, startedAt: 1, pausedMs: 0, pausedAt: null, bonus: 0, workout: WORKOUT },
+        runShape: TIMER_RUN_SHAPE,
       }),
     );
 
@@ -224,7 +232,11 @@ describe('run persistence — classifications', () => {
   it('degrades a malformed classifications value to an empty map rather than rejecting the run', () => {
     window.localStorage.setItem(
       TIMER_STORAGE_KEY,
-      JSON.stringify({ settings: null, run: { ...makeRun(), classifications: 'not a map' } }),
+      JSON.stringify({
+        settings: null,
+        run: { ...makeRun(), classifications: 'not a map' },
+        runShape: TIMER_RUN_SHAPE,
+      }),
     );
 
     const run = loadTimerRun(WORKOUT);
@@ -242,6 +254,7 @@ describe('run persistence — classifications', () => {
           // 'push' is not a real LiftClassification.
           classifications: { 'Cable Curls': 'accessory', 'Overhead Press': 'push' },
         },
+        runShape: TIMER_RUN_SHAPE,
       }),
     );
 
