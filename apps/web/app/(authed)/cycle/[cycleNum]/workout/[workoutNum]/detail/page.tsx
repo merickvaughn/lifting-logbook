@@ -79,7 +79,18 @@ export default async function WorkoutDetailPage({
     const plannedSets = spec ? computePlannedSets(spec, tm) : [];
     const warmUpCount = plannedSets.filter((s) => s.setLabel.startsWith('Warm-up')).length;
     const workCount = plannedSets.filter((s) => s.setLabel.startsWith('Set')).length;
-    return { lift: wl.lift, tm, warmUpCount, workCount, plannedSets };
+    return {
+      lift: wl.lift,
+      tm,
+      // The spec's raw `activation` column. Each consumer narrows it to a real
+      // movement name with `activationExercise` at the point it displays one —
+      // the lift list below, and `toTimerLiftPlans` for the timer — because the
+      // column also carries legacy classification values.
+      activation: spec?.activation,
+      warmUpCount,
+      workCount,
+      plannedSets,
+    };
   });
 
   // A finished or skipped workout has nothing left to time, so the timer is not

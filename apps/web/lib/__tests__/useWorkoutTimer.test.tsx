@@ -1,7 +1,13 @@
 import { act, renderHook } from '@testing-library/react';
 import type { TimerLiftPlan, TimerWorkoutKey } from '@lifting-logbook/core';
 import { useWorkoutTimer } from '../useWorkoutTimer';
-import { TIMER_STORAGE_KEY, loadTimerRun, loadTimerSettings, saveTimerSettings } from '../timerSettings';
+import {
+  TIMER_RUN_SHAPE,
+  TIMER_STORAGE_KEY,
+  loadTimerRun,
+  loadTimerSettings,
+  saveTimerSettings,
+} from '../timerSettings';
 
 // The alert wrappers reach for AudioContext / navigator.vibrate / wakeLock, none of
 // which jsdom implements. Mocked at the module boundary so the tests assert on the
@@ -96,6 +102,58 @@ describe('queue and startup', () => {
     const { result } = render();
     act(() => result.current.startAtSet(1));
     expect(result.current.phase?.set.setLabel).toBe('Set 1');
+  });
+});
+
+describe('activation', () => {
+  const WITH_ACTIVATION: TimerLiftPlan[] = LIFTS.map((lift) => ({
+    ...lift,
+    activation: 'Hip Airplane',
+  }));
+
+  function renderWithActivation() {
+    return renderHook(() => useWorkoutTimer(WITH_ACTIVATION, WORKOUT));
+  }
+
+  it('opens the queue with the activation phase', () => {
+    const { result } = renderWithActivation();
+    expect(result.current.queue.map((p) => p.kind)).toEqual([
+      'activation',
+      'prep',
+      'set',
+      'rest',
+      'prep',
+      'set',
+    ]);
+  });
+
+  it('starts the whole session on the activation', () => {
+    const { result } = renderWithActivation();
+    act(() => result.current.startAt(0));
+    expect(result.current.phase?.kind).toBe('activation');
+    expect(result.current.phase?.set.setLabel).toBe('Hip Airplane');
+  });
+
+  it('starts a per-set ▶ on that set, not on the lift activation', () => {
+    // The activation shares setIndex 0 with the lift's first timed set (as a prep
+    // does), so a plain `setIndex` match would land the ▶ labelled "Start timer at
+    // Bench Press Warm-up 1" on a hip-airplane countdown instead.
+    const { result } = renderWithActivation();
+    act(() => result.current.startAtSet(0));
+
+    expect(result.current.phase?.kind).toBe('prep');
+    expect(result.current.phase?.set.setLabel).toBe('Warm-up 1');
+  });
+
+  it('auto-advances out of the activation into the first prep', () => {
+    const { result } = renderWithActivation();
+    act(() => result.current.startAt(0));
+
+    const dur = result.current.duration;
+    expect(dur).toBeGreaterThan(0);
+    act(() => advance(dur * 1000 + 200));
+
+    expect(result.current.phase?.kind).toBe('prep');
   });
 });
 
@@ -464,12 +522,37 @@ describe('persistence', () => {
           bonus: 0,
           workout: WORKOUT,
         },
+        runShape: TIMER_RUN_SHAPE,
       }),
     );
 
     const { result } = render();
     expect(result.current.run?.idx).toBe(3);
     expect(result.current.running).toBe(true);
+  });
+
+  it('does not restore a run recorded against an older queue shape', () => {
+    // The same blob as above minus the shape stamp — i.e. what a browser holds
+    // from before the activation phase existed. Its `idx` addresses a phase that
+    // has since moved, so resuming it would count down the wrong phase against
+    // the wrong `startedAt` with nothing on screen to say so.
+    window.localStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({
+        settings: null,
+        run: {
+          idx: 3,
+          startedAt: Date.now(),
+          pausedMs: 0,
+          pausedAt: null,
+          bonus: 0,
+          workout: WORKOUT,
+        },
+      }),
+    );
+
+    const { result } = render();
+    expect(result.current.running).toBe(false);
   });
 
   it('ignores a run belonging to a different workout', () => {
@@ -485,6 +568,9 @@ describe('persistence', () => {
           bonus: 0,
           workout: { ...WORKOUT, workoutNum: 99 },
         },
+        // Stamped, so this still exercises the workout-key gate rather than
+        // being rejected earlier by the shape-version check.
+        runShape: TIMER_RUN_SHAPE,
       }),
     );
 

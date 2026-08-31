@@ -1,4 +1,5 @@
 import {
+  STANDARD_DURATIONS,
   applyClassifications,
   buildTimerQueue,
   defaultTimerSettings,
@@ -177,6 +178,7 @@ describe('buildTimerQueue', () => {
       restWarmup: 90,
       restWork: 240,
       prep: 0,
+      activation: 60,
     };
 
     const queue = buildTimerQueue(plan(), base);
@@ -235,6 +237,124 @@ describe('buildTimerQueue', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Activation (#960)
+// ---------------------------------------------------------------------------
+
+/** The same plan, with an activation movement on the first lift only. */
+function planWithActivation(): TimerLiftPlan[] {
+  const [bench, rows] = [at(plan(), 0), at(plan(), 1)];
+  return [{ ...bench, activation: 'Hip Airplane' }, rows];
+}
+
+describe('buildTimerQueue — activation', () => {
+  it('opens a lift that has one with a single activation phase', () => {
+    const queue = buildTimerQueue(planWithActivation(), settings());
+
+    expect(at(queue, 0).kind).toBe('activation');
+    expect(at(queue, 0).lift).toBe('Bench Press');
+    expect(at(queue, 0).dur).toBe(STANDARD_DURATIONS.activation);
+    // One per lift, not one per set — Bench Press has three sets.
+    expect(queue.filter((p) => p.kind === 'activation')).toHaveLength(1);
+    // …and it precedes that lift's first prep rather than replacing it.
+    expect(at(queue, 1).kind).toBe('prep');
+  });
+
+  it('names the movement on its own set rather than borrowing the next one', () => {
+    const queue = buildTimerQueue(planWithActivation(), settings());
+    const activation = at(queue, 0);
+
+    expect(activation.label).toBe('Activation');
+    expect(activation.set).toEqual({ type: 'activation', setLabel: 'Hip Airplane', spec: '' });
+    // The set it precedes is a warm-up; borrowing that label would announce
+    // "Warm-up 1 · 5 × 135 lbs" while the lifter is doing hip airplanes.
+    expect(at(queue, 2).set.setLabel).toBe('Warm-up 1');
+  });
+
+  it('emits nothing for a lift with no activation movement', () => {
+    const queue = buildTimerQueue(planWithActivation(), settings());
+    expect(queue.some((p) => p.kind === 'activation' && p.lift === 'Barbell Rows')).toBe(false);
+  });
+
+  it('omits the phase when the resolved duration is zero', () => {
+    const base = defaultTimerSettings();
+    base.presets[base.preset] = { ...STANDARD_DURATIONS, activation: 0 };
+
+    const queue = buildTimerQueue(planWithActivation(), base);
+
+    expect(queue.some((p) => p.kind === 'activation')).toBe(false);
+    expect(at(queue, 0).kind).toBe('prep');
+  });
+
+  it('honours a per-lift override of the activation duration', () => {
+    const base = defaultTimerSettings();
+    base.overrides['Bench Press'] = { activation: 90 };
+
+    const queue = buildTimerQueue(planWithActivation(), base);
+
+    expect(at(queue, 0).kind).toBe('activation');
+    expect(at(queue, 0).dur).toBe(90);
+  });
+
+  it('carries the setIndex of the first timed set it opens', () => {
+    const queue = buildTimerQueue(planWithActivation(), settings());
+    expect(at(queue, 0).setIndex).toBe(0);
+  });
+
+  it('opens the first TIMED set when warm-ups are skipped', () => {
+    const base = defaultTimerSettings();
+    base.behavior.skipWarmups = true;
+
+    const queue = buildTimerQueue(planWithActivation(), base);
+    const timedSets = flattenSets(planWithActivation(), true);
+
+    expect(at(queue, 0).kind).toBe('activation');
+    expect(at(queue, 0).setIndex).toBe(0);
+    // setIndex 0 is now the first *work* set, since the warm-up is gone.
+    expect(at(timedSets, 0).set.setLabel).toBe('Set 1');
+  });
+
+  it('emits nothing for a lift left with no timed sets by skipWarmups', () => {
+    const warmupsOnly: TimerLiftPlan[] = [
+      {
+        lift: 'Bench Press',
+        activation: 'Hip Airplane',
+        sets: [{ type: 'warmup', setLabel: 'Warm-up 1', spec: '5 × 135' }],
+      },
+    ];
+    const base = defaultTimerSettings();
+    base.behavior.skipWarmups = true;
+
+    // An activation with nothing left to open would be a phase for a lift that
+    // is not being timed at all.
+    expect(buildTimerQueue(warmupsOnly, base)).toEqual([]);
+  });
+
+  it('gives each occurrence of a repeated lift its own activation', () => {
+    // The program editor keys an instance by position, not by name, so the same
+    // lift can legitimately appear twice in one workout.
+    const twice: TimerLiftPlan[] = [
+      {
+        lift: 'Bench Press',
+        activation: 'Band Pull-Apart',
+        sets: [{ type: 'work', setLabel: 'Set 1', spec: '5 × 200 lbs' }],
+      },
+      {
+        lift: 'Bench Press',
+        activation: 'Band Pull-Apart',
+        sets: [{ type: 'work', setLabel: 'Set 1', spec: '5 × 200 lbs' }],
+      },
+    ];
+
+    const queue = buildTimerQueue(twice, defaultTimerSettings());
+    const activations = queue.filter((p) => p.kind === 'activation');
+
+    expect(activations).toHaveLength(2);
+    expect(at(activations, 0).setIndex).toBe(0);
+    expect(at(activations, 1).setIndex).toBe(1);
+  });
+});
+
 describe('queueSummary', () => {
   it('counts timed sets and total seconds including rest', () => {
     const queue = buildTimerQueue(plan(), settings());
@@ -248,6 +368,15 @@ describe('queueSummary', () => {
 
   it('is zero for an empty queue', () => {
     expect(queueSummary([])).toEqual({ sets: 0, totalSeconds: 0 });
+  });
+
+  it('counts an activation in the time but not in the set count', () => {
+    const base = queueSummary(buildTimerQueue(plan(), settings()));
+    const withActivation = queueSummary(buildTimerQueue(planWithActivation(), settings()));
+
+    // An activation is not a set — "Set 3 of 4" must not become "of 5".
+    expect(withActivation.sets).toBe(base.sets);
+    expect(withActivation.totalSeconds).toBe(base.totalSeconds + STANDARD_DURATIONS.activation);
   });
 });
 

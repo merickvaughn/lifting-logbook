@@ -370,6 +370,14 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
       <h2 className={styles.sectionTitle}>Before every set</h2>
       <div className={styles.card}>{durationRow('prep')}</div>
 
+      <h2 className={styles.sectionTitle}>Activation</h2>
+      <div className={styles.card}>{durationRow('activation')}</div>
+      <p className={styles.footNote}>
+        The movement itself comes from the program — a lift only gets an activation phase when its
+        program spec names one. A duration of 0:00, here or as a per-lift override below, drops the
+        phase from the next session you start.
+      </p>
+
       <h2 className={styles.sectionTitle}>Per-lift overrides</h2>
       <ul className={styles.overrideList}>
         {lifts.map((lift) => {
@@ -378,17 +386,25 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           const isOpen = openLift === lift.lift;
           const panelId = `override-${encodeURIComponent(lift.lift)}`;
           const hasWarmups = lift.sets.some((s) => s.type === 'warmup');
-          const fields: TimerDurationField[] = hasWarmups ?
-            ['warmupSet', 'workSet', 'restWarmup', 'restWork', 'prep']
-          : ['workSet', 'restWork', 'prep'];
+          // Activation only where the program actually names a movement — a row
+          // for a lift with none would control nothing, which is the defect that
+          // kept this field out of #959 in the first place.
+          const fields: TimerDurationField[] = [
+            ...(lift.activation ? (['activation'] as const) : []),
+            ...(hasWarmups ?
+              (['warmupSet', 'workSet', 'restWarmup', 'restWork', 'prep'] as const)
+            : (['workSet', 'restWork', 'prep'] as const)),
+          ];
           // What this lift's REST follows when it has no overrides of its own —
           // one field, not the whole lift. Read off the rung that actually
           // resolves `restWork` rather than assuming the preset, which stopped
           // being true once the deload and accessory contexts existed.
           //
           // Deliberately a one-field summary: neither context sets `warmupSet`,
-          // `restWarmup` or `prep`, so a label claiming to describe the whole lift
-          // would be wrong for three of its five durations. The copy says "Rest
+          // `restWarmup`, `prep` or `activation`, so a label claiming to describe
+          // the whole lift would be wrong for every duration but this one and
+          // `workSet` — four of the six rows a lift with an activation shows, and
+          // three of five without one. The copy says "Rest
           // follows …" so the collapsed row does not overstate its scope; the
           // per-field `From <rung>` hints inside give the exact answer.
           const restFollows = sourceLabel(

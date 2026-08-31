@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * Validates that the rest timer's four dial-phase colors stay mutually distinct
+ * Validates that the rest timer's five dial-phase colors stay mutually distinct
  * within every theme defined in apps/web/app/globals.css.
  *
- * The countdown ring paints exactly one of four states — set, rest, prep and
- * overrun — so if any two resolve to the same value inside a theme, the ring
- * silently stops carrying information for that pair. Nothing else catches it:
+ * The countdown ring paints exactly one of five states — set, rest, prep,
+ * activation and overrun — so if any two resolve to the same value inside a
+ * theme, the ring silently stops carrying information for that pair. Nothing
+ * else catches it:
  * both colors are valid tokens, every test passes, and the page renders without
  * complaint.
  *
@@ -34,12 +35,37 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
 /**
- * The four states the dial can paint, per TimerDial.tsx's phase -> class chain.
+ * The states the dial can paint, per TimerDial.tsx's phase -> class chain.
  *
- * This is a contract (the dial has exactly these four states), not a duplicated
- * value — the *colors* are derived from source below.
+ * This is a contract (the dial has exactly these states), not a duplicated
+ * value — the *colors* are derived from source below, and every message that
+ * names the phases is built from this array so the two cannot drift.
  */
-export const DIAL_PHASES = ['set', 'rest', 'prep', 'overrun'];
+export const DIAL_PHASES = ['set', 'rest', 'prep', 'activation', 'overrun'];
+
+/**
+ * The phase kinds core actually declares, read out of `TIMER_PHASE_KINDS` in
+ * `packages/core/src/timer/types.ts`.
+ *
+ * `DIAL_PHASES` is `TIMER_PHASE_KINDS` plus `overrun` — a paint state, not a
+ * phase kind. Deriving the first half from source is what stops the two drifting:
+ * a kind added to core without a `.class` here would otherwise leave this guard
+ * checking a stale set, exactly as a hardcoded phase→token map would have let
+ * `.rest` be repointed unnoticed.
+ *
+ * Returns `null` when the array cannot be located, which {@link main} treats as a
+ * failure rather than skipping the cross-check — an extraction that silently
+ * finds nothing is the vacuous pass this file already guards against elsewhere.
+ */
+export function readPhaseKinds(typesTs) {
+  const match = typesTs.match(/TIMER_PHASE_KINDS\s*=\s*\[([^\]]*)\]\s*as const/);
+  if (!match) return null;
+  const kinds = [...match[1].matchAll(/'([\w-]+)'/g)].map((m) => m[1]);
+  return kinds.length > 0 ? kinds : null;
+}
+
+/** The paint state that is not a phase kind — see {@link readPhaseKinds}. */
+export const NON_KIND_DIAL_STATES = ['overrun'];
 
 // --- Pure parsing helpers (exported for unit testing) ---
 
@@ -154,8 +180,31 @@ function main() {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const cssPath = resolve(repoRoot, 'apps/web/app/globals.css');
   const dialPath = resolve(repoRoot, 'apps/web/components/timer/TimerDial.module.css');
+  const typesPath = resolve(repoRoot, 'packages/core/src/timer/types.ts');
   const css = readFileSync(cssPath, 'utf8');
   const dialCss = readFileSync(dialPath, 'utf8');
+
+  // Half 0: DIAL_PHASES must still describe the phase kinds core declares.
+  const kinds = readPhaseKinds(readFileSync(typesPath, 'utf8'));
+  if (kinds === null) {
+    fail([
+      'FAIL: could not read TIMER_PHASE_KINDS from packages/core/src/timer/types.ts.',
+      '      Without it this guard cannot tell whether DIAL_PHASES is still complete,',
+      '      and would check a stale phase set while reporting a clean pass.',
+    ]);
+  }
+  const expectedPhases = [...kinds, ...NON_KIND_DIAL_STATES];
+  const missingKinds = expectedPhases.filter((p) => !DIAL_PHASES.includes(p));
+  const strayPhases = DIAL_PHASES.filter((p) => !expectedPhases.includes(p));
+  if (missingKinds.length > 0 || strayPhases.length > 0) {
+    fail([
+      'FAIL: DIAL_PHASES has drifted from TIMER_PHASE_KINDS.\n',
+      missingKinds.length > 0 ? `  declared in core but unchecked here: ${missingKinds.join(', ')}` : '',
+      strayPhases.length > 0 ? `  checked here but not a phase kind: ${strayPhases.join(', ')}` : '',
+      '\nA phase kind the dial can paint but this guard does not know about is a phase',
+      'whose color nothing checks. Add it to DIAL_PHASES (and give it a .class and a token).',
+    ].filter(Boolean));
+  }
 
   // Half 1: which token paints each phase, per the dial's own stylesheet.
   const { tokens, problems } = readDialTokens(dialCss);
@@ -163,7 +212,7 @@ function main() {
     fail([
       'FAIL: cannot resolve the dial phase colors from TimerDial.module.css.\n',
       ...problems.map((p) => `  ${p}`),
-      '\nEach of .set/.rest/.prep/.overrun must stroke a var(--custom-property)',
+      `\nEach of ${DIAL_PHASES.map((p) => `.${p}`).join('/')} must stroke a var(--custom-property)`,
       'so this guard can check it against every theme.',
     ]);
   }
@@ -216,8 +265,8 @@ function main() {
     fail([
       'FAIL: rest-timer dial phases are not distinguishable.\n',
       failures.join('\n'),
-      '\nEach theme must give set/rest/prep/overrun four different colors.',
-      'See #958 and docs/adr/ADR-035-client-side-rest-timer-state.md.',
+      `\nEach theme must give ${DIAL_PHASES.join('/')} ${DIAL_PHASES.length} different colors.`,
+      'See #958, #960 and docs/adr/ADR-035-client-side-rest-timer-state.md.',
     ]);
   }
 

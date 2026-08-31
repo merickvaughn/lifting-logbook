@@ -1,4 +1,4 @@
-import { formatWeight, liftClassificationFor } from '@lifting-logbook/core';
+import { activationExercise, formatWeight, liftClassificationFor } from '@lifting-logbook/core';
 import type { ClassifiableLift, TimerLiftPlan } from '@lifting-logbook/core';
 import type { WeightUnit } from '@lifting-logbook/types';
 import type { PlannedSet } from './workoutPlan';
@@ -26,6 +26,13 @@ export interface TimerPlanInput {
   lift: string;
   /** Training max in lbs — the storage unit; `unit` is display only. */
   tm: number;
+  /**
+   * The program spec's raw `activation` column for this lift, straight off
+   * `LiftingProgramSpecResponse`. Narrowed to a real movement name by
+   * `activationExercise` below — see that function for why the raw value cannot
+   * be trusted as one.
+   */
+  activation?: string | undefined;
   plannedSets: PlannedSet[];
 }
 
@@ -64,6 +71,7 @@ export function toTimerLiftPlans(
       lift: detail.lift,
       classification: liftClassificationFor(detail.lift, customLifts),
       tm: detail.tm > 0 ? `TM: ${formatWeight(detail.tm, 'lbs', unit)}` : undefined,
+      activation: activationExercise(detail.activation),
       sets: detail.plannedSets.map((set) => ({
         type: set.type,
         setLabel: set.setLabel,

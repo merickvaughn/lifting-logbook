@@ -5,11 +5,13 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import {
   DIAL_PHASES,
+  NON_KIND_DIAL_STATES,
   declaredThemeNames,
   extractThemeBlocks,
   findConflicts,
   readDialTokens,
   readPhaseColors,
+  readPhaseKinds,
 } from './check-timer-phase-colors.mjs';
 
 // A trimmed stand-in for globals.css carrying only what the guard reads. Shaped
@@ -25,6 +27,7 @@ const GOOD_CSS = `
   --color-accent: #3498db;
   --color-rest: #27ae60;
   --color-prep: #e0a800;
+  --color-activation: #8e44ad;
   --color-error-text: #c0392b;
 }
 
@@ -32,6 +35,7 @@ const GOOD_CSS = `
   --color-accent: #22c55e;
   --color-rest: #0284c7;
   --color-prep: #d97706;
+  --color-activation: #7c3aed;
   --color-error-text: #dc2626;
 }
 `;
@@ -43,6 +47,7 @@ const GOOD_DIAL = `
 .set { stroke: var(--color-accent); }
 .rest { stroke: var(--color-rest); }
 .prep { stroke: var(--color-prep); }
+.activation { stroke: var(--color-activation); }
 .overrun { stroke: var(--color-error-text); }
 `;
 
@@ -62,12 +67,13 @@ test('extractThemeBlocks returns nothing for CSS with no themes', () => {
   assert.deepEqual(extractThemeBlocks(':root { --space-1: 0.25rem; }'), {});
 });
 
-test('readPhaseColors reads all four phases', () => {
+test('readPhaseColors reads every phase', () => {
   const colors = readPhaseColors(extractThemeBlocks(GOOD_CSS).iron, TOKENS);
   assert.deepEqual(colors, {
     set: '#22c55e',
     rest: '#0284c7',
     prep: '#d97706',
+    activation: '#7c3aed',
     overrun: '#dc2626',
   });
 });
@@ -77,10 +83,11 @@ test('readPhaseColors reports an absent token as null rather than guessing', () 
   assert.equal(colors.set, '#fff');
   assert.equal(colors.rest, null);
   assert.equal(colors.prep, null);
+  assert.equal(colors.activation, null);
   assert.equal(colors.overrun, null);
 });
 
-test('findConflicts is clean for four distinct colors', () => {
+test('findConflicts is clean for distinct colors', () => {
   const { missing, collisions } = findConflicts(
     readPhaseColors(extractThemeBlocks(GOOD_CSS).navy, TOKENS),
   );
@@ -110,8 +117,26 @@ test('findConflicts reports a missing token', () => {
   assert.deepEqual(missing, ['rest']);
 });
 
-test('DIAL_PHASES covers exactly the four dial states', () => {
-  assert.deepEqual([...DIAL_PHASES].sort(), ['overrun', 'prep', 'rest', 'set']);
+test('DIAL_PHASES covers exactly the five dial states', () => {
+  assert.deepEqual(
+    [...DIAL_PHASES].sort(),
+    ['activation', 'overrun', 'prep', 'rest', 'set'],
+  );
+});
+
+test('findConflicts catches an activation that reuses the prep colour', () => {
+  // Known-bad for #960: activation is the fifth ring state, and amber is the
+  // nearest neighbour it could collide with under `iron`.
+  const { collisions } = findConflicts({
+    set: '#22c55e',
+    rest: '#0284c7',
+    prep: '#d97706',
+    activation: '#d97706',
+    overrun: '#dc2626',
+  });
+  assert.equal(collisions.length, 1);
+  assert.deepEqual(collisions[0].phases.sort(), ['activation', 'prep']);
+  assert.equal(collisions[0].color, '#d97706');
 });
 
 // --- The phase -> token map is derived from the dial, not assumed ---
@@ -123,6 +148,7 @@ test('readDialTokens derives each phase token from the dial stylesheet', () => {
     set: '--color-accent',
     rest: '--color-rest',
     prep: '--color-prep',
+    activation: '--color-activation',
     overrun: '--color-error-text',
   });
 });
@@ -143,6 +169,7 @@ test('readDialTokens follows the dial when a phase is repointed at another token
   --color-accent: #22c55e;
   --color-success: #22c55e;
   --color-prep: #d97706;
+  --color-activation: #7c3aed;
   --color-error-text: #dc2626;
 }
 `;
@@ -167,7 +194,34 @@ test('readDialTokens reports a literal stroke rather than treating it as checkab
   assert.match(problems[0], /literal/);
 });
 
-test('the real dial stylesheet resolves to four checkable tokens', () => {
+// --- DIAL_PHASES is cross-checked against core's own phase-kind list ---
+
+test('readPhaseKinds reads TIMER_PHASE_KINDS out of the types source', () => {
+  const src = `
+export const TIMER_PHASE_KINDS = ['prep', 'set', 'rest', 'activation'] as const;
+export type TimerPhaseKind = (typeof TIMER_PHASE_KINDS)[number];
+`;
+  assert.deepEqual(readPhaseKinds(src), ['prep', 'set', 'rest', 'activation']);
+});
+
+test('readPhaseKinds returns null rather than an empty list it cannot verify', () => {
+  // Both shapes must be distinguishable from a successful read of zero kinds —
+  // the guard fails on null, which is the only non-vacuous response to "I could
+  // not find the declaration".
+  assert.equal(readPhaseKinds('export type TimerPhaseKind = string;'), null);
+  assert.equal(readPhaseKinds('export const TIMER_PHASE_KINDS = [] as const;'), null);
+});
+
+test('DIAL_PHASES equals the real TIMER_PHASE_KINDS plus the non-kind paint states', () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const kinds = readPhaseKinds(
+    readFileSync(resolve(repoRoot, 'packages/core/src/timer/types.ts'), 'utf8'),
+  );
+  assert.notEqual(kinds, null, 'TIMER_PHASE_KINDS must be readable from source');
+  assert.deepEqual([...DIAL_PHASES].sort(), [...kinds, ...NON_KIND_DIAL_STATES].sort());
+});
+
+test('the real dial stylesheet resolves to a checkable token per phase', () => {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const dialCss = readFileSync(
     resolve(repoRoot, 'apps/web/components/timer/TimerDial.module.css'),
@@ -188,6 +242,7 @@ test('readPhaseColors takes the LAST declaration, matching the cascade', () => {
   --color-accent: #22c55e;
   --color-rest: #0284c7;
   --color-prep: #d97706;
+  --color-activation: #7c3aed;
   --color-error-text: #dc2626;
 }
 

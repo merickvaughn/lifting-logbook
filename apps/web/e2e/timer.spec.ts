@@ -129,3 +129,46 @@ test('the timer page links back to the workout detail page', async ({ page }) =>
   await page.getByRole('link', { name: /Week \d+ · Workout \d+/ }).click();
   await expect(page).toHaveURL(/\/cycle\/1\/workout\/1\/detail$/);
 });
+
+// ---------------------------------------------------------------------------
+// Activation (#960)
+// ---------------------------------------------------------------------------
+
+test('an activation the program names appears in the plan and the queue', async ({ page }) => {
+  // The mock spec gives squat `activation: 'Hip Airplane'` and leaves the other
+  // three lifts on the legacy `'none'` placeholder.
+  await page.goto('/cycle/1/workout/1/detail');
+
+  await page.getByRole('button', { name: /warm-up/ }).first().click();
+  await expect(page.getByText('Hip Airplane')).toBeVisible();
+
+  await page.goto('/cycle/1/workout/1/timer');
+
+  const queueRow = page.getByRole('listitem').filter({ hasText: 'Hip Airplane' });
+  await expect(queueRow).toHaveCount(1);
+  await expect(queueRow).toContainText('Activation');
+
+  // It opens the session rather than replacing the first set's setup countdown.
+  //
+  // Asserted on the DIAL, not page-wide: the session-queue list already contains
+  // an "Activation" badge before the click, so a page-wide match would pass even
+  // if Start landed on the prep. The dial's sub-label is the movement name only
+  // while the activation is the live phase (`phaseSubLabel` returns
+  // `phase.set.setLabel` for it), so this can actually fail.
+  await page.getByRole('button', { name: 'Start' }).click();
+  const dial = page.getByRole('timer').locator('xpath=ancestor::div[1]');
+  await expect(dial).toContainText('Activation');
+  await expect(dial).toContainText('Hip Airplane');
+});
+
+test('a legacy activation placeholder produces no phase', async ({ page }) => {
+  await page.goto('/cycle/1/workout/1/timer');
+
+  // 'none' is a classification placeholder, not a movement — rendering it would
+  // put "Activation · none" on the dial for three of the four lifts. Scoped to
+  // the queue and exact: a page-wide substring match would also hit any future
+  // copy containing "none" ("None", "nonexistent") and pass for the wrong reason.
+  const queue = page.getByRole('listitem');
+  await expect(queue.filter({ hasText: /^none$/ })).toHaveCount(0);
+  await expect(queue.filter({ hasText: 'Activation' })).toHaveCount(1);
+});

@@ -347,4 +347,61 @@ describe('WorkoutTimerView', () => {
       expect(screen.getByText('Rest follows Standard')).toBeInTheDocument();
     });
   });
+
+  describe('activation (#960)', () => {
+    const WITH_ACTIVATION: TimerLiftPlan[] = LIFTS.map((lift) => ({
+      ...lift,
+      activation: 'Hip Airplane',
+    }));
+
+    it('labels the activation queue row by kind and names the movement', () => {
+      renderView(WITH_ACTIVATION);
+      const rows = within(screen.getByRole('list')).getAllByRole('listitem');
+
+      // The badge chain ends in "Set" as its fallthrough, so an unlabelled kind
+      // renders as a set and reads as one — the movement name is the only thing
+      // distinguishing this row.
+      expect(rows[0]).toHaveTextContent('Activation');
+      expect(rows[0]).toHaveTextContent('Hip Airplane');
+      expect(rows).toHaveLength(6);
+    });
+
+    it('counts the activation in the estimate but not in the set count', () => {
+      renderView(WITH_ACTIVATION);
+      // The 3:20 of the plain plan plus a 60s activation.
+      expect(screen.getByText(/2 timed sets · 4:20 estimated/)).toBeInTheDocument();
+    });
+
+    it('offers an activation duration in the preset settings', async () => {
+      const user = userEvent.setup();
+      renderView(WITH_ACTIVATION);
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+
+      expect(screen.getByRole('heading', { name: 'Activation' })).toBeInTheDocument();
+      expect(screen.getByLabelText('Activation')).toHaveValue('1:00');
+    });
+
+    it('offers a per-lift activation override only for a lift that has one', async () => {
+      const user = userEvent.setup();
+      renderView(WITH_ACTIVATION);
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+      await user.click(screen.getByRole('button', { name: /Bench Press/ }));
+
+      // Disambiguated from the preset-level "Activation" row above it, so both
+      // are individually addressable by assistive tech.
+      expect(screen.getByLabelText('Activation (Bench Press)')).toBeInTheDocument();
+    });
+
+    it('omits the per-lift activation row for a lift the program gives none', async () => {
+      const user = userEvent.setup();
+      renderView(); // LIFTS carries no activation
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+      await user.click(screen.getByRole('button', { name: /Bench Press/ }));
+
+      // A row here would control nothing — the queue emits no activation phase
+      // for a lift whose program spec names no movement.
+      expect(screen.queryByLabelText('Activation (Bench Press)')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Working set (Bench Press)')).toBeInTheDocument();
+    });
+  });
 });

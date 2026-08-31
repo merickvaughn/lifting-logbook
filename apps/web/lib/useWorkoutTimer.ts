@@ -341,7 +341,12 @@ export function useWorkoutTimer(
 
   const startAtSet = useCallback(
     (setIndex: number) => {
-      const index = queue.findIndex((p) => p.setIndex === setIndex);
+      // Skip the activation: it shares the `setIndex` of the lift's first timed
+      // set (as a prep does), so a plain match would land the per-set ▶ —
+      // labelled "Start timer at <lift> <set>" — on a hip-airplane countdown
+      // instead of on that set. Starting the whole session still reaches it,
+      // because that calls `startAt(0)`, the head of the queue.
+      const index = queue.findIndex((p) => p.setIndex === setIndex && p.kind !== 'activation');
       startAt(index < 0 ? 0 : index);
     },
     [queue, startAt],

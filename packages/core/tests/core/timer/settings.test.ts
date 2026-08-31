@@ -54,6 +54,44 @@ describe('resolveDuration', () => {
     expect(resolveDuration(s, 'Bench Press', 'workSet', undefined)).toBe(45);
   });
 
+  it('resolves the activation duration through the whole chain (#960)', () => {
+    const s = defaultTimerSettings();
+    // 4. the active preset
+    expect(resolveDuration(s, 'Squat', 'activation', undefined)).toBe(
+      STANDARD_DURATIONS.activation,
+    );
+
+    // 3. the accessory context does NOT pin activation by default — it ships only
+    //    `workSet` and `restWork`, so an accessory's activation still falls
+    //    through to the preset rather than inheriting a shortened rest.
+    expect(resolveDuration(s, 'Cable Curl', 'activation', 'accessory')).toBe(
+      STANDARD_DURATIONS.activation,
+    );
+    s.context.accessory.activation = 20;
+    expect(resolveDuration(s, 'Cable Curl', 'activation', 'accessory')).toBe(20);
+    // …and once set it stays scoped to accessories.
+    expect(resolveDuration(s, 'Squat', 'activation', 'compound')).toBe(
+      STANDARD_DURATIONS.activation,
+    );
+
+    // 2. the deload context outranks accessory
+    s.context.deloadOn = true;
+    s.context.deload.activation = 30;
+    expect(resolveDuration(s, 'Cable Curl', 'activation', 'accessory')).toBe(30);
+
+    // 1. a per-lift override beats every context
+    s.overrides['Cable Curl'] = { activation: 90 };
+    expect(resolveDuration(s, 'Cable Curl', 'activation', 'accessory')).toBe(90);
+    expect(resolveDuration(s, 'Squat', 'activation', 'compound')).toBe(30);
+
+    // 5. and a stale preset name still degrades to Standard, not to zero
+    const stale = defaultTimerSettings();
+    stale.preset = 'Deleted preset';
+    expect(resolveDuration(stale, 'Squat', 'activation', undefined)).toBe(
+      STANDARD_DURATIONS.activation,
+    );
+  });
+
   it('falls back to Standard when the active preset no longer exists', () => {
     const s = defaultTimerSettings();
     s.preset = 'Deleted preset';
@@ -211,6 +249,31 @@ describe('normalizeTimerSettings', () => {
 
     expect(result.presets.Standard?.workSet).toBe(90);
     expect(result.presets.Standard?.restWork).toBe(STANDARD_DURATIONS.restWork);
+  });
+
+  it('fills the activation duration into a blob written before it existed (#960)', () => {
+    // Exactly the shape a browser holds after #959: every pre-activation field
+    // present, `activation` absent. Left as a hole it would resolve to undefined
+    // inside the tick loop and render NaN.
+    const preActivation = {
+      preset: 'Light day',
+      presets: {
+        Standard: { warmupSet: 30, workSet: 60, restWarmup: 90, restWork: 240, prep: 10 },
+        'Light day': { warmupSet: 30, workSet: 45, restWarmup: 60, restWork: 150, prep: 10 },
+      },
+      overrides: { 'Bench Press': { restWork: 300 } },
+    };
+
+    const result = normalizeTimerSettings(preActivation);
+
+    expect(result.presets['Light day']?.activation).toBe(
+      TIMER_PRESET_DEFAULTS['Light day']?.activation,
+    );
+    expect(result.presets.Standard?.activation).toBe(STANDARD_DURATIONS.activation);
+    // The lifter's own edits survive alongside the filled-in default.
+    expect(result.presets['Light day']?.restWork).toBe(150);
+    expect(result.overrides['Bench Press']).toEqual({ restWork: 300 });
+    expect(resolveDuration(result, 'Bench Press', 'activation', undefined)).toBeGreaterThan(0);
   });
 
   it('rejects non-numeric, negative, and non-finite durations', () => {

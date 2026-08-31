@@ -23,6 +23,9 @@ export function phaseLabel(phase: TimerPhase, paused: boolean): string {
 
 /** What the current phase is for: the set being performed, or what rest precedes. */
 export function phaseSubLabel(phase: TimerPhase): string {
+  // An activation carries the movement name and no prescription, so the generic
+  // `label · spec` form below would render a dangling separator.
+  if (phase.kind === 'activation') return phase.set.setLabel;
   if (phase.kind !== 'rest') return `${phase.set.setLabel} · ${phase.set.spec}`;
   return phase.next ? `Up next: ${phase.next.lift} · ${phase.next.setLabel}` : 'Last set done';
 }

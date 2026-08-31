@@ -32,10 +32,15 @@ export default function TimerDial({ size, stroke, progress, kind, overrun, child
   // fills clockwise from 12 o'clock (the -90° rotation is applied in CSS).
   const offset = circumference * (1 - Math.min(1, Math.max(0, progress)));
 
+  // Every arm is explicit down to `set`, which is also the fallthrough: a phase
+  // kind added without a branch here paints accent-coloured and typechecks, so
+  // the miss is silent. `scripts/check-timer-phase-colors.mjs` reads this file's
+  // stylesheet to catch the other half of that (two phases, one colour).
   const phaseClass =
     overrun ? styles.overrun
     : kind === 'rest' ? styles.rest
     : kind === 'prep' ? styles.prep
+    : kind === 'activation' ? styles.activation
     : styles.set;
 
   return (
