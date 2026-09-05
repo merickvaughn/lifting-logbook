@@ -69,6 +69,8 @@ const _programSpecRepo: ILiftingProgramSpecRepository = {
 const _liftRecordRepo: ILiftRecordRepository = {
   getLiftRecords: (): Promise<LiftRecord[]> =>
     Promise.resolve([]),
+  getLoggedWorkoutNums: (): Promise<Set<number>> =>
+    Promise.resolve(new Set()),
   appendLiftRecords: (): Promise<number> =>
     Promise.resolve(0),
   findExistingRecords: (): Promise<LiftRecord[]> =>

@@ -4,6 +4,14 @@ export interface ILiftRecordRepository {
   getLiftRecords(program: string, cycleNum: number): Promise<LiftRecord[]>;
 
   /**
+   * The distinct `workoutNum`s with at least one logged record in the cycle —
+   * what the cycle dashboard's `completedWorkoutNums` is built from. A grouped
+   * query rather than `getLiftRecords` + a reduce, which fetched every column
+   * of every row in the cycle to keep a handful of integers (issue #982).
+   */
+  getLoggedWorkoutNums(program: string, cycleNum: number): Promise<Set<number>>;
+
+  /**
    * Appends records for a program, silently skipping any whose natural key already exists.
    * Returns the number of rows actually inserted (i.e. excluding duplicates).
    */

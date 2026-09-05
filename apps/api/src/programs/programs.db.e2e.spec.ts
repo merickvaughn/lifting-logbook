@@ -1231,6 +1231,16 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(records.every((r) => r.cycleNum === 1)).toBe(true);
     });
 
+    it('GET cycles/current derives completedWorkoutNums with a grouped query scoped to this user (issue #982)', async () => {
+      // The first `groupBy` under RLS in the repo: exactly the two workouts this
+      // user logged in cycle 1 — no other user's rows for the same program and
+      // cycle, and each workout once.
+      const injectRaw = app.getHttpAdapter().getInstance().inject.bind(app.getHttpAdapter().getInstance());
+      const res = await injectRaw({ method: 'GET', url: `/programs/${SEED_PROGRAM}/cycles/current`, headers: AS_HIST });
+      expect(res.statusCode).toBe(200);
+      expect((res.json() as { completedWorkoutNums: number[] }).completedWorkoutNums).toEqual([1, 2]);
+    });
+
     it('GET training-maxes/history returns 2 seeded entries and respects isPR', async () => {
       const injectRaw = app.getHttpAdapter().getInstance().inject.bind(app.getHttpAdapter().getInstance());
       const res = await injectRaw({ method: 'GET', url: `/programs/${SEED_PROGRAM}/training-maxes/history`, headers: AS_HIST });
