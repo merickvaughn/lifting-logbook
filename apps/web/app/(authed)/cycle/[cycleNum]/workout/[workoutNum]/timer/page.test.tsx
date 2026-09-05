@@ -103,15 +103,9 @@ describe('WorkoutTimerPage — accessory classification', () => {
     ]);
   });
 
-  it('classifies a custom lift from the fetched list', async () => {
-    seedWorkout(['Sissy Squat']);
-    mockedCustomLifts.mockResolvedValue([
-      { name: 'Sissy Squat', classification: 'accessory' },
-    ]);
-
-    expect(passedLifts(await renderPage())).toEqual([['Sissy Squat', 'accessory']]);
-  });
-
+  // The classification matrix (custom lifts, slow fetch, deferred await) lives
+  // in apps/web/lib/__tests__/loadWorkoutPlan.test.ts now; this page test keeps
+  // one success and one failure case to prove the page → loader → view wiring.
   it('still renders, and still classifies built-ins, when the custom-lift fetch fails', async () => {
     const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     mockedCustomLifts.mockRejectedValue(new Error('API down'));
@@ -127,23 +121,24 @@ describe('WorkoutTimerPage — accessory classification', () => {
 
     // Degraded, not silent.
     expect(errSpy).toHaveBeenCalledWith(
-      'WorkoutTimerPage: custom lifts fetch failed, classifying built-ins only',
+      '[WorkoutTimerPage] custom lifts fetch failed, classifying built-ins only',
       expect.any(Error),
     );
     errSpy.mockRestore();
   });
 
-  it('loses only the custom lift when the fetch fails', async () => {
-    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-    seedWorkout(['Squat', 'Sissy Squat']);
-    mockedCustomLifts.mockRejectedValue(new Error('API down'));
+  it('redirects to the detail page for a workout that is no longer timeable', async () => {
+    mockedCustomLifts.mockResolvedValue([]);
+    mockedWorkout.mockResolvedValue({
+      program: '5-3-1',
+      cycleNum: 1,
+      workoutNum: 1,
+      week: 1,
+      date: '2999-01-01',
+      skipped: true,
+      lifts: [{ lift: 'Squat', sets: [], planned: true }],
+    });
 
-    // The honest cost of the fallback: a custom lift goes unclassified and falls
-    // through to the preset. It is still in the session — never dropped.
-    expect(passedLifts(await renderPage())).toEqual([
-      ['Squat', 'compound'],
-      ['Sissy Squat', null],
-    ]);
-    errSpy.mockRestore();
+    await expect(renderPage()).rejects.toThrow('REDIRECT:/cycle/1/workout/1/detail');
   });
 });

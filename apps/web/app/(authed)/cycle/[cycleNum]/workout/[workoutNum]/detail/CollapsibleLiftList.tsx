@@ -2,26 +2,18 @@
 
 import { useEffect, useId, useState } from 'react';
 import Link from 'next/link';
-import { activationExercise, formatWeight } from '@lifting-logbook/core';
+import { formatWeight } from '@lifting-logbook/core';
 import type { WeightUnit } from '@lifting-logbook/types';
-import type { PlannedSet } from '@/lib/workoutPlan';
+import type { PlannedSet, WorkoutLiftDetail } from '@/lib/workoutPlan';
 import { useTimerRowState } from '@/components/timer/WorkoutTimerProvider';
 import type { TimerRowState } from '@/components/timer/WorkoutTimerProvider';
 import styles from './detail.module.css';
 
-export interface LiftDetail {
-  lift: string;
-  tm: number;
-  /**
-   * The program spec's raw `activation` column. Narrowed here with
-   * `activationExercise`, because the column also carries legacy classification
-   * values (`'compound'` / `'isolation'`) that are not movement names.
-   */
-  activation?: string | undefined;
-  warmUpCount: number;
-  workCount: number;
-  plannedSets: PlannedSet[];
-}
+/**
+ * What the list renders per lift — the shape `loadWorkoutPlan` builds once for
+ * this page and the timer route, with the activation movement already narrowed.
+ */
+export type LiftDetail = WorkoutLiftDetail;
 
 interface Props {
   liftDetails: LiftDetail[];
@@ -123,7 +115,7 @@ export default function CollapsibleLiftList({
 
   return (
     <ul className={styles.liftList}>
-      {liftDetails.map(({ lift, tm, activation, warmUpCount, workCount, plannedSets }, liftIndex) => {
+      {liftDetails.map(({ lift, tm, activationMovement: movement, warmUpCount, workCount, plannedSets }, liftIndex) => {
         const isExpanded = expanded.has(liftIndex);
         const panelId = `${idBase}-lift-${liftIndex}`;
         const warmUpSets = plannedSets.filter((s) => s.type === 'warmup');
@@ -133,8 +125,7 @@ export default function CollapsibleLiftList({
         // kept, empty, to hold its position). Ungated, the block rendered
         // directly above "No sets — set a training max…", promising a countdown
         // that could not happen.
-        const activationMovement =
-          plannedSets.length > 0 ? activationExercise(activation) : undefined;
+        const activationMovement = plannedSets.length > 0 ? movement : undefined;
 
         return (
           <li key={liftIndex} className={styles.liftItem}>

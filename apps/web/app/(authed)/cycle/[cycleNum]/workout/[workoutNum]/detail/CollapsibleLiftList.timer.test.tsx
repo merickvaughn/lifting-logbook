@@ -17,6 +17,10 @@ const LIFT_DETAILS: LiftDetail[] = [
   {
     lift: 'Bench Press',
     tm: 285,
+    // Spelled out because `activationMovement` is required-but-nullable: a
+    // fixture cannot inherit "no activation" by omission, which is what let the
+    // pre-#984 raw-column shape satisfy the interface silently.
+    activationMovement: undefined,
     warmUpCount: 1,
     workCount: 2,
     plannedSets: [
@@ -124,6 +128,7 @@ describe('CollapsibleLiftList with the timer', () => {
     const detail: LiftDetail = {
       lift: 'Bench Press',
       tm: 285,
+      activationMovement: undefined,
       warmUpCount: 0,
       workCount: 1,
       plannedSets: [{ type: 'work', setLabel: 'Set 1', weight: 200, reps: 5 }],
@@ -200,9 +205,13 @@ describe('CollapsibleLiftList with the timer', () => {
   });
 
   describe('the activation movement (#960)', () => {
-    /** `LIFT_DETAILS` with the raw spec column set, as the detail page passes it. */
-    function withActivation(activation: string): LiftDetail[] {
-      return LIFT_DETAILS.map((detail) => ({ ...detail, activation }));
+    /**
+     * `LIFT_DETAILS` with the movement set, as `loadWorkoutPlan` passes it — the
+     * raw spec column is narrowed there, so a legacy `'compound'` marker never
+     * reaches this list (covered in `lib/__tests__/loadWorkoutPlan.test.ts`).
+     */
+    function withActivation(activationMovement: string): LiftDetail[] {
+      return LIFT_DETAILS.map((detail) => ({ ...detail, activationMovement }));
     }
 
     it('shows the movement the program names for the lift', async () => {
@@ -237,18 +246,6 @@ describe('CollapsibleLiftList with the timer', () => {
       await user.click(liftHeader());
 
       expect(screen.queryByText('Activation')).not.toBeInTheDocument();
-    });
-
-    it('shows nothing for a legacy classification value in the column', async () => {
-      const user = userEvent.setup();
-      // Every built-in program ships `'compound'` here. Rendering it verbatim
-      // would put "Activation · compound" on every lift of every preset program.
-      renderList({ withTimer: false, liftDetails: withActivation('compound') });
-
-      await user.click(liftHeader());
-
-      expect(screen.queryByText('Activation')).not.toBeInTheDocument();
-      expect(screen.queryByText('compound')).not.toBeInTheDocument();
     });
   });
 });

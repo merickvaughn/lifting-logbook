@@ -6,9 +6,14 @@ const path = require('path');
 // TODO(#354): when audit extends to packages/core and packages/types, narrow the
 // 'packages' entry to specific test-bearing subpaths rather than the whole tree —
 // the eager scan reads every matching file on first lint invocation.
+// Directories scanned for test files whose `<path>:<line>` comments form the
+// reference set. A directory absent here cannot satisfy coverage mode 1 at all,
+// leaving only the existence-checked `fallback-covered-by:` — so every directory
+// the `files` glob in eslint.config.js enforces must appear here too (#984).
 const TEST_GLOB_DIRS = [
   'apps/web/e2e',
-  'apps/web/src',
+  'apps/web/app',
+  'apps/web/lib',
   'apps/api/src',
   'packages',
 ];

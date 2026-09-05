@@ -1,12 +1,8 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes, fetchCustomLifts } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
-import { getPreferredUnit } from '@/lib/preferences';
-import { computePlannedSets } from '@/lib/workoutPlan';
-import { CUSTOM_LIFTS_TIMEOUT_MS, toTimerLiftPlans } from '@/lib/timerPlan';
-import { withTimeout } from '@/lib/with-timeout';
-import { isTimeable, workoutStatus } from '@/lib/workoutStatus';
+import { loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
+import { isTimeable } from '@/lib/workoutStatus';
 import WorkoutTimerProvider from '@/components/timer/WorkoutTimerProvider';
 import CollapsibleLiftList from './CollapsibleLiftList';
 import StartTimedWorkout from './StartTimedWorkout';
@@ -28,77 +24,27 @@ export default async function WorkoutDetailPage({
   }
 
   const program = await getActiveProgram();
+  // One loader for this page and the timer route, so the plan the dock counts
+  // down and the plan the timer page displays are the same computation. Its
+  // custom-lift fetch is started up front but awaited only through
+  // `plan.timerLifts()` — see `WorkoutPlan.timerLifts` for why that matters on
+  // the app's most-visited page.
+  const plan = await loadWorkoutPlan(program, workoutNum, 'WorkoutDetailPage');
 
-  // Started here rather than inside the Promise.all below, and awaited only if the
-  // timer is actually mounted (see `timerAvailable`). Most views of this page are
-  // of completed workouts, where `timerLifts` is `[]` and this result is discarded
-  // — so awaiting it unconditionally would put a round-trip on the critical path
-  // of the app's most-visited page precisely when it is thrown away. The `.catch`
-  // is attached at creation, so an unawaited rejection is impossible.
-  //
-  // Bounded as well as caught: neither a failure nor a slow response may hold up
-  // the page for an enrichment that only shortens accessory rest. The timeout is
-  // separate from the api-client's own `AbortSignal.timeout(30s)`, which is a
-  // failure bound; `onTimeout` logs distinctly so "slow" and "down" stay tellable
-  // apart in the logs.
-  // fallback-covered-by: apps/web/app/(authed)/cycle/[cycleNum]/workout/[workoutNum]/detail/page.test.tsx
-  const customLiftsPromise = withTimeout(
-    fetchCustomLifts().catch((err: unknown) => {
-      console.error('WorkoutDetailPage: custom lifts fetch failed, classifying built-ins only', err);
-      return [];
-    }),
-    CUSTOM_LIFTS_TIMEOUT_MS,
-    [],
-    () => console.warn('WorkoutDetailPage: custom lifts fetch slow, classifying built-ins only'),
-  );
-
-  const [workout, specs, maxes, unit] = await Promise.all([
-    fetchWorkout(program, workoutNum),
-    fetchProgramSpec(program),
-    fetchTrainingMaxes(program),
-    getPreferredUnit(),
-  ]);
-
-  if (!workout) {
+  if (!plan) {
     notFound();
     return null;
   }
 
-  const effectiveDate = workout.overrideDate ?? workout.date;
-  const hasLogs = workout.lifts.some((l) => !l.planned);
-  // completed wins over skipped intentionally: a partially-logged workout can also be
-  // marked skipped (the two states are independent records). When both are true the
-  // workout still shows as completed and SkipForm is hidden.
-  const status = workoutStatus(effectiveDate, hasLogs, workout.skipped);
-  const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
-
-  // For each lift, compute warm-up and work set counts from spec
-  const liftDetails = workout.lifts.map((wl) => {
-    const tm = maxMap.get(wl.lift) ?? 0;
-    const spec = specs.find((s) => s.week === workout.week && s.lift === wl.lift);
-    const plannedSets = spec ? computePlannedSets(spec, tm) : [];
-    const warmUpCount = plannedSets.filter((s) => s.setLabel.startsWith('Warm-up')).length;
-    const workCount = plannedSets.filter((s) => s.setLabel.startsWith('Set')).length;
-    return {
-      lift: wl.lift,
-      tm,
-      // The spec's raw `activation` column. Each consumer narrows it to a real
-      // movement name with `activationExercise` at the point it displays one —
-      // the lift list below, and `toTimerLiftPlans` for the timer — because the
-      // column also carries legacy classification values.
-      activation: spec?.activation,
-      warmUpCount,
-      workCount,
-      plannedSets,
-    };
-  });
+  // `effectiveDate` comes off the plan rather than being recomputed here, so the
+  // date this page displays is the same one `statusOf` derived the status from.
+  const { workout, unit, status, effectiveDate, liftDetails } = plan;
 
   // A finished or skipped workout has nothing left to time, so the timer is not
   // mounted at all rather than being mounted and hidden. The timer route applies
   // the same check via `isTimeable`, so the two surfaces cannot disagree.
   const timerAvailable = isTimeable(status);
-  const timerLifts =
-    timerAvailable ? toTimerLiftPlans(liftDetails, unit, await customLiftsPromise) : [];
+  const timerLifts = timerAvailable ? await plan.timerLifts() : [];
 
   const plannedSets = liftDetails.reduce((acc, d) => acc + d.warmUpCount + d.workCount, 0);
   const actualSets = workout.lifts.reduce((acc, wl) => acc + wl.sets.length, 0);

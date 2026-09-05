@@ -5,6 +5,8 @@ function detail(lift: string, overrides: Partial<TimerPlanInput> = {}): TimerPla
   return {
     lift,
     tm: 200,
+    // Required-but-nullable, so the default is explicit rather than inherited.
+    activationMovement: undefined,
     plannedSets: [{ type: 'work', setLabel: 'Set 1', weight: 150, reps: 5 }],
     ...overrides,
   };

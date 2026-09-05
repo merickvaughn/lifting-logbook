@@ -1,4 +1,4 @@
-import { activationExercise, formatWeight, liftClassificationFor } from '@lifting-logbook/core';
+import { formatWeight, liftClassificationFor } from '@lifting-logbook/core';
 import type { ClassifiableLift, TimerLiftPlan } from '@lifting-logbook/core';
 import type { WeightUnit } from '@lifting-logbook/types';
 import type { PlannedSet } from './workoutPlan';
@@ -16,23 +16,30 @@ import type { PlannedSet } from './workoutPlan';
 export const CUSTOM_LIFTS_TIMEOUT_MS = 1500;
 
 /**
- * The slice of a workout-detail lift the timer needs.
+ * The slice of a workout lift the timer needs.
  *
- * Structurally satisfied by the `liftDetails` entries both the detail page and
- * the timer page already build from `computePlannedSets`, so neither has to
- * assemble a second shape.
+ * Structurally satisfied by `WorkoutLiftDetail` (`./workoutPlan`), which
+ * `loadWorkoutPlan` builds once for both the detail page and the timer page.
  */
 export interface TimerPlanInput {
   lift: string;
   /** Training max in lbs — the storage unit; `unit` is display only. */
   tm: number;
   /**
-   * The program spec's raw `activation` column for this lift, straight off
-   * `LiftingProgramSpecResponse`. Narrowed to a real movement name by
-   * `activationExercise` below — see that function for why the raw value cannot
-   * be trusted as one.
+   * The lift's activation movement, already narrowed from the spec's raw
+   * `activation` column by `buildLiftDetails` (`activationExercise` runs exactly
+   * once, there). `undefined` means the program names none.
+   *
+   * Required-but-nullable, deliberately, not optional. Optional would let the
+   * pre-#984 shape — `{ lift, tm, activation, plannedSets }`, verbatim what both
+   * pages built until this PR deleted them — satisfy this interface structurally:
+   * excess-property checking fires only on a fresh object literal passed directly
+   * as an argument, and every real call site passes a variable. The result would
+   * be silent and total, since `activation` arrives `undefined` and
+   * `buildTimerQueue` gates the phase on `activation !== undefined`, so every
+   * activation phase would vanish with no error and no failing test.
    */
-  activation?: string | undefined;
+  activationMovement: string | undefined;
   plannedSets: PlannedSet[];
 }
 
@@ -51,10 +58,8 @@ export interface TimerPlanInput {
  * nothing for `sets: []`, and the activation phase is opened from inside the
  * per-set loop, so an empty lift cannot queue a countdown either.
  *
- * Training role is resolved here too, rather than being carried on
- * {@link TimerPlanInput}: the detail and timer pages build their `liftDetails`
- * lists independently, so putting the lookup on the input shape would duplicate
- * it across both call sites instead of keeping it at the one mapping boundary.
+ * Training role is resolved here, at the one mapping boundary into the timer's
+ * shape, rather than being carried on {@link TimerPlanInput}.
  *
  * @param customLifts - The user's own lifts, so their classification is available
  *   alongside the built-in catalog's. Required rather than defaulted, for the same
@@ -72,7 +77,7 @@ export function toTimerLiftPlans(
       lift: detail.lift,
       classification: liftClassificationFor(detail.lift, customLifts),
       tm: detail.tm > 0 ? `TM: ${formatWeight(detail.tm, 'lbs', unit)}` : undefined,
-      activation: activationExercise(detail.activation),
+      activation: detail.activationMovement,
       sets: detail.plannedSets.map((set) => ({
         type: set.type,
         setLabel: set.setLabel,
