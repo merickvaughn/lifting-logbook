@@ -29,13 +29,14 @@ export class CycleDashboardController {
     ]);
     const currentWeekType = weekTypeForDate(dashboard.cycleDate, programSpec);
 
-    const [scheduledWorkouts, liftRecords, overrideMap, skippedNums] = await Promise.all([
+    const [scheduledWorkouts, completedWorkoutNums, overrideMap, skippedNums] = await Promise.all([
       cycleScheduledWorkout.getScheduledWorkouts(program, dashboard.cycleNum),
-      liftRecord.getLiftRecords(program, dashboard.cycleNum),
+      // Only the workout numbers are needed here; the full records were fetched
+      // and reduced to this set before (issue #982).
+      liftRecord.getLoggedWorkoutNums(program, dashboard.cycleNum),
       workoutDateOverride.getOverridesForCycle(program, dashboard.cycleNum),
       workoutSkipOverride.getSkipsForCycle(program, dashboard.cycleNum),
     ]);
-    const completedWorkoutNums = new Set(liftRecords.map((r) => r.workoutNum));
 
     return buildCycleDashboardResponse(dashboard, currentWeekType, scheduledWorkouts, overrideMap, completedWorkoutNums, skippedNums);
   }

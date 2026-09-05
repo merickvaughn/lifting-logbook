@@ -67,6 +67,7 @@ describe('CycleDashboardController', () => {
     };
     liftRecordRepo = {
       getLiftRecords: jest.fn().mockResolvedValue([]),
+      getLoggedWorkoutNums: jest.fn().mockResolvedValue(new Set<number>()),
       appendLiftRecords: jest.fn(),
       findExistingRecords: jest.fn(),
       updateLiftRecord: jest.fn(),
@@ -187,10 +188,7 @@ describe('CycleDashboardController', () => {
       { workoutNum: 1, weekNum: 1, scheduledDate: new Date('2026-04-21T00:00:00.000Z') },
       { workoutNum: 2, weekNum: 1, scheduledDate: new Date('2026-04-23T00:00:00.000Z') },
     ]);
-    liftRecordRepo.getLiftRecords.mockResolvedValue([
-      { program: '5-3-1', cycleNum: 2, workoutNum: 1, date: new Date(), lift: 'Squat', setNum: 1, weight: 200, reps: 5, notes: '' },
-      { program: '5-3-1', cycleNum: 2, workoutNum: 2, date: new Date(), lift: 'Bench', setNum: 1, weight: 150, reps: 5, notes: '' },
-    ]);
+    liftRecordRepo.getLoggedWorkoutNums.mockResolvedValue(new Set([1, 2]));
 
     const result = await controller.getCurrentCycle('5-3-1', MOCK_USER);
 
@@ -204,9 +202,7 @@ describe('CycleDashboardController', () => {
       { workoutNum: 1, weekNum: 1, scheduledDate: new Date('2026-04-21T00:00:00.000Z') },
       { workoutNum: 2, weekNum: 1, scheduledDate: new Date('2026-04-23T00:00:00.000Z') },
     ]);
-    liftRecordRepo.getLiftRecords.mockResolvedValue([
-      { program: '5-3-1', cycleNum: 2, workoutNum: 1, date: new Date(), lift: 'Squat', setNum: 1, weight: 200, reps: 5, notes: '' },
-    ]);
+    liftRecordRepo.getLoggedWorkoutNums.mockResolvedValue(new Set([1]));
 
     const result = await controller.getCurrentCycle('5-3-1', MOCK_USER);
 
@@ -224,9 +220,7 @@ describe('CycleDashboardController', () => {
       new Map([[2, new Date('2026-04-30T00:00:00.000Z')]]),
     );
     skipRepo.getSkipsForCycle.mockResolvedValue(new Set([3]));
-    liftRecordRepo.getLiftRecords.mockResolvedValue([
-      { program: '5-3-1', cycleNum: 2, workoutNum: 1, date: new Date(), lift: 'Squat', setNum: 1, weight: 200, reps: 5, notes: '' },
-    ]);
+    liftRecordRepo.getLoggedWorkoutNums.mockResolvedValue(new Set([1]));
 
     const result = await controller.getCurrentCycle('5-3-1', MOCK_USER);
 

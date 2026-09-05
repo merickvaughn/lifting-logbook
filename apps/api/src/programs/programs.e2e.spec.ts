@@ -451,6 +451,14 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(liftNames).toContain('Overhead Press');
     });
 
+    it('GET /cycles/current lists each logged workoutNum once, sorted (issue #982)', async () => {
+      // Workout 1 holds two records (Squat + Bench Press) and workout 2 two more,
+      // so the set must dedupe as well as scope to the current cycle.
+      const res = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
+      expect(res.statusCode).toBe(200);
+      expect((res.json() as { completedWorkoutNums: number[] }).completedWorkoutNums).toEqual([1, 2]);
+    });
+
     it('POST /training-maxes/recalculate flags reductions; only genuine increases are applied', async () => {
       const res = await post(`/programs/${SEED_PROGRAM}/training-maxes/recalculate`);
       expect(res.statusCode).toBe(200);

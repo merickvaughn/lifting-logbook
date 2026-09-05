@@ -22,6 +22,19 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     return rows.map(rowToLiftRecord);
   }
 
+  async getLoggedWorkoutNums(program: string, cycleNum: number): Promise<Set<number>> {
+    // `groupBy`, not `findMany({ distinct })`: without the `nativeDistinct`
+    // preview feature Prisma implements `distinct` in the query engine (fetch
+    // every matching row, dedupe in memory), which is the round-trip this method
+    // exists to avoid. `groupBy` emits SQL `GROUP BY` and is served index-only by
+    // `@@index([userId, program, cycleNum, workoutNum])`.
+    const rows = await this.prisma.liftRecord.groupBy({
+      by: ['workoutNum'],
+      where: { userId: this.userId, program, cycleNum },
+    });
+    return new Set(rows.map((r) => r.workoutNum));
+  }
+
   async appendLiftRecords(program: string, records: LiftRecord[]): Promise<number> {
     const { count } = await this.prisma.liftRecord.createMany({
       data: records.map((r) => ({

@@ -8,6 +8,14 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
     return (this.store.get(program) ?? []).filter((r) => r.cycleNum === cycleNum);
   }
 
+  async getLoggedWorkoutNums(program: string, cycleNum: number): Promise<Set<number>> {
+    return new Set(
+      (this.store.get(program) ?? [])
+        .filter((r) => r.cycleNum === cycleNum)
+        .map((r) => r.workoutNum),
+    );
+  }
+
   async appendLiftRecords(program: string, records: LiftRecord[]): Promise<number> {
     // Mirror Prisma's createMany({ skipDuplicates: true }) on the natural-key
     // unique constraint: rows whose key already exists (or repeats within this
