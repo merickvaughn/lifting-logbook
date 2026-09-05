@@ -322,7 +322,8 @@ mapped by `toLiftingProgramSpecResponse`, importable via the CSV `Activation` co
 fetched by both timer surfaces. Nothing in `apps/web` read it, which is why the gap went unnoticed.
 
 Its documented meaning is an **exercise name**: `rpt_program_spec.schema.json` describes it as
-"Activation exercise name", it maps to the legacy `"Activ. Ex."` sheet column in `LIFT_SPEC_HEADERS`,
+"Activation exercise name", it maps to the Sheets-era `"Activ. Ex."` column in `LIFT_SPEC_HEADERS`
+(archived with the rest of the Sheets grid code in #979),
 and the design doc's own example value is `"leg press"`.
 
 ### Decision

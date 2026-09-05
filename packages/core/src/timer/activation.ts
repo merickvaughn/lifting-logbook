@@ -4,8 +4,9 @@
  * The column's documented meaning is an *exercise name*: the JSON schema for the
  * program-spec import calls it "Activation exercise name"
  * (`packages/core/tests/fixtures/rpt_program_spec.schema.json`), it maps to the
- * legacy `"Activ. Ex."` sheet column (`LIFT_SPEC_HEADERS` in
- * `../constants/config`), and the design doc's own example is `"leg press"`.
+ * Sheets-era `"Activ. Ex."` column (see `LIFT_SPEC_HEADERS` in
+ * `archive/packages-core-gas-sheets/src/constants/sheets-config.ts`, archived
+ * in #979), and the design doc's own example is `"leg press"`.
  *
  * But `PRESET_BASE_SPECS` and the program editor's default row store a movement
  * *classification* there instead — `'compound'` / `'isolation'`. Nothing read the
