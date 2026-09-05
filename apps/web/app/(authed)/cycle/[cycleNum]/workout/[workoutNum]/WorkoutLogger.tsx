@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import type { LiftRecordResponse, WeightUnit } from '@lifting-logbook/types';
+import type { WeightUnit } from '@lifting-logbook/types';
 import { convertWeight, formatWeight, roundToDisplay } from '@lifting-logbook/core';
 import {
   createLiftRecord,
@@ -185,7 +185,7 @@ function WorkingSetRow({
   workoutNum: number;
   date: string;
   unit: WeightUnit;
-  onLogged: (record: LiftRecordResponse) => void;
+  onLogged: (record: LoggedSet) => void;
   onEditStart: () => void;
   onEditSave: (record: LoggedSet) => void;
 }) {
@@ -447,7 +447,7 @@ function LiftView({
   workoutNum: number;
   date: string;
   unit: WeightUnit;
-  onLogged: (key: string, record: LiftRecordResponse) => void;
+  onLogged: (key: string, record: LoggedSet) => void;
   onEditStart: (key: string) => void;
   onEditSave: (key: string, record: LoggedSet) => void;
 }) {
@@ -612,7 +612,7 @@ export default function WorkoutLogger({
     setBodyWeightDone(true);
   }
 
-  function handleLogged(key: string, record: LiftRecordResponse) {
+  function handleLogged(key: string, record: LoggedSet) {
     setLoggedSets((prev) => new Map(prev).set(key, record));
     setEditingSet(null);
   }
