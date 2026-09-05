@@ -7,6 +7,10 @@ module.exports = [
   {
     files: ['**/*.ts', '**/*.tsx'],
     rules: {
+      // packages/core is a pure domain library with no logger port; a console call
+      // here is stray debug output (the GAS-era residue #983 removed), never
+      // observability — apps/api logs under pino at the call site instead.
+      'no-console': 'error',
       // Enforce the hexagonal architecture boundary defined in ADR-002.
       // packages/core is pure domain logic — it must never import from app
       // workspaces or infrastructure packages. Violations mean the dependency
