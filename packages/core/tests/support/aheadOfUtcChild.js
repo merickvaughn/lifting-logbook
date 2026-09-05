@@ -74,7 +74,6 @@ require.extensions[".ts"] = function transpileAndCompile(mod, filename) {
 
 const { parseLiftRecords } = require(path.join(CORE_SRC, "utils", "parser", "parseLiftRecords.ts"));
 const { parseTrainingMaxes } = require(path.join(CORE_SRC, "utils", "parser", "parseTrainingMaxes.ts"));
-const { parseCycleDashboard } = require(path.join(CORE_SRC, "utils", "parser", "parseCycleDashboard.ts"));
 const { parseStrengthGoals } = require(path.join(CORE_SRC, "utils", "parser", "parseStrengthGoals.ts"));
 
 // Same fixture shape as parseLiftRecords.test.ts's / parseTrainingMaxes.test.ts's
@@ -87,16 +86,6 @@ const [record] = parseLiftRecords([
 const [trainingMax] = parseTrainingMaxes([
   ["Date Updated", "Lift", "Weight"],
   ["12/16/2025", "Bench", "150"],
-]);
-
-// Mirrors tests/fixtures/dashboard_20260105.csv (Cycle Date: "1/5/2026").
-const cycleDashboard = parseCycleDashboard([
-  ["Program", "RPT"],
-  ["Cycle Unit", "Week"],
-  ["Cycle #", "1"],
-  ["Cycle Date", "1/5/2026"],
-  ["Sheet Name", "RPT_Cycle_1_20260105"],
-  ["Start Weekday", "Monday"],
 ]);
 
 // Mirrors tests/fixtures/strength_goals.csv (Today's Date: "6/9/2026").
@@ -124,7 +113,6 @@ process.stdout.write(
     timezoneOffsetMinutes: new Date().getTimezoneOffset(),
     liftRecordDate: describeDate(record.date),
     trainingMaxDate: describeDate(trainingMax.dateUpdated),
-    cycleDashboardDate: describeDate(cycleDashboard.cycleDate),
     strengthGoalUpdatedAt: describeDate(strengthGoal.updatedAt),
   }),
 );

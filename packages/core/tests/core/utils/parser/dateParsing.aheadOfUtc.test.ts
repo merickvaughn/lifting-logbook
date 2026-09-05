@@ -40,7 +40,6 @@ type AheadOfUtcResult = {
   timezoneOffsetMinutes: number;
   liftRecordDate: DateParts;
   trainingMaxDate: DateParts;
-  cycleDashboardDate: DateParts;
   strengthGoalUpdatedAt: DateParts;
 };
 
@@ -81,7 +80,7 @@ describe("parseLiftRecords / parseTrainingMaxes on a host ahead of UTC (issue #8
   });
 });
 
-describe("parseCycleDashboard / parseStrengthGoals on a host ahead of UTC (issue #899)", () => {
+describe("parseStrengthGoals on a host ahead of UTC (issue #899)", () => {
   it("resolve M/D/YYYY cells to the UTC calendar day the cell names, in a real Pacific/Auckland process", () => {
     // Sanity check (see the identical check in the #894 describe block above).
     expect(parsed.timezoneOffsetMinutes).toBeLessThan(0);
@@ -91,7 +90,7 @@ describe("parseCycleDashboard / parseStrengthGoals on a host ahead of UTC (issue
     // "6/9/2026" to the PREVIOUS UTC calendar day at a non-midnight hour.
     // Confirmed live during development of this test by running this exact
     // script against the pre-fix source.
-    expect(parsed.cycleDashboardDate).toEqual({ year: 2026, month: 0, date: 5, hours: 0 });
+    // (`parseCycleDashboard`'s "1/5/2026" case moved to the archive with the parser — #979.)
     expect(parsed.strengthGoalUpdatedAt).toEqual({ year: 2026, month: 5, date: 9, hours: 0 });
   });
 });

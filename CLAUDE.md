@@ -61,6 +61,7 @@ infra/terraform/     — Shared infrastructure: VPC, load balancer, DNS, IAM
 docs/adr/            — Architecture Decision Records (see docs/README.md for the full ADR index)
 docs/README.md       — Full architecture narrative and ADR index
 scripts/             — Repository automation scripts
+archive/             — Frozen, unbuilt code kept for reference; nothing imports it (see archive/*/README.md)
 ```
 
 Architecture follows hexagonal / Ports & Adapters. `packages/core` has zero infrastructure dependencies. See [`docs/README.md`](docs/README.md) for full context.
