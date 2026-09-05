@@ -21,7 +21,7 @@ function phase(kind: TimerPhaseKind, next: TimerPhase['next'] = null): TimerPhas
     kind === 'activation' ?
       { type: 'activation' as const, setLabel: 'Hip Airplane', spec: '' }
     : { type: 'work' as const, setLabel: 'Set 2', spec: '5 × 225 lbs' };
-  return { kind, label: kind, dur: 60, lift: 'Squat', set, setIndex: 1, next };
+  return { kind, label: kind, dur: 60, lift: 'Squat', set, setIndex: 1, liftIndex: 0, setOrdinal: 1, next };
 }
 
 const EVERY_KIND = TIMER_PHASE_KINDS.map((kind) => [kind] as const);
