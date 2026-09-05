@@ -4,15 +4,15 @@ import type { TimerPhaseKind } from '@lifting-logbook/core';
 import TimerDial from './TimerDial';
 
 /**
- * The dial's phase -> class chain, which `scripts/check-timer-phase-colors.mjs`
+ * The dial's phase -> class map, which `scripts/check-timer-phase-colors.mjs`
  * cannot see.
  *
  * That guard checks the *stylesheet* half of the pairing — that no two phases
  * resolve to the same colour in a theme. It reads `TimerDial.module.css`, not
- * `TimerDial.tsx`, so it cannot tell whether the component ever applies a class.
- * And the chain ends in `styles.set` as its fallthrough, so a phase kind added
- * without a branch paints accent-coloured, typechecks, and passes that guard.
- * These assertions close that half.
+ * `TimerDial.tsx`, so it cannot tell which class the component applies. The map
+ * is exhaustive by type (a kind with no entry is a compile error), but the type
+ * cannot tell two kinds mapped to the *same* class apart — that is what these
+ * assertions close.
  *
  * CSS modules resolve through `identity-obj-proxy` under jest, so `styles.rest`
  * is the literal string `'rest'`.

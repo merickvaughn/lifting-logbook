@@ -603,13 +603,18 @@ pairing from source — which custom property paints each phase from
 and what each resolves to from [`apps/web/app/globals.css`](apps/web/app/globals.css), last-wins to
 match the cascade — so repointing a phase at a colliding token cannot pass.
 
-**It cannot see whether the component applies the class at all.** It reads the *stylesheet*, and
-`TimerDial.tsx`'s phase→class chain ends in `styles.set` as its fallthrough, so a phase kind added
-without a branch paints accent-colored, typechecks, and passes this guard.
-[`apps/web/components/timer/TimerDial.test.tsx`](apps/web/components/timer/TimerDial.test.tsx) is
-what covers that half — it asserts every phase kind resolves to a *distinct* class. Adding a sixth
-phase means touching both, plus `DIAL_PHASES` in the guard and a new token in **each** theme block.
-See [#960](https://github.com/merickvaughn/lifting-logbook/issues/960) and
+**It cannot see whether the component applies the class at all.** It reads the *stylesheet*.
+`TimerDial.tsx`'s phase→class lookup is an exhaustive `Record<TimerPhaseKind, string>` — as are the
+queue badge and sub-label copy in `apps/web/lib/timerLabels.ts` — so a phase kind added without an
+entry is a **type error**, not a phase that silently paints accent-colored
+([#977](https://github.com/merickvaughn/lifting-logbook/issues/977)). What the type cannot catch is two
+kinds mapped to the *same* class;
+[`apps/web/components/timer/TimerDial.test.tsx`](apps/web/components/timer/TimerDial.test.tsx) covers
+that half by asserting every phase kind resolves to a *distinct* class. Adding a sixth phase means
+touching the class map and the copy records (compile-enforced), `DIAL_PHASES` in the guard, and a new
+token in **each** theme block; the tests' per-kind tables are derived from `TIMER_PHASE_KINDS` and
+pick it up automatically. See [#960](https://github.com/merickvaughn/lifting-logbook/issues/960),
+[#977](https://github.com/merickvaughn/lifting-logbook/issues/977) and
 [ADR-035](docs/adr/ADR-035-client-side-rest-timer-state.md).
 
 ### Coverage Requirements

@@ -14,12 +14,13 @@ import type { LiftClassification } from '@lifting-logbook/types';
  * `activation` is the pre-lift movement drawn from the program spec's own
  * `activation` column — see {@link TimerLiftPlan.activation}.
  *
- * A runtime array rather than a bare type union, because three of the places
- * that switch on a phase kind end in a *fallthrough* — `TimerDial`'s class chain
- * defaults to `.set`, `WorkoutTimerView`'s queue badge defaults to `Set` — so a
- * kind added to a union alone typechecks and renders as the wrong thing. Tests
- * and the dial-colour CI guard iterate this array, which is what makes a fifth
- * kind fail loudly instead of silently.
+ * A runtime array rather than a bare type union so that tests and the
+ * dial-colour CI guard can iterate it: a fifth kind enters every per-kind table
+ * automatically. The places that *switch* on a kind — `TimerDial`'s class map
+ * and the badge / sub-label copy in `apps/web/lib/timerLabels.ts` — are
+ * exhaustive `Record<TimerPhaseKind, …>` lookups, so a kind added here without
+ * an entry there is a compile error rather than a phase that silently renders
+ * as a set (which is what their earlier `kind === …` chains allowed).
  */
 export const TIMER_PHASE_KINDS = ['prep', 'set', 'rest', 'activation'] as const;
 
