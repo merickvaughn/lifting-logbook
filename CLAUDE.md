@@ -611,9 +611,9 @@ entry is a **type error**, not a phase that silently paints accent-colored
 kinds mapped to the *same* class;
 [`apps/web/components/timer/TimerDial.test.tsx`](apps/web/components/timer/TimerDial.test.tsx) covers
 that half by asserting every phase kind resolves to a *distinct* class. Adding a sixth phase means
-touching the class map and the copy records (compile-enforced), `DIAL_PHASES` in the guard, and a new
-token in **each** theme block; the tests' per-kind tables are derived from `TIMER_PHASE_KINDS` and
-pick it up automatically. See [#960](https://github.com/merickvaughn/lifting-logbook/issues/960),
+touching the class map and the copy records (compile-enforced), a `.<kind> { stroke: … }` rule in
+`TimerDial.module.css`, `DIAL_PHASES` in the guard, and a new token in **each** theme block; the
+tests' per-kind tables are derived from `TIMER_PHASE_KINDS` and pick it up automatically. See [#960](https://github.com/merickvaughn/lifting-logbook/issues/960),
 [#977](https://github.com/merickvaughn/lifting-logbook/issues/977) and
 [ADR-035](docs/adr/ADR-035-client-side-rest-timer-state.md).
 

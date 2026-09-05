@@ -49,7 +49,7 @@ describe('phaseSubLabel', () => {
 });
 
 describe('queue row copy', () => {
-  it.each(EVERY_KIND)('has a distinct badge for a %s phase', (kind) => {
+  it.each(EVERY_KIND)('has a badge for a %s phase', (kind) => {
     expect(QUEUE_KIND_LABEL[kind]).not.toBe('');
   });
 

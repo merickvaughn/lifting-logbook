@@ -31,9 +31,12 @@ export function phaseLabel(phase: TimerPhase, paused: boolean): string {
  * "Set" for any unknown kind), so a new kind typechecked and rendered as the
  * wrong thing. `timerLabels.test.ts` iterates the array as the runtime check.
  */
+/** `Set 2 · 5 × 225 lbs` — the prescription a prep counts down to and a set performs. */
+const setCopy = (phase: TimerPhase): string => `${phase.set.setLabel} · ${phase.set.spec}`;
+
 const PHASE_SUB_LABEL = {
-  prep: (phase) => `${phase.set.setLabel} · ${phase.set.spec}`,
-  set: (phase) => `${phase.set.setLabel} · ${phase.set.spec}`,
+  prep: setCopy,
+  set: setCopy,
   // An activation carries the movement name and no prescription, so the
   // `label · spec` form would render a dangling separator.
   activation: (phase) => phase.set.setLabel,
