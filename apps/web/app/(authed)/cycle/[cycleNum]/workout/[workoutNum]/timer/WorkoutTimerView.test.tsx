@@ -358,9 +358,9 @@ describe('WorkoutTimerView', () => {
       renderView(WITH_ACTIVATION);
       const rows = within(screen.getByRole('list')).getAllByRole('listitem');
 
-      // The badge chain ends in "Set" as its fallthrough, so an unlabelled kind
-      // renders as a set and reads as one — the movement name is the only thing
-      // distinguishing this row.
+      // The badge is an exhaustive per-kind lookup (`QUEUE_KIND_LABEL`), so a
+      // missing entry is a type error rather than a row that reads as a set;
+      // this pins the copy itself and that the movement name is shown.
       expect(rows[0]).toHaveTextContent('Activation');
       expect(rows[0]).toHaveTextContent('Hip Airplane');
       expect(rows).toHaveLength(6);
