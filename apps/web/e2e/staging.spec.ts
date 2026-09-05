@@ -50,7 +50,8 @@ test('programs page catalog loads', async ({ page }) => {
 //
 // Structure-only assertion is intentional: the staging test user has no
 // records, so the success path renders empty tabs with no visible rows. The
-// two fetches in apps/web/app/(authed)/history/page.tsx:41-48 catch a failure
+// two fetches in apps/web/app/(authed)/history/page.tsx (the two `.catch` fallbacks,
+// annotated `fallback-covered-by` → this spec) catch a failure
 // into a `[]` fallback that also flips a `loadFailed` flag driving a
 // non-blocking "couldn't load" banner — but that banner appears only when a
 // fetch REJECTS, which the live staging API (asserted up by test 5,
