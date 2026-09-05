@@ -16,11 +16,14 @@ import type { LiftClassification } from '@lifting-logbook/types';
  *
  * A runtime array rather than a bare type union so that tests and the
  * dial-colour CI guard can iterate it: a fifth kind enters every per-kind table
- * automatically. The places that *switch* on a kind — `TimerDial`'s class map
- * and the badge / sub-label copy in `apps/web/lib/timerLabels.ts` — are
- * exhaustive `Record<TimerPhaseKind, …>` lookups, so a kind added here without
- * an entry there is a compile error rather than a phase that silently renders
- * as a set (which is what their earlier `kind === …` chains allowed).
+ * automatically. The places that *switch* on a kind — `TimerDial`'s class map,
+ * the badge / sub-label copy in `apps/web/lib/timerLabels.ts`, and
+ * `KIND_RANK` in `./anchor` (the order a set's phases are emitted in, which
+ * re-anchoring depends on) — are exhaustive `Record<TimerPhaseKind, …>`
+ * lookups, so a kind added here without an entry there is a compile error
+ * rather than a phase that silently renders as a set (which is what their
+ * earlier `kind === …` chains allowed). The rank's *value* is not compiler
+ * checked; `anchor.test.ts` asserts every kind ranks distinctly.
  */
 export const TIMER_PHASE_KINDS = ['prep', 'set', 'rest', 'activation'] as const;
 
@@ -182,6 +185,14 @@ export interface TimerPhaseKey {
   liftIndex: number;
   setOrdinal: number;
   kind: TimerPhaseKind;
+  /**
+   * The lift's name — a sanity check, not part of the ordering. Position alone
+   * would alias silently if the plan were reordered under a live run (a lift
+   * inserted or removed ahead of the current one in the program editor); a
+   * positional hit whose name differs is treated as "this plan is not the one
+   * the run was anchored in" rather than resumed on someone else's set.
+   */
+  lift: string;
 }
 
 /**

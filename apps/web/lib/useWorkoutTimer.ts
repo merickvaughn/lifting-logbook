@@ -163,9 +163,20 @@ export function useWorkoutTimer(
     [effectiveLifts, settings],
   );
 
-  // A queue that shrank under a running session (e.g. skipWarmups was switched on
-  // mid-workout) would leave idx dangling past the end; treat that as finished.
-  const phase = run && run.idx < queue.length ? (queue[run.idx] ?? null) : null;
+  // Where the run's anchor sits in the queue as currently built. Memoized on the
+  // anchor itself — not on `run`, which gets a new identity on every pause and
+  // nudge — so it is recomputed only when the queue or the anchored phase
+  // changes. The displayed phase is read through it rather than through
+  // `run.idx`: `idx` is a cache the effect below brings up to date one render
+  // later, and reading it here would let a rebuild paint, announce, and tick
+  // against a phase the run is not on for that one render.
+  const anchor = run?.on;
+  const anchored = useMemo(
+    () => (anchor ? reanchorIndex(queue, anchor) : null),
+    [queue, anchor],
+  );
+  const phase = anchored?.exact ? (queue[anchored.index] ?? null) : null;
+  const activeIndex = anchored?.exact ? anchored.index : -1;
 
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const acquiringRef = useRef<Promise<void> | null>(null);
@@ -270,21 +281,24 @@ export function useWorkoutTimer(
      * previous phase actually ended so a phase boundary crossed while the tab
      * was hidden does not silently grant a full fresh phase on return.
      */
-    (index: number, startedAt?: number) => {
+    (index: number, startedAt?: number, opts?: { paused?: boolean }) => {
       const target = queue[index];
       if (!target) {
         commitRun(null);
         return;
       }
       alertedAtRef.current = -1;
+      const from = startedAt ?? Date.now();
       commitRun({
         idx: index,
         // The shape-stable identity of the phase — what every later queue
         // rebuild re-derives `idx` from (see the re-anchor effect below).
         on: phaseKey(target),
-        startedAt: startedAt ?? Date.now(),
+        startedAt: from,
         pausedMs: 0,
-        pausedAt: null,
+        // A re-anchor onto a surviving phase keeps a paused run paused — the
+        // lifter's explicit pause outranks the fresh start (see the effect below).
+        pausedAt: opts?.paused ? from : null,
         bonus: 0,
         workout,
         // Pinned once, the first time a session starts (`run` is still null),
@@ -337,24 +351,30 @@ export function useWorkoutTimer(
   //
   // - same phase, maybe at a new index → keep the clock, re-point `idx`;
   // - phase gone (its duration went to 0:00, its warm-up was skipped away) →
-  //   advance to the nearest surviving phase after it, as a fresh start, rather
-  //   than ending the session (issue #972);
-  // - nothing survives at or after it → the session is over.
+  //   advance to the nearest surviving phase after it, as a fresh start that
+  //   stays paused if the run was paused, rather than ending the session
+  //   (issue #972);
+  // - nothing survives after it, or the plan was reordered under the run → the
+  //   session is over.
+  //
+  // `anchored` is the memo above, so this costs nothing on the pause/nudge
+  // renders that change `run` but not the anchor, and it converges in one pass:
+  // `startAt` writes the surviving phase's own key, which the next pass finds
+  // exactly at the index it just committed.
   //
   // Comparing against the *previous render's* queue, as this once did, could
   // not see the mount-time case above and mis-anchored every restored run whose
   // persisted settings changed the queue's shape (issue #980).
   useEffect(() => {
-    if (!run) return;
-    const { index, exact } = reanchorIndex(queue, run.on);
-    if (index === -1) {
+    if (!run || !anchored) return;
+    if (anchored.index === -1) {
       commitRun(null);
-    } else if (exact) {
-      if (index !== run.idx) commitRun({ ...run, idx: index });
+    } else if (anchored.exact) {
+      if (anchored.index !== run.idx) commitRun({ ...run, idx: anchored.index });
     } else {
-      startAt(index);
+      startAt(anchored.index, undefined, { paused: run.pausedAt !== null });
     }
-  }, [queue, run, commitRun, startAt]);
+  }, [anchored, run, commitRun, startAt]);
 
   const next = useCallback(() => {
     startAt(run ? run.idx + 1 : 0);
@@ -490,7 +510,7 @@ export function useWorkoutTimer(
   const remaining = phase && run ? phaseRemaining(phase, run, now) : 0;
   const duration = phase && run ? phaseDuration(phase, run) : 0;
   const progress = phase && run ? phaseProgress(phase, run, now) : 0;
-  const setOrdinal = setProgress(queue, run?.idx ?? -1);
+  const setOrdinal = setProgress(queue, activeIndex);
 
   return {
     effectiveLifts,
@@ -504,7 +524,7 @@ export function useWorkoutTimer(
     progress,
     overrun: remaining < 0,
     setOrdinal,
-    sessionProgress: queue.length > 0 && run ? run.idx / queue.length : 0,
+    sessionProgress: queue.length > 0 && activeIndex >= 0 ? activeIndex / queue.length : 0,
     settings,
     updateSettings,
     hydrated,

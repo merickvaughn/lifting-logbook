@@ -1,4 +1,5 @@
 import {
+  TIMER_PHASE_KINDS,
   buildTimerQueue,
   comparePhaseKeys,
   defaultTimerSettings,
@@ -54,15 +55,16 @@ function settingsWith(patch: {
   };
 }
 
-function key(liftIndex: number, setOrdinal: number, kind: TimerPhaseKey['kind']): TimerPhaseKey {
-  return { liftIndex, setOrdinal, kind };
+function key(
+  liftIndex: number,
+  setOrdinal: number,
+  kind: TimerPhaseKey['kind'],
+  lift = 'Bench Press',
+): TimerPhaseKey {
+  return { liftIndex, setOrdinal, kind, lift };
 }
 
-function at(queue: readonly TimerPhase[], index: number): TimerPhase {
-  const phase = queue[index];
-  if (!phase) throw new Error(`no phase at ${index}`);
-  return phase;
-}
+const at = (queue: readonly TimerPhase[], index: number): TimerPhase => pick(queue, index);
 
 describe('comparePhaseKeys', () => {
   it('orders by lift, then set, then activation < prep < set < rest', () => {
@@ -89,6 +91,22 @@ describe('comparePhaseKeys', () => {
     for (let i = 1; i < keys.length; i++) {
       expect(comparePhaseKeys(pick(keys, i - 1), pick(keys, i))).toBeLessThan(0);
     }
+  });
+
+  it('gives every phase kind its own rank', () => {
+    // Driven off TIMER_PHASE_KINDS so a kind added to core without a rank — or
+    // with a rank that ties another — fails here rather than re-anchoring wrong.
+    for (const a of TIMER_PHASE_KINDS) {
+      for (const b of TIMER_PHASE_KINDS) {
+        const order = comparePhaseKeys(key(0, 0, a), key(0, 0, b));
+        if (a === b) expect(order).toBe(0);
+        else expect(order).not.toBe(0);
+      }
+    }
+  });
+
+  it('ignores the lift name when ordering', () => {
+    expect(comparePhaseKeys(key(0, 0, 'set', 'A'), key(0, 0, 'set', 'B'))).toBe(0);
   });
 });
 
@@ -150,6 +168,15 @@ describe('reanchorIndex', () => {
     expect(reanchorIndex([], last)).toEqual({ index: -1, exact: false });
   });
 
+  it('ends rather than aliasing when the plan was reordered under the run', () => {
+    // The run was anchored on Barbell Rows at position 1. Insert a lift ahead of
+    // it and position 1 is now Bench Press: a positional hit with the wrong name
+    // must not resume as if nothing happened.
+    const rowsSet = full.findIndex((p) => p.kind === 'set' && p.liftIndex === 1);
+    const reordered = buildTimerQueue([pick(PLAN, 1), pick(PLAN, 0)], defaultTimerSettings());
+    expect(reanchorIndex(reordered, phaseKey(at(full, rowsSet)))).toEqual({ index: -1, exact: false });
+  });
+
   it('keys on the lift occurrence, so a repeated lift re-anchors onto the right one', () => {
     const twice: TimerLiftPlan[] = [pick(PLAN, 1), pick(PLAN, 1)];
     const before = buildTimerQueue(twice, defaultTimerSettings());
@@ -173,8 +200,9 @@ describe('isTimerPhaseKey', () => {
     ['a negative lift index', key(-1, 0, 'set')],
     ['an ordinal below -1', key(0, -2, 'set')],
     ['a fractional ordinal', key(0, 0.5, 'set')],
-    ['an unknown kind', { liftIndex: 0, setOrdinal: 0, kind: 'cooldown' }],
-    ['a missing field', { liftIndex: 0, kind: 'set' }],
+    ['an unknown kind', { liftIndex: 0, setOrdinal: 0, kind: 'cooldown', lift: 'Squat' }],
+    ['a missing field', { liftIndex: 0, kind: 'set', lift: 'Squat' }],
+    ['a missing lift name', { liftIndex: 0, setOrdinal: 0, kind: 'set' }],
   ])('rejects %s', (_label, value) => {
     expect(isTimerPhaseKey(value)).toBe(false);
   });

@@ -21,19 +21,28 @@ const KIND_RANK: Record<TimerPhaseKind, number> = {
 };
 
 export function phaseKey(phase: TimerPhase): TimerPhaseKey {
-  return { liftIndex: phase.liftIndex, setOrdinal: phase.setOrdinal, kind: phase.kind };
+  return {
+    liftIndex: phase.liftIndex,
+    setOrdinal: phase.setOrdinal,
+    kind: phase.kind,
+    lift: phase.lift,
+  };
 }
 
 export function sameTimerPhaseKey(a: TimerPhaseKey, b: TimerPhaseKey): boolean {
-  return a.liftIndex === b.liftIndex && a.setOrdinal === b.setOrdinal && a.kind === b.kind;
+  return (
+    a.liftIndex === b.liftIndex &&
+    a.setOrdinal === b.setOrdinal &&
+    a.kind === b.kind &&
+    a.lift === b.lift
+  );
 }
 
-/**
- * The total order {@link buildTimerQueue} emits phases in: by lift occurrence,
- * then by set, then activation < prep < set < rest. Because the activation's
- * ordinal is `-1`, it sorts before the lift's first set with no special case.
- */
-export function comparePhaseKeys(a: TimerPhaseKey, b: TimerPhaseKey): number {
+/** Positional order of a phase relative to a key; the name plays no part. */
+function comparePosition(
+  a: Pick<TimerPhaseKey, 'liftIndex' | 'setOrdinal' | 'kind'>,
+  b: Pick<TimerPhaseKey, 'liftIndex' | 'setOrdinal' | 'kind'>,
+): number {
   return (
     a.liftIndex - b.liftIndex ||
     a.setOrdinal - b.setOrdinal ||
@@ -42,25 +51,43 @@ export function comparePhaseKeys(a: TimerPhaseKey, b: TimerPhaseKey): number {
 }
 
 /**
+ * The total order {@link buildTimerQueue} emits phases in: by lift occurrence,
+ * then by set, then activation < prep < set < rest. Because the activation's
+ * ordinal is `-1`, it sorts before the lift's first set with no special case.
+ * `lift` is not part of the order — see {@link TimerPhaseKey.lift}.
+ */
+export function comparePhaseKeys(a: TimerPhaseKey, b: TimerPhaseKey): number {
+  return comparePosition(a, b);
+}
+
+/**
  * Where a run anchored on `key` belongs in a (possibly rebuilt) queue.
  *
  * Exact match first — the phase is still there, perhaps at a new index, and the
  * run's clock carries on. Otherwise the phase was removed by the rebuild (its
  * duration went to zero, its warm-up was skipped away) and the run should
- * *advance* to the nearest surviving phase at or after it in emission order,
- * not end (issue #972). `index` is `-1` only when nothing survives at or after
- * the key, which is the one case where ending the session is right.
+ * *advance* to the nearest surviving phase after it in emission order, not end
+ * (issue #972). `index` is `-1` only when nothing survives after the key — the
+ * one case where ending the session is right — or when the plan itself has
+ * been reordered under the run (a phase sits at the key's position but belongs
+ * to a different lift), where every position is suspect and ending is the safe
+ * answer.
  *
  * The queue is emitted in key order, so the first phase comparing greater is
- * the nearest survivor; no sort is needed.
+ * the nearest survivor; no sort is needed. Phases are compared field by field
+ * rather than through {@link phaseKey}, so a scan allocates nothing.
  */
 export function reanchorIndex(
   queue: readonly TimerPhase[],
   key: TimerPhaseKey,
 ): { index: number; exact: boolean } {
-  const exact = queue.findIndex((phase) => sameTimerPhaseKey(phaseKey(phase), key));
-  if (exact !== -1) return { index: exact, exact: true };
-  const next = queue.findIndex((phase) => comparePhaseKeys(phaseKey(phase), key) > 0);
+  const positional = queue.findIndex((phase) => comparePosition(phase, key) === 0);
+  if (positional !== -1) {
+    const hit = queue[positional];
+    if (hit && hit.lift === key.lift) return { index: positional, exact: true };
+    return { index: -1, exact: false };
+  }
+  const next = queue.findIndex((phase) => comparePosition(phase, key) > 0);
   return { index: next, exact: false };
 }
 
@@ -84,6 +111,7 @@ export function isTimerPhaseKey(raw: unknown): raw is TimerPhaseKey {
     typeof value.setOrdinal === 'number' &&
     Number.isInteger(value.setOrdinal) &&
     value.setOrdinal >= -1 &&
-    isKind(value.kind)
+    isKind(value.kind) &&
+    typeof value.lift === 'string'
   );
 }

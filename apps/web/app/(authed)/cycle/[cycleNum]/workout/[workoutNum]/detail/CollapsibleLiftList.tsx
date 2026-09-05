@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import Link from 'next/link';
 import { activationExercise, formatWeight } from '@lifting-logbook/core';
 import type { WeightUnit } from '@lifting-logbook/types';
@@ -93,6 +93,10 @@ export default function CollapsibleLiftList({
   // Keyed by position, not lift name: the same lift can appear twice in one
   // workout, and position is the identity the timer uses for it (issue #971).
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  // Per-instance prefix for the panel ids: a bare positional id would collide
+  // the moment a second list rendered on the page and silently break the
+  // header's `aria-controls` target.
+  const idBase = useId();
   // Null outside a WorkoutTimerProvider — the list renders exactly as it did
   // before the timer existed, which is also how its own tests mount it.
   const timer = useTimerRowState();
@@ -121,7 +125,7 @@ export default function CollapsibleLiftList({
     <ul className={styles.liftList}>
       {liftDetails.map(({ lift, tm, activation, warmUpCount, workCount, plannedSets }, liftIndex) => {
         const isExpanded = expanded.has(liftIndex);
-        const panelId = `lift-detail-${liftIndex}`;
+        const panelId = `${idBase}-lift-${liftIndex}`;
         const warmUpSets = plannedSets.filter((s) => s.type === 'warmup');
         const workSets = plannedSets.filter((s) => s.type === 'work');
         // Gated on `plannedSets`: with no training max there is nothing to time,

@@ -13,7 +13,7 @@ const T0 = 1_700_000_000_000;
 function run(overrides: Partial<TimerRunState> = {}): TimerRunState {
   return {
     idx: 0,
-    on: { liftIndex: 0, setOrdinal: 0, kind: 'rest' },
+    on: { liftIndex: 0, setOrdinal: 0, kind: 'rest', lift: 'Bench Press' },
     startedAt: T0,
     pausedMs: 0,
     pausedAt: null,

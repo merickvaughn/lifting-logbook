@@ -118,6 +118,20 @@ describe('WorkoutTimerView', () => {
       expect(screen.getByRole('radio', { name: 'Standard' })).toBeChecked();
     });
 
+    it('shows one override row for a repeated lift, even when its first occurrence has no sets', async () => {
+      // Overrides are keyed by name, so the two occurrences share a row — and
+      // the empty first occurrence (no training max yet) must not shadow the
+      // timed second one out of the list entirely.
+      const user = userEvent.setup();
+      const [bench] = LIFTS;
+      if (!bench) throw new Error('LIFTS fixture must hold a lift');
+      renderView([{ ...bench, sets: [] }, bench]);
+
+      await user.click(screen.getByRole('tab', { name: 'Settings' }));
+
+      expect(screen.getAllByRole('button', { name: /Bench Press/ })).toHaveLength(1);
+    });
+
     it('changes the preset and reflects it in the plan estimate', async () => {
       const user = userEvent.setup();
       renderView();

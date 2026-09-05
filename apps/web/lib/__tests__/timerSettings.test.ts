@@ -15,7 +15,7 @@ const WORKOUT: TimerWorkoutKey = { program: '531', cycleNum: 1, workoutNum: 3 };
 function makeRun(overrides: Partial<TimerRunState> = {}): TimerRunState {
   return {
     idx: 2,
-    on: { liftIndex: 0, setOrdinal: 1, kind: 'set' },
+    on: { liftIndex: 0, setOrdinal: 1, kind: 'set', lift: 'Bench Press' },
     startedAt: 1_700_000_000_000,
     pausedMs: 0,
     pausedAt: null,
@@ -132,7 +132,8 @@ describe('run persistence', () => {
   });
 
   it.each([
-    ['a missing workout key', { idx: 1, startedAt: 1, pausedMs: 0, pausedAt: null, bonus: 0 }],
+    // Carries a valid anchor so the rejection is the missing key, not the anchor guard.
+    ['a missing workout key', { idx: 1, on: { liftIndex: 0, setOrdinal: 1, kind: 'set', lift: 'Bench Press' }, startedAt: 1, pausedMs: 0, pausedAt: null, bonus: 0 }],
     ['a non-numeric idx', { ...makeRun(), idx: 'two' }],
     ['a negative idx', { ...makeRun(), idx: -1 }],
     ['a NaN startedAt', { ...makeRun(), startedAt: Number.NaN }],
@@ -142,7 +143,8 @@ describe('run persistence', () => {
     // valid one the run cannot be placed.
     ['no anchor', { ...makeRun(), on: undefined }],
     ['a malformed anchor', { ...makeRun(), on: { liftIndex: 0, setOrdinal: 0 } }],
-    ['an anchor of an unknown kind', { ...makeRun(), on: { liftIndex: 0, setOrdinal: 0, kind: 'cooldown' } }],
+    ['an anchor of an unknown kind', { ...makeRun(), on: { liftIndex: 0, setOrdinal: 0, kind: 'cooldown', lift: 'Bench Press' } }],
+    ['an anchor with no lift name', { ...makeRun(), on: { liftIndex: 0, setOrdinal: 0, kind: 'set' } }],
   ])('rejects a persisted run with %s', (_label, run) => {
     // `runShape` is written deliberately: without it `loadTimerRun` would bail on
     // the shape-version check before `isRunShape` ever ran, and every case here
@@ -229,7 +231,7 @@ describe('run persistence — classifications', () => {
         settings: null,
         run: {
           idx: 3,
-          on: { liftIndex: 0, setOrdinal: 1, kind: 'prep' },
+          on: { liftIndex: 0, setOrdinal: 1, kind: 'prep', lift: 'Bench Press' },
           startedAt: 1,
           pausedMs: 0,
           pausedAt: null,

@@ -36,9 +36,10 @@ export interface TimerRowState {
   /**
    * Flat set index for a rendered row, or `null` when that set is not timed.
    *
-   * Built from core's own `flattenSets`, so the index a row reports can never
-   * drift from the one the queue was built with — which matters because the
-   * rendered list shows every set while the queue may omit warm-ups.
+   * Built with core's own `flattenSets` from the same `effectiveLifts` the queue
+   * is built from, so a row's index and the queue's agree by construction —
+   * which matters because the rendered list shows every set while the queue
+   * may omit warm-ups.
    *
    * Keyed by the lift's *position* in the plan (which the page's own lift list
    * shares, index for index), not its name — see `activeLiftIndex`.
@@ -98,17 +99,17 @@ export default function WorkoutTimerProvider({
   );
 
   const timer: UseWorkoutTimerResult = useWorkoutTimer(lifts, workout);
-  const { phase, running, queue, settings, startAtSet, startAt } = timer;
+  const { effectiveLifts, phase, running, queue, settings, startAtSet, startAt } = timer;
 
   const summary = useMemo(() => queueSummary(queue), [queue]);
 
   const setIndexes = useMemo(() => {
     const map = new Map<string, number>();
-    flattenSets(lifts, settings.behavior.skipWarmups).forEach((entry, index) => {
+    flattenSets(effectiveLifts, settings.behavior.skipWarmups).forEach((entry, index) => {
       map.set(setKey(entry.liftIndex, entry.set.setLabel), index);
     });
     return map;
-  }, [lifts, settings.behavior.skipWarmups]);
+  }, [effectiveLifts, settings.behavior.skipWarmups]);
 
   const rowState = useMemo<TimerRowState>(
     () => ({

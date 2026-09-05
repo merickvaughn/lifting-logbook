@@ -411,6 +411,23 @@ describe('queue rebuilt under a live run', () => {
     expect(result.current.phase).toMatchObject({ kind: 'prep', set: { setLabel: 'Warm-up 1' } });
   });
 
+  it('keeps a paused run paused when the phase it was on is removed', () => {
+    const { result } = render();
+    act(() => result.current.startAtSet(1)); // Set 1's prep
+    act(() => result.current.togglePause());
+    expect(result.current.paused).toBe(true);
+
+    act(() => result.current.updateSettings(withPreset(result.current.settings, { prep: 0 })));
+
+    // Moved on to the set — but not counting: the lifter's pause outranks the
+    // fresh start, so the set cannot run down (and beep, and auto-advance) while
+    // they are still on the Settings tab.
+    expect(result.current.phase).toMatchObject({ kind: 'set', set: { setLabel: 'Set 1' } });
+    expect(result.current.paused).toBe(true);
+    advance(30_000);
+    expect(result.current.remaining).toBe(result.current.duration);
+  });
+
   it('ends only when nothing survives at or after the phase it was on', () => {
     const warmupOnly: TimerLiftPlan[] = [
       { lift: 'Bench Press', sets: [{ type: 'warmup', setLabel: 'Warm-up 1', spec: '5 × 135 lbs' }] },
@@ -466,7 +483,7 @@ describe('queue rebuilt under a live run', () => {
         settings,
         run: {
           idx: 1,
-          on: { liftIndex: 0, setOrdinal: 1, kind: 'set' },
+          on: { liftIndex: 0, setOrdinal: 1, kind: 'set', lift: 'Bench Press' },
           startedAt: Date.now(),
           pausedMs: 0,
           pausedAt: null,
@@ -636,7 +653,7 @@ describe('persistence', () => {
           idx: 3,
           // Queue under default settings: WU1 prep/set/rest, then Set 1's prep
           // at index 3 — the key names that phase by position.
-          on: { liftIndex: 0, setOrdinal: 1, kind: 'prep' },
+          on: { liftIndex: 0, setOrdinal: 1, kind: 'prep', lift: 'Bench Press' },
           startedAt: Date.now(),
           pausedMs: 0,
           pausedAt: null,
@@ -683,14 +700,15 @@ describe('persistence', () => {
         settings: null,
         run: {
           idx: 3,
+          on: { liftIndex: 0, setOrdinal: 1, kind: 'prep', lift: 'Bench Press' },
           startedAt: Date.now(),
           pausedMs: 0,
           pausedAt: null,
           bonus: 0,
           workout: { ...WORKOUT, workoutNum: 99 },
         },
-        // Stamped, so this still exercises the workout-key gate rather than
-        // being rejected earlier by the shape-version check.
+        // Stamped and anchored, so this still exercises the workout-key gate
+        // rather than being rejected earlier by the shape-version or anchor checks.
         runShape: TIMER_RUN_SHAPE,
       }),
     );
