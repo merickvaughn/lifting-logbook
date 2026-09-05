@@ -98,18 +98,16 @@ export class WorkoutsController {
 
     // Apply overrides to logged records so removed/replaced lifts don't
     // re-appear via the "append ad-hoc logged lifts" path in toWorkoutResponse.
+    // Removed lifts are dropped here; replaced lifts are regrouped inside the
+    // mapper (`renamedLifts`) rather than renamed on the records, so each set's
+    // `id` is still built from the row as stored (issue #978).
     const replaceMap = new Map(
       liftOverrides
         .filter((o): o is (typeof o) & { replacedBy: string } => o.action === 'replace' && !!o.replacedBy)
         .map((o) => [o.lift, o.replacedBy!]),
     );
     const removedLifts = new Set(liftOverrides.filter((o) => o.action === 'remove').map((o) => o.lift));
-    const adjustedRecords = records
-      .filter((r) => !removedLifts.has(r.lift))
-      .map((r) => {
-        const renamed = replaceMap.get(r.lift);
-        return renamed !== undefined ? { ...r, lift: renamed } : r;
-      });
+    const adjustedRecords = records.filter((r) => !removedLifts.has(r.lift));
 
     return toWorkoutResponse(program, dashboard.cycleNum, workoutNum, week, adjustedRecords, {
       overrideDate: overrideDate ?? undefined,
@@ -118,6 +116,7 @@ export class WorkoutsController {
       skipped: skippedNums.has(workoutNum),
       cycleStartDate,
       offset: workoutKey?.offset,
+      renamedLifts: replaceMap,
     });
   }
 }

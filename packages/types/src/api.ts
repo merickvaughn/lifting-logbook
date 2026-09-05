@@ -70,10 +70,19 @@ export interface UpdateTrainingMaxHistoryRequest {
 
 /** A single set within a workout. */
 export interface SetResponse {
+  /**
+   * The logged record's id — the same value as {@link LiftRecordResponse.id},
+   * valid for `PATCH /programs/:program/lift-records/:id`. Built from the
+   * stored record, so under a `replace` lift override it still addresses the
+   * row as persisted (the lift the set is grouped under may be the replacement).
+   */
+  id: string;
   setNum: number;
   weight: number;
   reps: number;
   amrap: boolean;
+  /** Free-text notes on the logged record; `''` when none. */
+  notes: string;
 }
 
 /** A single lift's sets within a workout. */
