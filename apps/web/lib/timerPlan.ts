@@ -29,8 +29,17 @@ export interface TimerPlanInput {
    * The lift's activation movement, already narrowed from the spec's raw
    * `activation` column by `buildLiftDetails` (`activationExercise` runs exactly
    * once, there). `undefined` means the program names none.
+   *
+   * Required-but-nullable, deliberately, not optional. Optional would let the
+   * pre-#984 shape — `{ lift, tm, activation, plannedSets }`, verbatim what both
+   * pages built until this PR deleted them — satisfy this interface structurally:
+   * excess-property checking fires only on a fresh object literal passed directly
+   * as an argument, and every real call site passes a variable. The result would
+   * be silent and total, since `activation` arrives `undefined` and
+   * `buildTimerQueue` gates the phase on `activation !== undefined`, so every
+   * activation phase would vanish with no error and no failing test.
    */
-  activationMovement?: string | undefined;
+  activationMovement: string | undefined;
   plannedSets: PlannedSet[];
 }
 

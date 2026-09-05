@@ -29,19 +29,16 @@ export default async function WorkoutDetailPage({
   // custom-lift fetch is started up front but awaited only through
   // `plan.timerLifts()` — see `WorkoutPlan.timerLifts` for why that matters on
   // the app's most-visited page.
-  const plan = await loadWorkoutPlan(program, workoutNum);
+  const plan = await loadWorkoutPlan(program, workoutNum, 'WorkoutDetailPage');
 
   if (!plan) {
     notFound();
     return null;
   }
 
-  const { workout, unit, status, liftDetails } = plan;
-  const effectiveDate = workout.overrideDate ?? workout.date;
-  // `status`: completed wins over skipped intentionally — a partially-logged
-  // workout can also be marked skipped (the two states are independent
-  // records); when both are true the workout still shows as completed and
-  // SkipForm is hidden. See `statusOf`.
+  // `effectiveDate` comes off the plan rather than being recomputed here, so the
+  // date this page displays is the same one `statusOf` derived the status from.
+  const { workout, unit, status, effectiveDate, liftDetails } = plan;
 
   // A finished or skipped workout has nothing left to time, so the timer is not
   // mounted at all rather than being mounted and hidden. The timer route applies

@@ -121,7 +121,7 @@ describe('WorkoutTimerPage — accessory classification', () => {
 
     // Degraded, not silent.
     expect(errSpy).toHaveBeenCalledWith(
-      '[loadWorkoutPlan] custom lifts fetch failed, classifying built-ins only',
+      '[WorkoutTimerPage] custom lifts fetch failed, classifying built-ins only',
       expect.any(Error),
     );
     errSpy.mockRestore();

@@ -130,6 +130,31 @@ describe('WorkoutDetailPage — accessory classification', () => {
     expect(passedLifts(await renderPage()).map(([lift]) => lift)).toEqual(['Squat', 'Cable Curls']);
   });
 
+  it('mounts no timer, and never awaits the custom-lift fetch, for a logged workout', async () => {
+    // The other side of `timerAvailable`, and the property the deferred await
+    // exists for: a completed workout is most detail-page traffic, and it must
+    // not pay for the optional enrichment. `fetchCustomLifts` never settles here,
+    // so collapsing the page to an unconditional `await plan.timerLifts()` hangs
+    // this test instead of quietly putting the round-trip back on the hot path.
+    mockedCustomLifts.mockReturnValue(new Promise(() => undefined));
+    mockedWorkout.mockResolvedValue({
+      program: '5-3-1',
+      cycleNum: 1,
+      workoutNum: 1,
+      week: 1,
+      date: '2020-01-01',
+      skipped: false,
+      lifts: [{ lift: 'Squat', sets: [{ setNum: 1, weight: 225, reps: 5, notes: '' }], planned: false }],
+    });
+
+    const html = await renderPage();
+
+    expect(html).toContain('Planned Lifts');
+    expect(html).toContain('✓ Done');
+    // The provider is the timer's mount point; its absence is the assertion.
+    expect(html).not.toContain('data-lifts');
+  });
+
   // The classification matrix (custom lifts, slow fetch, deferred await) lives
   // in apps/web/lib/__tests__/loadWorkoutPlan.test.ts now; this page test keeps
   // one success, the plan/list alignment pin, and one failure case to prove the
@@ -149,7 +174,7 @@ describe('WorkoutDetailPage — accessory classification', () => {
     expect(html).toContain('Planned Lifts');
 
     expect(errSpy).toHaveBeenCalledWith(
-      '[loadWorkoutPlan] custom lifts fetch failed, classifying built-ins only',
+      '[WorkoutDetailPage] custom lifts fetch failed, classifying built-ins only',
       expect.any(Error),
     );
     errSpy.mockRestore();

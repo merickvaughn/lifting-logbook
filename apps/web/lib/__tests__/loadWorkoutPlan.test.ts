@@ -60,7 +60,7 @@ describe('loadWorkoutPlan', () => {
     mockedSpec.mockResolvedValue([]);
     mockedMaxes.mockResolvedValue([]);
 
-    await expect(loadWorkoutPlan('5-3-1', 99)).resolves.toBeNull();
+    await expect(loadWorkoutPlan('5-3-1', 99, 'WorkoutDetailPage')).resolves.toBeNull();
   });
 
   it('builds one detail per lift in order, keeping a lift the spec does not plan as an empty entry', async () => {
@@ -72,7 +72,7 @@ describe('loadWorkoutPlan', () => {
     mockedSpec.mockResolvedValue([spec('Cable Curls')]);
     mockedMaxes.mockResolvedValue([{ lift: 'Cable Curls', weight: 60 }]);
 
-    const plan = await loadWorkoutPlan('5-3-1', 1);
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
     if (!plan) throw new Error('expected a plan');
 
     expect(plan.status).toBe('upcoming');
@@ -88,10 +88,28 @@ describe('loadWorkoutPlan', () => {
     ]);
   });
 
+  it('still plans a lift with a spec row but no training max, at weight 0', async () => {
+    // The sibling of the case above, and the reason that one seeds a missing
+    // *spec row* rather than a missing max: the two are not interchangeable.
+    // A lift the spec does not plan contributes no sets; a lift with no training
+    // max still gets every set, priced at 0 — which is what the detail page's
+    // "set a training max" prompt keys off. Asserting the weights, not just the
+    // count, is what separates this from the empty-plan case.
+    seedWorkout(['Squat']);
+    mockedMaxes.mockResolvedValue([]);
+
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage');
+    if (!plan) throw new Error('expected a plan');
+
+    const [squat] = plan.liftDetails;
+    expect(squat).toMatchObject({ lift: 'Squat', tm: 0, warmUpCount: 3, workCount: 3 });
+    expect(squat?.plannedSets.map((set) => set.weight)).toEqual([0, 0, 0, 0, 0, 0]);
+  });
+
   it('narrows the activation column once, keeping a movement and dropping a legacy marker', async () => {
     seedWorkout(['Squat', 'Bench Press'], { Squat: 'Hip Airplane', 'Bench Press': 'compound' });
 
-    const plan = await loadWorkoutPlan('5-3-1', 1);
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
     if (!plan) throw new Error('expected a plan');
 
     expect(plan.liftDetails.map((d) => d.activationMovement)).toEqual(['Hip Airplane', undefined]);
@@ -102,7 +120,7 @@ describe('loadWorkoutPlan', () => {
     seedWorkout(['Squat', 'Cable Curls', 'Sissy Squat']);
     mockedCustomLifts.mockResolvedValue([{ name: 'Sissy Squat', classification: 'accessory' }]);
 
-    const plan = await loadWorkoutPlan('5-3-1', 1);
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
     if (!plan) throw new Error('expected a plan');
 
     expect((await plan.timerLifts()).map((l) => [l.lift, l.classification])).toEqual([
@@ -117,7 +135,7 @@ describe('loadWorkoutPlan', () => {
     seedWorkout(['Squat', 'Cable Curls', 'Sissy Squat']);
     mockedCustomLifts.mockRejectedValue(new Error('API down'));
 
-    const plan = await loadWorkoutPlan('5-3-1', 1);
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
     if (!plan) throw new Error('expected a plan');
 
     // Paired with the success path above: a loader that stopped classifying
@@ -131,7 +149,7 @@ describe('loadWorkoutPlan', () => {
       ['Sissy Squat', undefined],
     ]);
     expect(errSpy).toHaveBeenCalledWith(
-      '[loadWorkoutPlan] custom lifts fetch failed, classifying built-ins only',
+      '[WorkoutTimerPage] custom lifts fetch failed, classifying built-ins only',
       expect.any(Error),
     );
     errSpy.mockRestore();
@@ -145,7 +163,7 @@ describe('loadWorkoutPlan', () => {
       seedWorkout(['Squat']);
       mockedCustomLifts.mockReturnValue(new Promise(() => undefined)); // never settles
 
-      const plan = await loadWorkoutPlan('5-3-1', 1);
+      const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
       if (!plan) throw new Error('expected a plan');
 
       const lifts = plan.timerLifts();
@@ -153,7 +171,7 @@ describe('loadWorkoutPlan', () => {
 
       expect((await lifts).map((l) => [l.lift, l.classification])).toEqual([['Squat', 'compound']]);
       expect(warnSpy).toHaveBeenCalledWith(
-        '[loadWorkoutPlan] custom lifts fetch slow, classifying built-ins only',
+        '[WorkoutTimerPage] custom lifts fetch slow, classifying built-ins only',
       );
       expect(errSpy).not.toHaveBeenCalled();
     } finally {
@@ -173,7 +191,7 @@ describe('loadWorkoutPlan', () => {
       let settle: (lifts: { name: string; classification: 'accessory' }[]) => void = () => undefined;
       mockedCustomLifts.mockReturnValue(new Promise((resolve) => { settle = resolve; }));
 
-      const plan = await loadWorkoutPlan('5-3-1', 1);
+      const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
       expect(plan).not.toBeNull();
       expect(mockedCustomLifts).toHaveBeenCalledTimes(1);
 

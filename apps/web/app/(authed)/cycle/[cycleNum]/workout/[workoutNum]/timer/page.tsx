@@ -25,7 +25,7 @@ export default async function WorkoutTimerPage({
   }
 
   const program = await getActiveProgram();
-  const plan = await loadWorkoutPlan(program, workoutNum);
+  const plan = await loadWorkoutPlan(program, workoutNum, 'WorkoutTimerPage');
 
   if (!plan) {
     notFound();

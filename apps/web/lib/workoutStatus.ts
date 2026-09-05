@@ -9,6 +9,11 @@
  */
 export type WorkoutStatus = 'completed' | 'upcoming' | 'missed' | 'skipped';
 
+/**
+ * Completed wins over skipped, intentionally: a partially-logged workout can also
+ * be marked skipped, because the two are independent records. When both are true
+ * the workout still reads as completed, and the detail page hides its SkipForm.
+ */
 export function workoutStatus(date: string, hasLogs: boolean, skipped: boolean): WorkoutStatus {
   const today = new Date().toISOString().slice(0, 10);
   if (hasLogs) return 'completed';
@@ -22,6 +27,15 @@ export function isTimeable(status: WorkoutStatus): boolean {
   return status !== 'completed' && status !== 'skipped';
 }
 
+/**
+ * The date a workout actually falls on: the reschedule override, else its
+ * original date. The one owner of that rule — `statusOf` judges against it and
+ * the detail page displays it, so a second copy could put the two out of step.
+ */
+export function effectiveDateOf(workout: { date: string; overrideDate?: string | null }): string {
+  return workout.overrideDate ?? workout.date;
+}
+
 /** Status inputs, derived from a workout the API returned. */
 export function statusOf(workout: {
   date: string;
@@ -29,7 +43,6 @@ export function statusOf(workout: {
   skipped: boolean;
   lifts: { planned?: boolean }[];
 }): WorkoutStatus {
-  const effectiveDate = workout.overrideDate ?? workout.date;
   const hasLogs = workout.lifts.some((l) => !l.planned);
-  return workoutStatus(effectiveDate, hasLogs, workout.skipped);
+  return workoutStatus(effectiveDateOf(workout), hasLogs, workout.skipped);
 }

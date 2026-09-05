@@ -515,7 +515,9 @@ now a third such table (its presence is compiler-enforced, its values checked by
   `useId()` so a second list on a page cannot collide.
 - The index alignment between the page's `liftDetails` and the plan handed to the timer is now
   load-bearing across two routes and a persisted artifact; `detail/page.test.tsx` pins it (every
-  lift, in order, including one with no training max), and
+  lift, in order, including one the spec does not plan) and `lib/__tests__/loadWorkoutPlan.test.ts`
+  covers the two ways a lift can come up short — no spec row, which plans nothing, and no training
+  max, which still plans its sets at weight 0 — because only the first drops out of the plan, and
   [#984](https://github.com/merickvaughn/lifting-logbook/issues/984)'s shared `loadWorkoutPlan`
   makes it structural — both routes take `liftDetails` and the timer plan from one call, so there
   is no second code path to filter. That loader partially revisits Amendment 2's rejection of "a

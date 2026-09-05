@@ -175,10 +175,15 @@ export interface WorkoutLiftDetail {
    * `activation` column also carries legacy classification markers
    * (`'compound'` / `'n/a'`), which are not movements. Named `activationMovement`
    * rather than `activation` so a consumer still expecting the raw column fails
-   * to compile instead of re-narrowing — or forgetting to. Optional because
-   * "none" is the common case and fixtures should not have to spell it.
+   * to compile instead of re-narrowing — or forgetting to.
+   *
+   * Required-but-nullable, not optional: an optional key would let the raw-column
+   * shape satisfy this interface structurally (excess-property checking only fires
+   * on a fresh literal passed directly as an argument), which is exactly the
+   * substitution the rename exists to prevent. Every construction site — fixtures
+   * included — therefore has to spell the decision out.
    */
-  activationMovement?: string | undefined;
+  activationMovement: string | undefined;
   warmUpCount: number;
   workCount: number;
   plannedSets: PlannedSet[];

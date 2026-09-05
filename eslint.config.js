@@ -58,7 +58,10 @@ module.exports = [
       'apps/web/app/**/*.ts',
       'apps/web/app/**/*.tsx',
       // Server-side loaders shared by pages live here too (e.g. lib/loadWorkoutPlan.ts).
+      // Both extensions, mirroring the app entries above, so a future lib/*.tsx
+      // cannot slip past the rule.
       'apps/web/lib/**/*.ts',
+      'apps/web/lib/**/*.tsx',
       'apps/api/src/**/*.ts',
     ],
     ignores: ['**/*.spec.ts', '**/*.test.ts', '**/*.spec.tsx', '**/*.test.tsx', '**/__tests__/**'],

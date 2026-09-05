@@ -17,6 +17,10 @@ const LIFT_DETAILS: LiftDetail[] = [
   {
     lift: 'Bench Press',
     tm: 285,
+    // Spelled out because `activationMovement` is required-but-nullable: a
+    // fixture cannot inherit "no activation" by omission, which is what let the
+    // pre-#984 raw-column shape satisfy the interface silently.
+    activationMovement: undefined,
     warmUpCount: 1,
     workCount: 2,
     plannedSets: [
@@ -124,6 +128,7 @@ describe('CollapsibleLiftList with the timer', () => {
     const detail: LiftDetail = {
       lift: 'Bench Press',
       tm: 285,
+      activationMovement: undefined,
       warmUpCount: 0,
       workCount: 1,
       plannedSets: [{ type: 'work', setLabel: 'Set 1', weight: 200, reps: 5 }],
