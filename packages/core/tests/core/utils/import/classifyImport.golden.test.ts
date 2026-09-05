@@ -11,6 +11,12 @@ import { loadCsvFixture } from "../../../testUtils";
  * a table no profile matches. Deliberately kept after the refactor: they also
  * guard the thresholds in importThresholds.ts. A change that moves any of these
  * on purpose must update the literal and say why.
+ *
+ * Generated, not hand-written: each literal is
+ * `JSON.stringify(classifyImport(loadCsvFixture(name)))` (and the same call on
+ * AMBIGUOUS), captured by a throwaway test that printed the JSON and then
+ * transcribed here with the keys unquoted. Regenerate the same way after an
+ * intentional scoring or threshold change, and review the diff of the literal.
  */
 const AMBIGUOUS = [["a", "b", "c"], ["1", "2", "3"], ["4", "5", "6"]];
 
