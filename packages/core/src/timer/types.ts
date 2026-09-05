@@ -150,8 +150,38 @@ export interface TimerPhase {
    * uses to mark rows active/done without comparing object identity.
    */
   setIndex: number;
+  /**
+   * Position of the lift occurrence this phase belongs to in the plan — the
+   * first half of its shape-stable identity (see {@link TimerPhaseKey}).
+   * Positional, never the name: the same lift can appear twice in one workout.
+   */
+  liftIndex: number;
+  /**
+   * Position of this phase's set within its lift's *full* set list, warm-ups
+   * included — so, unlike `setIndex`, it does not renumber when `skipWarmups`
+   * toggles. `-1` for an activation, which precedes every set of its lift.
+   */
+  setOrdinal: number;
   /** The next *set* phase after this one, for "Up next: …" copy. `null` at the end. */
   next: { lift: string; setLabel: string; spec: string } | null;
+}
+
+/**
+ * Shape-stable identity of a phase in the session queue.
+ *
+ * A queue index is not one: toggling `skipWarmups`, or moving `prep` or
+ * `activation` across zero, changes how many phases each set expands to and
+ * renumbers everything after it. `setIndex` is not one either — it addresses
+ * the *timed* set list, which is exactly what `skipWarmups` renumbers. What
+ * survives every rebuild is *position in the plan*: which lift occurrence
+ * (`liftIndex`), which of its sets (`setOrdinal`, counted over the lift's full
+ * set list), and which of that set's phases (`kind`). See `./anchor` for the
+ * ordering and re-anchoring helpers built on it.
+ */
+export interface TimerPhaseKey {
+  liftIndex: number;
+  setOrdinal: number;
+  kind: TimerPhaseKind;
 }
 
 /**
@@ -163,8 +193,19 @@ export interface TimerPhase {
  * across a locked phone or a throttled background tab.
  */
 export interface TimerRunState {
-  /** Index into the queue. */
+  /**
+   * Index into the queue — a *cache* of where {@link TimerRunState.on} sits in
+   * the queue as currently built. Re-derived from `on` whenever the queue is
+   * rebuilt; never the source of truth for which phase the run is on.
+   */
   idx: number;
+  /**
+   * The phase the run is on, by shape-stable identity. This is what survives a
+   * queue rebuild — on this route, the other route, or a fresh mount whose
+   * persisted settings build a different shape than the defaults did — where a
+   * bare index would silently point at a different phase (issue #980).
+   */
+  on: TimerPhaseKey;
   startedAt: number;
   /** Total milliseconds spent paused across every pause so far. */
   pausedMs: number;
