@@ -17,7 +17,11 @@
 // would spam telemetry for something that is not a production incident. Same
 // rationale, and the same shape, as workoutDraftStorage.ts.
 
-import { normalizeClassifications, normalizeTimerSettings } from '@lifting-logbook/core';
+import {
+  isTimerPhaseKey,
+  normalizeClassifications,
+  normalizeTimerSettings,
+} from '@lifting-logbook/core';
 import type { TimerRunState, TimerSettings, TimerWorkoutKey } from '@lifting-logbook/core';
 
 /** Versioned so a future schema change can migrate rather than clobber. */
@@ -39,13 +43,15 @@ export const TIMER_STORAGE_KEY = 'll.timer.v1';
  * the new shape, so it re-finds and then cements the displaced phase.
  *
  * Bump this whenever a change alters the phases `buildTimerQueue` emits for a
- * given plan. A run written under a different version is dropped rather than
- * resumed at the wrong phase: a run is minutes of ephemeral position (the lifter
- * taps Start again), whereas a silently wrong countdown is indistinguishable
- * from a working one. Settings are stored beside it and are unaffected — they
- * migrate field-by-field through `normalizeTimerSettings` instead.
+ * given plan, or changes what a run needs in order to be re-anchored (shape 3
+ * added the persisted `on` key — issue #980). A run written under a different
+ * version is dropped rather than resumed at the wrong phase: a run is minutes of
+ * ephemeral position (the lifter taps Start again), whereas a silently wrong
+ * countdown is indistinguishable from a working one. Settings are stored beside
+ * it and are unaffected — they migrate field-by-field through
+ * `normalizeTimerSettings` instead.
  */
-export const TIMER_RUN_SHAPE = 2;
+export const TIMER_RUN_SHAPE = 3;
 
 interface StoredBlob {
   settings: unknown;
@@ -153,7 +159,10 @@ function isRunShape(value: unknown): value is UnvalidatedRun {
       (typeof value.pausedAt === 'number' && Number.isFinite(value.pausedAt))) &&
     typeof value.bonus === 'number' &&
     Number.isFinite(value.bonus) &&
-    isWorkoutKey(value.workout)
+    isWorkoutKey(value.workout) &&
+    // The anchor is what a rebuilt queue re-derives `idx` from, so a run
+    // without a valid one cannot be placed and is dropped (issue #980).
+    isTimerPhaseKey(value.on)
   );
 }
 

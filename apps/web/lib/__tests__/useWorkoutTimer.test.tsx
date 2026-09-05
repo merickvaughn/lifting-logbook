@@ -1,5 +1,10 @@
 import { act, renderHook } from '@testing-library/react';
-import type { TimerLiftPlan, TimerWorkoutKey } from '@lifting-logbook/core';
+import type {
+  TimerLiftPlan,
+  TimerPresetDurations,
+  TimerSettings,
+  TimerWorkoutKey,
+} from '@lifting-logbook/core';
 import { useWorkoutTimer } from '../useWorkoutTimer';
 import {
   TIMER_RUN_SHAPE,
@@ -67,6 +72,19 @@ function advance(ms: number) {
 
 function render() {
   return renderHook(() => useWorkoutTimer(LIFTS, WORKOUT));
+}
+
+/** `settings` with the active preset's durations patched. */
+function withPreset(
+  settings: TimerSettings,
+  patch: Partial<TimerPresetDurations>,
+): TimerSettings {
+  const preset = settings.presets[settings.preset];
+  if (!preset) throw new Error(`no preset named ${settings.preset}`);
+  return {
+    ...settings,
+    presets: { ...settings.presets, [settings.preset]: { ...preset, ...patch } },
+  };
 }
 
 beforeEach(() => {
@@ -349,7 +367,7 @@ describe('queue rebuilt under a live run', () => {
     expect(result.current.run?.idx).not.toBe(idxBefore);
   });
 
-  it('ends the session when the phase it was on is removed from the queue', () => {
+  it('advances to the first surviving phase when the warm-up it was on is skipped away (#972)', () => {
     const { result } = render();
     act(() => result.current.startAtSet(0)); // the warm-up set
     expect(result.current.phase?.set.setLabel).toBe('Warm-up 1');
@@ -360,11 +378,128 @@ describe('queue rebuilt under a live run', () => {
       result.current.updateSettings(next);
     });
 
-    // The warm-up is gone. The run must be cleared, not left pointing past the
-    // end with a live interval and no surface able to stop it.
+    // The warm-up is gone; the lifter's position is not. The run moves on to the
+    // nearest surviving phase — the working set's prep — rather than ending and
+    // wiping the persisted run.
+    expect(result.current.running).toBe(true);
+    expect(result.current.phase).toMatchObject({ kind: 'prep', set: { setLabel: 'Set 1' } });
+    expect(loadTimerRun(WORKOUT)).not.toBeNull();
+  });
+
+  it('skips a prep phase whose duration is set to 0:00 while it is live (#972)', () => {
+    const { result } = render();
+    act(() => result.current.startAtSet(1)); // Set 1, which starts on its prep
+    expect(result.current.phase).toMatchObject({ kind: 'prep', set: { setLabel: 'Set 1' } });
+
+    act(() => result.current.updateSettings(withPreset(result.current.settings, { prep: 0 })));
+
+    expect(result.current.running).toBe(true);
+    expect(result.current.phase).toMatchObject({ kind: 'set', set: { setLabel: 'Set 1' } });
+  });
+
+  it('advances past an activation whose duration is set to 0:00 while it is live (#972)', () => {
+    const [bench] = LIFTS;
+    if (!bench) throw new Error('LIFTS fixture must hold a lift');
+    const lifts: TimerLiftPlan[] = [{ ...bench, activation: 'Band Pull-Apart' }];
+    const { result } = renderHook(() => useWorkoutTimer(lifts, WORKOUT));
+    act(() => result.current.startAt(0));
+    expect(result.current.phase?.kind).toBe('activation');
+
+    act(() => result.current.updateSettings(withPreset(result.current.settings, { activation: 0 })));
+
+    expect(result.current.running).toBe(true);
+    expect(result.current.phase).toMatchObject({ kind: 'prep', set: { setLabel: 'Warm-up 1' } });
+  });
+
+  it('keeps a paused run paused when the phase it was on is removed', () => {
+    const { result } = render();
+    act(() => result.current.startAtSet(1)); // Set 1's prep
+    act(() => result.current.togglePause());
+    expect(result.current.paused).toBe(true);
+
+    act(() => result.current.updateSettings(withPreset(result.current.settings, { prep: 0 })));
+
+    // Moved on to the set — but not counting: the lifter's pause outranks the
+    // fresh start, so the set cannot run down (and beep, and auto-advance) while
+    // they are still on the Settings tab.
+    expect(result.current.phase).toMatchObject({ kind: 'set', set: { setLabel: 'Set 1' } });
+    expect(result.current.paused).toBe(true);
+    advance(30_000);
+    expect(result.current.remaining).toBe(result.current.duration);
+  });
+
+  it('ends only when nothing survives at or after the phase it was on', () => {
+    const warmupOnly: TimerLiftPlan[] = [
+      { lift: 'Bench Press', sets: [{ type: 'warmup', setLabel: 'Warm-up 1', spec: '5 × 135 lbs' }] },
+    ];
+    const { result } = renderHook(() => useWorkoutTimer(warmupOnly, WORKOUT));
+    act(() => result.current.startAtSet(0));
+    expect(result.current.running).toBe(true);
+
+    act(() => {
+      const next = { ...result.current.settings };
+      next.behavior = { ...next.behavior, skipWarmups: true };
+      result.current.updateSettings(next);
+    });
+
+    // The whole queue is gone. The run must be cleared, not left pointing past
+    // the end with a live interval and no surface able to stop it.
     expect(result.current.running).toBe(false);
     expect(result.current.phase).toBeNull();
     expect(loadTimerRun(WORKOUT)).toBeNull();
+  });
+
+  it('re-anchors onto the second occurrence of a repeated lift, not the first (#971)', () => {
+    const set = { type: 'work' as const, setLabel: 'Set 1', spec: '5 × 200 lbs' };
+    const twice: TimerLiftPlan[] = [
+      { lift: 'Bench Press', sets: [set] },
+      { lift: 'Bench Press', sets: [set] },
+    ];
+    const { result } = renderHook(() => useWorkoutTimer(twice, WORKOUT));
+    // Flat set index 1 is the second occurrence's only set; it starts on its prep.
+    act(() => result.current.startAtSet(1));
+    expect(result.current.phase).toMatchObject({ kind: 'prep', liftIndex: 1 });
+
+    act(() => result.current.updateSettings(withPreset(result.current.settings, { prep: 0 })));
+
+    // Both occurrences carry the same lift name and set label; only position
+    // tells them apart. A name-keyed anchor lands on the first.
+    expect(result.current.running).toBe(true);
+    expect(result.current.phase).toMatchObject({ kind: 'set', liftIndex: 1 });
+    expect(result.current.run?.on.liftIndex).toBe(1);
+  });
+
+  it('restores a run recorded under persisted skipWarmups onto the same phase on a fresh mount (#980)', () => {
+    // Under skipWarmups the queue is [prep, set] for Set 1; the run was on the
+    // set, at index 1. A fresh mount builds its first queue from the *default*
+    // settings, where index 1 is the warm-up's set — the old previous-queue
+    // comparison read the persisted index against that queue and ended the
+    // session on every reload with this setting on.
+    const settings = loadTimerSettings();
+    settings.behavior.skipWarmups = true;
+    window.localStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({
+        settings,
+        run: {
+          idx: 1,
+          on: { liftIndex: 0, setOrdinal: 1, kind: 'set', lift: 'Bench Press' },
+          startedAt: Date.now(),
+          pausedMs: 0,
+          pausedAt: null,
+          bonus: 0,
+          workout: WORKOUT,
+        },
+        runShape: TIMER_RUN_SHAPE,
+      }),
+    );
+
+    const { result } = render();
+
+    expect(result.current.running).toBe(true);
+    expect(result.current.phase).toMatchObject({ kind: 'set', set: { setLabel: 'Set 1' } });
+    expect(result.current.run?.idx).toBe(1);
+    expect(loadTimerRun(WORKOUT)?.idx).toBe(1);
   });
 });
 
@@ -516,6 +651,9 @@ describe('persistence', () => {
         settings: null,
         run: {
           idx: 3,
+          // Queue under default settings: WU1 prep/set/rest, then Set 1's prep
+          // at index 3 — the key names that phase by position.
+          on: { liftIndex: 0, setOrdinal: 1, kind: 'prep', lift: 'Bench Press' },
           startedAt: Date.now(),
           pausedMs: 0,
           pausedAt: null,
@@ -562,14 +700,15 @@ describe('persistence', () => {
         settings: null,
         run: {
           idx: 3,
+          on: { liftIndex: 0, setOrdinal: 1, kind: 'prep', lift: 'Bench Press' },
           startedAt: Date.now(),
           pausedMs: 0,
           pausedAt: null,
           bonus: 0,
           workout: { ...WORKOUT, workoutNum: 99 },
         },
-        // Stamped, so this still exercises the workout-key gate rather than
-        // being rejected earlier by the shape-version check.
+        // Stamped and anchored, so this still exercises the workout-key gate
+        // rather than being rejected earlier by the shape-version or anchor checks.
         runShape: TIMER_RUN_SHAPE,
       }),
     );

@@ -19,8 +19,12 @@ export interface TimerRowState {
   running: boolean;
   /** Flat set index of the current phase, or `null` when no session is running. */
   activeSetIndex: number | null;
-  /** Lift the current phase belongs to — the list auto-expands it. */
-  activeLift: string | null;
+  /**
+   * Position of the lift occurrence the current phase belongs to — the list
+   * auto-expands it. Positional, not the name: the same lift can appear twice
+   * in one workout, and only position tells the two apart (issue #971).
+   */
+  activeLiftIndex: number | null;
   /** Every set index at or below this one is finished. `-1` when none are. */
   doneThroughIndex: number;
   /** Starts the session at the given flat set index. */
@@ -32,27 +36,28 @@ export interface TimerRowState {
   /**
    * Flat set index for a rendered row, or `null` when that set is not timed.
    *
-   * Built from core's own `flattenSets`, so the index a row reports can never
-   * drift from the one the queue was built with — which matters because the
-   * rendered list shows every set while the queue may omit warm-ups, and because
-   * lifts with no training max are dropped from the plan entirely.
+   * Built with core's own `flattenSets` from the same `effectiveLifts` the queue
+   * is built from, so a row's index and the queue's agree by construction —
+   * which matters because the rendered list shows every set while the queue
+   * may omit warm-ups.
+   *
+   * Keyed by the lift's *position* in the plan (which the page's own lift list
+   * shares, index for index), not its name — see `activeLiftIndex`.
    */
-  setIndexOf: (lift: string, setLabel: string) => number | null;
+  setIndexOf: (liftIndex: number, setLabel: string) => number | null;
 }
 
 const TimerRowStateContext = createContext<TimerRowState | null>(null);
 
 /**
- * Separator for the `(lift, setLabel)` composite key.
- *
- * A delimiter neither half can contain, matching the `:`-joined key convention in
- * `workoutDraftStorage.ts` — a plain space would collide for a lift name with a
- * trailing space.
+ * Separator for the `(liftIndex, setLabel)` composite key. A delimiter a set
+ * label cannot contain, matching the `:`-joined key convention in
+ * `workoutDraftStorage.ts`.
  */
 const KEY_SEP = '::';
 
-function setKey(lift: string, setLabel: string): string {
-  return [lift, setLabel].join(KEY_SEP);
+function setKey(liftIndex: number, setLabel: string): string {
+  return [String(liftIndex), setLabel].join(KEY_SEP);
 }
 
 /**
@@ -94,23 +99,23 @@ export default function WorkoutTimerProvider({
   );
 
   const timer: UseWorkoutTimerResult = useWorkoutTimer(lifts, workout);
-  const { phase, running, queue, settings, startAtSet, startAt } = timer;
+  const { effectiveLifts, phase, running, queue, settings, startAtSet, startAt } = timer;
 
   const summary = useMemo(() => queueSummary(queue), [queue]);
 
   const setIndexes = useMemo(() => {
     const map = new Map<string, number>();
-    flattenSets(lifts, settings.behavior.skipWarmups).forEach((entry, index) => {
-      map.set(setKey(entry.lift, entry.set.setLabel), index);
+    flattenSets(effectiveLifts, settings.behavior.skipWarmups).forEach((entry, index) => {
+      map.set(setKey(entry.liftIndex, entry.set.setLabel), index);
     });
     return map;
-  }, [lifts, settings.behavior.skipWarmups]);
+  }, [effectiveLifts, settings.behavior.skipWarmups]);
 
   const rowState = useMemo<TimerRowState>(
     () => ({
       running,
       activeSetIndex: phase?.setIndex ?? null,
-      activeLift: phase?.lift ?? null,
+      activeLiftIndex: phase?.liftIndex ?? null,
       // A rest phase means the set it belongs to is finished, so it counts as done
       // while the rest is still counting.
       doneThroughIndex:
@@ -129,7 +134,7 @@ export default function WorkoutTimerProvider({
         summary.sets > 0 ?
           `${summary.sets} sets · ${formatDuration(summary.totalSeconds)} including rest`
         : null,
-      setIndexOf: (lift, setLabel) => setIndexes.get(setKey(lift, setLabel)) ?? null,
+      setIndexOf: (liftIndex, setLabel) => setIndexes.get(setKey(liftIndex, setLabel)) ?? null,
     }),
     [running, phase, startAtSet, startAt, settings, summary, setIndexes],
   );

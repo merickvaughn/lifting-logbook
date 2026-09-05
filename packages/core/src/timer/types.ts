@@ -16,11 +16,14 @@ import type { LiftClassification } from '@lifting-logbook/types';
  *
  * A runtime array rather than a bare type union so that tests and the
  * dial-colour CI guard can iterate it: a fifth kind enters every per-kind table
- * automatically. The places that *switch* on a kind — `TimerDial`'s class map
- * and the badge / sub-label copy in `apps/web/lib/timerLabels.ts` — are
- * exhaustive `Record<TimerPhaseKind, …>` lookups, so a kind added here without
- * an entry there is a compile error rather than a phase that silently renders
- * as a set (which is what their earlier `kind === …` chains allowed).
+ * automatically. The places that *switch* on a kind — `TimerDial`'s class map,
+ * the badge / sub-label copy in `apps/web/lib/timerLabels.ts`, and
+ * `KIND_RANK` in `./anchor` (the order a set's phases are emitted in, which
+ * re-anchoring depends on) — are exhaustive `Record<TimerPhaseKind, …>`
+ * lookups, so a kind added here without an entry there is a compile error
+ * rather than a phase that silently renders as a set (which is what their
+ * earlier `kind === …` chains allowed). The rank's *value* is not compiler
+ * checked; `anchor.test.ts` asserts every kind ranks distinctly.
  */
 export const TIMER_PHASE_KINDS = ['prep', 'set', 'rest', 'activation'] as const;
 
@@ -150,8 +153,46 @@ export interface TimerPhase {
    * uses to mark rows active/done without comparing object identity.
    */
   setIndex: number;
+  /**
+   * Position of the lift occurrence this phase belongs to in the plan — the
+   * first half of its shape-stable identity (see {@link TimerPhaseKey}).
+   * Positional, never the name: the same lift can appear twice in one workout.
+   */
+  liftIndex: number;
+  /**
+   * Position of this phase's set within its lift's *full* set list, warm-ups
+   * included — so, unlike `setIndex`, it does not renumber when `skipWarmups`
+   * toggles. `-1` for an activation, which precedes every set of its lift.
+   */
+  setOrdinal: number;
   /** The next *set* phase after this one, for "Up next: …" copy. `null` at the end. */
   next: { lift: string; setLabel: string; spec: string } | null;
+}
+
+/**
+ * Shape-stable identity of a phase in the session queue.
+ *
+ * A queue index is not one: toggling `skipWarmups`, or moving `prep` or
+ * `activation` across zero, changes how many phases each set expands to and
+ * renumbers everything after it. `setIndex` is not one either — it addresses
+ * the *timed* set list, which is exactly what `skipWarmups` renumbers. What
+ * survives every rebuild is *position in the plan*: which lift occurrence
+ * (`liftIndex`), which of its sets (`setOrdinal`, counted over the lift's full
+ * set list), and which of that set's phases (`kind`). See `./anchor` for the
+ * ordering and re-anchoring helpers built on it.
+ */
+export interface TimerPhaseKey {
+  liftIndex: number;
+  setOrdinal: number;
+  kind: TimerPhaseKind;
+  /**
+   * The lift's name — a sanity check, not part of the ordering. Position alone
+   * would alias silently if the plan were reordered under a live run (a lift
+   * inserted or removed ahead of the current one in the program editor); a
+   * positional hit whose name differs is treated as "this plan is not the one
+   * the run was anchored in" rather than resumed on someone else's set.
+   */
+  lift: string;
 }
 
 /**
@@ -163,8 +204,19 @@ export interface TimerPhase {
  * across a locked phone or a throttled background tab.
  */
 export interface TimerRunState {
-  /** Index into the queue. */
+  /**
+   * Index into the queue — a *cache* of where {@link TimerRunState.on} sits in
+   * the queue as currently built. Re-derived from `on` whenever the queue is
+   * rebuilt; never the source of truth for which phase the run is on.
+   */
   idx: number;
+  /**
+   * The phase the run is on, by shape-stable identity. This is what survives a
+   * queue rebuild — on this route, the other route, or a fresh mount whose
+   * persisted settings build a different shape than the defaults did — where a
+   * bare index would silently point at a different phase (issue #980).
+   */
+  on: TimerPhaseKey;
   startedAt: number;
   /** Total milliseconds spent paused across every pause so far. */
   pausedMs: number;

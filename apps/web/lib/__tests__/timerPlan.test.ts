@@ -19,14 +19,20 @@ describe('toTimerLiftPlans', () => {
     expect(plan?.sets).toEqual([{ type: 'work', setLabel: 'Set 1', spec: '5 × 150 lbs' }]);
   });
 
-  it('drops a lift with no planned sets', () => {
+  it('keeps a lift with no planned sets as an empty plan, so positions stay aligned', () => {
+    // Position is a lift occurrence's identity for the timer (issue #980): a
+    // dropped entry would shift every later lift's `liftIndex` away from the
+    // page's own list. An empty plan contributes no phases either way.
     const plans = toTimerLiftPlans(
-      [detail('Bench Press'), detail('Deadlift', { plannedSets: [] })],
+      [detail('Deadlift', { plannedSets: [] }), detail('Bench Press')],
       'lbs',
       [],
     );
 
-    expect(plans.map((plan) => plan.lift)).toEqual(['Bench Press']);
+    expect(plans.map((plan) => [plan.lift, plan.sets.length])).toEqual([
+      ['Deadlift', 0],
+      ['Bench Press', 1],
+    ]);
   });
 
   it('omits the training-max caption when there is no training max', () => {

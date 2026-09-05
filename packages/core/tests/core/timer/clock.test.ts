@@ -13,6 +13,7 @@ const T0 = 1_700_000_000_000;
 function run(overrides: Partial<TimerRunState> = {}): TimerRunState {
   return {
     idx: 0,
+    on: { liftIndex: 0, setOrdinal: 0, kind: 'rest', lift: 'Bench Press' },
     startedAt: T0,
     pausedMs: 0,
     pausedAt: null,
@@ -31,6 +32,8 @@ function phase(overrides: Partial<TimerPhase> = {}): TimerPhase {
     lift: 'Bench Press',
     set: { type: 'work', setLabel: 'Set 1', spec: '5 × 200 lbs' },
     setIndex: 0,
+    liftIndex: 0,
+    setOrdinal: 0,
     next: null,
     ...overrides,
   };

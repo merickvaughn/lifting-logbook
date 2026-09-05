@@ -352,6 +352,51 @@ describe('buildTimerQueue — activation', () => {
     expect(activations).toHaveLength(2);
     expect(at(activations, 0).setIndex).toBe(0);
     expect(at(activations, 1).setIndex).toBe(1);
+    // Each occurrence is its own lift index — the identity everything keys on (#971).
+    expect(at(activations, 0).liftIndex).toBe(0);
+    expect(at(activations, 1).liftIndex).toBe(1);
+  });
+});
+
+describe('positional identity (issue #980)', () => {
+  const [bench, rows] = plan();
+  if (!bench || !rows) throw new Error('plan() fixture must hold two lifts');
+  const withActivation: TimerLiftPlan[] = [{ ...bench, activation: 'Band Pull-Apart' }, rows];
+
+  it('carries liftIndex and setOrdinal on every phase, with the activation at ordinal -1', () => {
+    const queue = buildTimerQueue(withActivation, defaultTimerSettings());
+    expect(queue.map((p) => [p.kind, p.liftIndex, p.setOrdinal])).toEqual([
+      ['activation', 0, -1],
+      ['prep', 0, 0], ['set', 0, 0], ['rest', 0, 0],
+      ['prep', 0, 1], ['set', 0, 1], ['rest', 0, 1],
+      ['prep', 0, 2], ['set', 0, 2], ['rest', 0, 2],
+      ['prep', 1, 0], ['set', 1, 0],
+    ]);
+  });
+
+  it('keeps setOrdinal stable when warm-ups are skipped, while setIndex renumbers', () => {
+    const skip = defaultTimerSettings();
+    skip.behavior.skipWarmups = true;
+    const queue = buildTimerQueue(withActivation, skip);
+    const set1 = queue.find((p) => p.kind === 'set' && p.set.setLabel === 'Set 1');
+    expect(set1).toMatchObject({ setIndex: 0, setOrdinal: 1, liftIndex: 0 });
+  });
+
+  it('flags the first surviving set of each lift in flattenSets, under both skipWarmups values', () => {
+    const kept = flattenSets(withActivation, false).map((s) => [s.set.setLabel, s.firstOfLift]);
+    expect(kept).toEqual([
+      ['Warm-up 1', true], ['Set 1', false], ['Set 2', false],
+      ['Set 1', true],
+    ]);
+    const skipped = flattenSets(withActivation, true).map((s) => [s.set.setLabel, s.firstOfLift]);
+    expect(skipped).toEqual([['Set 1', true], ['Set 2', false], ['Set 1', true]]);
+  });
+
+  it('emits exactly one activation per lift with no reliance on grouping order', () => {
+    // The boundary is `firstOfLift`, computed in flattenSets — not a comparison
+    // against the previous set's lift, so it holds for any survivor list.
+    const queue = buildTimerQueue(withActivation, defaultTimerSettings());
+    expect(queue.filter((p) => p.kind === 'activation')).toHaveLength(1);
   });
 });
 

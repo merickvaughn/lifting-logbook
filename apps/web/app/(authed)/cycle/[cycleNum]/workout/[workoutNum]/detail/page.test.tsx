@@ -118,6 +118,18 @@ describe('WorkoutDetailPage — accessory classification', () => {
     ]);
   });
 
+  it('hands the timer every lift in plan order, keeping one with no training max as an empty plan', async () => {
+    // Position is a lift's identity for the timer (issue #980): the plan the
+    // provider receives must line up index-for-index with the list this page
+    // renders, so a lift without a training max is passed through (empty), not
+    // filtered out. A `liftDetails.filter(...)` here would compile and silently
+    // point every ▶ and every persisted run at the wrong lift.
+    mockedCustomLifts.mockResolvedValue([]);
+    mockedMaxes.mockResolvedValue([{ lift: 'Cable Curls', weight: 60 }]);
+
+    expect(passedLifts(await renderPage()).map(([lift]) => lift)).toEqual(['Squat', 'Cable Curls']);
+  });
+
   it('classifies a custom lift from the fetched list', async () => {
     seedWorkout(['Sissy Squat']);
     mockedCustomLifts.mockResolvedValue([

@@ -17,19 +17,27 @@ export interface TimerQueueSet {
   /** The lift's activation movement, carried through so the queue can emit its phase. */
   activation?: string | undefined;
   /**
-   * Index of the {@link TimerLiftPlan} this set came from.
+   * Index of the {@link TimerLiftPlan} this set came from — the lift
+   * occurrence's identity, carried onto every phase as `TimerPhase.liftIndex`.
    *
-   * The lift *name* cannot serve as the boundary marker: one workout can legitimately
-   * hold the same lift twice (the program editor keys an instance by position, not by
-   * name), and each occurrence gets its own activation *in the queue*.
-   *
-   * Note the surrounding UI machinery does not yet distinguish those occurrences —
-   * `WorkoutTimerProvider`'s `setIndexOf` map and `useWorkoutTimer`'s re-anchor
-   * both key on `(lift, setLabel)`, so the second occurrence's rows resolve to the
-   * first. That collision predates the activation phase and applies equally to
-   * prep/set/rest; it is tracked separately rather than widened here.
+   * Positional rather than the lift *name*: one workout can legitimately hold
+   * the same lift twice (the program editor keys an instance by position, not
+   * by name), and everything downstream — the queue, the detail page's per-set
+   * ▶ map, the run's persisted anchor — keys on this so the two occurrences
+   * stay distinct (issues #970, #971).
    */
   liftIndex: number;
+  /**
+   * Position of `set` in its lift's full set list, warm-ups included, so it is
+   * stable across `skipWarmups` (unlike the flat index this list is walked by).
+   */
+  setOrdinal: number;
+  /**
+   * True on the first set of each lift that survives the flatten — the lift
+   * boundary, computed here where the loop knows it, so `buildTimerQueue` needs
+   * no ordering invariant to open a lift's activation phase.
+   */
+  firstOfLift: boolean;
   set: TimerSetPlan;
 }
 
@@ -47,19 +55,35 @@ export function flattenSets(
 ): TimerQueueSet[] {
   const out: TimerQueueSet[] = [];
   lifts.forEach((lift, liftIndex) => {
-    for (const set of lift.sets) {
-      if (skipWarmups && set.type === 'warmup') continue;
+    let opened = false;
+    lift.sets.forEach((set, setOrdinal) => {
+      if (skipWarmups && set.type === 'warmup') return;
       out.push({
         lift: lift.lift,
         classification: lift.classification,
         tm: lift.tm,
         activation: lift.activation,
         liftIndex,
+        setOrdinal,
+        firstOfLift: !opened,
         set,
       });
-    }
+      opened = true;
+    });
   });
   return out;
+}
+
+/**
+ * Whether a plan entry contributes any phases.
+ *
+ * A lift with no planned sets (no training max yet) is kept in the plan to hold
+ * its position — see `toTimerLiftPlans` in `apps/web` — but has nothing to time:
+ * {@link flattenSets} emits nothing for it, so no activation opens either. The
+ * one predicate every consumer that hides such a lift should share.
+ */
+export function hasTimedSets(plan: Pick<TimerLiftPlan, 'sets'>): boolean {
+  return plan.sets.length > 0;
 }
 
 function setLabelFor(set: TimerSetPlan): string {
@@ -86,59 +110,61 @@ export function buildTimerQueue(
 ): TimerPhase[] {
   const sets = flattenSets(lifts, settings.behavior.skipWarmups);
   const queue: TimerPhase[] = [];
-  let openedLiftIndex: number | null = null;
 
-  sets.forEach(({ lift, classification, tm, activation, liftIndex, set }, setIndex) => {
-    const common = { lift, tm, set, setIndex, next: null };
+  sets.forEach(
+    ({ lift, classification, tm, activation, liftIndex, setOrdinal, firstOfLift, set }, setIndex) => {
+      const common = { lift, tm, set, setIndex, liftIndex, setOrdinal, next: null };
 
-    if (liftIndex !== openedLiftIndex) {
-      openedLiftIndex = liftIndex;
-      const dur = resolveDuration(settings, lift, 'activation', classification);
-      // Zero omits the phase, matching `prep` below — that is also the per-lift
-      // "turn this one off" mechanism, via an override of `activation: 0`.
-      if (activation !== undefined && activation !== '' && dur > 0) {
-        queue.push({
-          ...common,
-          kind: 'activation',
-          label: 'Activation',
-          dur,
-          // Its own set rather than the one it precedes: the dial names the
-          // movement, and borrowing the first set's label would announce
-          // "Warm-up 1 · 5 × 135 lbs" while the lifter is doing hip airplanes.
-          set: { type: 'activation', setLabel: activation, spec: '' },
-        });
+      if (firstOfLift) {
+        const dur = resolveDuration(settings, lift, 'activation', classification);
+        // Zero omits the phase, matching `prep` below — that is also the per-lift
+        // "turn this one off" mechanism, via an override of `activation: 0`.
+        if (activation !== undefined && activation !== '' && dur > 0) {
+          queue.push({
+            ...common,
+            kind: 'activation',
+            label: 'Activation',
+            dur,
+            // Precedes every set of its lift — see `TimerPhase.setOrdinal`.
+            setOrdinal: -1,
+            // Its own set rather than the one it precedes: the dial names the
+            // movement, and borrowing the first set's label would announce
+            // "Warm-up 1 · 5 × 135 lbs" while the lifter is doing hip airplanes.
+            set: { type: 'activation', setLabel: activation, spec: '' },
+          });
+        }
       }
-    }
 
-    const prep = resolveDuration(settings, lift, 'prep', classification);
-    if (prep > 0) {
-      queue.push({ ...common, kind: 'prep', label: 'Get set', dur: prep });
-    }
+      const prep = resolveDuration(settings, lift, 'prep', classification);
+      if (prep > 0) {
+        queue.push({ ...common, kind: 'prep', label: 'Get set', dur: prep });
+      }
 
-    queue.push({
-      ...common,
-      kind: 'set',
-      label: setLabelFor(set),
-      dur: resolveDuration(
-        settings,
-        lift,
-        set.type === 'warmup' ? 'warmupSet' : 'workSet',
-        classification,
-      ),
-    });
+      queue.push({
+        ...common,
+        kind: 'set',
+        label: setLabelFor(set),
+        dur: resolveDuration(
+          settings,
+          lift,
+          set.type === 'warmup' ? 'warmupSet' : 'workSet',
+          classification,
+        ),
+      });
 
-    queue.push({
-      ...common,
-      kind: 'rest',
-      label: 'Rest',
-      dur: resolveDuration(
-        settings,
-        lift,
-        set.type === 'warmup' ? 'restWarmup' : 'restWork',
-        classification,
-      ),
-    });
-  });
+      queue.push({
+        ...common,
+        kind: 'rest',
+        label: 'Rest',
+        dur: resolveDuration(
+          settings,
+          lift,
+          set.type === 'warmup' ? 'restWarmup' : 'restWork',
+          classification,
+        ),
+      });
+    },
+  );
 
   while (queue[queue.length - 1]?.kind === 'rest') queue.pop();
 

@@ -6,6 +6,7 @@ import {
   STANDARD_DURATIONS,
   TIMER_FIELD_COPY,
   formatDuration,
+  hasTimedSets,
   parseDuration,
   resolveDurationEntry,
 } from '@lifting-logbook/core';
@@ -375,107 +376,116 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
       <div className={styles.card}>{durationRow('activation')}</div>
       <p className={styles.footNote}>
         The movement itself comes from the program — a lift only gets an activation phase when its
-        program spec names one. A duration of 0:00, here or as a per-lift override below, drops the
-        phase from the next session you start.
+        program spec names one. A duration of 0:00, here or as a per-lift override below, skips the
+        phase — mid-session, the timer moves straight on to the next one.
       </p>
 
       <h2 className={styles.sectionTitle}>Per-lift overrides</h2>
       <ul className={styles.overrideList}>
-        {lifts.map((lift) => {
-          const overrides = settings.overrides[lift.lift];
-          const count = overrides ? Object.keys(overrides).length : 0;
-          const isOpen = openLift === lift.lift;
-          const panelId = `override-${encodeURIComponent(lift.lift)}`;
-          const hasWarmups = lift.sets.some((s) => s.type === 'warmup');
-          // Activation only where the program actually names a movement — a row
-          // for a lift with none would control nothing, which is the defect that
-          // kept this field out of #959 in the first place.
-          const fields: TimerDurationField[] = [
-            ...(lift.activation ? (['activation'] as const) : []),
-            ...(hasWarmups ?
-              (['warmupSet', 'workSet', 'restWarmup', 'restWork', 'prep'] as const)
-            : (['workSet', 'restWork', 'prep'] as const)),
-          ];
-          // What this lift's REST follows when it has no overrides of its own —
-          // one field, not the whole lift. Read off the rung that actually
-          // resolves `restWork` rather than assuming the preset, which stopped
-          // being true once the deload and accessory contexts existed.
-          //
-          // Deliberately a one-field summary: neither context sets `warmupSet`,
-          // `restWarmup`, `prep` or `activation`, so a label claiming to describe
-          // the whole lift would be wrong for every duration but this one and
-          // `workSet` — four of the six rows a lift with an activation shows, and
-          // three of five without one. The copy says "Rest
-          // follows …" so the collapsed row does not overstate its scope; the
-          // per-field `From <rung>` hints inside give the exact answer.
-          const restFollows = sourceLabel(
-            resolveDurationEntry(settings, lift.lift, 'restWork', lift.classification).source,
-            settings.preset,
-          );
+        {lifts
+          // A lift with no planned sets (no training max yet) has nothing to
+          // override — the plan keeps such entries only to hold each lift's
+          // position (see `toTimerLiftPlans`).
+          .filter(hasTimedSets)
+          // Overrides are keyed by lift *name*, so a lift that appears twice in
+          // the workout shares one row. Deduped over the *timed* lifts, so an
+          // occurrence with no sets cannot shadow a later one that has them.
+          .filter((lift, index, timed) => timed.findIndex((other) => other.lift === lift.lift) === index)
+          .map((lift) => {
+            const overrides = settings.overrides[lift.lift];
+            const count = overrides ? Object.keys(overrides).length : 0;
+            const isOpen = openLift === lift.lift;
+            const panelId = `override-${encodeURIComponent(lift.lift)}`;
+            const hasWarmups = lift.sets.some((s) => s.type === 'warmup');
+            // Activation only where the program actually names a movement — a row
+            // for a lift with none would control nothing, which is the defect that
+            // kept this field out of #959 in the first place.
+            const fields: TimerDurationField[] = [
+              ...(lift.activation ? (['activation'] as const) : []),
+              ...(hasWarmups ?
+                (['warmupSet', 'workSet', 'restWarmup', 'restWork', 'prep'] as const)
+              : (['workSet', 'restWork', 'prep'] as const)),
+            ];
+            // What this lift's REST follows when it has no overrides of its own —
+            // one field, not the whole lift. Read off the rung that actually
+            // resolves `restWork` rather than assuming the preset, which stopped
+            // being true once the deload and accessory contexts existed.
+            //
+            // Deliberately a one-field summary: neither context sets `warmupSet`,
+            // `restWarmup`, `prep` or `activation`, so a label claiming to describe
+            // the whole lift would be wrong for every duration but this one and
+            // `workSet` — four of the six rows a lift with an activation shows, and
+            // three of five without one. The copy says "Rest
+            // follows …" so the collapsed row does not overstate its scope; the
+            // per-field `From <rung>` hints inside give the exact answer.
+            const restFollows = sourceLabel(
+              resolveDurationEntry(settings, lift.lift, 'restWork', lift.classification).source,
+              settings.preset,
+            );
 
-          return (
-            <li key={lift.lift} className={styles.overrideItem}>
-              <button
-                type="button"
-                className={`${styles.overrideHead} focus-ring`}
-                aria-expanded={isOpen}
-                aria-controls={panelId}
-                onClick={() => setOpenLift(isOpen ? null : lift.lift)}
-              >
-                <span
-                  className={`${styles.overrideIcon} ${isOpen ? styles.overrideIconOpen : ''}`}
-                  aria-hidden="true"
+            return (
+              <li key={lift.lift} className={styles.overrideItem}>
+                <button
+                  type="button"
+                  className={`${styles.overrideHead} focus-ring`}
+                  aria-expanded={isOpen}
+                  aria-controls={panelId}
+                  onClick={() => setOpenLift(isOpen ? null : lift.lift)}
                 >
-                  ›
-                </span>
-                <span className={styles.overrideName}>{lift.lift}</span>
-                <span
-                  className={`${styles.overrideState} ${count > 0 ? styles.overrideStateSet : ''}`}
-                >
-                  {count > 0 ?
-                    `${count} override${count > 1 ? 's' : ''}`
-                  : `Rest follows ${restFollows}`}
-                </span>
-              </button>
-
-              <div id={panelId} className={styles.overrideBody} hidden={!isOpen}>
-                {fields.map((field) => {
-                  const copy = TIMER_FIELD_COPY[field];
-                  const entry = resolveDurationEntry(
-                    settings,
-                    lift.lift,
-                    field,
-                    lift.classification,
-                  );
-                  return (
-                    <DurationRow
-                      key={field}
-                      label={copy.label}
-                      hint={
-                        entry.source === 'override' ?
-                          'Overridden'
-                        : `From ${sourceLabel(entry.source, settings.preset)}`
-                      }
-                      context={lift.lift}
-                      step={copy.step}
-                      value={entry.seconds}
-                      onChange={(value) => setOverride(lift.lift, field, value)}
-                    />
-                  );
-                })}
-                {count > 0 && (
-                  <button
-                    type="button"
-                    className={`${styles.clearBtn} focus-ring`}
-                    onClick={() => clearOverrides(lift.lift)}
+                  <span
+                    className={`${styles.overrideIcon} ${isOpen ? styles.overrideIconOpen : ''}`}
+                    aria-hidden="true"
                   >
-                    Clear overrides for {lift.lift}
-                  </button>
-                )}
-              </div>
-            </li>
-          );
-        })}
+                    ›
+                  </span>
+                  <span className={styles.overrideName}>{lift.lift}</span>
+                  <span
+                    className={`${styles.overrideState} ${count > 0 ? styles.overrideStateSet : ''}`}
+                  >
+                    {count > 0 ?
+                      `${count} override${count > 1 ? 's' : ''}`
+                    : `Rest follows ${restFollows}`}
+                  </span>
+                </button>
+
+                <div id={panelId} className={styles.overrideBody} hidden={!isOpen}>
+                  {fields.map((field) => {
+                    const copy = TIMER_FIELD_COPY[field];
+                    const entry = resolveDurationEntry(
+                      settings,
+                      lift.lift,
+                      field,
+                      lift.classification,
+                    );
+                    return (
+                      <DurationRow
+                        key={field}
+                        label={copy.label}
+                        hint={
+                          entry.source === 'override' ?
+                            'Overridden'
+                          : `From ${sourceLabel(entry.source, settings.preset)}`
+                        }
+                        context={lift.lift}
+                        step={copy.step}
+                        value={entry.seconds}
+                        onChange={(value) => setOverride(lift.lift, field, value)}
+                      />
+                    );
+                  })}
+                  {count > 0 && (
+                    <button
+                      type="button"
+                      className={`${styles.clearBtn} focus-ring`}
+                      onClick={() => clearOverrides(lift.lift)}
+                    >
+                      Clear overrides for {lift.lift}
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
       </ul>
       <p className={styles.footNote}>
         An override wins over everything else, for that lift only. Anything left alone follows the

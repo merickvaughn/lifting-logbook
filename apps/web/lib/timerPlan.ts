@@ -44,9 +44,12 @@ export interface TimerPlanInput {
  * knows how to produce one. Weights are formatted here rather than in the timer
  * because `spec` is display copy — the timer never does arithmetic on it.
  *
- * Lifts with no planned sets are dropped: they appear in the list as "set a
- * training max to see planned weights", and queueing a lift with nothing to
- * perform would emit rest phases for a set that never happens.
+ * A lift with no planned sets is kept as an empty plan rather than dropped, so
+ * the plan stays index-aligned with the page's own lift list — position is a
+ * lift occurrence's identity (issue #980), and dropping an entry would shift
+ * every later lift's `liftIndex`. It contributes no phases: `flattenSets` emits
+ * nothing for `sets: []`, and the activation phase is opened from inside the
+ * per-set loop, so an empty lift cannot queue a countdown either.
  *
  * Training role is resolved here too, rather than being carried on
  * {@link TimerPlanInput}: the detail and timer pages build their `liftDetails`
@@ -65,9 +68,7 @@ export function toTimerLiftPlans(
   unit: WeightUnit,
   customLifts: readonly ClassifiableLift[],
 ): TimerLiftPlan[] {
-  return details
-    .filter((detail) => detail.plannedSets.length > 0)
-    .map((detail) => ({
+  return details.map((detail) => ({
       lift: detail.lift,
       classification: liftClassificationFor(detail.lift, customLifts),
       tm: detail.tm > 0 ? `TM: ${formatWeight(detail.tm, 'lbs', unit)}` : undefined,
