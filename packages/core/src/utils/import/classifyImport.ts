@@ -121,7 +121,8 @@ function scoreKind(
   ctx: {
     headers: string[];
     firstColumn: string[];
-    allCells: string[];
+    /** Every normalized non-empty cell — a thunk, because only one profile wants it. */
+    allCells: () => string[];
     numCols: number;
     liftHitRate: number;
   },
@@ -129,7 +130,7 @@ function scoreKind(
   // Labels to scan: all cells for ladder layouts, headers + first column for
   // transposed ones, headers only otherwise.
   const labels = profile.scanAllCells
-    ? ctx.allCells
+    ? ctx.allCells()
     : profile.transposed
       ? [...ctx.headers, ...ctx.firstColumn]
       : ctx.headers;
@@ -185,20 +186,26 @@ function scoreKind(
   return { kind: profile.kind, score: Math.min(1, score), reasons };
 }
 
-/** Best-effort hit rate of a table's most lift-like column against the slot map. */
-function liftColumnHitRate(headers: string[], dataRows: SpreadsheetCell[][]): number {
-  if (dataRows.length === 0) return 0;
+/**
+ * Best-effort hit rate of a table's most lift-like column against the slot map.
+ *
+ * Takes the already-normalized rows: every cell was normalized exactly once by
+ * `classifyImport`, so this pass reads strings rather than re-running `norm`
+ * per cell (issue #983).
+ */
+function liftColumnHitRate(headerCount: number, normRows: readonly string[][]): number {
+  if (normRows.length === 0) return 0;
   // Prefer a column whose header looks like a lift column; else the column with
   // the most slot-map hits across the data rows.
   const slotKeys = new Set(Object.keys(DEFAULT_SLOT_MAP).map((k) => k.toLowerCase()));
-  const colCount = Math.max(...dataRows.map((r) => r.length), headers.length);
+  const colCount = Math.max(...normRows.map((r) => r.length), headerCount);
 
   let best = 0;
   for (let c = 0; c < colCount; c++) {
     let hits = 0;
     let nonEmpty = 0;
-    for (const row of dataRows) {
-      const v = norm(row[c]);
+    for (const row of normRows) {
+      const v = row[c] ?? '';
       if (!v) continue;
       nonEmpty++;
       if (slotKeys.has(v)) hits++;
@@ -213,11 +220,20 @@ export function classifyImport(table: SpreadsheetCell[][]): ImportClassification
   // Sample at most CLASSIFY_SAMPLE_ROWS data rows — enough to saturate every
   // signal without walking a large file end to end.
   const dataRows = table.slice(1, 1 + CLASSIFY_SAMPLE_ROWS);
-  const headers = headerRow.map(norm).filter((h) => h.length > 0);
-  const firstColumn = dataRows.map((r) => norm(r[0])).filter((v) => v.length > 0);
-  const allCells = [headerRow, ...dataRows].flat().map(norm).filter((v) => v.length > 0);
+  // Normalize the sample once; every signal below reads these strings rather
+  // than re-normalizing the same cells (issue #983). `row.map(norm)` preserves
+  // each row's length, so column positions are unchanged.
+  const normHeader = headerRow.map(norm);
+  const normRows = dataRows.map((r) => r.map(norm));
+  const headers = normHeader.filter((h) => h.length > 0);
+  const firstColumn = normRows.map((r) => r[0] ?? '').filter((v) => v.length > 0);
   const numCols = Math.max(headerRow.length, ...dataRows.map((r) => r.length), 0);
-  const liftHitRate = liftColumnHitRate(headers, dataRows);
+  const liftHitRate = liftColumnHitRate(headers.length, normRows);
+  // Only the ladder profile scans every cell, so the flattened list is built on
+  // first use rather than for every classification.
+  let flattened: string[] | null = null;
+  const allCells = (): string[] =>
+    (flattened ??= [normHeader, ...normRows].flat().filter((v) => v.length > 0));
 
   const ctx = { headers, firstColumn, allCells, numCols, liftHitRate };
   const scored = PROFILES.map((p) => scoreKind(p, ctx)).sort((a, b) => b.score - a.score);

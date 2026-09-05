@@ -16,18 +16,11 @@ export function updateCycle(
     // Determine target weekday: if not specified, use previous cycle's weekday
     if (targetWeekday) {
       targetWeekdayNum = WEEKDAY_MAP[targetWeekday.toLowerCase()]!;
-      console.log(
-        `Target weekday overridden to ${targetWeekday} (${targetWeekdayNum}).`,
-      );
     } else {
       targetWeekdayNum = WEEKDAY_MAP[prevCycle.cycleStartWeekday.toLowerCase()]!;
-      console.log(
-        `Target weekday set to previous cycle's weekday: ${prevCycle.cycleStartWeekday} (${targetWeekdayNum}).`,
-      );
     }
   }
   // If today matches the target weekday and is at least 7 days after prevDate, use today
-  // let cycleDate: Date;
   const cycleDate =
     overrideDate ?? getNextDate(prevDate, targetWeekdayNum, today);
   // Update sheet link
