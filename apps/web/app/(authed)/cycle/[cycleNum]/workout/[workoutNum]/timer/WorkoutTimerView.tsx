@@ -7,8 +7,10 @@ import type { TimerLiftPlan } from '@lifting-logbook/core';
 import TimerDial from '@/components/timer/TimerDial';
 import {
   END_SESSION_LABEL,
+  QUEUE_KIND_LABEL,
   phaseSubLabel,
   primaryActionLabel,
+  queueRowDetail,
   signedTime,
 } from '@/lib/timerLabels';
 import { playStartChime, useWorkoutTimer } from '@/lib/useWorkoutTimer';
@@ -86,17 +88,10 @@ export default function WorkoutTimerView({ lifts, program, cycleNum, workoutNum,
           return (
             <li key={`${item.kind}-${i}`} className={`${styles.queueRow} ${state}`}>
               <span className={styles.queueLabel}>
-                <span className={styles.queueKind}>
-                  {item.kind === 'prep' ? 'Setup'
-                  : item.kind === 'rest' ? 'Rest'
-                  : item.kind === 'activation' ? 'Activation'
-                  : 'Set'}
-                </span>
+                <span className={styles.queueKind}>{QUEUE_KIND_LABEL[item.kind]}</span>
                 <span>
                   {item.lift}
-                  {item.kind === 'set' ? ` · ${item.set.spec}`
-                  : item.kind === 'activation' ? ` · ${item.set.setLabel}`
-                  : ''}
+                  {queueRowDetail(item)}
                 </span>
               </span>
               <span className={styles.queueDur}>{formatDuration(item.dur)}</span>

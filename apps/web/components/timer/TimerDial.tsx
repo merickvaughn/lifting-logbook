@@ -3,6 +3,24 @@
 import type { TimerPhaseKind } from '@lifting-logbook/core';
 import styles from './TimerDial.module.css';
 
+/**
+ * Which stylesheet class paints each phase.
+ *
+ * Exhaustive by type: `TimerPhaseKind` is derived from `TIMER_PHASE_KINDS`, so
+ * a kind added there without an entry here is a compile error — not a phase
+ * that silently paints accent-coloured, which is what the old `kind === …`
+ * chain with its `styles.set` fallthrough allowed. What the type cannot see is
+ * two kinds sharing one class; `TimerDial.test.tsx` asserts distinctness, and
+ * `scripts/check-timer-phase-colors.mjs` reads this file's stylesheet to catch
+ * two classes resolving to one colour.
+ */
+const PHASE_CLASS = {
+  set: styles.set,
+  rest: styles.rest,
+  prep: styles.prep,
+  activation: styles.activation,
+} satisfies Record<TimerPhaseKind, string>;
+
 interface Props {
   /** Outer diameter in px. The ring is inset by `stroke`. */
   size: number;
@@ -32,16 +50,12 @@ export default function TimerDial({ size, stroke, progress, kind, overrun, child
   // fills clockwise from 12 o'clock (the -90° rotation is applied in CSS).
   const offset = circumference * (1 - Math.min(1, Math.max(0, progress)));
 
-  // Every arm is explicit down to `set`, which is also the fallthrough: a phase
-  // kind added without a branch here paints accent-coloured and typechecks, so
-  // the miss is silent. `scripts/check-timer-phase-colors.mjs` reads this file's
-  // stylesheet to catch the other half of that (two phases, one colour).
+  // Before a session starts there is no phase; the idle ring wears the set
+  // colour (the accent). Overrun paints over whichever phase is running.
   const phaseClass =
     overrun ? styles.overrun
-    : kind === 'rest' ? styles.rest
-    : kind === 'prep' ? styles.prep
-    : kind === 'activation' ? styles.activation
-    : styles.set;
+    : kind === null ? styles.set
+    : PHASE_CLASS[kind];
 
   return (
     <div className={styles.dial} style={{ width: size, height: size }}>
