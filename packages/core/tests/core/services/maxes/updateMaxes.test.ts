@@ -148,3 +148,59 @@ describe("updateMaxes", () => {
     expect(benchMax.dateUpdated).toEqual(originalBenchMax.dateUpdated);
   });
 });
+
+describe("updateMaxes — lookup semantics (issue #983)", () => {
+  function baseline() {
+    const trainingMaxes = parseTrainingMaxes(loadCsvFixture("training_maxes.csv"));
+    const programSpec = parseLiftingProgramSpec(loadCsvFixture("rpt_program_spec.csv"));
+    const liftRecords = parseLiftRecords(loadCsvFixture("lift_records_week_1_20260105.csv"));
+    return { trainingMaxes, programSpec, liftRecords };
+  }
+
+  it("flags reductions in record iteration order, exactly", () => {
+    // The hoisted lookups must not change *which* record decides a lift or in
+    // what order the flags are pushed: the sequence is the order those lifts'
+    // set-1 records appear in the input, which is what the per-record scan produced.
+    const { trainingMaxes, programSpec, liftRecords } = baseline();
+    const { flagged } = updateMaxes(programSpec, trainingMaxes, liftRecords);
+    const flaggedLifts = new Set(["Chin-up", "Dip", "Deadlift"]);
+    const expectedOrder = liftRecords
+      .filter((r) => r.setNum === 1 && flaggedLifts.has(r.lift))
+      .map((r) => r.lift);
+    expect(flagged.map((f) => f.lift)).toEqual(expectedOrder);
+    expect(flagged).toHaveLength(3);
+  });
+
+  it("uses the first entry when a lift appears twice in the training maxes, leaving the second untouched", () => {
+    const { trainingMaxes, programSpec, liftRecords } = baseline();
+    const squat = trainingMaxes.find((tm) => tm.lift === "Deadlift");
+    if (!squat) throw new Error("fixture has no Deadlift max");
+    const duplicated = [...trainingMaxes, { ...squat, weight: 999 }];
+
+    const { maxes } = updateMaxes(programSpec, duplicated, liftRecords);
+
+    const [first, second] = maxes.filter((m) => m.lift === "Deadlift");
+    // Deadlift is a flagged reduction in this fixture: the first entry is the
+    // one consulted (and left at its weight), the duplicate is never touched.
+    expect(first?.weight).toBe(squat.weight);
+    expect(second?.weight).toBe(999);
+  });
+
+  it("reports a missing training max before a missing spec, and a missing max even on a deload spec", () => {
+    const { trainingMaxes, programSpec, liftRecords } = baseline();
+    const withoutDeadliftMax = trainingMaxes.filter((tm) => tm.lift !== "Deadlift");
+    expect(() => updateMaxes(programSpec, withoutDeadliftMax, liftRecords)).toThrow(
+      "Training max for lift Deadlift not found.",
+    );
+
+    const withoutDeadliftSpec = programSpec.filter((ps) => ps.lift !== "Deadlift");
+    expect(() => updateMaxes(withoutDeadliftSpec, trainingMaxes, liftRecords)).toThrow(
+      "Program spec for lift Deadlift not found.",
+    );
+
+    const deloadSpec = programSpec.map((ps) => ({ ...ps, weekType: "deload" as const }));
+    expect(() => updateMaxes(deloadSpec, withoutDeadliftMax, liftRecords)).toThrow(
+      "Training max for lift Deadlift not found.",
+    );
+  });
+});

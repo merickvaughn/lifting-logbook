@@ -40,14 +40,47 @@ export function updateMaxes(
   const newMaxes: TrainingMax[] = trainingMaxes.map((tm) => ({ ...tm }));
   const flagged: MaxReductionFlag[] = [];
 
+  // Lookups built once rather than scanned once per record (issue #983).
+  // First-wins on a duplicate lift, which is exactly what the per-record
+  // `findIndex` / `find` returned; the map holds the same objects that sit in
+  // `newMaxes`, so a mutation through it lands in the returned array.
+  const maxByLift = new Map<string, TrainingMax>();
+  for (const tm of newMaxes) if (!maxByLift.has(tm.lift)) maxByLift.set(tm.lift, tm);
+  const specByLift = new Map<string, LiftingProgramSpec>();
+  for (const ps of programSpec) if (!specByLift.has(ps.lift)) specByLift.set(ps.lift, ps);
+
+  // A test week's final set needs every set of that lift in the same workout,
+  // best attempt first. Grouped once, lazily, on the first such set: each group
+  // keeps input order and is sorted by setNum descending once — a stable sort of
+  // the input-ordered group is exactly what filtering then sorting the whole
+  // list per record produced, without re-walking it for every final set.
+  let setsByLiftAndWorkout: Map<string, Map<number, LiftRecord[]>> | null = null;
+  const setsFor = (lift: string, workoutNum: number): LiftRecord[] => {
+    if (setsByLiftAndWorkout === null) {
+      setsByLiftAndWorkout = new Map();
+      for (const r of liftRecords) {
+        let byWorkout = setsByLiftAndWorkout.get(r.lift);
+        if (!byWorkout) {
+          byWorkout = new Map();
+          setsByLiftAndWorkout.set(r.lift, byWorkout);
+        }
+        const group = byWorkout.get(r.workoutNum);
+        if (group) group.push(r);
+        else byWorkout.set(r.workoutNum, [r]);
+      }
+      for (const byWorkout of setsByLiftAndWorkout.values()) {
+        for (const group of byWorkout.values()) group.sort((a, b) => b.setNum - a.setNum);
+      }
+    }
+    return setsByLiftAndWorkout.get(lift)?.get(workoutNum) ?? [];
+  };
+
   liftRecords.forEach((record) => {
     const liftName = record.lift;
-    const tmIndex = newMaxes.findIndex((tm) => tm.lift === liftName);
+    const currentMax = maxByLift.get(liftName);
+    if (!currentMax) throw new Error(`Training max for lift ${liftName} not found.`);
 
-    if (tmIndex === -1) throw new Error(`Training max for lift ${liftName} not found.`);
-
-    const currentMax = newMaxes[tmIndex]!;
-    const spec = programSpec.find((ps) => ps.lift === liftName);
+    const spec = specByLift.get(liftName);
     if (!spec) throw new Error(`Program spec for lift ${liftName} not found.`);
 
     const weekType = spec.weekType ?? 'training';
@@ -59,10 +92,8 @@ export function updateMaxes(
       // unaffected set (in case the final set was flagged as abnormal).
       if (record.setNum !== spec.sets) return;
 
-      // Gather all records for this lift in the same workout
-      const liftSetRecords = liftRecords
-        .filter((r) => r.lift === liftName && r.workoutNum === record.workoutNum)
-        .sort((a, b) => b.setNum - a.setNum); // descending: best attempt first
+      // Every set of this lift in the same workout, descending: best attempt first.
+      const liftSetRecords = setsFor(liftName, record.workoutNum);
 
       const candidate = liftSetRecords.find((r) => r.reps > 0 && !isAbnormal(r.notes));
       if (
