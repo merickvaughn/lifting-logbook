@@ -6,6 +6,7 @@ import type {
   TrainingMaxHistoryEntryResponse,
   WeightUnit,
 } from '@lifting-logbook/types';
+import { buildTmAtTimeIndex } from '@/lib/tmAtTime';
 import HistoryTabs from './HistoryTabs';
 import styles from './history.module.css';
 
@@ -15,18 +16,6 @@ export type EnrichedRecord = LiftRecordResponse & {
   tmPercent: number | null;
   isPR: boolean;
 };
-
-function findTmAtTime(
-  lift: string,
-  date: string,
-  entries: TrainingMaxHistoryEntryResponse[],
-): TrainingMaxHistoryEntryResponse | null {
-  return (
-    entries
-      .filter((e) => e.lift === lift && e.date <= date)
-      .sort((a, b) => b.date.localeCompare(a.date))[0] ?? null
-  );
-}
 
 export default async function HistoryPage() {
   const program = await getActiveProgram();
@@ -38,10 +27,12 @@ export default async function HistoryPage() {
   // `loadFailed` distinguishes a real fetch failure from a genuinely empty history.
   let loadFailed = false;
   const [records, { entries: tmEntries }, unit] = await Promise.all([
+    // fallback-covered-by: apps/web/e2e/staging.spec.ts
     fetchLiftRecords(program).catch((): LiftRecordResponse[] => {
       loadFailed = true;
       return [];
     }),
+    // fallback-covered-by: apps/web/e2e/staging.spec.ts
     fetchTrainingMaxHistory(program).catch(() => {
       loadFailed = true;
       return { entries: [] as TrainingMaxHistoryEntryResponse[] };
@@ -67,8 +58,11 @@ export default async function HistoryPage() {
     }
   }
 
+  // Built once: the per-record lookup used to filter and sort the whole history
+  // again for every record (issue #981).
+  const tmAtTime = buildTmAtTimeIndex(tmEntries);
   const enriched: EnrichedRecord[] = sortedRecords.map((r) => {
-    const tm = findTmAtTime(r.lift, r.date, tmEntries);
+    const tm = tmAtTime.find(r.lift, r.date);
     const tmPercent =
       tm !== null ? Math.round((r.weight / tm.weight) * 1000) / 10 : null;
     return {
