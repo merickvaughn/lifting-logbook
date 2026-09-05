@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TimerLiftPlan } from '@lifting-logbook/core';
 import WorkoutTimerProvider from '@/components/timer/WorkoutTimerProvider';
@@ -114,6 +114,40 @@ describe('CollapsibleLiftList with the timer', () => {
     // The dock opens on that set's prep phase and names the set it is preparing for.
     expect(screen.getByRole('button', { name: 'Expand timer' })).toBeInTheDocument();
     expect(screen.getByText(/Bench Press — Set 2 · 3 × 230 lbs/)).toBeInTheDocument();
+  });
+
+  it('starts and marks the second occurrence of a repeated lift, not the first (#971)', async () => {
+    // The program editor keys an instance by position, so one workout can hold
+    // the same lift twice with identical set labels. Only position tells the
+    // two apart — a name-keyed lookup sent the second occurrence's ▶ to the first.
+    const user = userEvent.setup();
+    const detail: LiftDetail = {
+      lift: 'Bench Press',
+      tm: 285,
+      warmUpCount: 0,
+      workCount: 1,
+      plannedSets: [{ type: 'work', setLabel: 'Set 1', weight: 200, reps: 5 }],
+    };
+    const timerLift: TimerLiftPlan = {
+      lift: 'Bench Press',
+      tm: 'TM: 285 lbs',
+      sets: [{ type: 'work', setLabel: 'Set 1', spec: '5 × 200 lbs' }],
+    };
+    render(
+      <WorkoutTimerProvider lifts={[timerLift, timerLift]} program="531" cycleNum={1} workoutNum={1}>
+        <CollapsibleLiftList liftDetails={[detail, detail]} cycleNum={1} workoutNum={1} unit="lbs" />
+      </WorkoutTimerProvider>,
+    );
+    const [first, second] = screen.getAllByRole('listitem');
+    if (!first || !second) throw new Error('expected two lift items');
+
+    await user.click(within(second).getByRole('button', { name: 'Start timer at Bench Press Set 1' }));
+
+    // The dock is on the second occurrence's prep, and only the second item's row is active.
+    expect(within(second).getByText('Set 1').closest('div')).toHaveClass('setRowActive');
+    expect(within(first).getByText('Set 1').closest('div')).not.toHaveClass('setRowActive');
+    expect(within(second).getByRole('button', { name: /1 working/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(first).getByRole('button', { name: /1 working/ })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('auto-expands the lift the timer moves to', async () => {

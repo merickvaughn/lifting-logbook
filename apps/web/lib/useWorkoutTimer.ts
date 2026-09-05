@@ -6,8 +6,10 @@ import {
   buildTimerQueue,
   defaultTimerSettings,
   phaseDuration,
+  phaseKey,
   phaseProgress,
   phaseRemaining,
+  reanchorIndex,
   setProgress,
   snapshotClassifications,
 } from '@lifting-logbook/core';
@@ -192,43 +194,6 @@ export function useWorkoutTimer(
     saveTimerSettings(next);
   }, []);
 
-  // Re-anchor a live run when the queue is rebuilt underneath it.
-  //
-  // The queue is derived from `settings`, and the Settings tab sits on the same
-  // page as the running dial — so a mid-session change is one click away.
-  // Toggling `skipWarmups`, or moving `prep` across zero (which adds or removes
-  // one phase per set), shifts every index: `run.idx` would then address an
-  // unrelated phase, or fall past the end, where `phase` goes null while `run`
-  // stays non-null — the dock unmounts, the page freezes at 0:00, and the
-  // interval keeps ticking with no surface left to stop it.
-  //
-  // The anchor is lift + set label + kind, NOT `setIndex`: `setIndex` addresses
-  // the timed set list, so toggling `skipWarmups` renumbers it and it cannot
-  // identify the same phase either side of exactly the change most likely to
-  // rebuild the queue. If the phase is genuinely gone (its warm-up was skipped
-  // away), the session is over.
-  const prevQueueRef = useRef(queue);
-  useEffect(() => {
-    const prevQueue = prevQueueRef.current;
-    prevQueueRef.current = queue;
-    if (prevQueue === queue || !run) return;
-
-    const wasOn = prevQueue[run.idx];
-    if (!wasOn) {
-      commitRun(null);
-      return;
-    }
-
-    const nextIdx = queue.findIndex(
-      (p) =>
-        p.kind === wasOn.kind &&
-        p.lift === wasOn.lift &&
-        p.set.setLabel === wasOn.set.setLabel,
-    );
-    if (nextIdx === -1) commitRun(null);
-    else if (nextIdx !== run.idx) commitRun({ ...run, idx: nextIdx });
-  }, [queue, run, commitRun]);
-
   // ---------------------------------------------------------------------------
   // Wake lock
   // ---------------------------------------------------------------------------
@@ -306,13 +271,17 @@ export function useWorkoutTimer(
      * was hidden does not silently grant a full fresh phase on return.
      */
     (index: number, startedAt?: number) => {
-      if (index < 0 || index >= queue.length) {
+      const target = queue[index];
+      if (!target) {
         commitRun(null);
         return;
       }
       alertedAtRef.current = -1;
       commitRun({
         idx: index,
+        // The shape-stable identity of the phase — what every later queue
+        // rebuild re-derives `idx` from (see the re-anchor effect below).
+        on: phaseKey(target),
         startedAt: startedAt ?? Date.now(),
         pausedMs: 0,
         pausedAt: null,
@@ -336,7 +305,10 @@ export function useWorkoutTimer(
         classifications: runClassifications ?? snapshotClassifications(lifts),
       });
     },
-    [queue.length, commitRun, workout, runClassifications, lifts],
+    // `queue` rather than `queue.length`: the key is read off the phase itself.
+    // Identity still changes only when settings or the plan change, so the
+    // stability `WorkoutTimerProvider`'s per-tick-safe context relies on holds.
+    [queue, commitRun, workout, runClassifications, lifts],
   );
 
   const startAtSet = useCallback(
@@ -351,6 +323,38 @@ export function useWorkoutTimer(
     },
     [queue, startAt],
   );
+
+  // Re-anchor a live run whenever the queue is (re)built underneath it.
+  //
+  // The queue is derived from `settings` and the plan, and the Settings tab sits
+  // on the same page as the running dial — so a mid-session change is one click
+  // away. Toggling `skipWarmups`, or moving `prep` or `activation` across zero,
+  // shifts every index; and a fresh mount builds the queue from *default*
+  // settings on its first render and from the persisted ones on the next, so a
+  // bare index recorded under one shape lands on the wrong phase under the
+  // other. In every case the run's persisted anchor (`run.on`, a shape-stable
+  // key — see `TimerPhaseKey`) is re-resolved against the queue as it now is:
+  //
+  // - same phase, maybe at a new index → keep the clock, re-point `idx`;
+  // - phase gone (its duration went to 0:00, its warm-up was skipped away) →
+  //   advance to the nearest surviving phase after it, as a fresh start, rather
+  //   than ending the session (issue #972);
+  // - nothing survives at or after it → the session is over.
+  //
+  // Comparing against the *previous render's* queue, as this once did, could
+  // not see the mount-time case above and mis-anchored every restored run whose
+  // persisted settings changed the queue's shape (issue #980).
+  useEffect(() => {
+    if (!run) return;
+    const { index, exact } = reanchorIndex(queue, run.on);
+    if (index === -1) {
+      commitRun(null);
+    } else if (exact) {
+      if (index !== run.idx) commitRun({ ...run, idx: index });
+    } else {
+      startAt(index);
+    }
+  }, [queue, run, commitRun, startAt]);
 
   const next = useCallback(() => {
     startAt(run ? run.idx + 1 : 0);

@@ -436,6 +436,100 @@ they occur only in unrelated API test fixtures.
   stamped one round-trips, and a settings write carries the stamp forward (without which changing a
   duration on the Settings tab would silently end the session).
 
+---
+
+## Amendment 4 — Phase identity is positional, and the run persists it (2026-09-04)
+
+**Closes:** [#980](https://github.com/merickvaughn/lifting-logbook/issues/980), and through it
+[#970](https://github.com/merickvaughn/lifting-logbook/issues/970),
+[#971](https://github.com/merickvaughn/lifting-logbook/issues/971),
+[#972](https://github.com/merickvaughn/lifting-logbook/issues/972)
+
+### Context
+
+Three filed issues and one latent defect turned out to share a cause: a phase in the session queue
+had no shape-stable identity, so every piece of machinery that needed one improvised its own.
+`buildTimerQueue` detected a lift boundary by comparing `liftIndex` against the previous set's,
+relying on an unstated "flattened sets are grouped by lift" invariant (#970). `WorkoutTimerProvider`
+keyed its per-set ▶ map on `(lift, setLabel)` and `useWorkoutTimer` re-anchored a live run on
+`(kind, lift, setLabel)`, so a lift that appears twice in one workout — legitimate, since the program
+editor keys an instance by position — resolved to its first occurrence on both surfaces (#971). When a
+rebuild removed the phase the run was on (a duration set to `0:00`, `skipWarmups` toggled mid-warm-up),
+the re-anchor ended the session and cleared the persisted run instead of moving on (#972).
+
+The latent defect was in the re-anchor's premise. It compared the new queue against the *previous
+render's* queue, but a fresh mount builds its first queue from the default settings and only then
+swaps in the persisted ones — so a restored run's `idx` was read against a queue of the wrong shape.
+With `skipWarmups` on (or `prep` / `activation` at zero) every reload and every detail → timer
+navigation mis-anchored or ended the run: the exact flow the Decision section promises survives.
+
+### Decision
+
+1. **A lift's identity within a workout is its position.** `TimerPhase` carries `liftIndex` (the
+   lift's position in the plan, matching the program editor's own instance key) and `setOrdinal`
+   (the set's position in its lift's *full* set list, warm-ups included, so it does not renumber when
+   `skipWarmups` toggles; `-1` for an activation, which precedes every set of its lift).
+   `toTimerLiftPlans` no longer drops a lift with no planned sets, so the plan, the detail page's
+   `liftDetails` and `workout.lifts` are index-aligned by construction — the earlier rationale for
+   dropping was wrong: `flattenSets` emits nothing for an empty lift, so nothing is queued either way.
+2. **The shape-stable key is `(liftIndex, setOrdinal, kind)`** — `TimerPhaseKey`, with
+   `comparePhaseKeys` giving it the total order the queue is emitted in (activation < prep < set <
+   rest). `(kind, setIndex)` was rejected because `setIndex` addresses the timed set list and renumbers
+   under precisely the change most likely to rebuild the queue; `(lift, setLabel)` was rejected
+   because it cannot tell two occurrences apart and gives no forward order to search in.
+3. **The run persists its anchor.** `TimerRunState.on` holds the key; `idx` is a cache re-derived
+   from it by `reanchorIndex` every time the queue is (re)built. The previous-queue comparison is
+   gone, which is what closes the mount-time defect: the anchor is resolved against the queue as it
+   is, never against what a prior render happened to build.
+4. **Removal advances; only emptiness ends.** When the anchored phase is gone, the run starts fresh
+   on the nearest surviving phase after it in key order; the session ends only when nothing survives
+   at or after it.
+5. **`TIMER_RUN_SHAPE` is 3**, and its bump rule now also covers "changes what a run needs in order to
+   be re-anchored". A shape-2 run has no `on`, and reconstructing one from `queue[idx]` at load time
+   would reintroduce the very ambiguity item 3 removes, so such runs are dropped — the documented
+   policy, costing minutes of ephemeral position once per browser at deploy.
+6. `buildTimerQueue` opens a lift's activation on `firstOfLift`, a flag `flattenSets` sets on the
+   first surviving set of each lift where the loop already knows it — no grouping invariant, no
+   builder state.
+7. The three per-kind fallthroughs Amendment 3 named are closed by exhaustive
+   `Record<TimerPhaseKind, …>` lookups ([#977](https://github.com/merickvaughn/lifting-logbook/issues/977)).
+8. Amendment 2's rejection of "a shared layer above both routes" is revisited only for *plan data*
+   ([#984](https://github.com/merickvaughn/lifting-logbook/issues/984), a shared server-side loader);
+   classification pinning stays, because the two routes still mount the hook independently.
+
+### Consequences
+
+- The per-set ▶, the auto-expand, the re-anchor and the persisted run all key on position, so a
+  repeated lift behaves as two lifts everywhere — and the lift list's React keys and panel ids are
+  positional too, which also removes the duplicate-key warning a repeated lift produced.
+- `TimerSettingsPanel`'s per-lift override list dedupes by name (overrides are keyed by lift *name*,
+  so a repeated lift shares one row) and hides lifts with no sets, which the plan now keeps as empty
+  entries to hold position.
+- Out of scope, and now cheap: cross-tab sync
+  ([#995](https://github.com/merickvaughn/lifting-logbook/issues/995)). With a persisted key, a
+  `storage`-event re-hydrate no longer needs to re-derive position from a queue index.
+
+### Verification
+
+- `packages/core/tests/core/timer/anchor.test.ts` — key ordering matches the emitted queue; the
+  re-anchor table (prep → 0:00 lands on the set; a skipped-away warm-up lands on the first work set's
+  prep, never back on the activation; activation → 0:00 lands on the first prep; a vanished lift lands
+  on the next lift; `-1` only when nothing survives; a repeated lift re-anchors onto the right
+  occurrence); the storage guard accepts ordinal `-1` and rejects malformed keys.
+- `packages/core/tests/core/timer/queue.test.ts` — `liftIndex` / `setOrdinal` on every phase with the
+  activation at `-1`, `setOrdinal` stable under `skipWarmups` while `setIndex` renumbers,
+  `firstOfLift` under both `skipWarmups` values, and the repeated-lift activation test now asserting
+  distinct lift indexes.
+- `apps/web/lib/__tests__/useWorkoutTimer.test.tsx` — the removed-phase case re-expressed as
+  "advances to the first surviving phase"; a prep and an activation set to `0:00` while live are
+  skipped; "ends only when nothing survives"; the second occurrence of a repeated lift stays anchored
+  through a rebuild; and the mount-time case: a run persisted under `skipWarmups` restores onto the
+  same phase — which failed on the previous-queue comparison.
+- `…/detail/CollapsibleLiftList.timer.test.tsx` — with the same lift twice, the ▶ inside the second
+  item marks the row inside the second item.
+- `apps/web/lib/__tests__/timerSettings.test.ts` — a run with no anchor, a malformed one, or one of
+  an unknown kind is rejected; the shape-2 drop is covered by the existing older-stamp cases.
+
 ## References
 
 - [Screen Wake Lock API](https://www.w3.org/TR/screen-wake-lock/) — W3C spec; §3.3 defines the

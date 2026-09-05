@@ -375,13 +375,22 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
       <div className={styles.card}>{durationRow('activation')}</div>
       <p className={styles.footNote}>
         The movement itself comes from the program — a lift only gets an activation phase when its
-        program spec names one. A duration of 0:00, here or as a per-lift override below, drops the
-        phase from the next session you start.
+        program spec names one. A duration of 0:00, here or as a per-lift override below, skips the
+        phase — mid-session, the timer moves straight on to the next one.
       </p>
 
       <h2 className={styles.sectionTitle}>Per-lift overrides</h2>
       <ul className={styles.overrideList}>
-        {lifts.map((lift) => {
+        {lifts
+          // Overrides are keyed by lift *name*, so a lift that appears twice in
+          // the workout shares one row; and a lift with no planned sets (no
+          // training max yet) has nothing to override. The plan keeps such
+          // entries to hold each lift's position — see `toTimerLiftPlans`.
+          .filter(
+            (lift, index, all) =>
+              lift.sets.length > 0 && all.findIndex((other) => other.lift === lift.lift) === index,
+          )
+          .map((lift) => {
           const overrides = settings.overrides[lift.lift];
           const count = overrides ? Object.keys(overrides).length : 0;
           const isOpen = openLift === lift.lift;

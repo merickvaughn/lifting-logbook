@@ -15,6 +15,7 @@ const WORKOUT: TimerWorkoutKey = { program: '531', cycleNum: 1, workoutNum: 3 };
 function makeRun(overrides: Partial<TimerRunState> = {}): TimerRunState {
   return {
     idx: 2,
+    on: { liftIndex: 0, setOrdinal: 1, kind: 'set' },
     startedAt: 1_700_000_000_000,
     pausedMs: 0,
     pausedAt: null,
@@ -137,6 +138,11 @@ describe('run persistence', () => {
     ['a NaN startedAt', { ...makeRun(), startedAt: Number.NaN }],
     ['a non-null non-numeric pausedAt', { ...makeRun(), pausedAt: 'yes' }],
     ['a malformed workout key', { ...makeRun(), workout: { program: '531' } }],
+    // The anchor is what a rebuilt queue re-derives `idx` from (#980); without a
+    // valid one the run cannot be placed.
+    ['no anchor', { ...makeRun(), on: undefined }],
+    ['a malformed anchor', { ...makeRun(), on: { liftIndex: 0, setOrdinal: 0 } }],
+    ['an anchor of an unknown kind', { ...makeRun(), on: { liftIndex: 0, setOrdinal: 0, kind: 'cooldown' } }],
   ])('rejects a persisted run with %s', (_label, run) => {
     // `runShape` is written deliberately: without it `loadTimerRun` would bail on
     // the shape-version check before `isRunShape` ever ran, and every case here
@@ -214,12 +220,22 @@ describe('run persistence — classifications', () => {
   // has nothing to do with what they assert. The two guarantees compose rather
   // than conflict: a run *stamped* for this queue shape but missing or
   // malformed `classifications` still restores, exactly as #966 intends.
-  it('defaults to an empty map for a run persisted before this field existed', () => {
+  it('defaults to an empty map for a run persisted without this field', () => {
+    // A structurally valid run for the current shape (it carries `on`) that
+    // simply has no `classifications` — the field stays lenient.
     window.localStorage.setItem(
       TIMER_STORAGE_KEY,
       JSON.stringify({
         settings: null,
-        run: { idx: 3, startedAt: 1, pausedMs: 0, pausedAt: null, bonus: 0, workout: WORKOUT },
+        run: {
+          idx: 3,
+          on: { liftIndex: 0, setOrdinal: 1, kind: 'prep' },
+          startedAt: 1,
+          pausedMs: 0,
+          pausedAt: null,
+          bonus: 0,
+          workout: WORKOUT,
+        },
         runShape: TIMER_RUN_SHAPE,
       }),
     );

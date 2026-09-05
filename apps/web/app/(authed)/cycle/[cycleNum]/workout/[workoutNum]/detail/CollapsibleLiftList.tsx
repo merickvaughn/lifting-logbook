@@ -40,17 +40,20 @@ interface Props {
  */
 function SetRow({
   lift,
+  liftIndex,
   set,
   unit,
   timer,
 }: {
   lift: string;
+  /** Position of the lift in the plan — the timer's identity for it, not the name. */
+  liftIndex: number;
   set: PlannedSet;
   unit: WeightUnit;
   timer: TimerRowState | null;
 }) {
   const spec = `${set.reps} × ${formatWeight(set.weight, 'lbs', unit)}`;
-  const setIndex = timer === null ? null : timer.setIndexOf(lift, set.setLabel);
+  const setIndex = timer === null ? null : timer.setIndexOf(liftIndex, set.setLabel);
 
   const isActive = timer != null && setIndex != null && timer.activeSetIndex === setIndex;
   const isDone = timer != null && setIndex != null && setIndex <= timer.doneThroughIndex;
@@ -87,51 +90,55 @@ export default function CollapsibleLiftList({
   workoutNum,
   unit,
 }: Props) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Keyed by position, not lift name: the same lift can appear twice in one
+  // workout, and position is the identity the timer uses for it (issue #971).
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
   // Null outside a WorkoutTimerProvider — the list renders exactly as it did
   // before the timer existed, which is also how its own tests mount it.
   const timer = useTimerRowState();
-  const activeLift = timer === null ? null : timer.activeLift;
+  const activeLiftIndex = timer === null ? null : timer.activeLiftIndex;
 
   // Reveal the lift the timer just moved to, so the current set is visible
   // without hunting for it. Added to the same set the header toggles, so the
   // lifter can still collapse it afterwards.
   useEffect(() => {
-    if (activeLift === null) return;
-    setExpanded((prev) => (prev.has(activeLift) ? prev : new Set(prev).add(activeLift)));
-  }, [activeLift]);
+    if (activeLiftIndex === null) return;
+    setExpanded((prev) =>
+      prev.has(activeLiftIndex) ? prev : new Set(prev).add(activeLiftIndex),
+    );
+  }, [activeLiftIndex]);
 
-  function toggle(lift: string) {
+  function toggle(liftIndex: number) {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(lift)) next.delete(lift);
-      else next.add(lift);
+      if (next.has(liftIndex)) next.delete(liftIndex);
+      else next.add(liftIndex);
       return next;
     });
   }
 
   return (
     <ul className={styles.liftList}>
-      {liftDetails.map(({ lift, tm, activation, warmUpCount, workCount, plannedSets }) => {
-        const isExpanded = expanded.has(lift);
-        const panelId = `lift-detail-${encodeURIComponent(lift)}`;
+      {liftDetails.map(({ lift, tm, activation, warmUpCount, workCount, plannedSets }, liftIndex) => {
+        const isExpanded = expanded.has(liftIndex);
+        const panelId = `lift-detail-${liftIndex}`;
         const warmUpSets = plannedSets.filter((s) => s.type === 'warmup');
         const workSets = plannedSets.filter((s) => s.type === 'work');
-        // Gated on `plannedSets` for the same reason `toTimerLiftPlans` drops
-        // such a lift entirely: with no training max there is nothing to time, so
-        // the queue emits no activation for it. Ungated, the block rendered
+        // Gated on `plannedSets`: with no training max there is nothing to time,
+        // so the queue emits no activation for such a lift (its plan entry is
+        // kept, empty, to hold its position). Ungated, the block rendered
         // directly above "No sets — set a training max…", promising a countdown
         // that could not happen.
         const activationMovement =
           plannedSets.length > 0 ? activationExercise(activation) : undefined;
 
         return (
-          <li key={lift} className={styles.liftItem}>
+          <li key={liftIndex} className={styles.liftItem}>
             <div className={styles.liftItemRow}>
               <button
                 type="button"
                 className={styles.liftItemHeader}
-                onClick={() => toggle(lift)}
+                onClick={() => toggle(liftIndex)}
                 aria-expanded={isExpanded}
                 aria-controls={panelId}
               >
@@ -187,7 +194,14 @@ export default function CollapsibleLiftList({
                   <div className={styles.setGroup}>
                     <span className={styles.setGroupLabel}>Warm-up</span>
                     {warmUpSets.map((s) => (
-                      <SetRow key={s.setLabel} lift={lift} set={s} unit={unit} timer={timer} />
+                      <SetRow
+                        key={s.setLabel}
+                        lift={lift}
+                        liftIndex={liftIndex}
+                        set={s}
+                        unit={unit}
+                        timer={timer}
+                      />
                     ))}
                   </div>
                 )}
@@ -196,7 +210,14 @@ export default function CollapsibleLiftList({
                   <div className={styles.setGroup}>
                     <span className={styles.setGroupLabel}>Working Sets</span>
                     {workSets.map((s) => (
-                      <SetRow key={s.setLabel} lift={lift} set={s} unit={unit} timer={timer} />
+                      <SetRow
+                        key={s.setLabel}
+                        lift={lift}
+                        liftIndex={liftIndex}
+                        set={s}
+                        unit={unit}
+                        timer={timer}
+                      />
                     ))}
                   </div>
                 )}
