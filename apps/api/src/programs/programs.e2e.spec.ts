@@ -440,6 +440,27 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(liftNames).toContain('Bench Press');
     });
 
+    it('GET /workouts/1 set ids round-trip through PATCH /lift-records/:id (issue #978)', async () => {
+      const before = await get(`/programs/${SEED_PROGRAM}/workouts/1`);
+      expect(before.statusCode).toBe(200);
+      const squat = (before.json() as { lifts: { lift: string; planned: boolean; sets: { id: string; reps: number; notes: string }[] }[] })
+        .lifts.find((l) => l.lift === 'Squat');
+      expect(squat).toBeDefined();
+      expect(squat?.planned).toBe(false);
+      const set = squat?.sets[0];
+      expect(set).toMatchObject({ reps: 5, notes: '' });
+      expect(set?.id).toMatch(/-Squat-1$/);
+
+      // The id on the workout's set is the id the record endpoint answers to.
+      const patched = await patchJson(`/programs/${SEED_PROGRAM}/lift-records/${set?.id}`, { notes: 'belt' });
+      expect(patched.statusCode).toBe(200);
+
+      const after = await get(`/programs/${SEED_PROGRAM}/workouts/1`);
+      const squatAfter = (after.json() as { lifts: { lift: string; sets: { id: string; notes: string }[] }[] })
+        .lifts.find((l) => l.lift === 'Squat');
+      expect(squatAfter?.sets[0]).toMatchObject({ id: set?.id, notes: 'belt' });
+    });
+
     it('GET /workouts/2 reflects completion status after workout 2 is logged', async () => {
       const res = await get(`/programs/${SEED_PROGRAM}/workouts/2`);
       expect(res.statusCode).toBe(200);

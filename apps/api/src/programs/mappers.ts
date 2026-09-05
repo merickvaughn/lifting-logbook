@@ -293,6 +293,13 @@ export interface WorkoutResponseOptions {
   cycleStartDate?: Date | undefined;
   /** This workout's `(week, offset)` key offset; feeds the no-schedule date. */
   offset?: number | undefined;
+  /**
+   * Stored lift name → the lift to group its records under, for `replace`
+   * overrides. Applied while grouping rather than by renaming the records up
+   * front, so each set's `id` is built from the record as persisted and still
+   * addresses that row for `PATCH /lift-records/:id` (issue #978).
+   */
+  renamedLifts?: ReadonlyMap<string, string> | undefined;
 }
 
 /**
@@ -331,19 +338,25 @@ export const toWorkoutResponse = (
     skipped = false,
     cycleStartDate,
     offset,
+    renamedLifts,
   } = options;
 
   const liftMap = new Map<string, SetResponse[]>();
   for (const r of records) {
     const set: SetResponse = {
+      // From the record as stored — before the `renamedLifts` regrouping below —
+      // so it is the id the persisted row answers to (issue #978).
+      id: buildLiftRecordId(r.program, r),
       setNum: r.setNum,
       weight: r.weight,
       reps: r.reps,
       amrap: r.notes.toUpperCase().includes('AMRAP'),
+      notes: r.notes,
     };
-    const sets = liftMap.get(r.lift);
+    const lift = renamedLifts?.get(r.lift) ?? r.lift;
+    const sets = liftMap.get(lift);
     if (sets) sets.push(set);
-    else liftMap.set(r.lift, [set]);
+    else liftMap.set(lift, [set]);
   }
 
   let lifts: WorkoutLiftResponse[];

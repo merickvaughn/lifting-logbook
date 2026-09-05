@@ -11,6 +11,15 @@ export interface WarmUpSetData {
   totalLoad: number;
 }
 
+/**
+ * What the logger needs from an already-logged set: the id to PATCH, and the
+ * three values it displays and pre-fills. Sourced from `SetResponse` on the
+ * workout itself (issue #978), so the page no longer fetches the whole cycle's
+ * lift records to recover them; a freshly logged `LiftRecordResponse` is a
+ * structural superset and flows into the same slot.
+ */
+export type LoggedSet = Pick<LiftRecordResponse, 'id' | 'weight' | 'reps' | 'notes'>;
+
 export interface WorkingSetData {
   setNum: number;
   /** Total planned load (barbell: bar weight; BW-component: targetLoad). */
@@ -18,7 +27,7 @@ export interface WorkingSetData {
   reps: number;
   amrap: boolean;
   /** Pre-populated when a logged record already exists for this set. */
-  existing?: LiftRecordResponse;
+  existing?: LoggedSet;
 }
 
 export interface LiftData {

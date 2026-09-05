@@ -274,6 +274,15 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     const body = res.json();
     expect(body.workoutNum).toBe(1);
     expect(body.lifts.length).toBeGreaterThan(0);
+    // Every logged set carries its record id and notes on the Prisma path too
+    // (issue #978) — the id is the natural key, the same value LiftRecordResponse.id
+    // carries, so the logging page can PATCH it without a second fetch.
+    const logged = body.lifts.find((l: { sets: unknown[] }) => l.sets.length > 0);
+    expect(logged).toBeDefined();
+    expect(logged.sets[0]).toMatchObject({
+      id: expect.stringMatching(/-1$/),
+      notes: expect.any(String),
+    });
   });
 
   it('GET /programs/:program/training-maxes returns the seeded maxes', async () => {

@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import type { LiftRecordResponse, WeightUnit } from '@lifting-logbook/types';
+import type { WeightUnit } from '@lifting-logbook/types';
 import { convertWeight, formatWeight, roundToDisplay } from '@lifting-logbook/core';
 import {
   createLiftRecord,
@@ -12,7 +12,7 @@ import {
 } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import styles from './WorkoutLogger.module.css';
-import type { LiftData, WorkingSetData, WorkoutLoggerProps } from './types';
+import type { LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
 import { buildDraftKey, clearDraft, readDraft, writeDraft } from './workoutDraftStorage';
 
 // ---------------------------------------------------------------------------
@@ -178,16 +178,16 @@ function WorkingSetRow({
   bodyWeight: number | null;
   isBodyweightComponent: boolean;
   isReadOnly: boolean;
-  loggedRecord?: LiftRecordResponse;
+  loggedRecord?: LoggedSet;
   isEditing: boolean;
   program: string;
   cycleNum: number;
   workoutNum: number;
   date: string;
   unit: WeightUnit;
-  onLogged: (record: LiftRecordResponse) => void;
+  onLogged: (record: LoggedSet) => void;
   onEditStart: () => void;
-  onEditSave: (record: LiftRecordResponse) => void;
+  onEditSave: (record: LoggedSet) => void;
 }) {
   const { value: defaultWeight } = formatWorkingWeight(
     set.totalLoad,
@@ -440,16 +440,16 @@ function LiftView({
   lift: LiftData;
   bodyWeight: number | null;
   isReadOnly: boolean;
-  loggedSets: Map<string, LiftRecordResponse>;
+  loggedSets: Map<string, LoggedSet>;
   editingSet: string | null;
   program: string;
   cycleNum: number;
   workoutNum: number;
   date: string;
   unit: WeightUnit;
-  onLogged: (key: string, record: LiftRecordResponse) => void;
+  onLogged: (key: string, record: LoggedSet) => void;
   onEditStart: (key: string) => void;
-  onEditSave: (key: string, record: LiftRecordResponse) => void;
+  onEditSave: (key: string, record: LoggedSet) => void;
 }) {
   return (
     <div className={styles.liftView}>
@@ -518,7 +518,7 @@ function OverviewRow({
 }: {
   lift: LiftData;
   bodyWeight: number | null;
-  loggedSets: Map<string, LiftRecordResponse>;
+  loggedSets: Map<string, LoggedSet>;
   unit: WeightUnit;
   onGoTo: () => void;
 }) {
@@ -577,9 +577,9 @@ export default function WorkoutLogger({
   useEffect(() => { setEffectiveDate(date); }, [date]);
 
   // Initialize loggedSets from any pre-existing records passed via server props
-  const [loggedSets, setLoggedSets] = useState<Map<string, LiftRecordResponse>>(
+  const [loggedSets, setLoggedSets] = useState<Map<string, LoggedSet>>(
     () => {
-      const m = new Map<string, LiftRecordResponse>();
+      const m = new Map<string, LoggedSet>();
       for (const lift of lifts) {
         for (const ws of lift.workingSets) {
           if (ws.existing) {
@@ -612,7 +612,7 @@ export default function WorkoutLogger({
     setBodyWeightDone(true);
   }
 
-  function handleLogged(key: string, record: LiftRecordResponse) {
+  function handleLogged(key: string, record: LoggedSet) {
     setLoggedSets((prev) => new Map(prev).set(key, record));
     setEditingSet(null);
   }
@@ -621,7 +621,7 @@ export default function WorkoutLogger({
     setEditingSet(key);
   }
 
-  function handleEditSave(key: string, record: LiftRecordResponse) {
+  function handleEditSave(key: string, record: LoggedSet) {
     setLoggedSets((prev) => new Map(prev).set(key, record));
     setEditingSet(null);
   }

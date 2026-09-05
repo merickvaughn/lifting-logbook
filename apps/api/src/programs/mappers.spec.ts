@@ -208,6 +208,34 @@ describe('toWorkoutResponse with plannedLifts', () => {
     expect(result.lifts[0]?.sets).toHaveLength(1);
   });
 
+  // Issue #978: each set carries the record's natural-key id (the same value
+  // LiftRecordResponse.id carries) and its notes, so the logging page can PATCH
+  // a logged set without refetching the cycle's lift records to look them up.
+  it('carries each logged set’s record id and notes', () => {
+    const records = [{ ...record('Squat', 2, 220), notes: 'AMRAP felt heavy' }];
+    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { plannedLifts: ['Squat'] });
+    expect(result.lifts[0]?.sets[0]).toEqual({
+      id: '5-3-1-1-1-20260507-Squat-2',
+      setNum: 2,
+      weight: 220,
+      reps: 5,
+      amrap: true,
+      notes: 'AMRAP felt heavy',
+    });
+  });
+
+  it('groups a replaced lift’s records under the replacement but keeps the stored lift in each id', () => {
+    const records = [record('Squat', 1, 200)];
+    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, {
+      plannedLifts: ['Front Squat'],
+      renamedLifts: new Map([['Squat', 'Front Squat']]),
+    });
+    expect(result.lifts).toHaveLength(1);
+    expect(result.lifts[0]).toMatchObject({ lift: 'Front Squat', planned: false });
+    // The row is still persisted as Squat, so that is the id PATCH must address.
+    expect(result.lifts[0]?.sets[0]?.id).toBe('5-3-1-1-1-20260507-Squat-1');
+  });
+
   it('marks unlogged planned lifts as planned:true with empty sets', () => {
     const result = toWorkoutResponse(program, cycleNum, workoutNum, week, [], { plannedLifts: ['Squat', 'Bench Press'] });
     expect(result.lifts).toHaveLength(2);

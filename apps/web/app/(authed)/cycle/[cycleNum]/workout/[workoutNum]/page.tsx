@@ -9,7 +9,6 @@ import {
 } from '@lifting-logbook/core';
 import {
   fetchLatestBodyWeight,
-  fetchLiftRecords,
   fetchProgramSpec,
   fetchTrainingMaxes,
   fetchWorkout,
@@ -50,11 +49,10 @@ export default async function WorkoutLoggingPage({
 
   const program = await getActiveProgram();
 
-  const [workout, specs, maxes, allRecords, latestBodyWeight, unit] = await Promise.all([
+  const [workout, specs, maxes, latestBodyWeight, unit] = await Promise.all([
     fetchWorkout(program, workoutNum),
     fetchProgramSpec(program),
     fetchTrainingMaxes(program),
-    fetchLiftRecords(program),
     fetchLatestBodyWeight(program),
     getPreferredUnit(),
   ]);
@@ -63,9 +61,6 @@ export default async function WorkoutLoggingPage({
     notFound();
     return null; // unreachable; notFound() throws but TypeScript can't verify without Next.js types
   }
-
-  // Only care about records for this specific workout
-  const workoutRecords = allRecords.filter((r) => r.workoutNum === workoutNum);
 
   const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
 
@@ -84,14 +79,18 @@ export default async function WorkoutLoggingPage({
           }))
       : [];
 
+    // `planned: false` is the API's contract for "these sets are logged records"
+    // (`planned: true` lifts carry no sets on the real API). Each such set now
+    // brings its own record id and notes (issue #978), so the page no longer
+    // fetches the whole cycle's lift records just to look them up — which also
+    // fixes a `replace`-override edge: the old name-based `.find` missed a
+    // renamed lift's records, showing its logged sets as unlogged.
     const workingSets: WorkingSetData[] = wl.sets.map((s) => ({
       setNum: s.setNum,
       totalLoad: s.weight,
       reps: s.reps,
       amrap: s.amrap,
-      existing: workoutRecords.find(
-        (r) => r.lift === wl.lift && r.setNum === s.setNum,
-      ),
+      existing: wl.planned ? undefined : { id: s.id, weight: s.weight, reps: s.reps, notes: s.notes },
     }));
 
     const bwComponent = isBodyweightComponent(wl.lift);

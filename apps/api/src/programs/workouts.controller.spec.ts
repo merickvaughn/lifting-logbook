@@ -127,9 +127,38 @@ describe('WorkoutsController', () => {
     expect(result.lifts[0]?.lift).toBe('Squat');
     expect(result.lifts[0]?.planned).toBe(false);
     expect(result.lifts[0]?.sets).toEqual([
-      { setNum: 1, weight: 200, reps: 5, amrap: false },
-      { setNum: 2, weight: 220, reps: 5, amrap: true },
+      { id: '5-3-1-3-1-20260420-Squat-1', setNum: 1, weight: 200, reps: 5, amrap: false, notes: '' },
+      { id: '5-3-1-3-1-20260420-Squat-2', setNum: 2, weight: 220, reps: 5, amrap: true, notes: 'AMRAP' },
     ]);
+  });
+
+  it('keeps each set id addressed to the stored row under a replace override (issue #978)', async () => {
+    dashboardRepo.getCycleDashboard.mockResolvedValue({ cycleNum: 3, cycleDate: new Date('2026-04-20T00:00:00.000Z') });
+    specRepo.getProgramSpec.mockResolvedValue([
+      { week: 1, offset: 0, lift: 'Squat', increment: 5, order: 1, sets: 3, reps: 5, amrap: true, warmUpPct: '0.4,0.5,0.6', wtDecrementPct: 0.1, activation: 'compound' },
+    ]);
+    workoutRepo.getWorkout.mockResolvedValue([
+      {
+        program: '5-3-1',
+        cycleNum: 3,
+        workoutNum: 1,
+        date: new Date('2026-04-20T00:00:00.000Z'),
+        lift: 'Squat',
+        setNum: 1,
+        weight: 200,
+        reps: 5,
+        notes: '',
+      },
+    ]);
+    liftOverrideRepo.getOverrides.mockResolvedValue([{ lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' }]);
+
+    const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
+
+    // Grouped under the replacement so the planned list and the logged sets agree…
+    expect(result.lifts.map((l) => l.lift)).toEqual(['Front Squat']);
+    expect(result.lifts[0]?.planned).toBe(false);
+    // …but the row is still persisted as Squat, so that is the id PATCH must address.
+    expect(result.lifts[0]?.sets[0]?.id).toBe('5-3-1-3-1-20260420-Squat-1');
   });
 
   it('returns 400 only when workoutNum exceeds the full canonical length, not one block (issue #740)', async () => {
