@@ -1,5 +1,5 @@
 import { formatDuration } from '@lifting-logbook/core';
-import type { TimerPhase } from '@lifting-logbook/core';
+import type { TimerPhase, TimerPhaseKind } from '@lifting-logbook/core';
 
 /**
  * Copy shared by the timer page and the workout-detail dock.
@@ -21,13 +21,52 @@ export function phaseLabel(phase: TimerPhase, paused: boolean): string {
   return `${paused ? 'Paused · ' : ''}${phase.label}`;
 }
 
+/**
+ * Per-kind copy, one entry per `TimerPhaseKind`.
+ *
+ * Each of these is a `Record` over the kind rather than an `if` chain so that a
+ * kind added to `TIMER_PHASE_KINDS` without an entry here is a compile error —
+ * the chains these replaced each ended in a fallthrough (`phaseSubLabel` treated
+ * anything that wasn't `rest` or `activation` as a set; the queue badge read
+ * "Set" for any unknown kind), so a new kind typechecked and rendered as the
+ * wrong thing. `timerLabels.test.ts` iterates the array as the runtime check.
+ */
+/** `Set 2 · 5 × 225 lbs` — the prescription a prep counts down to and a set performs. */
+const setCopy = (phase: TimerPhase): string => `${phase.set.setLabel} · ${phase.set.spec}`;
+
+const PHASE_SUB_LABEL = {
+  prep: setCopy,
+  set: setCopy,
+  // An activation carries the movement name and no prescription, so the
+  // `label · spec` form would render a dangling separator.
+  activation: (phase) => phase.set.setLabel,
+  rest: (phase) =>
+    phase.next ? `Up next: ${phase.next.lift} · ${phase.next.setLabel}` : 'Last set done',
+} satisfies Record<TimerPhaseKind, (phase: TimerPhase) => string>;
+
 /** What the current phase is for: the set being performed, or what rest precedes. */
 export function phaseSubLabel(phase: TimerPhase): string {
-  // An activation carries the movement name and no prescription, so the generic
-  // `label · spec` form below would render a dangling separator.
-  if (phase.kind === 'activation') return phase.set.setLabel;
-  if (phase.kind !== 'rest') return `${phase.set.setLabel} · ${phase.set.spec}`;
-  return phase.next ? `Up next: ${phase.next.lift} · ${phase.next.setLabel}` : 'Last set done';
+  return PHASE_SUB_LABEL[phase.kind](phase);
+}
+
+/** The kind badge on a session-queue row. */
+export const QUEUE_KIND_LABEL = {
+  prep: 'Setup',
+  set: 'Set',
+  rest: 'Rest',
+  activation: 'Activation',
+} satisfies Record<TimerPhaseKind, string>;
+
+const QUEUE_ROW_DETAIL = {
+  prep: () => '',
+  set: (phase) => ` · ${phase.set.spec}`,
+  rest: () => '',
+  activation: (phase) => ` · ${phase.set.setLabel}`,
+} satisfies Record<TimerPhaseKind, (phase: TimerPhase) => string>;
+
+/** What follows the lift name on a session-queue row: the prescription, or the movement. */
+export function queueRowDetail(phase: TimerPhase): string {
+  return QUEUE_ROW_DETAIL[phase.kind](phase);
 }
 
 /** The primary control's label, for both surfaces. */

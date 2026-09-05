@@ -35,7 +35,7 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
 /**
- * The states the dial can paint, per TimerDial.tsx's phase -> class chain.
+ * The states the dial can paint, per TimerDial.tsx's phase -> class map.
  *
  * This is a contract (the dial has exactly these states), not a duplicated
  * value — the *colors* are derived from source below, and every message that
