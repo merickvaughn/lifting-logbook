@@ -3,12 +3,17 @@ import {
   PROG_SPEC_WARMUP_PCTS,
   PROG_SPEC_WORK_PCTS,
   WARMUP_BASE_REPS,
+  activationExercise,
   expandSpecToLength,
   noScheduleWorkoutDateUTC,
   orderedWorkoutKeys,
   programLengthWeeks,
 } from '@lifting-logbook/core';
-import type { LiftingProgramSpecResponse } from '@lifting-logbook/types';
+import type {
+  LiftingProgramSpecResponse,
+  TrainingMaxResponse,
+  WorkoutResponse,
+} from '@lifting-logbook/types';
 
 export interface PlannedSet {
   type: 'warmup' | 'work';
@@ -150,4 +155,58 @@ export function computeCycleProgress(weeks: WeekRow[]): CycleProgress {
   const percent =
     totalWorkouts > 0 ? Math.round((completedWorkouts / totalWorkouts) * 100) : 0;
   return { completedWorkouts, totalWorkouts, percent };
+}
+
+/**
+ * One lift of a workout as the detail page renders it and the timer plans it.
+ *
+ * Built by {@link buildLiftDetails}, index-aligned with `workout.lifts`; the
+ * timer reads it through `toTimerLiftPlans`, so this is the one shape both
+ * routes share (issue #984).
+ */
+export interface WorkoutLiftDetail {
+  lift: string;
+  /** Training max in lbs — the storage unit; display conversion happens later. */
+  tm: number;
+  /**
+   * The lift's activation movement, or `undefined` when the program names none.
+   *
+   * Narrowed exactly once, here, via `activationExercise`: the spec's raw
+   * `activation` column also carries legacy classification markers
+   * (`'compound'` / `'n/a'`), which are not movements. Named `activationMovement`
+   * rather than `activation` so a consumer still expecting the raw column fails
+   * to compile instead of re-narrowing — or forgetting to. Optional because
+   * "none" is the common case and fixtures should not have to spell it.
+   */
+  activationMovement?: string | undefined;
+  warmUpCount: number;
+  workCount: number;
+  plannedSets: PlannedSet[];
+}
+
+/**
+ * Derives the per-lift plan for a workout from the program spec and the
+ * training maxes — one entry per `workout.lifts` entry, in order, never
+ * filtered: position is a lift occurrence's identity for the timer (ADR-035
+ * Amendment 4), so a lift with no training max is kept as an empty plan.
+ */
+export function buildLiftDetails(
+  workout: Pick<WorkoutResponse, 'week' | 'lifts'>,
+  specs: readonly LiftingProgramSpecResponse[],
+  maxes: readonly Pick<TrainingMaxResponse, 'lift' | 'weight'>[],
+): WorkoutLiftDetail[] {
+  const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
+  return workout.lifts.map((wl) => {
+    const tm = maxMap.get(wl.lift) ?? 0;
+    const spec = specs.find((s) => s.week === workout.week && s.lift === wl.lift);
+    const plannedSets = spec ? computePlannedSets(spec, tm) : [];
+    return {
+      lift: wl.lift,
+      tm,
+      activationMovement: activationExercise(spec?.activation),
+      warmUpCount: plannedSets.filter((s) => s.type === 'warmup').length,
+      workCount: plannedSets.filter((s) => s.type === 'work').length,
+      plannedSets,
+    };
+  });
 }

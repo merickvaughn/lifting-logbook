@@ -38,6 +38,9 @@ module.exports = {
     '^@lifting-logbook/core$': '<rootDir>/../../packages/core/src/index.ts',
     '^@lifting-logbook/types$': '<rootDir>/../../packages/types/src/index.ts',
     '^@/(.*)$': '<rootDir>/$1',
+    // `server-only` throws under Jest; stubbed so server-side lib modules
+    // (lib/loadWorkoutPlan.ts, lib/preferences.ts) can be tested directly.
+    '^server-only$': '<rootDir>/__mocks__/server-only.js',
   },
   // win32-only worker-memory mitigation (#807); spread last so it applies on every
   // win32 Node without disturbing base's win32 testTimeout. No-op off win32.

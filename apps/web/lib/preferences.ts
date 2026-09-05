@@ -16,6 +16,7 @@ import { getUserSettings } from './active-program';
  * instead of issuing a duplicate GET.
  */
 export async function getPreferredUnit(): Promise<WeightUnit> {
+  // fallback-covered-by: apps/web/lib/__tests__/preferences.test.ts
   const settings = await getUserSettings().catch(() => null);
   return settings?.unit ?? DEFAULT_WEIGHT_UNIT;
 }

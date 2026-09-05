@@ -118,27 +118,22 @@ describe('WorkoutDetailPage — accessory classification', () => {
     ]);
   });
 
-  it('hands the timer every lift in plan order, keeping one with no training max as an empty plan', async () => {
+  it('hands the timer every lift in plan order, including one the spec does not plan', async () => {
     // Position is a lift's identity for the timer (issue #980): the plan the
     // provider receives must line up index-for-index with the list this page
-    // renders, so a lift without a training max is passed through (empty), not
+    // renders, so a lift with nothing planned is passed through (empty), not
     // filtered out. A `liftDetails.filter(...)` here would compile and silently
     // point every ▶ and every persisted run at the wrong lift.
     mockedCustomLifts.mockResolvedValue([]);
-    mockedMaxes.mockResolvedValue([{ lift: 'Cable Curls', weight: 60 }]);
+    mockedSpec.mockResolvedValue([spec('Cable Curls')]);
 
     expect(passedLifts(await renderPage()).map(([lift]) => lift)).toEqual(['Squat', 'Cable Curls']);
   });
 
-  it('classifies a custom lift from the fetched list', async () => {
-    seedWorkout(['Sissy Squat']);
-    mockedCustomLifts.mockResolvedValue([
-      { name: 'Sissy Squat', classification: 'accessory' },
-    ]);
-
-    expect(passedLifts(await renderPage())).toEqual([['Sissy Squat', 'accessory']]);
-  });
-
+  // The classification matrix (custom lifts, slow fetch, deferred await) lives
+  // in apps/web/lib/__tests__/loadWorkoutPlan.test.ts now; this page test keeps
+  // one success, the plan/list alignment pin, and one failure case to prove the
+  // page → loader → provider wiring.
   it('still renders, and still classifies built-ins, when the custom-lift fetch fails', async () => {
     const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     mockedCustomLifts.mockRejectedValue(new Error('API down'));
@@ -154,7 +149,7 @@ describe('WorkoutDetailPage — accessory classification', () => {
     expect(html).toContain('Planned Lifts');
 
     expect(errSpy).toHaveBeenCalledWith(
-      'WorkoutDetailPage: custom lifts fetch failed, classifying built-ins only',
+      '[loadWorkoutPlan] custom lifts fetch failed, classifying built-ins only',
       expect.any(Error),
     );
     errSpy.mockRestore();

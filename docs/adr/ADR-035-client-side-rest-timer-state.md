@@ -515,11 +515,12 @@ now a third such table (its presence is compiler-enforced, its values checked by
   `useId()` so a second list on a page cannot collide.
 - The index alignment between the page's `liftDetails` and the plan handed to the timer is now
   load-bearing across two routes and a persisted artifact; `detail/page.test.tsx` pins it (every
-  lift, in order, including one with no training max) until
-  [#984](https://github.com/merickvaughn/lifting-logbook/issues/984)'s shared loader makes it
-  structural. That loader partially revisits Amendment 2's rejection of "a shared layer above both
-  routes" for *plan data* only; classification pinning stays, because the two routes still mount
-  the hook independently.
+  lift, in order, including one with no training max), and
+  [#984](https://github.com/merickvaughn/lifting-logbook/issues/984)'s shared `loadWorkoutPlan`
+  makes it structural — both routes take `liftDetails` and the timer plan from one call, so there
+  is no second code path to filter. That loader partially revisits Amendment 2's rejection of "a
+  shared layer above both routes" for *plan data* only; classification pinning stays, because the
+  two routes still mount the hook independently.
 - `TimerSettingsPanel`'s per-lift override list hides lifts with no sets (`hasTimedSets`, the one
   predicate for "this plan entry has nothing to time") and then dedupes by name, in that order, so an
   empty first occurrence cannot shadow a timed later one.

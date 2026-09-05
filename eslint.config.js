@@ -54,8 +54,14 @@ module.exports = [
   // API route handlers. See docs/standards/error-fallback-test-coverage.md and
   // tools/eslint-rules/no-uncovered-error-fallback.js.
   {
-    files: ['apps/web/app/**/*.ts', 'apps/web/app/**/*.tsx', 'apps/api/src/**/*.ts'],
-    ignores: ['**/*.spec.ts', '**/*.test.ts', '**/*.spec.tsx', '**/*.test.tsx'],
+    files: [
+      'apps/web/app/**/*.ts',
+      'apps/web/app/**/*.tsx',
+      // Server-side loaders shared by pages live here too (e.g. lib/loadWorkoutPlan.ts).
+      'apps/web/lib/**/*.ts',
+      'apps/api/src/**/*.ts',
+    ],
+    ignores: ['**/*.spec.ts', '**/*.test.ts', '**/*.spec.tsx', '**/*.test.tsx', '**/__tests__/**'],
     plugins: {
       'lifting-logbook': localRules,
     },
