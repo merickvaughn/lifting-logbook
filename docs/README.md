@@ -213,6 +213,16 @@ Visual representations of the system are in [`docs/diagrams/`](diagrams/):
 | [Package Dependencies](diagrams/package-dependencies.md) | Compile-time dependency graph across all monorepo packages and apps |
 | [Deployment Topology](diagrams/deployment-topology.md) | GKE Autopilot vs. Cloud Run traffic split, shared infrastructure, CI/CD |
 | [Data Flow](diagrams/data-flow.md) | Request path: client → transport → domain service → repository adapter → data store |
+| [Domain Model classes](domain-model.md#5-class-diagram) | Training entities and which are persisted rows vs. recomputed per request. Kept inline in `domain-model.md` rather than in `diagrams/`, because it is only readable alongside that document's stereotype legend |
+
+---
+
+## Domain Model
+
+See [domain-model.md](domain-model.md) for the training domain model as built: the lift
+taxonomy's four axes, the `Program → Cycle → Week → Workout → Lift slot → Set` ladder and
+what each level is stored as, the prescribed-versus-logged seam, a class diagram of the
+whole model, and the known divergences between the model, the API and the UI.
 
 ---
 

@@ -173,7 +173,7 @@ Two tabs:
 - **1RM (one-rep max)** — the heaviest weight you can lift once for a given exercise. The onboarding flow can estimate it from a heavier-rep set using the [Brzycki formula](https://en.wikipedia.org/wiki/One-repetition_maximum#Brzycki).
 - **Training max (TM)** — a working number, typically 85–90 % of your 1RM, that every percentage in the program is calculated from. Lower than your true 1RM by design.
 - **AMRAP** — "as many reps as possible." The last set of certain lifts is performed to technical failure; the rep count you hit is what drives training-max adjustments.
-- **Deload** — a planned lighter week to manage fatigue. Most programs schedule one every fourth week.
+- **Deload** — a planned lighter week to manage fatigue. Commonly scheduled every fourth week in strength programming generally, but **none of the built-in programs currently schedules one** — deload is a documented non-goal for v1.0 (see [PRD.md](PRD.md)), and no shipped program marks a week as a deload.
 - **PR (personal record)** — your highest logged value for a given lift, set count, or training max.
 - **Bodyweight component** — an exercise where your body weight is part of the load (chin-ups, pull-ups, dips). Logging a workout that includes one triggers the body-weight gate.
 - **Brzycki formula** — `1RM ≈ weight × 36 / (37 − reps)`. Reasonably accurate for sets of 1–10 reps.
