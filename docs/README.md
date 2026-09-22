@@ -216,6 +216,16 @@ Visual representations of the system are in [`docs/diagrams/`](diagrams/):
 
 ---
 
+## Domain Model
+
+See [domain-model.md](domain-model.md) for the training domain model as built: the lift
+taxonomy's four orthogonal axes, the `Program → Cycle → Week → Workout → Lift → Set`
+ladder, and a class diagram marking which levels are **persisted rows** and which are
+**recomputed per request** — only the leaf (`lift_record`) is stored. It also records
+the known divergences between the model, the API and the UI.
+
+---
+
 ## Product Requirements
 
 See [PRD.md](PRD.md) for the lightweight product requirements document: user personas,
