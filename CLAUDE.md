@@ -61,8 +61,8 @@ infra/terraform/     — Shared infrastructure: VPC, load balancer, DNS, IAM
 docs/adr/            — Architecture Decision Records (see docs/README.md for the full ADR index)
 docs/README.md       — Full architecture narrative and ADR index
 docs/domain-model.md — Training domain model as built: the lift taxonomy, the
-                       Program→Cycle→Week→Workout→Set ladder, and which levels are
-                       persisted rows vs. recomputed per request (only the leaf is stored)
+                       Program → Cycle → Week → Workout → Lift slot → Set ladder, and which
+                       levels are persisted rows vs. recomputed per request
 scripts/             — Repository automation scripts
 archive/             — Frozen, unbuilt code kept for reference; nothing imports it (see archive/*/README.md)
 ```
