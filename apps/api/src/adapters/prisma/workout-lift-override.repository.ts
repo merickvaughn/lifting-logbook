@@ -16,6 +16,11 @@ export class PrismaWorkoutLiftOverrideRepository
   ): Promise<LiftOverride[]> {
     const rows = await this.prisma.workoutLiftOverride.findMany({
       where: { userId: this.userId, program, cycleNum, workoutNum },
+      // Creation order, which the port promises: without an ORDER BY Postgres may
+      // return rows in index order (alphabetical by `lift`), and a chain of swaps
+      // would then resolve out of sequence. An upsert keeps its row's `createdAt`,
+      // matching the in-memory adapter, which replaces an override in place.
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     // mirrors WorkoutLiftOverride schema
     return rows.map((r: { lift: string; action: string; replacedBy: string | null }) => ({

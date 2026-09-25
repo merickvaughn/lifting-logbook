@@ -111,11 +111,13 @@ export interface WorkoutResponse {
    * The workout's day within its week: the `offset` of the spec rows that plan
    * it. `GET /programs/:program/spec` serves the one untiled block, so resolve
    * those rows through the block week — `specRowsForWorkoutDay` in
-   * `@lifting-logbook/core` (issue #1014). Absent for a scheduled workout the
-   * program has no day for (a schedule running more days a week than the
-   * program), which plans no lifts.
+   * `@lifting-logbook/core` (issue #1014).
+   * - `null`: the program has no day for this workout (a scheduled workout past
+   *   the program's last day, #1023). It plans no lifts, and nothing on it has
+   *   a prescription.
+   * - Absent: only from an API that predates this field.
    */
-  offset?: number;
+  offset?: number | null;
   date: string; // ISO 8601 date string
   overrideDate?: string; // ISO 8601 date string; present when the user has rescheduled
   skipped: boolean;

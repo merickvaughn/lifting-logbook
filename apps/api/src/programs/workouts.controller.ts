@@ -3,9 +3,15 @@ import {
   Controller,
   Get,
   Inject,
+  Logger,
   Param,
 } from '@nestjs/common';
-import { LiftRecord, programLengthWeeks, specRowsForWorkoutDay } from '@lifting-logbook/core';
+import {
+  LiftRecord,
+  applyLiftOverrides,
+  programLengthWeeks,
+  specRowsForWorkoutDay,
+} from '@lifting-logbook/core';
 import { WorkoutResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
@@ -13,7 +19,6 @@ import { ProgramNotFoundError, WorkoutNotFoundError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import {
-  applyLiftOverrides,
   isValidWorkoutNum,
   toWorkoutResponse,
   workoutKeyForWorkoutNum,
@@ -21,6 +26,8 @@ import {
 
 @Controller('programs/:program')
 export class WorkoutsController {
+  private readonly logger = new Logger(WorkoutsController.name);
+
   constructor(
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
   ) {}
@@ -84,17 +91,30 @@ export class WorkoutsController {
     }
 
     // Planned lifts are this workout's own day: the block week its program week
-    // tiles from, at its key's offset — the same helper the web resolves each
-    // lift's prescription with, so the two never disagree. Filtering on the week
-    // alone listed every day's lifts on every day (issue #1014). In schedule mode
-    // the week comes from the scheduled row and the offset from the key; they agree
-    // whenever the schedule runs the program's own number of days a week, which
-    // saveScheduledDates assumes. A scheduled workout past the program's last day
-    // has no key, and so no day to plan.
+    // tiles from, at its key's offset — the helper the web resolves each lift's
+    // prescription with and the Cycle Dashboard builds its cards from. Filtering on
+    // the week alone listed every day's lifts on every day (issue #1014). A lift
+    // the day repeats is still listed once (#1027). In schedule mode the week comes
+    // from the scheduled row and the offset from the key; they agree whenever the
+    // schedule runs the program's own number of days a week, which
+    // saveScheduledDates assumes but nothing enforces (#1023). A scheduled workout
+    // past the program's last day has no key, and so no day to plan.
+    if (!workoutKey) {
+      this.logger.warn(
+        `Scheduled workout has no program day, so it plans no lifts: program=${program} ` +
+          `cycleNum=${dashboard.cycleNum} workoutNum=${workoutNum} week=${week} (#1023)`,
+      );
+    }
     const dayRows = workoutKey ? specRowsForWorkoutDay(spec, week, workoutKey.offset) : [];
     const specLifts = [...new Set(dayRows.map((s) => s.lift))];
 
-    const plannedLifts = applyLiftOverrides(specLifts, liftOverrides);
+    // One pass decides both the plan and where each logged set belongs, so a swap
+    // cannot be followed through its chain for one and a single hop for the other.
+    // Removed lifts' records are dropped here; replaced lifts' are regrouped inside
+    // the mapper (`renamedLifts`) rather than renamed on the records, so each set's
+    // `id` is still built from the row as stored (issue #978).
+    const { planned, renamed, removed } = applyLiftOverrides(specLifts, liftOverrides);
+    const adjustedRecords = records.filter((r) => !removed.has(r.lift));
 
     // cycleDate is absent only on the ProgramNotFoundError fallback ({ cycleNum: 1 }),
     // where the spec is empty so the workoutNum guard above already 400'd. When
@@ -102,27 +122,14 @@ export class WorkoutsController {
     // dashboard card derives its date from (issue #745).
     const cycleStartDate = 'cycleDate' in dashboard ? dashboard.cycleDate : undefined;
 
-    // Apply overrides to logged records so removed/replaced lifts don't
-    // re-appear via the "append ad-hoc logged lifts" path in toWorkoutResponse.
-    // Removed lifts are dropped here; replaced lifts are regrouped inside the
-    // mapper (`renamedLifts`) rather than renamed on the records, so each set's
-    // `id` is still built from the row as stored (issue #978).
-    const replaceMap = new Map(
-      liftOverrides
-        .filter((o): o is (typeof o) & { replacedBy: string } => o.action === 'replace' && !!o.replacedBy)
-        .map((o) => [o.lift, o.replacedBy!]),
-    );
-    const removedLifts = new Set(liftOverrides.filter((o) => o.action === 'remove').map((o) => o.lift));
-    const adjustedRecords = records.filter((r) => !removedLifts.has(r.lift));
-
     return toWorkoutResponse(program, dashboard.cycleNum, workoutNum, week, adjustedRecords, {
       overrideDate: overrideDate ?? undefined,
-      plannedLifts,
+      plannedLifts: planned,
       scheduledDate,
       skipped: skippedNums.has(workoutNum),
       cycleStartDate,
       offset: workoutKey?.offset,
-      renamedLifts: replaceMap,
+      renamedLifts: renamed,
     });
   }
 }

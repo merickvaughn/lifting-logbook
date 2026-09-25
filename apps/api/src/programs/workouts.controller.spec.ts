@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Weekday } from '@lifting-logbook/core';
 import { ICycleDashboardRepository } from '../ports/ICycleDashboardRepository';
@@ -176,6 +176,63 @@ describe('WorkoutsController', () => {
     expect(result.lifts[0]?.sets[0]?.id).toBe('5-3-1-3-1-20260420-Squat-1');
   });
 
+  describe('a chain of swaps (issue #1014)', () => {
+    const squatAndBench = [specRow(1, 0, 'Squat', 1), specRow(1, 0, 'Bench Press', 2)];
+    const logged = (lift: string, setNum: number) => ({
+      program: '5-3-1',
+      cycleNum: 3,
+      workoutNum: 1,
+      date: new Date('2026-04-20T00:00:00.000Z'),
+      lift,
+      setNum,
+      weight: 200,
+      reps: 5,
+      notes: '',
+    });
+
+    beforeEach(() => {
+      dashboardRepo.getCycleDashboard.mockResolvedValue({ cycleNum: 3, cycleDate: new Date('2026-04-20T00:00:00.000Z') });
+      specRepo.getProgramSpec.mockResolvedValue(squatAndBench);
+    });
+
+    it('keeps sets logged under every earlier name of the slot with its current lift', async () => {
+      // A set logged as Squat before the first swap, and one as Front Squat
+      // between the two. Pre-fix the records followed one hop only: Squat's set
+      // landed on an unplanned "Front Squat" entry with no prescription.
+      workoutRepo.getWorkout.mockResolvedValue([logged('Squat', 1), logged('Front Squat', 2)]);
+      liftOverrideRepo.getOverrides.mockResolvedValue([
+        { lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' },
+        { lift: 'Front Squat', action: 'replace', replacedBy: 'Box Squat' },
+      ]);
+
+      const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
+
+      expect(result.lifts.map((l) => [l.lift, l.replaces, l.planned])).toEqual([
+        ['Box Squat', 'Squat', false],
+        ['Bench Press', undefined, true],
+      ]);
+      // Each set still addresses the row as stored (issue #978).
+      expect(result.lifts[0]?.sets.map((s) => s.id)).toEqual([
+        '5-3-1-3-1-20260420-Squat-1',
+        '5-3-1-3-1-20260420-Front Squat-2',
+      ]);
+    });
+
+    it('hides the slot’s sets when the replacement is then removed', async () => {
+      // Pre-fix, removing the replacement resurrected it as an unplanned entry
+      // carrying Squat's sets.
+      workoutRepo.getWorkout.mockResolvedValue([logged('Squat', 1)]);
+      liftOverrideRepo.getOverrides.mockResolvedValue([
+        { lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' },
+        { lift: 'Front Squat', action: 'remove' },
+      ]);
+
+      const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
+
+      expect(result.lifts.map((l) => l.lift)).toEqual(['Bench Press']);
+    });
+  });
+
   it('returns 400 only when workoutNum exceeds the full canonical length, not one block (issue #740)', async () => {
     // Leangains tiles a 1-week / 3-offset block across 12 weeks = 36 workout days.
     // Pre-#740 the no-schedule cap was 3 (one block); now it is the full 36, so a
@@ -319,12 +376,22 @@ describe('WorkoutsController', () => {
       { workoutNum: 2, weekNum: 1, scheduledDate: new Date('2026-04-22T00:00:00.000Z') },
     ]);
 
-    const result = await controller.getWorkout('my-custom', '2', MOCK_USER);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await controller.getWorkout('my-custom', '2', MOCK_USER);
 
-    expect(result.week).toBe(1);
-    expect(result.date).toBe('2026-04-22');
-    expect(result.offset).toBeUndefined();
-    expect(result.lifts).toEqual([]);
+      expect(result.week).toBe(1);
+      expect(result.date).toBe('2026-04-22');
+      // Explicitly "no day", so a client plans nothing on it rather than treating
+      // it as an API that predates `offset`.
+      expect(result.offset).toBeNull();
+      expect(result.lifts).toEqual([]);
+      // A user-visible empty workout from an unvalidated schedule (#1023) is logged,
+      // so how often it happens shows up.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('workoutNum=2'));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('sets the no-schedule detail date to the Cycle Dashboard card date, not today (issue #745)', async () => {

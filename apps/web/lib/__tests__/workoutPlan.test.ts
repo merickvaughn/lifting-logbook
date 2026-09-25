@@ -227,7 +227,7 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
   // prescription, and a Manage Lifts replacement found no row at all.
   const workout = (
     week: number,
-    offset: number | undefined,
+    offset: number | null | undefined,
     lifts: { lift: string; replaces?: string }[],
   ) => ({
     week,
@@ -312,14 +312,27 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
   });
 
   it('matches on the block week alone for a response without an offset', () => {
-    // An API that predates `offset` (mid rolling deploy) — or the Playwright mock
-    // — says only the week; its block week is still the right place to look.
+    // An API that predates `offset` (one rolled back under a newer web) says
+    // only the week; its block week is still the right place to look.
     const [squat] = buildLiftDetails(
       workout(3, undefined, [{ lift: 'Squat' }]),
       [makeSpec({ lift: 'Squat', offset: 2 })],
       [{ lift: 'Squat', weight: 200 }],
     );
     expect(squat?.workCount).toBe(3);
+  });
+
+  it('plans nothing on a workout the program has no day for', () => {
+    // `offset: null` is a scheduled workout past the program's last day (#1023).
+    // A lift added or logged there has no prescription, even one the block trains
+    // on another day. Only a response with no offset at all falls back to the
+    // block week.
+    const [squat] = buildLiftDetails(
+      workout(3, null, [{ lift: 'Squat' }]),
+      [makeSpec({ lift: 'Squat', offset: 2 })],
+      [{ lift: 'Squat', weight: 200 }],
+    );
+    expect(squat).toMatchObject({ lift: 'Squat', tm: 200, warmUpCount: 0, workCount: 0 });
   });
 });
 

@@ -35,6 +35,9 @@ const WORKOUT = {
   cycleNum: 1,
   workoutNum: 1,
   week: 1,
+  // The day's offset, as the real API sends it (#1014), so e2e exercises the
+  // same day resolution production does. Every PROGRAM_SPEC row is on offset 0.
+  offset: 0,
   date: '2025-01-06',
   skipped: false,
   lifts: [

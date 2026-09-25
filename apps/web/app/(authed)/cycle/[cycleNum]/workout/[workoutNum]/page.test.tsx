@@ -141,7 +141,9 @@ describe('WorkoutLoggingPage — warm-ups resolve through the workout’s day (i
   });
 
   // Week 2, day 0 of a 1-week repeating block (Leangains-shaped). The spec
-  // endpoint serves only the stored block, so its rows all say week 1.
+  // endpoint serves only the stored block, so its rows all say week 1. Squat
+  // also trains on day 2 with a single warm-up, listed first, so a lookup that
+  // ignored the workout's day would find that row instead.
   function seedWeekTwo(
     lifts: { lift: string; replaces?: string }[],
     maxes: { lift: string; weight: number }[],
@@ -156,7 +158,10 @@ describe('WorkoutLoggingPage — warm-ups resolve through the workout’s day (i
       skipped: false,
       lifts: lifts.map((l) => ({ ...l, planned: true, sets: [] })),
     });
-    mockedSpec.mockResolvedValue([{ ...spec('Squat'), warmUpPct: '0.4,0.5,0.6' }]);
+    mockedSpec.mockResolvedValue([
+      { ...spec('Squat'), offset: 2, warmUpPct: '0.5' },
+      { ...spec('Squat'), warmUpPct: '0.4,0.5,0.6' },
+    ]);
     mockedMaxes.mockResolvedValue(maxes);
   }
 

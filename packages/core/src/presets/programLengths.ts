@@ -93,10 +93,10 @@ export function blockWeekForProgramWeek(week: number, blockWeeks: number): numbe
  * serving it — is one untiled block. Matching a row's `week` against the program week
  * finds nothing from the second block on (Leangains/RPT week 2, 5-3-1 week 4), and
  * matching the week without the offset lists every day's lifts on every day (issue
- * #1014). The workouts controller (which lifts a day plans) and the web (each lift's
- * prescription) both resolve a day here, so they cannot disagree; and the result is
- * the Cycle Dashboard card's, which groups the tiled spec by the same `(week, offset)`
- * and sorts by the same `order`.
+ * #1014). The workouts controller (which lifts a day plans), the web (each lift's
+ * prescription) and the Cycle Dashboard (each card's lifts, `buildWorkoutDays`) all
+ * resolve a day here, so they start from the same rows. Downstream, a lift a day
+ * repeats is still collapsed to one occurrence by the workout endpoint (#1027).
  *
  * `offset` is required: a caller without one has no day, and must decide what that
  * means rather than fall back to the whole week.

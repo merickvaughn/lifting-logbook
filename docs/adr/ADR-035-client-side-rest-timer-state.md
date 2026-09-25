@@ -556,6 +556,22 @@ now a third such table (its presence is compiler-enforced, its values checked by
 - `apps/web/lib/__tests__/timerSettings.test.ts` — a run with no anchor, a malformed one, or one of
   an unknown kind is rejected; the shape-2 drop is covered by the existing older-stamp cases.
 
+### Addendum — shape 4 (2026-09-25, [#1014](https://github.com/merickvaughn/lifting-logbook/issues/1014))
+
+`TIMER_RUN_SHAPE` is now **4**, and item 5's bump rule gains a third case: a change to *the plan an
+existing workout resolves to*.
+
+#1014 didn't change how a plan expands into phases. It changed the plan itself: the workout endpoint
+now lists only the day's own lifts (a Leangains day went from 12 lifts to 4), and week-2+ workouts
+gained the sets they had been missing. Item 4's re-anchor handles a phase that disappears by moving
+forward to the next survivor. That is right within one plan, but across a wholesale change of lift
+list it can land on another lift's set. A run on Day C's Weighted Pull-ups work set 2 would resume
+on Lateral Raises, the misresume item 5's policy exists to prevent.
+
+So shape-3 runs are dropped once, at deploy. The window before the web deploys is not covered, since
+the API ships first: an old web still reads a shape-3 run against the new API's plan until it is
+replaced.
+
 ## References
 
 - [Screen Wake Lock API](https://www.w3.org/TR/screen-wake-lock/) — W3C spec; §3.3 defines the

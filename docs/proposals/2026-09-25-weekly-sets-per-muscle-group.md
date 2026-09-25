@@ -169,9 +169,11 @@ implementation. The API adds three things:
 - ~~Should a Manage Lifts swap inherit the replaced lift's prescription on the workout detail and
   timer pages as well?~~ **Resolved in [#1014](https://github.com/merickvaughn/lifting-logbook/issues/1014): yes.**
   A swap inherits the replaced slot's whole prescription (sets, reps, AMRAP, warm-up and
-  decrement %, increment, activation), priced from the replacement's own training max. The
-  workout response names the slot on the replacement's `replaces`, so the dashboard counts can
-  use the same rule and the pages agree.
+  decrement %, increment, activation), priced from the replacement's own training max. The rule
+  is `applyLiftOverrides` in `@lifting-logbook/core`. It returns each swap's `replaces` and where
+  each stored lift name's logged sets now belong, following chains of swaps. The current-week
+  counts (#1019) should call it on each workout's overrides rather than re-implement the swap
+  table, so the dashboard and the workout pages agree.
 
 ## References
 

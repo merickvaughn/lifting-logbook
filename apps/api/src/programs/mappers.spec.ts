@@ -1,14 +1,11 @@
 import { CycleDashboard, LiftRecord, LiftingProgramSpec, Weekday } from '@lifting-logbook/core';
 import {
-  PlannedLift,
-  applyLiftOverrides,
   buildCycleDashboardResponse,
   toLiftRecordResponse,
   toWorkoutResponse,
   weekForWorkoutNum,
   workoutKeyForWorkoutNum,
 } from './mappers';
-import { LiftOverride } from '../ports/IWorkoutLiftOverrideRepository';
 import { ScheduledWorkout } from '../ports/ICycleScheduledWorkoutRepository';
 
 const baseFields: Omit<LiftingProgramSpec, 'offset' | 'lift' | 'week'> = {
@@ -137,80 +134,8 @@ describe('workoutKeyForWorkoutNum', () => {
   });
 });
 
-describe('applyLiftOverrides', () => {
-  const lifts = ['Squat', 'Bench Press', 'Deadlift'];
-  const names = (planned: PlannedLift[]) => planned.map((p) => p.lift);
-
-  it('returns spec lifts unchanged when no overrides', () => {
-    expect(applyLiftOverrides(lifts, [])).toEqual(lifts.map((lift) => ({ lift })));
-  });
-
-  it('remove — drops the target lift', () => {
-    const o: LiftOverride[] = [{ lift: 'Bench Press', action: 'remove' }];
-    expect(names(applyLiftOverrides(lifts, o))).toEqual(['Squat', 'Deadlift']);
-  });
-
-  it('remove — no-op when lift is not in list', () => {
-    const o: LiftOverride[] = [{ lift: 'Overhead Press', action: 'remove' }];
-    expect(names(applyLiftOverrides(lifts, o))).toEqual(lifts);
-  });
-
-  it('replace — swaps in-place preserving order', () => {
-    const o: LiftOverride[] = [{ lift: 'Bench Press', action: 'replace', replacedBy: 'Dips' }];
-    expect(names(applyLiftOverrides(lifts, o))).toEqual(['Squat', 'Dips', 'Deadlift']);
-  });
-
-  it('replace — the replacement records the slot it took (issue #1014)', () => {
-    const o: LiftOverride[] = [{ lift: 'Bench Press', action: 'replace', replacedBy: 'Dips' }];
-    expect(applyLiftOverrides(lifts, o)).toEqual([
-      { lift: 'Squat' },
-      { lift: 'Dips', replaces: 'Bench Press' },
-      { lift: 'Deadlift' },
-    ]);
-  });
-
-  it('replace chain — follows back to the lift originally in the slot (issue #1014)', () => {
-    // Swapping the swap: the slot, and so its prescription, is still Squat's.
-    const o: LiftOverride[] = [
-      { lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' },
-      { lift: 'Front Squat', action: 'replace', replacedBy: 'Box Squat' },
-    ];
-    expect(applyLiftOverrides(lifts, o)[0]).toEqual({ lift: 'Box Squat', replaces: 'Squat' });
-  });
-
-  it('replace without replacedBy — no-op (invalid but defensively handled)', () => {
-    const o: LiftOverride[] = [{ lift: 'Bench Press', action: 'replace' }];
-    expect(applyLiftOverrides(lifts, o)).toEqual(lifts.map((lift) => ({ lift })));
-  });
-
-  it('add — appends new lift', () => {
-    const o: LiftOverride[] = [{ lift: 'Chin-up', action: 'add' }];
-    expect(names(applyLiftOverrides(lifts, o))).toEqual([...lifts, 'Chin-up']);
-  });
-
-  it('add — an added lift fills no program slot', () => {
-    const o: LiftOverride[] = [{ lift: 'Chin-up', action: 'add' }];
-    expect(applyLiftOverrides(lifts, o)[3]).toEqual({ lift: 'Chin-up' });
-  });
-
-  it('add — no-op when lift already present', () => {
-    const o: LiftOverride[] = [{ lift: 'Squat', action: 'add' }];
-    expect(names(applyLiftOverrides(lifts, o))).toEqual(lifts);
-  });
-
-  it('combined — remove, replace, add applied in order', () => {
-    const o: LiftOverride[] = [
-      { lift: 'Squat', action: 'remove' },
-      { lift: 'Bench Press', action: 'replace', replacedBy: 'Dips' },
-      { lift: 'Chin-up', action: 'add' },
-    ];
-    expect(applyLiftOverrides(lifts, o)).toEqual([
-      { lift: 'Dips', replaces: 'Bench Press' },
-      { lift: 'Deadlift' },
-      { lift: 'Chin-up' },
-    ]);
-  });
-});
+// applyLiftOverrides moved to packages/core (issue #1014) — its tests live in
+// packages/core/tests/core/services/workout/applyLiftOverrides.test.ts.
 
 describe('toWorkoutResponse with plannedLifts', () => {
   const program = '5-3-1';
@@ -266,11 +191,14 @@ describe('toWorkoutResponse with plannedLifts', () => {
     expect(result.lifts[0]?.sets[0]?.id).toBe('5-3-1-1-1-20260507-Squat-1');
   });
 
-  it('emits the day’s offset when known and omits it when not (issue #1014)', () => {
+  it('emits the day’s offset, and an explicit null when the program has no day (issue #1014)', () => {
     const withDay = toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: 3 });
     expect(withDay.offset).toBe(3);
+    // Offset 0 is a real day, not "no day".
+    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: 0 }).offset).toBe(0);
+    // Never absent: absence is how a client recognizes an API predating the field.
     const withoutDay = toWorkoutResponse(program, cycleNum, workoutNum, week, []);
-    expect(withoutDay).not.toHaveProperty('offset');
+    expect(withoutDay).toHaveProperty('offset', null);
   });
 
   it('marks unlogged planned lifts as planned:true with empty sets', () => {

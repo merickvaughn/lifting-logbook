@@ -66,13 +66,13 @@ export default async function WorkoutLoggingPage({
   const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
   const liftSpecs = liftSpecsForWorkout(workout, specs);
 
-  const lifts: LiftData[] = workout.lifts.map((wl, i) => {
+  const lifts: LiftData[] = workout.lifts.map((wl, liftIndex) => {
     const tm = maxMap.get(wl.lift) ?? 0;
 
     // The lift's prescription — provides warmUpPct and increment. Resolved through
     // the block week at the workout's day, and for a Manage Lifts replacement from
     // the slot it replaced; `tm` stays the replacement's own (issue #1014).
-    const spec = liftSpecs[i];
+    const spec = liftSpecs[liftIndex];
 
     const warmUpSets: WarmUpSetData[] = spec
       ? PROG_SPEC_WARMUP_PCTS(spec.warmUpPct)

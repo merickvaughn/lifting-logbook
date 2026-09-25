@@ -2,6 +2,7 @@ import {
   CycleDashboard,
   LiftRecord,
   LiftingProgramSpec,
+  PlannedLift,
   StrengthGoalEntry,
   TrainingMax,
   TrainingMaxHistoryEntry,
@@ -211,43 +212,6 @@ export const toLiftOverrideResponse = (o: LiftOverride): LiftOverrideResponse =>
   ...(o.replacedBy !== undefined && { replacedBy: o.replacedBy }),
 });
 
-/**
- * One entry of a workout's planned lift list, after overrides.
- *
- * `replaces` is the lift whose slot a `replace` override put this one in,
- * followed back through a chain of swaps to the lift the slot started with — for
- * a spec lift, the name its prescription is stored under, which the replacement
- * inherits (issue #1014). Absent for a lift left in place and for an `add`.
- */
-export interface PlannedLift {
-  lift: string;
-  replaces?: string;
-}
-
-/**
- * Applies a list of lift overrides to the spec-derived planned lift list.
- * - 'remove': drops the lift from the list.
- * - 'replace': swaps the lift in-place, preserving order; the replacement keeps
- *   the slot, recorded as `replaces`.
- * - 'add': appends the lift if not already present.
- */
-export function applyLiftOverrides(specLifts: string[], overrides: LiftOverride[]): PlannedLift[] {
-  let lifts: PlannedLift[] = specLifts.map((lift) => ({ lift }));
-  for (const o of overrides) {
-    if (o.action === 'remove') {
-      lifts = lifts.filter((l) => l.lift !== o.lift);
-    } else if (o.action === 'replace' && o.replacedBy) {
-      const replacedBy = o.replacedBy;
-      lifts = lifts.map((l) =>
-        l.lift === o.lift ? { lift: replacedBy, replaces: l.replaces ?? l.lift } : l,
-      );
-    } else if (o.action === 'add') {
-      if (!lifts.some((l) => l.lift === o.lift)) lifts.push({ lift: o.lift });
-    }
-  }
-  return lifts;
-}
-
 export const isValidWorkoutNum = (n: number): boolean =>
   Number.isInteger(n) && n >= 1;
 
@@ -311,7 +275,8 @@ export interface WorkoutResponseOptions {
   /**
    * This workout's `(week, offset)` key offset; feeds the no-schedule date and is
    * emitted as `WorkoutResponse.offset`, so a client can resolve the day's spec
-   * rows (issue #1014).
+   * rows (issue #1014). `undefined` means the program has no day for this
+   * workout, emitted as an explicit `null`.
    */
   offset?: number | undefined;
   /**
@@ -415,7 +380,9 @@ export const toWorkoutResponse = (
     cycleNum,
     workoutNum,
     week,
-    ...(offset !== undefined && { offset }),
+    // Always present, so a client can tell "no program day" (null) from an API
+    // that predates the field (absent).
+    offset: offset ?? null,
     date,
     ...(overrideDate !== undefined && { overrideDate: isoDate(overrideDate) }),
     skipped,

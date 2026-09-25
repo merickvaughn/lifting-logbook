@@ -630,6 +630,27 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(row).toBeNull();
     });
 
+    it('resolves a chain of swaps in the order it was made (issue #1014)', async () => {
+      const dashRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
+      const { cycleNum } = dashRes.json() as { cycleNum: number };
+      const url = `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/lift-overrides`;
+      try {
+        // "Front Squat" sorts before "Squat": a read in lift-name order would
+        // apply the second swap before the first put Front Squat in the workout.
+        await postJson(url, { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
+        await postJson(url, { action: 'replace', lift: 'Front Squat', replacedBy: 'Box Squat' });
+
+        const res = await get(`/programs/${SEED_PROGRAM}/workouts/1`);
+        expect(res.statusCode).toBe(200);
+        const lifts = (res.json() as { lifts: { lift: string; replaces?: string }[] }).lifts;
+        expect(lifts.find((l) => l.lift === 'Box Squat')?.replaces).toBe('Squat');
+        expect(lifts.some((l) => l.lift === 'Squat' || l.lift === 'Front Squat')).toBe(false);
+      } finally {
+        await deleteReq(`${url}/Squat`);
+        await deleteReq(`${url}/${encodeURIComponent('Front Squat')}`);
+      }
+    });
+
     it('user isolation — lift overrides are scoped to userId', async () => {
       const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
         app.getHttpAdapter().getInstance(),
