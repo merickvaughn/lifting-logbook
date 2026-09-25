@@ -67,9 +67,30 @@ describe('movementPatternsFor', () => {
     expect(movementPatternsFor('landmine press', custom)).toBeUndefined();
   });
 
-  it('lets a built-in win a name collision with a custom lift', () => {
+  it('lets the built-in win a collision on a reserved slot name', () => {
     const custom = [{ name: 'Squat', movementProfile: { patterns: ['hinge'] as const } }];
     expect(movementPatternsFor('Squat', custom)).toEqual(['Squat']);
+  });
+
+  it.each(['Calf Raises', 'Cable Row', 'Face Pull', 'Incline Dumbbell Press'])(
+    'lets a custom lift named %p keep the tags its user recorded',
+    (name) => {
+      // Not reserved: the custom-lift guard allows these names, so the custom lift wins.
+      const custom = [{ name, movementProfile: { patterns: ['hinge'] as const } }];
+      expect(movementPatternsFor(name, custom)).toEqual(['Hinge']);
+    },
+  );
+
+  it('finds a custom lift by its uuid, which import can store as the lift name', () => {
+    const custom = [
+      { id: 'uuid-landmine', name: 'Landmine Press', movementProfile: { patterns: ['push', 'vertical'] as const } },
+    ];
+    expect(movementPatternsFor('uuid-landmine', custom)).toEqual(['Vertical Push']);
+  });
+
+  it('files both curls under "Isolation / other" — a lone pull tag earns no direction', () => {
+    expect(movementPatternsFor('Cable Curl')).toEqual(['Isolation / other']);
+    expect(movementPatternsFor('Leg Curl')).toEqual(['Isolation / other']);
   });
 
   it('returns undefined for a lift it has never heard of', () => {

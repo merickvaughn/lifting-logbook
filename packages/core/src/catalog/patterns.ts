@@ -1,5 +1,5 @@
 import type { MovementTag } from '@lifting-logbook/types';
-import { builtInLiftFor } from './builtInLift';
+import { lookupLift, type NamedLift } from './builtInLift';
 
 /**
  * The rows of a weekly sets-by-movement-pattern breakdown, in display order.
@@ -31,8 +31,7 @@ const DIRECTION_ROWS = {
  * `ClassifiableLift`, so both `CustomLiftResponse` and the `CustomLift` domain object
  * satisfy it.
  */
-export interface PatternedLift {
-  name: string;
+export interface PatternedLift extends NamedLift {
   movementProfile: { patterns: readonly MovementTag[] };
 }
 
@@ -63,17 +62,17 @@ export function movementPatternRowsFor(patterns: readonly MovementTag[]): Moveme
 }
 
 /**
- * The pattern rows a workout's lift name counts toward: a built-in resolves through
- * `builtInLiftFor` (and wins a name collision, as in `liftClassificationFor`); otherwise
- * a custom lift is matched by exact name. `undefined` means the lift is unknown — the
- * caller reports it as not counted rather than filing it under "Isolation / other".
+ * The pattern rows a workout's lift name counts toward, under the same precedence as
+ * `liftClassificationFor` (see `lookupLift`): a reserved slot name always means the
+ * built-in; any other name prefers a custom lift with that exact name or id, whose tags
+ * the user recorded. `undefined` means the lift is unknown — the caller reports it as not
+ * counted rather than filing it under "Isolation / other".
  */
 export function movementPatternsFor(
   name: string,
   customLifts: readonly PatternedLift[] = [],
 ): MovementPatternRow[] | undefined {
-  const profile =
-    builtInLiftFor(name)?.movementProfile ??
-    customLifts.find((lift) => lift.name === name)?.movementProfile;
+  const { builtIn, custom } = lookupLift(name, customLifts);
+  const profile = custom?.movementProfile ?? builtIn?.movementProfile;
   return profile ? movementPatternRowsFor(profile.patterns) : undefined;
 }

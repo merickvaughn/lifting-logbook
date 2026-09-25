@@ -30,8 +30,9 @@ describe('liftClassificationFor', () => {
   // that actually reaches a workout is covered. A custom program's spec `lift`
   // values come from ProgramEditor's picker, which is built as
   // `LIFT_CATALOG.map((l) => l.name)`, so catalog display names reach here too —
-  // and only 8 of them are slot-map keys. Seeded from DEFAULT_SLOT_MAP alone,
-  // 15 names returned undefined, 8 of them accessories (Cable Curl, Lateral
+  // and when this test was written only 8 of the then-23 catalog names were
+  // slot-map keys. Seeded from DEFAULT_SLOT_MAP alone, 15 of those 23 names
+  // returned undefined, 8 of them accessories (Cable Curl, Lateral
   // Raise, Face Pull, Lat Pulldown, Dumbbell Row, Goblet Squat, Hip Thrust,
   // Kettlebell Swing) — the feature silently not firing on the lifts it exists
   // for, with the panel reporting "Follows Standard".
@@ -72,13 +73,33 @@ describe('liftClassificationFor', () => {
     ).toBe('accessory');
   });
 
-  it('lets a built-in win a name collision with a custom lift', () => {
+  it('lets the built-in win a collision on a reserved slot name', () => {
     // Mirrors buildEffectiveSlotMap: DEFAULT_SLOT_MAP's keys are shared
     // vocabulary every program template relies on, so one user's custom lift
     // must never redirect what "Squat" means.
     expect(
       liftClassificationFor('Squat', [{ name: 'Squat', classification: 'accessory' }]),
     ).toBe('compound');
+  });
+
+  it.each([
+    ['Cable Row', 'compound'],
+    ['Leg Curl', 'compound'],
+    ['Weighted Pull-ups', 'accessory'],
+    ['Calf Raises', 'compound'],
+    ['Face Pull', 'compound'],
+  ] as const)('lets a custom lift named %p keep the classification its user recorded', (name, classification) => {
+    // Not reserved: the custom-lift guard allows these names (a Leangains importer had to
+    // create "Cable Row" and "Leg Curl" as custom lifts), so the user's record wins.
+    expect(liftClassificationFor(name, [{ name, classification }])).toBe(classification);
+  });
+
+  it('finds a custom lift by its uuid, which import can store as the lift name', () => {
+    expect(
+      liftClassificationFor('uuid-sissy', [
+        { id: 'uuid-sissy', name: 'Sissy Squat', classification: 'accessory' },
+      ]),
+    ).toBe('accessory');
   });
 
   it('returns undefined for a lift it has never heard of', () => {
@@ -94,7 +115,7 @@ describe('liftClassificationFor', () => {
       // by accident (the inherited value is a *function*, which then matches no
       // catalog id), so this assertion cannot tell the two implementations
       // apart. What actually rules the hazard out is that the lookup is a Map
-      // built from Object.entries — see BUILT_IN_CLASSIFICATIONS. Kept because
+      // built from Object.entries — see BUILT_IN_LIFTS in builtInLift.ts. Kept because
       // the outcome is worth pinning either way.
       expect(liftClassificationFor(name)).toBeUndefined();
     },

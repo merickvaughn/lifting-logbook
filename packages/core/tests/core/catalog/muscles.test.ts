@@ -144,13 +144,57 @@ describe('buildMuscleTargetResolver', () => {
       expect(resolve('Bench Press').primary).toEqual(['Triceps']);
     });
 
-    it('keeps a name that is not valid percent-encoding exactly as stored', () => {
-      // decodeURIComponent throws on a malformed escape; the resolver must keep the row
-      // under its stored name rather than drop it.
-      const resolve = buildMuscleTargetResolver([
-        { lift: '100% Effort Squat', muscleGroups: ['Quads'] },
-      ]);
-      expect(resolve('100% Effort Squat')).toEqual({ primary: ['Quads'], secondary: [], source: 'custom' });
+    it('keeps a name that is not valid percent-encoding under its stored name', () => {
+      // No whitespace, so it looks encoded — but "%Ef" is a lone UTF-8 lead byte and
+      // decodeURIComponent throws. The row must stay reachable, not vanish or crash the build.
+      const resolve = buildMuscleTargetResolver([{ lift: '100%Effort', muscleGroups: ['Quads'] }]);
+      expect(resolve('100%Effort')).toEqual({ primary: ['Quads'], secondary: [], source: 'custom' });
     });
+
+    it('finds a real name containing a valid escape by its own name', () => {
+      // A name with whitespace was never encoded, so "Bench %75" is taken at its word.
+      const resolve = buildMuscleTargetResolver([{ lift: 'Bench %75', muscleGroups: ['Chest'] }]);
+      expect(resolve('Bench %75').source).toBe('custom');
+      expect(resolve('Bench u').source).toBe('none');
+    });
+
+    it('never re-keys a real name onto a different lift', () => {
+      const resolve = buildMuscleTargetResolver([{ lift: 'Squat %40 RPE', muscleGroups: ['Quads'] }]);
+      expect(resolve('Squat %40 RPE').source).toBe('custom');
+      expect(resolve('Squat @ RPE').source).toBe('none');
+    });
+
+    it('lets an explicit both-empty row under the real name restore the defaults', () => {
+      // What the lift editor's reset will write (#1017): the real-name row wins over its
+      // legacy encoded twin, and empty lists mean "use the defaults".
+      const resolve = buildMuscleTargetResolver([
+        { lift: 'Bench%20Press', muscleGroups: ['Triceps'] },
+        { lift: 'Bench Press', muscleGroups: [], secondaryMuscleGroups: [] },
+      ]);
+      expect(resolve('Bench Press').source).toBe('default');
+    });
+  });
+
+  it('keys an override on an alias name to that alias only', () => {
+    const resolve = buildMuscleTargetResolver([
+      { lift: 'Calf Raises', muscleGroups: ['Calves', 'Hamstrings'] },
+    ]);
+    expect(resolve('Calf Raises').source).toBe('custom');
+    expect(resolve('Calf Raise').source).toBe('default');
+  });
+
+  it("gives a custom lift that shares a built-in's name that built-in's defaults", () => {
+    // Defaults attach to the name: a custom "Cable Row" carries no muscle data of its own.
+    const resolve = buildMuscleTargetResolver([], [{ id: 'uuid-cable-row', name: 'Cable Row' }]);
+    expect(resolve('Cable Row').source).toBe('default');
+  });
+
+  it("reads a custom lift's overrides when a record names it by uuid", () => {
+    // Import can store a mid-import custom lift's uuid in the record's `lift` column.
+    const resolve = buildMuscleTargetResolver(
+      [{ lift: 'Sissy Squat', muscleGroups: ['Quads'] }],
+      [{ id: 'uuid-sissy', name: 'Sissy Squat' }],
+    );
+    expect(resolve('uuid-sissy')).toEqual({ primary: ['Quads'], secondary: [], source: 'custom' });
   });
 });

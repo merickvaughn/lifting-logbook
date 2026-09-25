@@ -83,12 +83,14 @@ directly: a **Goblet Squat is movement-`compound`** (knees and hips) **yet
 role-`accessory`**. The two axes are independent and must stay that way.
 
 [`packages/core/src/catalog/lifts.ts`](../packages/core/src/catalog/lifts.ts) carries all
-four axes for **22 of the 26 built-in lifts**, grouped by pattern with a trailing accessories
-group. Four leave one axis deliberately empty:
+four axes for **23 of the 26 built-in lifts**, grouped by pattern with a trailing accessories
+group. Three leave one axis deliberately empty:
 - `farmers-carry` has no `jointActions`. A loaded carry has no prime mover driven through a range
   of motion, and the source comment says so explicitly.
-- `calf-raise`, `lateral-raise` and `leg-curl` have no `patterns`. Single-joint raises and curls
-  carry no push/pull direction.
+- `calf-raise` and `lateral-raise` have no `patterns`. A raise neither pushes nor pulls.
+
+The curls (`cable-curl`, `leg-curl`) keep a lone `pull` tag, since they flex a joint toward the
+body, but no direction. So neither a raise nor a curl earns a push/pull direction row.
 
 `isBodyweightComponent` marks the three where body weight contributes to the load (dip, chin-up,
 pull-up).
@@ -99,7 +101,8 @@ Every catalog entry is a `CatalogLift`: a `Lift` plus `muscles: MuscleTargets`. 
 **default** `primary` and `secondary` muscle groups from the 17-name `MUSCLE_GROUPS` vocabulary in
 `packages/types`. Weekly set counts credit 1 per primary and ½ per secondary
 ([ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md)). The shared `Lift` type
-does not carry muscles: custom lifts have no defaults, and the API never returns catalog muscles.
+does not carry muscles: a custom lift under its own name has no defaults, and the API never
+returns catalog muscles.
 
 Per-user overrides still live in `LiftMetadata` (`muscleGroups`, `substitutions`, `foundational`).
 That is a **separate per-user table keyed by lift *name***, while `CustomLift` is keyed by uuid.
@@ -144,9 +147,16 @@ Every schema column references a lift by **name string**, not by `Lift.id` — s
 D3. But the column is not single-vocabulary: the import path can persist a canonical
 catalog or custom-lift **id** into that same column when a row is pre-resolved through
 `liftOverrides`, which is why `DEFAULT_SLOT_MAP` self-maps canonical ids and why
-[`catalog/classify.ts`](../packages/core/src/catalog/classify.ts) opens by stating that
-three vocabularies reach its lookup — slot names, catalog names, and catalog ids. Code
-reading a `lift` value must tolerate all three.
+[`catalog/builtInLift.ts`](../packages/core/src/catalog/builtInLift.ts) opens by stating that
+four forms reach its lookup — slot names, catalog names, catalog ids and per-entry aliases.
+Import can also store a custom lift's **uuid**, which is why `lookupLift` matches custom lifts
+by name *or* id. Code reading a `lift` value must tolerate all of these.
+
+When a name belongs to both a built-in and one of the user's custom lifts, `lookupLift` settles
+it. A **reserved** name (a `DEFAULT_SLOT_MAP` slot name, which the custom-lift guard refuses)
+always means the built-in. Any other name prefers the custom lift, whose classification and
+patterns the user recorded. Default muscles are the one exception: they attach to the *name*, so
+a same-named custom lift reads them until it is overridden.
 
 ---
 
@@ -411,7 +421,7 @@ classDiagram
     CustomLift --|> Lift
     CatalogLift --|> Lift
     CatalogLift *-- MuscleTargets : default muscles
-    LiftMetadata ..> CatalogLift : overrides muscles by exact NAME - no FK
+    LiftMetadata ..> Lift : overrides muscles by exact NAME - no FK
     TrainingMax ..> TrainingMaxHistory : appended on change
 ```
 
@@ -420,8 +430,9 @@ The four edges worth reading twice:
 1. `LiftRecord ..> Workout` — **no foreign key.** The link is a string coordinate.
 2. `CustomProgramSpec × TrainingMax ..> PlannedSet` — the prescription becomes concrete weights only at read time.
 3. `PlannedSet ..> LiftRecord` — **set kind is discarded on write.**
-4. `LiftMetadata ..> CatalogLift` — still no foreign key. A per-user row overrides a lift's default
-   muscles by exact lift **name**, so a rename orphans it (D3).
+4. `LiftMetadata ..> Lift` — still no foreign key. A per-user row keyed by exact lift **name**
+   overrides a catalog lift's default muscles. It is also the *only* source of muscles for a
+   custom lift, which is why renaming a custom lift orphans it (D3).
 
 ### What the database looks like
 

@@ -4,7 +4,8 @@ import { Lift, MuscleTargets } from '@lifting-logbook/types';
  * A built-in catalog entry: a {@link Lift} plus the data only built-ins carry.
  *
  *   - muscles: default primary/secondary muscle groups for weekly set counts. A user can
- *     override them per lift (`LiftMetadata`); custom lifts have no defaults. See ADR-036.
+ *     override them per lift (`LiftMetadata`). Defaults attach to the name, so a custom
+ *     lift reads them only when it shares a built-in's name or alias. See ADR-036.
  *   - aliases: other names the built-in program presets use for this lift (e.g.
  *     "Calf Raises"). `builtInLiftFor` recognizes them — so they classify and count — but
  *     they are deliberately NOT import slot names: `DEFAULT_SLOT_MAP` also drives the
@@ -40,8 +41,10 @@ export interface CatalogLift extends Lift {
  * a vertical push because the hands drive down along the torso. A bench inclined θ°
  * presses at (90 − θ)° to the torso, so an incline of 45° or less presses at least as
  * close to perpendicular as to parallel and stays horizontal — what the incline mainly
- * changes is regional chest emphasis, which is a muscle question, not a pattern one. Single-joint raises and curls (lateral raise, calf raise, leg curl) carry no
- * push/pull direction. See ADR-036.
+ * changes is regional chest emphasis, which is a muscle question, not a pattern one.
+ * Single-joint moves carry no direction: a curl (cable curl, leg curl) flexes a joint
+ * toward the body, so it keeps a lone `pull` tag, and a raise (lateral raise, calf raise)
+ * carries no tag at all — neither earns a direction row. See ADR-036.
  *
  * NOTE: movement `complexity` (simple|compound) is distinct from role `classification`
  * (compound|accessory). A Goblet Squat is movement-`compound` yet role-`accessory`.
@@ -188,16 +191,17 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
     muscles: { primary: ['Biceps'], secondary: ['Forearms'] },
   },
-  // A lateral raise abducts the arm; it presses nothing, so it carries no push/pull direction.
+  // A lateral raise abducts the arm; it presses nothing and pulls nothing, so it carries no tag.
   {
     id: 'lateral-raise', name: 'Lateral Raise', classification: 'accessory',
     movementProfile: { patterns: [], jointActions: ['abduction'], complexity: 'simple' },
     muscles: { primary: ['Side Delts'], secondary: [] },
     aliases: ['Lateral Raises'], // leangains
   },
+  // A curl, like Cable Curl above: a lone `pull` (knee flexion toward the body), no direction.
   {
     id: 'leg-curl', name: 'Leg Curl', classification: 'accessory',
-    movementProfile: { patterns: [], jointActions: ['flexion'], complexity: 'simple' },
+    movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
     muscles: { primary: ['Hamstrings'], secondary: [] },
   },
   {

@@ -104,10 +104,11 @@ describe("LIFT_CATALOG", () => {
       expect(patternsOf('incline-db-press')).toEqual(['push', 'horizontal']);
     });
 
-    it("lateral-raise, leg-curl and calf-raise carry no push/pull direction", () => {
+    it("single-joint raises carry no tag; curls keep a lone pull and no direction", () => {
       expect(patternsOf('lateral-raise')).toEqual([]);
-      expect(patternsOf('leg-curl')).toEqual([]);
       expect(patternsOf('calf-raise')).toEqual([]);
+      expect(patternsOf('cable-curl')).toEqual(['pull']);
+      expect(patternsOf('leg-curl')).toEqual(['pull']);
     });
   });
 

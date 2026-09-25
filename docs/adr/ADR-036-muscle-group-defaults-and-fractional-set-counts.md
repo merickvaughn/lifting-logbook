@@ -20,8 +20,9 @@ measures volume in the same units. The app holds every input: the spec, the week
 and swaps, and the logged sets. What it lacked was data it could count against.
 
 - **Muscles.** The only muscle data was `LiftMetadata.muscleGroups`: optional, per-user free text,
-  keyed by lift name, with no vocabulary and no defaults (`docs/domain-model.md` §2, "A fifth axis
-  that never joins"). A fresh user would have seen every set as unassigned.
+  keyed by lift name, with no vocabulary and no defaults (`docs/domain-model.md` §2, whose section
+  was titled "A fifth axis that never joins" before this change). A fresh user would have seen
+  every set as unassigned.
 - **Names.** Six of Leangains' twelve preset lift names resolved to no catalog lift:
   `Weighted Pull-ups`, `Incline DB Press`, `Cable Row`, `Leg Curl`, `Calf Raises` and
   `Lateral Raises`. RPT uses two of the same names. Even built-in data could not reach those lifts.
@@ -58,7 +59,8 @@ The design choices below were made with the user; the proposal records the discu
      Isolation / other) are derived from the existing tags. Each set counts once toward each row
      its lift earns.
    - Dip becomes a vertical push, and Upright Row a vertical pull.
-   - Lateral Raise, Leg Curl and Calf Raise carry no direction.
+   - Single-joint moves carry no direction. Raises (Lateral Raise, Calf Raise) carry no tag, and
+     curls (Cable Curl, Leg Curl) keep a lone `pull`. Both count as "Isolation / other".
    - Incline pressing stays a horizontal push. A bench inclined θ° presses at (90 − θ)° to the
      torso's long axis, so an incline of 45° or less presses at least as close to perpendicular as
      to parallel. What the incline mainly changes is regional chest emphasis, a muscle question
@@ -70,11 +72,23 @@ The design choices below were made with the user; the proposal records the discu
    - catalog id;
    - per-entry alias;
    - slot name.
-6. **Counting is pure core code.**
+6. **A name shared by a built-in and a custom lift resolves by one rule** (`lookupLift`).
+   - A **reserved** name, meaning a `DEFAULT_SLOT_MAP` slot name that the custom-lift guard
+     already refuses, always means the built-in.
+   - **Any other name** prefers the user's custom lift with that exact name or uuid, because its
+     classification and patterns are what the user recorded. This covers catalog display names,
+     aliases and the new catalog names, all of which the guard allows and import creates.
+   - Default muscles are the exception. They attach to the *name*: a same-named custom lift has no
+     muscle data of its own, so it reads the built-in's defaults until the user overrides them.
+7. **Counting is pure core code.**
    - `weeklySetCounts` in `packages/core/src/services/volume` is one generic counter. The muscle
      and pattern breakdowns are thin wrappers around it.
-   - Pages call these functions from `apps/web` server components, the same way `buildWorkoutDays`
-     and `programLengths` are shared today.
+   - `toVolumeTable` aligns several breakdowns into one table, so no view re-implements the row
+     order or the key join. Examples are per-week columns, or Planned | Done.
+   - Pages call these functions from `apps/web`, the same way `buildWorkoutDays` and
+     `programLengths` are shared today. The resolver is a closure and can't cross the React
+     server → client boundary, so pages pass the serializable inputs (override rows, custom
+     lifts) and build it where it is used.
    - The API supplies data, not summaries: a bulk override read, a secondary-muscle column, and
      the dashboard's overrides and logged counts (#1017, #1019).
 
@@ -129,6 +143,17 @@ carry, would cross over. The EMG evidence (Rodríguez-Ridao et al. 2020) is abou
 the chest* works: upper-pec activity peaks around 30°, and above 45° the front delt takes over. That
 is a muscle-granularity question, left for a future vocabulary change if it proves needed.
 
+### Option 8: Let the built-in win every name collision, or reserve every built-in name
+
+The first is the rule `liftClassificationFor` had before this change. It was justified only for
+`DEFAULT_SLOT_MAP` keys, which are shared template vocabulary, yet it also silently overrode
+custom lifts that users were allowed to create. Before this ADR, the import wizard's custom
+"Cable Row" or "Leg Curl" was the only way a Leangains user could get those lifts classified.
+Rejected.
+
+Reserving every built-in name in the create/rename guard would prevent the collision instead.
+It needs an audit of the custom lifts users already have, so it is left to #1015.
+
 ## Consequences
 
 ### Positive
@@ -154,9 +179,18 @@ is a muscle-granularity question, left for a future vocabulary change if it prov
   - D2: lift overrides survive delete-then-initialize, which the current-week counts (#1019) will
     inherit.
 - **Legacy encoded rows.** Override rows written by the lift editor before #1017 carry a
-  URL-encoded name (`Bench%20Press`). The resolver decodes on read, and #1017 fixes the write.
-- **Custom lifts start uncounted for muscles** until the user tags them. They are counted by
-  pattern from their own tags.
+  URL-encoded name (`Bench%20Press`).
+  - The resolver keys every row by its stored name. It also files a row with the bug's exact
+    signature (a `%` and no whitespace) under its decoded name, but only where no row already
+    holds that name, so a real name like "Squat %40 RPE" is never re-keyed.
+  - #1017 fixes the write path. Its editor must fill from this resolver over all rows, or a save
+    would write empty lists under the real name and hide a legacy row's tags.
+- **A same-named custom lift now wins classification and patterns.** Previously the built-in won
+  every collision. The only consumer that changes is the rest timer: a user's custom "Face Pull"
+  or "Cable Row" is now timed by the classification they gave it. The create/rename guard still
+  reserves only slot names; whether to reserve more is #1015's decision.
+- **Custom lifts under their own names start uncounted for muscles** until the user tags them.
+  They are counted by pattern from their own tags.
 
 ## Verification
 
@@ -169,11 +203,21 @@ is a muscle-granularity question, left for a future vocabulary change if it prov
   - vocabulary-only defaults with no overlap;
   - resolver precedence and exact-name matching;
   - canonical dedupe;
-  - the tolerant decode, including the malformed-escape fallback.
-- `packages/core/tests/core/catalog/patterns.test.ts`: the torso-rule classifications, ambiguous
-  tags, and custom lifts.
-- `packages/core/tests/core/services/volume.test.ts`: the proposal's Leangains worked examples for
-  muscles and patterns, no preset lift uncounted, and 5-3-1's three weeks collapsing to one column.
+  - legacy encoded rows: a real-name row beats its twin; real names containing `%` are never
+    re-keyed; the malformed-escape fallback;
+  - a custom lift's uuid maps to its name for override lookup.
+- `packages/core/tests/core/catalog/patterns.test.ts` and `classify.test.ts`:
+  - the torso-rule classifications and ambiguous tags;
+  - the Option 8 precedence: reserved "Squat" goes to the built-in, while custom "Cable Row",
+    "Calf Raises" and "Face Pull" keep their recorded attributes;
+  - custom lifts are matched by uuid.
+- `packages/core/tests/core/services/volume.test.ts`:
+  - the proposal's Leangains worked examples for muscles and patterns;
+  - no preset lift is uncounted, and the preset list is asserted non-empty;
+  - 5-3-1's three weeks collapse to one column;
+  - a zeroed week stays its own column;
+  - `toVolumeTable`'s row alignment and ordering;
+  - ordering does not depend on locale.
 
 ## References
 

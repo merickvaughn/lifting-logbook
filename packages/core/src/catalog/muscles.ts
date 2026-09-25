@@ -1,5 +1,5 @@
 import { MUSCLE_GROUPS, type MuscleTargets } from '@lifting-logbook/types';
-import { builtInLiftFor } from './builtInLift';
+import { builtInLiftFor, type NamedLift } from './builtInLift';
 
 /**
  * A user's override of the muscles a lift trains — the `LiftMetadata` fields this module
@@ -61,17 +61,23 @@ function canonicalList(labels: readonly string[]): string[] {
 }
 
 /**
- * Override rows written through the lift editor before issue #1017's fix carry their
- * lift name still URL-encoded ("Bench%20Press"): the edit route handed its raw dynamic
- * param straight to the API client, which encoded it again. Decoding on read lets those
- * rows apply. A name that is not valid percent-encoding is kept exactly as stored.
+ * The real name behind a legacy URL-encoded override row, or undefined when `lift` does
+ * not look like one.
+ *
+ * Until issue #1017, the lift editor's route handed its still-encoded dynamic param to the
+ * API client, so a multi-word override was stored as "Bench%20Press". Those rows carry
+ * the bug's exact signature — a `%` and no whitespace, since `encodeURIComponent` never
+ * leaves a literal space — and nothing else is decoded: a real name like "Squat %40 RPE"
+ * keeps its identity. A name that is not valid percent-encoding is left alone.
  */
-function decodeStoredLiftName(lift: string): string {
+function legacyEncodedLiftName(lift: string): string | undefined {
+  if (!lift.includes('%') || /\s/.test(lift)) return undefined;
   try {
-    return decodeURIComponent(lift);
+    const decoded = decodeURIComponent(lift);
+    return decoded === lift ? undefined : decoded;
   } catch {
     // fallback-covered-by: packages/core/tests/core/catalog/muscles.test.ts
-    return lift;
+    return undefined;
   }
 }
 
@@ -85,27 +91,49 @@ function decodeStoredLiftName(lift: string): string {
  *      id, per-entry alias or slot name — see `builtInLiftFor`);
  *   3. nothing (`source: 'none'`) — the caller reports the lift as not counted.
  *
- * Overrides deliberately do not follow aliases: an override set on "Squat" does not
- * apply to "Back Squat". Every other per-lift attribute in `LiftMetadata` is exact-name
- * too, and alias-following would let two rows claim one lift, leaving the editor's
- * "reset to defaults" unable to say which it resets (ADR-036).
+ * Defaults attach to the *name*: a custom lift that shares a built-in's name or alias
+ * ("Cable Row") reads that built-in's defaults until its user overrides them. That is the
+ * one place a custom lift yields to a built-in — classification and patterns, which a
+ * custom lift records explicitly, follow `lookupLift` — and it is deliberate: a same-named
+ * custom lift carries no muscle data of its own, and the name is the best evidence of what
+ * it trains.
+ *
+ * Overrides do not follow aliases: one set on "Squat" leaves "Back Squat" on its defaults.
+ * Every other per-lift attribute in `LiftMetadata` is exact-name too, and alias-following
+ * would let two rows claim one lift (ADR-036). `customLifts` is consulted only to map a
+ * custom lift's uuid — which import can store in a record's `lift` column — to the name its
+ * overrides are keyed by.
+ *
+ * Rows are keyed by their stored name first; a legacy encoded row (see
+ * `legacyEncodedLiftName`) is added under its real name only where no row already holds it,
+ * so a row stored under the real name always wins. Requirements this places on issue
+ * #1017's lift editor: fill the editor from this resolver over all of the user's rows, so a
+ * legacy row's tags are shown and carried forward when saved under the real name — filling
+ * it from the single-lift GET would save empty lists under the real name and hide them.
+ *
+ * Returns a closure, which cannot cross the React server → client boundary. Pass the
+ * serializable inputs (`MuscleOverride[]`, custom lifts) instead, and build the resolver
+ * where it is used.
  *
  * A muscle listed as both primary and secondary counts as primary only.
  */
 export function buildMuscleTargetResolver(
   overrides: readonly MuscleOverride[],
+  customLifts: readonly NamedLift[] = [],
 ): (lift: string) => ResolvedMuscleTargets {
   const byLift = new Map<string, MuscleOverride>();
+  for (const override of overrides) byLift.set(override.lift, override);
   for (const override of overrides) {
-    const lift = decodeStoredLiftName(override.lift);
-    // A row stored under the real name always beats a legacy encoded twin, whichever
-    // order the API returned them in.
-    if (lift !== override.lift && byLift.has(lift)) continue;
-    byLift.set(lift, override);
+    const realName = legacyEncodedLiftName(override.lift);
+    if (realName !== undefined && !byLift.has(realName)) byLift.set(realName, override);
   }
+  const nameById = new Map(
+    customLifts.flatMap((lift) => (lift.id ? [[lift.id, lift.name] as const] : [])),
+  );
 
   return (lift) => {
-    const override = byLift.get(lift);
+    const name = nameById.get(lift) ?? lift;
+    const override = byLift.get(name);
     if (override) {
       const primary = canonicalList(override.muscleGroups);
       const inPrimary = new Set(primary.map((label) => label.toLowerCase()));
@@ -116,7 +144,7 @@ export function buildMuscleTargetResolver(
         return { primary, secondary, source: 'custom' };
       }
     }
-    const defaults = defaultMuscleTargetsFor(lift);
+    const defaults = defaultMuscleTargetsFor(name);
     if (defaults) {
       return { primary: defaults.primary, secondary: defaults.secondary, source: 'default' };
     }

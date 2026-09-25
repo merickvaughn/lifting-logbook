@@ -4,6 +4,7 @@ import {
   collapseIdenticalWeeks,
   formatSetCount,
   movementPatternsFor,
+  toVolumeTable,
   weeklySetCounts,
   weeklySetsByMuscleGroup,
   weeklySetsByPattern,
@@ -49,8 +50,11 @@ describe('weeklySetCounts', () => {
     expect(week?.uncounted).toEqual([{ lift: 'Mystery', sets: 5 }]);
   });
 
-  it.each([0, -1, NaN, Infinity])('ignores a slot whose sets is %p', (sets) => {
-    expect(weeklySetCounts([{ week: 1, lift: 'A', sets }], credits)).toEqual([]);
+  it.each([0, -1, NaN, Infinity])('counts nothing for a slot whose sets is %p, but keeps its week', (sets) => {
+    // A program editor mid-keystroke zeroes a week; it must read as an empty week, not vanish.
+    expect(weeklySetCounts([{ week: 1, lift: 'A', sets }], credits)).toEqual([
+      { week: 1, counts: [], uncounted: [] },
+    ]);
   });
 });
 
@@ -67,12 +71,20 @@ describe('weeklySetsByMuscleGroup', () => {
     ]);
   });
 
-  it('sorts by sets, then vocabulary order, then free text alphabetically', () => {
+  it('sorts by sets, then vocabulary order, then free text in code-unit order', () => {
     const resolve = buildMuscleTargetResolver([
       { lift: 'Custom', muscleGroups: ['zygomatic', 'Calves', 'Chest', 'abductors'] },
     ]);
     const [week] = weeklySetsByMuscleGroup([{ week: 1, lift: 'Custom', sets: 2 }], resolve);
     expect(week?.counts.map((c) => c.key)).toEqual(['Chest', 'Calves', 'abductors', 'zygomatic']);
+  });
+
+  it('orders free-text ties by code unit, never by the runtime locale', () => {
+    // Czech collation puts "hips" before "chin" ("ch" sorts after "h"); a server render and
+    // the browser's re-render must agree whatever their locales.
+    const resolve = buildMuscleTargetResolver([{ lift: 'Custom', muscleGroups: ['hips', 'chin'] }]);
+    const [week] = weeklySetsByMuscleGroup([{ week: 1, lift: 'Custom', sets: 1 }], resolve);
+    expect(week?.counts.map((c) => c.key)).toEqual(['chin', 'hips']);
   });
 
   it('reproduces the proposal worked example for Leangains with default muscles', () => {
@@ -100,8 +112,13 @@ describe('weeklySetsByMuscleGroup', () => {
   });
 
   it('counts every lift of every built-in preset — nothing falls through as uncounted', () => {
-    for (const program of Object.keys(PRESET_BASE_SPECS)) {
-      for (const week of weeklySetsByMuscleGroup(slotsOf(program), buildMuscleTargetResolver([]))) {
+    const programs = Object.keys(PRESET_BASE_SPECS);
+    // Both loops below would pass vacuously over an empty extraction.
+    expect(programs.length).toBeGreaterThan(0);
+    for (const program of programs) {
+      const weeks = weeklySetsByMuscleGroup(slotsOf(program), buildMuscleTargetResolver([]));
+      expect({ program, weeks: weeks.length > 0 }).toEqual({ program, weeks: true });
+      for (const week of weeks) {
         expect({ program, uncounted: week.uncounted }).toEqual({ program, uncounted: [] });
       }
     }
@@ -171,6 +188,72 @@ describe('collapseIdenticalWeeks', () => {
       ),
     );
     expect(columns.map((c) => c.weeks)).toEqual([[1, 3], [2]]);
+  });
+
+  it('keeps a week whose sets were all zeroed as its own column', () => {
+    // Without the empty week, weeks 1 and 3 would collapse to one column that claims
+    // every week is identical.
+    const columns = collapseIdenticalWeeks(
+      weeklySetsByMuscleGroup(
+        [
+          { week: 1, lift: 'Bench Press', sets: 3 },
+          { week: 2, lift: 'Bench Press', sets: 0 },
+          { week: 3, lift: 'Bench Press', sets: 3 },
+        ],
+        buildMuscleTargetResolver([]),
+      ),
+    );
+    expect(columns.map((c) => c.weeks)).toEqual([[1, 3], [2]]);
+    expect(columns[1]?.volume.counts).toEqual([]);
+  });
+});
+
+describe('toVolumeTable', () => {
+  const week = (n: number, counts: [string, number][], uncounted: [string, number][] = []): WeeklyVolume => ({
+    week: n,
+    counts: counts.map(([key, sets]) => ({ key, sets })),
+    uncounted: uncounted.map(([lift, sets]) => ({ lift, sets })),
+  });
+
+  it('aligns columns on one row order, reading 0 where a column lacks a row', () => {
+    const table = toVolumeTable(
+      [week(1, [['Chest', 3], ['Triceps', 1.5]]), week(2, [['Triceps', 4], ['Lats', 3]])],
+      'muscle',
+    );
+    // Ordered by total across columns: Triceps 5.5, Chest 3, Lats 3 (vocabulary breaks the tie).
+    expect(table.rows).toEqual([
+      { key: 'Triceps', sets: [1.5, 4] },
+      { key: 'Chest', sets: [3, 0] },
+      { key: 'Lats', sets: [0, 3] },
+    ]);
+  });
+
+  it('joins keys case-insensitively under the first spelling seen', () => {
+    const table = toVolumeTable([week(1, [['quadriceps', 2]]), week(2, [['Quadriceps', 1]])], 'muscle');
+    expect(table.rows).toEqual([{ key: 'quadriceps', sets: [2, 1] }]);
+  });
+
+  it('keeps pattern rows in their fixed order regardless of totals', () => {
+    const table = toVolumeTable(
+      [week(1, [['Hinge', 9], ['Vertical Push', 1], ['Horizontal Push', 2]])],
+      'pattern',
+    );
+    expect(table.rows.map((row) => row.key)).toEqual(['Horizontal Push', 'Vertical Push', 'Hinge']);
+  });
+
+  it('aligns uncounted lifts across columns, heaviest first', () => {
+    const table = toVolumeTable(
+      [week(1, [], [['Mystery', 2]]), week(2, [], [['Other', 5], ['Mystery', 1]])],
+      'muscle',
+    );
+    expect(table.uncounted).toEqual([
+      { lift: 'Other', sets: [0, 5] },
+      { lift: 'Mystery', sets: [2, 1] },
+    ]);
+  });
+
+  it('returns empty rows for no columns', () => {
+    expect(toVolumeTable([], 'muscle')).toEqual({ rows: [], uncounted: [] });
   });
 });
 
