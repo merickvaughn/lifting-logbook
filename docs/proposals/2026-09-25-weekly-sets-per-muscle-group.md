@@ -151,7 +151,7 @@ implementation. The API adds three things:
   defaults and lift classification. The wider name gap is tracked in [#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015).
 - **Workout-plan defects found during design:** every lift of the block week is listed on every
   day; there are no planned sets after the first block; a swapped-in lift gets no planned sets.
-  Tracked in [#1014](https://github.com/merickvaughn/lifting-logbook/issues/1014).
+  Fixed in [#1014](https://github.com/merickvaughn/lifting-logbook/issues/1014).
 - **Custom lifts** start with no muscle groups until the user sets them. There is no standalone
   lift-library page for editing muscles.
 - **Pattern tags on built-in lifts can't be edited by the user.** They are catalog data. Custom
@@ -166,9 +166,12 @@ implementation. The API adds three things:
 
 ## Open Questions
 
-- Should a Manage Lifts swap inherit the replaced lift's prescription on the workout detail and
-  timer pages as well? This proposal assumes it does for the dashboard counts. The detail-page
-  behavior is decided in [#1014](https://github.com/merickvaughn/lifting-logbook/issues/1014).
+- ~~Should a Manage Lifts swap inherit the replaced lift's prescription on the workout detail and
+  timer pages as well?~~ **Resolved in [#1014](https://github.com/merickvaughn/lifting-logbook/issues/1014): yes.**
+  A swap inherits the replaced slot's whole prescription (sets, reps, AMRAP, warm-up and
+  decrement %, increment, activation), priced from the replacement's own training max. The
+  workout response names the slot on the replacement's `replaces`, so the dashboard counts can
+  use the same rule and the pages agree.
 
 ## References
 
