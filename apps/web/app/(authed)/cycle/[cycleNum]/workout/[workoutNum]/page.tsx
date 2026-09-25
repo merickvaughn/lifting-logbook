@@ -15,6 +15,7 @@ import {
 } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
+import { liftSpecsForWorkout } from '@/lib/workoutPlan';
 import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WarmUpSetData, WorkingSetData, WorkoutLoggerProps } from './types';
 
@@ -63,12 +64,15 @@ export default async function WorkoutLoggingPage({
   }
 
   const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
+  const liftSpecs = liftSpecsForWorkout(workout, specs);
 
-  const lifts: LiftData[] = workout.lifts.map((wl) => {
+  const lifts: LiftData[] = workout.lifts.map((wl, i) => {
     const tm = maxMap.get(wl.lift) ?? 0;
 
-    // Spec entry for this (week, lift) — provides warmUpPct and increment
-    const spec = specs.find((s) => s.week === workout.week && s.lift === wl.lift);
+    // The lift's prescription — provides warmUpPct and increment. Resolved through
+    // the block week at the workout's day, and for a Manage Lifts replacement from
+    // the slot it replaced; `tm` stays the replacement's own (issue #1014).
+    const spec = liftSpecs[i];
 
     const warmUpSets: WarmUpSetData[] = spec
       ? PROG_SPEC_WARMUP_PCTS(spec.warmUpPct)

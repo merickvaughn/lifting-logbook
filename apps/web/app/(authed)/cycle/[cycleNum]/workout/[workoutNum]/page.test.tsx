@@ -134,3 +134,58 @@ describe('WorkoutLoggingPage — logged sets come from the workout itself (issue
     expect(mockedWorkout).toHaveBeenCalledWith('5-3-1', 1);
   });
 });
+
+describe('WorkoutLoggingPage — warm-ups resolve through the workout’s day (issue #1014)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // Week 2, day 0 of a 1-week repeating block (Leangains-shaped). The spec
+  // endpoint serves only the stored block, so its rows all say week 1.
+  function seedWeekTwo(
+    lifts: { lift: string; replaces?: string }[],
+    maxes: { lift: string; weight: number }[],
+  ) {
+    mockedWorkout.mockResolvedValue({
+      program: 'leangains',
+      cycleNum: 1,
+      workoutNum: 4,
+      week: 2,
+      offset: 0,
+      date: '2026-01-13',
+      skipped: false,
+      lifts: lifts.map((l) => ({ ...l, planned: true, sets: [] })),
+    });
+    mockedSpec.mockResolvedValue([{ ...spec('Squat'), warmUpPct: '0.4,0.5,0.6' }]);
+    mockedMaxes.mockResolvedValue(maxes);
+  }
+
+  it('plans warm-ups for a week-2 workout of a repeating 1-week block', async () => {
+    // Pre-#1014 the page matched `s.week === workout.week` against the stored
+    // block, found nothing from week 2 on, and showed no warm-ups.
+    seedWeekTwo([{ lift: 'Squat' }], [{ lift: 'Squat', weight: 200 }]);
+
+    const { lifts } = await renderPage();
+
+    expect(lifts[0]?.warmUpSets).toEqual([
+      { reps: 5, totalLoad: 80 },
+      { reps: 4, totalLoad: 100 },
+      { reps: 3, totalLoad: 120 },
+    ]);
+  });
+
+  it('gives a replacement the warm-ups of the slot it replaced, priced from its own training max', async () => {
+    seedWeekTwo(
+      [{ lift: 'Front Squat', replaces: 'Squat' }],
+      [
+        { lift: 'Squat', weight: 300 },
+        { lift: 'Front Squat', weight: 200 },
+      ],
+    );
+
+    const { lifts } = await renderPage();
+
+    expect(lifts[0]?.lift).toBe('Front Squat');
+    expect(lifts[0]?.warmUpSets.map((s) => s.totalLoad)).toEqual([80, 100, 120]);
+  });
+});

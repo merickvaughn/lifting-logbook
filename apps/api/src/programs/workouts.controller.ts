@@ -5,7 +5,7 @@ import {
   Inject,
   Param,
 } from '@nestjs/common';
-import { baseSpecBlockWeeks, blockWeekForProgramWeek, LiftRecord, programLengthWeeks } from '@lifting-logbook/core';
+import { LiftRecord, programLengthWeeks, specRowsForWorkoutDay } from '@lifting-logbook/core';
 import { WorkoutResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
@@ -72,8 +72,9 @@ export class WorkoutsController {
     // (week, offset) workout days — so week-2+ workouts of a tiled program
     // (Leangains 12w, 5-3-1 12w) resolve in no-schedule mode too, not only schedule
     // mode (#680 completed by #740). Undefined means workoutNum is past the *full*
-    // canonical length. The key's `offset` also feeds the no-schedule detail date
-    // below, keeping it aligned with the Cycle Dashboard card (issue #745).
+    // canonical length. The key's `offset` picks the day's lifts below and feeds the
+    // no-schedule detail date, keeping both aligned with the Cycle Dashboard card
+    // (issues #745, #1014).
     const workoutKey = workoutKeyForWorkoutNum(spec, workoutNum, program);
     const week = scheduledWorkout?.weekNum ?? workoutKey?.week;
     if (week === undefined) {
@@ -82,11 +83,16 @@ export class WorkoutsController {
       );
     }
 
-    // Planned lifts come from the tiled block week: the stored spec is one block,
-    // so map the program week (which may exceed blockWeeks) back into the block —
-    // via the same helper expandSpecToLength tiles with, so the two never disagree.
-    const blockWeek = blockWeekForProgramWeek(week, baseSpecBlockWeeks(spec));
-    const specLifts = [...new Set(spec.filter((s) => s.week === blockWeek).map((s) => s.lift))];
+    // Planned lifts are this workout's own day: the block week its program week
+    // tiles from, at its key's offset — the same helper the web resolves each
+    // lift's prescription with, so the two never disagree. Filtering on the week
+    // alone listed every day's lifts on every day (issue #1014). In schedule mode
+    // the week comes from the scheduled row and the offset from the key; they agree
+    // whenever the schedule runs the program's own number of days a week, which
+    // saveScheduledDates assumes. A scheduled workout past the program's last day
+    // has no key, and so no day to plan.
+    const dayRows = workoutKey ? specRowsForWorkoutDay(spec, week, workoutKey.offset) : [];
+    const specLifts = [...new Set(dayRows.map((s) => s.lift))];
 
     const plannedLifts = applyLiftOverrides(specLifts, liftOverrides);
 

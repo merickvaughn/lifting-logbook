@@ -7,6 +7,7 @@ import {
   expandSpecToLength,
   orderedWorkoutKeys,
   noScheduleWorkoutDateUTC,
+  specRowsForWorkoutDay,
 } from '.';
 import { LiftingProgramSpec } from '../models/LiftingProgramSpec';
 
@@ -265,6 +266,72 @@ describe('blockWeekForProgramWeek', () => {
     const repsForBlockWeek: Record<number, number> = { 1: 5, 2: 3, 3: 1 };
     for (const row of expandSpecToLength(block3, 12)) {
       expect(row.reps).toBe(repsForBlockWeek[blockWeekForProgramWeek(row.week, 3)]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// specRowsForWorkoutDay — one workout day's rows, through the block (issue #1014)
+// ---------------------------------------------------------------------------
+
+describe('specRowsForWorkoutDay', () => {
+  // Two days of a 1-week block, stored the way custom-program rows come back:
+  // by week, then order — so the days interleave.
+  const twoDays = [
+    makeRow({ offset: 0, lift: 'Bench Press', order: 1 }),
+    makeRow({ offset: 2, lift: 'Squat', order: 1 }),
+    makeRow({ offset: 0, lift: 'Barbell Row', order: 2 }),
+    makeRow({ offset: 2, lift: 'Deadlift', order: 2 }),
+  ];
+  const lifts = (rows: LiftingProgramSpec[]) => rows.map((r) => r.lift);
+
+  it('returns only the requested day’s rows, not the whole week', () => {
+    expect(lifts(specRowsForWorkoutDay(twoDays, 1, 2))).toEqual(['Squat', 'Deadlift']);
+  });
+
+  it('maps a later program week back into the block', () => {
+    // A 1-week block repeats every week; a 3-week block repeats every wave.
+    expect(lifts(specRowsForWorkoutDay(twoDays, 9, 0))).toEqual(['Bench Press', 'Barbell Row']);
+    // Program week 5 is the second wave's week 2 (block3 encodes it as reps 3).
+    expect(specRowsForWorkoutDay(block3, 5, 0).map((r) => [r.week, r.reps])).toEqual([[2, 3]]);
+  });
+
+  it('orders the day by `order`, not by storage order', () => {
+    expect(lifts(specRowsForWorkoutDay([...twoDays].reverse(), 1, 0))).toEqual([
+      'Bench Press',
+      'Barbell Row',
+    ]);
+  });
+
+  it('returns [] for an offset the block week does not train, or an empty spec', () => {
+    expect(specRowsForWorkoutDay(twoDays, 1, 4)).toEqual([]);
+    expect(specRowsForWorkoutDay([], 1, 0)).toEqual([]);
+  });
+
+  it('does not mutate or reorder its input', () => {
+    const input = [...twoDays].reverse();
+    const before = [...input];
+    specRowsForWorkoutDay(input, 1, 0);
+    expect(input).toEqual(before);
+  });
+
+  it('agrees with the tiled spec on every workout day of every preset', () => {
+    // The Cycle Dashboard groups the *tiled* spec by (week, offset); the API and
+    // the web resolve a workout's day from the *stored* block. They must name the
+    // same lifts with the same prescription on every day, or a card and the
+    // workout it opens disagree (issues #740, #1014). Reps differ by week in
+    // 5-3-1, so comparing them also pins the right block week.
+    const liftsAndReps = (rows: LiftingProgramSpec[]) => rows.map((r) => [r.lift, r.reps]);
+    for (const [program, base] of Object.entries(PRESET_BASE_SPECS)) {
+      const tiled = expandSpecToLength(base, programLengthWeeks(program, base));
+      const keys = orderedWorkoutKeys(tiled);
+      expect(keys.length).toBeGreaterThan(0);
+      for (const { week, offset } of keys) {
+        const card = tiled
+          .filter((r) => r.week === week && r.offset === offset)
+          .sort((a, b) => a.order - b.order);
+        expect(liftsAndReps(specRowsForWorkoutDay(base, week, offset))).toEqual(liftsAndReps(card));
+      }
     }
   });
 });

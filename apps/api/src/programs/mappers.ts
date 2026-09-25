@@ -212,20 +212,37 @@ export const toLiftOverrideResponse = (o: LiftOverride): LiftOverrideResponse =>
 });
 
 /**
+ * One entry of a workout's planned lift list, after overrides.
+ *
+ * `replaces` is the lift whose slot a `replace` override put this one in,
+ * followed back through a chain of swaps to the lift the slot started with — for
+ * a spec lift, the name its prescription is stored under, which the replacement
+ * inherits (issue #1014). Absent for a lift left in place and for an `add`.
+ */
+export interface PlannedLift {
+  lift: string;
+  replaces?: string;
+}
+
+/**
  * Applies a list of lift overrides to the spec-derived planned lift list.
  * - 'remove': drops the lift from the list.
- * - 'replace': swaps the lift in-place, preserving order.
+ * - 'replace': swaps the lift in-place, preserving order; the replacement keeps
+ *   the slot, recorded as `replaces`.
  * - 'add': appends the lift if not already present.
  */
-export function applyLiftOverrides(specLifts: string[], overrides: LiftOverride[]): string[] {
-  let lifts = [...specLifts];
+export function applyLiftOverrides(specLifts: string[], overrides: LiftOverride[]): PlannedLift[] {
+  let lifts: PlannedLift[] = specLifts.map((lift) => ({ lift }));
   for (const o of overrides) {
     if (o.action === 'remove') {
-      lifts = lifts.filter((l) => l !== o.lift);
+      lifts = lifts.filter((l) => l.lift !== o.lift);
     } else if (o.action === 'replace' && o.replacedBy) {
-      lifts = lifts.map((l) => (l === o.lift ? o.replacedBy! : l));
+      const replacedBy = o.replacedBy;
+      lifts = lifts.map((l) =>
+        l.lift === o.lift ? { lift: replacedBy, replaces: l.replaces ?? l.lift } : l,
+      );
     } else if (o.action === 'add') {
-      if (!lifts.includes(o.lift)) lifts.push(o.lift);
+      if (!lifts.some((l) => l.lift === o.lift)) lifts.push({ lift: o.lift });
     }
   }
   return lifts;
@@ -283,15 +300,19 @@ export interface WorkoutResponseOptions {
   // `workoutKey?.offset`). Required under this workspace's `exactOptionalPropertyTypes`.
   /** User override date for the workout; surfaced as `overrideDate` on the response. */
   overrideDate?: Date | undefined;
-  /** Spec-derived + override lift list; drives lift ordering and the `planned` flags. */
-  plannedLifts?: string[] | undefined;
+  /** Spec-derived + override lift list; drives lift ordering, the `planned` flags and `replaces`. */
+  plannedLifts?: readonly PlannedLift[] | undefined;
   /** System-assigned scheduled date (schedule mode). */
   scheduledDate?: Date | undefined;
   /** Whether the workout is explicitly skipped. */
   skipped?: boolean | undefined;
   /** Cycle start date; anchors the no-schedule spec-relative date. */
   cycleStartDate?: Date | undefined;
-  /** This workout's `(week, offset)` key offset; feeds the no-schedule date. */
+  /**
+   * This workout's `(week, offset)` key offset; feeds the no-schedule date and is
+   * emitted as `WorkoutResponse.offset`, so a client can resolve the day's spec
+   * rows (issue #1014).
+   */
   offset?: number | undefined;
   /**
    * Stored lift name → the lift to group its records under, for `replace`
@@ -308,7 +329,8 @@ export interface WorkoutResponseOptions {
  * `week` via `weekForWorkoutNum` before invoking.
  *
  * When `plannedLifts` is provided (the spec-derived + override list), lifts are
- * emitted in that order. Planned-but-unlogged lifts appear with `sets: []` and
+ * emitted in that order, each keeping its `replaces` (the slot a swap took).
+ * Planned-but-unlogged lifts appear with `sets: []` and
  * `planned: true`. Logged lifts not in the planned list are appended with
  * `planned: false`. When `plannedLifts` is omitted, all logged lifts are emitted
  * in record order with `planned: false` (preserves pre-override behaviour).
@@ -362,10 +384,10 @@ export const toWorkoutResponse = (
   let lifts: WorkoutLiftResponse[];
   if (plannedLifts) {
     const emitted = new Set<string>();
-    lifts = plannedLifts.map((lift) => {
+    lifts = plannedLifts.map(({ lift, replaces }) => {
       emitted.add(lift);
       const sets = liftMap.get(lift) ?? [];
-      return { lift, sets, planned: sets.length === 0 };
+      return { lift, sets, planned: sets.length === 0, ...(replaces !== undefined && { replaces }) };
     });
     // Append any logged lifts not in the planned list (e.g. added ad-hoc during logging).
     for (const [lift, sets] of liftMap.entries()) {
@@ -393,6 +415,7 @@ export const toWorkoutResponse = (
     cycleNum,
     workoutNum,
     week,
+    ...(offset !== undefined && { offset }),
     date,
     ...(overrideDate !== undefined && { overrideDate: isoDate(overrideDate) }),
     skipped,

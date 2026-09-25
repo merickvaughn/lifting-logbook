@@ -91,6 +91,13 @@ export interface WorkoutLiftResponse {
   sets: SetResponse[];
   /** True when derived from the program spec with no logged sets yet; false when backed by real records. */
   planned: boolean;
+  /**
+   * The spec lift whose slot this one took, present only when a Manage Lifts
+   * `replace` put it here (followed back through a chain of swaps). A swap
+   * changes the movement, not the slot: resolve this lift's prescription by
+   * this name, and price it from `lift`'s own training max (issue #1014).
+   */
+  replaces?: LiftName;
 }
 
 /** Serialized workout as returned by the API. */
@@ -98,7 +105,17 @@ export interface WorkoutResponse {
   program: string;
   cycleNum: CycleNumber;
   workoutNum: number;
+  /** The *program* week — past the stored block, for a tiled program. */
   week: WeekNumber;
+  /**
+   * The workout's day within its week: the `offset` of the spec rows that plan
+   * it. `GET /programs/:program/spec` serves the one untiled block, so resolve
+   * those rows through the block week — `specRowsForWorkoutDay` in
+   * `@lifting-logbook/core` (issue #1014). Absent for a scheduled workout the
+   * program has no day for (a schedule running more days a week than the
+   * program), which plans no lifts.
+   */
+  offset?: number;
   date: string; // ISO 8601 date string
   overrideDate?: string; // ISO 8601 date string; present when the user has rescheduled
   skipped: boolean;
