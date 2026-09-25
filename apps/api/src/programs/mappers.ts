@@ -2,6 +2,7 @@ import {
   CycleDashboard,
   LiftRecord,
   LiftingProgramSpec,
+  PlannedLift,
   StrengthGoalEntry,
   TrainingMax,
   TrainingMaxHistoryEntry,
@@ -211,26 +212,6 @@ export const toLiftOverrideResponse = (o: LiftOverride): LiftOverrideResponse =>
   ...(o.replacedBy !== undefined && { replacedBy: o.replacedBy }),
 });
 
-/**
- * Applies a list of lift overrides to the spec-derived planned lift list.
- * - 'remove': drops the lift from the list.
- * - 'replace': swaps the lift in-place, preserving order.
- * - 'add': appends the lift if not already present.
- */
-export function applyLiftOverrides(specLifts: string[], overrides: LiftOverride[]): string[] {
-  let lifts = [...specLifts];
-  for (const o of overrides) {
-    if (o.action === 'remove') {
-      lifts = lifts.filter((l) => l !== o.lift);
-    } else if (o.action === 'replace' && o.replacedBy) {
-      lifts = lifts.map((l) => (l === o.lift ? o.replacedBy! : l));
-    } else if (o.action === 'add') {
-      if (!lifts.includes(o.lift)) lifts.push(o.lift);
-    }
-  }
-  return lifts;
-}
-
 export const isValidWorkoutNum = (n: number): boolean =>
   Number.isInteger(n) && n >= 1;
 
@@ -283,16 +264,22 @@ export interface WorkoutResponseOptions {
   // `workoutKey?.offset`). Required under this workspace's `exactOptionalPropertyTypes`.
   /** User override date for the workout; surfaced as `overrideDate` on the response. */
   overrideDate?: Date | undefined;
-  /** Spec-derived + override lift list; drives lift ordering and the `planned` flags. */
-  plannedLifts?: string[] | undefined;
+  /** Spec-derived + override lift list; drives lift ordering, the `planned` flags and `replaces`. */
+  plannedLifts?: readonly PlannedLift[] | undefined;
   /** System-assigned scheduled date (schedule mode). */
   scheduledDate?: Date | undefined;
   /** Whether the workout is explicitly skipped. */
   skipped?: boolean | undefined;
   /** Cycle start date; anchors the no-schedule spec-relative date. */
   cycleStartDate?: Date | undefined;
-  /** This workout's `(week, offset)` key offset; feeds the no-schedule date. */
-  offset?: number | undefined;
+  /**
+   * This workout's `(week, offset)` key offset; feeds the no-schedule date and is
+   * emitted as `WorkoutResponse.offset`, so a client can resolve the day's spec
+   * rows (issue #1014). `null` states that the program has no day for this
+   * workout and is emitted as `null`. Leaving it out states nothing: the field is
+   * omitted, which a client treats like an API that predates it.
+   */
+  offset?: number | null | undefined;
   /**
    * Stored lift name → the lift to group its records under, for `replace`
    * overrides. Applied while grouping rather than by renaming the records up
@@ -308,7 +295,8 @@ export interface WorkoutResponseOptions {
  * `week` via `weekForWorkoutNum` before invoking.
  *
  * When `plannedLifts` is provided (the spec-derived + override list), lifts are
- * emitted in that order. Planned-but-unlogged lifts appear with `sets: []` and
+ * emitted in that order, each keeping its `replaces` (the slot a swap took).
+ * Planned-but-unlogged lifts appear with `sets: []` and
  * `planned: true`. Logged lifts not in the planned list are appended with
  * `planned: false`. When `plannedLifts` is omitted, all logged lifts are emitted
  * in record order with `planned: false` (preserves pre-override behaviour).
@@ -362,10 +350,10 @@ export const toWorkoutResponse = (
   let lifts: WorkoutLiftResponse[];
   if (plannedLifts) {
     const emitted = new Set<string>();
-    lifts = plannedLifts.map((lift) => {
+    lifts = plannedLifts.map(({ lift, replaces }) => {
       emitted.add(lift);
       const sets = liftMap.get(lift) ?? [];
-      return { lift, sets, planned: sets.length === 0 };
+      return { lift, sets, planned: sets.length === 0, ...(replaces !== undefined && { replaces }) };
     });
     // Append any logged lifts not in the planned list (e.g. added ad-hoc during logging).
     for (const [lift, sets] of liftMap.entries()) {
@@ -385,7 +373,7 @@ export const toWorkoutResponse = (
     ? isoDate(records[0].date)
     : scheduledDate
       ? isoDate(scheduledDate)
-      : cycleStartDate !== undefined && offset !== undefined
+      : cycleStartDate !== undefined && typeof offset === 'number'
         ? isoDate(noScheduleWorkoutDateUTC(cycleStartDate, week, offset))
         : isoDate(new Date());
   return {
@@ -393,6 +381,7 @@ export const toWorkoutResponse = (
     cycleNum,
     workoutNum,
     week,
+    ...(offset !== undefined && { offset }),
     date,
     ...(overrideDate !== undefined && { overrideDate: isoDate(overrideDate) }),
     skipped,

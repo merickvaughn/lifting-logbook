@@ -1,6 +1,7 @@
 export * from "./CycleDashboard";
 export * from "./StrengthGoalEntry";
 export * from "./LiftingProgramSpec";
+export * from "./LiftOverride";
 export * from "./LiftRecord";
 export * from "./SpreadsheetCell";
 export * from "./TrainingMax";

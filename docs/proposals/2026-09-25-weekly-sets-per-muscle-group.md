@@ -151,7 +151,7 @@ implementation. The API adds three things:
   defaults and lift classification. The wider name gap is tracked in [#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015).
 - **Workout-plan defects found during design:** every lift of the block week is listed on every
   day; there are no planned sets after the first block; a swapped-in lift gets no planned sets.
-  Tracked in [#1014](https://github.com/merickvaughn/lifting-logbook/issues/1014).
+  Fixed in [#1014](https://github.com/merickvaughn/lifting-logbook/issues/1014).
 - **Custom lifts** start with no muscle groups until the user sets them. There is no standalone
   lift-library page for editing muscles.
 - **Pattern tags on built-in lifts can't be edited by the user.** They are catalog data. Custom
@@ -166,9 +166,16 @@ implementation. The API adds three things:
 
 ## Open Questions
 
-- Should a Manage Lifts swap inherit the replaced lift's prescription on the workout detail and
-  timer pages as well? This proposal assumes it does for the dashboard counts. The detail-page
-  behavior is decided in [#1014](https://github.com/merickvaughn/lifting-logbook/issues/1014).
+- ~~Should a Manage Lifts swap inherit the replaced lift's prescription on the workout detail and
+  timer pages as well?~~ **Resolved in [#1014](https://github.com/merickvaughn/lifting-logbook/issues/1014): yes.**
+  A swap inherits the replaced slot's whole prescription (sets, reps, AMRAP, warm-up and
+  decrement %, increment, activation), priced from the replacement's own training max. The rule
+  is `applyLiftOverrides` in `@lifting-logbook/core`. It returns each swap's `replaces` and where
+  each stored lift name's logged sets now belong, following chains of swaps. The current-week
+  counts (#1019) should call it on each workout's overrides rather than re-implement the swap
+  table, so the dashboard and the workout pages agree. Its cycle-wide override read must return
+  each workout's overrides in the order each was last written, as `getOverrides` does; otherwise
+  a chain resolves differently on the dashboard.
 
 ## References
 

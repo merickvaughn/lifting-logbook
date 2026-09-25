@@ -86,6 +86,33 @@ export function blockWeekForProgramWeek(week: number, blockWeeks: number): numbe
 }
 
 /**
+ * The spec rows that plan one workout day: the rows of the block week that program
+ * `week` tiles from ({@link blockWeekForProgramWeek}) at day `offset`, in `order`.
+ *
+ * A workout carries its *program* week, but the stored spec — and the spec endpoint
+ * serving it — is one untiled block. Matching a row's `week` against the program week
+ * finds nothing from the second block on (Leangains/RPT week 2, 5-3-1 week 4), and
+ * matching the week without the offset lists every day's lifts on every day (issue
+ * #1014). The workouts controller (which lifts a day plans), the web (each lift's
+ * prescription) and the Cycle Dashboard (each card's lifts, `buildWorkoutDays`) all
+ * resolve a day here, so they start from the same rows. Downstream, a lift a day
+ * repeats is still collapsed to one occurrence by the workout endpoint (#1027).
+ *
+ * `offset` is required: a caller without one has no day, and must decide what that
+ * means rather than fall back to the whole week.
+ */
+export function specRowsForWorkoutDay<T extends { week: WeekNumber; offset: number; order: number }>(
+  spec: readonly T[],
+  week: number,
+  offset: number,
+): T[] {
+  const blockWeek = blockWeekForProgramWeek(week, baseSpecBlockWeeks(spec));
+  return spec
+    .filter((row) => row.week === blockWeek && row.offset === offset)
+    .sort((a, b) => a.order - b.order);
+}
+
+/**
  * Tiles a base spec (one repeating block) across `lengthWeeks` by repeating the
  * block's rows with incremented `week` numbers. Read-time expansion only — stored
  * specs are never mutated, so there is no DB migration and revert is a pure code

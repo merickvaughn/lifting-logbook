@@ -1,13 +1,11 @@
 import { CycleDashboard, LiftRecord, LiftingProgramSpec, Weekday } from '@lifting-logbook/core';
 import {
-  applyLiftOverrides,
   buildCycleDashboardResponse,
   toLiftRecordResponse,
   toWorkoutResponse,
   weekForWorkoutNum,
   workoutKeyForWorkoutNum,
 } from './mappers';
-import { LiftOverride } from '../ports/IWorkoutLiftOverrideRepository';
 import { ScheduledWorkout } from '../ports/ICycleScheduledWorkoutRepository';
 
 const baseFields: Omit<LiftingProgramSpec, 'offset' | 'lift' | 'week'> = {
@@ -136,52 +134,8 @@ describe('workoutKeyForWorkoutNum', () => {
   });
 });
 
-describe('applyLiftOverrides', () => {
-  const lifts = ['Squat', 'Bench Press', 'Deadlift'];
-
-  it('returns spec lifts unchanged when no overrides', () => {
-    expect(applyLiftOverrides(lifts, [])).toEqual(lifts);
-  });
-
-  it('remove — drops the target lift', () => {
-    const o: LiftOverride[] = [{ lift: 'Bench Press', action: 'remove' }];
-    expect(applyLiftOverrides(lifts, o)).toEqual(['Squat', 'Deadlift']);
-  });
-
-  it('remove — no-op when lift is not in list', () => {
-    const o: LiftOverride[] = [{ lift: 'Overhead Press', action: 'remove' }];
-    expect(applyLiftOverrides(lifts, o)).toEqual(lifts);
-  });
-
-  it('replace — swaps in-place preserving order', () => {
-    const o: LiftOverride[] = [{ lift: 'Bench Press', action: 'replace', replacedBy: 'Dips' }];
-    expect(applyLiftOverrides(lifts, o)).toEqual(['Squat', 'Dips', 'Deadlift']);
-  });
-
-  it('replace without replacedBy — no-op (invalid but defensively handled)', () => {
-    const o: LiftOverride[] = [{ lift: 'Bench Press', action: 'replace' }];
-    expect(applyLiftOverrides(lifts, o)).toEqual(lifts);
-  });
-
-  it('add — appends new lift', () => {
-    const o: LiftOverride[] = [{ lift: 'Chin-up', action: 'add' }];
-    expect(applyLiftOverrides(lifts, o)).toEqual([...lifts, 'Chin-up']);
-  });
-
-  it('add — no-op when lift already present', () => {
-    const o: LiftOverride[] = [{ lift: 'Squat', action: 'add' }];
-    expect(applyLiftOverrides(lifts, o)).toEqual(lifts);
-  });
-
-  it('combined — remove, replace, add applied in order', () => {
-    const o: LiftOverride[] = [
-      { lift: 'Squat', action: 'remove' },
-      { lift: 'Bench Press', action: 'replace', replacedBy: 'Dips' },
-      { lift: 'Chin-up', action: 'add' },
-    ];
-    expect(applyLiftOverrides(lifts, o)).toEqual(['Dips', 'Deadlift', 'Chin-up']);
-  });
-});
+// applyLiftOverrides moved to packages/core (issue #1014) — its tests live in
+// packages/core/tests/core/services/workout/applyLiftOverrides.test.ts.
 
 describe('toWorkoutResponse with plannedLifts', () => {
   const program = '5-3-1';
@@ -203,7 +157,7 @@ describe('toWorkoutResponse with plannedLifts', () => {
 
   it('marks logged lifts as planned:false', () => {
     const records = [record('Squat', 1, 200)];
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { plannedLifts: ['Squat'] });
+    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });
     expect(result.lifts[0]).toMatchObject({ lift: 'Squat', planned: false });
     expect(result.lifts[0]?.sets).toHaveLength(1);
   });
@@ -213,7 +167,7 @@ describe('toWorkoutResponse with plannedLifts', () => {
   // a logged set without refetching the cycle's lift records to look them up.
   it('carries each logged set’s record id and notes', () => {
     const records = [{ ...record('Squat', 2, 220), notes: 'AMRAP felt heavy' }];
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { plannedLifts: ['Squat'] });
+    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });
     expect(result.lifts[0]?.sets[0]).toEqual({
       id: '5-3-1-1-1-20260507-Squat-2',
       setNum: 2,
@@ -227,17 +181,32 @@ describe('toWorkoutResponse with plannedLifts', () => {
   it('groups a replaced lift’s records under the replacement but keeps the stored lift in each id', () => {
     const records = [record('Squat', 1, 200)];
     const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, {
-      plannedLifts: ['Front Squat'],
+      plannedLifts: [{ lift: 'Front Squat', replaces: 'Squat' }],
       renamedLifts: new Map([['Squat', 'Front Squat']]),
     });
     expect(result.lifts).toHaveLength(1);
-    expect(result.lifts[0]).toMatchObject({ lift: 'Front Squat', planned: false });
+    // Logged or not, a replacement still names its slot (issue #1014).
+    expect(result.lifts[0]).toMatchObject({ lift: 'Front Squat', planned: false, replaces: 'Squat' });
     // The row is still persisted as Squat, so that is the id PATCH must address.
     expect(result.lifts[0]?.sets[0]?.id).toBe('5-3-1-1-1-20260507-Squat-1');
   });
 
+  it('emits the day’s offset, an explicit null for "no program day", and nothing when not told (issue #1014)', () => {
+    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: 3 }).offset).toBe(3);
+    // Offset 0 is a real day, not "no day".
+    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: 0 }).offset).toBe(0);
+    // Only an explicit null says the program has no day for this workout…
+    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: null })).toHaveProperty(
+      'offset',
+      null,
+    );
+    // …leaving the option out says nothing, so a caller that forgets it cannot
+    // make a client plan an empty workout.
+    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [])).not.toHaveProperty('offset');
+  });
+
   it('marks unlogged planned lifts as planned:true with empty sets', () => {
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, [], { plannedLifts: ['Squat', 'Bench Press'] });
+    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, [], { plannedLifts: [{ lift: 'Squat' }, { lift: 'Bench Press' }] });
     expect(result.lifts).toHaveLength(2);
     expect(result.lifts[0]).toMatchObject({ lift: 'Squat', sets: [], planned: true });
     expect(result.lifts[1]).toMatchObject({ lift: 'Bench Press', sets: [], planned: true });
@@ -245,7 +214,7 @@ describe('toWorkoutResponse with plannedLifts', () => {
 
   it('appends logged lifts not in planned list as planned:false', () => {
     const records = [record('Squat', 1, 200), record('Chin-up', 1, 0)];
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { plannedLifts: ['Squat'] });
+    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });
     expect(result.lifts).toHaveLength(2);
     expect(result.lifts[0]).toMatchObject({ lift: 'Squat', planned: false });
     expect(result.lifts[1]).toMatchObject({ lift: 'Chin-up', planned: false });
@@ -277,7 +246,7 @@ describe('toWorkoutResponse with plannedLifts', () => {
     const cycleStart = new Date('2026-04-20T00:00:00.000Z');
     // week 2, offset 0 → 2026-04-20 + 7 = 2026-04-27 (NOT today).
     const result = toWorkoutResponse(program, cycleNum, 3, 2, [], {
-      plannedLifts: ['Squat'],
+      plannedLifts: [{ lift: 'Squat' }],
       cycleStartDate: cycleStart,
       offset: 0,
     });
@@ -287,7 +256,7 @@ describe('toWorkoutResponse with plannedLifts', () => {
   it('no-schedule week-1 date is cycleStart + offset', () => {
     const cycleStart = new Date('2026-04-20T00:00:00.000Z');
     const result = toWorkoutResponse(program, cycleNum, 2, 1, [], {
-      plannedLifts: ['Squat'],
+      plannedLifts: [{ lift: 'Squat' }],
       cycleStartDate: cycleStart,
       offset: 2,
     });
@@ -298,7 +267,7 @@ describe('toWorkoutResponse with plannedLifts', () => {
     const cycleStart = new Date('2026-04-20T00:00:00.000Z');
     const scheduledDate = new Date('2026-06-02T00:00:00.000Z');
     const result = toWorkoutResponse(program, cycleNum, 3, 2, [], {
-      plannedLifts: ['Squat'],
+      plannedLifts: [{ lift: 'Squat' }],
       scheduledDate,
       cycleStartDate: cycleStart,
       offset: 0,

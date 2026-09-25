@@ -115,7 +115,19 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     const body = res.json();
     expect(body.workoutNum).toBe(3);
     expect(body.week).toBe(2);
-    expect(body.lifts.length).toBeGreaterThan(0);
+    // …and it plans block week 2's first day, not the whole week (issue #1014).
+    expect(body.offset).toBe(0);
+    expect(body.lifts.map((l: { lift: string }) => l.lift)).toEqual(['Squat', 'Bench Press']);
+  });
+
+  it('GET /programs/:program/workouts/:workoutNum plans only its own day’s lifts (issue #1014)', async () => {
+    // The seeded 5-3-1 block trains Squat + Bench Press at offset 0 and Deadlift +
+    // Overhead Press at offset 3. Pre-#1014 every workout listed all four.
+    const res = await get(`/programs/${SEED_PROGRAM}/workouts/2`);
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect([body.week, body.offset]).toEqual([1, 3]);
+    expect(body.lifts.map((l: { lift: string }) => l.lift)).toEqual(['Deadlift', 'Overhead Press']);
   });
 
   it('GET /programs/:program/training-maxes returns the seeded maxes', async () => {
@@ -921,12 +933,35 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       await postJson(OVERRIDE_URL(cycleNum, 1), { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
 
       const res = await get(`/programs/${PROGRAM}/workouts/1`);
-      const lifts = (res.json() as { lifts: { lift: string }[] }).lifts;
+      const lifts = (res.json() as { lifts: { lift: string; replaces?: string }[] }).lifts;
       expect(lifts.some((l) => l.lift === 'Squat')).toBe(false);
-      expect(lifts.some((l) => l.lift === 'Front Squat')).toBe(true);
+      // The replacement names the slot it took, so it inherits Squat's
+      // prescription (issue #1014).
+      expect(lifts.find((l) => l.lift === 'Front Squat')?.replaces).toBe('Squat');
 
       // Cleanup
       await deleteReq(`${OVERRIDE_URL(cycleNum, 1)}/Squat`);
+    });
+
+    it('a swap made again after being undone takes effect (issue #1014)', async () => {
+      // Squat → Front Squat, back to Squat, then Squat → Front Squat again. The
+      // third save rewrites the Squat override; had it kept its first position
+      // it would apply before the undo and the workout would stay on Squat.
+      const dashRes = await get(`/programs/${PROGRAM}/cycles/current`);
+      const { cycleNum } = dashRes.json() as { cycleNum: number };
+      try {
+        await postJson(OVERRIDE_URL(cycleNum, 1), { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
+        await postJson(OVERRIDE_URL(cycleNum, 1), { action: 'replace', lift: 'Front Squat', replacedBy: 'Squat' });
+        await postJson(OVERRIDE_URL(cycleNum, 1), { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
+
+        const res = await get(`/programs/${PROGRAM}/workouts/1`);
+        const lifts = (res.json() as { lifts: { lift: string; replaces?: string }[] }).lifts;
+        expect(lifts.find((l) => l.lift === 'Front Squat')?.replaces).toBe('Squat');
+        expect(lifts.some((l) => l.lift === 'Squat')).toBe(false);
+      } finally {
+        await deleteReq(`${OVERRIDE_URL(cycleNum, 1)}/Squat`);
+        await deleteReq(`${OVERRIDE_URL(cycleNum, 1)}/${encodeURIComponent('Front Squat')}`);
+      }
     });
 
     it('DELETE override is idempotent — returns 204 even when override absent', async () => {

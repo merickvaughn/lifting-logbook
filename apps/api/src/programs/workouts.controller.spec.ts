@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Weekday } from '@lifting-logbook/core';
 import { ICycleDashboardRepository } from '../ports/ICycleDashboardRepository';
@@ -14,6 +14,21 @@ import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { WorkoutsController } from './workouts.controller';
 
 const MOCK_USER = { id: 'test-user', email: 'test@example.com', provider: 'dev' };
+
+/** One spec row; only the fields a test varies are parameters. */
+const specRow = (week: number, offset: number, lift: string, order: number) => ({
+  week,
+  offset,
+  lift,
+  order,
+  increment: 5,
+  sets: 3,
+  reps: 6,
+  amrap: true,
+  warmUpPct: '0.4,0.5,0.6',
+  wtDecrementPct: 0.1,
+  activation: 'compound',
+});
 
 describe('WorkoutsController', () => {
   let controller: WorkoutsController;
@@ -161,6 +176,63 @@ describe('WorkoutsController', () => {
     expect(result.lifts[0]?.sets[0]?.id).toBe('5-3-1-3-1-20260420-Squat-1');
   });
 
+  describe('a chain of swaps (issue #1014)', () => {
+    const squatAndBench = [specRow(1, 0, 'Squat', 1), specRow(1, 0, 'Bench Press', 2)];
+    const logged = (lift: string, setNum: number) => ({
+      program: '5-3-1',
+      cycleNum: 3,
+      workoutNum: 1,
+      date: new Date('2026-04-20T00:00:00.000Z'),
+      lift,
+      setNum,
+      weight: 200,
+      reps: 5,
+      notes: '',
+    });
+
+    beforeEach(() => {
+      dashboardRepo.getCycleDashboard.mockResolvedValue({ cycleNum: 3, cycleDate: new Date('2026-04-20T00:00:00.000Z') });
+      specRepo.getProgramSpec.mockResolvedValue(squatAndBench);
+    });
+
+    it('keeps sets logged under every earlier name of the slot with its current lift', async () => {
+      // A set logged as Squat before the first swap, and one as Front Squat
+      // between the two. Pre-fix the records followed one hop only: Squat's set
+      // landed on an unplanned "Front Squat" entry with no prescription.
+      workoutRepo.getWorkout.mockResolvedValue([logged('Squat', 1), logged('Front Squat', 2)]);
+      liftOverrideRepo.getOverrides.mockResolvedValue([
+        { lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' },
+        { lift: 'Front Squat', action: 'replace', replacedBy: 'Box Squat' },
+      ]);
+
+      const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
+
+      expect(result.lifts.map((l) => [l.lift, l.replaces, l.planned])).toEqual([
+        ['Box Squat', 'Squat', false],
+        ['Bench Press', undefined, true],
+      ]);
+      // Each set still addresses the row as stored (issue #978).
+      expect(result.lifts[0]?.sets.map((s) => s.id)).toEqual([
+        '5-3-1-3-1-20260420-Squat-1',
+        '5-3-1-3-1-20260420-Front Squat-2',
+      ]);
+    });
+
+    it('hides the slot’s sets when the replacement is then removed', async () => {
+      // Pre-fix, removing the replacement resurrected it as an unplanned entry
+      // carrying Squat's sets.
+      workoutRepo.getWorkout.mockResolvedValue([logged('Squat', 1)]);
+      liftOverrideRepo.getOverrides.mockResolvedValue([
+        { lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' },
+        { lift: 'Front Squat', action: 'remove' },
+      ]);
+
+      const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
+
+      expect(result.lifts.map((l) => l.lift)).toEqual(['Bench Press']);
+    });
+  });
+
   it('returns 400 only when workoutNum exceeds the full canonical length, not one block (issue #740)', async () => {
     // Leangains tiles a 1-week / 3-offset block across 12 weeks = 36 workout days.
     // Pre-#740 the no-schedule cap was 3 (one block); now it is the full 36, so a
@@ -191,11 +263,13 @@ describe('WorkoutsController', () => {
     );
   });
 
-  it('resolves a no-schedule tiled week-2 workout to its program week (issue #740)', async () => {
+  it('resolves a no-schedule tiled week-2 workout to its program week and its own day (issues #740, #1014)', async () => {
     // Leangains 1-week block of 2 offsets tiled across 12 weeks; workout 3 lands in
-    // week 2. Pre-#740 this 400'd in no-schedule mode — #680 fixed only schedule
-    // mode (see the scheduled-row test below). Planned lifts still come from the
-    // tiled block week (block week 1 for a 1-week block).
+    // week 2 at offset 0. Pre-#740 this 400'd in no-schedule mode — #680 fixed only
+    // schedule mode (see the scheduled-row test below). Planned lifts come from the
+    // tiled block week (block week 1 for a 1-week block) at the workout's own
+    // offset: pre-#1014 the offset was ignored, so this day also listed offset 2's
+    // Squat.
     dashboardRepo.getCycleDashboard.mockResolvedValue({
       program: 'leangains',
       cycleUnit: 'week',
@@ -213,8 +287,121 @@ describe('WorkoutsController', () => {
     const result = await controller.getWorkout('leangains', '3', MOCK_USER);
 
     expect(result.week).toBe(2);
-    expect(result.lifts.map((l) => l.lift).sort()).toEqual(['Bench Press', 'Squat']);
+    expect(result.offset).toBe(0);
+    expect(result.lifts.map((l) => l.lift)).toEqual(['Bench Press']);
     expect(result.lifts.every((l) => l.planned)).toBe(true);
+  });
+
+  it('plans only its own day’s lifts, in order, not every lift of the block week (issue #1014)', async () => {
+    // A Leangains-shaped block: three days (offsets 0/2/4) of two lifts each, with
+    // the rows interleaved the way custom-program storage returns them (by week,
+    // then order). Pre-#1014 the planned list filtered on the block week alone,
+    // so every day listed all six lifts — and Manage Lifts offered all six.
+    dashboardRepo.getCycleDashboard.mockResolvedValue({
+      program: 'leangains',
+      cycleUnit: 'week',
+      cycleNum: 3,
+      cycleDate: new Date('2026-04-20T00:00:00.000Z'),
+      sheetName: '',
+      cycleStartWeekday: Weekday.Monday,
+    });
+    specRepo.getProgramSpec.mockResolvedValue([
+      specRow(1, 0, 'Bench Press', 1),
+      specRow(1, 2, 'Squat', 1),
+      specRow(1, 4, 'Overhead Press', 1),
+      specRow(1, 0, 'Weighted Pull-ups', 2),
+      specRow(1, 2, 'Romanian Deadlift', 2),
+      specRow(1, 4, 'Deadlift', 2),
+    ]);
+    workoutRepo.getWorkout.mockResolvedValue([]);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const days = [];
+    try {
+      for (const workoutNum of ['1', '2', '3', '4']) {
+        days.push(await controller.getWorkout('leangains', workoutNum, MOCK_USER));
+      }
+      // Every day here has a key, so the "no program day" warning stays quiet.
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    expect(days.map((d) => [d.week, d.offset, d.lifts.map((l) => l.lift)])).toEqual([
+      [1, 0, ['Bench Press', 'Weighted Pull-ups']],
+      [1, 2, ['Squat', 'Romanian Deadlift']],
+      [1, 4, ['Overhead Press', 'Deadlift']],
+      [2, 0, ['Bench Press', 'Weighted Pull-ups']],
+    ]);
+  });
+
+  it('plans a second-wave 5-3-1 workout from its block week at its own offset (issue #1014)', async () => {
+    // 5-3-1 tiles a 3-week block (offsets 0 and 3) across 12 weeks, so workout 8
+    // is week 4 at offset 3 — block week 1's second day, not all four lifts.
+    dashboardRepo.getCycleDashboard.mockResolvedValue({
+      program: '5-3-1',
+      cycleUnit: 'week',
+      cycleNum: 3,
+      cycleDate: new Date('2026-04-20T00:00:00.000Z'),
+      sheetName: '',
+      cycleStartWeekday: Weekday.Monday,
+    });
+    specRepo.getProgramSpec.mockResolvedValue(
+      [1, 2, 3].flatMap((week) => [
+        specRow(week, 0, 'Squat', 1),
+        specRow(week, 0, 'Bench Press', 2),
+        specRow(week, 3, 'Deadlift', 1),
+        specRow(week, 3, 'Overhead Press', 2),
+      ]),
+    );
+    workoutRepo.getWorkout.mockResolvedValue([]);
+
+    const result = await controller.getWorkout('5-3-1', '8', MOCK_USER);
+
+    expect([result.week, result.offset]).toEqual([4, 3]);
+    expect(result.lifts.map((l) => l.lift)).toEqual(['Deadlift', 'Overhead Press']);
+  });
+
+  it('plans no lifts for a scheduled workout the program has no day for (issue #1014)', async () => {
+    // saveScheduledDates assumes the schedule runs as many days a week as the
+    // program; one that runs more generates scheduled workouts past the program's
+    // last day. Workout 2 of this one-day custom block has a scheduled row but no
+    // (week, offset) key, so it has no day to plan — pre-#1014 it listed the
+    // whole block week.
+    dashboardRepo.getCycleDashboard.mockResolvedValue({
+      program: 'my-custom',
+      cycleUnit: 'week',
+      cycleNum: 1,
+      cycleDate: new Date('2026-04-20T00:00:00.000Z'),
+      sheetName: '',
+      cycleStartWeekday: Weekday.Monday,
+    });
+    specRepo.getProgramSpec.mockResolvedValue([specRow(1, 0, 'Squat', 1)]);
+    workoutRepo.getWorkout.mockResolvedValue([]);
+    scheduledWorkoutRepo.getScheduledWorkouts.mockResolvedValue([
+      { workoutNum: 1, weekNum: 1, scheduledDate: new Date('2026-04-20T00:00:00.000Z') },
+      { workoutNum: 2, weekNum: 1, scheduledDate: new Date('2026-04-22T00:00:00.000Z') },
+    ]);
+
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await controller.getWorkout('my-custom', '2', MOCK_USER);
+
+      expect(result.week).toBe(1);
+      expect(result.date).toBe('2026-04-22');
+      // Explicitly "no day", so a client plans nothing on it rather than treating
+      // it as an API that predates `offset`.
+      expect(result.offset).toBeNull();
+      expect(result.lifts).toEqual([]);
+      // A user-visible empty workout from an unvalidated schedule (#1023) is logged
+      // with structured fields, so how often it happens shows up.
+      expect(warnSpy).toHaveBeenCalledWith(
+        { program: 'my-custom', cycleNum: 1, workoutNum: 2, week: 1 },
+        expect.stringContaining('no program day'),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('sets the no-schedule detail date to the Cycle Dashboard card date, not today (issue #745)', async () => {
@@ -242,10 +429,14 @@ describe('WorkoutsController', () => {
     expect(result.date).toBe('2026-04-27');
   });
 
-  it('resolves week from the scheduled row for a tiled week-2+ workout (issue #680)', async () => {
+  it('resolves week from the scheduled row and the day from its key for a tiled week-2+ workout (issues #680, #1014)', async () => {
     // A 12-week Leangains schedule tiles a 1-week block, so workoutNum 4 lands in
     // week 2 — beyond the block's 2 distinct offsets. Without sourcing week from
     // the scheduled row this would 400; planned lifts must still come from the block.
+    // The day's offset comes from the workout's (week, offset) key: a schedule
+    // running the program's own number of days a week numbers workouts in the same
+    // order as orderedWorkoutKeys, so scheduled workout 4 is key 4 — week 2,
+    // offset 2 — and plans only that day's Squat (#1014).
     dashboardRepo.getCycleDashboard.mockResolvedValue({
       program: 'leangains',
       cycleUnit: 'week',
@@ -261,14 +452,19 @@ describe('WorkoutsController', () => {
     workoutRepo.getWorkout.mockResolvedValue([]); // upcoming — no records yet
     scheduledWorkoutRepo.getScheduledWorkouts.mockResolvedValue([
       { workoutNum: 1, weekNum: 1, scheduledDate: new Date('2026-04-20T00:00:00.000Z') },
-      { workoutNum: 4, weekNum: 2, scheduledDate: new Date('2026-04-27T00:00:00.000Z') },
+      { workoutNum: 2, weekNum: 1, scheduledDate: new Date('2026-04-22T00:00:00.000Z') },
+      { workoutNum: 3, weekNum: 2, scheduledDate: new Date('2026-04-27T00:00:00.000Z') },
+      { workoutNum: 4, weekNum: 2, scheduledDate: new Date('2026-04-29T00:00:00.000Z') },
     ]);
 
     const result = await controller.getWorkout('leangains', '4', MOCK_USER);
 
     expect(result.week).toBe(2);
-    // Planned lifts come from the tiled block week (block week 1 for a 1-week block).
-    expect(result.lifts.map((l) => l.lift).sort()).toEqual(['Bench Press', 'Squat']);
+    expect(result.date).toBe('2026-04-29');
+    expect(result.offset).toBe(2);
+    // Planned lifts come from the tiled block week (block week 1 for a 1-week
+    // block), at the workout's own offset.
+    expect(result.lifts.map((l) => l.lift)).toEqual(['Squat']);
     expect(result.lifts.every((l) => l.planned)).toBe(true);
   });
 
@@ -368,6 +564,23 @@ describe('WorkoutsController', () => {
       expect(result.lifts.map((l) => l.lift)).toEqual(['Bench Press']);
     });
 
+    it('marks a replacement with the slot it took, so it inherits that slot’s prescription (issue #1014)', async () => {
+      // The spec has no row for Front Squat, so without `replaces` a client that
+      // looks up its prescription by name finds nothing and plans no sets.
+      dashboardRepo.getCycleDashboard.mockResolvedValue(dashboard);
+      specRepo.getProgramSpec.mockResolvedValue(twoLiftSpec);
+      workoutRepo.getWorkout.mockRejectedValue(new WorkoutNotFoundError('5-3-1', 3, 1));
+      liftOverrideRepo.getOverrides.mockResolvedValue([{ lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' }]);
+
+      const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
+
+      expect(result.lifts).toEqual([
+        { lift: 'Front Squat', sets: [], planned: true, replaces: 'Squat' },
+        { lift: 'Bench Press', sets: [], planned: true },
+      ]);
+      expect(result.lifts[1]).not.toHaveProperty('replaces');
+    });
+
     it('appends added lifts to the planned list', async () => {
       dashboardRepo.getCycleDashboard.mockResolvedValue(dashboard);
       specRepo.getProgramSpec.mockResolvedValue(twoLiftSpec);
@@ -462,7 +675,7 @@ describe('WorkoutsController', () => {
       // empty Set so a transient skip-store failure cannot break the workout
       // response. Verify the fallback branch separately from the success
       // branch — see docs/standards/error-fallback-test-coverage.md.
-      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
       try {
         dashboardRepo.getCycleDashboard.mockResolvedValue(dashboard);
         specRepo.getProgramSpec.mockResolvedValue(spec);
@@ -472,7 +685,10 @@ describe('WorkoutsController', () => {
         const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
 
         expect(result.skipped).toBe(false);
-        expect(errorSpy).toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ message: 'skip store unavailable' }),
+          expect.stringContaining('getSkipsForCycle failed'),
+        );
       } finally {
         errorSpy.mockRestore();
       }

@@ -106,6 +106,32 @@ describe('loadWorkoutPlan', () => {
     expect(squat?.plannedSets.map((set) => set.weight)).toEqual([0, 0, 0, 0, 0, 0]);
   });
 
+  it('plans a week-2+ workout through the block week at its own day (issue #1014)', async () => {
+    // The detail and timer pages both plan through this loader. The spec
+    // endpoint serves only the stored block (every row week 1 here), so before
+    // #1014 a week-2 workout found no rows and both pages planned no sets. Squat
+    // also trains on day 2 with five sets, so the plan must come from this
+    // workout's own day (offset 0, three sets), not just any Squat row.
+    mockedWorkout.mockResolvedValue({
+      program: 'leangains',
+      cycleNum: 1,
+      workoutNum: 4,
+      week: 2,
+      offset: 0,
+      date: '2999-01-01',
+      skipped: false,
+      lifts: [{ lift: 'Squat', sets: [], planned: true }],
+    });
+    mockedSpec.mockResolvedValue([{ ...spec('Squat'), offset: 2, sets: 5 }, spec('Squat')]);
+    mockedMaxes.mockResolvedValue([{ lift: 'Squat', weight: 200 }]);
+
+    const plan = await loadWorkoutPlan('leangains', 4, 'WorkoutTimerPage');
+    if (!plan) throw new Error('expected a plan');
+
+    expect(plan.liftDetails.map((d) => [d.lift, d.warmUpCount, d.workCount])).toEqual([['Squat', 3, 3]]);
+    expect((await plan.timerLifts()).map((l) => [l.lift, l.sets.length])).toEqual([['Squat', 6]]);
+  });
+
   it('narrows the activation column once, keeping a movement and dropping a legacy marker', async () => {
     seedWorkout(['Squat', 'Bench Press'], { Squat: 'Hip Airplane', 'Bench Press': 'compound' });
 

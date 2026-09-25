@@ -41,7 +41,7 @@ A rest timer that reads the workout's own plan, driven by durations the lifter c
    queue advances.
 
 **The queue is built from data, not scraped from the DOM.** `computePlannedSets`
-(`apps/web/lib/workoutPlan.ts:101`) already produces a typed `PlannedSet[]` per lift with
+(in `apps/web/lib/workoutPlan.ts`) already produces a typed `PlannedSet[]` per lift with
 `type: 'warmup' | 'work'`, `setLabel`, `weight`, and `reps` — everything the queue needs. Each set
 expands to up to three phases: an optional `prep` countdown ("get in position"), the `set` itself,
 and a `rest` phase whose duration depends on whether the set was a warm-up or a working set. The

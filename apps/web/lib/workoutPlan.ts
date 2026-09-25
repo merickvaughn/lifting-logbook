@@ -4,10 +4,13 @@ import {
   PROG_SPEC_WORK_PCTS,
   WARMUP_BASE_REPS,
   activationExercise,
+  baseSpecBlockWeeks,
+  blockWeekForProgramWeek,
   expandSpecToLength,
   noScheduleWorkoutDateUTC,
   orderedWorkoutKeys,
   programLengthWeeks,
+  specRowsForWorkoutDay,
 } from '@lifting-logbook/core';
 import type {
   LiftingProgramSpecResponse,
@@ -70,30 +73,20 @@ export function buildWorkoutDays(
 
   const fullSpec = expandSpecToLength(specs, programLengthWeeks(program ?? '', specs));
 
-  const byKey = new Map<string, LiftingProgramSpecResponse[]>();
-  for (const spec of fullSpec) {
-    const key = `${spec.week}:${spec.offset}`;
-    const lifts = byKey.get(key) ?? [];
-    lifts.push(spec);
-    byKey.set(key, lifts);
-  }
-
-  return orderedWorkoutKeys(fullSpec).map((k, i) => {
-    const lifts = (byKey.get(`${k.week}:${k.offset}`) ?? []).sort(
-      (a, b) => a.order - b.order,
-    );
-    return {
-      workoutNum: i + 1,
-      week: k.week,
-      // cycleStart + (week-1)*7 + offset, via the shared core helper the API's
-      // no-schedule detail fallback (toWorkoutResponse) also calls — so a card's
-      // date can never drift from the workout it opens (issues #740, #745).
-      date: noScheduleWorkoutDateUTC(startDate, k.week, k.offset)
-        .toISOString()
-        .slice(0, 10),
-      lifts,
-    };
-  });
+  return orderedWorkoutKeys(fullSpec).map((k, i) => ({
+    workoutNum: i + 1,
+    week: k.week,
+    // cycleStart + (week-1)*7 + offset, via the shared core helper the API's
+    // no-schedule detail fallback (toWorkoutResponse) also calls — so a card's
+    // date can never drift from the workout it opens (issues #740, #745).
+    date: noScheduleWorkoutDateUTC(startDate, k.week, k.offset)
+      .toISOString()
+      .slice(0, 10),
+    // The day's rows through the same helper the workout endpoint plans a day
+    // with, so a card and the workout it opens start from the same rows (#1014).
+    // Stored rows carry their block week; the card's carry the program week.
+    lifts: specRowsForWorkoutDay(specs, k.week, k.offset).map((row) => ({ ...row, week: k.week })),
+  }));
 }
 
 /**
@@ -190,20 +183,56 @@ export interface WorkoutLiftDetail {
 }
 
 /**
+ * The spec row prescribing each of a workout's lifts, index-aligned with
+ * `workout.lifts`; `undefined` where the program plans none on that day (a lift
+ * logged ad hoc, or one added through Manage Lifts).
+ *
+ * `workout.week` is the *program* week while `specs` is the one stored block, so
+ * the day resolves through the block week at the workout's `offset` — the same
+ * `specRowsForWorkoutDay` the API chose the day's lifts with (issue #1014). A
+ * Manage Lifts replacement is looked up by the slot it `replaces`: a swap changes
+ * the movement, not the slot, so it inherits that prescription (the caller prices
+ * it from the replacement's own training max).
+ *
+ * `offset: null` is a workout the program has no day for (#1023): nothing on it
+ * has a prescription. A response with no `offset` at all comes from an API that
+ * predates the field — an API rolled back under a newer web — and can only be
+ * matched on its block week.
+ */
+export function liftSpecsForWorkout(
+  workout: Pick<WorkoutResponse, 'week' | 'offset' | 'lifts'>,
+  specs: readonly LiftingProgramSpecResponse[],
+): (LiftingProgramSpecResponse | undefined)[] {
+  let dayRows: readonly LiftingProgramSpecResponse[];
+  if (workout.offset === null) {
+    dayRows = [];
+  } else if (workout.offset !== undefined) {
+    dayRows = specRowsForWorkoutDay(specs, workout.week, workout.offset);
+  } else {
+    const blockWeek = blockWeekForProgramWeek(workout.week, baseSpecBlockWeeks(specs));
+    dayRows = specs.filter((s) => s.week === blockWeek);
+  }
+  return workout.lifts.map((wl) => dayRows.find((s) => s.lift === (wl.replaces ?? wl.lift)));
+}
+
+/**
  * Derives the per-lift plan for a workout from the program spec and the
  * training maxes — one entry per `workout.lifts` entry, in order, never
  * filtered: position is a lift occurrence's identity for the timer (ADR-035
  * Amendment 4), so a lift with no training max is kept as an empty plan.
+ * Each lift's prescription comes from {@link liftSpecsForWorkout}; its weights
+ * from its own training max — a replacement's, not its slot's.
  */
 export function buildLiftDetails(
-  workout: Pick<WorkoutResponse, 'week' | 'lifts'>,
+  workout: Pick<WorkoutResponse, 'week' | 'offset' | 'lifts'>,
   specs: readonly LiftingProgramSpecResponse[],
   maxes: readonly Pick<TrainingMaxResponse, 'lift' | 'weight'>[],
 ): WorkoutLiftDetail[] {
   const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
-  return workout.lifts.map((wl) => {
+  const liftSpecs = liftSpecsForWorkout(workout, specs);
+  return workout.lifts.map((wl, i) => {
     const tm = maxMap.get(wl.lift) ?? 0;
-    const spec = specs.find((s) => s.week === workout.week && s.lift === wl.lift);
+    const spec = liftSpecs[i];
     const plannedSets = spec ? computePlannedSets(spec, tm) : [];
     return {
       lift: wl.lift,

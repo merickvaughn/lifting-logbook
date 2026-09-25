@@ -38,20 +38,26 @@ export const TIMER_STORAGE_KEY = 'll.timer.v1';
  * carried over, so elapsed time recorded against a 60 s set is applied to a
  * 240 s rest.
  *
- * The re-anchor effect in `useWorkoutTimer` cannot catch this — it compares the
- * queue against the *previous render's* queue, which on a fresh mount is already
- * the new shape, so it re-finds and then cements the displaced phase.
+ * Re-anchoring cannot catch this. `reanchorIndex` (ADR-035 Amendment 4) finds a
+ * run's phase by position, and when that position no longer exists it moves on
+ * to the next surviving phase without checking which lift it belongs to. That is
+ * right within one plan, where a phase disappears because a warm-up was skipped
+ * or a duration went to zero, but wrong once the plan itself has changed shape.
  *
  * Bump this whenever a change alters the phases `buildTimerQueue` emits for a
  * given plan, or changes what a run needs in order to be re-anchored (shape 3
- * added the persisted `on` key — issue #980). A run written under a different
+ * added the persisted `on` key — issue #980), or changes the plan an existing
+ * workout resolves to. Shape 4 is that last case (#1014): a workout now plans
+ * its own day's lifts rather than the whole week's, and gains its week-2+ sets,
+ * so a run anchored in the old queue could re-anchor onto another lift's set
+ * instead of ending. A run written under a different
  * version is dropped rather than resumed at the wrong phase: a run is minutes of
  * ephemeral position (the lifter taps Start again), whereas a silently wrong
  * countdown is indistinguishable from a working one. Settings are stored beside
  * it and are unaffected — they migrate field-by-field through
  * `normalizeTimerSettings` instead.
  */
-export const TIMER_RUN_SHAPE = 3;
+export const TIMER_RUN_SHAPE = 4;
 
 interface StoredBlob {
   settings: unknown;
