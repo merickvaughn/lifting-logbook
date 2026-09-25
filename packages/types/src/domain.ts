@@ -45,6 +45,46 @@ export interface MovementProfile {
   complexity: MovementComplexity;
 }
 
+/**
+ * Muscle groups used to count weekly set volume, ordered upper → lower body.
+ *
+ * The granularity follows the groups hypertrophy volume guidance is written for: the
+ * shoulder splits into front, side and rear delts and the back into lats, upper back,
+ * traps and lower back, because those regions answer to different movements — a program
+ * can press heavily and still give the side delts almost no direct work. See ADR-036.
+ */
+export const MUSCLE_GROUPS = [
+  'Chest',
+  'Front Delts',
+  'Side Delts',
+  'Rear Delts',
+  'Triceps',
+  'Biceps',
+  'Forearms',
+  'Lats',
+  'Upper Back',
+  'Traps',
+  'Lower Back',
+  'Core',
+  'Quads',
+  'Hamstrings',
+  'Glutes',
+  'Adductors',
+  'Calves',
+] as const;
+
+export type MuscleGroup = (typeof MUSCLE_GROUPS)[number];
+
+/**
+ * The muscles a lift trains, for weekly set counts: a working set counts 1 toward each
+ * `primary` muscle and ½ toward each `secondary` one (the "fractional" counting method —
+ * see ADR-036). A muscle appears in one list, never both.
+ */
+export interface MuscleTargets {
+  primary: readonly MuscleGroup[];
+  secondary: readonly MuscleGroup[];
+}
+
 /** A first-class exercise domain object. */
 export interface Lift {
   id: string;

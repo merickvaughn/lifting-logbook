@@ -212,6 +212,16 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 
 ---
 
+## Training Science
+
+| Source | Cited In | Relevance |
+|---|---|---|
+| [Pelland et al. (2025), *The Resistance Training Dose Response*, Sports Medicine](https://link.springer.com/article/10.1007/s40279-025-02344-w) | [ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md) | Meta-regression that compares three ways to count indirect sets: direct (0), fractional (0.5) and total (1). ADR-036's weekly counts use the fractional method: primary muscle 1, secondary ½. |
+| [Rodríguez-Ridao et al. (2020), IJERPH 17(19):7339](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7579505/) | [ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md) | EMG study of five bench inclinations. Upper-chest activity peaks at 30°, and above 45° the anterior deltoid takes over. This is why incline pressing is treated as a chest-emphasis question rather than a separate movement direction. |
+| [r/bodyweightfitness — Recommended Routine](https://redditbwf.github.io/wiki/recommended_routine.html) | [ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md) | A community convention, not research. It pairs dips with pull-ups and push-ups with rows, which supports classifying the dip as a vertical push relative to the torso. |
+
+---
+
 ## Observability
 
 | Source | Cited In | Relevance |

@@ -71,35 +71,57 @@ This half is modeled deliberately and well. `packages/types/src/domain.ts` defin
 | Complexity | `MovementProfile.complexity` | `simple` \| `compound` | Single- vs multi-joint mechanics |
 
 Pattern tags **combine** rather than enumerate: `push + vertical` is the overhead-press
-pattern, `pull + horizontal` is the row pattern.
+pattern, `pull + horizontal` is the row pattern. **Vertical and horizontal are measured relative
+to the torso**, not the floor ([ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md)).
+So a bench press is a horizontal push even though the lifter lies down, and a dip is a vertical
+push because the hands drive down along the torso. An upright row is a vertical pull. Incline
+pressing stays horizontal: at 45° or less it presses at least as close to perpendicular to the
+torso as to parallel, and what it mainly changes is chest emphasis.
 
 Role and complexity are the pair most easily confused, and `domain.ts` calls this out
 directly: a **Goblet Squat is movement-`compound`** (knees and hips) **yet
 role-`accessory`**. The two axes are independent and must stay that way.
 
 [`packages/core/src/catalog/lifts.ts`](../packages/core/src/catalog/lifts.ts) carries all
-four axes for **21 of the 23 built-in lifts**, grouped by pattern with a trailing
-accessories group. Two leave one axis deliberately empty: `farmers-carry` has no
-`jointActions` — a loaded carry has no prime mover driven through a range of motion, and
-the source comment says so explicitly — and `calf-raise` has no `patterns`.
-`isBodyweightComponent` marks the three where body weight contributes to the load
-(dip, chin-up, pull-up).
+four axes for **23 of the 26 built-in lifts**, grouped by pattern with a trailing accessories
+group. Three leave one axis deliberately empty:
+- `farmers-carry` has no `jointActions`. A loaded carry has no prime mover driven through a range
+  of motion, and the source comment says so explicitly.
+- `calf-raise` and `lateral-raise` have no `patterns`. A raise neither pushes nor pulls.
 
-### A fifth axis that never joins
+The curls (`cable-curl`, `leg-curl`) keep a lone `pull` tag, since they flex a joint toward the
+body, but no direction. So neither a raise nor a curl earns a push/pull direction row.
 
-`LiftMetadata` (`muscleGroups`, `substitutions`, `foundational`) is a **separate
-per-user table keyed by lift *name***, while `CustomLift` is keyed by uuid. It does not
-appear on `Lift`, `CustomLift` or `CustomLiftResponse`. It is also the only way to
-annotate a *built-in* catalog lift. So per-user lift attributes live in two unrelated
-stores under two different keys, and `muscleGroups` is an unconstrained `String[]` with
-no enum and no seed.
+`isBodyweightComponent` marks the three where body weight contributes to the load (dip, chin-up,
+pull-up).
+
+### A fifth axis: muscle groups, defaulted in the catalog, overridden per user
+
+Every catalog entry is a `CatalogLift`: a `Lift` plus `muscles: MuscleTargets`. That field holds
+**default** `primary` and `secondary` muscle groups from the 17-name `MUSCLE_GROUPS` vocabulary in
+`packages/types`. Weekly set counts credit 1 per primary and ½ per secondary
+([ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md)). The shared `Lift` type
+does not carry muscles: a custom lift under its own name has no defaults, and the API never
+returns catalog muscles.
+
+Per-user overrides still live in `LiftMetadata` (`muscleGroups`, `substitutions`, `foundational`).
+That is a **separate per-user table keyed by lift *name***, while `CustomLift` is keyed by uuid.
+- An override on an exact lift name replaces the defaults for that name. Overrides do not follow
+  aliases: one on "Squat" leaves "Back Squat" on its defaults.
+- An empty list means "use the defaults".
+- `muscleGroups` is still an unconstrained `String[]`. Readers canonicalize it
+  case-insensitively against the vocabulary and keep unknown text as its own row
+  (`buildMuscleTargetResolver`, `packages/core/src/catalog/muscles.ts`).
+- Per-user lift attributes still live in two unrelated stores under two different keys. That is why
+  a custom-lift rename orphans its overrides (D3).
 
 ### Two name registries, one bridge
 
 | Registry | Count | Purpose |
 |---|---|---|
 | `LIFT_NAMES` (`domain.ts`) | 12 | Autocomplete / onboarding fallback |
-| `LIFT_CATALOG` (`core/catalog/lifts.ts`) | 23 | The real catalog, carrying the four axes |
+| `LIFT_CATALOG` (`core/catalog/lifts.ts`) | 26 | The real catalog: the four axes plus default muscles |
+| `CatalogLift.aliases` (per entry) | 4 | Preset names that are neither catalog nor slot names (`Weighted Pull-ups`, `Incline DB Press`, `Calf Raises`, `Lateral Raises`) |
 
 They share 7 names exactly and diverge on 5 — `Squat`/`Back Squat`, `Dips`/`Dip`,
 `Face Pulls`/`Face Pull`, `Cable Curls`/`Cable Curl`, `Cable Lat Raise`/`Lateral Raise`.
@@ -108,13 +130,33 @@ is the reconciliation layer and resolves all of them for import. The onboarding
 fallback in `apps/web/app/(authed)/onboarding/page.tsx` renders raw `LIFT_NAMES`
 strings **without** passing through that bridge.
 
+`builtInLiftFor(name)` (`core/catalog/builtInLift.ts`) is the one lookup that accepts every form a
+built-in goes by:
+- catalog display name;
+- catalog id;
+- per-entry alias;
+- slot name.
+
+Lift classification, default muscles and movement patterns all resolve through it. The per-entry
+aliases are deliberately **not** in `DEFAULT_SLOT_MAP`. That map also drives the logger's
+bodyweight detection, import validation and the custom-lift collision guard, and aliasing
+`Weighted Pull-ups` there would flip it to a bodyweight-component lift. Those are separate
+decisions, tracked in [#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015).
+
 Every schema column references a lift by **name string**, not by `Lift.id` — see divergence
 D3. But the column is not single-vocabulary: the import path can persist a canonical
 catalog or custom-lift **id** into that same column when a row is pre-resolved through
 `liftOverrides`, which is why `DEFAULT_SLOT_MAP` self-maps canonical ids and why
-[`catalog/classify.ts`](../packages/core/src/catalog/classify.ts) opens by stating that
-three vocabularies reach its lookup — slot names, catalog names, and catalog ids. Code
-reading a `lift` value must tolerate all three.
+[`catalog/builtInLift.ts`](../packages/core/src/catalog/builtInLift.ts) opens by stating that
+four forms reach its lookup — slot names, catalog names, catalog ids and per-entry aliases.
+Import can also store a custom lift's **uuid**, which is why `lookupLift` matches custom lifts
+by name *or* id. Code reading a `lift` value must tolerate all of these.
+
+When a name belongs to both a built-in and one of the user's custom lifts, `lookupLift` settles
+it. A **reserved** name (a `DEFAULT_SLOT_MAP` slot name, which the custom-lift guard refuses)
+always means the built-in. Any other name prefers the custom lift, whose classification and
+patterns the user recorded. Default muscles are the one exception: they attach to the *name*, so
+a same-named custom lift reads them until it is overridden.
 
 ---
 
@@ -346,6 +388,15 @@ classDiagram
         +uuid id
         +string name
     }
+    class CatalogLift {
+        <<registry>>
+        +MuscleTargets muscles
+        +string[] aliases
+    }
+    class MuscleTargets {
+        +MuscleGroup[] primary
+        +MuscleGroup[] secondary
+    }
     class LiftMetadata {
         <<persisted>>
         +string lift
@@ -368,7 +419,9 @@ classDiagram
     Workout <.. WorkoutLiftOverride : add/remove/replace
     Lift *-- MovementProfile
     CustomLift --|> Lift
-    LiftMetadata ..> Lift : detached - keyed by NAME, never joins
+    CatalogLift --|> Lift
+    CatalogLift *-- MuscleTargets : default muscles
+    LiftMetadata ..> Lift : overrides muscles by exact NAME - no FK
     TrainingMax ..> TrainingMaxHistory : appended on change
 ```
 
@@ -377,7 +430,9 @@ The four edges worth reading twice:
 1. `LiftRecord ..> Workout` — **no foreign key.** The link is a string coordinate.
 2. `CustomProgramSpec × TrainingMax ..> PlannedSet` — the prescription becomes concrete weights only at read time.
 3. `PlannedSet ..> LiftRecord` — **set kind is discarded on write.**
-4. `LiftMetadata ..> Lift` — drawn detached, because it never actually joins.
+4. `LiftMetadata ..> Lift` — still no foreign key. A per-user row keyed by exact lift **name**
+   overrides a catalog lift's default muscles. It is also the *only* source of muscles for a
+   custom lift, which is why renaming a custom lift orphans it (D3).
 
 ### What the database looks like
 
