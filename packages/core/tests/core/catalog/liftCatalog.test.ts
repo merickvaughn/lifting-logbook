@@ -88,6 +88,29 @@ describe("LIFT_CATALOG", () => {
     });
   });
 
+  describe("direction is measured relative to the torso — spot checks", () => {
+    const patternsOf = (id: string) => LIFT_CATALOG.find((l) => l.id === id)?.movementProfile.patterns;
+
+    it("dip is a vertical push (the hands drive down along the torso)", () => {
+      expect(patternsOf('dip')).toEqual(['push', 'vertical']);
+    });
+
+    it("upright-row is a vertical pull (the bar travels up along the torso)", () => {
+      expect(patternsOf('upright-row')).toEqual(['pull', 'vertical']);
+    });
+
+    it("incline pressing stays a horizontal push", () => {
+      expect(patternsOf('incline-bench-press')).toEqual(['push', 'horizontal']);
+      expect(patternsOf('incline-db-press')).toEqual(['push', 'horizontal']);
+    });
+
+    it("lateral-raise, leg-curl and calf-raise carry no push/pull direction", () => {
+      expect(patternsOf('lateral-raise')).toEqual([]);
+      expect(patternsOf('leg-curl')).toEqual([]);
+      expect(patternsOf('calf-raise')).toEqual([]);
+    });
+  });
+
   describe("jointActions and complexity — spot checks", () => {
     it("face-pull drives external-rotation and is movement-simple", () => {
       const lift = LIFT_CATALOG.find((l) => l.id === 'face-pull')!;

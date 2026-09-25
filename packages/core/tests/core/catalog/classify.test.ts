@@ -30,7 +30,7 @@ describe('liftClassificationFor', () => {
   // that actually reaches a workout is covered. A custom program's spec `lift`
   // values come from ProgramEditor's picker, which is built as
   // `LIFT_CATALOG.map((l) => l.name)`, so catalog display names reach here too —
-  // and only 8 of the 23 are slot-map keys. Seeded from DEFAULT_SLOT_MAP alone,
+  // and only 8 of them are slot-map keys. Seeded from DEFAULT_SLOT_MAP alone,
   // 15 names returned undefined, 8 of them accessories (Cable Curl, Lateral
   // Raise, Face Pull, Lat Pulldown, Dumbbell Row, Goblet Squat, Hip Thrust,
   // Kettlebell Swing) — the feature silently not firing on the lifts it exists
@@ -50,6 +50,18 @@ describe('liftClassificationFor', () => {
     expect(liftClassificationFor('Face Pull')).toBe('accessory');
     expect(liftClassificationFor('Cable Lat Raise')).toBe('accessory');
     expect(liftClassificationFor('Lateral Raise')).toBe('accessory');
+  });
+
+  it('classifies the Leangains/RPT preset names that are neither catalog nor slot names', () => {
+    // These resolve through per-entry catalog aliases (or, for Cable Row and Leg Curl,
+    // catalog entries added for them). Before, all six returned undefined, so the rest
+    // timer never applied accessory durations to Leangains' accessories.
+    expect(liftClassificationFor('Weighted Pull-ups')).toBe('compound');
+    expect(liftClassificationFor('Incline DB Press')).toBe('accessory');
+    expect(liftClassificationFor('Cable Row')).toBe('accessory');
+    expect(liftClassificationFor('Leg Curl')).toBe('accessory');
+    expect(liftClassificationFor('Calf Raises')).toBe('accessory');
+    expect(liftClassificationFor('Lateral Raises')).toBe('accessory');
   });
 
   it('classifies a custom lift from the list it is given', () => {
