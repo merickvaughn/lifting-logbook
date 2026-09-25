@@ -60,8 +60,9 @@ The torso-relative rule gets applied consistently in the catalog:
 | Upright Row | horizontal pull | vertical pull |
 | Lateral Raise | push + vertical | no push/pull tag (an abduction isolation lift) |
 
-Incline pressing stays horizontal push. Its real distinction is regional chest emphasis, not the
-direction of force.
+Incline pressing stays horizontal push. A bench inclined θ° presses at (90 − θ)° to the torso, so
+an incline of 45° or less presses at least as close to perpendicular as to parallel. What the
+incline mainly changes is regional chest emphasis.
 
 When every week of a program has the same counts, the table collapses to a single "sets / week"
 column. Lifts with no muscle groups or pattern are listed as not counted rather than silently
@@ -155,8 +156,9 @@ implementation. The API adds three things:
   lift-library page for editing muscles.
 - **Pattern tags on built-in lifts can't be edited by the user.** They are catalog data. Custom
   lifts keep their existing editable tags.
-- **No incline direction, and no upper/lower chest split.** Both were considered and declined:
-  a 30–45° incline still presses closer to perpendicular to the torso than parallel to it.
+- **No incline direction, and no upper/lower chest split.** Both were considered and declined.
+  An incline of 45° or less presses at least as close to perpendicular to the torso as to
+  parallel, and the chest split is a vocabulary change to revisit only if it proves needed.
 - **Other volume measures.** No per-muscle volume targets or landmarks, no trends across weeks or
   cycles, and no reps × load (tonnage) volume.
 - **Warm-ups in logged data.** Set kind is not stored (`docs/domain-model.md` §4), so Done counts
