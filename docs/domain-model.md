@@ -228,7 +228,8 @@ current lift. It also keeps the slot's prescription: sets, reps, AMRAP, warm-up 
 decrement percentages, increment and activation. Only the weights change, because they
 are priced from the replacement's own training max. `applyLiftOverrides`
 (`packages/core`) is the one definition of these rules. It applies a workout's overrides
-in the order they were made, and the repositories return them in that order. The
+in the order each was last written, which is how the repositories return them (saving an
+override again re-creates it at the end). The
 workout response names the slot on the replacement's `replaces`, so clients resolve the
 prescription without the override table (#1014). Progression doesn't follow these rules
 yet: `updateMaxes` still looks a record's prescription up by the record's own lift name
@@ -498,7 +499,7 @@ through with its closing PR rather than deleted or renumbered.
 
 | # | Finding | Location |
 |---|---|---|
-| **D1** | **Logged `amrap` is recovered by string-sniffing free text**: `amrap: r.notes.toUpperCase().includes('AMRAP')`. Any note mentioning "amrap" flips the flag. `amrap` is a real column on `custom_program_spec` but has none for a logged set. | `apps/api/src/programs/mappers.ts:340` |
+| **D1** | **Logged `amrap` is recovered by string-sniffing free text**: `amrap: r.notes.toUpperCase().includes('AMRAP')`. Any note mentioning "amrap" flips the flag. `amrap` is a real column on `custom_program_spec` but has none for a logged set. | `apps/api/src/programs/mappers.ts:341` |
 | **D2** | **`deleteCurrentCycle` does not delete the workout overrides.** Its docstring opens "the current cycle … and every row scoped to it", then enumerates five kinds; the `repos` parameter's `Pick<>` type structurally excludes the rest. `workout_date_override`, `workout_skip_override` and `workout_lift_override` are all `(program, cycleNum, workoutNum)`-scoped and survive, so after delete-then-initialize the old cycle 1's reschedules, skips and lift overrides resurface on the new cycle 1. No FK cascade covers it. (`strength_goal` and `body_weight` also survive, which is arguably correct — they outlive a cycle. `import_batch` survives with a `preImage` referencing deleted rows.) | `apps/api/src/programs/cycle-generation.service.ts:281` |
 | **D3** | **Renaming a custom lift silently orphans its history.** `custom_lift.id` is the REST key, and `domain.ts` claims id is independent of name "so a lift can be renamed without breaking references" — but every training table keys lifts by name string, and `update()` writes only the `custom_lift` row. There is no `updateMany` in any repository. A rename leaves `lift_record`, `training_max`, `strength_goal`, `lift_metadata`, `workout_lift_override` and `custom_program_spec` pointing at the old name. | `apps/api/src/adapters/prisma/custom-lift.repository.ts:59` |
 | **D4** | **A `LiftRecord`'s public id is unstable.** The cuid PK is never exposed; `LiftRecordResponse.id` is the synthetic composite `program-cycleNum-workoutNum-YYYYMMDD-lift-setNum`, parsed back to the compound unique index on `PATCH`. Editing a record's date therefore changes its id. `packages/core`'s `LiftRecord` model declares no `id` field at all. | `packages/core/src/utils/import/liftRecordNaturalKey.ts:74` |

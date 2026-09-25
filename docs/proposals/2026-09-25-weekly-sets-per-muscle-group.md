@@ -173,7 +173,9 @@ implementation. The API adds three things:
   is `applyLiftOverrides` in `@lifting-logbook/core`. It returns each swap's `replaces` and where
   each stored lift name's logged sets now belong, following chains of swaps. The current-week
   counts (#1019) should call it on each workout's overrides rather than re-implement the swap
-  table, so the dashboard and the workout pages agree.
+  table, so the dashboard and the workout pages agree. Its cycle-wide override read must return
+  each workout's overrides in the order each was last written, as `getOverrides` does; otherwise
+  a chain resolves differently on the dashboard.
 
 ## References
 

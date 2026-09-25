@@ -191,14 +191,18 @@ describe('toWorkoutResponse with plannedLifts', () => {
     expect(result.lifts[0]?.sets[0]?.id).toBe('5-3-1-1-1-20260507-Squat-1');
   });
 
-  it('emits the day’s offset, and an explicit null when the program has no day (issue #1014)', () => {
-    const withDay = toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: 3 });
-    expect(withDay.offset).toBe(3);
+  it('emits the day’s offset, an explicit null for "no program day", and nothing when not told (issue #1014)', () => {
+    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: 3 }).offset).toBe(3);
     // Offset 0 is a real day, not "no day".
     expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: 0 }).offset).toBe(0);
-    // Never absent: absence is how a client recognizes an API predating the field.
-    const withoutDay = toWorkoutResponse(program, cycleNum, workoutNum, week, []);
-    expect(withoutDay).toHaveProperty('offset', null);
+    // Only an explicit null says the program has no day for this workout…
+    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: null })).toHaveProperty(
+      'offset',
+      null,
+    );
+    // …leaving the option out says nothing, so a caller that forgets it cannot
+    // make a client plan an empty workout.
+    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [])).not.toHaveProperty('offset');
   });
 
   it('marks unlogged planned lifts as planned:true with empty sets', () => {

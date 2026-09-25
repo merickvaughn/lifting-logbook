@@ -25,14 +25,10 @@ export class InMemoryWorkoutLiftOverrideRepository
     override: LiftOverride,
   ): Promise<void> {
     const k = this.key(program, cycleNum, workoutNum);
-    const existing = this.store.get(k) ?? [];
-    const idx = existing.findIndex((o) => o.lift === override.lift);
-    if (idx >= 0) {
-      existing[idx] = override;
-    } else {
-      existing.push(override);
-    }
-    this.store.set(k, existing);
+    // A re-saved override moves to the end — the order each was last written,
+    // matching the Prisma adapter, which re-creates the row (issue #1014).
+    const others = (this.store.get(k) ?? []).filter((o) => o.lift !== override.lift);
+    this.store.set(k, [...others, override]);
   }
 
   async deleteOverride(

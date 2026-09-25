@@ -6,8 +6,10 @@ export type { LiftOverride };
 
 export interface IWorkoutLiftOverrideRepository {
   /**
-   * The workout's overrides in the order they were made. `applyLiftOverrides`
-   * depends on it: a chain of swaps only resolves when applied in sequence.
+   * The workout's overrides in the order each was last written: saving an
+   * override for a lift again moves it to the end. `applyLiftOverrides` depends
+   * on it: a chain of swaps, or a swap made again after being undone, only
+   * resolves when applied in that sequence.
    */
   getOverrides(
     program: string,

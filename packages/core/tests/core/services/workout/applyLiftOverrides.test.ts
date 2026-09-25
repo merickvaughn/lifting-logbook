@@ -156,4 +156,61 @@ describe("applyLiftOverrides — where logged sets belong", () => {
     expect(renamed.has("Squat")).toBe(false);
     expect(removed.has("Squat")).toBe(false);
   });
+
+  it("lets a lift the plan shows keep the sets stored under its own name", () => {
+    // Squat's slot was swapped and removed, then Leg Press's slot became Squat.
+    // A Squat set logged in that slot must show there, not vanish with the old
+    // slot. Older Squat sets come along: sets are keyed by name alone (#1027).
+    const o: LiftOverride[] = [
+      { lift: "Squat", action: "replace", replacedBy: "Front Squat" },
+      { lift: "Front Squat", action: "remove" },
+      { lift: "Leg Press", action: "replace", replacedBy: "Squat" },
+    ];
+    const { planned, renamed, removed } = applyLiftOverrides([...lifts, "Leg Press"], o);
+    expect(planned[2]).toEqual({ lift: "Squat", replaces: "Leg Press" });
+    expect(removed.has("Squat")).toBe(false);
+    expect(renamed.has("Squat")).toBe(false);
+    expect([...removed]).toEqual(["Front Squat"]);
+    expect(Object.fromEntries(renamed)).toEqual({ "Leg Press": "Squat" });
+  });
+});
+
+describe("applyLiftOverrides — an override saved again", () => {
+  // The repositories return overrides in the order each was last written, and
+  // saving an override for a lift again moves it to the end. Each case below
+  // is that order after the flow it names.
+
+  it("redo after undo: a swap made again applies after the undo", () => {
+    // Squat → Front Squat, back to Squat, then Squat → Front Squat again. The
+    // Squat row was re-saved last; the undo (Front Squat → Squat) is older.
+    const o: LiftOverride[] = [
+      { lift: "Front Squat", action: "replace", replacedBy: "Squat" },
+      { lift: "Squat", action: "replace", replacedBy: "Front Squat" },
+    ];
+    expect(applyLiftOverrides(lifts, o).planned[0]).toEqual({ lift: "Front Squat", replaces: "Squat" });
+  });
+
+  it("a different swap after an undo keeps the undone lift’s sets with the slot", () => {
+    // Squat → Front Squat (a set logged as Front Squat), back to Squat, then
+    // Squat → Box Squat. The Front Squat set was the slot's, so it goes to Box Squat.
+    const o: LiftOverride[] = [
+      { lift: "Front Squat", action: "replace", replacedBy: "Squat" },
+      { lift: "Squat", action: "replace", replacedBy: "Box Squat" },
+    ];
+    const { planned, renamed } = applyLiftOverrides(lifts, o);
+    expect(planned[0]).toEqual({ lift: "Box Squat", replaces: "Squat" });
+    expect(Object.fromEntries(renamed)).toEqual({ "Front Squat": "Box Squat", Squat: "Box Squat" });
+  });
+
+  it("removing after an undo hides the undone lift’s sets too", () => {
+    // Squat → Front Squat (a set logged as Front Squat), back to Squat, then
+    // remove Squat. The slot is gone, so is its Front Squat set.
+    const o: LiftOverride[] = [
+      { lift: "Front Squat", action: "replace", replacedBy: "Squat" },
+      { lift: "Squat", action: "remove" },
+    ];
+    const { planned, removed } = applyLiftOverrides(lifts, o);
+    expect(names(planned)).toEqual(["Bench Press", "Deadlift"]);
+    expect([...removed].sort()).toEqual(["Front Squat", "Squat"]);
+  });
 });

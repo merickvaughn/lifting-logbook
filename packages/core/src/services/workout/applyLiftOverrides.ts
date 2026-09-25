@@ -40,9 +40,15 @@ export interface AppliedLiftOverrides {
  *   unplanned (ad hoc) lift regroups its logged sets under the replacement.
  * - `add`: appends the lift if it is not already planned.
  *
- * Overrides must arrive in the order they were made — the repositories sort by
- * creation — because a chain depends on it: Squat → Front Squat → Box Squat
- * applies its second swap only after the first has put Front Squat in the list.
+ * A lift the plan shows always owns the sets stored under its own name, even a
+ * name an earlier override hid or regrouped: a set just logged against it must
+ * not vanish. (Sets are keyed by name alone, so older sets under that name come
+ * with it; telling them apart needs slot identity, #1027.)
+ *
+ * Overrides must arrive in the order each was last written — the repositories
+ * guarantee it — because a chain depends on it: Squat → Front Squat → Box Squat
+ * applies its second swap only after the first has put Front Squat in the list,
+ * and a swap made again after being undone must apply after the undo.
  */
 export function applyLiftOverrides(
   specLifts: readonly string[],
@@ -75,6 +81,8 @@ export function applyLiftOverrides(
       if (!planned.some((l) => l.lift === o.lift)) planned.push({ lift: o.lift });
     }
   }
+
+  for (const { lift } of planned) owner.delete(lift);
 
   const renamed = new Map<string, string>();
   const removed = new Set<string>();

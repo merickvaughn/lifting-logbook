@@ -275,10 +275,11 @@ export interface WorkoutResponseOptions {
   /**
    * This workout's `(week, offset)` key offset; feeds the no-schedule date and is
    * emitted as `WorkoutResponse.offset`, so a client can resolve the day's spec
-   * rows (issue #1014). `undefined` means the program has no day for this
-   * workout, emitted as an explicit `null`.
+   * rows (issue #1014). `null` states that the program has no day for this
+   * workout and is emitted as `null`. Leaving it out states nothing: the field is
+   * omitted, which a client treats like an API that predates it.
    */
-  offset?: number | undefined;
+  offset?: number | null | undefined;
   /**
    * Stored lift name → the lift to group its records under, for `replace`
    * overrides. Applied while grouping rather than by renaming the records up
@@ -372,7 +373,7 @@ export const toWorkoutResponse = (
     ? isoDate(records[0].date)
     : scheduledDate
       ? isoDate(scheduledDate)
-      : cycleStartDate !== undefined && offset !== undefined
+      : cycleStartDate !== undefined && typeof offset === 'number'
         ? isoDate(noScheduleWorkoutDateUTC(cycleStartDate, week, offset))
         : isoDate(new Date());
   return {
@@ -380,9 +381,7 @@ export const toWorkoutResponse = (
     cycleNum,
     workoutNum,
     week,
-    // Always present, so a client can tell "no program day" (null) from an API
-    // that predates the field (absent).
-    offset: offset ?? null,
+    ...(offset !== undefined && { offset }),
     date,
     ...(overrideDate !== undefined && { overrideDate: isoDate(overrideDate) }),
     skipped,

@@ -38,9 +38,11 @@ export const TIMER_STORAGE_KEY = 'll.timer.v1';
  * carried over, so elapsed time recorded against a 60 s set is applied to a
  * 240 s rest.
  *
- * The re-anchor effect in `useWorkoutTimer` cannot catch this — it compares the
- * queue against the *previous render's* queue, which on a fresh mount is already
- * the new shape, so it re-finds and then cements the displaced phase.
+ * Re-anchoring cannot catch this. `reanchorIndex` (ADR-035 Amendment 4) finds a
+ * run's phase by position, and when that position no longer exists it moves on
+ * to the next surviving phase without checking which lift it belongs to. That is
+ * right within one plan, where a phase disappears because a warm-up was skipped
+ * or a duration went to zero, but wrong once the plan itself has changed shape.
  *
  * Bump this whenever a change alters the phases `buildTimerQueue` emits for a
  * given plan, or changes what a run needs in order to be re-anchored (shape 3

@@ -943,6 +943,27 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       await deleteReq(`${OVERRIDE_URL(cycleNum, 1)}/Squat`);
     });
 
+    it('a swap made again after being undone takes effect (issue #1014)', async () => {
+      // Squat → Front Squat, back to Squat, then Squat → Front Squat again. The
+      // third save rewrites the Squat override; had it kept its first position
+      // it would apply before the undo and the workout would stay on Squat.
+      const dashRes = await get(`/programs/${PROGRAM}/cycles/current`);
+      const { cycleNum } = dashRes.json() as { cycleNum: number };
+      try {
+        await postJson(OVERRIDE_URL(cycleNum, 1), { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
+        await postJson(OVERRIDE_URL(cycleNum, 1), { action: 'replace', lift: 'Front Squat', replacedBy: 'Squat' });
+        await postJson(OVERRIDE_URL(cycleNum, 1), { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
+
+        const res = await get(`/programs/${PROGRAM}/workouts/1`);
+        const lifts = (res.json() as { lifts: { lift: string; replaces?: string }[] }).lifts;
+        expect(lifts.find((l) => l.lift === 'Front Squat')?.replaces).toBe('Squat');
+        expect(lifts.some((l) => l.lift === 'Squat')).toBe(false);
+      } finally {
+        await deleteReq(`${OVERRIDE_URL(cycleNum, 1)}/Squat`);
+        await deleteReq(`${OVERRIDE_URL(cycleNum, 1)}/${encodeURIComponent('Front Squat')}`);
+      }
+    });
+
     it('DELETE override is idempotent — returns 204 even when override absent', async () => {
       const dashRes = await get(`/programs/${PROGRAM}/cycles/current`);
       const { cycleNum } = dashRes.json() as { cycleNum: number };

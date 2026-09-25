@@ -314,10 +314,17 @@ describe('WorkoutsController', () => {
       specRow(1, 4, 'Deadlift', 2),
     ]);
     workoutRepo.getWorkout.mockResolvedValue([]);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
     const days = [];
-    for (const workoutNum of ['1', '2', '3', '4']) {
-      days.push(await controller.getWorkout('leangains', workoutNum, MOCK_USER));
+    try {
+      for (const workoutNum of ['1', '2', '3', '4']) {
+        days.push(await controller.getWorkout('leangains', workoutNum, MOCK_USER));
+      }
+      // Every day here has a key, so the "no program day" warning stays quiet.
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
     }
 
     expect(days.map((d) => [d.week, d.offset, d.lifts.map((l) => l.lift)])).toEqual([
@@ -386,9 +393,12 @@ describe('WorkoutsController', () => {
       // it as an API that predates `offset`.
       expect(result.offset).toBeNull();
       expect(result.lifts).toEqual([]);
-      // A user-visible empty workout from an unvalidated schedule (#1023) is logged,
-      // so how often it happens shows up.
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('workoutNum=2'));
+      // A user-visible empty workout from an unvalidated schedule (#1023) is logged
+      // with structured fields, so how often it happens shows up.
+      expect(warnSpy).toHaveBeenCalledWith(
+        { program: 'my-custom', cycleNum: 1, workoutNum: 2, week: 1 },
+        expect.stringContaining('no program day'),
+      );
     } finally {
       warnSpy.mockRestore();
     }
@@ -665,7 +675,7 @@ describe('WorkoutsController', () => {
       // empty Set so a transient skip-store failure cannot break the workout
       // response. Verify the fallback branch separately from the success
       // branch — see docs/standards/error-fallback-test-coverage.md.
-      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
       try {
         dashboardRepo.getCycleDashboard.mockResolvedValue(dashboard);
         specRepo.getProgramSpec.mockResolvedValue(spec);
@@ -675,7 +685,10 @@ describe('WorkoutsController', () => {
         const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
 
         expect(result.skipped).toBe(false);
-        expect(errorSpy).toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ message: 'skip store unavailable' }),
+          expect.stringContaining('getSkipsForCycle failed'),
+        );
       } finally {
         errorSpy.mockRestore();
       }

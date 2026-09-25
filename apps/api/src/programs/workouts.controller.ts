@@ -66,7 +66,8 @@ export class WorkoutsController {
       cycleScheduledWorkout.getScheduledWorkouts(program, dashboard.cycleNum),
       // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
       workoutSkipOverride.getSkipsForCycle(program, dashboard.cycleNum).catch((err: unknown) => {
-        console.error('[WorkoutsController] getSkipsForCycle failed; defaulting to empty set', err);
+        // Through the class logger (Pino), so the line keeps its trace_id.
+        this.logger.error(err, 'getSkipsForCycle failed; defaulting to empty set');
         return new Set<number>();
       }),
     ]);
@@ -100,9 +101,10 @@ export class WorkoutsController {
     // saveScheduledDates assumes but nothing enforces (#1023). A scheduled workout
     // past the program's last day has no key, and so no day to plan.
     if (!workoutKey) {
+      // Structured, so #1023's frequency is a plain `| json` query in Loki.
       this.logger.warn(
-        `Scheduled workout has no program day, so it plans no lifts: program=${program} ` +
-          `cycleNum=${dashboard.cycleNum} workoutNum=${workoutNum} week=${week} (#1023)`,
+        { program, cycleNum: dashboard.cycleNum, workoutNum, week },
+        'Scheduled workout has no program day, so it plans no lifts (#1023)',
       );
     }
     const dayRows = workoutKey ? specRowsForWorkoutDay(spec, week, workoutKey.offset) : [];
@@ -128,7 +130,8 @@ export class WorkoutsController {
       scheduledDate,
       skipped: skippedNums.has(workoutNum),
       cycleStartDate,
-      offset: workoutKey?.offset,
+      // The day's offset, or null: no key means the program has no day for it.
+      offset: workoutKey ? workoutKey.offset : null,
       renamedLifts: renamed,
     });
   }

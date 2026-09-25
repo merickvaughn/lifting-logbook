@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { LiftOverride, IWorkoutLiftOverrideRepository } from '../../ports/IWorkoutLiftOverrideRepository';
+import { runBatch } from './prisma-tx.util';
 
 export class PrismaWorkoutLiftOverrideRepository
   implements IWorkoutLiftOverrideRepository
@@ -16,10 +17,10 @@ export class PrismaWorkoutLiftOverrideRepository
   ): Promise<LiftOverride[]> {
     const rows = await this.prisma.workoutLiftOverride.findMany({
       where: { userId: this.userId, program, cycleNum, workoutNum },
-      // Creation order, which the port promises: without an ORDER BY Postgres may
-      // return rows in index order (alphabetical by `lift`), and a chain of swaps
-      // would then resolve out of sequence. An upsert keeps its row's `createdAt`,
-      // matching the in-memory adapter, which replaces an override in place.
+      // The order each override was last written, which the port promises:
+      // upsertOverride re-creates a re-saved row, so `createdAt` is its last write.
+      // Without an ORDER BY Postgres may return rows in index order (alphabetical
+      // by `lift`), and a chain of swaps would resolve out of sequence.
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     // mirrors WorkoutLiftOverride schema
@@ -36,30 +37,26 @@ export class PrismaWorkoutLiftOverrideRepository
     workoutNum: number,
     override: LiftOverride,
   ): Promise<void> {
-    await this.prisma.workoutLiftOverride.upsert({
-      where: {
-        userId_program_cycleNum_workoutNum_lift: {
+    // Delete-then-create rather than an in-place update, so a re-saved override
+    // moves to the end of the order getOverrides returns. An update would keep
+    // the row's original `createdAt`: a swap made again after being undone would
+    // then be applied before the undo, and silently change nothing (#1014).
+    await runBatch(this.prisma, (db) => [
+      db.workoutLiftOverride.deleteMany({
+        where: { userId: this.userId, program, cycleNum, workoutNum, lift: override.lift },
+      }),
+      db.workoutLiftOverride.create({
+        data: {
           userId: this.userId,
           program,
           cycleNum,
           workoutNum,
           lift: override.lift,
+          action: override.action,
+          replacedBy: override.replacedBy ?? null,
         },
-      },
-      create: {
-        userId: this.userId,
-        program,
-        cycleNum,
-        workoutNum,
-        lift: override.lift,
-        action: override.action,
-        replacedBy: override.replacedBy ?? null,
-      },
-      update: {
-        action: override.action,
-        replacedBy: override.replacedBy ?? null,
-      },
-    });
+      }),
+    ]);
   }
 
   async deleteOverride(

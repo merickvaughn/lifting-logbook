@@ -630,21 +630,48 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(row).toBeNull();
     });
 
-    it('resolves a chain of swaps in the order it was made (issue #1014)', async () => {
+    it('applies a chain of swaps in the order each was written, not the order rows sit in (issue #1014)', async () => {
       const dashRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
       const { cycleNum } = dashRes.json() as { cycleNum: number };
-      const url = `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/lift-overrides`;
+      const base = { userId: TEST_USER, program: SEED_PROGRAM, cycleNum, workoutNum: 1 };
       try {
-        // "Front Squat" sorts before "Squat": a read in lift-name order would
-        // apply the second swap before the first put Front Squat in the workout.
-        await postJson(url, { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
-        await postJson(url, { action: 'replace', lift: 'Front Squat', replacedBy: 'Box Squat' });
+        // Inserted second swap first, with createdAt saying the opposite. A read in
+        // insertion order (a sequential scan) or lift-name order (the unique index)
+        // would both apply Front Squat → Box Squat before Front Squat exists; only
+        // the ORDER BY on createdAt resolves the chain.
+        await prisma.workoutLiftOverride.create({
+          data: { ...base, lift: 'Front Squat', action: 'replace', replacedBy: 'Box Squat', createdAt: new Date('2026-01-02T00:00:00Z') },
+        });
+        await prisma.workoutLiftOverride.create({
+          data: { ...base, lift: 'Squat', action: 'replace', replacedBy: 'Front Squat', createdAt: new Date('2026-01-01T00:00:00Z') },
+        });
 
         const res = await get(`/programs/${SEED_PROGRAM}/workouts/1`);
         expect(res.statusCode).toBe(200);
         const lifts = (res.json() as { lifts: { lift: string; replaces?: string }[] }).lifts;
         expect(lifts.find((l) => l.lift === 'Box Squat')?.replaces).toBe('Squat');
         expect(lifts.some((l) => l.lift === 'Squat' || l.lift === 'Front Squat')).toBe(false);
+      } finally {
+        await prisma.workoutLiftOverride.deleteMany({ where: base });
+      }
+    });
+
+    it('a swap made again after being undone takes effect (issue #1014)', async () => {
+      // Saving the Squat override a second time must re-create its row: an update
+      // would keep its first createdAt and sort it before the undo.
+      const dashRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
+      const { cycleNum } = dashRes.json() as { cycleNum: number };
+      const url = `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/lift-overrides`;
+      try {
+        await postJson(url, { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
+        await postJson(url, { action: 'replace', lift: 'Front Squat', replacedBy: 'Squat' });
+        await postJson(url, { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
+
+        const res = await get(`/programs/${SEED_PROGRAM}/workouts/1`);
+        expect(res.statusCode).toBe(200);
+        const lifts = (res.json() as { lifts: { lift: string; replaces?: string }[] }).lifts;
+        expect(lifts.find((l) => l.lift === 'Front Squat')?.replaces).toBe('Squat');
+        expect(lifts.some((l) => l.lift === 'Squat')).toBe(false);
       } finally {
         await deleteReq(`${url}/Squat`);
         await deleteReq(`${url}/${encodeURIComponent('Front Squat')}`);
