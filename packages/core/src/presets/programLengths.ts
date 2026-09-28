@@ -131,7 +131,7 @@ export function specRowsForWorkoutDay<T extends { week: WeekNumber; offset: numb
  * cast — only the `week` field is read or rewritten.
  */
 export function expandSpecToLength<T extends { week: WeekNumber }>(
-  baseSpec: T[],
+  baseSpec: readonly T[],
   lengthWeeks: number,
 ): T[] {
   const blockWeeks = baseSpecBlockWeeks(baseSpec);
@@ -157,16 +157,13 @@ export function expandSpecToLength<T extends { week: WeekNumber }>(
 
 /**
  * The distinct `(week, offset)` workout-day keys of a spec, ordered by week then
- * offset. This is the canonical `workoutNum ↔ (week, offset)` mapping — the Nth
- * entry (1-based) is `workoutNum` N.
+ * offset; the Nth entry (1-based) is `workoutNum` N.
  *
- * Both the web Cycle Dashboard grid (`buildWorkoutDays`) and the API's no-schedule
- * `weekForWorkoutNum` fallback derive `workoutNum` from this single helper, so a
- * card's `workoutNum` and the workout it opens can never disagree. Callers pass a
- * spec already tiled to the canonical length via {@link expandSpecToLength}, so the
- * ordering spans the whole cycle rather than a single repeating block (issue #740).
+ * Module-private: only a spec already tiled to the canonical length numbers a
+ * cycle, and numbering the stored block instead was the #740 bug. Callers use
+ * {@link programWorkoutKeys}, which tiles first (issue #1023).
  */
-export function orderedWorkoutKeys(
+function orderedWorkoutKeys(
   spec: ReadonlyArray<{ week: WeekNumber; offset: number }>,
 ): { week: WeekNumber; offset: number }[] {
   const seen = new Set<string>();
@@ -181,18 +178,38 @@ export function orderedWorkoutKeys(
 }
 
 /**
+ * A program's workout days in `workoutNum` order: the `(week, offset)` keys of its
+ * spec tiled to its canonical length. Workout N is entry N-1; a `workoutNum` past
+ * the end is not a workout of the program.
+ *
+ * This is the one numbering of a cycle's workouts, in both modes. The Cycle
+ * Dashboard grid (`buildWorkoutDays`), the workout endpoint, the cycle dashboard
+ * response and schedule generation (`saveScheduledDates`) all read it. A schedule
+ * dates these days and never numbers them, so a schedule that trains more or fewer
+ * days a week than the program, or a different number each week, changes only the
+ * dates (issue #1023, ADR-037).
+ */
+export function programWorkoutKeys(
+  program: string,
+  spec: ReadonlyArray<{ week: WeekNumber; offset: number }>,
+): { week: WeekNumber; offset: number }[] {
+  return orderedWorkoutKeys(expandSpecToLength(spec, programLengthWeeks(program, spec)));
+}
+
+/**
  * The UTC calendar date of a no-schedule workout day, from its `(week, offset)`
  * key relative to the cycle start: `cycleStart + (week-1)*7 + offset` days.
- * Program weeks are 7 calendar days (see `distributeWorkouts`), so a workout in
- * program week W at in-week `offset` lands `(W-1)*7 + offset` days after the
- * cycle start. Week 1 (`week === 1`) is just `cycleStart + offset`.
+ * Without a schedule a program week is 7 calendar days, so a workout in program
+ * week W at in-week `offset` lands `(W-1)*7 + offset` days after the cycle start.
+ * Week 1 (`week === 1`) is just `cycleStart + offset`. A schedule sets its own
+ * pace (ADR-037); a program day it gave no date falls back to this one.
  *
- * The single source of truth for the spec-relative (no-schedule) workout date,
- * shared by the web Cycle Dashboard grid (`buildWorkoutDays`) and the API
- * no-schedule workout-detail fallback (`toWorkoutResponse`) so a card's date and
- * the detail page it opens can never drift (issue #745). This is the date-side
- * companion to {@link orderedWorkoutKeys}, which shares the `workoutNum ↔
- * (week, offset)` mapping the same two callers use (issue #740).
+ * The single source of truth for the spec-relative workout date, shared by the web
+ * Cycle Dashboard grid (`buildWorkoutDays`), the API workout-detail fallback
+ * (`toWorkoutResponse`) and the cycle dashboard response, so a card's date and the
+ * detail page it opens can never drift (issue #745). This is the date-side
+ * companion to {@link programWorkoutKeys}, the `workoutNum ↔ (week, offset)`
+ * numbering the same callers share (issues #740, #1023).
  */
 export function noScheduleWorkoutDateUTC(
   cycleStart: Date,

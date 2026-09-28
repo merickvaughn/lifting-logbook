@@ -363,11 +363,11 @@ describe('WorkoutsController', () => {
   });
 
   it('plans no lifts for a scheduled workout the program has no day for (issue #1014)', async () => {
-    // saveScheduledDates assumes the schedule runs as many days a week as the
-    // program; one that runs more generates scheduled workouts past the program's
-    // last day. Workout 2 of this one-day custom block has a scheduled row but no
-    // (week, offset) key, so it has no day to plan — pre-#1014 it listed the
-    // whole block week.
+    // Before #1023, saveScheduledDates numbered a schedule training more days a week
+    // than the program past the program's last day; a program that loses days
+    // mid-cycle can still leave such a row. Workout 2 of this one-day custom block
+    // has a scheduled row but no (week, offset) key, so it has no day to plan —
+    // pre-#1014 it listed the whole block week.
     dashboardRepo.getCycleDashboard.mockResolvedValue({
       program: 'my-custom',
       cycleUnit: 'week',
@@ -429,14 +429,11 @@ describe('WorkoutsController', () => {
     expect(result.date).toBe('2026-04-27');
   });
 
-  it('resolves week from the scheduled row and the day from its key for a tiled week-2+ workout (issues #680, #1014)', async () => {
+  it('resolves a tiled week-2+ scheduled workout through the block (issues #680, #1014)', async () => {
     // A 12-week Leangains schedule tiles a 1-week block, so workoutNum 4 lands in
-    // week 2 — beyond the block's 2 distinct offsets. Without sourcing week from
-    // the scheduled row this would 400; planned lifts must still come from the block.
-    // The day's offset comes from the workout's (week, offset) key: a schedule
-    // running the program's own number of days a week numbers workouts in the same
-    // order as orderedWorkoutKeys, so scheduled workout 4 is key 4 — week 2,
-    // offset 2 — and plans only that day's Squat (#1014).
+    // week 2 — beyond the block's 2 distinct offsets. Planned lifts must still come
+    // from the block. Scheduled workout 4 is key 4 — week 2, offset 2 — and plans
+    // only that day's Squat (#1014); the scheduled row gives it its date.
     dashboardRepo.getCycleDashboard.mockResolvedValue({
       program: 'leangains',
       cycleUnit: 'week',
@@ -466,6 +463,42 @@ describe('WorkoutsController', () => {
     // block), at the workout's own offset.
     expect(result.lifts.map((l) => l.lift)).toEqual(['Squat']);
     expect(result.lifts.every((l) => l.planned)).toBe(true);
+  });
+
+  it('takes a scheduled workout’s week from the program, not the week stored on its row (issue #1023)', async () => {
+    // Before #1023 a Mon/Wed/Fri schedule on this two-day program was numbered by
+    // calendar week, storing workout 3 (the first Friday) as week 1. The program's
+    // third day, which the Cycle Dashboard card shows, is week 2's first day, and
+    // a 3-week wave prescribes week 2 differently (here, with different lifts), so
+    // the detail page must get week 2 too. The row still gives the workout its date.
+    dashboardRepo.getCycleDashboard.mockResolvedValue({
+      program: '5-3-1',
+      cycleUnit: 'week',
+      cycleNum: 1,
+      cycleDate: new Date('2026-04-20T00:00:00.000Z'),
+      sheetName: '',
+      cycleStartWeekday: Weekday.Monday,
+    });
+    specRepo.getProgramSpec.mockResolvedValue([
+      specRow(1, 0, 'Squat', 1),
+      specRow(1, 3, 'Deadlift', 1),
+      specRow(2, 0, 'Front Squat', 1),
+      specRow(2, 3, 'Romanian Deadlift', 1),
+      specRow(3, 0, 'Pause Squat', 1),
+      specRow(3, 3, 'Deficit Deadlift', 1),
+    ]);
+    workoutRepo.getWorkout.mockResolvedValue([]);
+    scheduledWorkoutRepo.getScheduledWorkouts.mockResolvedValue([
+      { workoutNum: 1, weekNum: 1, scheduledDate: new Date('2026-04-20T00:00:00.000Z') },
+      { workoutNum: 2, weekNum: 1, scheduledDate: new Date('2026-04-22T00:00:00.000Z') },
+      { workoutNum: 3, weekNum: 1, scheduledDate: new Date('2026-04-24T00:00:00.000Z') },
+    ]);
+
+    const result = await controller.getWorkout('5-3-1', '3', MOCK_USER);
+
+    expect([result.week, result.offset]).toEqual([2, 0]);
+    expect(result.lifts.map((l) => l.lift)).toEqual(['Front Squat']);
+    expect(result.date).toBe('2026-04-24');
   });
 
   describe('overrideDate', () => {

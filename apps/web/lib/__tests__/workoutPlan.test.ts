@@ -4,6 +4,7 @@ import {
   buildWorkoutDays,
   computeCycleProgress,
   computePlannedSets,
+  workoutDateResolver,
 } from '../workoutPlan';
 import type { WeekRow, WorkoutCell, WorkoutLiftDetail } from '../workoutPlan';
 
@@ -151,6 +152,30 @@ describe('buildWorkoutDays — multi-week grouping and canonical-length expansio
     expect(days).toHaveLength(3); // one workout per week — NOT one collided card of 6 lifts
     expect(days.map((d) => d.week)).toEqual([1, 2, 3]);
     expect(days.every((d) => d.lifts.length === 2)).toBe(true);
+  });
+});
+
+describe('workoutDateResolver — the dashboard’s one date precedence (issue #1023)', () => {
+  const day = (workoutNum: number, date: string) => ({ workoutNum, date });
+  const scheduledWeek = {
+    week: 1,
+    workouts: [
+      { workoutNum: 1, date: '2026-05-18', skipped: false },
+      { workoutNum: 2, date: '2026-05-20', skipped: false },
+    ],
+    completed: false,
+  };
+
+  it('prefers an override, then the scheduled date, then the spec-relative date', () => {
+    const dateOf = workoutDateResolver({ weeks: [scheduledWeek], dateOverrides: { 2: '2026-05-23' } });
+    expect(dateOf(day(1, '2026-05-19'))).toBe('2026-05-18'); // scheduled beats spec-relative
+    expect(dateOf(day(2, '2026-05-21'))).toBe('2026-05-23'); // override beats scheduled
+    expect(dateOf(day(3, '2026-05-25'))).toBe('2026-05-25'); // neither: spec-relative
+  });
+
+  it('uses the spec-relative date for every workout with no schedule and no overrides', () => {
+    const dateOf = workoutDateResolver({ weeks: [], dateOverrides: {} });
+    expect(dateOf(day(1, '2026-05-19'))).toBe('2026-05-19');
   });
 });
 

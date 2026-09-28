@@ -177,7 +177,7 @@ set, and each level above it is reassembled per request.
 | **Block / Wave** | `blockWeeks` arithmetic + `phaseStyle: 'repeating' \| 'wave'` | **No entity.** A wave boundary is `ceil(week / blockWeeks)` |
 | **Cycle** | `cycleNum: number`, denormalized onto five child tables | `cycle_dashboard` is `@@unique([userId, program])` — **one row, the current cycle only** |
 | **Week** | `week: number` + `WeekType` | **Derived** by tiling (`expandSpecToLength`) |
-| **Workout** | `(program, cycleNum, workoutNum)`; `workoutNum` is a **global ordinal** over the cycle, from `orderedWorkoutKeys` | **Derived.** Typed exactly once, as `TimerWorkoutKey` |
+| **Workout** | `(program, cycleNum, workoutNum)`; `workoutNum` is a **global ordinal** over the cycle, from `programWorkoutKeys`, with or without a schedule | **Derived.** Typed exactly once, as `TimerWorkoutKey` |
 | **Lift slot** | spec row keyed `(week, offset, lift, order)` | `custom_program_spec` row |
 | **Set** | `PlannedSet` (prescribed) / `LiftRecord` (logged) | One `lift_record` row per completed set |
 
@@ -196,8 +196,8 @@ time — never in storage, so reverting is a pure code change.
 
 `programLengths.ts` owns the canonical mapping and the helpers that keep the web grid
 and the API in lockstep: `expandSpecToLength`, `blockWeekForProgramWeek`,
-`orderedWorkoutKeys` (the `workoutNum ↔ (week, offset)` mapping),
-`noScheduleWorkoutDateUTC`, and `specRowsForWorkoutDay` (one workout day's rows: the
+`programWorkoutKeys` (the `workoutNum ↔ (week, offset)` mapping: the tiled program's
+distinct days, in week-then-offset order), `noScheduleWorkoutDateUTC`, and `specRowsForWorkoutDay` (one workout day's rows: the
 block week its program week tiles from, at its `offset`). A workout carries its
 **program** week, but the spec endpoint serves the untiled block, so a lookup must go
 through the block week and the day's offset. `WorkoutResponse` carries the `offset` for
@@ -216,7 +216,7 @@ side-tables keyed `(userId, program, cycleNum, workoutNum)`:
 | `workout_date_override` | Rescheduled to a new date |
 | `workout_skip_override` | Explicitly skipped |
 | `workout_lift_override` | `action: add \| remove \| replace` (+ `replacedBy`) |
-| `cycle_scheduled_workout` | The generated schedule (no HTTP route at all) |
+| `cycle_scheduled_workout` | The generated schedule: one date per program day, in the program's order (no HTTP route at all). A schedule dates workouts and never numbers them, so readers take a workout's week and day from its `workoutNum` ([ADR-037](adr/ADR-037-schedule-dates-program-days.md)) |
 
 This is the clearest structural evidence of the absent entity: three tables exist to
 describe changes to a thing that is not itself stored.
@@ -504,8 +504,8 @@ through with its closing PR rather than deleted or renumbered.
 
 | # | Finding | Location |
 |---|---|---|
-| **D1** | **Logged `amrap` is recovered by string-sniffing free text**: `amrap: r.notes.toUpperCase().includes('AMRAP')`. Any note mentioning "amrap" flips the flag. `amrap` is a real column on `custom_program_spec` but has none for a logged set. | `apps/api/src/programs/mappers.ts:341` |
-| **D2** | **`deleteCurrentCycle` does not delete the workout overrides.** Its docstring opens "the current cycle … and every row scoped to it", then enumerates five kinds; the `repos` parameter's `Pick<>` type structurally excludes the rest. `workout_date_override`, `workout_skip_override` and `workout_lift_override` are all `(program, cycleNum, workoutNum)`-scoped and survive, so after delete-then-initialize the old cycle 1's reschedules, skips and lift overrides resurface on the new cycle 1. No FK cascade covers it. (`strength_goal` and `body_weight` also survive, which is arguably correct — they outlive a cycle. `import_batch` survives with a `preImage` referencing deleted rows.) | `apps/api/src/programs/cycle-generation.service.ts:281` |
+| **D1** | **Logged `amrap` is recovered by string-sniffing free text**: `amrap: r.notes.toUpperCase().includes('AMRAP')`. Any note mentioning "amrap" flips the flag. `amrap` is a real column on `custom_program_spec` but has none for a logged set. | `apps/api/src/programs/mappers.ts:346` |
+| **D2** | **`deleteCurrentCycle` does not delete the workout overrides.** Its docstring opens "the current cycle … and every row scoped to it", then enumerates five kinds; the `repos` parameter's `Pick<>` type structurally excludes the rest. `workout_date_override`, `workout_skip_override` and `workout_lift_override` are all `(program, cycleNum, workoutNum)`-scoped and survive, so after delete-then-initialize the old cycle 1's reschedules, skips and lift overrides resurface on the new cycle 1. No FK cascade covers it. (`strength_goal` and `body_weight` also survive, which is arguably correct — they outlive a cycle. `import_batch` survives with a `preImage` referencing deleted rows.) | `apps/api/src/programs/cycle-generation.service.ts:288` |
 | **D3** | **Renaming a custom lift silently orphans its history.** `custom_lift.id` is the REST key, and `domain.ts` claims id is independent of name "so a lift can be renamed without breaking references" — but every training table keys lifts by name string, and `update()` writes only the `custom_lift` row. There is no `updateMany` in any repository. A rename leaves `lift_record`, `training_max`, `strength_goal`, `lift_metadata`, `workout_lift_override` and `custom_program_spec` pointing at the old name. | `apps/api/src/adapters/prisma/custom-lift.repository.ts:59` |
 | **D4** | **A `LiftRecord`'s public id is unstable.** The cuid PK is never exposed; `LiftRecordResponse.id` is the synthetic composite `program-cycleNum-workoutNum-YYYYMMDD-lift-setNum`, parsed back to the compound unique index on `PATCH`. Editing a record's date therefore changes its id. `packages/core`'s `LiftRecord` model declares no `id` field at all. | `packages/core/src/utils/import/liftRecordNaturalKey.ts:74` |
 | **D5** | **`WeekType` drives progression, and no shipped preset sets it.** For built-in programs `weekType` is always `undefined` → `'training'`, so only one of `updateMaxes`' three branches runs. The `test` and `deload` branches are **not dead code**: a custom program can set `weekType`, and the create DTO accepts it as an unconstrained `@IsString()` — so an arbitrary string reaches a field the domain types as a three-value union. `apps/web/lib/programPlan.ts` notes its own `deload`/`test` phase branches are unreachable. Separately, `docs/PRD.md` lists deload as a v1.0 **non-goal** while `docs/user-guide.md`'s glossary describes it as routine — the two documents disagree, and the user-facing one is the wrong half. | `packages/core/src/presets/index.ts`, `create-custom-program.dto.ts` (`weekType`) |
@@ -518,7 +518,7 @@ through with its closing PR rather than deleted or renumbered.
 | **D7** | **The Cycle Planning Agent has no UI.** ADR-016 is Accepted and the server side is complete — `ICyclePlanningAgent`, two LLM adapters, six agent tools (`TOOL_DEFS` in `agent-tools.ts`), `POST /cycle-plan`, `CyclePlanResponse`. `rg -l 'cycle-plan\|CyclePlan' apps/web packages/api-client` returns **nothing**. `ProgramPhilosophy` is the same but thinner: a port, an adapter, three factory wirings, and no HTTP route at all. | `apps/api/src/programs/cycle-plan.controller.ts`, [ADR-016](adr/ADR-016-cycle-planning-agent.md) |
 | **D8** | **`MovementProfile` is populated and unread.** The catalog carries patterns, joint actions and complexity; no *production* `apps/web` code reads them. All seven `apps/web` occurrences are non-production: six empty-array fixtures in two import test files, present to satisfy the type, plus one in the Playwright e2e mock (`e2e/mock-api.mjs`) that passes the field through rather than fixing it empty. `LiftEditor.tsx` edits only the thinner `LiftMetadata`. | `packages/core/src/catalog/lifts.ts` |
 | **D9** | **Cycle is modeled as a sequence and exposed as a singleton.** `[cycleNum]` appears in every cycle-scoped authed URL (10 of the 21 authed routes), but the dashboard `notFound()`s unless it equals the current cycle, and `plan`/`program` redirect to current. There is no `/cycles/:cycleNum` resource and no `GET /cycles`. `createCycle` is re-exported in `apps/web/lib/api.ts:84` and **never called** — finishing cycle 1 leaves no way to start cycle 2. `POST /training-maxes/recalculate` is likewise uncalled; its only mention in the web app is copy in `MaxHistory.tsx:82` describing a recalculation the user cannot trigger. | `apps/web/app/(authed)/cycle/[cycleNum]/page.tsx` |
-| **D10** | **`WorkoutResponse.bodyWeightEntry` is declared and never populated** — one source reference repo-wide, the declaration itself. | `packages/types/src/api.ts:125` |
+| **D10** | **`WorkoutResponse.bodyWeightEntry` is declared and never populated** — one source reference repo-wide, the declaration itself. | `packages/types/src/api.ts:126` |
 | **D11** | **Two unrelated strength-goal models.** `domain.ts`'s `StrengthGoal` (`StrengthTier`, `multiplierOverride`, `targetDate`, `observedDate`) and `StrengthStandard` have **no persistence and no API surface**; the persisted `StrengthGoalResponse` (`goalType: absolute \| relative`) has no tier concept. So "reach advanced by March" is unexpressible, even though the tier ladder and `evaluateStrengthTier` exist. | `packages/types/src/domain.ts:121-139` |
 | **D12** | **The timer and the logger never meet.** Per [ADR-035](adr/ADR-035-client-side-rest-timer-state.md) the timer keeps all state in one `localStorage` key and **writes nothing** — no `createLiftRecord` under any timer directory — and links only back to `/detail`. A workout therefore has no duration, no RPE and no finished-at; the session's timing data is discarded. Timer settings also sit outside `UserSettings`, so they cannot sync across devices. | `apps/web/lib/useWorkoutTimer.ts`, `packages/core/src/timer` |
 
@@ -542,6 +542,7 @@ through with its closing PR rather than deleted or renumbered.
 - [ADR-016 — Cycle planning agent](adr/ADR-016-cycle-planning-agent.md)
 - [ADR-017 — Training max history table](adr/ADR-017-training-max-history-table.md) — the one domain-model ADR, and fully surfaced
 - [ADR-035 — Client-side rest timer state](adr/ADR-035-client-side-rest-timer-state.md)
+- [ADR-037 — A schedule dates the program's workouts; it never numbers them](adr/ADR-037-schedule-dates-program-days.md)
 - [`docs/README.md`](README.md) — architecture narrative and full ADR index
 - [`docs/user-guide.md`](user-guide.md) — end-user vocabulary
 - [`docs/standards/training-max-precision.md`](standards/training-max-precision.md) — rounding rules referenced by `computePlannedSets`

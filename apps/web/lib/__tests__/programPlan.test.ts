@@ -3,6 +3,7 @@ import type { ProgramLengthMeta } from '@lifting-logbook/core';
 import {
   deriveProgramPhases,
   deriveProgramSummary,
+  estimateCompletionDate,
   resolveProgramPlanMeta,
 } from '../programPlan';
 
@@ -165,6 +166,50 @@ describe('deriveProgramPhases — status', () => {
 // ---------------------------------------------------------------------------
 // deriveProgramSummary
 // ---------------------------------------------------------------------------
+
+describe('estimateCompletionDate', () => {
+  // Workouts 1 and 2 on their spec-relative dates: 5-3-1's first and last days
+  // from a Monday 2026-05-18 start (week 12, offset 3 = +80 days).
+  const days = [
+    { workoutNum: 1, date: '2026-05-18' },
+    { workoutNum: 2, date: '2026-08-06' },
+  ];
+  const START = '2026-05-18';
+
+  it('is the last workout’s date with no schedule', () => {
+    expect(estimateCompletionDate(days, { cycleStartDate: START, weeks: [], dateOverrides: {} })).toBe(
+      '2026-08-06',
+    );
+  });
+
+  it('is the last scheduled workout’s date with a schedule, whose pace sets the length (issue #1023)', () => {
+    // On Mon/Wed/Fri, 5-3-1's last day falls in calendar week 8.
+    const weeks = [makeWeek(1, ['2026-05-18', '2026-07-10'], false)];
+    expect(estimateCompletionDate(days, { cycleStartDate: START, weeks, dateOverrides: {} })).toBe(
+      '2026-07-10',
+    );
+  });
+
+  it('means the same with or without a schedule that dates the days alike', () => {
+    // A schedule that puts every workout on its spec-relative day (5-3-1 on
+    // Mon/Thu) must not change the estimate. Before #1023's review it did.
+    const weeks = [makeWeek(1, ['2026-05-18', '2026-08-06'], false)];
+    expect(estimateCompletionDate(days, { cycleStartDate: START, weeks, dateOverrides: {} })).toBe(
+      estimateCompletionDate(days, { cycleStartDate: START, weeks: [], dateOverrides: {} }),
+    );
+  });
+
+  it('counts a rescheduled workout in both modes', () => {
+    const dateOverrides = { 2: '2026-08-20' };
+    expect(estimateCompletionDate(days, { cycleStartDate: START, weeks: [], dateOverrides })).toBe('2026-08-20');
+    const weeks = [makeWeek(1, ['2026-05-18', '2026-07-10'], false)];
+    expect(estimateCompletionDate(days, { cycleStartDate: START, weeks, dateOverrides })).toBe('2026-08-20');
+  });
+
+  it('is the start date for a program with no workouts', () => {
+    expect(estimateCompletionDate([], { cycleStartDate: START, weeks: [], dateOverrides: {} })).toBe(START);
+  });
+});
 
 describe('deriveProgramSummary', () => {
   it('uses the canonical program length for duration, not the stored block', () => {

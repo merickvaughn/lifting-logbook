@@ -19,14 +19,23 @@ function alignToMonday(date: Date): Date {
 // (not a discriminated union), so the `?? []` fallbacks are required for type
 // soundness even though the runtime validator (`isValidSchedule`) guarantees the
 // correct arm is populated at the API boundary.
+//
+// Sorted into weekday order: the validator accepts days in any order, and a
+// week listed as [Fri, Mon] must still date its first workout on the Monday.
+// Callers number workouts by position, so the dates must come out chronological
+// (issue #1023).
 function getWeekPattern(
   schedule: UserWorkoutSchedule,
   weekIndex: number,
 ): number[] {
-  if (schedule.type === "fixed") return schedule.days ?? [];
-  const weeks = schedule.weeks ?? [];
-  if (weeks.length === 0) return [];
-  return weeks[weekIndex % weeks.length] ?? [];
+  let days: number[];
+  if (schedule.type === "fixed") {
+    days = schedule.days ?? [];
+  } else {
+    const weeks = schedule.weeks ?? [];
+    days = weeks.length === 0 ? [] : (weeks[weekIndex % weeks.length] ?? []);
+  }
+  return [...days].sort((a, b) => a - b);
 }
 
 /**
@@ -35,6 +44,9 @@ function getWeekPattern(
  * The first week is aligned to the Monday of `cycleStartDate`'s week; days earlier in
  * that week than the start date are still emitted, matching the design-doc contract
  * (callers wanting "future days only" should filter the first week themselves).
+ *
+ * Dates come out in chronological order, each week's days in weekday order however
+ * the schedule lists them, so the Nth date is the Nth workout.
  *
  * Returns an empty array when the schedule has no usable days (e.g. an empty fixed
  * `days` array or rotating with all-empty weeks) — guards against infinite loops.

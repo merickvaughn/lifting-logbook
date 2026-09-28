@@ -6,13 +6,12 @@ import {
   activationExercise,
   baseSpecBlockWeeks,
   blockWeekForProgramWeek,
-  expandSpecToLength,
   noScheduleWorkoutDateUTC,
-  orderedWorkoutKeys,
-  programLengthWeeks,
+  programWorkoutKeys,
   specRowsForWorkoutDay,
 } from '@lifting-logbook/core';
 import type {
+  CycleDashboardResponse,
   LiftingProgramSpecResponse,
   TrainingMaxResponse,
   WorkoutResponse,
@@ -55,9 +54,10 @@ export interface WeekRow {
  * (leangains 12 wks, rpt 8, etc.); `program` is optional and falls back to the
  * base-spec block length for custom / unregistered programs.
  *
- * `workoutNum` is a global sequential index over {@link orderedWorkoutKeys} — the
- * same helper the API's no-schedule `weekForWorkoutNum` uses — so a card's
- * `workoutNum` always resolves to the workout it links to (issue #740).
+ * `workoutNum` indexes {@link programWorkoutKeys} — the numbering the workout
+ * endpoint resolves a workout's day with and schedule generation dates — so a
+ * card's `workoutNum` always resolves to the workout it links to (issue #740),
+ * with or without a schedule (#1023).
  */
 export function buildWorkoutDays(
   specs: LiftingProgramSpecResponse[],
@@ -71,9 +71,7 @@ export function buildWorkoutDays(
   ];
   const startDate = new Date(Date.UTC(y, m - 1, d));
 
-  const fullSpec = expandSpecToLength(specs, programLengthWeeks(program ?? '', specs));
-
-  return orderedWorkoutKeys(fullSpec).map((k, i) => ({
+  return programWorkoutKeys(program ?? '', specs).map((k, i) => ({
     workoutNum: i + 1,
     week: k.week,
     // cycleStart + (week-1)*7 + offset, via the shared core helper the API's
@@ -87,6 +85,29 @@ export function buildWorkoutDays(
     // Stored rows carry their block week; the card's carry the program week.
     lifts: specRowsForWorkoutDay(specs, k.week, k.offset).map((row) => ({ ...row, week: k.week })),
   }));
+}
+
+/**
+ * How the Cycle Dashboard dates a workout: its override if it was rescheduled,
+ * else the date the dashboard response lists it on, else its spec-relative date
+ * (`WorkoutDay.date`). The grid and the Program Plan's estimate both date workouts
+ * through this, so the two can't drift (issue #1023).
+ *
+ * With a schedule, the response already applies this order: it lists every workout
+ * on its override, else its scheduled date, else its spec-relative date. The fallbacks
+ * here matter without a schedule, where `weeks` is empty, and against an older API pod
+ * during a non-atomic web/api rolling deploy. That is also why `dateOverrides` is read
+ * with `?.`: a response missing it degrades instead of crashing the page.
+ */
+export function workoutDateResolver(
+  dashboard: Pick<CycleDashboardResponse, 'weeks' | 'dateOverrides'>,
+): (day: Pick<WorkoutDay, 'workoutNum' | 'date'>) => string {
+  const listed = new Map<number, string>();
+  for (const week of dashboard.weeks) {
+    for (const ws of week.workouts) listed.set(ws.workoutNum, ws.date);
+  }
+  return (day) =>
+    dashboard.dateOverrides?.[day.workoutNum] ?? listed.get(day.workoutNum) ?? day.date;
 }
 
 /**

@@ -74,17 +74,20 @@ export class WorkoutsController {
     const scheduledWorkout = scheduledWorkouts.find((s) => s.workoutNum === workoutNum);
     const scheduledDate = scheduledWorkout?.scheduledDate;
 
-    // The scheduled row's weekNum is authoritative for the program week. With no
-    // schedule, workoutKeyForWorkoutNum tiles the stored block to the program's
-    // canonical length and indexes the global workoutNum into the ordered
-    // (week, offset) workout days — so week-2+ workouts of a tiled program
-    // (Leangains 12w, 5-3-1 12w) resolve in no-schedule mode too, not only schedule
-    // mode (#680 completed by #740). Undefined means workoutNum is past the *full*
-    // canonical length. The key's `offset` picks the day's lifts below and feeds the
-    // no-schedule detail date, keeping both aligned with the Cycle Dashboard card
-    // (issues #745, #1014).
+    // The workout's day is its (week, offset) key: workoutKeyForWorkoutNum tiles the
+    // stored block to the program's canonical length and indexes the global
+    // workoutNum into the ordered workout days, so week-2+ workouts of a tiled
+    // program (Leangains 12w, 5-3-1 12w) resolve (#680, #740). It is the numbering
+    // the Cycle Dashboard card uses, in both modes: a schedule only dates the
+    // program's days, so the scheduled row gives this workout its date, never its
+    // week (#1023). The key's `offset` picks the day's lifts below and feeds the
+    // no-schedule detail date (issues #745, #1014).
     const workoutKey = workoutKeyForWorkoutNum(spec, workoutNum, program);
-    const week = scheduledWorkout?.weekNum ?? workoutKey?.week;
+    // Only a scheduled row past the program's last day has no key, and its own week
+    // is then the only one it has. saveScheduledDates writes none since #1023, so it
+    // is from a cycle scheduled before that, or a program that lost days mid-cycle.
+    // Undefined means workoutNum is past the *full* canonical length.
+    const week = workoutKey?.week ?? scheduledWorkout?.weekNum;
     if (week === undefined) {
       throw new BadRequestException(
         `workoutNum ${workoutNum} exceeds the program's ${programLengthWeeks(program, spec)}-week schedule`,
@@ -95,19 +98,21 @@ export class WorkoutsController {
     // tiles from, at its key's offset — the helper the web resolves each lift's
     // prescription with and the Cycle Dashboard builds its cards from. Filtering on
     // the week alone listed every day's lifts on every day (issue #1014). A lift
-    // the day repeats is still listed once (#1027). In schedule mode the week comes
-    // from the scheduled row and the offset from the key; they agree whenever the
-    // schedule runs the program's own number of days a week, which
-    // saveScheduledDates assumes but nothing enforces (#1023). A scheduled workout
-    // past the program's last day has no key, and so no day to plan.
+    // the day repeats is still listed once (#1027). A scheduled workout past the
+    // program's last day has no key, and so no day to plan; any sets logged
+    // against it are still listed.
     if (!workoutKey) {
-      // Structured, so #1023's frequency is a plain `| json` query in Loki.
+      // Structured, so it is a plain `| json` query in Loki. It fires only when such a
+      // workout is opened directly, since the web never links to one. The cycle
+      // dashboard warns once per load for every cycle still carrying such rows.
       this.logger.warn(
         { program, cycleNum: dashboard.cycleNum, workoutNum, week },
         'Scheduled workout has no program day, so it plans no lifts (#1023)',
       );
     }
-    const dayRows = workoutKey ? specRowsForWorkoutDay(spec, week, workoutKey.offset) : [];
+    const dayRows = workoutKey
+      ? specRowsForWorkoutDay(spec, workoutKey.week, workoutKey.offset)
+      : [];
     const specLifts = [...new Set(dayRows.map((s) => s.lift))];
 
     // One pass decides both the plan and where each logged set belongs, so a swap

@@ -168,6 +168,7 @@ monorepo/
 | [ADR-034](adr/ADR-034-edge-rate-limiting-client-errors.md)  | Edge Rate Limiting for the Unauthenticated `/api/client-errors` Endpoint (Cloud Armor) | Accepted |
 | [ADR-035](adr/ADR-035-client-side-rest-timer-state.md)      | The Rest Timer Keeps Its State Client-Side, on the Wall Clock       | Accepted |
 | [ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md) | Muscle-Group Defaults Live in the Catalog, and Weekly Sets Count Fractionally | Accepted |
+| [ADR-037](adr/ADR-037-schedule-dates-program-days.md) | A Schedule Dates the Program's Workouts; It Never Numbers Them | Accepted |
 
 ---
 

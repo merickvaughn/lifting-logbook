@@ -1,4 +1,5 @@
 import type {
+  CycleDashboardResponse,
   CycleWeekSummary,
   LiftingProgramSpecResponse,
 } from '@lifting-logbook/types';
@@ -8,6 +9,7 @@ import {
   programLengthWeeks,
   type ProgramLengthMeta,
 } from '@lifting-logbook/core';
+import { workoutDateResolver, type WorkoutDay } from './workoutPlan';
 
 // Phase rendering type. Built-in programs are autoregulated (Leangains, RPT) or a
 // no-deload wave (5/3/1), so their presets tag no deload/test weeks and
@@ -94,9 +96,9 @@ function phaseStatus(
     (_, i) => phase.startWeek + i,
   );
   const summaries = weeks.map((w) => weekMap.get(w));
-  // Every week in the phase must exist and be completed. Missing weeks (e.g. a
-  // pre-#680 cycle whose stored schedule predates full-length expansion) read as
-  // not-yet-complete, so the phase shows as upcoming/in-progress rather than done.
+  // Every week in the phase must exist and be completed. With a schedule, `weeks`
+  // lists every program week (#1023). Without one it is empty, so every phase reads
+  // upcoming for the whole cycle (#1036).
   if (summaries.length > 0 && summaries.every((s) => s?.completed)) return 'completed';
   const hasStarted = summaries.some((s) =>
     s?.workouts.some((w) => w.date <= today),
@@ -114,6 +116,29 @@ export function deriveProgramPhases(
     ...p,
     status: phaseStatus(p, weekMap, today),
   }));
+}
+
+/**
+ * The Program Plan's estimated completion date: the latest date among the cycle's
+ * workouts (`days`, from `buildWorkoutDays`), each dated as the Cycle Dashboard
+ * dates it ({@link workoutDateResolver}).
+ *
+ * This is one definition for both modes (issue #1023):
+ * - a schedule sets the pace, so 5-3-1's 24 days on Mon/Wed/Fri end in calendar
+ *   week 8, not 12;
+ * - a rescheduled workout moves the estimate whether or not there is a schedule.
+ *
+ * A program with no workouts completes on its start date.
+ */
+export function estimateCompletionDate(
+  days: readonly Pick<WorkoutDay, 'workoutNum' | 'date'>[],
+  dashboard: Pick<CycleDashboardResponse, 'cycleStartDate' | 'weeks' | 'dateOverrides'>,
+): string {
+  const dateOf = workoutDateResolver(dashboard);
+  return days.reduce((last, day) => {
+    const date = dateOf(day);
+    return date > last ? date : last;
+  }, dashboard.cycleStartDate);
 }
 
 export function deriveProgramSummary(

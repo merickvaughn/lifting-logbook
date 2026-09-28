@@ -1,5 +1,13 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
-import { Weekday } from '@lifting-logbook/core';
+import { BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import { PRESET_BASE_SPECS, Weekday, distributeWorkouts } from '@lifting-logbook/core';
+import { DAY_INDEX, UserWorkoutSchedule } from '@lifting-logbook/types';
+
+// distributeWorkouts is wrapped, not replaced: every test calls through to the real
+// implementation except the one that makes it break its contract (issue #1023).
+jest.mock('@lifting-logbook/core', () => {
+  const actual = jest.requireActual<typeof import('@lifting-logbook/core')>('@lifting-logbook/core');
+  return { ...actual, distributeWorkouts: jest.fn(actual.distributeWorkouts) };
+});
 import {
   ICycleDashboardRepository,
   ILiftRecordRepository,
@@ -235,7 +243,10 @@ describe('CycleGenerationService', () => {
       );
     });
 
-    it('does not save scheduled dates when user has no workout schedule', async () => {
+    it('clears the new cycle’s scheduled rows when user has no workout schedule (issue #1023)', async () => {
+      // The cycle number may have been used before (fromCycleNum, or delete then
+      // re-initialize), and deleteCurrentCycle clears only the current cycle's rows:
+      // without a schedule the new cycle must not inherit an old one's dates.
       cycleDashboardRepo.getCycleDashboard.mockResolvedValue(stubDashboard());
       programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
       trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
@@ -243,7 +254,7 @@ describe('CycleGenerationService', () => {
 
       await service.startNewCycle(repos, PROGRAM);
 
-      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).not.toHaveBeenCalled();
+      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 2, []);
     });
   });
 
@@ -328,8 +339,9 @@ describe('CycleGenerationService', () => {
 
     it('schedules the full canonical program length, not the stored block (issue #680)', async () => {
       // PROGRAM = '5-3-1' has a canonical length of 12 weeks. Even though the stub
-      // spec is a single block week, the schedule must span all 12 weeks so the
-      // workout calendar matches the advertised plan length.
+      // spec is a single block week of one day, every one of the 12 program weeks
+      // must be scheduled, one workout per program day, so the workout calendar
+      // covers the advertised plan.
       cycleDashboardRepo.getCycleDashboard.mockRejectedValue(
         new ProgramNotFoundError(PROGRAM),
       );
@@ -345,21 +357,112 @@ describe('CycleGenerationService', () => {
       const calls = cycleScheduledWorkoutRepo.saveScheduledWorkouts.mock.calls;
       expect(calls).toHaveLength(1);
       const workouts: Array<{ weekNum: number }> = calls[0]?.[2] ?? [];
+      expect(workouts).toHaveLength(12);
       const weeks = [...new Set(workouts.map((w) => w.weekNum))].sort((a, b) => a - b);
       expect(weeks).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
     });
 
-    it('does not save scheduled dates when user has no workout schedule', async () => {
+    describe('numbers scheduled workouts by program day, whatever the schedule (issue #1023)', () => {
+      // A schedule only dates the program's days: scheduled workout N is the
+      // program's N-th (week, offset) day — what the Cycle Dashboard card and the
+      // workout endpoint show — on the schedule's N-th date. Before #1023 it was
+      // numbered through the schedule's calendar weeks, so any schedule not
+      // training the program's own number of days every week drifted.
+      const { MON, TUE, WED, THU, FRI } = DAY_INDEX;
+      // distributeWorkouts builds local-time dates, so read the weekday back the
+      // same way (0 = Monday).
+      const weekday = (d: Date) => (d.getDay() + 6) % 7;
+
+      it.each<[string, string, UserWorkoutSchedule, number, number, number[]]>([
+        // 5-3-1 trains 2 days a week for 12 weeks; the rotation alternates 3 and 2.
+        ['a rotating schedule', '5-3-1', { type: 'rotating', weeks: [[MON, WED, FRI], [TUE, THU]] }, 24, 2, [MON, WED, FRI, TUE, THU]],
+        ['more days a week than the program', '5-3-1', { type: 'fixed', days: [MON, TUE, WED, THU] }, 24, 2, [MON, TUE, WED, THU]],
+        // Leangains trains 3 days a week for 12 weeks.
+        ['fewer days a week than the program', 'leangains', { type: 'fixed', days: [MON, THU] }, 36, 3, [MON, THU]],
+      ])('%s', async (_label, program, workoutSchedule, programDays, daysPerProgramWeek, rotation) => {
+        cycleDashboardRepo.getCycleDashboard.mockRejectedValue(new ProgramNotFoundError(program));
+        // A copy: the preset is a shared, unfrozen module constant.
+        programSpecRepo.getProgramSpec.mockResolvedValue(structuredClone(PRESET_BASE_SPECS[program] ?? []));
+        userSettingsRepo.getSettings.mockResolvedValue({
+          activeProgram: null,
+          workoutSchedule,
+          defaultWeightIncrement: null,
+        });
+
+        await service.initializeFirstCycle(repos, program, { cycleDate: '2026-05-18' });
+
+        const calls = cycleScheduledWorkoutRepo.saveScheduledWorkouts.mock.calls;
+        expect(calls).toHaveLength(1);
+        const workouts = calls[0]?.[2] ?? [];
+        // One scheduled workout per program day: none past the last day, none missing.
+        expect(workouts.map((w) => w.workoutNum)).toEqual(
+          Array.from({ length: programDays }, (_, i) => i + 1),
+        );
+        // Each carries its day's program week, not the calendar week it falls in.
+        expect(workouts.map((w) => w.weekNum)).toEqual(
+          Array.from({ length: programDays }, (_, i) => Math.floor(i / daysPerProgramWeek) + 1),
+        );
+        // The dates walk the schedule in order.
+        const times = workouts.map((w) => w.scheduledDate.getTime());
+        expect(times).toEqual([...times].sort((a, b) => a - b));
+        expect(new Set(times).size).toBe(times.length);
+        expect(workouts.map((w) => weekday(w.scheduledDate))).toEqual(
+          Array.from({ length: programDays }, (_, i) => rotation[i % rotation.length]),
+        );
+      });
+
+      it.each<[string, Date[]]>([
+        ['too few dates', [new Date(2026, 4, 18)]],
+        ['no dates at all', []],
+      ])(
+        'leaves the cycle unscheduled, with a structured error, if distributeWorkouts breaks its contract: %s',
+        async (_label, dates) => {
+          // Unreachable through a valid schedule: it has at least one day, and
+          // distributeWorkouts then dates every workout. Numbering doesn't depend on
+          // the schedule (ADR-037), so dropping the dates beats failing every
+          // scheduled user's cycle creation. The rows are cleared, not left alone,
+          // so a reused cycle number doesn't keep another cycle's dates.
+          jest.mocked(distributeWorkouts).mockReturnValueOnce(dates.length ? [{ week: 1, workouts: dates }] : []);
+          cycleDashboardRepo.getCycleDashboard.mockRejectedValue(new ProgramNotFoundError(PROGRAM));
+          programSpecRepo.getProgramSpec.mockResolvedValue(structuredClone(PRESET_BASE_SPECS[PROGRAM] ?? []));
+          userSettingsRepo.getSettings.mockResolvedValue({
+            activeProgram: null,
+            workoutSchedule: { type: 'fixed', days: [MON, WED, FRI] },
+            defaultWeightIncrement: null,
+          });
+          const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+          try {
+            const { dashboard } = await service.initializeFirstCycle(repos, PROGRAM, { cycleDate: '2026-05-18' });
+
+            expect(dashboard.cycleNum).toBe(1);
+            expect(cycleDashboardRepo.saveCycleDashboard).toHaveBeenCalledWith(dashboard);
+            expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 1, []);
+            expect(errorSpy).toHaveBeenCalledWith(
+              expect.objectContaining({ program: PROGRAM, cycleNum: 1, programDays: 24, dated: dates.length }),
+              expect.stringContaining('left unscheduled'),
+            );
+          } finally {
+            errorSpy.mockRestore();
+          }
+        },
+      );
+    });
+
+    it('clears cycle 1’s scheduled rows when user has no workout schedule (issue #1023)', async () => {
+      // A cycle 1 deleted from cycle 2 or later left its rows behind:
+      // deleteCurrentCycle clears only the current cycle's. Re-initializing without
+      // a schedule must not run the new cycle 1 on those old dates.
       cycleDashboardRepo.getCycleDashboard.mockRejectedValue(
         new ProgramNotFoundError(PROGRAM),
       );
 
       await service.initializeFirstCycle(repos, PROGRAM, { cycleDate: '2026-05-12' });
 
-      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).not.toHaveBeenCalled();
+      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 1, []);
     });
 
-    it('skips scheduled dates without crashing when programSpec is empty and workoutSchedule is set', async () => {
+    it('saves no scheduled dates, without crashing, when programSpec is empty and workoutSchedule is set', async () => {
       cycleDashboardRepo.getCycleDashboard.mockRejectedValue(
         new ProgramNotFoundError(PROGRAM),
       );
@@ -374,7 +477,8 @@ describe('CycleGenerationService', () => {
         service.initializeFirstCycle(repos, PROGRAM, { cycleDate: '2026-05-12' }),
       ).resolves.not.toThrow();
 
-      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).not.toHaveBeenCalled();
+      // A program with no days has nothing to date: the cycle's rows are cleared.
+      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 1, []);
     });
   });
 

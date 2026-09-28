@@ -1,14 +1,12 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { UserWorkoutSchedule } from '@lifting-logbook/types';
 import {
   CycleDashboard,
   LiftingProgramSpec,
   distributeWorkouts,
-  expandSpecToLength,
   formatDateYYYYMMDD,
-  getScheduleWorkoutsPerWeek,
   MaxReductionFlag,
-  programLengthWeeks,
+  programWorkoutKeys,
   TrainingMax,
   TrainingMaxHistoryEntry,
   updateCycle,
@@ -69,46 +67,67 @@ export const PROGRAM_DEFAULTS: Record<string, { cycleUnit: string; programType: 
   'creeping-death-2': { cycleUnit: 'week', programType: 'creeping-death-2' },
 };
 
+/**
+ * Replaces a new cycle's scheduled rows: one per program day, dated by the user's
+ * schedule in the program's own order (issue #1023, ADR-037).
+ *
+ * Workout N is the program's N-th `(week, offset)` day ({@link programWorkoutKeys},
+ * the numbering the Cycle Dashboard and the workout endpoint read) and gets the
+ * schedule's N-th date. So the schedule sets only the pace: a schedule training more
+ * or fewer days a week than the program, or a different number each week, stretches
+ * or compresses the calendar instead of re-numbering the program. Each row's
+ * `weekNum` is its day's program week. The program is tiled to its canonical length
+ * first: repeating programs (Leangains, RPT) store a 1-week block but run 8–12 weeks
+ * (issue #680).
+ *
+ * With no schedule, or nothing to date, the rows are cleared rather than left alone.
+ * `deleteCurrentCycle` clears only the current cycle's rows, so a cycle number
+ * reused after a delete, or via `fromCycleNum`, would otherwise inherit dates a
+ * previous cycle of that number was given.
+ */
 async function saveScheduledDates(
   repos: Pick<CycleRepos, 'cycleScheduledWorkout'>,
   program: string,
   cycleNum: number,
   cycleDate: Date,
   programSpec: LiftingProgramSpec[],
-  workoutSchedule: UserWorkoutSchedule,
+  workoutSchedule: UserWorkoutSchedule | null,
+  logger: Logger,
 ): Promise<void> {
-  // Schedule the program's canonical length, not its stored block: repeating
-  // programs (Leangains, RPT) persist a 1-week block but run 8–12 weeks, so tile
-  // the base spec to full length before distributing so the workout calendar
-  // spans the whole program (issue #680). Expanding an empty spec yields [] —
-  // the guard covers custom/unseeded programs, since Math.max(...[]) is -Infinity
-  // and would drive distributeWorkouts negative.
-  const fullSpec = expandSpecToLength(programSpec, programLengthWeeks(program, programSpec));
-  if (fullSpec.length === 0) return;
-  // numWeeks * workoutsPerWeek assumes schedule days/week equals program
-  // workouts/week. Phase 5 adds a user-confirmation prompt that validates
-  // this match before schedule mode is activated.
-  const numWeeks = fullSpec.reduce((max, s) => Math.max(max, s.week), 0);
-  const workoutsPerWeek = getScheduleWorkoutsPerWeek(workoutSchedule);
-  const distributed = distributeWorkouts(numWeeks * workoutsPerWeek, workoutSchedule, cycleDate);
+  const workouts = workoutSchedule
+    ? datesForProgramDays(program, cycleNum, cycleDate, programSpec, workoutSchedule, logger)
+    : [];
+  await repos.cycleScheduledWorkout.saveScheduledWorkouts(program, cycleNum, workouts);
+}
 
-  const workouts: ScheduledWorkout[] = [];
-  let workoutNum = 1;
-  let lastWeek = 0;
-  for (const week of distributed) {
-    if (week.week <= lastWeek) {
-      throw new Error(`distributeWorkouts returned out-of-order week: ${week.week}`);
-    }
-    lastWeek = week.week;
-    for (const date of week.workouts) {
-      workouts.push({ workoutNum, weekNum: week.week, scheduledDate: date });
-      workoutNum++;
-    }
+function datesForProgramDays(
+  program: string,
+  cycleNum: number,
+  cycleDate: Date,
+  programSpec: LiftingProgramSpec[],
+  workoutSchedule: UserWorkoutSchedule,
+  logger: Logger,
+): ScheduledWorkout[] {
+  const days = programWorkoutKeys(program, programSpec);
+  if (days.length === 0) return [];
+  const dates = distributeWorkouts(days.length, workoutSchedule, cycleDate).flatMap(
+    (week) => week.workouts,
+  );
+  // A valid schedule has at least one day, and distributeWorkouts then dates every
+  // workout. Any other count, none included, breaks its contract. Numbering doesn't
+  // depend on the schedule (ADR-037), so no rows costs only the dates: the cycle
+  // runs unscheduled instead of failing to start for every scheduled user.
+  if (dates.length !== days.length) {
+    logger.error(
+      { program, cycleNum, programDays: days.length, dated: dates.length, schedule: workoutSchedule },
+      'distributeWorkouts dated the wrong number of workouts; the cycle is left unscheduled (#1023)',
+    );
+    return [];
   }
-
-  if (workouts.length > 0) {
-    await repos.cycleScheduledWorkout.saveScheduledWorkouts(program, cycleNum, workouts);
-  }
+  return days.flatMap((day, i) => {
+    const scheduledDate = dates[i];
+    return scheduledDate ? [{ workoutNum: i + 1, weekNum: day.week, scheduledDate }] : [];
+  });
 }
 
 function round2dp(w: number): number {
@@ -143,6 +162,8 @@ export interface CycleGenerationResult {
 
 @Injectable()
 export class CycleGenerationService {
+  private readonly logger = new Logger(CycleGenerationService.name);
+
   async startNewCycle(
     repos: CycleRepos,
     program: string,
@@ -185,9 +206,7 @@ export class CycleGenerationService {
     // rows use replace-all semantics and are idempotent across retries.
     await repos.trainingMax.saveTrainingMaxes(program, newMaxes);
     const settings = await repos.userSettings.getSettings();
-    if (settings.workoutSchedule) {
-      await saveScheduledDates(repos, program, newCycle.cycleNum, newCycle.cycleDate, programSpec, settings.workoutSchedule);
-    }
+    await saveScheduledDates(repos, program, newCycle.cycleNum, newCycle.cycleDate, programSpec, settings.workoutSchedule, this.logger);
     await repos.cycleDashboard.saveCycleDashboard(newCycle);
 
     // Source reflects the week type of the cycle being closed (the previous
@@ -247,11 +266,8 @@ export class CycleGenerationService {
       repos.userSettings.getSettings(),
       repos.liftingProgramSpec.getProgramSpec(program),
     ]);
-    // Skip workout-date distribution when the program has no seeded spec —
-    // Math.max(...[]) = -Infinity would crash distributeWorkouts.
-    if (settings.workoutSchedule && programSpec.length > 0) {
-      await saveScheduledDates(repos, program, dashboard.cycleNum, dashboard.cycleDate, programSpec, settings.workoutSchedule);
-    }
+    // Without a schedule, or a seeded spec, this clears any rows a deleted cycle 1 left.
+    await saveScheduledDates(repos, program, dashboard.cycleNum, dashboard.cycleDate, programSpec, settings.workoutSchedule, this.logger);
     await repos.cycleDashboard.saveCycleDashboard(dashboard);
     return { dashboard, programSpec };
   }

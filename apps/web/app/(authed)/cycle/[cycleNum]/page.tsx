@@ -9,6 +9,7 @@ import { getPreferredUnit } from '@/lib/preferences';
 import {
   buildWorkoutDays,
   computePlannedSets,
+  workoutDateResolver,
   type WeekRow,
   type WorkoutCell,
 } from '@/lib/workoutPlan';
@@ -48,12 +49,8 @@ export default async function CycleDashboardPage({
   // guards tolerate a response missing the (required) fields — e.g. an older API
   // pod during a non-atomic web/api rolling deploy — degrading rather than crashing
   // the whole dashboard, matching how the two Sets already tolerate `undefined`.
-  const scheduledDateMap = new Map<number, string>();
-  for (const week of dashboard.weeks) {
-    for (const ws of week.workouts) {
-      scheduledDateMap.set(ws.workoutNum, ws.date);
-    }
-  }
+  // Dates go through the same precedence the Program Plan's estimate uses (#1023).
+  const dateOf = workoutDateResolver(dashboard);
   const skippedWorkoutNums = new Set(dashboard.skippedWorkoutNums ?? []);
   // `logged` derives from lift records (like the dashboard's own week-completion,
   // cycle-dashboard.controller.ts) rather than the removed per-workout response, so a
@@ -72,10 +69,7 @@ export default async function CycleDashboardPage({
       .map((w): WorkoutCell => {
         const logged = completedWorkoutNums.has(w.workoutNum);
         // Priority: user override date > API scheduled date > spec-computed date.
-        const effectiveDate =
-          dashboard.dateOverrides?.[w.workoutNum] ??
-          scheduledDateMap.get(w.workoutNum) ??
-          w.date;
+        const effectiveDate = dateOf(w);
         const status: WorkoutCell['status'] = logged
           ? 'completed'
           : skippedWorkoutNums.has(w.workoutNum)

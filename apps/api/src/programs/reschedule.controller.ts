@@ -51,8 +51,9 @@ export class RescheduleController {
 
     // Reject a workoutNum past the program's spec-derived canonical length, via the
     // same workoutKeyForWorkoutNum helper the GET workout endpoint uses. (GET also
-    // honors a scheduled row's weekNum, so its effective bound is marginally looser;
-    // the two align because schedules are never generated beyond the canonical length.)
+    // serves a scheduled row past the program's last day as a workout with no
+    // planned lifts, so its bound is marginally looser. Such a row is left by a
+    // cycle scheduled before #1023, or by a program that has since lost days.)
     // Without this an override is upserted for a workoutNum that maps to no real workout
     // day and is silently never surfaced (204 success, no visible effect).
     if (workoutKeyForWorkoutNum(spec, workoutNum, program) === undefined) {
