@@ -4,9 +4,9 @@
 -- replacing a lift that Manage Lifts had added overwrote its `add` row: the
 -- replace then found no such lift to swap, and neither lift was planned. With
 -- `action` in the key, a lift's add and its replace are separate rows.
--- `upsertOverride` still keeps one row per lift and kind, deleting a lift's add
--- when saving its remove and vice versa (sameKindActions in the port), so an add
--- and a remove never coexist.
+-- `upsertOverride` still keeps one row per lift and kind: saving a lift's add
+-- deletes its remove and vice versa (sameKindActions in the port). Only two racing
+-- saves can leave both, and then the later write applies last.
 --
 -- No de-duplication step is needed: the old 5-column key already allowed only
 -- one row per lift, so every existing row satisfies the new 6-column key.
