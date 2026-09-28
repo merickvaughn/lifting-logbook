@@ -964,6 +964,78 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       }
     });
 
+    describe('replacing an added lift (issue #1026)', () => {
+      // A user of its own: the set logged below stays out of the other tests' workouts.
+      const headers = { authorization: 'Bearer user-replace-added-lift' };
+      const send = (method: 'GET' | 'POST', url: string, body?: unknown) =>
+        app.getHttpAdapter().getInstance().inject({
+          method,
+          url,
+          headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
+          ...(body !== undefined && { payload: JSON.stringify(body) }),
+        });
+      type Lift = { lift: string; planned: boolean; replaces?: string; sets: { reps: number }[] };
+      const workoutLifts = async (workoutNum: number) => {
+        const res = await send('GET', `/programs/${PROGRAM}/workouts/${workoutNum}`);
+        expect(res.statusCode).toBe(200);
+        return (res.json() as { lifts: Lift[] }).lifts;
+      };
+      let cycleNum: number;
+
+      beforeAll(async () => {
+        const init = await send('POST', `/programs/${PROGRAM}/cycles/initialize`, { cycleDate: '2026-05-19' });
+        expect(init.statusCode).toBe(201);
+        ({ cycleNum } = (await send('GET', `/programs/${PROGRAM}/cycles/current`)).json() as { cycleNum: number });
+      });
+
+      it('plans the replacement', async () => {
+        // The replace used to overwrite Chin-up's add, and then had no lift to
+        // swap: neither lift was planned.
+        await send('POST', OVERRIDE_URL(cycleNum, 1), { action: 'add', lift: 'Chin-up' });
+        const replaced = await send('POST', OVERRIDE_URL(cycleNum, 1), {
+          action: 'replace',
+          lift: 'Chin-up',
+          replacedBy: 'Pull-up',
+        });
+        expect(replaced.statusCode).toBe(201);
+
+        const lifts = await workoutLifts(1);
+        expect(lifts.some((l) => l.lift === 'Chin-up')).toBe(false);
+        // It names the added lift as its slot, which has no prescription.
+        expect(lifts.find((l) => l.lift === 'Pull-up')).toEqual({
+          lift: 'Pull-up',
+          sets: [],
+          planned: true,
+          replaces: 'Chin-up',
+        });
+      });
+
+      it('puts the replacement in the added lift’s place, with the sets logged under it', async () => {
+        // Chin-up, then Face Pulls, are added; a Chin-up set is logged; then Chin-up is replaced.
+        await send('POST', OVERRIDE_URL(cycleNum, 2), { action: 'add', lift: 'Chin-up' });
+        await send('POST', OVERRIDE_URL(cycleNum, 2), { action: 'add', lift: 'Face Pulls' });
+        const logged = await send('POST', `/programs/${PROGRAM}/lift-records`, {
+          cycleNum,
+          workoutNum: 2,
+          date: '2026-05-21',
+          lift: 'Chin-up',
+          setNum: 1,
+          weight: 0,
+          reps: 8,
+          notes: '',
+        });
+        expect(logged.statusCode).toBe(201);
+        await send('POST', OVERRIDE_URL(cycleNum, 2), { action: 'replace', lift: 'Chin-up', replacedBy: 'Pull-up' });
+
+        const lifts = await workoutLifts(2);
+        const names = lifts.map((l) => l.lift);
+        expect(names).not.toContain('Chin-up');
+        // Ahead of the lift added after Chin-up, not behind it as an unplanned lift.
+        expect(names.slice(-2)).toEqual(['Pull-up', 'Face Pulls']);
+        expect(lifts.find((l) => l.lift === 'Pull-up')?.sets.map((s) => s.reps)).toEqual([8]);
+      });
+    });
+
     it('DELETE override is idempotent — returns 204 even when override absent', async () => {
       const dashRes = await get(`/programs/${PROGRAM}/cycles/current`);
       const { cycleNum } = dashRes.json() as { cycleNum: number };

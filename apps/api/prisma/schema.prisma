@@ -142,7 +142,11 @@ model WorkoutLiftOverride {
   replacedBy String?
   createdAt  DateTime @default(now())
 
-  @@unique([userId, program, cycleNum, workoutNum, lift])
+  // One row per lift and action: a lift's add and its replace are kept apart, so
+  // replacing an added lift keeps the add (#1026). Saving a lift's add deletes its
+  // remove and vice versa (sameKindActions in the port); only two racing saves can
+  // leave both, and then the later write applies last.
+  @@unique([userId, program, cycleNum, workoutNum, lift, action])
   @@index([userId, program, cycleNum, workoutNum])
   @@map("workout_lift_override")
 }

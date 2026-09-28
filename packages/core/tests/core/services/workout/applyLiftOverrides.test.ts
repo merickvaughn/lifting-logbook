@@ -214,3 +214,63 @@ describe("applyLiftOverrides — an override saved again", () => {
     expect([...removed].sort()).toEqual(["Front Squat", "Squat"]);
   });
 });
+
+describe("applyLiftOverrides — a lift’s add and its replace, stored apart (#1026)", () => {
+  // The repositories keep a lift's add alongside its replace, each in the order
+  // it was last written. (When one overwrote the other, replacing an added lift
+  // left the replace no lift to swap, and adding a swapped-out lift undid the swap.)
+
+  it("keeps a swap when the swapped-out lift is then added back", () => {
+    // Squat → Front Squat, then Squat added: Front Squat keeps Squat's slot, and
+    // Squat joins the workout as an added lift.
+    const o: LiftOverride[] = [
+      { lift: "Squat", action: "replace", replacedBy: "Front Squat" },
+      { lift: "Squat", action: "add" },
+    ];
+    const { planned, renamed } = applyLiftOverrides(lifts, o);
+    expect(planned).toEqual([
+      { lift: "Front Squat", replaces: "Squat" },
+      { lift: "Bench Press" },
+      { lift: "Deadlift" },
+      { lift: "Squat" },
+    ]);
+    // A lift the plan shows owns the sets under its own name (telling the two
+    // Squats' sets apart needs slot identity, #1027).
+    expect(renamed.size).toBe(0);
+  });
+
+  it("puts the replacement in the added lift’s place, with its logged sets", () => {
+    // Chin-up, then Face Pulls, were added; then Chin-up was replaced.
+    const o: LiftOverride[] = [
+      { lift: "Chin-up", action: "add" },
+      { lift: "Face Pulls", action: "add" },
+      { lift: "Chin-up", action: "replace", replacedBy: "Pull-up" },
+    ];
+    const { planned, renamed, removed } = applyLiftOverrides(lifts, o);
+    // It names the added lift as its slot, which has no prescription to inherit.
+    expect(planned.slice(3)).toEqual([{ lift: "Pull-up", replaces: "Chin-up" }, { lift: "Face Pulls" }]);
+    expect(Object.fromEntries(renamed)).toEqual({ "Chin-up": "Pull-up" });
+    expect(removed.size).toBe(0);
+  });
+
+  it("follows a swap back and a redo on the added slot like any other", () => {
+    // Chin-up → Pull-up, back to Chin-up: the added lift is back in its own slot.
+    const undone: LiftOverride[] = [
+      { lift: "Chin-up", action: "add" },
+      { lift: "Chin-up", action: "replace", replacedBy: "Pull-up" },
+      { lift: "Pull-up", action: "replace", replacedBy: "Chin-up" },
+    ];
+    expect(applyLiftOverrides(lifts, undone).planned[3]).toEqual({ lift: "Chin-up" });
+
+    // Then Chin-up → Pull-up again: Chin-up's replace is re-saved after the undo.
+    // A set logged as Pull-up before the undo is the slot's, so it comes back too.
+    const redone: LiftOverride[] = [
+      { lift: "Chin-up", action: "add" },
+      { lift: "Pull-up", action: "replace", replacedBy: "Chin-up" },
+      { lift: "Chin-up", action: "replace", replacedBy: "Pull-up" },
+    ];
+    const { planned, renamed } = applyLiftOverrides(lifts, redone);
+    expect(planned[3]).toEqual({ lift: "Pull-up", replaces: "Chin-up" });
+    expect(Object.fromEntries(renamed)).toEqual({ "Chin-up": "Pull-up" });
+  });
+});

@@ -311,6 +311,21 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
     expect(workSets(front)).toEqual([[200, 5], [180, 5], [160, 5]]);
   });
 
+  it('gives a lift swapped into an added lift’s slot no prescription (#1026)', () => {
+    // An added lift fills no program slot on this day, so its replacement has none
+    // to inherit — even when the program trains the added lift on another day.
+    const specs = [makeSpec({ lift: 'Squat', offset: 0 }), makeSpec({ lift: 'Chin-up', offset: 2 })];
+    const details = buildLiftDetails(
+      workout(1, 0, [{ lift: 'Squat' }, { lift: 'Pull-up', replaces: 'Chin-up' }]),
+      specs,
+      [],
+    );
+    expect(details.map((d) => [d.lift, d.plannedSets.length])).toEqual([
+      ['Squat', 6],
+      ['Pull-up', 0],
+    ]);
+  });
+
   it('matches on the block week alone for a response without an offset', () => {
     // An API that predates `offset` (one rolled back under a newer web) says
     // only the week; its block week is still the right place to look.

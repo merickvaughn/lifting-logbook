@@ -1,4 +1,8 @@
-import { LiftOverride, IWorkoutLiftOverrideRepository } from '../../ports/IWorkoutLiftOverrideRepository';
+import {
+  LiftOverride,
+  IWorkoutLiftOverrideRepository,
+  sameKindActions,
+} from '../../ports/IWorkoutLiftOverrideRepository';
 
 export class InMemoryWorkoutLiftOverrideRepository
   implements IWorkoutLiftOverrideRepository
@@ -26,8 +30,13 @@ export class InMemoryWorkoutLiftOverrideRepository
   ): Promise<void> {
     const k = this.key(program, cycleNum, workoutNum);
     // A re-saved override moves to the end — the order each was last written,
-    // matching the Prisma adapter, which re-creates the row (issue #1014).
-    const others = (this.store.get(k) ?? []).filter((o) => o.lift !== override.lift);
+    // matching the Prisma adapter, which re-creates the row (issue #1014). It
+    // replaces only the lift's override of the same kind: a replace keeps the
+    // lift's add (#1026).
+    const superseded = sameKindActions(override.action);
+    const others = (this.store.get(k) ?? []).filter(
+      (o) => o.lift !== override.lift || !superseded.includes(o.action),
+    );
     this.store.set(k, [...others, override]);
   }
 
