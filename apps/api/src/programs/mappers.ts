@@ -9,6 +9,7 @@ import {
   buildLiftRecordId,
   normalizeAmrap,
   noScheduleWorkoutDateUTC,
+  programLengthWeeks,
   programWorkoutKeys,
 } from '@lifting-logbook/core';
 import {
@@ -184,8 +185,11 @@ export function buildCycleDashboardResponse(
   }
 
   const scheduledDates = new Map(scheduled.map((sw) => [sw.workoutNum, sw.scheduledDate]));
-  // The days come in week order, so the Map's insertion order is the weeks' order.
+  // Every week of the program is listed, even one it trains no day in (a custom spec
+  // can skip one: weeks 1 and 3, say). Empty, it is completed, so a plan-page phase
+  // containing it can still complete.
   const weekAcc = new Map<WeekNumber, WorkoutSummary[]>();
+  for (let week = 1; week <= programLengthWeeks(d.program, spec); week++) weekAcc.set(week, []);
   programWorkoutKeys(d.program, spec).forEach(({ week, offset }, i) => {
     const workoutNum = i + 1;
     const date =
@@ -214,6 +218,30 @@ export function buildCycleDashboardResponse(
     dateOverrides,
     skippedWorkoutNums: skippedList,
     completedWorkoutNums: completedList,
+  };
+}
+
+/**
+ * How a cycle's scheduled rows line up with its program's days (#1023): the rows
+ * past the program's last day, which date no workout and which the dashboard leaves
+ * out, and how many program days have no row and are dated spec-relatively. A cycle
+ * scheduled since #1023 has neither, so either one marks a cycle scheduled before
+ * it, or a program whose days changed mid-cycle.
+ */
+export function scheduleCoverage(
+  program: string,
+  spec: ReadonlyArray<{ week: WeekNumber; offset: number }>,
+  scheduled: readonly ScheduledWorkout[],
+): { pastLastDay: number[]; unscheduledDays: number } {
+  const dayCount = programWorkoutKeys(program, spec).length;
+  const rows = new Set(scheduled.map((sw) => sw.workoutNum));
+  let unscheduledDays = 0;
+  for (let workoutNum = 1; workoutNum <= dayCount; workoutNum++) {
+    if (!rows.has(workoutNum)) unscheduledDays++;
+  }
+  return {
+    pastLastDay: scheduled.map((sw) => sw.workoutNum).filter((n) => n > dayCount),
+    unscheduledDays,
   };
 }
 

@@ -5,7 +5,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { buildCycleDashboardResponse } from './mappers';
+import { buildCycleDashboardResponse, scheduleCoverage } from './mappers';
 import { CycleGenerationService } from './cycle-generation.service';
 
 @Controller('programs/:program')
@@ -48,18 +48,21 @@ export class CycleDashboardController {
       skippedNums,
     });
 
-    // A scheduled row past the program's last day dates no workout, so the response
-    // leaves it out (#1023). Such rows come from cycles scheduled before #1023, or
-    // from programs that lost days mid-cycle. The web never links to them, so this
-    // is the one place that sees each such cycle. Structured, so they are a plain
-    // `| json` query in Loki: the cycles re-dating would repair (#1032).
-    const listed = new Set(response.weeks.flatMap((w) => w.workouts.map((ws) => ws.workoutNum)));
-    const dropped = scheduledWorkouts.filter((sw) => !listed.has(sw.workoutNum));
-    if (dropped.length > 0) {
-      this.logger.warn(
-        { program, cycleNum: dashboard.cycleNum, dropped: dropped.length, firstDropped: dropped[0]?.workoutNum },
-        'Scheduled workouts past the last program day are left off the dashboard (#1023)',
-      );
+    // Since #1023 a cycle's scheduled rows are exactly its program's days (ADR-037).
+    // Rows past the last day are left off the dashboard, and days with no row are
+    // dated spec-relatively. Either marks a cycle scheduled before #1023, or a
+    // program whose days changed mid-cycle. The web never links to such a row, so
+    // this is the one place that sees it. The log is structured, so how often such
+    // cycles are loaded is a plain `| json` count in Loki. It can't name the cycle:
+    // finding those is re-dating's job, from the database (#1032).
+    if (scheduledWorkouts.length > 0) {
+      const { pastLastDay, unscheduledDays } = scheduleCoverage(dashboard.program, programSpec, scheduledWorkouts);
+      if (pastLastDay.length > 0 || unscheduledDays > 0) {
+        this.logger.warn(
+          { program, cycleNum: dashboard.cycleNum, pastLastDay: pastLastDay.length, unscheduledDays },
+          'Scheduled workouts do not match the program days (#1023)',
+        );
+      }
     }
     return response;
   }

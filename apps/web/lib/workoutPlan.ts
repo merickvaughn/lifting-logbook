@@ -89,22 +89,25 @@ export function buildWorkoutDays(
 
 /**
  * How the Cycle Dashboard dates a workout: its override if it was rescheduled,
- * else the date its schedule gave it, else its spec-relative date
+ * else the date the dashboard response lists it on, else its spec-relative date
  * (`WorkoutDay.date`). The grid and the Program Plan's estimate both date workouts
  * through this, so the two can't drift (issue #1023).
  *
- * `dateOverrides` is read with `?.` so a response missing it (an older API pod
- * during a non-atomic web/api rolling deploy) degrades instead of crashing the page.
+ * With a schedule, the response already applies this order: it lists every workout
+ * on its override, else its scheduled date, else its spec-relative date. The fallbacks
+ * here matter without a schedule, where `weeks` is empty, and against an older API pod
+ * during a non-atomic web/api rolling deploy. That is also why `dateOverrides` is read
+ * with `?.`: a response missing it degrades instead of crashing the page.
  */
 export function workoutDateResolver(
   dashboard: Pick<CycleDashboardResponse, 'weeks' | 'dateOverrides'>,
 ): (day: Pick<WorkoutDay, 'workoutNum' | 'date'>) => string {
-  const scheduled = new Map<number, string>();
+  const listed = new Map<number, string>();
   for (const week of dashboard.weeks) {
-    for (const ws of week.workouts) scheduled.set(ws.workoutNum, ws.date);
+    for (const ws of week.workouts) listed.set(ws.workoutNum, ws.date);
   }
   return (day) =>
-    dashboard.dateOverrides?.[day.workoutNum] ?? scheduled.get(day.workoutNum) ?? day.date;
+    dashboard.dateOverrides?.[day.workoutNum] ?? listed.get(day.workoutNum) ?? day.date;
 }
 
 /**

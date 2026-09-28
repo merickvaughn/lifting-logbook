@@ -1,6 +1,7 @@
 import { CycleDashboard, LiftRecord, LiftingProgramSpec, Weekday } from '@lifting-logbook/core';
 import {
   buildCycleDashboardResponse,
+  scheduleCoverage,
   toLiftRecordResponse,
   toWorkoutResponse,
   workoutKeyForWorkoutNum,
@@ -442,6 +443,18 @@ describe('buildCycleDashboardResponse', () => {
     ]);
   });
 
+  it('lists a program week with no workout days as empty and completed (issue #1023)', () => {
+    // A custom spec can skip a week (here week 2 of 3). The week is still part of
+    // the program, so a phase containing it must be able to complete.
+    const scheduled = [sw(1, 1, '2026-05-19'), sw(2, 3, '2026-06-02')];
+    const result = build(days([1, 0], [3, 0]), scheduled, { completed: new Set([1, 2]) });
+    expect(result.weeks.map((w) => [w.week, w.workouts.map((ws) => ws.workoutNum), w.completed])).toEqual([
+      [1, [1], true],
+      [2, [], true],
+      [3, [2], true],
+    ]);
+  });
+
   it('surfaces per-workout metadata top-level in no-schedule mode (issue #740)', () => {
     const result = build(ONE_WEEK_TWO_DAYS, [], {
       overrides: new Map([[2, new Date('2026-05-22T00:00:00.000Z')]]),
@@ -465,5 +478,36 @@ describe('buildCycleDashboardResponse', () => {
     expect(result.dateOverrides).toEqual({ 1: '2026-05-20' });
     expect(result.completedWorkoutNums).toEqual([1]);
     expect(result.skippedWorkoutNums).toEqual([]);
+  });
+});
+
+describe('scheduleCoverage (issue #1023)', () => {
+  // An unregistered program runs its spec once: here 3 days, one a week.
+  const spec = [
+    { week: 1, offset: 0 },
+    { week: 2, offset: 0 },
+    { week: 3, offset: 0 },
+  ];
+  const rows = (...workoutNums: number[]): ScheduledWorkout[] =>
+    workoutNums.map((workoutNum) => ({ workoutNum, weekNum: 1, scheduledDate: new Date('2026-05-18T00:00:00.000Z') }));
+
+  it('finds nothing when the rows are exactly the program days, as a cycle scheduled since #1023 has', () => {
+    expect(scheduleCoverage('my-program', spec, rows(1, 2, 3))).toEqual({ pastLastDay: [], unscheduledDays: 0 });
+  });
+
+  it('lists rows past the program’s last day', () => {
+    expect(scheduleCoverage('my-program', spec, rows(1, 2, 3, 4, 5))).toEqual({ pastLastDay: [4, 5], unscheduledDays: 0 });
+  });
+
+  it('counts program days with no row', () => {
+    expect(scheduleCoverage('my-program', spec, rows(1))).toEqual({ pastLastDay: [], unscheduledDays: 2 });
+  });
+
+  it('numbers the program by its canonical length', () => {
+    // 5-3-1 tiles its block to 12 weeks, so a 1-day-a-week spec has 12 days.
+    expect(scheduleCoverage('5-3-1', [{ week: 1, offset: 0 }], rows(12, 13))).toEqual({
+      pastLastDay: [13],
+      unscheduledDays: 11,
+    });
   });
 });

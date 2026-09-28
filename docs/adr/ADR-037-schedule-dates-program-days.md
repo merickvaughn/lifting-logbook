@@ -56,20 +56,24 @@ the #740 bug. A schedule only dates the days.
    - its `weekNum` is day N's program week.
 
    A schedule training more or fewer days a week than the program, or a different number each
-   week, stretches or compresses the calendar. It no longer renumbers the program. If
-   `distributeWorkouts` ever broke its contract and dated the wrong number of workouts, the cycle
-   would start unscheduled with a structured error log rather than fail: numbering no longer
-   depends on the schedule, so only the dates would be lost.
+   week, stretches or compresses the calendar. It no longer renumbers the program.
+   - Generating a cycle always replaces that cycle number's rows. With no schedule, or nothing to
+     date, it clears them, so a cycle number reused after a delete, or via `fromCycleNum`, never
+     inherits another cycle's dates.
+   - If `distributeWorkouts` ever broke its contract and dated the wrong number of workouts, none
+     included, the cycle would start unscheduled with a structured error log rather than fail.
+     Numbering no longer depends on the schedule, so only the dates would be lost.
 2. **Reads.** Readers take the week and day from `workoutNum`, and only the date from the row. All
    three read `programWorkoutKeys`:
    - The workout endpoint, through `workoutKeyForWorkoutNum`. The one exception is a row past
      the program's last day, which has no program day: if it is opened directly, it is labelled
      with its own stored week and plans nothing.
    - The cycle dashboard response. With a schedule, `buildCycleDashboardResponse` lists every
-     program day under its program week. Each day is dated by its override, else its row, else
-     the spec-relative date the grid and endpoint also give it. Rows past the last day are left
-     out, with one structured warning per load. It numbers the days itself from the spec it is
-     given, so a caller can't hand it a different numbering.
+     program day under its program week, and every week, even one with no days (then empty and
+     completed). Each day is dated by its override, else its row, else the spec-relative date the
+     grid and endpoint also give it. Rows past the last day are left out. It numbers the days
+     itself from the spec it is given, so a caller can't hand it a different numbering. When rows
+     and days don't match, the controller logs one structured warning per load.
    - The web grid (`buildWorkoutDays`).
 3. **Order.** `distributeWorkouts` emits each week's days in weekday order. The settings validator
    accepts days in any order, and workout order must match date order.
@@ -134,14 +138,17 @@ the row and the offset from the program is the combination that produced empty d
 
 Existing cycles keep their stored dates:
 - **A row past the program's last day stays in place.**
-  - The dashboard leaves it out and logs one structured warning per load, so the affected cycles
-    can be found in Loki.
+  - The dashboard leaves it out.
   - If it is opened directly, the workout endpoint still serves it as a workout with no planned
     lifts, logs a warning, and keeps any sets logged against it visible.
 - **A cycle scheduled with fewer days a week than the program has no rows for its last days.**
   Those days show their spec-relative dates on the card, on the detail page and in the dashboard
   response, whose program weeks are therefore complete, so the plan page's phases can still
   finish. The dates stay out of calendar order with the scheduled ones until the next cycle.
+- **Both shapes are counted, not named.** The dashboard's warning counts both, once per load,
+  with the program and cycle number. Loki can therefore count how often such cycles are loaded.
+  The warning carries no user, so it can't identify the cycles; re-dating (#1032) would find
+  them in the database.
 
 Re-dating a cycle when the schedule changes is [#1032](https://github.com/merickvaughn/lifting-logbook/issues/1032).
 

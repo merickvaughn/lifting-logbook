@@ -222,8 +222,34 @@ describe('CycleDashboardController', () => {
       ]);
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy).toHaveBeenCalledWith(
-        { program: SCHEDULED_PROGRAM, cycleNum: 2, dropped: 2, firstDropped: 5 },
-        expect.stringContaining('left off the dashboard'),
+        { program: SCHEDULED_PROGRAM, cycleNum: 2, pastLastDay: 2, unscheduledDays: 0 },
+        expect.stringContaining('do not match the program days'),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('lists a program day with no scheduled row on its spec-relative date, and warns (issue #1023)', async () => {
+    // Rows saved before #1023 for a schedule training fewer days a week than the
+    // program dated too few workouts. The days they missed still belong to their
+    // program week, so the plan page's phases can complete.
+    repo.getCycleDashboard.mockResolvedValue(stubDashboard(SCHEDULED_PROGRAM));
+    specRepo.getProgramSpec.mockResolvedValue(SCHEDULED_SPEC());
+    scheduledRepo.getScheduledWorkouts.mockResolvedValue(stubScheduled().slice(0, 2));
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    try {
+      const result = await controller.getCurrentCycle(SCHEDULED_PROGRAM, MOCK_USER);
+
+      // Cycle start 2026-04-20 + (week-1)*7 + offset.
+      expect(result.weeks[1]?.workouts).toEqual([
+        { workoutNum: 3, date: '2026-04-27', skipped: false },
+        { workoutNum: 4, date: '2026-04-29', skipped: false },
+      ]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        { program: SCHEDULED_PROGRAM, cycleNum: 2, pastLastDay: 0, unscheduledDays: 2 },
+        expect.stringContaining('do not match the program days'),
       );
     } finally {
       warnSpy.mockRestore();

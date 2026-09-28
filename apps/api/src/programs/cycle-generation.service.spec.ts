@@ -243,7 +243,10 @@ describe('CycleGenerationService', () => {
       );
     });
 
-    it('does not save scheduled dates when user has no workout schedule', async () => {
+    it('clears the new cycle’s scheduled rows when user has no workout schedule (issue #1023)', async () => {
+      // The cycle number may have been used before (fromCycleNum, or delete then
+      // re-initialize), and deleteCurrentCycle clears only the current cycle's rows:
+      // without a schedule the new cycle must not inherit an old one's dates.
       cycleDashboardRepo.getCycleDashboard.mockResolvedValue(stubDashboard());
       programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
       trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
@@ -251,7 +254,7 @@ describe('CycleGenerationService', () => {
 
       await service.startNewCycle(repos, PROGRAM);
 
-      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).not.toHaveBeenCalled();
+      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 2, []);
     });
   });
 
@@ -408,48 +411,58 @@ describe('CycleGenerationService', () => {
         );
       });
 
-      it('leaves the cycle unscheduled, with a structured error, if distributeWorkouts breaks its contract', async () => {
-        // Unreachable through a valid schedule: distributeWorkouts dates every
-        // workout or, for a schedule with no days, none. Numbering doesn't depend on
-        // the schedule (ADR-037), so dropping the dates beats failing every
-        // scheduled user's cycle creation.
-        jest.mocked(distributeWorkouts).mockReturnValueOnce([{ week: 1, workouts: [new Date(2026, 4, 18)] }]);
-        cycleDashboardRepo.getCycleDashboard.mockRejectedValue(new ProgramNotFoundError(PROGRAM));
-        programSpecRepo.getProgramSpec.mockResolvedValue(structuredClone(PRESET_BASE_SPECS[PROGRAM] ?? []));
-        userSettingsRepo.getSettings.mockResolvedValue({
-          activeProgram: null,
-          workoutSchedule: { type: 'fixed', days: [MON, WED, FRI] },
-          defaultWeightIncrement: null,
-        });
-        const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      it.each<[string, Date[]]>([
+        ['too few dates', [new Date(2026, 4, 18)]],
+        ['no dates at all', []],
+      ])(
+        'leaves the cycle unscheduled, with a structured error, if distributeWorkouts breaks its contract: %s',
+        async (_label, dates) => {
+          // Unreachable through a valid schedule: it has at least one day, and
+          // distributeWorkouts then dates every workout. Numbering doesn't depend on
+          // the schedule (ADR-037), so dropping the dates beats failing every
+          // scheduled user's cycle creation. The rows are cleared, not left alone,
+          // so a reused cycle number doesn't keep another cycle's dates.
+          jest.mocked(distributeWorkouts).mockReturnValueOnce(dates.length ? [{ week: 1, workouts: dates }] : []);
+          cycleDashboardRepo.getCycleDashboard.mockRejectedValue(new ProgramNotFoundError(PROGRAM));
+          programSpecRepo.getProgramSpec.mockResolvedValue(structuredClone(PRESET_BASE_SPECS[PROGRAM] ?? []));
+          userSettingsRepo.getSettings.mockResolvedValue({
+            activeProgram: null,
+            workoutSchedule: { type: 'fixed', days: [MON, WED, FRI] },
+            defaultWeightIncrement: null,
+          });
+          const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
-        try {
-          const { dashboard } = await service.initializeFirstCycle(repos, PROGRAM, { cycleDate: '2026-05-18' });
+          try {
+            const { dashboard } = await service.initializeFirstCycle(repos, PROGRAM, { cycleDate: '2026-05-18' });
 
-          expect(dashboard.cycleNum).toBe(1);
-          expect(cycleDashboardRepo.saveCycleDashboard).toHaveBeenCalledWith(dashboard);
-          expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).not.toHaveBeenCalled();
-          expect(errorSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ program: PROGRAM, cycleNum: 1, programDays: 24, dated: 1 }),
-            expect.stringContaining('left unscheduled'),
-          );
-        } finally {
-          errorSpy.mockRestore();
-        }
-      });
+            expect(dashboard.cycleNum).toBe(1);
+            expect(cycleDashboardRepo.saveCycleDashboard).toHaveBeenCalledWith(dashboard);
+            expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 1, []);
+            expect(errorSpy).toHaveBeenCalledWith(
+              expect.objectContaining({ program: PROGRAM, cycleNum: 1, programDays: 24, dated: dates.length }),
+              expect.stringContaining('left unscheduled'),
+            );
+          } finally {
+            errorSpy.mockRestore();
+          }
+        },
+      );
     });
 
-    it('does not save scheduled dates when user has no workout schedule', async () => {
+    it('clears cycle 1’s scheduled rows when user has no workout schedule (issue #1023)', async () => {
+      // A cycle 1 deleted from cycle 2 or later left its rows behind:
+      // deleteCurrentCycle clears only the current cycle's. Re-initializing without
+      // a schedule must not run the new cycle 1 on those old dates.
       cycleDashboardRepo.getCycleDashboard.mockRejectedValue(
         new ProgramNotFoundError(PROGRAM),
       );
 
       await service.initializeFirstCycle(repos, PROGRAM, { cycleDate: '2026-05-12' });
 
-      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).not.toHaveBeenCalled();
+      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 1, []);
     });
 
-    it('skips scheduled dates without crashing when programSpec is empty and workoutSchedule is set', async () => {
+    it('saves no scheduled dates, without crashing, when programSpec is empty and workoutSchedule is set', async () => {
       cycleDashboardRepo.getCycleDashboard.mockRejectedValue(
         new ProgramNotFoundError(PROGRAM),
       );
@@ -464,7 +477,8 @@ describe('CycleGenerationService', () => {
         service.initializeFirstCycle(repos, PROGRAM, { cycleDate: '2026-05-12' }),
       ).resolves.not.toThrow();
 
-      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).not.toHaveBeenCalled();
+      // A program with no days has nothing to date: the cycle's rows are cleared.
+      expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 1, []);
     });
   });
 

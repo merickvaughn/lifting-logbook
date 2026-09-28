@@ -96,9 +96,9 @@ function phaseStatus(
     (_, i) => phase.startWeek + i,
   );
   const summaries = weeks.map((w) => weekMap.get(w));
-  // Every week in the phase must exist and be completed. Missing weeks (e.g. a
-  // pre-#680 cycle whose stored schedule predates full-length expansion) read as
-  // not-yet-complete, so the phase shows as upcoming/in-progress rather than done.
+  // Every week in the phase must exist and be completed. With a schedule, `weeks`
+  // lists every program week (#1023). Without one it is empty, so every phase reads
+  // upcoming for the whole cycle (#1036).
   if (summaries.length > 0 && summaries.every((s) => s?.completed)) return 'completed';
   const hasStarted = summaries.some((s) =>
     s?.workouts.some((w) => w.date <= today),
