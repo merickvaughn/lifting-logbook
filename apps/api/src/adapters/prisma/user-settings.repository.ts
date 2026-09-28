@@ -1,30 +1,13 @@
 import { Prisma } from '@prisma/client';
-import {
-  UserSettingsResponse,
-  UserWorkoutSchedule,
-  WeightUnit,
-  isValidSchedule,
-} from '@lifting-logbook/types';
-import { PrismaExecutor } from '../adapters/prisma/prisma-tx.util';
-import { IUserSettingsRepository } from '../ports/IUserSettingsRepository';
-
-export interface UpsertSettingsPatch {
-  activeProgram?: string;
-  // Explicit `null` clears the schedule; `undefined` leaves it unchanged.
-  workoutSchedule?: UserWorkoutSchedule | null;
-  // Explicit `null` clears the override (falls back to the 1.25 app default);
-  // `undefined` leaves it unchanged.
-  defaultWeightIncrement?: number | null;
-  // Explicit `null` clears the preference (falls back to 'lbs'); `undefined`
-  // leaves it unchanged.
-  unit?: WeightUnit | null;
-}
+import { UserSettingsResponse, WeightUnit, isValidSchedule } from '@lifting-logbook/types';
+import { PrismaExecutor } from './prisma-tx.util';
+import { IUserSettingsRepository, UpsertSettingsPatch } from '../../ports/IUserSettingsRepository';
 
 // Runtime guard for values read from the JSONB column. Prisma returns whatever JSON is
 // stored — a manual DB edit or a pre-validator row could violate the type. Delegates to
 // the shared `isValidSchedule` predicate so the read-side bounds stay locked to the
 // write-side DTO bounds.
-function parseSchedule(value: unknown): UserWorkoutSchedule | null {
+function parseSchedule(value: unknown): UserSettingsResponse['workoutSchedule'] {
   if (value === null || value === undefined) return null;
   return isValidSchedule(value) ? value : null;
 }
@@ -35,7 +18,7 @@ function parseUnit(value: unknown): WeightUnit | null {
   return value === 'lbs' || value === 'kg' ? value : null;
 }
 
-export class UserSettingsRepository implements IUserSettingsRepository {
+export class PrismaUserSettingsRepository implements IUserSettingsRepository {
   constructor(
     private readonly prisma: PrismaExecutor,
     private readonly userId: string,

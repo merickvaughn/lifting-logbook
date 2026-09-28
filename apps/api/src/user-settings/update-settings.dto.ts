@@ -80,7 +80,12 @@ export class WorkoutScheduleDto implements UserWorkoutSchedule {
 }
 
 export class UpdateSettingsDto {
-  @IsOptional()
+  // Unlike the other three fields, activeProgram has no clear-via-null semantics — it's
+  // switched by POST /programs/:program/switch, not cleared here. @IsOptional() would let
+  // `null` through unvalidated (class-validator skips every check when the value is exactly
+  // `null`, not just `undefined`) and both adapters would then null out the column; reject it
+  // explicitly instead so the port's `activeProgram?: string` (no `| null`) type stays accurate.
+  @ValidateIf((o: UpdateSettingsDto) => o.activeProgram !== undefined)
   @IsString()
   @MaxLength(64)
   activeProgram?: string;
