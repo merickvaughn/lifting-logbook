@@ -232,6 +232,9 @@ in the order each was last written, which is how the repositories return them (s
 override again re-creates it at the end). A lift keeps one override of each kind — its
 `add` or `remove`, and its `replace` — so replacing a lift added through Manage Lifts
 keeps the add, and the replacement takes the added lift's place and sets (#1026). The
+store keeps the add rather than `applyLiftOverrides` inferring it, because a replace of
+a lift the plan doesn't show is routine once re-saves reorder a chain of swaps: treating
+it as an add would list a lift twice when a chain is redone after an undo. The
 workout response names the slot on the replacement's `replaces`, so clients resolve the
 prescription without the override table (#1014). Progression doesn't follow these rules
 yet: `updateMaxes` still looks a record's prescription up by the record's own lift name

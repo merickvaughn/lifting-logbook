@@ -20,8 +20,8 @@ export interface IWorkoutLiftOverrideRepository {
    * The workout's overrides in the order each was last written: saving an
    * override again moves it to the end. `applyLiftOverrides` depends on it: a
    * chain of swaps, or a swap made again after being undone, only resolves when
-   * applied in that sequence. A lift has at most one override of each kind (see
-   * {@link sameKindActions}).
+   * applied in that sequence. Saving an override replaces the lift's override of
+   * the same kind (see {@link sameKindActions}).
    */
   getOverrides(
     program: string,

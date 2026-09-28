@@ -215,11 +215,29 @@ describe("applyLiftOverrides — an override saved again", () => {
   });
 });
 
-describe("applyLiftOverrides — replacing an added lift (#1026)", () => {
-  // The repositories keep a lift's add alongside its replace, so the add keeps
-  // its place in the order and the replace, saved later, comes after it. (When
-  // the replace overwrote the add, the replace had no lift to swap, and neither
-  // was planned.)
+describe("applyLiftOverrides — a lift’s add and its replace, stored apart (#1026)", () => {
+  // The repositories keep a lift's add alongside its replace, each in the order
+  // it was last written. (When one overwrote the other, replacing an added lift
+  // left the replace no lift to swap, and adding a swapped-out lift undid the swap.)
+
+  it("keeps a swap when the swapped-out lift is then added back", () => {
+    // Squat → Front Squat, then Squat added: Front Squat keeps Squat's slot, and
+    // Squat joins the workout as an added lift.
+    const o: LiftOverride[] = [
+      { lift: "Squat", action: "replace", replacedBy: "Front Squat" },
+      { lift: "Squat", action: "add" },
+    ];
+    const { planned, renamed } = applyLiftOverrides(lifts, o);
+    expect(planned).toEqual([
+      { lift: "Front Squat", replaces: "Squat" },
+      { lift: "Bench Press" },
+      { lift: "Deadlift" },
+      { lift: "Squat" },
+    ]);
+    // A lift the plan shows owns the sets under its own name (telling the two
+    // Squats' sets apart needs slot identity, #1027).
+    expect(renamed.size).toBe(0);
+  });
 
   it("puts the replacement in the added lift’s place, with its logged sets", () => {
     // Chin-up, then Face Pulls, were added; then Chin-up was replaced.

@@ -16,6 +16,19 @@ describe('InMemoryWorkoutLiftOverrideRepository', () => {
     ]);
   });
 
+  it('keeps a lift’s replace when the lift is then added', async () => {
+    // Squat swapped for Front Squat, then Squat added back: the add used to
+    // overwrite the replace, undoing the swap.
+    const repo = new InMemoryWorkoutLiftOverrideRepository();
+    await repo.upsertOverride(...W, { lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' });
+    await repo.upsertOverride(...W, { lift: 'Squat', action: 'add' });
+
+    expect(await repo.getOverrides(...W)).toEqual([
+      { lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' },
+      { lift: 'Squat', action: 'add' },
+    ]);
+  });
+
   it('replaces the lift’s override of the same kind, moving it to the end (#1014)', async () => {
     const repo = new InMemoryWorkoutLiftOverrideRepository();
     await repo.upsertOverride(...W, { lift: 'Chin-up', action: 'add' });
