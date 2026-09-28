@@ -6,10 +6,8 @@ import {
   activationExercise,
   baseSpecBlockWeeks,
   blockWeekForProgramWeek,
-  expandSpecToLength,
   noScheduleWorkoutDateUTC,
-  orderedWorkoutKeys,
-  programLengthWeeks,
+  programWorkoutKeys,
   specRowsForWorkoutDay,
 } from '@lifting-logbook/core';
 import type {
@@ -55,9 +53,10 @@ export interface WeekRow {
  * (leangains 12 wks, rpt 8, etc.); `program` is optional and falls back to the
  * base-spec block length for custom / unregistered programs.
  *
- * `workoutNum` is a global sequential index over {@link orderedWorkoutKeys} — the
- * same helper the API's no-schedule `weekForWorkoutNum` uses — so a card's
- * `workoutNum` always resolves to the workout it links to (issue #740).
+ * `workoutNum` indexes {@link programWorkoutKeys} — the numbering the workout
+ * endpoint resolves a workout's day with and schedule generation dates — so a
+ * card's `workoutNum` always resolves to the workout it links to (issue #740),
+ * with or without a schedule (#1023).
  */
 export function buildWorkoutDays(
   specs: LiftingProgramSpecResponse[],
@@ -71,9 +70,7 @@ export function buildWorkoutDays(
   ];
   const startDate = new Date(Date.UTC(y, m - 1, d));
 
-  const fullSpec = expandSpecToLength(specs, programLengthWeeks(program ?? '', specs));
-
-  return orderedWorkoutKeys(fullSpec).map((k, i) => ({
+  return programWorkoutKeys(program ?? '', specs).map((k, i) => ({
     workoutNum: i + 1,
     week: k.week,
     // cycleStart + (week-1)*7 + offset, via the shared core helper the API's

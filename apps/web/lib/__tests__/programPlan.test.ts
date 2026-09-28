@@ -3,6 +3,7 @@ import type { ProgramLengthMeta } from '@lifting-logbook/core';
 import {
   deriveProgramPhases,
   deriveProgramSummary,
+  estimateCompletionDate,
   resolveProgramPlanMeta,
 } from '../programPlan';
 
@@ -165,6 +166,30 @@ describe('deriveProgramPhases — status', () => {
 // ---------------------------------------------------------------------------
 // deriveProgramSummary
 // ---------------------------------------------------------------------------
+
+describe('estimateCompletionDate', () => {
+  it('is the day after the last program week with no schedule', () => {
+    // A program week is a calendar week, so 12 weeks from a Monday start.
+    expect(estimateCompletionDate([], '2026-05-18', 12)).toBe('2026-08-10');
+  });
+
+  it('is the last scheduled workout with a schedule, whose pace sets the length (issue #1023)', () => {
+    // 5-3-1's 24 days on Mon/Wed/Fri: program week 12's last day falls in
+    // calendar week 8, four weeks before a 12-calendar-week estimate.
+    const weeks = [
+      makeWeek(1, ['2026-05-18', '2026-05-20'], false),
+      makeWeek(12, ['2026-07-08', '2026-07-10'], false),
+    ];
+    expect(estimateCompletionDate(weeks, '2026-05-18', 12)).toBe('2026-07-10');
+  });
+
+  it('counts a rescheduled workout wherever its override put it', () => {
+    // `weeks` carries override dates, so a last workout moved earlier (or an
+    // earlier one moved later) changes the estimate.
+    const weeks = [makeWeek(1, ['2026-07-20', '2026-05-20'], false)];
+    expect(estimateCompletionDate(weeks, '2026-05-18', 12)).toBe('2026-07-20');
+  });
+});
 
 describe('deriveProgramSummary', () => {
   it('uses the canonical program length for duration, not the stored block', () => {

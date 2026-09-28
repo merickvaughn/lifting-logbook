@@ -1,6 +1,6 @@
 import { Controller, Delete, Get, HttpCode, HttpStatus, Inject, Param } from '@nestjs/common';
 import { CycleDashboardResponse } from '@lifting-logbook/types';
-import { weekTypeForDate } from '@lifting-logbook/core';
+import { programWorkoutKeys, weekTypeForDate } from '@lifting-logbook/core';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
@@ -38,7 +38,10 @@ export class CycleDashboardController {
       workoutSkipOverride.getSkipsForCycle(program, dashboard.cycleNum),
     ]);
 
-    return buildCycleDashboardResponse(dashboard, currentWeekType, scheduledWorkouts, overrideMap, completedWorkoutNums, skippedNums);
+    // Schedule rows are listed under their day's program week, from the same
+    // numbering the workout endpoint and the web grid use (#1023).
+    const programDays = programWorkoutKeys(program, programSpec);
+    return buildCycleDashboardResponse(dashboard, currentWeekType, scheduledWorkouts, programDays, overrideMap, completedWorkoutNums, skippedNums);
   }
 
   @Delete('cycles/current')

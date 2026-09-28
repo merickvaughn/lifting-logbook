@@ -5,6 +5,7 @@ import { getActiveProgram } from '@/lib/active-program';
 import {
   deriveProgramPhases,
   deriveProgramSummary,
+  estimateCompletionDate,
   resolveProgramPlanMeta,
 } from '@/lib/programPlan';
 import styles from './plan.module.css';
@@ -14,12 +15,6 @@ const STATUS_ICON: Record<string, string> = {
   'in-progress': '◆',
   upcoming: '→',
 };
-
-function addDays(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate.slice(0, 10)}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
 
 export default async function ProgramPlanPage({
   params,
@@ -44,7 +39,7 @@ export default async function ProgramPlanPage({
   const { durationWeeks } = deriveProgramSummary(specs, program);
   const today = new Date().toISOString().slice(0, 10);
   const phases = deriveProgramPhases(dashboard.weeks, today, meta);
-  const estCompletion = addDays(dashboard.cycleStartDate, durationWeeks * 7);
+  const estCompletion = estimateCompletionDate(dashboard.weeks, dashboard.cycleStartDate, durationWeeks);
 
   return (
     <section className={styles.container}>

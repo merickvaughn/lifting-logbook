@@ -177,7 +177,7 @@ set, and each level above it is reassembled per request.
 | **Block / Wave** | `blockWeeks` arithmetic + `phaseStyle: 'repeating' \| 'wave'` | **No entity.** A wave boundary is `ceil(week / blockWeeks)` |
 | **Cycle** | `cycleNum: number`, denormalized onto five child tables | `cycle_dashboard` is `@@unique([userId, program])` — **one row, the current cycle only** |
 | **Week** | `week: number` + `WeekType` | **Derived** by tiling (`expandSpecToLength`) |
-| **Workout** | `(program, cycleNum, workoutNum)`; `workoutNum` is a **global ordinal** over the cycle, from `orderedWorkoutKeys` | **Derived.** Typed exactly once, as `TimerWorkoutKey` |
+| **Workout** | `(program, cycleNum, workoutNum)`; `workoutNum` is a **global ordinal** over the cycle, from `programWorkoutKeys`, with or without a schedule | **Derived.** Typed exactly once, as `TimerWorkoutKey` |
 | **Lift slot** | spec row keyed `(week, offset, lift, order)` | `custom_program_spec` row |
 | **Set** | `PlannedSet` (prescribed) / `LiftRecord` (logged) | One `lift_record` row per completed set |
 
@@ -196,8 +196,8 @@ time — never in storage, so reverting is a pure code change.
 
 `programLengths.ts` owns the canonical mapping and the helpers that keep the web grid
 and the API in lockstep: `expandSpecToLength`, `blockWeekForProgramWeek`,
-`orderedWorkoutKeys` (the `workoutNum ↔ (week, offset)` mapping),
-`noScheduleWorkoutDateUTC`, and `specRowsForWorkoutDay` (one workout day's rows: the
+`programWorkoutKeys` (the `workoutNum ↔ (week, offset)` mapping: `orderedWorkoutKeys`
+over the tiled program), `noScheduleWorkoutDateUTC`, and `specRowsForWorkoutDay` (one workout day's rows: the
 block week its program week tiles from, at its `offset`). A workout carries its
 **program** week, but the spec endpoint serves the untiled block, so a lookup must go
 through the block week and the day's offset. `WorkoutResponse` carries the `offset` for
@@ -216,7 +216,7 @@ side-tables keyed `(userId, program, cycleNum, workoutNum)`:
 | `workout_date_override` | Rescheduled to a new date |
 | `workout_skip_override` | Explicitly skipped |
 | `workout_lift_override` | `action: add \| remove \| replace` (+ `replacedBy`) |
-| `cycle_scheduled_workout` | The generated schedule (no HTTP route at all) |
+| `cycle_scheduled_workout` | The generated schedule: one date per program day, in the program's order (no HTTP route at all). A schedule dates workouts and never numbers them, so readers take a workout's week and day from its `workoutNum` ([ADR-037](adr/ADR-037-schedule-dates-program-days.md)) |
 
 This is the clearest structural evidence of the absent entity: three tables exist to
 describe changes to a thing that is not itself stored.
@@ -542,6 +542,7 @@ through with its closing PR rather than deleted or renumbered.
 - [ADR-016 — Cycle planning agent](adr/ADR-016-cycle-planning-agent.md)
 - [ADR-017 — Training max history table](adr/ADR-017-training-max-history-table.md) — the one domain-model ADR, and fully surfaced
 - [ADR-035 — Client-side rest timer state](adr/ADR-035-client-side-rest-timer-state.md)
+- [ADR-037 — A schedule dates the program's workouts; it never numbers them](adr/ADR-037-schedule-dates-program-days.md)
 - [`docs/README.md`](README.md) — architecture narrative and full ADR index
 - [`docs/user-guide.md`](user-guide.md) — end-user vocabulary
 - [`docs/standards/training-max-precision.md`](standards/training-max-precision.md) — rounding rules referenced by `computePlannedSets`

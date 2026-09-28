@@ -7,11 +7,9 @@ import {
   TrainingMax,
   TrainingMaxHistoryEntry,
   buildLiftRecordId,
-  expandSpecToLength,
   normalizeAmrap,
   noScheduleWorkoutDateUTC,
-  orderedWorkoutKeys,
-  programLengthWeeks,
+  programWorkoutKeys,
 } from '@lifting-logbook/core';
 import {
   CycleDashboardResponse,
@@ -127,11 +125,19 @@ export const toCycleDashboardResponse = (
  * workout dates. When an override date exists for a workout it wins over the
  * system-assigned scheduled date. A week is marked completed when every workout
  * in that week has at least one lift record or is explicitly skipped.
+ *
+ * Each workout is listed under the program week of its day, `programDays` being
+ * the program's workout days in `workoutNum` order (`programWorkoutKeys`). That is
+ * the week the Cycle Dashboard grid and the workout endpoint show it in, and the
+ * week the plan page's phases count. A scheduled row supplies only the date: rows
+ * saved before #1023 carry the schedule's calendar week, and a row past the
+ * program's last day dates no workout of the program, so it is left out.
  */
 export function buildCycleDashboardResponse(
   d: CycleDashboard,
   currentWeekType: WeekType,
   scheduled: ScheduledWorkout[],
+  programDays: ReadonlyArray<{ week: WeekNumber }>,
   overrides: Map<number, Date>,
   completedWorkoutNums: Set<number>,
   skippedNums: Set<number> = new Set(),
@@ -158,15 +164,17 @@ export function buildCycleDashboardResponse(
 
   const weekAcc = new Map<number, { workouts: WorkoutSummary[]; scheduled: ScheduledWorkout[] }>();
   for (const sw of scheduled) {
+    const week = programDays[sw.workoutNum - 1]?.week;
+    if (week === undefined) continue;
     const effectiveDate = overrides.get(sw.workoutNum) ?? sw.scheduledDate;
-    const acc = weekAcc.get(sw.weekNum) ?? { workouts: [], scheduled: [] };
+    const acc = weekAcc.get(week) ?? { workouts: [], scheduled: [] };
     acc.workouts.push({
       workoutNum: sw.workoutNum,
       date: isoDate(effectiveDate),
       skipped: skippedNums.has(sw.workoutNum),
     });
     acc.scheduled.push(sw);
-    weekAcc.set(sw.weekNum, acc);
+    weekAcc.set(week, acc);
   }
 
   const weeks: CycleWeekSummary[] = [...weekAcc.keys()]
@@ -218,27 +226,24 @@ export const isValidWorkoutNum = (n: number): boolean =>
 /**
  * The `(week, offset)` workout-day key for a global `workoutNum`, or undefined when
  * `workoutNum` exceeds the program's canonical length. The stored spec is one
- * repeating block, so it is first tiled to the program's canonical length
- * ({@link expandSpecToLength} + {@link programLengthWeeks}); the `workoutNum` then
- * indexes into the ordered `(week, offset)` workout days ({@link orderedWorkoutKeys})
- * — the *same* mapping the web Cycle Dashboard grid (`buildWorkoutDays`) uses, so a
- * card and the workout it opens can never disagree on week, offset, or the
- * spec-relative date derived from them (issues #740, #745). `program` defaults to
- * the base-spec block length for custom / unregistered programs.
+ * repeating block, so {@link programWorkoutKeys} first tiles it to the program's
+ * canonical length; the `workoutNum` then indexes the ordered `(week, offset)`
+ * workout days — the *same* numbering the web Cycle Dashboard grid
+ * (`buildWorkoutDays`) and schedule generation use, so a card and the workout it
+ * opens can never disagree on week, offset, or the spec-relative date derived from
+ * them (issues #740, #745), in either mode (#1023). `program` defaults to the
+ * base-spec block length for custom / unregistered programs.
  */
 export const workoutKeyForWorkoutNum = (
   spec: LiftingProgramSpec[],
   workoutNum: number,
   program = '',
-): { week: WeekNumber; offset: number } | undefined => {
-  const fullSpec = expandSpecToLength(spec, programLengthWeeks(program, spec));
-  return orderedWorkoutKeys(fullSpec)[workoutNum - 1];
-};
+): { week: WeekNumber; offset: number } | undefined =>
+  programWorkoutKeys(program, spec)[workoutNum - 1];
 
 /**
- * The training week for a global `workoutNum` — the no-schedule fallback (a
- * scheduled row's `weekNum` is authoritative when present). A thin `.week` accessor
- * over {@link workoutKeyForWorkoutNum}; see it for the tiling contract.
+ * The training week for a global `workoutNum`. A thin `.week` accessor over
+ * {@link workoutKeyForWorkoutNum}; see it for the tiling contract.
  *
  * Returns undefined only when `workoutNum` exceeds the *full* canonical length
  * (surfaced as 400 by the controller). Before #740 the cap was one block's

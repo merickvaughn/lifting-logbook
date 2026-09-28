@@ -75,6 +75,36 @@ describe("distributeWorkouts", () => {
     ]);
   });
 
+  it("dates each week's days in weekday order, whatever order the schedule lists them (issue #1023)", () => {
+    // The settings validator accepts days in any order. Scheduled workouts are
+    // numbered by position, so a week listed as [Fri, Mon, Wed] must still come
+    // out Mon, Wed, Fri, or workout 2 would fall before workout 1.
+    const fixed = distributeWorkouts(
+      3,
+      { type: "fixed", days: [DAY_INDEX.FRI, DAY_INDEX.MON, DAY_INDEX.WED] },
+      MON_2026_05_18,
+    );
+    expect(fixed[0]?.workouts.map(ymd)).toEqual(["2026-05-18", "2026-05-20", "2026-05-22"]);
+
+    const rotating = distributeWorkouts(
+      4,
+      { type: "rotating", weeks: [[DAY_INDEX.THU, DAY_INDEX.TUE], [DAY_INDEX.SAT, DAY_INDEX.MON]] },
+      MON_2026_05_18,
+    );
+    expect(rotating.flatMap((w) => w.workouts).map(ymd)).toEqual([
+      "2026-05-19", // Tue
+      "2026-05-21", // Thu
+      "2026-05-25", // Mon
+      "2026-05-30", // Sat
+    ]);
+  });
+
+  it("does not reorder the schedule it was given", () => {
+    const days = [DAY_INDEX.FRI, DAY_INDEX.MON];
+    distributeWorkouts(2, { type: "fixed", days }, MON_2026_05_18);
+    expect(days).toEqual([DAY_INDEX.FRI, DAY_INDEX.MON]);
+  });
+
   it("aligns the first week to the Monday of the start date's week", () => {
     // Wednesday start — first week's Mon and earlier days are still emitted by design.
     const schedule: UserWorkoutSchedule = {

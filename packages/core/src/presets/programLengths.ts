@@ -131,7 +131,7 @@ export function specRowsForWorkoutDay<T extends { week: WeekNumber; offset: numb
  * cast — only the `week` field is read or rewritten.
  */
 export function expandSpecToLength<T extends { week: WeekNumber }>(
-  baseSpec: T[],
+  baseSpec: readonly T[],
   lengthWeeks: number,
 ): T[] {
   const blockWeeks = baseSpecBlockWeeks(baseSpec);
@@ -160,11 +160,10 @@ export function expandSpecToLength<T extends { week: WeekNumber }>(
  * offset. This is the canonical `workoutNum ↔ (week, offset)` mapping — the Nth
  * entry (1-based) is `workoutNum` N.
  *
- * Both the web Cycle Dashboard grid (`buildWorkoutDays`) and the API's no-schedule
- * `weekForWorkoutNum` fallback derive `workoutNum` from this single helper, so a
- * card's `workoutNum` and the workout it opens can never disagree. Callers pass a
- * spec already tiled to the canonical length via {@link expandSpecToLength}, so the
- * ordering spans the whole cycle rather than a single repeating block (issue #740).
+ * The spec must already be tiled to the canonical length via
+ * {@link expandSpecToLength}, so the ordering spans the whole cycle rather than a
+ * single repeating block (issue #740). {@link programWorkoutKeys} does both steps,
+ * and is what callers numbering a cycle's workouts use.
  */
 export function orderedWorkoutKeys(
   spec: ReadonlyArray<{ week: WeekNumber; offset: number }>,
@@ -178,6 +177,25 @@ export function orderedWorkoutKeys(
     keys.push({ week: row.week, offset: row.offset });
   }
   return keys.sort((a, b) => a.week - b.week || a.offset - b.offset);
+}
+
+/**
+ * A program's workout days in `workoutNum` order: the `(week, offset)` keys of its
+ * spec tiled to its canonical length. Workout N is entry N-1; a `workoutNum` past
+ * the end is not a workout of the program.
+ *
+ * This is the one numbering of a cycle's workouts, in both modes. The Cycle
+ * Dashboard grid (`buildWorkoutDays`), the workout endpoint, the cycle dashboard
+ * response and schedule generation (`saveScheduledDates`) all read it. A schedule
+ * dates these days and never numbers them, so a schedule that trains more or fewer
+ * days a week than the program, or a different number each week, changes only the
+ * dates (issue #1023, ADR-037).
+ */
+export function programWorkoutKeys(
+  program: string,
+  spec: ReadonlyArray<{ week: WeekNumber; offset: number }>,
+): { week: WeekNumber; offset: number }[] {
+  return orderedWorkoutKeys(expandSpecToLength(spec, programLengthWeeks(program, spec)));
 }
 
 /**

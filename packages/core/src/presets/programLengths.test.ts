@@ -7,6 +7,7 @@ import {
   expandSpecToLength,
   orderedWorkoutKeys,
   noScheduleWorkoutDateUTC,
+  programWorkoutKeys,
   specRowsForWorkoutDay,
 } from '.';
 import { LiftingProgramSpec } from '../models/LiftingProgramSpec';
@@ -373,6 +374,57 @@ describe('orderedWorkoutKeys', () => {
     expect(keys[0]).toEqual({ week: 1, offset: 0 });
     expect(keys[3]).toEqual({ week: 2, offset: 0 }); // workoutNum 4 → week 2
     expect(keys[35]?.week).toBe(12);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// programWorkoutKeys — a cycle's one workout numbering (issue #1023)
+// ---------------------------------------------------------------------------
+
+describe('programWorkoutKeys', () => {
+  it('tiles the stored block to the canonical length before numbering', () => {
+    const base = PRESET_BASE_SPECS['5-3-1'] ?? [];
+    const keys = programWorkoutKeys('5-3-1', base);
+    // 12 weeks × 2 days {0, 3}, though the stored block is only 3 weeks.
+    expect(keys).toHaveLength(24);
+    expect(keys.slice(0, 4)).toEqual([
+      { week: 1, offset: 0 },
+      { week: 1, offset: 3 },
+      { week: 2, offset: 0 },
+      { week: 2, offset: 3 },
+    ]);
+    expect(keys[23]).toEqual({ week: 12, offset: 3 });
+  });
+
+  it('is exactly orderedWorkoutKeys over the tiled spec, for every preset', () => {
+    for (const [program, base] of Object.entries(PRESET_BASE_SPECS)) {
+      expect(programWorkoutKeys(program, base)).toEqual(
+        orderedWorkoutKeys(expandSpecToLength(base, programLengthWeeks(program, base))),
+      );
+    }
+  });
+
+  it('numbers a custom program by its own block, whatever offsets each week trains', () => {
+    // Imported specs can train different days in different weeks. Each program
+    // day still gets one number, so no workout lands on a day the week lacks.
+    const uneven = [
+      makeRow({ week: 1, offset: 0 }),
+      makeRow({ week: 1, offset: 2 }),
+      makeRow({ week: 1, offset: 4 }),
+      makeRow({ week: 2, offset: 0 }),
+      makeRow({ week: 2, offset: 3 }),
+    ];
+    expect(programWorkoutKeys('my-custom', uneven)).toEqual([
+      { week: 1, offset: 0 },
+      { week: 1, offset: 2 },
+      { week: 1, offset: 4 },
+      { week: 2, offset: 0 },
+      { week: 2, offset: 3 },
+    ]);
+  });
+
+  it('returns [] for an empty spec', () => {
+    expect(programWorkoutKeys('5-3-1', [])).toEqual([]);
   });
 });
 

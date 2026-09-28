@@ -22,20 +22,26 @@ const stubDashboard = () => ({
   cycleStartWeekday: Weekday.Monday,
 });
 
-const stubSpec = (weekType: 'training' | 'test' | 'deload' = 'training') => [{
-  week: 1,
-  offset: 0,
-  lift: 'Squat' as const,
-  increment: 5,
-  order: 1,
-  sets: 3,
-  reps: 5,
-  amrap: false,
-  warmUpPct: '40,50,60',
-  wtDecrementPct: 0,
-  activation: 'None',
-  weekType,
-}];
+// Two days a week (offsets 0 and 2), tiled across 5-3-1's 12 weeks: workouts 1–2
+// are week 1, 3–4 week 2, and so on — the program weeks stubScheduled lists.
+const stubSpec = (weekType: 'training' | 'test' | 'deload' = 'training') =>
+  [
+    { offset: 0, lift: 'Squat' as const },
+    { offset: 2, lift: 'Bench Press' as const },
+  ].map(({ offset, lift }) => ({
+    week: 1,
+    offset,
+    lift,
+    increment: 5,
+    order: 1,
+    sets: 3,
+    reps: 5,
+    amrap: false,
+    warmUpPct: '40,50,60',
+    wtDecrementPct: 0,
+    activation: 'None',
+    weekType,
+  }));
 
 const stubScheduled = (): ScheduledWorkout[] => [
   { workoutNum: 1, weekNum: 1, scheduledDate: new Date('2026-04-21T00:00:00.000Z') },
@@ -166,6 +172,30 @@ describe('CycleDashboardController', () => {
       workouts: [{ workoutNum: 3, date: '2026-04-28', skipped: false }],
       completed: false,
     });
+  });
+
+  it('lists a workout under its program week, not the week stored on its row (issue #1023)', async () => {
+    // Rows saved before #1023 numbered a Mon/Wed/Fri schedule by calendar week:
+    // three workouts in stored week 1 for a program training two days a week.
+    // The grid and the workout endpoint show workout 3 in program week 2, so the
+    // dashboard (and the plan page's phases, which read it) must too. A row past
+    // the program's 24th day dates no workout of the program and is left out.
+    repo.getCycleDashboard.mockResolvedValue(stubDashboard());
+    specRepo.getProgramSpec.mockResolvedValue(stubSpec());
+    scheduledRepo.getScheduledWorkouts.mockResolvedValue([
+      { workoutNum: 1, weekNum: 1, scheduledDate: new Date('2026-04-20T00:00:00.000Z') },
+      { workoutNum: 2, weekNum: 1, scheduledDate: new Date('2026-04-22T00:00:00.000Z') },
+      { workoutNum: 3, weekNum: 1, scheduledDate: new Date('2026-04-24T00:00:00.000Z') },
+      { workoutNum: 4, weekNum: 2, scheduledDate: new Date('2026-04-27T00:00:00.000Z') },
+      { workoutNum: 25, weekNum: 9, scheduledDate: new Date('2026-06-15T00:00:00.000Z') },
+    ]);
+
+    const result = await controller.getCurrentCycle('5-3-1', MOCK_USER);
+
+    expect(result.weeks.map((w) => [w.week, w.workouts.map((ws) => ws.workoutNum)])).toEqual([
+      [1, [1, 2]],
+      [2, [3, 4]],
+    ]);
   });
 
   it('uses override date instead of scheduled date when override exists', async () => {

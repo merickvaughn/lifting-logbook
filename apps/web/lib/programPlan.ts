@@ -116,6 +116,29 @@ export function deriveProgramPhases(
   }));
 }
 
+/**
+ * The Program Plan's estimated completion date.
+ *
+ * With a schedule, the schedule sets the pace, so the program's weeks need not be
+ * calendar weeks (issue #1023): 5-3-1's 24 days on a Mon/Wed/Fri schedule end in
+ * calendar week 8, not 12. The estimate is then the last scheduled workout's date,
+ * rescheduled or not (`weeks` carries the override). Without one, a program week
+ * is a calendar week, and the estimate is the day after the program's last week.
+ */
+export function estimateCompletionDate(
+  weeks: CycleWeekSummary[],
+  cycleStartDate: string,
+  durationWeeks: number,
+): string {
+  const scheduled = weeks.flatMap((w) => w.workouts.map((ws) => ws.date));
+  if (scheduled.length > 0) {
+    return scheduled.reduce((last, date) => (date > last ? date : last));
+  }
+  const d = new Date(`${cycleStartDate.slice(0, 10)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + durationWeeks * 7);
+  return d.toISOString().slice(0, 10);
+}
+
 export function deriveProgramSummary(
   specs: LiftingProgramSpecResponse[],
   program: string,

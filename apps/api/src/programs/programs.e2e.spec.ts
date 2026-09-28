@@ -5,6 +5,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
+import type { UserWorkoutSchedule } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { InMemoryRepositoryFactory } from '../adapters/factory/in-memory-repository-factory';
 import { InMemoryUserSettingsRepository } from '../adapters/in-memory/user-settings.adapter';
@@ -1165,13 +1166,13 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
         ...(body ? { payload: JSON.stringify(body) } : {}),
       });
 
-    async function setScheduleForUser(userId: string): Promise<void> {
+    async function setScheduleForUser(
+      userId: string,
+      schedule: UserWorkoutSchedule = { type: 'fixed', days: [0, 2, 4] }, // Mon, Wed, Fri
+    ): Promise<void> {
       const factory = app.get<InMemoryRepositoryFactory>(REPOSITORY_FACTORY);
       const bundle = await factory.forUser({ id: userId, email: '', provider: 'dev' });
-      (bundle.userSettings as InMemoryUserSettingsRepository).setSchedule({
-        type: 'fixed',
-        days: [0, 2, 4], // Mon, Wed, Fri
-      });
+      (bundle.userSettings as InMemoryUserSettingsRepository).setSchedule(schedule);
     }
 
     it('GET cycle dashboard returns weeks:[] when no schedule is set', async () => {
@@ -1288,6 +1289,67 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(recordRes.statusCode).toBe(201);
       expect(recordRes.json().date).toBe(scheduledDate);
     });
+
+    // SEED_PROGRAM (5-3-1) trains two days a week, at offsets 0 and 3, for 12 weeks:
+    // 24 program days. Neither schedule below trains two days every week — the
+    // rotation alternates three and two, and Mon/Wed/Fri trains three — so before
+    // #1023 both scheduled 36 workouts, numbered through the calendar, and the
+    // workout endpoint and the Cycle Dashboard disagreed from workout 3 on.
+    it.each<[string, UserWorkoutSchedule]>([
+      ['a rotating schedule', { type: 'rotating', weeks: [[0, 2, 4], [1, 3]] }],
+      ['a Mon/Wed/Fri schedule', { type: 'fixed', days: [0, 2, 4] }],
+    ])(
+      'numbers %s by program day: the workout and the dashboard agree on every workout (issue #1023)',
+      async (_label, schedule) => {
+        const token = `Bearer schedule-e2e-1023-${schedule.type}`;
+        const inject = (method: 'GET' | 'POST', url: string, body?: unknown) =>
+          app.getHttpAdapter().getInstance().inject({
+            method,
+            url,
+            headers: body
+              ? { 'content-type': 'application/json', authorization: token }
+              : { authorization: token },
+            ...(body ? { payload: JSON.stringify(body) } : {}),
+          });
+        await setScheduleForUser(`schedule-e2e-1023-${schedule.type}`, schedule);
+        const initRes = await inject('POST', `/programs/${SEED_PROGRAM}/cycles/initialize`, {
+          cycleDate: '2026-05-18',
+        });
+        expect(initRes.statusCode).toBe(201);
+
+        const dashRes = await inject('GET', `/programs/${SEED_PROGRAM}/cycles/current`);
+        expect(dashRes.statusCode).toBe(200);
+        const listed = (
+          dashRes.json().weeks as { week: number; workouts: { workoutNum: number; date: string }[] }[]
+        ).flatMap((w) => w.workouts.map((ws) => ({ ...ws, week: w.week })));
+
+        // One scheduled workout per program day, and none past the last one.
+        expect(listed.map((ws) => ws.workoutNum)).toEqual(Array.from({ length: 24 }, (_, i) => i + 1));
+        const pastTheEnd = await inject('GET', `/programs/${SEED_PROGRAM}/workouts/25`);
+        expect(pastTheEnd.statusCode).toBe(400);
+
+        for (const ws of listed) {
+          const res = await inject('GET', `/programs/${SEED_PROGRAM}/workouts/${ws.workoutNum}`);
+          expect(res.statusCode).toBe(200);
+          const workout = res.json();
+          // Workout N is the program's N-th day — the Cycle Dashboard card for N.
+          const week = Math.ceil(ws.workoutNum / 2);
+          const offset = ws.workoutNum % 2 === 1 ? 0 : 3;
+          expect({ workoutNum: ws.workoutNum, week: workout.week, offset: workout.offset }).toEqual({
+            workoutNum: ws.workoutNum,
+            week,
+            offset,
+          });
+          // The dashboard lists it in that same week, on the date the workout shows.
+          expect(ws.week).toBe(week);
+          expect(workout.date).toBe(ws.date);
+          // And it plans that day's lifts, which the web prices from (week, offset).
+          expect(workout.lifts.map((l: { lift: string }) => l.lift)).toEqual(
+            offset === 0 ? ['Squat', 'Bench Press'] : ['Deadlift', 'Overhead Press'],
+          );
+        }
+      },
+    );
 
     it('GET cycle dashboard returns weeks:[] when no schedule is set (schedule user baseline)', async () => {
       // A fresh user with no schedule should still see weeks:[]

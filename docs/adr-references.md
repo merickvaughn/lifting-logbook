@@ -209,6 +209,7 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 |---|---|---|
 | [Prisma — `createMany`](https://www.prisma.io/docs/orm/reference/prisma-client-reference#createmany) | [ADR-017](adr/ADR-017-training-max-history-table.md) | Batch insert API used by `PrismaTrainingMaxHistoryRepository.appendHistoryEntries`. |
 | [Martin Fowler — Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html) | [ADR-017](adr/ADR-017-training-max-history-table.md) | Background pattern: storing state changes as a sequence of events rather than deriving history post-hoc from current state. The `training_max_history` table is a lightweight application of this principle. |
+| [E. F. Codd — A Relational Model of Data for Large Shared Data Banks (1970)](https://doi.org/10.1145/362384.362685) | [ADR-037](adr/ADR-037-schedule-dates-program-days.md) | §2 defines redundancy (data derivable from other data) and the consistency problems it causes. This is why ADR-037 derives a scheduled workout's `(week, offset)` from the program instead of storing a copy on `cycle_scheduled_workout`. |
 
 ---
 

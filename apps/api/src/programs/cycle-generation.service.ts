@@ -4,11 +4,9 @@ import {
   CycleDashboard,
   LiftingProgramSpec,
   distributeWorkouts,
-  expandSpecToLength,
   formatDateYYYYMMDD,
-  getScheduleWorkoutsPerWeek,
   MaxReductionFlag,
-  programLengthWeeks,
+  programWorkoutKeys,
   TrainingMax,
   TrainingMaxHistoryEntry,
   updateCycle,
@@ -69,6 +67,21 @@ export const PROGRAM_DEFAULTS: Record<string, { cycleUnit: string; programType: 
   'creeping-death-2': { cycleUnit: 'week', programType: 'creeping-death-2' },
 };
 
+/**
+ * Dates every workout day of the program from the user's schedule: one scheduled
+ * workout per program day, in the program's own order (issue #1023, ADR-037).
+ *
+ * Workout N is the program's N-th `(week, offset)` day ({@link programWorkoutKeys},
+ * the numbering the Cycle Dashboard and the workout endpoint read) and gets the
+ * schedule's N-th date. So the schedule sets only the pace: a schedule training more
+ * or fewer days a week than the program, or a different number each week, stretches
+ * or compresses the calendar instead of re-numbering the program. Each row's
+ * `weekNum` is its day's program week.
+ *
+ * The program is tiled to its canonical length first: repeating programs (Leangains,
+ * RPT) store a 1-week block but run 8–12 weeks (issue #680). An empty spec has no
+ * days, so nothing is scheduled.
+ */
 async function saveScheduledDates(
   repos: Pick<CycleRepos, 'cycleScheduledWorkout'>,
   program: string,
@@ -77,38 +90,22 @@ async function saveScheduledDates(
   programSpec: LiftingProgramSpec[],
   workoutSchedule: UserWorkoutSchedule,
 ): Promise<void> {
-  // Schedule the program's canonical length, not its stored block: repeating
-  // programs (Leangains, RPT) persist a 1-week block but run 8–12 weeks, so tile
-  // the base spec to full length before distributing so the workout calendar
-  // spans the whole program (issue #680). Expanding an empty spec yields [] —
-  // the guard covers custom/unseeded programs, since Math.max(...[]) is -Infinity
-  // and would drive distributeWorkouts negative.
-  const fullSpec = expandSpecToLength(programSpec, programLengthWeeks(program, programSpec));
-  if (fullSpec.length === 0) return;
-  // numWeeks * workoutsPerWeek assumes schedule days/week equals program
-  // workouts/week. Phase 5 adds a user-confirmation prompt that validates
-  // this match before schedule mode is activated.
-  const numWeeks = fullSpec.reduce((max, s) => Math.max(max, s.week), 0);
-  const workoutsPerWeek = getScheduleWorkoutsPerWeek(workoutSchedule);
-  const distributed = distributeWorkouts(numWeeks * workoutsPerWeek, workoutSchedule, cycleDate);
-
-  const workouts: ScheduledWorkout[] = [];
-  let workoutNum = 1;
-  let lastWeek = 0;
-  for (const week of distributed) {
-    if (week.week <= lastWeek) {
-      throw new Error(`distributeWorkouts returned out-of-order week: ${week.week}`);
-    }
-    lastWeek = week.week;
-    for (const date of week.workouts) {
-      workouts.push({ workoutNum, weekNum: week.week, scheduledDate: date });
-      workoutNum++;
-    }
+  const days = programWorkoutKeys(program, programSpec);
+  if (days.length === 0) return;
+  const dates = distributeWorkouts(days.length, workoutSchedule, cycleDate).flatMap(
+    (week) => week.workouts,
+  );
+  // distributeWorkouts dates every workout, or none for a schedule with no days.
+  if (dates.length === 0) return;
+  if (dates.length !== days.length) {
+    throw new Error(`distributeWorkouts dated ${dates.length} of ${days.length} workouts`);
   }
 
-  if (workouts.length > 0) {
-    await repos.cycleScheduledWorkout.saveScheduledWorkouts(program, cycleNum, workouts);
-  }
+  const workouts: ScheduledWorkout[] = days.flatMap((day, i) => {
+    const scheduledDate = dates[i];
+    return scheduledDate ? [{ workoutNum: i + 1, weekNum: day.week, scheduledDate }] : [];
+  });
+  await repos.cycleScheduledWorkout.saveScheduledWorkouts(program, cycleNum, workouts);
 }
 
 function round2dp(w: number): number {
@@ -247,9 +244,8 @@ export class CycleGenerationService {
       repos.userSettings.getSettings(),
       repos.liftingProgramSpec.getProgramSpec(program),
     ]);
-    // Skip workout-date distribution when the program has no seeded spec —
-    // Math.max(...[]) = -Infinity would crash distributeWorkouts.
-    if (settings.workoutSchedule && programSpec.length > 0) {
+    // A program with no seeded spec has no days, so saveScheduledDates dates none.
+    if (settings.workoutSchedule) {
       await saveScheduledDates(repos, program, dashboard.cycleNum, dashboard.cycleDate, programSpec, settings.workoutSchedule);
     }
     await repos.cycleDashboard.saveCycleDashboard(dashboard);
