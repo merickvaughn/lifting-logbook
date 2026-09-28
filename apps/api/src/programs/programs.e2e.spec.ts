@@ -1561,22 +1561,40 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   // Regression coverage for #1029: the happy path used to construct UserSettingsRepository
   // directly from PrismaService.clientForRequest(), which is null in this in-memory jest
   // environment (see jest.env.setup.js) — a 500 on every built-in-program switch without a
-  // database. Fixed by routing the settings write through the same RepositoryBundle every
-  // other controller uses, so it resolves to the in-memory adapter here and Prisma in
-  // production (still exercised by programs.db.e2e.spec.ts).
+  // database. Fixed by routing the settings write through the same RepositoryBundle the
+  // other factory-backed controllers use, so it resolves to the in-memory adapter here and
+  // Prisma in production (still exercised by programs.db.e2e.spec.ts).
   describe('POST /programs/:program/switch — built-in program, no database (regression for #1029)', () => {
     it('switches the active program and initializes the first cycle without a database', async () => {
+      const token = 'switch-inmemory-user';
       const res = await app.getHttpAdapter().getInstance().inject({
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/switch`,
-        headers: {
-          'content-type': 'application/json',
-          authorization: 'Bearer switch-inmemory-user',
-        },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         payload: JSON.stringify({}),
       });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ activeProgram: SEED_PROGRAM, cycleNum: 1 });
+
+      // A 200 with these exact values is also what a throwaway repository (one never read
+      // by GET) would return — activeProgram just echoes the path param and cycleNum is the
+      // handler's own default. Confirm the write actually landed in the bundle GET reads
+      // from, which is the part #1029 broke (the settings write 500'd before it could).
+      const settings = await app.getHttpAdapter().getInstance().inject({
+        method: 'GET',
+        url: '/users/me/settings',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(settings.statusCode).toBe(200);
+      expect(settings.json().activeProgram).toBe(SEED_PROGRAM);
+
+      const cycle = await app.getHttpAdapter().getInstance().inject({
+        method: 'GET',
+        url: `/programs/${SEED_PROGRAM}/cycles/current`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(cycle.statusCode).toBe(200);
+      expect(cycle.json().cycleNum).toBe(1);
     });
   });
 

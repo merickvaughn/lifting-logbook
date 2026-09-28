@@ -318,11 +318,11 @@ describeOrSkip('RLS request wiring (interceptor + factory)', () => {
   });
 
   it('clientForRequest() returns the request tx client inside a request and the base client outside', async () => {
-    // Guards the path used by controllers that build repositories, or run raw queries, OUTSIDE
-    // the factory (CustomProgramsController; SwitchProgramController's custom-program ownership
-    // check). If this routing regresses, those controllers' queries run on the base connection
-    // with no GUC and fail closed under lifting_app. Outside any CLS request, the base client
-    // must be returned.
+    // Guards the path used by controllers that build repositories, or query user-scoped tables
+    // directly, OUTSIDE the factory (CustomProgramsController; SwitchProgramController's
+    // custom-program ownership check). If this routing regresses, those controllers' queries run
+    // on the base connection with no GUC and fail closed under lifting_app. Outside any CLS
+    // request, the base client must be returned.
     expect(prisma.clientForRequest()).toBe(prisma);
 
     // Inside a CLS context with the interceptor's tx stashed, the tx client must be returned.
@@ -419,15 +419,17 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
     await owner.cycleDashboard.deleteMany({ where: { userId } });
   });
 
-  // switchProgram (SwitchProgramController) is a separate DI-wired path from
-  // cycles/initialize above — it builds its repos via `this.prisma.clientForRequest()`
-  // directly rather than solely through PrismaRepositoryFactory. It has an existing
-  // create-new-cycle test in programs.db.e2e.spec.ts, but that suite (like every DB E2E
-  // suite except this file) connects as the bootstrap superuser, which bypasses RLS.
-  // #650 (the onboarding activeProgram fix) made this the primary path onboarding now
-  // depends on, so it needs the same full-app-boot-under-lifting_app coverage cycles/
-  // initialize got in #645 — otherwise this endpoint carries the same class of blind
-  // spot that let #644 ship undetected.
+  // switchProgram (SwitchProgramController) exercises a second HTTP entry point into the same
+  // factory-routed cycle-init + settings-write path as cycles/initialize above (both now resolve
+  // their repositories via PrismaRepositoryFactory — the settings write used to bypass it via a
+  // directly-constructed repository, fixed by #1029/#1030). It keeps its own coverage here
+  // because #650 (the onboarding activeProgram fix) made this the primary path onboarding now
+  // depends on, so it needs the same full-app-boot-under-lifting_app coverage cycles/initialize
+  // got in #645 — otherwise this endpoint carries the same class of blind spot that let #644 ship
+  // undetected. It has an existing create-new-cycle test in programs.db.e2e.spec.ts, but that
+  // suite (like every DB E2E suite except this file) connects as the bootstrap superuser, which
+  // bypasses RLS. (The one branch still calling clientForRequest() directly — the custom-program
+  // ownership check — only runs for UUID program ids; 'leangains' below isn't one.)
   it('switchProgram creates a first-time cycle and sets activeProgram under the restricted role', async () => {
     const userId = `rls-e2e-fullapp-switch-${Date.now()}`;
     const res = await inject({

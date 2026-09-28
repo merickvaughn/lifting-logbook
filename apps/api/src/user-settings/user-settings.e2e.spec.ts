@@ -11,9 +11,9 @@ import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 // Regression coverage for #1029: GET/PATCH /users/me/settings 500'd with no DATABASE_URL
 // because the controller injected PrismaService directly (null in this in-memory jest
 // environment — see jest.env.setup.js) instead of resolving IUserSettingsRepository
-// through the repository factory like every other controller. This suite runs the way
-// `npm run dev -w @lifting-logbook/api` does with no DATABASE_URL set: the in-memory
-// adapters, not a Prisma mock.
+// through the repository factory like the other factory-backed controllers (e.g.
+// BodyWeightController). This suite runs the way `npm run dev -w @lifting-logbook/api`
+// does with no DATABASE_URL set: the in-memory adapters, not a Prisma mock.
 describe('User Settings HTTP (e2e, in-memory adapters)', () => {
   let app: NestFastifyApplication;
 
@@ -89,9 +89,14 @@ describe('User Settings HTTP (e2e, in-memory adapters)', () => {
   it('PATCH /users/me/settings clears a field with an explicit null', async () => {
     const token = 'settings-clear-user';
 
-    await patchJson('/users/me/settings', token, { unit: 'kg' });
-    const cleared = await patchJson('/users/me/settings', token, { unit: null });
+    // Assert the setup write actually landed — otherwise a broken setup PATCH would still
+    // leave `unit` at its already-null default, and the clear assertion below would pass
+    // without ever exercising a clear.
+    const set = await patchJson('/users/me/settings', token, { unit: 'kg' });
+    expect(set.statusCode).toBe(200);
+    expect(set.json().unit).toBe('kg');
 
+    const cleared = await patchJson('/users/me/settings', token, { unit: null });
     expect(cleared.statusCode).toBe(200);
     expect(cleared.json().unit).toBeNull();
   });

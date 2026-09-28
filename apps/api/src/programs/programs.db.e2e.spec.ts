@@ -1324,7 +1324,8 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // User settings — Prisma-backed; no in-memory variant.
+  // User settings — Prisma-backed here; also has an in-memory variant now (see
+  // apps/api/src/user-settings/user-settings.e2e.spec.ts, #1029).
   // ---------------------------------------------------------------------------
 
   describe('user settings (DB)', () => {
@@ -1645,7 +1646,9 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Switch program — Prisma-backed; no in-memory variant.
+  // Switch program — Prisma-backed here; also has an in-memory variant now (see the
+  // "built-in program, no database" describe block in programs.e2e.spec.ts, #1029) for
+  // built-in programs. Custom (UUID) programs still require Prisma — D17, still open.
   // Order-sensitive within this block.
   // ---------------------------------------------------------------------------
 

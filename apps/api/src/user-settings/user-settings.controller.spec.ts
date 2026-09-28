@@ -102,6 +102,20 @@ describe('UpdateSettingsDto validation', () => {
     expect(errs.length).toBeGreaterThan(0);
   });
 
+  it('accepts a rotating schedule with valid weeks', async () => {
+    expect(
+      await check({
+        workoutSchedule: {
+          type: 'rotating',
+          weeks: [
+            [0, 2, 4, 5],
+            [1, 3, 5],
+          ],
+        },
+      }),
+    ).toEqual([]);
+  });
+
   it('rejects a rotating schedule with an empty week', async () => {
     const errs = await check({ workoutSchedule: { type: 'rotating', weeks: [[0, 2], []] } });
     expect(errs.length).toBeGreaterThan(0);
@@ -140,6 +154,15 @@ describe('UpdateSettingsDto validation', () => {
 
   it('accepts an empty patch (no-op)', async () => {
     expect(await check({})).toEqual([]);
+  });
+
+  it('accepts a valid activeProgram', async () => {
+    expect(await check({ activeProgram: '5-3-1' })).toEqual([]);
+  });
+
+  it('rejects a null activeProgram — it has no clear-via-null semantics', async () => {
+    const errs = await check({ activeProgram: null });
+    expect(errs.length).toBeGreaterThan(0);
   });
 
   it('accepts an explicit null to clear the schedule', async () => {
