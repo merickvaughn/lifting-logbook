@@ -678,6 +678,36 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       }
     });
 
+    it('replacing an added lift keeps its add row, so the replacement is planned (issue #1026)', async () => {
+      // The unique key includes `action`, so the replace no longer overwrites the add.
+      const dashRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
+      const { cycleNum } = dashRes.json() as { cycleNum: number };
+      const url = `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/lift-overrides`;
+      const chinUpRows = () =>
+        prisma.workoutLiftOverride.findMany({
+          where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum, workoutNum: 1, lift: 'Chin-up' },
+          orderBy: { createdAt: 'asc' },
+        });
+      try {
+        await postJson(url, { action: 'add', lift: 'Chin-up' });
+        const replaced = await postJson(url, { action: 'replace', lift: 'Chin-up', replacedBy: 'Pull-up' });
+        expect(replaced.statusCode).toBe(201);
+        expect((await chinUpRows()).map((r) => r.action)).toEqual(['add', 'replace']);
+
+        const res = await get(`/programs/${SEED_PROGRAM}/workouts/1`);
+        expect(res.statusCode).toBe(200);
+        const lifts = (res.json() as { lifts: { lift: string; replaces?: string }[] }).lifts;
+        expect(lifts.find((l) => l.lift === 'Pull-up')?.replaces).toBe('Chin-up');
+        expect(lifts.some((l) => l.lift === 'Chin-up')).toBe(false);
+
+        // An add and a remove are one kind: the remove replaces the add, not the replace.
+        await postJson(url, { action: 'remove', lift: 'Chin-up' });
+        expect((await chinUpRows()).map((r) => r.action)).toEqual(['replace', 'remove']);
+      } finally {
+        await deleteReq(`${url}/Chin-up`);
+      }
+    });
+
     it('user isolation — lift overrides are scoped to userId', async () => {
       const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
         app.getHttpAdapter().getInstance(),

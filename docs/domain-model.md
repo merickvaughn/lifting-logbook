@@ -229,7 +229,9 @@ decrement percentages, increment and activation. Only the weights change, becaus
 are priced from the replacement's own training max. `applyLiftOverrides`
 (`packages/core`) is the one definition of these rules. It applies a workout's overrides
 in the order each was last written, which is how the repositories return them (saving an
-override again re-creates it at the end). The
+override again re-creates it at the end). A lift keeps one override of each kind — its
+`add` or `remove`, and its `replace` — so replacing a lift added through Manage Lifts
+keeps the add, and the replacement takes the added lift's place and sets (#1026). The
 workout response names the slot on the replacement's `replaces`, so clients resolve the
 prescription without the override table (#1014). Progression doesn't follow these rules
 yet: `updateMaxes` still looks a record's prescription up by the record's own lift name

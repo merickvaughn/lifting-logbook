@@ -45,13 +45,18 @@ describe('PrismaWorkoutLiftOverrideRepository.getOverrides', () => {
 });
 
 describe('PrismaWorkoutLiftOverrideRepository.upsertOverride', () => {
-  it('re-creates the lift’s row in one transaction, so a re-saved override sorts last (issue #1014)', async () => {
-    // An in-place update would keep the row's original createdAt: redoing a swap
-    // after undoing it would then sort before the undo and change nothing.
+  function makeWritablePrisma() {
     const deleteMany = jest.fn().mockReturnValue('delete-op');
     const create = jest.fn().mockReturnValue('create-op');
     const $transaction = jest.fn().mockResolvedValue([]);
     const prisma = { workoutLiftOverride: { deleteMany, create }, $transaction } as unknown as PrismaClient;
+    return { prisma, deleteMany, create, $transaction };
+  }
+
+  it('re-creates the lift’s row in one transaction, so a re-saved override sorts last (issue #1014)', async () => {
+    // An in-place update would keep the row's original createdAt: redoing a swap
+    // after undoing it would then sort before the undo and change nothing.
+    const { prisma, deleteMany, create, $transaction } = makeWritablePrisma();
 
     await new PrismaWorkoutLiftOverrideRepository(prisma, USER).upsertOverride('5-3-1', 2, 7, {
       lift: 'Squat',
@@ -59,8 +64,9 @@ describe('PrismaWorkoutLiftOverrideRepository.upsertOverride', () => {
       replacedBy: 'Front Squat',
     });
 
+    // Only the lift's replace: a replace keeps the lift's add (#1026).
     expect(deleteMany).toHaveBeenCalledWith({
-      where: { userId: USER, program: '5-3-1', cycleNum: 2, workoutNum: 7, lift: 'Squat' },
+      where: { userId: USER, program: '5-3-1', cycleNum: 2, workoutNum: 7, lift: 'Squat', action: { in: ['replace'] } },
     });
     expect(create).toHaveBeenCalledWith({
       data: {
@@ -75,5 +81,21 @@ describe('PrismaWorkoutLiftOverrideRepository.upsertOverride', () => {
     });
     // Both writes go through one batch transaction, delete first.
     expect($transaction).toHaveBeenCalledWith(['delete-op', 'create-op']);
+  });
+
+  it('replaces a lift’s add or remove, which are one kind, and leaves its replace (#1026)', async () => {
+    const { prisma, deleteMany } = makeWritablePrisma();
+    const repo = new PrismaWorkoutLiftOverrideRepository(prisma, USER);
+
+    await repo.upsertOverride('5-3-1', 2, 7, { lift: 'Chin-up', action: 'add' });
+    await repo.upsertOverride('5-3-1', 2, 7, { lift: 'Chin-up', action: 'remove' });
+
+    const kind = { in: ['add', 'remove'] };
+    expect(deleteMany).toHaveBeenNthCalledWith(1, {
+      where: { userId: USER, program: '5-3-1', cycleNum: 2, workoutNum: 7, lift: 'Chin-up', action: kind },
+    });
+    expect(deleteMany).toHaveBeenNthCalledWith(2, {
+      where: { userId: USER, program: '5-3-1', cycleNum: 2, workoutNum: 7, lift: 'Chin-up', action: kind },
+    });
   });
 });

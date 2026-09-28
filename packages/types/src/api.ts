@@ -92,10 +92,11 @@ export interface WorkoutLiftResponse {
   /** True when derived from the program spec with no logged sets yet; false when backed by real records. */
   planned: boolean;
   /**
-   * The spec lift whose slot this one took, present only when a Manage Lifts
-   * `replace` put it here (followed back through a chain of swaps). A swap
-   * changes the movement, not the slot: resolve this lift's prescription by
-   * this name, and price it from `lift`'s own training max (issue #1014).
+   * The lift whose slot this one took, present only when a Manage Lifts
+   * `replace` put it here (followed back through a chain of swaps): a spec lift,
+   * or a lift added through Manage Lifts, whose slot has no prescription (#1026).
+   * A swap changes the movement, not the slot: resolve this lift's prescription
+   * by this name, and price it from `lift`'s own training max (issue #1014).
    */
   replaces?: LiftName;
 }

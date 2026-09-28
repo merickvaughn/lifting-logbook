@@ -7,8 +7,9 @@ export interface PlannedLift {
    * The lift whose slot a `replace` put this one in, followed back through a
    * chain of swaps to the lift the slot started with — for a spec lift, the name
    * its prescription is stored under, which the replacement inherits (issue
-   * #1014). Absent for a lift in its own slot, including one swapped back to it,
-   * and for an `add`.
+   * #1014); an added lift's slot has no prescription to inherit (#1026). Absent
+   * for a lift in its own slot, including one swapped back to it, and for an
+   * `add`.
    */
   replaces?: string;
 }
@@ -36,8 +37,10 @@ export interface AppliedLiftOverrides {
  * - `remove`: drops the lift. Its logged sets are hidden, along with those of
  *   every earlier name its slot held; so are an unplanned (ad hoc) lift's.
  * - `replace`: swaps the lift in place, keeping its position. The replacement
- *   keeps the slot (`replaces`) and the slot's logged sets. Replacing an
- *   unplanned (ad hoc) lift regroups its logged sets under the replacement.
+ *   keeps the slot (`replaces`) and the slot's logged sets — an added lift's
+ *   slot too, since a lift's add and its replace are stored apart (#1026).
+ *   Replacing an unplanned (ad hoc) lift regroups its logged sets under the
+ *   replacement.
  * - `add`: appends the lift if it is not already planned.
  *
  * A lift the plan shows always owns the sets stored under its own name, even a

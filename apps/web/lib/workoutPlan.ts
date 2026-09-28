@@ -185,7 +185,8 @@ export interface WorkoutLiftDetail {
 /**
  * The spec row prescribing each of a workout's lifts, index-aligned with
  * `workout.lifts`; `undefined` where the program plans none on that day (a lift
- * logged ad hoc, or one added through Manage Lifts).
+ * logged ad hoc, or one added through Manage Lifts or swapped into an added
+ * lift's slot, #1026).
  *
  * `workout.week` is the *program* week while `specs` is the one stored block, so
  * the day resolves through the block week at the workout's `offset` — the same

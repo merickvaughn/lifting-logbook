@@ -214,3 +214,45 @@ describe("applyLiftOverrides — an override saved again", () => {
     expect([...removed].sort()).toEqual(["Front Squat", "Squat"]);
   });
 });
+
+describe("applyLiftOverrides — replacing an added lift (#1026)", () => {
+  // The repositories keep a lift's add alongside its replace, so the add keeps
+  // its place in the order and the replace, saved later, comes after it. (When
+  // the replace overwrote the add, the replace had no lift to swap, and neither
+  // was planned.)
+
+  it("puts the replacement in the added lift’s place, with its logged sets", () => {
+    // Chin-up, then Face Pulls, were added; then Chin-up was replaced.
+    const o: LiftOverride[] = [
+      { lift: "Chin-up", action: "add" },
+      { lift: "Face Pulls", action: "add" },
+      { lift: "Chin-up", action: "replace", replacedBy: "Pull-up" },
+    ];
+    const { planned, renamed, removed } = applyLiftOverrides(lifts, o);
+    // It names the added lift as its slot, which has no prescription to inherit.
+    expect(planned.slice(3)).toEqual([{ lift: "Pull-up", replaces: "Chin-up" }, { lift: "Face Pulls" }]);
+    expect(Object.fromEntries(renamed)).toEqual({ "Chin-up": "Pull-up" });
+    expect(removed.size).toBe(0);
+  });
+
+  it("follows a swap back and a redo on the added slot like any other", () => {
+    // Chin-up → Pull-up, back to Chin-up: the added lift is back in its own slot.
+    const undone: LiftOverride[] = [
+      { lift: "Chin-up", action: "add" },
+      { lift: "Chin-up", action: "replace", replacedBy: "Pull-up" },
+      { lift: "Pull-up", action: "replace", replacedBy: "Chin-up" },
+    ];
+    expect(applyLiftOverrides(lifts, undone).planned[3]).toEqual({ lift: "Chin-up" });
+
+    // Then Chin-up → Pull-up again: Chin-up's replace is re-saved after the undo.
+    // A set logged as Pull-up before the undo is the slot's, so it comes back too.
+    const redone: LiftOverride[] = [
+      { lift: "Chin-up", action: "add" },
+      { lift: "Pull-up", action: "replace", replacedBy: "Chin-up" },
+      { lift: "Chin-up", action: "replace", replacedBy: "Pull-up" },
+    ];
+    const { planned, renamed } = applyLiftOverrides(lifts, redone);
+    expect(planned[3]).toEqual({ lift: "Pull-up", replaces: "Chin-up" });
+    expect(Object.fromEntries(renamed)).toEqual({ "Chin-up": "Pull-up" });
+  });
+});

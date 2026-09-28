@@ -142,7 +142,10 @@ model WorkoutLiftOverride {
   replacedBy String?
   createdAt  DateTime @default(now())
 
-  @@unique([userId, program, cycleNum, workoutNum, lift])
+  // One row per lift and action: a lift's add and its replace are kept apart, so
+  // replacing an added lift keeps the add (#1026). The repository also keeps a
+  // lift's add and remove from coexisting (sameKindActions in the port).
+  @@unique([userId, program, cycleNum, workoutNum, lift, action])
   @@index([userId, program, cycleNum, workoutNum])
   @@map("workout_lift_override")
 }

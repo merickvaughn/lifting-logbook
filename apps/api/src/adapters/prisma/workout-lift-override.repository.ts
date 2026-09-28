@@ -1,5 +1,9 @@
 import { PrismaClient } from '@prisma/client';
-import { LiftOverride, IWorkoutLiftOverrideRepository } from '../../ports/IWorkoutLiftOverrideRepository';
+import {
+  LiftOverride,
+  IWorkoutLiftOverrideRepository,
+  sameKindActions,
+} from '../../ports/IWorkoutLiftOverrideRepository';
 import { runBatch } from './prisma-tx.util';
 
 export class PrismaWorkoutLiftOverrideRepository
@@ -41,9 +45,17 @@ export class PrismaWorkoutLiftOverrideRepository
     // moves to the end of the order getOverrides returns. An update would keep
     // the row's original `createdAt`: a swap made again after being undone would
     // then be applied before the undo, and silently change nothing (#1014).
+    // Only the lift's override of the same kind goes: a replace keeps its add (#1026).
     await runBatch(this.prisma, (db) => [
       db.workoutLiftOverride.deleteMany({
-        where: { userId: this.userId, program, cycleNum, workoutNum, lift: override.lift },
+        where: {
+          userId: this.userId,
+          program,
+          cycleNum,
+          workoutNum,
+          lift: override.lift,
+          action: { in: sameKindActions(override.action) },
+        },
       }),
       db.workoutLiftOverride.create({
         data: {
