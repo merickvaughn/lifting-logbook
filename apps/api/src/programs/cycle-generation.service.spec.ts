@@ -116,6 +116,7 @@ describe('CycleGenerationService', () => {
       getSettings: jest
         .fn()
         .mockResolvedValue({ activeProgram: null, workoutSchedule: null, defaultWeightIncrement: null }),
+      upsertSettings: jest.fn(),
     };
     cycleScheduledWorkoutRepo = {
       getScheduledWorkouts: jest.fn().mockResolvedValue([]),

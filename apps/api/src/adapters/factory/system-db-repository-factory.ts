@@ -35,7 +35,7 @@ import { InMemoryWorkoutRepository } from '../in-memory/workout.adapter';
 import { PrismaCycleScheduledWorkoutRepository } from '../prisma/cycle-scheduled-workout.repository';
 import { PrismaWorkoutSkipOverrideRepository } from '../prisma/workout-skip-override.repository';
 import { InMemoryWorkoutSkipOverrideRepository } from '../in-memory/workout-skip-override.adapter';
-import { UserSettingsRepository } from '../../user-settings/user-settings.repository';
+import { PrismaUserSettingsRepository } from '../prisma/user-settings.repository';
 
 interface UserDataSourceRow {
   adapter_type: string;
@@ -102,7 +102,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
         strengthGoal: new PrismaStrengthGoalRepository(prisma, userId),
         trainingMax: new PrismaTrainingMaxRepository(prisma, userId),
         trainingMaxHistory: new PrismaTrainingMaxHistoryRepository(prisma, userId),
-        userSettings: new UserSettingsRepository(prisma, userId),
+        userSettings: new PrismaUserSettingsRepository(prisma, userId),
         workout: new PrismaWorkoutRepository(prisma, userId),
         workoutDateOverride: new PrismaWorkoutDateOverrideRepository(prisma, userId),
         workoutLiftOverride: new PrismaWorkoutLiftOverrideRepository(prisma, userId),

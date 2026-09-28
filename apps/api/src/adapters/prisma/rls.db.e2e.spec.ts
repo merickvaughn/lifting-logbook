@@ -318,10 +318,11 @@ describeOrSkip('RLS request wiring (interceptor + factory)', () => {
   });
 
   it('clientForRequest() returns the request tx client inside a request and the base client outside', async () => {
-    // Guards the path used by controllers that build repositories OUTSIDE the factory
-    // (CustomProgramsController, UserSettingsController, SwitchProgramController). If this routing
-    // regresses, those controllers' queries run on the base connection with no GUC and fail closed
-    // under lifting_app. Outside any CLS request, the base client must be returned.
+    // Guards the path used by controllers that build repositories, or run raw queries, OUTSIDE
+    // the factory (CustomProgramsController; SwitchProgramController's custom-program ownership
+    // check). If this routing regresses, those controllers' queries run on the base connection
+    // with no GUC and fail closed under lifting_app. Outside any CLS request, the base client
+    // must be returned.
     expect(prisma.clientForRequest()).toBe(prisma);
 
     // Inside a CLS context with the interceptor's tx stashed, the tx client must be returned.

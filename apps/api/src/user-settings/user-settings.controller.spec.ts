@@ -2,203 +2,76 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ValidationPipe } from '@nestjs/common';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
-import { PrismaService } from '../adapters/prisma/prisma.service';
+import { UserSettingsResponse } from '@lifting-logbook/types';
+import { IUserSettingsRepository } from '../ports/IUserSettingsRepository';
+import { IRepositoryFactory } from '../ports/factory';
+import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { UserSettingsController } from './user-settings.controller';
 import { UpdateSettingsDto } from './update-settings.dto';
 
 const MOCK_USER = { id: 'user-1', email: 'u@example.com', provider: 'dev' };
 
-type Row = {
-  userId: string;
-  activeProgram: string | null;
-  workoutSchedule: unknown;
-  defaultWeightIncrement: number | null;
-  unit: string | null;
+const EMPTY_SETTINGS: UserSettingsResponse = {
+  activeProgram: null,
+  workoutSchedule: null,
+  defaultWeightIncrement: null,
+  unit: null,
 };
-
-function makePrismaMock(): { service: PrismaService; store: Map<string, Row> } {
-  const store = new Map<string, Row>();
-  const service = {
-    // The controller routes repository construction through clientForRequest() (RLS); with no
-    // active request transaction it returns the base client — here, the mock itself.
-    clientForRequest() {
-      return this;
-    },
-    userSettings: {
-      findUnique: jest.fn(async ({ where }: { where: { userId: string } }) => {
-        return store.get(where.userId) ?? null;
-      }),
-      upsert: jest.fn(
-        async ({
-          where,
-          create,
-          update,
-        }: {
-          where: { userId: string };
-          create: Partial<Row> & { userId: string };
-          update: Partial<Row>;
-        }) => {
-          const existing = store.get(where.userId);
-          const next: Row = existing
-            ? { ...existing, ...update }
-            : {
-                userId: where.userId,
-                activeProgram: create.activeProgram ?? null,
-                workoutSchedule: create.workoutSchedule ?? null,
-                defaultWeightIncrement: create.defaultWeightIncrement ?? null,
-                unit: create.unit ?? null,
-              };
-          store.set(where.userId, next);
-          return next;
-        },
-      ),
-    },
-  } as unknown as PrismaService;
-  return { service, store };
-}
 
 describe('UserSettingsController', () => {
   let controller: UserSettingsController;
-  let prismaMock: ReturnType<typeof makePrismaMock>;
+  let userSettings: jest.Mocked<IUserSettingsRepository>;
+  let factory: jest.Mocked<IRepositoryFactory>;
 
   beforeEach(async () => {
-    prismaMock = makePrismaMock();
+    userSettings = {
+      getSettings: jest.fn().mockResolvedValue(EMPTY_SETTINGS),
+      upsertSettings: jest.fn().mockResolvedValue(EMPTY_SETTINGS),
+    };
+    factory = {
+      forUser: jest.fn().mockResolvedValue({ userSettings }),
+    };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UserSettingsController],
-      providers: [{ provide: PrismaService, useValue: prismaMock.service }],
+      providers: [{ provide: REPOSITORY_FACTORY, useValue: factory }],
     }).compile();
     controller = module.get(UserSettingsController);
   });
 
-  it('returns null schedule for a fresh user', async () => {
-    const result = await controller.getSettings(MOCK_USER);
-    expect(result).toEqual({
-      activeProgram: null,
-      workoutSchedule: null,
-      defaultWeightIncrement: null,
-      unit: null,
+  describe('getSettings', () => {
+    it('resolves the repository for the current user and returns its settings', async () => {
+      userSettings.getSettings.mockResolvedValue({
+        activeProgram: '5-3-1',
+        workoutSchedule: { type: 'fixed', days: [0, 2, 4] },
+        defaultWeightIncrement: 0.625,
+        unit: 'kg',
+      });
+
+      const result = await controller.getSettings(MOCK_USER);
+
+      expect(factory.forUser).toHaveBeenCalledWith(MOCK_USER);
+      expect(result).toEqual({
+        activeProgram: '5-3-1',
+        workoutSchedule: { type: 'fixed', days: [0, 2, 4] },
+        defaultWeightIncrement: 0.625,
+        unit: 'kg',
+      });
     });
   });
 
-  it('persists a defaultWeightIncrement and reads it back', async () => {
-    const dto = plainToInstance(UpdateSettingsDto, { defaultWeightIncrement: 0.625 });
-    const errors = await validate(dto);
-    expect(errors).toEqual([]);
+  describe('updateSettings', () => {
+    it('resolves the repository for the current user and forwards the patch', async () => {
+      const dto = plainToInstance(UpdateSettingsDto, { defaultWeightIncrement: 0.625 });
+      const errors = await validate(dto);
+      expect(errors).toEqual([]);
+      userSettings.upsertSettings.mockResolvedValue({ ...EMPTY_SETTINGS, defaultWeightIncrement: 0.625 });
 
-    const patched = await controller.updateSettings(MOCK_USER, dto);
-    expect(patched.defaultWeightIncrement).toBe(0.625);
+      const result = await controller.updateSettings(MOCK_USER, dto);
 
-    const fetched = await controller.getSettings(MOCK_USER);
-    expect(fetched.defaultWeightIncrement).toBe(0.625);
-  });
-
-  it('clears defaultWeightIncrement when patched with null', async () => {
-    prismaMock.store.set(MOCK_USER.id, {
-      userId: MOCK_USER.id,
-      activeProgram: null,
-      workoutSchedule: null,
-      defaultWeightIncrement: 2.5,
-      unit: null,
-    });
-    const dto = plainToInstance(UpdateSettingsDto, { defaultWeightIncrement: null });
-    const errors = await validate(dto);
-    expect(errors).toEqual([]);
-    const result = await controller.updateSettings(MOCK_USER, dto);
-    expect(result.defaultWeightIncrement).toBeNull();
-  });
-
-  it('persists a unit preference and reads it back', async () => {
-    const dto = plainToInstance(UpdateSettingsDto, { unit: 'kg' });
-    const errors = await validate(dto);
-    expect(errors).toEqual([]);
-
-    const patched = await controller.updateSettings(MOCK_USER, dto);
-    expect(patched.unit).toBe('kg');
-
-    const fetched = await controller.getSettings(MOCK_USER);
-    expect(fetched.unit).toBe('kg');
-  });
-
-  it('clears the unit preference when patched with null', async () => {
-    prismaMock.store.set(MOCK_USER.id, {
-      userId: MOCK_USER.id,
-      activeProgram: null,
-      workoutSchedule: null,
-      defaultWeightIncrement: null,
-      unit: 'kg',
-    });
-    const dto = plainToInstance(UpdateSettingsDto, { unit: null });
-    const errors = await validate(dto);
-    expect(errors).toEqual([]);
-    const result = await controller.updateSettings(MOCK_USER, dto);
-    expect(result.unit).toBeNull();
-  });
-
-  it('persists a fixed schedule and reads it back', async () => {
-    const dto = plainToInstance(UpdateSettingsDto, {
-      workoutSchedule: { type: 'fixed', days: [0, 2, 4] },
-    });
-    const errors = await validate(dto);
-    expect(errors).toEqual([]);
-
-    const patched = await controller.updateSettings(MOCK_USER, dto);
-    expect(patched.workoutSchedule).toEqual({ type: 'fixed', days: [0, 2, 4] });
-
-    const fetched = await controller.getSettings(MOCK_USER);
-    expect(fetched.workoutSchedule).toEqual({ type: 'fixed', days: [0, 2, 4] });
-  });
-
-  it('returns null when the DB row holds a malformed schedule', async () => {
-    // Simulates a row written by a pre-validator code path or a manual edit. The
-    // repository's parseSchedule guard should coerce to null rather than letting
-    // malformed JSON reach the client.
-    prismaMock.store.set(MOCK_USER.id, {
-      userId: MOCK_USER.id,
-      activeProgram: null,
-      workoutSchedule: { type: 'fixed', days: [0, 99] },
-      defaultWeightIncrement: null,
-      unit: null,
-    });
-    const result = await controller.getSettings(MOCK_USER);
-    expect(result.workoutSchedule).toBeNull();
-  });
-
-  it('clears the schedule when patched with null', async () => {
-    prismaMock.store.set(MOCK_USER.id, {
-      userId: MOCK_USER.id,
-      activeProgram: null,
-      workoutSchedule: { type: 'fixed', days: [0, 2, 4] },
-      defaultWeightIncrement: null,
-      unit: null,
-    });
-    const dto = plainToInstance(UpdateSettingsDto, { workoutSchedule: null });
-    const errors = await validate(dto);
-    expect(errors).toEqual([]);
-    const result = await controller.updateSettings(MOCK_USER, dto);
-    expect(result.workoutSchedule).toBeNull();
-  });
-
-  it('persists a rotating schedule', async () => {
-    const dto = plainToInstance(UpdateSettingsDto, {
-      workoutSchedule: {
-        type: 'rotating',
-        weeks: [
-          [0, 2, 4, 5],
-          [1, 3, 5],
-        ],
-      },
-    });
-    const errors = await validate(dto);
-    expect(errors).toEqual([]);
-
-    const patched = await controller.updateSettings(MOCK_USER, dto);
-    expect(patched.workoutSchedule).toEqual({
-      type: 'rotating',
-      weeks: [
-        [0, 2, 4, 5],
-        [1, 3, 5],
-      ],
+      expect(factory.forUser).toHaveBeenCalledWith(MOCK_USER);
+      expect(userSettings.upsertSettings).toHaveBeenCalledWith(dto);
+      expect(result.defaultWeightIncrement).toBe(0.625);
     });
   });
 });

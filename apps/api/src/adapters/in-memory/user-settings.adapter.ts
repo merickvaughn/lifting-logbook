@@ -1,5 +1,5 @@
 import { UserSettingsResponse, UserWorkoutSchedule, WeightUnit } from '@lifting-logbook/types';
-import { IUserSettingsRepository } from '../../ports/IUserSettingsRepository';
+import { IUserSettingsRepository, UpsertSettingsPatch } from '../../ports/IUserSettingsRepository';
 
 export class InMemoryUserSettingsRepository implements IUserSettingsRepository {
   private activeProgram: string | null = null;
@@ -14,6 +14,19 @@ export class InMemoryUserSettingsRepository implements IUserSettingsRepository {
       defaultWeightIncrement: this.defaultWeightIncrement,
       unit: this.unit,
     };
+  }
+
+  // Mirrors PrismaUserSettingsRepository's patch semantics: `undefined` leaves a field
+  // unchanged, explicit `null` clears it (activeProgram has no clear semantics — see
+  // UpsertSettingsPatch).
+  async upsertSettings(patch: UpsertSettingsPatch): Promise<UserSettingsResponse> {
+    if (patch.activeProgram !== undefined) this.activeProgram = patch.activeProgram;
+    if (patch.workoutSchedule !== undefined) this.workoutSchedule = patch.workoutSchedule;
+    if (patch.defaultWeightIncrement !== undefined) {
+      this.defaultWeightIncrement = patch.defaultWeightIncrement;
+    }
+    if (patch.unit !== undefined) this.unit = patch.unit;
+    return this.getSettings();
   }
 
   setSchedule(schedule: UserWorkoutSchedule | null): void {

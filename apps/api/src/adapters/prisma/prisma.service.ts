@@ -31,10 +31,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    * that transaction client so the GUC stays in scope; otherwise it returns the base client.
    *
    * PrismaRepositoryFactory routes its repositories through the equivalent lookup. Consumers that
-   * build repositories OUTSIDE the factory (e.g. CustomProgramsController, UserSettingsController,
-   * SwitchProgramController) MUST construct them with `clientForRequest()` rather than the bare
-   * service — otherwise, under the non-superuser `lifting_app` role, their queries run on the base
-   * connection with no GUC and fail closed (zero rows). See issue #511.
+   * build repositories OUTSIDE the factory (e.g. CustomProgramsController) or run raw queries
+   * outside a repository (e.g. SwitchProgramController's custom-program ownership check) MUST use
+   * `clientForRequest()` rather than the bare service — otherwise, under the non-superuser
+   * `lifting_app` role, their queries run on the base connection with no GUC and fail closed (zero
+   * rows). See issue #511. (UserSettingsController resolves IUserSettingsRepository through
+   * RepositoryBundle like every other controller and no longer needs this directly — #1029.)
    */
   clientForRequest(): PrismaExecutor {
     if (this.cls?.isActive()) {

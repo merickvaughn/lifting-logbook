@@ -1532,8 +1532,8 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   // passed every mock-backed test while failing in production. This suite is the always-on
   // (no-Docker) layer; locking the server's 400 here means a future client or mock regression is
   // caught without a database. Fastify rejects the body before the handler runs, so these assert
-  // the contract without touching Prisma. The happy path (200 + cycle init) writes user-settings
-  // through Prisma and is covered by the DB-backed suite (programs.db.e2e.spec.ts). See #704.
+  // the contract without touching Prisma. The happy path is covered below (#1029) and by the
+  // DB-backed suite (programs.db.e2e.spec.ts). See #704.
   describe('POST /programs/:program/switch — malformed/empty JSON body (regression for #665)', () => {
     const AS_SWITCH = { authorization: 'Bearer switch-regression-user' };
 
@@ -1555,6 +1555,28 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
         payload: '{not valid json',
       });
       expect(res.statusCode).toBe(400);
+    });
+  });
+
+  // Regression coverage for #1029: the happy path used to construct UserSettingsRepository
+  // directly from PrismaService.clientForRequest(), which is null in this in-memory jest
+  // environment (see jest.env.setup.js) — a 500 on every built-in-program switch without a
+  // database. Fixed by routing the settings write through the same RepositoryBundle every
+  // other controller uses, so it resolves to the in-memory adapter here and Prisma in
+  // production (still exercised by programs.db.e2e.spec.ts).
+  describe('POST /programs/:program/switch — built-in program, no database (regression for #1029)', () => {
+    it('switches the active program and initializes the first cycle without a database', async () => {
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/${SEED_PROGRAM}/switch`,
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer switch-inmemory-user',
+        },
+        payload: JSON.stringify({}),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ activeProgram: SEED_PROGRAM, cycleNum: 1 });
     });
   });
 

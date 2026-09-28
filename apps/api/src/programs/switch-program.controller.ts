@@ -5,7 +5,6 @@ import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { PrismaService } from '../adapters/prisma/prisma.service';
-import { UserSettingsRepository } from '../user-settings/user-settings.repository';
 import { CycleGenerationService } from './cycle-generation.service';
 import { ParseProgramPipe } from './program.pipe';
 import { ProgramNotFoundError } from '../ports/errors';
@@ -18,7 +17,7 @@ export class SwitchProgramController {
   constructor(
     private readonly cycleGenerationService: CycleGenerationService,
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
-    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(PrismaService) private readonly prisma: PrismaService | null,
   ) {}
 
   @Post('switch')
@@ -27,23 +26,24 @@ export class SwitchProgramController {
     @Param('program', ParseProgramPipe) program: string,
     @CurrentUser() user: AuthUser,
   ): Promise<SwitchProgramResponse> {
+    const repos = await this.factory.forUser(user);
+
     // Custom program IDs are UUIDs. Verify ownership before using the spec —
     // HybridLiftingProgramSpecRepository queries CustomProgramSpec by programId
     // without a userId filter, so we must gate here. Use ForbiddenException
     // rather than NotFoundException to avoid confirming UUID existence.
-    // clientForRequest() yields the per-request RLS transaction client (GUC set) when active, so
-    // this ownership check and the settings write are RLS-scoped under lifting_app. The factory's
-    // forUser() routes the same way. See prisma.service.ts (#511).
-    const db = this.prisma.clientForRequest();
+    // Custom programs are Prisma-only today (no in-memory twin — docs/domain-model.md D17,
+    // first half), so no database means no custom program can exist; treat that the same as
+    // an unowned UUID rather than special-casing it. clientForRequest() yields the per-request
+    // RLS transaction client (GUC set) when active, so this ownership check is RLS-scoped under
+    // lifting_app. See prisma.service.ts (#511).
     if (UUID_PATTERN.test(program)) {
-      const owned = await db.customProgram.findFirst({
-        where: { id: program, userId: user.id },
-      });
+      const db = this.prisma?.clientForRequest();
+      const owned = db
+        ? await db.customProgram.findFirst({ where: { id: program, userId: user.id } })
+        : null;
       if (!owned) throw new ForbiddenException('Program not found');
     }
-
-    const settingsRepo = new UserSettingsRepository(db, user.id);
-    const repos = await this.factory.forUser(user);
 
     // Ensure a CycleDashboard exists for this program; create if not.
     // Order is intentional: cycle init runs first so that if the settings write
@@ -64,7 +64,7 @@ export class SwitchProgramController {
       }
     }
 
-    await settingsRepo.upsertSettings({ activeProgram: program });
+    await repos.userSettings.upsertSettings({ activeProgram: program });
 
     return { activeProgram: program, cycleNum };
   }
