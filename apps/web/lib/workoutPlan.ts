@@ -11,6 +11,7 @@ import {
   specRowsForWorkoutDay,
 } from '@lifting-logbook/core';
 import type {
+  CycleDashboardResponse,
   LiftingProgramSpecResponse,
   TrainingMaxResponse,
   WorkoutResponse,
@@ -84,6 +85,26 @@ export function buildWorkoutDays(
     // Stored rows carry their block week; the card's carry the program week.
     lifts: specRowsForWorkoutDay(specs, k.week, k.offset).map((row) => ({ ...row, week: k.week })),
   }));
+}
+
+/**
+ * How the Cycle Dashboard dates a workout: its override if it was rescheduled,
+ * else the date its schedule gave it, else its spec-relative date
+ * (`WorkoutDay.date`). The grid and the Program Plan's estimate both date workouts
+ * through this, so the two can't drift (issue #1023).
+ *
+ * `dateOverrides` is read with `?.` so a response missing it (an older API pod
+ * during a non-atomic web/api rolling deploy) degrades instead of crashing the page.
+ */
+export function workoutDateResolver(
+  dashboard: Pick<CycleDashboardResponse, 'weeks' | 'dateOverrides'>,
+): (day: Pick<WorkoutDay, 'workoutNum' | 'date'>) => string {
+  const scheduled = new Map<number, string>();
+  for (const week of dashboard.weeks) {
+    for (const ws of week.workouts) scheduled.set(ws.workoutNum, ws.date);
+  }
+  return (day) =>
+    dashboard.dateOverrides?.[day.workoutNum] ?? scheduled.get(day.workoutNum) ?? day.date;
 }
 
 /**

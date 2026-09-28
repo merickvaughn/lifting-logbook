@@ -228,12 +228,22 @@ export interface UpsertStrengthGoalRequest {
 /** Per-workout entry within a cycle week summary. */
 export interface WorkoutSummary {
   workoutNum: number;
-  date: string; // ISO 8601 scheduled date
+  /**
+   * ISO 8601 date: the override if the workout was rescheduled, else the date its
+   * schedule gave it, else, for a day the schedule gave no date, its spec-relative
+   * date.
+   */
+  date: string;
   skipped: boolean;
 }
 
 /** Per-week summary within a cycle dashboard. */
 export interface CycleWeekSummary {
+  /**
+   * The *program* week, the week the Cycle Dashboard grid and the workout
+   * endpoint show these workouts in. It is not the calendar week they fall in,
+   * since a schedule sets its own pace (issue #1023, ADR-037).
+   */
   week: WeekNumber;
   workouts: WorkoutSummary[];
   completed: boolean;
@@ -244,6 +254,11 @@ export interface CycleDashboardResponse {
   program: string;
   cycleNum: CycleNumber;
   cycleStartDate: string; // ISO 8601 date string
+  /**
+   * With a schedule, every workout of the program, grouped by program week. With
+   * none, empty. A scheduled row past the program's last day is not a workout of
+   * the program, so it is left out (issue #1023).
+   */
   weeks: CycleWeekSummary[];
   currentWeekType: WeekType;
   /**

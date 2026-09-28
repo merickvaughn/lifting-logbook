@@ -168,26 +168,46 @@ describe('deriveProgramPhases — status', () => {
 // ---------------------------------------------------------------------------
 
 describe('estimateCompletionDate', () => {
-  it('is the day after the last program week with no schedule', () => {
-    // A program week is a calendar week, so 12 weeks from a Monday start.
-    expect(estimateCompletionDate([], '2026-05-18', 12)).toBe('2026-08-10');
+  // Workouts 1 and 2 on their spec-relative dates: 5-3-1's first and last days
+  // from a Monday 2026-05-18 start (week 12, offset 3 = +80 days).
+  const days = [
+    { workoutNum: 1, date: '2026-05-18' },
+    { workoutNum: 2, date: '2026-08-06' },
+  ];
+  const START = '2026-05-18';
+
+  it('is the last workout’s date with no schedule', () => {
+    expect(estimateCompletionDate(days, { cycleStartDate: START, weeks: [], dateOverrides: {} })).toBe(
+      '2026-08-06',
+    );
   });
 
-  it('is the last scheduled workout with a schedule, whose pace sets the length (issue #1023)', () => {
-    // 5-3-1's 24 days on Mon/Wed/Fri: program week 12's last day falls in
-    // calendar week 8, four weeks before a 12-calendar-week estimate.
-    const weeks = [
-      makeWeek(1, ['2026-05-18', '2026-05-20'], false),
-      makeWeek(12, ['2026-07-08', '2026-07-10'], false),
-    ];
-    expect(estimateCompletionDate(weeks, '2026-05-18', 12)).toBe('2026-07-10');
+  it('is the last scheduled workout’s date with a schedule, whose pace sets the length (issue #1023)', () => {
+    // On Mon/Wed/Fri, 5-3-1's last day falls in calendar week 8.
+    const weeks = [makeWeek(1, ['2026-05-18', '2026-07-10'], false)];
+    expect(estimateCompletionDate(days, { cycleStartDate: START, weeks, dateOverrides: {} })).toBe(
+      '2026-07-10',
+    );
   });
 
-  it('counts a rescheduled workout wherever its override put it', () => {
-    // `weeks` carries override dates, so a last workout moved earlier (or an
-    // earlier one moved later) changes the estimate.
-    const weeks = [makeWeek(1, ['2026-07-20', '2026-05-20'], false)];
-    expect(estimateCompletionDate(weeks, '2026-05-18', 12)).toBe('2026-07-20');
+  it('means the same with or without a schedule that dates the days alike', () => {
+    // A schedule that puts every workout on its spec-relative day (5-3-1 on
+    // Mon/Thu) must not change the estimate. Before #1023's review it did.
+    const weeks = [makeWeek(1, ['2026-05-18', '2026-08-06'], false)];
+    expect(estimateCompletionDate(days, { cycleStartDate: START, weeks, dateOverrides: {} })).toBe(
+      estimateCompletionDate(days, { cycleStartDate: START, weeks: [], dateOverrides: {} }),
+    );
+  });
+
+  it('counts a rescheduled workout in both modes', () => {
+    const dateOverrides = { 2: '2026-08-20' };
+    expect(estimateCompletionDate(days, { cycleStartDate: START, weeks: [], dateOverrides })).toBe('2026-08-20');
+    const weeks = [makeWeek(1, ['2026-05-18', '2026-07-10'], false)];
+    expect(estimateCompletionDate(days, { cycleStartDate: START, weeks, dateOverrides })).toBe('2026-08-20');
+  });
+
+  it('is the start date for a program with no workouts', () => {
+    expect(estimateCompletionDate([], { cycleStartDate: START, weeks: [], dateOverrides: {} })).toBe(START);
   });
 });
 

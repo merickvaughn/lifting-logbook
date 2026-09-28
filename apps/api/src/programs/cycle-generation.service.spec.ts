@@ -1,6 +1,13 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
-import { PRESET_BASE_SPECS, Weekday } from '@lifting-logbook/core';
+import { BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import { PRESET_BASE_SPECS, Weekday, distributeWorkouts } from '@lifting-logbook/core';
 import { DAY_INDEX, UserWorkoutSchedule } from '@lifting-logbook/types';
+
+// distributeWorkouts is wrapped, not replaced: every test calls through to the real
+// implementation except the one that makes it break its contract (issue #1023).
+jest.mock('@lifting-logbook/core', () => {
+  const actual = jest.requireActual<typeof import('@lifting-logbook/core')>('@lifting-logbook/core');
+  return { ...actual, distributeWorkouts: jest.fn(actual.distributeWorkouts) };
+});
 import {
   ICycleDashboardRepository,
   ILiftRecordRepository,
@@ -371,7 +378,8 @@ describe('CycleGenerationService', () => {
         ['fewer days a week than the program', 'leangains', { type: 'fixed', days: [MON, THU] }, 36, 3, [MON, THU]],
       ])('%s', async (_label, program, workoutSchedule, programDays, daysPerProgramWeek, rotation) => {
         cycleDashboardRepo.getCycleDashboard.mockRejectedValue(new ProgramNotFoundError(program));
-        programSpecRepo.getProgramSpec.mockResolvedValue(PRESET_BASE_SPECS[program] ?? []);
+        // A copy: the preset is a shared, unfrozen module constant.
+        programSpecRepo.getProgramSpec.mockResolvedValue(structuredClone(PRESET_BASE_SPECS[program] ?? []));
         userSettingsRepo.getSettings.mockResolvedValue({
           activeProgram: null,
           workoutSchedule,
@@ -398,6 +406,36 @@ describe('CycleGenerationService', () => {
         expect(workouts.map((w) => weekday(w.scheduledDate))).toEqual(
           Array.from({ length: programDays }, (_, i) => rotation[i % rotation.length]),
         );
+      });
+
+      it('leaves the cycle unscheduled, with a structured error, if distributeWorkouts breaks its contract', async () => {
+        // Unreachable through a valid schedule: distributeWorkouts dates every
+        // workout or, for a schedule with no days, none. Numbering doesn't depend on
+        // the schedule (ADR-037), so dropping the dates beats failing every
+        // scheduled user's cycle creation.
+        jest.mocked(distributeWorkouts).mockReturnValueOnce([{ week: 1, workouts: [new Date(2026, 4, 18)] }]);
+        cycleDashboardRepo.getCycleDashboard.mockRejectedValue(new ProgramNotFoundError(PROGRAM));
+        programSpecRepo.getProgramSpec.mockResolvedValue(structuredClone(PRESET_BASE_SPECS[PROGRAM] ?? []));
+        userSettingsRepo.getSettings.mockResolvedValue({
+          activeProgram: null,
+          workoutSchedule: { type: 'fixed', days: [MON, WED, FRI] },
+          defaultWeightIncrement: null,
+        });
+        const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+        try {
+          const { dashboard } = await service.initializeFirstCycle(repos, PROGRAM, { cycleDate: '2026-05-18' });
+
+          expect(dashboard.cycleNum).toBe(1);
+          expect(cycleDashboardRepo.saveCycleDashboard).toHaveBeenCalledWith(dashboard);
+          expect(cycleScheduledWorkoutRepo.saveScheduledWorkouts).not.toHaveBeenCalled();
+          expect(errorSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ program: PROGRAM, cycleNum: 1, programDays: 24, dated: 1 }),
+            expect.stringContaining('left unscheduled'),
+          );
+        } finally {
+          errorSpy.mockRestore();
+        }
       });
     });
 

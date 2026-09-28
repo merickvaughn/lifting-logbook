@@ -5,7 +5,6 @@ import {
   blockWeekForProgramWeek,
   programLengthWeeks,
   expandSpecToLength,
-  orderedWorkoutKeys,
   noScheduleWorkoutDateUTC,
   programWorkoutKeys,
   specRowsForWorkoutDay,
@@ -325,7 +324,7 @@ describe('specRowsForWorkoutDay', () => {
     const liftsAndReps = (rows: LiftingProgramSpec[]) => rows.map((r) => [r.lift, r.reps]);
     for (const [program, base] of Object.entries(PRESET_BASE_SPECS)) {
       const tiled = expandSpecToLength(base, programLengthWeeks(program, base));
-      const keys = orderedWorkoutKeys(tiled);
+      const keys = programWorkoutKeys(program, base);
       expect(keys.length).toBeGreaterThan(0);
       for (const { week, offset } of keys) {
         const card = tiled
@@ -338,13 +337,15 @@ describe('specRowsForWorkoutDay', () => {
 });
 
 // ---------------------------------------------------------------------------
-// orderedWorkoutKeys — the shared workoutNum ↔ (week, offset) mapping (issue #740)
+// programWorkoutKeys — a cycle's one workoutNum ↔ (week, offset) numbering
+// (issues #740, #1023)
 // ---------------------------------------------------------------------------
 
-describe('orderedWorkoutKeys', () => {
+describe('programWorkoutKeys', () => {
   it('returns distinct (week, offset) keys ordered by week then offset', () => {
     // Rows deliberately out of order, with duplicate (week, offset) pairs and
-    // multiple lifts sharing a workout day.
+    // multiple lifts sharing a workout day. An unregistered program runs its own
+    // 2-week block once, so nothing is tiled here.
     const spec = [
       makeRow({ week: 2, offset: 3, lift: 'A' }),
       makeRow({ week: 1, offset: 3, lift: 'B' }),
@@ -352,7 +353,7 @@ describe('orderedWorkoutKeys', () => {
       makeRow({ week: 1, offset: 0, lift: 'D' }), // duplicate key with row C
       makeRow({ week: 2, offset: 0, lift: 'E' }),
     ];
-    expect(orderedWorkoutKeys(spec)).toEqual([
+    expect(programWorkoutKeys('my-custom', spec)).toEqual([
       { week: 1, offset: 0 },
       { week: 1, offset: 3 },
       { week: 2, offset: 0 },
@@ -360,28 +361,17 @@ describe('orderedWorkoutKeys', () => {
     ]);
   });
 
-  it('returns [] for an empty spec', () => {
-    expect(orderedWorkoutKeys([])).toEqual([]);
-  });
-
-  it('indexes workoutNum → (week, offset) consistently with a tiled Leangains block', () => {
-    // Both the web grid (buildWorkoutDays) and the API (weekForWorkoutNum) call
-    // orderedWorkoutKeys(expandSpecToLength(...)), so this is the single contract
-    // that keeps a Dashboard card's workoutNum aligned with the workout it opens.
-    const base = (PRESET_BASE_SPECS['leangains'] ?? []);
-    const keys = orderedWorkoutKeys(expandSpecToLength(base, 12));
+  it('indexes workoutNum → (week, offset) across a tiled Leangains block', () => {
+    // The web grid (buildWorkoutDays), the workout endpoint and schedule
+    // generation all number workouts here, so this is the contract that keeps a
+    // Dashboard card's workoutNum aligned with the workout it opens.
+    const keys = programWorkoutKeys('leangains', PRESET_BASE_SPECS['leangains'] ?? []);
     expect(keys).toHaveLength(36); // 12 weeks × 3 offsets {0,2,4}
     expect(keys[0]).toEqual({ week: 1, offset: 0 });
     expect(keys[3]).toEqual({ week: 2, offset: 0 }); // workoutNum 4 → week 2
     expect(keys[35]?.week).toBe(12);
   });
-});
 
-// ---------------------------------------------------------------------------
-// programWorkoutKeys — a cycle's one workout numbering (issue #1023)
-// ---------------------------------------------------------------------------
-
-describe('programWorkoutKeys', () => {
   it('tiles the stored block to the canonical length before numbering', () => {
     const base = PRESET_BASE_SPECS['5-3-1'] ?? [];
     const keys = programWorkoutKeys('5-3-1', base);
@@ -396,11 +386,19 @@ describe('programWorkoutKeys', () => {
     expect(keys[23]).toEqual({ week: 12, offset: 3 });
   });
 
-  it('is exactly orderedWorkoutKeys over the tiled spec, for every preset', () => {
+  it('numbers every day of the tiled program once, in week-then-offset order, for every preset', () => {
+    // Derived independently of the implementation: the distinct (week, offset)
+    // pairs of the program tiled to its canonical length, sorted.
     for (const [program, base] of Object.entries(PRESET_BASE_SPECS)) {
-      expect(programWorkoutKeys(program, base)).toEqual(
-        orderedWorkoutKeys(expandSpecToLength(base, programLengthWeeks(program, base))),
+      const days = new Set(
+        expandSpecToLength(base, programLengthWeeks(program, base)).map((r) => `${r.week}:${r.offset}`),
       );
+      const expected = [...days]
+        .map((key) => key.split(':').map(Number) as [number, number])
+        .sort(([wa, oa], [wb, ob]) => wa - wb || oa - ob)
+        .map(([week, offset]) => ({ week, offset }));
+      expect(expected.length).toBeGreaterThan(0);
+      expect(programWorkoutKeys(program, base)).toEqual(expected);
     }
   });
 
@@ -449,13 +447,12 @@ describe('noScheduleWorkoutDateUTC', () => {
     expect(iso(cycleStart)).toBe('2026-04-20'); // input unchanged
   });
 
-  it('is the date-side companion to orderedWorkoutKeys — one date per tiled workoutNum', () => {
+  it('is the date-side companion to programWorkoutKeys — one date per tiled workoutNum', () => {
     // buildWorkoutDays (web card) and toWorkoutResponse (API detail) both resolve a
-    // workoutNum to its (week, offset) via orderedWorkoutKeys(expandSpecToLength(...))
-    // then feed it to this helper, so this is the single contract that keeps a card's
-    // date aligned with the workout it opens (issue #745).
-    const base = PRESET_BASE_SPECS['leangains'] ?? [];
-    const keys = orderedWorkoutKeys(expandSpecToLength(base, 12));
+    // workoutNum to its (week, offset) via programWorkoutKeys, then feed it to this
+    // helper, so this is the single contract that keeps a card's date aligned with
+    // the workout it opens (issue #745).
+    const keys = programWorkoutKeys('leangains', PRESET_BASE_SPECS['leangains'] ?? []);
     expect(keys[3]).toEqual({ week: 2, offset: 0 }); // workoutNum 4 → week 2, offset 0
     // …and that (week, offset) yields the card/detail date cycleStart + 7.
     expect(iso(noScheduleWorkoutDateUTC(cycleStart, 2, 0))).toBe('2026-04-27');

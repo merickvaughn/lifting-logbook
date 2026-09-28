@@ -8,6 +8,7 @@ import {
   estimateCompletionDate,
   resolveProgramPlanMeta,
 } from '@/lib/programPlan';
+import { buildWorkoutDays } from '@/lib/workoutPlan';
 import styles from './plan.module.css';
 
 const STATUS_ICON: Record<string, string> = {
@@ -39,7 +40,10 @@ export default async function ProgramPlanPage({
   const { durationWeeks } = deriveProgramSummary(specs, program);
   const today = new Date().toISOString().slice(0, 10);
   const phases = deriveProgramPhases(dashboard.weeks, today, meta);
-  const estCompletion = estimateCompletionDate(dashboard.weeks, dashboard.cycleStartDate, durationWeeks);
+  const estCompletion = estimateCompletionDate(
+    buildWorkoutDays(specs, dashboard.cycleStartDate, program),
+    dashboard,
+  );
 
   return (
     <section className={styles.container}>

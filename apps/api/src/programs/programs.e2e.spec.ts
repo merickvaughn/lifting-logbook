@@ -1295,13 +1295,15 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     // rotation alternates three and two, and Mon/Wed/Fri trains three — so before
     // #1023 both scheduled 36 workouts, numbered through the calendar, and the
     // workout endpoint and the Cycle Dashboard disagreed from workout 3 on.
-    it.each<[string, UserWorkoutSchedule]>([
-      ['a rotating schedule', { type: 'rotating', weeks: [[0, 2, 4], [1, 3]] }],
-      ['a Mon/Wed/Fri schedule', { type: 'fixed', days: [0, 2, 4] }],
+    // Each case has its own user: the in-memory state lives for the whole file, and a
+    // second cycle initialize for the same user would 409.
+    it.each<[string, UserWorkoutSchedule, string]>([
+      ['a rotating schedule', { type: 'rotating', weeks: [[0, 2, 4], [1, 3]] }, 'schedule-e2e-1023-rotating'],
+      ['a Mon/Wed/Fri schedule', { type: 'fixed', days: [0, 2, 4] }, 'schedule-e2e-1023-mon-wed-fri'],
     ])(
       'numbers %s by program day: the workout and the dashboard agree on every workout (issue #1023)',
-      async (_label, schedule) => {
-        const token = `Bearer schedule-e2e-1023-${schedule.type}`;
+      async (_label, schedule, userId) => {
+        const token = `Bearer ${userId}`;
         const inject = (method: 'GET' | 'POST', url: string, body?: unknown) =>
           app.getHttpAdapter().getInstance().inject({
             method,
@@ -1311,7 +1313,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
               : { authorization: token },
             ...(body ? { payload: JSON.stringify(body) } : {}),
           });
-        await setScheduleForUser(`schedule-e2e-1023-${schedule.type}`, schedule);
+        await setScheduleForUser(userId, schedule);
         const initRes = await inject('POST', `/programs/${SEED_PROGRAM}/cycles/initialize`, {
           cycleDate: '2026-05-18',
         });

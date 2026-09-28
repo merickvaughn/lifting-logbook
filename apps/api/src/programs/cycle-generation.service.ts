@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { UserWorkoutSchedule } from '@lifting-logbook/types';
 import {
   CycleDashboard,
@@ -89,6 +89,7 @@ async function saveScheduledDates(
   cycleDate: Date,
   programSpec: LiftingProgramSpec[],
   workoutSchedule: UserWorkoutSchedule,
+  logger: Logger,
 ): Promise<void> {
   const days = programWorkoutKeys(program, programSpec);
   if (days.length === 0) return;
@@ -96,9 +97,17 @@ async function saveScheduledDates(
     (week) => week.workouts,
   );
   // distributeWorkouts dates every workout, or none for a schedule with no days.
-  if (dates.length === 0) return;
+  // Anything else breaks its contract. Numbering doesn't depend on the schedule
+  // (ADR-037), so saving no rows costs only the dates: the cycle runs unscheduled
+  // instead of failing to start for every scheduled user.
   if (dates.length !== days.length) {
-    throw new Error(`distributeWorkouts dated ${dates.length} of ${days.length} workouts`);
+    if (dates.length > 0) {
+      logger.error(
+        { program, cycleNum, programDays: days.length, dated: dates.length, schedule: workoutSchedule },
+        'distributeWorkouts dated the wrong number of workouts; the cycle is left unscheduled (#1023)',
+      );
+    }
+    return;
   }
 
   const workouts: ScheduledWorkout[] = days.flatMap((day, i) => {
@@ -140,6 +149,8 @@ export interface CycleGenerationResult {
 
 @Injectable()
 export class CycleGenerationService {
+  private readonly logger = new Logger(CycleGenerationService.name);
+
   async startNewCycle(
     repos: CycleRepos,
     program: string,
@@ -183,7 +194,7 @@ export class CycleGenerationService {
     await repos.trainingMax.saveTrainingMaxes(program, newMaxes);
     const settings = await repos.userSettings.getSettings();
     if (settings.workoutSchedule) {
-      await saveScheduledDates(repos, program, newCycle.cycleNum, newCycle.cycleDate, programSpec, settings.workoutSchedule);
+      await saveScheduledDates(repos, program, newCycle.cycleNum, newCycle.cycleDate, programSpec, settings.workoutSchedule, this.logger);
     }
     await repos.cycleDashboard.saveCycleDashboard(newCycle);
 
@@ -246,7 +257,7 @@ export class CycleGenerationService {
     ]);
     // A program with no seeded spec has no days, so saveScheduledDates dates none.
     if (settings.workoutSchedule) {
-      await saveScheduledDates(repos, program, dashboard.cycleNum, dashboard.cycleDate, programSpec, settings.workoutSchedule);
+      await saveScheduledDates(repos, program, dashboard.cycleNum, dashboard.cycleDate, programSpec, settings.workoutSchedule, this.logger);
     }
     await repos.cycleDashboard.saveCycleDashboard(dashboard);
     return { dashboard, programSpec };

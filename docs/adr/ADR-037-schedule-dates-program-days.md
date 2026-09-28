@@ -46,7 +46,9 @@ schedule is Mon/Wed/Fri.
 
 **Map explicitly, by the program's own numbering.** Workout N of a cycle is always the program's
 N-th `(week, offset)` day, in both modes. `programWorkoutKeys(program, spec)` in
-`packages/core/src/presets/programLengths.ts` is that numbering. A schedule only dates the days.
+`packages/core/src/presets/programLengths.ts` is that numbering, and the only way to get it: the
+underlying `orderedWorkoutKeys` is module-private, because numbering an untiled block with it was
+the #740 bug. A schedule only dates the days.
 
 1. **Generation.** `saveScheduledDates` schedules exactly the program's days:
    - `distributeWorkouts(days.length, schedule, cycleDate)` yields one date per day, and scheduled
@@ -54,20 +56,31 @@ N-th `(week, offset)` day, in both modes. `programWorkoutKeys(program, spec)` in
    - its `weekNum` is day N's program week.
 
    A schedule training more or fewer days a week than the program, or a different number each
-   week, stretches or compresses the calendar. It no longer renumbers the program.
-2. **Reads.** Readers take the week and day from `workoutNum`, never from the row, which supplies
-   only the date. All three read the same helper, `programWorkoutKeys`:
-   - the workout endpoint, through `workoutKeyForWorkoutNum`;
-   - the cycle dashboard response, where `buildCycleDashboardResponse` groups rows by their day's
-     program week and leaves out a row with no program day;
-   - the web grid (`buildWorkoutDays`).
+   week, stretches or compresses the calendar. It no longer renumbers the program. If
+   `distributeWorkouts` ever broke its contract and dated the wrong number of workouts, the cycle
+   would start unscheduled with a structured error log rather than fail: numbering no longer
+   depends on the schedule, so only the dates would be lost.
+2. **Reads.** Readers take the week and day from `workoutNum`, and only the date from the row. All
+   three read `programWorkoutKeys`:
+   - The workout endpoint, through `workoutKeyForWorkoutNum`. The one exception is a row past
+     the program's last day, which has no program day: if it is opened directly, it is labelled
+     with its own stored week and plans nothing.
+   - The cycle dashboard response. With a schedule, `buildCycleDashboardResponse` lists every
+     program day under its program week. Each day is dated by its override, else its row, else
+     the spec-relative date the grid and endpoint also give it. Rows past the last day are left
+     out, with one structured warning per load. It numbers the days itself from the spec it is
+     given, so a caller can't hand it a different numbering.
+   - The web grid (`buildWorkoutDays`).
 3. **Order.** `distributeWorkouts` emits each week's days in weekday order. The settings validator
    accepts days in any order, and workout order must match date order.
 4. **No validation.** Any valid schedule works with any program, and the schedule sets the pace.
    This is the scheduling design's own premise: "the pace (workouts per week) is an emergent
    property of the schedule."
-5. **Plan page.** In schedule mode, the Program Plan's estimated completion is the last scheduled
-   workout's date (`estimateCompletionDate`). Program weeks are no longer calendar weeks there.
+5. **Plan page.** The Program Plan's estimated completion is the latest date among the cycle's
+   workouts, in both modes (`estimateCompletionDate`). Each workout is dated with the Cycle
+   Dashboard's own precedence, `workoutDateResolver`: override, then scheduled date, then
+   spec-relative date. With a schedule, program weeks are no longer calendar weeks, and a
+   rescheduled workout moves the estimate whether or not there is a schedule.
 
 ## Alternatives Considered
 
@@ -109,8 +122,8 @@ the row and the offset from the program is the combination that produced empty d
 ### Positive
 
 - **One numbering, in both modes.** The workout endpoint, the Dashboard grid and response, the
-  plan page's phases, and the skip and reschedule bounds share it. They can't disagree on week,
-  day or prescription.
+  plan page's phases and completion estimate, and the skip and reschedule bounds share it. They
+  can't disagree on week, day or prescription.
 - **Any schedule works with any program:** rotating, more days, or fewer.
 - **Existing cycles read correctly without a migration**, because readers no longer trust a
   row's stored week.
@@ -120,19 +133,28 @@ the row and the offset from the program is the combination that produced empty d
 ### Negative / Risks
 
 Existing cycles keep their stored dates:
-- A row past the program's last day stays in place. The dashboard leaves it out. If it is opened
-  directly, the workout endpoint still serves it as a workout with no planned lifts and logs a
-  warning, which keeps any sets logged against it visible.
-- A cycle scheduled with fewer days a week than the program has no rows for its last days. Those
-  show spec-relative dates on both the card and the detail page until the next cycle.
+- **A row past the program's last day stays in place.**
+  - The dashboard leaves it out and logs one structured warning per load, so the affected cycles
+    can be found in Loki.
+  - If it is opened directly, the workout endpoint still serves it as a workout with no planned
+    lifts, logs a warning, and keeps any sets logged against it visible.
+- **A cycle scheduled with fewer days a week than the program has no rows for its last days.**
+  Those days show their spec-relative dates on the card, on the detail page and in the dashboard
+  response, whose program weeks are therefore complete, so the plan page's phases can still
+  finish. The dates stay out of calendar order with the scheduled ones until the next cycle.
 
 Re-dating a cycle when the schedule changes is [#1032](https://github.com/merickvaughn/lifting-logbook/issues/1032).
 
-Two limits are not changed by this ADR:
+Three limits are not changed by this ADR:
 - **A mid-cycle spec edit still renumbers the workouts**, as it always has.
 - **`distributeWorkouts` aligns weeks in local time**, so on a host west of UTC a schedule can
   start a week early. That is [#1031](https://github.com/merickvaughn/lifting-logbook/issues/1031);
   production runs in UTC.
+- **`weekTypeForDate` still finds the current week by counting calendar weeks** since the cycle
+  start. It feeds the dashboard's `currentWeekType` and the training-max history `source`, and it
+  also clamps instead of tiling. With a schedule's own pace, calendar weeks and program weeks
+  differ. It is latent, because no preset tags a week type, and it is tracked with the clamping in
+  [#1028](https://github.com/merickvaughn/lifting-logbook/issues/1028).
 
 ## Verification
 
@@ -149,14 +171,23 @@ Two limits are not changed by this ADR:
   - one scheduled workout per program day;
   - each one's `weekNum` is its program week;
   - the dates walk the schedule in order.
+
+  With a mocked `distributeWorkouts` that breaks its contract, the cycle starts unscheduled and
+  an error is logged.
 - **`workouts.controller.spec.ts`.** A row saved before this change with a calendar week gets its
   program week and day.
-- **`cycle-dashboard.controller.spec.ts` and `mappers.spec.ts`.** Rows are grouped by program
-  week, and a row past the last day is left out.
-- **`programLengths.test.ts`.** `programWorkoutKeys` is `orderedWorkoutKeys` over the tiled spec
-  for every preset.
+- **`cycle-dashboard.controller.spec.ts` and `mappers.spec.ts`.**
+  - Every program day is listed by program week.
+  - A day with no row gets its spec-relative date.
+  - A row past the last day is left out, with one warning.
+- **`programLengths.test.ts`.** For every preset, `programWorkoutKeys` numbers each day of the
+  tiled program once, in order. The expected days are derived independently of the
+  implementation.
 - **`distributeWorkouts.test.ts`.** Days listed out of order are dated in weekday order.
-- **`programPlan.test.ts`.** `estimateCompletionDate` in both modes.
+- **`programPlan.test.ts` and `workoutPlan.test.ts`.**
+  - `estimateCompletionDate` gives the same answer with and without a schedule that dates the
+    days alike, and counts overrides in both modes.
+  - `workoutDateResolver` follows its precedence.
 
 ## References
 

@@ -121,27 +121,48 @@ export const toCycleDashboardResponse = (
 });
 
 /**
- * Builds a CycleDashboardResponse with per-week summaries derived from scheduled
- * workout dates. When an override date exists for a workout it wins over the
- * system-assigned scheduled date. A week is marked completed when every workout
- * in that week has at least one lift record or is explicitly skipped.
+ * What {@link buildCycleDashboardResponse} builds a response from besides the
+ * dashboard row. Named rather than positional, like {@link WorkoutResponseOptions}
+ * (#750), so the collections can't be transposed at the call site.
+ */
+export interface CycleDashboardInputs {
+  /**
+   * The program's stored spec. The cycle's workouts are numbered from it inside the
+   * builder (`programWorkoutKeys(d.program, spec)`), so a caller can't hand it some
+   * other numbering (#1023).
+   */
+  spec: ReadonlyArray<{ week: WeekNumber; offset: number }>;
+  /** The cycle's scheduled rows; empty in no-schedule mode. */
+  scheduled: readonly ScheduledWorkout[];
+  /** Rescheduled dates, by `workoutNum`. */
+  overrides: ReadonlyMap<number, Date>;
+  /** `workoutNum`s with at least one logged lift record. */
+  completedWorkoutNums: ReadonlySet<number>;
+  /** `workoutNum`s explicitly skipped. */
+  skippedNums?: ReadonlySet<number> | undefined;
+}
+
+/**
+ * Builds a CycleDashboardResponse. The per-workout metadata covers the whole cycle
+ * in both modes; `weeks` is empty with no schedule.
  *
- * Each workout is listed under the program week of its day, `programDays` being
- * the program's workout days in `workoutNum` order (`programWorkoutKeys`). That is
- * the week the Cycle Dashboard grid and the workout endpoint show it in, and the
- * week the plan page's phases count. A scheduled row supplies only the date: rows
- * saved before #1023 carry the schedule's calendar week, and a row past the
- * program's last day dates no workout of the program, so it is left out.
+ * With a schedule, `weeks` lists every workout of the program under its program
+ * week. Workouts are numbered by `programWorkoutKeys`, as in the Cycle Dashboard
+ * grid and the workout endpoint, and the week is also the one the plan page's
+ * phases count. Each workout is dated by its override, else the date its schedule
+ * gave it, else the spec-relative date the grid and the endpoint give a day with no
+ * scheduled row; cycles scheduled before #1023 with fewer days a week than their
+ * program have such days. A scheduled row supplies only a date, never a week:
+ * rows saved before #1023 carry the schedule's calendar week, and a row past the
+ * program's last day dates no workout, so it is left out. A week is completed when
+ * every workout in it has at least one lift record or is explicitly skipped.
  */
 export function buildCycleDashboardResponse(
   d: CycleDashboard,
   currentWeekType: WeekType,
-  scheduled: ScheduledWorkout[],
-  programDays: ReadonlyArray<{ week: WeekNumber }>,
-  overrides: Map<number, Date>,
-  completedWorkoutNums: Set<number>,
-  skippedNums: Set<number> = new Set(),
+  inputs: CycleDashboardInputs,
 ): CycleDashboardResponse {
+  const { spec, scheduled, overrides, completedWorkoutNums, skippedNums = new Set<number>() } = inputs;
   // Per-workout metadata for the whole cycle, surfaced top-level so the Cycle
   // Dashboard can render every tiled workout's status without a per-workout fetch
   // (issue #740). Populated identically in both modes; only `weeks` differs.
@@ -162,33 +183,27 @@ export function buildCycleDashboardResponse(
     );
   }
 
-  const weekAcc = new Map<number, { workouts: WorkoutSummary[]; scheduled: ScheduledWorkout[] }>();
-  for (const sw of scheduled) {
-    const week = programDays[sw.workoutNum - 1]?.week;
-    if (week === undefined) continue;
-    const effectiveDate = overrides.get(sw.workoutNum) ?? sw.scheduledDate;
-    const acc = weekAcc.get(week) ?? { workouts: [], scheduled: [] };
-    acc.workouts.push({
-      workoutNum: sw.workoutNum,
-      date: isoDate(effectiveDate),
-      skipped: skippedNums.has(sw.workoutNum),
-    });
-    acc.scheduled.push(sw);
-    weekAcc.set(week, acc);
-  }
+  const scheduledDates = new Map(scheduled.map((sw) => [sw.workoutNum, sw.scheduledDate]));
+  // The days come in week order, so the Map's insertion order is the weeks' order.
+  const weekAcc = new Map<WeekNumber, WorkoutSummary[]>();
+  programWorkoutKeys(d.program, spec).forEach(({ week, offset }, i) => {
+    const workoutNum = i + 1;
+    const date =
+      overrides.get(workoutNum) ??
+      scheduledDates.get(workoutNum) ??
+      noScheduleWorkoutDateUTC(d.cycleDate, week, offset);
+    const workouts = weekAcc.get(week) ?? [];
+    workouts.push({ workoutNum, date: isoDate(date), skipped: skippedNums.has(workoutNum) });
+    weekAcc.set(week, workouts);
+  });
 
-  const weeks: CycleWeekSummary[] = [...weekAcc.keys()]
-    .sort((a, b) => a - b)
-    .map((weekNum) => {
-      const { workouts, scheduled } = weekAcc.get(weekNum)!;
-      return {
-        week: weekNum as WeekNumber,
-        workouts,
-        completed: scheduled.every(
-          (sw) => completedWorkoutNums.has(sw.workoutNum) || skippedNums.has(sw.workoutNum),
-        ),
-      };
-    });
+  const weeks: CycleWeekSummary[] = [...weekAcc].map(([week, workouts]) => ({
+    week,
+    workouts,
+    completed: workouts.every(
+      (w) => completedWorkoutNums.has(w.workoutNum) || skippedNums.has(w.workoutNum),
+    ),
+  }));
 
   return {
     program: d.program,
@@ -242,21 +257,6 @@ export const workoutKeyForWorkoutNum = (
   programWorkoutKeys(program, spec)[workoutNum - 1];
 
 /**
- * The training week for a global `workoutNum`. A thin `.week` accessor over
- * {@link workoutKeyForWorkoutNum}; see it for the tiling contract.
- *
- * Returns undefined only when `workoutNum` exceeds the *full* canonical length
- * (surfaced as 400 by the controller). Before #740 the cap was one block's
- * distinct-offset count, which 400'd every week-2+ workout of a tiled program in
- * no-schedule mode (#680 fixed this only for schedule mode).
- */
-export const weekForWorkoutNum = (
-  spec: LiftingProgramSpec[],
-  workoutNum: number,
-  program = '',
-): WeekNumber | undefined => workoutKeyForWorkoutNum(spec, workoutNum, program)?.week;
-
-/**
  * Optional inputs to {@link toWorkoutResponse}. Collapsed into an options object
  * (issue #750) so call sites pass them by name — the two adjacent `Date` fields
  * (`scheduledDate`, `cycleStartDate`) can no longer be transposed without a
@@ -296,8 +296,8 @@ export interface WorkoutResponseOptions {
 
 /**
  * Groups a workout's lift records into the WorkoutResponse shape.
- * Caller must validate `workoutNum` with `isValidWorkoutNum` and derive
- * `week` via `weekForWorkoutNum` before invoking.
+ * Caller must validate `workoutNum` with `isValidWorkoutNum` and resolve its day
+ * with `workoutKeyForWorkoutNum` (the `week` and `offset` it passes) before invoking.
  *
  * When `plannedLifts` is provided (the spec-derived + override list), lifts are
  * emitted in that order, each keeping its `replaces` (the slot a swap took).

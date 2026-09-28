@@ -1,4 +1,5 @@
 import type {
+  CycleDashboardResponse,
   CycleWeekSummary,
   LiftingProgramSpecResponse,
 } from '@lifting-logbook/types';
@@ -8,6 +9,7 @@ import {
   programLengthWeeks,
   type ProgramLengthMeta,
 } from '@lifting-logbook/core';
+import { workoutDateResolver, type WorkoutDay } from './workoutPlan';
 
 // Phase rendering type. Built-in programs are autoregulated (Leangains, RPT) or a
 // no-deload wave (5/3/1), so their presets tag no deload/test weeks and
@@ -117,26 +119,26 @@ export function deriveProgramPhases(
 }
 
 /**
- * The Program Plan's estimated completion date.
+ * The Program Plan's estimated completion date: the latest date among the cycle's
+ * workouts (`days`, from `buildWorkoutDays`), each dated as the Cycle Dashboard
+ * dates it ({@link workoutDateResolver}).
  *
- * With a schedule, the schedule sets the pace, so the program's weeks need not be
- * calendar weeks (issue #1023): 5-3-1's 24 days on a Mon/Wed/Fri schedule end in
- * calendar week 8, not 12. The estimate is then the last scheduled workout's date,
- * rescheduled or not (`weeks` carries the override). Without one, a program week
- * is a calendar week, and the estimate is the day after the program's last week.
+ * This is one definition for both modes (issue #1023):
+ * - a schedule sets the pace, so 5-3-1's 24 days on Mon/Wed/Fri end in calendar
+ *   week 8, not 12;
+ * - a rescheduled workout moves the estimate whether or not there is a schedule.
+ *
+ * A program with no workouts completes on its start date.
  */
 export function estimateCompletionDate(
-  weeks: CycleWeekSummary[],
-  cycleStartDate: string,
-  durationWeeks: number,
+  days: readonly Pick<WorkoutDay, 'workoutNum' | 'date'>[],
+  dashboard: Pick<CycleDashboardResponse, 'cycleStartDate' | 'weeks' | 'dateOverrides'>,
 ): string {
-  const scheduled = weeks.flatMap((w) => w.workouts.map((ws) => ws.date));
-  if (scheduled.length > 0) {
-    return scheduled.reduce((last, date) => (date > last ? date : last));
-  }
-  const d = new Date(`${cycleStartDate.slice(0, 10)}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + durationWeeks * 7);
-  return d.toISOString().slice(0, 10);
+  const dateOf = workoutDateResolver(dashboard);
+  return days.reduce((last, day) => {
+    const date = dateOf(day);
+    return date > last ? date : last;
+  }, dashboard.cycleStartDate);
 }
 
 export function deriveProgramSummary(

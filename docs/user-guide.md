@@ -142,6 +142,8 @@ Three modes:
 - **Fixed days** — pick the days of the week you train (Mon–Sun). The app schedules workouts onto the next available training day.
 - **Rotating weeks** — define up to eight different weekly patterns that cycle. Useful if you train M/W/F one week and Tue/Thu/Sat the next, for example.
 
+A schedule only sets the dates. Your program's workouts keep their order, one per training day, so a schedule that trains more or fewer days a week than your program finishes it sooner or later. For example, 5/3/1's 24 workouts on a Mon/Wed/Fri schedule take eight calendar weeks instead of twelve. The Program Plan's estimated completion date follows your schedule. A schedule you set or change applies to the next cycle you start.
+
 The form validates that you've picked at least one day before saving, and re-seeds from the server response after save so you see the canonical stored value.
 
 ---

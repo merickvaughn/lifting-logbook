@@ -3,7 +3,6 @@ import {
   buildCycleDashboardResponse,
   toLiftRecordResponse,
   toWorkoutResponse,
-  weekForWorkoutNum,
   workoutKeyForWorkoutNum,
 } from './mappers';
 import { ScheduledWorkout } from '../ports/ICycleScheduledWorkoutRepository';
@@ -26,12 +25,6 @@ const spec = (offset: number, lift: string, week?: number): LiftingProgramSpec =
   ...(week !== undefined ? { week } : {}),
 });
 
-// Pre-#740 weekForWorkoutNum indexed workoutNum into the stored block's distinct
-// offsets and returned undefined (→ 400) beyond that count. #740 tiles the block to
-// the program's canonical length first and indexes into the ordered (week, offset)
-// workout days (the same orderedWorkoutKeys mapping the web grid uses), so week-2+
-// workouts resolve in no-schedule mode too; undefined now means past the *full*
-// canonical length. These tests replace the old offset-cap assertions.
 describe('toLiftRecordResponse', () => {
   const liftRecord = (overrides: Partial<LiftRecord> = {}): LiftRecord => ({
     program: '5-3-1',
@@ -65,9 +58,19 @@ describe('toLiftRecordResponse', () => {
   });
 });
 
-describe('weekForWorkoutNum', () => {
+// Pre-#740 the week lookup indexed workoutNum into the stored block's distinct
+// offsets and returned undefined (→ 400) beyond that count. #740 tiles the block to
+// the program's canonical length first and indexes into the ordered (week, offset)
+// workout days (programWorkoutKeys, the numbering the web grid uses too), so week-2+
+// workouts resolve in no-schedule mode as well; undefined now means past the *full*
+// canonical length. These tests replaced the old offset-cap assertions, and moved
+// here from the removed `.week` accessor, weekForWorkoutNum (#1023).
+describe('workoutKeyForWorkoutNum — the week of each workout', () => {
+  const weekOf = (s: LiftingProgramSpec[], workoutNum: number, program?: string) =>
+    workoutKeyForWorkoutNum(s, workoutNum, program)?.week;
+
   it('returns undefined for empty spec', () => {
-    expect(weekForWorkoutNum([], 1)).toBeUndefined();
+    expect(weekOf([], 1)).toBeUndefined();
   });
 
   it('maps workoutNum to the (week, offset) day in order for a multi-week block', () => {
@@ -79,34 +82,34 @@ describe('weekForWorkoutNum', () => {
       spec(0, 'Squat', 2),
       spec(3, 'Deadlift', 2),
     ];
-    expect(weekForWorkoutNum(s, 1)).toBe(1); // (w1, o0)
-    expect(weekForWorkoutNum(s, 2)).toBe(1); // (w1, o3)
-    expect(weekForWorkoutNum(s, 3)).toBe(2); // (w2, o0)
-    expect(weekForWorkoutNum(s, 4)).toBe(2); // (w2, o3)
-    expect(weekForWorkoutNum(s, 5)).toBeUndefined(); // past full length
+    expect(weekOf(s, 1)).toBe(1); // (w1, o0)
+    expect(weekOf(s, 2)).toBe(1); // (w1, o3)
+    expect(weekOf(s, 3)).toBe(2); // (w2, o0)
+    expect(weekOf(s, 4)).toBe(2); // (w2, o3)
+    expect(weekOf(s, 5)).toBeUndefined(); // past full length
   });
 
   it('deduplicates offsets — two lifts at the same offset are one workout day', () => {
     const s = [spec(0, 'Squat', 1), spec(0, 'Bench Press', 1), spec(3, 'Deadlift', 1)];
     // 1-week block of 2 offsets → base length 1 week → 2 workout days.
-    expect(weekForWorkoutNum(s, 1)).toBe(1);
-    expect(weekForWorkoutNum(s, 2)).toBe(1);
-    expect(weekForWorkoutNum(s, 3)).toBeUndefined();
+    expect(weekOf(s, 1)).toBe(1);
+    expect(weekOf(s, 2)).toBe(1);
+    expect(weekOf(s, 3)).toBeUndefined();
   });
 
   it('tiles a single-week repeating block to the program canonical length (issue #740)', () => {
     // Leangains: a 1-week block of offsets {0,2,4} tiled across 12 weeks = 36 days.
     const s = [spec(0, 'Bench Press', 1), spec(2, 'Squat', 1), spec(4, 'Overhead Press', 1)];
-    expect(weekForWorkoutNum(s, 3, 'leangains')).toBe(1); // last workout of week 1
-    expect(weekForWorkoutNum(s, 4, 'leangains')).toBe(2); // first of week 2 — 400'd pre-#740
-    expect(weekForWorkoutNum(s, 36, 'leangains')).toBe(12); // final workout
-    expect(weekForWorkoutNum(s, 37, 'leangains')).toBeUndefined(); // beyond 12 weeks
+    expect(weekOf(s, 3, 'leangains')).toBe(1); // last workout of week 1
+    expect(weekOf(s, 4, 'leangains')).toBe(2); // first of week 2 — 400'd pre-#740
+    expect(weekOf(s, 36, 'leangains')).toBe(12); // final workout
+    expect(weekOf(s, 37, 'leangains')).toBeUndefined(); // beyond 12 weeks
   });
 
   it('falls back to the base-spec block length for an unregistered program', () => {
     const s = [spec(0, 'Squat', 1), spec(0, 'Squat', 2), spec(0, 'Squat', 3)];
-    expect(weekForWorkoutNum(s, 3, 'a-custom-uuid')).toBe(3);
-    expect(weekForWorkoutNum(s, 4, 'a-custom-uuid')).toBeUndefined();
+    expect(weekOf(s, 3, 'a-custom-uuid')).toBe(3);
+    expect(weekOf(s, 4, 'a-custom-uuid')).toBeUndefined();
   });
 });
 
@@ -124,13 +127,6 @@ describe('workoutKeyForWorkoutNum', () => {
   it('returns undefined past the full canonical length', () => {
     const s = [spec(0, 'Bench Press', 1), spec(2, 'Squat', 1)];
     expect(workoutKeyForWorkoutNum(s, 25, 'leangains')).toBeUndefined();
-  });
-
-  it('weekForWorkoutNum is exactly its .week projection', () => {
-    const s = [spec(0, 'Squat', 1), spec(3, 'Deadlift', 1), spec(0, 'Squat', 2), spec(3, 'Deadlift', 2)];
-    for (const n of [1, 2, 3, 4, 5]) {
-      expect(weekForWorkoutNum(s, n)).toBe(workoutKeyForWorkoutNum(s, n)?.week);
-    }
   });
 });
 
@@ -307,73 +303,75 @@ describe('buildCycleDashboardResponse', () => {
     scheduledDate: new Date(`${date}T00:00:00.000Z`),
   });
 
-  // The program's workout days in workoutNum order, as programWorkoutKeys returns
-  // them; only each day's week is read. Two days a week unless a test says otherwise.
-  const programDays = (...weeks: number[]) => weeks.map((week) => ({ week }));
-  const TWO_A_WEEK = programDays(1, 1, 2, 2, 3, 3);
+  // A spec's workout days as (week, offset) pairs. The dashboard's program is
+  // unregistered, so its spec runs once and these are exactly its workouts, in
+  // workoutNum order.
+  const days = (...pairs: Array<[number, number]>) => pairs.map(([week, offset]) => ({ week, offset }));
+  const ONE_WEEK_TWO_DAYS = days([1, 0], [1, 2]);
+
+  const build = (
+    spec: ReturnType<typeof days>,
+    scheduled: ScheduledWorkout[],
+    progress: { overrides?: Map<number, Date>; completed?: Set<number>; skipped?: Set<number> } = {},
+  ) =>
+    buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, {
+      spec,
+      scheduled,
+      overrides: progress.overrides ?? new Map(),
+      completedWorkoutNums: progress.completed ?? new Set(),
+      skippedNums: progress.skipped,
+    });
 
   it('returns base response when scheduled array is empty', () => {
-    const result = buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, [], TWO_A_WEEK, new Map(), new Set());
-    expect(result.weeks).toEqual([]);
+    expect(build(ONE_WEEK_TWO_DAYS, []).weeks).toEqual([]);
   });
 
   it('emits workouts[] with workoutNum and date per entry', () => {
     const scheduled = [sw(1, 1, '2026-05-19'), sw(2, 1, '2026-05-21'), sw(3, 2, '2026-05-26')];
-    const result = buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, scheduled, TWO_A_WEEK, new Map(), new Set());
+    const result = build(days([1, 0], [1, 2], [2, 0]), scheduled);
     expect(result.weeks).toHaveLength(2);
-    const week1 = result.weeks[0]!;
-    expect(week1.week).toBe(1);
-    expect(week1.workouts).toHaveLength(2);
-    expect(week1.workouts[0]).toEqual({ workoutNum: 1, date: '2026-05-19', skipped: false });
-    expect(week1.workouts[1]).toEqual({ workoutNum: 2, date: '2026-05-21', skipped: false });
-    expect(week1.completed).toBe(false);
-    const week2 = result.weeks[1]!;
-    expect(week2.workouts[0]).toEqual({ workoutNum: 3, date: '2026-05-26', skipped: false });
+    const [week1, week2] = result.weeks;
+    expect(week1?.week).toBe(1);
+    expect(week1?.workouts).toEqual([
+      { workoutNum: 1, date: '2026-05-19', skipped: false },
+      { workoutNum: 2, date: '2026-05-21', skipped: false },
+    ]);
+    expect(week1?.completed).toBe(false);
+    expect(week2?.workouts).toEqual([{ workoutNum: 3, date: '2026-05-26', skipped: false }]);
   });
 
   it('applies override date when present', () => {
-    const scheduled = [sw(1, 1, '2026-05-19')];
     const overrides = new Map([[1, new Date('2026-05-20T00:00:00.000Z')]]);
-    const result = buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, scheduled, TWO_A_WEEK, overrides, new Set());
-    expect(result.weeks[0]!.workouts[0]).toEqual({ workoutNum: 1, date: '2026-05-20', skipped: false });
+    const result = build(days([1, 0]), [sw(1, 1, '2026-05-19')], { overrides });
+    expect(result.weeks[0]?.workouts[0]).toEqual({ workoutNum: 1, date: '2026-05-20', skipped: false });
   });
 
   it('marks week completed when all workouts have records', () => {
     const scheduled = [sw(1, 1, '2026-05-19'), sw(2, 1, '2026-05-21')];
-    const completed = new Set([1, 2]);
-    const result = buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, scheduled, TWO_A_WEEK, new Map(), completed);
-    expect(result.weeks[0]!.completed).toBe(true);
+    expect(build(ONE_WEEK_TWO_DAYS, scheduled, { completed: new Set([1, 2]) }).weeks[0]?.completed).toBe(true);
   });
 
   it('week is incomplete when only some workouts have records', () => {
     const scheduled = [sw(1, 1, '2026-05-19'), sw(2, 1, '2026-05-21')];
-    const completed = new Set([1]);
-    const result = buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, scheduled, TWO_A_WEEK, new Map(), completed);
-    expect(result.weeks[0]!.completed).toBe(false);
+    expect(build(ONE_WEEK_TWO_DAYS, scheduled, { completed: new Set([1]) }).weeks[0]?.completed).toBe(false);
   });
 
   it('marks skipped workout as skipped:true in output', () => {
     const scheduled = [sw(1, 1, '2026-05-19'), sw(2, 1, '2026-05-21')];
-    const skipped = new Set([1]);
-    const result = buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, scheduled, TWO_A_WEEK, new Map(), new Set(), skipped);
-    expect(result.weeks[0]!.workouts[0]!.skipped).toBe(true);
-    expect(result.weeks[0]!.workouts[1]!.skipped).toBe(false);
+    const result = build(ONE_WEEK_TWO_DAYS, scheduled, { skipped: new Set([1]) });
+    expect(result.weeks[0]?.workouts.map((w) => w.skipped)).toEqual([true, false]);
   });
 
   it('week is completed when all workouts are either logged or skipped', () => {
     const scheduled = [sw(1, 1, '2026-05-19'), sw(2, 1, '2026-05-21')];
-    const completed = new Set([1]);
-    const skipped = new Set([2]);
-    const result = buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, scheduled, TWO_A_WEEK, new Map(), completed, skipped);
-    expect(result.weeks[0]!.completed).toBe(true);
+    const result = build(ONE_WEEK_TWO_DAYS, scheduled, { completed: new Set([1]), skipped: new Set([2]) });
+    expect(result.weeks[0]?.completed).toBe(true);
   });
 
   it('week is incomplete when a skipped workout still has an un-logged sibling', () => {
     const scheduled = [sw(1, 1, '2026-05-19'), sw(2, 1, '2026-05-21'), sw(3, 1, '2026-05-23')];
-    const skipped = new Set([1]);
-    const threeAWeek = programDays(1, 1, 1);
-    const result = buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, scheduled, threeAWeek, new Map(), new Set(), skipped);
-    expect(result.weeks[0]!.completed).toBe(false);
+    const result = build(days([1, 0], [1, 2], [1, 4]), scheduled, { skipped: new Set([1]) });
+    expect(result.weeks[0]?.completed).toBe(false);
   });
 
   it('lists each workout under its program week, not the week stored on its row (issue #1023)', () => {
@@ -387,7 +385,8 @@ describe('buildCycleDashboardResponse', () => {
       sw(4, 2, '2026-05-25'),
       sw(5, 2, '2026-05-27'),
     ];
-    const result = buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, scheduled, TWO_A_WEEK, new Map(), new Set([1, 2]));
+    const spec = days([1, 0], [1, 2], [2, 0], [2, 2], [3, 0]);
+    const result = build(spec, scheduled, { completed: new Set([1, 2]) });
     expect(result.weeks.map((w) => [w.week, w.workouts.map((ws) => ws.workoutNum), w.completed])).toEqual([
       [1, [1, 2], true],
       [2, [3, 4], false],
@@ -401,15 +400,7 @@ describe('buildCycleDashboardResponse', () => {
     // Such a row dates no workout of the program: there is no card for it, and
     // counting it would hold its week's phase open on the plan page for good.
     const scheduled = [sw(1, 1, '2026-05-18'), sw(2, 1, '2026-05-20'), sw(3, 2, '2026-05-25')];
-    const result = buildCycleDashboardResponse(
-      baseDashboard,
-      WEEK_TYPE,
-      scheduled,
-      programDays(1, 1),
-      new Map(),
-      new Set([1, 2]),
-    );
-    expect(result.weeks).toEqual([
+    expect(build(ONE_WEEK_TWO_DAYS, scheduled, { completed: new Set([1, 2]) }).weeks).toEqual([
       {
         week: 1,
         workouts: [
@@ -421,17 +412,42 @@ describe('buildCycleDashboardResponse', () => {
     ]);
   });
 
+  it('lists a program day with no scheduled row on its spec-relative date (issue #1023)', () => {
+    // A schedule saved before #1023 with fewer days a week than the program dated
+    // too few workouts. The days it missed are still workouts: the grid and the
+    // workout endpoint show them on their spec-relative date, cycleStart +
+    // (week-1)*7 + offset. Leaving them out would keep their weeks, and every phase
+    // containing them, from ever completing on the plan page.
+    const spec = days([1, 0], [1, 2], [2, 0], [2, 2]);
+    const scheduled = [sw(1, 1, '2026-05-19'), sw(2, 1, '2026-05-22')];
+    const overrides = new Map([[4, new Date('2026-05-30T00:00:00.000Z')]]);
+    const result = build(spec, scheduled, { overrides, completed: new Set([1, 2, 3, 4]) });
+    expect(result.weeks).toEqual([
+      {
+        week: 1,
+        workouts: [
+          { workoutNum: 1, date: '2026-05-19', skipped: false },
+          { workoutNum: 2, date: '2026-05-22', skipped: false },
+        ],
+        completed: true,
+      },
+      {
+        week: 2,
+        workouts: [
+          { workoutNum: 3, date: '2026-05-26', skipped: false }, // 2026-05-19 + 7 + 0
+          { workoutNum: 4, date: '2026-05-30', skipped: false }, // rescheduled
+        ],
+        completed: true,
+      },
+    ]);
+  });
+
   it('surfaces per-workout metadata top-level in no-schedule mode (issue #740)', () => {
-    const overrides = new Map([[2, new Date('2026-05-22T00:00:00.000Z')]]);
-    const result = buildCycleDashboardResponse(
-      baseDashboard,
-      WEEK_TYPE,
-      [], // no schedule → weeks: []
-      TWO_A_WEEK,
-      overrides,
-      new Set([1]), // completed
-      new Set([3]), // skipped
-    );
+    const result = build(ONE_WEEK_TWO_DAYS, [], {
+      overrides: new Map([[2, new Date('2026-05-22T00:00:00.000Z')]]),
+      completed: new Set([1]),
+      skipped: new Set([3]),
+    });
     expect(result.weeks).toEqual([]);
     expect(result.dateOverrides).toEqual({ 2: '2026-05-22' });
     expect(result.completedWorkoutNums).toEqual([1]);
@@ -440,8 +456,11 @@ describe('buildCycleDashboardResponse', () => {
 
   it('surfaces the same top-level metadata in schedule mode', () => {
     const scheduled = [sw(1, 1, '2026-05-19'), sw(2, 1, '2026-05-21')];
-    const overrides = new Map([[1, new Date('2026-05-20T00:00:00.000Z')]]);
-    const result = buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, scheduled, TWO_A_WEEK, overrides, new Set([1]), new Set());
+    const result = build(ONE_WEEK_TWO_DAYS, scheduled, {
+      overrides: new Map([[1, new Date('2026-05-20T00:00:00.000Z')]]),
+      completed: new Set([1]),
+      skipped: new Set(),
+    });
     expect(result.weeks).toHaveLength(1);
     expect(result.dateOverrides).toEqual({ 1: '2026-05-20' });
     expect(result.completedWorkoutNums).toEqual([1]);

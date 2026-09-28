@@ -102,7 +102,9 @@ export class WorkoutsController {
     // program's last day has no key, and so no day to plan; any sets logged
     // against it are still listed.
     if (!workoutKey) {
-      // Structured, so how often this still happens is a plain `| json` query in Loki.
+      // Structured, so it is a plain `| json` query in Loki. It fires only when such a
+      // workout is opened directly, since the web never links to one. The cycle
+      // dashboard warns once per load for every cycle still carrying such rows.
       this.logger.warn(
         { program, cycleNum: dashboard.cycleNum, workoutNum, week },
         'Scheduled workout has no program day, so it plans no lifts (#1023)',
