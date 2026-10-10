@@ -37,7 +37,7 @@ This pattern can recur anywhere an error boundary returns a neutral value: empty
 
 `apps/api/src/programs/workouts.controller.spec.ts` exercises both the success and the fallback branches of every `.catch()` in `workouts.controller.ts`:
 
-- `getCycleDashboard.catch(ProgramNotFoundError → cycleNum 1)` — paired success and fallback tests, plus a rethrow test for non-typed errors.
+- `getMacrocycleDashboard.catch(ProgramNotFoundError → macrocycleNum 1)` — paired success and fallback tests, plus a rethrow test for non-typed errors.
 - `getWorkout.catch(WorkoutNotFoundError → [])` — paired success, fallback, and rethrow tests.
 - `getSkipsForCycle.catch(_ → Set())` — paired success and fallback tests; the fallback test also asserts the error was logged.
 

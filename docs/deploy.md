@@ -224,7 +224,7 @@ pipeline runs the `lifting-logbook-stg-migrate` Cloud Run Job automatically — 
 | `lift_metadata` | 6 lifts (squat, deadlift, bench-press, overhead-press, barbell-row, romanian-deadlift) |
 | `training_max` | 6 (current maxes after 12 cycles) |
 | `training_max_history` | ~24 (PR entries every 3rd cycle) |
-| `cycle_dashboard` | 1 (current cycle state) |
+| `macrocycle_dashboard` | 1 (current macrocycle state) |
 | `strength_goal` | 6 (relative bodyweight ratio targets) |
 | `lift_record` | ~216 (12 cycles × 3 workouts × 2 lifts/workout × 3 sets) |
 

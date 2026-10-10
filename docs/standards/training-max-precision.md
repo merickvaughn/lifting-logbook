@@ -50,7 +50,7 @@ mistake.
 
 A fourth bug in the same PR was in a category-1 path with a legitimate reason for *some*
 rounding tolerance (absorbing floating-point noise from upstream arithmetic in
-`cycle-generation.service.ts`'s history-change detection) — but the tolerance was coarser
+`macrocycle-generation.service.ts`'s history-change detection) — but the tolerance was coarser
 (1 decimal place) than the precision that actually matters to users, silently dropping real
 sub-0.1lb changes from history. This is why the rule above specifies a floor on how coarse
 a *comparison* tolerance may be, separately from the "no rounding at all" rule for the

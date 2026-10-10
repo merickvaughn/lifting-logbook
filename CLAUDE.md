@@ -61,8 +61,11 @@ infra/terraform/     — Shared infrastructure: VPC, load balancer, DNS, IAM
 docs/adr/            — Architecture Decision Records (see docs/README.md for the full ADR index)
 docs/README.md       — Full architecture narrative and ADR index
 docs/domain-model.md — Training domain model as built: the lift taxonomy, the
-                       Program → Cycle → Week → Workout → Lift slot → Set ladder, and which
-                       levels are persisted rows vs. recomputed per request
+                       Program → Macrocycle → Mesocycle → Week → Workout → Lift slot → Set
+                       ladder, and which levels are persisted rows vs. recomputed per request
+docs/glossary.md     — Training-time vocabulary (macrocycle, mesocycle/block, microcycle) and
+                       the other meanings of "cycle", "wave" and "phase"; mirrored in-app at
+                       /glossary (apps/web/lib/glossary.ts)
 scripts/             — Repository automation scripts
 archive/             — Frozen, unbuilt code kept for reference; nothing imports it (see archive/*/README.md)
 ```
@@ -920,7 +923,7 @@ This repo runs a full OpenTelemetry + Grafana Cloud stack. The Plan-then-optimiz
 ### What the Observability audit dimension must verify for this repo
 
 1. **Raw SQL is NOT auto-traced.** `@prisma/instrumentation` is excluded from the OTel SDK due to an SDK v1/v2 incompatibility ([ADR-024](docs/adr/ADR-024-prisma-otel-sdk-override.md)). Prisma Client ORM calls and any `$queryRaw` / `$executeRaw` emit **no spans**. Any new raw-SQL call site must be wrapped in a **manual span** to remain observable. (There are currently zero raw-SQL usages — this is a forward-looking gate.)
-2. **LLM adapters apply NO PII scrubbing to prompts.** The cycle-planning adapters (`apps/api/src/adapters/llm/anthropic-cycle-planning.adapter.ts`, `openai-compatible-cycle-planning.adapter.ts`) send user context to the provider unscrubbed. New LLM call sites must consider prompt-content exposure before sending or logging.
+2. **LLM adapters apply NO PII scrubbing to prompts.** The macrocycle-planning adapters (`apps/api/src/adapters/llm/anthropic-macrocycle-planning.adapter.ts`, `openai-compatible-macrocycle-planning.adapter.ts`) send user context to the provider unscrubbed. New LLM call sites must consider prompt-content exposure before sending or logging.
 3. **Header redaction is redact-by-default (allowlist), not a denylist.** Request/response headers are filtered to the `LOGGABLE_REQUEST_HEADERS` allowlist in `app.module.ts`; any header not explicitly marked safe is dropped, and `log-header-allowlist.spec.ts` fails CI if a credential-bearing name is added to the allowlist ([ADR-033](docs/adr/ADR-033-log-header-allowlist.md)). The allowlist covers **headers**, not payloads — new API boundaries must still log at appropriate levels and must never log secrets, tokens, or sensitive request/response **bodies**.
 4. **Client-side mutations must not swallow errors.** Every write invoked from a Client Component must route its caught error through [`apps/web/lib/log-client-error.ts`](apps/web/lib/log-client-error.ts) (`logClientError`) — never an empty `catch {}`, a bare `console.error`, or an uncaught rejection. Context passed to the helper carries ids/actions only, never secrets, tokens, or request bodies (the api-client throws only `Error(message)`/`ApiClientError`, so the caught error itself is safe to log). See [#783](https://github.com/merickvaughn/lifting-logbook/issues/783).
 

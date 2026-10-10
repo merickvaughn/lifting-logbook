@@ -7,8 +7,8 @@ This document maps every critical user flow to its test coverage across the API 
 | Flow | API (in-mem) | API (DB) | Frontend |
 |---|---|---|---|
 | Log a workout (lift records) | ✅ | ✅ | ✅ |
-| Onboarding — initialize first cycle | ❌ | ✅ | ✅ |
-| Advance a cycle | ✅ | ✅ | ❌ |
+| Onboarding — initialize first macrocycle | ❌ | ✅ | ✅ |
+| Advance a macrocycle | ✅ | ✅ | ❌ |
 | Recalculate training maxes | ✅ | ✅ | ❌ |
 | Reschedule a workout | ✅ | ✅ | ✅ (staging only — see `apps/web/e2e/staging.spec.ts`) |
 | Manage lifts (overrides) | ✅ | ✅ | ❌ |
@@ -70,7 +70,7 @@ Tracking issue: [#259](https://github.com/merickvaughn/lifting-logbook/issues/25
 | Page | Endpoints |
 |---|---|
 | `/history` | `GET /programs/:p/lift-records`, `GET /programs/:p/training-maxes/history` |
-| `/onboarding` (final step only) | `POST /programs/:p/cycles/initialize` |
+| `/onboarding` (final step only) | `POST /programs/:p/macrocycles/initialize` |
 | `/programs` | `GET /users/me/settings`, `GET /programs/custom` |
 | Programs — switch | `POST /programs/:p/switch` |
 | `/settings/training-maxes` | `GET /programs/:p/training-maxes`, `PATCH /programs/:p/training-maxes`, `GET /programs/:p/training-maxes/history` |
