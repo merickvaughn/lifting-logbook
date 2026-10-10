@@ -8,16 +8,16 @@ import { addDaysUTC } from '../utils/jsUtil';
  *   week is a training week; progression is AMRAP-driven (via `updateMaxes` from
  *   actual lift records), not a fixed weekly bump. Rendered as a single flat
  *   "Training" span — never a fabricated deload/test week.
- * - 'wave': structured, periodized programs (5/3/1). The repeating block is a
- *   wave; the plan shows one training phase per wave.
+ * - 'mesocycle': structured, periodized programs (5/3/1). The repeating block is a
+ *   mesocycle (what 5/3/1 calls a "wave"); the plan shows one phase per mesocycle.
  */
-export type ProgramPhaseStyle = 'repeating' | 'wave';
+export type ProgramPhaseStyle = 'repeating' | 'mesocycle';
 
 export interface ProgramLengthMeta {
   /** Authoritative total program length in weeks — the single source of truth. */
   lengthWeeks: number;
-  /** Size of the repeating block in {@link PRESET_BASE_SPECS} (its max `week`). */
-  blockWeeks: number;
+  /** Size of the repeating block (the mesocycle) in {@link PRESET_BASE_SPECS} (its max `week`). */
+  mesocycleWeeks: number;
   /** Plan-display periodization style. */
   phaseStyle: ProgramPhaseStyle;
 }
@@ -25,7 +25,7 @@ export interface ProgramLengthMeta {
 /**
  * Canonical program-length registry — the single source of truth for how long a
  * built-in program runs and how it is periodized. Both API schedule generation
- * (`cycle-generation.service.ts`) and web onboarding copy (`apps/web/lib/programs.ts`)
+ * (`macrocycle-generation.service.ts`) and web onboarding copy (`apps/web/lib/programs.ts`)
  * derive from this, replacing three previously-disagreeing sources: the onboarding
  * `weeks` literal, the 1-week preset block, and the `Math.max(...spec.week)`-derived
  * duration (which collapsed Leangains to "1 total week"). See issue #680.
@@ -42,11 +42,11 @@ export interface ProgramLengthMeta {
  */
 export const PROGRAM_LENGTHS: Record<string, ProgramLengthMeta> = {
   // 1-week repeating block tiled across 12 weeks; autoregulated (RPT + IF protocol).
-  leangains: { lengthWeeks: 12, blockWeeks: 1, phaseStyle: 'repeating' },
+  leangains: { lengthWeeks: 12, mesocycleWeeks: 1, phaseStyle: 'repeating' },
   // 1-week repeating block tiled across 8 weeks; autoregulated (reverse-pyramid).
-  rpt: { lengthWeeks: 8, blockWeeks: 1, phaseStyle: 'repeating' },
-  // 3-week 5/3/1 wave tiled across 12 weeks (4 waves); structured / periodized.
-  '5-3-1': { lengthWeeks: 12, blockWeeks: 3, phaseStyle: 'wave' },
+  rpt: { lengthWeeks: 8, mesocycleWeeks: 1, phaseStyle: 'repeating' },
+  // 3-week 5/3/1 mesocycle ("wave") tiled across a 12-week macrocycle (4 mesocycles).
+  '5-3-1': { lengthWeeks: 12, mesocycleWeeks: 3, phaseStyle: 'mesocycle' },
 };
 
 /**
@@ -54,7 +54,7 @@ export const PROGRAM_LENGTHS: Record<string, ProgramLengthMeta> = {
  * (0 for an empty spec). Reads `week` only, so it accepts both the domain
  * {@link LiftingProgramSpec} and its serialized `LiftingProgramSpecResponse`.
  */
-export function baseSpecBlockWeeks(
+export function baseSpecMesocycleWeeks(
   spec: ReadonlyArray<{ week: WeekNumber }>,
 ): number {
   return spec.reduce((max, s) => Math.max(max, s.week), 0);
@@ -70,7 +70,7 @@ export function programLengthWeeks(
   program: string,
   spec: ReadonlyArray<{ week: WeekNumber }>,
 ): number {
-  return PROGRAM_LENGTHS[program]?.lengthWeeks ?? baseSpecBlockWeeks(spec);
+  return PROGRAM_LENGTHS[program]?.lengthWeeks ?? baseSpecMesocycleWeeks(spec);
 }
 
 /**
@@ -79,22 +79,22 @@ export function programLengthWeeks(
  * controller derives a tiled workout's planned lifts from its block week, so it
  * must pick the *same* block week `expandSpecToLength` tiled into that program
  * week — sharing this one function keeps the two in lockstep (issue #740).
- * `blockWeeks <= 0` (empty spec) returns the program week unchanged.
+ * `mesocycleWeeks <= 0` (empty spec) returns the program week unchanged.
  */
-export function blockWeekForProgramWeek(week: number, blockWeeks: number): number {
-  return blockWeeks > 0 ? ((week - 1) % blockWeeks) + 1 : week;
+export function mesocycleWeekForProgramWeek(week: number, mesocycleWeeks: number): number {
+  return mesocycleWeeks > 0 ? ((week - 1) % mesocycleWeeks) + 1 : week;
 }
 
 /**
  * The spec rows that plan one workout day: the rows of the block week that program
- * `week` tiles from ({@link blockWeekForProgramWeek}) at day `offset`, in `order`.
+ * `week` tiles from ({@link mesocycleWeekForProgramWeek}) at day `offset`, in `order`.
  *
  * A workout carries its *program* week, but the stored spec — and the spec endpoint
  * serving it — is one untiled block. Matching a row's `week` against the program week
  * finds nothing from the second block on (Leangains/RPT week 2, 5-3-1 week 4), and
  * matching the week without the offset lists every day's lifts on every day (issue
  * #1014). The workouts controller (which lifts a day plans), the web (each lift's
- * prescription) and the Cycle Dashboard (each card's lifts, `buildWorkoutDays`) all
+ * prescription) and the Macrocycle Dashboard (each card's lifts, `buildWorkoutDays`) all
  * resolve a day here, so they start from the same rows. Downstream, a lift a day
  * repeats is still collapsed to one occurrence by the workout endpoint (#1027).
  *
@@ -106,9 +106,9 @@ export function specRowsForWorkoutDay<T extends { week: WeekNumber; offset: numb
   week: number,
   offset: number,
 ): T[] {
-  const blockWeek = blockWeekForProgramWeek(week, baseSpecBlockWeeks(spec));
+  const mesocycleWeek = mesocycleWeekForProgramWeek(week, baseSpecMesocycleWeeks(spec));
   return spec
-    .filter((row) => row.week === blockWeek && row.offset === offset)
+    .filter((row) => row.week === mesocycleWeek && row.offset === offset)
     .sort((a, b) => a.order - b.order);
 }
 
@@ -134,8 +134,8 @@ export function expandSpecToLength<T extends { week: WeekNumber }>(
   baseSpec: readonly T[],
   lengthWeeks: number,
 ): T[] {
-  const blockWeeks = baseSpecBlockWeeks(baseSpec);
-  if (blockWeeks <= 0 || lengthWeeks <= 0) return [];
+  const mesocycleWeeks = baseSpecMesocycleWeeks(baseSpec);
+  if (mesocycleWeeks <= 0 || lengthWeeks <= 0) return [];
 
   // Group rows by their in-block week once, preserving each week's row order.
   const rowsByWeek = new Map<number, T[]>();
@@ -147,8 +147,8 @@ export function expandSpecToLength<T extends { week: WeekNumber }>(
 
   const expanded: T[] = [];
   for (let week = 1; week <= lengthWeeks; week++) {
-    const blockWeek = blockWeekForProgramWeek(week, blockWeeks);
-    for (const row of rowsByWeek.get(blockWeek) ?? []) {
+    const mesocycleWeek = mesocycleWeekForProgramWeek(week, mesocycleWeeks);
+    for (const row of rowsByWeek.get(mesocycleWeek) ?? []) {
       expanded.push({ ...row, week });
     }
   }
@@ -160,7 +160,7 @@ export function expandSpecToLength<T extends { week: WeekNumber }>(
  * offset; the Nth entry (1-based) is `workoutNum` N.
  *
  * Module-private: only a spec already tiled to the canonical length numbers a
- * cycle, and numbering the stored block instead was the #740 bug. Callers use
+ * macrocycle, and numbering the stored block instead was the #740 bug. Callers use
  * {@link programWorkoutKeys}, which tiles first (issue #1023).
  */
 function orderedWorkoutKeys(
@@ -182,8 +182,8 @@ function orderedWorkoutKeys(
  * spec tiled to its canonical length. Workout N is entry N-1; a `workoutNum` past
  * the end is not a workout of the program.
  *
- * This is the one numbering of a cycle's workouts, in both modes. The Cycle
- * Dashboard grid (`buildWorkoutDays`), the workout endpoint, the cycle dashboard
+ * This is the one numbering of a macrocycle's workouts, in both modes. The Cycle
+ * Dashboard grid (`buildWorkoutDays`), the workout endpoint, the macrocycle dashboard
  * response and schedule generation (`saveScheduledDates`) all read it. A schedule
  * dates these days and never numbers them, so a schedule that trains more or fewer
  * days a week than the program, or a different number each week, changes only the
@@ -198,23 +198,23 @@ export function programWorkoutKeys(
 
 /**
  * The UTC calendar date of a no-schedule workout day, from its `(week, offset)`
- * key relative to the cycle start: `cycleStart + (week-1)*7 + offset` days.
+ * key relative to the macrocycle start: `macrocycleStart + (week-1)*7 + offset` days.
  * Without a schedule a program week is 7 calendar days, so a workout in program
- * week W at in-week `offset` lands `(W-1)*7 + offset` days after the cycle start.
- * Week 1 (`week === 1`) is just `cycleStart + offset`. A schedule sets its own
+ * week W at in-week `offset` lands `(W-1)*7 + offset` days after the macrocycle start.
+ * Week 1 (`week === 1`) is just `macrocycleStart + offset`. A schedule sets its own
  * pace (ADR-037); a program day it gave no date falls back to this one.
  *
  * The single source of truth for the spec-relative workout date, shared by the web
- * Cycle Dashboard grid (`buildWorkoutDays`), the API workout-detail fallback
- * (`toWorkoutResponse`) and the cycle dashboard response, so a card's date and the
+ * Macrocycle Dashboard grid (`buildWorkoutDays`), the API workout-detail fallback
+ * (`toWorkoutResponse`) and the macrocycle dashboard response, so a card's date and the
  * detail page it opens can never drift (issue #745). This is the date-side
  * companion to {@link programWorkoutKeys}, the `workoutNum ↔ (week, offset)`
  * numbering the same callers share (issues #740, #1023).
  */
 export function noScheduleWorkoutDateUTC(
-  cycleStart: Date,
+  macrocycleStart: Date,
   week: number,
   offset: number,
 ): Date {
-  return addDaysUTC(cycleStart, (week - 1) * 7 + offset);
+  return addDaysUTC(macrocycleStart, (week - 1) * 7 + offset);
 }

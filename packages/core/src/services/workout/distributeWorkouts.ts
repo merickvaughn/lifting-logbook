@@ -41,7 +41,7 @@ function getWeekPattern(
 /**
  * Distributes a fixed number of workouts across weeks according to a user schedule.
  *
- * The first week is aligned to the Monday of `cycleStartDate`'s week; days earlier in
+ * The first week is aligned to the Monday of `macrocycleStartDate`'s week; days earlier in
  * that week than the start date are still emitted, matching the design-doc contract
  * (callers wanting "future days only" should filter the first week themselves).
  *
@@ -56,20 +56,20 @@ function getWeekPattern(
  * weeks, so `result[i].week` may not equal `i + 1`. Callers using `week` as an array
  * index should compute their own positional index instead.
  *
- * Throws on negative `cycleWorkouts` so caller bugs surface here rather than as
+ * Throws on negative `macrocycleWorkouts` so caller bugs surface here rather than as
  * silent empty output downstream.
  */
 export function distributeWorkouts(
-  cycleWorkouts: number,
+  macrocycleWorkouts: number,
   schedule: UserWorkoutSchedule,
-  cycleStartDate: Date,
+  macrocycleStartDate: Date,
 ): DistributedWeek[] {
-  if (cycleWorkouts < 0) {
+  if (macrocycleWorkouts < 0) {
     throw new Error(
-      `distributeWorkouts: cycleWorkouts must be non-negative (got ${cycleWorkouts})`,
+      `distributeWorkouts: macrocycleWorkouts must be non-negative (got ${macrocycleWorkouts})`,
     );
   }
-  if (cycleWorkouts === 0) return [];
+  if (macrocycleWorkouts === 0) return [];
 
   // Guard against schedules with no placeable days — without this, the while loop
   // below would spin forever advancing weekCounter without placing anything.
@@ -82,14 +82,14 @@ export function distributeWorkouts(
   const distribution: DistributedWeek[] = [];
   let workoutsPlaced = 0;
   let weekCounter = 0;
-  let currentWeekStart = alignToMonday(cycleStartDate);
+  let currentWeekStart = alignToMonday(macrocycleStartDate);
 
-  while (workoutsPlaced < cycleWorkouts) {
+  while (workoutsPlaced < macrocycleWorkouts) {
     const weekPattern = getWeekPattern(schedule, weekCounter);
     const weekWorkouts: Date[] = [];
 
     for (const dayIndex of weekPattern) {
-      if (workoutsPlaced >= cycleWorkouts) break;
+      if (workoutsPlaced >= macrocycleWorkouts) break;
       weekWorkouts.push(addDaysLocal(currentWeekStart, dayIndex));
       workoutsPlaced++;
     }
@@ -106,7 +106,7 @@ export function distributeWorkouts(
 }
 
 /**
- * Estimated workouts per week for a schedule. Used only for cycle-duration display —
+ * Estimated workouts per week for a schedule. Used only for macrocycle-duration display —
  * the schedule itself drives distribution, not this number.
  *
  * Fixed → number of training days. Rotating → rounded average across week patterns.

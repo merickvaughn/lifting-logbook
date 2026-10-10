@@ -31,7 +31,7 @@ import { PrismaClient } from '@prisma/client';
 import { AppModule } from '../app.module';
 import {
   SEED_PROGRAM,
-  seedCycleDashboard,
+  seedMacrocycleDashboard,
   seedLiftRecords,
   seedTrainingMaxes,
 } from '../adapters/in-memory/fixtures';
@@ -68,7 +68,7 @@ async function cleanTestUsers(prisma: PrismaClient): Promise<void> {
   await prisma.liftRecord.deleteMany({ where: { userId: { in: users } } });
   await prisma.trainingMax.deleteMany({ where: { userId: { in: users } } });
   await prisma.trainingMaxHistory.deleteMany({ where: { userId: { in: users } } });
-  await prisma.cycleDashboard.deleteMany({ where: { userId: { in: users } } });
+  await prisma.macrocycleDashboard.deleteMany({ where: { userId: { in: users } } });
   await prisma.workoutLiftOverride.deleteMany({ where: { userId: { in: users } } });
   await prisma.workoutDateOverride.deleteMany({ where: { userId: { in: users } } });
   await prisma.strengthGoal.deleteMany({ where: { userId: { in: users } } });
@@ -158,19 +158,19 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     // Clean any leftover data from an interrupted previous run before seeding.
     await cleanTestUsers(prisma);
 
-    const dashboard = seedCycleDashboard();
-    // Seed CycleDashboard for TEST_USER plus the isolation-test users (Alice, Bob)
-    // so the user-isolation specs can call /cycles/current and reschedule endpoints
+    const dashboard = seedMacrocycleDashboard();
+    // Seed MacrocycleDashboard for TEST_USER plus the isolation-test users (Alice, Bob)
+    // so the user-isolation specs can call /macrocycles/current and reschedule endpoints
     // without tripping the dashboard-precondition 404 in their handlers.
-    await prisma.cycleDashboard.createMany({
+    await prisma.macrocycleDashboard.createMany({
       data: [TEST_USER, USER_ALICE, USER_BOB].map((userId) => ({
         userId,
         program: SEED_PROGRAM,
-        cycleUnit: dashboard.cycleUnit,
-        cycleNum: dashboard.cycleNum,
-        cycleDate: dashboard.cycleDate,
+        macrocycleUnit: dashboard.macrocycleUnit,
+        macrocycleNum: dashboard.macrocycleNum,
+        macrocycleDate: dashboard.macrocycleDate,
         sheetName: dashboard.sheetName,
-        cycleStartWeekday: dashboard.cycleStartWeekday,
+        macrocycleStartWeekday: dashboard.macrocycleStartWeekday,
         programType: dashboard.programType ?? null,
       })),
     });
@@ -189,7 +189,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       data: seedLiftRecords().map((r) => ({
         userId: TEST_USER,
         program: r.program,
-        cycleNum: r.cycleNum,
+        macrocycleNum: r.macrocycleNum,
         workoutNum: r.workoutNum,
         date: r.date,
         lift: r.lift,
@@ -202,8 +202,8 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
 
     // Seed one TrainingMaxHistory row so the order-sensitive write block has
     // pre-existing history to PATCH (mark-as-PR) and GET (?isPR=true) against.
-    // The recalculate/cycle-advance tests do not produce history rows on their
-    // own — the cycle-1 records yield reductions for current maxes, which are
+    // The recalculate/macrocycle-advance tests do not produce history rows on their
+    // own — the macrocycle-1 records yield reductions for current maxes, which are
     // flagged rather than applied (and so generate no history entries).
     await prisma.trainingMaxHistory.create({
       data: {
@@ -251,21 +251,21 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it('GET /programs/:program/cycles/current returns 401 without auth', async () => {
+  it('GET /programs/:program/macrocycles/current returns 401 without auth', async () => {
     const res = await app
       .getHttpAdapter()
       .getInstance()
-      .inject({ method: 'GET', url: `/programs/${SEED_PROGRAM}/cycles/current` });
+      .inject({ method: 'GET', url: `/programs/${SEED_PROGRAM}/macrocycles/current` });
     expect(res.statusCode).toBe(401);
   });
 
-  it('GET /programs/:program/cycles/current returns the seeded cycle', async () => {
-    const res = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
+  it('GET /programs/:program/macrocycles/current returns the seeded macrocycle', async () => {
+    const res = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.program).toBe(SEED_PROGRAM);
-    expect(body.cycleNum).toBe(1);
-    expect(body.cycleStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(body.macrocycleNum).toBe(1);
+    expect(body.macrocycleStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it('GET /programs/:program/workouts/:workoutNum returns grouped lifts', async () => {
@@ -291,12 +291,12 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect(res.json().length).toBeGreaterThan(0);
   });
 
-  it('GET /programs/:program/lift-records returns records for current cycle', async () => {
+  it('GET /programs/:program/lift-records returns records for current macrocycle', async () => {
     const res = await get(`/programs/${SEED_PROGRAM}/lift-records`);
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(Array.isArray(body)).toBe(true);
-    expect(body.every((r: { cycleNum: number }) => r.cycleNum === 1)).toBe(true);
+    expect(body.every((r: { macrocycleNum: number }) => r.macrocycleNum === 1)).toBe(true);
   });
 
   it('GET /programs/:program/spec returns the seeded program spec', async () => {
@@ -306,7 +306,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
   });
 
   it('GET unknown program returns 404', async () => {
-    const res = await get('/programs/does-not-exist/cycles/current');
+    const res = await get('/programs/does-not-exist/macrocycles/current');
     expect(res.statusCode).toBe(404);
   });
 
@@ -333,7 +333,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     it('POST /programs/:program/training-maxes/recalculate flags reductions without applying them', async () => {
-      // Pre-condition: PATCH above set Squat to 300. The seeded cycle-1 records would
+      // Pre-condition: PATCH above set Squat to 300. The seeded macrocycle-1 records would
       // propose a Squat max of 210 (a *reduction*); updateMaxes flags reductions
       // and does not apply them, so the returned Squat weight stays at 300 and the
       // proposal appears in `flagged`. Response shape is { maxes, flagged }.
@@ -366,62 +366,62 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(Array.isArray(body.flagged)).toBe(true);
     });
 
-    it('POST /programs/:program/cycles advances cycleNum and persists new maxes', async () => {
-      expect((await get(`/programs/${SEED_PROGRAM}/cycles/current`)).json().cycleNum).toBe(1);
+    it('POST /programs/:program/macrocycles advances macrocycleNum and persists new maxes', async () => {
+      expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(1);
 
-      const res = await post(`/programs/${SEED_PROGRAM}/cycles`);
+      const res = await post(`/programs/${SEED_PROGRAM}/macrocycles`);
       expect(res.statusCode).toBe(201);
       const body = res.json();
       expect(body.program).toBe(SEED_PROGRAM);
-      expect(body.cycleNum).toBe(2);
-      expect(body.cycleStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(body.macrocycleNum).toBe(2);
+      expect(body.macrocycleStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
-      const getRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
+      const getRes = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
       expect(getRes.statusCode).toBe(200);
-      expect(getRes.json().cycleNum).toBe(2);
+      expect(getRes.json().macrocycleNum).toBe(2);
     });
 
-    it('POST /programs/:program/cycles with fromCycleNum uses that cycle\'s records', async () => {
-      expect((await get(`/programs/${SEED_PROGRAM}/cycles/current`)).json().cycleNum).toBe(2);
-      const res = await postJson(`/programs/${SEED_PROGRAM}/cycles`, { fromCycleNum: 1 });
+    it('POST /programs/:program/macrocycles with fromMacrocycleNum uses that macrocycle\'s records', async () => {
+      expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(2);
+      const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, { fromMacrocycleNum: 1 });
       expect(res.statusCode).toBe(201);
       const body = res.json();
-      expect(body.cycleNum).toBe(2);
-      expect(body.cycleStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(body.macrocycleNum).toBe(2);
+      expect(body.macrocycleStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
-      // Verify the re-pinned cycle is persisted to the DB (not just returned in the response).
-      const getRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
+      // Verify the re-pinned macrocycle is persisted to the DB (not just returned in the response).
+      const getRes = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
       expect(getRes.statusCode).toBe(200);
-      expect(getRes.json().cycleNum).toBe(2);
+      expect(getRes.json().macrocycleNum).toBe(2);
     });
 
-    it('POST /programs/:program/cycles with cycleDate pins the new cycle\'s start date', async () => {
-      expect((await get(`/programs/${SEED_PROGRAM}/cycles/current`)).json().cycleNum).toBe(2);
-      const res = await postJson(`/programs/${SEED_PROGRAM}/cycles`, {
-        cycleDate: '2026-06-01',
+    it('POST /programs/:program/macrocycles with macrocycleDate pins the new macrocycle\'s start date', async () => {
+      expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(2);
+      const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, {
+        macrocycleDate: '2026-06-01',
       });
       expect(res.statusCode).toBe(201);
-      expect(res.json().cycleStartDate).toBe('2026-06-01');
+      expect(res.json().macrocycleStartDate).toBe('2026-06-01');
     });
 
-    it('POST /programs/:program/cycles with fromCycleNum having no records returns 400', async () => {
-      const res = await postJson(`/programs/${SEED_PROGRAM}/cycles`, { fromCycleNum: 99 });
+    it('POST /programs/:program/macrocycles with fromMacrocycleNum having no records returns 400', async () => {
+      const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, { fromMacrocycleNum: 99 });
       expect(res.statusCode).toBe(400);
     });
 
-    it('POST /programs/unknown/cycles returns 404', async () => {
-      const res = await post('/programs/does-not-exist/cycles');
+    it('POST /programs/unknown/macrocycles returns 404', async () => {
+      const res = await post('/programs/does-not-exist/macrocycles');
       expect(res.statusCode).toBe(404);
     });
   });
 
   // -------------------------------------------------------------------------
   // Training max history — order-sensitive, continues from write operations.
-  // At this point cycle advances have written history rows for changed lifts.
+  // At this point macrocycle advances have written history rows for changed lifts.
   // -------------------------------------------------------------------------
 
   describe('training max history', () => {
-    it('GET /training-maxes/history returns entries after cycle advances', async () => {
+    it('GET /training-maxes/history returns entries after macrocycle advances', async () => {
       const res = await get(`/programs/${SEED_PROGRAM}/training-maxes/history`);
       expect(res.statusCode).toBe(200);
       const body = res.json();
@@ -489,40 +489,40 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // POST cycles/initialize — uses USER_INIT who has no seed data.
+  // POST macrocycles/initialize — uses USER_INIT who has no seed data.
   // Order-sensitive within the block (409 test depends on happy path row).
   // -------------------------------------------------------------------------
 
-  describe('POST /programs/:program/cycles/initialize (DB)', () => {
+  describe('POST /programs/:program/macrocycles/initialize (DB)', () => {
     const AS_INIT = { authorization: `Bearer ${USER_INIT}` };
 
-    it('happy path — creates a CycleDashboard row and returns 201 with expected shape', async () => {
+    it('happy path — creates a MacrocycleDashboard row and returns 201 with expected shape', async () => {
       const res = await app.getHttpAdapter().getInstance().inject({
         method: 'POST',
-        url: '/programs/5-3-1/cycles/initialize',
+        url: '/programs/5-3-1/macrocycles/initialize',
         headers: { 'content-type': 'application/json', ...AS_INIT },
-        payload: JSON.stringify({ cycleDate: '2026-06-02' }),
+        payload: JSON.stringify({ macrocycleDate: '2026-06-02' }),
       });
       expect(res.statusCode).toBe(201);
       const body = res.json();
       expect(body.program).toBe('5-3-1');
-      expect(body.cycleNum).toBe(1);
-      expect(body.cycleStartDate).toBe('2026-06-02');
+      expect(body.macrocycleNum).toBe(1);
+      expect(body.macrocycleStartDate).toBe('2026-06-02');
       expect(body.currentWeekType).toBe('training');
       expect(body.weeks).toEqual([]);
 
       // DB-level assertion
-      const row = await prisma.cycleDashboard.findFirst({
+      const row = await prisma.macrocycleDashboard.findFirst({
         where: { userId: USER_INIT, program: '5-3-1' },
       });
       expect(row).not.toBeNull();
-      expect(row?.cycleNum).toBe(1);
+      expect(row?.macrocycleNum).toBe(1);
     });
 
     it('409 Conflict — second call for the same user+program', async () => {
       const res = await app.getHttpAdapter().getInstance().inject({
         method: 'POST',
-        url: '/programs/5-3-1/cycles/initialize',
+        url: '/programs/5-3-1/macrocycles/initialize',
         headers: { 'content-type': 'application/json', ...AS_INIT },
         payload: JSON.stringify({}),
       });
@@ -532,7 +532,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     it('400 Bad Request — unrecognized program ID', async () => {
       const res = await app.getHttpAdapter().getInstance().inject({
         method: 'POST',
-        url: '/programs/not-a-real-program/cycles/initialize',
+        url: '/programs/not-a-real-program/macrocycles/initialize',
         headers: { 'content-type': 'application/json', ...AS_INIT },
         payload: JSON.stringify({}),
       });
@@ -592,48 +592,48 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       app.getHttpAdapter().getInstance().inject({ method: 'DELETE', url, headers: AUTH });
 
     it('POST override persists to the database', async () => {
-      const dashRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
-      const { cycleNum } = dashRes.json() as { cycleNum: number };
+      const dashRes = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
+      const { macrocycleNum } = dashRes.json() as { macrocycleNum: number };
 
       const res = await postJson(
-        `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/lift-overrides`,
+        `/programs/${SEED_PROGRAM}/macrocycles/${macrocycleNum}/workouts/1/lift-overrides`,
         { action: 'add', lift: 'Dips' },
       );
       expect(res.statusCode).toBe(201);
 
       const row = await prisma.workoutLiftOverride.findFirst({
-        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum, workoutNum: 1, lift: 'Dips' },
+        where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum, workoutNum: 1, lift: 'Dips' },
       });
       expect(row).not.toBeNull();
       expect(row?.action).toBe('add');
     });
 
     it('DELETE override removes the row', async () => {
-      const dashRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
-      const { cycleNum } = dashRes.json() as { cycleNum: number };
+      const dashRes = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
+      const { macrocycleNum } = dashRes.json() as { macrocycleNum: number };
 
       // Create first
       await postJson(
-        `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/lift-overrides`,
+        `/programs/${SEED_PROGRAM}/macrocycles/${macrocycleNum}/workouts/1/lift-overrides`,
         { action: 'remove', lift: 'Squat' },
       );
 
       // Then delete
       const delRes = await deleteReq(
-        `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/lift-overrides/Squat`,
+        `/programs/${SEED_PROGRAM}/macrocycles/${macrocycleNum}/workouts/1/lift-overrides/Squat`,
       );
       expect(delRes.statusCode).toBe(204);
 
       const row = await prisma.workoutLiftOverride.findFirst({
-        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum, workoutNum: 1, lift: 'Squat' },
+        where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum, workoutNum: 1, lift: 'Squat' },
       });
       expect(row).toBeNull();
     });
 
     it('applies a chain of swaps in the order each was written, not the order rows sit in (issue #1014)', async () => {
-      const dashRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
-      const { cycleNum } = dashRes.json() as { cycleNum: number };
-      const base = { userId: TEST_USER, program: SEED_PROGRAM, cycleNum, workoutNum: 1 };
+      const dashRes = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
+      const { macrocycleNum } = dashRes.json() as { macrocycleNum: number };
+      const base = { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum, workoutNum: 1 };
       try {
         // Inserted second swap first, with createdAt saying the opposite. A read in
         // insertion order (a sequential scan) or lift-name order (the unique index)
@@ -659,9 +659,9 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     it('a swap made again after being undone takes effect (issue #1014)', async () => {
       // Saving the Squat override a second time must re-create its row: an update
       // would keep its first createdAt and sort it before the undo.
-      const dashRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
-      const { cycleNum } = dashRes.json() as { cycleNum: number };
-      const url = `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/lift-overrides`;
+      const dashRes = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
+      const { macrocycleNum } = dashRes.json() as { macrocycleNum: number };
+      const url = `/programs/${SEED_PROGRAM}/macrocycles/${macrocycleNum}/workouts/1/lift-overrides`;
       try {
         await postJson(url, { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
         await postJson(url, { action: 'replace', lift: 'Front Squat', replacedBy: 'Squat' });
@@ -680,12 +680,12 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
 
     it('replacing an added lift keeps its add row, so the replacement is planned (issue #1026)', async () => {
       // The unique key includes `action`, so the replace no longer overwrites the add.
-      const dashRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
-      const { cycleNum } = dashRes.json() as { cycleNum: number };
-      const url = `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/lift-overrides`;
+      const dashRes = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
+      const { macrocycleNum } = dashRes.json() as { macrocycleNum: number };
+      const url = `/programs/${SEED_PROGRAM}/macrocycles/${macrocycleNum}/workouts/1/lift-overrides`;
       const chinUpRows = () =>
         prisma.workoutLiftOverride.findMany({
-          where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum, workoutNum: 1, lift: 'Chin-up' },
+          where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum, workoutNum: 1, lift: 'Chin-up' },
           orderBy: { createdAt: 'asc' },
         });
       try {
@@ -715,13 +715,13 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       const AS_ALICE = { authorization: `Bearer ${USER_ALICE}` };
       const AS_BOB = { authorization: `Bearer ${USER_BOB}` };
 
-      const dashAlice = await injectRaw({ method: 'GET', url: `/programs/${SEED_PROGRAM}/cycles/current`, headers: AS_ALICE });
-      const { cycleNum } = dashAlice.json() as { cycleNum: number };
+      const dashAlice = await injectRaw({ method: 'GET', url: `/programs/${SEED_PROGRAM}/macrocycles/current`, headers: AS_ALICE });
+      const { macrocycleNum } = dashAlice.json() as { macrocycleNum: number };
 
       // Alice adds an override
       const alicePost = await injectRaw({
         method: 'POST',
-        url: `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/lift-overrides`,
+        url: `/programs/${SEED_PROGRAM}/macrocycles/${macrocycleNum}/workouts/1/lift-overrides`,
         headers: { 'content-type': 'application/json', ...AS_ALICE },
         payload: JSON.stringify({ action: 'add', lift: 'Face Pulls' }),
       });
@@ -747,11 +747,11 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
 
   describe('workout rescheduling (DB)', () => {
     it('PATCH reschedule persists override and GET workout returns overrideDate', async () => {
-      const dashRes = await get(`/programs/${SEED_PROGRAM}/cycles/current`);
-      const { cycleNum } = dashRes.json() as { cycleNum: number };
+      const dashRes = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
+      const { macrocycleNum } = dashRes.json() as { macrocycleNum: number };
 
       const patchRes = await patchJson(
-        `/programs/${SEED_PROGRAM}/cycles/${cycleNum}/workouts/1/reschedule`,
+        `/programs/${SEED_PROGRAM}/macrocycles/${macrocycleNum}/workouts/1/reschedule`,
         { newDate: '2026-09-01' },
       );
       expect(patchRes.statusCode).toBe(204);
@@ -761,7 +761,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(workoutRes.json().overrideDate).toBe('2026-09-01');
 
       const row = await prisma.workoutDateOverride.findFirst({
-        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum, workoutNum: 1 },
+        where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum, workoutNum: 1 },
       });
       expect(row).not.toBeNull();
     });
@@ -773,10 +773,10 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       const AS_ALICE = { authorization: `Bearer ${USER_ALICE}` };
       const AS_BOB = { authorization: `Bearer ${USER_BOB}` };
 
-      // Alice reschedules cycle 1, workout 2
+      // Alice reschedules macrocycle 1, workout 2
       const alicePatch = await injectRaw({
         method: 'PATCH',
-        url: `/programs/${SEED_PROGRAM}/cycles/1/workouts/2/reschedule`,
+        url: `/programs/${SEED_PROGRAM}/macrocycles/1/workouts/2/reschedule`,
         headers: { 'content-type': 'application/json', ...AS_ALICE },
         payload: JSON.stringify({ newDate: '2026-09-15' }),
       });
@@ -793,12 +793,12 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
 
       // DB layer — Alice's row exists, Bob's does not
       const aliceRow = await prisma.workoutDateOverride.findFirst({
-        where: { userId: USER_ALICE, program: SEED_PROGRAM, cycleNum: 1, workoutNum: 2 },
+        where: { userId: USER_ALICE, program: SEED_PROGRAM, macrocycleNum: 1, workoutNum: 2 },
       });
       expect(aliceRow).not.toBeNull();
 
       const bobRow = await prisma.workoutDateOverride.findFirst({
-        where: { userId: USER_BOB, program: SEED_PROGRAM, cycleNum: 1, workoutNum: 2 },
+        where: { userId: USER_BOB, program: SEED_PROGRAM, macrocycleNum: 1, workoutNum: 2 },
       });
       expect(bobRow).toBeNull();
     });
@@ -973,7 +973,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     // Regression for issue #884, against real fixture data rather than a synthetic
-    // case: this CSV contains a genuine same-key-different-date collision — cycle
+    // case: this CSV contains a genuine same-key-different-date collision — macrocycle
     // 37 / workout 2 / "BB Row" (canonical: "barbell-row") / set 1 exists on both
     // 12/16/2025 (175x7) and 1/12/2024 (202.5x8), the exact numbers cited in the
     // issue. Before the fix, the database's own unique constraint made it
@@ -989,7 +989,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
         where: {
           userId: TEST_USER,
           program: SEED_PROGRAM,
-          cycleNum: 37,
+          macrocycleNum: 37,
           workoutNum: 2,
           lift: 'barbell-row',
           setNum: 1,
@@ -1075,7 +1075,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(body.skipped[0]?.row).toBe(2);
 
       const rows = await prisma.liftRecord.findMany({
-        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 90, workoutNum: 1, lift: 'back-squat', setNum: 1 },
+        where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum: 90, workoutNum: 1, lift: 'back-squat', setNum: 1 },
       });
       // The first occurrence's data won, not the duplicate's.
       expect(rows).toHaveLength(1);
@@ -1098,7 +1098,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     it('PATCHes the record it just POSTed, addressed by the id the POST returned', async () => {
       const createRes = await postJson(LIFT_RECORDS_URL, {
         program: SEED_PROGRAM,
-        cycleNum: 4,
+        macrocycleNum: 4,
         workoutNum: 1,
         date: '2026-04-20',
         lift: 'Overhead Press',
@@ -1117,7 +1117,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect((patchRes.json() as { weight: number }).weight).toBe(100);
 
       const row = await prisma.liftRecord.findFirst({
-        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 4, workoutNum: 1, setNum: 1 },
+        where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum: 4, workoutNum: 1, setNum: 1 },
       });
       expect(row?.weight).toBe(100);
     });
@@ -1128,7 +1128,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     it('returns 409 when the write collides with different data on an already-logged set', async () => {
       const base = {
         program: SEED_PROGRAM,
-        cycleNum: 4,
+        macrocycleNum: 4,
         workoutNum: 1,
         date: '2026-04-20',
         lift: 'Overhead Press',
@@ -1141,7 +1141,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(second.statusCode).toBe(409);
 
       const rows = await prisma.liftRecord.findMany({
-        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 4, workoutNum: 1, setNum: 1 },
+        where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum: 4, workoutNum: 1, setNum: 1 },
       });
       expect(rows).toHaveLength(1);
       expect(rows[0]?.weight).toBe(95);
@@ -1154,7 +1154,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     it('returns the existing record instead of 409 when the retry is identical', async () => {
       const body = {
         program: SEED_PROGRAM,
-        cycleNum: 4,
+        macrocycleNum: 4,
         workoutNum: 1,
         date: '2026-04-20',
         lift: 'Overhead Press',
@@ -1170,7 +1170,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect((second.json() as { weight: number }).weight).toBe(95);
 
       const count = await prisma.liftRecord.count({
-        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 4, workoutNum: 1, setNum: 1 },
+        where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum: 4, workoutNum: 1, setNum: 1 },
       });
       expect(count).toBe(1);
     });
@@ -1178,7 +1178,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     it('does not collide when the same set is logged on a different date', async () => {
       const base = {
         program: SEED_PROGRAM,
-        cycleNum: 4,
+        macrocycleNum: 4,
         workoutNum: 1,
         lift: 'Overhead Press',
         setNum: 1,
@@ -1192,7 +1192,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(second.statusCode).toBe(201);
 
       const count = await prisma.liftRecord.count({
-        where: { userId: TEST_USER, program: SEED_PROGRAM, cycleNum: 4, workoutNum: 1, setNum: 1 },
+        where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum: 4, workoutNum: 1, setNum: 1 },
       });
       expect(count).toBe(2);
     });
@@ -1276,23 +1276,23 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     const AS_HIST = { authorization: `Bearer ${USER_HIST}` };
 
     beforeAll(async () => {
-      const dash = seedCycleDashboard();
-      await prisma.cycleDashboard.create({
+      const dash = seedMacrocycleDashboard();
+      await prisma.macrocycleDashboard.create({
         data: {
           userId: USER_HIST,
           program: SEED_PROGRAM,
-          cycleUnit: dash.cycleUnit,
-          cycleNum: 1,
-          cycleDate: dash.cycleDate,
+          macrocycleUnit: dash.macrocycleUnit,
+          macrocycleNum: 1,
+          macrocycleDate: dash.macrocycleDate,
           sheetName: dash.sheetName,
-          cycleStartWeekday: dash.cycleStartWeekday,
+          macrocycleStartWeekday: dash.macrocycleStartWeekday,
           programType: dash.programType ?? null,
         },
       });
       await prisma.liftRecord.createMany({
         data: [
-          { userId: USER_HIST, program: SEED_PROGRAM, cycleNum: 1, workoutNum: 1, date: new Date('2026-04-20'), lift: 'Squat', setNum: 1, weight: 205, reps: 5, notes: '' },
-          { userId: USER_HIST, program: SEED_PROGRAM, cycleNum: 1, workoutNum: 2, date: new Date('2026-04-22'), lift: 'Bench Press', setNum: 1, weight: 145, reps: 5, notes: '' },
+          { userId: USER_HIST, program: SEED_PROGRAM, macrocycleNum: 1, workoutNum: 1, date: new Date('2026-04-20'), lift: 'Squat', setNum: 1, weight: 205, reps: 5, notes: '' },
+          { userId: USER_HIST, program: SEED_PROGRAM, macrocycleNum: 1, workoutNum: 2, date: new Date('2026-04-22'), lift: 'Bench Press', setNum: 1, weight: 145, reps: 5, notes: '' },
         ],
       });
       await prisma.trainingMaxHistory.createMany({
@@ -1306,24 +1306,24 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     afterAll(async () => {
       await prisma.liftRecord.deleteMany({ where: { userId: USER_HIST } });
       await prisma.trainingMaxHistory.deleteMany({ where: { userId: USER_HIST } });
-      await prisma.cycleDashboard.deleteMany({ where: { userId: USER_HIST } });
+      await prisma.macrocycleDashboard.deleteMany({ where: { userId: USER_HIST } });
     });
 
-    it('GET lift-records returns 2 seeded records for current cycle', async () => {
+    it('GET lift-records returns 2 seeded records for current macrocycle', async () => {
       const injectRaw = app.getHttpAdapter().getInstance().inject.bind(app.getHttpAdapter().getInstance());
       const res = await injectRaw({ method: 'GET', url: `/programs/${SEED_PROGRAM}/lift-records`, headers: AS_HIST });
       expect(res.statusCode).toBe(200);
-      const records = res.json() as { lift: string; cycleNum: number }[];
+      const records = res.json() as { lift: string; macrocycleNum: number }[];
       expect(records).toHaveLength(2);
-      expect(records.every((r) => r.cycleNum === 1)).toBe(true);
+      expect(records.every((r) => r.macrocycleNum === 1)).toBe(true);
     });
 
-    it('GET cycles/current derives completedWorkoutNums with a grouped query scoped to this user (issue #982)', async () => {
+    it('GET macrocycles/current derives completedWorkoutNums with a grouped query scoped to this user (issue #982)', async () => {
       // The first `groupBy` under RLS in the repo: exactly the two workouts this
-      // user logged in cycle 1 — no other user's rows for the same program and
-      // cycle, and each workout once.
+      // user logged in macrocycle 1 — no other user's rows for the same program and
+      // macrocycle, and each workout once.
       const injectRaw = app.getHttpAdapter().getInstance().inject.bind(app.getHttpAdapter().getInstance());
-      const res = await injectRaw({ method: 'GET', url: `/programs/${SEED_PROGRAM}/cycles/current`, headers: AS_HIST });
+      const res = await injectRaw({ method: 'GET', url: `/programs/${SEED_PROGRAM}/macrocycles/current`, headers: AS_HIST });
       expect(res.statusCode).toBe(200);
       expect((res.json() as { completedWorkoutNums: number[] }).completedWorkoutNums).toEqual([1, 2]);
     });
@@ -1685,30 +1685,30 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
   describe('POST /programs/:program/switch (DB)', () => {
     const AS_SW = { authorization: `Bearer ${USER_SW}` };
 
-    it('initializes a cycle and sets activeProgram for a user with no prior cycle', async () => {
+    it('initializes a macrocycle and sets activeProgram for a user with no prior macrocycle', async () => {
       const injectRaw = app.getHttpAdapter().getInstance().inject.bind(app.getHttpAdapter().getInstance());
 
       const res = await injectRaw({ method: 'POST', url: `/programs/${SEED_PROGRAM}/switch`, headers: AS_SW });
       expect(res.statusCode).toBe(200);
-      const body = res.json() as { activeProgram: string; cycleNum: number };
+      const body = res.json() as { activeProgram: string; macrocycleNum: number };
       expect(body.activeProgram).toBe(SEED_PROGRAM);
-      expect(body.cycleNum).toBe(1);
+      expect(body.macrocycleNum).toBe(1);
 
       const settingsRow = await prisma.userSettings.findFirst({ where: { userId: USER_SW } });
       expect(settingsRow?.activeProgram).toBe(SEED_PROGRAM);
 
-      const cycleRow = await prisma.cycleDashboard.findFirst({ where: { userId: USER_SW, program: SEED_PROGRAM } });
-      expect(cycleRow).not.toBeNull();
-      expect(cycleRow?.cycleNum).toBe(1);
+      const macrocycleRow = await prisma.macrocycleDashboard.findFirst({ where: { userId: USER_SW, program: SEED_PROGRAM } });
+      expect(macrocycleRow).not.toBeNull();
+      expect(macrocycleRow?.macrocycleNum).toBe(1);
     });
 
-    it('returns existing cycleNum when CycleDashboard already exists', async () => {
+    it('returns existing macrocycleNum when MacrocycleDashboard already exists', async () => {
       const injectRaw = app.getHttpAdapter().getInstance().inject.bind(app.getHttpAdapter().getInstance());
 
       // Previous test created the dashboard — switching again must not reinitialize.
       const res = await injectRaw({ method: 'POST', url: `/programs/${SEED_PROGRAM}/switch`, headers: AS_SW });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toMatchObject({ activeProgram: SEED_PROGRAM, cycleNum: 1 });
+      expect(res.json()).toMatchObject({ activeProgram: SEED_PROGRAM, macrocycleNum: 1 });
     });
 
     it('returns 403 when switching to a UUID-format program not owned by the user', async () => {

@@ -87,7 +87,7 @@ function collectReferencesFromText(text, refSet) {
   // posix path (e.g. `apps/web/app/page.tsx:10`), so bare basename or non-path tokens
   // in the set are inert.
   // Path component allows posix-style separators and Next.js route-group parens
-  // (e.g. `apps/web/app/(authed)/cycle/page.tsx:10-16`).
+  // (e.g. `apps/web/app/(authed)/macrocycle/page.tsx:10-16`).
   const re = /([a-zA-Z0-9._\-/()]+\.[a-zA-Z0-9]+):(\d+)(?:-(\d+))?/g;
   let match;
   while ((match = re.exec(text)) !== null) {

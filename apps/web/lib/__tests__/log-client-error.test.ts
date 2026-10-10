@@ -69,13 +69,13 @@ describe('logClientError', () => {
   }
 
   it('beacons the failure to /api/client-errors with operation, name, message, and context', () => {
-    logClientError('rescheduleWorkout', new Error('Slot taken'), { program: '5-3-1', cycleNum: 3 });
+    logClientError('rescheduleWorkout', new Error('Slot taken'), { program: '5-3-1', macrocycleNum: 3 });
 
     expect(beaconPayload()).toEqual({
       operation: 'rescheduleWorkout',
       name: 'Error',
       message: 'Slot taken',
-      context: { program: '5-3-1', cycleNum: 3 },
+      context: { program: '5-3-1', macrocycleNum: 3 },
     });
   });
 

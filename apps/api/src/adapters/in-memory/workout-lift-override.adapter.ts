@@ -9,26 +9,26 @@ export class InMemoryWorkoutLiftOverrideRepository
 {
   private readonly store = new Map<string, LiftOverride[]>();
 
-  private key(program: string, cycleNum: number, workoutNum: number): string {
+  private key(program: string, macrocycleNum: number, workoutNum: number): string {
     // Null byte delimiter — program slugs cannot contain \0, unambiguous even for slugs like "5-3-1".
-    return `${program}\0${cycleNum}\0${workoutNum}`;
+    return `${program}\0${macrocycleNum}\0${workoutNum}`;
   }
 
   async getOverrides(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
   ): Promise<LiftOverride[]> {
-    return this.store.get(this.key(program, cycleNum, workoutNum)) ?? [];
+    return this.store.get(this.key(program, macrocycleNum, workoutNum)) ?? [];
   }
 
   async upsertOverride(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
     override: LiftOverride,
   ): Promise<void> {
-    const k = this.key(program, cycleNum, workoutNum);
+    const k = this.key(program, macrocycleNum, workoutNum);
     // A re-saved override moves to the end — the order each was last written,
     // matching the Prisma adapter, which re-creates the row (issue #1014). It
     // replaces only the lift's override of the same kind: a replace keeps the
@@ -42,11 +42,11 @@ export class InMemoryWorkoutLiftOverrideRepository
 
   async deleteOverride(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
     lift: string,
   ): Promise<void> {
-    const k = this.key(program, cycleNum, workoutNum);
+    const k = this.key(program, macrocycleNum, workoutNum);
     const existing = this.store.get(k) ?? [];
     this.store.set(
       k,

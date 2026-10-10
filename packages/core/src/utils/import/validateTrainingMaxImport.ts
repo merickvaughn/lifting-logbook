@@ -31,7 +31,7 @@ export function validateTrainingMaxImport(
     const liftStr = String(m.lift ?? '').trim();
     if (!liftStr) rowErrors.push({ row, field: IMPORT_ERROR_FIELD_LIFT, code: 'LIFT_EMPTY', message: 'lift is empty' });
     if (typeof m.weight !== 'number' || isNaN(m.weight))
-      rowErrors.push({ row, field: 'weight', code: 'WEIGHT_INVALID', message: 'weight is not a number' });
+      rowErrors.push({ row, field: 'weight', code: 'WEIGHT_INVALID', message: 'Weight is not a number' });
     if (!m.dateUpdated || isNaN(m.dateUpdated.getTime()))
       rowErrors.push({ row, field: 'dateUpdated', code: 'DATE_INVALID', message: 'dateUpdated is invalid' });
 

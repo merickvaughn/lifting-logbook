@@ -1,8 +1,8 @@
 import {
   PRESET_BASE_SPECS,
   PROGRAM_LENGTHS,
-  baseSpecBlockWeeks,
-  blockWeekForProgramWeek,
+  baseSpecMesocycleWeeks,
+  mesocycleWeekForProgramWeek,
   programLengthWeeks,
   expandSpecToLength,
   noScheduleWorkoutDateUTC,
@@ -49,7 +49,7 @@ describe('PROGRAM_LENGTHS', () => {
   it('advertises Leangains as a 12-week repeating (autoregulated) program', () => {
     expect(PROGRAM_LENGTHS['leangains']).toEqual({
       lengthWeeks: 12,
-      blockWeeks: 1,
+      mesocycleWeeks: 1,
       phaseStyle: 'repeating',
     });
   });
@@ -57,32 +57,32 @@ describe('PROGRAM_LENGTHS', () => {
   it('advertises RPT as an 8-week repeating program', () => {
     expect(PROGRAM_LENGTHS['rpt']).toEqual({
       lengthWeeks: 8,
-      blockWeeks: 1,
+      mesocycleWeeks: 1,
       phaseStyle: 'repeating',
     });
   });
 
-  it('advertises 5-3-1 as a 12-week structured (wave) program', () => {
+  it('advertises 5-3-1 as a 12-week structured (mesocycle) program', () => {
     expect(PROGRAM_LENGTHS['5-3-1']).toEqual({
       lengthWeeks: 12,
-      blockWeeks: 3,
-      phaseStyle: 'wave',
+      mesocycleWeeks: 3,
+      phaseStyle: 'mesocycle',
     });
   });
 
-  it('each registry blockWeeks matches its PRESET_BASE_SPECS block size', () => {
+  it('each registry mesocycleWeeks matches its PRESET_BASE_SPECS block size', () => {
     for (const [program, meta] of Object.entries(PROGRAM_LENGTHS)) {
       const spec = PRESET_BASE_SPECS[program];
       expect(spec).toBeDefined();
-      expect(baseSpecBlockWeeks(spec ?? [])).toBe(meta.blockWeeks);
+      expect(baseSpecMesocycleWeeks(spec ?? [])).toBe(meta.mesocycleWeeks);
     }
   });
 
-  it('each registry lengthWeeks is a whole multiple of its blockWeeks', () => {
+  it('each registry lengthWeeks is a whole multiple of its mesocycleWeeks', () => {
     // Tiling is cleanest when the program length is an exact number of blocks;
     // partial trailing blocks are supported but not intended for built-ins.
     for (const meta of Object.values(PROGRAM_LENGTHS)) {
-      expect(meta.lengthWeeks % meta.blockWeeks).toBe(0);
+      expect(meta.lengthWeeks % meta.mesocycleWeeks).toBe(0);
     }
   });
 
@@ -96,33 +96,33 @@ describe('PROGRAM_LENGTHS', () => {
     }
   });
 
-  it('every wave program has a multi-week block', () => {
-    // buildPhaseTemplate only renders per-wave phases when phaseStyle==='wave' AND
-    // blockWeeks>1; a wave program with a 1-week block would silently degrade to a
+  it('every mesocycle program has a multi-week block', () => {
+    // buildPhaseTemplate only renders per-mesocycle phases when phaseStyle==='mesocycle' AND
+    // mesocycleWeeks>1; a mesocycle program with a 1-week block would silently degrade to a
     // single flat phase. Enforce the contract the plan renderer assumes.
     for (const meta of Object.values(PROGRAM_LENGTHS)) {
-      if (meta.phaseStyle === 'wave') expect(meta.blockWeeks).toBeGreaterThan(1);
+      if (meta.phaseStyle === 'mesocycle') expect(meta.mesocycleWeeks).toBeGreaterThan(1);
     }
   });
 });
 
 // ---------------------------------------------------------------------------
-// baseSpecBlockWeeks
+// baseSpecMesocycleWeeks
 // ---------------------------------------------------------------------------
 
-describe('baseSpecBlockWeeks', () => {
+describe('baseSpecMesocycleWeeks', () => {
   it('returns 0 for an empty spec', () => {
-    expect(baseSpecBlockWeeks([])).toBe(0);
+    expect(baseSpecMesocycleWeeks([])).toBe(0);
   });
 
   it('returns the max week present in the block', () => {
-    expect(baseSpecBlockWeeks(block1)).toBe(1);
-    expect(baseSpecBlockWeeks(block3)).toBe(3);
+    expect(baseSpecMesocycleWeeks(block1)).toBe(1);
+    expect(baseSpecMesocycleWeeks(block3)).toBe(3);
   });
 
   it('matches the real Leangains (1) and 5-3-1 (3) presets', () => {
-    expect(baseSpecBlockWeeks((PRESET_BASE_SPECS['leangains'] ?? []))).toBe(1);
-    expect(baseSpecBlockWeeks((PRESET_BASE_SPECS['5-3-1'] ?? []))).toBe(3);
+    expect(baseSpecMesocycleWeeks((PRESET_BASE_SPECS['leangains'] ?? []))).toBe(1);
+    expect(baseSpecMesocycleWeeks((PRESET_BASE_SPECS['5-3-1'] ?? []))).toBe(3);
   });
 });
 
@@ -162,7 +162,7 @@ describe('expandSpecToLength', () => {
     expect(expanded).toHaveLength(24);
   });
 
-  it('tiles a 3-week block across 12 weeks (4 waves)', () => {
+  it('tiles a 3-week block across 12 weeks (4 mesocycles)', () => {
     const expanded = expandSpecToLength(block3, 12);
     expect(expanded).toHaveLength(12); // 1 row/week × 12
     expect(expanded.map((r) => r.week)).toEqual(
@@ -175,9 +175,9 @@ describe('expandSpecToLength', () => {
     // block week 1 = reps 5, week 2 = reps 3, week 3 = reps 1; repeated every 3.
     const repsByWeek = new Map(expanded.map((r) => [r.week, r.reps]));
     expect(repsByWeek.get(1)).toBe(5);
-    expect(repsByWeek.get(4)).toBe(5); // wave 2, block week 1
-    expect(repsByWeek.get(5)).toBe(3); // wave 2, block week 2
-    expect(repsByWeek.get(12)).toBe(1); // wave 4, block week 3
+    expect(repsByWeek.get(4)).toBe(5); // mesocycle 2, block week 1
+    expect(repsByWeek.get(5)).toBe(3); // mesocycle 2, block week 2
+    expect(repsByWeek.get(12)).toBe(1); // mesocycle 4, block week 3
   });
 
   it('includes a partial trailing block when length is not a whole multiple', () => {
@@ -231,41 +231,41 @@ describe('expandSpecToLength', () => {
   it('expands the real Leangains preset to a full 12-week schedule', () => {
     const base = (PRESET_BASE_SPECS['leangains'] ?? []);
     const expanded = expandSpecToLength(base, 12);
-    expect(baseSpecBlockWeeks(expanded)).toBe(12);
+    expect(baseSpecMesocycleWeeks(expanded)).toBe(12);
     // Same rows per week as the 1-week block, tiled 12×.
     expect(expanded).toHaveLength(base.length * 12);
   });
 });
 
 // ---------------------------------------------------------------------------
-// blockWeekForProgramWeek — inverse of expandSpecToLength's tiling (issue #740)
+// mesocycleWeekForProgramWeek — inverse of expandSpecToLength's tiling (issue #740)
 // ---------------------------------------------------------------------------
 
-describe('blockWeekForProgramWeek', () => {
-  it('maps a program week back into a 3-week block (5-3-1 waves)', () => {
-    expect(blockWeekForProgramWeek(1, 3)).toBe(1);
-    expect(blockWeekForProgramWeek(2, 3)).toBe(2);
-    expect(blockWeekForProgramWeek(3, 3)).toBe(3);
-    expect(blockWeekForProgramWeek(4, 3)).toBe(1); // wave 2, block week 1
-    expect(blockWeekForProgramWeek(12, 3)).toBe(3);
+describe('mesocycleWeekForProgramWeek', () => {
+  it('maps a program week back into a 3-week block (5-3-1 mesocycles)', () => {
+    expect(mesocycleWeekForProgramWeek(1, 3)).toBe(1);
+    expect(mesocycleWeekForProgramWeek(2, 3)).toBe(2);
+    expect(mesocycleWeekForProgramWeek(3, 3)).toBe(3);
+    expect(mesocycleWeekForProgramWeek(4, 3)).toBe(1); // mesocycle 2, block week 1
+    expect(mesocycleWeekForProgramWeek(12, 3)).toBe(3);
   });
 
   it('is the identity for a 1-week repeating block', () => {
-    expect(blockWeekForProgramWeek(1, 1)).toBe(1);
-    expect(blockWeekForProgramWeek(12, 1)).toBe(1);
+    expect(mesocycleWeekForProgramWeek(1, 1)).toBe(1);
+    expect(mesocycleWeekForProgramWeek(12, 1)).toBe(1);
   });
 
-  it('returns the program week unchanged when blockWeeks <= 0 (empty spec)', () => {
-    expect(blockWeekForProgramWeek(5, 0)).toBe(5);
+  it('returns the program week unchanged when mesocycleWeeks <= 0 (empty spec)', () => {
+    expect(mesocycleWeekForProgramWeek(5, 0)).toBe(5);
   });
 
   it('stays in lockstep with expandSpecToLength tiling', () => {
     // Every tiled row's program week must map back to the block week it came from
     // — this is the invariant the workouts controller relies on for planned lifts.
     // block3 encodes its block week in `reps` (wk1→5, wk2→3, wk3→1).
-    const repsForBlockWeek: Record<number, number> = { 1: 5, 2: 3, 3: 1 };
+    const repsForMesocycleWeek: Record<number, number> = { 1: 5, 2: 3, 3: 1 };
     for (const row of expandSpecToLength(block3, 12)) {
-      expect(row.reps).toBe(repsForBlockWeek[blockWeekForProgramWeek(row.week, 3)]);
+      expect(row.reps).toBe(repsForMesocycleWeek[mesocycleWeekForProgramWeek(row.week, 3)]);
     }
   });
 });
@@ -290,9 +290,9 @@ describe('specRowsForWorkoutDay', () => {
   });
 
   it('maps a later program week back into the block', () => {
-    // A 1-week block repeats every week; a 3-week block repeats every wave.
+    // A 1-week block repeats every week; a 3-week block repeats every mesocycle.
     expect(lifts(specRowsForWorkoutDay(twoDays, 9, 0))).toEqual(['Bench Press', 'Barbell Row']);
-    // Program week 5 is the second wave's week 2 (block3 encodes it as reps 3).
+    // Program week 5 is the second mesocycle's week 2 (block3 encodes it as reps 3).
     expect(specRowsForWorkoutDay(block3, 5, 0).map((r) => [r.week, r.reps])).toEqual([[2, 3]]);
   });
 
@@ -316,7 +316,7 @@ describe('specRowsForWorkoutDay', () => {
   });
 
   it('agrees with the tiled spec on every workout day of every preset', () => {
-    // The Cycle Dashboard groups the *tiled* spec by (week, offset); the API and
+    // The Macrocycle Dashboard groups the *tiled* spec by (week, offset); the API and
     // the web resolve a workout's day from the *stored* block. They must name the
     // same lifts with the same prescription on every day, or a card and the
     // workout it opens disagree (issues #740, #1014). Reps differ by week in
@@ -337,7 +337,7 @@ describe('specRowsForWorkoutDay', () => {
 });
 
 // ---------------------------------------------------------------------------
-// programWorkoutKeys — a cycle's one workoutNum ↔ (week, offset) numbering
+// programWorkoutKeys — a macrocycle's one workoutNum ↔ (week, offset) numbering
 // (issues #740, #1023)
 // ---------------------------------------------------------------------------
 
@@ -427,24 +427,24 @@ describe('programWorkoutKeys', () => {
 });
 
 describe('noScheduleWorkoutDateUTC', () => {
-  const cycleStart = new Date('2026-04-20T00:00:00.000Z'); // a Monday, UTC midnight
+  const macrocycleStart = new Date('2026-04-20T00:00:00.000Z'); // a Monday, UTC midnight
   const iso = (d: Date) => d.toISOString().slice(0, 10);
 
-  it('week 1 is cycleStart + offset (no week term)', () => {
-    expect(iso(noScheduleWorkoutDateUTC(cycleStart, 1, 0))).toBe('2026-04-20');
-    expect(iso(noScheduleWorkoutDateUTC(cycleStart, 1, 2))).toBe('2026-04-22');
+  it('week 1 is macrocycleStart + offset (no week term)', () => {
+    expect(iso(noScheduleWorkoutDateUTC(macrocycleStart, 1, 0))).toBe('2026-04-20');
+    expect(iso(noScheduleWorkoutDateUTC(macrocycleStart, 1, 2))).toBe('2026-04-22');
   });
 
   it('advances a full 7 days per program week: (week-1)*7 + offset', () => {
-    expect(iso(noScheduleWorkoutDateUTC(cycleStart, 2, 0))).toBe('2026-04-27'); // +7
-    expect(iso(noScheduleWorkoutDateUTC(cycleStart, 3, 4))).toBe('2026-05-08'); // +14+4
-    expect(iso(noScheduleWorkoutDateUTC(cycleStart, 12, 0))).toBe('2026-07-06'); // +77
+    expect(iso(noScheduleWorkoutDateUTC(macrocycleStart, 2, 0))).toBe('2026-04-27'); // +7
+    expect(iso(noScheduleWorkoutDateUTC(macrocycleStart, 3, 4))).toBe('2026-05-08'); // +14+4
+    expect(iso(noScheduleWorkoutDateUTC(macrocycleStart, 12, 0))).toBe('2026-07-06'); // +77
   });
 
   it('returns a fresh UTC-midnight Date and does not mutate the input', () => {
-    const out = noScheduleWorkoutDateUTC(cycleStart, 2, 0);
+    const out = noScheduleWorkoutDateUTC(macrocycleStart, 2, 0);
     expect(out.getUTCHours()).toBe(0);
-    expect(iso(cycleStart)).toBe('2026-04-20'); // input unchanged
+    expect(iso(macrocycleStart)).toBe('2026-04-20'); // input unchanged
   });
 
   it('is the date-side companion to programWorkoutKeys — one date per tiled workoutNum', () => {
@@ -454,7 +454,7 @@ describe('noScheduleWorkoutDateUTC', () => {
     // the workout it opens (issue #745).
     const keys = programWorkoutKeys('leangains', PRESET_BASE_SPECS['leangains'] ?? []);
     expect(keys[3]).toEqual({ week: 2, offset: 0 }); // workoutNum 4 → week 2, offset 0
-    // …and that (week, offset) yields the card/detail date cycleStart + 7.
-    expect(iso(noScheduleWorkoutDateUTC(cycleStart, 2, 0))).toBe('2026-04-27');
+    // …and that (week, offset) yields the card/detail date macrocycleStart + 7.
+    expect(iso(noScheduleWorkoutDateUTC(macrocycleStart, 2, 0))).toBe('2026-04-27');
   });
 });

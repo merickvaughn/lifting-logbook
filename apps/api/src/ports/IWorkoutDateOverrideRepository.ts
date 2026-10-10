@@ -1,18 +1,18 @@
 export interface IWorkoutDateOverrideRepository {
   getOverride(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
   ): Promise<Date | null>;
 
-  getOverridesForCycle(
+  getOverridesForMacrocycle(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
   ): Promise<Map<number, Date>>;
 
   upsertOverride(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
     newDate: Date,
   ): Promise<void>;

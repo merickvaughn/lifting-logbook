@@ -16,11 +16,11 @@ export class PrismaWorkoutLiftOverrideRepository
 
   async getOverrides(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
   ): Promise<LiftOverride[]> {
     const rows = await this.prisma.workoutLiftOverride.findMany({
-      where: { userId: this.userId, program, cycleNum, workoutNum },
+      where: { userId: this.userId, program, macrocycleNum, workoutNum },
       // The order each override was last written, which the port promises:
       // upsertOverride re-creates a re-saved row, so `createdAt` is its last write.
       // Without an ORDER BY Postgres may return rows in index order (alphabetical
@@ -37,7 +37,7 @@ export class PrismaWorkoutLiftOverrideRepository
 
   async upsertOverride(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
     override: LiftOverride,
   ): Promise<void> {
@@ -51,7 +51,7 @@ export class PrismaWorkoutLiftOverrideRepository
         where: {
           userId: this.userId,
           program,
-          cycleNum,
+          macrocycleNum,
           workoutNum,
           lift: override.lift,
           action: { in: sameKindActions(override.action) },
@@ -61,7 +61,7 @@ export class PrismaWorkoutLiftOverrideRepository
         data: {
           userId: this.userId,
           program,
-          cycleNum,
+          macrocycleNum,
           workoutNum,
           lift: override.lift,
           action: override.action,
@@ -73,12 +73,12 @@ export class PrismaWorkoutLiftOverrideRepository
 
   async deleteOverride(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
     lift: string,
   ): Promise<void> {
     await this.prisma.workoutLiftOverride.deleteMany({
-      where: { userId: this.userId, program, cycleNum, workoutNum, lift },
+      where: { userId: this.userId, program, macrocycleNum, workoutNum, lift },
     });
   }
 }

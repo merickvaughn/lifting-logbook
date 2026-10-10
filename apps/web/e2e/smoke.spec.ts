@@ -16,28 +16,28 @@ test.beforeEach(async ({ request }) => {
 test('home page renders with primary navigation', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Lifting Logbook' })).toBeVisible();
-  await expect(page.getByRole('link', { name: /Current Cycle/i })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Current Macrocycle/i })).toBeVisible();
   await expect(page.getByRole('link', { name: /Get Started/i })).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
-// 2. No active cycle → redirect to onboarding
+// 2. No active macrocycle → redirect to onboarding
 // ---------------------------------------------------------------------------
 
-test('no active cycle redirects to onboarding', async ({ page, request }) => {
-  await request.get(`${MOCK_API}/__reset?noCurrentCycle=true`);
-  await page.goto('/cycle');
+test('no active macrocycle redirects to onboarding', async ({ page, request }) => {
+  await request.get(`${MOCK_API}/__reset?noCurrentMacrocycle=true`);
+  await page.goto('/macrocycle');
   await expect(page).toHaveURL(/\/onboarding/);
 });
 
 // ---------------------------------------------------------------------------
-// 3. Onboarding flow → lands on cycle dashboard
+// 3. Onboarding flow → lands on macrocycle dashboard
 // ---------------------------------------------------------------------------
 
-test('onboarding: choose program → enter lifts → confirm → lands on cycle', async ({ page, request }) => {
-  // The onboarding guard redirects to /cycle/<N> when a cycle already exists,
-  // so this test must start from a no-cycle state.
-  await request.get(`${MOCK_API}/__reset?noCurrentCycle=true`);
+test('onboarding: choose program → enter lifts → confirm → lands on macrocycle', async ({ page, request }) => {
+  // The onboarding guard redirects to /macrocycle/<N> when a macrocycle already exists,
+  // so this test must start from a no-macrocycle state.
+  await request.get(`${MOCK_API}/__reset?noCurrentMacrocycle=true`);
   await page.goto('/onboarding');
   await expect(page.getByRole('heading', { name: 'Get Started' })).toBeVisible();
 
@@ -63,23 +63,23 @@ test('onboarding: choose program → enter lifts → confirm → lands on cycle'
   }
   await page.getByRole('button', { name: 'Next', exact: true }).click();
 
-  // Step 4: Confirm Maxes — submit to create the first cycle
+  // Step 4: Confirm Maxes — submit to create the first macrocycle
   await page.getByRole('button', { name: 'Start My Program' }).click();
 
-  // Should land on the cycle dashboard
-  await expect(page).toHaveURL(/\/cycle\/1/, { timeout: 15_000 });
+  // Should land on the macrocycle dashboard
+  await expect(page).toHaveURL(/\/macrocycle\/1/, { timeout: 15_000 });
 });
 
 // ---------------------------------------------------------------------------
-// 4. Cycle dashboard renders workouts
+// 4. Macrocycle dashboard renders workouts
 // ---------------------------------------------------------------------------
 
-test('cycle dashboard renders workout grid', async ({ page }) => {
-  await page.goto('/cycle');
-  await expect(page).toHaveURL(/\/cycle\/1/);
-  await expect(page.getByRole('heading', { name: 'Cycle 1' })).toBeVisible();
+test('macrocycle dashboard renders workout grid', async ({ page }) => {
+  await page.goto('/macrocycle');
+  await expect(page).toHaveURL(/\/macrocycle\/1/);
+  await expect(page.getByRole('heading', { name: 'Macrocycle 1' })).toBeVisible();
   // The grid renders one collapsible section per program week (issue #740). The mock
-  // cycle's dates are all in the past, so the current-week heuristic expands a later
+  // macrocycle's dates are all in the past, so the current-week heuristic expands a later
   // week and Week 1 starts collapsed — expand it, then assert its workout entry shows.
   await page.getByRole('button', { name: 'Week 1', exact: true }).click();
   await expect(page.locator('text=2025-01-06').first()).toBeVisible();
@@ -87,21 +87,35 @@ test('cycle dashboard renders workout grid', async ({ page }) => {
   // The screen is discoverably labeled as the dashboard.
   await expect(page.getByText('Dashboard', { exact: true })).toBeVisible();
 
-  // Cycle Progress bar renders with an "N of M workouts" readout and an
+  // Macrocycle progress bar renders with an "N of M workouts" readout and an
   // accessible progressbar role. The regex keeps this robust to whatever
   // completed/total counts the mock fixture produces.
   await expect(page.getByText(/\d+ of \d+ workouts/)).toBeVisible();
   await expect(
-    page.getByRole('progressbar', { name: 'Cycle progress' }),
+    page.getByRole('progressbar', { name: 'Macrocycle progress' }),
   ).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
-// 4b. Cycle program page: "Edit Program" reads as disabled-with-reason
+// 4a. Glossary: a heading's "?" link lands on the term's entry
 // ---------------------------------------------------------------------------
 
-test('cycle program page marks Edit Program as coming soon', async ({ page }) => {
-  await page.goto('/cycle/1/program');
+test('dashboard glossary link opens the macrocycle entry', async ({ page }) => {
+  await page.goto('/macrocycle/1');
+  await page.getByRole('link', { name: 'What does “Macrocycle” mean?' }).click();
+  await expect(page).toHaveURL(/\/glossary#macrocycle$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Glossary' })).toBeVisible();
+  await expect(page.locator('#macrocycle')).toContainText('One complete run through a program');
+  // The primary nav reaches the same page.
+  await expect(page.getByRole('link', { name: 'Glossary' })).toHaveAttribute('href', '/glossary');
+});
+
+// ---------------------------------------------------------------------------
+// 4b. Program page: "Edit Program" reads as disabled-with-reason
+// ---------------------------------------------------------------------------
+
+test('macrocycle program page marks Edit Program as coming soon', async ({ page }) => {
+  await page.goto('/macrocycle/1/program');
 
   // The action is not built yet: the button is aria-disabled (still focusable, so
   // the reason is reachable by AT) with a visible "Coming soon" affordance beside
@@ -117,7 +131,7 @@ test('cycle program page marks Edit Program as coming soon', async ({ page }) =>
 // ---------------------------------------------------------------------------
 
 test('workout logger renders planned sets and accepts a submission', async ({ page }) => {
-  await page.goto('/cycle/1/workout/1');
+  await page.goto('/macrocycle/1/workout/1');
 
   // Working sets section must be present — confirms the workout loaded and rendered
   await expect(page.getByRole('region', { name: 'Working sets' })).toBeVisible();
@@ -243,7 +257,7 @@ test('primary nav persists and provides an escape route from Programs', async ({
   await nav.getByRole('link', { name: 'History' }).click();
   await expect(page).toHaveURL(/\/history/);
 
-  // The brand wordmark links back to the current cycle from anywhere.
+  // The brand wordmark links back to the current macrocycle from anywhere.
   await page.getByRole('link', { name: 'Lifting Logbook' }).click();
-  await expect(page).toHaveURL(/\/cycle\/1/);
+  await expect(page).toHaveURL(/\/macrocycle\/1/);
 });

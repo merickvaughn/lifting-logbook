@@ -7,7 +7,7 @@ import type { EnrichedRecord } from './page';
 const RECORD: EnrichedRecord = {
   id: 'rec-1',
   program: '5-3-1',
-  cycleNum: 1,
+  macrocycleNum: 1,
   workoutNum: 1,
   date: '2026-06-01',
   lift: 'Back Squat',

@@ -6,7 +6,7 @@ import { LiftRecord } from '../../models';
  *
  * Rather than a single valid/errors split, rows are classified into four buckets:
  *   - valid:       fully valid; can be committed as-is
- *   - incomplete:  missing a numeric required field (cycleNum, workoutNum, setNum,
+ *   - incomplete:  missing a numeric required field (macrocycleNum, workoutNum, setNum,
  *                  weight, reps, or date); can be committed after a bulk-edit fix
  *   - ambiguous:   all numeric fields OK but lift name not in slotMap; user can
  *                  pick a canonical name via the lift-catalog autocomplete
@@ -39,16 +39,16 @@ export function validateLiftImportSoft(
     const rowIndex = i + 1;
     const numericErrors: ImportError[] = [];
 
-    if (isNaN(r.cycleNum))
-      numericErrors.push({ row: rowIndex, field: 'cycleNum', code: 'CYCLE_NUM_INVALID', message: 'cycleNum is not a number' });
+    if (isNaN(r.macrocycleNum))
+      numericErrors.push({ row: rowIndex, field: 'macrocycleNum', code: 'MACROCYCLE_NUM_INVALID', message: 'Macrocycle # is not a number' });
     if (isNaN(r.workoutNum))
-      numericErrors.push({ row: rowIndex, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'workoutNum is not a number' });
+      numericErrors.push({ row: rowIndex, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'Workout # is not a number' });
     if (isNaN(r.setNum))
-      numericErrors.push({ row: rowIndex, field: 'setNum', code: 'SET_NUM_INVALID', message: 'setNum is not a number' });
+      numericErrors.push({ row: rowIndex, field: 'setNum', code: 'SET_NUM_INVALID', message: 'Set # is not a number' });
     if (isNaN(r.weight))
-      numericErrors.push({ row: rowIndex, field: 'weight', code: 'WEIGHT_INVALID', message: 'weight is not a number' });
+      numericErrors.push({ row: rowIndex, field: 'weight', code: 'WEIGHT_INVALID', message: 'Weight is not a number' });
     if (isNaN(r.reps))
-      numericErrors.push({ row: rowIndex, field: 'reps', code: 'REPS_INVALID', message: 'reps is not a number' });
+      numericErrors.push({ row: rowIndex, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
     if (!r.date || isNaN(r.date.getTime()))
       numericErrors.push({ row: rowIndex, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
 

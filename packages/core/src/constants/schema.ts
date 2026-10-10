@@ -4,7 +4,7 @@ export const LIFT_RECORD_HEADER_MAP: Record<
   { key: string; type: string }
 > = {
   Program: { key: "program", type: "string" },
-  "Cycle #": { key: "cycleNum", type: "number" },
+  "Macrocycle #": { key: "macrocycleNum", type: "number" },
   "Workout #": { key: "workoutNum", type: "number" },
   Date: { key: "date", type: "string" },
   Lift: { key: "lift", type: "string" },
@@ -12,6 +12,12 @@ export const LIFT_RECORD_HEADER_MAP: Record<
   Weight: { key: "weight", type: "number" },
   Reps: { key: "reps", type: "number" },
   Notes: { key: "notes", type: "string" },
+};
+// Headers older exports used, keyed to the canonical header they stand for. The
+// "Cycle #" column predates the macrocycle rename (#1038); files exported before it
+// must keep importing.
+export const LEGACY_LIFT_RECORD_HEADERS: Record<string, string> = {
+  "Cycle #": "Macrocycle #",
 };
 // TrainingMax header mapping for parsing
 export const TRAINING_MAX_HEADER_MAP: Record<

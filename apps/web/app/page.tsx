@@ -13,7 +13,7 @@ export default async function Home() {
     process.env["NODE_ENV"] !== "production" && process.env.DEV_AUTH_TOKEN;
   if (!devBypass) {
     const { userId } = await auth();
-    if (userId) redirect("/cycle");
+    if (userId) redirect("/macrocycle");
   }
   return (
     <main className={styles.page}>
@@ -23,8 +23,8 @@ export default async function Home() {
           <p className={styles.tagline}>Track your lifts. Run the program.</p>
         </div>
         <nav className={styles.ctaList} aria-label="Primary navigation">
-          <Link href="/cycle" className={styles.cta}>
-            <span>Current Cycle</span>
+          <Link href="/macrocycle" className={styles.cta}>
+            <span>Current Macrocycle</span>
             <span className={styles.ctaArrow} aria-hidden="true">
               →
             </span>

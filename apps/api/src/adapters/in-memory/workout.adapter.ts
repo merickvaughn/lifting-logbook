@@ -7,27 +7,27 @@ export class InMemoryWorkoutRepository implements IWorkoutRepository {
 
   async getWorkout(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
   ): Promise<LiftRecord[]> {
     const records = (this.store.get(program) ?? []).filter(
-      (r) => r.cycleNum === cycleNum && r.workoutNum === workoutNum,
+      (r) => r.macrocycleNum === macrocycleNum && r.workoutNum === workoutNum,
     );
     if (records.length === 0) {
-      throw new WorkoutNotFoundError(program, cycleNum, workoutNum);
+      throw new WorkoutNotFoundError(program, macrocycleNum, workoutNum);
     }
     return records;
   }
 
   async saveWorkout(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
     records: LiftRecord[],
   ): Promise<void> {
     const existing = this.store.get(program) ?? [];
     const kept = existing.filter(
-      (r) => !(r.cycleNum === cycleNum && r.workoutNum === workoutNum),
+      (r) => !(r.macrocycleNum === macrocycleNum && r.workoutNum === workoutNum),
     );
     this.store.set(program, [...kept, ...records]);
   }

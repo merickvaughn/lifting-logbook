@@ -39,7 +39,7 @@ describe("distributeWorkouts", () => {
     ]);
   });
 
-  it("trims the final week when cycleWorkouts is not a multiple of the weekly count", () => {
+  it("trims the final week when macrocycleWorkouts is not a multiple of the weekly count", () => {
     const schedule: UserWorkoutSchedule = {
       type: "fixed",
       days: [DAY_INDEX.MON, DAY_INDEX.WED, DAY_INDEX.FRI],
@@ -146,7 +146,7 @@ describe("distributeWorkouts", () => {
     expect(distributeWorkouts(5, schedule, MON_2026_05_18)).toEqual([]);
   });
 
-  it("returns an empty array when cycleWorkouts is zero", () => {
+  it("returns an empty array when macrocycleWorkouts is zero", () => {
     const schedule: UserWorkoutSchedule = {
       type: "fixed",
       days: [DAY_INDEX.MON],
@@ -154,7 +154,7 @@ describe("distributeWorkouts", () => {
     expect(distributeWorkouts(0, schedule, MON_2026_05_18)).toEqual([]);
   });
 
-  it("throws when cycleWorkouts is negative", () => {
+  it("throws when macrocycleWorkouts is negative", () => {
     const schedule: UserWorkoutSchedule = {
       type: "fixed",
       days: [DAY_INDEX.MON],

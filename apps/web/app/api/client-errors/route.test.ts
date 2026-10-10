@@ -79,7 +79,7 @@ describe('POST /api/client-errors', () => {
         message: 'boom',
         context: {
           program: '5-3-1',
-          cycleNum: 3,
+          macrocycleNum: 3,
           enabled: true,
           nested: { a: 1 }, // dropped — never serialize nested objects
           list: [1, 2], // dropped
@@ -90,7 +90,7 @@ describe('POST /api/client-errors', () => {
 
     const attrs = attributes();
     expect(attrs['client.context.program']).toBe('5-3-1');
-    expect(attrs['client.context.cycleNum']).toBe(3);
+    expect(attrs['client.context.macrocycleNum']).toBe(3);
     expect(attrs['client.context.enabled']).toBe(true);
     expect(attrs).not.toHaveProperty('client.context.nested');
     expect(attrs).not.toHaveProperty('client.context.list');

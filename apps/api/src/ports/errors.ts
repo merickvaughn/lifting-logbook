@@ -15,11 +15,11 @@ export class ProgramNotFoundError extends Error {
 export class WorkoutNotFoundError extends Error {
   constructor(
     public readonly program: string,
-    public readonly cycleNum: number,
+    public readonly macrocycleNum: number,
     public readonly workoutNum: number,
   ) {
     super(
-      `Workout ${workoutNum} for program '${program}' cycle ${cycleNum} not found`,
+      `Workout ${workoutNum} for program '${program}' macrocycle ${macrocycleNum} not found`,
     );
     this.name = 'WorkoutNotFoundError';
   }

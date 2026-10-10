@@ -46,7 +46,7 @@ const LIFT_RECORDS_PREVIEW: ImportPreviewResponse = {
   destination: 'lift-records',
   columnMappings: [
     { sourceHeader: 'Program', destinationField: 'program', confidence: 1, required: true },
-    { sourceHeader: 'Cycle #', destinationField: 'cycleNum', confidence: 1, required: true },
+    { sourceHeader: 'Cycle #', destinationField: 'macrocycleNum', confidence: 1, required: true },
     { sourceHeader: 'Workout #', destinationField: 'workoutNum', confidence: 1, required: true },
     { sourceHeader: 'Date', destinationField: 'date', confidence: 1, required: true },
     { sourceHeader: 'Lift', destinationField: 'lift', confidence: 1, required: true },
@@ -131,7 +131,7 @@ const CUSTOM_LIFT: CustomLiftResponse = {
 
 const AMBIGUOUS_LIFT_COLUMN_MAPPINGS = [
   { sourceHeader: 'Program', destinationField: 'program', confidence: 1, required: true },
-  { sourceHeader: 'Cycle #', destinationField: 'cycleNum', confidence: 1, required: true },
+  { sourceHeader: 'Cycle #', destinationField: 'macrocycleNum', confidence: 1, required: true },
   { sourceHeader: 'Workout #', destinationField: 'workoutNum', confidence: 1, required: true },
   { sourceHeader: 'Date', destinationField: 'date', confidence: 1, required: true },
   { sourceHeader: 'Lift', destinationField: 'lift', confidence: 1, required: true },

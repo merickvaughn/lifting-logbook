@@ -37,11 +37,11 @@ describe('root page — signed-in redirect', () => {
     (process.env as Record<string, string | undefined>).NODE_ENV = originalNodeEnv;
   });
 
-  it('redirects signed-in users to /cycle', async () => {
+  it('redirects signed-in users to /macrocycle', async () => {
     mockedAuth.mockResolvedValue({ userId: 'user_123' });
 
-    await expect(Home()).rejects.toThrow('REDIRECT:/cycle');
-    expect(mockedRedirect).toHaveBeenCalledWith('/cycle');
+    await expect(Home()).rejects.toThrow('REDIRECT:/macrocycle');
+    expect(mockedRedirect).toHaveBeenCalledWith('/macrocycle');
   });
 
   it('renders the marketing card for unauthenticated visitors', async () => {
@@ -71,8 +71,8 @@ describe('root page — signed-in redirect', () => {
     (process.env as Record<string, string>).NODE_ENV = 'production';
     mockedAuth.mockResolvedValue({ userId: 'user_123' });
 
-    await expect(Home()).rejects.toThrow('REDIRECT:/cycle');
+    await expect(Home()).rejects.toThrow('REDIRECT:/macrocycle');
     expect(mockedAuth).toHaveBeenCalled();
-    expect(mockedRedirect).toHaveBeenCalledWith('/cycle');
+    expect(mockedRedirect).toHaveBeenCalledWith('/macrocycle');
   });
 });

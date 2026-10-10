@@ -23,7 +23,7 @@ export const RLS_TX_TIMEOUT_KEY = 'rls.txTimeoutMs';
 /**
  * Override the per-request RLS transaction timeout (ms) for a route handler. Use sparingly: the
  * request holds one DB connection for the whole transaction, so a long timeout pins a connection
- * for that duration. The motivating case is `cycle-plan`, which calls an LLM between DB reads.
+ * for that duration. The motivating case is `macrocycle-plan`, which calls an LLM between DB reads.
  */
 export const RlsTxTimeout = (ms: number) => SetMetadata(RLS_TX_TIMEOUT_KEY, ms);
 
@@ -43,7 +43,7 @@ export const RLS_USER_ID_KEY = 'rls.userId';
  * stores the userId in CLS ({@link RLS_USER_ID_KEY}); the handler is then responsible for wrapping
  * each unit of DB work in {@link RlsContextService.withUserContext}. Use this for handlers that do
  * slow non-DB work (e.g. an LLM round-trip) between DB reads, so a DB connection is not pinned for
- * the whole request. The motivating case is `cycle-plan`. See issue #518.
+ * the whole request. The motivating case is `macrocycle-plan`. See issue #518.
  */
 export const SkipRlsTransaction = () => SetMetadata(RLS_SKIP_TX, true);
 

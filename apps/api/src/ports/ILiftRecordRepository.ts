@@ -1,15 +1,15 @@
 import { LiftRecord } from '@lifting-logbook/core';
 
 export interface ILiftRecordRepository {
-  getLiftRecords(program: string, cycleNum: number): Promise<LiftRecord[]>;
+  getLiftRecords(program: string, macrocycleNum: number): Promise<LiftRecord[]>;
 
   /**
-   * The distinct `workoutNum`s with at least one logged record in the cycle —
-   * what the cycle dashboard's `completedWorkoutNums` is built from. A grouped
+   * The distinct `workoutNum`s with at least one logged record in the macrocycle —
+   * what the macrocycle dashboard's `completedWorkoutNums` is built from. A grouped
    * query rather than `getLiftRecords` + a reduce, which fetched every column
-   * of every row in the cycle to keep a handful of integers (issue #982).
+   * of every row in the macrocycle to keep a handful of integers (issue #982).
    */
-  getLoggedWorkoutNums(program: string, cycleNum: number): Promise<Set<number>>;
+  getLoggedWorkoutNums(program: string, macrocycleNum: number): Promise<Set<number>>;
 
   /**
    * Appends records for a program, silently skipping any whose natural key already exists.
@@ -19,9 +19,9 @@ export interface ILiftRecordRepository {
 
   /**
    * Returns the subset of `candidates` whose natural key
-   * (cycleNum, workoutNum, date, lift, setNum) already exists for the given program.
+   * (macrocycleNum, workoutNum, date, lift, setNum) already exists for the given program.
    * `date` is part of the key (issue #884): two sets can otherwise legitimately
-   * share the same (cycleNum, workoutNum, lift, setNum) tuple on different real
+   * share the same (macrocycleNum, workoutNum, lift, setNum) tuple on different real
    * calendar dates and must not be treated as duplicates of each other.
    * Used by the CSV import endpoint to identify which rows will be skipped as duplicates.
    */
@@ -35,11 +35,11 @@ export interface ILiftRecordRepository {
 
   /**
    * Deletes lift records by natural key for undo support.
-   * Each key is encoded as `"cycleNum:workoutNum:YYYYMMDD:lift:setNum"`.
+   * Each key is encoded as `"macrocycleNum:workoutNum:YYYYMMDD:lift:setNum"`.
    * Returns the number of rows deleted.
    */
   deleteLiftRecordsByNaturalKeys(program: string, naturalKeys: string[]): Promise<number>;
 
-  /** Deletes every lift record for a program, across all cycles. No-op if none exist. */
+  /** Deletes every lift record for a program, across all macrocycles. No-op if none exist. */
   deleteAllLiftRecords(program: string): Promise<void>;
 }

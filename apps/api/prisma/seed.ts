@@ -22,7 +22,7 @@ const WEEK_TYPES = [
   { weekType: 'C', pct: [0.75, 0.85, 0.95] },
 ];
 
-// Workouts per cycle: 3 workouts, each hits 2 lifts
+// Workouts per macrocycle: 3 workouts, each hits 2 lifts
 const WORKOUT_LIFTS: Record<number, string[]> = {
   1: ['squat', 'bench-press'],
   2: ['deadlift', 'overhead-press'],
@@ -32,8 +32,8 @@ const WORKOUT_LIFTS: Record<number, string[]> = {
 const NUM_CYCLES = 12;
 const DAYS_PER_WORKOUT = 2; // workouts every other day
 
-function trainingMaxAt(lift: typeof LIFTS[0], cycle: number): number {
-  return lift.startMax + lift.increment * cycle;
+function trainingMaxAt(lift: typeof LIFTS[0], macrocycle: number): number {
+  return lift.startMax + lift.increment * macrocycle;
 }
 
 function weightForSet(max: number, pct: number): number {
@@ -80,7 +80,7 @@ async function main() {
     });
   }
 
-  // TrainingMax (current — after all cycles)
+  // TrainingMax (current — after all macrocycles)
   for (const lift of LIFTS) {
     const currentMax = trainingMaxAt(lift, NUM_CYCLES);
     await prisma.trainingMax.upsert({
@@ -107,24 +107,24 @@ async function main() {
   // idempotent across repeated seed runs.
   await prisma.liftRecord.deleteMany({ where: { userId: SEED_USER_ID, program: PROGRAM } });
 
-  for (let cycle = 0; cycle < NUM_CYCLES; cycle++) {
-    const weekType = WEEK_TYPES[cycle % 3];
-    if (!weekType) throw new Error(`WEEK_TYPES missing index ${cycle % 3}`);
-    const cycleNum = cycle + 1;
+  for (let macrocycle = 0; macrocycle < NUM_CYCLES; macrocycle++) {
+    const weekType = WEEK_TYPES[macrocycle % 3];
+    if (!weekType) throw new Error(`WEEK_TYPES missing index ${macrocycle % 3}`);
+    const macrocycleNum = macrocycle + 1;
 
-    // TrainingMaxHistory — one entry per lift at cycle start (representing a PR test)
-    if (cycle > 0 && cycle % 3 === 0) {
+    // TrainingMaxHistory — one entry per lift at macrocycle start (representing a PR test)
+    if (macrocycle > 0 && macrocycle % 3 === 0) {
       for (const lift of LIFTS) {
-        const weight = trainingMaxAt(lift, cycle);
+        const weight = trainingMaxAt(lift, macrocycle);
         const histDate = new Date(workoutDate);
         await prisma.trainingMaxHistory.upsert({
           where: {
             // No single unique index — use create only if not exists by checking
-            id: `seed-tmh-${SEED_USER_ID}-${PROGRAM}-${lift.name}-cycle${cycle}`,
+            id: `seed-tmh-${SEED_USER_ID}-${PROGRAM}-${lift.name}-macrocycle${macrocycle}`,
           },
           update: {},
           create: {
-            id: `seed-tmh-${SEED_USER_ID}-${PROGRAM}-${lift.name}-cycle${cycle}`,
+            id: `seed-tmh-${SEED_USER_ID}-${PROGRAM}-${lift.name}-macrocycle${macrocycle}`,
             userId: SEED_USER_ID,
             program: PROGRAM,
             lift: lift.name,
@@ -146,7 +146,7 @@ async function main() {
       for (const liftName of liftsThisWorkout) {
         const lift = LIFTS.find((l) => l.name === liftName);
         if (!lift) throw new Error(`LIFTS missing entry for ${liftName}`);
-        const max = trainingMaxAt(lift, cycle);
+        const max = trainingMaxAt(lift, macrocycle);
 
         for (let setNum = 1; setNum <= 3; setNum++) {
           const pct = weekType.pct[setNum - 1];
@@ -155,7 +155,7 @@ async function main() {
           if (pct === undefined) throw new Error(`weekType.pct missing index ${setNum - 1}`);
           const weight = weightForSet(max, pct);
           const isAmrap = setNum === 3;
-          const amrapReps = isAmrap ? 5 + ((cycle * workoutNum + setNum) % 4) : 5;
+          const amrapReps = isAmrap ? 5 + ((macrocycle * workoutNum + setNum) % 4) : 5;
 
           // Plain create, not upsert: the table was wiped for this program above,
           // so every row here is guaranteed new (see comment at the wipe site).
@@ -163,7 +163,7 @@ async function main() {
             data: {
               userId: SEED_USER_ID,
               program: PROGRAM,
-              cycleNum,
+              macrocycleNum,
               workoutNum,
               date: new Date(workoutDate),
               lift: liftName,
@@ -180,22 +180,22 @@ async function main() {
     }
   }
 
-  // CycleDashboard — current cycle state
-  const currentCycle = NUM_CYCLES;
-  await prisma.cycleDashboard.upsert({
+  // MacrocycleDashboard — current macrocycle state
+  const currentMacrocycle = NUM_CYCLES;
+  await prisma.macrocycleDashboard.upsert({
     where: { userId_program: { userId: SEED_USER_ID, program: PROGRAM } },
     update: {
-      cycleNum: currentCycle,
-      cycleDate: now,
+      macrocycleNum: currentMacrocycle,
+      macrocycleDate: now,
     },
     create: {
       userId: SEED_USER_ID,
       program: PROGRAM,
-      cycleUnit: 'cycle',
-      cycleNum: currentCycle,
-      cycleDate: now,
+      macrocycleUnit: 'macrocycle',
+      macrocycleNum: currentMacrocycle,
+      macrocycleDate: now,
       sheetName: '531',
-      cycleStartWeekday: 'Monday',
+      macrocycleStartWeekday: 'Monday',
       programType: '531',
     },
   });
@@ -229,7 +229,7 @@ async function main() {
   console.log(`  LiftMetadata:        ${LIFTS.length}`);
   console.log(`  TrainingMax:         ${LIFTS.length}`);
   console.log(`  TrainingMaxHistory:  ${Math.floor(NUM_CYCLES / 3) * LIFTS.length}`);
-  console.log(`  CycleDashboard:      1`);
+  console.log(`  MacrocycleDashboard:      1`);
   console.log(`  StrengthGoal:        ${LIFTS.length}`);
   console.log(`  LiftRecord:          ${NUM_CYCLES * 3 * 2 * 3} (approx)`);
 }

@@ -211,21 +211,21 @@ describe("jsUtil", () => {
     ];
 
     it("returns the matching week's weekType when today is within the spec", () => {
-      const cycleStart = new Date(2026, 0, 5);
+      const macrocycleStart = new Date(2026, 0, 5);
       const today = new Date(2026, 0, 12); // week 2 (7 days later)
-      expect(weekTypeForDate(cycleStart, spec, today)).toBe("test");
+      expect(weekTypeForDate(macrocycleStart, spec, today)).toBe("test");
     });
 
     it("clamps to the max week in the spec when today is past the spec's range", () => {
-      const cycleStart = new Date(2026, 0, 5);
+      const macrocycleStart = new Date(2026, 0, 5);
       // In-range week 2 returns "test" (baseline); past-range should also return
       // "test" via clamp-to-max, not the "training" fallback. Asserting both
       // pins the clamp specifically rather than incidentally matching the max.
-      expect(weekTypeForDate(cycleStart, spec, new Date(2026, 0, 12))).toBe(
+      expect(weekTypeForDate(macrocycleStart, spec, new Date(2026, 0, 12))).toBe(
         "test",
       );
       const today = new Date(2026, 1, 28); // far past week 2
-      expect(weekTypeForDate(cycleStart, spec, today)).toBe("test");
+      expect(weekTypeForDate(macrocycleStart, spec, today)).toBe("test");
     });
 
     it("returns 'training' fallback when the matched week has no weekType set", () => {
@@ -234,15 +234,15 @@ describe("jsUtil", () => {
       const { weekType: _omit, ...rest } = spec[0]!;
       void _omit;
       const partialSpec: LiftingProgramSpec[] = [rest];
-      const cycleStart = new Date(2026, 0, 5);
+      const macrocycleStart = new Date(2026, 0, 5);
       const today = new Date(2026, 0, 5);
-      expect(weekTypeForDate(cycleStart, partialSpec, today)).toBe("training");
+      expect(weekTypeForDate(macrocycleStart, partialSpec, today)).toBe("training");
     });
 
     it("returns 'training' fallback when no spec entry matches the computed week", () => {
-      const cycleStart = new Date(2026, 0, 5);
+      const macrocycleStart = new Date(2026, 0, 5);
       const today = new Date(2026, 0, 5);
-      expect(weekTypeForDate(cycleStart, [], today)).toBe("training");
+      expect(weekTypeForDate(macrocycleStart, [], today)).toBe("training");
     });
   });
 

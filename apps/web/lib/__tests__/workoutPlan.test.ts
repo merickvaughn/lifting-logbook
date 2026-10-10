@@ -2,7 +2,7 @@ import type { LiftingProgramSpecResponse } from '@lifting-logbook/types';
 import {
   buildLiftDetails,
   buildWorkoutDays,
-  computeCycleProgress,
+  computeMacrocycleProgress,
   computePlannedSets,
   workoutDateResolver,
 } from '../workoutPlan';
@@ -55,7 +55,7 @@ describe('buildWorkoutDays', () => {
     expect(days[1]?.week).toBe(2);
   });
 
-  it('computes workout dates by adding offset days to cycleStartDate in UTC', () => {
+  it('computes workout dates by adding offset days to macrocycleStartDate in UTC', () => {
     const specs = [
       makeSpec({ offset: 0 }),
       makeSpec({ lift: 'Bench Press', offset: 3 }),
@@ -126,8 +126,8 @@ describe('buildWorkoutDays — multi-week grouping and canonical-length expansio
     expect(days[3]?.week).toBe(2);
   });
 
-  it('no-schedule card date is cycleStart + (week-1)*7 + offset — matches the workout-detail date (issue #745)', () => {
-    // Same leangains 2-offset block + cycleStart the API mappers/controller specs use
+  it('no-schedule card date is macrocycleStart + (week-1)*7 + offset — matches the workout-detail date (issue #745)', () => {
+    // Same leangains 2-offset block + macrocycleStart the API mappers/controller specs use
     // for the detail page, so this locks card date == detail date. workout 3 →
     // (week 2, offset 0) → 2026-04-20 + 7 = 2026-04-27 (the API asserts the same).
     const base = [0, 2].map((offset, i) => makeSpec({ week: 1, offset, lift: `Lift${i}` }));
@@ -394,9 +394,9 @@ const makeWeek = (
   workouts: statuses.map((status, i) => makeCell(status, i + 1)),
 });
 
-describe('computeCycleProgress', () => {
-  it('returns zeroes for an empty cycle', () => {
-    expect(computeCycleProgress([])).toEqual({
+describe('computeMacrocycleProgress', () => {
+  it('returns zeroes for an empty macrocycle', () => {
+    expect(computeMacrocycleProgress([])).toEqual({
       completedWorkouts: 0,
       totalWorkouts: 0,
       percent: 0,
@@ -405,7 +405,7 @@ describe('computeCycleProgress', () => {
 
   it('reports 100% when every workout is completed', () => {
     const weeks: WeekRow[] = [makeWeek(1, ['completed', 'completed'])];
-    expect(computeCycleProgress(weeks)).toEqual({
+    expect(computeMacrocycleProgress(weeks)).toEqual({
       completedWorkouts: 2,
       totalWorkouts: 2,
       percent: 100,
@@ -416,7 +416,7 @@ describe('computeCycleProgress', () => {
     const weeks: WeekRow[] = [
       makeWeek(1, ['completed', 'skipped', 'missed', 'upcoming']),
     ];
-    const progress = computeCycleProgress(weeks);
+    const progress = computeMacrocycleProgress(weeks);
     expect(progress.completedWorkouts).toBe(1);
     expect(progress.totalWorkouts).toBe(4);
     expect(progress.percent).toBe(25);
@@ -427,7 +427,7 @@ describe('computeCycleProgress', () => {
       makeWeek(1, ['completed', 'completed', 'completed']),
       makeWeek(2, ['completed', 'upcoming', 'upcoming']),
     ];
-    const progress = computeCycleProgress(weeks);
+    const progress = computeMacrocycleProgress(weeks);
     expect(progress.completedWorkouts).toBe(4);
     expect(progress.totalWorkouts).toBe(6);
     expect(progress.percent).toBe(67); // 4 / 6 = 66.67 → 67
@@ -436,6 +436,6 @@ describe('computeCycleProgress', () => {
   it('rounds percent to the nearest integer', () => {
     // 1 of 3 completed = 33.33% → 33
     const weeks: WeekRow[] = [makeWeek(1, ['completed', 'upcoming', 'upcoming'])];
-    expect(computeCycleProgress(weeks).percent).toBe(33);
+    expect(computeMacrocycleProgress(weeks).percent).toBe(33);
   });
 });

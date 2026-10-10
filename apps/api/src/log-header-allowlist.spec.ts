@@ -58,7 +58,7 @@ describe('request/response header logging is redact-by-default (allowlist)', () 
       {
         req: {
           method: 'POST',
-          url: '/programs/x/cycles/initialize',
+          url: '/programs/x/macrocycles/initialize',
           headers: {
             ...secretValues,
             // An allowlisted header, to prove the serializer filters rather

@@ -79,7 +79,7 @@ export default function MaxHistory({
       <section style={{ marginTop: '2rem' }}>
         <h2>Training Max History</h2>
         <p style={{ color: 'var(--color-text-muted, #888)' }}>
-          No history yet. History entries are recorded each time a cycle advances or maxes are recalculated.
+          No history yet. History entries are recorded each time a new macrocycle starts or maxes are recalculated.
         </p>
       </section>
     );
@@ -239,7 +239,7 @@ function EntryRow({
       <td>{entry.lift}</td>
       <td style={{ textAlign: 'right' }}>{formatWeight(entry.weight, entry.unit, unit)}</td>
       <td style={{ textAlign: 'center' }}>
-        <span title={entry.source === 'test' ? 'Test week' : 'Program cycle'}>
+        <span title={entry.source === 'test' ? 'Test week' : 'New macrocycle'}>
           {entry.source === 'test' ? 'Test' : 'Program'}
         </span>
       </td>

@@ -1,12 +1,12 @@
-import { CycleDashboard, LiftRecord, LiftingProgramSpec, Weekday } from '@lifting-logbook/core';
+import { MacrocycleDashboard, LiftRecord, LiftingProgramSpec, Weekday } from '@lifting-logbook/core';
 import {
-  buildCycleDashboardResponse,
+  buildMacrocycleDashboardResponse,
   scheduleCoverage,
   toLiftRecordResponse,
   toWorkoutResponse,
   workoutKeyForWorkoutNum,
 } from './mappers';
-import { ScheduledWorkout } from '../ports/ICycleScheduledWorkoutRepository';
+import { ScheduledWorkout } from '../ports/IMacrocycleScheduledWorkoutRepository';
 
 const baseFields: Omit<LiftingProgramSpec, 'offset' | 'lift' | 'week'> = {
   increment: 5,
@@ -29,7 +29,7 @@ const spec = (offset: number, lift: string, week?: number): LiftingProgramSpec =
 describe('toLiftRecordResponse', () => {
   const liftRecord = (overrides: Partial<LiftRecord> = {}): LiftRecord => ({
     program: '5-3-1',
-    cycleNum: 4,
+    macrocycleNum: 4,
     workoutNum: 1,
     date: new Date('2026-04-20T00:00:00.000Z'),
     lift: 'Bench Press',
@@ -136,13 +136,13 @@ describe('workoutKeyForWorkoutNum', () => {
 
 describe('toWorkoutResponse with plannedLifts', () => {
   const program = '5-3-1';
-  const cycleNum = 1;
+  const macrocycleNum = 1;
   const workoutNum = 1;
   const week = 1;
 
   const record = (lift: string, setNum: number, weight: number) => ({
     program,
-    cycleNum,
+    macrocycleNum,
     workoutNum,
     date: new Date('2026-05-07T00:00:00Z'),
     lift,
@@ -154,17 +154,17 @@ describe('toWorkoutResponse with plannedLifts', () => {
 
   it('marks logged lifts as planned:false', () => {
     const records = [record('Squat', 1, 200)];
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });
     expect(result.lifts[0]).toMatchObject({ lift: 'Squat', planned: false });
     expect(result.lifts[0]?.sets).toHaveLength(1);
   });
 
   // Issue #978: each set carries the record's natural-key id (the same value
   // LiftRecordResponse.id carries) and its notes, so the logging page can PATCH
-  // a logged set without refetching the cycle's lift records to look them up.
+  // a logged set without refetching the macrocycle's lift records to look them up.
   it('carries each logged set’s record id and notes', () => {
     const records = [{ ...record('Squat', 2, 220), notes: 'AMRAP felt heavy' }];
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });
     expect(result.lifts[0]?.sets[0]).toEqual({
       id: '5-3-1-1-1-20260507-Squat-2',
       setNum: 2,
@@ -177,7 +177,7 @@ describe('toWorkoutResponse with plannedLifts', () => {
 
   it('groups a replaced lift’s records under the replacement but keeps the stored lift in each id', () => {
     const records = [record('Squat', 1, 200)];
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, {
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, {
       plannedLifts: [{ lift: 'Front Squat', replaces: 'Squat' }],
       renamedLifts: new Map([['Squat', 'Front Squat']]),
     });
@@ -189,21 +189,21 @@ describe('toWorkoutResponse with plannedLifts', () => {
   });
 
   it('emits the day’s offset, an explicit null for "no program day", and nothing when not told (issue #1014)', () => {
-    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: 3 }).offset).toBe(3);
+    expect(toWorkoutResponse(program, macrocycleNum, workoutNum, week, [], { offset: 3 }).offset).toBe(3);
     // Offset 0 is a real day, not "no day".
-    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: 0 }).offset).toBe(0);
+    expect(toWorkoutResponse(program, macrocycleNum, workoutNum, week, [], { offset: 0 }).offset).toBe(0);
     // Only an explicit null says the program has no day for this workout…
-    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [], { offset: null })).toHaveProperty(
+    expect(toWorkoutResponse(program, macrocycleNum, workoutNum, week, [], { offset: null })).toHaveProperty(
       'offset',
       null,
     );
     // …leaving the option out says nothing, so a caller that forgets it cannot
     // make a client plan an empty workout.
-    expect(toWorkoutResponse(program, cycleNum, workoutNum, week, [])).not.toHaveProperty('offset');
+    expect(toWorkoutResponse(program, macrocycleNum, workoutNum, week, [])).not.toHaveProperty('offset');
   });
 
   it('marks unlogged planned lifts as planned:true with empty sets', () => {
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, [], { plannedLifts: [{ lift: 'Squat' }, { lift: 'Bench Press' }] });
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, [], { plannedLifts: [{ lift: 'Squat' }, { lift: 'Bench Press' }] });
     expect(result.lifts).toHaveLength(2);
     expect(result.lifts[0]).toMatchObject({ lift: 'Squat', sets: [], planned: true });
     expect(result.lifts[1]).toMatchObject({ lift: 'Bench Press', sets: [], planned: true });
@@ -211,7 +211,7 @@ describe('toWorkoutResponse with plannedLifts', () => {
 
   it('appends logged lifts not in planned list as planned:false', () => {
     const records = [record('Squat', 1, 200), record('Chin-up', 1, 0)];
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });
     expect(result.lifts).toHaveLength(2);
     expect(result.lifts[0]).toMatchObject({ lift: 'Squat', planned: false });
     expect(result.lifts[1]).toMatchObject({ lift: 'Chin-up', planned: false });
@@ -219,66 +219,66 @@ describe('toWorkoutResponse with plannedLifts', () => {
 
   it('without plannedLifts — all logged lifts get planned:false (legacy behaviour)', () => {
     const records = [record('Squat', 1, 200)];
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records);
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records);
     expect(result.lifts[0]).toMatchObject({ lift: 'Squat', planned: false });
   });
 
   it('uses scheduledDate as date when no records exist', () => {
     const scheduledDate = new Date('2026-06-02T00:00:00.000Z');
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, [], { scheduledDate });
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, [], { scheduledDate });
     expect(result.date).toBe('2026-06-02');
   });
 
   it('prefers first record date over scheduledDate when records exist', () => {
     const records = [record('Squat', 1, 200)];
     const scheduledDate = new Date('2026-06-02T00:00:00.000Z');
-    const result = toWorkoutResponse(program, cycleNum, workoutNum, week, records, { scheduledDate });
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, { scheduledDate });
     expect(result.date).toBe(records[0]!.date.toISOString().slice(0, 10));
   });
 
-  it('no-schedule, unlogged: derives date from cycleStart + (week-1)*7 + offset (issue #745)', () => {
+  it('no-schedule, unlogged: derives date from macrocycleStart + (week-1)*7 + offset (issue #745)', () => {
     // No records, no scheduledDate. Pre-#745 this fell back to today(); now it must
-    // equal the date the Cycle Dashboard card computes for the same (cycleStart,
+    // equal the date the Macrocycle Dashboard card computes for the same (macrocycleStart,
     // week, offset) — both route through the shared noScheduleWorkoutDateUTC.
-    const cycleStart = new Date('2026-04-20T00:00:00.000Z');
+    const macrocycleStart = new Date('2026-04-20T00:00:00.000Z');
     // week 2, offset 0 → 2026-04-20 + 7 = 2026-04-27 (NOT today).
-    const result = toWorkoutResponse(program, cycleNum, 3, 2, [], {
+    const result = toWorkoutResponse(program, macrocycleNum, 3, 2, [], {
       plannedLifts: [{ lift: 'Squat' }],
-      cycleStartDate: cycleStart,
+      macrocycleStartDate: macrocycleStart,
       offset: 0,
     });
     expect(result.date).toBe('2026-04-27');
   });
 
-  it('no-schedule week-1 date is cycleStart + offset', () => {
-    const cycleStart = new Date('2026-04-20T00:00:00.000Z');
-    const result = toWorkoutResponse(program, cycleNum, 2, 1, [], {
+  it('no-schedule week-1 date is macrocycleStart + offset', () => {
+    const macrocycleStart = new Date('2026-04-20T00:00:00.000Z');
+    const result = toWorkoutResponse(program, macrocycleNum, 2, 1, [], {
       plannedLifts: [{ lift: 'Squat' }],
-      cycleStartDate: cycleStart,
+      macrocycleStartDate: macrocycleStart,
       offset: 2,
     });
     expect(result.date).toBe('2026-04-22');
   });
 
-  it('scheduledDate still wins over the cycleStart-derived no-schedule date', () => {
-    const cycleStart = new Date('2026-04-20T00:00:00.000Z');
+  it('scheduledDate still wins over the macrocycleStart-derived no-schedule date', () => {
+    const macrocycleStart = new Date('2026-04-20T00:00:00.000Z');
     const scheduledDate = new Date('2026-06-02T00:00:00.000Z');
-    const result = toWorkoutResponse(program, cycleNum, 3, 2, [], {
+    const result = toWorkoutResponse(program, macrocycleNum, 3, 2, [], {
       plannedLifts: [{ lift: 'Squat' }],
       scheduledDate,
-      cycleStartDate: cycleStart,
+      macrocycleStartDate: macrocycleStart,
       offset: 0,
     });
     expect(result.date).toBe('2026-06-02');
   });
 
-  it('falls back to today only when cycleStartDate/offset are absent (defensive last resort)', () => {
+  it('falls back to today only when macrocycleStartDate/offset are absent (defensive last resort)', () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-15T12:00:00.000Z'));
     try {
-      // No records, no scheduledDate, and no cycleStart/offset threaded → retains the
-      // pre-#745 today() behavior so a degenerate call (e.g. missing cycle dashboard)
+      // No records, no scheduledDate, and no macrocycleStart/offset threaded → retains the
+      // pre-#745 today() behavior so a degenerate call (e.g. missing macrocycle dashboard)
       // never crashes. The controller always threads them in real no-schedule mode.
-      const result = toWorkoutResponse(program, cycleNum, workoutNum, week, []);
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, []);
       expect(result.date).toBe('2026-08-15');
     } finally {
       jest.useRealTimers();
@@ -286,14 +286,14 @@ describe('toWorkoutResponse with plannedLifts', () => {
   });
 });
 
-describe('buildCycleDashboardResponse', () => {
-  const baseDashboard: CycleDashboard = {
+describe('buildMacrocycleDashboardResponse', () => {
+  const baseDashboard: MacrocycleDashboard = {
     program: 'test-531',
-    cycleNum: 1,
-    cycleDate: new Date('2026-05-19T00:00:00.000Z'),
-    cycleUnit: 'week',
+    macrocycleNum: 1,
+    macrocycleDate: new Date('2026-05-19T00:00:00.000Z'),
+    macrocycleUnit: 'week',
     sheetName: 'Sheet1',
-    cycleStartWeekday: Weekday.Monday,
+    macrocycleStartWeekday: Weekday.Monday,
   };
 
   const WEEK_TYPE = 'training' as const;
@@ -315,7 +315,7 @@ describe('buildCycleDashboardResponse', () => {
     scheduled: ScheduledWorkout[],
     progress: { overrides?: Map<number, Date>; completed?: Set<number>; skipped?: Set<number> } = {},
   ) =>
-    buildCycleDashboardResponse(baseDashboard, WEEK_TYPE, {
+    buildMacrocycleDashboardResponse(baseDashboard, WEEK_TYPE, {
       spec,
       scheduled,
       overrides: progress.overrides ?? new Map(),
@@ -416,7 +416,7 @@ describe('buildCycleDashboardResponse', () => {
   it('lists a program day with no scheduled row on its spec-relative date (issue #1023)', () => {
     // A schedule saved before #1023 with fewer days a week than the program dated
     // too few workouts. The days it missed are still workouts: the grid and the
-    // workout endpoint show them on their spec-relative date, cycleStart +
+    // workout endpoint show them on their spec-relative date, macrocycleStart +
     // (week-1)*7 + offset. Leaving them out would keep their weeks, and every phase
     // containing them, from ever completing on the plan page.
     const spec = days([1, 0], [1, 2], [2, 0], [2, 2]);
@@ -491,7 +491,7 @@ describe('scheduleCoverage (issue #1023)', () => {
   const rows = (...workoutNums: number[]): ScheduledWorkout[] =>
     workoutNums.map((workoutNum) => ({ workoutNum, weekNum: 1, scheduledDate: new Date('2026-05-18T00:00:00.000Z') }));
 
-  it('finds nothing when the rows are exactly the program days, as a cycle scheduled since #1023 has', () => {
+  it('finds nothing when the rows are exactly the program days, as a macrocycle scheduled since #1023 has', () => {
     expect(scheduleCoverage('my-program', spec, rows(1, 2, 3))).toEqual({ pastLastDay: [], unscheduledDays: 0 });
   });
 

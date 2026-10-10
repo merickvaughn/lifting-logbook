@@ -4,14 +4,14 @@ import { ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
 export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
   constructor(private readonly store: Map<string, LiftRecord[]>) {}
 
-  async getLiftRecords(program: string, cycleNum: number): Promise<LiftRecord[]> {
-    return (this.store.get(program) ?? []).filter((r) => r.cycleNum === cycleNum);
+  async getLiftRecords(program: string, macrocycleNum: number): Promise<LiftRecord[]> {
+    return (this.store.get(program) ?? []).filter((r) => r.macrocycleNum === macrocycleNum);
   }
 
-  async getLoggedWorkoutNums(program: string, cycleNum: number): Promise<Set<number>> {
+  async getLoggedWorkoutNums(program: string, macrocycleNum: number): Promise<Set<number>> {
     return new Set(
       (this.store.get(program) ?? [])
-        .filter((r) => r.cycleNum === cycleNum)
+        .filter((r) => r.macrocycleNum === macrocycleNum)
         .map((r) => r.workoutNum),
     );
   }

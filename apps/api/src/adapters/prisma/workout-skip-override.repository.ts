@@ -7,25 +7,25 @@ export class PrismaWorkoutSkipOverrideRepository implements IWorkoutSkipOverride
     private readonly userId: string,
   ) {}
 
-  async getSkipsForCycle(program: string, cycleNum: number): Promise<Set<number>> {
+  async getSkipsForMacrocycle(program: string, macrocycleNum: number): Promise<Set<number>> {
     const rows = await this.prisma.workoutSkipOverride.findMany({
-      where: { userId: this.userId, program, cycleNum },
+      where: { userId: this.userId, program, macrocycleNum },
       select: { workoutNum: true },
     });
     return new Set(rows.map((r) => r.workoutNum));
   }
 
-  async skipWorkout(program: string, cycleNum: number, workoutNum: number, reason?: string): Promise<void> {
+  async skipWorkout(program: string, macrocycleNum: number, workoutNum: number, reason?: string): Promise<void> {
     await this.prisma.workoutSkipOverride.upsert({
-      where: { userId_program_cycleNum_workoutNum: { userId: this.userId, program, cycleNum, workoutNum } },
+      where: { userId_program_macrocycleNum_workoutNum: { userId: this.userId, program, macrocycleNum, workoutNum } },
       update: { reason: reason ?? null, skippedAt: new Date() },
-      create: { userId: this.userId, program, cycleNum, workoutNum, reason: reason ?? null },
+      create: { userId: this.userId, program, macrocycleNum, workoutNum, reason: reason ?? null },
     });
   }
 
-  async unskipWorkout(program: string, cycleNum: number, workoutNum: number): Promise<void> {
+  async unskipWorkout(program: string, macrocycleNum: number, workoutNum: number): Promise<void> {
     await this.prisma.workoutSkipOverride.deleteMany({
-      where: { userId: this.userId, program, cycleNum, workoutNum },
+      where: { userId: this.userId, program, macrocycleNum, workoutNum },
     });
   }
 }

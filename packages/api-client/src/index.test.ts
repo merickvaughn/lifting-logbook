@@ -31,7 +31,7 @@ describe('createApiClient', () => {
       await client.rescheduleWorkout('5-3-1', 1, 2, '2026-07-01');
 
       const [url, init] = lastCall();
-      expect(url).toBe('http://api.test/programs/5-3-1/cycles/1/workouts/2/reschedule');
+      expect(url).toBe('http://api.test/programs/5-3-1/macrocycles/1/workouts/2/reschedule');
       expect(init.method).toBe('PATCH');
       // Content-Type from the call site coexists with both injected auth headers.
       expect(init.headers).toEqual({
@@ -157,17 +157,17 @@ describe('createApiClient', () => {
     it('returns null on 404 instead of throwing', async () => {
       mockFetch.mockResolvedValue(new Response('', { status: 404 }));
       const client = makeClient();
-      await expect(client.fetchCycleDashboard('5-3-1')).resolves.toBeNull();
+      await expect(client.fetchMacrocycleDashboard('5-3-1')).resolves.toBeNull();
     });
 
     it('returns the parsed body on 200', async () => {
       mockFetch.mockResolvedValue(
-        new Response(JSON.stringify({ program: '5-3-1', cycleNum: 3 }), { status: 200 }),
+        new Response(JSON.stringify({ program: '5-3-1', macrocycleNum: 3 }), { status: 200 }),
       );
       const client = makeClient();
-      await expect(client.fetchCycleDashboard('5-3-1')).resolves.toEqual({
+      await expect(client.fetchMacrocycleDashboard('5-3-1')).resolves.toEqual({
         program: '5-3-1',
-        cycleNum: 3,
+        macrocycleNum: 3,
       });
     });
 
@@ -192,21 +192,21 @@ describe('createApiClient', () => {
     });
   });
 
-  describe('conflict-tolerant POSTs (initializeCycle)', () => {
+  describe('conflict-tolerant POSTs (initializeMacrocycle)', () => {
     it('returns null on 409 Conflict instead of throwing', async () => {
       mockFetch.mockResolvedValue(
-        new Response(JSON.stringify({ message: 'A cycle for "rpt" already exists.' }), { status: 409 }),
+        new Response(JSON.stringify({ message: 'A macrocycle for "rpt" already exists.' }), { status: 409 }),
       );
       const client = makeClient();
-      await expect(client.initializeCycle('rpt')).resolves.toBeNull();
+      await expect(client.initializeMacrocycle('rpt')).resolves.toBeNull();
     });
 
     it('returns the parsed dashboard on 200', async () => {
       mockFetch.mockResolvedValue(
-        new Response(JSON.stringify({ program: 'rpt', cycleNum: 1 }), { status: 200 }),
+        new Response(JSON.stringify({ program: 'rpt', macrocycleNum: 1 }), { status: 200 }),
       );
       const client = makeClient();
-      await expect(client.initializeCycle('rpt')).resolves.toMatchObject({ program: 'rpt', cycleNum: 1 });
+      await expect(client.initializeMacrocycle('rpt')).resolves.toMatchObject({ program: 'rpt', macrocycleNum: 1 });
     });
 
     it('throws on a non-409 error', async () => {
@@ -214,12 +214,12 @@ describe('createApiClient', () => {
         new Response(JSON.stringify({ message: 'server exploded' }), { status: 500 }),
       );
       const client = makeClient();
-      await expect(client.initializeCycle('rpt')).rejects.toThrow('server exploded');
+      await expect(client.initializeMacrocycle('rpt')).rejects.toThrow('server exploded');
     });
   });
 
   describe('conflict-with-reason POSTs (createCustomLift)', () => {
-    // Unlike initializeCycle's single conflict cause, custom-lift creation
+    // Unlike initializeMacrocycle's single conflict cause, custom-lift creation
     // 409s for two distinct, both-true reasons (a duplicate name vs. a name
     // reserved by a canonical alias) — so this endpoint must surface the
     // server's actual message rather than collapsing to bare null (#917).
@@ -280,7 +280,7 @@ describe('createApiClient', () => {
   describe('switchProgram', () => {
     it('sends a JSON body alongside the JSON content-type header (issue #665)', async () => {
       mockFetch.mockResolvedValue(
-        new Response(JSON.stringify({ activeProgram: 'leangains', cycleNum: 1 }), { status: 200 }),
+        new Response(JSON.stringify({ activeProgram: 'leangains', macrocycleNum: 1 }), { status: 200 }),
       );
       const client = makeClient();
       await client.switchProgram('leangains');
@@ -296,12 +296,12 @@ describe('createApiClient', () => {
 
     it('resolves with the parsed response', async () => {
       mockFetch.mockResolvedValue(
-        new Response(JSON.stringify({ activeProgram: 'leangains', cycleNum: 3 }), { status: 200 }),
+        new Response(JSON.stringify({ activeProgram: 'leangains', macrocycleNum: 3 }), { status: 200 }),
       );
       const client = makeClient();
       await expect(client.switchProgram('leangains')).resolves.toEqual({
         activeProgram: 'leangains',
-        cycleNum: 3,
+        macrocycleNum: 3,
       });
     });
   });

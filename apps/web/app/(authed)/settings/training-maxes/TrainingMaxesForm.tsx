@@ -7,6 +7,7 @@ import {
   type TrainingMaxResponse,
   type WeightUnit,
 } from '@lifting-logbook/types';
+import GlossaryLink from '@/components/GlossaryLink';
 import { saveTrainingMaxes } from './actions';
 import styles from './TrainingMaxesForm.module.css';
 
@@ -133,7 +134,10 @@ export default function TrainingMaxesForm({
 
   return (
     <section className={styles.container}>
-      <h2 className={styles.heading}>Training Maxes</h2>
+      <div className={styles.headingRow}>
+        <h2 className={styles.heading}>Training Maxes</h2>
+        <GlossaryLink id="training-max" />
+      </div>
       <div className={styles.tableWrapper}>
         <table className={styles.table}>
           <thead>

@@ -709,7 +709,7 @@
   padding: var(--space-4) 0;
 }
 
-/* ── Cycle start error note ──────────────────────────────────── */
+/* ── Macrocycle start error note ──────────────────────────────────── */
 
 .errorNote {
   font-size: var(--font-size-sm);

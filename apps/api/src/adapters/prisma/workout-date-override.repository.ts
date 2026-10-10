@@ -11,15 +11,15 @@ export class PrismaWorkoutDateOverrideRepository
 
   async getOverride(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
   ): Promise<Date | null> {
     const row = await this.prisma.workoutDateOverride.findUnique({
       where: {
-        userId_program_cycleNum_workoutNum: {
+        userId_program_macrocycleNum_workoutNum: {
           userId: this.userId,
           program,
-          cycleNum,
+          macrocycleNum,
           workoutNum,
         },
       },
@@ -27,29 +27,29 @@ export class PrismaWorkoutDateOverrideRepository
     return row?.newDate ?? null;
   }
 
-  async getOverridesForCycle(program: string, cycleNum: number): Promise<Map<number, Date>> {
+  async getOverridesForMacrocycle(program: string, macrocycleNum: number): Promise<Map<number, Date>> {
     const rows = await this.prisma.workoutDateOverride.findMany({
-      where: { userId: this.userId, program, cycleNum },
+      where: { userId: this.userId, program, macrocycleNum },
     });
     return new Map(rows.map((r) => [r.workoutNum, r.newDate]));
   }
 
   async upsertOverride(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
     newDate: Date,
   ): Promise<void> {
     await this.prisma.workoutDateOverride.upsert({
       where: {
-        userId_program_cycleNum_workoutNum: {
+        userId_program_macrocycleNum_workoutNum: {
           userId: this.userId,
           program,
-          cycleNum,
+          macrocycleNum,
           workoutNum,
         },
       },
-      create: { userId: this.userId, program, cycleNum, workoutNum, newDate },
+      create: { userId: this.userId, program, macrocycleNum, workoutNum, newDate },
       update: { newDate },
     });
   }

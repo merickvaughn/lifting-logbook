@@ -3,7 +3,7 @@ import { LiftName } from '@lifting-logbook/types';
 // LiftRecord interface for individual workout log entries
 export interface LiftRecord {
   program: string;
-  cycleNum: number;
+  macrocycleNum: number;
   workoutNum: number;
   date: Date;
   lift: LiftName;

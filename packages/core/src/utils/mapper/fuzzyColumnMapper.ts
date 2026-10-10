@@ -103,7 +103,7 @@ function calculateSimilarity(sourceHeader: string, canonicalField: string): numb
  */
 function getRequiredFields(kind: ImportKind): Set<string> {
   const required = new Map<ImportKind, Set<string>>([
-    ['lift-records', new Set(['program', 'cycleNum', 'workoutNum', 'date', 'lift', 'setNum', 'weight', 'reps'])],
+    ['lift-records', new Set(['program', 'macrocycleNum', 'workoutNum', 'date', 'lift', 'setNum', 'weight', 'reps'])],
     ['training-maxes', new Set(['lift', 'weight', 'dateUpdated'])],
     ['program-spec', new Set(['week', 'offset', 'lift', 'increment', 'order', 'sets', 'reps', 'wtDecrementPct'])],
     // Strength goals requires lift, goalType, unit, and either target or ratio

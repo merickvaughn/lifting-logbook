@@ -15,7 +15,7 @@ import { resolveCorsOrigins } from './cors.config';
 // resolved list is honored on the wire (issue #766 / ADR-032).
 @Controller('programs/:program')
 class StubRescheduleController {
-  @Get('cycles/:cycleNum/workouts/:workoutNum/ping')
+  @Get('macrocycles/:macrocycleNum/workouts/:workoutNum/ping')
   ping() {
     return { ok: true };
   }
@@ -54,7 +54,7 @@ describe('CORS preflight wiring (enableCors + Fastify adapter)', () => {
   function preflight(origin: string) {
     return app.getHttpAdapter().getInstance().inject({
       method: 'OPTIONS',
-      url: '/programs/5-3-1/cycles/1/workouts/1/reschedule',
+      url: '/programs/5-3-1/macrocycles/1/workouts/1/reschedule',
       headers: {
         origin,
         'access-control-request-method': 'PATCH',

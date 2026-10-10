@@ -106,7 +106,7 @@ describe("updateMaxes", () => {
     // All 5 sets flagged as injury
     const liftRecords = [1, 2, 3, 4, 5].map((setNum) => ({
       program: "RPT",
-      cycleNum: 1,
+      macrocycleNum: 1,
       workoutNum: 1,
       date: new Date("2026-01-05"),
       lift: "Bench P." as const,
@@ -131,7 +131,7 @@ describe("updateMaxes", () => {
     // A completed deload set — should never update the max
     const liftRecords = [1, 2, 3].map((setNum) => ({
       program: "RPT",
-      cycleNum: 1,
+      macrocycleNum: 1,
       workoutNum: 1,
       date: new Date("2026-01-05"),
       lift: "Bench P." as const,

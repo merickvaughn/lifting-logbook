@@ -7,7 +7,7 @@ import type {
   CustomLiftResponse,
   CustomProgramResponse,
   CustomProgramSummaryResponse,
-  CycleDashboardResponse,
+  MacrocycleDashboardResponse,
   ImportCommitResponse,
   ImportError,
   ImportKind,
@@ -205,8 +205,8 @@ export function createApiClient(config: ApiClientConfig) {
   // Like request but returns null on 409 Conflict instead of throwing.
   // Use for POST operations that are idempotent by intent — where a conflict
   // means the resource already exists in the desired state and the caller
-  // doesn't need to know why (only initializeCycle uses this — a single
-  // conflict cause, "a cycle already exists").
+  // doesn't need to know why (only initializeMacrocycle uses this — a single
+  // conflict cause, "a macrocycle already exists").
   async function requestOrConflict<T>(path: string, init?: FetchInit): Promise<T | null> {
     const res = await rawFetch(path, init);
     if (res.status === 409) return null;
@@ -222,7 +222,7 @@ export function createApiClient(config: ApiClientConfig) {
   // built-in canonical alias (ReservedLiftNameConflictError); collapsing
   // both to bare `null` left a caller unable to state the true cause and
   // reusing one error's wording for the other's conflict was simply false
-  // (#917). initializeCycle deliberately keeps using requestOrConflict
+  // (#917). initializeMacrocycle deliberately keeps using requestOrConflict
   // above, unaffected by this addition.
   async function requestOrConflictWithReason<T>(
     path: string,
@@ -247,35 +247,35 @@ export function createApiClient(config: ApiClientConfig) {
   }
 
   return {
-    // -- Cycles ------------------------------------------------------------
-    fetchCycleDashboard(program: string): Promise<CycleDashboardResponse | null> {
-      return requestNullable(`/programs/${enc(program)}/cycles/current`, { cache: 'no-store' });
+    // -- Macrocycles ----------------------------------------------------------
+    fetchMacrocycleDashboard(program: string): Promise<MacrocycleDashboardResponse | null> {
+      return requestNullable(`/programs/${enc(program)}/macrocycles/current`, { cache: 'no-store' });
     },
-    createCycle(programId: string): Promise<CycleDashboardResponse> {
-      return request(`/programs/${enc(programId)}/cycles`, {
+    createMacrocycle(programId: string): Promise<MacrocycleDashboardResponse> {
+      return request(`/programs/${enc(programId)}/macrocycles`, {
         method: 'POST',
         headers: JSON_HEADERS,
         body: JSON.stringify({}),
         cache: 'no-store',
       });
     },
-    // Returns null when a cycle already exists (409) — the caller should treat
+    // Returns null when a macrocycle already exists (409) — the caller should treat
     // null as "already initialized" and redirect rather than error.
-    initializeCycle(
+    initializeMacrocycle(
       programId: string,
-      options: { cycleDate?: string } = {},
-    ): Promise<CycleDashboardResponse | null> {
-      return requestOrConflict(`/programs/${enc(programId)}/cycles/initialize`, {
+      options: { macrocycleDate?: string } = {},
+    ): Promise<MacrocycleDashboardResponse | null> {
+      return requestOrConflict(`/programs/${enc(programId)}/macrocycles/initialize`, {
         method: 'POST',
         headers: JSON_HEADERS,
         body: JSON.stringify(options),
         cache: 'no-store',
       });
     },
-    // Idempotent delete: a 404 (no existing cycle) is treated as success, matching
+    // Idempotent delete: a 404 (no existing macrocycle) is treated as success, matching
     // deleteStrengthGoal/deleteCustomProgram below.
-    deleteCurrentCycle(programId: string): Promise<void> {
-      return requestVoidIdempotent(`/programs/${enc(programId)}/cycles/current`, {
+    deleteCurrentMacrocycle(programId: string): Promise<void> {
+      return requestVoidIdempotent(`/programs/${enc(programId)}/macrocycles/current`, {
         method: 'DELETE',
         cache: 'no-store',
       });
@@ -323,7 +323,7 @@ export function createApiClient(config: ApiClientConfig) {
     },
     rescheduleWorkout(
       program: string,
-      cycleNum: number,
+      macrocycleNum: number,
       workoutNum: number,
       newDate: string,
     ): Promise<void> {
@@ -331,18 +331,18 @@ export function createApiClient(config: ApiClientConfig) {
       // here at compile time rather than as a silently malformed request body.
       const body: RescheduleRequest = { newDate };
       return request(
-        `/programs/${enc(program)}/cycles/${cycleNum}/workouts/${workoutNum}/reschedule`,
+        `/programs/${enc(program)}/macrocycles/${macrocycleNum}/workouts/${workoutNum}/reschedule`,
         { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(body), cache: 'no-store' },
       );
     },
     skipWorkout(
       program: string,
-      cycleNum: number,
+      macrocycleNum: number,
       workoutNum: number,
       reason?: string,
     ): Promise<void> {
       return request(
-        `/programs/${enc(program)}/cycles/${cycleNum}/workouts/${workoutNum}/skip`,
+        `/programs/${enc(program)}/macrocycles/${macrocycleNum}/workouts/${workoutNum}/skip`,
         {
           method: 'POST',
           headers: JSON_HEADERS,
@@ -351,9 +351,9 @@ export function createApiClient(config: ApiClientConfig) {
         },
       );
     },
-    unskipWorkout(program: string, cycleNum: number, workoutNum: number): Promise<void> {
+    unskipWorkout(program: string, macrocycleNum: number, workoutNum: number): Promise<void> {
       return request(
-        `/programs/${enc(program)}/cycles/${cycleNum}/workouts/${workoutNum}/skip`,
+        `/programs/${enc(program)}/macrocycles/${macrocycleNum}/workouts/${workoutNum}/skip`,
         { method: 'DELETE', cache: 'no-store' },
       );
     },
@@ -519,23 +519,23 @@ export function createApiClient(config: ApiClientConfig) {
     // -- Lift overrides ----------------------------------------------------
     upsertLiftOverride(
       program: string,
-      cycleNum: number,
+      macrocycleNum: number,
       workoutNum: number,
       body: CreateLiftOverrideRequest,
     ): Promise<LiftOverrideResponse> {
       return request(
-        `/programs/${enc(program)}/cycles/${cycleNum}/workouts/${workoutNum}/lift-overrides`,
+        `/programs/${enc(program)}/macrocycles/${macrocycleNum}/workouts/${workoutNum}/lift-overrides`,
         { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body), cache: 'no-store' },
       );
     },
     deleteLiftOverride(
       program: string,
-      cycleNum: number,
+      macrocycleNum: number,
       workoutNum: number,
       lift: string,
     ): Promise<void> {
       return request(
-        `/programs/${enc(program)}/cycles/${cycleNum}/workouts/${workoutNum}/lift-overrides/${enc(lift)}`,
+        `/programs/${enc(program)}/macrocycles/${macrocycleNum}/workouts/${workoutNum}/lift-overrides/${enc(lift)}`,
         { method: 'DELETE', cache: 'no-store' },
       );
     },

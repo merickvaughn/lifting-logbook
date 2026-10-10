@@ -122,7 +122,7 @@ function isWorkoutKey(value: unknown): value is TimerWorkoutKey {
   if (!isRecord(value)) return false;
   return (
     typeof value.program === 'string' &&
-    typeof value.cycleNum === 'number' &&
+    typeof value.macrocycleNum === 'number' &&
     typeof value.workoutNum === 'number'
   );
 }
@@ -173,7 +173,7 @@ function isRunShape(value: unknown): value is UnvalidatedRun {
 }
 
 export function sameWorkout(a: TimerWorkoutKey, b: TimerWorkoutKey): boolean {
-  return a.program === b.program && a.cycleNum === b.cycleNum && a.workoutNum === b.workoutNum;
+  return a.program === b.program && a.macrocycleNum === b.macrocycleNum && a.workoutNum === b.workoutNum;
 }
 
 /**

@@ -28,16 +28,16 @@ export function validateLiftImport(
     const row = i + 1;
     const rowErrors: ImportError[] = [];
 
-    if (isNaN(r.cycleNum))
-      rowErrors.push({ row, field: 'cycleNum', code: 'CYCLE_NUM_INVALID', message: 'cycleNum is not a number' });
+    if (isNaN(r.macrocycleNum))
+      rowErrors.push({ row, field: 'macrocycleNum', code: 'MACROCYCLE_NUM_INVALID', message: 'Macrocycle # is not a number' });
     if (isNaN(r.workoutNum))
-      rowErrors.push({ row, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'workoutNum is not a number' });
+      rowErrors.push({ row, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'Workout # is not a number' });
     if (isNaN(r.setNum))
-      rowErrors.push({ row, field: 'setNum', code: 'SET_NUM_INVALID', message: 'setNum is not a number' });
+      rowErrors.push({ row, field: 'setNum', code: 'SET_NUM_INVALID', message: 'Set # is not a number' });
     if (isNaN(r.weight))
-      rowErrors.push({ row, field: 'weight', code: 'WEIGHT_INVALID', message: 'weight is not a number' });
+      rowErrors.push({ row, field: 'weight', code: 'WEIGHT_INVALID', message: 'Weight is not a number' });
     if (isNaN(r.reps))
-      rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'reps is not a number' });
+      rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
     if (!r.date || isNaN(r.date.getTime()))
       rowErrors.push({ row, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
 

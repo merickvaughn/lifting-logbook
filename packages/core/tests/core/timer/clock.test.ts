@@ -18,7 +18,7 @@ function run(overrides: Partial<TimerRunState> = {}): TimerRunState {
     pausedMs: 0,
     pausedAt: null,
     bonus: 0,
-    workout: { program: 'p', cycleNum: 1, workoutNum: 1 },
+    workout: { program: 'p', macrocycleNum: 1, workoutNum: 1 },
     classifications: {},
     ...overrides,
   };

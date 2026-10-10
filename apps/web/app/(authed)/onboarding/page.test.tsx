@@ -4,7 +4,7 @@ import { LIFT_NAMES } from '@lifting-logbook/types';
 
 jest.mock('@/lib/api', () => ({
   fetchLiftCatalog: jest.fn(),
-  fetchCycleDashboard: jest.fn(),
+  fetchMacrocycleDashboard: jest.fn(),
 }));
 
 jest.mock('@/lib/active-program', () => ({
@@ -25,33 +25,33 @@ jest.mock('./OnboardingFlow', () => ({
   ),
 }));
 
-import { fetchLiftCatalog, fetchCycleDashboard } from '@/lib/api';
+import { fetchLiftCatalog, fetchMacrocycleDashboard } from '@/lib/api';
 import OnboardingPage from './page';
 import { DEFAULT_LIFTS } from './lib';
 
 const mockedFetch = fetchLiftCatalog as unknown as jest.Mock;
-const mockedFetchDashboard = fetchCycleDashboard as unknown as jest.Mock;
+const mockedFetchDashboard = fetchMacrocycleDashboard as unknown as jest.Mock;
 
-describe('OnboardingPage — existing-cycle guard', () => {
+describe('OnboardingPage — existing-macrocycle guard', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('redirects to /cycle/1 when a cycle already exists', async () => {
-    mockedFetchDashboard.mockResolvedValue({ cycleNum: 1, program: '5-3-1' });
+  it('redirects to /macrocycle/1 when a macrocycle already exists', async () => {
+    mockedFetchDashboard.mockResolvedValue({ macrocycleNum: 1, program: '5-3-1' });
 
-    await expect(OnboardingPage()).rejects.toThrow('REDIRECT:/cycle/1');
+    await expect(OnboardingPage()).rejects.toThrow('REDIRECT:/macrocycle/1');
   });
 
-  it('redirects to /cycle/3 matching the existing cycleNum', async () => {
-    mockedFetchDashboard.mockResolvedValue({ cycleNum: 3, program: '5-3-1' });
+  it('redirects to /macrocycle/3 matching the existing macrocycleNum', async () => {
+    mockedFetchDashboard.mockResolvedValue({ macrocycleNum: 3, program: '5-3-1' });
 
-    await expect(OnboardingPage()).rejects.toThrow('REDIRECT:/cycle/3');
+    await expect(OnboardingPage()).rejects.toThrow('REDIRECT:/macrocycle/3');
   });
 });
 
 describe('OnboardingPage — catalog fetch fallback', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    // No existing cycle — proceed to render the onboarding flow.
+    // No existing macrocycle — proceed to render the onboarding flow.
     mockedFetchDashboard.mockResolvedValue(null);
   });
 

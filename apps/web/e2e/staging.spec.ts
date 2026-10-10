@@ -8,23 +8,23 @@ import { test, expect, Page } from '@playwright/test';
 // - Assertions check structure/presence only — not hardcoded seed data values
 // - Write-path tests must be idempotent or self-cleaning
 //   (see test 6 for the first concrete example: onboarding write-path, self-
-//   cleaned via /api/test-support/reset-cycle before and after)
+//   cleaned via /api/test-support/reset-macrocycle before and after)
 
 // ---------------------------------------------------------------------------
 // 1. Home page redirects signed-in users to the authenticated landing page
 //
 // Per #384, `/` is now an async server component that calls `auth()` and
-// redirects signed-in users to `/cycle`. The marketing card is reserved for
+// redirects signed-in users to `/macrocycle`. The marketing card is reserved for
 // signed-out visitors and is exercised by Jest in apps/web/app/page.test.tsx
 // (renderToStaticMarkup assertions). The staging suite runs with a saved
 // Clerk session, so the only observable behavior here is the redirect itself.
-// `/cycle` further redirects to `/onboarding` when the test user has no
-// active cycle, so accept either landing URL.
+// `/macrocycle` further redirects to `/onboarding` when the test user has no
+// active macrocycle, so accept either landing URL.
 // ---------------------------------------------------------------------------
 
-test('home page redirects signed-in users to /cycle (or /onboarding)', async ({ page }) => {
+test('home page redirects signed-in users to /macrocycle (or /onboarding)', async ({ page }) => {
   await page.goto('/');
-  await expect(page).toHaveURL(/\/(cycle(\/\d+)?|onboarding)$/, { timeout: 15_000 });
+  await expect(page).toHaveURL(/\/(macrocycle(\/\d+)?|onboarding)$/, { timeout: 15_000 });
 });
 
 // ---------------------------------------------------------------------------
@@ -72,18 +72,18 @@ test('history page renders both tabs', async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Cycle dashboard renders (or onboarding if no cycle exists)
+// 4. Macrocycle dashboard renders (or onboarding if no macrocycle exists)
 //
 // The URL-or-onboarding tolerance is intentional: the staging test user
-// has no active cycle, so the try/catch in apps/web/app/(authed)/cycle/page.tsx:10-16
-// redirects to /onboarding on both "no cycle" and "API failed". This test
+// has no active macrocycle, so the try/catch in apps/web/app/(authed)/macrocycle/page.tsx:10-16
+// redirects to /onboarding on both "no macrocycle" and "API failed". This test
 // cannot distinguish the two; API-failure detection is delegated to test 5
 // which calls /api/health and asserts a specific HTTP 200.
 // ---------------------------------------------------------------------------
 
-test('cycle resolves to dashboard or onboarding', async ({ page }) => {
-  await page.goto('/cycle');
-  await expect(page).toHaveURL(/\/(cycle\/\d+|onboarding)/, { timeout: 15_000 });
+test('macrocycle resolves to dashboard or onboarding', async ({ page }) => {
+  await page.goto('/macrocycle');
+  await expect(page).toHaveURL(/\/(macrocycle\/\d+|onboarding)/, { timeout: 15_000 });
   if (page.url().includes('/onboarding')) {
     await expect(page.getByRole('heading', { name: 'Get Started' })).toBeVisible();
   }
@@ -134,17 +134,17 @@ test('authenticated API call succeeds (auth propagation)', async ({ page }) => {
 
 // ---------------------------------------------------------------------------
 // 6. Onboarding write path — sign in -> choose program -> confirm maxes ->
-//    Start My Program -> cycle dashboard renders
+//    Start My Program -> macrocycle dashboard renders
 //
 // This is the only write-path test in this file. It exists to close the gap
 // that let #644 (RLS silently disabled) ship undetected: every other test here
 // is read-only and would pass even if every write to Postgres were silently
 // failing. Per the file-level constraint above ("write-path tests must be
 // idempotent or self-cleaning"), this test deletes the test account's current
-// cycle via the /api/test-support/reset-cycle route handler BEFORE it runs
-// (so a fresh cycle-1 creation is actually exercised even on a re-run) AND
-// again AFTER (so a left-behind cycle never causes a future run of this test
-// to silently take the "cycle already exists" branch of switchProgram instead
+// macrocycle via the /api/test-support/reset-macrocycle route handler BEFORE it runs
+// (so a fresh macrocycle-1 creation is actually exercised even on a re-run) AND
+// again AFTER (so a left-behind macrocycle never causes a future run of this test
+// to silently take the "macrocycle already exists" branch of switchProgram instead
 // of genuinely creating one — see apps/api/src/programs/switch-program.controller.ts).
 //
 // Cleanup runs via test.beforeAll/afterAll with the `request` fixture rather
@@ -161,13 +161,13 @@ test('authenticated API call succeeds (auth propagation)', async ({ page }) => {
 // ---------------------------------------------------------------------------
 
 test.describe('onboarding write path (creates and cleans up real data)', () => {
-  const RESET_URL = '/api/test-support/reset-cycle?program=rpt';
+  const RESET_URL = '/api/test-support/reset-macrocycle?program=rpt';
 
   test.beforeAll(async ({ request }) => {
     // Defensive: a prior run's own cleanup may not have completed (CI kill, etc).
     // Asserted, not fire-and-forget: a silently-failing reset here (e.g. an
-    // expired Clerk session returning 401) would leave a stale cycle in place,
-    // and switchProgram silently reuses an existing cycle rather than erroring
+    // expired Clerk session returning 401) would leave a stale macrocycle in place,
+    // and switchProgram silently reuses an existing macrocycle rather than erroring
     // (switch-program.controller.ts) — so the test below would still pass
     // without ever exercising a genuine first-time write, defeating the entire
     // point of this suite with no visible signal. Fail loudly here instead.
@@ -180,7 +180,7 @@ test.describe('onboarding write path (creates and cleans up real data)', () => {
     expect(res.ok(), `Post-test cleanup failed: ${res.status()} ${await res.text()}`).toBeTruthy();
   });
 
-  test('sign in -> choose program -> confirm maxes -> Start My Program -> cycle dashboard renders', async ({ page }: { page: Page }) => {
+  test('sign in -> choose program -> confirm maxes -> Start My Program -> macrocycle dashboard renders', async ({ page }: { page: Page }) => {
     await page.goto('/onboarding');
     await expect(page.getByRole('heading', { name: 'Get Started' })).toBeVisible();
 
@@ -204,16 +204,16 @@ test.describe('onboarding write path (creates and cleans up real data)', () => {
     }
     await page.getByRole('button', { name: 'Next', exact: true }).click();
 
-    // Step 4: Confirm Maxes — submit to create the first cycle
+    // Step 4: Confirm Maxes — submit to create the first macrocycle
     await page.getByRole('button', { name: 'Start My Program' }).click();
 
-    // Lands on the cycle dashboard — the actual write-path assertion.
-    await expect(page).toHaveURL(/\/cycle\/1/, { timeout: 15_000 });
-    await expect(page.getByRole('heading', { name: /cycle/i }).first()).toBeVisible();
+    // Lands on the macrocycle dashboard — the actual write-path assertion.
+    await expect(page).toHaveURL(/\/macrocycle\/1/, { timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /macrocycle/i }).first()).toBeVisible();
 
     // ---------------------------------------------------------------------
     // Reschedule write path — appended here (rather than a standalone test)
-    // to reuse the cycle/workout this test already created and cleans up,
+    // to reuse the macrocycle/workout this test already created and cleans up,
     // avoiding new seed/cleanup plumbing.
     //
     // This specifically exercises RescheduleForm.tsx -> lib/client-api.ts,
@@ -227,7 +227,7 @@ test.describe('onboarding write path (creates and cleans up real data)', () => {
     // of the tests above would have caught the ~month-long production outage
     // that motivated ADR-032 (#766); this one would have.
     // ---------------------------------------------------------------------
-    await page.goto('/cycle/1/workout/1/detail');
+    await page.goto('/macrocycle/1/workout/1/detail');
     await page.getByRole('button', { name: '📅 Reschedule' }).click();
 
     const newDate = new Date();

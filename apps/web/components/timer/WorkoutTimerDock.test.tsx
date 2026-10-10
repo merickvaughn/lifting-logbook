@@ -23,7 +23,7 @@ const LIFTS: TimerLiftPlan[] = [
 
 function Harness({ lifts = LIFTS }: { lifts?: TimerLiftPlan[] }) {
   return (
-    <WorkoutTimerProvider lifts={lifts} program="531" cycleNum={1} workoutNum={1}>
+    <WorkoutTimerProvider lifts={lifts} program="531" macrocycleNum={1} workoutNum={1}>
       <StartButton />
     </WorkoutTimerProvider>
   );
@@ -133,7 +133,7 @@ describe('WorkoutTimerDock', () => {
 
       expect(screen.getByRole('link', { name: /Full timer/ })).toHaveAttribute(
         'href',
-        '/cycle/1/workout/1/timer',
+        '/macrocycle/1/workout/1/timer',
       );
     });
 

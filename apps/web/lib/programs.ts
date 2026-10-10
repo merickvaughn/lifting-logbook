@@ -22,7 +22,7 @@ export type Program = {
   daysPerWeek: number;
   progression: string;
   deloads: string;
-  cycles: string;
+  periodization: string;
   purposes: Purpose[];
   goals: Goal[];
   lifts: string[];
@@ -99,7 +99,7 @@ const PROGRAM_CATALOG: Program[] = [
       'Add 5 lb to squat and deadlift and 2.5 lb to upper-body lifts after every session. When you miss a rep target three sessions in a row, deload 10% and reset.',
     deloads:
       'Deload 10% on a stalling lift and return to linear progression. Deloads are reactive — triggered by stall, not scheduled.',
-    cycles:
+    periodization:
       'Single linear phase that continues until progress stalls on all major lifts, typically 3–6 months for true beginners.',
     purposes: ['Strength', 'Beginner'],
     goals: ['strength'],
@@ -124,7 +124,7 @@ const PROGRAM_CATALOG: Program[] = [
       'Add 5 lb to lower-body and 2.5 lb to upper-body lifts after every successful 5×5. Deload 10% after three consecutive failures on a lift.',
     deloads:
       'Three missed sessions triggers a 10% deload on the stalling lift. After two deloads, switch to 3×5 instead of 5×5.',
-    cycles:
+    periodization:
       'Continuous linear phase until multiple lifts stall simultaneously, typically 3–5 months before intermediate programming is needed.',
     purposes: ['Strength', 'Beginner'],
     goals: ['strength'],
@@ -149,7 +149,7 @@ const PROGRAM_CATALOG: Program[] = [
       'Hit the top-set rep ceiling (e.g. 6 reps), add 2.5–5 lb next session. Miss the floor (e.g. 4 reps), stay at the same weight. Back-off sets drop 10% from the top-set load.',
     deloads:
       'Deload every 8–12 weeks or when performance degrades across two consecutive sessions. Drop to 60% of top-set load for all sets, full ROM focus.',
-    cycles:
+    periodization:
       'Runs in open-ended blocks; most lifters deload every 2–3 months and reset top-set targets after a deload.',
     purposes: ['Strength', 'Hypertrophy'],
     goals: ['strength', 'muscle-gain'],
@@ -174,7 +174,7 @@ const PROGRAM_CATALOG: Program[] = [
       'Double progression: hit the top of the rep range for all sets, then add 2.5–5 lb next session. Most exercises use 3–4 sets of 8–12 reps.',
     deloads:
       'Schedule a light week (50% volume) every 8–10 weeks, or when fatigue prevents hitting rep targets on two consecutive sessions.',
-    cycles:
+    periodization:
       'Runs in open-ended blocks separated by deload weeks. Volume can be periodized: accumulation (high volume) → intensification (lower reps, higher load).',
     purposes: ['Hypertrophy', 'Bodybuilding'],
     goals: ['muscle-gain', 'body-composition'],
@@ -202,7 +202,7 @@ const PROGRAM_CATALOG: Program[] = [
       'Linear progression on main compound lifts (add weight each week). Accessory work uses double progression (reps, then load).',
     deloads:
       'Deload every 6–8 weeks. Cut volume by 40–50% while maintaining intensity; focus on technique and recovery.',
-    cycles:
+    periodization:
       'Typically run in 4–8 week blocks with distinct strength (lower reps) and hypertrophy (higher reps) phases.',
     purposes: ['Strength', 'Hypertrophy'],
     goals: ['strength', 'muscle-gain'],
@@ -221,15 +221,15 @@ const PROGRAM_CATALOG: Program[] = [
     experience: 'intermediate',
     meta: '4 days/week · Wave-loaded',
     description:
-      'Jim Wendler’s 4-week wave with a top set on each main lift, then assistance work. Conservative training maxes (90% of 1RM) drive long-term progress.',
+      'Jim Wendler’s program of 4-week “cycles” — three work weeks and a deload — with a top set on each main lift, then assistance work. Conservative training maxes (90% of 1RM) drive long-term progress.',
     weeks: 16,
     daysPerWeek: 4,
     progression:
-      'Training max increases by 5 lb for upper-body and 10 lb for lower-body after each 4-week cycle. Each week uses percentages of the training max: 65/75/85% → 70/80/90% → 75/85/95% → deload.',
+      'Wendler raises the training max by 5 lb for upper-body and 10 lb for lower-body lifts after each 4-week cycle. Each week uses percentages of the training max: 65/75/85% → 70/80/90% → 75/85/95% → deload. This app runs the three work weeks as a 3-week mesocycle, four times per 12-week macrocycle, and recalculates training maxes from your logged sets when the next macrocycle starts.',
     deloads:
-      'Week 4 of every cycle is a planned deload at 40/50/60% of training max. No reactive deloads needed — recovery is built into the wave.',
-    cycles:
-      'Runs in 4-week waves indefinitely. Most lifters run a main template for 6–12 months before needing a major reset.',
+      'In the original program, week 4 of every cycle is a planned deload at 40/50/60% of training max. This app does not schedule the deload week yet.',
+    periodization:
+      'Wendler’s 4-week cycles repeat indefinitely; most lifters run a main template for 6–12 months before needing a major reset. In this app one macrocycle is 12 weeks: four 3-week mesocycles.',
     purposes: ['Strength'],
     goals: ['strength'],
     lifts: ['Squat', 'Bench Press', 'Deadlift', 'Overhead Press'],
@@ -251,11 +251,11 @@ const PROGRAM_CATALOG: Program[] = [
     weeks: 16,
     daysPerWeek: 4,
     progression:
-      'Same 5/3/1 wave structure as the base program. BBB sets use a fixed percentage (50–70% TM) that can increase each cycle as strength improves.',
+      'Same 5/3/1 wave structure as the base program. BBB sets use a fixed percentage (50–70% TM) that can increase each 4-week cycle as strength improves.',
     deloads:
       'Week 4 planned deload covers the main sets. BBB sets drop to 5×5 at 50% TM during the deload week.',
-    cycles:
-      'Typically run for 2–3 cycles (8–12 weeks) before switching to an intensity-focused template like FSL or SSL, then returning to BBB.',
+    periodization:
+      'Typically run for 2–3 of Wendler’s 4-week cycles (8–12 weeks) before switching to an intensity-focused template like FSL or SSL, then returning to BBB.',
     purposes: ['Strength', 'Hypertrophy'],
     goals: ['strength', 'muscle-gain'],
     lifts: ['Squat', 'Bench Press', 'Deadlift', 'Overhead Press'],
@@ -277,10 +277,10 @@ const PROGRAM_CATALOG: Program[] = [
     weeks: 24,
     daysPerWeek: 4,
     progression:
-      'Leader cycles (2–3 per anchor) run at high volume and moderate intensity. Anchor cycles dial up intensity with PR sets. Training max increases after the full leader/anchor sequence.',
+      '“Leader” cycles (2–3 per anchor) run at high volume and moderate intensity. “Anchor” cycles dial up intensity with PR sets. Training max increases after the full leader/anchor sequence.',
     deloads:
       'No dedicated deload week — light days and the reduced intensity of leader weeks serve as active recovery. A full rest week after each anchor cycle is optional.',
-    cycles:
+    periodization:
       'Long-term structure: 2 leader cycles + 1 anchor cycle = one sequence (roughly 12 weeks). Training max is tested and reset after each sequence.',
     purposes: ['Strength'],
     goals: ['strength'],
@@ -306,7 +306,7 @@ const PROGRAM_CATALOG: Program[] = [
       'RPT rules: hit the top-set rep ceiling, add 2.5–5 lb next session. Stalled for 2 sessions? Deload 10% on that lift and reset.',
     deloads:
       'Reactive: deload after two consecutive stalls or when overall fatigue accumulates. Drop all working weights 10–15% and rebuild.',
-    cycles:
+    periodization:
       'Runs in open-ended blocks. Most practitioners alternate muscle-gain and fat-loss phases of 8–12 weeks, adjusting caloric intake to match.',
     purposes: ['Strength', 'Hypertrophy'],
     goals: ['strength', 'muscle-gain', 'fat-loss', 'body-composition'],
@@ -331,7 +331,7 @@ const PROGRAM_CATALOG: Program[] = [
       'Max-effort days: work up to a 1–3RM on a main movement, rotate the exercise every 1–3 weeks to avoid CNS adaptation. Dynamic-effort days: 8–12 sets of 2 at 50–60% with added bands or chains.',
     deloads:
       'Deload after 3 weeks of max-effort work: reduce to 70% of recent max-effort weight, cut dynamic sets to 6×2. Full deload week optional every 8–12 weeks.',
-    cycles:
+    periodization:
       'Three-week pendulum wave on dynamic-effort percentages (50% → 55% → 60%), then reset. Max-effort movement rotation is separate and ongoing.',
     purposes: ['Strength', 'Powerlifting'],
     goals: ['strength'],
@@ -357,7 +357,7 @@ const PROGRAM_CATALOG: Program[] = [
       'Prescribed percentages of your current 1RM. Base mesocycle: 4 sessions/week at increasing volume. Intense mesocycle: load increases 10–15 lb per week across 4 sessions.',
     deloads:
       'Switching phase (weeks 8–9) acts as a transition deload: reduced squatting volume, bench and other lifts, active recovery. No mid-cycle deloads — the program runs as written.',
-    cycles:
+    periodization:
       'Run once (13 weeks), take 1–2 weeks full rest, test a new 1RM. Most lifters run it only once per year due to the systemic stress.',
     purposes: ['Strength', 'Sports'],
     goals: ['strength'],
@@ -383,8 +383,8 @@ const PROGRAM_CATALOG: Program[] = [
       'Four waves across 4 months: 10s wave (accumulation), 8s wave, 5s wave, 3s wave (realization). Load increases each week within a wave; AMRAP sets guide progression.',
     deloads:
       'After each 4-week wave, a transition week at 60% volume and intensity before the next wave begins. Serves as a built-in deload between blocks.',
-    cycles:
-      'One full cycle = 16 weeks (4 waves × 4 weeks). After completing a cycle, retest 1RMs and begin the next cycle with updated percentages.',
+    periodization:
+      'One full “cycle” = 16 weeks (4 waves × 4 weeks) — a macrocycle of four mesocycles, in this app’s terms. After completing it, retest 1RMs and begin the next one with updated percentages.',
     purposes: ['Strength', 'Powerlifting'],
     goals: ['strength'],
     lifts: ['Squat', 'Bench Press', 'Deadlift', 'Overhead Press'],
@@ -409,7 +409,7 @@ const PROGRAM_CATALOG: Program[] = [
       'Uses 5/3/1 percentages with extended cycles: each wave progresses more slowly than standard 5/3/1, giving the body more time to adapt to each load bracket.',
     deloads:
       'Built-in deload weeks occur every 6 weeks (longer than standard 5/3/1’s 4-week wave). Supplemental volume drops significantly during deload.',
-    cycles:
+    periodization:
       'Designed as a 6-month program with progressive supplemental work phases. After completion, lifters typically test maxes and return to a simpler 5/3/1 template.',
     purposes: ['Strength'],
     goals: ['strength'],

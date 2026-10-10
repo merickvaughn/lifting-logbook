@@ -145,17 +145,17 @@ export interface BodyWeightEntry {
   unit: WeightUnit;
 }
 
-/** Week number within a training cycle (1-based). */
+/** Week number within a training macrocycle (1-based). */
 export type WeekNumber = number;
 
 /** Declares the character of a training week. */
 export type WeekType = 'training' | 'test' | 'deload';
 
 /**
- * Cycle number within a training program.
- * 1-indexed: the first cycle is cycle 1.
+ * Macrocycle number within a training program.
+ * 1-indexed: the first macrocycle is macrocycle 1.
  */
-export type CycleNumber = number;
+export type MacrocycleNumber = number;
 
 /** Strength classification tier relative to bodyweight-based standards. */
 export type StrengthTier = 'intermediate' | 'advanced' | 'elite';

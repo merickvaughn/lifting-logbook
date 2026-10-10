@@ -6,7 +6,7 @@ import {
 
 function record(overrides: Partial<Parameters<typeof liftRecordNaturalKey>[0]> = {}) {
   return {
-    cycleNum: 3,
+    macrocycleNum: 3,
     workoutNum: 2,
     date: new Date('2026-08-17'),
     lift: 'Bench Press',
@@ -63,7 +63,7 @@ describe('parseLiftRecordNaturalKey', () => {
     expect(parseLiftRecordNaturalKey('3:2:2026-08-17:Bench Press:1')).toBeNull();
   });
 
-  it('returns null for non-numeric cycleNum/workoutNum/setNum', () => {
+  it('returns null for non-numeric macrocycleNum/workoutNum/setNum', () => {
     expect(parseLiftRecordNaturalKey('x:2:20260817:Bench Press:1')).toBeNull();
   });
 

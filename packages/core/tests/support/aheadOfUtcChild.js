@@ -3,7 +3,7 @@
  * Plain-JS child-process worker for the "on a host ahead of UTC" regression
  * tests in dateParsing.aheadOfUtc.test.ts -- originally written for issue
  * #894 (parseLiftRecords / parseTrainingMaxes), extended for issue #899
- * (parseCycleDashboard / parseStrengthGoals): same bug class (bare
+ * (parseMacrocycleDashboard / parseStrengthGoals): same bug class (bare
  * `new Date(string)` on a non-ISO cell), same fix (parseDateStringUTC +
  * toUTCMidnight) at every call site, so one shared child process reports on
  * all four.

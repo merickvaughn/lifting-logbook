@@ -188,7 +188,7 @@ export default function ProgramEditor({
       try {
         const saved = await persist(specs);
         const result = await switchProgram(saved.id);
-        router.push(`/cycle/${result.cycleNum}`);
+        router.push(`/macrocycle/${result.macrocycleNum}`);
         router.refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to save or switch program.');

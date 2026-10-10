@@ -40,17 +40,17 @@ export default function SwitchProgramDialog({
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'confirm' | 'schedule-info'>('confirm');
-  const [cycleNum, setCycleNum] = useState<number | null>(null);
+  const [macrocycleNum, setMacrocycleNum] = useState<number | null>(null);
 
   function handleConfirm() {
     startTransition(async () => {
       try {
         const result = await switchProgram(programId);
         if (workoutSchedule) {
-          setCycleNum(result.cycleNum);
+          setMacrocycleNum(result.macrocycleNum);
           setStep('schedule-info');
         } else {
-          router.push(`/cycle/${result.cycleNum}`);
+          router.push(`/macrocycle/${result.macrocycleNum}`);
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to switch program.');
@@ -58,15 +58,15 @@ export default function SwitchProgramDialog({
     });
   }
 
-  function handleGoToCycle() {
-    if (cycleNum !== null) {
-      router.push(`/cycle/${cycleNum}`);
+  function handleGoToMacrocycle() {
+    if (macrocycleNum !== null) {
+      router.push(`/macrocycle/${macrocycleNum}`);
     }
   }
 
   function handleClose() {
     setStep('confirm');
-    setCycleNum(null);
+    setMacrocycleNum(null);
     setError(null);
     onClose();
   }
@@ -85,7 +85,7 @@ export default function SwitchProgramDialog({
       onKeyDown={(e) => { if (e.key === 'Escape' && !isPending) handleClose(); }}
     >
       <div className={styles.dialog}>
-        {step === 'schedule-info' && workoutSchedule && cycleNum !== null ? (
+        {step === 'schedule-info' && workoutSchedule && macrocycleNum !== null ? (
           <>
             <p className={styles.dialogTitle}>Schedule applied to {programName}</p>
             <div className={styles.scheduleInfoBody}>
@@ -106,9 +106,9 @@ export default function SwitchProgramDialog({
               <button
                 type="button"
                 className={styles.btnPrimary}
-                onClick={handleGoToCycle}
+                onClick={handleGoToMacrocycle}
               >
-                Go to Cycle
+                Go to Macrocycle
               </button>
             </div>
           </>

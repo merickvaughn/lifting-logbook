@@ -8,7 +8,7 @@ const BASE_ROW = {
   id: 'row-id-1',
   userId: 'user-1',
   program: '5-3-1',
-  cycleNum: 2,
+  macrocycleNum: 2,
   workoutNum: 3,
   date: new Date('2026-04-01T00:00:00.000Z'),
   lift: 'Bench Press',
@@ -21,7 +21,7 @@ const BASE_ROW = {
 function liftRecord(overrides: Partial<LiftRecord> = {}): LiftRecord {
   return {
     program: '5-3-1',
-    cycleNum: 2,
+    macrocycleNum: 2,
     workoutNum: 3,
     date: new Date('2026-04-01T00:00:00.000Z'),
     lift: 'Bench Press',
@@ -59,10 +59,10 @@ describe('PrismaLiftRecordRepository', () => {
       expect(prisma.liftRecord.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            userId_program_cycleNum_workoutNum_date_lift_setNum: {
+            userId_program_macrocycleNum_workoutNum_date_lift_setNum: {
               userId: 'user-1',
               program: '5-3-1',
-              cycleNum: 2,
+              macrocycleNum: 2,
               workoutNum: 3,
               date: new Date('2026-04-01T00:00:00.000Z'),
               lift: 'Bench Press',
@@ -85,7 +85,7 @@ describe('PrismaLiftRecordRepository', () => {
       expect(prisma.liftRecord.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            userId_program_cycleNum_workoutNum_date_lift_setNum: expect.objectContaining({
+            userId_program_macrocycleNum_workoutNum_date_lift_setNum: expect.objectContaining({
               date: new Date('2026-04-01T00:00:00.000Z'),
               lift: 'Chin-up',
               setNum: 2,
@@ -108,7 +108,7 @@ describe('PrismaLiftRecordRepository', () => {
       expect(prisma.liftRecord.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            userId_program_cycleNum_workoutNum_date_lift_setNum: expect.objectContaining({
+            userId_program_macrocycleNum_workoutNum_date_lift_setNum: expect.objectContaining({
               date: new Date('2026-04-01T00:00:00.000Z'),
               lift: 'Romanian Dead-lift',
               setNum: 3,
@@ -213,7 +213,7 @@ describe('PrismaLiftRecordRepository', () => {
           where: expect.objectContaining({
             OR: [
               expect.objectContaining({
-                cycleNum: 2,
+                macrocycleNum: 2,
                 workoutNum: 3,
                 date: new Date('2026-04-01T00:00:00.000Z'),
                 lift: 'Bench Press',
@@ -261,7 +261,7 @@ describe('PrismaLiftRecordRepository', () => {
           where: expect.objectContaining({
             OR: [
               expect.objectContaining({
-                cycleNum: 2,
+                macrocycleNum: 2,
                 workoutNum: 3,
                 date: new Date('2026-04-01T00:00:00.000Z'),
                 lift: 'Bench Press',
@@ -289,7 +289,7 @@ describe('PrismaLiftRecordRepository', () => {
       expect(prisma.liftRecord.deleteMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            OR: [{ cycleNum: 2, workoutNum: 3, lift: 'Bench Press', setNum: 1 }],
+            OR: [{ macrocycleNum: 2, workoutNum: 3, lift: 'Bench Press', setNum: 1 }],
           }),
         }),
       );

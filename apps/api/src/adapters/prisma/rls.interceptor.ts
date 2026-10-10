@@ -106,7 +106,7 @@ export class RlsInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    // `@SkipRlsTransaction()` handlers opt out of the per-request transaction (e.g. cycle-plan,
+    // `@SkipRlsTransaction()` handlers opt out of the per-request transaction (e.g. macrocycle-plan,
     // which calls an LLM between DB reads). The userId is stashed in CLS so RlsContextService can
     // open a short-lived transaction per DB operation instead of pinning a connection for the
     // whole request. See issue #518.

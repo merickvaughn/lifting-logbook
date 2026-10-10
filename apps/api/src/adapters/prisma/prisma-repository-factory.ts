@@ -7,8 +7,8 @@ import { PrismaService } from './prisma.service';
 import { RLS_TX_CLIENT } from './rls-context';
 import { PrismaBodyWeightRepository } from './body-weight.repository';
 import { PrismaCustomLiftRepository } from './custom-lift.repository';
-import { PrismaCycleDashboardRepository } from './cycle-dashboard.repository';
-import { PrismaCycleScheduledWorkoutRepository } from './cycle-scheduled-workout.repository';
+import { PrismaMacrocycleDashboardRepository } from './macrocycle-dashboard.repository';
+import { PrismaMacrocycleScheduledWorkoutRepository } from './macrocycle-scheduled-workout.repository';
 import { PrismaImportBatchRepository } from './import-batch.repository';
 import { PrismaLiftMetadataRepository } from './lift-metadata.repository';
 import { PrismaLiftRecordRepository } from './lift-record.repository';
@@ -55,8 +55,8 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
     return {
       bodyWeight: new PrismaBodyWeightRepository(db, user.id),
       customLift: new PrismaCustomLiftRepository(db, user.id),
-      cycleDashboard: new PrismaCycleDashboardRepository(db, user.id),
-      cycleScheduledWorkout: new PrismaCycleScheduledWorkoutRepository(db, user.id),
+      macrocycleDashboard: new PrismaMacrocycleDashboardRepository(db, user.id),
+      macrocycleScheduledWorkout: new PrismaMacrocycleScheduledWorkoutRepository(db, user.id),
       importBatch: new PrismaImportBatchRepository(db, user.id),
       liftMetadata: new PrismaLiftMetadataRepository(db, user.id),
       liftRecord: new PrismaLiftRecordRepository(db, user.id),

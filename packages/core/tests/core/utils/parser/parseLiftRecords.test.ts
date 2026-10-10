@@ -8,9 +8,20 @@ describe("parseLiftRecords", () => {
     expect(Array.isArray(records)).toBe(true);
     expect(records.length).toBeGreaterThan(0);
     expect(records[0]!).toHaveProperty("program");
-    expect(records[0]!).toHaveProperty("cycleNum");
+    expect(records[0]!).toHaveProperty("macrocycleNum");
     expect(records[0]!).toHaveProperty("workoutNum");
     expect(records[0]!).toHaveProperty("setNum");
+  });
+
+  // #1038: the column was renamed "Macrocycle #"; files exported earlier still
+  // carry "Cycle #" and must keep importing.
+  it.each(["Macrocycle #", "Cycle #"])("reads the macrocycle number from a %s column", (header) => {
+    const data = [
+      ["Program", header, "Workout #", "Date", "Lift", "Set #", "Weight", "Reps", "Notes"],
+      ["5-3-1", "3", "1", "2025-12-16", "Bench P.", "1", "180", "5", ""],
+    ];
+    const [record] = parseLiftRecords(data);
+    expect(record?.macrocycleNum).toBe(3);
   });
 
   // Regression for issue #884: LiftRecord.date now joins the natural key,

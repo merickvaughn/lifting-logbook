@@ -5,7 +5,7 @@ import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { PrismaService } from '../adapters/prisma/prisma.service';
-import { CycleGenerationService } from './cycle-generation.service';
+import { MacrocycleGenerationService } from './macrocycle-generation.service';
 import { ParseProgramPipe } from './program.pipe';
 import { ProgramNotFoundError } from '../ports/errors';
 
@@ -15,7 +15,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 @Controller('programs/:program')
 export class SwitchProgramController {
   constructor(
-    private readonly cycleGenerationService: CycleGenerationService,
+    private readonly macrocycleGenerationService: MacrocycleGenerationService,
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
     @Inject(PrismaService) private readonly prisma: PrismaService | null,
   ) {}
@@ -45,20 +45,20 @@ export class SwitchProgramController {
       if (!owned) throw new ForbiddenException('Program not found');
     }
 
-    // Ensure a CycleDashboard exists for this program; create if not.
-    // Order is intentional: cycle init runs first so that if the settings write
+    // Ensure a MacrocycleDashboard exists for this program; create if not.
+    // Order is intentional: macrocycle init runs first so that if the settings write
     // fails the dashboard exists but is not yet referenced — a retry will skip
     // init and succeed at the settings write. The inverse (settings written,
-    // init failed) would leave the user's active program pointing at a cycle
+    // init failed) would leave the user's active program pointing at a macrocycle
     // that doesn't exist yet, which is a harder state to recover from.
-    let cycleNum = 1;
+    let macrocycleNum = 1;
     try {
-      const existing = await repos.cycleDashboard.getCycleDashboard(program);
-      cycleNum = existing.cycleNum;
+      const existing = await repos.macrocycleDashboard.getMacrocycleDashboard(program);
+      macrocycleNum = existing.macrocycleNum;
     } catch (e) {
       if (e instanceof ProgramNotFoundError) {
-        const { dashboard } = await this.cycleGenerationService.initializeFirstCycle(repos, program);
-        cycleNum = dashboard.cycleNum;
+        const { dashboard } = await this.macrocycleGenerationService.initializeFirstMacrocycle(repos, program);
+        macrocycleNum = dashboard.macrocycleNum;
       } else {
         throw e;
       }
@@ -66,6 +66,6 @@ export class SwitchProgramController {
 
     await repos.userSettings.upsertSettings({ activeProgram: program });
 
-    return { activeProgram: program, cycleNum };
+    return { activeProgram: program, macrocycleNum };
   }
 }

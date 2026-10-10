@@ -4,7 +4,7 @@ import * as path from "node:path";
 /**
  * Regression tests for a host genuinely ahead of UTC -- originally issue
  * #894 (parseLiftRecords / parseTrainingMaxes), extended for issue #899
- * (parseCycleDashboard / parseStrengthGoals): same bug class (bare
+ * (parseMacrocycleDashboard / parseStrengthGoals): same bug class (bare
  * `new Date(string)` on a non-ISO cell), same fix (parseDateStringUTC +
  * toUTCMidnight) at every call site.
  *
@@ -90,7 +90,7 @@ describe("parseStrengthGoals on a host ahead of UTC (issue #899)", () => {
     // "6/9/2026" to the PREVIOUS UTC calendar day at a non-midnight hour.
     // Confirmed live during development of this test by running this exact
     // script against the pre-fix source.
-    // (`parseCycleDashboard`'s "1/5/2026" case moved to the archive with the parser — #979.)
+    // (`parseMacrocycleDashboard`'s "1/5/2026" case moved to the archive with the parser — #979.)
     expect(parsed.strengthGoalUpdatedAt).toEqual({ year: 2026, month: 5, date: 9, hours: 0 });
   });
 });
