@@ -5,6 +5,17 @@ import { useEffect } from 'react';
 /** Attribute the stylesheet keys the highlighted entry on (`[data-targeted]`). */
 export const TARGETED_ATTR = 'data-targeted';
 
+/** The element id a URL hash names; '' when absent or not valid percent-encoding. */
+function decodeHash(hash: string): string {
+  try {
+    return decodeURIComponent(hash.slice(1));
+  } catch {
+    // A malformed escape (`#%E0`) names no glossary entry; highlight nothing
+    // rather than throw out of the effect. Covered by page.test.tsx.
+    return '';
+  }
+}
+
 /**
  * Marks the glossary entry named by the URL hash so it can be highlighted.
  *
@@ -21,7 +32,7 @@ export default function TargetHighlight() {
       for (const el of document.querySelectorAll(`[${TARGETED_ATTR}]`)) {
         el.removeAttribute(TARGETED_ATTR);
       }
-      const id = decodeURIComponent(window.location.hash.slice(1));
+      const id = decodeHash(window.location.hash);
       if (id) document.getElementById(id)?.setAttribute(TARGETED_ATTR, 'true');
     };
     apply();

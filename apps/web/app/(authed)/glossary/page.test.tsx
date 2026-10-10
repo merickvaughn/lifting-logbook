@@ -53,6 +53,13 @@ describe('Glossary page', () => {
     expect(container.querySelector('#mesocycle')).not.toHaveAttribute('data-targeted');
   });
 
+  it('ignores a malformed hash instead of throwing', () => {
+    window.history.pushState(null, '', '/glossary#%E0');
+    const { container } = render(<GlossaryPage />);
+    expect(container.querySelectorAll('[data-targeted]')).toHaveLength(0);
+    expect(screen.getByRole('heading', { level: 1, name: 'Glossary' })).toBeInTheDocument();
+  });
+
   it('marks nothing without a hash', () => {
     const { container } = render(<GlossaryPage />);
     expect(container.querySelectorAll('[data-targeted]')).toHaveLength(0);
