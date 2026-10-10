@@ -1,0 +1,75 @@
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.title {
+  margin: 0 0 1rem;
+  color: var(--color-text-heading);
+}
+
+.section {
+  margin-top: 2rem;
+}
+
+.sectionHeading {
+  margin: 0 0 0.5rem;
+  color: var(--color-text-heading);
+  font-size: 1.2rem;
+}
+
+.intro {
+  margin: 0 0 1rem;
+  color: var(--color-text-muted);
+}
+
+.terms {
+  margin: 0;
+}
+
+.entry {
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--color-border);
+  /* Keep an anchored entry clear of the sticky app header. */
+  scroll-margin-top: 5rem;
+}
+
+/* :target covers a direct load; [data-targeted] covers a soft navigation
+   (see TargetHighlight.tsx — pushState does not update :target). */
+.entry:target,
+.entry[data-targeted] {
+  background: var(--color-accent-soft);
+  border-radius: 6px;
+  padding-inline: 0.75rem;
+}
+
+.term {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.aka {
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.definition {
+  margin: 0.35rem 0 0;
+}
+
+.definition p {
+  margin: 0 0 0.35rem;
+}
+
+.otherHeading {
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.otherList {
+  margin: 0;
+  padding-left: 1.25rem;
+  list-style: disc;
+  font-size: 0.95rem;
+}

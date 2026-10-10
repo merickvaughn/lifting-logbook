@@ -44,7 +44,7 @@
   background: var(--color-accent-hover);
 }
 
-/* Escape link back to the cycle — de-emphasised relative to the section tabs. */
+/* Escape link back to the macrocycle — de-emphasised relative to the section tabs. */
 .backLink {
   display: inline-flex;
   align-items: center;

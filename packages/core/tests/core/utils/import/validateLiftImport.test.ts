@@ -11,7 +11,7 @@ const TEST_SLOT_MAP: Readonly<Record<string, string>> = {
 function makeRecord(overrides: Partial<LiftRecord> = {}): LiftRecord {
   return {
     program: "RPT",
-    cycleNum: 1,
+    macrocycleNum: 1,
     workoutNum: 1,
     date: new Date("2025-01-01"),
     lift: "Squat" as LiftRecord["lift"],
@@ -86,15 +86,15 @@ describe("validateLiftImport", () => {
     expect(errors[0]).toMatchObject({ row: 1, field: "date", code: "DATE_INVALID" });
   });
 
-  it("assigns a distinct code per invalid numeric field (cycleNum, workoutNum, setNum)", () => {
+  it("assigns a distinct code per invalid numeric field (macrocycleNum, workoutNum, setNum)", () => {
     const records = [
-      makeRecord({ cycleNum: NaN }),
+      makeRecord({ macrocycleNum: NaN }),
       makeRecord({ workoutNum: NaN }),
       makeRecord({ setNum: NaN }),
     ];
     const { errors } = validateLiftImport(records, TEST_SLOT_MAP);
     expect(errors).toMatchObject([
-      { row: 1, field: "cycleNum", code: "CYCLE_NUM_INVALID" },
+      { row: 1, field: "macrocycleNum", code: "MACROCYCLE_NUM_INVALID" },
       { row: 2, field: "workoutNum", code: "WORKOUT_NUM_INVALID" },
       { row: 3, field: "setNum", code: "SET_NUM_INVALID" },
     ]);

@@ -1,5 +1,5 @@
 import {
-  CycleDashboard,
+  MacrocycleDashboard,
   LiftRecord,
   LiftingProgramSpec,
   PlannedLift,
@@ -13,9 +13,9 @@ import {
   programWorkoutKeys,
 } from '@lifting-logbook/core';
 import {
-  CycleDashboardResponse,
-  CyclePlanResponse,
-  CycleWeekSummary,
+  MacrocycleDashboardResponse,
+  MacrocyclePlanResponse,
+  MacrocycleWeekSummary,
   LiftOverrideResponse,
   LiftRecordResponse,
   LiftingProgramSpecResponse,
@@ -29,8 +29,8 @@ import {
   WorkoutResponse,
   WorkoutSummary,
 } from '@lifting-logbook/types';
-import { CyclePlanResult } from '../ports/ICyclePlanningAgent';
-import { ScheduledWorkout } from '../ports/ICycleScheduledWorkoutRepository';
+import { MacrocyclePlanResult } from '../ports/IMacrocyclePlanningAgent';
+import { ScheduledWorkout } from '../ports/IMacrocycleScheduledWorkoutRepository';
 import { LiftOverride } from '../ports/IWorkoutLiftOverrideRepository';
 
 // All API date fields are emitted as `YYYY-MM-DD` in UTC. Domain `Date`
@@ -70,7 +70,7 @@ export const toTrainingMaxHistoryEntryResponse = (
 export const toLiftRecordResponse = (r: LiftRecord): LiftRecordResponse => ({
   id: buildLiftRecordId(r.program, r),
   program: r.program,
-  cycleNum: r.cycleNum,
+  macrocycleNum: r.macrocycleNum,
   workoutNum: r.workoutNum,
   date: isoDate(r.date),
   lift: r.lift,
@@ -97,23 +97,23 @@ export const toLiftingProgramSpecResponse = (
 });
 
 /**
- * Maps a CycleDashboard to a CycleDashboardResponse with no schedule data.
+ * Maps a MacrocycleDashboard to a MacrocycleDashboardResponse with no schedule data.
  * Used when no scheduled workouts exist (no-schedule mode).
  *
  * `currentWeekType` is passed explicitly because it is derived at request time
- * via `weekTypeForDate(dashboard.cycleDate, programSpec)`, not stored on the
+ * via `weekTypeForDate(dashboard.macrocycleDate, programSpec)`, not stored on the
  * dashboard model.
  */
-export const toCycleDashboardResponse = (
-  d: CycleDashboard,
+export const toMacrocycleDashboardResponse = (
+  d: MacrocycleDashboard,
   currentWeekType: WeekType,
   dateOverrides: Record<number, string> = {},
   skippedWorkoutNums: number[] = [],
   completedWorkoutNums: number[] = [],
-): CycleDashboardResponse => ({
+): MacrocycleDashboardResponse => ({
   program: d.program,
-  cycleNum: d.cycleNum,
-  cycleStartDate: isoDate(d.cycleDate),
+  macrocycleNum: d.macrocycleNum,
+  macrocycleStartDate: isoDate(d.macrocycleDate),
   weeks: [],
   currentWeekType,
   dateOverrides,
@@ -122,18 +122,18 @@ export const toCycleDashboardResponse = (
 });
 
 /**
- * What {@link buildCycleDashboardResponse} builds a response from besides the
+ * What {@link buildMacrocycleDashboardResponse} builds a response from besides the
  * dashboard row. Named rather than positional, like {@link WorkoutResponseOptions}
  * (#750), so the collections can't be transposed at the call site.
  */
-export interface CycleDashboardInputs {
+export interface MacrocycleDashboardInputs {
   /**
-   * The program's stored spec. The cycle's workouts are numbered from it inside the
+   * The program's stored spec. The macrocycle's workouts are numbered from it inside the
    * builder (`programWorkoutKeys(d.program, spec)`), so a caller can't hand it some
    * other numbering (#1023).
    */
   spec: ReadonlyArray<{ week: WeekNumber; offset: number }>;
-  /** The cycle's scheduled rows; empty in no-schedule mode. */
+  /** The macrocycle's scheduled rows; empty in no-schedule mode. */
   scheduled: readonly ScheduledWorkout[];
   /** Rescheduled dates, by `workoutNum`. */
   overrides: ReadonlyMap<number, Date>;
@@ -144,28 +144,28 @@ export interface CycleDashboardInputs {
 }
 
 /**
- * Builds a CycleDashboardResponse. The per-workout metadata covers the whole cycle
+ * Builds a MacrocycleDashboardResponse. The per-workout metadata covers the whole macrocycle
  * in both modes; `weeks` is empty with no schedule.
  *
  * With a schedule, `weeks` lists every workout of the program under its program
- * week. Workouts are numbered by `programWorkoutKeys`, as in the Cycle Dashboard
+ * week. Workouts are numbered by `programWorkoutKeys`, as in the Macrocycle Dashboard
  * grid and the workout endpoint, and the week is also the one the plan page's
  * phases count. Each workout is dated by its override, else the date its schedule
  * gave it, else the spec-relative date the grid and the endpoint give a day with no
- * scheduled row; cycles scheduled before #1023 with fewer days a week than their
+ * scheduled row; macrocycles scheduled before #1023 with fewer days a week than their
  * program have such days. A scheduled row supplies only a date, never a week:
  * rows saved before #1023 carry the schedule's calendar week, and a row past the
  * program's last day dates no workout, so it is left out. A week is completed when
  * every workout in it has at least one lift record or is explicitly skipped.
  */
-export function buildCycleDashboardResponse(
-  d: CycleDashboard,
+export function buildMacrocycleDashboardResponse(
+  d: MacrocycleDashboard,
   currentWeekType: WeekType,
-  inputs: CycleDashboardInputs,
-): CycleDashboardResponse {
+  inputs: MacrocycleDashboardInputs,
+): MacrocycleDashboardResponse {
   const { spec, scheduled, overrides, completedWorkoutNums, skippedNums = new Set<number>() } = inputs;
-  // Per-workout metadata for the whole cycle, surfaced top-level so the Cycle
-  // Dashboard can render every tiled workout's status without a per-workout fetch
+  // Per-workout metadata for the whole macrocycle, surfaced top-level so the macrocycle
+  // dashboard can render every tiled workout's status without a per-workout fetch
   // (issue #740). Populated identically in both modes; only `weeks` differs.
   const dateOverrides: Record<number, string> = {};
   for (const [workoutNum, date] of overrides) {
@@ -175,7 +175,7 @@ export function buildCycleDashboardResponse(
   const completedList = [...completedWorkoutNums].sort((a, b) => a - b);
 
   if (scheduled.length === 0) {
-    return toCycleDashboardResponse(
+    return toMacrocycleDashboardResponse(
       d,
       currentWeekType,
       dateOverrides,
@@ -195,13 +195,13 @@ export function buildCycleDashboardResponse(
     const date =
       overrides.get(workoutNum) ??
       scheduledDates.get(workoutNum) ??
-      noScheduleWorkoutDateUTC(d.cycleDate, week, offset);
+      noScheduleWorkoutDateUTC(d.macrocycleDate, week, offset);
     const workouts = weekAcc.get(week) ?? [];
     workouts.push({ workoutNum, date: isoDate(date), skipped: skippedNums.has(workoutNum) });
     weekAcc.set(week, workouts);
   });
 
-  const weeks: CycleWeekSummary[] = [...weekAcc].map(([week, workouts]) => ({
+  const weeks: MacrocycleWeekSummary[] = [...weekAcc].map(([week, workouts]) => ({
     week,
     workouts,
     completed: workouts.every(
@@ -211,8 +211,8 @@ export function buildCycleDashboardResponse(
 
   return {
     program: d.program,
-    cycleNum: d.cycleNum,
-    cycleStartDate: isoDate(d.cycleDate),
+    macrocycleNum: d.macrocycleNum,
+    macrocycleStartDate: isoDate(d.macrocycleDate),
     weeks,
     currentWeekType,
     dateOverrides,
@@ -222,11 +222,11 @@ export function buildCycleDashboardResponse(
 }
 
 /**
- * How a cycle's scheduled rows line up with its program's days (#1023): the rows
+ * How a macrocycle's scheduled rows line up with its program's days (#1023): the rows
  * past the program's last day, which date no workout and which the dashboard leaves
- * out, and how many program days have no row and are dated spec-relatively. A cycle
- * scheduled since #1023 has neither, so either one marks a cycle scheduled before
- * it, or a program whose days changed mid-cycle.
+ * out, and how many program days have no row and are dated spec-relatively. A macrocycle
+ * scheduled since #1023 has neither, so either one marks a macrocycle scheduled before
+ * it, or a program whose days changed mid-macrocycle.
  */
 export function scheduleCoverage(
   program: string,
@@ -245,7 +245,7 @@ export function scheduleCoverage(
   };
 }
 
-export const toCyclePlanResponse = (r: CyclePlanResult): CyclePlanResponse => ({
+export const toMacrocyclePlanResponse = (r: MacrocyclePlanResult): MacrocyclePlanResponse => ({
   proposedChanges: r.proposedChanges.map((c) => ({
     lift: c.lift,
     currentWeight: c.currentWeight,
@@ -271,7 +271,7 @@ export const isValidWorkoutNum = (n: number): boolean =>
  * `workoutNum` exceeds the program's canonical length. The stored spec is one
  * repeating block, so {@link programWorkoutKeys} first tiles it to the program's
  * canonical length; the `workoutNum` then indexes the ordered `(week, offset)`
- * workout days — the *same* numbering the web Cycle Dashboard grid
+ * workout days — the *same* numbering the web Macrocycle Dashboard grid
  * (`buildWorkoutDays`) and schedule generation use, so a card and the workout it
  * opens can never disagree on week, offset, or the spec-relative date derived from
  * them (issues #740, #745), in either mode (#1023). `program` defaults to the
@@ -287,13 +287,13 @@ export const workoutKeyForWorkoutNum = (
 /**
  * Optional inputs to {@link toWorkoutResponse}. Collapsed into an options object
  * (issue #750) so call sites pass them by name — the two adjacent `Date` fields
- * (`scheduledDate`, `cycleStartDate`) can no longer be transposed without a
+ * (`scheduledDate`, `macrocycleStartDate`) can no longer be transposed without a
  * TypeScript error, the silent-wrong-date failure mode #749 fixed.
  */
 export interface WorkoutResponseOptions {
   // Each field is `T | undefined` (not just `T?`): the pre-#750 positional params
   // these replace all accepted `undefined`, and the controller passes values that
-  // may be undefined (`overrideDate ?? undefined`, `scheduledDate`, `cycleStartDate`,
+  // may be undefined (`overrideDate ?? undefined`, `scheduledDate`, `macrocycleStartDate`,
   // `workoutKey?.offset`). Required under this workspace's `exactOptionalPropertyTypes`.
   /** User override date for the workout; surfaced as `overrideDate` on the response. */
   overrideDate?: Date | undefined;
@@ -303,8 +303,8 @@ export interface WorkoutResponseOptions {
   scheduledDate?: Date | undefined;
   /** Whether the workout is explicitly skipped. */
   skipped?: boolean | undefined;
-  /** Cycle start date; anchors the no-schedule spec-relative date. */
-  cycleStartDate?: Date | undefined;
+  /** Macrocycle start date; anchors the no-schedule spec-relative date. */
+  macrocycleStartDate?: Date | undefined;
   /**
    * This workout's `(week, offset)` key offset; feeds the no-schedule date and is
    * emitted as `WorkoutResponse.offset`, so a client can resolve the day's spec
@@ -336,17 +336,17 @@ export interface WorkoutResponseOptions {
  *
  * The response `date` is the first logged record's date, else `scheduledDate`
  * (schedule mode), else — for a no-schedule unlogged workout — the spec-relative
- * date `cycleStart + (week-1)*7 + offset` derived from `cycleStartDate` + `offset`
+ * date `macrocycleStart + (week-1)*7 + offset` derived from `macrocycleStartDate` + `offset`
  * (this workout's `(week, offset)` key offset, from `workoutKeyForWorkoutNum`) via
- * the shared {@link noScheduleWorkoutDateUTC}. That is the SAME date the Cycle
+ * the shared {@link noScheduleWorkoutDateUTC}. That is the SAME date the Macrocycle
  * Dashboard card shows (`buildWorkoutDays` calls the same helper), so the card and
- * this detail page can never diverge (issue #745). Omitting `cycleStartDate` /
- * `offset` falls back to today only as a defensive last resort (e.g. no cycle
+ * this detail page can never diverge (issue #745). Omitting `macrocycleStartDate` /
+ * `offset` falls back to today only as a defensive last resort (e.g. no macrocycle
  * dashboard), which is what the pre-#745 code always did in no-schedule mode.
  */
 export const toWorkoutResponse = (
   program: string,
-  cycleNum: number,
+  macrocycleNum: number,
   workoutNum: number,
   week: WeekNumber,
   records: LiftRecord[],
@@ -357,7 +357,7 @@ export const toWorkoutResponse = (
     plannedLifts,
     scheduledDate,
     skipped = false,
-    cycleStartDate,
+    macrocycleStartDate,
     offset,
     renamedLifts,
   } = options;
@@ -406,12 +406,12 @@ export const toWorkoutResponse = (
     ? isoDate(records[0].date)
     : scheduledDate
       ? isoDate(scheduledDate)
-      : cycleStartDate !== undefined && typeof offset === 'number'
-        ? isoDate(noScheduleWorkoutDateUTC(cycleStartDate, week, offset))
+      : macrocycleStartDate !== undefined && typeof offset === 'number'
+        ? isoDate(noScheduleWorkoutDateUTC(macrocycleStartDate, week, offset))
         : isoDate(new Date());
   return {
     program,
-    cycleNum,
+    macrocycleNum,
     workoutNum,
     week,
     ...(offset !== undefined && { offset }),

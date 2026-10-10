@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { LIFT_NAMES } from '@lifting-logbook/types';
-import { ICycleDashboardRepository } from '../ports/ICycleDashboardRepository';
+import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
 import { ILiftingProgramSpecRepository } from '../ports/ILiftingProgramSpecRepository';
 import { IWorkoutLiftOverrideRepository } from '../ports/IWorkoutLiftOverrideRepository';
 import { IRepositoryFactory } from '../ports/factory';
@@ -21,8 +21,8 @@ describe('ManageLiftsController', () => {
   let liftOverrideRepoB: jest.Mocked<IWorkoutLiftOverrideRepository>;
   let specRepoA: jest.Mocked<ILiftingProgramSpecRepository>;
   let specRepoB: jest.Mocked<ILiftingProgramSpecRepository>;
-  let dashboardRepoA: jest.Mocked<ICycleDashboardRepository>;
-  let dashboardRepoB: jest.Mocked<ICycleDashboardRepository>;
+  let dashboardRepoA: jest.Mocked<IMacrocycleDashboardRepository>;
+  let dashboardRepoB: jest.Mocked<IMacrocycleDashboardRepository>;
   let factory: jest.Mocked<IRepositoryFactory>;
 
   beforeEach(async () => {
@@ -38,14 +38,14 @@ describe('ManageLiftsController', () => {
     };
     specRepoA = { getProgramSpec: jest.fn().mockResolvedValue(STUB_SPEC), saveProgramSpec: jest.fn(), deleteSpecRows: jest.fn() } as jest.Mocked<ILiftingProgramSpecRepository>;
     specRepoB = { getProgramSpec: jest.fn().mockResolvedValue(STUB_SPEC), saveProgramSpec: jest.fn(), deleteSpecRows: jest.fn() } as jest.Mocked<ILiftingProgramSpecRepository>;
-    dashboardRepoA = { getCycleDashboard: jest.fn().mockResolvedValue({}), saveCycleDashboard: jest.fn() } as unknown as jest.Mocked<ICycleDashboardRepository>;
-    dashboardRepoB = { getCycleDashboard: jest.fn().mockResolvedValue({}), saveCycleDashboard: jest.fn() } as unknown as jest.Mocked<ICycleDashboardRepository>;
+    dashboardRepoA = { getMacrocycleDashboard: jest.fn().mockResolvedValue({}), saveMacrocycleDashboard: jest.fn() } as unknown as jest.Mocked<IMacrocycleDashboardRepository>;
+    dashboardRepoB = { getMacrocycleDashboard: jest.fn().mockResolvedValue({}), saveMacrocycleDashboard: jest.fn() } as unknown as jest.Mocked<IMacrocycleDashboardRepository>;
     const customLiftRepo = { list: jest.fn().mockResolvedValue([]) };
     factory = {
       forUser: jest.fn().mockImplementation(async (user) =>
         user.id === MOCK_USER_A.id
-          ? { cycleDashboard: dashboardRepoA, workoutLiftOverride: liftOverrideRepoA, liftingProgramSpec: specRepoA, customLift: customLiftRepo }
-          : { cycleDashboard: dashboardRepoB, workoutLiftOverride: liftOverrideRepoB, liftingProgramSpec: specRepoB, customLift: customLiftRepo },
+          ? { macrocycleDashboard: dashboardRepoA, workoutLiftOverride: liftOverrideRepoA, liftingProgramSpec: specRepoA, customLift: customLiftRepo }
+          : { macrocycleDashboard: dashboardRepoB, workoutLiftOverride: liftOverrideRepoB, liftingProgramSpec: specRepoB, customLift: customLiftRepo },
       ),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -102,8 +102,8 @@ describe('ManageLiftsController', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('propagates ProgramNotFoundError when cycle dashboard is missing', async () => {
-      dashboardRepoA.getCycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
+    it('propagates ProgramNotFoundError when macrocycle dashboard is missing', async () => {
+      dashboardRepoA.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
 
       await expect(
         controller.upsertOverride('5-3-1', '3', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A),
@@ -111,7 +111,7 @@ describe('ManageLiftsController', () => {
       expect(liftOverrideRepoA.upsertOverride).not.toHaveBeenCalled();
     });
 
-    it('throws 400 for invalid cycleNum', async () => {
+    it('throws 400 for invalid macrocycleNum', async () => {
       await expect(
         controller.upsertOverride('5-3-1', '0', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A),
       ).rejects.toBeInstanceOf(BadRequestException);

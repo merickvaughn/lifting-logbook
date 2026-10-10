@@ -10,10 +10,10 @@ type Props = {
   method: DiscoveryMethod;
   onConfirm: () => void;
   isPending: boolean;
-  cycleError?: string | null;
+  macrocycleError?: string | null;
 };
 
-export function StepConfirm({ maxes, method, onConfirm, isPending, cycleError }: Props) {
+export function StepConfirm({ maxes, method, onConfirm, isPending, macrocycleError }: Props) {
   // For `tm`/`import` the value is already the training max, so there is no 1RM
   // to show and no 90% derivation; the other methods display the 1RM with the
   // derived training max alongside it.
@@ -62,8 +62,8 @@ export function StepConfirm({ maxes, method, onConfirm, isPending, cycleError }:
           {isPending ? 'Starting…' : 'Start My Program'}
         </button>
       </div>
-      {cycleError && (
-        <p className={styles.errorNote} role="alert">{cycleError}</p>
+      {macrocycleError && (
+        <p className={styles.errorNote} role="alert">{macrocycleError}</p>
       )}
     </>
   );

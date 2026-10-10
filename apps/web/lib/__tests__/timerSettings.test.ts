@@ -10,7 +10,7 @@ import {
   saveTimerSettings,
 } from '../timerSettings';
 
-const WORKOUT: TimerWorkoutKey = { program: '531', cycleNum: 1, workoutNum: 3 };
+const WORKOUT: TimerWorkoutKey = { program: '531', macrocycleNum: 1, workoutNum: 3 };
 
 function makeRun(overrides: Partial<TimerRunState> = {}): TimerRunState {
   return {
@@ -107,7 +107,7 @@ describe('run persistence', () => {
     saveTimerRun(makeRun());
 
     expect(loadTimerRun({ ...WORKOUT, workoutNum: 4 })).toBeNull();
-    expect(loadTimerRun({ ...WORKOUT, cycleNum: 2 })).toBeNull();
+    expect(loadTimerRun({ ...WORKOUT, macrocycleNum: 2 })).toBeNull();
     expect(loadTimerRun({ ...WORKOUT, program: 'leangains' })).toBeNull();
   });
 

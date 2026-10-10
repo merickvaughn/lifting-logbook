@@ -38,7 +38,7 @@ function spec(lift: string, activation = '') {
 function seedWorkout(lifts: string[], activation: Record<string, string> = {}) {
   mockedWorkout.mockResolvedValue({
     program: '5-3-1',
-    cycleNum: 1,
+    macrocycleNum: 1,
     workoutNum: 1,
     week: 1,
     date: '2999-01-01',
@@ -114,7 +114,7 @@ describe('loadWorkoutPlan', () => {
     // workout's own day (offset 0, three sets), not just any Squat row.
     mockedWorkout.mockResolvedValue({
       program: 'leangains',
-      cycleNum: 1,
+      macrocycleNum: 1,
       workoutNum: 4,
       week: 2,
       offset: 0,

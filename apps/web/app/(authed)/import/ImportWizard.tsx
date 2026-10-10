@@ -91,7 +91,7 @@ type FieldOption = { key: string; label: string };
 const KIND_FIELDS: Record<ImportKind, FieldOption[]> = {
   'lift-records': [
     { key: 'program', label: 'Program' },
-    { key: 'cycleNum', label: 'Cycle #' },
+    { key: 'macrocycleNum', label: 'Macrocycle #' },
     { key: 'workoutNum', label: 'Workout #' },
     { key: 'date', label: 'Date' },
     { key: 'lift', label: 'Lift' },

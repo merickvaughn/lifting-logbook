@@ -1,4 +1,4 @@
-export * from "./CycleDashboard";
+export * from "./MacrocycleDashboard";
 export * from "./StrengthGoalEntry";
 export * from "./LiftingProgramSpec";
 export * from "./LiftOverride";
@@ -6,4 +6,4 @@ export * from "./LiftRecord";
 export * from "./SpreadsheetCell";
 export * from "./TrainingMax";
 export * from "./TrainingMaxHistoryEntry";
-export * from "./UpdateCycleOverrides";
+export * from "./UpdateMacrocycleOverrides";

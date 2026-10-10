@@ -5,7 +5,7 @@ import { PROGRAMS } from '../programs';
  * Forward-looking guard for the issue #739 class of bug. Every program the
  * onboarding catalog marks `available: true` must resolve to a non-empty
  * built-in spec (`PRESET_BASE_SPECS[id]`), otherwise an onboarded user of that
- * program gets an empty cycle view. This catches the *other* way this gap can
+ * program gets an empty macrocycle view. This catches the *other* way this gap can
  * open: flipping a catalog program to `available: true` without adding its
  * preset (the seeding side is guarded by the API repository tests).
  *

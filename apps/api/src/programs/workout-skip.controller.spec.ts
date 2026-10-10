@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { ICycleDashboardRepository } from '../ports/ICycleDashboardRepository';
+import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
 import { ILiftingProgramSpecRepository } from '../ports/ILiftingProgramSpecRepository';
 import { IWorkoutSkipOverrideRepository } from '../ports/IWorkoutSkipOverrideRepository';
 import { IRepositoryFactory } from '../ports/factory';
@@ -33,11 +33,11 @@ describe('WorkoutSkipController', () => {
   let controller: WorkoutSkipController;
   let skipRepo: jest.Mocked<IWorkoutSkipOverrideRepository>;
   let specRepo: jest.Mocked<ILiftingProgramSpecRepository>;
-  let dashboardRepo: jest.Mocked<ICycleDashboardRepository>;
+  let dashboardRepo: jest.Mocked<IMacrocycleDashboardRepository>;
 
   beforeEach(async () => {
     skipRepo = {
-      getSkipsForCycle: jest.fn(),
+      getSkipsForMacrocycle: jest.fn(),
       skipWorkout: jest.fn().mockResolvedValue(undefined),
       unskipWorkout: jest.fn().mockResolvedValue(undefined),
     };
@@ -46,18 +46,18 @@ describe('WorkoutSkipController', () => {
       saveProgramSpec: jest.fn(),
       deleteSpecRows: jest.fn(),
     } as jest.Mocked<ILiftingProgramSpecRepository>;
-    // Active cycle is 2 — the valid-input tests skip/unskip cycle 2; the
-    // controller's new cycle-match check compares the path cycleNum against this
-    // dashboard cycleNum.
+    // Active macrocycle is 2 — the valid-input tests skip/unskip macrocycle 2; the
+    // controller's new macrocycle-match check compares the path macrocycleNum against this
+    // dashboard macrocycleNum.
     dashboardRepo = {
-      getCycleDashboard: jest.fn().mockResolvedValue({ cycleNum: 2 }),
-      saveCycleDashboard: jest.fn(),
-    } as unknown as jest.Mocked<ICycleDashboardRepository>;
+      getMacrocycleDashboard: jest.fn().mockResolvedValue({ macrocycleNum: 2 }),
+      saveMacrocycleDashboard: jest.fn(),
+    } as unknown as jest.Mocked<IMacrocycleDashboardRepository>;
     const factory: jest.Mocked<IRepositoryFactory> = {
       forUser: jest.fn().mockResolvedValue({
         workoutSkipOverride: skipRepo,
         liftingProgramSpec: specRepo,
-        cycleDashboard: dashboardRepo,
+        macrocycleDashboard: dashboardRepo,
       }),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -68,13 +68,13 @@ describe('WorkoutSkipController', () => {
   });
 
   describe('skipWorkout', () => {
-    it('throws 400 for non-numeric cycleNum', async () => {
+    it('throws 400 for non-numeric macrocycleNum', async () => {
       await expect(
         controller.skipWorkout('5-3-1', 'abc', '1', {}, MOCK_USER),
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('throws 400 for cycleNum < 1', async () => {
+    it('throws 400 for macrocycleNum < 1', async () => {
       await expect(
         controller.skipWorkout('5-3-1', '0', '1', {}, MOCK_USER),
       ).rejects.toThrow(BadRequestException);
@@ -108,16 +108,16 @@ describe('WorkoutSkipController', () => {
       expect(skipRepo.skipWorkout).not.toHaveBeenCalled();
     });
 
-    it('throws 400 for a cycleNum that is not the active cycle', async () => {
-      // Active cycle is 2 (dashboard mock); a skip on cycle 7 could never be read.
+    it('throws 400 for a macrocycleNum that is not the active macrocycle', async () => {
+      // Active macrocycle is 2 (dashboard mock); a skip on macrocycle 7 could never be read.
       await expect(
         controller.skipWorkout('5-3-1', '7', '3', {}, MOCK_USER),
       ).rejects.toThrow(BadRequestException);
       expect(skipRepo.skipWorkout).not.toHaveBeenCalled();
     });
 
-    it('propagates ProgramNotFoundError when the cycle dashboard is missing', async () => {
-      dashboardRepo.getCycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
+    it('propagates ProgramNotFoundError when the macrocycle dashboard is missing', async () => {
+      dashboardRepo.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
       await expect(
         controller.skipWorkout('5-3-1', '2', '3', {}, MOCK_USER),
       ).rejects.toThrow(ProgramNotFoundError);
@@ -136,13 +136,13 @@ describe('WorkoutSkipController', () => {
   });
 
   describe('unskipWorkout', () => {
-    it('throws 400 for non-numeric cycleNum', async () => {
+    it('throws 400 for non-numeric macrocycleNum', async () => {
       await expect(
         controller.unskipWorkout('5-3-1', 'abc', '1', MOCK_USER),
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('throws 400 for cycleNum < 1', async () => {
+    it('throws 400 for macrocycleNum < 1', async () => {
       await expect(
         controller.unskipWorkout('5-3-1', '0', '1', MOCK_USER),
       ).rejects.toThrow(BadRequestException);
@@ -175,15 +175,15 @@ describe('WorkoutSkipController', () => {
       expect(skipRepo.unskipWorkout).not.toHaveBeenCalled();
     });
 
-    it('throws 400 for a cycleNum that is not the active cycle', async () => {
+    it('throws 400 for a macrocycleNum that is not the active macrocycle', async () => {
       await expect(
         controller.unskipWorkout('5-3-1', '7', '3', MOCK_USER),
       ).rejects.toThrow(BadRequestException);
       expect(skipRepo.unskipWorkout).not.toHaveBeenCalled();
     });
 
-    it('propagates ProgramNotFoundError when the cycle dashboard is missing', async () => {
-      dashboardRepo.getCycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
+    it('propagates ProgramNotFoundError when the macrocycle dashboard is missing', async () => {
+      dashboardRepo.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
       await expect(
         controller.unskipWorkout('5-3-1', '2', '3', MOCK_USER),
       ).rejects.toThrow(ProgramNotFoundError);

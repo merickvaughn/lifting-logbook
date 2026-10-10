@@ -5,7 +5,7 @@ import { FastifyRequest } from 'fastify';
 import { Weekday } from '@lifting-logbook/core';
 import { CustomLift } from '@lifting-logbook/types';
 import { ICustomLiftRepository } from '../ports/ICustomLiftRepository';
-import { ICycleDashboardRepository } from '../ports/ICycleDashboardRepository';
+import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
 import { ILiftRecordRepository } from '../ports/ILiftRecordRepository';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
@@ -27,16 +27,16 @@ const MOCK_USER = { id: 'test-user', email: 'test@example.com', provider: 'dev' 
 
 const SEED_DASHBOARD = {
   program: '5-3-1',
-  cycleUnit: 'week' as const,
-  cycleNum: 4,
-  cycleDate: new Date('2026-04-20T00:00:00.000Z'),
+  macrocycleUnit: 'week' as const,
+  macrocycleNum: 4,
+  macrocycleDate: new Date('2026-04-20T00:00:00.000Z'),
   sheetName: '',
-  cycleStartWeekday: Weekday.Monday,
+  macrocycleStartWeekday: Weekday.Monday,
 };
 
 const SEED_RECORD = {
   program: '5-3-1',
-  cycleNum: 4,
+  macrocycleNum: 4,
   workoutNum: 1,
   date: new Date('2026-04-20T00:00:00.000Z'),
   lift: 'Bench Press',
@@ -49,7 +49,7 @@ const SEED_RECORD = {
 describe('LiftRecordsController', () => {
   let controller: LiftRecordsController;
   let liftRecordRepo: jest.Mocked<ILiftRecordRepository>;
-  let dashboardRepo: jest.Mocked<ICycleDashboardRepository>;
+  let dashboardRepo: jest.Mocked<IMacrocycleDashboardRepository>;
   let customLiftRepo: jest.Mocked<ICustomLiftRepository>;
   let factory: jest.Mocked<IRepositoryFactory>;
 
@@ -63,9 +63,9 @@ describe('LiftRecordsController', () => {
       deleteAllLiftRecords: jest.fn().mockResolvedValue(undefined),
     };
     dashboardRepo = {
-      getCycleDashboard: jest.fn(),
-      saveCycleDashboard: jest.fn(),
-      deleteCycleDashboard: jest.fn().mockResolvedValue(undefined),
+      getMacrocycleDashboard: jest.fn(),
+      saveMacrocycleDashboard: jest.fn(),
+      deleteMacrocycleDashboard: jest.fn().mockResolvedValue(undefined),
     };
     customLiftRepo = {
       list: jest.fn().mockResolvedValue([]),
@@ -76,7 +76,7 @@ describe('LiftRecordsController', () => {
     factory = {
       forUser: jest.fn().mockResolvedValue({
         liftRecord: liftRecordRepo,
-        cycleDashboard: dashboardRepo,
+        macrocycleDashboard: dashboardRepo,
         customLift: customLiftRepo,
       }),
     };
@@ -88,8 +88,8 @@ describe('LiftRecordsController', () => {
   });
 
   describe('GET lift-records', () => {
-    it('fetches lift records scoped to current cycle', async () => {
-      dashboardRepo.getCycleDashboard.mockResolvedValue(SEED_DASHBOARD);
+    it('fetches lift records scoped to current macrocycle', async () => {
+      dashboardRepo.getMacrocycleDashboard.mockResolvedValue(SEED_DASHBOARD);
       liftRecordRepo.getLiftRecords.mockResolvedValue([SEED_RECORD]);
 
       const result = await controller.getLiftRecords('5-3-1', MOCK_USER);
@@ -107,7 +107,7 @@ describe('LiftRecordsController', () => {
 
       const result = await controller.createLiftRecord('5-3-1', {
         program: '5-3-1',
-        cycleNum: 4,
+        macrocycleNum: 4,
         workoutNum: 1,
         date: '2026-04-20',
         lift: 'Bench Press',
@@ -131,7 +131,7 @@ describe('LiftRecordsController', () => {
 
       const result = await controller.createLiftRecord('5-3-1', {
         program: '5-3-1',
-        cycleNum: 4,
+        macrocycleNum: 4,
         workoutNum: 1,
         date: '2026-04-20',
         lift: 'Squat',
@@ -153,7 +153,7 @@ describe('LiftRecordsController', () => {
       await expect(
         controller.createLiftRecord('5-3-1', {
           program: '5-3-1',
-          cycleNum: 4,
+          macrocycleNum: 4,
           workoutNum: 1,
           date: 'garbage-value',
           lift: 'Bench Press',
@@ -174,7 +174,7 @@ describe('LiftRecordsController', () => {
       await expect(
         controller.createLiftRecord('5-3-1', {
           program: 'some-other-program',
-          cycleNum: 4,
+          macrocycleNum: 4,
           workoutNum: 1,
           date: '2026-04-20',
           lift: 'Bench Press',
@@ -199,7 +199,7 @@ describe('LiftRecordsController', () => {
       await expect(
         controller.createLiftRecord('5-3-1', {
           program: '5-3-1',
-          cycleNum: 4,
+          macrocycleNum: 4,
           workoutNum: 1,
           date: '2026-04-20',
           lift: 'Bench Press',
@@ -220,7 +220,7 @@ describe('LiftRecordsController', () => {
 
       const result = await controller.createLiftRecord('5-3-1', {
         program: '5-3-1',
-        cycleNum: 4,
+        macrocycleNum: 4,
         workoutNum: 1,
         date: '2026-04-20',
         lift: 'Bench Press',

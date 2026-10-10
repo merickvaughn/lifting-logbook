@@ -74,7 +74,7 @@ export function useTimerRowState(): TimerRowState | null {
 interface Props {
   lifts: TimerLiftPlan[];
   program: string;
-  cycleNum: number;
+  macrocycleNum: number;
   workoutNum: number;
   children: React.ReactNode;
 }
@@ -89,13 +89,13 @@ interface Props {
 export default function WorkoutTimerProvider({
   lifts,
   program,
-  cycleNum,
+  macrocycleNum,
   workoutNum,
   children,
 }: Props) {
   const workout = useMemo(
-    () => ({ program, cycleNum, workoutNum }),
-    [program, cycleNum, workoutNum],
+    () => ({ program, macrocycleNum, workoutNum }),
+    [program, macrocycleNum, workoutNum],
   );
 
   const timer: UseWorkoutTimerResult = useWorkoutTimer(lifts, workout);
@@ -142,7 +142,7 @@ export default function WorkoutTimerProvider({
   return (
     <TimerRowStateContext.Provider value={rowState}>
       {children}
-      <WorkoutTimerDock timer={timer} cycleNum={cycleNum} workoutNum={workoutNum} />
+      <WorkoutTimerDock timer={timer} macrocycleNum={macrocycleNum} workoutNum={workoutNum} />
     </TimerRowStateContext.Provider>
   );
 }

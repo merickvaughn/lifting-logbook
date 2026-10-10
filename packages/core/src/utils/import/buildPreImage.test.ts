@@ -3,7 +3,7 @@ import type { LiftRecord, TrainingMax, StrengthGoalEntry } from '../../models';
 
 function liftRecord(overrides: Partial<LiftRecord> = {}): LiftRecord {
   return {
-    program: 'prog', cycleNum: 1, workoutNum: 1, date: new Date('2026-01-01'),
+    program: 'prog', macrocycleNum: 1, workoutNum: 1, date: new Date('2026-01-01'),
     lift: 'Squat', setNum: 1, weight: 100, reps: 5, notes: '',
     ...overrides,
   };

@@ -1,5 +1,6 @@
 import { SpreadsheetCell } from '../../models';
 import {
+  LEGACY_LIFT_RECORD_HEADERS,
   LIFT_RECORD_HEADER_MAP,
   TRAINING_MAX_HEADER_MAP,
   LIFTING_PROGRAM_SPEC_HEADER_MAP,
@@ -103,7 +104,7 @@ function calculateSimilarity(sourceHeader: string, canonicalField: string): numb
  */
 function getRequiredFields(kind: ImportKind): Set<string> {
   const required = new Map<ImportKind, Set<string>>([
-    ['lift-records', new Set(['program', 'cycleNum', 'workoutNum', 'date', 'lift', 'setNum', 'weight', 'reps'])],
+    ['lift-records', new Set(['program', 'macrocycleNum', 'workoutNum', 'date', 'lift', 'setNum', 'weight', 'reps'])],
     ['training-maxes', new Set(['lift', 'weight', 'dateUpdated'])],
     ['program-spec', new Set(['week', 'offset', 'lift', 'increment', 'order', 'sets', 'reps', 'wtDecrementPct'])],
     // Strength goals requires lift, goalType, unit, and either target or ratio
@@ -131,6 +132,15 @@ function getHeaderMapForKind(kind: ImportKind): Record<string, { key: string; ty
 }
 
 /**
+ * Other header spellings accepted for each canonical header of a kind. A source
+ * header is scored against these as well as the canonical name, so an alternate
+ * maps on an exact match rather than by token coincidence.
+ */
+function getAlternateHeadersForKind(kind: ImportKind): Readonly<Record<string, readonly string[]>> {
+  return kind === 'lift-records' ? LEGACY_LIFT_RECORD_HEADERS : {};
+}
+
+/**
  * Fuzzy-map a list of source CSV headers to canonical destination fields.
  *
  * For each source header, finds the best-matching destination field with a
@@ -147,6 +157,7 @@ function getHeaderMapForKind(kind: ImportKind): Record<string, { key: string; ty
 export function fuzzyColumnMapper(sourceHeaders: SpreadsheetCell[], kind: ImportKind): ColumnMapping[] {
   if (kind === 'strength-goals') return [];
   const headerMap = getHeaderMapForKind(kind);
+  const alternateHeaders = getAlternateHeadersForKind(kind);
   const requiredFields = getRequiredFields(kind);
   const mappings: ColumnMapping[] = [];
 
@@ -164,8 +175,11 @@ export function fuzzyColumnMapper(sourceHeaders: SpreadsheetCell[], kind: Import
 
     // Score against each canonical field
     Object.entries(headerMap).forEach(([displayName, { key }]) => {
-      const displayNameNorm = normalize(displayName);
-      const score = calculateSimilarity(sourceHeader, displayNameNorm);
+      const score = Math.max(
+        ...[displayName, ...(alternateHeaders[displayName] ?? [])].map((name) =>
+          calculateSimilarity(sourceHeader, normalize(name)),
+        ),
+      );
       scores.push({ key, field: displayName, score });
     });
 

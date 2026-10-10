@@ -4,7 +4,7 @@ import type { LiftRecord } from '../../models';
 function record(overrides: Partial<LiftRecord> = {}): LiftRecord {
   return {
     program: 'prog',
-    cycleNum: 1,
+    macrocycleNum: 1,
     workoutNum: 1,
     date: new Date('2026-01-01'),
     lift: 'Squat',

@@ -5,14 +5,14 @@
  * If the mock is missing a required method or uses an incompatible signature,
  * the TypeScript compiler will error here — no runtime needed.
  */
-import { CycleDashboard, LiftRecord, LiftingProgramSpec, TrainingMax, TrainingMaxHistoryEntry } from '@lifting-logbook/core';
+import { MacrocycleDashboard, LiftRecord, LiftingProgramSpec, TrainingMax, TrainingMaxHistoryEntry } from '@lifting-logbook/core';
 import { BodyWeightEntry } from '@lifting-logbook/types';
 import { AuthUser, IAuthProvider } from './auth';
 import { IBodyWeightRepository } from './IBodyWeightRepository';
 import { IRepositoryFactory, RepositoryBundle } from './factory';
 import { ICustomLiftRepository } from './ICustomLiftRepository';
-import { ICycleDashboardRepository } from './ICycleDashboardRepository';
-import { ICycleScheduledWorkoutRepository } from './ICycleScheduledWorkoutRepository';
+import { IMacrocycleDashboardRepository } from './IMacrocycleDashboardRepository';
+import { IMacrocycleScheduledWorkoutRepository } from './IMacrocycleScheduledWorkoutRepository';
 import { ILiftingProgramSpecRepository } from './ILiftingProgramSpecRepository';
 import { ILiftRecordRepository } from './ILiftRecordRepository';
 import { IProgramPhilosophyRepository } from './IProgramPhilosophyRepository';
@@ -37,15 +37,15 @@ const _authProvider: IAuthProvider = {
 };
 
 // ---------------------------------------------------------------------------
-// ICycleDashboardRepository
+// IMacrocycleDashboardRepository
 // ---------------------------------------------------------------------------
 
-const _cycleDashboardRepo: ICycleDashboardRepository = {
-  getCycleDashboard: (): Promise<CycleDashboard> =>
-    Promise.resolve({} as CycleDashboard),
-  saveCycleDashboard: (): Promise<void> =>
+const _macrocycleDashboardRepo: IMacrocycleDashboardRepository = {
+  getMacrocycleDashboard: (): Promise<MacrocycleDashboard> =>
+    Promise.resolve({} as MacrocycleDashboard),
+  saveMacrocycleDashboard: (): Promise<void> =>
     Promise.resolve(),
-  deleteCycleDashboard: (): Promise<void> =>
+  deleteMacrocycleDashboard: (): Promise<void> =>
     Promise.resolve(),
 };
 
@@ -144,7 +144,7 @@ const _programPhilosophyRepo: IProgramPhilosophyRepository = {
 
 const _workoutDateOverrideRepo: IWorkoutDateOverrideRepository = {
   getOverride: () => Promise.resolve(null),
-  getOverridesForCycle: () => Promise.resolve(new Map()),
+  getOverridesForMacrocycle: () => Promise.resolve(new Map()),
   upsertOverride: () => Promise.resolve(),
 };
 
@@ -167,13 +167,13 @@ const _workoutLiftOverrideRepo: IWorkoutLiftOverrideRepository = {
   deleteOverride: () => Promise.resolve(),
 };
 
-const _cycleScheduledWorkoutRepo: ICycleScheduledWorkoutRepository = {
+const _macrocycleScheduledWorkoutRepo: IMacrocycleScheduledWorkoutRepository = {
   getScheduledWorkouts: () => Promise.resolve([]),
   saveScheduledWorkouts: () => Promise.resolve(),
 };
 
 const _workoutSkipOverrideRepo: IWorkoutSkipOverrideRepository = {
-  getSkipsForCycle: () => Promise.resolve(new Set<number>()),
+  getSkipsForMacrocycle: () => Promise.resolve(new Set<number>()),
   skipWorkout: () => Promise.resolve(),
   unskipWorkout: () => Promise.resolve(),
 };
@@ -221,8 +221,8 @@ const _importBatchRepo: IImportBatchRepository = {
 const _repositoryBundle: RepositoryBundle = {
   bodyWeight: _bodyWeightRepo,
   customLift: _customLiftRepo,
-  cycleDashboard: _cycleDashboardRepo,
-  cycleScheduledWorkout: _cycleScheduledWorkoutRepo,
+  macrocycleDashboard: _macrocycleDashboardRepo,
+  macrocycleScheduledWorkout: _macrocycleScheduledWorkoutRepo,
   liftMetadata: _liftMetadataRepo,
   liftingProgramSpec: _programSpecRepo,
   liftRecord: _liftRecordRepo,
@@ -245,7 +245,7 @@ const _repositoryFactory: IRepositoryFactory = {
 // Suppress "declared but never read" errors — these variables exist solely
 // to trigger structural type checking at compile time.
 void _authProvider;
-void _cycleDashboardRepo;
+void _macrocycleDashboardRepo;
 void _programSpecRepo;
 void _liftRecordRepo;
 void _trainingMaxRepo;
@@ -255,7 +255,7 @@ void _liftMetadataRepo;
 void _strengthGoalRepo;
 void _workoutDateOverrideRepo;
 void _workoutLiftOverrideRepo;
-void _cycleScheduledWorkoutRepo;
+void _macrocycleScheduledWorkoutRepo;
 void _userSettingsRepo;
 void _repositoryBundle;
 void _repositoryFactory;

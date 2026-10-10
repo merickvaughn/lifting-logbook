@@ -30,14 +30,14 @@ export function getNextDate(
     return mostRecent;
   }
   // 3. Otherwise, find the next valid occurrence at least 7 days after prevDate
-  const cycleDate = new Date(prevDate);
+  const macrocycleDate = new Date(prevDate);
   // Find the next occurrence of the target weekday after prevDate
   const daysToNext = (weekday - prevDay + 7) % 7 || 7;
-  cycleDate.setDate(prevDate.getDate() + daysToNext);
-  while (cycleDate.getTime() - prevDate.getTime() < 7 * 24 * 60 * 60 * 1000) {
-    cycleDate.setDate(cycleDate.getDate() + 7);
+  macrocycleDate.setDate(prevDate.getDate() + daysToNext);
+  while (macrocycleDate.getTime() - prevDate.getTime() < 7 * 24 * 60 * 60 * 1000) {
+    macrocycleDate.setDate(macrocycleDate.getDate() + 7);
   }
-  return cycleDate;
+  return macrocycleDate;
 }
 // Add days to a date in UTC
 export function addDaysUTC(date: Date, days: number): Date {
@@ -157,15 +157,15 @@ export function toUTCMidnight(date: Date): Date {
   );
 }
 
-// Returns the WeekType for the week containing `today` within a cycle.
-// Week 1 = days 0–6 from cycle start; clamped to max week in spec.
+// Returns the WeekType for the week containing `today` within a macrocycle.
+// Week 1 = days 0–6 from macrocycle start; clamped to max week in spec.
 export function weekTypeForDate(
-  cycleStartDate: Date,
+  macrocycleStartDate: Date,
   programSpec: LiftingProgramSpec[],
   today: Date = new Date(),
 ): WeekType {
   const msPerWeek = 7 * 24 * 60 * 60 * 1000;
-  const elapsed = Math.max(0, today.getTime() - cycleStartDate.getTime());
+  const elapsed = Math.max(0, today.getTime() - macrocycleStartDate.getTime());
   const rawWeekNum = Math.floor(elapsed / msPerWeek) + 1;
   const maxWeek = programSpec.reduce((m, ps) => Math.max(m, ps.week), 1);
   const weekNum = Math.min(rawWeekNum, maxWeek);

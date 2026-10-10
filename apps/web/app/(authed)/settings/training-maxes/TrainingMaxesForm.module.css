@@ -4,9 +4,15 @@
   margin: 0 auto;
 }
 
+.headingRow {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+
 .heading {
   font-size: var(--font-size-lg);
-  margin-bottom: var(--space-4);
+  margin: 0;
 }
 
 .tableWrapper {

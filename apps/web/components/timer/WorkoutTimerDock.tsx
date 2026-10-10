@@ -15,7 +15,7 @@ import styles from './WorkoutTimerDock.module.css';
 
 interface Props {
   timer: UseWorkoutTimerResult;
-  cycleNum: number;
+  macrocycleNum: number;
   workoutNum: number;
 }
 
@@ -29,7 +29,7 @@ const FOCUSABLE =
  * Renders nothing until a session is running, so the workout-detail page is
  * unchanged for anyone not using the timer.
  */
-export default function WorkoutTimerDock({ timer, cycleNum, workoutNum }: Props) {
+export default function WorkoutTimerDock({ timer, macrocycleNum, workoutNum }: Props) {
   const { phase, running, paused, remaining, progress, overrun, setOrdinal } = timer;
   const [expanded, setExpanded] = useState(false);
 
@@ -234,7 +234,7 @@ export default function WorkoutTimerDock({ timer, cycleNum, workoutNum }: Props)
             </div>
 
             <Link
-              href={`/cycle/${cycleNum}/workout/${workoutNum}/timer`}
+              href={`/macrocycle/${macrocycleNum}/workout/${workoutNum}/timer`}
               className={styles.sheetLink}
             >
               Full timer &amp; settings

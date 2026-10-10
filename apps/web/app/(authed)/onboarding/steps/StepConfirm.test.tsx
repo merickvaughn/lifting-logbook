@@ -78,14 +78,14 @@ describe('StepConfirm — submit action', () => {
     expect(btn).toHaveTextContent('Starting…');
   });
 
-  it('shows a cycleError alert when provided', () => {
+  it('shows a macrocycleError alert when provided', () => {
     render(
       <StepConfirm
         method="estimate"
         maxes={[{ lift: 'Squat', oneRm: 225, trainingMax: 203 }]}
         onConfirm={() => {}}
         isPending={false}
-        cycleError="Something went wrong"
+        macrocycleError="Something went wrong"
       />,
     );
 

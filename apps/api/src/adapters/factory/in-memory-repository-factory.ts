@@ -4,8 +4,8 @@ import { AuthUser } from '../../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
 import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
-import { InMemoryCycleDashboardRepository } from '../in-memory/cycle-dashboard.adapter';
-import { InMemoryCycleScheduledWorkoutRepository } from '../in-memory/cycle-scheduled-workout.adapter';
+import { InMemoryMacrocycleDashboardRepository } from '../in-memory/macrocycle-dashboard.adapter';
+import { InMemoryMacrocycleScheduledWorkoutRepository } from '../in-memory/macrocycle-scheduled-workout.adapter';
 import { InMemoryImportBatchRepository } from '../in-memory/import-batch.adapter';
 import { InMemoryLiftMetadataRepository } from '../in-memory/lift-metadata.adapter';
 import { InMemoryLiftingProgramSpecRepository } from '../in-memory/lifting-program-spec.adapter';
@@ -40,8 +40,8 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       this.bundles.set(user.id, {
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift: new InMemoryCustomLiftRepository(user.id),
-        cycleDashboard: new InMemoryCycleDashboardRepository(preSeed),
-        cycleScheduledWorkout: new InMemoryCycleScheduledWorkoutRepository(),
+        macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(preSeed),
+        macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
         importBatch: new InMemoryImportBatchRepository(),
         liftMetadata: new InMemoryLiftMetadataRepository(),
         liftingProgramSpec: new InMemoryLiftingProgramSpecRepository(preSeed),

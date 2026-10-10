@@ -21,7 +21,7 @@ test('no-raw-fetch-outside-api-client', () => {
   tester.run('no-raw-fetch-outside-api-client', rule, {
     valid: [
       // Calls through the typed client are the sanctioned path.
-      { code: 'apiClient.fetchCycleDashboard(id);', filename: 'apps/web/app/page.ts' },
+      { code: 'apiClient.fetchMacrocycleDashboard(id);', filename: 'apps/web/app/page.ts' },
       // Member `.fetch` is not a bare fetch() call.
       { code: 'client.fetch(url);', filename: 'apps/web/app/page.ts' },
       // A non-auth header object outside the wrappers is fine.

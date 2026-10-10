@@ -10,40 +10,40 @@ jest.mock('next/navigation', () => ({
 }));
 
 import { switchProgram, updateTrainingMaxes } from '@/lib/api';
-import { createFirstCycle } from './actions';
+import { createFirstMacrocycle } from './actions';
 
 const mockedSwitchProgram = switchProgram as unknown as jest.Mock;
 const mockedUpdateTrainingMaxes = updateTrainingMaxes as unknown as jest.Mock;
 
-describe('createFirstCycle', () => {
+describe('createFirstMacrocycle', () => {
   beforeEach(() => jest.clearAllMocks());
 
   // Regression test for #650: completing onboarding must set activeProgram (via
-  // switchProgram), not just create the cycle — otherwise the dashboard page's
+  // switchProgram), not just create the macrocycle — otherwise the dashboard page's
   // getActiveProgram() lookup resolves to the wrong program and 404s even though
-  // the cycle was created successfully.
-  it('redirects to /cycle/1 using the cycleNum switchProgram returns (genuine first-time setup)', async () => {
-    mockedSwitchProgram.mockResolvedValue({ activeProgram: 'leangains', cycleNum: 1 });
+  // the macrocycle was created successfully.
+  it('redirects to /macrocycle/1 using the macrocycleNum switchProgram returns (genuine first-time setup)', async () => {
+    mockedSwitchProgram.mockResolvedValue({ activeProgram: 'leangains', macrocycleNum: 1 });
 
-    await expect(createFirstCycle('leangains', [])).rejects.toThrow('REDIRECT:/cycle/1');
+    await expect(createFirstMacrocycle('leangains', [])).rejects.toThrow('REDIRECT:/macrocycle/1');
     expect(mockedSwitchProgram).toHaveBeenCalledWith('leangains');
   });
 
   // Proves the redirect target is not hardcoded — switchProgram returns the
-  // existing cycleNum when a cycle already exists, and the redirect must follow it.
-  it('redirects to the returned cycleNum, not a hardcoded /cycle/1', async () => {
-    mockedSwitchProgram.mockResolvedValue({ activeProgram: 'leangains', cycleNum: 3 });
+  // existing macrocycleNum when a macrocycle already exists, and the redirect must follow it.
+  it('redirects to the returned macrocycleNum, not a hardcoded /macrocycle/1', async () => {
+    mockedSwitchProgram.mockResolvedValue({ activeProgram: 'leangains', macrocycleNum: 3 });
 
-    await expect(createFirstCycle('leangains', [])).rejects.toThrow('REDIRECT:/cycle/3');
+    await expect(createFirstMacrocycle('leangains', [])).rejects.toThrow('REDIRECT:/macrocycle/3');
   });
 
   it('persists confirmed training maxes after switchProgram succeeds', async () => {
-    mockedSwitchProgram.mockResolvedValue({ activeProgram: 'leangains', cycleNum: 1 });
+    mockedSwitchProgram.mockResolvedValue({ activeProgram: 'leangains', macrocycleNum: 1 });
     mockedUpdateTrainingMaxes.mockResolvedValue(undefined);
 
     await expect(
-      createFirstCycle('leangains', [{ lift: 'Squat', trainingMax: 315 }]),
-    ).rejects.toThrow('REDIRECT:/cycle/1');
+      createFirstMacrocycle('leangains', [{ lift: 'Squat', trainingMax: 315 }]),
+    ).rejects.toThrow('REDIRECT:/macrocycle/1');
 
     expect(mockedUpdateTrainingMaxes).toHaveBeenCalledWith('leangains', {
       maxes: [{ lift: 'Squat', weight: 315, unit: 'lbs' }],
@@ -51,7 +51,7 @@ describe('createFirstCycle', () => {
   });
 
   it('rejects a program that is not available', async () => {
-    const result = await createFirstCycle('not-a-real-program', []);
+    const result = await createFirstMacrocycle('not-a-real-program', []);
 
     expect(result).toEqual({ ok: false, error: 'That program is not yet available.' });
     expect(mockedSwitchProgram).not.toHaveBeenCalled();
@@ -61,7 +61,7 @@ describe('createFirstCycle', () => {
     mockedSwitchProgram.mockRejectedValue(new Error('API down'));
     const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    const result = await createFirstCycle('leangains', []);
+    const result = await createFirstMacrocycle('leangains', []);
 
     expect(result).toEqual({
       ok: false,

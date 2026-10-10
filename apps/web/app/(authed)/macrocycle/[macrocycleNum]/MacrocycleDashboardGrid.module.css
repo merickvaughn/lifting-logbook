@@ -1,0 +1,245 @@
+.container {
+  padding: var(--space-4);
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.eyebrow {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-1);
+}
+
+.headingRow {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+
+.heading {
+  font-size: var(--font-size-xl);
+  margin: 0;
+}
+
+.blockGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.blockHeadingRow {
+  display: flex;
+  align-items: center;
+}
+
+.blockHeading {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.progressSection {
+  margin-bottom: var(--space-4);
+}
+
+.progressHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.progressLabel {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.progressCount {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.progressTrack {
+  height: 8px;
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: var(--radius-full);
+  transition: width var(--transition-base);
+}
+
+.progressFill_complete {
+  background: var(--color-success);
+}
+
+.quickNav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.weekSection {
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.weekToggle {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--color-surface);
+  border: none;
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.weekToggle:hover {
+  background: var(--color-surface-alt);
+}
+
+.toggleIcon {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.workouts {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.workoutCard {
+  display: block;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: box-shadow var(--transition-fast);
+}
+
+.workoutCard:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.card_completed {
+  background: var(--color-completed-bg);
+  border-color: var(--color-success-border);
+}
+
+.card_upcoming {
+  background: var(--color-upcoming-bg);
+  border-color: var(--color-warn-border);
+}
+
+.card_missed {
+  background: var(--color-missed-bg);
+  border-color: var(--color-missed-border);
+}
+
+.card_skipped {
+  background: var(--color-surface-alt);
+  border-color: var(--color-border);
+  opacity: 0.75;
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-3);
+  gap: var(--space-2);
+}
+
+.cardHeader time {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.badge {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge_completed {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+}
+
+.badge_upcoming {
+  background: var(--color-warn-bg);
+  color: var(--color-warn-text);
+}
+
+.badge_missed {
+  background: var(--color-missed-bg);
+  color: var(--color-upcoming-text);
+}
+
+.badge_skipped {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+}
+
+.liftList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.liftItem {
+  font-size: var(--font-size-sm);
+}
+
+.setList {
+  margin: var(--space-1) 0 0 var(--space-5);
+  padding: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+@media (min-width: 540px) {
+  .workouts {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .workoutCard {
+    flex: 1;
+    min-width: 200px;
+  }
+}

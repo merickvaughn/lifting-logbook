@@ -4,14 +4,14 @@ import { OnboardingFlow } from './OnboardingFlow';
 import { PROGRAMS } from '@/lib/programs';
 import { PRESET_BASE_SPECS } from '@lifting-logbook/core';
 import { getSeedLifts } from './lib';
-import { createFirstCycle } from './actions';
+import { createFirstMacrocycle } from './actions';
 
 jest.mock('./actions', () => ({
-  createFirstCycle: jest.fn(async () => undefined),
+  createFirstMacrocycle: jest.fn(async () => undefined),
 }));
 
-const mockCreateFirstCycle = createFirstCycle as jest.MockedFunction<
-  typeof createFirstCycle
+const mockCreateFirstMacrocycle = createFirstMacrocycle as jest.MockedFunction<
+  typeof createFirstMacrocycle
 >;
 
 const CATALOG = ['Bench Press', 'Squat', 'Deadlift', 'Overhead Press'];
@@ -31,10 +31,10 @@ async function selectRpt(user: ReturnType<typeof userEvent.setup>) {
 
 describe('OnboardingFlow — persistence of confirmed maxes', () => {
   beforeEach(() => {
-    mockCreateFirstCycle.mockClear();
+    mockCreateFirstMacrocycle.mockClear();
   });
 
-  it('passes the computed maxes to createFirstCycle on completion (estimate method)', async () => {
+  it('passes the computed maxes to createFirstMacrocycle on completion (estimate method)', async () => {
     const user = userEvent.setup();
     const rpt = PROGRAMS.find((p) => p.id === 'rpt');
     if (!rpt) throw new Error('Test setup: rpt missing from PROGRAMS catalog');
@@ -60,8 +60,8 @@ describe('OnboardingFlow — persistence of confirmed maxes', () => {
     // Step 3: submit
     await user.click(screen.getByRole('button', { name: /start my program/i }));
 
-    expect(mockCreateFirstCycle).toHaveBeenCalledTimes(1);
-    expect(mockCreateFirstCycle).toHaveBeenCalledWith(
+    expect(mockCreateFirstMacrocycle).toHaveBeenCalledTimes(1);
+    expect(mockCreateFirstMacrocycle).toHaveBeenCalledWith(
       rpt.id,
       RPT_LIFTS.map((lift) => ({ lift, trainingMax: 202.5 })),
     );
@@ -95,8 +95,8 @@ describe('OnboardingFlow — persistence of confirmed maxes', () => {
     await user.click(screen.getByRole('button', { name: /start my program/i }));
 
     // Entered as-is → persisted as-is (not 283 which would be 90% of 315 rounded).
-    expect(mockCreateFirstCycle).toHaveBeenCalledTimes(1);
-    expect(mockCreateFirstCycle).toHaveBeenCalledWith(rpt.id, [
+    expect(mockCreateFirstMacrocycle).toHaveBeenCalledTimes(1);
+    expect(mockCreateFirstMacrocycle).toHaveBeenCalledWith(rpt.id, [
       { lift: decimalLift, trainingMax: 316.25 },
       ...wholeLifts.map((lift) => ({ lift, trainingMax: 315 })),
     ]);
@@ -138,9 +138,9 @@ describe('OnboardingFlow — persistence of confirmed maxes', () => {
     await user.click(screen.getByRole('button', { name: /start my program/i }));
 
     // Imported TMs persist verbatim (latest per lift, full precision); the 9
-    // seeded RPT rows are overwritten by the import, not passed to createFirstCycle.
-    expect(mockCreateFirstCycle).toHaveBeenCalledTimes(1);
-    expect(mockCreateFirstCycle).toHaveBeenCalledWith(rpt.id, [
+    // seeded RPT rows are overwritten by the import, not passed to createFirstMacrocycle.
+    expect(mockCreateFirstMacrocycle).toHaveBeenCalledTimes(1);
+    expect(mockCreateFirstMacrocycle).toHaveBeenCalledWith(rpt.id, [
       { lift: 'Squat', trainingMax: 316.25 },
       { lift: 'Bench Press', trainingMax: 225 },
     ]);
@@ -170,8 +170,8 @@ describe('OnboardingFlow — persistence of confirmed maxes', () => {
     await user.click(screen.getByRole('button', { name: /next/i }));
     await user.click(screen.getByRole('button', { name: /start my program/i }));
 
-    expect(mockCreateFirstCycle).toHaveBeenCalledTimes(1);
-    expect(mockCreateFirstCycle).toHaveBeenCalledWith(
+    expect(mockCreateFirstMacrocycle).toHaveBeenCalledTimes(1);
+    expect(mockCreateFirstMacrocycle).toHaveBeenCalledWith(
       rpt.id,
       RPT_LIFTS.map((lift) => ({ lift, trainingMax: 180 })),
     );
@@ -180,7 +180,7 @@ describe('OnboardingFlow — persistence of confirmed maxes', () => {
 
 describe('OnboardingFlow — lift seeding', () => {
   beforeEach(() => {
-    mockCreateFirstCycle.mockClear();
+    mockCreateFirstMacrocycle.mockClear();
   });
 
   it('(a) seeds lifts from PRESET_BASE_SPECS when a mapped program is selected', async () => {
@@ -244,7 +244,7 @@ describe('OnboardingFlow — lift seeding', () => {
     expect(screen.queryByLabelText('Barbell Row weight')).not.toBeInTheDocument();
   });
 
-  it('(d) import path overwrites seeded rows — imported lifts are used for createFirstCycle', async () => {
+  it('(d) import path overwrites seeded rows — imported lifts are used for createFirstMacrocycle', async () => {
     const user = userEvent.setup();
     const rpt = PROGRAMS.find((p) => p.id === 'rpt');
     if (!rpt) throw new Error('Test setup: rpt missing from PROGRAMS catalog');
@@ -271,8 +271,8 @@ describe('OnboardingFlow — lift seeding', () => {
     await user.click(screen.getByRole('button', { name: /next/i }));
     await user.click(screen.getByRole('button', { name: /start my program/i }));
 
-    // Only the 2 imported lifts reach createFirstCycle — the 9 seeded RPT rows are gone
-    expect(mockCreateFirstCycle).toHaveBeenCalledWith(rpt.id, [
+    // Only the 2 imported lifts reach createFirstMacrocycle — the 9 seeded RPT rows are gone
+    expect(mockCreateFirstMacrocycle).toHaveBeenCalledWith(rpt.id, [
       { lift: 'Squat', trainingMax: 315 },
       { lift: 'Bench Press', trainingMax: 225 },
     ]);
@@ -281,7 +281,7 @@ describe('OnboardingFlow — lift seeding', () => {
 
 describe('OnboardingFlow — navigation', () => {
   beforeEach(() => {
-    mockCreateFirstCycle.mockClear();
+    mockCreateFirstMacrocycle.mockClear();
   });
 
   it('Back button is present at step 1 (Program) and navigates back to step 0 (Method)', async () => {

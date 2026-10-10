@@ -4,7 +4,7 @@ export const LIFT_RECORD_HEADER_MAP: Record<
   { key: string; type: string }
 > = {
   Program: { key: "program", type: "string" },
-  "Cycle #": { key: "cycleNum", type: "number" },
+  "Macrocycle #": { key: "macrocycleNum", type: "number" },
   "Workout #": { key: "workoutNum", type: "number" },
   Date: { key: "date", type: "string" },
   Lift: { key: "lift", type: "string" },
@@ -12,6 +12,14 @@ export const LIFT_RECORD_HEADER_MAP: Record<
   Weight: { key: "weight", type: "number" },
   Reps: { key: "reps", type: "number" },
   Notes: { key: "notes", type: "string" },
+};
+// Other header spellings accepted for a canonical lift-record column, keyed by the
+// canonical header. Not dead compatibility code: the Google Sheet this app imports
+// from still emits "Cycle #" (the column predates the macrocycle rename, #1038), so
+// it is the usual header in an import, not an edge case. Read by parseLiftRecords
+// and fuzzyColumnMapper; classifyImport's 'cycle' token matches both by substring.
+export const LEGACY_LIFT_RECORD_HEADERS: Readonly<Record<string, readonly string[]>> = {
+  "Macrocycle #": ["Cycle #"],
 };
 // TrainingMax header mapping for parsing
 export const TRAINING_MAX_HEADER_MAP: Record<

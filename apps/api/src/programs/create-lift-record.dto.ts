@@ -56,7 +56,7 @@ export class CreateLiftRecordDto
   @IsInt()
   @Min(1)
   @Max(1000)
-  cycleNum!: number;
+  macrocycleNum!: number;
 
   @IsInt()
   @Min(1)

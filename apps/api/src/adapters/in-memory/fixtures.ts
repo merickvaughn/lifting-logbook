@@ -1,9 +1,9 @@
-import { CycleDashboard, LiftRecord, TrainingMax, Weekday } from '@lifting-logbook/core';
+import { MacrocycleDashboard, LiftRecord, TrainingMax, Weekday } from '@lifting-logbook/core';
 
 /**
  * Seed data for the in-memory adapters used in v0.2 to wire the API end-to-end
  * before real persistence (Google Sheets adapters + auth) lands. One program,
- * one cycle, enough records to render the "today's workout" UI path.
+ * one macrocycle, enough records to render the "today's workout" UI path.
  *
  * Built-in program *specs* are no longer seeded here: the in-memory spec adapter
  * seeds every entry of PRESET_BASE_SPECS directly (issue #739).
@@ -11,13 +11,13 @@ import { CycleDashboard, LiftRecord, TrainingMax, Weekday } from '@lifting-logbo
 
 export const SEED_PROGRAM = '5-3-1';
 
-export const seedCycleDashboard = (): CycleDashboard => ({
+export const seedMacrocycleDashboard = (): MacrocycleDashboard => ({
   program: SEED_PROGRAM,
-  cycleUnit: 'week',
-  cycleNum: 1,
-  cycleDate: new Date('2026-04-20T00:00:00.000Z'),
+  macrocycleUnit: 'week',
+  macrocycleNum: 1,
+  macrocycleDate: new Date('2026-04-20T00:00:00.000Z'),
   sheetName: '',
-  cycleStartWeekday: Weekday.Monday,
+  macrocycleStartWeekday: Weekday.Monday,
   programType: '5-3-1',
 });
 
@@ -31,7 +31,7 @@ export const seedTrainingMaxes = (): TrainingMax[] => [
 export const seedLiftRecords = (): LiftRecord[] => [
   {
     program: SEED_PROGRAM,
-    cycleNum: 1,
+    macrocycleNum: 1,
     workoutNum: 1,
     date: new Date('2026-04-20T00:00:00.000Z'),
     lift: 'Squat',
@@ -42,7 +42,7 @@ export const seedLiftRecords = (): LiftRecord[] => [
   },
   {
     program: SEED_PROGRAM,
-    cycleNum: 1,
+    macrocycleNum: 1,
     workoutNum: 1,
     date: new Date('2026-04-20T00:00:00.000Z'),
     lift: 'Squat',
@@ -53,7 +53,7 @@ export const seedLiftRecords = (): LiftRecord[] => [
   },
   {
     program: SEED_PROGRAM,
-    cycleNum: 1,
+    macrocycleNum: 1,
     workoutNum: 1,
     date: new Date('2026-04-20T00:00:00.000Z'),
     lift: 'Squat',

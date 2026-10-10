@@ -23,26 +23,26 @@ export class RescheduleController {
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
   ) {}
 
-  @Patch('cycles/:cycleNum/workouts/:workoutNum/reschedule')
+  @Patch('macrocycles/:macrocycleNum/workouts/:workoutNum/reschedule')
   @HttpCode(HttpStatus.NO_CONTENT)
   async reschedule(
     @Param('program') program: string,
-    @Param('cycleNum') cycleNumParam: string,
+    @Param('macrocycleNum') macrocycleNumParam: string,
     @Param('workoutNum') workoutNumParam: string,
     @Body() dto: RescheduleDto,
     @CurrentUser() user: AuthUser,
   ): Promise<void> {
-    const cycleNum = Number.parseInt(cycleNumParam, 10);
+    const macrocycleNum = Number.parseInt(macrocycleNumParam, 10);
     const workoutNum = Number.parseInt(workoutNumParam, 10);
 
-    if (!Number.isInteger(cycleNum) || cycleNum < 1) {
-      throw new BadRequestException('cycleNum must be a positive integer');
+    if (!Number.isInteger(macrocycleNum) || macrocycleNum < 1) {
+      throw new BadRequestException('macrocycleNum must be a positive integer');
     }
     if (!isValidWorkoutNum(workoutNum)) {
       throw new BadRequestException('workoutNum must be a positive integer');
     }
 
-    const { cycleDashboard, workoutDateOverride, liftingProgramSpec } = await this.factory.forUser(user);
+    const { macrocycleDashboard, workoutDateOverride, liftingProgramSpec } = await this.factory.forUser(user);
 
     const spec = await liftingProgramSpec.getProgramSpec(program);
     if (spec.length === 0) {
@@ -53,7 +53,7 @@ export class RescheduleController {
     // same workoutKeyForWorkoutNum helper the GET workout endpoint uses. (GET also
     // serves a scheduled row past the program's last day as a workout with no
     // planned lifts, so its bound is marginally looser. Such a row is left by a
-    // cycle scheduled before #1023, or by a program that has since lost days.)
+    // macrocycle scheduled before #1023, or by a program that has since lost days.)
     // Without this an override is upserted for a workoutNum that maps to no real workout
     // day and is silently never surfaced (204 success, no visible effect).
     if (workoutKeyForWorkoutNum(spec, workoutNum, program) === undefined) {
@@ -62,15 +62,15 @@ export class RescheduleController {
       );
     }
 
-    // getCycleDashboard throws ProgramNotFoundError when the program has no cycle.
-    // Its cycleNum is the *active* cycle, and the entire read model (GET workout,
-    // cycle dashboard, getOverride) reads only that cycle — an override written for
-    // any other cycleNum is dead data the client can never see. Reject a non-active
-    // cycleNum rather than accept a 204-with-no-effect reschedule.
-    const dashboard = await cycleDashboard.getCycleDashboard(program);
-    if (cycleNum !== dashboard.cycleNum) {
+    // getMacrocycleDashboard throws ProgramNotFoundError when the program has no macrocycle.
+    // Its macrocycleNum is the *active* macrocycle, and the entire read model (GET workout,
+    // macrocycle dashboard, getOverride) reads only that macrocycle — an override written for
+    // any other macrocycleNum is dead data the client can never see. Reject a non-active
+    // macrocycleNum rather than accept a 204-with-no-effect reschedule.
+    const dashboard = await macrocycleDashboard.getMacrocycleDashboard(program);
+    if (macrocycleNum !== dashboard.macrocycleNum) {
       throw new BadRequestException(
-        `cycleNum ${cycleNum} is not the active cycle (${dashboard.cycleNum})`,
+        `macrocycleNum ${macrocycleNum} is not the active macrocycle (${dashboard.macrocycleNum})`,
       );
     }
 
@@ -78,7 +78,7 @@ export class RescheduleController {
     // regardless of the server's local timezone.
     await workoutDateOverride.upsertOverride(
       program,
-      cycleNum,
+      macrocycleNum,
       workoutNum,
       new Date(dto.newDate + 'T00:00:00Z'),
     );

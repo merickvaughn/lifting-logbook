@@ -4,14 +4,14 @@ import {
   PROG_SPEC_WORK_PCTS,
   WARMUP_BASE_REPS,
   activationExercise,
-  baseSpecBlockWeeks,
-  blockWeekForProgramWeek,
+  baseSpecMesocycleWeeks,
+  mesocycleWeekForProgramWeek,
   noScheduleWorkoutDateUTC,
   programWorkoutKeys,
   specRowsForWorkoutDay,
 } from '@lifting-logbook/core';
 import type {
-  CycleDashboardResponse,
+  MacrocycleDashboardResponse,
   LiftingProgramSpecResponse,
   TrainingMaxResponse,
   WorkoutResponse,
@@ -61,10 +61,10 @@ export interface WeekRow {
  */
 export function buildWorkoutDays(
   specs: LiftingProgramSpecResponse[],
-  cycleStartDate: string,
+  macrocycleStartDate: string,
   program?: string,
 ): WorkoutDay[] {
-  const [y, m, d] = cycleStartDate.split('-').map(Number) as [
+  const [y, m, d] = macrocycleStartDate.split('-').map(Number) as [
     number,
     number,
     number,
@@ -74,7 +74,7 @@ export function buildWorkoutDays(
   return programWorkoutKeys(program ?? '', specs).map((k, i) => ({
     workoutNum: i + 1,
     week: k.week,
-    // cycleStart + (week-1)*7 + offset, via the shared core helper the API's
+    // macrocycleStart + (week-1)*7 + offset, via the shared core helper the API's
     // no-schedule detail fallback (toWorkoutResponse) also calls — so a card's
     // date can never drift from the workout it opens (issues #740, #745).
     date: noScheduleWorkoutDateUTC(startDate, k.week, k.offset)
@@ -88,7 +88,7 @@ export function buildWorkoutDays(
 }
 
 /**
- * How the Cycle Dashboard dates a workout: its override if it was rescheduled,
+ * How the Macrocycle Dashboard dates a workout: its override if it was rescheduled,
  * else the date the dashboard response lists it on, else its spec-relative date
  * (`WorkoutDay.date`). The grid and the Program Plan's estimate both date workouts
  * through this, so the two can't drift (issue #1023).
@@ -100,7 +100,7 @@ export function buildWorkoutDays(
  * with `?.`: a response missing it degrades instead of crashing the page.
  */
 export function workoutDateResolver(
-  dashboard: Pick<CycleDashboardResponse, 'weeks' | 'dateOverrides'>,
+  dashboard: Pick<MacrocycleDashboardResponse, 'weeks' | 'dateOverrides'>,
 ): (day: Pick<WorkoutDay, 'workoutNum' | 'date'>) => string {
   const listed = new Map<number, string>();
   for (const week of dashboard.weeks) {
@@ -143,7 +143,7 @@ export function computePlannedSets(
   return [...warmupSets, ...workSets];
 }
 
-export interface CycleProgress {
+export interface MacrocycleProgress {
   completedWorkouts: number;
   totalWorkouts: number;
   /** 0–100, rounded to the nearest integer. 0 when totalWorkouts is 0. */
@@ -151,13 +151,13 @@ export interface CycleProgress {
 }
 
 /**
- * Workout-completion progress for the current cycle, derived from the WeekRow[]
- * the dashboard already assembles (see CycleDashboardGrid). Only
+ * Workout-completion progress for the current macrocycle, derived from the WeekRow[]
+ * the dashboard already assembles (see MacrocycleDashboardGrid). Only
  * status === 'completed' counts toward the numerator; skipped and missed
- * workouts still count toward the denominator (they're part of the cycle) but
+ * workouts still count toward the denominator (they're part of the macrocycle) but
  * weren't performed, so they don't count as done.
  */
-export function computeCycleProgress(weeks: WeekRow[]): CycleProgress {
+export function computeMacrocycleProgress(weeks: WeekRow[]): MacrocycleProgress {
   let completedWorkouts = 0;
   let totalWorkouts = 0;
   for (const row of weeks) {
@@ -231,8 +231,8 @@ export function liftSpecsForWorkout(
   } else if (workout.offset !== undefined) {
     dayRows = specRowsForWorkoutDay(specs, workout.week, workout.offset);
   } else {
-    const blockWeek = blockWeekForProgramWeek(workout.week, baseSpecBlockWeeks(specs));
-    dayRows = specs.filter((s) => s.week === blockWeek);
+    const mesocycleWeek = mesocycleWeekForProgramWeek(workout.week, baseSpecMesocycleWeeks(specs));
+    dayRows = specs.filter((s) => s.week === mesocycleWeek);
   }
   return workout.lifts.map((wl) => dayRows.find((s) => s.lift === (wl.replaces ?? wl.lift)));
 }

@@ -21,7 +21,7 @@ describe('PrismaWorkoutLiftOverrideRepository.getOverrides', () => {
     await new PrismaWorkoutLiftOverrideRepository(prisma, USER).getOverrides('5-3-1', 2, 7);
 
     expect(findMany).toHaveBeenCalledWith({
-      where: { userId: USER, program: '5-3-1', cycleNum: 2, workoutNum: 7 },
+      where: { userId: USER, program: '5-3-1', macrocycleNum: 2, workoutNum: 7 },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
   });
@@ -66,13 +66,13 @@ describe('PrismaWorkoutLiftOverrideRepository.upsertOverride', () => {
 
     // Only the lift's replace: a replace keeps the lift's add (#1026).
     expect(deleteMany).toHaveBeenCalledWith({
-      where: { userId: USER, program: '5-3-1', cycleNum: 2, workoutNum: 7, lift: 'Squat', action: { in: ['replace'] } },
+      where: { userId: USER, program: '5-3-1', macrocycleNum: 2, workoutNum: 7, lift: 'Squat', action: { in: ['replace'] } },
     });
     expect(create).toHaveBeenCalledWith({
       data: {
         userId: USER,
         program: '5-3-1',
-        cycleNum: 2,
+        macrocycleNum: 2,
         workoutNum: 7,
         lift: 'Squat',
         action: 'replace',
@@ -92,10 +92,10 @@ describe('PrismaWorkoutLiftOverrideRepository.upsertOverride', () => {
 
     const kind = { in: ['add', 'remove'] };
     expect(deleteMany).toHaveBeenNthCalledWith(1, {
-      where: { userId: USER, program: '5-3-1', cycleNum: 2, workoutNum: 7, lift: 'Chin-up', action: kind },
+      where: { userId: USER, program: '5-3-1', macrocycleNum: 2, workoutNum: 7, lift: 'Chin-up', action: kind },
     });
     expect(deleteMany).toHaveBeenNthCalledWith(2, {
-      where: { userId: USER, program: '5-3-1', cycleNum: 2, workoutNum: 7, lift: 'Chin-up', action: kind },
+      where: { userId: USER, program: '5-3-1', macrocycleNum: 2, workoutNum: 7, lift: 'Chin-up', action: kind },
     });
   });
 });

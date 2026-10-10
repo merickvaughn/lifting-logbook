@@ -169,6 +169,7 @@ monorepo/
 | [ADR-035](adr/ADR-035-client-side-rest-timer-state.md)      | The Rest Timer Keeps Its State Client-Side, on the Wall Clock       | Accepted |
 | [ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md) | Muscle-Group Defaults Live in the Catalog, and Weekly Sets Count Fractionally | Accepted |
 | [ADR-037](adr/ADR-037-schedule-dates-program-days.md) | A Schedule Dates the Program's Workouts; It Never Numbers Them | Accepted |
+| [ADR-038](adr/ADR-038-training-time-vocabulary.md) | Training-Time Vocabulary — Macrocycle and Mesocycle | Accepted |
 
 ---
 
@@ -222,9 +223,13 @@ Visual representations of the system are in [`docs/diagrams/`](diagrams/):
 ## Domain Model
 
 See [domain-model.md](domain-model.md) for the training domain model as built: the lift
-taxonomy's four axes, the `Program → Cycle → Week → Workout → Lift slot → Set` ladder and
-what each level is stored as, the prescribed-versus-logged seam, a class diagram of the
-whole model, and the known divergences between the model, the API and the UI.
+taxonomy's four axes, the `Program → Macrocycle → Mesocycle → Week → Workout → Lift slot → Set`
+ladder and what each level is stored as, the prescribed-versus-logged seam, a class diagram of
+the whole model, and the known divergences between the model, the API and the UI.
+
+See [glossary.md](glossary.md) for the training-time vocabulary — macrocycle, mesocycle, block,
+microcycle — and what "cycle", "wave" and "phase" mean in other programs and in coaching
+literature. The same content is in the app at `/glossary`.
 
 ---
 

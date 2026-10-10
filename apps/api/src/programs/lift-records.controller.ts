@@ -52,9 +52,9 @@ export class LiftRecordsController {
     @Param('program') program: string,
     @CurrentUser() user: AuthUser,
   ): Promise<LiftRecordResponse[]> {
-    const { liftRecord, cycleDashboard } = await this.factory.forUser(user);
-    const dashboard = await cycleDashboard.getCycleDashboard(program);
-    const records = await liftRecord.getLiftRecords(program, dashboard.cycleNum);
+    const { liftRecord, macrocycleDashboard } = await this.factory.forUser(user);
+    const dashboard = await macrocycleDashboard.getMacrocycleDashboard(program);
+    const records = await liftRecord.getLiftRecords(program, dashboard.macrocycleNum);
     return records.map(toLiftRecordResponse);
   }
 
@@ -78,7 +78,7 @@ export class LiftRecordsController {
       );
     }
 
-    const { liftRecord, cycleScheduledWorkout } = await this.factory.forUser(user);
+    const { liftRecord, macrocycleScheduledWorkout } = await this.factory.forUser(user);
 
     let effectiveDate: Date;
     if (body.date) {
@@ -105,7 +105,7 @@ export class LiftRecordsController {
         throw new BadRequestException('date must be a valid calendar date');
       }
     } else {
-      const scheduled = await cycleScheduledWorkout.getScheduledWorkouts(program, body.cycleNum);
+      const scheduled = await macrocycleScheduledWorkout.getScheduledWorkouts(program, body.macrocycleNum);
       const match = scheduled.find((s) => s.workoutNum === body.workoutNum);
       // `scheduledDate` is `@db.Date` (no time component) so it's already
       // UTC-midnight-equivalent, but normalize it too for defense in depth —
@@ -116,7 +116,7 @@ export class LiftRecordsController {
 
     const record = {
       program,
-      cycleNum: body.cycleNum,
+      macrocycleNum: body.macrocycleNum,
       workoutNum: body.workoutNum,
       date: effectiveDate,
       lift: body.lift,
@@ -139,7 +139,7 @@ export class LiftRecordsController {
       // rather than leaving the client stuck on a conflict it cannot resolve.
       // A payload that collides on the key but differs in content is a genuine
       // conflict and still 409s.
-      const existing = (await liftRecord.getLiftRecords(program, record.cycleNum)).find(
+      const existing = (await liftRecord.getLiftRecords(program, record.macrocycleNum)).find(
         (r) =>
           r.workoutNum === record.workoutNum &&
           r.lift === record.lift &&
@@ -156,7 +156,7 @@ export class LiftRecordsController {
       }
       const existingId = existing ? buildLiftRecordId(program, existing) : null;
       throw new ConflictException(
-        `A lift record already exists for ${record.lift}, cycle ${record.cycleNum}, ` +
+        `A lift record already exists for ${record.lift}, macrocycle ${record.macrocycleNum}, ` +
           `workout ${record.workoutNum}, set ${record.setNum} on ${record.date.toISOString().slice(0, 10)}` +
           (existingId
             ? `. Update it with PATCH /programs/${program}/lift-records/${existingId} instead.`
@@ -184,7 +184,7 @@ export class LiftRecordsController {
    * (Preloaded template programs become custom programs when edited; custom
    * programs have no lift restrictions.)
    *
-   * Rows whose natural key (cycleNum, workoutNum, date, lift, setNum) already exist
+   * Rows whose natural key (macrocycleNum, workoutNum, date, lift, setNum) already exist
    * for the program — or that repeat an earlier row's key within this same file —
    * are skipped and reported in the `skipped` response field. `written`/`skipped`
    * both come from one up-front classification pass (issue #884), so a same-key

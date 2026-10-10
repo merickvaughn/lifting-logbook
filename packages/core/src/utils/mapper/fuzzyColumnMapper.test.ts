@@ -20,6 +20,15 @@ describe('fuzzyColumnMapper', () => {
       }));
     });
 
+    // The source Sheet still emits "Cycle #"; it is an accepted alternate of
+    // "Macrocycle #" (LEGACY_LIFT_RECORD_HEADERS), so both map exactly.
+    it.each(['Macrocycle #', 'Cycle #'])('maps %s to macrocycleNum at full confidence', (header) => {
+      const result = fuzzyColumnMapper([header], 'lift-records');
+      expect(result).toContainEqual(expect.objectContaining({
+        sourceHeader: header, destinationField: 'macrocycleNum', confidence: 1, required: true,
+      }));
+    });
+
     it('fuzzy-matches abbreviated headers', () => {
       const headers = ['Prog', 'Cycle', 'Workout', 'Date', 'Lift', 'Set', 'Wt', 'Reps'];
       const result = fuzzyColumnMapper(headers, 'lift-records');
@@ -33,7 +42,7 @@ describe('fuzzyColumnMapper', () => {
     });
 
     it('matches case-insensitively', () => {
-      const headers = ['program', 'cycle #', 'workout #', 'date', 'lift', 'set #', 'weight', 'reps'];
+      const headers = ['program', 'macrocycle #', 'workout #', 'date', 'lift', 'set #', 'weight', 'reps'];
       const result = fuzzyColumnMapper(headers, 'lift-records');
 
       const prog = result.find((m) => m.sourceHeader === 'program');
@@ -47,7 +56,7 @@ describe('fuzzyColumnMapper', () => {
 
       const requiredFields = result.filter((m) => m.required).map((m) => m.destinationField);
       expect(requiredFields).toEqual(
-        expect.arrayContaining(['program', 'cycleNum', 'workoutNum', 'date', 'lift', 'setNum', 'weight', 'reps'])
+        expect.arrayContaining(['program', 'macrocycleNum', 'workoutNum', 'date', 'lift', 'setNum', 'weight', 'reps'])
       );
     });
 
@@ -64,7 +73,7 @@ describe('fuzzyColumnMapper', () => {
       const headers = ['Program', 'Cycle#', 'Workout-Num', 'Date', 'Lift', 'Set#', 'Weight', 'Reps'];
       const result = fuzzyColumnMapper(headers, 'lift-records');
 
-      expect(result.find((m) => m.sourceHeader === 'Cycle#')?.destinationField).toBe('cycleNum');
+      expect(result.find((m) => m.sourceHeader === 'Cycle#')?.destinationField).toBe('macrocycleNum');
       expect(result.find((m) => m.sourceHeader === 'Workout-Num')?.destinationField).toBe('workoutNum');
     });
   });

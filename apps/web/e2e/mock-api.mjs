@@ -7,11 +7,11 @@ import { createServer } from 'node:http';
 // Canned data
 // ---------------------------------------------------------------------------
 
-const CYCLE_DASHBOARD = {
+const MACROCYCLE_DASHBOARD = {
   program: '5-3-1',
-  cycleNum: 1,
-  cycleStartDate: '2025-01-06',
-  currentWeekType: 'regular',
+  macrocycleNum: 1,
+  macrocycleStartDate: '2025-01-06',
+  currentWeekType: 'training',
   weeks: [
     {
       week: 1,
@@ -23,7 +23,7 @@ const CYCLE_DASHBOARD = {
       ],
     },
   ],
-  // Top-level per-workout metadata the Cycle Dashboard reads instead of a
+  // Top-level per-workout metadata the Macrocycle Dashboard reads instead of a
   // per-workout fetch (issue #740). skippedWorkoutNums is filled from state below.
   dateOverrides: {},
   skippedWorkoutNums: [],
@@ -32,7 +32,7 @@ const CYCLE_DASHBOARD = {
 
 const WORKOUT = {
   program: '5-3-1',
-  cycleNum: 1,
+  macrocycleNum: 1,
   workoutNum: 1,
   week: 1,
   // The day's offset, as the real API sends it (#1014), so e2e exercises the
@@ -89,8 +89,8 @@ const INITIAL_TRAINING_MAXES = [
 ];
 
 const LIFT_RECORDS = [
-  { id: 'r1', program: '5-3-1', cycleNum: 1, workoutNum: 1, date: '2025-01-06', lift: 'squat', setNum: 1, weight: 195, reps: 5, notes: '' },
-  { id: 'r2', program: '5-3-1', cycleNum: 1, workoutNum: 1, date: '2025-01-06', lift: 'deadlift', setNum: 1, weight: 230, reps: 5, notes: '' },
+  { id: 'r1', program: '5-3-1', macrocycleNum: 1, workoutNum: 1, date: '2025-01-06', lift: 'squat', setNum: 1, weight: 195, reps: 5, notes: '' },
+  { id: 'r2', program: '5-3-1', macrocycleNum: 1, workoutNum: 1, date: '2025-01-06', lift: 'deadlift', setNum: 1, weight: 230, reps: 5, notes: '' },
 ];
 
 // Single source of truth for the #911 ambiguous-lift preview/commit scenario
@@ -116,7 +116,7 @@ const CUSTOM_PROGRAM = {
 
 function createInitialState() {
   return {
-    noCurrentCycle: false,
+    noCurrentMacrocycle: false,
     trainingMaxes: structuredClone(INITIAL_TRAINING_MAXES),
     strengthGoals: [],
     skippedWorkouts: new Set(),
@@ -215,12 +215,12 @@ const server = createServer(async (req, res) => {
   // -------------------------------------------------------------------------
   // Test control: reset state between tests
   // GET /__reset           — reset to defaults
-  // GET /__reset?noCurrentCycle=true — reset with no active cycle
+  // GET /__reset?noCurrentMacrocycle=true — reset with no active macrocycle
   // -------------------------------------------------------------------------
   if (url.pathname === '/__reset') {
     state = createInitialState();
-    if (url.searchParams.get('noCurrentCycle') === 'true') {
-      state.noCurrentCycle = true;
+    if (url.searchParams.get('noCurrentMacrocycle') === 'true') {
+      state.noCurrentMacrocycle = true;
     }
     if (url.searchParams.get('withSchedule') === 'true') {
       state.workoutSchedule = { type: 'fixed', days: [0, 2, 4] }; // Mon/Wed/Fri
@@ -362,12 +362,12 @@ const server = createServer(async (req, res) => {
   if (parts[0] === 'programs' && parts.length >= 3) {
     const rest = parts.slice(2);
 
-    // GET /programs/:p/cycles/current
-    if (method === 'GET' && rest[0] === 'cycles' && rest[1] === 'current') {
-      if (state.noCurrentCycle) {
-        json(res, { statusCode: 404, message: 'No active cycle' }, 404);
+    // GET /programs/:p/macrocycles/current
+    if (method === 'GET' && rest[0] === 'macrocycles' && rest[1] === 'current') {
+      if (state.noCurrentMacrocycle) {
+        json(res, { statusCode: 404, message: 'No active macrocycle' }, 404);
       } else {
-        const dashboard = structuredClone(CYCLE_DASHBOARD);
+        const dashboard = structuredClone(MACROCYCLE_DASHBOARD);
         for (const week of dashboard.weeks) {
           for (const wo of week.workouts) {
             wo.skipped = state.skippedWorkouts.has(wo.workoutNum);
@@ -380,9 +380,9 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // POST /programs/:p/cycles/initialize
-    if (method === 'POST' && rest[0] === 'cycles' && rest[1] === 'initialize') {
-      json(res, CYCLE_DASHBOARD);
+    // POST /programs/:p/macrocycles/initialize
+    if (method === 'POST' && rest[0] === 'macrocycles' && rest[1] === 'initialize') {
+      json(res, MACROCYCLE_DASHBOARD);
       return;
     }
 
@@ -393,16 +393,16 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // POST /programs/:p/cycles/:cycleNum/workouts/:workoutNum/skip
-    if (method === 'POST' && rest[0] === 'cycles' && rest[2] === 'workouts' && rest[4] === 'skip') {
+    // POST /programs/:p/macrocycles/:macrocycleNum/workouts/:workoutNum/skip
+    if (method === 'POST' && rest[0] === 'macrocycles' && rest[2] === 'workouts' && rest[4] === 'skip') {
       const workoutNum = Number(rest[3]);
       state.skippedWorkouts.add(workoutNum);
       noContent(res);
       return;
     }
 
-    // DELETE /programs/:p/cycles/:cycleNum/workouts/:workoutNum/skip
-    if (method === 'DELETE' && rest[0] === 'cycles' && rest[2] === 'workouts' && rest[4] === 'skip') {
+    // DELETE /programs/:p/macrocycles/:macrocycleNum/workouts/:workoutNum/skip
+    if (method === 'DELETE' && rest[0] === 'macrocycles' && rest[2] === 'workouts' && rest[4] === 'skip') {
       const workoutNum = Number(rest[3]);
       state.skippedWorkouts.delete(workoutNum);
       noContent(res);
@@ -507,7 +507,7 @@ const server = createServer(async (req, res) => {
 
     // POST /programs/:p/switch
     if (method === 'POST' && rest[0] === 'switch') {
-      json(res, { activeProgram: parts[1], cycleNum: 1 });
+      json(res, { activeProgram: parts[1], macrocycleNum: 1 });
       return;
     }
 
@@ -561,7 +561,7 @@ const server = createServer(async (req, res) => {
             destination: 'lift-records',
             columnMappings: [
               { sourceHeader: 'Program', destinationField: 'program', confidence: 1, required: true },
-              { sourceHeader: 'Cycle #', destinationField: 'cycleNum', confidence: 1, required: true },
+              { sourceHeader: 'Cycle #', destinationField: 'macrocycleNum', confidence: 1, required: true },
               { sourceHeader: 'Workout #', destinationField: 'workoutNum', confidence: 1, required: true },
               { sourceHeader: 'Date', destinationField: 'date', confidence: 1, required: true },
               { sourceHeader: 'Lift', destinationField: 'lift', confidence: 1, required: true },

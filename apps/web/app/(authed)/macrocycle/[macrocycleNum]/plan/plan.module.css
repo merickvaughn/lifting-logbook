@@ -1,0 +1,167 @@
+.container {
+  padding: var(--space-4);
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.backRow {
+  margin-bottom: var(--space-4);
+  font-size: var(--font-size-sm);
+}
+
+.heading {
+  font-size: var(--font-size-xl);
+  margin-bottom: var(--space-4);
+}
+
+.dataList {
+  margin: 0 0 var(--space-5) 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dataRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dataRow dt {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.dataRow dd {
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.sectionLabelRow {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.sectionLabel {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.phaseList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.phaseCard {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  border-left-width: 4px;
+  gap: var(--space-3);
+}
+
+/* Left border color by phase type */
+.phase_training {
+  border-left-color: #1d4ed8;
+}
+
+.phase_deload {
+  border-left-color: var(--color-warn-border);
+}
+
+.phase_test {
+  border-left-color: #b91c1c;
+}
+
+/* Background tint by status */
+.status_completed {
+  background: var(--color-completed-bg);
+}
+
+.status_in-progress {
+  background: var(--color-upcoming-bg);
+}
+
+.status_upcoming {
+  background: var(--color-surface);
+}
+
+.phaseMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.phaseName {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.phaseWeeks {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.phaseMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.typeBadge {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.typeBadge_training {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.typeBadge_deload {
+  background: var(--color-warn-bg);
+  color: var(--color-warn-text);
+}
+
+.typeBadge_test {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.statusIcon {
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  min-width: 1.25rem;
+  text-align: center;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}

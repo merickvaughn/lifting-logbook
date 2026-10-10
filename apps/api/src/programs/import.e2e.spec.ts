@@ -67,7 +67,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
   ].join('\n');
 
   // Two rows sharing every field except date — the exact shape of issue #884's
-  // real-world collisions (e.g. a cycle-numbering reset reusing cycle/workout/set
+  // real-world collisions (e.g. a macrocycle-numbering reset reusing macrocycle/workout/set
   // combos years apart). Both must be created; neither may silently collapse.
   const LIFT_CSV_SAME_KEY_DIFFERENT_DATE = [
     'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
@@ -591,7 +591,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     });
 
     it('excludes rows whose natural key matches excludeKeys', async () => {
-      // Natural key for LIFT_CSV row: cycleNum:workoutNum:YYYYMMDD:lift:setNum
+      // Natural key for LIFT_CSV row: macrocycleNum:workoutNum:YYYYMMDD:lift:setNum
       // = 1:1:20260101:bench-press:1 (date joined the key in issue #884)
       const excludeParam = encodeURIComponent('1:1:20260101:bench-press:1');
       const res = (

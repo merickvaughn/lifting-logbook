@@ -37,20 +37,20 @@ export class ManageLiftsController {
     return Array.from(new Set([...LIFT_NAMES, ...customNames]));
   }
 
-  @Post('cycles/:cycleNum/workouts/:workoutNum/lift-overrides')
+  @Post('macrocycles/:macrocycleNum/workouts/:workoutNum/lift-overrides')
   @HttpCode(HttpStatus.CREATED)
   async upsertOverride(
     @Param('program') program: string,
-    @Param('cycleNum') cycleNumParam: string,
+    @Param('macrocycleNum') macrocycleNumParam: string,
     @Param('workoutNum') workoutNumParam: string,
     @Body() dto: LiftOverrideDto,
     @CurrentUser() user: AuthUser,
   ): Promise<LiftOverrideResponse> {
-    const cycleNum = Number.parseInt(cycleNumParam, 10);
+    const macrocycleNum = Number.parseInt(macrocycleNumParam, 10);
     const workoutNum = Number.parseInt(workoutNumParam, 10);
 
-    if (!Number.isInteger(cycleNum) || cycleNum < 1) {
-      throw new BadRequestException('cycleNum must be a positive integer');
+    if (!Number.isInteger(macrocycleNum) || macrocycleNum < 1) {
+      throw new BadRequestException('macrocycleNum must be a positive integer');
     }
     if (!isValidWorkoutNum(workoutNum)) {
       throw new BadRequestException('workoutNum must be a positive integer');
@@ -59,44 +59,44 @@ export class ManageLiftsController {
       throw new BadRequestException("replacedBy is required when action is 'replace'");
     }
 
-    const { cycleDashboard, workoutLiftOverride, liftingProgramSpec } = await this.factory.forUser(user);
+    const { macrocycleDashboard, workoutLiftOverride, liftingProgramSpec } = await this.factory.forUser(user);
 
     const spec = await liftingProgramSpec.getProgramSpec(program);
     if (spec.length === 0) {
       throw new NotFoundException(`Program '${program}' not found`);
     }
 
-    await cycleDashboard.getCycleDashboard(program);
+    await macrocycleDashboard.getMacrocycleDashboard(program);
 
     const override = {
       lift: dto.lift,
       action: dto.action,
       ...(dto.replacedBy !== undefined && { replacedBy: dto.replacedBy }),
     };
-    await workoutLiftOverride.upsertOverride(program, cycleNum, workoutNum, override);
+    await workoutLiftOverride.upsertOverride(program, macrocycleNum, workoutNum, override);
     return toLiftOverrideResponse(override);
   }
 
-  @Delete('cycles/:cycleNum/workouts/:workoutNum/lift-overrides/:lift')
+  @Delete('macrocycles/:macrocycleNum/workouts/:workoutNum/lift-overrides/:lift')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteOverride(
     @Param('program') program: string,
-    @Param('cycleNum') cycleNumParam: string,
+    @Param('macrocycleNum') macrocycleNumParam: string,
     @Param('workoutNum') workoutNumParam: string,
     @Param('lift') lift: string,
     @CurrentUser() user: AuthUser,
   ): Promise<void> {
-    const cycleNum = Number.parseInt(cycleNumParam, 10);
+    const macrocycleNum = Number.parseInt(macrocycleNumParam, 10);
     const workoutNum = Number.parseInt(workoutNumParam, 10);
 
-    if (!Number.isInteger(cycleNum) || cycleNum < 1) {
-      throw new BadRequestException('cycleNum must be a positive integer');
+    if (!Number.isInteger(macrocycleNum) || macrocycleNum < 1) {
+      throw new BadRequestException('macrocycleNum must be a positive integer');
     }
     if (!isValidWorkoutNum(workoutNum)) {
       throw new BadRequestException('workoutNum must be a positive integer');
     }
 
     const { workoutLiftOverride } = await this.factory.forUser(user);
-    await workoutLiftOverride.deleteOverride(program, cycleNum, workoutNum, decodeURIComponent(lift));
+    await workoutLiftOverride.deleteOverride(program, macrocycleNum, workoutNum, decodeURIComponent(lift));
   }
 }

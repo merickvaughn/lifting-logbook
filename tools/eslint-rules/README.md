@@ -50,7 +50,7 @@ both branches — that remains a reviewer responsibility (see the standard doc).
 
 ```ts
 // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
-workoutSkipOverride.getSkipsForCycle(program, dashboard.cycleNum).catch((err: unknown) => {
+workoutSkipOverride.getSkipsForMacrocycle(program, dashboard.macrocycleNum).catch((err: unknown) => {
   console.error('[WorkoutsController] getSkipsForCycle failed; defaulting to empty set', err);
   return new Set<number>();
 });

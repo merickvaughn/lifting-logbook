@@ -15,22 +15,22 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     private readonly userId: string,
   ) {}
 
-  async getLiftRecords(program: string, cycleNum: number): Promise<LiftRecord[]> {
+  async getLiftRecords(program: string, macrocycleNum: number): Promise<LiftRecord[]> {
     const rows = await this.prisma.liftRecord.findMany({
-      where: { userId: this.userId, program, cycleNum },
+      where: { userId: this.userId, program, macrocycleNum },
     });
     return rows.map(rowToLiftRecord);
   }
 
-  async getLoggedWorkoutNums(program: string, cycleNum: number): Promise<Set<number>> {
+  async getLoggedWorkoutNums(program: string, macrocycleNum: number): Promise<Set<number>> {
     // `groupBy`, not `findMany({ distinct })`: without the `nativeDistinct`
     // preview feature Prisma implements `distinct` in the query engine (fetch
     // every matching row, dedupe in memory), which is the round-trip this method
     // exists to avoid. `groupBy` emits SQL `GROUP BY` and is served index-only by
-    // `@@index([userId, program, cycleNum, workoutNum])`.
+    // `@@index([userId, program, macrocycleNum, workoutNum])`.
     const rows = await this.prisma.liftRecord.groupBy({
       by: ['workoutNum'],
-      where: { userId: this.userId, program, cycleNum },
+      where: { userId: this.userId, program, macrocycleNum },
     });
     return new Set(rows.map((r) => r.workoutNum));
   }
@@ -40,7 +40,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
       data: records.map((r) => ({
         userId: this.userId,
         program,
-        cycleNum: r.cycleNum,
+        macrocycleNum: r.macrocycleNum,
         workoutNum: r.workoutNum,
         date: r.date,
         lift: r.lift,
@@ -72,7 +72,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
             userId: this.userId,
             program,
             OR: chunk.map((r) => ({
-              cycleNum: r.cycleNum,
+              macrocycleNum: r.macrocycleNum,
               workoutNum: r.workoutNum,
               date: r.date,
               lift: r.lift,
@@ -98,7 +98,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     try {
       const updated = await this.prisma.liftRecord.update({
         where: {
-          userId_program_cycleNum_workoutNum_date_lift_setNum: {
+          userId_program_macrocycleNum_workoutNum_date_lift_setNum: {
             userId: this.userId,
             program,
             ...parsed,
@@ -130,7 +130,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     // pre-#884 behavior for pre-#884 data without weakening the current
     // parser's contract for current data.
     const clauses: Array<{
-      cycleNum: number;
+      macrocycleNum: number;
       workoutNum: number;
       date?: Date;
       lift: string;
@@ -140,7 +140,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
       const p = parseLiftRecordNaturalKey(k);
       if (p) {
         clauses.push({
-          cycleNum: p.cycleNum,
+          macrocycleNum: p.macrocycleNum,
           workoutNum: p.workoutNum,
           date: p.date,
           lift: p.lift,
@@ -169,8 +169,8 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
   }
 }
 
-// ID format: ${program}-${cycleNum}-${workoutNum}-${YYYYMMDD}-${lift}-${setNum}
-// cycleNum, workoutNum, setNum are integers; date is 8 UTC digits (no internal
+// ID format: ${program}-${macrocycleNum}-${workoutNum}-${YYYYMMDD}-${lift}-${setNum}
+// macrocycleNum, workoutNum, setNum are integers; date is 8 UTC digits (no internal
 // delimiter, so it can never be confused with a hyphen inside the lift name,
 // e.g. "Chin-up", "Romanian Dead-lift"); lift may itself contain hyphens.
 //
@@ -181,45 +181,45 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
 function parseLiftRecordId(
   program: string,
   id: string,
-): { cycleNum: number; workoutNum: number; date: Date; lift: string; setNum: number } | null {
+): { macrocycleNum: number; workoutNum: number; date: Date; lift: string; setNum: number } | null {
   const prefix = `${program}-`;
   if (!id.startsWith(prefix)) return null;
   const rest = id.slice(prefix.length);
   const parts = rest.split('-');
   if (parts.length < 5) return null;
 
-  const cycleNum = parseInt(parts[0] ?? '', 10);
+  const macrocycleNum = parseInt(parts[0] ?? '', 10);
   const workoutNum = parseInt(parts[1] ?? '', 10);
   const date = parseYYYYMMDD(parts[2] ?? '');
   const setNum = parseInt(parts[parts.length - 1] ?? '', 10);
   const lift = parts.slice(3, parts.length - 1).join('-');
 
-  if (isNaN(cycleNum) || isNaN(workoutNum) || !date || isNaN(setNum) || !lift) return null;
-  return { cycleNum, workoutNum, date, lift, setNum };
+  if (isNaN(macrocycleNum) || isNaN(workoutNum) || !date || isNaN(setNum) || !lift) return null;
+  return { macrocycleNum, workoutNum, date, lift, setNum };
 }
 
 // Parses a pre-#884 natural key with no date segment:
-// "cycleNum:workoutNum:lift:setNum". Exists only so undo still works against
+// "macrocycleNum:workoutNum:lift:setNum". Exists only so undo still works against
 // ImportBatch.preImage rows persisted before date joined the key — see the
 // call site in deleteLiftRecordsByNaturalKeys. Returns a date-less clause
-// (matches any date for that cycle/workout/lift/set), the same date-blind
+// (matches any date for that macrocycle/workout/lift/set), the same date-blind
 // behavior undo had before this issue's fix.
 function parseLegacyLiftRecordNaturalKey(
   key: string,
-): { cycleNum: number; workoutNum: number; lift: string; setNum: number } | null {
+): { macrocycleNum: number; workoutNum: number; lift: string; setNum: number } | null {
   const parts = key.split(':');
   if (parts.length < 4) return null;
-  const cycleNum = parseInt(parts[0] ?? '', 10);
+  const macrocycleNum = parseInt(parts[0] ?? '', 10);
   const workoutNum = parseInt(parts[1] ?? '', 10);
   const setNum = parseInt(parts[parts.length - 1] ?? '', 10);
   const lift = parts.slice(2, parts.length - 1).join(':');
-  if (isNaN(cycleNum) || isNaN(workoutNum) || isNaN(setNum) || !lift) return null;
-  return { cycleNum, workoutNum, lift, setNum };
+  if (isNaN(macrocycleNum) || isNaN(workoutNum) || isNaN(setNum) || !lift) return null;
+  return { macrocycleNum, workoutNum, lift, setNum };
 }
 
 export function rowToLiftRecord(row: {
   program: string;
-  cycleNum: number;
+  macrocycleNum: number;
   workoutNum: number;
   date: Date;
   lift: string;
@@ -230,7 +230,7 @@ export function rowToLiftRecord(row: {
 }): LiftRecord {
   return {
     program: row.program,
-    cycleNum: row.cycleNum,
+    macrocycleNum: row.macrocycleNum,
     workoutNum: row.workoutNum,
     date: row.date,
     lift: row.lift,

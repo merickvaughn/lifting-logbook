@@ -25,14 +25,14 @@ export interface IWorkoutLiftOverrideRepository {
    */
   getOverrides(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
   ): Promise<LiftOverride[]>;
 
   /** Saves `override`, replacing the lift's override of the same kind if it has one. */
   upsertOverride(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
     override: LiftOverride,
   ): Promise<void>;
@@ -40,7 +40,7 @@ export interface IWorkoutLiftOverrideRepository {
   /** Deletes every override of `lift`, of either kind. */
   deleteOverride(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
     lift: string,
   ): Promise<void>;

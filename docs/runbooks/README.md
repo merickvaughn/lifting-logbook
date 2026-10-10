@@ -19,6 +19,7 @@ For severity levels, escalation paths, and the incident response checklist, see
 | [Auth provider outage](auth-provider-outage.md) | 401/403 surge + Clerk status incident | SEV2 |
 | [Deploy regression rollback](deploy-regression-rollback.md) | Error rate spike correlated with recent deploy | SEV2 |
 | [Staging CI flakiness](staging-ci-flakiness.md) | `staging.yml` red runs that pass on re-run | SEV3 |
+| [Macrocycle rename rollback](macrocycle-rename-rollback.md) | Reverting ADR-038 / PR #1041 after its rename migration ran | SEV2 |
 
 ---
 

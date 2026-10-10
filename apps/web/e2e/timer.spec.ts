@@ -20,7 +20,7 @@ test.beforeEach(async ({ request }) => {
 // ---------------------------------------------------------------------------
 
 test('start a timed workout — dock appears, expands, pauses and ends', async ({ page }) => {
-  await page.goto('/cycle/1/workout/1/detail');
+  await page.goto('/macrocycle/1/workout/1/detail');
 
   // The timed plan is summarised before anything starts.
   await expect(page.getByText(/Timed plan: \d+ sets · \d+:\d{2} including rest/)).toBeVisible();
@@ -57,7 +57,7 @@ test('start a timed workout — dock appears, expands, pauses and ends', async (
 });
 
 test('start the timer at a chosen set from the lift list', async ({ page }) => {
-  await page.goto('/cycle/1/workout/1/detail');
+  await page.goto('/macrocycle/1/workout/1/detail');
 
   // The set rows sit in a `display: none` panel until the lift is expanded, so
   // the play control is not actionable before this click.
@@ -73,7 +73,7 @@ test('start the timer at a chosen set from the lift list', async ({ page }) => {
 });
 
 test('the countdown survives a reload — the run is picked up again', async ({ page }) => {
-  await page.goto('/cycle/1/workout/1/detail');
+  await page.goto('/macrocycle/1/workout/1/detail');
   await page.getByRole('button', { name: '▶ Start timed workout' }).click();
   await expect(page.getByRole('button', { name: 'Expand timer' })).toBeVisible();
 
@@ -88,7 +88,7 @@ test('the countdown survives a reload — the run is picked up again', async ({ 
 // ---------------------------------------------------------------------------
 
 test('the timer page shows the live dial and the session queue', async ({ page }) => {
-  await page.goto('/cycle/1/workout/1/timer');
+  await page.goto('/macrocycle/1/workout/1/timer');
 
   await expect(page.getByRole('tab', { name: 'Timer' })).toHaveAttribute(
     'aria-selected',
@@ -106,7 +106,7 @@ test('the timer page shows the live dial and the session queue', async ({ page }
 });
 
 test('timer settings persist and change the plan estimate', async ({ page }) => {
-  await page.goto('/cycle/1/workout/1/timer');
+  await page.goto('/macrocycle/1/workout/1/timer');
 
   const estimate = page.getByText(/\d+ timed sets · \d+:\d{2} estimated/);
   const before = await estimate.textContent();
@@ -124,10 +124,10 @@ test('timer settings persist and change the plan estimate', async ({ page }) => 
 });
 
 test('the timer page links back to the workout detail page', async ({ page }) => {
-  await page.goto('/cycle/1/workout/1/timer');
+  await page.goto('/macrocycle/1/workout/1/timer');
 
   await page.getByRole('link', { name: /Week \d+ · Workout \d+/ }).click();
-  await expect(page).toHaveURL(/\/cycle\/1\/workout\/1\/detail$/);
+  await expect(page).toHaveURL(/\/macrocycle\/1\/workout\/1\/detail$/);
 });
 
 // ---------------------------------------------------------------------------
@@ -137,12 +137,12 @@ test('the timer page links back to the workout detail page', async ({ page }) =>
 test('an activation the program names appears in the plan and the queue', async ({ page }) => {
   // The mock spec gives squat `activation: 'Hip Airplane'` and leaves the other
   // three lifts on the legacy `'none'` placeholder.
-  await page.goto('/cycle/1/workout/1/detail');
+  await page.goto('/macrocycle/1/workout/1/detail');
 
   await page.getByRole('button', { name: /warm-up/ }).first().click();
   await expect(page.getByText('Hip Airplane')).toBeVisible();
 
-  await page.goto('/cycle/1/workout/1/timer');
+  await page.goto('/macrocycle/1/workout/1/timer');
 
   const queueRow = page.getByRole('listitem').filter({ hasText: 'Hip Airplane' });
   await expect(queueRow).toHaveCount(1);
@@ -162,7 +162,7 @@ test('an activation the program names appears in the plan and the queue', async 
 });
 
 test('a legacy activation placeholder produces no phase', async ({ page }) => {
-  await page.goto('/cycle/1/workout/1/timer');
+  await page.goto('/macrocycle/1/workout/1/timer');
 
   // 'none' is a classification placeholder, not a movement — rendering it would
   // put "Activation · none" on the dial for three of the four lifts. Scoped to

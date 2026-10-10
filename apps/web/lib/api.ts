@@ -80,9 +80,9 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 // wrapper that binds them to the server auth strategy above and re-exports the
 // subset used by Server Components / Server Actions.
 export const {
-  fetchCycleDashboard,
-  createCycle,
-  deleteCurrentCycle,
+  fetchMacrocycleDashboard,
+  createMacrocycle,
+  deleteCurrentMacrocycle,
   fetchProgramSpec,
   fetchTrainingMaxes,
   fetchTrainingMaxHistory,

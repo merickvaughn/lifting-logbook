@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { ICycleDashboardRepository } from '../ports/ICycleDashboardRepository';
+import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
 import { ILiftingProgramSpecRepository } from '../ports/ILiftingProgramSpecRepository';
 import { IWorkoutDateOverrideRepository } from '../ports/IWorkoutDateOverrideRepository';
 import { IRepositoryFactory } from '../ports/factory';
@@ -36,8 +36,8 @@ describe('RescheduleController', () => {
   let overrideRepoB: jest.Mocked<IWorkoutDateOverrideRepository>;
   let specRepoA: jest.Mocked<ILiftingProgramSpecRepository>;
   let specRepoB: jest.Mocked<ILiftingProgramSpecRepository>;
-  let dashboardRepoA: jest.Mocked<ICycleDashboardRepository>;
-  let dashboardRepoB: jest.Mocked<ICycleDashboardRepository>;
+  let dashboardRepoA: jest.Mocked<IMacrocycleDashboardRepository>;
+  let dashboardRepoB: jest.Mocked<IMacrocycleDashboardRepository>;
   let factory: jest.Mocked<IRepositoryFactory>;
 
   beforeEach(async () => {
@@ -51,15 +51,15 @@ describe('RescheduleController', () => {
     };
     specRepoA = { getProgramSpec: jest.fn().mockResolvedValue(STUB_SPEC), saveProgramSpec: jest.fn(), deleteSpecRows: jest.fn() } as jest.Mocked<ILiftingProgramSpecRepository>;
     specRepoB = { getProgramSpec: jest.fn().mockResolvedValue(STUB_SPEC), saveProgramSpec: jest.fn(), deleteSpecRows: jest.fn() } as jest.Mocked<ILiftingProgramSpecRepository>;
-    // Active cycle is 3 — the valid-input tests reschedule cycle 3; the controller's
-    // new cycle-match check compares the path cycleNum against this dashboard cycleNum.
-    dashboardRepoA = { getCycleDashboard: jest.fn().mockResolvedValue({ cycleNum: 3 }), saveCycleDashboard: jest.fn() } as unknown as jest.Mocked<ICycleDashboardRepository>;
-    dashboardRepoB = { getCycleDashboard: jest.fn().mockResolvedValue({ cycleNum: 3 }), saveCycleDashboard: jest.fn() } as unknown as jest.Mocked<ICycleDashboardRepository>;
+    // Active macrocycle is 3 — the valid-input tests reschedule macrocycle 3; the controller's
+    // new macrocycle-match check compares the path macrocycleNum against this dashboard macrocycleNum.
+    dashboardRepoA = { getMacrocycleDashboard: jest.fn().mockResolvedValue({ macrocycleNum: 3 }), saveMacrocycleDashboard: jest.fn() } as unknown as jest.Mocked<IMacrocycleDashboardRepository>;
+    dashboardRepoB = { getMacrocycleDashboard: jest.fn().mockResolvedValue({ macrocycleNum: 3 }), saveMacrocycleDashboard: jest.fn() } as unknown as jest.Mocked<IMacrocycleDashboardRepository>;
     factory = {
       forUser: jest.fn().mockImplementation(async (user) =>
         user.id === MOCK_USER_A.id
-          ? { cycleDashboard: dashboardRepoA, workoutDateOverride: overrideRepoA, liftingProgramSpec: specRepoA }
-          : { cycleDashboard: dashboardRepoB, workoutDateOverride: overrideRepoB, liftingProgramSpec: specRepoB },
+          ? { macrocycleDashboard: dashboardRepoA, workoutDateOverride: overrideRepoA, liftingProgramSpec: specRepoA }
+          : { macrocycleDashboard: dashboardRepoB, workoutDateOverride: overrideRepoB, liftingProgramSpec: specRepoB },
       ),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -91,14 +91,14 @@ describe('RescheduleController', () => {
     expect(result).toBeUndefined();
   });
 
-  it('rejects non-integer cycleNum', async () => {
+  it('rejects non-integer macrocycleNum', async () => {
     await expect(
       controller.reschedule('5-3-1', 'abc', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(overrideRepoA.upsertOverride).not.toHaveBeenCalled();
   });
 
-  it('rejects zero cycleNum', async () => {
+  it('rejects zero macrocycleNum', async () => {
     await expect(
       controller.reschedule('5-3-1', '0', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -131,8 +131,8 @@ describe('RescheduleController', () => {
     expect(overrideRepoA.upsertOverride).not.toHaveBeenCalled();
   });
 
-  it('propagates ProgramNotFoundError when cycle dashboard is missing', async () => {
-    dashboardRepoA.getCycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
+  it('propagates ProgramNotFoundError when macrocycle dashboard is missing', async () => {
+    dashboardRepoA.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
     await expect(
       controller.reschedule('5-3-1', '3', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
     ).rejects.toBeInstanceOf(ProgramNotFoundError);
@@ -148,9 +148,9 @@ describe('RescheduleController', () => {
     expect(overrideRepoA.upsertOverride).not.toHaveBeenCalled();
   });
 
-  it('rejects a cycleNum that is not the active cycle with 400', async () => {
-    // Active cycle is 3 (dashboard mock); rescheduling cycle 7 would write an
-    // override the current-cycle read model can never surface — reject it.
+  it('rejects a macrocycleNum that is not the active macrocycle with 400', async () => {
+    // Active macrocycle is 3 (dashboard mock); rescheduling macrocycle 7 would write an
+    // override the current-macrocycle read model can never surface — reject it.
     await expect(
       controller.reschedule('5-3-1', '7', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
     ).rejects.toBeInstanceOf(BadRequestException);

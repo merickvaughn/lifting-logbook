@@ -11,30 +11,30 @@ export class PrismaWorkoutRepository implements IWorkoutRepository {
     private readonly userId: string,
   ) {}
 
-  async getWorkout(program: string, cycleNum: number, workoutNum: number): Promise<LiftRecord[]> {
+  async getWorkout(program: string, macrocycleNum: number, workoutNum: number): Promise<LiftRecord[]> {
     const rows = await this.prisma.liftRecord.findMany({
-      where: { userId: this.userId, program, cycleNum, workoutNum },
+      where: { userId: this.userId, program, macrocycleNum, workoutNum },
       orderBy: [{ lift: 'asc' }, { setNum: 'asc' }],
     });
-    if (rows.length === 0) throw new WorkoutNotFoundError(program, cycleNum, workoutNum);
+    if (rows.length === 0) throw new WorkoutNotFoundError(program, macrocycleNum, workoutNum);
     return rows.map(rowToLiftRecord);
   }
 
   async saveWorkout(
     program: string,
-    cycleNum: number,
+    macrocycleNum: number,
     workoutNum: number,
     records: LiftRecord[],
   ): Promise<void> {
     await runBatch(this.prisma, (db) => [
       db.liftRecord.deleteMany({
-        where: { userId: this.userId, program, cycleNum, workoutNum },
+        where: { userId: this.userId, program, macrocycleNum, workoutNum },
       }),
       db.liftRecord.createMany({
         data: records.map((r) => ({
           userId: this.userId,
           program,
-          cycleNum,
+          macrocycleNum,
           workoutNum,
           date: r.date,
           lift: r.lift,

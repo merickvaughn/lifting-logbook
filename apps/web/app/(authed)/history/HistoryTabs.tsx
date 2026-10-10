@@ -132,7 +132,7 @@ function LiftHistoryTab({ records, unit }: { records: EnrichedRecord[]; unit: We
                   </td>
                   <td>{r.tmPercent !== null ? `${r.tmPercent}%` : '—'}</td>
                   <td>
-                    Cycle {r.cycleNum}, Workout {r.workoutNum}
+                    Macrocycle {r.macrocycleNum}, Workout {r.workoutNum}
                   </td>
                   <td>{r.notes || '—'}</td>
                   <td>

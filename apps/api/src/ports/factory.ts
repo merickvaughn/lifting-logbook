@@ -1,8 +1,8 @@
 import { AuthUser } from './auth';
 import { IBodyWeightRepository } from './IBodyWeightRepository';
 import { ICustomLiftRepository } from './ICustomLiftRepository';
-import { ICycleDashboardRepository } from './ICycleDashboardRepository';
-import { ICycleScheduledWorkoutRepository } from './ICycleScheduledWorkoutRepository';
+import { IMacrocycleDashboardRepository } from './IMacrocycleDashboardRepository';
+import { IMacrocycleScheduledWorkoutRepository } from './IMacrocycleScheduledWorkoutRepository';
 import { IImportBatchRepository } from './IImportBatchRepository';
 import { ILiftMetadataRepository } from './ILiftMetadataRepository';
 import { ILiftingProgramSpecRepository } from './ILiftingProgramSpecRepository';
@@ -20,8 +20,8 @@ import { IWorkoutSkipOverrideRepository } from './IWorkoutSkipOverrideRepository
 export interface RepositoryBundle {
   bodyWeight: IBodyWeightRepository;
   customLift: ICustomLiftRepository;
-  cycleDashboard: ICycleDashboardRepository;
-  cycleScheduledWorkout: ICycleScheduledWorkoutRepository;
+  macrocycleDashboard: IMacrocycleDashboardRepository;
+  macrocycleScheduledWorkout: IMacrocycleScheduledWorkoutRepository;
   importBatch: IImportBatchRepository;
   liftMetadata: ILiftMetadataRepository;
   liftingProgramSpec: ILiftingProgramSpecRepository;

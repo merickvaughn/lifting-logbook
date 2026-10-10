@@ -384,53 +384,53 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
     const userId = `rls-e2e-fullapp-init-${Date.now()}`;
     const res = await inject({
       method: 'POST',
-      url: '/programs/leangains/cycles/initialize',
+      url: '/programs/leangains/macrocycles/initialize',
       headers: { authorization: `Bearer ${userId}`, 'content-type': 'application/json' },
       payload: '{}',
     });
 
     expect(res.statusCode).toBe(201);
-    await owner.cycleDashboard.deleteMany({ where: { userId } });
+    await owner.macrocycleDashboard.deleteMany({ where: { userId } });
   });
 
   it('reads back data that genuinely exists instead of failing closed (regression test for #644)', async () => {
     const userId = `rls-e2e-fullapp-read-${Date.now()}`;
-    await owner.cycleDashboard.create({
+    await owner.macrocycleDashboard.create({
       data: {
         userId,
         program: 'leangains',
-        cycleUnit: 'week',
-        cycleNum: 1,
-        cycleDate: new Date(),
+        macrocycleUnit: 'week',
+        macrocycleNum: 1,
+        macrocycleDate: new Date(),
         sheetName: 'leangains_Cycle_1_seed',
-        cycleStartWeekday: 'Friday',
+        macrocycleStartWeekday: 'Friday',
         programType: 'leangains',
       },
     });
 
     const res = await inject({
       method: 'GET',
-      url: '/programs/leangains/cycles/current',
+      url: '/programs/leangains/macrocycles/current',
       headers: { authorization: `Bearer ${userId}` },
     });
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).program).toBe('leangains');
-    await owner.cycleDashboard.deleteMany({ where: { userId } });
+    await owner.macrocycleDashboard.deleteMany({ where: { userId } });
   });
 
   // switchProgram (SwitchProgramController) exercises a second HTTP entry point into the same
-  // factory-routed cycle-init + settings-write path as cycles/initialize above (both now resolve
+  // factory-routed macrocycle-init + settings-write path as macrocycles/initialize above (both now resolve
   // their repositories via PrismaRepositoryFactory — the settings write used to bypass it via a
   // directly-constructed repository, fixed by #1029/#1030). It keeps its own coverage here
   // because #650 (the onboarding activeProgram fix) made this the primary path onboarding now
-  // depends on, so it needs the same full-app-boot-under-lifting_app coverage cycles/initialize
+  // depends on, so it needs the same full-app-boot-under-lifting_app coverage macrocycles/initialize
   // got in #645 — otherwise this endpoint carries the same class of blind spot that let #644 ship
-  // undetected. It has an existing create-new-cycle test in programs.db.e2e.spec.ts, but that
+  // undetected. It has an existing create-new-macrocycle test in programs.db.e2e.spec.ts, but that
   // suite (like every DB E2E suite except this file) connects as the bootstrap superuser, which
   // bypasses RLS. (The one branch still calling clientForRequest() directly — the custom-program
   // ownership check — only runs for UUID program ids; 'leangains' below isn't one.)
-  it('switchProgram creates a first-time cycle and sets activeProgram under the restricted role', async () => {
+  it('switchProgram creates a first-time macrocycle and sets activeProgram under the restricted role', async () => {
     const userId = `rls-e2e-fullapp-switch-${Date.now()}`;
     const res = await inject({
       method: 'POST',
@@ -439,21 +439,21 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
     });
 
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ activeProgram: 'leangains', cycleNum: 1 });
+    expect(JSON.parse(res.body)).toEqual({ activeProgram: 'leangains', macrocycleNum: 1 });
 
-    await owner.cycleDashboard.deleteMany({ where: { userId } });
+    await owner.macrocycleDashboard.deleteMany({ where: { userId } });
     await owner.userSettings.deleteMany({ where: { userId } });
   });
 
-  // Regression coverage for #647: the new DELETE cycles/current endpoint (added to
+  // Regression coverage for #647: the new DELETE macrocycles/current endpoint (added to
   // support a self-cleaning staging Playwright test) deletes through the same
   // factory/repos path as every other request. Proves the deleteMany calls are
   // genuinely RLS-scoped under the restricted lifting_app role — not merely
   // filtered by an application-level WHERE clause that happens to look correct —
   // exactly the risk class that let #644 ship silently.
-  it('deletes a cycle scoped to the requesting user only, under real RLS (regression coverage for #647)', async () => {
-    // deleteCurrentCycle issues five scoped deletes (CycleDashboard, LiftRecord,
-    // TrainingMax, TrainingMaxHistory, CycleScheduledWorkout). Seeding all five
+  it('deletes a macrocycle scoped to the requesting user only, under real RLS (regression coverage for #647)', async () => {
+    // deleteCurrentMacrocycle issues five scoped deletes (MacrocycleDashboard, LiftRecord,
+    // TrainingMax, TrainingMaxHistory, MacrocycleScheduledWorkout). Seeding all five
     // for both users — not just the dashboard — matters because #644 was a
     // per-repository DI-wiring failure, not a missing-policy failure: a future
     // regression where one specific repository fails to route through the
@@ -464,15 +464,15 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
     const PROGRAM = 'leangains';
 
     const seedAllTables = async (uid: string) => {
-      await owner.cycleDashboard.create({
+      await owner.macrocycleDashboard.create({
         data: {
           userId: uid,
           program: PROGRAM,
-          cycleUnit: 'week',
-          cycleNum: 1,
-          cycleDate: new Date(),
+          macrocycleUnit: 'week',
+          macrocycleNum: 1,
+          macrocycleDate: new Date(),
           sheetName: `leangains_Cycle_1_${uid}`,
-          cycleStartWeekday: 'Friday',
+          macrocycleStartWeekday: 'Friday',
           programType: PROGRAM,
         },
       });
@@ -480,7 +480,7 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
         data: {
           userId: uid,
           program: PROGRAM,
-          cycleNum: 1,
+          macrocycleNum: 1,
           workoutNum: 1,
           date: new Date(),
           lift: 'Squat',
@@ -505,8 +505,8 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
           goalMet: false,
         },
       });
-      await owner.cycleScheduledWorkout.create({
-        data: { userId: uid, program: PROGRAM, cycleNum: 1, workoutNum: 1, weekNum: 1, scheduledDate: new Date() },
+      await owner.macrocycleScheduledWorkout.create({
+        data: { userId: uid, program: PROGRAM, macrocycleNum: 1, workoutNum: 1, weekNum: 1, scheduledDate: new Date() },
       });
     };
     await seedAllTables(userId);
@@ -514,18 +514,18 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
 
     const delRes = await inject({
       method: 'DELETE',
-      url: `/programs/${PROGRAM}/cycles/current`,
+      url: `/programs/${PROGRAM}/macrocycles/current`,
       headers: { authorization: `Bearer ${userId}` },
     });
     expect(delRes.statusCode).toBe(204);
 
     const findAllFor = (uid: string) =>
       Promise.all([
-        owner.cycleDashboard.findFirst({ where: { userId: uid, program: PROGRAM } }),
+        owner.macrocycleDashboard.findFirst({ where: { userId: uid, program: PROGRAM } }),
         owner.liftRecord.findFirst({ where: { userId: uid, program: PROGRAM } }),
         owner.trainingMax.findFirst({ where: { userId: uid, program: PROGRAM } }),
         owner.trainingMaxHistory.findFirst({ where: { userId: uid, program: PROGRAM } }),
-        owner.cycleScheduledWorkout.findFirst({ where: { userId: uid, program: PROGRAM } }),
+        owner.macrocycleScheduledWorkout.findFirst({ where: { userId: uid, program: PROGRAM } }),
       ]);
 
     // The requesting user's rows are gone from every affected table...
@@ -539,11 +539,11 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
     for (const row of others) expect(row).not.toBeNull();
 
     await Promise.all([
-      owner.cycleDashboard.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
+      owner.macrocycleDashboard.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.liftRecord.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.trainingMax.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.trainingMaxHistory.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
-      owner.cycleScheduledWorkout.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
+      owner.macrocycleScheduledWorkout.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
     ]);
   });
 });

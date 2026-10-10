@@ -50,14 +50,16 @@ export const TIMER_STORAGE_KEY = 'll.timer.v1';
  * workout resolves to. Shape 4 is that last case (#1014): a workout now plans
  * its own day's lifts rather than the whole week's, and gains its week-2+ sets,
  * so a run anchored in the old queue could re-anchor onto another lift's set
- * instead of ending. A run written under a different
+ * instead of ending. Shape 5 (#1039) renamed the run's workout key from
+ * `cycleNum` to `macrocycleNum`; a shape-4 run no longer passes `isWorkoutKey`,
+ * and the bump makes that drop deliberate rather than incidental. A run written under a different
  * version is dropped rather than resumed at the wrong phase: a run is minutes of
  * ephemeral position (the lifter taps Start again), whereas a silently wrong
  * countdown is indistinguishable from a working one. Settings are stored beside
  * it and are unaffected — they migrate field-by-field through
  * `normalizeTimerSettings` instead.
  */
-export const TIMER_RUN_SHAPE = 4;
+export const TIMER_RUN_SHAPE = 5;
 
 interface StoredBlob {
   settings: unknown;
@@ -122,7 +124,7 @@ function isWorkoutKey(value: unknown): value is TimerWorkoutKey {
   if (!isRecord(value)) return false;
   return (
     typeof value.program === 'string' &&
-    typeof value.cycleNum === 'number' &&
+    typeof value.macrocycleNum === 'number' &&
     typeof value.workoutNum === 'number'
   );
 }
@@ -173,7 +175,7 @@ function isRunShape(value: unknown): value is UnvalidatedRun {
 }
 
 export function sameWorkout(a: TimerWorkoutKey, b: TimerWorkoutKey): boolean {
-  return a.program === b.program && a.cycleNum === b.cycleNum && a.workoutNum === b.workoutNum;
+  return a.program === b.program && a.macrocycleNum === b.macrocycleNum && a.workoutNum === b.workoutNum;
 }
 
 /**

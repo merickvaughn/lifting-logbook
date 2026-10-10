@@ -39,7 +39,7 @@ import { REPOSITORY_FACTORY } from '../../ports/tokens';
     // and on unauthenticated routes. See rls.interceptor.ts.
     { provide: APP_INTERCEPTOR, useClass: RlsInterceptor },
     // Opens a short-lived per-operation RLS transaction for @SkipRlsTransaction() handlers
-    // (cycle-plan). PrismaService is optional — null on the in-memory/SystemDb paths, where
+    // (macrocycle-plan). PrismaService is optional — null on the in-memory/SystemDb paths, where
     // withUserContext runs its callback directly. See rls-context.service.ts (#518).
     {
       provide: RlsContextService,

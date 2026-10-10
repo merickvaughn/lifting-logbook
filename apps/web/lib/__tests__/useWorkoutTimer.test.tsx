@@ -45,7 +45,7 @@ function setVisibility(state: 'visible' | 'hidden') {
   document.dispatchEvent(new Event('visibilitychange'));
 }
 
-const WORKOUT: TimerWorkoutKey = { program: '531', cycleNum: 1, workoutNum: 1 };
+const WORKOUT: TimerWorkoutKey = { program: '531', macrocycleNum: 1, workoutNum: 1 };
 
 const LIFTS: TimerLiftPlan[] = [
   {

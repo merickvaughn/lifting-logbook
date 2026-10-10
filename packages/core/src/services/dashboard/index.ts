@@ -1,1 +1,1 @@
-export * from './updateCycle';
+export * from './updateMacrocycle';

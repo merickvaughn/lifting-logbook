@@ -1,23 +1,36 @@
 import type {
-  CycleDashboardResponse,
-  CycleWeekSummary,
+  MacrocycleDashboardResponse,
+  MacrocycleWeekSummary,
   LiftingProgramSpecResponse,
 } from '@lifting-logbook/types';
 import {
   PROGRAM_LENGTHS,
-  baseSpecBlockWeeks,
+  baseSpecMesocycleWeeks,
   programLengthWeeks,
   type ProgramLengthMeta,
 } from '@lifting-logbook/core';
 import { workoutDateResolver, type WorkoutDay } from './workoutPlan';
 
 // Phase rendering type. Built-in programs are autoregulated (Leangains, RPT) or a
-// no-deload wave (5/3/1), so their presets tag no deload/test weeks and
+// no-deload mesocycle (5/3/1), so their presets tag no deload/test weeks and
 // buildPhaseTemplate currently only emits 'training'. 'deload'/'test' (and their
 // plan.module.css styles) are retained for programs that define weekType-tagged
 // weeks — not dead code until such a program exists. See issue #680.
 export type PhaseType = 'training' | 'deload' | 'test';
 export type PhaseStatus = 'completed' | 'in-progress' | 'upcoming';
+
+/** Display labels for week types — never the raw enum value. */
+export const WEEK_TYPE_LABELS: Record<PhaseType, string> = {
+  training: 'Training',
+  deload: 'Deload',
+  test: 'Test week',
+};
+
+export const PHASE_STATUS_LABELS: Record<PhaseStatus, string> = {
+  completed: 'Completed',
+  'in-progress': 'In progress',
+  upcoming: 'Upcoming',
+};
 
 export interface ProgramPhase {
   name: string;
@@ -47,8 +60,8 @@ export function resolveProgramPlanMeta(
 ): ProgramLengthMeta {
   const registered = PROGRAM_LENGTHS[program];
   if (registered) return registered;
-  const blockWeeks = baseSpecBlockWeeks(specs);
-  return { lengthWeeks: blockWeeks, blockWeeks, phaseStyle: 'repeating' };
+  const mesocycleWeeks = baseSpecMesocycleWeeks(specs);
+  return { lengthWeeks: mesocycleWeeks, mesocycleWeeks, phaseStyle: 'repeating' };
 }
 
 type PhaseTemplate = {
@@ -66,19 +79,19 @@ type PhaseTemplate = {
  *  - 'repeating' (Leangains, RPT): a single flat "Training" span. Progression is
  *    autoregulated (AMRAP-driven via updateMaxes from actual lift records), not a
  *    scheduled weekly deload or a test week — so we never invent a "Test" phase.
- *  - 'wave' (5/3/1): one "Wave N" training phase per repeating block.
+ *  - 'mesocycle' (5/3/1): one "Mesocycle N" training phase per repeating block.
  */
 function buildPhaseTemplate(meta: ProgramLengthMeta): PhaseTemplate[] {
-  const { lengthWeeks, blockWeeks, phaseStyle } = meta;
+  const { lengthWeeks, mesocycleWeeks, phaseStyle } = meta;
   if (lengthWeeks <= 0) return [];
 
-  if (phaseStyle === 'wave' && blockWeeks > 1) {
+  if (phaseStyle === 'mesocycle' && mesocycleWeeks > 1) {
     const phases: PhaseTemplate[] = [];
-    let wave = 1;
-    for (let startWeek = 1; startWeek <= lengthWeeks; startWeek += blockWeeks) {
-      const endWeek = Math.min(startWeek + blockWeeks - 1, lengthWeeks);
-      phases.push({ name: `Wave ${wave}`, startWeek, endWeek, type: 'training' });
-      wave += 1;
+    let mesocycle = 1;
+    for (let startWeek = 1; startWeek <= lengthWeeks; startWeek += mesocycleWeeks) {
+      const endWeek = Math.min(startWeek + mesocycleWeeks - 1, lengthWeeks);
+      phases.push({ name: `Mesocycle ${mesocycle}`, startWeek, endWeek, type: 'training' });
+      mesocycle += 1;
     }
     return phases;
   }
@@ -88,7 +101,7 @@ function buildPhaseTemplate(meta: ProgramLengthMeta): PhaseTemplate[] {
 
 function phaseStatus(
   phase: { startWeek: number; endWeek: number },
-  weekMap: Map<number, CycleWeekSummary>,
+  weekMap: Map<number, MacrocycleWeekSummary>,
   today: string,
 ): PhaseStatus {
   const weeks = Array.from(
@@ -98,7 +111,7 @@ function phaseStatus(
   const summaries = weeks.map((w) => weekMap.get(w));
   // Every week in the phase must exist and be completed. With a schedule, `weeks`
   // lists every program week (#1023). Without one it is empty, so every phase reads
-  // upcoming for the whole cycle (#1036).
+  // upcoming for the whole macrocycle (#1036).
   if (summaries.length > 0 && summaries.every((s) => s?.completed)) return 'completed';
   const hasStarted = summaries.some((s) =>
     s?.workouts.some((w) => w.date <= today),
@@ -107,7 +120,7 @@ function phaseStatus(
 }
 
 export function deriveProgramPhases(
-  weeks: CycleWeekSummary[],
+  weeks: MacrocycleWeekSummary[],
   today: string,
   meta: ProgramLengthMeta,
 ): ProgramPhase[] {
@@ -119,8 +132,8 @@ export function deriveProgramPhases(
 }
 
 /**
- * The Program Plan's estimated completion date: the latest date among the cycle's
- * workouts (`days`, from `buildWorkoutDays`), each dated as the Cycle Dashboard
+ * The Program Plan's estimated completion date: the latest date among the macrocycle's
+ * workouts (`days`, from `buildWorkoutDays`), each dated as the Macrocycle Dashboard
  * dates it ({@link workoutDateResolver}).
  *
  * This is one definition for both modes (issue #1023):
@@ -132,13 +145,13 @@ export function deriveProgramPhases(
  */
 export function estimateCompletionDate(
   days: readonly Pick<WorkoutDay, 'workoutNum' | 'date'>[],
-  dashboard: Pick<CycleDashboardResponse, 'cycleStartDate' | 'weeks' | 'dateOverrides'>,
+  dashboard: Pick<MacrocycleDashboardResponse, 'macrocycleStartDate' | 'weeks' | 'dateOverrides'>,
 ): string {
   const dateOf = workoutDateResolver(dashboard);
   return days.reduce((last, day) => {
     const date = dateOf(day);
     return date > last ? date : last;
-  }, dashboard.cycleStartDate);
+  }, dashboard.macrocycleStartDate);
 }
 
 export function deriveProgramSummary(

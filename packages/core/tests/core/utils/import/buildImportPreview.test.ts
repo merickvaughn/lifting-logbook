@@ -16,7 +16,7 @@ import type {
 
 const liftRecord = (over: Partial<LiftRecord> = {}): LiftRecord => ({
   program: "p",
-  cycleNum: 1,
+  macrocycleNum: 1,
   workoutNum: 1,
   date: new Date("2026-01-01"),
   lift: "back-squat",
@@ -43,8 +43,8 @@ describe("buildLiftRecordsPreview", () => {
   });
 
   // Regression for issue #884: two sets sharing every field except date are
-  // genuinely different records (e.g. a cycle-numbering reset reusing the
-  // same cycle/workout/set combo years apart) and must both be creates, not
+  // genuinely different records (e.g. a macrocycle-numbering reset reusing the
+  // same macrocycle/workout/set combo years apart) and must both be creates, not
   // collapsed into one the way a true same-key duplicate is.
   it("treats rows with the same key but different dates as separate creates", () => {
     const incoming = [

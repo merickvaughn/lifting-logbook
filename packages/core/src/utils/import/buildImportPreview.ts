@@ -89,7 +89,7 @@ export function buildLiftRecordsPreview(
     (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
   )) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
-    const label = `${r.lift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+    const label = `${r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
@@ -121,7 +121,7 @@ export function buildLiftRecordsPreviewSoft(
     (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
   )) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
-    const label = `${r.lift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+    const label = `${r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
@@ -141,7 +141,7 @@ export function buildLiftRecordsPreviewSoft(
   for (const { record: r, rowIndex, originalLift } of softResult.ambiguous) {
     const key = `__ambiguous_${rowIndex}`;
     const value = `${r.weight} × ${r.reps}`;
-    const label = `${originalLift} · cycle ${r.cycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+    const label = `${originalLift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
     deltas.push({
       key,
       label,

@@ -40,7 +40,7 @@ describe('OTel log export does not leak redacted fields', () => {
       {
         req: {
           method: 'POST',
-          url: '/programs/x/cycles/initialize',
+          url: '/programs/x/macrocycles/initialize',
           headers: {
             authorization: `Bearer ${SECRET_TOKEN}`,
             cookie: SECRET_COOKIE,

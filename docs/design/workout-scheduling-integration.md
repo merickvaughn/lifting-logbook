@@ -370,5 +370,5 @@ No changes to existing program endpoints beyond what is already implemented — 
 
 - Current implementation: `packages/core/src/services/workout/updateLiftDates.ts` (shows offset-based grouping)
 - Type definitions: `packages/types/src/api.ts` and `packages/types/src/domain.ts`
-- Cycle model: `packages/core/src/models/CycleDashboard.ts`
+- Macrocycle model: `packages/core/src/models/MacrocycleDashboard.ts`
 - Program spec: `packages/core/src/models/LiftingProgramSpec.ts`

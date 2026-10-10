@@ -1,4 +1,4 @@
-import { BodyWeightEntry, LiftClassification, LiftName, MovementProfile, WeightUnit, WeekNumber, CycleNumber, WeekType } from './domain';
+import { BodyWeightEntry, LiftClassification, LiftName, MovementProfile, WeightUnit, WeekNumber, MacrocycleNumber, WeekType } from './domain';
 
 // ---------------------------------------------------------------------------
 // Training Maxes
@@ -104,7 +104,7 @@ export interface WorkoutLiftResponse {
 /** Serialized workout as returned by the API. */
 export interface WorkoutResponse {
   program: string;
-  cycleNum: CycleNumber;
+  macrocycleNum: MacrocycleNumber;
   workoutNum: number;
   /** The *program* week — past the stored block, for a tiled program. */
   week: WeekNumber;
@@ -128,14 +128,14 @@ export interface WorkoutResponse {
 
 /**
  * Request body for PATCH
- * /programs/:program/cycles/:cycleNum/workouts/:workoutNum/reschedule.
+ * /programs/:program/macrocycles/:macrocycleNum/workouts/:workoutNum/reschedule.
  *
  * Shared contract for the reschedule request shape: the backend `RescheduleDto`
  * (`apps/api`) implements this interface and the api-client builds its request
  * body as this type, so the two cannot drift. The endpoint returns 204 No
  * Content, so there is no corresponding response type — the reschedule result is
  * surfaced on the read side via `WorkoutResponse.overrideDate` and
- * `CycleDashboardResponse.dateOverrides`.
+ * `MacrocycleDashboardResponse.dateOverrides`.
  */
 export interface RescheduleRequest {
   /** Target calendar date in `YYYY-MM-DD` format (no time or timezone component). */
@@ -150,7 +150,7 @@ export interface RescheduleRequest {
 export interface LiftRecordResponse {
   id: string;
   program: string;
-  cycleNum: CycleNumber;
+  macrocycleNum: MacrocycleNumber;
   workoutNum: number;
   date: string; // ISO 8601 date string
   lift: LiftName;
@@ -163,7 +163,7 @@ export interface LiftRecordResponse {
 /** Request body for logging a new lift record. */
 export interface CreateLiftRecordRequest {
   program: string;
-  cycleNum: CycleNumber;
+  macrocycleNum: MacrocycleNumber;
   workoutNum: number;
   /** Bare calendar date ("YYYY-MM-DD", no time/offset — see CreateLiftRecordDto.date in apps/api). When omitted the server uses the scheduled date for this workout, falling back to today. */
   date?: string;
@@ -222,10 +222,10 @@ export interface UpsertStrengthGoalRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Cycle Dashboard
+// Macrocycle Dashboard
 // ---------------------------------------------------------------------------
 
-/** Per-workout entry within a cycle week summary. */
+/** Per-workout entry within a macrocycle week summary. */
 export interface WorkoutSummary {
   workoutNum: number;
   /**
@@ -237,10 +237,10 @@ export interface WorkoutSummary {
   skipped: boolean;
 }
 
-/** Per-week summary within a cycle dashboard. */
-export interface CycleWeekSummary {
+/** Per-week summary within a macrocycle dashboard. */
+export interface MacrocycleWeekSummary {
   /**
-   * The *program* week, the week the Cycle Dashboard grid and the workout
+   * The *program* week, the week the Macrocycle Dashboard grid and the workout
    * endpoint show these workouts in. It is not the calendar week they fall in,
    * since a schedule sets its own pace (issue #1023, ADR-037).
    */
@@ -249,21 +249,21 @@ export interface CycleWeekSummary {
   completed: boolean;
 }
 
-/** Serialized cycle dashboard as returned by the API. */
-export interface CycleDashboardResponse {
+/** Serialized macrocycle dashboard as returned by the API. */
+export interface MacrocycleDashboardResponse {
   program: string;
-  cycleNum: CycleNumber;
-  cycleStartDate: string; // ISO 8601 date string
+  macrocycleNum: MacrocycleNumber;
+  macrocycleStartDate: string; // ISO 8601 date string
   /**
    * With a schedule, every workout of the program, grouped by program week. With
    * none, empty. A scheduled row past the program's last day is not a workout of
    * the program, so it is left out (issue #1023).
    */
-  weeks: CycleWeekSummary[];
+  weeks: MacrocycleWeekSummary[];
   currentWeekType: WeekType;
   /**
-   * Per-workout metadata for the *whole* cycle, in both schedule and no-schedule
-   * modes — `weeks` is empty in no-schedule mode, so the Cycle Dashboard reads
+   * Per-workout metadata for the *whole* macrocycle, in both schedule and no-schedule
+   * modes — `weeks` is empty in no-schedule mode, so the Macrocycle Dashboard reads
    * these to render every tiled workout's status without a per-workout fetch
    * (issue #740). Keys are global `workoutNum`s.
    *
@@ -274,17 +274,17 @@ export interface CycleDashboardResponse {
    */
   /** `workoutNum` → override date (ISO 8601). Absent key = no override. */
   dateOverrides: Record<number, string>;
-  /** `workoutNum`s explicitly skipped in this cycle. */
+  /** `workoutNum`s explicitly skipped in this macrocycle. */
   skippedWorkoutNums: number[];
-  /** `workoutNum`s with at least one logged lift record in this cycle. */
+  /** `workoutNum`s with at least one logged lift record in this macrocycle. */
   completedWorkoutNums: number[];
 }
 
 // ---------------------------------------------------------------------------
-// Cycle Planning Agent
+// Macrocycle Planning Agent
 // ---------------------------------------------------------------------------
 
-/** A single proposed training-max change within a cycle plan. */
+/** A single proposed training-max change within a macrocycle plan. */
 export interface ProposedTrainingMaxChangeResponse {
   lift: LiftName;
   currentWeight: number;
@@ -292,8 +292,8 @@ export interface ProposedTrainingMaxChangeResponse {
   reasoning: string;
 }
 
-/** Result of a cycle planning agent run. */
-export interface CyclePlanResponse {
+/** Result of a macrocycle planning agent run. */
+export interface MacrocyclePlanResponse {
   proposedChanges: ProposedTrainingMaxChangeResponse[];
   overallReasoning: string;
   partial: boolean;
@@ -310,7 +310,7 @@ export interface CyclePlanResponse {
 
 export type LiftOverrideAction = 'add' | 'remove' | 'replace';
 
-/** Request body for POST /programs/:program/cycles/:cycleNum/workouts/:workoutNum/lift-overrides. */
+/** Request body for POST /programs/:program/macrocycles/:macrocycleNum/workouts/:workoutNum/lift-overrides. */
 export interface CreateLiftOverrideRequest {
   action: LiftOverrideAction;
   lift: string;
@@ -517,7 +517,7 @@ export interface UpdateCustomProgramRequest {
 
 export interface SwitchProgramResponse {
   activeProgram: string;
-  cycleNum: number;
+  macrocycleNum: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -535,7 +535,7 @@ export interface SwitchProgramResponse {
  * `code`, not `field`. See #913.
  */
 export type ImportErrorCode =
-  | 'CYCLE_NUM_INVALID'
+  | 'MACROCYCLE_NUM_INVALID'
   | 'WORKOUT_NUM_INVALID'
   | 'SET_NUM_INVALID'
   | 'WEIGHT_INVALID'
@@ -591,13 +591,13 @@ export interface SkippedRecord {
   row: number;
   /**
    * Stringified natural key identifying the skipped set, in the format:
-   * `"<cycleNum>:<workoutNum>:<YYYYMMDD>:<lift>:<setNum>"`
+   * `"<macrocycleNum>:<workoutNum>:<YYYYMMDD>:<lift>:<setNum>"`
    *
    * All components use the canonical (post-import, post-slot-map) values. `date`
    * is part of the key (issue #884): two sets can otherwise legitimately share
-   * the same (cycleNum, workoutNum, lift, setNum) tuple on different real
+   * the same (macrocycleNum, workoutNum, lift, setNum) tuple on different real
    * calendar dates and must not be treated as duplicates of each other.
-   * Example: `"3:2:20260817:bench-press:1"` means cycle 3, workout 2,
+   * Example: `"3:2:20260817:bench-press:1"` means macrocycle 3, workout 2,
    * 2026-08-17, bench-press, set 1.
    */
   naturalKey: string;

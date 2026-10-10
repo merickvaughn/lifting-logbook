@@ -199,7 +199,7 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 |---|---|---|
 | [Anthropic — Tool Use (Function Calling)](https://docs.anthropic.com/en/docs/tool-use) | [ADR-016](adr/ADR-016-cycle-planning-agent.md) | The Anthropic guide to tool use with the Messages API; documents the tool schema format, the agentic loop pattern, and the `propose_<output>` tool pattern for structured output. |
 | [Anthropic Node.js SDK (`@anthropic-ai/sdk`)](https://github.com/anthropics/anthropic-sdk-node) | [ADR-016](adr/ADR-016-cycle-planning-agent.md) | The SDK used in the cycle planning adapter; documents `client.messages.create()` and the `tool_use` / `tool_result` message block types. |
-| [Anthropic — Model Deprecation Policy](https://docs.anthropic.com/en/docs/deprecations) | [ADR-016](adr/ADR-016-cycle-planning-agent.md) | Anthropic's published model deprecation timeline; the `CYCLE_AGENT_MODEL` env var must be kept current as model versions age out. |
+| [Anthropic — Model Deprecation Policy](https://docs.anthropic.com/en/docs/deprecations) | [ADR-016](adr/ADR-016-cycle-planning-agent.md) | Anthropic's published model deprecation timeline; the `MACROCYCLE_AGENT_MODEL` env var (named `CYCLE_AGENT_MODEL` before ADR-038) must be kept current as model versions age out. |
 
 ---
 
@@ -209,7 +209,9 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 |---|---|---|
 | [Prisma — `createMany`](https://www.prisma.io/docs/orm/reference/prisma-client-reference#createmany) | [ADR-017](adr/ADR-017-training-max-history-table.md) | Batch insert API used by `PrismaTrainingMaxHistoryRepository.appendHistoryEntries`. |
 | [Martin Fowler — Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html) | [ADR-017](adr/ADR-017-training-max-history-table.md) | Background pattern: storing state changes as a sequence of events rather than deriving history post-hoc from current state. The `training_max_history` table is a lightweight application of this principle. |
-| [E. F. Codd — A Relational Model of Data for Large Shared Data Banks (1970)](https://doi.org/10.1145/362384.362685) | [ADR-037](adr/ADR-037-schedule-dates-program-days.md) | §2 defines redundancy (data derivable from other data) and the consistency problems it causes. This is why ADR-037 derives a scheduled workout's `(week, offset)` from the program instead of storing a copy on `cycle_scheduled_workout`. |
+| [E. F. Codd — A Relational Model of Data for Large Shared Data Banks (1970)](https://doi.org/10.1145/362384.362685) | [ADR-037](adr/ADR-037-schedule-dates-program-days.md) | §2 defines redundancy (data derivable from other data) and the consistency problems it causes. This is why ADR-037 derives a scheduled workout's `(week, offset)` from the program instead of storing a copy on `cycle_scheduled_workout` (renamed `macrocycle_scheduled_workout` by ADR-038). |
+| [PostgreSQL 16 — ALTER TABLE](https://www.postgresql.org/docs/16/sql-altertable.html), [ALTER POLICY](https://www.postgresql.org/docs/16/sql-alterpolicy.html) | [ADR-038](adr/ADR-038-training-time-vocabulary.md) | `RENAME`, `RENAME COLUMN` and `RENAME CONSTRAINT` keep data, grants and RLS policies attached, so the cycle→macrocycle rename is a rename-only migration. |
+| [Prisma — Customizing migrations](https://www.prisma.io/docs/orm/prisma-migrate/workflows/customizing-migrations) | [ADR-038](adr/ADR-038-training-time-vocabulary.md) | Hand-editing a migration to rename a field instead of Prisma's default drop-and-create. |
 
 ---
 
@@ -220,6 +222,9 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 | [Pelland et al. (2025), *The Resistance Training Dose Response*, Sports Medicine](https://link.springer.com/article/10.1007/s40279-025-02344-w) | [ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md) | Meta-regression that compares three ways to count indirect sets: direct (0), fractional (0.5) and total (1). ADR-036's weekly counts use the fractional method: primary muscle 1, secondary ½. |
 | [Rodríguez-Ridao et al. (2020), IJERPH 17(19):7339](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7579505/) | [ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md) | EMG study of five bench inclinations. Upper-chest activity peaks at 30°, and above 45° the anterior deltoid takes over. This is why incline pressing is treated as a chest-emphasis question rather than a separate movement direction. |
 | [r/bodyweightfitness — Recommended Routine](https://redditbwf.github.io/wiki/recommended_routine.html) | [ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md) | A community convention, not research. It pairs dips with pull-ups and push-ups with rows, which supports classifying the dip as a vertical push relative to the torso. |
+| Bompa & Buzzichelli (2018), *Periodization: Theory and Methodology of Training*, 6th ed., Human Kinetics, ISBN 978-1-4925-4480-7 | [ADR-038](adr/ADR-038-training-time-vocabulary.md) | The macrocycle / mesocycle / microcycle hierarchy the code and UI adopt. |
+| [Issurin (2010), *New Horizons for the Methodology and Physiology of Training Periodization*, Sports Medicine 40(3):189–206](https://doi.org/10.2165/11319770-000000000-00000) | [ADR-038](adr/ADR-038-training-time-vocabulary.md) | Block periodization: why "block" is a synonym for mesocycle, used as the UI label. |
+| Wendler (2011), *5/3/1*, 2nd ed., Jim Wendler LLC | [ADR-038](adr/ADR-038-training-time-vocabulary.md) | Defines the 5/3/1 "cycle" as a 4-week block with a deload — the lifter usage that made the old "Cycle" label ambiguous. |
 
 ---
 

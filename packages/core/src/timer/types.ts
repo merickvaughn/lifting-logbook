@@ -262,6 +262,6 @@ export interface TimerRunState {
 /** Identity of the workout a persisted run belongs to. */
 export interface TimerWorkoutKey {
   program: string;
-  cycleNum: number;
+  macrocycleNum: number;
   workoutNum: number;
 }

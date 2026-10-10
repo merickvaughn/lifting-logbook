@@ -42,12 +42,12 @@ export class WorkoutsController {
     if (!isValidWorkoutNum(workoutNum)) {
       throw new BadRequestException('workoutNum must be a positive integer');
     }
-    const { workout, cycleDashboard, cycleScheduledWorkout, liftingProgramSpec, workoutDateOverride, workoutLiftOverride, workoutSkipOverride } =
+    const { workout, macrocycleDashboard, macrocycleScheduledWorkout, liftingProgramSpec, workoutDateOverride, workoutLiftOverride, workoutSkipOverride } =
       await this.factory.forUser(user);
     const [dashboard, spec] = await Promise.all([
       // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
-      cycleDashboard.getCycleDashboard(program).catch((err: unknown) => {
-        if (err instanceof ProgramNotFoundError) return { cycleNum: 1 };
+      macrocycleDashboard.getMacrocycleDashboard(program).catch((err: unknown) => {
+        if (err instanceof ProgramNotFoundError) return { macrocycleNum: 1 };
         throw err;
       }),
       liftingProgramSpec.getProgramSpec(program),
@@ -55,19 +55,19 @@ export class WorkoutsController {
     const [records, overrideDate, liftOverrides, scheduledWorkouts, skippedNums] = await Promise.all([
       // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
       workout
-        .getWorkout(program, dashboard.cycleNum, workoutNum)
+        .getWorkout(program, dashboard.macrocycleNum, workoutNum)
         .catch((err: unknown) => {
           // Upcoming workouts have no logged records yet — treat as empty.
           if (err instanceof WorkoutNotFoundError) return [] as LiftRecord[];
           throw err;
         }),
-      workoutDateOverride.getOverride(program, dashboard.cycleNum, workoutNum),
-      workoutLiftOverride.getOverrides(program, dashboard.cycleNum, workoutNum),
-      cycleScheduledWorkout.getScheduledWorkouts(program, dashboard.cycleNum),
+      workoutDateOverride.getOverride(program, dashboard.macrocycleNum, workoutNum),
+      workoutLiftOverride.getOverrides(program, dashboard.macrocycleNum, workoutNum),
+      macrocycleScheduledWorkout.getScheduledWorkouts(program, dashboard.macrocycleNum),
       // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
-      workoutSkipOverride.getSkipsForCycle(program, dashboard.cycleNum).catch((err: unknown) => {
+      workoutSkipOverride.getSkipsForMacrocycle(program, dashboard.macrocycleNum).catch((err: unknown) => {
         // Through the class logger (Pino), so the line keeps its trace_id.
-        this.logger.error(err, 'getSkipsForCycle failed; defaulting to empty set');
+        this.logger.error(err, 'getSkipsForMacrocycle failed; defaulting to empty set');
         return new Set<number>();
       }),
     ]);
@@ -78,14 +78,14 @@ export class WorkoutsController {
     // stored block to the program's canonical length and indexes the global
     // workoutNum into the ordered workout days, so week-2+ workouts of a tiled
     // program (Leangains 12w, 5-3-1 12w) resolve (#680, #740). It is the numbering
-    // the Cycle Dashboard card uses, in both modes: a schedule only dates the
+    // the Macrocycle Dashboard card uses, in both modes: a schedule only dates the
     // program's days, so the scheduled row gives this workout its date, never its
     // week (#1023). The key's `offset` picks the day's lifts below and feeds the
     // no-schedule detail date (issues #745, #1014).
     const workoutKey = workoutKeyForWorkoutNum(spec, workoutNum, program);
     // Only a scheduled row past the program's last day has no key, and its own week
     // is then the only one it has. saveScheduledDates writes none since #1023, so it
-    // is from a cycle scheduled before that, or a program that lost days mid-cycle.
+    // is from a macrocycle scheduled before that, or a program that lost days mid-macrocycle.
     // Undefined means workoutNum is past the *full* canonical length.
     const week = workoutKey?.week ?? scheduledWorkout?.weekNum;
     if (week === undefined) {
@@ -96,17 +96,17 @@ export class WorkoutsController {
 
     // Planned lifts are this workout's own day: the block week its program week
     // tiles from, at its key's offset — the helper the web resolves each lift's
-    // prescription with and the Cycle Dashboard builds its cards from. Filtering on
+    // prescription with and the Macrocycle Dashboard builds its cards from. Filtering on
     // the week alone listed every day's lifts on every day (issue #1014). A lift
     // the day repeats is still listed once (#1027). A scheduled workout past the
     // program's last day has no key, and so no day to plan; any sets logged
     // against it are still listed.
     if (!workoutKey) {
       // Structured, so it is a plain `| json` query in Loki. It fires only when such a
-      // workout is opened directly, since the web never links to one. The cycle
-      // dashboard warns once per load for every cycle still carrying such rows.
+      // workout is opened directly, since the web never links to one. The macrocycle
+      // dashboard warns once per load for every macrocycle still carrying such rows.
       this.logger.warn(
-        { program, cycleNum: dashboard.cycleNum, workoutNum, week },
+        { program, macrocycleNum: dashboard.macrocycleNum, workoutNum, week },
         'Scheduled workout has no program day, so it plans no lifts (#1023)',
       );
     }
@@ -123,18 +123,18 @@ export class WorkoutsController {
     const { planned, renamed, removed } = applyLiftOverrides(specLifts, liftOverrides);
     const adjustedRecords = records.filter((r) => !removed.has(r.lift));
 
-    // cycleDate is absent only on the ProgramNotFoundError fallback ({ cycleNum: 1 }),
+    // macrocycleDate is absent only on the ProgramNotFoundError fallback ({ macrocycleNum: 1 }),
     // where the spec is empty so the workoutNum guard above already 400'd. When
-    // present it anchors the no-schedule detail date to the same cycle start the
+    // present it anchors the no-schedule detail date to the same macrocycle start the
     // dashboard card derives its date from (issue #745).
-    const cycleStartDate = 'cycleDate' in dashboard ? dashboard.cycleDate : undefined;
+    const macrocycleStartDate = 'macrocycleDate' in dashboard ? dashboard.macrocycleDate : undefined;
 
-    return toWorkoutResponse(program, dashboard.cycleNum, workoutNum, week, adjustedRecords, {
+    return toWorkoutResponse(program, dashboard.macrocycleNum, workoutNum, week, adjustedRecords, {
       overrideDate: overrideDate ?? undefined,
       plannedLifts: planned,
       scheduledDate,
       skipped: skippedNums.has(workoutNum),
-      cycleStartDate,
+      macrocycleStartDate,
       // The day's offset, or null: no key means the program has no day for it.
       offset: workoutKey ? workoutKey.offset : null,
       renamedLifts: renamed,

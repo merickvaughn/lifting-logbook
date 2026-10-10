@@ -127,7 +127,7 @@ This codebase has two deliberate gaps that will surprise you if you don't know a
    any `$queryRaw`/`$executeRaw` emit **no spans**. A trace that looks like it has a gap at the DB
    layer isn't necessarily fast — it may just be invisible. Any new raw-SQL call site must be
    wrapped in a **manual span** to show up.
-2. **LLM adapters send prompts unscrubbed.** The cycle-planning adapters forward user context to
+2. **LLM adapters send prompts unscrubbed.** The macrocycle-planning adapters forward user context to
    the provider with no PII scrubbing. Keep that in mind before assuming prompt content is safe to
    log or send.
 

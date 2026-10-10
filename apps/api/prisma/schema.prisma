@@ -9,21 +9,21 @@ datasource db {
 }
 
 model LiftRecord {
-  id         String   @id @default(cuid())
-  userId     String
-  program    String
-  cycleNum   Int
-  workoutNum Int
-  date       DateTime @db.Date
-  lift       String
-  setNum     Int
-  weight     Float
-  reps       Int
-  notes      String   @default("")
+  id            String   @id @default(cuid())
+  userId        String
+  program       String
+  macrocycleNum Int
+  workoutNum    Int
+  date          DateTime @db.Date
+  lift          String
+  setNum        Int
+  weight        Float
+  reps          Int
+  notes         String   @default("")
 
-  @@unique([userId, program, cycleNum, workoutNum, date, lift, setNum])
-  @@index([userId, program, cycleNum])
-  @@index([userId, program, cycleNum, workoutNum])
+  @@unique([userId, program, macrocycleNum, workoutNum, date, lift, setNum])
+  @@index([userId, program, macrocycleNum])
+  @@index([userId, program, macrocycleNum, workoutNum])
   @@map("lift_record")
 }
 
@@ -40,20 +40,20 @@ model TrainingMax {
   @@map("training_max")
 }
 
-model CycleDashboard {
-  id                String   @id @default(cuid())
-  userId            String
-  program           String
-  cycleUnit         String
-  cycleNum          Int
-  cycleDate         DateTime
-  sheetName         String
-  cycleStartWeekday String
-  programType       String?
+model MacrocycleDashboard {
+  id                     String   @id @default(cuid())
+  userId                 String
+  program                String
+  macrocycleUnit         String
+  macrocycleNum          Int
+  macrocycleDate         DateTime
+  sheetName              String
+  macrocycleStartWeekday String
+  programType            String?
 
   @@unique([userId, program])
   @@index([userId, program])
-  @@map("cycle_dashboard")
+  @@map("macrocycle_dashboard")
 }
 
 model TrainingMaxHistory {
@@ -104,50 +104,50 @@ model StrengthGoal {
 }
 
 model WorkoutDateOverride {
-  id         String   @id @default(cuid())
-  userId     String
-  program    String
-  cycleNum   Int
-  workoutNum Int
-  newDate    DateTime
-  createdAt  DateTime @default(now())
+  id            String   @id @default(cuid())
+  userId        String
+  program       String
+  macrocycleNum Int
+  workoutNum    Int
+  newDate       DateTime
+  createdAt     DateTime @default(now())
 
-  @@unique([userId, program, cycleNum, workoutNum])
-  @@index([userId, program, cycleNum])
+  @@unique([userId, program, macrocycleNum, workoutNum])
+  @@index([userId, program, macrocycleNum])
   @@map("workout_date_override")
 }
 
 model WorkoutSkipOverride {
-  id         String   @id @default(uuid())
-  userId     String
-  program    String
-  cycleNum   Int
-  workoutNum Int
-  reason     String?
-  skippedAt  DateTime @default(now())
+  id            String   @id @default(uuid())
+  userId        String
+  program       String
+  macrocycleNum Int
+  workoutNum    Int
+  reason        String?
+  skippedAt     DateTime @default(now())
 
-  @@unique([userId, program, cycleNum, workoutNum])
-  @@index([userId, program, cycleNum])
+  @@unique([userId, program, macrocycleNum, workoutNum])
+  @@index([userId, program, macrocycleNum])
   @@map("workout_skip_override")
 }
 
 model WorkoutLiftOverride {
-  id         String   @id @default(cuid())
-  userId     String
-  program    String
-  cycleNum   Int
-  workoutNum Int
-  lift       String
-  action     String
-  replacedBy String?
-  createdAt  DateTime @default(now())
+  id            String   @id @default(cuid())
+  userId        String
+  program       String
+  macrocycleNum Int
+  workoutNum    Int
+  lift          String
+  action        String
+  replacedBy    String?
+  createdAt     DateTime @default(now())
 
   // One row per lift and action: a lift's add and its replace are kept apart, so
   // replacing an added lift keeps the add (#1026). Saving a lift's add deletes its
   // remove and vice versa (sameKindActions in the port); only two racing saves can
   // leave both, and then the later write applies last.
-  @@unique([userId, program, cycleNum, workoutNum, lift, action])
-  @@index([userId, program, cycleNum, workoutNum])
+  @@unique([userId, program, macrocycleNum, workoutNum, lift, action])
+  @@index([userId, program, macrocycleNum, workoutNum])
   @@map("workout_lift_override")
 }
 
@@ -193,18 +193,18 @@ model UserSettings {
   @@map("user_settings")
 }
 
-model CycleScheduledWorkout {
+model MacrocycleScheduledWorkout {
   id            String   @id @default(uuid())
   userId        String
   program       String
-  cycleNum      Int
+  macrocycleNum Int
   workoutNum    Int
   weekNum       Int
   scheduledDate DateTime @db.Date
 
-  @@unique([userId, program, cycleNum, workoutNum])
-  @@index([userId, program, cycleNum])
-  @@map("cycle_scheduled_workout")
+  @@unique([userId, program, macrocycleNum, workoutNum])
+  @@index([userId, program, macrocycleNum])
+  @@map("macrocycle_scheduled_workout")
 }
 
 model CustomProgram {

@@ -12,8 +12,8 @@ export default function SettingsLayout({
       <header>
         <h1>Settings</h1>
         <SettingsNav />
-        <Link href="/cycle" className={styles.backLink}>
-          ← Back to cycle
+        <Link href="/macrocycle" className={styles.backLink}>
+          ← Back to macrocycle
         </Link>
       </header>
       {children}

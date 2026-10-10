@@ -1,4 +1,7 @@
-import { LIFT_RECORD_HEADER_MAP } from "@src/core/constants";
+import {
+  LEGACY_LIFT_RECORD_HEADERS,
+  LIFT_RECORD_HEADER_MAP,
+} from "@src/core/constants";
 import { LiftRecord, SpreadsheetCell } from "@src/core/models";
 import { parseDateStringUTC, toUTCMidnight } from "../jsUtil";
 import { tableToObjects } from "./tableToObjects";
@@ -16,7 +19,12 @@ export function parseLiftRecords(data: SpreadsheetCell[][]): LiftRecord[] {
     const result: Record<string, unknown> = {};
     for (const header in headerMap) {
       const { key, type } = headerMap[header]!;
+      // The canonical header wins; otherwise the first accepted alternate present.
       let value: unknown = obj[header];
+      for (const alternate of LEGACY_LIFT_RECORD_HEADERS[header] ?? []) {
+        if (value !== undefined) break;
+        value = obj[alternate];
+      }
       if (type === "number") {
         value = Number(value);
       }

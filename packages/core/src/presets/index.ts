@@ -11,8 +11,8 @@ export * from './programLengths';
  * getProgramSpec — no separate seed wiring step is required (issue #739).
  *
  * ADD AN ENTRY HERE when a new program is made available in onboarding.
- * Also update PROGRAM_DEFAULTS in apps/api/src/programs/cycle-generation.service.ts —
- * that registry is separate, and a missing entry there degrades cycle generation
+ * Also update PROGRAM_DEFAULTS in apps/api/src/programs/macrocycle-generation.service.ts —
+ * that registry is separate, and a missing entry there degrades macrocycle generation
  * for the new program. That coupling is enforced by the guard test
  * apps/api/src/programs/program-defaults.registry-sync.spec.ts (issue #747).
  */

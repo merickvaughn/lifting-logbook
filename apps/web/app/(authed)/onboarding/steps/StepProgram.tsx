@@ -233,7 +233,7 @@ export function StepProgram({
 
           {/* Periodization */}
           <p className={styles.sectionLabel}>Periodization</p>
-          <p className={styles.infoText}>{selectedProgram.cycles}</p>
+          <p className={styles.infoText}>{selectedProgram.periodization}</p>
 
           {/* Core lifts */}
           <p className={styles.sectionLabel}>Core Lifts</p>

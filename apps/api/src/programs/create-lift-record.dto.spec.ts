@@ -6,7 +6,7 @@ import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 
 const VALID_BODY = {
   program: '5-3-1',
-  cycleNum: 4,
+  macrocycleNum: 4,
   workoutNum: 1,
   date: '2026-04-20',
   lift: 'Bench Press',
@@ -150,12 +150,12 @@ describe('CreateLiftRecordDto validation', () => {
     expect(await flattenConstraintKeys(dtoWith({ lift: '   ' }))).toContain('lift.isNotEmpty');
   });
 
-  it('rejects a non-integer cycleNum', async () => {
-    expect(await flattenConstraintKeys(dtoWith({ cycleNum: 1.5 }))).toContain('cycleNum.isInt');
+  it('rejects a non-integer macrocycleNum', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ macrocycleNum: 1.5 }))).toContain('macrocycleNum.isInt');
   });
 
-  it('rejects a cycleNum below 1', async () => {
-    expect(await flattenConstraintKeys(dtoWith({ cycleNum: 0 }))).toContain('cycleNum.min');
+  it('rejects a macrocycleNum below 1', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ macrocycleNum: 0 }))).toContain('macrocycleNum.min');
   });
 
   it('rejects a non-numeric weight', async () => {
@@ -203,8 +203,8 @@ describe('CreateLiftRecordDto validation', () => {
     expect(await flattenConstraintKeys(dtoWith({ workoutNum: 1.5 }))).toContain('workoutNum.isInt');
   });
 
-  it('rejects a cycleNum above the sanity ceiling (obvious client bug, not a legitimate program length)', async () => {
-    expect(await flattenConstraintKeys(dtoWith({ cycleNum: 40000000 }))).toContain('cycleNum.max');
+  it('rejects a macrocycleNum above the sanity ceiling (obvious client bug, not a legitimate program length)', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ macrocycleNum: 40000000 }))).toContain('macrocycleNum.max');
   });
 
   it('rejects a workoutNum above the sanity ceiling', async () => {
@@ -215,8 +215,8 @@ describe('CreateLiftRecordDto validation', () => {
     expect(await flattenConstraintKeys(dtoWith({ setNum: 40000000 }))).toContain('setNum.max');
   });
 
-  it('accepts a cycleNum at the sanity ceiling', async () => {
-    const errors = await validate(dtoWith({ cycleNum: 1000 }), { whitelist: true });
+  it('accepts a macrocycleNum at the sanity ceiling', async () => {
+    const errors = await validate(dtoWith({ macrocycleNum: 1000 }), { whitelist: true });
     expect(errors).toHaveLength(0);
   });
 

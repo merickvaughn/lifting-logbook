@@ -11,14 +11,14 @@ import { PrismaLiftRecordRepository } from '../prisma/lift-record.repository';
 import { PrismaStrengthGoalRepository } from '../prisma/strength-goal.repository';
 import { PrismaTrainingMaxRepository } from '../prisma/training-max.repository';
 import { PrismaTrainingMaxHistoryRepository } from '../prisma/training-max-history.repository';
-import { PrismaCycleDashboardRepository } from '../prisma/cycle-dashboard.repository';
+import { PrismaMacrocycleDashboardRepository } from '../prisma/macrocycle-dashboard.repository';
 import { PrismaLiftMetadataRepository } from '../prisma/lift-metadata.repository';
 import { PrismaWorkoutDateOverrideRepository } from '../prisma/workout-date-override.repository';
 import { PrismaWorkoutLiftOverrideRepository } from '../prisma/workout-lift-override.repository';
 import { PrismaWorkoutRepository } from '../prisma/workout.repository';
 import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
-import { InMemoryCycleDashboardRepository } from '../in-memory/cycle-dashboard.adapter';
+import { InMemoryMacrocycleDashboardRepository } from '../in-memory/macrocycle-dashboard.adapter';
 import { InMemoryImportBatchRepository } from '../in-memory/import-batch.adapter';
 import { InMemoryLiftMetadataRepository } from '../in-memory/lift-metadata.adapter';
 import { InMemoryLiftingProgramSpecRepository } from '../in-memory/lifting-program-spec.adapter';
@@ -27,12 +27,12 @@ import { InMemoryProgramPhilosophyRepository } from '../in-memory/program-philos
 import { InMemoryStrengthGoalRepository } from '../in-memory/strength-goal.adapter';
 import { InMemoryTrainingMaxRepository } from '../in-memory/training-max.adapter';
 import { InMemoryTrainingMaxHistoryRepository } from '../in-memory/training-max-history.adapter';
-import { InMemoryCycleScheduledWorkoutRepository } from '../in-memory/cycle-scheduled-workout.adapter';
+import { InMemoryMacrocycleScheduledWorkoutRepository } from '../in-memory/macrocycle-scheduled-workout.adapter';
 import { InMemoryUserSettingsRepository } from '../in-memory/user-settings.adapter';
 import { InMemoryWorkoutDateOverrideRepository } from '../in-memory/workout-date-override.adapter';
 import { InMemoryWorkoutLiftOverrideRepository } from '../in-memory/workout-lift-override.adapter';
 import { InMemoryWorkoutRepository } from '../in-memory/workout.adapter';
-import { PrismaCycleScheduledWorkoutRepository } from '../prisma/cycle-scheduled-workout.repository';
+import { PrismaMacrocycleScheduledWorkoutRepository } from '../prisma/macrocycle-scheduled-workout.repository';
 import { PrismaWorkoutSkipOverrideRepository } from '../prisma/workout-skip-override.repository';
 import { InMemoryWorkoutSkipOverrideRepository } from '../in-memory/workout-skip-override.adapter';
 import { PrismaUserSettingsRepository } from '../prisma/user-settings.repository';
@@ -93,8 +93,8 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
       return {
         bodyWeight: new PrismaBodyWeightRepository(prisma, userId),
         customLift: new PrismaCustomLiftRepository(prisma, userId),
-        cycleDashboard: new PrismaCycleDashboardRepository(prisma, userId),
-        cycleScheduledWorkout: new PrismaCycleScheduledWorkoutRepository(prisma, userId),
+        macrocycleDashboard: new PrismaMacrocycleDashboardRepository(prisma, userId),
+        macrocycleScheduledWorkout: new PrismaMacrocycleScheduledWorkoutRepository(prisma, userId),
         importBatch: new PrismaImportBatchRepository(prisma, userId),
         liftMetadata: new PrismaLiftMetadataRepository(prisma, userId),
         liftRecord: new PrismaLiftRecordRepository(prisma, userId),
@@ -118,8 +118,8 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     return {
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift: new InMemoryCustomLiftRepository(userId),
-      cycleDashboard: new InMemoryCycleDashboardRepository(),
-      cycleScheduledWorkout: new InMemoryCycleScheduledWorkoutRepository(),
+      macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(),
+      macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
       importBatch: new InMemoryImportBatchRepository(),
       liftMetadata: new InMemoryLiftMetadataRepository(),
       liftingProgramSpec: this.programSpecRepo,

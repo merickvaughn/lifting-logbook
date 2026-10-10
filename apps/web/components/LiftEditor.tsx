@@ -10,12 +10,12 @@ import FreeTagPicker from './FreeTagPicker';
 import styles from './LiftEditor.module.css';
 
 interface Props {
-  cycleNum: number;
+  macrocycleNum: number;
   workoutNum: number;
   initialMetadata: LiftMetadataResponse;
 }
 
-export default function LiftEditor({ cycleNum, workoutNum, initialMetadata }: Props) {
+export default function LiftEditor({ macrocycleNum, workoutNum, initialMetadata }: Props) {
   const router = useRouter();
   const [muscleGroups, setMuscleGroups] = useState<string[]>(initialMetadata.muscleGroups);
   const [substitutions, setSubstitutions] = useState<string[]>(initialMetadata.substitutions);
@@ -34,7 +34,7 @@ export default function LiftEditor({ cycleNum, workoutNum, initialMetadata }: Pr
       });
       router.refresh();
       router.push(
-        `/cycle/${cycleNum}/workout/${workoutNum}/detail/manage-lifts`,
+        `/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts`,
       );
     } catch (err) {
       logClientError('patchLiftMetadata', err, { lift: initialMetadata.lift });

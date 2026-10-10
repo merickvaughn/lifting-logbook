@@ -396,7 +396,7 @@ describe('assertNoDuplicateSeedKeys', () => {
     expect(() => assertNoDuplicateSeedKeys(entries)).not.toThrow();
   });
 
-  it('throws when the same resolved lift and cycle date appear twice', () => {
+  it('throws when the same resolved lift and macrocycle date appear twice', () => {
     const entries = [
       validRow({ Lift: 'Squat' }),
       validRow({ Lift: 'Squat', 'Cycle #': '5' }), // same lift + same Cycle Date

@@ -14,7 +14,7 @@ test.beforeEach(async ({ request }) => {
 // ---------------------------------------------------------------------------
 
 test('skip a workout from detail page — Skipped badge shown', async ({ page }) => {
-  await page.goto('/cycle/1/workout/1/detail');
+  await page.goto('/macrocycle/1/workout/1/detail');
 
   // SkipForm trigger is visible for an upcoming (non-completed) workout
   const skipBtn = page.getByRole('button', { name: '⊘ Mark as Skipped' });
@@ -34,15 +34,15 @@ test('skip a workout from detail page — Skipped badge shown', async ({ page })
   await expect(page.getByRole('button', { name: '↩ Undo Skip' })).toBeVisible();
 });
 
-test('skip a workout — cycle dashboard card shows Skipped status', async ({ page, request }) => {
+test('skip a workout — macrocycle dashboard card shows Skipped status', async ({ page, request }) => {
   // Pre-skip workout 1 via API so the dashboard reflects it
-  await request.post(`${MOCK_API}/programs/5-3-1/cycles/1/workouts/1/skip`);
+  await request.post(`${MOCK_API}/programs/5-3-1/macrocycles/1/workouts/1/skip`);
 
-  await page.goto('/cycle/1');
-  await expect(page).toHaveURL(/\/cycle\/1/);
+  await page.goto('/macrocycle/1');
+  await expect(page).toHaveURL(/\/macrocycle\/1/);
 
   // The grid renders one collapsible section per program week (issue #740); the mock
-  // cycle's dates are in the past, so Week 1 (holding workout 1) starts collapsed —
+  // macrocycle's dates are in the past, so Week 1 (holding workout 1) starts collapsed —
   // expand it, then assert the workout card's Skipped badge.
   await page.getByRole('button', { name: 'Week 1', exact: true }).click();
   await expect(page.locator('text=Skipped').first()).toBeVisible();
@@ -50,9 +50,9 @@ test('skip a workout — cycle dashboard card shows Skipped status', async ({ pa
 
 test('undo skip — workout reverts to Upcoming/Missed status', async ({ page, request }) => {
   // Pre-skip workout 1
-  await request.post(`${MOCK_API}/programs/5-3-1/cycles/1/workouts/1/skip`);
+  await request.post(`${MOCK_API}/programs/5-3-1/macrocycles/1/workouts/1/skip`);
 
-  await page.goto('/cycle/1/workout/1/detail');
+  await page.goto('/macrocycle/1/workout/1/detail');
 
   // Undo button visible for a skipped workout
   const undoBtn = page.getByRole('button', { name: '↩ Undo Skip' });
@@ -91,9 +91,9 @@ test('selecting a program with schedule set shows schedule-info step', async ({ 
   await expect(page.getByText(/Mon \/ Wed \/ Fri/i)).toBeVisible();
   await expect(page.getByText(/3 workouts\/week/i)).toBeVisible();
 
-  // Navigates to cycle when "Go to Cycle" is clicked
-  await page.getByRole('button', { name: 'Go to Cycle' }).click();
-  await expect(page).toHaveURL(/\/cycle\/1/);
+  // Navigates to macrocycle when "Go to Macrocycle" is clicked
+  await page.getByRole('button', { name: 'Go to Macrocycle' }).click();
+  await expect(page).toHaveURL(/\/macrocycle\/1/);
 });
 
 test('selecting a program without schedule skips the schedule-info step', async ({ page }) => {
@@ -105,6 +105,6 @@ test('selecting a program without schedule skips the schedule-info step', async 
 
   await page.getByRole('button', { name: 'Confirm Switch' }).click();
 
-  // Should navigate directly to cycle — no schedule-info step
-  await expect(page).toHaveURL(/\/cycle\/1/, { timeout: 10_000 });
+  // Should navigate directly to macrocycle — no schedule-info step
+  await expect(page).toHaveURL(/\/macrocycle\/1/, { timeout: 10_000 });
 });

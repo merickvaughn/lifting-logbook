@@ -58,6 +58,8 @@ interface KindProfile {
 const PROFILES: readonly KindProfile[] = [
   {
     kind: 'lift-records',
+    // 'cycle' is a substring match, so it covers both the 'Macrocycle #' header and the
+    // 'Cycle #' alternate (LEGACY_LIFT_RECORD_HEADERS) the source Sheet still emits.
     signatureTokens: ['program', 'cycle', 'workout', 'set', 'reps', 'weight', 'date', 'lift', 'notes'],
     distinctiveTokens: ['cycle', 'workout', 'set'],
     antiTokens: [],

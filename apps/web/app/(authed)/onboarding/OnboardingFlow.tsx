@@ -16,7 +16,7 @@ import { StepLifts } from './steps/StepLifts';
 import { StepImport } from './steps/StepImport';
 import { StepConfirm } from './steps/StepConfirm';
 import { StepProgram } from './steps/StepProgram';
-import { createFirstCycle } from './actions';
+import { createFirstMacrocycle } from './actions';
 
 const STEP_LABELS = [
   'Choose Method',
@@ -34,7 +34,7 @@ export function OnboardingFlow({ catalog }: { catalog: string[] }) {
   const [experience, setExperience] = useState<Experience>('beginner');
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [cycleError, setCycleError] = useState<string | null>(null);
+  const [macrocycleError, setMacrocycleError] = useState<string | null>(null);
 
   // `manual` (1RM) and `tm` (training max) both capture a single weight per lift
   // with no reps; the estimate/test methods capture a weight × reps set.
@@ -109,14 +109,14 @@ export function OnboardingFlow({ catalog }: { catalog: string[] }) {
 
   function handleConfirm() {
     if (!selectedProgramId) return;
-    setCycleError(null);
+    setMacrocycleError(null);
     const maxes = computedMaxes
       .filter((m) => m.trainingMax > 0)
       .map((m) => ({ lift: m.lift, trainingMax: m.trainingMax }));
     startTransition(async () => {
-      const result = await createFirstCycle(selectedProgramId, maxes);
+      const result = await createFirstMacrocycle(selectedProgramId, maxes);
       if (result && !result.ok) {
-        setCycleError(result.error);
+        setMacrocycleError(result.error);
       }
     });
   }
@@ -186,7 +186,7 @@ export function OnboardingFlow({ catalog }: { catalog: string[] }) {
               method={method}
               onConfirm={handleConfirm}
               isPending={isPending}
-              cycleError={cycleError}
+              macrocycleError={macrocycleError}
             />
           )}
         </section>

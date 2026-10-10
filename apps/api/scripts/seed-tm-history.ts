@@ -299,7 +299,7 @@ function parseStrictBooleanCell(raw: string | undefined, field: string): boolean
  * Same as {@link parseStrictBooleanCell}, except an empty cell is legitimate
  * and coerces to `false` — used only for `Goal Met`, which `buildTMHistory`
  * on the gas-lifting-logbook side genuinely emits as null/blank when set-1
- * reps or spec reps weren't available for that cycle. `Will Seed` and
+ * reps or spec reps weren't available for that macrocycle. `Will Seed` and
  * `Is PR` are never legitimately blank (both non-nullable in the source
  * model), so they use the strict parser instead.
  */
@@ -360,11 +360,11 @@ export function assertSingleProgram(rows: TMHistoryCsvRow[]): void {
 /**
  * The other half of gas-lifting-logbook's Step 2 blocking checks, re-applied
  * here for the same reason as {@link assertSingleProgram}: a `(program,
- * lift, cycle date)` collision the Sheet-side validator already rejects,
+ * lift, macrocycle date)` collision the Sheet-side validator already rejects,
  * re-checked against this CSV because `training_max_history` has no unique
  * constraint to catch it at the database level. Checked on the *resolved*
  * lift id (post-`resolveLiftId`), not the raw CSV `Lift` string, because
- * that's what would actually collide as two rows for the same cycle in the
+ * that's what would actually collide as two rows for the same macrocycle in the
  * database — two differently-spelled raw names that resolve to the same
  * target lift are exactly the case a raw-string comparison would miss.
  */
@@ -381,7 +381,7 @@ export function assertNoDuplicateSeedKeys(
         `Duplicate seed key: lift '${entry.lift}' on ${dateKey} appears more than once ` +
           `among Will Seed=true rows (rows ${firstIndex + 1} and ${index + 1}). ` +
           `training_max_history has no unique constraint, so this would silently write ` +
-          `two rows for the same cycle — fix the source data (see the runbook's Step 2).`,
+          `two rows for the same macrocycle — fix the source data (see the runbook's Step 2).`,
       );
     }
     seenAt.set(key, index);
@@ -392,7 +392,7 @@ const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Parses a `Cycle Date` cell. Requires the exact `yyyy-MM-dd` shape
- * `TMHistoryRow.cycleDate` is documented to always be (ISO, date-only) and
+ * `TMHistoryRow.macrocycleDate` is documented to always be (ISO, date-only) and
  * builds the `Date` explicitly via `Date.UTC` — `new Date(str)`'s built-in
  * parser is too permissive two different ways: (1) it accepts locale-
  * formatted strings like `03/01/2026` without complaint, silently
@@ -404,7 +404,7 @@ const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
  * for the seeded history, so a silent day-shift is a real correctness bug,
  * not a cosmetic one.
  */
-function parseCycleDate(raw: string | undefined, field = 'Cycle Date'): Date {
+function parseMacrocycleDate(raw: string | undefined, field = 'Cycle Date'): Date {
   const value = (raw ?? '').trim();
   const match = ISO_DATE_ONLY.exec(value);
   if (!match) {
@@ -448,7 +448,7 @@ export function mapRowToEntry(
   if (!Number.isFinite(weight) || weight <= 0) {
     throw new Error(`Row has an invalid TM: ${JSON.stringify(row['TM'])}`);
   }
-  const date = parseCycleDate(row['Cycle Date']);
+  const date = parseMacrocycleDate(row['Cycle Date']);
   return {
     lift: resolveLiftId((row['Lift'] ?? '').trim()),
     weight,

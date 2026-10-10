@@ -45,7 +45,7 @@ describe('client-api runtime base URL', () => {
     await unskipWorkout('5-3-1', 1, 2);
 
     const [url] = firstCall();
-    expect(url).toBe('https://injected.example/programs/5-3-1/cycles/1/workouts/2/skip');
+    expect(url).toBe('https://injected.example/programs/5-3-1/macrocycles/1/workouts/2/skip');
   });
 
   it('sends the dev bearer token only for a non-Cloud-Run (http) apiUrl', async () => {
@@ -59,7 +59,7 @@ describe('client-api runtime base URL', () => {
     await unskipWorkout('5-3-1', 1, 2);
 
     const [url, init] = firstCall();
-    expect(url).toBe('http://localhost:3004/programs/5-3-1/cycles/1/workouts/2/skip');
+    expect(url).toBe('http://localhost:3004/programs/5-3-1/macrocycles/1/workouts/2/skip');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer dev-user');
   });
 
