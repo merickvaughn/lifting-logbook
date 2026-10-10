@@ -95,12 +95,11 @@ export default async function ProgramPlanPage({
               <span className={`${styles.typeBadge} ${styles[`typeBadge_${phase.type}`]}`}>
                 {WEEK_TYPE_LABELS[phase.type]}
               </span>
-              <span
-                className={styles.statusIcon}
-                title={PHASE_STATUS_LABELS[phase.status]}
-                aria-label={PHASE_STATUS_LABELS[phase.status]}
-              >
-                {STATUS_ICON[phase.status]}
+              {/* aria-label on a role-less <span> is ignored by assistive tech, so the
+                  status is spoken from visually hidden text and the icon is hidden. */}
+              <span className={styles.statusIcon} title={PHASE_STATUS_LABELS[phase.status]}>
+                <span aria-hidden="true">{STATUS_ICON[phase.status]}</span>
+                <span className={styles.srOnly}>{PHASE_STATUS_LABELS[phase.status]}</span>
               </span>
             </div>
           </li>

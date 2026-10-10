@@ -29,7 +29,7 @@ const WORKOUT_LIFTS: Record<number, string[]> = {
   3: ['barbell-row', 'romanian-deadlift'],
 };
 
-const NUM_CYCLES = 12;
+const NUM_MACROCYCLES = 12;
 const DAYS_PER_WORKOUT = 2; // workouts every other day
 
 function trainingMaxAt(lift: typeof LIFTS[0], macrocycle: number): number {
@@ -52,7 +52,7 @@ async function main() {
   // UTC-midnight date subsequently shifted via *local* Date methods, would make
   // every seeded record un-PATCHable (the reconstructed lookup date would never
   // match a stored non-UTC-midnight one) on any non-UTC host.
-  const startDate = addDaysUTC(toUTCMidnight(now), -NUM_CYCLES * 3 * DAYS_PER_WORKOUT);
+  const startDate = addDaysUTC(toUTCMidnight(now), -NUM_MACROCYCLES * 3 * DAYS_PER_WORKOUT);
 
   // UserSettings
   await prisma.userSettings.upsert({
@@ -82,7 +82,7 @@ async function main() {
 
   // TrainingMax (current — after all macrocycles)
   for (const lift of LIFTS) {
-    const currentMax = trainingMaxAt(lift, NUM_CYCLES);
+    const currentMax = trainingMaxAt(lift, NUM_MACROCYCLES);
     await prisma.trainingMax.upsert({
       where: { userId_program_lift: { userId: SEED_USER_ID, program: PROGRAM, lift: lift.name } },
       update: { weight: currentMax, dateUpdated: now },
@@ -107,7 +107,7 @@ async function main() {
   // idempotent across repeated seed runs.
   await prisma.liftRecord.deleteMany({ where: { userId: SEED_USER_ID, program: PROGRAM } });
 
-  for (let macrocycle = 0; macrocycle < NUM_CYCLES; macrocycle++) {
+  for (let macrocycle = 0; macrocycle < NUM_MACROCYCLES; macrocycle++) {
     const weekType = WEEK_TYPES[macrocycle % 3];
     if (!weekType) throw new Error(`WEEK_TYPES missing index ${macrocycle % 3}`);
     const macrocycleNum = macrocycle + 1;
@@ -119,12 +119,15 @@ async function main() {
         const histDate = new Date(workoutDate);
         await prisma.trainingMaxHistory.upsert({
           where: {
-            // No single unique index — use create only if not exists by checking
-            id: `seed-tmh-${SEED_USER_ID}-${PROGRAM}-${lift.name}-macrocycle${macrocycle}`,
+            // No single unique index — use create only if not exists by checking.
+            // The id is stored data: it keeps its pre-rename "-cycle" spelling so a
+            // re-seed matches rows written before the macrocycle rename (#1039)
+            // instead of inserting duplicates.
+            id: `seed-tmh-${SEED_USER_ID}-${PROGRAM}-${lift.name}-cycle${macrocycle}`,
           },
           update: {},
           create: {
-            id: `seed-tmh-${SEED_USER_ID}-${PROGRAM}-${lift.name}-macrocycle${macrocycle}`,
+            id: `seed-tmh-${SEED_USER_ID}-${PROGRAM}-${lift.name}-cycle${macrocycle}`,
             userId: SEED_USER_ID,
             program: PROGRAM,
             lift: lift.name,
@@ -181,7 +184,7 @@ async function main() {
   }
 
   // MacrocycleDashboard — current macrocycle state
-  const currentMacrocycle = NUM_CYCLES;
+  const currentMacrocycle = NUM_MACROCYCLES;
   await prisma.macrocycleDashboard.upsert({
     where: { userId_program: { userId: SEED_USER_ID, program: PROGRAM } },
     update: {
@@ -191,7 +194,7 @@ async function main() {
     create: {
       userId: SEED_USER_ID,
       program: PROGRAM,
-      macrocycleUnit: 'macrocycle',
+      macrocycleUnit: 'week',
       macrocycleNum: currentMacrocycle,
       macrocycleDate: now,
       sheetName: '531',
@@ -228,10 +231,10 @@ async function main() {
   console.log(`  UserSettings:        1`);
   console.log(`  LiftMetadata:        ${LIFTS.length}`);
   console.log(`  TrainingMax:         ${LIFTS.length}`);
-  console.log(`  TrainingMaxHistory:  ${Math.floor(NUM_CYCLES / 3) * LIFTS.length}`);
+  console.log(`  TrainingMaxHistory:  ${Math.floor(NUM_MACROCYCLES / 3) * LIFTS.length}`);
   console.log(`  MacrocycleDashboard:      1`);
   console.log(`  StrengthGoal:        ${LIFTS.length}`);
-  console.log(`  LiftRecord:          ${NUM_CYCLES * 3 * 2 * 3} (approx)`);
+  console.log(`  LiftRecord:          ${NUM_MACROCYCLES * 3 * 2 * 3} (approx)`);
 }
 
 main()

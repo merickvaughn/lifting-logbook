@@ -4,6 +4,16 @@
 -- stay attached to each table through a rename; the policies are renamed only so their
 -- names keep matching their tables. Index names follow Prisma's generated names for the
 -- renamed columns (63-character identifiers, truncated the way Prisma truncates them).
+--
+-- Deploy ordering (deploy.yml: migrate -> API -> web). Between this migration and the new API
+-- revision the old API queries the renamed tables and returns 500 on every DB route; between
+-- the new API and the new web revision the old web calls the deleted /cycles/* routes and is
+-- redirected to /onboarding. Deploy when the app is not in use.
+--
+-- Rollback: do not roll the API image back alone, and do not rely on reverting the PR alone --
+-- `prisma migrate status` tolerates this applied-but-unknown migration, so the old code would
+-- deploy against the renamed schema. Add the reverse renames as a forward migration in the
+-- revert PR: docs/runbooks/macrocycle-rename-rollback.md.
 
 -- macrocycle_dashboard (was cycle_dashboard)
 ALTER TABLE "cycle_dashboard" RENAME TO "macrocycle_dashboard";

@@ -4,6 +4,8 @@
 **Date:** 2026-04-21
 **Closes:** [#55](https://github.com/merickvaughn/lifting-logbook/issues/55)
 
+> **Renamed by [ADR-038](ADR-038-training-time-vocabulary.md):** the agent is `IMacrocyclePlanningAgent` behind `POST /macrocycle-plan`, and its environment variables are `MACROCYCLE_AGENT_{PROVIDER,MODEL,BASE_URL,API_KEY}`. The `CYCLE_AGENT_*` names below are no longer read. The body is kept as written.
+
 ---
 
 ## Context

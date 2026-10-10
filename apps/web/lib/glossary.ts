@@ -40,7 +40,7 @@ export const GLOSSARY = [
         term: 'Macrocycle',
         aka: ['Program run'],
         definition:
-          'One complete run through a program, start to finish — 12 weeks for 5/3/1 here. The dashboard shows your current macrocycle. Starting the next one is when your training maxes are recalculated from the sets you logged.',
+          'One complete run through a program, start to finish — 12 weeks for 5/3/1 here. The dashboard shows your current macrocycle. Starting the next one, which will recalculate your training maxes from the sets you logged, is not available in the app yet.',
         otherMeanings: [
           'In sport science a macrocycle is usually a whole season or year of training, often built toward a competition.',
           'Lifters often say "cycle" for this, but just as often for a much shorter block — see Cycle below.',
@@ -173,7 +173,7 @@ export const GLOSSARY = [
         id: 'phase',
         term: 'Phase',
         definition:
-          'A stretch of training defined by its goal, such as a hypertrophy phase or a peaking phase. A phase can be one mesocycle or several.',
+          'A stretch of training defined by its goal, such as a hypertrophy phase or a peaking phase. A phase can be one mesocycle or several. The Macrocycle plan lists "Phases" in place of mesocycles for programs that repeat a single week.',
       },
     ],
   },

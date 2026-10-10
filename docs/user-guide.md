@@ -178,7 +178,7 @@ The app has its own glossary at `/glossary` (the **Glossary** link in the top na
 
 **How training time is organized**, largest to smallest:
 
-- **Macrocycle** — one complete run through a program, start to finish (12 weeks for 5/3/1 here). Starting the next macrocycle is when training maxes are recalculated from your logged sets.
+- **Macrocycle** — one complete run through a program, start to finish (12 weeks for 5/3/1 here). Starting the next macrocycle, which will recalculate training maxes from your logged sets, is not available in the app yet.
 - **Mesocycle (block)** — a block of weeks that repeats as a unit inside a macrocycle. 5/3/1 here uses four 3-week mesocycles; Leangains and RPT repeat a single week.
 - **Microcycle (week)** — one training week.
 - **Workout (session)** — one training day's lifts, numbered in order across the macrocycle.
@@ -195,6 +195,6 @@ The app has its own glossary at `/glossary` (the **Glossary** link in the top na
 - **Training max (TM)** — a working number, typically 85–90 % of your 1RM, that every percentage in the program is calculated from. Lower than your true 1RM by design.
 - **AMRAP** — "as many reps as possible." The last set of certain lifts is performed to technical failure; the rep count you hit is what drives training-max adjustments.
 - **Deload** — a planned lighter week to manage fatigue. Commonly scheduled every fourth week in strength programming generally, but **none of the built-in programs currently schedules one** — deload is a documented non-goal for v1.0 (see [PRD.md](PRD.md)), and no shipped program marks a week as a deload.
-- **PR (personal record)** — your highest logged value for a given lift, set count, or training max.
+- **PR (personal record)** — your best logged result for a lift: the heaviest weight, the most reps, or the highest training max.
 - **Bodyweight component** — an exercise where your body weight is part of the load (chin-ups, pull-ups, dips). Logging a workout that includes one triggers the body-weight gate.
 - **Brzycki formula** — `1RM ≈ weight × 36 / (37 − reps)`. Reasonably accurate for sets of 1–10 reps.

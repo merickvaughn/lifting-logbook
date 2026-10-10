@@ -35,7 +35,10 @@
   scroll-margin-top: 5rem;
 }
 
-.entry:target {
+/* :target covers a direct load; [data-targeted] covers a soft navigation
+   (see TargetHighlight.tsx — pushState does not update :target). */
+.entry:target,
+.entry[data-targeted] {
   background: var(--color-accent-soft);
   border-radius: 6px;
   padding-inline: 0.75rem;

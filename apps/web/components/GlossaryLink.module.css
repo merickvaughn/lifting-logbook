@@ -16,6 +16,7 @@
   vertical-align: middle;
 }
 
+/* The focus outline comes from the global .focus-ring utility. */
 .link:hover,
 .link:focus-visible {
   border-color: var(--color-accent);

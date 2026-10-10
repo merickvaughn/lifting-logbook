@@ -182,8 +182,8 @@ function orderedWorkoutKeys(
  * spec tiled to its canonical length. Workout N is entry N-1; a `workoutNum` past
  * the end is not a workout of the program.
  *
- * This is the one numbering of a macrocycle's workouts, in both modes. The Cycle
- * Dashboard grid (`buildWorkoutDays`), the workout endpoint, the macrocycle dashboard
+ * This is the one numbering of a macrocycle's workouts, in both modes. The macrocycle
+ * dashboard grid (`buildWorkoutDays`), the workout endpoint, the macrocycle dashboard
  * response and schedule generation (`saveScheduledDates`) all read it. A schedule
  * dates these days and never numbers them, so a schedule that trains more or fewer
  * days a week than the program, or a different number each week, changes only the

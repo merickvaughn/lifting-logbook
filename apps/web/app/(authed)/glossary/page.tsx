@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { GLOSSARY } from '@/lib/glossary';
+import TargetHighlight from './TargetHighlight';
 import styles from './glossary.module.css';
 
 export const metadata: Metadata = {
@@ -16,6 +17,7 @@ export const metadata: Metadata = {
 export default function GlossaryPage() {
   return (
     <main className={styles.page}>
+      <TargetHighlight />
       <h1 className={styles.title}>Glossary</h1>
       {GLOSSARY.map((section) => (
         <section

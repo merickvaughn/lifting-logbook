@@ -225,7 +225,7 @@ const PROGRAM_CATALOG: Program[] = [
     weeks: 16,
     daysPerWeek: 4,
     progression:
-      'Wendler raises the training max by 5 lb for upper-body and 10 lb for lower-body lifts after each 4-week cycle. Each week uses percentages of the training max: 65/75/85% → 70/80/90% → 75/85/95% → deload. This app runs the three work weeks as a 3-week mesocycle, four times per 12-week macrocycle, and recalculates training maxes from your logged sets when the next macrocycle starts.',
+      'Wendler raises the training max by 5 lb for upper-body and 10 lb for lower-body lifts after each 4-week cycle. Each week uses percentages of the training max: 65/75/85% → 70/80/90% → 75/85/95% → deload. This app runs the three work weeks as a 3-week mesocycle, four times per 12-week macrocycle. Starting the next macrocycle, which recalculates training maxes from your logged sets, is not available in the app yet.',
     deloads:
       'In the original program, week 4 of every cycle is a planned deload at 40/50/60% of training max. This app does not schedule the deload week yet.',
     periodization:

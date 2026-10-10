@@ -164,8 +164,8 @@ export function buildMacrocycleDashboardResponse(
   inputs: MacrocycleDashboardInputs,
 ): MacrocycleDashboardResponse {
   const { spec, scheduled, overrides, completedWorkoutNums, skippedNums = new Set<number>() } = inputs;
-  // Per-workout metadata for the whole macrocycle, surfaced top-level so the Cycle
-  // Dashboard can render every tiled workout's status without a per-workout fetch
+  // Per-workout metadata for the whole macrocycle, surfaced top-level so the macrocycle
+  // dashboard can render every tiled workout's status without a per-workout fetch
   // (issue #740). Populated identically in both modes; only `weeks` differs.
   const dateOverrides: Record<number, string> = {};
   for (const [workoutNum, date] of overrides) {

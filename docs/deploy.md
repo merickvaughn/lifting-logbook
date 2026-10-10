@@ -222,11 +222,11 @@ pipeline runs the `lifting-logbook-stg-migrate` Cloud Run Job automatically — 
 |---|---|
 | `user_settings` | 1 (seed user) |
 | `lift_metadata` | 6 lifts (squat, deadlift, bench-press, overhead-press, barbell-row, romanian-deadlift) |
-| `training_max` | 6 (current maxes after 12 cycles) |
-| `training_max_history` | ~24 (PR entries every 3rd cycle) |
+| `training_max` | 6 (current maxes after 12 seeded macrocycles) |
+| `training_max_history` | ~24 (PR entries every 3rd macrocycle) |
 | `macrocycle_dashboard` | 1 (current macrocycle state) |
 | `strength_goal` | 6 (relative bodyweight ratio targets) |
-| `lift_record` | ~216 (12 cycles × 3 workouts × 2 lifts/workout × 3 sets) |
+| `lift_record` | ~216 (12 macrocycles × 3 workouts × 2 lifts/workout × 3 sets) |
 
 **Seed user ID:** `seed_user_clerkid_staging_001` — this is a synthetic Clerk user ID. It will
 not appear in your Clerk dashboard and cannot be accessed via a real auth token. It is useful for

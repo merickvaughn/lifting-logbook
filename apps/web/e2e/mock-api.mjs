@@ -11,7 +11,7 @@ const MACROCYCLE_DASHBOARD = {
   program: '5-3-1',
   macrocycleNum: 1,
   macrocycleStartDate: '2025-01-06',
-  currentWeekType: 'regular',
+  currentWeekType: 'training',
   weeks: [
     {
       week: 1,

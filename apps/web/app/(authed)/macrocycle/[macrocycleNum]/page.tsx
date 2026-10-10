@@ -1,5 +1,4 @@
 import { notFound } from 'next/navigation';
-import { baseSpecMesocycleWeeks, PROGRAM_LENGTHS } from '@lifting-logbook/core';
 import {
   fetchMacrocycleDashboard,
   fetchProgramSpec,
@@ -14,6 +13,7 @@ import {
   type WeekRow,
   type WorkoutCell,
 } from '@/lib/workoutPlan';
+import { resolveProgramPlanMeta } from '@/lib/programPlan';
 import MacrocycleDashboardGrid from './MacrocycleDashboardGrid';
 
 export default async function MacrocycleDashboardPage({
@@ -90,7 +90,10 @@ export default async function MacrocycleDashboardPage({
       }),
   }));
 
-  const mesocycleWeeks = PROGRAM_LENGTHS[program]?.mesocycleWeeks ?? baseSpecMesocycleWeeks(specs);
+  // Same rule as the plan page: only a 'mesocycle'-style program groups its
+  // weeks into blocks. A 'repeating' program (Leangains, RPT, custom) stays flat.
+  const planMeta = resolveProgramPlanMeta(program, specs);
+  const mesocycleWeeks = planMeta.phaseStyle === 'mesocycle' ? planMeta.mesocycleWeeks : 1;
 
   return (
     <MacrocycleDashboardGrid

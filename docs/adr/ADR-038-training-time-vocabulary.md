@@ -75,13 +75,28 @@ Supporting decisions:
 
 - Code, schema, API, routes and UI use one vocabulary, and the glossary maps it to the words
   lifters use.
-- During the deploy that ships this change, the API can briefly run against a database that has
-  not yet been migrated, or the reverse. Requests in that window error. Accepted for a single-user
-  app.
-- **Rollback:** revert the PR and run the reverse renames. Each `ALTER … RENAME` in the migration
-  inverts by swapping its two names.
-- Analytics events are renamed (`cycle_started` → `macrocycle_started`, payload key `cycle` →
-  `macrocycle`). Any dashboard panel filtering on the old names needs updating.
+- The deploy that ships this change has two short broken windows. `deploy.yml` runs migrate → API →
+  web, so new code never meets an unmigrated database, but old code meets new:
+  - **Migrate → new API revision:** the old API queries the renamed tables, and every DB-backed
+    route returns 500.
+  - **New API → new web revision:** the old web calls the deleted `/cycles/*` routes, and its
+    `/cycle` page redirects to `/onboarding`.
+
+  Accepted for a single-user app. Deploy when the app is not in use.
+- **Rollback:** reverting the PR alone is not enough. `prisma migrate status` tolerates an
+  applied migration the branch no longer has, so the old code would deploy against the renamed
+  schema, and `/readyz` (`SELECT 1`) would not notice. The revert PR must add the reverse renames as
+  a forward migration. [`docs/runbooks/macrocycle-rename-rollback.md`](../runbooks/macrocycle-rename-rollback.md)
+  has the SQL, verified to restore the pre-rename schema exactly, and the procedure.
+- The staging database is shared by every PR's staging run. This change's first staging run
+  migrated it, so other branches fail staging until they rebase onto the merged change. The same
+  runbook covers restoring staging if the change is abandoned.
+- The macrocycle-planning agent's environment variables are renamed `CYCLE_AGENT_*` →
+  `MACROCYCLE_AGENT_*`, with no fallback. No deployed service sets either name. Local `.env` files
+  need the new names (`apps/api/.env.example`).
+- The `AnalyticsEvent` names are renamed (`cycle_started` → `macrocycle_started`, payload key
+  `cycle` → `macrocycle`). Nothing emits these events yet, and no dashboard, alert or SLO in
+  `infra/` references them or the old routes, so there is nothing downstream to update.
 - ADR-016's "Cycle Planning Agent" is now `IMacrocyclePlanningAgent` / `/macrocycle-plan` in code.
   The ADR itself keeps its historical title.
 

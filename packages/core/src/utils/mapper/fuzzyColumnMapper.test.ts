@@ -20,6 +20,15 @@ describe('fuzzyColumnMapper', () => {
       }));
     });
 
+    // The source Sheet still emits "Cycle #"; it is an accepted alternate of
+    // "Macrocycle #" (LEGACY_LIFT_RECORD_HEADERS), so both map exactly.
+    it.each(['Macrocycle #', 'Cycle #'])('maps %s to macrocycleNum at full confidence', (header) => {
+      const result = fuzzyColumnMapper([header], 'lift-records');
+      expect(result).toContainEqual(expect.objectContaining({
+        sourceHeader: header, destinationField: 'macrocycleNum', confidence: 1, required: true,
+      }));
+    });
+
     it('fuzzy-matches abbreviated headers', () => {
       const headers = ['Prog', 'Cycle', 'Workout', 'Date', 'Lift', 'Set', 'Wt', 'Reps'];
       const result = fuzzyColumnMapper(headers, 'lift-records');

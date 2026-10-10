@@ -106,6 +106,9 @@ test('dashboard glossary link opens the macrocycle entry', async ({ page }) => {
   await expect(page).toHaveURL(/\/glossary#macrocycle$/);
   await expect(page.getByRole('heading', { level: 1, name: 'Glossary' })).toBeVisible();
   await expect(page.locator('#macrocycle')).toContainText('One complete run through a program');
+  // The link is a soft navigation (pushState), so the highlight comes from the
+  // data-targeted mark rather than :target.
+  await expect(page.locator('#macrocycle')).toHaveAttribute('data-targeted', 'true');
   // The primary nav reaches the same page.
   await expect(page.getByRole('link', { name: 'Glossary' })).toHaveAttribute('href', '/glossary');
 });

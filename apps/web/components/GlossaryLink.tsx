@@ -12,7 +12,7 @@ export default function GlossaryLink({ id }: { id: GlossaryTermId }) {
   return (
     <Link
       href={`/glossary#${id}`}
-      className={styles.link}
+      className={`${styles.link} focus-ring`}
       aria-label={`What does “${term}” mean?`}
       title={`What does “${term}” mean?`}
     >
