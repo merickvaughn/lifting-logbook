@@ -585,6 +585,11 @@ jobs:
       # owned, unchanged, by the existing cloud_run_api_deployed gate + the log-fetch
       # step below. On the non-image-affecting skip-build path the built tag already
       # equals what serves, so this is a correct no-op, never a false failure. See #823.
+      #
+      # This step reads spec.template, i.e. what was APPLIED, not what SERVES. Whether the
+      # new revision actually receives traffic is checked inside the action itself (its
+      # "Verify the new revision serves 100% of traffic" step, #1042). That check runs only
+      # if the action loads, which is exactly the case this step exists to cover.
       - name: Verify API revision actually deployed (staging)
         if: steps.deploy-api.outcome == 'success'
         run: |

@@ -15,7 +15,11 @@ verbatim, so the ONLY changes this makes are:
   * name the ingress container (INGRESS_CONTAINER_NAME, default `api`) and set its image,
   * add `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` to the ingress container,
   * drop the unused owner-cred `SYSTEM_DATABASE_URL` secret env if present (#534; api only),
-  * add (or rebuild) the `otel-collector` sidecar and its config-file volume.
+  * add (or rebuild) the `otel-collector` sidecar and its config-file volume,
+  * route 100% of traffic to the revision this replace creates (#1042). The export carries the
+    live `spec.traffic`, so a manual `update-traffic --to-revisions` rollback pin used to be
+    re-applied by every deploy, leaving each new revision at 0% traffic. A deploy is the decision
+    to ship this build, so it supersedes the pin; the rollback runbook says so.
 That makes it safe for the production service, which cannot be dry-run tested, and idempotent:
 re-running on an already-two-container manifest rebuilds the sidecar cleanly rather than
 stacking a second one.
@@ -183,6 +187,10 @@ def main():
     template_metadata.pop("name", None)  # let Cloud Run assign the new revision name
     labels = template_metadata.get("labels") or {}
     labels.pop("client.knative.dev/nonce", None)  # let Cloud Run assign a fresh nonce
+
+    # Serve the new revision. Overwrites any pinned or split traffic carried over from the export
+    # (#1042); no service uses traffic tags, so nothing else in the block needs preserving.
+    doc["spec"]["traffic"] = [{"latestRevision": True, "percent": 100}]
 
     yaml.safe_dump(doc, sys.stdout, default_flow_style=False, sort_keys=False)
 

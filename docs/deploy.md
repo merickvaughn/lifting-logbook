@@ -542,6 +542,10 @@ gcloud run services update-traffic lifting-logbook-prod-api \
   --region=us-central1 --project=lifting-logbook-prod
 ```
 
+`--to-revisions` **pins** traffic to that revision. The next pipeline deploy re-routes to the
+new revision (#1042). To unpin without deploying, run `update-traffic --to-latest`. See
+[Deploy regression rollback → Fast path on Cloud Run](runbooks/deploy-regression-rollback.md#fast-path-on-cloud-run-route-traffic-to-the-previous-revision).
+
 ### Running database migrations
 
 **The deploy pipeline applies Prisma migrations automatically (ADR-027).** On every

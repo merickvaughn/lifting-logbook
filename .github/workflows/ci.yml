@@ -141,6 +141,11 @@ jobs:
       - name: Unit test the OTel sidecar injector (scripts/inject-otel-sidecar.py)
         run: python scripts/test_inject_otel_sidecar.py -v
 
+      # The deploy action's post-replace gate: fails unless the new revision serves 100% of
+      # traffic. Calibrated against the live staging shape (pass) and the #1042 pin (fail).
+      - name: Unit test the Cloud Run serving-revision check (scripts/check-cloud-run-serving-revision.py)
+        run: python scripts/test_check_cloud_run_serving_revision.py -v
+
   db-integration:
     name: DB Integration Tests
     runs-on: ubuntu-latest

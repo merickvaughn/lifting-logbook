@@ -400,5 +400,49 @@ class IngressExtraEnvTest(unittest.TestCase):
         self.assertEqual(first, yaml.safe_load(second.stdout))
 
 
+class TrafficRoutingTest(unittest.TestCase):
+    """Every deploy routes 100% of traffic to the revision it creates (#1042).
+
+    `describe --format=export` carries the live `spec.traffic`, so a manual
+    `update-traffic --to-revisions=<rev>=100` rollback pin used to be re-applied by every
+    `services replace`: from 2026-07-10 to 2026-10-09 staging deploys created 0%-traffic
+    revisions while the URL kept answering from a July build.
+    """
+
+    LATEST = [{"latestRevision": True, "percent": 100}]
+
+    def _run_with_traffic(self, fixture, env, traffic):
+        with open(fixture, encoding="utf-8") as f:
+            doc = yaml.safe_load(f)
+        doc["spec"]["traffic"] = traffic
+        proc = run_injector(stdin_text=yaml.safe_dump(doc), env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return yaml.safe_load(proc.stdout)
+
+    def test_pinned_api_revision_rerouted_to_latest(self):
+        # The exact incident shape: 100% pinned to an older named revision.
+        doc = self._run_with_traffic(FIXTURE, clean_env(**REQUIRED_ENV), [
+            {"revisionName": "lifting-logbook-prod-api-00527-krj", "percent": 100},
+        ])
+        self.assertEqual(doc["spec"]["traffic"], self.LATEST)
+
+    def test_pinned_web_revision_rerouted_to_latest(self):
+        doc = self._run_with_traffic(WEB_FIXTURE, clean_env(**WEB_ENV), [
+            {"revisionName": "lifting-logbook-prod-web-00100-abc", "percent": 100},
+        ])
+        self.assertEqual(doc["spec"]["traffic"], self.LATEST)
+
+    def test_split_traffic_rerouted_to_latest(self):
+        doc = self._run_with_traffic(FIXTURE, clean_env(**REQUIRED_ENV), [
+            {"revisionName": "lifting-logbook-prod-api-00527-krj", "percent": 90},
+            {"latestRevision": True, "percent": 10},
+        ])
+        self.assertEqual(doc["spec"]["traffic"], self.LATEST)
+
+    def test_missing_traffic_block_added(self):
+        doc = self._run_with_traffic(FIXTURE, clean_env(**REQUIRED_ENV), None)
+        self.assertEqual(doc["spec"]["traffic"], self.LATEST)
+
+
 if __name__ == "__main__":
     unittest.main()

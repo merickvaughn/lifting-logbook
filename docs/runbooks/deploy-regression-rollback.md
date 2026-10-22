@@ -105,6 +105,51 @@ kubectl rollout status deployment/api
 Verify the error rate drops in Grafana within 2 minutes of the rollback completing. If
 it does not drop, the rollback did not revert the cause — investigate further.
 
+### Fast path on Cloud Run: route traffic to the previous revision
+
+Both environments run Cloud-Run-only (GKE is disabled, ADR-009 / #860), so this is the usual
+rollback. Find the last good revision, then send all traffic to it:
+
+```sh
+gcloud run revisions list --service=lifting-logbook-prod-api \
+  --region=us-central1 --project=lifting-logbook-prod --limit=5
+
+gcloud run services update-traffic lifting-logbook-prod-api \
+  --to-revisions=PREVIOUS_REVISION=100 \
+  --region=us-central1 --project=lifting-logbook-prod
+```
+
+**This pins traffic.** After `--to-revisions`, the service routes to that named revision
+instead of "latest". Any revision created later starts at **0% traffic**, so a later deploy
+succeeds without serving anything. Check the pin:
+
+```sh
+gcloud run services describe lifting-logbook-prod-api \
+  --region=us-central1 --project=lifting-logbook-prod --format='yaml(status.traffic)'
+```
+
+A pinned service lists a `revisionName` with `percent: 100` and no `latestRevision: true`.
+
+**The next pipeline deploy removes the pin.** Since #1042, every deploy through
+`.github/actions/deploy-cloud-run-otel-sidecar` routes 100% of traffic to the revision it
+creates, then fails the job if that revision is not serving. So a Cloud Run rollback lasts
+only until the next deploy of that service. In production that deploy waits for the
+`environment: production` approval, so the approver decides when the rollback ends. Do not
+approve a deploy of the broken commit.
+
+**To unpin by hand**, without deploying (for example after rolling back to check a theory):
+
+```sh
+gcloud run services update-traffic lifting-logbook-prod-api \
+  --to-latest \
+  --region=us-central1 --project=lifting-logbook-prod
+```
+
+Staging is the same, with `lifting-logbook-stg-api` / `lifting-logbook-stg-web` in
+`lifting-logbook-staging`. A staging pin is never harmless: from 2026-07-10 to 2026-10-09 a
+forgotten pin on `lifting-logbook-stg-api` meant every PR's `Staging Integration Tests` ran
+against a July build (#1042). Unpin staging as soon as you are done with it.
+
 ### If migrations were applied
 
 Do not roll back the deployment until the impact of the migration is understood:

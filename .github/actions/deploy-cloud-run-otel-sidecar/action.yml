@@ -199,3 +199,30 @@ runs:
           python3 scripts/inject-otel-sidecar.py "$SRC" > "$RENDERED"
         gcloud run services replace "$RENDERED" \
           --region="${{ inputs.region }}" --project="$PROJECT" --quiet
+
+    # Prove the URL now answers from the revision just created (#1042). The injector routes
+    # spec.traffic to the latest revision, so a manual `update-traffic --to-revisions` rollback pin
+    # no longer survives a deploy. This step checks the result instead of trusting it: it reads
+    # status.traffic and fails unless the newest revision is ready, serves 100% of traffic, and was
+    # built from inputs.image. A pin left staging's API serving a July build from 2026-07-10 to
+    # 2026-10-09 while every deploy and /readyz smoke passed, because nothing read status.traffic.
+    # Only the describe READ is retried (mirroring staging.yml's #823 check), so a transient Cloud
+    # Run API blip cannot red a good deploy; a real mismatch fails on the first good read.
+    - name: Verify the new revision serves 100% of traffic
+      shell: bash
+      run: |
+        DESCRIBED="$RUNNER_TEMP/${{ inputs.service }}-described.json"
+        for attempt in 1 2 3; do
+          if gcloud run services describe "${{ inputs.service }}" \
+              --region="${{ inputs.region }}" --project="${{ inputs.project }}" \
+              --format=json > "$DESCRIBED"; then
+            break
+          fi
+          if [ "$attempt" -eq 3 ]; then
+            echo "::error title=Cloud Run serving check::could not describe ${{ inputs.service }} after 3 attempts; not trusting this deploy."
+            exit 1
+          fi
+          echo "describe attempt $attempt failed; retrying in $((attempt * 5))s..."
+          sleep $((attempt * 5))
+        done
+        python3 scripts/check-cloud-run-serving-revision.py "$DESCRIBED" --image "${{ inputs.image }}"
