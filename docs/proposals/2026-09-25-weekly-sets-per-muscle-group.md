@@ -40,7 +40,7 @@ The resulting **sets per muscle group per week** table appears in three places:
 
 1. **The program itself.** It shows in the Details panel of each built-in program with a real
    spec (Leangains, RPT). The My Programs editor shows it too, recomputed live as days are edited.
-2. **The program in use.** It shows on the Current Program page.
+2. **The program in use.** It shows on the Cycle Program page.
 3. **The current week.** It shows in the dashboard's expanded week, with two columns:
    - **Planned**: the week's prescribed working sets, dropping skipped workouts and applying
      Manage Lifts swaps, adds and removes.
@@ -94,7 +94,7 @@ implementation. The API adds three things:
 - [ ] **Bulk read.** `GET /lifts/metadata` returns all of the caller's overrides and no one
   else's, verified under the restricted database role.
 - [ ] **Program views.** The Leangains and RPT Details panels, the My Programs editor (live) and
-  the Current Program page each show weekly sets per muscle group.
+  the Cycle Program page each show weekly sets per muscle group.
 - [ ] **Current week**
   - [ ] The dashboard shows Planned and Done per muscle group.
   - [ ] Skipping a workout lowers Planned.

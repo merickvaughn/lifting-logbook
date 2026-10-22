@@ -80,7 +80,7 @@ the #740 bug. A schedule only dates the days.
 4. **No validation.** Any valid schedule works with any program, and the schedule sets the pace.
    This is the scheduling design's own premise: "the pace (workouts per week) is an emergent
    property of the schedule."
-5. **Plan page.** The Macrocycle Plan's estimated completion is the latest date among the cycle's
+5. **Plan page.** The Program Plan's estimated completion is the latest date among the cycle's
    workouts, in both modes (`estimateCompletionDate`). Each workout is dated with the Cycle
    Dashboard's own precedence, `workoutDateResolver`: override, then scheduled date, then
    spec-relative date. With a schedule, program weeks are no longer calendar weeks, and a

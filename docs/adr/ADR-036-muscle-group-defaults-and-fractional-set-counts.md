@@ -12,7 +12,7 @@
 
 #1013 asks for **weekly working sets per muscle group**, and per movement pattern, in three places:
 - the program views;
-- the Current Program page;
+- the Cycle Program page;
 - the dashboard's current week.
 
 Lifters use these counts to judge a program's balance, and hypertrophy dose-response research
