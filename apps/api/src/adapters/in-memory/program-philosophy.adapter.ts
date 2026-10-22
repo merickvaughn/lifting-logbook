@@ -9,15 +9,17 @@ import {
 const APP_MAX_UPDATES =
   'Training maxes are recalculated from logged sets only when the next macrocycle starts, using each lift’s `increment` from the program spec (get_program_spec). A training max you propose applies to every week of the next macrocycle.';
 
-// Berkhan's reverse-pyramid rules, shared by the Leangains and RPT presets,
-// which this app runs as the same 1-week block over different lengths.
-const BERKHAN_RPT = {
+// The reverse-pyramid method's rules, shared by the Leangains and RPT presets,
+// which this app runs as the same 1-week block over different lengths. The
+// catalog credits RPT to Lyle/Eric Helms and Leangains to Berkhan, so these
+// name the method, not one author.
+const RPT_METHOD = {
   progressionRules:
-    'As Berkhan wrote it: when the top set hits the upper rep target (e.g., 6 reps on a 4–6 set), add weight next session: ~2.5–5 lb upper-body, ~5–10 lb lower-body. Otherwise repeat.',
+    'As the reverse-pyramid method is usually written: when the top set hits the upper rep target (e.g., 6 reps on a 4–6 set), add weight next session: ~2.5–5 lb upper-body, ~5–10 lb lower-body. Otherwise repeat.',
   trainingMaxGuidance:
     'No formal TM. Top set weight is the target; back-off weights are computed by % drop (typically 10% then 10% again).',
   deloadGuidance:
-    'As Berkhan wrote it: no scheduled deload. Take 4–7 days off when consistently missing top-set rep targets.',
+    'As the reverse-pyramid method is usually written: no scheduled deload. Take 4–7 days off when consistently missing top-set rep targets.',
 };
 
 // The Leangains and RPT presets reverse-pyramid only some lifts.
@@ -109,7 +111,7 @@ const PHILOSOPHIES: ProgramPhilosophy[] = [
     displayName: 'Leangains — Reverse Pyramid Training (Berkhan)',
     summary:
       "As Berkhan wrote it: one all-out top set, then 1–2 back-off sets at reduced weight and higher reps, paired with intermittent fasting. Designed for lifters in a caloric deficit or maintenance, prioritizing strength retention with low volume.",
-    ...BERKHAN_RPT,
+    ...RPT_METHOD,
     notes: [
       'Pairs with intermittent fasting (16:8) in the original Leangains framework.',
       'Very low volume — works well in a deficit, may underperform in a surplus vs. higher-volume programs.',
@@ -122,8 +124,8 @@ const PHILOSOPHIES: ProgramPhilosophy[] = [
     programType: 'rpt',
     displayName: 'Reverse Pyramid Training (RPT)',
     summary:
-      "As Berkhan wrote it: one all-out top set, then 1–2 back-off sets at reduced weight and higher reps. Low volume, prioritizing strength on the heaviest set.",
-    ...BERKHAN_RPT,
+      "As the reverse-pyramid method is usually written: one all-out top set, then 1–2 back-off sets at reduced weight and higher reps. Low volume, prioritizing strength on the heaviest set.",
+    ...RPT_METHOD,
     notes: [
       'Very low volume — works well in a deficit, may underperform in a surplus vs. higher-volume programs.',
     ],

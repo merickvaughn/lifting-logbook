@@ -177,7 +177,7 @@ const TOOL_DEFS: CanonicalTool[] = [
   {
     name: 'get_program_philosophy',
     description:
-      'Fetch curated guidance for a program type (e.g. "5-3-1", "starting-strength"). Use programType from the macrocycle dashboard.',
+      'Fetch curated guidance for a program type (e.g. "5-3-1", "starting-strength"). Use programType from the macrocycle dashboard. When the result has an appModel, it describes what this app actually schedules and takes precedence over the author\'s guidance in the other fields.',
     parameters: {
       type: 'object',
       properties: { programType: { type: 'string' } },
