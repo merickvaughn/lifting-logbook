@@ -66,8 +66,8 @@ Click any cell to open that workout's detail screen.
 
 Two related routes give you a broader view of the macrocycle:
 
-- `/macrocycle/<n>/program` (**Program**) — the program's full lift list and bulk-import form for backfilling records.
-- `/macrocycle/<n>/plan` (**Macrocycle plan**) — the start date and estimated completion of the macrocycle, plus its mesocycles with status icons. 5/3/1 shows four 3-week mesocycles; programs that repeat a single week (Leangains, RPT) show one **Training** span.
+- `/macrocycle/<n>/program` (**Current Program**) — the program's full lift list and bulk-import form for backfilling records.
+- `/macrocycle/<n>/plan` (**Macrocycle Plan**) — the start date and estimated completion of the macrocycle, plus its mesocycles with status icons. 5/3/1 shows four 3-week mesocycles; programs that repeat a single week (Leangains, RPT) show one **Training** span.
 
 ---
 
@@ -144,7 +144,7 @@ Three modes:
 - **Fixed days** — pick the days of the week you train (Mon–Sun). The app schedules workouts onto the next available training day.
 - **Rotating weeks** — define up to eight different weekly patterns that cycle. Useful if you train M/W/F one week and Tue/Thu/Sat the next, for example.
 
-A schedule only sets the dates. Your program's workouts keep their order, one per training day, so a schedule that trains more or fewer days a week than your program finishes it sooner or later. For example, 5/3/1's 24 workouts on a Mon/Wed/Fri schedule take eight calendar weeks instead of twelve. The Macrocycle plan's estimated completion date follows your schedule. A schedule you set or change applies to the next macrocycle you start.
+A schedule only sets the dates. Your program's workouts keep their order, one per training day, so a schedule that trains more or fewer days a week than your program finishes it sooner or later. For example, 5/3/1's 24 workouts on a Mon/Wed/Fri schedule take eight calendar weeks instead of twelve. The Macrocycle Plan's estimated completion date follows your schedule. A schedule you set or change applies to the next macrocycle you start.
 
 The form validates that you've picked at least one day before saving, and re-seeds from the server response after save so you see the canonical stored value.
 

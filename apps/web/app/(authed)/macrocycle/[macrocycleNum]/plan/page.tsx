@@ -54,7 +54,7 @@ export default async function ProgramPlanPage({
         <Link href={`/macrocycle/${dashboard.macrocycleNum}`}>← Back to macrocycle</Link>
       </div>
 
-      <h1 className={styles.heading}>Macrocycle plan</h1>
+      <h1 className={styles.heading}>Macrocycle Plan</h1>
 
       <dl className={styles.dataList}>
         <div className={styles.dataRow}>
