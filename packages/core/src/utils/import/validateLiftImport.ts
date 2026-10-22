@@ -68,7 +68,7 @@ export function validateLiftImport(
         row,
         field: IMPORT_ERROR_FIELD_LIFT,
         code: 'LIFT_EMPTY',
-        message: 'Row has no exercise name — check that your file has a "Lift" column.',
+        message: 'Row has no lift name — check that your file has a "Lift" column.',
       });
     } else if (!Object.prototype.hasOwnProperty.call(slotMap, liftStr)) {
       // Object.prototype.hasOwnProperty.call, not the `in` operator: `in`
@@ -87,7 +87,7 @@ export function validateLiftImport(
         row,
         field: IMPORT_ERROR_FIELD_LIFT,
         code: 'UNRECOGNIZED_LIFT',
-        message: `'${liftStr}' isn't a recognized exercise. Map it to an existing exercise or create a new one before importing.`,
+        message: `'${liftStr}' isn't a recognized lift. Map it to an existing lift or create a new one before importing.`,
       });
     }
 

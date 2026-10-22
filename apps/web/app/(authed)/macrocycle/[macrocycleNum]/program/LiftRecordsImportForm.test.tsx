@@ -45,20 +45,20 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
         field: 'lift',
         code: 'UNRECOGNIZED_LIFT',
         message:
-          "'Wide-Grip CBL Curls' isn't a recognized exercise. Map it to an existing exercise or create a new one before importing.",
+          "'Wide-Grip CBL Curls' isn't a recognized lift. Map it to an existing lift or create a new one before importing.",
       },
     ];
     mockImport.mockResolvedValue({ ok: false, errors });
 
     await uploadAndSubmit();
 
-    expect(await screen.findByText(/isn't a recognized exercise/)).toBeInTheDocument();
+    expect(await screen.findByText(/isn't a recognized lift/)).toBeInTheDocument();
     expect(screen.queryByText(/slot map/i)).not.toBeInTheDocument();
   });
 
   it('shows a link to the Smart Import Wizard when a lift-field error is present', async () => {
     const errors: ImportError[] = [
-      { row: 5, field: 'lift', code: 'UNRECOGNIZED_LIFT', message: "'X' isn't a recognized exercise." },
+      { row: 5, field: 'lift', code: 'UNRECOGNIZED_LIFT', message: "'X' isn't a recognized lift." },
     ];
     mockImport.mockResolvedValue({ ok: false, errors });
 
@@ -97,7 +97,7 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
       row: i + 1,
       field: 'lift',
       code: 'UNRECOGNIZED_LIFT',
-      message: `'Row ${i + 1} Lift' isn't a recognized exercise.`,
+      message: `'Row ${i + 1} Lift' isn't a recognized lift.`,
     }));
     mockImport.mockResolvedValue({ ok: false, errors });
 
@@ -122,7 +122,7 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
       row: i + 1,
       field: 'lift',
       code: 'UNRECOGNIZED_LIFT',
-      message: `'Row ${i + 1} Lift' isn't a recognized exercise.`,
+      message: `'Row ${i + 1} Lift' isn't a recognized lift.`,
     }));
     mockImport.mockResolvedValue({ ok: false, errors });
 

@@ -28,17 +28,17 @@ function renderNew(defaultWeightIncrement: number | null) {
 
 // A `new` program starts with one empty Day 1; adding an exercise to it seeds three
 // week rows whose increment inputs carry the configured default.
-async function addFirstExerciseToDay1(user: ReturnType<typeof userEvent.setup>) {
+async function addFirstLiftToDay1(user: ReturnType<typeof userEvent.setup>) {
   // 'Back Squat' is the first catalog lift; selecting by option value keeps this
   // independent of catalog ordering and avoids a non-null index assertion.
-  await user.selectOptions(screen.getByLabelText('Add exercise to Day 1'), 'Back Squat');
+  await user.selectOptions(screen.getByLabelText('Add lift to Day 1'), 'Back Squat');
 }
 
 describe('ProgramEditor — new instances seed from the configured weight increment', () => {
-  it('seeds a new exercise instance with the user-configured default', async () => {
+  it('seeds a new lift instance with the user-configured default', async () => {
     const user = userEvent.setup();
     renderNew(0.625);
-    await addFirstExerciseToDay1(user);
+    await addFirstLiftToDay1(user);
 
     const incrementInputs = screen.getAllByDisplayValue('0.625');
     // One row per week (3) for the single added instance.
@@ -48,7 +48,7 @@ describe('ProgramEditor — new instances seed from the configured weight increm
   it('falls back to 1.25 when no default is configured yet', async () => {
     const user = userEvent.setup();
     renderNew(null);
-    await addFirstExerciseToDay1(user);
+    await addFirstLiftToDay1(user);
 
     const incrementInputs = screen.getAllByDisplayValue('1.25');
     expect(incrementInputs).toHaveLength(3);

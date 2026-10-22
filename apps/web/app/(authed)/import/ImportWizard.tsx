@@ -31,7 +31,7 @@ import styles from './import.module.css';
 type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous';
 type EditableMax = { lift: string; weight: string };
 
-// Per-row transient state for the "create new exercise" affordance on an
+// Per-row transient state for the "create new lift" affordance on an
 // ambiguous row (issue #911) — keyed by rowIndex, mirroring liftOverrides.
 // `name` is the exact text a busy (in-flight) draft is creating — set
 // whenever `busy` becomes true, read by busyLiftNames below. It must be the
@@ -133,7 +133,7 @@ function getAllFieldsForKind(kind: ImportKind): FieldOption[] {
 // hand-written array version made the identical "exhaustive" claim in its own
 // comment but was just a plain array literal — it type-checked fine with a
 // member missing, silently leaving that value unreachable in the "create new
-// exercise" affordance despite the comment (#911 review, third pass — this is
+// lift" affordance despite the comment (#911 review, third pass — this is
 // the same overclaiming-comment pattern the second pass already corrected
 // once in this same PR, in effective-slot-map.util.ts).
 const LIFT_CLASSIFICATION_LABELS: Record<LiftClassification, string> = {
@@ -457,7 +457,7 @@ export function ImportWizard({
     setSelectedKeys(new Set());
   }
 
-  // Toggles the classification chip for an in-progress "create new exercise" draft
+  // Toggles the classification chip for an in-progress "create new lift" draft
   // (issue #911). Clicking the already-selected chip clears the choice.
   function setDraftClassification(rowIndex: number, classification: LiftClassification) {
     setCreateDrafts((prev) => {
@@ -753,7 +753,7 @@ export function ImportWizard({
       // include `name` — see the logClientError comment above.
       logClientError('createCustomLift', e, { programId, rowIndex });
       if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
-      setCreateDraftError(rowIndex, e instanceof Error ? e.message : 'Failed to create exercise');
+      setCreateDraftError(rowIndex, e instanceof Error ? e.message : 'Failed to create lift');
     }
   }
 
@@ -1435,7 +1435,7 @@ export function ImportWizard({
                                         <div className={styles.createLiftAffordance}>
                                           <span className={styles.createLiftPrompt}>
                                             No match — create &quot;{currentLiftValue}&quot; as a
-                                            new exercise
+                                            new lift
                                           </span>
                                           <div className={styles.chipRow}>
                                             {LIFT_CLASSIFICATIONS.map((c) => (
@@ -1470,7 +1470,7 @@ export function ImportWizard({
                                                 draft?.busy ||
                                                 busyLiftNames.has(currentLiftValue)
                                               }
-                                              aria-label={`Create "${currentLiftValue}" as a new exercise`}
+                                              aria-label={`Create "${currentLiftValue}" as a new lift`}
                                               onClick={() => {
                                                 // d.originalLift is always populated for a
                                                 // genuinely ambiguous delta (validateLiftImportSoft

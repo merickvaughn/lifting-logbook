@@ -99,7 +99,7 @@ function BodyWeightGate({
     <div className={styles.gate}>
       <h2 className={styles.gateHeading}>Body Weight</h2>
       <p className={styles.gateHint}>
-        This workout includes bodyweight exercises. Enter your weight to
+        This workout includes bodyweight lifts. Enter your weight to
         calculate added load.
       </p>
       <form className={styles.gateForm} onSubmit={handleSubmit}>
@@ -659,7 +659,7 @@ export default function WorkoutLogger({
           <button
             className={styles.viewToggle}
             type="button"
-            aria-label="Switch to per-exercise view"
+            aria-label="Switch to per-lift view"
             onClick={() => setViewMode('per-lift')}
           >
             ✕
@@ -732,7 +732,7 @@ export default function WorkoutLogger({
       </div>
 
       {/* Navigation dots */}
-      <nav className={styles.navDots} aria-label="Exercise navigation">
+      <nav className={styles.navDots} aria-label="Lift navigation">
         {lifts.map((lift, i) => {
           const liftLogged = lift.workingSets.every((ws) =>
             loggedSets.has(`${lift.lift}-${ws.setNum}`),
@@ -795,7 +795,7 @@ export default function WorkoutLogger({
             </button>
           </>
         ) : (
-          <span className={styles.lastExercise}>Last exercise</span>
+          <span className={styles.lastExercise}>Last lift</span>
         )}
         {allLogged && (
           <button

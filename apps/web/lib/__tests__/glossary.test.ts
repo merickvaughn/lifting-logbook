@@ -23,6 +23,12 @@ describe('glossary data', () => {
     }
   });
 
+  it('defines Lift and names Exercise as its synonym (#1045)', () => {
+    const lift = glossaryTerm('lift');
+    expect(lift.definition.length).toBeGreaterThan(0);
+    expect(lift.otherMeanings?.some((m) => /\bexercise\b/i.test(m))).toBe(true);
+  });
+
   it('explains every overloaded term with at least two other meanings', () => {
     const cycle = glossaryTerm('cycle');
     const wave = glossaryTerm('wave');

@@ -145,7 +145,7 @@ export default function ProgramEditor({
     }
     const specs = specsFromDays(days);
     if (specs.length === 0) {
-      setError('Add at least one exercise to a workout day.');
+      setError('Add at least one lift to a workout day.');
       return null;
     }
     setError(null);
@@ -223,7 +223,7 @@ export default function ProgramEditor({
       <div className={styles.formField}>
         <p className={styles.formLabel}>Workout Days</p>
         <p className={styles.infoText}>
-          Group exercises into workout days. Add an exercise to more than one day to train it
+          Group lifts into workout days. Add a lift to more than one day to train it
           multiple times in a week.
         </p>
 
@@ -244,7 +244,7 @@ export default function ProgramEditor({
               </div>
 
               {day.instances.length === 0 ? (
-                <p className={styles.infoText}>No exercises yet — add one below.</p>
+                <p className={styles.infoText}>No lifts yet — add one below.</p>
               ) : (
                 day.instances.map((inst, i) => (
                   <div key={inst.id} className={styles.instanceRow}>
@@ -343,11 +343,11 @@ export default function ProgramEditor({
                 <select
                   className={styles.formSelect}
                   value=""
-                  aria-label={`Add exercise to Day ${n}`}
+                  aria-label={`Add lift to Day ${n}`}
                   disabled={day.instances.length >= MAX_INSTANCES_PER_DAY}
                   onChange={(e) => addInstance(day.id, e.target.value)}
                 >
-                  <option value="" disabled>Add exercise…</option>
+                  <option value="" disabled>Add lift…</option>
                   {ALL_LIFTS.map((lift) => (
                     <option key={lift} value={lift}>{lift}</option>
                   ))}

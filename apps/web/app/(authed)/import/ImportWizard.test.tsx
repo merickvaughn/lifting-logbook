@@ -485,7 +485,7 @@ async function startStaleCreate(user: ReturnType<typeof userEvent.setup>) {
   await navigateToLiftRecordsReview(user, RACE_GEN1_CSV);
   await user.click(screen.getByRole('button', { name: 'Accessory' }));
   const createButton = screen.getByRole('button', {
-    name: 'Create "Legacy Row One Name" as a new exercise',
+    name: 'Create "Legacy Row One Name" as a new lift',
   });
   await user.click(createButton);
   await waitFor(() => expect(createButton).toBeDisabled());
@@ -508,7 +508,7 @@ async function replacePreviewMidRequest(user: ReturnType<typeof userEvent.setup>
   await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
   await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
   expect(
-    screen.getByText('No match — create "Fresh Row One Name" as a new exercise'),
+    screen.getByText('No match — create "Fresh Row One Name" as a new lift'),
   ).toBeInTheDocument();
 }
 
@@ -519,7 +519,7 @@ async function replacePreviewMidRequest(user: ReturnType<typeof userEvent.setup>
 function expectGen2RowUndisturbed() {
   expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Fresh Row One Name');
   expect(
-    screen.getByText('No match — create "Fresh Row One Name" as a new exercise'),
+    screen.getByText('No match — create "Fresh Row One Name" as a new lift'),
   ).toBeInTheDocument();
 }
 
@@ -959,7 +959,7 @@ describe('ImportWizard', () => {
 
   // #911: the REVIEW step's ambiguous-row remap datalist offers the user's
   // custom lifts alongside the built-in canonical ones, and an inline
-  // "create new exercise" affordance for a genuinely unrecognized name.
+  // "create new lift" affordance for a genuinely unrecognized name.
   describe('ambiguous-row remap: custom lifts (#911)', () => {
     it("datalist includes the user's custom lifts alongside built-in canonical lifts", async () => {
       const user = userEvent.setup();
@@ -1042,12 +1042,12 @@ describe('ImportWizard', () => {
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
 
       const prompts = screen.getAllByText(
-        'No match — create "Wide-Grip CBL Curls" as a new exercise',
+        'No match — create "Wide-Grip CBL Curls" as a new lift',
       );
       expect(prompts).toHaveLength(2); // both ambiguous rows share the same original text
 
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+        name: 'Create "Wide-Grip CBL Curls" as a new lift',
       });
       expect(createButtons[0]).toBeDisabled();
 
@@ -1055,7 +1055,7 @@ describe('ImportWizard', () => {
       expect(createButtons[0]).toBeEnabled();
     });
 
-    it('creates a new exercise and batch-resolves every row sharing the same original text', async () => {
+    it('creates a new lift and batch-resolves every row sharing the same original text', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
       mockCommit.mockResolvedValue({
@@ -1069,7 +1069,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+        name: 'Create "Wide-Grip CBL Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
@@ -1121,7 +1121,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+        name: 'Create "Wide-Grip CBL Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
@@ -1149,7 +1149,7 @@ describe('ImportWizard', () => {
       mockCreateCustomLift.mockResolvedValue({
         ok: false,
         conflictMessage:
-          "'Wide-Grip CBL Curls' is a reserved exercise name and cannot be used for a custom exercise",
+          "'Wide-Grip CBL Curls' is a reserved lift name and cannot be used for a custom lift",
       });
       mockFetchCustomLifts.mockResolvedValue([]);
 
@@ -1158,13 +1158,13 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+        name: 'Create "Wide-Grip CBL Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
       expect(
         await screen.findByText(
-          "'Wide-Grip CBL Curls' is a reserved exercise name and cannot be used for a custom exercise",
+          "'Wide-Grip CBL Curls' is a reserved lift name and cannot be used for a custom lift",
         ),
       ).toBeInTheDocument();
       expect(screen.queryByText('An exercise with this name already exists.')).not.toBeInTheDocument();
@@ -1186,7 +1186,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+        name: 'Create "Wide-Grip CBL Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
@@ -1243,10 +1243,10 @@ describe('ImportWizard', () => {
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!); // row 1
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[1]!); // row 2
       await user.click(
-        screen.getByRole('button', { name: 'Create "Zorbing Machine Press" as a new exercise' }),
+        screen.getByRole('button', { name: 'Create "Zorbing Machine Press" as a new lift' }),
       );
       await user.click(
-        screen.getByRole('button', { name: 'Create "Underwater Kettle Flys" as a new exercise' }),
+        screen.getByRole('button', { name: 'Create "Underwater Kettle Flys" as a new lift' }),
       );
       await waitFor(() => expect(mockCreateCustomLift).toHaveBeenCalledTimes(2));
 
@@ -1272,7 +1272,7 @@ describe('ImportWizard', () => {
       createZorbingPressGate.resolve({ ok: true, data: createdZorbingPress });
       await waitFor(() =>
         expect(
-          screen.queryByText('No match — create "Zorbing Machine Press" as a new exercise'),
+          screen.queryByText('No match — create "Zorbing Machine Press" as a new lift'),
         ).not.toBeInTheDocument(),
       );
 
@@ -1320,7 +1320,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getByRole('button', { name: 'Accessory' }));
       await user.click(
-        screen.getByRole('button', { name: 'Create "Sideways Anvil Curl" as a new exercise' }),
+        screen.getByRole('button', { name: 'Create "Sideways Anvil Curl" as a new lift' }),
       );
       await waitFor(() => expect(mockFetchCustomLifts).toHaveBeenCalledTimes(1));
       expect(
@@ -1343,7 +1343,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+        name: 'Create "Wide-Grip CBL Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
@@ -1383,14 +1383,14 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+        name: 'Create "Wide-Grip CBL Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
       // Row goes busy and stays busy while the request is pending — this is the
       // state a genuinely hung request left it in forever before #922, since the
       // only way `busy` ever cleared was the request settling. The button's
-      // aria-label is static (`Create "..." as a new exercise`) regardless of
+      // aria-label is static (`Create "..." as a new lift`) regardless of
       // busy state — it takes precedence over text content for the accessible
       // name — so assert on the visible "Creating…" text rather than a
       // name-based role query, and reuse the stable `createButtons[0]` element
@@ -1457,7 +1457,7 @@ describe('ImportWizard', () => {
       await user.type(row1Input, 'New Lift');
 
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "New Lift" as a new exercise',
+        name: 'Create "New Lift" as a new lift',
       });
       expect(createButtons).toHaveLength(1); // row 2 shows no affordance — still blank
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
@@ -1498,7 +1498,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new exercise',
+        name: 'Create "Wide-Grip CBL Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
       await waitFor(() => expect(mockCreateCustomLift).toHaveBeenCalledTimes(1));
@@ -1574,14 +1574,14 @@ describe('ImportWizard', () => {
       await user.type(screen.getByLabelText('Lift name for row 2'), 'Second New Lift');
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
-      const row1Create = screen.getByRole('button', { name: 'Create "First New Lift" as a new exercise' });
+      const row1Create = screen.getByRole('button', { name: 'Create "First New Lift" as a new lift' });
       await user.click(row1Create);
       await waitFor(() => expect(row1Create).toBeDisabled()); // row 1 now busy
 
       // Row 2's own Create button must still be reachable — it needs its own
       // classification pick first (each row's chip state is independent).
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[1]!);
-      const row2Create = screen.getByRole('button', { name: 'Create "Second New Lift" as a new exercise' });
+      const row2Create = screen.getByRole('button', { name: 'Create "Second New Lift" as a new lift' });
       expect(row2Create).toBeEnabled();
     });
 
@@ -1602,7 +1602,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Same New Lift" as a new exercise',
+        name: 'Create "Same New Lift" as a new lift',
       });
       await user.click(createButtons[0]!);
       await waitFor(() => expect(createButtons[0]).toBeDisabled());
@@ -1633,7 +1633,7 @@ describe('ImportWizard', () => {
       await user.type(row1Input, 'First Attempt');
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const firstCreateButton = screen.getByRole('button', {
-        name: 'Create "First Attempt" as a new exercise',
+        name: 'Create "First Attempt" as a new lift',
       });
       await user.click(firstCreateButton);
 

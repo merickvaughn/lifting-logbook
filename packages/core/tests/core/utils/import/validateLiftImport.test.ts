@@ -53,15 +53,15 @@ describe("validateLiftImport", () => {
   // exercise... message — the "unrecognized name" message is for a genuinely
   // typed-but-unknown name, not a missing Lift column, which would otherwise
   // produce that confusing message on every single row.
-  it("flags an empty lift with a distinct 'no exercise name' message, not the interpolated unrecognized-name one", () => {
+  it("flags an empty lift with a distinct 'no lift name' message, not the interpolated unrecognized-name one", () => {
     const records = [makeRecord({ lift: "" as LiftRecord["lift"] })];
     const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
     expect(valid).toHaveLength(0);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatchObject({ row: 1, field: "lift", code: "LIFT_EMPTY" });
     expect(errors[0]!.message).not.toMatch(/undefined/);
-    expect(errors[0]!.message).not.toMatch(/isn't a recognized exercise/);
-    expect(errors[0]!.message).toMatch(/no exercise name/i);
+    expect(errors[0]!.message).not.toMatch(/isn't a recognized lift/);
+    expect(errors[0]!.message).toMatch(/no lift name/i);
   });
 
   it("flags a NaN weight", () => {
@@ -146,7 +146,7 @@ describe("validateLiftImport", () => {
     const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
     expect(valid).toHaveLength(0);
     expect(errors).toHaveLength(1);
-    expect(errors[0]!.message).toMatch(/no exercise name/i);
+    expect(errors[0]!.message).toMatch(/no lift name/i);
   });
 
   // Regression guard (#911 review, fourth pass): a genuinely missing Lift
@@ -161,7 +161,7 @@ describe("validateLiftImport", () => {
     const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
     expect(valid).toHaveLength(0);
     expect(errors).toHaveLength(1);
-    expect(errors[0]!.message).toMatch(/no exercise name/i);
+    expect(errors[0]!.message).toMatch(/no lift name/i);
   });
 
   // Regression guard (#911 review): membership must be Object.hasOwn, not the `in`

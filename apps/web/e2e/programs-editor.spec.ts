@@ -33,16 +33,16 @@ test('program editor: build multiple workout days, place a lift on two of them, 
 
   await page.getByLabel('Program Name').fill('Upper/Lower Split');
 
-  // Day 1 starts empty — add two exercises to it.
-  await page.getByLabel('Add exercise to Day 1').selectOption({ label: 'Back Squat' });
+  // Day 1 starts empty — add two lifts to it.
+  await page.getByLabel('Add lift to Day 1').selectOption({ label: 'Back Squat' });
   await expect(page.getByRole('button', { name: 'Remove Back Squat #1 from Day 1' })).toBeVisible();
-  await page.getByLabel('Add exercise to Day 1').selectOption({ label: 'Bench Press' });
+  await page.getByLabel('Add lift to Day 1').selectOption({ label: 'Bench Press' });
   await expect(page.getByRole('button', { name: 'Remove Bench Press #2 from Day 1' })).toBeVisible();
 
   // Add a second workout day and place Back Squat on it too — the same lift on two days,
   // which the pre-#751 editor could not express.
   await page.getByRole('button', { name: 'Add Day' }).click();
-  await page.getByLabel('Add exercise to Day 2').selectOption({ label: 'Back Squat' });
+  await page.getByLabel('Add lift to Day 2').selectOption({ label: 'Back Squat' });
   await expect(page.getByRole('button', { name: 'Remove Back Squat #1 from Day 2' })).toBeVisible();
 
   // Save → on success onSaved fires and the view returns to the Browse tab, so the

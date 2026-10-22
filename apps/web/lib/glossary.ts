@@ -96,6 +96,16 @@ export const GLOSSARY = [
     title: 'Weights and sets',
     terms: [
       {
+        id: 'lift',
+        term: 'Lift',
+        definition:
+          'A named movement you train and log, such as Back Squat, Bench Press or Face Pull, either built in or one you create. Every movement is a lift here, accessories included. A lift placed on a workout day, in a set order, is a lift slot.',
+        otherMeanings: [
+          'Other apps and most training writing call it an exercise; the two words mean the same thing.',
+          'In powerlifting, "the lifts" means only the squat, bench press and deadlift.',
+        ],
+      },
+      {
         id: 'training-max',
         term: 'Training max',
         aka: ['TM'],
@@ -107,7 +117,7 @@ export const GLOSSARY = [
         term: 'One-rep max',
         aka: ['1RM'],
         definition:
-          'The heaviest weight you can lift once for a given exercise. Setup can estimate it from a heavier set of several reps using the Brzycki formula.',
+          'The heaviest weight you can manage for a single rep of a given lift. Setup can estimate it from a heavier set of several reps using the Brzycki formula.',
       },
       {
         id: 'amrap',
@@ -131,7 +141,7 @@ export const GLOSSARY = [
         id: 'bodyweight-component',
         term: 'Bodyweight component',
         definition:
-          'An exercise where your body weight is part of the load, such as chin-ups or dips. Logging a workout with one asks for your current body weight.',
+          'A lift where your body weight is part of the load, such as chin-ups or dips. Logging a workout with one asks for your current body weight.',
       },
     ],
   },

@@ -1,9 +1,10 @@
-# Glossary — training-time vocabulary
+# Glossary — training vocabulary
 
 Lifting vocabulary is overloaded: "cycle" alone names three different spans of time depending
-on who is writing. This page fixes the terms the code, the API and the UI use, and maps each one
-to the other meanings a contributor or lifter will meet in program write-ups and coaching
-literature. The decision behind the names is [ADR-038](adr/ADR-038-training-time-vocabulary.md).
+on who is writing, and "lift" and "exercise" name the same thing. This page fixes the terms the
+code, the API and the UI use, and maps each one to the other meanings a contributor or lifter will
+meet in program write-ups and coaching literature. The decision behind the names is
+[ADR-038](adr/ADR-038-training-time-vocabulary.md).
 
 - **End users** see the same content in the app at `/glossary` (`apps/web/lib/glossary.ts`). Headings
   across the app link into it through `GlossaryLink`. Keep the two in step.
@@ -41,6 +42,21 @@ Program → Macrocycle → Mesocycle → Week (microcycle) → Workout → Lift 
 
 ---
 
+## Lift
+
+**Lift** — a named movement you train and log, such as Back Squat, Bench Press or Face Pull, either
+built in or one you create. Every movement is a lift here, accessories included. A lift placed on a
+workout day, in a set order, is a lift slot.
+
+- Other apps and most training writing call it an exercise; the two words mean the same thing.
+- In powerlifting, "the lifts" means only the squat, bench press and deadlift.
+
+In code a lift is the `Lift` type (`packages/types/src/domain.ts`), with the built-ins in
+`LIFT_CATALOG` and the user's own in `custom_lift`. A lift slot is a spec row, as in the table
+above. How lifts are classified is in [domain-model.md §2](domain-model.md#2-the-lift-taxonomy).
+
+---
+
 ## Overloaded terms
 
 | Word | Meanings you will meet | What this repo says instead |
@@ -51,6 +67,7 @@ Program → Macrocycle → Mesocycle → Week (microcycle) → Workout → Lift 
 | **Phase** | A goal-defined stretch (hypertrophy, strength, peaking): one mesocycle or several. Bompa also uses phase for the preparatory/competitive/transition parts of a macrocycle [1]. | The plan page heads its list "Mesocycles" for mesocycle programs and "Phases" for repeating ones. |
 | **Session** | A workout. | **Workout**, except the timer's "session queue". |
 | **Program run** | One time through a program. | **Macrocycle** (shown as an alias in the in-app glossary). |
+| **Exercise** | A movement you train: the same thing as a lift. | **Lift**. UI labels, aria-labels and error messages say "lift". Program catalog copy keeps its author's words, and a CSV's "Exercise" column maps onto Lift on import. |
 
 ---
 
