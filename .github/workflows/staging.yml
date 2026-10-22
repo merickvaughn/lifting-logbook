@@ -857,7 +857,7 @@ jobs:
           # cause instead of polling an empty URL into "Staging did not become ready in time".
           WEB_RESULT='${{ needs.deploy-web.result }}'
           if [[ "$WEB_RESULT" != "success" ]]; then
-            echo "::error::deploy-web did not succeed (result: $WEB_RESULT) — integration tests cannot run. Open the Deploy web (staging) job for the step that failed; if it was 'Verify the newest revision serves 100% of traffic', traffic is pinned to an older revision (see docs/runbooks/deploy-regression-rollback.md, #1042)."
+            echo "::error::deploy-web did not succeed (result: $WEB_RESULT) — integration tests cannot run. If 'cancelled', a newer PR's staging deploy most likely preempted it in the staging-deploy-mutex-web queue — re-run the failed jobs (see CLAUDE.md 'Staging-deploy queue starvation', #673). If 'failure', open the Deploy web (staging) job for the step that failed; if it was 'Verify the newest revision serves 100% of traffic', traffic is pinned to an older revision (see docs/runbooks/deploy-regression-rollback.md, #1042)."
             exit 1
           fi
 

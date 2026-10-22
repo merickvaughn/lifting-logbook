@@ -721,7 +721,7 @@ Motivating incident: [PR #722](https://github.com/merickvaughn/lifting-logbook/p
 
 **Pattern:** `.github/workflows/staging.yml`'s `deploy-api`/`deploy-web` jobs serialize writes to the one shared staging Cloud Run service / Helm release via job-level concurrency groups (`staging-deploy-mutex-api`, `staging-deploy-mutex-web`, both `cancel-in-progress: false`). These groups are global, not per-PR. GitHub Actions keeps only the most-recently-queued run per concurrency group — when a third PR pushes while a second PR's deploy is already queued behind a first PR's running deploy, the second PR's queued run is silently cancelled and the third takes its place. Under sustained multi-PR throughput this can repeat for an unlucky PR across many cycles.
 
-**Symptom:** The required `Staging Integration Tests` check fails with "Staging did not become ready in time" or an empty `WEB_URL`, even on a PR whose diff cannot plausibly affect staging (e.g. docs-only). The `deploy-api` or `deploy-web` job's own result shows `cancelled` rather than `failure`.
+**Symptom:** The required `Staging Integration Tests` check fails with "deploy-web did not succeed (result: cancelled)" (since [#1042](https://github.com/merickvaughn/lifting-logbook/issues/1042); before it, "Staging did not become ready in time" or an empty `WEB_URL`), even on a PR whose diff cannot plausibly affect staging (e.g. docs-only). The `deploy-api` or `deploy-web` job's own result shows `cancelled` rather than `failure`.
 
 **Diagnosis:**
 ```bash
