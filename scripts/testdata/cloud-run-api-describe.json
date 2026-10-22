@@ -1,0 +1,43 @@
+{
+  "apiVersion": "serving.knative.dev/v1",
+  "kind": "Service",
+  "metadata": {
+    "name": "lifting-logbook-stg-api",
+    "namespace": "000000000000",
+    "generation": 785
+  },
+  "spec": {
+    "template": {
+      "spec": {
+        "containers": [
+          {
+            "name": "api",
+            "image": "us-central1-docker.pkg.dev/example-project/lifting-logbook/api:92a8462616d0ce9010c5dc6165f26392812dc79b",
+            "ports": [{"containerPort": 3000, "name": "http1"}]
+          },
+          {
+            "name": "otel-collector",
+            "image": "us-central1-docker.pkg.dev/example-project/lifting-logbook-dockerhub/otel/opentelemetry-collector-contrib@sha256:e07e325e303e86f4a87a617491e921b579a92da6d404007394757ac910bf9587"
+          }
+        ]
+      }
+    },
+    "traffic": [
+      {"latestRevision": true, "percent": 100}
+    ]
+  },
+  "status": {
+    "observedGeneration": 785,
+    "latestCreatedRevisionName": "lifting-logbook-stg-api-00783-xz9",
+    "latestReadyRevisionName": "lifting-logbook-stg-api-00783-xz9",
+    "traffic": [
+      {"latestRevision": true, "percent": 100, "revisionName": "lifting-logbook-stg-api-00783-xz9"}
+    ],
+    "conditions": [
+      {"type": "Ready", "status": "True"},
+      {"type": "ConfigurationsReady", "status": "True"},
+      {"type": "RoutesReady", "status": "True"}
+    ],
+    "url": "https://lifting-logbook-stg-api-000000000000.us-central1.run.app"
+  }
+}

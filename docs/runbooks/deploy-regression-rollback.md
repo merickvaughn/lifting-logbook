@@ -105,6 +105,55 @@ kubectl rollout status deployment/api
 Verify the error rate drops in Grafana within 2 minutes of the rollback completing. If
 it does not drop, the rollback did not revert the cause — investigate further.
 
+### Fast path on Cloud Run: route traffic to the previous revision
+
+Both environments run Cloud-Run-only (GKE is disabled, ADR-009 / #860), so this is the usual
+rollback. Find the last good revision, then send all traffic to it:
+
+```sh
+gcloud run revisions list --service=lifting-logbook-prod-api \
+  --region=us-central1 --project=lifting-logbook-prod --limit=5
+
+gcloud run services update-traffic lifting-logbook-prod-api \
+  --to-revisions=PREVIOUS_REVISION=100 \
+  --region=us-central1 --project=lifting-logbook-prod
+```
+
+**This pins traffic.** After `--to-revisions`, the service routes to that named revision
+instead of "latest". A revision created later by anything outside the pipeline — a manual
+`gcloud run deploy` or `services replace` — starts at **0% traffic**, so it succeeds without
+serving anything. (Pipeline deploys behave differently; see below.) Check the pin:
+
+```sh
+gcloud run services describe lifting-logbook-prod-api \
+  --region=us-central1 --project=lifting-logbook-prod --format='yaml(status.traffic)'
+```
+
+A pinned service lists a `revisionName` with `percent: 100` and no `latestRevision: true`.
+
+**The next pipeline deploy removes the pin.** Since #1042, every deploy through
+`.github/actions/deploy-cloud-run-otel-sidecar` routes 100% of traffic to the revision it
+creates, then fails the job if traffic is still pinned. So a Cloud Run rollback lasts
+only until the next pipeline deploy of that service. In production that deploy waits for the
+`environment: production` approval, so the approver decides when the rollback ends: **do not
+approve any production deploy until `main` contains the fix.** Approving any later commit
+that lacks it unpins traffic and re-ships the regression.
+
+**To unpin by hand**, without deploying (for example after rolling back to check a theory):
+
+```sh
+gcloud run services update-traffic lifting-logbook-prod-api \
+  --to-latest \
+  --region=us-central1 --project=lifting-logbook-prod
+```
+
+Staging uses the same commands, with `lifting-logbook-stg-api` / `lifting-logbook-stg-web` in
+`lifting-logbook-staging`, but a staging rollback is short-lived: `staging.yml` redeploys
+staging for every PR push and merge-queue entry, with no approval, so the next one unpins it
+within minutes. To hold staging on an old revision for investigation, pause those runs first.
+Before #1042 the opposite was true, and a forgotten pin on `lifting-logbook-stg-api` meant every
+PR's `Staging Integration Tests` ran against a July build from 2026-07-10 to 2026-10-09.
+
 ### If migrations were applied
 
 Do not roll back the deployment until the impact of the migration is understood:

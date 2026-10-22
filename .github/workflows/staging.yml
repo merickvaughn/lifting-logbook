@@ -585,6 +585,11 @@ jobs:
       # owned, unchanged, by the existing cloud_run_api_deployed gate + the log-fetch
       # step below. On the non-image-affecting skip-build path the built tag already
       # equals what serves, so this is a correct no-op, never a false failure. See #823.
+      #
+      # This step reads spec.template, i.e. what was APPLIED, not what SERVES. Whether traffic
+      # is pinned away from the newest revision is checked inside the action itself (its
+      # "Verify the newest revision serves 100% of traffic" step, #1042). That check runs only
+      # if the action loads, which is exactly the case this step exists to cover.
       - name: Verify API revision actually deployed (staging)
         if: steps.deploy-api.outcome == 'success'
         run: |
@@ -633,6 +638,9 @@ jobs:
           echo "::error title=Staging API deploy is a hollow green::deploy-api reported success but '$SERVICE' is NOT running the just-built image ($EXPECTED${EXPECTED_DIGEST:+ / $EXPECTED_DIGEST}). The OTel-sidecar composite action most likely failed to LOAD (a manifest/template-validation error) and submitted no revision, leaving the stale revision serving. Fix the action manifest — do not trust this green. See #823 and docs/runbooks/staging-ci-flakiness.md."
           exit 1
 
+      # Also runs when the deploy action's "Verify the newest revision serves 100% of traffic" step
+      # failed (#1042): then the revision started fine and these crash logs are irrelevant — the
+      # cause is the traffic routes printed in that step's ::error annotation (a pin).
       - name: Fetch Cloud Run API logs on failure
         if: steps.deploy-api.outcome == 'failure'
         run: |
@@ -841,7 +849,15 @@ jobs:
             exit 1
           fi
           if [[ "$API_DEPLOYED" != "true" ]]; then
-            echo "::error::Cloud Run API deploy failed — integration tests cannot run. Check the 'Fetch Cloud Run API logs on failure' step in the Deploy API (staging) job (commonly an image/startup error or an Artifact Registry push issue — not Cloud SQL connectivity, per the #498 diagnosis). See docs/runbooks/staging-ci-flakiness.md."
+            echo "::error::Cloud Run API deploy failed — integration tests cannot run. Open the Deploy API (staging) job and see which step failed. If it was 'Verify the newest revision serves 100% of traffic', traffic is pinned to an older revision — see its annotation and docs/runbooks/deploy-regression-rollback.md (#1042). Otherwise check the 'Fetch Cloud Run API logs on failure' step (commonly an image/startup error or an Artifact Registry push issue — not Cloud SQL connectivity, per the #498 diagnosis). See docs/runbooks/staging-ci-flakiness.md."
+            exit 1
+          fi
+          # deploy-web's Cloud Run deploy has no continue-on-error, so a failure there (including
+          # the #1042 serving check) fails the job and leaves web_url empty. Fail fast with that
+          # cause instead of polling an empty URL into "Staging did not become ready in time".
+          WEB_RESULT='${{ needs.deploy-web.result }}'
+          if [[ "$WEB_RESULT" != "success" ]]; then
+            echo "::error::deploy-web did not succeed (result: $WEB_RESULT) — integration tests cannot run. If 'cancelled', a newer PR's staging deploy most likely preempted it in the staging-deploy-mutex-web queue — re-run the failed jobs (see CLAUDE.md 'Staging-deploy queue starvation', #673). If 'failure', open the Deploy web (staging) job for the step that failed; if it was 'Verify the newest revision serves 100% of traffic', traffic is pinned to an older revision (see docs/runbooks/deploy-regression-rollback.md, #1042)."
             exit 1
           fi
 
@@ -977,7 +993,7 @@ jobs:
             } else if (!clerkConfigured) {
               body = '⚠️ **Staging integration tests skipped** — `lifting-logbook-stg-clerk-secret-key` in GCP Secret Manager is still the placeholder value. Follow [docs/deploy.md Step 4](https://github.com/${{ github.repository }}/blob/${{ github.event.pull_request.head.sha }}/docs/deploy.md#step-4--sign-up-for-clerk-and-create-two-apps) to configure the staging Clerk secret key, then re-run CI.';
             } else if (!cloudRunApiDeployed) {
-              body = `⚠️ **Staging integration tests skipped** — Cloud Run API deploy failed (container did not start). Check the "Fetch Cloud Run API logs on failure" step in the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for the crash reason — commonly an image/startup error or an Artifact Registry push issue, not Cloud SQL connectivity (see the [#498](https://github.com/${{ github.repository }}/issues/498) diagnosis and \`docs/runbooks/staging-ci-flakiness.md\`).`;
+              body = `⚠️ **Staging integration tests skipped** — Cloud Run API deploy failed. If the failing step in the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) is "Verify the newest revision serves 100% of traffic", traffic is pinned to an older revision (see \`docs/runbooks/deploy-regression-rollback.md\`, #1042). Otherwise check the "Fetch Cloud Run API logs on failure" step for the crash reason — commonly an image/startup error or an Artifact Registry push issue, not Cloud SQL connectivity (see the [#498](https://github.com/${{ github.repository }}/issues/498) diagnosis and \`docs/runbooks/staging-ci-flakiness.md\`).`;
             } else if (testResult === 'success') {
               body = `✅ **Staging integration tests passed**\n\n🔗 [Staging environment](${webUrl})`;
             } else if (testResult === 'failure') {
