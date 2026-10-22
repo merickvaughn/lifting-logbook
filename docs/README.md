@@ -228,8 +228,8 @@ ladder and what each level is stored as, the prescribed-versus-logged seam, a cl
 the whole model, and the known divergences between the model, the API and the UI.
 
 See [glossary.md](glossary.md) for the training vocabulary — macrocycle, mesocycle, block,
-microcycle, and **lift** (the app's one word for a trained movement; "exercise" is a synonym it
-does not use) — and what "cycle", "wave" and "phase" mean in other programs and in coaching
+microcycle, and **lift** (the app's one word for a trained movement in its own labels;
+"exercise" is a synonym, kept only where program catalog copy quotes its author) — and what "cycle", "wave" and "phase" mean in other programs and in coaching
 literature. The same content is in the app at `/glossary`.
 
 ---
