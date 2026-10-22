@@ -150,7 +150,7 @@ describe('Custom Lifts HTTP (e2e, in-memory adapters)', () => {
   it('distinguishes a reserved-alias 409 from a genuine duplicate-name 409 by message', async () => {
     const reserved = await create({ name: 'squat', classification: 'compound' });
     expect(reserved.statusCode).toBe(409);
-    expect((reserved.json() as { message: string }).message).toMatch(/reserved exercise name/i);
+    expect((reserved.json() as { message: string }).message).toMatch(/reserved lift name/i);
     expect((reserved.json() as { message: string }).message).not.toMatch(/already exists/i);
 
     await create({ name: 'Genuinely Duplicated Lift', classification: 'compound' });

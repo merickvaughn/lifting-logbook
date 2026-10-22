@@ -36,7 +36,7 @@ export type WeekParams = {
   weekType?: string;
 };
 
-export type ExerciseInstance = {
+export type LiftInstance = {
   /** Client-only React key; never serialized to the API. */
   id: string;
   lift: string;
@@ -46,7 +46,7 @@ export type ExerciseInstance = {
 export type WorkoutDayModel = {
   /** Client-only React key; never serialized to the API. */
   id: string;
-  instances: ExerciseInstance[];
+  instances: LiftInstance[];
 };
 
 let idCounter = 0;
@@ -169,7 +169,7 @@ export function daysFromSpecs(specs: CustomProgramSpecRow[]): WorkoutDayModel[] 
         else byInstance.set(key, [r]);
       }
 
-      const instances: ExerciseInstance[] = [...byInstance.values()]
+      const instances: LiftInstance[] = [...byInstance.values()]
         .sort((a, b) => {
           const orderDiff = a[0].order - b[0].order;
           return orderDiff !== 0 ? orderDiff : a[0].lift.localeCompare(b[0].lift);

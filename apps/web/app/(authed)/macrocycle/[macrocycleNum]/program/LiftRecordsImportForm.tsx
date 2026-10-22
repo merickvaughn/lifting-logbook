@@ -112,9 +112,9 @@ export default function LiftRecordsImportForm({ program }: Props) {
           <strong>Upload rejected — fix the following errors and try again:</strong>
           {errors.some(isLiftNameError) && (
             <p style={{ marginTop: '0.5rem' }}>
-              This form can&apos;t map an unrecognized exercise name to an existing
+              This form can&apos;t map an unrecognized lift name to an existing
               one or create it for you. <Link href="/import">Use the Smart Import
-              Wizard</Link> instead — it lets you resolve unrecognized exercises
+              Wizard</Link> instead — it lets you resolve unrecognized lifts
               interactively before anything is imported.
             </p>
           )}

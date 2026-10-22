@@ -152,9 +152,9 @@ test('import wizard MAP_COLUMNS: fuzzy-matched columns shown; override unmapped 
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
 });
 
-test('import wizard REVIEW: create a new exercise for an unrecognized lift, resolving every matching row', async ({ page, request }) => {
+test('import wizard REVIEW: create a new lift for an unrecognized name, resolving every matching row', async ({ page, request }) => {
   // #911: an unrecognized lift name reaches REVIEW as an ambiguous row (never a
-  // raw internal error), and the inline "create new exercise" affordance lets
+  // raw internal error), and the inline "create new lift" affordance lets
   // the user resolve it — and every other row sharing the same original text —
   // without leaving the wizard.
   await request.get(`${MOCK_API}/__reset?withCustomProgram=true&withAmbiguousLift=true`);
@@ -180,10 +180,10 @@ test('import wizard REVIEW: create a new exercise for an unrecognized lift, reso
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
 
   // Both ambiguous rows surface the create-new affordance for the same name.
-  const prompts = page.getByText('No match — create "Wide-Grip CBL Curls" as a new exercise');
+  const prompts = page.getByText('No match — create "Wide-Grip CBL Curls" as a new lift');
   await expect(prompts).toHaveCount(2);
 
-  const createButtons = page.getByRole('button', { name: 'Create "Wide-Grip CBL Curls" as a new exercise' });
+  const createButtons = page.getByRole('button', { name: 'Create "Wide-Grip CBL Curls" as a new lift' });
   await expect(createButtons.first()).toBeDisabled();
 
   // Pick a classification, then confirm — only the first row's chips/button are used;

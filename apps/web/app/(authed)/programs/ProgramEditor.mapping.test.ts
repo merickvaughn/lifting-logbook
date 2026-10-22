@@ -4,12 +4,12 @@ import {
   defaultWeeks,
   specsFromDays,
   uid,
-  type ExerciseInstance,
+  type LiftInstance,
   type WeekParams,
   type WorkoutDayModel,
 } from './programSpecMapping';
 
-function makeInstance(lift: string): ExerciseInstance {
+function makeInstance(lift: string): LiftInstance {
   return { id: uid(), lift, weeks: defaultWeeks(5) };
 }
 

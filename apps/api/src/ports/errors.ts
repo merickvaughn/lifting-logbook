@@ -60,7 +60,7 @@ export class CustomLiftConflictError extends Error {
 // from the response alone (issue #911 review, third pass).
 export class ReservedLiftNameConflictError extends Error {
   constructor(public readonly liftName: string) {
-    super(`'${liftName}' is a reserved exercise name and cannot be used for a custom exercise`);
+    super(`'${liftName}' is a reserved lift name and cannot be used for a custom lift`);
     this.name = 'ReservedLiftNameConflictError';
   }
 }

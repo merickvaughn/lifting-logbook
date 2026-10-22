@@ -100,6 +100,23 @@ Supporting decisions:
 - ADR-016's "Cycle Planning Agent" is now `IMacrocyclePlanningAgent` / `/macrocycle-plan` in code.
   The ADR itself keeps its historical title.
 
+## Amendment: Lift, not Exercise (#1045)
+
+**Date:** 2026-10-22 · **Issue:** [#1045](https://github.com/merickvaughn/lifting-logbook/issues/1045)
+
+This ADR settled the time-structure words. Its other open question
+([domain-model D18](../domain-model.md#6-known-divergences)) was the unit being trained: the app
+said "lift" almost everywhere and "exercise" in about fifteen user-visible places.
+
+- **Lift** is the one user-facing term. "Lift" already dominated the code, schema and API
+  (`Lift`, `custom_lift`, `LiftRecord`, the `lift` column), so the stray "exercise" labels
+  converge on it. Renaming the other way would have touched every layer.
+- The glossaries (`docs/glossary.md`, `docs/user-guide.md`, in-app `/glossary`) define Lift with
+  one wording and list "exercise" as a synonym, because lifters and other apps use it.
+- Same exceptions as §4–5 above: program catalog copy keeps its author's words, and a CSV's
+  "Exercise" column header is input data that import maps onto Lift. Code comments, CSS class
+  names and internal identifiers no user sees are not renamed.
+
 ## References
 
 1. Bompa, T. O., & Buzzichelli, C. (2018). *Periodization: Theory and Methodology of Training*

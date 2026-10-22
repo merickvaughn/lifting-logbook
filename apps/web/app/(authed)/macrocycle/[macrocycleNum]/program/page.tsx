@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { fetchMacrocycleDashboard, fetchProgramSpec } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
+import GlossaryLink from '@/components/GlossaryLink';
 import { deriveProgramSummary, WEEK_TYPE_LABELS } from '@/lib/programPlan';
 import styles from './program.module.css';
 import LiftRecordsImportForm from './LiftRecordsImportForm';
@@ -75,7 +76,9 @@ export default async function MacrocycleProgramPage({
         </div>
       </dl>
 
-      <h3 className={styles.sectionLabel}>Exercises</h3>
+      <h3 className={styles.sectionLabel}>
+        Lifts <GlossaryLink id="lift" />
+      </h3>
       <ul className={styles.exerciseList}>
         {exercises.map((name) => (
           <li key={name} className={styles.exerciseItem}>

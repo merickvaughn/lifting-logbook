@@ -243,7 +243,7 @@ describe('createApiClient', () => {
       mockFetch.mockResolvedValue(
         new Response(
           JSON.stringify({
-            message: "'Squat' is a reserved exercise name and cannot be used for a custom exercise",
+            message: "'Squat' is a reserved lift name and cannot be used for a custom lift",
           }),
           { status: 409 },
         ),
@@ -253,7 +253,7 @@ describe('createApiClient', () => {
         client.createCustomLift({ name: 'Squat', classification: 'compound' }),
       ).resolves.toEqual({
         ok: false,
-        conflictMessage: "'Squat' is a reserved exercise name and cannot be used for a custom exercise",
+        conflictMessage: "'Squat' is a reserved lift name and cannot be used for a custom lift",
       });
     });
 
