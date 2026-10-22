@@ -63,9 +63,9 @@ docs/README.md       — Full architecture narrative and ADR index
 docs/domain-model.md — Training domain model as built: the lift taxonomy, the
                        Program → Macrocycle → Mesocycle → Week → Workout → Lift slot → Set
                        ladder, and which levels are persisted rows vs. recomputed per request
-docs/glossary.md     — Training-time vocabulary (macrocycle, mesocycle/block, microcycle) and
-                       the other meanings of "cycle", "wave" and "phase"; mirrored in-app at
-                       /glossary (apps/web/lib/glossary.ts)
+docs/glossary.md     — Training vocabulary (macrocycle, mesocycle/block, microcycle, and lift —
+                       the UI says "lift", never "exercise") and the other meanings of "cycle",
+                       "wave" and "phase"; mirrored in-app at /glossary (apps/web/lib/glossary.ts)
 scripts/             — Repository automation scripts
 archive/             — Frozen, unbuilt code kept for reference; nothing imports it (see archive/*/README.md)
 ```

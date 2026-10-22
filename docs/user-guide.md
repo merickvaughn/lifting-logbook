@@ -191,7 +191,7 @@ The app has its own glossary at `/glossary` (the **Glossary** link in the top na
 
 **Weights and sets:**
 
-- **Lift** — a named movement you train and log, such as Back Squat, Bench Press or Face Pull, either built in or one you create. Every movement is a lift here, accessories included. A lift placed on a workout day, in a set order, is a lift slot. Other apps and most training writing call it an exercise; the two words mean the same thing. In powerlifting, "the lifts" means only the squat, bench press and deadlift.
+- **Lift** — a named movement you train and log, such as Back Squat, Bench Press or Face Pull, either built in or one you create. Every movement is a lift here, accessories included. Other apps and most training writing call it an exercise; the two words mean the same thing. In powerlifting, "the lifts" means only the squat, bench press and deadlift.
 - **1RM (one-rep max)** — the heaviest weight you can manage for a single rep of a given lift. The onboarding flow can estimate it from a heavier-rep set using the [Brzycki formula](https://en.wikipedia.org/wiki/One-repetition_maximum#Brzycki).
 - **Training max (TM)** — a working number, typically 85–90 % of your 1RM, that every percentage in the program is calculated from. Lower than your true 1RM by design.
 - **AMRAP** — "as many reps as possible." The last set of certain lifts is performed to technical failure; the rep count you hit is what drives training-max adjustments.

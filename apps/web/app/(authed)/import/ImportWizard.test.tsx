@@ -1167,7 +1167,9 @@ describe('ImportWizard', () => {
           "'Wide-Grip CBL Curls' is a reserved lift name and cannot be used for a custom lift",
         ),
       ).toBeInTheDocument();
-      expect(screen.queryByText('An exercise with this name already exists.')).not.toBeInTheDocument();
+      // No "already exists" wording at all: neither CustomLiftConflictError's
+      // "A custom lift named '…' already exists" nor any generic duplicate hedge.
+      expect(screen.queryByText(/already exists/i)).not.toBeInTheDocument();
     });
 
     it('shows a distinct inline error when the 409 self-heal refetch itself fails', async () => {

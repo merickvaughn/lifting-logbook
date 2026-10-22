@@ -99,7 +99,7 @@ export const GLOSSARY = [
         id: 'lift',
         term: 'Lift',
         definition:
-          'A named movement you train and log, such as Back Squat, Bench Press or Face Pull, either built in or one you create. Every movement is a lift here, accessories included. A lift placed on a workout day, in a set order, is a lift slot.',
+          'A named movement you train and log, such as Back Squat, Bench Press or Face Pull, either built in or one you create. Every movement is a lift here, accessories included.',
         otherMeanings: [
           'Other apps and most training writing call it an exercise; the two words mean the same thing.',
           'In powerlifting, "the lifts" means only the squat, bench press and deadlift.',

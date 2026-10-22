@@ -45,13 +45,13 @@ Program → Macrocycle → Mesocycle → Week (microcycle) → Workout → Lift 
 ## Lift
 
 **Lift** — a named movement you train and log, such as Back Squat, Bench Press or Face Pull, either
-built in or one you create. Every movement is a lift here, accessories included. A lift placed on a
-workout day, in a set order, is a lift slot.
+built in or one you create. Every movement is a lift here, accessories included.
 
 - Other apps and most training writing call it an exercise; the two words mean the same thing.
 - In powerlifting, "the lifts" means only the squat, bench press and deadlift.
 
-In code a lift is the `Lift` type (`packages/types/src/domain.ts`), with the built-ins in
+This definition is worded identically in the in-app glossary and the user guide. A lift placed on a
+workout day, in a set order, is a **lift slot** (a developer term; the UI does not show it). In code a lift is the `Lift` type (`packages/types/src/domain.ts`), with the built-ins in
 `LIFT_CATALOG` and the user's own in `custom_lift`. A lift slot is a spec row, as in the table
 above. How lifts are classified is in [domain-model.md §2](domain-model.md#2-the-lift-taxonomy).
 

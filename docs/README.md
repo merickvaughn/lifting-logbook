@@ -227,8 +227,9 @@ taxonomy's four axes, the `Program → Macrocycle → Mesocycle → Week → Wor
 ladder and what each level is stored as, the prescribed-versus-logged seam, a class diagram of
 the whole model, and the known divergences between the model, the API and the UI.
 
-See [glossary.md](glossary.md) for the training-time vocabulary — macrocycle, mesocycle, block,
-microcycle — and what "cycle", "wave" and "phase" mean in other programs and in coaching
+See [glossary.md](glossary.md) for the training vocabulary — macrocycle, mesocycle, block,
+microcycle, and **lift** (the app's one word for a trained movement; "exercise" is a synonym it
+does not use) — and what "cycle", "wave" and "phase" mean in other programs and in coaching
 literature. The same content is in the app at `/glossary`.
 
 ---
