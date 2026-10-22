@@ -631,9 +631,6 @@ jobs:
     if: needs.preflight.outputs.staging_enabled == 'true' && needs.deploy-staging.result == 'success'
 
     steps:
-      # For scripts/check-served-version.sh (the /version probe below, #1042).
-      - uses: actions/checkout@v5
-
       # Two-probe staging smoke (#402, renamed /healthz → /livez in #409).
       # One probe owned by app code (/livez), one by the user-facing auth
       # flow (/sign-in). They distinguish three failure modes that a single
@@ -687,14 +684,11 @@ jobs:
           done
           echo "Staging /sign-in smoke FAILED — runtime healthy but Clerk auth flow not serving 200 (check middleware matcher and Clerk env vars)" && exit 1
 
-      # Which build answered (#1042). /livez and /sign-in pass against any revision, so a pinned
-      # service would stay green here while serving old code. /version reports the GIT_SHA the
-      # image was built with, which deploy.yml always sets to github.sha. The staging API is
-      # IAM-gated and this job holds no GCP credentials, so the API side is covered by the
-      # serving-revision check inside the deploy-cloud-run-otel-sidecar action instead.
-      - name: Smoke test Cloud Run staging — /version (served web build)
-        run: bash scripts/check-served-version.sh "${{ needs.terraform-staging.outputs.cloud_run_web_url }}" "${{ github.sha }}"
-
+      # No /version (served-build) probe here, unlike prod (#1042). Staging is shared: staging.yml
+      # redeploys these services for every PR push and merge-queue entry, with no lock against this
+      # workflow, so by now stg-web may legitimately serve another commit — and a failure here would
+      # block deploy-production. A pin in staging is caught instead by the deploy action's
+      # "Verify the newest revision serves 100% of traffic" step.
       - name: Smoke test Cloud Run staging (API auth check)
         run: |
           # API requires Cloud Run IAM auth — a 403 confirms it is up and rejecting
@@ -1137,7 +1131,7 @@ jobs:
       # rather than days later. NOTE: this does not auto-roll-back the revision;
       # roll back manually on failure (docs/deploy.md) — automated rollback is a
       # tracked follow-up.
-      - name: Smoke test Cloud Run production — /readyz (DB-backed)
+      - name: Smoke test Cloud Run production — /readyz (DB-backed) + /version (served API build)
         run: |
           API_URL="${{ steps.tf-prod.outputs.cloud_run_api_url }}"
           API_URL="${API_URL%/}"
@@ -1147,30 +1141,23 @@ jobs:
             --include-email)
           [ -n "$ID_TOKEN" ] || { echo "ERROR: failed to mint Cloud Run identity token for $API_URL"; exit 1; }
           # Allow up to 2 minutes for the new revision to become ready.
+          READY=false
           for i in $(seq 1 12); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
               -H "Authorization: Bearer $ID_TOKEN" "$API_URL/readyz" || true)
             if [ "$STATUS" = "200" ]; then
               echo "Production /readyz returned 200 — DB-backed readiness OK"
-              exit 0
+              READY=true
+              break
             fi
             echo "/readyz attempt $i: got $STATUS, retrying in 10s..."
             sleep 10
           done
-          echo "Production /readyz smoke FAILED — API is up but cannot serve DB-backed requests (check migrations, Cloud SQL connectivity, DATABASE_URL). Roll back the API revision per docs/deploy.md." && exit 1
-
-      # Which build answered (#1042). /readyz runs `SELECT 1` and passes against ANY revision, so
-      # on its own it cannot tell a fresh deploy from traffic pinned to an old one. /version
-      # reports the GIT_SHA baked into the image (github.sha for every deploy.yml build).
-      - name: Smoke test Cloud Run production — /version (served API build)
-        run: |
-          API_URL="${{ steps.tf-prod.outputs.cloud_run_api_url }}"
-          API_URL="${API_URL%/}"
-          ID_TOKEN=$(gcloud auth print-identity-token \
-            --impersonate-service-account="${{ secrets.GCP_PROD_SERVICE_ACCOUNT }}" \
-            --audiences="$API_URL" \
-            --include-email)
-          [ -n "$ID_TOKEN" ] || { echo "ERROR: failed to mint Cloud Run identity token for $API_URL"; exit 1; }
+          [ "$READY" = "true" ] || { echo "Production /readyz smoke FAILED — API is up but cannot serve DB-backed requests (check migrations, Cloud SQL connectivity, DATABASE_URL). Roll back the API revision per docs/deploy.md."; exit 1; }
+          # Which build answered (#1042). /readyz runs `SELECT 1` and passes against ANY revision,
+          # so on its own it cannot tell a fresh deploy from traffic pinned to an old one. /version
+          # reports the GIT_SHA baked into the image (github.sha for every deploy.yml build). Same
+          # ID token; prod is written only by this workflow, serialized by the deploy-main group.
           bash scripts/check-served-version.sh "$API_URL" "${{ github.sha }}" "$ID_TOKEN"
 
       # web sidecar via the shared composite action (see the api step above). web_sa
@@ -1247,7 +1234,7 @@ jobs:
           done
           echo "Production /sign-in smoke FAILED — runtime healthy but Clerk auth flow not serving 200 (check the prod clerk-secret-key and the middleware matcher). Roll back the web revision per docs/deploy.md." && exit 1
 
-      # Which build answered (#1042) — see the API /version step above.
+      # Which build answered (#1042) — see the API /readyz + /version step above.
       - name: Smoke test Cloud Run production — /version (served web build)
         run: bash scripts/check-served-version.sh "${{ steps.tf-prod.outputs.cloud_run_web_url }}" "${{ github.sha }}"
 

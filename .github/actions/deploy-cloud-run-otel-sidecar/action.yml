@@ -200,29 +200,34 @@ runs:
         gcloud run services replace "$RENDERED" \
           --region="${{ inputs.region }}" --project="$PROJECT" --quiet
 
-    # Prove the URL now answers from the revision just created (#1042). The injector routes
+    # Prove traffic is not pinned away from the newest revision (#1042). The injector routes
     # spec.traffic to the latest revision, so a manual `update-traffic --to-revisions` rollback pin
     # no longer survives a deploy. This step checks the result instead of trusting it: it reads
-    # status.traffic and fails unless the newest revision is ready, serves 100% of traffic, and was
-    # built from inputs.image. A pin left staging's API serving a July build from 2026-07-10 to
-    # 2026-10-09 while every deploy and /readyz smoke passed, because nothing read status.traffic.
-    # Only the describe READ is retried (mirroring staging.yml's #823 check), so a transient Cloud
-    # Run API blip cannot red a good deploy; a real mismatch fails on the first good read.
-    - name: Verify the new revision serves 100% of traffic
+    # status.traffic and fails unless the newest READY revision gets 100% of traffic. A pin left
+    # staging's API serving a July build from 2026-07-10 to 2026-10-09 while every deploy and
+    # /readyz smoke passed, because nothing read status.traffic.
+    #
+    # It checks only that property, not "this run's image is serving": staging.yml and deploy.yml
+    # both deploy the staging services with no shared lock (sharing staging.yml's mutex would let a
+    # newer PR run cancel the post-merge deploy prod depends on, #673), so another deploy may have
+    # replaced the service by now. That still routes to the newest ready revision; a pin never does.
+    # Read and check are retried together, so a read taken mid-reconcile cannot fail a good deploy;
+    # a pin fails all three attempts.
+    - name: Verify the newest revision serves 100% of traffic
       shell: bash
       run: |
         DESCRIBED="$RUNNER_TEMP/${{ inputs.service }}-described.json"
         for attempt in 1 2 3; do
           if gcloud run services describe "${{ inputs.service }}" \
               --region="${{ inputs.region }}" --project="${{ inputs.project }}" \
-              --format=json > "$DESCRIBED"; then
-            break
+              --format=json > "$DESCRIBED" \
+             && python3 scripts/check-cloud-run-serving-revision.py "$DESCRIBED"; then
+            exit 0
           fi
-          if [ "$attempt" -eq 3 ]; then
-            echo "::error title=Cloud Run serving check::could not describe ${{ inputs.service }} after 3 attempts; not trusting this deploy."
-            exit 1
+          if [ "$attempt" -lt 3 ]; then
+            echo "Serving check attempt $attempt did not pass; re-reading in $((attempt * 5))s..."
+            sleep $((attempt * 5))
           fi
-          echo "describe attempt $attempt failed; retrying in $((attempt * 5))s..."
-          sleep $((attempt * 5))
         done
-        python3 scripts/check-cloud-run-serving-revision.py "$DESCRIBED" --image "${{ inputs.image }}"
+        echo "::error title=Cloud Run serving check::${{ inputs.service }} is not serving its newest ready revision after 3 reads. See the routes above, then docs/runbooks/deploy-regression-rollback.md (Fast path on Cloud Run)."
+        exit 1

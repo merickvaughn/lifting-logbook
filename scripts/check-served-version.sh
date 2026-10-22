@@ -9,11 +9,14 @@
 # The api additionally sits behind Cloud Run IAM, so pass a Cloud Run identity token as the
 # third argument (as deploy.yml's prod /readyz smoke mints one).
 #
-# Only compare against a SHA the image was BUILT with. deploy.yml builds every image with
-# GIT_SHA=${{ github.sha }}; staging.yml's skip-build runs reuse an earlier image (#671), so
-# PR staging is checked by scripts/check-cloud-run-serving-revision.py instead.
+# Only point it at a service nothing else deploys to concurrently, with a SHA the image was BUILT
+# with: deploy.yml's production services (GIT_SHA=github.sha, serialized by the deploy-main group).
+# Not staging — staging.yml redeploys it for every PR push with no lock against deploy.yml, and its
+# skip-build runs reuse an earlier image (#671) — where scripts/check-cloud-run-serving-revision.py
+# (run by the deploy action) catches a pin instead.
 #
 # Usage: bash scripts/check-served-version.sh <base-url> <expected-sha> [bearer-token]
+# CHECK_SERVED_VERSION_RETRY_DELAY (seconds, default 10) exists for scripts/test_check_served_version.py.
 
 set -uo pipefail
 
@@ -25,6 +28,7 @@ fi
 BASE_URL="${1%/}"
 EXPECTED="$2"
 TOKEN="${3:-}"
+DELAY="${CHECK_SERVED_VERSION_RETRY_DELAY:-10}"
 AUTH=()
 [ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
 
@@ -44,8 +48,8 @@ for i in $(seq 1 6); do
     # would only delay it.
     break
   fi
-  echo "/version attempt $i: no gitSha in the response, retrying in 10s..."
-  sleep 10
+  echo "/version attempt $i: no gitSha in the response, retrying in ${DELAY}s..."
+  sleep "$DELAY"
 done
 
 echo "::error title=Served build mismatch::$BASE_URL/version reports gitSha='${SERVED:-<none>}', expected $EXPECTED. The URL is not answering from the revision this run deployed; check status.traffic (docs/runbooks/deploy-regression-rollback.md)."

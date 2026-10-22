@@ -543,7 +543,8 @@ gcloud run services update-traffic lifting-logbook-prod-api \
 ```
 
 `--to-revisions` **pins** traffic to that revision. The next pipeline deploy re-routes to the
-new revision (#1042). To unpin without deploying, run `update-traffic --to-latest`. See
+new revision (#1042), so don't approve a production deploy until `main` has the fix. To unpin
+without deploying, run `update-traffic --to-latest`. See
 [Deploy regression rollback → Fast path on Cloud Run](runbooks/deploy-regression-rollback.md#fast-path-on-cloud-run-route-traffic-to-the-previous-revision).
 
 ### Running database migrations
