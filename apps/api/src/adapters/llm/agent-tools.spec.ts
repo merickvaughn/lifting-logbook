@@ -6,6 +6,7 @@ import {
   parseProposal,
   runAgentLoop,
   sanitizeGoal,
+  toAnthropicTools,
 } from './agent-tools';
 import { RepositoryBundle } from '../../ports/factory';
 import { MacrocyclePlanRequest, WithRlsContext } from '../../ports/IMacrocyclePlanningAgent';
@@ -125,6 +126,16 @@ describe('agent-tools', () => {
     it('matches propose_macrocycle_plan', () => {
       expect(isProposeTool('propose_macrocycle_plan')).toBe(true);
       expect(isProposeTool('get_training_maxes')).toBe(false);
+    });
+  });
+
+  describe('get_program_philosophy tool definition', () => {
+    it('tells the model appModel overrides the author’s guidance (#1043)', () => {
+      // The precedence rule must reach the model: a philosophy carries both the
+      // author's program and how this app runs it, and they conflict on purpose.
+      const tool = toAnthropicTools().find((t) => t.name === 'get_program_philosophy');
+      expect(tool?.description).toContain('appModel');
+      expect(tool?.description).toContain('takes precedence');
     });
   });
 
