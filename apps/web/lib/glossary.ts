@@ -183,7 +183,7 @@ export const GLOSSARY = [
         id: 'phase',
         term: 'Phase',
         definition:
-          'A stretch of training defined by its goal, such as a hypertrophy phase or a peaking phase. A phase can be one mesocycle or several. The Macrocycle plan lists "Phases" in place of mesocycles for programs that repeat a single week.',
+          'A stretch of training defined by its goal, such as a hypertrophy phase or a peaking phase. A phase can be one mesocycle or several. The Macrocycle Plan lists "Phases" in place of mesocycles for programs that repeat a single week.',
       },
     ],
   },

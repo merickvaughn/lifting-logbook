@@ -185,12 +185,12 @@ export default function MacrocycleDashboardGrid({
         </div>
       )}
       <nav className={styles.quickNav}>
-        <Link href={`/macrocycle/${macrocycleNum}/program`}>📋 Program</Link>
-        <Link href={`/macrocycle/${macrocycleNum}/plan`}>🗓 Macrocycle plan</Link>
+        <Link href={`/macrocycle/${macrocycleNum}/program`}>📋 Current Program</Link>
+        <Link href={`/macrocycle/${macrocycleNum}/plan`}>🗓 Macrocycle Plan</Link>
         <Link href="/settings/training-maxes">💪 Training Maxes</Link>
         <Link href="/settings/strength-goals">🎯 Strength Goals</Link>
         <Link href="/history">📚 Lift History</Link>
-        <Link href="/programs">🗂 Programs</Link>
+        <Link href="/programs">🗂 Program Catalog</Link>
       </nav>
       <div className={styles.grid}>
         {blocks

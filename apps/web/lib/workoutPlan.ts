@@ -90,7 +90,7 @@ export function buildWorkoutDays(
 /**
  * How the Macrocycle Dashboard dates a workout: its override if it was rescheduled,
  * else the date the dashboard response lists it on, else its spec-relative date
- * (`WorkoutDay.date`). The grid and the Program Plan's estimate both date workouts
+ * (`WorkoutDay.date`). The grid and the Macrocycle Plan's estimate both date workouts
  * through this, so the two can't drift (issue #1023).
  *
  * With a schedule, the response already applies this order: it lists every workout

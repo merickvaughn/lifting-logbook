@@ -50,7 +50,7 @@ export default async function MacrocycleDashboardPage({
   // guards tolerate a response missing the (required) fields — e.g. an older API
   // pod during a non-atomic web/api rolling deploy — degrading rather than crashing
   // the whole dashboard, matching how the two Sets already tolerate `undefined`.
-  // Dates go through the same precedence the Program Plan's estimate uses (#1023).
+  // Dates go through the same precedence the Macrocycle Plan's estimate uses (#1023).
   const dateOf = workoutDateResolver(dashboard);
   const skippedWorkoutNums = new Set(dashboard.skippedWorkoutNums ?? []);
   // `logged` derives from lift records (like the dashboard's own week-completion,

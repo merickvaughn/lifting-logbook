@@ -132,7 +132,7 @@ export function deriveProgramPhases(
 }
 
 /**
- * The Program Plan's estimated completion date: the latest date among the macrocycle's
+ * The Macrocycle Plan's estimated completion date: the latest date among the macrocycle's
  * workouts (`days`, from `buildWorkoutDays`), each dated as the Macrocycle Dashboard
  * dates it ({@link workoutDateResolver}).
  *

@@ -39,9 +39,21 @@ describe('MacrocycleDashboardGrid', () => {
       'href',
       '/glossary#macrocycle',
     );
-    expect(screen.getByRole('link', { name: /Macrocycle plan/ })).toHaveAttribute(
+  });
+
+  it('labels the quick-nav links so the current program and the catalog are distinct', () => {
+    render(<MacrocycleDashboardGrid macrocycleNum={2} weeks={weeksOf(1)} unit="lbs" />);
+    expect(screen.getByRole('link', { name: /Current Program/ })).toHaveAttribute(
+      'href',
+      '/macrocycle/2/program',
+    );
+    expect(screen.getByRole('link', { name: /Macrocycle Plan/ })).toHaveAttribute(
       'href',
       '/macrocycle/2/plan',
+    );
+    expect(screen.getByRole('link', { name: /Program Catalog/ })).toHaveAttribute(
+      'href',
+      '/programs',
     );
   });
 
