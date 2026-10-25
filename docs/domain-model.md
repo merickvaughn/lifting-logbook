@@ -123,7 +123,7 @@ That is a **separate per-user table keyed by lift *name***, while `CustomLift` i
 | Registry | Count | Purpose |
 |---|---|---|
 | `LIFT_NAMES` (`domain.ts`) | 12 | Autocomplete / onboarding fallback |
-| `LIFT_CATALOG` (`core/catalog/lifts.ts`) | 26 | The real catalog: the four axes plus default muscles |
+| `LIFT_CATALOG` (`core/catalog/lifts.ts`) | 39 | The real catalog: the four axes plus default muscles |
 | `CatalogLift.aliases` (per entry) | 4 | Preset names that are neither catalog nor slot names (`Weighted Pull-ups`, `Incline DB Press`, `Calf Raises`, `Lateral Raises`) |
 
 They share 7 names exactly and diverge on 5 — `Squat`/`Back Squat`, `Dips`/`Dip`,

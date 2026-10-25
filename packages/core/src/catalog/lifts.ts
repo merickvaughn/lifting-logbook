@@ -43,8 +43,9 @@ export interface CatalogLift extends Lift {
  * close to perpendicular as to parallel and stays horizontal — what the incline mainly
  * changes is regional chest emphasis, which is a muscle question, not a pattern one.
  * Single-joint moves carry no direction: a curl (cable curl, leg curl) flexes a joint
- * toward the body, so it keeps a lone `pull` tag, and a raise (lateral raise, calf raise)
- * carries no tag at all — neither earns a direction row. See ADR-036.
+ * toward the body, so it keeps a lone `pull` tag; a triceps extension (pushdown, skull
+ * crusher) extends one away, so it keeps a lone `push`; and a raise or fly (lateral raise,
+ * calf raise, cable fly) carries no tag at all — none earns a direction row. See ADR-036.
  *
  * NOTE: movement `complexity` (simple|compound) is distinct from role `classification`
  * (compound|accessory). A Goblet Squat is movement-`compound` yet role-`accessory`.
@@ -209,5 +210,76 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     movementProfile: { patterns: [], jointActions: ['extension'], complexity: 'simple' },
     muscles: { primary: ['Calves'], secondary: [] },
     aliases: ['Calf Raises'], // leangains, rpt
+  },
+
+  // --- Focus work accessories (issue #1054) ---
+  {
+    id: 'arnold-press', name: 'Arnold Press', classification: 'accessory',
+    movementProfile: { patterns: ['push', 'vertical'], jointActions: ['flexion', 'extension', 'external-rotation', 'internal-rotation'], complexity: 'compound' },
+    muscles: { primary: ['Front Delts'], secondary: ['Side Delts', 'Triceps'] },
+  },
+  {
+    id: 'hammer-curl', name: 'Hammer Curl', classification: 'accessory',
+    movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
+    muscles: { primary: ['Biceps'], secondary: ['Forearms'] },
+  },
+  {
+    id: 'incline-db-curl', name: 'Incline Dumbbell Curl', classification: 'accessory',
+    movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
+    muscles: { primary: ['Biceps'], secondary: [] },
+  },
+  // Triceps extensions mirror the curl rule: a lone `push` (the elbow extends away from the
+  // body), no direction row.
+  {
+    id: 'rope-pushdown', name: 'Rope Pushdown', classification: 'accessory',
+    movementProfile: { patterns: ['push'], jointActions: ['extension'], complexity: 'simple' },
+    muscles: { primary: ['Triceps'], secondary: [] },
+  },
+  {
+    id: 'overhead-extension', name: 'Overhead Extension', classification: 'accessory',
+    movementProfile: { patterns: ['push'], jointActions: ['extension'], complexity: 'simple' },
+    muscles: { primary: ['Triceps'], secondary: [] },
+  },
+  {
+    id: 'skull-crusher', name: 'Skull Crusher', classification: 'accessory',
+    movementProfile: { patterns: ['push'], jointActions: ['extension'], complexity: 'simple' },
+    muscles: { primary: ['Triceps'], secondary: [] },
+  },
+  {
+    id: 'chest-supported-row', name: 'Chest-Supported Row', classification: 'accessory',
+    movementProfile: { patterns: ['pull', 'horizontal'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
+    muscles: { primary: ['Upper Back', 'Lats'], secondary: ['Biceps', 'Rear Delts'] },
+  },
+  // Single-joint shoulder extension: a lone `pull`, like a curl, with no direction row.
+  {
+    id: 'straight-arm-pulldown', name: 'Straight-Arm Pulldown', classification: 'accessory',
+    movementProfile: { patterns: ['pull'], jointActions: ['extension'], complexity: 'simple' },
+    muscles: { primary: ['Lats'], secondary: [] },
+  },
+  // A fly adducts the arm across the body; like a raise, it carries no tag.
+  {
+    id: 'cable-fly', name: 'Cable Fly', classification: 'accessory',
+    movementProfile: { patterns: [], jointActions: ['adduction'], complexity: 'simple' },
+    muscles: { primary: ['Chest'], secondary: ['Front Delts'] },
+  },
+  {
+    id: 'seated-calf-raise', name: 'Seated Calf Raise', classification: 'accessory',
+    movementProfile: { patterns: [], jointActions: ['extension'], complexity: 'simple' },
+    muscles: { primary: ['Calves'], secondary: [] },
+  },
+  {
+    id: 'cable-pull-through', name: 'Cable Pull-Through', classification: 'accessory',
+    movementProfile: { patterns: ['hinge'], jointActions: ['extension'], complexity: 'simple' },
+    muscles: { primary: ['Glutes'], secondary: ['Hamstrings'] },
+  },
+  {
+    id: 'cable-crunch', name: 'Cable Crunch', classification: 'accessory',
+    movementProfile: { patterns: [], jointActions: ['flexion'], complexity: 'simple' },
+    muscles: { primary: ['Core'], secondary: [] },
+  },
+  {
+    id: 'hanging-leg-raise', name: 'Hanging Leg Raise', classification: 'accessory',
+    movementProfile: { patterns: [], jointActions: ['flexion'], complexity: 'simple' },
+    muscles: { primary: ['Core'], secondary: [] },
   },
 ];
