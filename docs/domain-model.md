@@ -248,6 +248,26 @@ prescription without the override table (#1014). Progression doesn't follow thes
 yet: `updateMaxes` still looks a record's prescription up by the record's own lift name
 (#1028).
 
+### Focus blocks sit beside the ladder, not on it
+
+A **focus block** ([#1053](https://github.com/merickvaughn/lifting-logbook/issues/1053)) is
+accessory work for one muscle area over a calendar month or quarter. It is not a level of the
+ladder: it runs on dates, not on `macrocycleNum`/`workoutNum`, so it carries on unchanged
+when the program switches or a new macrocycle starts. It is always "focus block" in docs and
+code; the bare word "block" is a mesocycle.
+
+| Concept | Represented as | Stored? |
+|---|---|---|
+| **Focus block** | `FocusBlock` (`packages/types/src/focus.ts`): area, period, alignment, start date, lift pool, timer | One `focus_block` row. Pool and timer are JSON columns |
+| **Focus block status** | `queued` \| `active` \| `ended`, from `blockStatus(block, today)` | **Derived** from the dates on every read, never stored ([ADR-039](adr/ADR-039-focus-block-persistence.md)) |
+| **Focus block series** | `series` shared by a block and the auto-roll successors it creates | A column. A successor is a row created on read, idempotent on `(userId, series, start)` |
+| **A workout's focus work** | `planFocusDay` over the active blocks and the workout's planned lifts | **Derived** per request; the user's per-workout choices are one `focus_day_state` row, keyed like the override side-tables |
+| **Daily focus guide** | `FocusBudget {sets, minutes}` | Two nullable `user_settings` columns |
+
+A focus block names its areas through `FOCUS_AREA_MUSCLES`, which maps each of the eight areas
+onto `MUSCLE_GROUPS`; whether a planned lift overlaps one is decided by the muscle resolver
+(§2), so a user's muscle overrides apply.
+
 ---
 
 ## 4. Prescribed vs. logged
@@ -467,7 +487,7 @@ The four edges worth reading twice:
 
 ### What the database looks like
 
-**16 models, 1 relation, 0 enums.** The sole relation is
+**18 models, 1 relation, 0 enums.** The sole relation is
 `CustomProgram → CustomProgramSpec` (`onDelete: Cascade`). Every other model is a flat
 table scoped by a bare `userId String`; there is no `User` model (Clerk owns identity)
 and therefore almost nothing cascades.
@@ -475,8 +495,11 @@ and therefore almost nothing cascades.
 Ten exhaustive TypeScript unions — `WeekType`, `LiftClassification`, `MovementTag`,
 `JointAction`, `MovementComplexity`, `WeightUnit`, `LiftOverrideAction`,
 `TrainingMaxHistorySource`, `ImportKind`, `goalType` — are stored as bare `String`.
-Exactly **three** CHECK constraints exist: `training_max_history_source_check`,
-`strength_goal_unit_check`, and `body_weight_unit_check`.
+CHECK constraints exist on `training_max_history.source`, `strength_goal.unit`,
+`body_weight.unit`, and every enum column of `focus_block` (area, next area, period, alignment,
+selection, overlap, progression, end behavior). `focus_block.pool`, `focus_block.timer` and
+`focus_day_state.state` are JSON, validated by DTOs on write and re-parsed on read
+([ADR-039](adr/ADR-039-focus-block-persistence.md)).
 
 Row-level security is the real isolation boundary, and the invariant is that **every table in the
 schema has it enabled and `FORCE`d, fail-closed** — `custom_program_spec`, which has no `userId`

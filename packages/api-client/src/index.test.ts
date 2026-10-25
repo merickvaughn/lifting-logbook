@@ -1,3 +1,4 @@
+import type { CreateFocusBlockRequest } from '@lifting-logbook/types';
 import { createApiClient } from './index';
 
 const AUTH = { Authorization: 'Bearer identity', 'X-Clerk-Authorization': 'Bearer clerk' };
@@ -412,6 +413,60 @@ describe('createApiClient', () => {
         ok: false,
         errors: [{ row: 0, code: 'UNEXPECTED_ERROR', message: 'Unexpected error (HTTP 500)' }],
       });
+    });
+  });
+
+  describe('focus work (#1056)', () => {
+    const ok = (body: unknown = {}) => new Response(JSON.stringify(body), { status: 200 });
+    const NEW_BLOCK: CreateFocusBlockRequest = {
+      area: 'Core',
+      period: 'monthly',
+      align: 'calendar',
+      start: '2026-10-01',
+      selection: 'rules',
+      overlap: 'reduce',
+      progression: 'double',
+      timer: { prep: 10, set: 45, rest: 60 },
+      onEnd: 'prompt',
+      nextArea: null,
+      pool: [],
+    };
+
+    it.each([
+      ['fetchFocusBlocks', (c: ReturnType<typeof makeClient>) => c.fetchFocusBlocks('2026-10-25'), 'GET', '/focus/blocks?today=2026-10-25'],
+      ['fetchFocusBlockSummary', (c: ReturnType<typeof makeClient>) => c.fetchFocusBlockSummary('a b'), 'GET', '/focus/blocks/a%20b/summary'],
+      ['fetchFocusSettings', (c: ReturnType<typeof makeClient>) => c.fetchFocusSettings(), 'GET', '/focus/settings'],
+      ['fetchFocusPlan', (c: ReturnType<typeof makeClient>) => c.fetchFocusPlan('5-3-1', 4, '2026-10-25'), 'GET', '/programs/5-3-1/workouts/4/focus?today=2026-10-25'],
+      ['fetchFocusDayState', (c: ReturnType<typeof makeClient>) => c.fetchFocusDayState('5-3-1', 4), 'GET', '/programs/5-3-1/workouts/4/focus-state'],
+    ])('%s requests the right URL', async (_name, call, method, path) => {
+      mockFetch.mockResolvedValue(ok());
+      await call(makeClient());
+      const [url, init] = lastCall();
+      expect(url).toBe(`http://api.test${path}`);
+      expect(init.method ?? 'GET').toBe(method);
+    });
+
+    it.each([
+      ['createFocusBlock', (c: ReturnType<typeof makeClient>) => c.createFocusBlock(NEW_BLOCK, '2026-10-25'), 'POST', '/focus/blocks?today=2026-10-25', NEW_BLOCK],
+      ['updateFocusBlock', (c: ReturnType<typeof makeClient>) => c.updateFocusBlock('b1', { area: 'Core' }, '2026-10-25'), 'PATCH', '/focus/blocks/b1?today=2026-10-25', { area: 'Core' }],
+      ['reorderFocusBlocks', (c: ReturnType<typeof makeClient>) => c.reorderFocusBlocks(['b2', 'b1'], '2026-10-25'), 'PUT', '/focus/blocks/order?today=2026-10-25', { ids: ['b2', 'b1'] }],
+      ['updateFocusSettings', (c: ReturnType<typeof makeClient>) => c.updateFocusSettings({ sets: 9, minutes: 20 }), 'PUT', '/focus/settings', { sets: 9, minutes: 20 }],
+      ['saveFocusDayState', (c: ReturnType<typeof makeClient>) => c.saveFocusDayState('5-3-1', 4, { modes: {}, picks: {}, trims: {}, placement: 'after', order: null, dismissed: true }), 'PUT', '/programs/5-3-1/workouts/4/focus-state', { modes: {}, picks: {}, trims: {}, placement: 'after', order: null, dismissed: true }],
+    ])('%s sends its body as JSON', async (_name, call, method, path, body) => {
+      mockFetch.mockResolvedValue(ok());
+      await call(makeClient());
+      const [url, init] = lastCall();
+      expect(url).toBe(`http://api.test${path}`);
+      expect(init.method).toBe(method);
+      expect(JSON.parse(init.body as string)).toEqual(body);
+    });
+
+    it('treats deleting an already-deleted focus block as success', async () => {
+      mockFetch.mockResolvedValue(new Response(null, { status: 404 }));
+      await expect(makeClient().deleteFocusBlock('gone')).resolves.toBeUndefined();
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/focus/blocks/gone');
+      expect(init.method).toBe('DELETE');
     });
   });
 });

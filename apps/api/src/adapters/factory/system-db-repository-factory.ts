@@ -6,6 +6,7 @@ import { AuthUser } from '../../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
 import { PrismaBodyWeightRepository } from '../prisma/body-weight.repository';
 import { PrismaCustomLiftRepository } from '../prisma/custom-lift.repository';
+import { PrismaFocusRepository } from '../prisma/focus.repository';
 import { PrismaImportBatchRepository } from '../prisma/import-batch.repository';
 import { PrismaLiftRecordRepository } from '../prisma/lift-record.repository';
 import { PrismaStrengthGoalRepository } from '../prisma/strength-goal.repository';
@@ -18,6 +19,7 @@ import { PrismaWorkoutLiftOverrideRepository } from '../prisma/workout-lift-over
 import { PrismaWorkoutRepository } from '../prisma/workout.repository';
 import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
+import { InMemoryFocusRepository } from '../in-memory/focus.adapter';
 import { InMemoryMacrocycleDashboardRepository } from '../in-memory/macrocycle-dashboard.adapter';
 import { InMemoryImportBatchRepository } from '../in-memory/import-batch.adapter';
 import { InMemoryLiftMetadataRepository } from '../in-memory/lift-metadata.adapter';
@@ -93,6 +95,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
       return {
         bodyWeight: new PrismaBodyWeightRepository(prisma, userId),
         customLift: new PrismaCustomLiftRepository(prisma, userId),
+        focus: new PrismaFocusRepository(prisma, userId),
         macrocycleDashboard: new PrismaMacrocycleDashboardRepository(prisma, userId),
         macrocycleScheduledWorkout: new PrismaMacrocycleScheduledWorkoutRepository(prisma, userId),
         importBatch: new PrismaImportBatchRepository(prisma, userId),
@@ -118,6 +121,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     return {
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift: new InMemoryCustomLiftRepository(userId),
+      focus: new InMemoryFocusRepository(),
       macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(),
       macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
       importBatch: new InMemoryImportBatchRepository(),

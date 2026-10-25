@@ -35,6 +35,14 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     return new Set(rows.map((r) => r.workoutNum));
   }
 
+  async getRecordsForLifts(lifts: readonly string[], through: Date): Promise<LiftRecord[]> {
+    if (lifts.length === 0) return [];
+    const rows = await this.prisma.liftRecord.findMany({
+      where: { userId: this.userId, lift: { in: [...lifts] }, date: { lte: through } },
+    });
+    return rows.map(rowToLiftRecord);
+  }
+
   async appendLiftRecords(program: string, records: LiftRecord[]): Promise<number> {
     const { count } = await this.prisma.liftRecord.createMany({
       data: records.map((r) => ({

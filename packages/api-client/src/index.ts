@@ -1,12 +1,19 @@
 import type {
   BodyWeightResponse,
   CreateCustomLiftRequest,
+  CreateFocusBlockRequest,
   CreateCustomProgramRequest,
   CreateLiftOverrideRequest,
   CreateLiftRecordRequest,
   CustomLiftResponse,
   CustomProgramResponse,
   CustomProgramSummaryResponse,
+  FocusBlockResponse,
+  FocusBlockSummaryResponse,
+  FocusDayPlanResponse,
+  FocusDayState,
+  FocusSettingsResponse,
+  ReorderFocusBlocksRequest,
   MacrocycleDashboardResponse,
   ImportCommitResponse,
   ImportError,
@@ -26,6 +33,8 @@ import type {
   TrainingMaxHistoryResponse,
   TrainingMaxResponse,
   UpdateCustomProgramRequest,
+  UpdateFocusBlockRequest,
+  UpdateFocusSettingsRequest,
   UpdateLiftRecordRequest,
   UpdateTrainingMaxesRequest,
   UpdateUserSettingsRequest,
@@ -567,6 +576,73 @@ export function createApiClient(config: ApiClientConfig) {
     ): Promise<{ ok: true; data: CustomLiftResponse } | { ok: false; conflictMessage: string }> {
       return requestOrConflictWithReason('/lifts/custom', {
         method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+
+    // -- Focus work (#1056) ------------------------------------------------
+    // `today` is the user's calendar day (YYYY-MM-DD): block status and the day's focus
+    // plan depend on it, and only the client knows the user's time zone.
+    fetchFocusBlocks(today: string): Promise<FocusBlockResponse[]> {
+      return request(`/focus/blocks?today=${enc(today)}`, { cache: 'no-store' });
+    },
+    createFocusBlock(body: CreateFocusBlockRequest, today: string): Promise<FocusBlockResponse> {
+      return request(`/focus/blocks?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    updateFocusBlock(id: string, body: UpdateFocusBlockRequest, today: string): Promise<FocusBlockResponse> {
+      return request(`/focus/blocks/${enc(id)}?today=${enc(today)}`, {
+        method: 'PATCH',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    // Idempotent delete: an already-deleted focus block is the desired end state.
+    deleteFocusBlock(id: string): Promise<void> {
+      return requestVoidIdempotent(`/focus/blocks/${enc(id)}`, { method: 'DELETE', cache: 'no-store' });
+    },
+    // `ids`: every focus block that has not ended on `today`, highest priority first.
+    reorderFocusBlocks(ids: string[], today: string): Promise<FocusBlockResponse[]> {
+      const body: ReorderFocusBlocksRequest = { ids };
+      return request(`/focus/blocks/order?today=${enc(today)}`, {
+        method: 'PUT',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    fetchFocusBlockSummary(id: string): Promise<FocusBlockSummaryResponse> {
+      return request(`/focus/blocks/${enc(id)}/summary`, { cache: 'no-store' });
+    },
+    fetchFocusSettings(): Promise<FocusSettingsResponse> {
+      return request('/focus/settings', { cache: 'no-store' });
+    },
+    updateFocusSettings(body: UpdateFocusSettingsRequest): Promise<FocusSettingsResponse> {
+      return request('/focus/settings', {
+        method: 'PUT',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    fetchFocusPlan(program: string, workoutNum: number, today: string): Promise<FocusDayPlanResponse> {
+      return request(`/programs/${enc(program)}/workouts/${workoutNum}/focus?today=${enc(today)}`, {
+        cache: 'no-store',
+      });
+    },
+    fetchFocusDayState(program: string, workoutNum: number): Promise<FocusDayState> {
+      return request(`/programs/${enc(program)}/workouts/${workoutNum}/focus-state`, { cache: 'no-store' });
+    },
+    saveFocusDayState(program: string, workoutNum: number, body: FocusDayState): Promise<FocusDayState> {
+      return request(`/programs/${enc(program)}/workouts/${workoutNum}/focus-state`, {
+        method: 'PUT',
         headers: JSON_HEADERS,
         body: JSON.stringify(body),
         cache: 'no-store',

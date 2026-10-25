@@ -88,4 +88,10 @@ export const {
   // live custom-lift list client-side (a stale/absent local copy otherwise
   // dead-ends the user with no way to recover short of a page reload; #911).
   fetchCustomLifts,
+  createFocusBlock,
+  updateFocusBlock,
+  deleteFocusBlock,
+  reorderFocusBlocks,
+  updateFocusSettings,
+  saveFocusDayState,
 } = createApiClient({ baseUrl: getApiUrl, getAuthHeaders: getClientAuthHeaders });

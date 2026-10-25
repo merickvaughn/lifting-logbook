@@ -12,6 +12,13 @@ export interface ILiftRecordRepository {
   getLoggedWorkoutNums(program: string, macrocycleNum: number): Promise<Set<number>>;
 
   /**
+   * Every record of the given lifts dated on or before `through`, across all of the user's
+   * programs and macrocycles — what a focus block summary needs, since focus blocks run on
+   * a timeline of their own (#1056). Served by `@@index([userId, lift, date])`.
+   */
+  getRecordsForLifts(lifts: readonly string[], through: Date): Promise<LiftRecord[]>;
+
+  /**
    * Appends records for a program, silently skipping any whose natural key already exists.
    * Returns the number of rows actually inserted (i.e. excluding duplicates).
    */

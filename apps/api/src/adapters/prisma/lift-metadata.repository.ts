@@ -20,6 +20,16 @@ export class PrismaLiftMetadataRepository implements ILiftMetadataRepository {
     };
   }
 
+  async listMetadata(): Promise<LiftMetadata[]> {
+    const rows = await this.prisma.liftMetadata.findMany({ where: { userId: this.userId } });
+    return rows.map((row) => ({
+      lift: row.lift,
+      muscleGroups: row.muscleGroups,
+      substitutions: row.substitutions,
+      foundational: row.foundational,
+    }));
+  }
+
   async upsertMetadata(
     lift: string,
     patch: { muscleGroups?: string[]; substitutions?: string[]; foundational?: boolean },
