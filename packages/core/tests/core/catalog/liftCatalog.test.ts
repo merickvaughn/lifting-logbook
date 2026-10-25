@@ -1,5 +1,5 @@
 import { DEFAULT_SLOT_MAP, ALL_SLOT_MAP_ALIASES, LIFT_CATALOG, resolveLift, buildEffectiveSlotMap } from "@src/core";
-import type { Lift, CustomLift } from "@lifting-logbook/types";
+import { FOCUS_AREAS, FOCUS_AREA_MUSCLES, type Lift, type CustomLift } from "@lifting-logbook/types";
 
 describe("LIFT_CATALOG", () => {
   it("contains at least 20 lifts", () => {
@@ -147,25 +147,14 @@ describe("LIFT_CATALOG", () => {
   });
 
   describe("Focus work areas each have a default accessory pool (#1054)", () => {
-    // Local copy until #1055 exports FOCUS_AREA_MUSCLES from core.
-    const FOCUS_AREA_MUSCLES: Record<string, readonly string[]> = {
-      Shoulders: ['Front Delts', 'Side Delts', 'Rear Delts'],
-      Biceps: ['Biceps'],
-      Triceps: ['Triceps'],
-      Back: ['Lats', 'Upper Back', 'Traps', 'Lower Back'],
-      Chest: ['Chest'],
-      Calves: ['Calves'],
-      Glutes: ['Glutes'],
-      Core: ['Core'],
-    };
-
-    it("maps all eight areas", () => {
-      expect(Object.keys(FOCUS_AREA_MUSCLES)).toHaveLength(8);
+    it("maps every focus area", () => {
+      expect(Object.keys(FOCUS_AREA_MUSCLES)).toEqual([...FOCUS_AREAS]);
     });
 
-    it.each(Object.entries(FOCUS_AREA_MUSCLES))(
+    it.each(FOCUS_AREAS)(
       "%s has at least two accessory lifts with a primary muscle in its groups",
-      (_area, groups) => {
+      (area) => {
+        const groups: readonly string[] = FOCUS_AREA_MUSCLES[area];
         const pool = LIFT_CATALOG.filter(
           (l) => l.classification === 'accessory' && l.muscles.primary.some((m) => groups.includes(m)),
         );
