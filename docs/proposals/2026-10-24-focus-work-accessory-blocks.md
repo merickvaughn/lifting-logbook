@@ -37,8 +37,9 @@ for a calendar month or quarter, or for one month or quarter from a custom start
 belong to the user, not to a program, and run on their own timeline, separate from the program's
 macrocycles and mesocycles. They are layered onto every workout of whichever program is active.
 
-The spec is the three-screen prototype in the Claude Design handoff bundle (Focus Work.html,
-2026-10-24).
+The spec is the three-screen prototype [`docs/mockups/focus-work.html`](../mockups/focus-work.html),
+a standalone copy of the Claude Design handoff bundle's `Focus Work.html` (2026-10-24). Open it in
+a browser and use the tabs to switch screens; **Reset demo data** restores the sample blocks.
 
 ### Staying inside the product non-goal
 
@@ -367,9 +368,10 @@ Seven pull requests under one top-level issue, each closing its own sub-issue:
 - Deload-aware focus work. Focus work continues through program deload weeks unless the user
   changes it (see Open Questions).
 - Multiple areas per focus block, and sharing focus blocks between users.
-- Pre-existing defects found during exploration, filed as separate issues: the undefined CSS tokens
-  `--color-accent-text` and `--font-weight-semibold`; `LiftMetadata` not persisting secondary muscle
-  overrides; seed data using free-text muscle names.
+- Pre-existing defects found during exploration, tracked separately: the undefined CSS tokens
+  `--color-accent-text` and `--font-weight-semibold` ([#1062](https://github.com/merickvaughn/lifting-logbook/issues/1062));
+  `LiftMetadata` not persisting secondary muscle overrides ([#1017](https://github.com/merickvaughn/lifting-logbook/issues/1017));
+  seed data using names nothing resolves ([#1022](https://github.com/merickvaughn/lifting-logbook/issues/1022)).
 
 ## Open Questions
 
@@ -382,7 +384,10 @@ Seven pull requests under one top-level issue, each closing its own sub-issue:
 
 ## References
 
-- Claude Design handoff bundle, Focus Work.html, 2026-10-24 (prototype source; not linked).
+- [`docs/mockups/focus-work.html`](../mockups/focus-work.html): the prototype, inlined from the
+  Claude Design handoff bundle (`Focus Work.html` plus `focus-data.js`, `focus-ui.jsx`,
+  `focus-workout.jsx`, `focus-setup.jsx`, `focus-calendar.jsx`), 2026-10-24. The only change is a
+  guarded `localStorage` write, so it also runs where storage is blocked.
 - [Domain model](../domain-model.md): the program ladder, workout override side-tables, and muscle
   groups as a lift axis.
 - [Glossary](../glossary.md): "Block" as the UI word for a mesocycle.
