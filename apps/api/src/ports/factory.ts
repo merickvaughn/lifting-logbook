@@ -1,6 +1,7 @@
 import { AuthUser } from './auth';
 import { IBodyWeightRepository } from './IBodyWeightRepository';
 import { ICustomLiftRepository } from './ICustomLiftRepository';
+import { IFocusRepository } from './IFocusRepository';
 import { IMacrocycleDashboardRepository } from './IMacrocycleDashboardRepository';
 import { IMacrocycleScheduledWorkoutRepository } from './IMacrocycleScheduledWorkoutRepository';
 import { IImportBatchRepository } from './IImportBatchRepository';
@@ -20,6 +21,7 @@ import { IWorkoutSkipOverrideRepository } from './IWorkoutSkipOverrideRepository
 export interface RepositoryBundle {
   bodyWeight: IBodyWeightRepository;
   customLift: ICustomLiftRepository;
+  focus: IFocusRepository;
   macrocycleDashboard: IMacrocycleDashboardRepository;
   macrocycleScheduledWorkout: IMacrocycleScheduledWorkoutRepository;
   importBatch: IImportBatchRepository;

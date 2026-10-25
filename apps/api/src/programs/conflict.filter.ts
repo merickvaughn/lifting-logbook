@@ -5,16 +5,20 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
-import { CustomLiftConflictError, ReservedLiftNameConflictError } from '../ports/errors';
+import {
+  CustomLiftConflictError,
+  FocusBlockConflictError,
+  ReservedLiftNameConflictError,
+} from '../ports/errors';
 
-type DomainConflict = CustomLiftConflictError | ReservedLiftNameConflictError;
+type DomainConflict = CustomLiftConflictError | ReservedLiftNameConflictError | FocusBlockConflictError;
 
 /**
  * Translates framework-agnostic domain "conflict" errors raised by port
  * adapters into HTTP 409 responses. Mirrors DomainNotFoundFilter so adapters
  * stay free of `@nestjs/common` HTTP dependencies.
  */
-@Catch(CustomLiftConflictError, ReservedLiftNameConflictError)
+@Catch(CustomLiftConflictError, ReservedLiftNameConflictError, FocusBlockConflictError)
 export class DomainConflictFilter implements ExceptionFilter {
   catch(err: DomainConflict, host: ArgumentsHost): void {
     const res = host.switchToHttp().getResponse<FastifyReply>();

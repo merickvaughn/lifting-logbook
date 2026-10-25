@@ -1,0 +1,101 @@
+import {
+  EMPTY_FOCUS_DAY_STATE,
+  FOCUS_INCLUDES,
+  FOCUS_PLACEMENTS,
+  FOCUS_SELECTIONS,
+  FocusDayState,
+  FocusPoolEntry,
+  FocusSelection,
+  FocusTimer,
+} from '@lifting-logbook/types';
+
+// Runtime guards for the focus JSON columns. Prisma returns whatever JSON is stored, and a
+// manual edit or an older row could violate the type, so reads check the shape the DTOs
+// enforce on write — the same reasoning as user-settings' parseSchedule.
+
+/** The timer a new focus block starts with, used when a stored timer is unreadable. */
+export const DEFAULT_FOCUS_TIMER: Readonly<FocusTimer> = { prep: 10, set: 45, rest: 60 };
+
+type Json = Record<string, unknown>;
+
+function isObject(value: unknown): value is Json {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isOneOf<T extends string>(options: readonly T[], value: unknown): value is T {
+  return typeof value === 'string' && (options as readonly string[]).includes(value);
+}
+
+export function parseFocusTimer(value: unknown): FocusTimer {
+  if (isObject(value) && isCount(value.prep) && isCount(value.set) && isCount(value.rest)) {
+    return { prep: value.prep, set: value.set, rest: value.rest };
+  }
+  return { ...DEFAULT_FOCUS_TIMER };
+}
+
+function parsePoolEntry(value: unknown): FocusPoolEntry | null {
+  if (!isObject(value)) return null;
+  const { lift, include, ruleLift, swapTo, sets, repsLow, repsHigh, weight, trainingMax, percent, rpe, lastReps } =
+    value;
+  if (typeof lift !== 'string' || !isOneOf(FOCUS_INCLUDES, include)) return null;
+  if (typeof ruleLift !== 'string' || typeof swapTo !== 'string') return null;
+  const numbers = [sets, repsLow, repsHigh, weight, trainingMax, percent, rpe];
+  if (!numbers.every(isCount)) return null;
+  const entry: FocusPoolEntry = {
+    lift,
+    include,
+    ruleLift,
+    swapTo,
+    sets: sets as number,
+    repsLow: repsLow as number,
+    repsHigh: repsHigh as number,
+    weight: weight as number,
+    trainingMax: trainingMax as number,
+    percent: percent as number,
+    rpe: rpe as number,
+  };
+  if (Array.isArray(lastReps) && lastReps.every(isCount)) entry.lastReps = lastReps;
+  return entry;
+}
+
+/** A stored pool, keeping only the entries that still read as pool entries. */
+export function parseFocusPool(value: unknown): FocusPoolEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const entry = parsePoolEntry(item);
+    return entry ? [entry] : [];
+  });
+}
+
+/** `Record<string, T>` entries that pass `keep`; anything else is dropped. */
+function parseRecord<T>(value: unknown, keep: (item: unknown) => item is T): Record<string, T> {
+  const out: Record<string, T> = {};
+  if (!isObject(value)) return out;
+  for (const [key, item] of Object.entries(value)) {
+    if (keep(item)) out[key] = item;
+  }
+  return out;
+}
+
+/** A stored day state, or the empty state when it does not read as one. */
+export function parseFocusDayState(value: unknown): FocusDayState {
+  if (!isObject(value) || !isOneOf(FOCUS_PLACEMENTS, value.placement)) {
+    return { ...EMPTY_FOCUS_DAY_STATE };
+  }
+  return {
+    modes: parseRecord(value.modes, (item): item is FocusSelection => isOneOf(FOCUS_SELECTIONS, item)),
+    picks: parseRecord(value.picks, isStringArray),
+    trims: parseRecord(value.trims, isStringArray),
+    placement: value.placement,
+    order: isStringArray(value.order) ? value.order : null,
+    dismissed: value.dismissed === true,
+  };
+}

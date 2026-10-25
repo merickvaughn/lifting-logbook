@@ -6,11 +6,12 @@
  * the TypeScript compiler will error here — no runtime needed.
  */
 import { MacrocycleDashboard, LiftRecord, LiftingProgramSpec, TrainingMax, TrainingMaxHistoryEntry } from '@lifting-logbook/core';
-import { BodyWeightEntry } from '@lifting-logbook/types';
+import { BodyWeightEntry, DEFAULT_FOCUS_BUDGET } from '@lifting-logbook/types';
 import { AuthUser, IAuthProvider } from './auth';
 import { IBodyWeightRepository } from './IBodyWeightRepository';
 import { IRepositoryFactory, RepositoryBundle } from './factory';
 import { ICustomLiftRepository } from './ICustomLiftRepository';
+import { IFocusRepository } from './IFocusRepository';
 import { IMacrocycleDashboardRepository } from './IMacrocycleDashboardRepository';
 import { IMacrocycleScheduledWorkoutRepository } from './IMacrocycleScheduledWorkoutRepository';
 import { ILiftingProgramSpecRepository } from './ILiftingProgramSpecRepository';
@@ -71,6 +72,8 @@ const _liftRecordRepo: ILiftRecordRepository = {
     Promise.resolve([]),
   getLoggedWorkoutNums: (): Promise<Set<number>> =>
     Promise.resolve(new Set()),
+  getRecordsForLifts: (): Promise<LiftRecord[]> =>
+    Promise.resolve([]),
   appendLiftRecords: (): Promise<number> =>
     Promise.resolve(0),
   findExistingRecords: (): Promise<LiftRecord[]> =>
@@ -212,6 +215,20 @@ const _customLiftRepo: ICustomLiftRepository = {
   delete: () => Promise.resolve(),
 };
 
+const _focusRepo: IFocusRepository = {
+  listBlocks: () => Promise.resolve([]),
+  getBlock: () => Promise.resolve(null),
+  createBlock: (block) => Promise.resolve(block),
+  createBlocksIfAbsent: (): Promise<void> => Promise.resolve(),
+  updateBlock: (id) => Promise.reject(new Error(id)),
+  deleteBlock: (): Promise<void> => Promise.resolve(),
+  setPriorities: (): Promise<void> => Promise.resolve(),
+  getBudget: () => Promise.resolve({ ...DEFAULT_FOCUS_BUDGET }),
+  setBudget: (budget) => Promise.resolve(budget),
+  getDayState: () => Promise.resolve(null),
+  saveDayState: (_program, _macrocycleNum, _workoutNum, state) => Promise.resolve(state),
+};
+
 const _importBatchRepo: IImportBatchRepository = {
   save: (): Promise<void> => Promise.resolve(),
   findById: () => Promise.resolve(null),
@@ -221,6 +238,7 @@ const _importBatchRepo: IImportBatchRepository = {
 const _repositoryBundle: RepositoryBundle = {
   bodyWeight: _bodyWeightRepo,
   customLift: _customLiftRepo,
+  focus: _focusRepo,
   macrocycleDashboard: _macrocycleDashboardRepo,
   macrocycleScheduledWorkout: _macrocycleScheduledWorkoutRepo,
   liftMetadata: _liftMetadataRepo,

@@ -69,6 +69,8 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
   const cleanup = async () => {
     await owner.customProgram.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.trainingMax.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
+    await owner.focusBlock.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
+    await owner.focusDayState.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
   };
 
   beforeAll(async () => {
@@ -86,6 +88,34 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
         { userId: USER_ALICE, program: PROGRAM, lift: 'squat', weight: 300, dateUpdated: new Date() },
         { userId: USER_BOB, program: PROGRAM, lift: 'squat', weight: 200, dateUpdated: new Date() },
       ],
+    });
+
+    // Seed both users' focus blocks and focus day states (#1056).
+    await owner.focusBlock.createMany({
+      data: [USER_ALICE, USER_BOB].map((userId) => ({
+        userId,
+        series: `${userId}-series`,
+        area: 'Biceps',
+        period: 'monthly',
+        align: 'calendar',
+        start: new Date('2026-10-01'),
+        selection: 'rules',
+        overlap: 'reduce',
+        progression: 'double',
+        priority: 1,
+        timer: { prep: 10, set: 40, rest: 60 },
+        onEnd: 'prompt',
+        pool: [],
+      })),
+    });
+    await owner.focusDayState.createMany({
+      data: [USER_ALICE, USER_BOB].map((userId) => ({
+        userId,
+        program: PROGRAM,
+        macrocycleNum: 1,
+        workoutNum: 1,
+        state: { modes: {}, picks: {}, trims: {}, placement: 'after', order: null, dismissed: false },
+      })),
     });
 
     // Seed a custom program + spec for Alice (custom_program_spec has no userId — it is isolated
@@ -149,6 +179,32 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
         }),
       ),
     ).rejects.toThrow();
+  });
+
+  it('isolates focus_block and focus_day_state reads by GUC on unscoped queries (#1056)', async () => {
+    const blocks = await asUser(appDb, USER_ALICE, (tx) => tx.focusBlock.findMany());
+    expect(blocks.map((row) => row.userId)).toEqual([USER_ALICE]);
+    const states = await asUser(appDb, USER_ALICE, (tx) => tx.focusDayState.findMany());
+    expect(states.map((row) => row.userId)).toEqual([USER_ALICE]);
+    expect(await asUser(appDb, null, (tx) => tx.focusBlock.count())).toBe(0);
+  });
+
+  it("cannot write another user's focus rows (#1056)", async () => {
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) =>
+        tx.focusDayState.create({
+          data: { userId: USER_BOB, program: PROGRAM, macrocycleNum: 1, workoutNum: 2, state: {} },
+        }),
+      ),
+    ).rejects.toThrow();
+    // An unscoped update or delete reaches only Alice's own rows.
+    const updated = await asUser(appDb, USER_ALICE, (tx) => tx.focusBlock.updateMany({ data: { priority: 7 } }));
+    expect(updated.count).toBe(1);
+    const deleted = await asUser(appDb, USER_ALICE, (tx) => tx.focusDayState.deleteMany());
+    expect(deleted.count).toBe(1);
+    const bobBlock = await owner.focusBlock.findFirst({ where: { userId: USER_BOB } });
+    expect(bobBlock?.priority).toBe(1);
+    expect(await owner.focusDayState.count({ where: { userId: USER_BOB } })).toBe(1);
   });
 
   it('isolates custom_program_spec through its parent program FK policy', async () => {

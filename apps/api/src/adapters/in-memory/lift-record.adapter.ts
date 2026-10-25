@@ -16,6 +16,13 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
     );
   }
 
+  async getRecordsForLifts(lifts: readonly string[], through: Date): Promise<LiftRecord[]> {
+    const wanted = new Set(lifts);
+    return [...this.store.values()]
+      .flat()
+      .filter((r) => wanted.has(r.lift) && r.date.getTime() <= through.getTime());
+  }
+
   async appendLiftRecords(program: string, records: LiftRecord[]): Promise<number> {
     // Mirror Prisma's createMany({ skipDuplicates: true }) on the natural-key
     // unique constraint: rows whose key already exists (or repeats within this

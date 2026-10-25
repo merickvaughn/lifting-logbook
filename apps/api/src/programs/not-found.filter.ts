@@ -7,6 +7,7 @@ import {
 import { FastifyReply } from 'fastify';
 import {
   CustomLiftNotFoundError,
+  FocusBlockNotFoundError,
   HistoryEntryNotFoundError,
   ProgramNotFoundError,
   StrengthGoalNotFoundError,
@@ -18,7 +19,8 @@ type DomainNotFound =
   | WorkoutNotFoundError
   | HistoryEntryNotFoundError
   | StrengthGoalNotFoundError
-  | CustomLiftNotFoundError;
+  | CustomLiftNotFoundError
+  | FocusBlockNotFoundError;
 
 /**
  * Translates framework-agnostic domain "not found" errors raised by port
@@ -31,6 +33,7 @@ type DomainNotFound =
   HistoryEntryNotFoundError,
   StrengthGoalNotFoundError,
   CustomLiftNotFoundError,
+  FocusBlockNotFoundError,
 )
 export class DomainNotFoundFilter implements ExceptionFilter {
   catch(err: DomainNotFound, host: ArgumentsHost): void {

@@ -3,6 +3,7 @@ export * from './errors';
 export * from './factory';
 export * from './tokens';
 export * from './IBodyWeightRepository';
+export * from './IFocusRepository';
 export * from './IMacrocycleDashboardRepository';
 export * from './IMacrocyclePlanningAgent';
 export * from './ILiftingProgramSpecRepository';

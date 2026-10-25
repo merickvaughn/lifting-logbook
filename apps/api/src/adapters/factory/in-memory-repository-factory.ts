@@ -4,6 +4,7 @@ import { AuthUser } from '../../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
 import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
+import { InMemoryFocusRepository } from '../in-memory/focus.adapter';
 import { InMemoryMacrocycleDashboardRepository } from '../in-memory/macrocycle-dashboard.adapter';
 import { InMemoryMacrocycleScheduledWorkoutRepository } from '../in-memory/macrocycle-scheduled-workout.adapter';
 import { InMemoryImportBatchRepository } from '../in-memory/import-batch.adapter';
@@ -40,6 +41,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       this.bundles.set(user.id, {
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift: new InMemoryCustomLiftRepository(user.id),
+        focus: new InMemoryFocusRepository(),
         macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(preSeed),
         macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
         importBatch: new InMemoryImportBatchRepository(),

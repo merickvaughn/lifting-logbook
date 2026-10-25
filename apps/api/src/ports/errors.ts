@@ -53,6 +53,23 @@ export class CustomLiftConflictError extends Error {
   }
 }
 
+export class FocusBlockNotFoundError extends Error {
+  constructor(public readonly id: string) {
+    super(`Focus block '${id}' not found`);
+    this.name = 'FocusBlockNotFoundError';
+  }
+}
+
+export class FocusBlockConflictError extends Error {
+  constructor(
+    public readonly series: string,
+    public readonly start: string,
+  ) {
+    super(`Focus block series '${series}' already has a focus block starting ${start}`);
+    this.name = 'FocusBlockConflictError';
+  }
+}
+
 // Distinct from CustomLiftConflictError: reusing that error's message for a
 // name that case-insensitively shadows a built-in canonical alias asserted
 // something false — no custom lift by that name exists — and made this

@@ -24,6 +24,9 @@ model LiftRecord {
   @@unique([userId, program, macrocycleNum, workoutNum, date, lift, setNum])
   @@index([userId, program, macrocycleNum])
   @@index([userId, program, macrocycleNum, workoutNum])
+  // A focus block summary reads one user's records for its pool lifts up to its last day,
+  // across programs (#1056).
+  @@index([userId, lift, date])
   @@map("lift_record")
 }
 
@@ -189,8 +192,56 @@ model UserSettings {
   workoutSchedule        Json?
   defaultWeightIncrement Float?
   unit                   String?
+  // The daily focus guide (#1056). Null falls back to DEFAULT_FOCUS_BUDGET.
+  focusBudgetSets        Int?
+  focusBudgetMinutes     Int?
 
   @@map("user_settings")
+}
+
+// A focus block (#1053, #1056): accessory work for one muscle area over a calendar month or
+// quarter, on a timeline separate from the program. Status (queued/active/ended) is derived
+// from `start`, `period` and `align` on every read and never stored (ADR-039).
+model FocusBlock {
+  id          String   @id @default(uuid())
+  userId      String
+  // Blocks that roll into one another share a series.
+  series      String
+  area        String
+  period      String
+  align       String
+  start       DateTime @db.Date
+  selection   String
+  overlap     String
+  progression String
+  // 1 is the highest priority.
+  priority    Int
+  // FocusTimer and FocusPoolEntry[], validated by the DTOs on write and on read.
+  timer       Json
+  onEnd       String
+  nextArea    String?
+  pool        Json
+  createdAt   DateTime @default(now())
+
+  // Keeps an auto-roll successor, created on read, from being created twice.
+  @@unique([userId, series, start])
+  @@index([userId])
+  @@map("focus_block")
+}
+
+// A user's per-workout focus choices (FocusDayState), keyed like the workout override
+// side-tables.
+model FocusDayState {
+  id            String   @id @default(uuid())
+  userId        String
+  program       String
+  macrocycleNum Int
+  workoutNum    Int
+  state         Json
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, program, macrocycleNum, workoutNum])
+  @@map("focus_day_state")
 }
 
 model MacrocycleScheduledWorkout {

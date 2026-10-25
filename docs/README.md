@@ -170,6 +170,7 @@ monorepo/
 | [ADR-036](adr/ADR-036-muscle-group-defaults-and-fractional-set-counts.md) | Muscle-Group Defaults Live in the Catalog, and Weekly Sets Count Fractionally | Accepted |
 | [ADR-037](adr/ADR-037-schedule-dates-program-days.md) | A Schedule Dates the Program's Workouts; It Never Numbers Them | Accepted |
 | [ADR-038](adr/ADR-038-training-time-vocabulary.md) | Training-Time Vocabulary — Macrocycle and Mesocycle | Accepted |
+| [ADR-039](adr/ADR-039-focus-block-persistence.md) | Focus Block Persistence — Server-Stored, Date-Derived, JSON Pools | Accepted |
 
 ---
 

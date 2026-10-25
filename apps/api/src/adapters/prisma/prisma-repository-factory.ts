@@ -7,6 +7,7 @@ import { PrismaService } from './prisma.service';
 import { RLS_TX_CLIENT } from './rls-context';
 import { PrismaBodyWeightRepository } from './body-weight.repository';
 import { PrismaCustomLiftRepository } from './custom-lift.repository';
+import { PrismaFocusRepository } from './focus.repository';
 import { PrismaMacrocycleDashboardRepository } from './macrocycle-dashboard.repository';
 import { PrismaMacrocycleScheduledWorkoutRepository } from './macrocycle-scheduled-workout.repository';
 import { PrismaImportBatchRepository } from './import-batch.repository';
@@ -55,6 +56,7 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
     return {
       bodyWeight: new PrismaBodyWeightRepository(db, user.id),
       customLift: new PrismaCustomLiftRepository(db, user.id),
+      focus: new PrismaFocusRepository(db, user.id),
       macrocycleDashboard: new PrismaMacrocycleDashboardRepository(db, user.id),
       macrocycleScheduledWorkout: new PrismaMacrocycleScheduledWorkoutRepository(db, user.id),
       importBatch: new PrismaImportBatchRepository(db, user.id),
