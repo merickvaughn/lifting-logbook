@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lifting Logbook — Focus Work</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+*{box-sizing:border-box}
+:root{--space-1:.25rem;--space-2:.5rem;--space-3:.75rem;--space-4:1rem;--space-5:1.25rem;--space-6:1.5rem;--space-8:2rem;--radius-sm:4px;--radius-md:6px;--radius-lg:8px;--fs-xs:.75rem;--fs-sm:.875rem;--fs-base:1rem;--fs-lg:1.125rem;--fs-xl:1.375rem;--t-fast:.2s ease;--color-bg:#fafaf8;--color-surface:#f8f9fa;--color-surface-alt:#ecf0f1;--color-border:#ecf0f1;--color-border-strong:#ddd;--color-text:#1a1a1a;--color-text-muted:#6f7b7c;--color-text-heading:#2c3e50;--color-accent:#3498db;--color-accent-hover:#2980b9;--color-success:#27ae60;--color-warn-text:#856404;--color-warn-bg:#fff3cd;--color-danger:#c0392b}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--color-bg);color:var(--color-text);line-height:1.5;font-size:16px}
+h1,h2,h3{color:var(--color-text-heading);font-weight:700;line-height:1.25;margin:0}
+a{color:var(--color-accent);text-decoration:none}a:hover{color:var(--color-accent-hover)}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+button:disabled{opacity:.35;cursor:default}
+.container{padding:var(--space-4);max-width:600px;margin:0 auto}
+.topBar{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-5);flex-wrap:wrap}
+.appName{font-size:var(--fs-sm);font-weight:700;color:var(--color-text-heading)}
+.tabs{display:flex;gap:var(--space-1);background:var(--color-surface-alt);padding:3px;border-radius:var(--radius-md)}
+.tab{padding:var(--space-1) var(--space-3);border-radius:var(--radius-sm);font-size:var(--fs-xs);font-weight:600;color:var(--color-text-muted);transition:all var(--t-fast)}
+.tab.on{background:#fff;color:var(--color-text-heading);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:var(--space-5);gap:var(--space-3)}
+.headerMeta{display:flex;flex-direction:column;gap:var(--space-1)}
+.date{font-size:var(--fs-lg);font-weight:600}
+.weekLabel{font-size:var(--fs-sm);color:var(--color-text-muted)}
+.badge{padding:var(--space-1) var(--space-3);border-radius:var(--radius-sm);font-size:var(--fs-xs);font-weight:600;white-space:nowrap}
+.badge_upcoming{background:var(--color-warn-bg);color:var(--color-warn-text)}
+.crumb{font-size:var(--fs-sm);color:var(--color-text-muted);margin-bottom:var(--space-1)}
+.pageTitle{font-size:var(--fs-xl);margin-bottom:var(--space-1)}
+.pageSub{font-size:var(--fs-sm);color:var(--color-text-muted);margin:0 0 var(--space-5);text-wrap:pretty}
+.sectionTitle{font-size:var(--fs-xs);font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--color-text-muted);margin:var(--space-6) 0 var(--space-3)}
+.subTitle{font-size:var(--fs-xs);font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-text-muted);margin:var(--space-4) 0 var(--space-2)}
+.summarySection{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:var(--space-4);margin:var(--space-4) 0}
+.summaryGrid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4)}
+.summaryItem{display:flex;flex-direction:column;gap:2px}
+.summaryLabel{font-size:var(--fs-sm);color:var(--color-text-muted);display:block}
+.summaryValue{font-size:var(--fs-lg);font-weight:600;display:block}
+.summaryOf{font-size:var(--fs-sm);font-weight:400;color:var(--color-text-muted)}
+.warnText{color:var(--color-warn-text)}
+.field{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);padding:var(--space-3) 0;flex-wrap:wrap}
+.field.stack{flex-direction:column;align-items:stretch}
+.fieldMeta{display:flex;flex-direction:column;flex:1;min-width:160px}
+.fieldLabel{font-size:var(--fs-sm);font-weight:600}
+.fieldHint{font-size:var(--fs-xs);color:var(--color-text-muted);text-wrap:pretty}
+.row{display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap}
+.seg{display:flex;gap:2px;background:var(--color-surface-alt);padding:3px;border-radius:var(--radius-md);flex-wrap:wrap}
+.segBtn{flex:1;padding:var(--space-1) var(--space-3);border-radius:var(--radius-sm);font-size:var(--fs-xs);font-weight:600;color:var(--color-text-muted);white-space:nowrap;transition:all var(--t-fast)}
+.segBtn.on{background:#fff;color:var(--color-text-heading);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.sel{font:inherit;font-size:var(--fs-xs);padding:6px var(--space-2);border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:#fff;color:var(--color-text);max-width:100%}
+.stepper{display:inline-flex;align-items:center;gap:var(--space-1)}
+.stepBtn{width:28px;height:28px;background:#fff;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);font-weight:600;color:var(--color-text-muted);display:inline-flex;align-items:center;justify-content:center}
+.stepBtn:hover:not(:disabled){background:var(--color-surface-alt);color:var(--color-text)}
+.stepBtn.sm{width:24px;height:24px;font-size:var(--fs-xs)}
+.stepVal{min-width:52px;text-align:center;font-size:var(--fs-sm);font-weight:600;font-variant-numeric:tabular-nums}
+.btnPrimary{padding:var(--space-3) var(--space-4);background:var(--color-accent);color:#fff;border-radius:var(--radius-md);font-size:var(--fs-sm);font-weight:600}
+.btnPrimary:hover{opacity:.88}
+.btnSecondary{padding:var(--space-3) var(--space-4);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);font-size:var(--fs-sm);font-weight:600}
+.btnSecondary:hover{background:var(--color-surface-alt)}
+.btnSm{padding:6px var(--space-3);border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);font-size:var(--fs-xs);font-weight:600;background:#fff}
+.btnSm:hover{background:var(--color-surface-alt)}
+.btnSm.primary{background:var(--color-accent);border-color:var(--color-accent);color:#fff}
+.btnSm.primary:hover{opacity:.88;background:var(--color-accent)}
+.btnSm.ghost{background:transparent;border-color:transparent;color:var(--color-text-muted)}
+.linkBtn{font-size:var(--fs-xs);color:var(--color-accent);text-decoration:underline;padding:0}
+.linkBtn.danger{color:var(--color-danger);margin-top:var(--space-4)}
+.actions{display:flex;flex-direction:column;gap:var(--space-3);margin:var(--space-6) 0 var(--space-8)}
+.module{background:#fff;border:1px solid var(--color-border-strong);border-radius:var(--radius-lg);margin-bottom:var(--space-4);overflow:hidden;transition:opacity var(--t-fast)}
+.module.dragging,.liftItem.dragging{opacity:.4}
+.moduleHead{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);background:var(--color-surface);border-bottom:1px solid var(--color-border)}
+.moduleTitle{flex:1;font-weight:700;color:var(--color-text-heading);display:flex;flex-direction:column;font-size:var(--fs-base)}
+.moduleSub{font-size:var(--fs-xs);font-weight:400;color:var(--color-text-muted)}
+.moduleMeta{font-size:var(--fs-xs);color:var(--color-text-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.grip{cursor:grab;color:#b3b9bd;font-size:14px;line-height:1;user-select:none}
+.liftList{list-style:none;padding:0;margin:0}
+.liftList.inset{border-top:1px solid var(--color-border)}
+.liftItem{border-top:1px solid var(--color-border)}
+.liftItem:first-child{border-top:none}
+.liftItemHeader{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);width:100%;text-align:left;transition:background var(--t-fast)}
+.liftItemHeader:hover{background:var(--color-surface)}
+.liftToggleIcon{width:16px;color:var(--color-text-muted);transition:transform var(--t-fast);flex-shrink:0;display:inline-flex;justify-content:center}
+.liftItem.expanded .liftToggleIcon,.bCard.open .bHeadMain .liftToggleIcon{transform:rotate(90deg)}
+.liftName{font-weight:600;font-size:var(--fs-sm);flex:1;display:flex;align-items:baseline;gap:var(--space-2);flex-wrap:wrap}
+.liftTM{font-weight:400;font-size:var(--fs-xs);color:var(--color-text-muted)}
+.liftSummary{font-size:var(--fs-sm);color:var(--color-text-muted);white-space:nowrap}
+.liftNotes{display:flex;flex-direction:column;padding:0 var(--space-4) var(--space-2) calc(var(--space-4) + 28px);font-size:var(--fs-xs);color:var(--color-warn-text);margin-top:-6px}
+.liftItemContentInner{padding:var(--space-3) var(--space-4) var(--space-4);display:flex;flex-direction:column;gap:var(--space-3);border-top:1px solid var(--color-border)}
+.setGroup{display:flex;flex-direction:column;gap:var(--space-2)}
+.setGroupLabel{font-size:var(--fs-xs);font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-text-muted)}
+.setRow{display:flex;justify-content:space-between;padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-sm);font-size:var(--fs-sm)}
+.setLabel{color:var(--color-text-muted)}
+.setSpec{font-weight:600;font-variant-numeric:tabular-nums}
+.liftHint{font-size:var(--fs-xs);color:var(--color-text-muted);text-wrap:pretty}
+.areaTag{font-size:11px;font-weight:600;padding:1px var(--space-2);border-radius:999px;white-space:nowrap}
+.dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;display:inline-block}
+.focusGroup+.focusGroup{border-top:1px solid var(--color-border-strong)}
+.fgHead{padding:var(--space-3) var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)}
+.fgTop{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
+.fgName{font-weight:700;font-size:var(--fs-sm)}
+.fgMeta{font-size:var(--fs-xs);color:var(--color-text-muted);flex:1}
+.fgNote{font-size:var(--fs-xs);color:var(--color-warn-text);background:var(--color-warn-bg);padding:var(--space-1) var(--space-2);border-radius:var(--radius-sm);text-wrap:pretty}
+.skipRow{font-size:var(--fs-xs);color:var(--color-text-muted)}
+.skipRow s{color:var(--color-text)}
+.pickRow{display:flex;gap:var(--space-2);flex-wrap:wrap;align-items:center}
+.chip{padding:4px var(--space-3);border:1px dashed var(--color-border-strong);border-radius:999px;font-size:var(--fs-xs);font-weight:600;color:var(--color-text-muted)}
+.chip.on{border-style:solid;border-color:var(--color-accent);color:var(--color-accent);background:#eef7fd}
+.empty{padding:var(--space-4);font-size:var(--fs-sm);color:var(--color-text-muted)}
+.advice,.prompt{background:#fff;border:1px solid #ecd58a;border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);margin-bottom:var(--space-3);display:flex;flex-direction:column;gap:var(--space-2)}
+.prompt{border-color:var(--color-border-strong)}
+.adviceTitle,.promptTitle{font-weight:700;font-size:var(--fs-sm);display:flex;align-items:center;gap:var(--space-2)}
+.adviceBody,.promptBody{font-size:var(--fs-sm);color:var(--color-text-muted);text-wrap:pretty}
+.promptBtns{display:flex;gap:var(--space-2);flex-wrap:wrap;align-items:center}
+.pickNext{display:inline-flex;gap:var(--space-1)}
+.quiet{font-size:var(--fs-xs);color:var(--color-text-muted);margin-bottom:var(--space-2)}
+.card{background:#fff;border:1px solid var(--color-border-strong);border-radius:var(--radius-md);padding:var(--space-2) var(--space-4)}
+.card>.field+.field{border-top:1px solid var(--color-border)}
+.bList{display:flex;flex-direction:column;gap:var(--space-2)}
+.bCard{background:#fff;border:1px solid var(--color-border-strong);border-radius:var(--radius-md)}
+.bHead{display:flex;align-items:center;gap:var(--space-2);padding-right:var(--space-3)}
+.bHeadMain{flex:1;display:flex;align-items:center;gap:var(--space-2);padding:var(--space-3) var(--space-4);text-align:left;min-width:0}
+.bName{font-weight:700;font-size:var(--fs-sm)}
+.bMeta{font-size:var(--fs-xs);color:var(--color-text-muted)}
+.prio{display:flex;align-items:center;gap:var(--space-1)}
+.bBody{padding:0 var(--space-4) var(--space-4);border-top:1px solid var(--color-border)}
+.bBody>.field+.field{border-top:1px solid var(--color-border)}
+.poolRow{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:var(--space-3);margin-bottom:var(--space-2)}
+.poolTop{display:flex;align-items:baseline;gap:var(--space-2);margin-bottom:var(--space-2)}
+.poolName{font-weight:600;font-size:var(--fs-sm)}
+.poolTags{font-size:11px;color:var(--color-text-muted);flex:1}
+.xBtn{color:var(--color-text-muted);font-size:18px;line-height:1;padding:0 var(--space-1)}
+.xBtn:hover{color:var(--color-danger)}
+.poolGrid,.timerGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:var(--space-2) var(--space-3)}
+.mini{display:flex;flex-direction:column;gap:2px}
+.mini>span:first-child{font-size:11px;color:var(--color-text-muted)}
+.pair{display:flex;gap:var(--space-2);flex-wrap:wrap}
+.addRow{margin-top:var(--space-3)}
+.plainList{list-style:none;padding:0;margin:0;background:#fff;border:1px solid var(--color-border-strong);border-radius:var(--radius-md)}
+.plainRow{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-3) var(--space-4);border-top:1px solid var(--color-border)}
+.plainRow:first-child{border-top:none}
+.plainRow .bMeta{flex:1}
+.weekHead{font-size:var(--fs-sm);font-weight:600;padding:var(--space-2) 0}
+.weekRow{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:var(--space-3);padding:var(--space-2) 0;border-top:1px solid var(--color-border);font-size:var(--fs-sm)}
+.weekLifts{color:var(--color-text-muted);font-size:var(--fs-xs);align-self:center}
+.weekNum{font-variant-numeric:tabular-nums;white-space:nowrap}
+.sumBox{margin-top:var(--space-3)}
+.sumGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3)}
+.prList{margin:var(--space-1) 0 0;padding-left:var(--space-5);font-size:var(--fs-sm)}
+.gantt{background:#fff;border:1px solid var(--color-border-strong);border-radius:var(--radius-md);overflow:hidden}
+.gRow{display:grid;grid-template-columns:96px minmax(0,1fr);border-top:1px solid var(--color-border)}
+.gRow:first-child{border-top:none}
+.gLabel{padding:var(--space-2);font-size:11px;color:var(--color-text-muted);line-height:1.3;border-right:1px solid var(--color-border);display:flex;flex-direction:column;justify-content:center}
+.gLabel b{color:var(--color-text-heading)}
+.gTrack{position:relative;height:44px}
+.gHeadRow .gTrack{height:26px}
+.gMonth{position:absolute;top:5px;padding-left:4px;font-size:11px;font-weight:600;color:var(--color-text-muted)}
+.gTodayLbl{position:absolute;bottom:-1px;transform:translateX(-50%);font-size:10px;font-weight:700;color:var(--color-danger);background:#fff;padding:0 2px;line-height:1.2}
+.gLine{position:absolute;top:0;bottom:0;width:1px;background:var(--color-border)}
+.gToday{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--color-danger);z-index:2;pointer-events:none}
+.gBar{position:absolute;top:9px;bottom:9px;border-radius:var(--radius-sm);font-size:11px;font-weight:600;color:#fff;padding:0 6px;display:flex;align-items:center;overflow:hidden;white-space:nowrap;z-index:1;border:1.5px solid transparent;transition:box-shadow var(--t-fast)}
+.gBar.ended{opacity:.4}
+.gBar.queued{background:repeating-linear-gradient(135deg,#fff 0 5px,#f4f6f7 5px 10px);border-style:dashed}
+.gBar.prog{background:#2c3e50}
+.gBar.prog.deload{background:#b8c2c8}
+.gBar.sel{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--color-text-heading)}
+.gDivider{font-size:var(--fs-xs);font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--color-text-muted);padding:var(--space-2);background:var(--color-surface);border-top:1px solid var(--color-border-strong)}
+.legend{display:flex;gap:var(--space-4);flex-wrap:wrap;font-size:var(--fs-xs);color:var(--color-text-muted);margin:var(--space-3) 0 var(--space-4)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.lg{width:16px;height:10px;border-radius:2px;display:inline-block}
+.lg.solid{background:var(--color-accent)}.lg.faded{background:var(--color-accent);opacity:.4}.lg.dashed{border:1.5px dashed var(--color-accent)}.lg.today{width:2px;background:var(--color-danger)}
+.detailTitle{font-weight:700;display:flex;align-items:center;gap:var(--space-2);padding-top:var(--space-2);flex-wrap:wrap}
+.statusPill{font-size:11px;font-weight:600;padding:1px var(--space-2);border-radius:999px;background:var(--color-surface-alt);color:var(--color-text-muted)}
+.statusPill.active{background:#e3f4ea;color:#1e7e45}
+.progRow{display:flex;align-items:center;gap:var(--space-3);margin:var(--space-3) 0}
+.progressTrack{flex:1;height:6px;background:var(--color-surface-alt);border-radius:3px;overflow:hidden}
+.progressFill{height:100%}
+.kv{display:grid;grid-template-columns:110px minmax(0,1fr);gap:var(--space-1) var(--space-3);font-size:var(--fs-sm);margin-bottom:var(--space-3)}
+.kv span:nth-child(odd){color:var(--color-text-muted)}
+.card>.btnSm{margin-bottom:var(--space-3)}
+.card>.prompt{margin-top:var(--space-2)}
+.resetRow{text-align:center;margin-bottom:var(--space-8)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const FW_TODAY=new Date(2026,9,23);
+const FW_LIFTS={
+'Squat':{tags:{quads:1,glutes:1,calves:2}},'Deadlift':{tags:{back:1,glutes:1,hamstrings:1}},'Bench Press':{tags:{chest:1,triceps:2,shoulders:2}},'Overhead Press':{tags:{shoulders:1,triceps:2}},'Chin-up':{tags:{back:1,biceps:2}},'Dips':{tags:{chest:1,triceps:1,shoulders:2}},'Barbell Row':{tags:{back:1,biceps:2}},
+'Lateral Raise':{tags:{shoulders:1},acc:1},'Upright Row':{tags:{shoulders:1,traps:2},acc:1},'Face Pull':{tags:{shoulders:1,back:2},acc:1},'Arnold Press':{tags:{shoulders:1,triceps:2},acc:1},
+'Hammer Curl':{tags:{biceps:1},acc:1},'Incline DB Curl':{tags:{biceps:1},acc:1},'Cable Curl':{tags:{biceps:1},acc:1},
+'Rope Pushdown':{tags:{triceps:1},acc:1},'Overhead Extension':{tags:{triceps:1},acc:1},'Skull Crusher':{tags:{triceps:1},acc:1},
+'Chest-Supported Row':{tags:{back:1,biceps:2},acc:1},'Straight-Arm Pulldown':{tags:{back:1},acc:1},'Lat Pulldown':{tags:{back:1,biceps:2},acc:1},
+'Cable Fly':{tags:{chest:1},acc:1},'Incline DB Press':{tags:{chest:1,shoulders:2},acc:1},
+'Standing Calf Raise':{tags:{calves:1},acc:1},'Seated Calf Raise':{tags:{calves:1},acc:1},
+'Hip Thrust':{tags:{glutes:1},acc:1},'Cable Pull-Through':{tags:{glutes:1,hamstrings:2},acc:1},
+'Cable Crunch':{tags:{core:1},acc:1},'Hanging Leg Raise':{tags:{core:1},acc:1}
+};
+const FW_AREAS=['Shoulders','Biceps','Triceps','Back','Chest','Calves','Glutes','Core'];
+const FW_HUE={Shoulders:245,Biceps:150,Triceps:25,Back:300,Chest:200,Calves:70,Glutes:350,Core:115};
+const fwColor=(a,l,c)=>'oklch('+(l||0.52)+' '+(c||0.12)+' '+(FW_HUE[a]||245)+')';
+const WU=s=>({type:'warmup',spec:s}),WK=s=>({type:'work',spec:s});
+const FW_PROGRAM={name:'Leangains Full-Body',week:'Block 1 · Week 8',days:{
+A:{key:'A',short:'Mon · A',date:'Monday, October 26',lifts:[
+{name:'Squat',tm:'TM 315 lbs',sets:[WU('5 × 135 lbs'),WU('3 × 205 lbs'),WK('5 × 285 lbs'),WK('6 × 255 lbs'),WK('8 × 230 lbs')]},
+{name:'Chin-up',tm:'BW + 45 lbs',sets:[WK('6 × +45 lbs'),WK('8 × +30 lbs'),WK('10 × +15 lbs')]},
+{name:'Dips',tm:'BW + 70 lbs',sets:[WK('6 × +70 lbs'),WK('8 × +55 lbs'),WK('10 × +40 lbs')]}]},
+B:{key:'B',short:'Wed · B',date:'Wednesday, October 28',lifts:[
+{name:'Deadlift',tm:'TM 405 lbs',sets:[WU('5 × 185 lbs'),WU('3 × 275 lbs'),WK('5 × 365 lbs'),WK('6 × 330 lbs')]},
+{name:'Overhead Press',tm:'TM 155 lbs',sets:[WU('5 × 75 lbs'),WK('5 × 140 lbs'),WK('6 × 125 lbs'),WK('8 × 115 lbs')]},
+{name:'Chin-up',tm:'BW + 45 lbs',sets:[WK('6 × +45 lbs'),WK('8 × +30 lbs'),WK('10 × +15 lbs')]}]},
+C:{key:'C',short:'Fri · C',date:'Friday, October 30',lifts:[
+{name:'Bench Press',tm:'TM 285 lbs',sets:[WU('5 × 135 lbs'),WK('5 × 255 lbs'),WK('6 × 230 lbs'),WK('8 × 205 lbs')]},
+{name:'Squat',tm:'TM 315 lbs',sets:[WU('5 × 135 lbs'),WK('5 × 285 lbs'),WK('6 × 255 lbs')]},
+{name:'Barbell Row',tm:'TM 245 lbs',sets:[WU('5 × 135 lbs'),WK('6 × 225 lbs'),WK('8 × 205 lbs'),WK('10 × 185 lbs')]}]}
+}};
+const FW_DAYIDX={A:0,B:1,C:2};
+const FW_PROGRAM_LIFTS=[...new Set(Object.values(FW_PROGRAM.days).flatMap(d=>d.lifts.map(l=>l.name)))];
+const FW_PHASES=[
+{label:'Block 1 · RPT',start:'2026-09-07',end:'2026-11-01'},{label:'Deload',start:'2026-11-02',end:'2026-11-08',deload:1},
+{label:'Block 2 · RPT',start:'2026-11-09',end:'2027-01-03'},{label:'Deload',start:'2027-01-04',end:'2027-01-10',deload:1},
+{label:'Block 3 · RPT',start:'2027-01-11',end:'2027-03-07'},{label:'Deload',start:'2027-03-08',end:'2027-03-14',deload:1}];
+const FW_RANGE=[new Date(2026,8,1),new Date(2027,2,31)];
+
+const fwP=(lift,o)=>Object.assign({lift,include:'auto',ruleLift:'',swapTo:'',sets:3,lo:10,hi:12,w:25,tm:40,pct:65,rpe:8,last:null},o);
+function fwDefaultPool(area){const k=area.toLowerCase();return Object.keys(FW_LIFTS).filter(n=>FW_LIFTS[n].acc&&FW_LIFTS[n].tags[k]===1).slice(0,3).map(n=>fwP(n))}
+function fwInitState(){return{tab:'workout',day:'A',openBlock:'sh',calSel:'sh',budget:{sets:9,minutes:20},dayMode:{},picks:{},trims:{},layout:{},dismissed:{},blocks:[
+{id:'sh',series:'s1',area:'Shoulders',status:'active',period:'quarterly',align:'calendar',start:'2026-10-01',selection:'rules',overlap:'reduce',progression:'double',priority:1,timer:{prep:10,set:45,rest:60},onEnd:'autoroll',next:'Back',
+pool:[fwP('Lateral Raise',{lo:12,hi:15,w:20,tm:35,pct:60,last:[15,14,13],swapTo:'Face Pull'}),fwP('Upright Row',{include:'rule',ruleLift:'Overhead Press',lo:8,hi:12,w:65,tm:95,last:[12,11,10]}),fwP('Face Pull',{include:'swap',lo:15,hi:20,w:40,tm:60,last:[20,18,17]})]},
+{id:'bi',series:'s2',area:'Biceps',status:'active',period:'monthly',align:'calendar',start:'2026-10-01',selection:'rotate',overlap:'anyway',progression:'fixed',priority:2,timer:{prep:10,set:40,rest:60},onEnd:'prompt',next:'Triceps',
+pool:[fwP('Hammer Curl',{w:40,tm:50,last:[12,12,11]}),fwP('Incline DB Curl',{w:25,tm:35,last:[12,11,10]})]},
+{id:'ca',series:'s3',area:'Calves',status:'active',period:'monthly',align:'custom',start:'2026-10-12',selection:'fixed',overlap:'skip',progression:'rpe',priority:3,timer:{prep:10,set:40,rest:45},onEnd:'prompt',next:'Core',
+pool:[fwP('Standing Calf Raise',{sets:4,lo:12,hi:15,w:180,tm:250,rpe:9}),fwP('Seated Calf Raise',{sets:4,lo:15,hi:20,w:90,tm:140,rpe:9})]},
+{id:'ch-q3',series:'s1',area:'Chest',status:'ended',period:'quarterly',align:'calendar',start:'2026-07-01',priority:9,pool:[],timer:{prep:10,set:45,rest:60},
+summary:{sessions:38,sets:236,volume:'61,900 lbs',prs:['Cable Fly: 35 lbs × 15 (+10 lbs)','Incline DB Press: 70 lbs × 10 (+5 lbs)']}},
+{id:'bi-sep',series:'s2',area:'Biceps',status:'ended',period:'monthly',align:'calendar',start:'2026-09-01',priority:9,pool:[],timer:{prep:10,set:40,rest:60},
+summary:{sessions:12,sets:68,volume:'18,340 lbs',prs:['Hammer Curl: 40 lbs × 12 (+5 lbs)','Incline DB Curl: 25 lbs × 12 (+2 reps)']}}
+]}}
+function fwNewBlock(st,area){const id='b'+Date.now().toString(36);const pr=Math.max(0,...st.blocks.filter(b=>b.status==='active').map(b=>b.priority))+1;
+return{id,series:id,area,status:'active',period:'monthly',align:'calendar',start:fwIso(new Date(FW_TODAY.getFullYear(),FW_TODAY.getMonth(),1)),selection:'rules',overlap:'reduce',progression:'double',priority:pr,timer:{prep:10,set:45,rest:60},onEnd:'prompt',next:FW_AREAS[0],pool:fwDefaultPool(area)}}
+
+const fwD=s=>{const p=s.split('-').map(Number);return new Date(p[0],p[1]-1,p[2])};
+const fwIso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const FW_MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const FW_MONTH=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const fwShort=d=>FW_MON[d.getMonth()]+' '+d.getDate();
+function fwRange(b){const s=fwD(b.start);let st,en;
+if(b.align==='calendar'){if(b.period==='quarterly'){const q=Math.floor(s.getMonth()/3)*3;st=new Date(s.getFullYear(),q,1);en=new Date(s.getFullYear(),q+3,0)}else{st=new Date(s.getFullYear(),s.getMonth(),1);en=new Date(s.getFullYear(),s.getMonth()+1,0)}}
+else{st=s;en=new Date(s.getFullYear(),s.getMonth()+(b.period==='quarterly'?3:1),s.getDate()-1)}
+return{st,en}}
+function fwRangeLabel(b){const{st,en}=fwRange(b);
+if(b.align==='calendar')return b.period==='quarterly'?'Q'+(Math.floor(st.getMonth()/3)+1)+' '+st.getFullYear():FW_MONTH[st.getMonth()]+' '+st.getFullYear();
+return fwShort(st)+' – '+fwShort(en)}
+const fwDaysLeft=b=>Math.round((fwRange(b).en-FW_TODAY)/864e5);
+function fwNextStart(b){const{en}=fwRange(b);return fwIso(new Date(en.getFullYear(),en.getMonth(),en.getDate()+1))}
+function fwAllBlocks(st){const out=[...st.blocks];
+st.blocks.filter(b=>b.status==='active'&&b.onEnd==='autoroll').forEach(b=>{const ns=fwNextStart(b);
+if(!st.blocks.some(x=>x.series===b.series&&x.status==='queued'))out.push(Object.assign({},b,{id:'roll-'+b.id,area:b.next,status:'queued',start:ns,auto:b.id,pool:fwDefaultPool(b.next),onEnd:'prompt'}))});
+return out}
+
+const fwFmt=s=>{const n=Math.abs(Math.round(s));return Math.floor(n/60)+':'+String(n%60).padStart(2,'0')};
+const fwMin=s=>Math.round(s/60);
+const fwDur=(sets,t)=>sets*(t.prep+t.set)+Math.max(0,sets-1)*t.rest;
+const fwRound=x=>Math.round(x/2.5)*2.5;
+function fwRx(b,p,sets){const reps=p.lo===p.hi?String(p.hi):p.lo+'–'+p.hi;
+switch(b.progression){
+case 'fixed':return{sum:sets+' × '+p.hi,per:p.hi+' reps @ '+p.w+' lbs',hint:'Fixed prescription. You set the weight.'};
+case 'tm':{const w=fwRound(p.tm*p.pct/100);return{sum:sets+' × '+p.hi+' @ '+p.pct+'%',per:p.hi+' reps @ '+w+' lbs',hint:p.pct+'% of a '+p.tm+' lb training max.'}}
+case 'rpe':{const r=10-p.rpe;return{sum:sets+' × '+p.hi+' @ RPE '+p.rpe,per:p.hi+' reps @ RPE '+p.rpe,hint:'Pick a weight that leaves about '+r+' rep'+(r===1?'':'s')+' in reserve.'}}
+default:return{sum:sets+' × '+reps,per:reps+' reps @ '+p.w+' lbs',hint:(p.last?'Last time: '+p.last.join(', ')+'. ':'')+'Hit '+p.hi+' on every set and the weight goes up 5 lbs.'}}}
+
+const FW_SEL_LABEL={rules:'Rules',rotate:'Rotate',fixed:'Fixed',pick:'I pick'};
+const FW_SEL_DESC={rules:'Every eligible lift in the pool, after your rules and overlap handling.',rotate:'One lift per session, cycling through the pool. Lifts marked Always are added on top.',fixed:'The first eligible lift in the pool, every session.',pick:'Eligible lifts are offered as suggestions. You choose on the day.'};
+const FW_OV_LABEL={swap:'Swap',reduce:'Reduce',skip:'Skip',anyway:'Do it anyway'};
+const FW_OV_DESC={swap:'swapped to complementary lifts',reduce:'one set fewer per lift',skip:'focus work skipped today',anyway:'doing the full prescription anyway'};
+const FW_PROG_LABEL={double:'Double progression',fixed:'Fixed',tm:'% of TM',rpe:'RPE'};
+
+function fwSelect(b,dk,modeOverride,picks){
+const planned=FW_PROGRAM.days[dk].lifts.map(l=>l.name),area=b.area.toLowerCase(),mode=modeOverride||b.selection;
+const overlapBy=planned.filter(n=>FW_LIFTS[n]&&FW_LIFTS[n].tags[area]===1);
+const skipped=[],eligible=[];let suggestions=[];
+b.pool.forEach(p=>{if(p.include==='off'||p.include==='swap')return;
+if(p.include==='rule'&&p.ruleLift&&planned.includes(p.ruleLift)){skipped.push({lift:p.lift,why:'your rule: '+p.ruleLift+' is planned'});return}
+eligible.push(p)});
+const always=eligible.filter(p=>p.include==='always'),flex=eligible.filter(p=>p.include!=='always');let chosen;
+if(mode==='rotate'){chosen=[...always];if(flex.length){const pk=flex[FW_DAYIDX[dk]%flex.length];chosen.push(pk);flex.filter(p=>p!==pk).forEach(p=>skipped.push({lift:p.lift,why:'rotation, up on another day'}))}}
+else if(mode==='fixed'){chosen=[...always];if(flex[0]){chosen.push(flex[0]);flex.slice(1).forEach(p=>skipped.push({lift:p.lift,why:'fixed mode uses '+flex[0].lift}))}}
+else if(mode==='pick'){const sel=picks||[];chosen=eligible.filter(p=>p.include==='always'||sel.includes(p.lift));suggestions=flex}
+else chosen=eligible;
+let items=chosen.map(p=>({p,lift:p.lift,sets:p.sets}));let overlap=null;
+if(overlapBy.length){overlap={who:overlapBy.join(' & '),mode:b.overlap};
+if(b.overlap==='skip'){items.forEach(i=>skipped.push({lift:i.lift,why:overlapBy.join(' & ')+' already trains '+b.area.toLowerCase()}));items=[]}
+else if(b.overlap==='reduce')items=items.map(i=>Object.assign({},i,{sets:Math.max(1,i.sets-1),reduced:i.sets}));
+else if(b.overlap==='swap'){const seen=new Set();items=items.map(i=>{const t=i.p.swapTo&&b.pool.find(x=>x.lift===i.p.swapTo);return t?{p:t,lift:t.lift,sets:t.sets,swappedFrom:i.lift}:i}).filter(i=>!seen.has(i.lift)&&seen.add(i.lift))}}
+return{items,skipped,suggestions,overlap,mode}}
+
+function fwPlannedSec(dk){let s=0;FW_PROGRAM.days[dk].lifts.forEach(l=>l.sets.forEach(x=>{s+=x.type==='warmup'?10+30+90:10+60+240}));return s}
+function fwDayPlan(st,dk){
+const active=st.blocks.filter(b=>b.status==='active').sort((a,b)=>a.priority-b.priority),trims=st.trims[dk]||[];
+const groups=active.map(b=>{const key=dk+'|'+b.id,res=fwSelect(b,dk,st.dayMode[key],st.picks[key]);
+res.trimmed=res.items.filter(i=>trims.includes(b.id+'|'+i.lift)).map(i=>i.lift);res.items=res.items.filter(i=>!trims.includes(b.id+'|'+i.lift));return{block:b,res,key}});
+const cost=(g,i)=>fwDur(i.sets,g.block.timer)+g.block.timer.rest;
+let sets=0,sec=0;groups.forEach(g=>g.res.items.forEach(i=>{sets+=i.sets;sec+=cost(g,i)}));
+const over=sets>st.budget.sets||sec/60>st.budget.minutes;let suggestion=null;
+if(over){for(let k=groups.length-1;k>=0&&!suggestion;k--){const g=groups[k];if(g.res.items.length){const i=g.res.items[g.res.items.length-1];suggestion={block:g.block,lift:i.lift,sets:sets-i.sets,sec:sec-cost(g,i)}}}}
+return{groups,sets,sec,over,suggestion}}
+
+</script>
+<script type="text/babel">
+function FwSeg({options,value,onChange}){return <div className="seg">{options.map(([v,l])=><button key={v} className={'segBtn'+(v===value?' on':'')} onClick={()=>onChange(v)}>{l}</button>)}</div>}
+function FwStepper({value,onChange,step=1,min=0,fmt}){const f=fmt||(x=>x);return <div className="stepper"><button className="stepBtn" onClick={()=>onChange(Math.max(min,value-step))}>−</button><span className="stepVal">{f(value)}</span><button className="stepBtn" onClick={()=>onChange(value+step)}>+</button></div>}
+function FwSelect({value,onChange,options}){return <select className="sel" value={value} onChange={e=>onChange(e.target.value)}>{options.map(o=>Array.isArray(o)?<option key={o[0]} value={o[0]}>{o[1]}</option>:<option key={o} value={o}>{o}</option>)}</select>}
+function FwField({label,hint,children,stack}){return <div className={'field'+(stack?' stack':'')}><div className="fieldMeta"><span className="fieldLabel">{label}</span>{hint&&<span className="fieldHint">{hint}</span>}</div>{children}</div>}
+function FwDot({area}){return <span className="dot" style={{background:fwColor(area)}}></span>}
+function FwAreaTag({area}){return <span className="areaTag" style={{color:fwColor(area,0.45),background:fwColor(area,0.95,0.03)}}>{area}</span>}
+function FwRenewPrompt({st,up,b}){
+const[pick,setPick]=React.useState(b.next||FW_AREAS[0]);const nm=fwD(fwNextStart(b));
+const queue=area=>up(s=>{s.blocks.push(Object.assign(JSON.parse(JSON.stringify(b)),{id:'q'+Date.now().toString(36),area,status:'queued',start:fwNextStart(b),pool:area===b.area?JSON.parse(JSON.stringify(b.pool)):fwDefaultPool(area)}))});
+return <div className="prompt">
+<div className="promptTitle"><FwDot area={b.area}></FwDot>{b.area} ({fwRangeLabel(b)}) ends in {fwDaysLeft(b)} days</div>
+<div className="promptBody">Choose what follows. A summary of volume and PRs appears when it ends.</div>
+<div className="promptBtns">
+<button className="btnSm primary" onClick={()=>queue(b.area)}>Renew for {b.period==='quarterly'?'next quarter':FW_MONTH[nm.getMonth()]}</button>
+<span className="pickNext"><FwSelect value={pick} onChange={setPick} options={FW_AREAS.filter(a=>a!==b.area)}></FwSelect><button className="btnSm" onClick={()=>queue(pick)}>Queue</button></span>
+<button className="btnSm ghost" onClick={()=>up(s=>{s.dismissed['end|'+b.id]=1})}>Let it end</button>
+</div></div>}
+function FwSummary({b}){const m=b.summary;if(!m)return null;return <div className="sumBox">
+<div className="sumGrid"><div><span className="summaryLabel">Sessions</span><span className="summaryValue">{m.sessions}</span></div><div><span className="summaryLabel">Sets</span><span className="summaryValue">{m.sets}</span></div><div><span className="summaryLabel">Volume</span><span className="summaryValue">{m.volume}</span></div></div>
+<div className="summaryLabel" style={{marginTop:'var(--space-3)'}}>PRs</div><ul className="prList">{m.prs.map(p=><li key={p}>{p}</li>)}</ul></div>}
+Object.assign(window,{FwSeg,FwStepper,FwSelect,FwField,FwDot,FwAreaTag,FwRenewPrompt,FwSummary});
+
+</script>
+<script type="text/babel">
+function FwLift({title,tm,summary,tag,notes,groups,hint,drag,dragging}){
+const[open,setOpen]=React.useState(false);
+return <li className={'liftItem'+(open?' expanded':'')+(dragging?' dragging':'')} {...(drag||{})}>
+<button className="liftItemHeader" onClick={()=>setOpen(!open)}>
+{drag&&<span className="grip" title="Drag to reorder">⠿</span>}
+<span className="liftToggleIcon">›</span>
+<span className="liftName">{title}{tm&&<span className="liftTM">{tm}</span>}</span>
+{tag}<span className="liftSummary">{summary}</span></button>
+{notes&&<div className="liftNotes">{notes}</div>}
+{open&&<div className="liftItemContentInner">{groups.map(g=><div className="setGroup" key={g.label}><div className="setGroupLabel">{g.label}</div>{g.rows.map((r,i)=><div className="setRow" key={i}><span className="setLabel">{r[0]}</span><span className="setSpec">{r[1]}</span></div>)}</div>)}{hint&&<div className="liftHint">{hint}</div>}</div>}
+</li>}
+
+function fwPlannedProps(l){const wu=l.sets.filter(s=>s.type==='warmup'),wk=l.sets.filter(s=>s.type==='work');
+const groups=[];if(wu.length)groups.push({label:'Warm-up',rows:wu.map((s,i)=>['Warm-up '+(i+1),s.spec])});groups.push({label:'Working sets',rows:wk.map((s,i)=>['Set '+(i+1),s.spec])});
+return{title:l.name,tm:l.tm,summary:(wu.length?wu.length+' warm-up • ':'')+wk.length+' working',groups}}
+function fwFocusProps(g,i,withTag){const b=g.block,rx=fwRx(b,i.p,i.sets),t=b.timer;const notes=[];
+if(i.reduced)notes.push(<span key="r">Reduced {i.reduced} → {i.sets} sets: {g.res.overlap.who} trains {b.area.toLowerCase()} today</span>);
+if(i.swappedFrom)notes.push(<span key="s">Swapped from {i.swappedFrom}: {g.res.overlap.who} trains {b.area.toLowerCase()} today</span>);
+return{title:i.lift,summary:rx.sum,tag:withTag?<FwAreaTag area={b.area}></FwAreaTag>:null,notes:notes.length?notes:null,
+groups:[{label:'Focus sets · '+FW_PROG_LABEL[b.progression],rows:Array.from({length:i.sets},(_,k)=>['Set '+(k+1),rx.per])}],
+hint:rx.hint+' Timer: '+fwFmt(t.prep)+' setup · '+fwFmt(t.set)+' set · '+fwFmt(t.rest)+' rest.'}}
+
+function FwGroupControls({g,st,up}){const b=g.block,r=g.res,ov=st.dayMode[g.key]||'';
+return <div className="fgHead">
+<div className="fgTop"><FwDot area={b.area}></FwDot><span className="fgName">{b.area}</span><span className="fgMeta">{fwRangeLabel(b)} · priority {b.priority}</span>
+<FwSelect value={ov} onChange={v=>up(s=>{if(v)s.dayMode[g.key]=v;else delete s.dayMode[g.key]})} options={[['','Block default ('+FW_SEL_LABEL[b.selection]+')'],...Object.keys(FW_SEL_LABEL).map(k=>[k,FW_SEL_LABEL[k]+' today'])]}></FwSelect></div>
+{r.overlap&&<div className="fgNote">{r.overlap.who} trains {b.area.toLowerCase()} today, so {FW_OV_DESC[r.overlap.mode]}.</div>}
+{r.mode==='pick'&&<div className="pickRow"><span className="fieldHint">Today:</span>{r.suggestions.map(p=>{const on=(st.picks[g.key]||[]).includes(p.lift);
+return <button key={p.lift} className={'chip'+(on?' on':'')} onClick={()=>up(s=>{const a=s.picks[g.key]=s.picks[g.key]||[];const ix=a.indexOf(p.lift);ix<0?a.push(p.lift):a.splice(ix,1)})}>{on?'✓ ':'+ '}{p.lift}</button>})}</div>}
+{r.skipped.map(x=><div className="skipRow" key={x.lift}><s>{x.lift}</s> <span>skipped: {x.why}</span></div>)}
+{r.trimmed.map(x=><div className="skipRow" key={'t'+x}><s>{x}</s> <span>trimmed for today</span></div>)}
+</div>}
+
+function FwWorkout({st,up}){
+const dk=st.day,day=FW_PROGRAM.days[dk],plan=fwDayPlan(st,dk),lay=st.layout[dk]||{place:'after'};
+const[drag,setDrag]=React.useState(null);
+const pSec=fwPlannedSec(dk),pSets=day.lifts.reduce((a,l)=>a+l.sets.filter(s=>s.type==='work').length,0);
+const trims=st.trims[dk]||[];
+const setLay=fn=>up(s=>{s.layout[dk]=s.layout[dk]||{place:'after'};fn(s.layout[dk])});
+const plannedEls=day.lifts.map(l=>({id:'p:'+l.name,el:p=><FwLift key={'p:'+l.name} {...fwPlannedProps(l)} {...p}></FwLift>,tag:'Planned'}));
+const focusEls=plan.groups.flatMap(g=>g.res.items.map(i=>({id:'f:'+g.block.id+':'+i.lift,el:p=><FwLift key={'f:'+g.block.id+':'+i.lift} {...fwFocusProps(g,i,lay.place==='interleave')} {...p}></FwLift>})));
+let mixed;if(lay.place==='interleave'){const all=[...plannedEls,...focusEls],byId=Object.fromEntries(all.map(x=>[x.id,x]));
+if(lay.order){mixed=lay.order.filter(id=>byId[id]).map(id=>byId[id]);all.forEach(x=>{if(!mixed.includes(x))mixed.push(x)})}
+else{mixed=[];let fi=0;plannedEls.forEach(p=>{mixed.push(p);if(focusEls[fi])mixed.push(focusEls[fi++])});mixed.push(...focusEls.slice(fi))}}
+const dragProps=(id,list)=>({draggable:true,onDragStart:e=>{setDrag(id);e.dataTransfer.effectAllowed='move'},onDragEnd:()=>setDrag(null),onDragOver:e=>e.preventDefault(),
+onDrop:e=>{e.preventDefault();if(!drag||drag===id)return;const ids=list.map(x=>x.id).filter(x=>x!==drag);ids.splice(ids.indexOf(id),0,drag);setLay(l=>{l.order=ids});setDrag(null)}});
+const modDrag=id=>({draggable:true,onDragStart:e=>{setDrag('m:'+id);e.dataTransfer.effectAllowed='move'},onDragEnd:()=>setDrag(null),onDragOver:e=>e.preventDefault(),
+onDrop:e=>{e.preventDefault();if(drag&&drag.startsWith('m:')&&drag!=='m:'+id)setLay(l=>{l.place=l.place==='after'?'before':'after'});setDrag(null)}});
+const overSets=plan.sets>st.budget.sets,overMin=fwMin(plan.sec)>st.budget.minutes;
+const plannedMod=<section className={'module'+(drag==='m:planned'?' dragging':'')} key="planned" {...modDrag('planned')}>
+<div className="moduleHead"><span className="grip" title="Drag to move">⠿</span><div className="moduleTitle">Planned<span className="moduleSub">{FW_PROGRAM.name} · Day {dk}</span></div><span className="moduleMeta">{pSets} sets · {fwMin(pSec)} min</span></div>
+<ul className="liftList">{plannedEls.map(x=>x.el({}))}</ul></section>;
+const focusMod=<section className={'module'+(drag==='m:focus'?' dragging':'')} key="focus" {...modDrag('focus')}>
+<div className="moduleHead"><span className="grip" title="Drag to move">⠿</span><div className="moduleTitle">Focus work<span className="moduleSub">Independent of the program · own timer per block</span></div><span className="moduleMeta">{plan.sets} sets · {fwMin(plan.sec)} min</span></div>
+{plan.groups.map(g=><div className="focusGroup" key={g.block.id}><FwGroupControls g={g} st={st} up={up}></FwGroupControls>
+{g.res.items.length>0&&<ul className="liftList inset">{g.res.items.map(i=><FwLift key={i.lift} {...fwFocusProps(g,i,false)}></FwLift>)}</ul>}</div>)}
+{!plan.groups.length&&<div className="empty">No active focus blocks. Add one under Programs.</div>}
+</section>;
+return <div>
+<div className="header"><div className="headerMeta"><span className="date">{day.date}</span><span className="weekLabel">{FW_PROGRAM.name} · {FW_PROGRAM.week} · Day {dk}</span></div><span className="badge badge_upcoming">Upcoming</span></div>
+<FwField label="Preview day" hint="Each day plans different lifts, so focus work changes"><FwSeg options={Object.values(FW_PROGRAM.days).map(d=>[d.key,d.short])} value={dk} onChange={v=>up(s=>{s.day=v})}></FwSeg></FwField>
+<section className="summarySection"><div className="summaryGrid">
+<div className="summaryItem"><span className="summaryLabel">Planned</span><span className="summaryValue">{pSets} sets</span></div>
+<div className="summaryItem"><span className="summaryLabel">Focus</span><span className={'summaryValue'+(overSets?' warnText':'')}>{plan.sets} sets <span className="summaryOf">/ {st.budget.sets} guide</span></span></div>
+<div className="summaryItem"><span className="summaryLabel">Estimated time</span><span className="summaryValue">{fwMin(pSec+plan.sec)} min</span></div>
+<div className="summaryItem"><span className="summaryLabel">Focus time</span><span className={'summaryValue'+(overMin?' warnText':'')}>{fwMin(plan.sec)} min <span className="summaryOf">/ {st.budget.minutes} guide</span></span></div>
+</div></section>
+{plan.over&&plan.suggestion&&!st.dismissed['budget|'+dk]&&<div className="advice">
+<div className="adviceTitle">Over your daily focus guide</div>
+<div className="adviceBody">{plan.sets} of {st.budget.sets} sets, {fwMin(plan.sec)} of {st.budget.minutes} min. {plan.suggestion.block.area} is your lowest priority; trimming {plan.suggestion.lift} brings today to {plan.suggestion.sets} sets, {fwMin(plan.suggestion.sec)} min.</div>
+<div className="promptBtns"><button className="btnSm primary" onClick={()=>up(s=>{(s.trims[dk]=s.trims[dk]||[]).push(plan.suggestion.block.id+'|'+plan.suggestion.lift)})}>Trim {plan.suggestion.lift}</button><button className="btnSm ghost" onClick={()=>up(s=>{s.dismissed['budget|'+dk]=1})}>Keep everything</button></div></div>}
+{plan.over&&st.dismissed['budget|'+dk]&&<div className="quiet">Over the guide; keeping everything. <button className="linkBtn" onClick={()=>up(s=>{delete s.dismissed['budget|'+dk]})}>Show suggestion</button></div>}
+{trims.length>0&&<div className="quiet">Trimmed today: {trims.map(t=>t.split('|')[1]).join(', ')}. <button className="linkBtn" onClick={()=>up(s=>{delete s.trims[dk]})}>Undo</button></div>}
+<FwField label="Focus work placement" hint="Drag modules or lifts by ⠿ to reorder"><FwSeg options={[['before','Before'],['after','After'],['interleave','Interleave']]} value={lay.place} onChange={v=>setLay(l=>{l.place=v})}></FwSeg></FwField>
+{lay.place==='interleave'?<React.Fragment>
+<section className="module"><div className="moduleHead"><div className="moduleTitle">Today's order<span className="moduleSub">Planned and focus lifts mixed; drag to reorder</span></div>{lay.order&&<button className="linkBtn" onClick={()=>setLay(l=>{delete l.order})}>Reset order</button>}</div>
+<ul className="liftList">{mixed.map(x=>x.el({drag:dragProps(x.id,mixed),dragging:drag===x.id}))}</ul></section>
+<section className="module"><div className="moduleHead"><div className="moduleTitle">Focus controls for today</div></div>{plan.groups.map(g=><div className="focusGroup" key={g.block.id}><FwGroupControls g={g} st={st} up={up}></FwGroupControls></div>)}</section>
+</React.Fragment>:(lay.place==='before'?[focusMod,plannedMod]:[plannedMod,focusMod])}
+<section className="actions"><button className="btnPrimary">▶ Start timed workout</button><button className="btnSecondary">Start logging (untimed)</button></section>
+</div>}
+Object.assign(window,{FwWorkout});
+
+</script>
+<script type="text/babel">
+const FW_INC=[['auto','Follows selection'],['always','Always'],['rule','Only when a lift isn\u2019t planned'],['swap','Swap target only'],['off','Off']];
+function FwPoolRow({b,p,ix,set,remove}){
+const prog=b.progression;
+return <div className="poolRow">
+<div className="poolTop"><span className="poolName">{p.lift}</span><span className="poolTags">{Object.entries(FW_LIFTS[p.lift]?FW_LIFTS[p.lift].tags:{}).map(([k,v])=>k+(v===1?'':' (2°)')).join(', ')}</span><button className="xBtn" title="Remove" onClick={remove}>×</button></div>
+<div className="poolGrid">
+<label className="mini"><span>Include</span><FwSelect value={p.include} onChange={v=>set('include',v)} options={FW_INC}></FwSelect></label>
+{p.include==='rule'&&<label className="mini"><span>Skip when planned</span><FwSelect value={p.ruleLift||''} onChange={v=>set('ruleLift',v)} options={[['','Choose lift…'],...FW_PROGRAM_LIFTS]}></FwSelect></label>}
+{b.overlap==='swap'&&p.include!=='swap'&&<label className="mini"><span>On overlap, swap to</span><FwSelect value={p.swapTo||''} onChange={v=>set('swapTo',v)} options={[['','Keep this lift'],...b.pool.filter(x=>x.lift!==p.lift).map(x=>x.lift)]}></FwSelect></label>}
+<label className="mini"><span>Sets</span><FwStepper value={p.sets} min={1} onChange={v=>set('sets',v)}></FwStepper></label>
+{prog==='double'&&<label className="mini"><span>Rep range</span><span className="pair"><FwStepper value={p.lo} min={1} onChange={v=>set('lo',Math.min(v,p.hi))}></FwStepper><FwStepper value={p.hi} min={1} onChange={v=>set('hi',Math.max(v,p.lo))}></FwStepper></span></label>}
+{prog!=='double'&&<label className="mini"><span>Reps</span><FwStepper value={p.hi} min={1} onChange={v=>set('hi',v)}></FwStepper></label>}
+{(prog==='double'||prog==='fixed')&&<label className="mini"><span>Weight</span><FwStepper value={p.w} step={2.5} onChange={v=>set('w',v)} fmt={v=>v+' lb'}></FwStepper></label>}
+{prog==='tm'&&<label className="mini"><span>TM · %</span><span className="pair"><FwStepper value={p.tm} step={5} onChange={v=>set('tm',v)} fmt={v=>v+' lb'}></FwStepper><FwStepper value={p.pct} step={5} onChange={v=>set('pct',Math.min(100,v))} fmt={v=>v+'%'}></FwStepper></span></label>}
+{prog==='rpe'&&<label className="mini"><span>RPE</span><FwStepper value={p.rpe} step={0.5} min={5} onChange={v=>set('rpe',Math.min(10,v))}></FwStepper></label>}
+</div></div>}
+
+function FwBlockCard({b,st,up,open,first,last}){
+const ub=fn=>up(s=>fn(s.blocks.find(x=>x.id===b.id)));
+const hits=FW_PROGRAM_LIFTS.filter(n=>FW_LIFTS[n].tags[b.area.toLowerCase()]===1);
+const avail=Object.keys(FW_LIFTS).filter(n=>!b.pool.some(p=>p.lift===n));
+const near=avail.filter(n=>FW_LIFTS[n].tags[b.area.toLowerCase()]===1),rest=avail.filter(n=>!near.includes(n));
+const move=d=>up(s=>{const act=s.blocks.filter(x=>x.status==='active').sort((x,y)=>x.priority-y.priority);const i=act.findIndex(x=>x.id===b.id),j=i+d;if(j<0||j>=act.length)return;[act[i],act[j]]=[act[j],act[i]];act.forEach((x,k)=>x.priority=k+1)});
+return <div className={'bCard'+(open?' open':'')}>
+<div className="bHead">
+<button className="bHeadMain" onClick={()=>up(s=>{s.openBlock=open?null:b.id})}><span className="liftToggleIcon">›</span><FwDot area={b.area}></FwDot><span className="bName">{b.area}</span><span className="bMeta">{b.period==='quarterly'?'Quarterly':'Monthly'} · {fwRangeLabel(b)}</span></button>
+<span className="prio"><span className="fieldHint">P{b.priority}</span><button className="stepBtn sm" disabled={first} onClick={()=>move(-1)} title="Higher priority">↑</button><button className="stepBtn sm" disabled={last} onClick={()=>move(1)} title="Lower priority">↓</button></span>
+</div>
+{open&&<div className="bBody">
+<FwField label="Area"><FwSelect value={b.area} onChange={v=>ub(x=>{x.area=v;x.pool=fwDefaultPool(v)})} options={FW_AREAS}></FwSelect></FwField>
+<FwField label="Period" hint={'Runs '+fwShort(fwRange(b).st)+' – '+fwShort(fwRange(b).en)+', '+fwRange(b).en.getFullYear()}><FwSeg options={[['quarterly','Quarterly'],['monthly','Monthly']]} value={b.period} onChange={v=>ub(x=>{x.period=v})}></FwSeg></FwField>
+<FwField label="Starts" hint={b.align==='calendar'?'Aligned to calendar '+(b.period==='quarterly'?'quarters':'months'):'Runs one '+(b.period==='quarterly'?'quarter':'month')+' from this date'}>
+<div className="row"><FwSeg options={[['calendar','Calendar'],['custom','Custom date']]} value={b.align} onChange={v=>ub(x=>{x.align=v})}></FwSeg>{b.align==='custom'&&<input className="sel" type="date" value={b.start} onChange={e=>e.target.value&&ub(x=>{x.start=e.target.value})}></input>}</div></FwField>
+<FwField label="Selection" hint={FW_SEL_DESC[b.selection]+' Can be changed per day on the workout.'} stack><FwSeg options={Object.entries(FW_SEL_LABEL)} value={b.selection} onChange={v=>ub(x=>{x.selection=v})}></FwSeg></FwField>
+<FwField label={'When planned work trains '+b.area.toLowerCase()} hint={(hits.length?'Detected by muscle tags: '+hits.join(', ')+'.':'No program lift has '+b.area.toLowerCase()+' as a primary mover.')+' Per-lift rules below also apply.'} stack><FwSeg options={Object.entries(FW_OV_LABEL)} value={b.overlap} onChange={v=>ub(x=>{x.overlap=v})}></FwSeg></FwField>
+<FwField label="Progression" stack><FwSeg options={Object.entries(FW_PROG_LABEL)} value={b.progression} onChange={v=>ub(x=>{x.progression=v})}></FwSeg></FwField>
+<div className="subTitle">Lift pool</div>
+{b.pool.map((p,i)=><FwPoolRow key={p.lift} b={b} p={p} ix={i} set={(k,v)=>ub(x=>{x.pool[i][k]=v})} remove={()=>ub(x=>{x.pool.splice(i,1)})}></FwPoolRow>)}
+<div className="row" style={{marginTop:'var(--space-2)'}}><FwSelect value="" onChange={v=>v&&ub(x=>{x.pool.push(fwP(v))})} options={[['','+ Add lift…'],...near.map(n=>[n,n+' · '+b.area]),...rest.map(n=>[n,n])]}></FwSelect></div>
+<div className="subTitle">Timer</div>
+<div className="timerGrid">
+<label className="mini"><span>Setup</span><FwStepper value={b.timer.prep} step={5} onChange={v=>ub(x=>{x.timer.prep=v})} fmt={fwFmt}></FwStepper></label>
+<label className="mini"><span>Set</span><FwStepper value={b.timer.set} step={5} onChange={v=>ub(x=>{x.timer.set=v})} fmt={fwFmt}></FwStepper></label>
+<label className="mini"><span>Rest</span><FwStepper value={b.timer.rest} step={15} onChange={v=>ub(x=>{x.timer.rest=v})} fmt={fwFmt}></FwStepper></label>
+</div>
+<FwField label="When it ends" hint="A summary of volume and PRs is shown either way."><div className="row"><FwSeg options={[['prompt','Prompt me'],['autoroll','Auto-roll']]} value={b.onEnd} onChange={v=>ub(x=>{x.onEnd=v})}></FwSeg>
+{b.onEnd==='autoroll'&&<FwSelect value={b.next} onChange={v=>ub(x=>{x.next=v})} options={FW_AREAS.map(a=>[a,'Next: '+a])}></FwSelect>}</div></FwField>
+<button className="linkBtn danger" onClick={()=>up(s=>{s.blocks=s.blocks.filter(x=>x.id!==b.id)})}>Remove this block</button>
+</div>}
+</div>}
+
+function FwSetup({st,up}){
+const active=st.blocks.filter(b=>b.status==='active').sort((a,b)=>a.priority-b.priority);
+const queued=fwAllBlocks(st).filter(b=>b.status==='queued').sort((a,b)=>fwD(a.start)-fwD(b.start));
+const prompts=active.filter(b=>b.onEnd==='prompt'&&fwDaysLeft(b)<=10&&!st.dismissed['end|'+b.id]&&!st.blocks.some(x=>x.series===b.series&&x.status==='queued'));
+const[newArea,setNewArea]=React.useState('Triceps');
+const week=Object.keys(FW_PROGRAM.days).map(k=>({k,d:FW_PROGRAM.days[k],p:fwDayPlan(Object.assign({},st,{trims:{},dismissed:{}}),k)}));
+const overN=week.filter(w=>w.p.over).length;
+return <div>
+<div className="crumb">Programs › {FW_PROGRAM.name} ›</div>
+<h1 className="pageTitle">Focus work</h1>
+<p className="pageSub">Extra work added to every session for a month or quarter, on a calendar separate from the program.</p>
+{prompts.map(b=><FwRenewPrompt key={b.id} st={st} up={up} b={b}></FwRenewPrompt>)}
+<div className="sectionTitle">Active blocks · by priority</div>
+<div className="bList">{active.map((b,i)=><FwBlockCard key={b.id} b={b} st={st} up={up} open={st.openBlock===b.id} first={i===0} last={i===active.length-1}></FwBlockCard>)}</div>
+<div className="row addRow"><FwSelect value={newArea} onChange={setNewArea} options={FW_AREAS}></FwSelect><button className="btnSm primary" onClick={()=>up(s=>{const nb=fwNewBlock(s,newArea);s.blocks.push(nb);s.openBlock=nb.id})}>+ Add focus block</button></div>
+{queued.length>0&&<React.Fragment><div className="sectionTitle">Up next</div><ul className="plainList">{queued.map(b=><li key={b.id} className="plainRow"><FwDot area={b.area}></FwDot><span className="bName">{b.area}</span><span className="bMeta">{fwRangeLabel(b)} · {b.auto?'auto-roll from '+st.blocks.find(x=>x.id===b.auto).area:'queued'}</span>
+<button className="linkBtn" onClick={()=>up(s=>{if(b.auto)s.blocks.find(x=>x.id===b.auto).onEnd='prompt';else s.blocks=s.blocks.filter(x=>x.id!==b.id)})}>Cancel</button></li>)}</ul></React.Fragment>}
+<div className="sectionTitle">Daily focus guide</div>
+<div className="card">
+<FwField label="Extra sets per day" hint="Advisory. Going over suggests a trim; nothing is blocked."><FwStepper value={st.budget.sets} min={1} onChange={v=>up(s=>{s.budget.sets=v})}></FwStepper></FwField>
+<FwField label="Focus time per day"><FwStepper value={st.budget.minutes} step={5} min={5} onChange={v=>up(s=>{s.budget.minutes=v})} fmt={v=>v+' min'}></FwStepper></FwField>
+</div>
+<div className="sectionTitle">This week</div>
+<div className="card">
+<div className="weekHead">{overN?overN+' of '+week.length+' sessions over the guide':'Every session fits the guide'}</div>
+{week.map(w=><div className="weekRow" key={w.k}><span>{w.d.short}</span><span className="weekLifts">{w.p.groups.flatMap(g=>g.res.items.map(i=>i.lift)).join(', ')||'—'}</span><span className={'weekNum'+(w.p.over?' warnText':'')}>{w.p.sets} sets · {fwMin(w.p.sec)} min</span></div>)}
+</div>
+</div>}
+Object.assign(window,{FwSetup});
+
+</script>
+<script type="text/babel">
+function FwCalendar({st,up}){
+const[a,z]=FW_RANGE,span=z-a,pct=d=>Math.max(0,Math.min(100,(d-a)/span*100));
+const months=[];for(let d=new Date(a);d<=z;d=new Date(d.getFullYear(),d.getMonth()+1,1))months.push(d);
+const all=fwAllBlocks(st),series=[...new Set(all.map(b=>b.series))];
+const lanes=series.map(s=>{const bs=all.filter(b=>b.series===s).sort((x,y)=>fwD(x.start)-fwD(y.start));const cur=bs.find(b=>b.status==='active')||bs[bs.length-1];
+const dd=fwD(cur.start).getDate(),ord=(dd%10<4&&dd%10>0&&Math.floor(dd/10)!==1)?['','st','nd','rd'][dd%10]:'th';
+return{s,bs,label:(cur.period==='quarterly'?'Quarterly':'Monthly')+(cur.align==='custom'?' · from the '+dd+ord:'')}})
+.sort((x,y)=>{const pa=(x.bs.find(b=>b.status==='active')||{priority:99}).priority,pb=(y.bs.find(b=>b.status==='active')||{priority:99}).priority;return pa-pb});
+const grid=<React.Fragment>{months.map((m,i)=><span key={i} className="gLine" style={{left:pct(m)+'%'}}></span>)}<span className="gToday" style={{left:pct(FW_TODAY)+'%'}}></span></React.Fragment>;
+const sel=st.calSel,selB=all.find(b=>b.id===sel),selP=sel&&sel.startsWith('ph')?FW_PHASES[+sel.slice(2)]:null;
+const bar=(b)=>{const{st:s,en}=fwRange(b),l=pct(s),w=pct(new Date(en.getFullYear(),en.getMonth(),en.getDate()+1))-l;if(w<=0)return null;
+const cls='gBar '+b.status+(sel===b.id?' sel':'');const style={left:l+'%',width:w+'%'};
+if(b.status==='queued'){style.borderColor=fwColor(b.area);style.color=fwColor(b.area,0.42)}else style.background=fwColor(b.area);
+return <button key={b.id} className={cls} style={style} onClick={()=>up(x=>{x.calSel=b.id})} title={b.area+' · '+fwRangeLabel(b)}>{b.area}</button>};
+let detail=null;
+if(selP){const s=fwD(selP.start),e=fwD(selP.end);detail=<div className="card"><div className="detailTitle">{selP.label}</div><div className="fieldHint">{FW_PROGRAM.name} · {fwShort(s)} – {fwShort(e)}, {e.getFullYear()} · {Math.round((e-s)/864e5/7)} weeks</div></div>}
+else if(selB){const{st:s,en}=fwRange(selB),wk=Math.ceil((en-s)/864e5/7),done=Math.max(0,Math.min(wk,Math.ceil((FW_TODAY-s)/864e5/7)));
+detail=<div className="card">
+<div className="detailTitle"><FwDot area={selB.area}></FwDot>{selB.area} · {fwRangeLabel(selB)}<span className={'statusPill '+selB.status}>{selB.status==='active'?'Active':selB.status==='ended'?'Ended':'Queued'}</span></div>
+<div className="fieldHint">{fwShort(s)} – {fwShort(en)}, {en.getFullYear()} · {selB.period==='quarterly'?'quarterly':'monthly'}, {selB.align==='calendar'?'calendar-aligned':'custom start'}</div>
+{selB.status==='ended'&&<FwSummary b={selB}></FwSummary>}
+{selB.status==='active'&&<React.Fragment>
+<div className="progRow"><div className="progressTrack"><div className="progressFill" style={{width:done/wk*100+'%',background:fwColor(selB.area)}}></div></div><span className="fieldHint">Week {Math.max(1,done)} of {wk}</span></div>
+<div className="kv"><span>Selection</span><span>{FW_SEL_LABEL[selB.selection]}</span><span>On overlap</span><span>{FW_OV_LABEL[selB.overlap]}</span><span>Progression</span><span>{FW_PROG_LABEL[selB.progression]}</span><span>Pool</span><span>{selB.pool.map(p=>p.lift).join(', ')}</span><span>When it ends</span><span>{selB.onEnd==='autoroll'?'Auto-roll to '+selB.next:'Prompt me'}</span></div>
+{selB.onEnd==='prompt'&&fwDaysLeft(selB)<=10&&!st.dismissed['end|'+selB.id]&&!st.blocks.some(x=>x.series===selB.series&&x.status==='queued')&&<FwRenewPrompt st={st} up={up} b={selB}></FwRenewPrompt>}
+<button className="btnSm" onClick={()=>up(x=>{x.tab='setup';x.openBlock=selB.id})}>Edit in Programs</button>
+</React.Fragment>}
+{selB.status==='queued'&&<React.Fragment><p className="fieldHint" style={{margin:'var(--space-3) 0'}}>{selB.auto?'Auto-rolls from '+st.blocks.find(x=>x.id===selB.auto).area+' when it ends.':'Queued. Starts automatically.'}</p>
+<button className="btnSm" onClick={()=>up(x=>{if(selB.auto)x.blocks.find(y=>y.id===selB.auto).onEnd='prompt';else x.blocks=x.blocks.filter(y=>y.id!==selB.id);x.calSel=null})}>Cancel</button></React.Fragment>}
+</div>}
+return <div>
+<h1 className="pageTitle">Calendar</h1>
+<p className="pageSub">The program and focus blocks run on separate timelines. Tap a bar for details.</p>
+<div className="gantt">
+<div className="gRow gHeadRow"><span className="gLabel"></span><div className="gTrack gMonths">{months.map((m,i)=><span key={i} className="gMonth" style={{left:pct(m)+'%'}}>{FW_MON[m.getMonth()]}{m.getMonth()===0?' ’'+String(m.getFullYear()).slice(2):''}</span>)}<span className="gTodayLbl" style={{left:pct(FW_TODAY)+'%'}}>Today</span></div></div>
+<div className="gRow"><span className="gLabel"><b>Program</b><br></br>{FW_PROGRAM.name}</span><div className="gTrack">{grid}{FW_PHASES.map((p,i)=>{const s=fwD(p.start),e=fwD(p.end),l=pct(s),w=pct(new Date(e.getFullYear(),e.getMonth(),e.getDate()+1))-l;
+return <button key={i} className={'gBar prog'+(p.deload?' deload':'')+(sel==='ph'+i?' sel':'')} style={{left:l+'%',width:w+'%'}} onClick={()=>up(x=>{x.calSel='ph'+i})} title={p.label}>{p.deload?'':p.label}</button>})}</div></div>
+<div className="gDivider">Focus</div>
+{lanes.map(ln=><div className="gRow" key={ln.s}><span className="gLabel">{ln.label}</span><div className="gTrack">{grid}{ln.bs.map(bar)}</div></div>)}
+</div>
+<div className="legend"><span><i className="lg solid"></i>Active</span><span><i className="lg faded"></i>Ended</span><span><i className="lg dashed"></i>Queued</span><span><i className="lg today"></i>Today</span></div>
+{detail}
+</div>}
+Object.assign(window,{FwCalendar});
+
+</script>
+<script type="text/babel">
+const FW_LS='ll.focus.v1';
+function FocusApp(){
+const[st,setSt]=React.useState(()=>{try{const s=JSON.parse(localStorage.getItem(FW_LS));if(s&&s.blocks)return s}catch(e){}return fwInitState()});
+React.useEffect(()=>{try{localStorage.setItem(FW_LS,JSON.stringify(st))}catch(e){}},[st]);
+const up=fn=>setSt(s=>{const n=JSON.parse(JSON.stringify(s));fn(n);return n});
+const tabs=[['workout','Workout'],['setup','Programs › Focus'],['calendar','Calendar']];
+return <div className="container">
+<div className="topBar"><span className="appName">Lifting Logbook</span><div className="tabs">{tabs.map(([k,l])=><button key={k} className={'tab'+(st.tab===k?' on':'')} onClick={()=>{up(s=>{s.tab=k});window.scrollTo(0,0)}}>{l}</button>)}</div></div>
+<div data-screen-label={st.tab==='workout'?'Workout details':st.tab==='setup'?'Focus setup':'Focus calendar'}>
+{st.tab==='workout'&&<FwWorkout st={st} up={up}></FwWorkout>}
+{st.tab==='setup'&&<FwSetup st={st} up={up}></FwSetup>}
+{st.tab==='calendar'&&<FwCalendar st={st} up={up}></FwCalendar>}
+</div>
+<div className="resetRow"><button className="linkBtn" onClick={()=>setSt(Object.assign(fwInitState(),{tab:st.tab}))}>Reset demo data</button></div>
+</div>}
+ReactDOM.createRoot(document.getElementById('root')).render(<FocusApp></FocusApp>);
+</script>
+</body>
+</html>
