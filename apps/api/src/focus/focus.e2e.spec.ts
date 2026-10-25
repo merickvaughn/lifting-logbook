@@ -2,15 +2,15 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { MROUND, defaultFocusPool } from '@lifting-logbook/core';
+import { MROUND, defaultFocusPool, defaultPoolEntry } from '@lifting-logbook/core';
 import {
   DEFAULT_FOCUS_BUDGET,
-  EMPTY_FOCUS_DAY_STATE,
   FocusBlockResponse,
   FocusBlockSummaryResponse,
   FocusDayPlanResponse,
   FocusDayState,
   FocusPoolEntry,
+  emptyFocusDayState,
 } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
@@ -21,20 +21,7 @@ const PROGRAM = '5-3-1';
 const TODAY = '2026-10-25';
 
 function entry(lift: string, overrides: Partial<FocusPoolEntry> = {}): FocusPoolEntry {
-  return {
-    lift,
-    include: 'auto',
-    ruleLift: '',
-    swapTo: '',
-    sets: 3,
-    repsLow: 10,
-    repsHigh: 12,
-    weight: 25,
-    trainingMax: 40,
-    percent: 65,
-    rpe: 8,
-    ...overrides,
-  };
+  return { ...defaultPoolEntry(lift), ...overrides };
 }
 
 /** A Q4 2026 calves focus block: active on TODAY. */
@@ -262,6 +249,69 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       expect(list.map((block) => block.id)).toEqual([predecessorId]);
       expect(list[0]?.onEnd).toBe('prompt');
     });
+
+    it('declines the roll when a user-queued block that covered it mid-month is deleted', async () => {
+      const other = as('focus-e2e-rollover-midmonth');
+      const october = (
+        await other.create(
+          blockBody({ period: 'monthly', start: '2026-10-01', onEnd: 'autoroll', nextArea: 'Core' }),
+        )
+      ).json() as FocusBlockResponse;
+      // Custom-aligned from Nov 15: not nextStart (Nov 1), but it still covers the roll.
+      const queued = (
+        await other.create(blockBody({ series: october.series, align: 'custom', start: '2026-11-15', period: 'monthly' }))
+      ).json() as FocusBlockResponse;
+      expect((await other.list()).map((block) => block.id).sort()).toEqual([october.id, queued.id].sort());
+
+      expect((await other.inject('DELETE', `/focus/blocks/${queued.id}`)).statusCode).toBe(204);
+      const list = await other.list();
+      expect(list.map((block) => block.id)).toEqual([october.id]);
+      expect(list[0]?.onEnd).toBe('prompt');
+    });
+
+    it('leaves an auto-roll alone when the deleted block was not covering it', async () => {
+      const other = as('focus-e2e-rollover-unrelated');
+      const rolling = (
+        await other.create(blockBody({ period: 'monthly', onEnd: 'autoroll', nextArea: 'Core' }))
+      ).json() as FocusBlockResponse;
+      const unrelated = (await other.create(blockBody({ area: 'Biceps' }))).json() as FocusBlockResponse;
+      const successor = (await other.list()).find((block) => block.series === rolling.series && block.id !== rolling.id);
+      expect(successor).toBeDefined();
+
+      expect((await other.inject('DELETE', `/focus/blocks/${unrelated.id}`)).statusCode).toBe(204);
+      const list = await other.list();
+      expect(list.find((block) => block.id === rolling.id)?.onEnd).toBe('autoroll');
+      expect(list.map((block) => block.id)).toContain(successor?.id);
+    });
+  });
+
+  describe('priority among blocks that have not ended', () => {
+    const user = as('focus-e2e-priority');
+
+    it('orders only blocks that have not ended, and numbers new ones below them', async () => {
+      const ended = (
+        await user.create(blockBody({ area: 'Chest', period: 'monthly', start: '2026-08-01', priority: 5 }))
+      ).json() as FocusBlockResponse;
+      const first = (await user.create(blockBody())).json() as FocusBlockResponse;
+      // The ended block's priority 5 does not push new blocks down.
+      expect(first.priority).toBe(1);
+      const second = (await user.create(blockBody({ area: 'Biceps' }))).json() as FocusBlockResponse;
+      expect(second.priority).toBe(2);
+
+      const res = await user.inject('PUT', `/focus/blocks/order?today=${TODAY}`, { ids: [second.id, first.id] });
+      expect(res.statusCode).toBe(200);
+      const byId = new Map((res.json() as FocusBlockResponse[]).map((block) => [block.id, block.priority]));
+      expect([byId.get(second.id), byId.get(first.id), byId.get(ended.id)]).toEqual([1, 2, 5]);
+
+      const withEnded = await user.inject('PUT', `/focus/blocks/order?today=${TODAY}`, {
+        ids: [ended.id, second.id, first.id],
+      });
+      expect(withEnded.statusCode).toBe(400);
+    });
+
+    it('rejects a priority outside its bound', async () => {
+      expect((await user.create(blockBody({ priority: 1001 }))).statusCode).toBe(400);
+    });
   });
 
   describe('daily focus guide', () => {
@@ -299,7 +349,7 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
     it('reads the empty state before anything is saved', async () => {
       const res = await user.inject('GET', url(1));
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual(EMPTY_FOCUS_DAY_STATE);
+      expect(res.json()).toEqual(emptyFocusDayState());
     });
 
     it('saves per workout, and does not leak to another workout or user', async () => {
@@ -307,8 +357,8 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       expect(put.statusCode).toBe(200);
       expect(put.json()).toEqual(saved);
       expect((await user.inject('GET', url(1))).json()).toEqual(saved);
-      expect((await user.inject('GET', url(2))).json()).toEqual(EMPTY_FOCUS_DAY_STATE);
-      expect((await as('focus-e2e-state-other').inject('GET', url(1))).json()).toEqual(EMPTY_FOCUS_DAY_STATE);
+      expect((await user.inject('GET', url(2))).json()).toEqual(emptyFocusDayState());
+      expect((await as('focus-e2e-state-other').inject('GET', url(1))).json()).toEqual(emptyFocusDayState());
     });
 
     it.each([
@@ -321,8 +371,11 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       expect((await user.inject('PUT', url(1), body)).statusCode).toBe(400);
     });
 
-    it('400s on a workoutNum that is not a positive integer', async () => {
+    it('400s on a workoutNum that is not a positive integer, or past the bound', async () => {
       expect((await user.inject('GET', url(0))).statusCode).toBe(400);
+      // Above INT4: a 400 here, not a database error.
+      expect((await user.inject('PUT', url(2147483648), emptyFocusDayState())).statusCode).toBe(400);
+      expect((await user.inject('GET', url(1001))).statusCode).toBe(400);
       expect((await user.inject('GET', `/programs/${PROGRAM}/workouts/1.5/focus-state`)).statusCode).toBe(400);
     });
   });
@@ -384,6 +437,20 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       await user.inject('PATCH', `/lifts/${encodeURIComponent(lift)}/metadata`, { muscleGroups: [] });
     });
 
+    it('applies a legacy URL-encoded override row to its real lift name (#1017)', async () => {
+      const lift = plannedLifts.find((name) => name.includes(' '));
+      expect(lift).toBeDefined();
+      const legacy = encodeURIComponent(lift ?? '');
+      // Stored under the still-encoded name, as the lift editor did before #1017.
+      const patched = await user.inject('PATCH', `/lifts/${encodeURIComponent(legacy)}/metadata`, {
+        muscleGroups: ['Calves'],
+      });
+      expect((patched.json() as { lift: string }).lift).toBe(legacy);
+      const [group] = (await user.plan()).groups;
+      expect(group?.overlap).toEqual({ lifts: [lift], mode: 'reduce' });
+      await user.inject('PATCH', `/lifts/${encodeURIComponent(legacy)}/metadata`, { muscleGroups: [] });
+    });
+
     it('rounds a percent-of-training-max weight to the program increment', async () => {
       await user.inject('PATCH', `/focus/blocks/${calvesId}?today=${TODAY}`, {
         progression: 'tm',
@@ -432,7 +499,7 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       expect(over.suggestion).toMatchObject({ blockId: calvesId, lift: 'Seated Calf Raise', sets: 4 });
 
       await user.inject('PUT', `/programs/${PROGRAM}/workouts/1/focus-state`, {
-        ...EMPTY_FOCUS_DAY_STATE,
+        ...emptyFocusDayState(),
         trims: { [calvesId]: ['Seated Calf Raise'] },
       });
       const trimmed = await user.plan();

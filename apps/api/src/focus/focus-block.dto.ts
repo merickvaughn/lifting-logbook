@@ -27,6 +27,7 @@ import {
   FOCUS_SELECTIONS,
 } from '@lifting-logbook/types';
 import type {
+  CreateFocusBlockRequest,
   FocusAlign,
   FocusArea,
   FocusInclude,
@@ -37,20 +38,25 @@ import type {
   FocusProgression,
   FocusSelection,
   FocusTimer,
+  ReorderFocusBlocksRequest,
+  UpdateFocusBlockRequest,
+  UpdateFocusSettingsRequest,
 } from '@lifting-logbook/types';
 
 /** Bounds on the pool and timer JSON, so a stored block stays a sane size. */
-export const FOCUS_LIMITS = {
+const FOCUS_LIMITS = {
   MAX_POOL: 20,
   MAX_LIFT_NAME: 100,
   MAX_SETS: 20,
   MAX_REPS: 100,
   MAX_WEIGHT: 5000,
   MAX_TIMER_SEC: 3600,
+  // Priorities count down from 1 among the blocks that are not ended (FocusController).
+  MAX_PRIORITY: 1000,
 } as const;
 
 /** `YYYY-MM-DD`. The controller checks the day exists in its month. */
-export const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export class FocusTimerDto implements FocusTimer {
   @IsInt() @Min(0) @Max(FOCUS_LIMITS.MAX_TIMER_SEC) prep!: number;
@@ -117,7 +123,7 @@ class FocusBlockFieldsDto {
   pool!: FocusPoolEntryDto[];
 }
 
-export class CreateFocusBlockDto extends FocusBlockFieldsDto {
+export class CreateFocusBlockDto extends FocusBlockFieldsDto implements CreateFocusBlockRequest {
   @IsOptional()
   @IsString()
   @MinLength(1)
@@ -127,6 +133,7 @@ export class CreateFocusBlockDto extends FocusBlockFieldsDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(FOCUS_LIMITS.MAX_PRIORITY)
   priority?: number;
 }
 
@@ -134,7 +141,7 @@ export class CreateFocusBlockDto extends FocusBlockFieldsDto {
  * Every field optional. @ValidateIf rather than @IsOptional, so an explicit `null` is
  * rejected for the fields where null means nothing (only `nextArea` takes null).
  */
-export class UpdateFocusBlockDto {
+export class UpdateFocusBlockDto implements UpdateFocusBlockRequest {
   @ValidateIf((o: UpdateFocusBlockDto) => o.area !== undefined) @IsIn(FOCUS_AREAS) area?: FocusArea;
   @ValidateIf((o: UpdateFocusBlockDto) => o.period !== undefined) @IsIn(FOCUS_PERIODS) period?: FocusPeriod;
   @ValidateIf((o: UpdateFocusBlockDto) => o.align !== undefined) @IsIn(FOCUS_ALIGNS) align?: FocusAlign;
@@ -175,14 +182,14 @@ export class UpdateFocusBlockDto {
   pool?: FocusPoolEntryDto[];
 }
 
-export class ReorderFocusBlocksDto {
+export class ReorderFocusBlocksDto implements ReorderFocusBlocksRequest {
   @IsArray()
-  @ArrayMaxSize(200)
+  @ArrayMaxSize(FOCUS_LIMITS.MAX_PRIORITY)
   @IsString({ each: true })
   ids!: string[];
 }
 
-export class FocusSettingsDto {
+export class FocusSettingsDto implements UpdateFocusSettingsRequest {
   @IsInt() @Min(0) @Max(100) sets!: number;
   @IsInt() @Min(0) @Max(600) minutes!: number;
 }

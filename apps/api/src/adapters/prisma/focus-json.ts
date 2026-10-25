@@ -1,5 +1,6 @@
 import {
-  EMPTY_FOCUS_DAY_STATE,
+  DEFAULT_FOCUS_PLACEMENT,
+  DEFAULT_FOCUS_TIMER,
   FOCUS_INCLUDES,
   FOCUS_PLACEMENTS,
   FOCUS_SELECTIONS,
@@ -7,14 +8,12 @@ import {
   FocusPoolEntry,
   FocusSelection,
   FocusTimer,
+  emptyFocusDayState,
 } from '@lifting-logbook/types';
 
 // Runtime guards for the focus JSON columns. Prisma returns whatever JSON is stored, and a
 // manual edit or an older row could violate the type, so reads check the shape the DTOs
 // enforce on write — the same reasoning as user-settings' parseSchedule.
-
-/** The timer a new focus block starts with, used when a stored timer is unreadable. */
-export const DEFAULT_FOCUS_TIMER: Readonly<FocusTimer> = { prep: 10, set: 45, rest: 60 };
 
 type Json = Record<string, unknown>;
 
@@ -85,16 +84,17 @@ function parseRecord<T>(value: unknown, keep: (item: unknown) => item is T): Rec
   return out;
 }
 
-/** A stored day state, or the empty state when it does not read as one. */
+/**
+ * A stored day state, field by field: an unreadable field falls back to its empty value
+ * without discarding the rest, so a retired placement value keeps the user's trims and picks.
+ */
 export function parseFocusDayState(value: unknown): FocusDayState {
-  if (!isObject(value) || !isOneOf(FOCUS_PLACEMENTS, value.placement)) {
-    return { ...EMPTY_FOCUS_DAY_STATE };
-  }
+  if (!isObject(value)) return emptyFocusDayState();
   return {
     modes: parseRecord(value.modes, (item): item is FocusSelection => isOneOf(FOCUS_SELECTIONS, item)),
     picks: parseRecord(value.picks, isStringArray),
     trims: parseRecord(value.trims, isStringArray),
-    placement: value.placement,
+    placement: isOneOf(FOCUS_PLACEMENTS, value.placement) ? value.placement : DEFAULT_FOCUS_PLACEMENT,
     order: isStringArray(value.order) ? value.order : null,
     dismissed: value.dismissed === true,
   };

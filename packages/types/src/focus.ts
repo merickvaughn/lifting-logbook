@@ -171,15 +171,19 @@ export interface FocusDayState {
 /** The daily focus guide when the user has not set one, as in the prototype. */
 export const DEFAULT_FOCUS_BUDGET: Readonly<FocusBudget> = { sets: 9, minutes: 20 };
 
-/** A day state with no adjustments: what a workout reads as before anything is saved. */
-export const EMPTY_FOCUS_DAY_STATE: Readonly<FocusDayState> = {
-  modes: {},
-  picks: {},
-  trims: {},
-  placement: 'after',
-  order: null,
-  dismissed: false,
-};
+/** The timer a new focus block starts with, as in the prototype. */
+export const DEFAULT_FOCUS_TIMER: Readonly<FocusTimer> = { prep: 10, set: 45, rest: 60 };
+
+/** Where focus work sits on a workout until the user moves it, as in the prototype. */
+export const DEFAULT_FOCUS_PLACEMENT: FocusPlacement = 'after';
+
+/**
+ * A day state with no adjustments: what a workout reads as before anything is saved. A
+ * fresh object on every call, so no caller can mutate another's.
+ */
+export function emptyFocusDayState(): FocusDayState {
+  return { modes: {}, picks: {}, trims: {}, placement: DEFAULT_FOCUS_PLACEMENT, order: null, dismissed: false };
+}
 
 /** A focus block as the API returns it, with its derived status and date range. */
 export interface FocusBlockResponse extends FocusBlock {

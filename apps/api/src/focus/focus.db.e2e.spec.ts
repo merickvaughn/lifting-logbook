@@ -11,14 +11,14 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { PrismaClient } from '@prisma/client';
-import { defaultFocusPool } from '@lifting-logbook/core';
+import { defaultFocusPool, defaultPoolEntry } from '@lifting-logbook/core';
 import {
-  EMPTY_FOCUS_DAY_STATE,
   FocusBlockResponse,
   FocusBlockSummaryResponse,
   FocusDayPlanResponse,
   FocusDayState,
   FocusPoolEntry,
+  emptyFocusDayState,
 } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
@@ -37,22 +37,11 @@ const TODAY = '2026-10-25';
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
 const OWNER_DATABASE_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;
 const describeOrSkip = APP_ROLE_URL && OWNER_DATABASE_URL ? describe : describe.skip;
+// Only read inside the guarded describe, so the '' fallback never runs (as in rls.db.e2e.spec.ts).
+const OWNER_URL = OWNER_DATABASE_URL ?? '';
 
 function entry(lift: string, overrides: Partial<FocusPoolEntry> = {}): FocusPoolEntry {
-  return {
-    lift,
-    include: 'auto',
-    ruleLift: '',
-    swapTo: '',
-    sets: 3,
-    repsLow: 10,
-    repsHigh: 12,
-    weight: 25,
-    trainingMax: 40,
-    percent: 65,
-    rpe: 8,
-    ...overrides,
-  };
+  return { ...defaultPoolEntry(lift), ...overrides };
 }
 
 function blockBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -99,7 +88,7 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
   beforeAll(async () => {
     // Allowed by jest.env.setup.js Proxy because value === LIFTING_TC_DATABASE_URL.
     process.env.DATABASE_URL = APP_ROLE_URL;
-    prisma = new PrismaClient({ datasources: { db: { url: OWNER_DATABASE_URL } } });
+    prisma = new PrismaClient({ datasources: { db: { url: OWNER_URL } } });
     await cleanUsers(prisma);
 
     app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), { logger: false });
@@ -205,7 +194,7 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
   it('PUT /focus-state upserts one row per workout and keeps users apart', async () => {
     const url = `/programs/${PROGRAM}/workouts/1/focus-state`;
     const state: FocusDayState = {
-      ...EMPTY_FOCUS_DAY_STATE,
+      ...emptyFocusDayState(),
       trims: { [blockId]: ['Rope Pushdown'] },
       placement: 'before',
     };
@@ -215,7 +204,7 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ program: PROGRAM, macrocycleNum: 1, workoutNum: 1 });
     expect(rows[0]?.state).toEqual({ ...state, dismissed: true });
-    expect((await other('GET', url)).json()).toEqual(EMPTY_FOCUS_DAY_STATE);
+    expect((await other('GET', url)).json()).toEqual(emptyFocusDayState());
   });
 
   it('GET /focus plans the workout from the stored block, guide and day state', async () => {

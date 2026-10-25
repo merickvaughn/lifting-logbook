@@ -13,6 +13,7 @@ import type {
   FocusDayPlanResponse,
   FocusDayState,
   FocusSettingsResponse,
+  ReorderFocusBlocksRequest,
   MacrocycleDashboardResponse,
   ImportCommitResponse,
   ImportError,
@@ -607,11 +608,13 @@ export function createApiClient(config: ApiClientConfig) {
     deleteFocusBlock(id: string): Promise<void> {
       return requestVoidIdempotent(`/focus/blocks/${enc(id)}`, { method: 'DELETE', cache: 'no-store' });
     },
+    // `ids`: every focus block that has not ended on `today`, highest priority first.
     reorderFocusBlocks(ids: string[], today: string): Promise<FocusBlockResponse[]> {
+      const body: ReorderFocusBlocksRequest = { ids };
       return request(`/focus/blocks/order?today=${enc(today)}`, {
         method: 'PUT',
         headers: JSON_HEADERS,
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify(body),
         cache: 'no-store',
       });
     },

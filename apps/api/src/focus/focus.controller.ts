@@ -16,7 +16,9 @@ import {
 } from '@nestjs/common';
 import {
   blockRange,
+  blockStatus,
   buildMuscleTargetResolver,
+  expandRollovers,
   nextStart,
   parseIsoDate,
   planFocusDay,
@@ -26,13 +28,14 @@ import {
   type MuscleOverride,
 } from '@lifting-logbook/core';
 import {
-  EMPTY_FOCUS_DAY_STATE,
+  FocusBlock,
   FocusBlockResponse,
   FocusBlockSummaryResponse,
   FocusDayPlanResponse,
   FocusDayState,
   FocusPlanGroupResponse,
   FocusSettingsResponse,
+  emptyFocusDayState,
 } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
@@ -48,8 +51,8 @@ import {
   UpdateFocusBlockDto,
 } from './focus-block.dto';
 import { FocusDayStateDto } from './focus-day-state.dto';
+import { currentMacrocycleOrFirst } from '../programs/workout-day.util';
 import {
-  currentMacrocycleNum,
   loadFocusBlocks,
   loadFocusWorkoutContext,
   parseIsoDateParam,
@@ -83,7 +86,11 @@ export class FocusController {
     parseIsoDateParam('start', dto.start);
     const { focus } = await this.factory.forUser(user);
     const id = randomUUID();
-    const priority = dto.priority ?? (await focus.listBlocks()).reduce((max, b) => Math.max(max, b.priority), 0) + 1;
+    // Below every block that still matters: ended blocks keep their last priority, which
+    // nothing reads again, so they must not push new priorities up forever.
+    const priority =
+      dto.priority ??
+      notEnded(await focus.listBlocks(), today).reduce((max, b) => Math.max(max, b.priority), 0) + 1;
     const created = await focus.createBlock({
       id,
       series: dto.series ?? id,
@@ -103,7 +110,11 @@ export class FocusController {
     return toFocusBlockResponse(created, today);
   }
 
-  /** Sets every block's priority from its position in `ids`, which must list each block once. */
+  /**
+   * Sets priorities from positions in `ids`, which must list every focus block that is not
+   * ended on `today` exactly once. Ended blocks are left alone: priority only orders the
+   * blocks a workout can still use, and the ended ones accumulate without bound.
+   */
   @Put('blocks/order')
   async reorder(
     @Body() dto: ReorderFocusBlocksDto,
@@ -112,13 +123,14 @@ export class FocusController {
   ): Promise<FocusBlockResponse[]> {
     const today = parseToday(todayParam);
     const { focus } = await this.factory.forUser(user);
-    const current = new Set((await focus.listBlocks()).map((block) => block.id));
+    // Materialized first, so a successor due today is one of the blocks to order.
+    const current = new Set(notEnded(await loadFocusBlocks(focus, today), today).map((block) => block.id));
     const listed = new Set(dto.ids);
     if (listed.size !== dto.ids.length || listed.size !== current.size || dto.ids.some((id) => !current.has(id))) {
-      throw new BadRequestException('ids must list every focus block exactly once');
+      throw new BadRequestException('ids must list every focus block that has not ended, exactly once');
     }
     await focus.setPriorities(dto.ids.map((id, index) => ({ id, priority: index + 1 })));
-    const blocks = await loadFocusBlocks(focus, today);
+    const blocks = await focus.listBlocks();
     return blocks.map((block) => toFocusBlockResponse(block, today));
   }
 
@@ -149,9 +161,9 @@ export class FocusController {
   }
 
   /**
-   * Deletes a focus block. A predecessor in its series that would auto-roll into it is set
-   * to prompt instead, so cancelling a queued successor declines it rather than letting the
-   * next read recreate it — the prototype's Cancel (core's `expandRollovers`).
+   * Deletes a focus block. Any predecessor in its series that the block was keeping from
+   * auto-rolling is set to prompt, so cancelling a queued block declines the roll rather
+   * than letting the next read create a successor in its place — the prototype's Cancel.
    */
   @Delete('blocks/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -159,14 +171,12 @@ export class FocusController {
     const { focus } = await this.factory.forUser(user);
     const block = await focus.getBlock(id);
     if (!block) throw new FocusBlockNotFoundError(id);
-    const predecessors = (await focus.listBlocks()).filter(
-      (other) =>
-        other.id !== block.id &&
-        other.series === block.series &&
-        other.onEnd === 'autoroll' &&
-        nextStart(other) === block.start,
-    );
-    for (const predecessor of predecessors) {
+    const series = (await focus.listBlocks()).filter((other) => other.series === block.series);
+    const remaining = series.filter((other) => other.id !== block.id);
+    // Ask core's own rule which rolls the block was covering: owed without it, not with it.
+    const covered = (predecessor: FocusBlock) =>
+      owesRoll(predecessor, remaining) && !owesRoll(predecessor, series);
+    for (const predecessor of remaining.filter(covered)) {
       await focus.updateBlock(predecessor.id, { onEnd: 'prompt' });
     }
     await focus.deleteBlock(id);
@@ -221,8 +231,8 @@ export class FocusWorkoutController {
   ): Promise<FocusDayState> {
     const workoutNum = parseWorkoutNum(workoutNumParam);
     const repos = await this.factory.forUser(user);
-    const macrocycleNum = await currentMacrocycleNum(repos, program);
-    return (await repos.focus.getDayState(program, macrocycleNum, workoutNum)) ?? emptyDayState();
+    const { macrocycleNum } = await currentMacrocycleOrFirst(repos.macrocycleDashboard, program);
+    return (await repos.focus.getDayState(program, macrocycleNum, workoutNum)) ?? emptyFocusDayState();
   }
 
   @Put('focus-state')
@@ -234,7 +244,7 @@ export class FocusWorkoutController {
   ): Promise<FocusDayState> {
     const workoutNum = parseWorkoutNum(workoutNumParam);
     const repos = await this.factory.forUser(user);
-    const macrocycleNum = await currentMacrocycleNum(repos, program);
+    const { macrocycleNum } = await currentMacrocycleOrFirst(repos.macrocycleDashboard, program);
     return repos.focus.saveDayState(program, macrocycleNum, workoutNum, {
       modes: { ...dto.modes },
       picks: { ...dto.picks },
@@ -265,14 +275,12 @@ export class FocusWorkoutController {
       loadFocusBlocks(repos.focus, today),
       repos.focus.getBudget(),
       repos.focus.getDayState(program, context.macrocycleNum, workoutNum),
-      // Only planned lifts are ever resolved: overlap asks whether a planned lift trains
-      // the area. One read per planned lift — a workout plans a handful.
-      Promise.all(context.plannedLifts.map((lift) => repos.liftMetadata.getMetadata(lift))),
+      // All of the user's rows, as buildMuscleTargetResolver requires: it maps legacy
+      // URL-encoded rows onto their real names (#1017).
+      repos.liftMetadata.listMetadata(),
     ]);
-    const overrides: MuscleOverride[] = metadata.flatMap((meta) =>
-      meta ? [{ lift: meta.lift, muscleGroups: meta.muscleGroups }] : [],
-    );
-    const dayState = savedState ?? emptyDayState();
+    const overrides: MuscleOverride[] = metadata.map((meta) => ({ lift: meta.lift, muscleGroups: meta.muscleGroups }));
+    const dayState = savedState ?? emptyFocusDayState();
     const plan = planFocusDay({
       blocks,
       plannedLifts: context.plannedLifts,
@@ -302,8 +310,18 @@ export class FocusWorkoutController {
   }
 }
 
-function emptyDayState(): FocusDayState {
-  return structuredClone(EMPTY_FOCUS_DAY_STATE);
+/** A date after every block's range, so a block not started yet counts as started. */
+const AFTER_EVERY_BLOCK = '9999-12-31';
+
+/** True when core's `expandRollovers` gives `predecessor` a successor, among `blocks`. */
+function owesRoll(predecessor: FocusBlock, blocks: readonly FocusBlock[]): boolean {
+  const start = nextStart(predecessor);
+  return expandRollovers([predecessor, ...blocks.filter((b) => b.id !== predecessor.id)], AFTER_EVERY_BLOCK, () => [])
+    .some((successor) => successor.series === predecessor.series && successor.start === start);
+}
+
+function notEnded(blocks: readonly FocusBlock[], today: string): FocusBlock[] {
+  return blocks.filter((block) => blockStatus(block, today) !== 'ended');
 }
 
 function toGroupResponse(group: FocusGroup, today: string, increment: number): FocusPlanGroupResponse {

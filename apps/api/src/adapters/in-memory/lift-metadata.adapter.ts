@@ -7,6 +7,10 @@ export class InMemoryLiftMetadataRepository implements ILiftMetadataRepository {
     return this.store.get(lift) ?? null;
   }
 
+  async listMetadata(): Promise<LiftMetadata[]> {
+    return [...this.store.values()];
+  }
+
   async upsertMetadata(
     lift: string,
     patch: { muscleGroups?: string[]; substitutions?: string[]; foundational?: boolean },

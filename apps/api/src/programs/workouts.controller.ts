@@ -6,23 +6,15 @@ import {
   Logger,
   Param,
 } from '@nestjs/common';
-import {
-  LiftRecord,
-  applyLiftOverrides,
-  programLengthWeeks,
-  specRowsForWorkoutDay,
-} from '@lifting-logbook/core';
+import { LiftRecord } from '@lifting-logbook/core';
 import { WorkoutResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
-import { ProgramNotFoundError, WorkoutNotFoundError } from '../ports/errors';
+import { WorkoutNotFoundError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import {
-  isValidWorkoutNum,
-  toWorkoutResponse,
-  workoutKeyForWorkoutNum,
-} from './mappers';
+import { isValidWorkoutNum, toWorkoutResponse } from './mappers';
+import { currentMacrocycleOrFirst, resolveWorkoutDay } from './workout-day.util';
 
 @Controller('programs/:program')
 export class WorkoutsController {
@@ -45,11 +37,7 @@ export class WorkoutsController {
     const { workout, macrocycleDashboard, macrocycleScheduledWorkout, liftingProgramSpec, workoutDateOverride, workoutLiftOverride, workoutSkipOverride } =
       await this.factory.forUser(user);
     const [dashboard, spec] = await Promise.all([
-      // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
-      macrocycleDashboard.getMacrocycleDashboard(program).catch((err: unknown) => {
-        if (err instanceof ProgramNotFoundError) return { macrocycleNum: 1 };
-        throw err;
-      }),
+      currentMacrocycleOrFirst(macrocycleDashboard, program),
       liftingProgramSpec.getProgramSpec(program),
     ]);
     const [records, overrideDate, liftOverrides, scheduledWorkouts, skippedNums] = await Promise.all([
@@ -74,33 +62,18 @@ export class WorkoutsController {
     const scheduledWorkout = scheduledWorkouts.find((s) => s.workoutNum === workoutNum);
     const scheduledDate = scheduledWorkout?.scheduledDate;
 
-    // The workout's day is its (week, offset) key: workoutKeyForWorkoutNum tiles the
-    // stored block to the program's canonical length and indexes the global
-    // workoutNum into the ordered workout days, so week-2+ workouts of a tiled
-    // program (Leangains 12w, 5-3-1 12w) resolve (#680, #740). It is the numbering
-    // the Macrocycle Dashboard card uses, in both modes: a schedule only dates the
-    // program's days, so the scheduled row gives this workout its date, never its
-    // week (#1023). The key's `offset` picks the day's lifts below and feeds the
-    // no-schedule detail date (issues #745, #1014).
-    const workoutKey = workoutKeyForWorkoutNum(spec, workoutNum, program);
-    // Only a scheduled row past the program's last day has no key, and its own week
-    // is then the only one it has. saveScheduledDates writes none since #1023, so it
-    // is from a macrocycle scheduled before that, or a program that lost days mid-macrocycle.
-    // Undefined means workoutNum is past the *full* canonical length.
-    const week = workoutKey?.week ?? scheduledWorkout?.weekNum;
-    if (week === undefined) {
-      throw new BadRequestException(
-        `workoutNum ${workoutNum} exceeds the program's ${programLengthWeeks(program, spec)}-week schedule`,
-      );
-    }
-
-    // Planned lifts are this workout's own day: the block week its program week
-    // tiles from, at its key's offset — the helper the web resolves each lift's
-    // prescription with and the Macrocycle Dashboard builds its cards from. Filtering on
-    // the week alone listed every day's lifts on every day (issue #1014). A lift
-    // the day repeats is still listed once (#1027). A scheduled workout past the
-    // program's last day has no key, and so no day to plan; any sets logged
-    // against it are still listed.
+    // The workout's day and planned lifts (see resolveWorkoutDay): shared with the focus
+    // plan, so focus overlap is judged against the lifts listed here. The key's `offset`
+    // feeds the no-schedule detail date (issues #745, #1014). A scheduled workout past
+    // the program's last day has no key, and so no day to plan; any sets logged against
+    // it are still listed.
+    const { workoutKey, week, planned, renamed, removed } = resolveWorkoutDay(
+      program,
+      workoutNum,
+      spec,
+      scheduledWorkouts,
+      liftOverrides,
+    );
     if (!workoutKey) {
       // Structured, so it is a plain `| json` query in Loki. It fires only when such a
       // workout is opened directly, since the web never links to one. The macrocycle
@@ -110,17 +83,12 @@ export class WorkoutsController {
         'Scheduled workout has no program day, so it plans no lifts (#1023)',
       );
     }
-    const dayRows = workoutKey
-      ? specRowsForWorkoutDay(spec, workoutKey.week, workoutKey.offset)
-      : [];
-    const specLifts = [...new Set(dayRows.map((s) => s.lift))];
 
     // One pass decides both the plan and where each logged set belongs, so a swap
     // cannot be followed through its chain for one and a single hop for the other.
     // Removed lifts' records are dropped here; replaced lifts' are regrouped inside
     // the mapper (`renamedLifts`) rather than renamed on the records, so each set's
     // `id` is still built from the row as stored (issue #978).
-    const { planned, renamed, removed } = applyLiftOverrides(specLifts, liftOverrides);
     const adjustedRecords = records.filter((r) => !removed.has(r.lift));
 
     // macrocycleDate is absent only on the ProgramNotFoundError fallback ({ macrocycleNum: 1 }),

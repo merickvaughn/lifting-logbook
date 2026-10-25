@@ -58,8 +58,13 @@ Five questions needed an answer:
    that ended while nobody opened the app still gets its successor on the next read. A
    successor's pool is `defaultFocusPool(area)`: the first catalog accessory lifts with a
    primary muscle in the area. **Declining** a successor is deleting it: `DELETE
-   /focus/blocks/:id` also sets the predecessor that would roll into it to `onEnd: 'prompt'`,
-   so the next read does not recreate it.
+   /focus/blocks/:id` also sets to `onEnd: 'prompt'` every predecessor the deleted block was
+   keeping from rolling, so the next read does not create a successor in its place. "Keeping
+   from rolling" is decided by `expandRollovers` itself (owed without the block, not with it),
+   so a user-queued block that starts mid-period is handled the same as an auto-created one.
+   **Priority** orders only blocks that have not ended: a reorder lists exactly those, and a
+   new block goes below them. Ended blocks keep their last priority, which nothing reads, so
+   their unbounded accumulation never limits a reorder.
 
 5. **The client sends `today`.** Every endpoint whose answer depends on the day takes a
    required `?today=YYYY-MM-DD` query parameter: the server cannot know the user's time zone,

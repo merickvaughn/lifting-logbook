@@ -1,20 +1,20 @@
 import { randomUUID } from 'crypto';
 import { BadRequestException } from '@nestjs/common';
 import {
-  applyLiftOverrides,
   blockRange,
   blockStatus,
   defaultFocusPool,
   expandRollovers,
   parseIsoDate,
-  programLengthWeeks,
-  specRowsForWorkoutDay,
 } from '@lifting-logbook/core';
 import { DEFAULT_WEIGHT_INCREMENT, FocusBlock, FocusBlockResponse } from '@lifting-logbook/types';
-import { ProgramNotFoundError } from '../ports/errors';
 import { RepositoryBundle } from '../ports/factory';
 import { IFocusRepository } from '../ports/IFocusRepository';
-import { isValidWorkoutNum, workoutKeyForWorkoutNum } from '../programs/mappers';
+import { isValidWorkoutNum } from '../programs/mappers';
+import { currentMacrocycleOrFirst, resolveWorkoutDay } from '../programs/workout-day.util';
+
+/** Matches `CreateLiftRecordDto.workoutNum`'s bound, and keeps the value inside INT4. */
+const MAX_WORKOUT_NUM = 1000;
 
 /**
  * Validates the `today` query parameter: the user's calendar day as an ISO date. The server
@@ -40,8 +40,8 @@ export function parseIsoDateParam(name: string, value: string | undefined): stri
 
 export function parseWorkoutNum(value: string): number {
   const workoutNum = Number(value);
-  if (!/^\d+$/.test(value) || !isValidWorkoutNum(workoutNum)) {
-    throw new BadRequestException('workoutNum must be a positive integer');
+  if (!/^\d+$/.test(value) || !isValidWorkoutNum(workoutNum) || workoutNum > MAX_WORKOUT_NUM) {
+    throw new BadRequestException(`workoutNum must be an integer from 1 to ${MAX_WORKOUT_NUM}`);
   }
   return workoutNum;
 }
@@ -68,16 +68,6 @@ export async function loadFocusBlocks(focus: IFocusRepository, today: string): P
   return focus.listBlocks();
 }
 
-/** The macrocycle a program's workout routes address: its current one, or 1 before any. */
-export async function currentMacrocycleNum(repos: RepositoryBundle, program: string): Promise<number> {
-  // fallback-covered-by: apps/api/src/focus/focus.e2e.spec.ts
-  const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program).catch((err: unknown) => {
-    if (err instanceof ProgramNotFoundError) return { macrocycleNum: 1 };
-    throw err;
-  });
-  return dashboard.macrocycleNum;
-}
-
 export interface FocusWorkoutContext {
   macrocycleNum: number;
   /** The day's planned lifts after overrides, by name. */
@@ -87,37 +77,25 @@ export interface FocusWorkoutContext {
 }
 
 /**
- * What a workout's focus plan needs from the program: the day's planned lifts and the
- * plate increment. The planned lifts follow WorkoutsController.getWorkout — the workout's
- * own program day (`workoutKeyForWorkoutNum` → `specRowsForWorkoutDay`), deduped, then
- * `applyLiftOverrides` — so focus overlap is judged against the lifts the workout page lists.
+ * What a workout's focus plan needs from the program: the macrocycle, the day's planned
+ * lifts and the plate increment. The planned lifts come from `resolveWorkoutDay`, the same
+ * derivation `WorkoutsController.getWorkout` lists, so focus overlap is judged against the
+ * lifts the workout page shows.
  */
 export async function loadFocusWorkoutContext(
   repos: RepositoryBundle,
   program: string,
   workoutNum: number,
 ): Promise<FocusWorkoutContext> {
-  const macrocycleNum = await currentMacrocycleNum(repos, program);
-  const [spec, liftOverrides, settings, customLifts] = await Promise.all([
+  const { macrocycleNum } = await currentMacrocycleOrFirst(repos.macrocycleDashboard, program);
+  const [spec, liftOverrides, scheduledWorkouts, settings, customLifts] = await Promise.all([
     repos.liftingProgramSpec.getProgramSpec(program),
     repos.workoutLiftOverride.getOverrides(program, macrocycleNum, workoutNum),
+    repos.macrocycleScheduledWorkout.getScheduledWorkouts(program, macrocycleNum),
     repos.userSettings.getSettings(),
     repos.customLift.list(),
   ]);
-
-  const workoutKey = workoutKeyForWorkoutNum(spec, workoutNum, program);
-  if (!workoutKey) {
-    // As in getWorkout: a scheduled row past the program's last day is a real workout
-    // with no program day, so it plans no lifts; anything else is out of range.
-    const scheduled = await repos.macrocycleScheduledWorkout.getScheduledWorkouts(program, macrocycleNum);
-    if (!scheduled.some((s) => s.workoutNum === workoutNum)) {
-      throw new BadRequestException(
-        `workoutNum ${workoutNum} exceeds the program's ${programLengthWeeks(program, spec)}-week schedule`,
-      );
-    }
-  }
-  const dayRows = workoutKey ? specRowsForWorkoutDay(spec, workoutKey.week, workoutKey.offset) : [];
-  const { planned } = applyLiftOverrides([...new Set(dayRows.map((row) => row.lift))], liftOverrides);
+  const { dayRows, planned } = resolveWorkoutDay(program, workoutNum, spec, scheduledWorkouts, liftOverrides);
 
   // A lift can be stored by a custom lift's uuid; focus pools and rules name lifts.
   const nameById = new Map(customLifts.map((lift) => [lift.id, lift.name] as const));
