@@ -115,7 +115,7 @@
 .undo {
   padding: var(--space-2) var(--space-4);
   background: var(--color-accent);
-  color: var(--color-accent-text);
+  color: var(--color-on-accent);
   border: none;
   border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
