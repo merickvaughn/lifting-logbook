@@ -147,8 +147,8 @@ export interface FocusDayState {
   modes: Record<string, FocusSelection>;
   /** Lifts chosen in `pick` mode, by block id. */
   picks: Record<string, string[]>;
-  /** Lifts trimmed for this workout, as `${blockId}|${lift}`. */
-  trims: string[];
+  /** Lifts trimmed for this workout, by block id. */
+  trims: Record<string, string[]>;
   placement: FocusPlacement;
   /** Interleaved order of lift ids, when the user has reordered. */
   order: string[] | null;

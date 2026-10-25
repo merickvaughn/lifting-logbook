@@ -58,33 +58,50 @@ export function trainsArea(lift: string, area: FocusArea, resolveMuscles: FocusM
   return resolveMuscles(lift).primary.some((muscle) => groups.includes(muscle));
 }
 
+/** A record's own value for `key` — never one inherited from `Object.prototype`. */
+function own<T>(record: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+  return record && Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+}
+
+/** True when a `rule` entry's lift is planned today, so the rule keeps it out. */
+function ruleExcludes(entry: FocusPoolEntry, plannedLifts: readonly string[]): boolean {
+  return entry.include === 'rule' && entry.ruleLift !== '' && plannedLifts.includes(entry.ruleLift);
+}
+
 /**
  * Picks a block's lifts for one workout.
  *
  * Include rules run first: `off` and `swap` lifts are never selected directly, and a `rule`
  * lift drops out when its `ruleLift` is planned. The selection mode then chooses among the
- * rest, with `always` lifts on top of `rotate`, `fixed` and `pick`. Rotation cycles by
- * `dayIndex`, the workout's index within the week. Last, when a planned lift trains the
- * area, the overlap mode applies: Skip drops everything, Reduce takes one set off each
- * lift (never below 1), Swap replaces each lift with its `swapTo` (keeping the first of any
- * duplicates), and Do it anyway changes nothing.
+ * rest, with `always` lifts on top of `rotate`, `fixed` and `pick`. Last, when a planned
+ * lift's primary muscles train the area, the overlap mode applies: Skip drops everything,
+ * Reduce takes one set off each lift (never below 1), Swap replaces each lift with its
+ * `swapTo` (keeping the first of any duplicates, and keeping the original when the target
+ * is `off` or excluded by its own rule today), and Do it anyway changes nothing.
+ *
+ * Rotate picks the flex lift at `rotationIndex` modulo the flex count. Pass a counter that
+ * keeps increasing across weeks — the workout's number since the block started — so a pool
+ * larger than the workouts in a week still cycles through every lift. The workout's index
+ * within its week repeats each week instead.
+ *
+ * Lift names are compared exactly; the caller passes planned lifts and pool lifts by name.
  */
 export function selectForDay(
   block: FocusBlock,
   plannedLifts: readonly string[],
-  dayIndex: number,
+  rotationIndex: number,
   dayState: Pick<FocusDayState, 'modes' | 'picks'> | undefined,
   resolveMuscles: FocusMuscleResolver,
 ): FocusSelectionResult {
-  const mode = dayState?.modes[block.id] ?? block.selection;
-  const overlapBy = plannedLifts.filter((lift) => trainsArea(lift, block.area, resolveMuscles));
+  const mode = own(dayState?.modes, block.id) ?? block.selection;
+  const overlapBy = [...new Set(plannedLifts.filter((lift) => trainsArea(lift, block.area, resolveMuscles)))];
   const skipped: FocusSkippedLift[] = [];
   const eligible: FocusPoolEntry[] = [];
   let suggestions: FocusPoolEntry[] = [];
 
   for (const entry of block.pool) {
     if (entry.include === 'off' || entry.include === 'swap') continue;
-    if (entry.include === 'rule' && entry.ruleLift && plannedLifts.includes(entry.ruleLift)) {
+    if (ruleExcludes(entry, plannedLifts)) {
       skipped.push({ lift: entry.lift, reason: 'rule', detail: entry.ruleLift });
       continue;
     }
@@ -94,29 +111,40 @@ export function selectForDay(
   const always = eligible.filter((entry) => entry.include === 'always');
   const flex = eligible.filter((entry) => entry.include !== 'always');
   let chosen: FocusPoolEntry[];
-  if (mode === 'rotate') {
-    chosen = [...always];
-    // Undefined when the pool has no flex lifts (the index is NaN).
-    const pick = flex[((dayIndex % flex.length) + flex.length) % flex.length];
-    if (pick) {
-      chosen.push(pick);
-      for (const entry of flex) {
-        if (entry !== pick) skipped.push({ lift: entry.lift, reason: 'rotation', detail: '' });
+  switch (mode) {
+    case 'rotate': {
+      chosen = [...always];
+      if (flex.length > 0) {
+        const pick = flex[((rotationIndex % flex.length) + flex.length) % flex.length];
+        for (const entry of flex) {
+          if (entry === pick) chosen.push(entry);
+          else skipped.push({ lift: entry.lift, reason: 'rotation', detail: '' });
+        }
       }
+      break;
     }
-  } else if (mode === 'fixed') {
-    chosen = [...always];
-    const [first, ...rest] = flex;
-    if (first) {
-      chosen.push(first);
-      for (const entry of rest) skipped.push({ lift: entry.lift, reason: 'fixed', detail: first.lift });
+    case 'fixed': {
+      chosen = [...always];
+      const [first, ...rest] = flex;
+      if (first) {
+        chosen.push(first);
+        for (const entry of rest) skipped.push({ lift: entry.lift, reason: 'fixed', detail: first.lift });
+      }
+      break;
     }
-  } else if (mode === 'pick') {
-    const picks = dayState?.picks[block.id] ?? [];
-    chosen = eligible.filter((entry) => entry.include === 'always' || picks.includes(entry.lift));
-    suggestions = flex;
-  } else {
-    chosen = eligible;
+    case 'pick': {
+      const picks = own(dayState?.picks, block.id) ?? [];
+      chosen = eligible.filter((entry) => entry.include === 'always' || picks.includes(entry.lift));
+      suggestions = flex;
+      break;
+    }
+    case 'rules':
+      chosen = eligible;
+      break;
+    default: {
+      const unknown: never = mode;
+      throw new Error(`Unknown focus selection mode: ${String(unknown)}`);
+    }
   }
 
   let items: FocusItem[] = chosen.map((entry) => ({ entry, lift: entry.lift, sets: entry.sets }));
@@ -128,15 +156,16 @@ export function selectForDay(
       for (const item of items) skipped.push({ lift: item.lift, reason: 'overlap', detail: who });
       items = [];
     } else if (block.overlap === 'reduce') {
-      items = items.map((item) => ({ ...item, sets: Math.max(1, item.sets - 1), reducedFrom: item.sets }));
+      items = items.map((item) =>
+        item.sets > 1 ? { ...item, sets: item.sets - 1, reducedFrom: item.sets } : item,
+      );
     } else if (block.overlap === 'swap') {
       const seen = new Set<string>();
       items = items
         .map((item): FocusItem => {
-          const target = item.entry.swapTo
-            ? block.pool.find((entry) => entry.lift === item.entry.swapTo)
-            : undefined;
-          return target
+          const target = block.pool.find((entry) => entry.lift === item.entry.swapTo);
+          const usable = target && target.include !== 'off' && !ruleExcludes(target, plannedLifts);
+          return usable
             ? { entry: target, lift: target.lift, sets: target.sets, swappedFrom: item.lift }
             : item;
         })

@@ -1,9 +1,6 @@
 import type { FocusBlock, FocusPoolEntry } from '@lifting-logbook/types';
 import { MROUND } from '../constants/config';
 
-/** How many pounds a double-progression lift goes up once every set hits the top of the range. */
-export const FOCUS_DOUBLE_PROGRESSION_STEP = 5;
-
 export type FocusPrescription =
   | {
       progression: 'double';
@@ -22,20 +19,22 @@ export type FocusPrescription =
  *
  * Double and fixed progression use the entry's weight as entered, never rounded. A percent
  * of training max is a computed per-workout weight, so it rounds to the nearest loadable
- * plate combination at `increment` (docs/standards/training-max-precision.md, rule 3).
+ * plate combination at the program's configured `increment`
+ * (docs/standards/training-max-precision.md, rule 3).
  */
 export function prescribe(
   block: Pick<FocusBlock, 'progression'>,
   entry: FocusPoolEntry,
   sets: number,
-  increment = 2.5,
+  increment: number,
 ): FocusPrescription {
-  switch (block.progression) {
+  const progression = block.progression;
+  switch (progression) {
     case 'fixed':
-      return { progression: 'fixed', sets, reps: entry.repsHigh, weight: entry.weight };
+      return { progression, sets, reps: entry.repsHigh, weight: entry.weight };
     case 'tm':
       return {
-        progression: 'tm',
+        progression,
         sets,
         reps: entry.repsHigh,
         weight: MROUND((entry.trainingMax * entry.percent) / 100, increment),
@@ -43,15 +42,19 @@ export function prescribe(
         trainingMax: entry.trainingMax,
       };
     case 'rpe':
-      return { progression: 'rpe', sets, reps: entry.repsHigh, rpe: entry.rpe, repsInReserve: 10 - entry.rpe };
+      return { progression, sets, reps: entry.repsHigh, rpe: entry.rpe, repsInReserve: 10 - entry.rpe };
     case 'double':
       return {
-        progression: 'double',
+        progression,
         sets,
         repsLow: entry.repsLow,
         repsHigh: entry.repsHigh,
         weight: entry.weight,
         lastReps: entry.lastReps ?? null,
       };
+    default: {
+      const unknown: never = progression;
+      throw new Error(`Unknown focus progression: ${String(unknown)}`);
+    }
   }
 }

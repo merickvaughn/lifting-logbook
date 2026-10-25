@@ -12,11 +12,6 @@ export function focusLiftCostSec(sets: number, timer: FocusTimer): number {
   return focusDurationSec(sets, timer) + timer.rest;
 }
 
-/** The key a trim is stored under in {@link FocusDayState.trims}. */
-export function focusTrimKey(blockId: string, lift: string): string {
-  return `${blockId}|${lift}`;
-}
-
 export interface FocusGroup {
   block: FocusBlock;
   /** Today's selection, with trimmed lifts removed from `items`. */
@@ -45,11 +40,12 @@ export interface FocusDayPlan {
 export interface PlanFocusDayInput {
   blocks: readonly FocusBlock[];
   plannedLifts: readonly string[];
-  /** The workout's index within its week, for rotation. */
-  dayIndex: number;
+  /** Passed to {@link selectForDay} for rotation. */
+  rotationIndex: number;
   dayState?: Pick<FocusDayState, 'modes' | 'picks' | 'trims'>;
   budget: FocusBudget;
-  today: Date;
+  /** The user's calendar day, as an ISO date. */
+  today: string;
   resolveMuscles: FocusMuscleResolver;
 }
 
@@ -59,18 +55,19 @@ export interface PlanFocusDayInput {
  * suggestion is the last lift of the lowest-priority block that still has lifts.
  */
 export function planFocusDay(input: PlanFocusDayInput): FocusDayPlan {
-  const { blocks, plannedLifts, dayIndex, dayState, budget, today, resolveMuscles } = input;
-  const trims = dayState?.trims ?? [];
+  const { blocks, plannedLifts, rotationIndex, dayState, budget, today, resolveMuscles } = input;
   const groups: FocusGroup[] = blocks
     .filter((block) => blockStatus(block, today) === 'active')
     .sort((a, b) => a.priority - b.priority)
     .map((block) => {
-      const selection = selectForDay(block, plannedLifts, dayIndex, dayState, resolveMuscles);
-      const isTrimmed = (lift: string) => trims.includes(focusTrimKey(block.id, lift));
+      const selection = selectForDay(block, plannedLifts, rotationIndex, dayState, resolveMuscles);
+      const trims = dayState && Object.prototype.hasOwnProperty.call(dayState.trims, block.id)
+        ? dayState.trims[block.id] ?? []
+        : [];
       return {
         block,
-        selection: { ...selection, items: selection.items.filter((item) => !isTrimmed(item.lift)) },
-        trimmed: selection.items.filter((item) => isTrimmed(item.lift)).map((item) => item.lift),
+        selection: { ...selection, items: selection.items.filter((item) => !trims.includes(item.lift)) },
+        trimmed: selection.items.filter((item) => trims.includes(item.lift)).map((item) => item.lift),
       };
     });
 

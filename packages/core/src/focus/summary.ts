@@ -1,6 +1,6 @@
 import type { FocusBlock } from '@lifting-logbook/types';
 import type { LiftRecord } from '../models/LiftRecord';
-import { blockRange, startOfDay, toIsoDate } from './dates';
+import { blockRange, toIsoDate } from './dates';
 
 /** A pool lift's best set inside a block, beating its best before the block. */
 export interface FocusPr {
@@ -29,8 +29,13 @@ function beats(a: BestSet, b: BestSet): boolean {
 
 /**
  * Totals for a block from the user's lift records: every set of a pool lift dated inside
- * the block's range. A PR is a lift whose best set in the range beats its best set before
- * the range; a lift with no earlier history has nothing to beat, so it never counts as one.
+ * the block's range. A record's day is the UTC calendar day of its `date`, which is stored
+ * at UTC midnight. A PR is a lift whose best set in the range beats its best set before the
+ * range; a lift with no earlier history has nothing to beat, so it never counts as one.
+ *
+ * Records are matched to pool lifts by exact name, so the caller passes records whose
+ * `lift` holds the lift's name (not a custom lift's id). Records with an invalid date are
+ * ignored.
  */
 export function summarizeBlock(
   records: readonly LiftRecord[],
@@ -45,14 +50,16 @@ export function summarizeBlock(
   let volume = 0;
 
   for (const record of records) {
-    if (!poolLifts.has(record.lift)) continue;
-    const day = startOfDay(record.date).getTime();
-    if (day > end.getTime()) continue;
-    const best = day < start.getTime() ? bestBefore : bestDuring;
+    if (!poolLifts.has(record.lift) || Number.isNaN(record.date.getTime())) continue;
+    const day = toIsoDate(record.date);
+    // ISO dates compare correctly as strings.
+    if (day > end) continue;
+    const before = day < start;
+    const best = before ? bestBefore : bestDuring;
     const current = best.get(record.lift);
     if (!current || beats(record, current)) best.set(record.lift, record);
-    if (day < start.getTime()) continue;
-    days.add(toIsoDate(record.date));
+    if (before) continue;
+    days.add(day);
     sets += 1;
     volume += record.weight * record.reps;
   }

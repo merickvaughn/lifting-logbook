@@ -1,104 +1,90 @@
 import type { FocusBlock, FocusBlockStatus } from '@lifting-logbook/types';
 
-// Focus-block dates are calendar days, not instants: an ISO date string is read as local
-// midnight and every comparison is between local midnights, as in the prototype.
+// Focus-block dates are calendar days written as ISO date strings ('YYYY-MM-DD'), and so is
+// `today`: which calendar day it is for the user is the caller's call. The arithmetic runs
+// on UTC midnights, so no result depends on the host's time zone.
 
 const MS_PER_DAY = 86_400_000;
-const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const MONTH_LONG = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-];
+const MONTH_YEAR = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+const MONTH_DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 
 type BlockDates = Pick<FocusBlock, 'start' | 'period' | 'align'>;
 
-/** First and last day of a block, both inclusive, at local midnight. */
+/** First and last day of a block, both inclusive, as ISO dates. */
 export interface FocusRange {
-  start: Date;
-  end: Date;
+  start: string;
+  end: string;
 }
 
-/** `'2026-10-01'` → local midnight on that day. */
+/** `'2026-10-01'` → UTC midnight on that day. Throws on anything else, including '2026-02-30'. */
 export function parseIsoDate(iso: string): Date {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!match) throw new RangeError(`Not an ISO date: ${iso}`);
-  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const date = match ? utcDate(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : undefined;
+  // Round-tripping rejects a day the month doesn't have, which Date would roll forward.
+  if (!date || toIsoDate(date) !== iso) throw new RangeError(`Not an ISO date: ${iso}`);
+  return date;
 }
 
-/** Local calendar date → `'YYYY-MM-DD'`. */
+/** The UTC calendar day of `date` as `'YYYY-MM-DD'` — the day a UTC-midnight `LiftRecord.date` is for. */
 export function toIsoDate(date: Date): string {
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
+  return date.toISOString().slice(0, 10);
 }
 
-/** Local midnight on the same calendar day. */
-export function startOfDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+/** Day overflow rolls into the next month, as with `Date.UTC`. */
+function utcDate(year: number, month: number, day: number): Date {
+  return new Date(Date.UTC(year, month, day));
 }
 
 /**
  * A calendar-aligned block covers the whole month or quarter containing `start`. A custom
  * block runs one month or quarter from `start`, ending the day before the same date in the
- * following period.
+ * following period — or on that period's last day when it is shorter: a monthly block from
+ * Jan 31 ends Feb 28 (29 in a leap year), not on a rolled-over "Feb 30". Its successor
+ * starts Mar 1, so a series anchored late in a month drifts to the 1st.
  */
 export function blockRange(block: BlockDates): FocusRange {
   const s = parseIsoDate(block.start);
+  const year = s.getUTCFullYear();
+  const month = s.getUTCMonth();
   if (block.align === 'calendar') {
-    if (block.period === 'quarterly') {
-      const quarterMonth = Math.floor(s.getMonth() / 3) * 3;
-      return {
-        start: new Date(s.getFullYear(), quarterMonth, 1),
-        end: new Date(s.getFullYear(), quarterMonth + 3, 0),
-      };
-    }
-    return {
-      start: new Date(s.getFullYear(), s.getMonth(), 1),
-      end: new Date(s.getFullYear(), s.getMonth() + 1, 0),
-    };
+    const first = block.period === 'quarterly' ? Math.floor(month / 3) * 3 : month;
+    const months = block.period === 'quarterly' ? 3 : 1;
+    return { start: toIsoDate(utcDate(year, first, 1)), end: toIsoDate(utcDate(year, first + months, 0)) };
   }
-  const months = block.period === 'quarterly' ? 3 : 1;
-  return { start: s, end: new Date(s.getFullYear(), s.getMonth() + months, s.getDate() - 1) };
+  const target = month + (block.period === 'quarterly' ? 3 : 1);
+  const lastDayOfTarget = utcDate(year, target + 1, 0).getUTCDate();
+  const end = utcDate(year, target, Math.min(s.getUTCDate() - 1, lastDayOfTarget));
+  return { start: block.start, end: toIsoDate(end) };
 }
 
 /** "Q4 2026", "October 2026", or "Oct 12 – Nov 11" for a custom block. */
 export function rangeLabel(block: BlockDates): string {
   const { start, end } = blockRange(block);
+  const first = parseIsoDate(start);
   if (block.align === 'calendar') {
     return block.period === 'quarterly'
-      ? `Q${Math.floor(start.getMonth() / 3) + 1} ${start.getFullYear()}`
-      : `${MONTH_LONG[start.getMonth()]} ${start.getFullYear()}`;
+      ? `Q${Math.floor(first.getUTCMonth() / 3) + 1} ${first.getUTCFullYear()}`
+      : MONTH_YEAR.format(first);
   }
-  const short = (d: Date) => `${MONTH_SHORT[d.getMonth()]} ${d.getDate()}`;
-  return `${short(start)} – ${short(end)}`;
+  return `${MONTH_DAY.format(first)} – ${MONTH_DAY.format(parseIsoDate(end))}`;
 }
 
 /** Days from `today` to the block's last day: 0 on the last day, negative once ended. */
-export function daysLeft(block: BlockDates, today: Date): number {
-  return Math.round((blockRange(block).end.getTime() - startOfDay(today).getTime()) / MS_PER_DAY);
+export function daysLeft(block: BlockDates, today: string): number {
+  return (parseIsoDate(blockRange(block).end).getTime() - parseIsoDate(today).getTime()) / MS_PER_DAY;
 }
 
 /** ISO date of the day after the block ends — where a successor starts. */
 export function nextStart(block: BlockDates): string {
-  const { end } = blockRange(block);
-  return toIsoDate(new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1));
+  return toIsoDate(new Date(parseIsoDate(blockRange(block).end).getTime() + MS_PER_DAY));
 }
 
 /** Derived from dates; never stored. */
-export function blockStatus(block: BlockDates, today: Date): FocusBlockStatus {
-  const day = startOfDay(today).getTime();
+export function blockStatus(block: BlockDates, today: string): FocusBlockStatus {
+  parseIsoDate(today);
   const { start, end } = blockRange(block);
-  if (day < start.getTime()) return 'queued';
-  if (day > end.getTime()) return 'ended';
+  // ISO dates compare correctly as strings.
+  if (today < start) return 'queued';
+  if (today > end) return 'ended';
   return 'active';
 }
