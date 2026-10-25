@@ -110,6 +110,14 @@ describe("LIFT_CATALOG", () => {
       expect(patternsOf('cable-curl')).toEqual(['pull']);
       expect(patternsOf('leg-curl')).toEqual(['pull']);
     });
+
+    it("single-joint extensions keep a lone push; flies and core raises carry no tag", () => {
+      expect(patternsOf('rope-pushdown')).toEqual(['push']);
+      expect(patternsOf('skull-crusher')).toEqual(['push']);
+      expect(patternsOf('straight-arm-pulldown')).toEqual(['pull']);
+      expect(patternsOf('cable-fly')).toEqual([]);
+      expect(patternsOf('hanging-leg-raise')).toEqual([]);
+    });
   });
 
   describe("jointActions and complexity — spot checks", () => {
@@ -136,6 +144,34 @@ describe("LIFT_CATALOG", () => {
       expect(lift.classification).toBe('accessory');
       expect(lift.movementProfile.complexity).toBe('compound');
     });
+  });
+
+  describe("Focus work areas each have a default accessory pool (#1054)", () => {
+    // Local copy until #1055 exports FOCUS_AREA_MUSCLES from core.
+    const FOCUS_AREA_MUSCLES: Record<string, readonly string[]> = {
+      Shoulders: ['Front Delts', 'Side Delts', 'Rear Delts'],
+      Biceps: ['Biceps'],
+      Triceps: ['Triceps'],
+      Back: ['Lats', 'Upper Back', 'Traps', 'Lower Back'],
+      Chest: ['Chest'],
+      Calves: ['Calves'],
+      Glutes: ['Glutes'],
+      Core: ['Core'],
+    };
+
+    it("maps all eight areas", () => {
+      expect(Object.keys(FOCUS_AREA_MUSCLES)).toHaveLength(8);
+    });
+
+    it.each(Object.entries(FOCUS_AREA_MUSCLES))(
+      "%s has at least two accessory lifts with a primary muscle in its groups",
+      (_area, groups) => {
+        const pool = LIFT_CATALOG.filter(
+          (l) => l.classification === 'accessory' && l.muscles.primary.some((m) => groups.includes(m)),
+        );
+        expect(pool.length).toBeGreaterThanOrEqual(2);
+      },
+    );
   });
 
   describe("covers major movement patterns", () => {
