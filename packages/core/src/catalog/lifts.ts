@@ -209,13 +209,13 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     id: 'calf-raise', name: 'Calf Raise', classification: 'accessory',
     movementProfile: { patterns: [], jointActions: ['extension'], complexity: 'simple' },
     muscles: { primary: ['Calves'], secondary: [] },
-    aliases: ['Calf Raises', 'Standing Calf Raise'], // leangains, rpt; focus work
+    aliases: ['Calf Raises'], // leangains, rpt
   },
 
   // --- Focus work accessories (issue #1054) ---
   {
     id: 'arnold-press', name: 'Arnold Press', classification: 'accessory',
-    movementProfile: { patterns: ['push', 'vertical'], jointActions: ['flexion', 'extension', 'internal-rotation'], complexity: 'compound' },
+    movementProfile: { patterns: ['push', 'vertical'], jointActions: ['flexion', 'extension', 'external-rotation', 'internal-rotation'], complexity: 'compound' },
     muscles: { primary: ['Front Delts'], secondary: ['Side Delts', 'Triceps'] },
   },
   {

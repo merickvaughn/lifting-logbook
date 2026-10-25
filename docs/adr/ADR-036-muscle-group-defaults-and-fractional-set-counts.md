@@ -219,6 +219,19 @@ It needs an audit of the custom lifts users already have, so it is left to #1015
   - `toVolumeTable`'s row alignment and ordering;
   - ordering does not depend on locale.
 
+## Amendment 1: extensions and flies (2026-10-25, [#1054](https://github.com/merickvaughn/lifting-logbook/issues/1054))
+
+The Focus work accessory lifts include two kinds of single-joint movement that Decision 4 didn't
+name. Both follow its "single-joint moves carry no direction" rule:
+
+- A triceps extension (Rope Pushdown, Overhead Extension, Skull Crusher) mirrors a curl. The elbow
+  extends the hand away from the body, so the lift keeps a lone `push`. Straight-Arm Pulldown, a
+  single-joint shoulder extension, keeps a lone `pull` in the same way.
+- A fly (Cable Fly) adducts the arm across the body. Like a raise, it presses and pulls nothing, so
+  it carries no tag. Core raises (Hanging Leg Raise) and Cable Crunch carry no tag either.
+
+All of these count as "Isolation / other".
+
 ## References
 
 - Pelland, J. C., Remmert, J. F., Robinson, Z. P., Hinson, S. R., Zourdos, M. C. "The Resistance
