@@ -204,6 +204,47 @@ describe('CollapsibleLiftList with the timer', () => {
     expect(rowFor('Set 2')?.className).not.toContain('setRowDone');
   });
 
+  it('keeps a planned lift’s timer controls when focus lifts are mixed in ahead of it (#1058)', async () => {
+    // Interleaving reorders the rendered rows but not the timer's plan, so a
+    // planned row's ▶ must still address its own position in `liftDetails`, and
+    // a focus row — not in the timer's plan yet (#1060) — must offer none.
+    const user = userEvent.setup();
+    render(
+      <WorkoutTimerProvider lifts={TIMER_LIFTS} program="531" macrocycleNum={1} workoutNum={1}>
+        <CollapsibleLiftList
+          liftDetails={LIFT_DETAILS}
+          macrocycleNum={1}
+          workoutNum={1}
+          unit="lbs"
+          rows={[
+            {
+              kind: 'focus',
+              id: 'f:b1:Lateral Raise',
+              lift: 'Lateral Raise',
+              summary: '3 × 10–12',
+              groupLabel: 'Focus sets · Double progression',
+              sets: 3,
+              perSet: '10–12 reps @ 25 lbs',
+              hint: 'Hit 12 on every set.',
+              note: null,
+              area: 'Shoulders',
+            },
+            { kind: 'planned', id: 'p:Bench Press#0', liftIndex: 0 },
+          ]}
+        />
+      </WorkoutTimerProvider>,
+    );
+    const [focusItem, plannedItem] = screen.getAllByRole('listitem');
+    if (!focusItem || !plannedItem) throw new Error('expected two lift items');
+
+    await user.click(within(focusItem).getByRole('button', { name: /Lateral Raise/ }));
+    expect(within(focusItem).queryByRole('button', { name: /^Start timer at/ })).not.toBeInTheDocument();
+    expect(within(focusItem).queryByRole('link', { name: /History/ })).not.toBeInTheDocument();
+
+    await user.click(within(plannedItem).getByRole('button', { name: 'Start timer at Bench Press Set 2' }));
+    expect(screen.getByText(/Bench Press — Set 2 · 3 × 230 lbs/)).toBeInTheDocument();
+  });
+
   describe('the activation movement (#960)', () => {
     /**
      * `LIFT_DETAILS` with the movement set, as `loadWorkoutPlan` passes it — the
