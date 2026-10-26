@@ -50,7 +50,7 @@ test('shows the program phases and a lane per focus series', async ({ page }) =>
   await expect(page.getByText('Today', { exact: true }).first()).toBeVisible();
 
   await page.getByRole('button', { name: /Mesocycle 1/ }).click();
-  await expect(page.getByRole('region', { name: 'Selected program phase' })).toContainText('Jan 6 – Jan 10, 2025 · 1 week');
+  await expect(page.getByRole('region', { name: 'Selected program phase' })).toContainText('Jan 6 – Jan 10, 2025 · 3 weeks');
 });
 
 test('an active focus block shows its progress and settings', async ({ page }) => {
