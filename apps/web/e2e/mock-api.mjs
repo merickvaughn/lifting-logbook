@@ -135,7 +135,86 @@ function createInitialState() {
     ambiguousLift: false,
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
+    // /focus/blocks (#1059) — stored focus blocks, without the derived status and range.
+    // Empty by default; /__reset?withFocusBlocks=<YYYY-MM-DD> seeds a set around that day.
+    focusBlocks: [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Focus blocks (#1059) — the date math mirrors packages/core/src/focus/dates.ts
+// (blockRange / blockStatus), which this dependency-free mock can't import.
+// ---------------------------------------------------------------------------
+
+const isoDay = (date) => date.toISOString().slice(0, 10);
+const utcDay = (y, m, d) => new Date(Date.UTC(y, m, d));
+
+function focusRange(block) {
+  const [y, m, d] = block.start.split('-').map(Number);
+  const months = block.period === 'quarterly' ? 3 : 1;
+  if (block.align === 'calendar') {
+    const first = block.period === 'quarterly' ? Math.floor((m - 1) / 3) * 3 : m - 1;
+    return { start: isoDay(utcDay(y, first, 1)), end: isoDay(utcDay(y, first + months, 0)) };
+  }
+  const target = m - 1 + months;
+  const lastDay = utcDay(y, target + 1, 0).getUTCDate();
+  return { start: block.start, end: isoDay(utcDay(y, target, Math.min(d - 1, lastDay))) };
+}
+
+function dayAfter(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return isoDay(utcDay(y, m - 1, d + 1));
+}
+
+function focusResponse(block, today) {
+  const { start, end } = focusRange(block);
+  const status = today < start ? 'queued' : today > end ? 'ended' : 'active';
+  return { ...block, status, rangeStart: start, rangeEnd: end };
+}
+
+function focusPoolEntry(lift) {
+  return { lift, include: 'auto', ruleLift: '', swapTo: '', sets: 3, repsLow: 10, repsHigh: 12, weight: 25, trainingMax: 40, percent: 65, rpe: 8 };
+}
+
+function focusBlock(fields) {
+  return {
+    selection: 'rules',
+    overlap: 'reduce',
+    progression: 'double',
+    timer: { prep: 10, set: 45, rest: 60 },
+    onEnd: 'prompt',
+    nextArea: null,
+    pool: [],
+    ...fields,
+  };
+}
+
+// Around `today`: an auto-rolling quarterly Shoulders block with its queued Back successor,
+// and a monthly Biceps block that prompts, after last month's ended one.
+function seedFocusBlocks(today) {
+  const [y, m] = today.split('-').map(Number);
+  const quarterStart = isoDay(utcDay(y, Math.floor((m - 1) / 3) * 3, 1));
+  const shoulders = focusBlock({
+    id: 'fb-shoulders', series: 'fs-1', area: 'Shoulders', period: 'quarterly', align: 'calendar',
+    start: quarterStart, priority: 1, onEnd: 'autoroll', nextArea: 'Back',
+    pool: [focusPoolEntry('Lateral Raise'), focusPoolEntry('Face Pull')],
+  });
+  return [
+    shoulders,
+    focusBlock({
+      id: 'fb-back', series: 'fs-1', area: 'Back', period: 'quarterly', align: 'calendar',
+      start: dayAfter(focusRange(shoulders).end), priority: 3,
+    }),
+    focusBlock({
+      id: 'fb-biceps', series: 'fs-2', area: 'Biceps', period: 'monthly', align: 'calendar',
+      start: isoDay(utcDay(y, m - 1, 1)), priority: 2, selection: 'rotate',
+      pool: [focusPoolEntry('Hammer Curl')],
+    }),
+    focusBlock({
+      id: 'fb-biceps-prev', series: 'fs-2', area: 'Biceps', period: 'monthly', align: 'calendar',
+      start: isoDay(utcDay(y, m - 2, 1)), priority: 9,
+    }),
+  ];
 }
 
 let state = createInitialState();
@@ -234,6 +313,10 @@ const server = createServer(async (req, res) => {
     if (url.searchParams.get('withAmbiguousLift') === 'true') {
       state.ambiguousLift = true;
     }
+    const focusToday = url.searchParams.get('withFocusBlocks');
+    if (focusToday) {
+      state.focusBlocks = seedFocusBlocks(focusToday);
+    }
     json(res, { ok: true });
     return;
   }
@@ -267,6 +350,78 @@ const server = createServer(async (req, res) => {
     };
     state.customLifts.push(created);
     json(res, created, 201);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // GET /focus/blocks/:id/summary — an ended focus block's totals (#1059)
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && parts[0] === 'focus' && parts[1] === 'blocks' && parts.length === 4 && parts[3] === 'summary') {
+    const block = state.focusBlocks.find((b) => b.id === parts[2]);
+    if (!block) {
+      json(res, { statusCode: 404, message: 'Focus block not found' }, 404);
+      return;
+    }
+    const { start, end } = focusRange(block);
+    json(res, {
+      blockId: block.id,
+      rangeStart: start,
+      rangeEnd: end,
+      sessions: 12,
+      sets: 68,
+      volume: 18340,
+      prs: [{ lift: 'Hammer Curl', weight: 40, reps: 12, previousWeight: 35, previousReps: 12 }],
+    });
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // GET /focus/blocks?today= — every focus block with its derived status (#1059)
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && url.pathname === '/focus/blocks') {
+    const today = url.searchParams.get('today');
+    if (!today) {
+      json(res, { statusCode: 400, message: 'today is required' }, 400);
+      return;
+    }
+    json(res, state.focusBlocks.map((b) => focusResponse(b, today)));
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // POST /focus/blocks?today= — create a focus block (#1059)
+  // -------------------------------------------------------------------------
+  if (method === 'POST' && url.pathname === '/focus/blocks') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const today = url.searchParams.get('today');
+    if (!today) {
+      json(res, { statusCode: 400, message: 'today is required' }, 400);
+      return;
+    }
+    const id = `fb-${state.focusBlocks.length + 1}`;
+    const priority = body.priority ?? Math.max(0, ...state.focusBlocks.map((b) => b.priority)) + 1;
+    const created = focusBlock({ ...body, id, series: body.series ?? id, priority });
+    state.focusBlocks.push(created);
+    json(res, focusResponse(created, today), 201);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // DELETE /focus/blocks/:id — like the API, also stops the focus block it
+  // auto-rolled from creating it again (ADR-039 §4) (#1059)
+  // -------------------------------------------------------------------------
+  if (method === 'DELETE' && parts[0] === 'focus' && parts[1] === 'blocks' && parts.length === 3) {
+    const block = state.focusBlocks.find((b) => b.id === parts[2]);
+    if (block) {
+      state.focusBlocks = state.focusBlocks.filter((b) => b.id !== block.id);
+      for (const b of state.focusBlocks) {
+        if (b.series === block.series && b.onEnd === 'autoroll' && dayAfter(focusRange(b).end) === block.start) {
+          b.onEnd = 'prompt';
+        }
+      }
+    }
+    noContent(res);
     return;
   }
 
