@@ -79,4 +79,50 @@ describe('mock-api JSON body fidelity (#699)', () => {
     const res = await jsonRequest('/programs/rpt/switch', 'POST');
     expect(res.status).toBe(200);
   });
+
+  describe('focus work routes (#1058)', () => {
+    const FOCUS = '/programs/5-3-1/workouts/1/focus';
+    const STATE = '/programs/5-3-1/workouts/1/focus-state';
+    const DAY_STATE = { modes: {}, picks: {}, trims: {}, placement: 'after', order: null, dismissed: false };
+
+    afterEach(async () => {
+      await fetch(`${BASE}/__reset`);
+    });
+
+    it('requires today, as the real API does', async () => {
+      expect((await fetch(`${BASE}${FOCUS}`)).status).toBe(400);
+      expect((await fetch(`${BASE}${FOCUS}?today=2026-10-26`)).status).toBe(200);
+    });
+
+    it('plans no focus work by default, so other specs see a plain workout', async () => {
+      const plan = await (await fetch(`${BASE}${FOCUS}?today=2026-10-26`)).json();
+      expect(plan.groups).toEqual([]);
+      expect(plan.dayState).toEqual(DAY_STATE);
+    });
+
+    it('plans an over-guide focus block once opted in, and applies saved trims', async () => {
+      await fetch(`${BASE}/__reset?withFocus=true`);
+      const before = await (await fetch(`${BASE}${FOCUS}?today=2026-10-26`)).json();
+      expect(before.groups[0].items.map((i: { lift: string }) => i.lift)).toEqual(['Lateral Raise', 'Face Pull', 'Arnold Press']);
+      expect(before).toMatchObject({ sets: 9, over: true, suggestion: { lift: 'Arnold Press', sets: 6 } });
+
+      const trimmed = { ...DAY_STATE, trims: { 'fb-shoulders': ['Arnold Press'] } };
+      expect((await jsonRequest(STATE, 'PUT', JSON.stringify(trimmed))).status).toBe(200);
+
+      const after = await (await fetch(`${BASE}${FOCUS}?today=2026-10-26`)).json();
+      expect(after).toMatchObject({ sets: 6, over: false, suggestion: null, dayState: trimmed });
+      expect(after.groups[0].trimmed).toEqual(['Arnold Press']);
+      expect(await (await fetch(`${BASE}${STATE}`)).json()).toEqual(trimmed);
+    });
+
+    it('fails the plan when asked to', async () => {
+      await fetch(`${BASE}/__reset?withFocusError=true`);
+      expect((await fetch(`${BASE}${FOCUS}?today=2026-10-26`)).status).toBe(500);
+    });
+
+    it('rejects a malformed or invalid day state with 400', async () => {
+      expect((await jsonRequest(STATE, 'PUT', '{nope')).status).toBe(400);
+      expect((await jsonRequest(STATE, 'PUT', JSON.stringify({ ...DAY_STATE, placement: 'sideways' }))).status).toBe(400);
+    });
+  });
 });
