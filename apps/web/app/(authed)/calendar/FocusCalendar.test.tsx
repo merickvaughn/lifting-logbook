@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import FocusCalendar from './FocusCalendar';
 import {
@@ -202,6 +202,41 @@ describe('FocusCalendar', () => {
     expect(await screen.findByRole('button', { name: 'Biceps focus block, November 2026, queued' })).toBeInTheDocument();
     // The answered prompt goes away rather than sitting there disabled.
     expect(screen.queryByRole('button', { name: 'Renew for November' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t refresh the calendar.');
+  });
+
+  it('shows a cancelled auto-roll as declined even when the refetch after it fails', async () => {
+    const user = userEvent.setup();
+    mockDelete.mockResolvedValue(undefined);
+    renderCalendar();
+    await user.click(await screen.findByRole('button', { name: /Back focus block/ }));
+
+    mockFetchBlocks.mockRejectedValue(new Error('network'));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Back focus block/ })).not.toBeInTheDocument());
+    // The API sets the predecessor to prompt; the calendar shows that without the refetch.
+    await user.click(screen.getByRole('button', { name: /Shoulders focus block/ }));
+    expect(screen.getByText('Prompt me')).toBeInTheDocument();
+  });
+
+  it('keeps the latest refetch when two land out of order', async () => {
+    const later = makeBlock({ id: 'later', series: 's9', area: 'Core', priority: 5 });
+    let resolveFirst: (blocks: ReturnType<typeof makeBlock>[]) => void = () => undefined;
+    mockFetchBlocks.mockReturnValueOnce(new Promise((resolve) => (resolveFirst = resolve)));
+    mockFetchBlocks.mockResolvedValueOnce([SHOULDERS, later]);
+    renderCalendar();
+
+    // A day change starts a second fetch while the first is still pending.
+    mockToday.mockReturnValue('2026-10-24');
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(await screen.findByRole('button', { name: /Core focus block/ })).toBeInTheDocument();
+
+    // The first, older response arrives last and must not replace the newer list.
+    await act(async () => resolveFirst([BICEPS]));
+    expect(screen.getByRole('button', { name: /Core focus block/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Biceps focus block/ })).not.toBeInTheDocument();
   });
 
   it('prompts for an auto-roll with no next area, which would otherwise just end', async () => {
@@ -217,7 +252,9 @@ describe('FocusCalendar', () => {
     renderCalendar();
     await screen.findByRole('button', { name: /Shoulders focus block/ });
     mockToday.mockReturnValue('2026-10-24');
-    document.dispatchEvent(new Event('visibilitychange'));
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
     await waitFor(() => expect(mockFetchBlocks).toHaveBeenLastCalledWith('2026-10-24'));
   });
 

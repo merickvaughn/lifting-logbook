@@ -153,6 +153,11 @@ function createInitialState() {
 // ---------------------------------------------------------------------------
 // Focus blocks (#1059) — the date math mirrors packages/core/src/focus/dates.ts
 // (blockRange / blockStatus), which this dependency-free mock can't import.
+//
+// These stored blocks back /focus/blocks only. The workout focus plan (#1058,
+// FOCUS_BLOCK and buildFocusPlan below) is a separate canned fixture: a block
+// created or cancelled here does not change a workout's plan, and the two
+// 'fb-shoulders' ids are unrelated.
 // ---------------------------------------------------------------------------
 
 const isoDay = (date) => date.toISOString().slice(0, 10);
@@ -543,7 +548,9 @@ const server = createServer(async (req, res) => {
       return;
     }
     const id = `fb-${state.nextFocusId++}`;
-    const priority = body.priority ?? Math.max(0, ...state.focusBlocks.map((b) => b.priority)) + 1;
+    // Like the API: below every focus block that hasn't ended.
+    const notEnded = state.focusBlocks.filter((b) => focusResponse(b, today).status !== 'ended');
+    const priority = body.priority ?? Math.max(0, ...notEnded.map((b) => b.priority)) + 1;
     const created = focusBlock({ ...body, id, series: body.series ?? id, priority });
     state.focusBlocks.push(created);
     json(res, focusResponse(created, today), 201);
@@ -556,14 +563,16 @@ const server = createServer(async (req, res) => {
   // -------------------------------------------------------------------------
   if (method === 'DELETE' && parts[0] === 'focus' && parts[1] === 'blocks' && parts.length === 3) {
     const block = state.focusBlocks.find((b) => b.id === parts[2]);
-    if (block) {
-      const series = state.focusBlocks.filter((b) => b.series === block.series);
-      const remaining = series.filter((b) => b.id !== block.id);
-      for (const predecessor of remaining) {
-        if (owesRoll(predecessor, remaining) && !owesRoll(predecessor, series)) predecessor.onEnd = 'prompt';
-      }
-      state.focusBlocks = state.focusBlocks.filter((b) => b.id !== block.id);
+    if (!block) {
+      json(res, { statusCode: 404, message: 'Focus block not found' }, 404);
+      return;
     }
+    const series = state.focusBlocks.filter((b) => b.series === block.series);
+    const remaining = series.filter((b) => b.id !== block.id);
+    for (const predecessor of remaining) {
+      if (owesRoll(predecessor, remaining) && !owesRoll(predecessor, series)) predecessor.onEnd = 'prompt';
+    }
+    state.focusBlocks = state.focusBlocks.filter((b) => b.id !== block.id);
     noContent(res);
     return;
   }

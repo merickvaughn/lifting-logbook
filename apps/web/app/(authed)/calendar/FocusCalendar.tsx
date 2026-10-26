@@ -237,7 +237,10 @@ export default function FocusCalendar({ phases, unit }: Props) {
         {!blocks && !loadError && <p className={styles.empty}>Loading focus blocks…</p>}
         {loadError && (
           <p className={styles.error} role="alert">
-            Couldn’t load your focus blocks. Reload the page to try again.
+            {blocks
+              ? // A refresh after a save or a day change: what's shown is still good.
+                'Couldn’t refresh the calendar. Reload the page to see the latest.'
+              : 'Couldn’t load your focus blocks. Reload the page to try again.'}
           </p>
         )}
       </div>
@@ -314,7 +317,13 @@ function BlockDetail({ block, blocks, today, unit, onChanged }: BlockDetailProps
     try {
       // Deleting a queued focus block also stops the one it rolls from creating it again.
       await deleteFocusBlock(block.id);
-      await onChanged((current) => current.filter((b) => b.id !== block.id), true);
+      await onChanged((current) => {
+        // The API also sets the focus block this one rolled from to prompt; mirror that.
+        const source = autoRollSource(block, current);
+        return current
+          .filter((b) => b.id !== block.id)
+          .map((b) => (b.id === source?.id ? { ...b, onEnd: 'prompt' as const } : b));
+      }, true);
     } catch (err) {
       logClientError('deleteFocusBlock', err, { blockId: block.id });
       setError('Couldn’t cancel this focus block. Please try again.');
@@ -451,7 +460,8 @@ function RenewPrompt({ block, today, onChanged }: Pick<BlockDetailProps, 'block'
         },
         today,
       );
-      await onChanged((current) => [...current, created], false);
+      // Idempotent: a refetch that landed first may already include it.
+      await onChanged((current) => [...current.filter((b) => b.id !== created.id), created], false);
     } catch (err) {
       logClientError('createFocusBlock', err, { series: block.series, area });
       setError('Couldn’t queue the next focus block. Please try again.');

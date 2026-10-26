@@ -204,6 +204,21 @@ describe('mock-api focus blocks (#1059)', () => {
     expect((await blocks('2025-01-23')).find((b) => b.id === 'fb-shoulders')?.onEnd).toBe('autoroll');
   });
 
+  it('answers 404 for deleting an unknown focus block, like the API', async () => {
+    expect((await fetch(`${BASE}/focus/blocks/nope`, { method: 'DELETE' })).status).toBe(404);
+  });
+
+  it('puts a new focus block below only the ones that have not ended', async () => {
+    // The ended December block has priority 9; the rest top out at 3.
+    const res = await jsonRequest(
+      '/focus/blocks?today=2025-01-23',
+      'POST',
+      JSON.stringify({ area: 'Core', period: 'monthly', align: 'calendar', start: '2025-03-01' }),
+    );
+    const created: { priority: number } = await res.json();
+    expect(created.priority).toBe(4);
+  });
+
   it('never reuses a created id after a delete', async () => {
     const create = async () => {
       const res = await jsonRequest(
