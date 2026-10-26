@@ -139,6 +139,13 @@ function createInitialState() {
     focusBlocks: [],
     focusGuide: { sets: 9, minutes: 20 },
     focusSeq: 0,
+    // Focus work (#1058). Off by default, so a workout reads as it does for a user
+    // with no focus blocks; the focus spec opts in via /__reset?withFocus=true, and
+    // withFocusError=true makes the plan endpoint fail.
+    focus: false,
+    focusError: false,
+    // Saved focus day state, by workout number.
+    focusDayStates: new Map(),
   };
 }
 
@@ -217,6 +224,62 @@ function materializeFocusRollovers(today) {
   }
 }
 
+/**
+ * A workout's focus plan from the stored focus blocks (#1057). Simplified: every active
+ * block's auto/always lifts, with no overlap handling or trims.
+ */
+function planFromFocusBlocks(program, workoutNum, today) {
+  const groups = state.focusBlocks
+    .filter((b) => focusStatus(b, today) === 'active')
+    .sort((a, b) => a.priority - b.priority)
+    .map((b) => ({
+      block: focusResponse(b, today),
+      mode: b.selection,
+      items: b.pool
+        .filter((entry) => entry.include === 'auto' || entry.include === 'always')
+        .map((entry) => ({
+          lift: entry.lift,
+          sets: entry.sets,
+          entry,
+          prescription: {
+            progression: 'double',
+            sets: entry.sets,
+            repsLow: entry.repsLow,
+            repsHigh: entry.repsHigh,
+            weight: entry.weight,
+            lastReps: null,
+          },
+        })),
+      skipped: [],
+      suggestions: [],
+      overlap: null,
+      trimmed: [],
+    }));
+  let sets = 0;
+  let seconds = 0;
+  for (const group of groups) {
+    const { prep, set, rest } = group.block.timer;
+    for (const item of group.items) {
+      sets += item.sets;
+      seconds += item.sets * (prep + set) + Math.max(0, item.sets - 1) * rest + rest;
+    }
+  }
+  return {
+    program,
+    macrocycleNum: 1,
+    workoutNum,
+    today,
+    plannedLifts: [],
+    budget: state.focusGuide,
+    dayState: { modes: {}, picks: {}, trims: {}, placement: 'after', order: null, dismissed: false },
+    groups,
+    sets,
+    seconds,
+    over: sets > state.focusGuide.sets || seconds / 60 > state.focusGuide.minutes,
+    suggestion: null,
+  };
+}
+
 /** The first day of this calendar quarter, by the mock's clock — for seeded blocks. */
 function thisQuarterStart() {
   const now = new Date();
@@ -289,6 +352,127 @@ async function readBody(req) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Focus work (#1058)
+// ---------------------------------------------------------------------------
+
+const FOCUS_TIMER = { prep: 10, set: 45, rest: 60 };
+const FOCUS_BUDGET = { sets: 6, minutes: 20 };
+const FOCUS_PLACEMENTS = ['before', 'after', 'interleave'];
+
+function focusPoolEntry(lift) {
+  return { lift, include: 'auto', ruleLift: '', swapTo: '', sets: 3, repsLow: 10, repsHigh: 12, weight: 25, trainingMax: 40, percent: 65, rpe: 8 };
+}
+
+// One active Shoulders focus block of three lifts: nine sets against a six-set
+// guide, so the over-guide advice shows until a lift is trimmed.
+const FOCUS_BLOCK = {
+  id: 'fb-shoulders',
+  series: 'fb-shoulders',
+  area: 'Shoulders',
+  period: 'quarterly',
+  align: 'calendar',
+  start: '2026-10-01',
+  selection: 'rules',
+  overlap: 'reduce',
+  progression: 'double',
+  priority: 1,
+  timer: FOCUS_TIMER,
+  onEnd: 'prompt',
+  nextArea: null,
+  pool: ['Lateral Raise', 'Face Pull', 'Arnold Press'].map(focusPoolEntry),
+  rangeStart: '2026-10-01',
+  rangeEnd: '2026-12-31',
+};
+
+function emptyFocusDayState() {
+  return { modes: {}, picks: {}, trims: {}, placement: 'after', order: null, dismissed: false };
+}
+
+// The limits apps/api/src/focus/focus-day-state.dto.ts enforces, so a request the
+// real API would reject with a 400 is rejected here too.
+const FOCUS_SELECTIONS = ['rules', 'rotate', 'fixed', 'pick'];
+const MAX_KEYS = 50;
+const MAX_ITEMS = 50;
+const MAX_ID = 100;
+const MAX_ORDER = 200;
+
+const isBoundedId = (x) => typeof x === 'string' && x.length <= MAX_ID;
+const isBoundedList = (v, max) => Array.isArray(v) && v.length <= max && v.every(isBoundedId);
+
+function isBoundedRecord(value, isValue) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length <= MAX_KEYS && keys.every(isBoundedId) && Object.values(value).every(isValue);
+}
+
+// The shape the real API's FocusDayStateDto accepts.
+function isFocusDayState(body) {
+  return (
+    body !== null &&
+    typeof body === 'object' &&
+    isBoundedRecord(body.modes, (mode) => FOCUS_SELECTIONS.includes(mode)) &&
+    isBoundedRecord(body.picks, (v) => isBoundedList(v, MAX_ITEMS)) &&
+    isBoundedRecord(body.trims, (v) => isBoundedList(v, MAX_ITEMS)) &&
+    FOCUS_PLACEMENTS.includes(body.placement) &&
+    (body.order === null || isBoundedList(body.order, MAX_ORDER)) &&
+    typeof body.dismissed === 'boolean'
+  );
+}
+
+// A canned stand-in for the API's planFocusDay: the day's trims are applied and
+// the totals, guide check and trim suggestion recomputed, as core does for one
+// focus block. Selection modes and picks are echoed but not re-planned.
+function buildFocusPlan(workoutNum, today, dayState) {
+  const base = {
+    program: '5-3-1',
+    macrocycleNum: 1,
+    workoutNum,
+    today,
+    plannedLifts: WORKOUT.lifts.map((l) => l.lift),
+    budget: FOCUS_BUDGET,
+    dayState,
+    groups: [],
+    sets: 0,
+    seconds: 0,
+    over: false,
+    suggestion: null,
+  };
+  if (!state.focus) return base;
+
+  const trims = dayState.trims[FOCUS_BLOCK.id] ?? [];
+  const all = FOCUS_BLOCK.pool.map((entry) => ({
+    lift: entry.lift,
+    sets: entry.sets,
+    entry,
+    prescription: { progression: 'double', sets: entry.sets, repsLow: entry.repsLow, repsHigh: entry.repsHigh, weight: entry.weight, lastReps: null },
+  }));
+  const items = all.filter((item) => !trims.includes(item.lift));
+  const cost = (sets) => sets * (FOCUS_TIMER.prep + FOCUS_TIMER.set) + Math.max(0, sets - 1) * FOCUS_TIMER.rest + FOCUS_TIMER.rest;
+  const sets = items.reduce((n, item) => n + item.sets, 0);
+  const seconds = items.reduce((n, item) => n + cost(item.sets), 0);
+  const over = sets > FOCUS_BUDGET.sets || seconds / 60 > FOCUS_BUDGET.minutes;
+  const last = items[items.length - 1];
+  return {
+    ...base,
+    groups: [
+      {
+        block: { ...FOCUS_BLOCK, status: 'active' },
+        mode: dayState.modes[FOCUS_BLOCK.id] ?? FOCUS_BLOCK.selection,
+        items,
+        skipped: [],
+        suggestions: [],
+        overlap: null,
+        trimmed: all.filter((item) => trims.includes(item.lift)).map((item) => item.lift),
+      },
+    ],
+    sets,
+    seconds,
+    over,
+    suggestion: over && last ? { blockId: FOCUS_BLOCK.id, lift: last.lift, sets: sets - last.sets, seconds: seconds - cost(last.sets) } : null,
+  };
+}
+
 // Sends a Fastify-shaped 400 and returns true when the parsed body was empty/malformed.
 function rejectIfInvalidBody(res, body) {
   if (body === INVALID_JSON_BODY) {
@@ -345,6 +529,12 @@ const server = createServer(async (req, res) => {
         seedFocusBlock('focus-shoulders', 'Shoulders', 1, ['Lateral Raise', 'Face Pull']),
         seedFocusBlock('focus-biceps', 'Biceps', 2, ['Hammer Curl']),
       ];
+    }
+    if (url.searchParams.get('withFocus') === 'true') {
+      state.focus = true;
+    }
+    if (url.searchParams.get('withFocusError') === 'true') {
+      state.focusError = true;
     }
     json(res, { ok: true });
     return;
@@ -602,63 +792,45 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // GET /programs/:p/workouts/:workoutNum/focus — the workout's focus plan (#1057).
-    // Simplified: every active block's auto/always lifts, no overlap handling or trims.
+    // GET /programs/:p/workouts/:workoutNum/focus?today=YYYY-MM-DD (#1058)
     if (method === 'GET' && rest[0] === 'workouts' && rest[2] === 'focus' && rest.length === 3) {
       const today = url.searchParams.get('today');
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(today ?? '')) {
-        json(res, { statusCode: 400, message: 'today is required (YYYY-MM-DD)' }, 400);
+      if (!today || !/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+        json(res, { statusCode: 400, message: 'today must be an ISO date (YYYY-MM-DD)' }, 400);
         return;
       }
-      const groups = state.focusBlocks
-        .filter((b) => focusStatus(b, today) === 'active')
-        .sort((a, b) => a.priority - b.priority)
-        .map((b) => ({
-          block: focusResponse(b, today),
-          mode: b.selection,
-          items: b.pool
-            .filter((entry) => entry.include === 'auto' || entry.include === 'always')
-            .map((entry) => ({
-              lift: entry.lift,
-              sets: entry.sets,
-              entry,
-              prescription: {
-                progression: 'double',
-                sets: entry.sets,
-                repsLow: entry.repsLow,
-                repsHigh: entry.repsHigh,
-                weight: entry.weight,
-                lastReps: null,
-              },
-            })),
-          skipped: [],
-          suggestions: [],
-          overlap: null,
-          trimmed: [],
-        }));
-      let sets = 0;
-      let seconds = 0;
-      for (const group of groups) {
-        const { prep, set, rest: restSec } = group.block.timer;
-        for (const item of group.items) {
-          sets += item.sets;
-          seconds += item.sets * (prep + set) + Math.max(0, item.sets - 1) * restSec + restSec;
-        }
+      if (state.focusError) {
+        json(res, { statusCode: 500, message: 'Internal server error' }, 500);
+        return;
       }
-      json(res, {
-        program: parts[1],
-        macrocycleNum: 1,
-        workoutNum: Number(rest[1]),
-        today,
-        plannedLifts: [],
-        budget: state.focusGuide,
-        dayState: { modes: {}, picks: {}, trims: {}, placement: 'after', order: null, dismissed: false },
-        groups,
-        sets,
-        seconds,
-        over: sets > state.focusGuide.sets || seconds / 60 > state.focusGuide.minutes,
-        suggestion: null,
-      });
+      const workoutNum = Number(rest[1]);
+      // Focus blocks created through /focus/* (#1057) plan from those blocks; otherwise the
+      // canned workout-details plan (#1058).
+      json(
+        res,
+        state.focusBlocks.length > 0 ?
+          planFromFocusBlocks(parts[1], workoutNum, today)
+        : buildFocusPlan(workoutNum, today, state.focusDayStates.get(workoutNum) ?? emptyFocusDayState()),
+      );
+      return;
+    }
+
+    // GET /programs/:p/workouts/:workoutNum/focus-state (#1058)
+    if (method === 'GET' && rest[0] === 'workouts' && rest[2] === 'focus-state' && rest.length === 3) {
+      json(res, state.focusDayStates.get(Number(rest[1])) ?? emptyFocusDayState());
+      return;
+    }
+
+    // PUT /programs/:p/workouts/:workoutNum/focus-state (#1058)
+    if (method === 'PUT' && rest[0] === 'workouts' && rest[2] === 'focus-state' && rest.length === 3) {
+      const body = await readBody(req);
+      if (rejectIfInvalidBody(res, body)) return;
+      if (!isFocusDayState(body)) {
+        json(res, { statusCode: 400, message: 'Invalid focus day state' }, 400);
+        return;
+      }
+      state.focusDayStates.set(Number(rest[1]), body);
+      json(res, body);
       return;
     }
 

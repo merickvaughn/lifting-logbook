@@ -1,12 +1,15 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactElement } from 'react';
 import type { TimerLiftPlan } from '@lifting-logbook/core';
+import type { FocusDayPlanResponse } from '@lifting-logbook/types';
+import { focusPlan } from '@/lib/__tests__/focusPlanFixture';
 
 jest.mock('@/lib/api', () => ({
   fetchWorkout: jest.fn(),
   fetchProgramSpec: jest.fn(),
   fetchTrainingMaxes: jest.fn(),
   fetchCustomLifts: jest.fn(),
+  fetchFocusPlan: jest.fn(),
 }));
 
 jest.mock('@/lib/active-program', () => ({
@@ -35,9 +38,22 @@ jest.mock('@/components/timer/WorkoutTimerProvider', () => ({
 
 // Stubbed only to keep this test about the page's own fetch-and-classify path;
 // each has (or warrants) its own coverage.
+// Both echo the data they were handed, so the focus fallback test below can
+// assert on what reached the page rather than on a stub having rendered.
 jest.mock('./CollapsibleLiftList', () => ({
   __esModule: true,
-  default: () => <div>collapsible-lift-list</div>,
+  default: ({ liftDetails }: { liftDetails: { lift: string }[] }) => (
+    <div>collapsible-lift-list: {liftDetails.map((d) => d.lift).join(', ')}</div>
+  ),
+}));
+jest.mock('./FocusWorkout', () => ({
+  __esModule: true,
+  default: ({ plan, liftDetails }: { plan: FocusDayPlanResponse; liftDetails: { lift: string }[] }) => (
+    <div>
+      focus-workout: {plan.groups.map((g) => g.items.map((i) => i.lift).join(', ')).join('; ')} | planned:{' '}
+      {liftDetails.map((d) => d.lift).join(', ')}
+    </div>
+  ),
 }));
 jest.mock('./StartTimedWorkout', () => ({
   __esModule: true,
@@ -49,13 +65,14 @@ jest.mock('./RescheduleForm', () => ({
 }));
 jest.mock('./SkipForm', () => ({ __esModule: true, default: () => <div>skip-form</div> }));
 
-import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes, fetchCustomLifts } from '@/lib/api';
+import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes, fetchCustomLifts, fetchFocusPlan } from '@/lib/api';
 import WorkoutDetailPage from './page';
 
 const mockedWorkout = fetchWorkout as unknown as jest.Mock;
 const mockedSpec = fetchProgramSpec as unknown as jest.Mock;
 const mockedMaxes = fetchTrainingMaxes as unknown as jest.Mock;
 const mockedCustomLifts = fetchCustomLifts as unknown as jest.Mock;
+const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
 
 function spec(lift: string) {
   return {
@@ -105,6 +122,7 @@ describe('WorkoutDetailPage — accessory classification', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     seedWorkout(['Squat', 'Cable Curls']);
+    mockedFocusPlan.mockResolvedValue(focusPlan({ groups: [] }));
   });
 
   it('classifies each lift and hands it to the timer provider', async () => {
@@ -178,5 +196,73 @@ describe('WorkoutDetailPage — accessory classification', () => {
       expect.any(Error),
     );
     errSpy.mockRestore();
+  });
+});
+
+describe('WorkoutDetailPage — focus work (#1058)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    seedWorkout(['Squat', 'Cable Curls']);
+    mockedCustomLifts.mockResolvedValue([]);
+  });
+
+  it('hands the focus plan and the planned lifts to the focus module', async () => {
+    mockedFocusPlan.mockResolvedValue(focusPlan());
+
+    const html = await renderPage();
+
+    expect(html).toContain('focus-workout: Lateral Raise, Face Pull | planned: Squat, Cable Curls');
+    expect(html).not.toContain('collapsible-lift-list');
+    expect(mockedFocusPlan).toHaveBeenCalledWith('5-3-1', 1, expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+  });
+
+  it('keeps the plain layout, with no notice, when no focus block is active', async () => {
+    mockedFocusPlan.mockResolvedValue(focusPlan({ groups: [] }));
+
+    const html = await renderPage();
+
+    expect(html).toContain('collapsible-lift-list: Squat, Cable Curls');
+    expect(html).not.toContain('focus-workout');
+    expect(html).not.toContain('Focus work couldn’t load');
+  });
+
+  it('falls back to the planned lifts, with a notice, when the focus plan fails to load', async () => {
+    // The skewed-test rule: assert on the data the fallback renders (the
+    // planned lifts and their count), paired with the success test above, so a
+    // page that swallowed the error and rendered nothing would fail here.
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockedFocusPlan.mockRejectedValue(new Error('API down'));
+
+    const html = await renderPage();
+
+    expect(html).toContain('collapsible-lift-list: Squat, Cable Curls');
+    expect(html).toContain('Focus work couldn’t load, so only the planned lifts are shown.');
+    expect(html).not.toContain('focus-workout');
+    // The timer is still offered: the focus failure must not take it down too.
+    expect(passedLifts(html)).toEqual([
+      ['Squat', 'compound'],
+      ['Cable Curls', 'accessory'],
+    ]);
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutDetailPage] focus plan fetch failed, showing planned lifts only',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
+  });
+
+  it('does not fetch focus work for a logged workout', async () => {
+    mockedWorkout.mockResolvedValue({
+      program: '5-3-1',
+      macrocycleNum: 1,
+      workoutNum: 1,
+      week: 1,
+      date: '2020-01-01',
+      skipped: false,
+      lifts: [{ lift: 'Squat', sets: [{ setNum: 1, weight: 225, reps: 5, notes: '' }], planned: false }],
+    });
+
+    await renderPage();
+
+    expect(mockedFocusPlan).not.toHaveBeenCalled();
   });
 });
