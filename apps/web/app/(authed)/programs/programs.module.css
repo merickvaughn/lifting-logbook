@@ -8,6 +8,12 @@
   margin-bottom: 1.5rem;
 }
 
+.focusLink {
+  margin: -0.75rem 0 1.5rem;
+  color: var(--color-text-muted, #6b7280);
+  font-size: 0.875rem;
+}
+
 /* ----- Tabs ----- */
 .tabs {
   display: flex;
