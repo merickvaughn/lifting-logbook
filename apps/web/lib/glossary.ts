@@ -180,6 +180,15 @@ export const GLOSSARY = [
         ],
       },
       {
+        id: 'focus-block',
+        term: 'Focus block',
+        definition:
+          'Extra accessory work for one muscle area — Shoulders, Biceps, Triceps, Back, Chest, Calves, Glutes or Core — over a calendar month or quarter, added to every workout on a timeline separate from your program. Set them up under Programs → Focus work.',
+        otherMeanings: [
+          'Not a block in the mesocycle sense above. This app always says "focus block" in full, never just "block".',
+        ],
+      },
+      {
         id: 'phase',
         term: 'Phase',
         definition:

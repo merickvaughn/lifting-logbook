@@ -1,0 +1,397 @@
+/* Focus work setup (#1057), after the prototype's focus-setup.jsx. */
+
+.container {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+.crumb {
+  display: flex;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.crumb li + li::before {
+  content: '›';
+  margin-right: var(--space-1);
+}
+
+.title {
+  margin: 0 0 var(--space-1);
+}
+
+.sub {
+  margin: 0 0 var(--space-5);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-wrap: pretty;
+}
+
+.sectionTitle {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin: var(--space-6) 0 var(--space-3);
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+}
+
+.muted {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.alert {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-warn-border);
+  border-radius: var(--radius-md);
+  background: var(--color-warn-bg);
+  color: var(--color-warn-text);
+  font-size: var(--font-size-sm);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.addRow {
+  margin-top: var(--space-3);
+}
+
+/* ----- Buttons ----- */
+
+.btn {
+  height: 32px;
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.btnPrimary {
+  color: var(--color-on-accent);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.btnGhost {
+  border-color: transparent;
+  background: none;
+  color: var(--color-text-muted);
+}
+
+.linkBtn {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-accent);
+  cursor: pointer;
+}
+
+.danger {
+  color: var(--color-error);
+}
+
+/* ----- Area colour: one hue per area, as in the prototype ----- */
+
+.dot {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: oklch(0.6 0.13 var(--focus-hue));
+}
+
+.areaShoulders { --focus-hue: 245; }
+.areaBiceps { --focus-hue: 150; }
+.areaTriceps { --focus-hue: 25; }
+.areaBack { --focus-hue: 300; }
+.areaChest { --focus-hue: 200; }
+.areaCalves { --focus-hue: 70; }
+.areaGlutes { --focus-hue: 350; }
+.areaCore { --focus-hue: 115; }
+
+/* ----- Renewal prompt ----- */
+
+.prompt {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.promptTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.promptBody {
+  margin: var(--space-1) 0 var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+/* ----- Focus block cards ----- */
+
+.blockList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.blockCard {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.blockHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+.blockToggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.toggleIcon {
+  color: var(--color-text-muted);
+  transition: transform var(--transition-fast);
+}
+
+.toggleIconOpen {
+  transform: rotate(90deg);
+}
+
+.blockName {
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.blockMeta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.priority {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.prioBtn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  font: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.prioBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.blockBody {
+  padding: 0 var(--space-4) var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.subTitle {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.dateInput {
+  height: 32px;
+  padding: 0 var(--space-2);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* ----- Lift pool ----- */
+
+.poolList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.poolRow {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+.poolTop {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.poolName {
+  font-weight: var(--font-weight-semibold, 600);
+  font-size: var(--font-size-sm);
+}
+
+.poolTags {
+  flex: 1;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.removeLift {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-base);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.poolGrid,
+.timerGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+}
+
+.mini {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.pair {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ----- Up next ----- */
+
+.plainList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plainRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.plainRow:first-child {
+  border-top: none;
+}
+
+.plainRow .blockMeta {
+  flex: 1;
+}
+
+/* ----- This week ----- */
+
+.weekHead {
+  padding: var(--space-2) 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.weekRow {
+  display: grid;
+  grid-template-columns: 7rem 1fr auto;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
+
+.weekLifts {
+  color: var(--color-text-muted);
+}
+
+.weekNum {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.warnText {
+  color: var(--color-warn-text);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+@media (max-width: 480px) {
+  .weekRow {
+    grid-template-columns: 1fr auto;
+  }
+
+  .weekLifts {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}

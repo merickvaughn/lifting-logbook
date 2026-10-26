@@ -87,6 +87,12 @@ export default async function MacrocycleProgramPage({
         ))}
       </ul>
 
+      <h3 className={styles.sectionLabel}>Focus work</h3>
+      <p className={styles.focusNote}>
+        Extra accessory work for one muscle area, layered onto every workout for a month or
+        quarter. <Link href="/programs/focus">Set up focus work</Link>
+      </p>
+
       <LiftRecordsImportForm program={program} />
     </section>
   );

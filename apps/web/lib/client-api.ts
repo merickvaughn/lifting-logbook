@@ -88,6 +88,11 @@ export const {
   // live custom-lift list client-side (a stale/absent local copy otherwise
   // dead-ends the user with no way to recover short of a page reload; #911).
   fetchCustomLifts,
+  // Reads too: focus block status depends on the user's calendar day (`?today=`), which
+  // only the browser knows, so the focus setup page loads them client-side (#1057).
+  fetchFocusBlocks,
+  fetchFocusSettings,
+  fetchFocusPlan,
   createFocusBlock,
   updateFocusBlock,
   deleteFocusBlock,

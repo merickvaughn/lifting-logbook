@@ -33,7 +33,7 @@ test('home page redirects signed-in users to /macrocycle (or /onboarding)', asyn
 // Structure-only assertion is intentional: the program catalog is rendered
 // from static data in apps/web/lib/programs.ts, so the page renders even
 // when the `.catch(() => DEFAULT_SETTINGS)` and `.catch(() => [])` fallbacks
-// in apps/web/app/(authed)/programs/page.tsx:15-16 are exercised. The staging test
+// in apps/web/app/(authed)/programs/page.tsx:16-17 are exercised. The staging test
 // user has no custom programs, so no real-data assertion would distinguish
 // the success and fallback paths here. API-success detection is delegated
 // to test 5 (auth/API propagation against /api/health).
