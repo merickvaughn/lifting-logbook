@@ -132,6 +132,16 @@ a {
   --color-rest: #27ae60;
   --color-prep: #e0a800;
   --color-activation: #8e44ad;
+  /* Focus-work areas (#1058): one hue per area, dark enough to read as 11px
+     text on a 14% tint of itself. */
+  --color-area-shoulders: oklch(0.5 0.13 245);
+  --color-area-biceps: oklch(0.5 0.13 150);
+  --color-area-triceps: oklch(0.5 0.13 25);
+  --color-area-back: oklch(0.5 0.13 300);
+  --color-area-chest: oklch(0.5 0.13 200);
+  --color-area-calves: oklch(0.5 0.13 70);
+  --color-area-glutes: oklch(0.5 0.13 350);
+  --color-area-core: oklch(0.5 0.13 115);
   --color-success: #27ae60;
   --color-success-text: #00b894;
   --color-success-bg: #a8e6cf;
@@ -176,6 +186,15 @@ a {
   /* Violet: the only hue family left that this theme's accent (green), rest
      (blue), prep (amber) and overrun (red) do not already occupy (#960). */
   --color-activation: #7c3aed;
+  /* Focus-work areas (#1058), as in navy: both themes are light. */
+  --color-area-shoulders: oklch(0.5 0.13 245);
+  --color-area-biceps: oklch(0.5 0.13 150);
+  --color-area-triceps: oklch(0.5 0.13 25);
+  --color-area-back: oklch(0.5 0.13 300);
+  --color-area-chest: oklch(0.5 0.13 200);
+  --color-area-calves: oklch(0.5 0.13 70);
+  --color-area-glutes: oklch(0.5 0.13 350);
+  --color-area-core: oklch(0.5 0.13 115);
   --color-success: #22c55e;
   --color-success-text: #16a34a;
   --color-success-bg: #f0fdf4;

@@ -108,4 +108,5 @@ export const {
   createCustomProgram,
   updateCustomProgram,
   deleteCustomProgram,
+  fetchFocusPlan,
 } = createApiClient({ baseUrl: API_URL, getAuthHeaders });
