@@ -20,6 +20,7 @@ import {
   FOCUS_ALIGNS,
   FOCUS_AREAS,
   FOCUS_INCLUDES,
+  FOCUS_LIMITS,
   FOCUS_ON_ENDS,
   FOCUS_OVERLAPS,
   FOCUS_PERIODS,
@@ -43,17 +44,6 @@ import type {
   UpdateFocusSettingsRequest,
 } from '@lifting-logbook/types';
 
-/** Bounds on the pool and timer JSON, so a stored block stays a sane size. */
-const FOCUS_LIMITS = {
-  MAX_POOL: 20,
-  MAX_LIFT_NAME: 100,
-  MAX_SETS: 20,
-  MAX_REPS: 100,
-  MAX_WEIGHT: 5000,
-  MAX_TIMER_SEC: 3600,
-  // Priorities count down from 1 among the blocks that are not ended (FocusController).
-  MAX_PRIORITY: 1000,
-} as const;
 
 /** `YYYY-MM-DD`. The controller checks the day exists in its month. */
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -190,6 +180,6 @@ export class ReorderFocusBlocksDto implements ReorderFocusBlocksRequest {
 }
 
 export class FocusSettingsDto implements UpdateFocusSettingsRequest {
-  @IsInt() @Min(0) @Max(100) sets!: number;
-  @IsInt() @Min(0) @Max(600) minutes!: number;
+  @IsInt() @Min(0) @Max(FOCUS_LIMITS.MAX_GUIDE_SETS) sets!: number;
+  @IsInt() @Min(0) @Max(FOCUS_LIMITS.MAX_GUIDE_MINUTES) minutes!: number;
 }

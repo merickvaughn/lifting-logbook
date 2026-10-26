@@ -149,6 +149,17 @@ describe('mock-api JSON body fidelity (#699)', () => {
       expect(list).toEqual([expect.objectContaining({ id: shoulders.id, onEnd: 'prompt' })]);
     });
 
+    it('creates an auto-roll successor on read, once, as the API does', async () => {
+      const shoulders = await create({ ...NEW_BLOCK, area: 'Shoulders', onEnd: 'autoroll', nextArea: 'Back' });
+      const read = async () => (await fetch(`${BASE}/focus/blocks?today=${TODAY}`)).json();
+      const first = await read();
+      expect(first).toEqual([
+        expect.objectContaining({ id: shoulders.id }),
+        expect.objectContaining({ series: shoulders.id, area: 'Back', start: '2026-11-01', status: 'queued', onEnd: 'prompt' }),
+      ]);
+      expect(await read()).toHaveLength(2);
+    });
+
     it('stores the daily focus guide', async () => {
       const put = await jsonRequest('/focus/settings', 'PUT', JSON.stringify({ sets: 12, minutes: 25 }));
       expect(put.status).toBe(200);

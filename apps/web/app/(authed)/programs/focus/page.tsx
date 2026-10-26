@@ -30,7 +30,10 @@ export default async function FocusPage() {
   let workouts: FocusWeekWorkout[] = [];
   if (dashboard) {
     const dateOf = workoutDateResolver(dashboard);
-    const done = new Set([...dashboard.completedWorkoutNums, ...dashboard.skippedWorkoutNums]);
+    // Guarded like the Macrocycle Dashboard's: an older API pod during a rolling deploy can
+    // omit these fields, and the page degrades to "not done" rather than failing to render.
+    // Display-only, so no data-level test distinguishes it (skewed-test rule, option c).
+    const done = new Set([...(dashboard.completedWorkoutNums ?? []), ...(dashboard.skippedWorkoutNums ?? [])]);
     workouts = buildWorkoutDays(specs, dashboard.macrocycleStartDate, program).map((day) => ({
       workoutNum: day.workoutNum,
       week: day.week,

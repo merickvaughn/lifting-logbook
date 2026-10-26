@@ -1,8 +1,13 @@
 import { defaultFocusPool, defaultPoolEntry } from '@lifting-logbook/core';
 import { DEFAULT_FOCUS_TIMER, type FocusBlock } from '@lifting-logbook/types';
 import {
+  RENEW_WINDOW_DAYS,
   activeBlocks,
+  anchoredPatch,
+  autoRollSuccessor,
   currentWeek,
+  isUsableStart,
+  shiftedFollowOn,
   endsIn,
   followOnBlock,
   localToday,
@@ -82,9 +87,11 @@ describe('renewalPrompts', () => {
     expect(renewalPrompts([ending], TODAY, new Set()).map((b) => b.id)).toEqual(['bi']);
   });
 
-  it('waits until the block is within 10 days of its end', () => {
-    expect(renewalPrompts([ending], '2026-10-20', new Set())).toEqual([]);
-    expect(renewalPrompts([ending], '2026-10-21', new Set())).toHaveLength(1);
+  it(`waits until the block is within ${RENEW_WINDOW_DAYS} days of its end`, () => {
+    // October ends on the 31st.
+    const firstDay = `2026-10-${31 - RENEW_WINDOW_DAYS}`;
+    expect(renewalPrompts([ending], `2026-10-${30 - RENEW_WINDOW_DAYS}`, new Set())).toEqual([]);
+    expect(renewalPrompts([ending], firstDay, new Set())).toHaveLength(1);
   });
 
   it('skips auto-roll blocks, dismissed blocks, and series with something queued', () => {
@@ -123,6 +130,84 @@ describe('reorderedIds', () => {
       ['b', 1],
       ['old', 4],
     ]);
+  });
+});
+
+describe('anchoredPatch', () => {
+  const quarterly = block({ id: 'q', period: 'quarterly', start: '2026-10-01' });
+
+  it('keeps start when the block still covers today', () => {
+    expect(anchoredPatch(quarterly, { period: 'monthly' }, '2026-10-26')).toEqual({ period: 'monthly' });
+  });
+
+  it('restarts a calendar block in this month when the change would end it', () => {
+    // Monthly from Oct 1 would be October only, already over on Nov 15.
+    expect(anchoredPatch(quarterly, { period: 'monthly' }, '2026-11-15')).toEqual({
+      period: 'monthly',
+      start: '2026-11-01',
+    });
+  });
+
+  it('restarts a custom block today when the change would end it', () => {
+    expect(anchoredPatch(quarterly, { align: 'custom', period: 'monthly' }, '2026-11-15')).toEqual({
+      align: 'custom',
+      period: 'monthly',
+      start: '2026-11-15',
+    });
+  });
+
+  it('leaves an explicit start and other fields alone', () => {
+    expect(anchoredPatch(quarterly, { start: '2026-12-01' }, '2026-11-15')).toEqual({ start: '2026-12-01' });
+    expect(anchoredPatch(quarterly, { overlap: 'skip' }, '2026-11-15')).toEqual({ overlap: 'skip' });
+  });
+});
+
+describe('shiftedFollowOn', () => {
+  const october = block({ id: 'oct', series: 's' });
+  const november = block({ id: 'nov', series: 's', start: '2026-11-01' });
+
+  it('moves a queued follow-on past a longer period instead of overlapping it', () => {
+    const quarter = { ...october, period: 'quarterly' as const };
+    expect(shiftedFollowOn([october, november], october, quarter, TODAY)).toEqual({ id: 'nov', start: '2027-01-01' });
+  });
+
+  it('moves it up to close the gap a shorter period leaves', () => {
+    const fromQuarter = { ...october, period: 'quarterly' as const };
+    const january = block({ id: 'jan', series: 's', start: '2027-01-01' });
+    expect(shiftedFollowOn([fromQuarter, january], fromQuarter, october, TODAY)).toEqual({ id: 'jan', start: '2026-11-01' });
+  });
+
+  it('is null when nothing follows, or it already starts in the right place', () => {
+    expect(shiftedFollowOn([october], october, { ...october, overlap: 'skip' }, TODAY)).toBeNull();
+    expect(shiftedFollowOn([october, november], october, { ...october, overlap: 'skip' }, TODAY)).toBeNull();
+  });
+});
+
+describe('autoRollSuccessor', () => {
+  it("is the queued block the API rolled the block into, if any", () => {
+    const shoulders = block({ id: 'sh', series: 's1', onEnd: 'autoroll', nextArea: 'Back' });
+    const back = block({ id: 'back', series: 's1', area: 'Back', start: '2026-11-01' });
+    expect(autoRollSuccessor([shoulders, back], shoulders, TODAY)?.id).toBe('back');
+    expect(autoRollSuccessor([shoulders], shoulders, TODAY)).toBeUndefined();
+  });
+});
+
+describe('isUsableStart', () => {
+  const custom = block({ id: 'c', align: 'custom', start: '2026-10-12' });
+
+  it('accepts a real date the block can run from', () => {
+    expect(isUsableStart(custom, '2026-10-20', TODAY)).toBe(true);
+    expect(isUsableStart(custom, '2026-12-01', TODAY)).toBe(true);
+  });
+
+  it('rejects the partial years a date input reports while typing', () => {
+    expect(isUsableStart(custom, '0002-10-26', TODAY)).toBe(false);
+    expect(isUsableStart(custom, '0202-10-26', TODAY)).toBe(false);
+  });
+
+  it('rejects a date that would end the block, and a non-date', () => {
+    expect(isUsableStart(custom, '2026-08-01', TODAY)).toBe(false);
+    expect(isUsableStart(custom, '2026-02-30', TODAY)).toBe(false);
   });
 });
 

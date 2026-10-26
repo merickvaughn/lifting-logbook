@@ -175,6 +175,48 @@ function focusResponse(block, today) {
   return { ...block, status: focusStatus(block, today), rangeStart: start, rangeEnd: end };
 }
 
+function focusNextStart(block) {
+  const end = new Date(`${focusRange(block).end}T00:00:00Z`);
+  return isoDay(new Date(end.getTime() + 86_400_000));
+}
+
+// One accessory per area stands in for core's defaultFocusPool, which this mock can't import.
+const FOCUS_AREA_LIFT = {
+  Shoulders: 'Lateral Raise',
+  Biceps: 'Hammer Curl',
+  Triceps: 'Rope Pushdown',
+  Back: 'Lat Pulldown',
+  Chest: 'Cable Fly',
+  Calves: 'Standing Calf Raise',
+  Glutes: 'Hip Thrust',
+  Core: 'Cable Crunch',
+};
+
+/**
+ * Mirrors core's expandRollovers as the real API runs it on every read: a started block
+ * set to auto-roll gets a successor in its series, from the day after it ends, unless
+ * something in the series already runs that late.
+ */
+function materializeFocusRollovers(today) {
+  for (const block of [...state.focusBlocks]) {
+    if (block.onEnd !== 'autoroll' || block.nextArea === null || focusStatus(block, today) === 'queued') continue;
+    const start = focusNextStart(block);
+    const covered = state.focusBlocks.some((other) => other.series === block.series && focusRange(other).end >= start);
+    if (covered) continue;
+    state.focusSeq += 1;
+    state.focusBlocks.push({
+      ...block,
+      id: `focus-${state.focusSeq}`,
+      area: block.nextArea,
+      start,
+      onEnd: 'prompt',
+      nextArea: null,
+      priority: state.focusBlocks.reduce((max, b) => Math.max(max, b.priority), 0) + 1,
+      pool: [seedPoolEntry(FOCUS_AREA_LIFT[block.nextArea])],
+    });
+  }
+}
+
 /** The first day of this calendar quarter, by the mock's clock — for seeded blocks. */
 function thisQuarterStart() {
   const now = new Date();
@@ -319,8 +361,9 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // GET /focus/blocks
+    // GET /focus/blocks — creates due auto-roll successors first, as the API does
     if (method === 'GET' && parts[1] === 'blocks' && parts.length === 2) {
+      materializeFocusRollovers(today);
       json(res, state.focusBlocks.map((b) => focusResponse(b, today)));
       return;
     }
@@ -346,6 +389,7 @@ const server = createServer(async (req, res) => {
     if (method === 'PUT' && parts[1] === 'blocks' && parts[2] === 'order') {
       const body = await readBody(req);
       if (rejectIfInvalidBody(res, body)) return;
+      materializeFocusRollovers(today);
       const current = state.focusBlocks.filter((b) => focusStatus(b, today) !== 'ended').map((b) => b.id);
       const ids = body.ids ?? [];
       if (ids.length !== current.length || new Set(ids).size !== ids.length || ids.some((id) => !current.includes(id))) {
@@ -383,8 +427,11 @@ const server = createServer(async (req, res) => {
         json(res, { statusCode: 404, message: 'Focus block not found' }, 404);
         return;
       }
+      // Only the predecessor whose roll the deleted block was covering, as the API's owesRoll.
       for (const b of state.focusBlocks) {
-        if (b.id !== id && b.series === target.series && b.onEnd === 'autoroll') b.onEnd = 'prompt';
+        if (b.id !== id && b.series === target.series && b.onEnd === 'autoroll' && focusNextStart(b) === target.start) {
+          b.onEnd = 'prompt';
+        }
       }
       state.focusBlocks = state.focusBlocks.filter((b) => b.id !== id);
       noContent(res);

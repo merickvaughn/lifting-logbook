@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { daysLeft, rangeLabel } from '@lifting-logbook/core';
+import { daysLeft, defaultFocusPool, rangeLabel } from '@lifting-logbook/core';
 import {
   FOCUS_AREAS,
+  FOCUS_LIMITS,
   type CreateFocusBlockRequest,
   type FocusArea,
   type FocusBlock,
@@ -28,6 +29,8 @@ import {
 } from '@/lib/client-api';
 import {
   activeBlocks,
+  anchoredPatch,
+  autoRollSuccessor,
   currentWeek,
   endsIn,
   followOnBlock,
@@ -36,6 +39,7 @@ import {
   nextMonthName,
   renewalPrompts,
   reorderedIds,
+  shiftedFollowOn,
   shortDate,
   suggestedArea,
   upNext,
@@ -69,6 +73,16 @@ function writeDismissed(ids: ReadonlySet<string>): void {
 
 type WeekPlans = { status: 'loading' } | { status: 'error' } | { status: 'ready'; plans: FocusDayPlanResponse[] };
 
+/** What a save can change, and so what to re-read once the saves are done. */
+interface Reread {
+  blocks: boolean;
+  week: boolean;
+  guide: boolean;
+}
+const NOTHING: Reread = { blocks: false, week: false, guide: false };
+const EVERYTHING: Reread = { blocks: true, week: true, guide: true };
+const BLOCKS_AND_WEEK: Reread = { blocks: true, week: true, guide: false };
+
 interface Props {
   program: string;
   macrocycleNum: number | null;
@@ -90,46 +104,84 @@ interface Props {
 export default function FocusSetup({ program, macrocycleNum, programLifts, workouts, unit }: Props) {
   const [today, setToday] = useState<string | null>(null);
   const [blocks, setBlocks] = useState<FocusBlock[] | null>(null);
-  const [budget, setBudget] = useState<FocusBudget | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [budget, setBudget] = useState<FocusBudget | null>(null);
+  const [guideFailed, setGuideFailed] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const [week, setWeek] = useState<WeekPlans>({ status: 'loading' });
   const [openId, setOpenId] = useState<string | null>(null);
   const [newArea, setNewArea] = useState<FocusArea | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  /** Creates still in flight: the buttons that create are disabled until they land. */
+  const [creating, setCreating] = useState(0);
+  /** Renewal prompts already answered, hidden until the re-read shows what was queued. */
+  const [answered, setAnswered] = useState<ReadonlySet<string>>(() => new Set());
 
   const queue = useRef<Promise<void>>(Promise.resolve());
   const pending = useRef(0);
+  /** Bumped by every save, so a re-read that started before it never overwrites its edit. */
+  const generation = useRef(0);
+  const weekRequest = useRef(0);
+  /** What the saves since the last re-read can have changed. */
+  const stale = useRef<Reread>({ ...NOTHING });
+  const failedSinceReread = useRef(false);
 
   const weekWorkouts = today ? currentWeek(workouts, today) : [];
   const weekKey = weekWorkouts.map((workout) => workout.workoutNum).join(',');
+  const weekNums = useCallback(() => (weekKey ? weekKey.split(',').map(Number) : []), [weekKey]);
 
+  /** Reads this week's plans. Only the latest request's answer is shown. */
   const loadWeek = useCallback(
-    async (day: string, nums: number[]) => {
+    async (day: string, current: () => boolean = () => true) => {
+      const request = ++weekRequest.current;
+      const nums = weekNums();
+      const applies = () => request === weekRequest.current && current();
       if (nums.length === 0) {
         setWeek({ status: 'ready', plans: [] });
-        return;
+        return true;
       }
       try {
         const plans = await Promise.all(nums.map((num) => fetchFocusPlan(program, num, day)));
-        setWeek({ status: 'ready', plans });
+        if (applies()) setWeek({ status: 'ready', plans });
+        return true;
       } catch (error) {
         logClientError('fetchFocusPlan', error, { program, workoutNums: nums });
-        setWeek({ status: 'error' });
+        if (applies()) setWeek({ status: 'error' });
+        return false;
       }
     },
-    [program],
+    [program, weekNums],
   );
 
-  const loadBlocks = useCallback(async (day: string) => {
+  /** Reads the focus blocks; true when they loaded. Applied only while `current()` holds. */
+  const loadBlocks = useCallback(async (day: string, current: () => boolean = () => true) => {
     try {
-      const [loaded, settings] = await Promise.all([fetchFocusBlocks(day), fetchFocusSettings()]);
-      setBlocks(loaded);
-      setBudget(settings);
-      setLoadFailed(false);
+      const loaded = await fetchFocusBlocks(day);
+      if (current()) {
+        setBlocks(loaded);
+        setLoadFailed(false);
+      }
+      return true;
     } catch (error) {
       logClientError('fetchFocusBlocks', error);
-      setLoadFailed(true);
+      if (current()) setLoadFailed(true);
+      return false;
+    }
+  }, []);
+
+  /** Reads the daily focus guide. A failure here only affects the guide's own card. */
+  const loadGuide = useCallback(async (current: () => boolean = () => true) => {
+    try {
+      const settings = await fetchFocusSettings();
+      if (current()) {
+        setBudget(settings);
+        setGuideFailed(false);
+      }
+      return true;
+    } catch (error) {
+      logClientError('fetchFocusSettings', error);
+      if (current()) setGuideFailed(true);
+      return false;
     }
   }, []);
 
@@ -140,59 +192,120 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
   }, []);
 
   useEffect(() => {
-    if (today) void loadBlocks(today);
-  }, [today, loadBlocks]);
+    if (!today) return;
+    void loadBlocks(today);
+    void loadGuide();
+  }, [today, loadBlocks, loadGuide]);
 
   useEffect(() => {
-    if (!today) return;
-    void loadWeek(
-      today,
-      weekKey ? weekKey.split(',').map(Number) : [],
-    );
-  }, [today, weekKey, loadWeek]);
+    if (today) void loadWeek(today);
+  }, [today, loadWeek]);
 
-  /** Runs a save after every earlier one; re-reads everything once none are left. */
-  function save(operation: string, task: (day: string) => Promise<void>, context?: Record<string, unknown>) {
+  /**
+   * Runs a save after every earlier one. Once none are left, re-reads what the saves can
+   * have changed (everything, after a failure), unless another save arrived meanwhile:
+   * that one re-reads when it finishes, and an older answer would undo its edit.
+   */
+  function save(operation: string, task: (day: string) => Promise<void>, rereads: Reread, context?: Record<string, unknown>) {
     if (!today) return;
     const day = today;
+    generation.current += 1;
     pending.current += 1;
+    stale.current = {
+      blocks: stale.current.blocks || rereads.blocks,
+      week: stale.current.week || rereads.week,
+      guide: stale.current.guide || rereads.guide,
+    };
     queue.current = queue.current.then(async () => {
       try {
         await task(day);
       } catch (error) {
         logClientError(operation, error, context);
-        setSaveFailed(true);
+        failedSinceReread.current = true;
+        stale.current = { ...EVERYTHING };
       }
       pending.current -= 1;
-      if (pending.current === 0) {
-        await Promise.all([loadBlocks(day), loadWeek(day, weekKey ? weekKey.split(',').map(Number) : [])]);
-      }
+      if (pending.current > 0) return;
+
+      const needs = stale.current;
+      stale.current = { ...NOTHING };
+      const startedAt = generation.current;
+      const current = () => generation.current === startedAt;
+      const results = await Promise.all([
+        needs.blocks ? loadBlocks(day, current) : true,
+        needs.week ? loadWeek(day, current) : true,
+        needs.guide ? loadGuide(current) : true,
+      ]);
+      if (!current()) return;
+      setAnswered(new Set());
+      // Claimed only once the page really shows what the API stored.
+      if (failedSinceReread.current && results.every(Boolean)) setSaveFailed(true);
+      failedSinceReread.current = false;
     });
   }
 
   function patchBlock(id: string, patch: UpdateFocusBlockRequest) {
-    setBlocks((current) => current && current.map((block) => (block.id === id ? { ...block, ...patch } : block)));
-    save('updateFocusBlock', (day) => updateFocusBlock(id, patch, day).then(() => undefined), {
-      blockId: id,
-      fields: Object.keys(patch),
-    });
+    const before = blocks?.find((block) => block.id === id);
+    if (!blocks || !before || !today) return;
+    const full = anchoredPatch(before, patch, today);
+    const after = { ...before, ...full };
+    const shift = shiftedFollowOn(blocks, before, after, today);
+    // The API gives an active auto-roll block its successor on the next read, so a new
+    // next area goes to that successor too, and going back to prompt removes it.
+    const successor = autoRollSuccessor(blocks, before, today);
+    const dropSuccessor = successor && full.onEnd === 'prompt' ? successor : undefined;
+    const retarget =
+      successor && !dropSuccessor && full.nextArea && full.nextArea !== successor.area ?
+        { id: successor.id, patch: { area: full.nextArea, pool: defaultFocusPool(full.nextArea) } }
+      : undefined;
+    const shifted = shift && shift.id !== dropSuccessor?.id ? shift : null;
+
+    setBlocks(
+      (current) =>
+        current &&
+        current.flatMap((block) => {
+          if (block.id === id) return [after];
+          if (block.id === dropSuccessor?.id) return [];
+          let next = block;
+          if (block.id === shifted?.id) next = { ...next, start: shifted.start };
+          if (block.id === retarget?.id) next = { ...next, ...retarget.patch };
+          return [next];
+        }),
+    );
+    const update = (blockId: string, body: UpdateFocusBlockRequest) =>
+      save('updateFocusBlock', (day) => updateFocusBlock(blockId, body, day).then(() => undefined), BLOCKS_AND_WEEK, {
+        blockId,
+        fields: Object.keys(body),
+      });
+    update(id, full);
+    if (shifted) update(shifted.id, { start: shifted.start });
+    if (retarget) update(retarget.id, retarget.patch);
+    if (dropSuccessor) {
+      save('deleteFocusBlock', () => deleteFocusBlock(dropSuccessor.id), BLOCKS_AND_WEEK, { blockId: dropSuccessor.id });
+    }
   }
 
   function createBlock(request: CreateFocusBlockRequest, open: boolean) {
+    setCreating((count) => count + 1);
     save(
       'createFocusBlock',
       async (day) => {
-        const created = await createFocusBlock(request, day);
-        setBlocks((current) => [...(current ?? []), created]);
-        if (open) setOpenId(created.id);
+        try {
+          const created = await createFocusBlock(request, day);
+          setBlocks((current) => [...(current ?? []), created]);
+          if (open) setOpenId(created.id);
+        } finally {
+          setCreating((count) => count - 1);
+        }
       },
+      BLOCKS_AND_WEEK,
       { area: request.area },
     );
   }
 
   function removeBlock(id: string) {
     setBlocks((current) => current && current.filter((block) => block.id !== id));
-    save('deleteFocusBlock', () => deleteFocusBlock(id), { blockId: id });
+    save('deleteFocusBlock', () => deleteFocusBlock(id), BLOCKS_AND_WEEK, { blockId: id });
   }
 
   function moveBlock(id: string, delta: -1 | 1) {
@@ -200,18 +313,41 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
     const ids = reorderedIds(blocks, today, id, delta);
     if (!ids) return;
     setBlocks(withPriorities(blocks, ids));
-    save('reorderFocusBlocks', (day) => reorderFocusBlocks(ids, day).then(() => undefined), { blockId: id });
+    // The order is worked out again when the save runs, from the API's own blocks: a save
+    // ahead of it in the queue (a create, or an auto-roll the API adds on read) changes
+    // which blocks the reorder has to list.
+    save(
+      'reorderFocusBlocks',
+      async (day) => {
+        const latest = reorderedIds(await fetchFocusBlocks(day), day, id, delta);
+        if (latest) await reorderFocusBlocks(latest, day);
+      },
+      BLOCKS_AND_WEEK,
+      { blockId: id },
+    );
   }
 
   function setGuide(next: FocusBudget) {
     setBudget(next);
-    save('updateFocusSettings', () => updateFocusSettings(next).then(() => undefined));
+    // The guide only changes this week's totals; the page already holds what it saved.
+    save('updateFocusSettings', () => updateFocusSettings(next).then(() => undefined), { ...NOTHING, week: true });
+  }
+
+  function answer(block: FocusBlock, area: FocusArea) {
+    setAnswered((current) => new Set(current).add(block.id));
+    createBlock(followOnBlock(block, area), false);
   }
 
   function letItEnd(id: string) {
     const next = new Set(dismissed).add(id);
     setDismissed(next);
     writeDismissed(next);
+  }
+
+  function retryReload() {
+    if (!today) return;
+    void loadBlocks(today);
+    void loadWeek(today);
   }
 
   const crumb = (
@@ -242,7 +378,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
     );
   }
 
-  if (!blocks || !budget) {
+  if (!blocks) {
     return (
       <main className={styles.container}>
         {header}
@@ -258,7 +394,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
 
   const active = activeBlocks(blocks, today);
   const queued = upNext(blocks, today);
-  const prompts = renewalPrompts(blocks, today, dismissed);
+  const prompts = renewalPrompts(blocks, today, dismissed).filter((block) => !answered.has(block.id));
   const addArea = newArea ?? suggestedArea(blocks, today);
 
   const plans = week.status === 'ready' ? week.plans : null;
@@ -277,21 +413,30 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
     <main className={styles.container}>
       {header}
 
-      {saveFailed && (
+      {loadFailed ?
         <p className={styles.alert} role="alert">
-          A change didn’t save, so the page now shows what was saved.{' '}
-          <button type="button" className={styles.linkBtn} onClick={() => setSaveFailed(false)}>
-            Dismiss
+          Couldn’t reload your focus blocks, so changes shown here may not have saved.{' '}
+          <button type="button" className={styles.linkBtn} onClick={retryReload}>
+            Try again
           </button>
         </p>
-      )}
+      : saveFailed && (
+          <p className={styles.alert} role="alert">
+            A change didn’t save, so the page now shows what was saved.{' '}
+            <button type="button" className={styles.linkBtn} onClick={() => setSaveFailed(false)}>
+              Dismiss
+            </button>
+          </p>
+        )
+      }
 
       {prompts.map((block) => (
         <RenewPrompt
           key={block.id}
           block={block}
           today={today}
-          onQueue={(area) => createBlock(followOnBlock(block, area), false)}
+          disabled={creating > 0}
+          onQueue={(area) => answer(block, area)}
           onLetItEnd={() => letItEnd(block.id)}
         />
       ))}
@@ -304,6 +449,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
             <FocusBlockCard
               key={block.id}
               block={block}
+              today={today}
               open={openId === block.id}
               first={index === 0}
               last={index === active.length - 1}
@@ -323,6 +469,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
         <button
           type="button"
           className={`${styles.btn} ${styles.btnPrimary} focus-ring`}
+          disabled={creating > 0}
           onClick={() => createBlock(newFocusBlock(addArea, today), true)}
         >
           + Add focus block
@@ -355,28 +502,37 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
       )}
 
       <h2 className={styles.sectionTitle}>Daily focus guide</h2>
-      <div className={styles.card}>
-        <Field label="Extra sets per day" hint="Advisory. Going over suggests a trim; nothing is blocked.">
-          <Stepper
-            name="Extra sets per day"
-            value={budget.sets}
-            min={1}
-            max={100}
-            onChange={(sets) => setGuide({ ...budget, sets })}
-          />
-        </Field>
-        <Field label="Focus time per day">
-          <Stepper
-            name="Focus time per day"
-            value={budget.minutes}
-            step={5}
-            min={5}
-            max={600}
-            format={(minutes) => `${minutes} min`}
-            onChange={(minutes) => setGuide({ ...budget, minutes })}
-          />
-        </Field>
-      </div>
+      {budget ?
+        <div className={styles.card}>
+          <Field label="Extra sets per day" hint="Advisory. Going over suggests a trim; nothing is blocked.">
+            <Stepper
+              name="Extra sets per day"
+              value={budget.sets}
+              min={1}
+              max={FOCUS_LIMITS.MAX_GUIDE_SETS}
+              onChange={(sets) => setGuide({ ...budget, sets })}
+            />
+          </Field>
+          <Field label="Focus time per day">
+            <Stepper
+              name="Focus time per day"
+              value={budget.minutes}
+              step={5}
+              min={5}
+              max={FOCUS_LIMITS.MAX_GUIDE_MINUTES}
+              format={(minutes) => `${minutes} min`}
+              onChange={(minutes) => setGuide({ ...budget, minutes })}
+            />
+          </Field>
+        </div>
+      : guideFailed ?
+        <p className={styles.alert} role="alert">
+          Couldn’t load your daily focus guide.{' '}
+          <button type="button" className={styles.linkBtn} onClick={() => void loadGuide()}>
+            Try again
+          </button>
+        </p>
+      : <p className={styles.muted}>Loading…</p>}
 
       <h2 className={styles.sectionTitle}>This week</h2>
       <ThisWeek workouts={weekWorkouts} week={week} />
@@ -387,11 +543,14 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
 function RenewPrompt({
   block,
   today,
+  disabled,
   onQueue,
   onLetItEnd,
 }: {
   block: FocusBlock;
   today: string;
+  /** While another create is in flight, so one click can't queue two blocks. */
+  disabled: boolean;
   onQueue: (area: FocusArea) => void;
   onLetItEnd: () => void;
 }) {
@@ -407,11 +566,16 @@ function RenewPrompt({
       </p>
       <p className={styles.promptBody}>Choose what follows. A summary of volume and PRs appears when it ends.</p>
       <div className={styles.row}>
-        <button type="button" className={`${styles.btn} ${styles.btnPrimary} focus-ring`} onClick={() => onQueue(block.area)}>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.btnPrimary} focus-ring`}
+          disabled={disabled}
+          onClick={() => onQueue(block.area)}
+        >
           Renew for {block.period === 'quarterly' ? 'next quarter' : nextMonthName(block)}
         </button>
         <Select<FocusArea> label={`Area to follow ${block.area}`} value={pick} options={others} onChange={setPick} />
-        <button type="button" className={`${styles.btn} focus-ring`} onClick={() => onQueue(pick)}>
+        <button type="button" className={`${styles.btn} focus-ring`} disabled={disabled} onClick={() => onQueue(pick)}>
           Queue
         </button>
         <button type="button" className={`${styles.btn} ${styles.btnGhost} focus-ring`} onClick={onLetItEnd}>

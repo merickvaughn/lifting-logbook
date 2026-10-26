@@ -2,7 +2,14 @@
 // prototype's `focus-setup.jsx` (docs/mockups/focus-work.html). Status always comes from
 // the dates through core's `blockStatus`, never from a stored field (ADR-039).
 
-import { blockStatus, daysLeft, defaultFocusPool, nextStart } from '@lifting-logbook/core';
+import {
+  blockRange,
+  blockStatus,
+  daysLeft,
+  defaultFocusPool,
+  nextStart,
+  parseIsoDate,
+} from '@lifting-logbook/core';
 import {
   DEFAULT_FOCUS_TIMER,
   FOCUS_AREAS,
@@ -13,6 +20,7 @@ import {
   type FocusOverlap,
   type FocusProgression,
   type FocusSelection,
+  type UpdateFocusBlockRequest,
 } from '@lifting-logbook/types';
 
 /** A block ending within this many days asks what comes next, as in the prototype. */
@@ -65,17 +73,17 @@ export function localToday(now: Date = new Date()): string {
 }
 
 /** Active focus blocks, highest priority first. */
-export function activeBlocks<T extends FocusBlock>(blocks: readonly T[], today: string): T[] {
+export function activeBlocks(blocks: readonly FocusBlock[], today: string): FocusBlock[] {
   return blocks
     .filter((block) => blockStatus(block, today) === 'active')
     .sort((a, b) => a.priority - b.priority);
 }
 
 /** One row of the "Up next" list: a queued block, and the block auto-rolling into it. */
-export interface UpNextRow<T extends FocusBlock> {
-  block: T;
+export interface UpNextRow {
+  block: FocusBlock;
   /** The predecessor this block is the auto-roll of; undefined for one the user queued. */
-  rolledFrom: T | undefined;
+  rolledFrom: FocusBlock | undefined;
 }
 
 /**
@@ -83,7 +91,7 @@ export interface UpNextRow<T extends FocusBlock> {
  * a block set to auto-roll that ends the day before it starts: the API creates those
  * successors itself (`expandRollovers`), so the page never does.
  */
-export function upNext<T extends FocusBlock>(blocks: readonly T[], today: string): UpNextRow<T>[] {
+export function upNext(blocks: readonly FocusBlock[], today: string): UpNextRow[] {
   return blocks
     .filter((block) => blockStatus(block, today) === 'queued')
     .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : a.priority - b.priority))
@@ -104,11 +112,11 @@ export function upNext<T extends FocusBlock>(blocks: readonly T[], today: string
  * {@link RENEW_WINDOW_DAYS}, not dismissed with "Let it end", and with nothing queued in
  * their series yet.
  */
-export function renewalPrompts<T extends FocusBlock>(
-  blocks: readonly T[],
+export function renewalPrompts(
+  blocks: readonly FocusBlock[],
   today: string,
   dismissed: ReadonlySet<string>,
-): T[] {
+): FocusBlock[] {
   return activeBlocks(blocks, today).filter(
     (block) =>
       block.onEnd === 'prompt' &&
@@ -145,11 +153,72 @@ export function reorderedIds(
 }
 
 /** Priorities as the API assigns them after a reorder: each block's 1-based position. */
-export function withPriorities<T extends FocusBlock>(blocks: readonly T[], ids: readonly string[]): T[] {
+export function withPriorities(blocks: readonly FocusBlock[], ids: readonly string[]): FocusBlock[] {
   return blocks.map((block) => {
     const index = ids.indexOf(block.id);
     return index < 0 ? block : { ...block, priority: index + 1 };
   });
+}
+
+/**
+ * `patch` for a running block, re-anchored so the block still covers `today`. Changing the
+ * period or alignment keeps `start`, which can leave a running block entirely in the past:
+ * a quarterly block from Oct 1 switched to Monthly in November would cover October alone,
+ * end, and leave the page. When that would happen, the block restarts from this month (or
+ * this quarter, which the 1st of this month also falls in) for calendar alignment, or from
+ * today for a custom date.
+ */
+export function anchoredPatch(
+  block: FocusBlock,
+  patch: UpdateFocusBlockRequest,
+  today: string,
+): UpdateFocusBlockRequest {
+  if (patch.start !== undefined || (patch.period === undefined && patch.align === undefined)) return patch;
+  const next = { ...block, ...patch };
+  if (blockStatus(block, today) !== 'active' || blockStatus(next, today) === 'active') return patch;
+  return { ...patch, start: next.align === 'calendar' ? `${today.slice(0, 8)}01` : today };
+}
+
+/**
+ * The queued block that follows `before` in its series — its renewal, queued area or
+ * auto-roll successor — moved to start the day after `after` ends. Without the move, a
+ * longer period would overlap it and a shorter one would leave a gap. Null when nothing
+ * follows, or it already starts there.
+ */
+export function shiftedFollowOn(
+  blocks: readonly FocusBlock[],
+  before: FocusBlock,
+  after: FocusBlock,
+  today: string,
+): { id: string; start: string } | null {
+  const start = nextStart(after);
+  const followOn = blocks.find(
+    (other) =>
+      other.id !== before.id &&
+      other.series === before.series &&
+      blockStatus(other, today) === 'queued' &&
+      (other.start === nextStart(before) || other.start <= blockRange(after).end),
+  );
+  return followOn && followOn.start !== start ? { id: followOn.id, start } : null;
+}
+
+/** The auto-roll successor the API created for `block`, if it has one queued. */
+export function autoRollSuccessor(blocks: readonly FocusBlock[], block: FocusBlock, today: string): FocusBlock | undefined {
+  return upNext(blocks, today).find((row) => row.rolledFrom?.id === block.id)?.block;
+}
+
+/**
+ * True for a start date the page can save: a real ISO date from 2000 on (a date input
+ * reports "0002-10-26" partway through typing a year), on which the block has not
+ * already ended. An ended block leaves this page, so the user could not undo it here.
+ */
+export function isUsableStart(block: FocusBlock, start: string, today: string): boolean {
+  try {
+    parseIsoDate(start);
+  } catch {
+    return false;
+  }
+  return start >= '2000-01-01' && blockStatus({ ...block, start }, today) !== 'ended';
 }
 
 /** The first area without an active block, so "+ Add focus block" starts somewhere new. */

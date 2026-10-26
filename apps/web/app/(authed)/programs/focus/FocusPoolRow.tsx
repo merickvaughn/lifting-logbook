@@ -3,6 +3,7 @@
 import { LIFT_CATALOG } from '@lifting-logbook/core';
 import {
   FOCUS_INCLUDES,
+  FOCUS_LIMITS,
   type FocusBlock,
   type FocusInclude,
   type FocusPoolEntry,
@@ -13,10 +14,7 @@ import { Stepper } from '@/components/form/Stepper';
 import { INCLUDE_LABELS } from '@/lib/focusSetup';
 import styles from './focus.module.css';
 
-// The API's bounds (FocusPoolEntryDto), so a stepper never offers a value it rejects.
-const MAX_SETS = 20;
-const MAX_REPS = 100;
-const MAX_WEIGHT = 5000;
+const { MAX_SETS, MAX_REPS, MAX_WEIGHT } = FOCUS_LIMITS;
 
 /** "Side Delts, Traps (2°)": the catalog's muscles for a lift, secondary ones marked. */
 function muscleTags(lift: string): string {

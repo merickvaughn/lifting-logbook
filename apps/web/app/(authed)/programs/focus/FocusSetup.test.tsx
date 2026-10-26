@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { defaultPoolEntry } from '@lifting-logbook/core';
+import { defaultFocusPool, defaultPoolEntry } from '@lifting-logbook/core';
 import {
   DEFAULT_FOCUS_TIMER,
   emptyFocusDayState,
@@ -343,6 +343,141 @@ describe('FocusSetup', () => {
         'true',
       ),
     );
+  });
+
+  it('does not claim the stored state is shown when the re-read after a failed save fails too', async () => {
+    const user = userEvent.setup();
+    mocks.update.mockRejectedValue(new Error('API 400'));
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Biceps/ }));
+    mocks.list.mockRejectedValue(new Error('API 503'));
+    await user.click(within(screen.getByRole('radiogroup', { name: 'Progression' })).getByRole('radio', { name: 'RPE' }));
+
+    expect(await screen.findByText(/Couldn’t reload your focus blocks/)).toBeInTheDocument();
+    expect(screen.queryByText(/the page now shows what was saved/)).not.toBeInTheDocument();
+  });
+
+  it('keeps an edit made while the re-read is in flight', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Biceps/ }));
+
+    // Hold the re-read that follows the first save, answering with what was stored then.
+    let release: () => void = () => undefined;
+    mocks.list.mockImplementationOnce(() => {
+      const then = stored.map((b) => ({ ...b }));
+      return new Promise((resolve) => {
+        release = () => resolve(then);
+      });
+    });
+    await user.click(screen.getByRole('button', { name: 'Increase Sets (Lateral Raise)' }));
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
+
+    // Hold the second save too, so the screen can be read between the stale answer and it.
+    let saveSecond: () => void = () => undefined;
+    mocks.update.mockImplementationOnce(
+      (id, patch) =>
+        new Promise((resolve) => {
+          saveSecond = () => {
+            stored = stored.map((b) => (b.id === id ? { ...b, ...patch } : b));
+            resolve(stored.find((b) => b.id === id) ?? SHOULDERS);
+          };
+        }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Increase Sets (Lateral Raise)' }));
+    release();
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2));
+    // The stale answer (4 sets) must not replace the newer edit.
+    expect(screen.getByRole('status', { name: 'Sets (Lateral Raise)' })).toHaveTextContent('5');
+
+    saveSecond();
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(3));
+    expect(mocks.update).toHaveBeenLastCalledWith('bi', { pool: [{ ...defaultPoolEntry('Lateral Raise'), sets: 5 }] }, TODAY);
+    expect(screen.getByRole('status', { name: 'Sets (Lateral Raise)' })).toHaveTextContent('5');
+  });
+
+  it('creates once however often "+ Add focus block" is clicked while the create is in flight', async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => undefined;
+    mocks.create.mockImplementationOnce(
+      (request) =>
+        new Promise((resolve) => {
+          finish = () => resolve(block({ ...request, id: 'new', priority: 4 }));
+        }),
+    );
+    renderPage();
+    const add = await screen.findByRole('button', { name: '+ Add focus block' });
+    await user.click(add);
+    expect(add).toBeDisabled();
+    await user.click(add);
+    finish();
+    await waitFor(() => expect(add).toBeEnabled());
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides a renewal prompt as soon as it is answered', async () => {
+    const user = userEvent.setup();
+    mocks.create.mockImplementationOnce(() => new Promise(() => undefined));
+    renderPage();
+    const prompt = await screen.findByRole('region', { name: 'Biceps focus block ending' });
+    await user.click(within(prompt).getByRole('button', { name: 'Renew for November' }));
+    expect(screen.queryByRole('region', { name: 'Biceps focus block ending' })).not.toBeInTheDocument();
+  });
+
+  it('builds the reorder from the blocks the API holds when the save runs', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: 'Raise priority of Biceps' });
+    // A block the page hasn't seen yet, such as one an earlier queued save created.
+    stored = [...stored, block({ id: 'late', series: 's9', area: 'Core', start: '2026-11-01', priority: 4 })];
+    await user.click(screen.getByRole('button', { name: 'Raise priority of Biceps' }));
+    await waitFor(() => expect(mocks.reorder).toHaveBeenCalledWith(['bi', 'sh', 'roll', 'late'], TODAY));
+  });
+
+  it("moves a changed next area to the auto-roll successor the API already created", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Shoulders/ }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Next area' }), 'Biceps');
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('sh', { nextArea: 'Biceps' }, TODAY));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith('roll', { area: 'Biceps', pool: defaultFocusPool('Biceps') }, TODAY),
+    );
+  });
+
+  it('removes the auto-roll successor when the block goes back to prompting', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Shoulders/ }));
+    await user.click(within(screen.getByRole('radiogroup', { name: 'When it ends' })).getByRole('radio', { name: 'Prompt me' }));
+    await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith('roll'));
+    expect(mocks.update).toHaveBeenCalledWith('sh', { onEnd: 'prompt', nextArea: null }, TODAY);
+  });
+
+  it('saves a custom start date on blur, and only a date the block can run from', async () => {
+    const user = userEvent.setup();
+    stored = stored.map((b) => (b.id === 'bi' ? { ...b, align: 'custom', start: '2026-10-12' } : b));
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Biceps/ }));
+    const date = screen.getByLabelText('Start date');
+
+    // What a date input reports partway through typing a year.
+    fireEvent.change(date, { target: { value: '0002-10-26' } });
+    fireEvent.blur(date);
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(date).toHaveValue('2026-10-12');
+
+    fireEvent.change(date, { target: { value: '2026-10-15' } });
+    fireEvent.blur(date);
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('bi', { start: '2026-10-15' }, TODAY));
+  });
+
+  it('shows the focus blocks when only the daily focus guide fails to load', async () => {
+    mocks.settings.mockRejectedValueOnce(new Error('API 503'));
+    renderPage();
+    expect(await screen.findByRole('button', { name: /^›?\s*Shoulders/ })).toBeInTheDocument();
+    expect(await screen.findByText(/Couldn’t load your daily focus guide/)).toBeInTheDocument();
+    expect(mocks.logError).toHaveBeenCalledWith('fetchFocusSettings', expect.any(Error));
   });
 
   it('says so when the focus blocks fail to load', async () => {

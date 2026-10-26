@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import {
   FOCUS_AREA_MUSCLES,
   FOCUS_AREAS,
+  FOCUS_LIMITS,
   FOCUS_OVERLAPS,
   FOCUS_PROGRESSIONS,
   FOCUS_SELECTIONS,
@@ -29,14 +31,13 @@ import {
   PROGRESSION_LABELS,
   SELECTION_HINTS,
   SELECTION_LABELS,
+  isUsableStart,
   runLabel,
 } from '@/lib/focusSetup';
 import FocusPoolRow from './FocusPoolRow';
 import styles from './focus.module.css';
 
-// The API's bounds (FocusBlockFieldsDto).
-const MAX_POOL = 20;
-const MAX_TIMER_SEC = 3600;
+const { MAX_POOL, MAX_TIMER_SEC } = FOCUS_LIMITS;
 
 /** The dot in an area's colour. */
 export function AreaDot({ area }: { area: FocusArea }) {
@@ -62,6 +63,7 @@ function addLiftOptions(block: FocusBlock): (readonly [string, string])[] {
 /** One active focus block: its header with priority controls, and its editor when open. */
 export default function FocusBlockCard({
   block,
+  today,
   open,
   first,
   last,
@@ -74,6 +76,7 @@ export default function FocusBlockCard({
   onRemove,
 }: {
   block: FocusBlock;
+  today: string;
   open: boolean;
   first: boolean;
   last: boolean;
@@ -91,6 +94,14 @@ export default function FocusBlockCard({
   const bodyId = `focus-block-${block.id}`;
   const areaWord = area.toLowerCase();
   const unitLabel = block.period === 'quarterly' ? 'quarter' : 'month';
+
+  const [startDraft, setStartDraft] = useState<string | null>(null);
+  function commitStart() {
+    if (startDraft !== null && startDraft !== block.start && isUsableStart(block, startDraft, today)) {
+      onPatch({ start: startDraft });
+    }
+    setStartDraft(null);
+  }
 
   const setPool = (pool: FocusPoolEntry[]) => onPatch({ pool });
   const setTimer = (key: keyof FocusBlock['timer'], value: number) =>
@@ -192,9 +203,14 @@ export default function FocusBlockCard({
                     type="date"
                     className={`${styles.dateInput} focus-ring`}
                     aria-label="Start date"
-                    value={block.start}
-                    onChange={(e) => {
-                      if (e.target.value) onPatch({ start: e.target.value });
+                    // A date input reports a complete value on every keystroke of the
+                    // year ("0002-…", "0020-…"), so the value saves on blur or Enter, and
+                    // only when it is a date the block can run from.
+                    value={startDraft ?? block.start}
+                    onChange={(e) => setStartDraft(e.target.value)}
+                    onBlur={commitStart}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.currentTarget.blur();
                     }}
                   />
                 )}
