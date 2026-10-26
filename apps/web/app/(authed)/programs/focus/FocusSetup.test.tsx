@@ -472,6 +472,51 @@ describe('FocusSetup', () => {
     await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('bi', { start: '2026-10-15' }, TODAY));
   });
 
+  it('still re-reads the focus blocks when a newer save discards the re-read', async () => {
+    const user = userEvent.setup();
+    mocks.update.mockRejectedValueOnce(new Error('API 400'));
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Biceps/ }));
+
+    // Hold the re-read that follows the failed save.
+    let release: () => void = () => undefined;
+    mocks.list.mockImplementationOnce(() => {
+      const then = stored.map((b) => ({ ...b }));
+      return new Promise((resolve) => {
+        release = () => resolve(then);
+      });
+    });
+    await user.click(within(screen.getByRole('radiogroup', { name: 'Progression' })).getByRole('radio', { name: 'RPE' }));
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
+
+    // A guide save only needs the week re-read, but the blocks still owe theirs.
+    await user.click(screen.getByRole('button', { name: 'Increase Extra sets per day' }));
+    release();
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(3));
+    expect(await screen.findByText(/A change didn’t save/)).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('radiogroup', { name: 'Progression' })).getByRole('radio', { name: 'Double progression' }),
+    ).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('moves a follow-on later before moving the block onto its old start', async () => {
+    const user = userEvent.setup();
+    // Custom Oct 12 – Nov 11, renewed from Nov 12.
+    stored = stored.map((b) => (b.id === 'bi' ? { ...b, align: 'custom', start: '2026-10-12' } : b));
+    stored = [...stored, block({ id: 'bi-next', series: 's2', area: 'Biceps', align: 'custom', start: '2026-11-12', priority: 4 })];
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Biceps/ }));
+    const date = screen.getByLabelText('Start date');
+    fireEvent.change(date, { target: { value: '2026-10-20' } });
+    fireEvent.blur(date);
+
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2));
+    expect(mocks.update.mock.calls.map(([id, patch]) => [id, patch])).toEqual([
+      ['bi-next', { start: '2026-11-20' }],
+      ['bi', { start: '2026-10-20' }],
+    ]);
+  });
+
   it('shows the focus blocks when only the daily focus guide fails to load', async () => {
     mocks.settings.mockRejectedValueOnce(new Error('API 503'));
     renderPage();

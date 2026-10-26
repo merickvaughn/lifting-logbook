@@ -125,6 +125,8 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
   /** What the saves since the last re-read can have changed. */
   const stale = useRef<Reread>({ ...NOTHING });
   const failedSinceReread = useRef(false);
+  /** Follow-on blocks this page created, which are never mistaken for auto-roll successors. */
+  const queuedHere = useRef(new Set<string>());
 
   const weekWorkouts = today ? currentWeek(workouts, today) : [];
   const weekKey = weekWorkouts.map((workout) => workout.workoutNum).join(',');
@@ -231,15 +233,25 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
       stale.current = { ...NOTHING };
       const startedAt = generation.current;
       const current = () => generation.current === startedAt;
-      const results = await Promise.all([
+      const [blocksRead] = await Promise.all([
         needs.blocks ? loadBlocks(day, current) : true,
         needs.week ? loadWeek(day, current) : true,
         needs.guide ? loadGuide(current) : true,
       ]);
-      if (!current()) return;
+      if (!current()) {
+        // Discarded for a newer save: hand what this re-read was for to that save's.
+        stale.current = {
+          blocks: stale.current.blocks || needs.blocks,
+          week: stale.current.week || needs.week,
+          guide: stale.current.guide || needs.guide,
+        };
+        return;
+      }
       setAnswered(new Set());
-      // Claimed only once the page really shows what the API stored.
-      if (failedSinceReread.current && results.every(Boolean)) setSaveFailed(true);
+      // Claimed only once the blocks on screen really are what the API stored. A failed
+      // blocks re-read shows its own alert; a failed week or guide re-read shows in its
+      // own section.
+      if (failedSinceReread.current && blocksRead) setSaveFailed(true);
       failedSinceReread.current = false;
     });
   }
@@ -252,7 +264,9 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
     const shift = shiftedFollowOn(blocks, before, after, today);
     // The API gives an active auto-roll block its successor on the next read, so a new
     // next area goes to that successor too, and going back to prompt removes it.
-    const successor = autoRollSuccessor(blocks, before, today);
+    // A block this page queued itself (a renewal, or a queued area) is never treated as one.
+    const found = autoRollSuccessor(blocks, before, today);
+    const successor = found && !queuedHere.current.has(found.id) ? found : undefined;
     const dropSuccessor = successor && full.onEnd === 'prompt' ? successor : undefined;
     const retarget =
       successor && !dropSuccessor && full.nextArea && full.nextArea !== successor.area ?
@@ -277,8 +291,12 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
         blockId,
         fields: Object.keys(body),
       });
+    // Start dates are unique within a series, so a follow-on moving later moves first, out
+    // of the way of the block's new range; one moving earlier waits for the block.
+    const followOnFirst = shifted && shifted.start > (blocks.find((b) => b.id === shifted.id)?.start ?? '');
+    if (shifted && followOnFirst) update(shifted.id, { start: shifted.start });
     update(id, full);
-    if (shifted) update(shifted.id, { start: shifted.start });
+    if (shifted && !followOnFirst) update(shifted.id, { start: shifted.start });
     if (retarget) update(retarget.id, retarget.patch);
     if (dropSuccessor) {
       save('deleteFocusBlock', () => deleteFocusBlock(dropSuccessor.id), BLOCKS_AND_WEEK, { blockId: dropSuccessor.id });
@@ -292,6 +310,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
       async (day) => {
         try {
           const created = await createFocusBlock(request, day);
+          if (request.series) queuedHere.current.add(created.id);
           setBlocks((current) => [...(current ?? []), created]);
           if (open) setOpenId(created.id);
         } finally {
@@ -344,10 +363,17 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
     writeDismissed(next);
   }
 
+  /** A retry's answer applies only if no save was queued while it was in flight. */
+  function sinceNow(): () => boolean {
+    const startedAt = generation.current;
+    return () => generation.current === startedAt;
+  }
+
   function retryReload() {
     if (!today) return;
-    void loadBlocks(today);
-    void loadWeek(today);
+    const current = sinceNow();
+    void loadBlocks(today, current);
+    void loadWeek(today, current);
   }
 
   const crumb = (
@@ -502,6 +528,14 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
       )}
 
       <h2 className={styles.sectionTitle}>Daily focus guide</h2>
+      {budget && guideFailed && (
+        <p className={styles.alert} role="alert">
+          Couldn’t reload your daily focus guide, so it may not show what was saved.{' '}
+          <button type="button" className={styles.linkBtn} onClick={() => void loadGuide(sinceNow())}>
+            Try again
+          </button>
+        </p>
+      )}
       {budget ?
         <div className={styles.card}>
           <Field label="Extra sets per day" hint="Advisory. Going over suggests a trim; nothing is blocked.">
@@ -528,7 +562,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
       : guideFailed ?
         <p className={styles.alert} role="alert">
           Couldn’t load your daily focus guide.{' '}
-          <button type="button" className={styles.linkBtn} onClick={() => void loadGuide()}>
+          <button type="button" className={styles.linkBtn} onClick={() => void loadGuide(sinceNow())}>
             Try again
           </button>
         </p>

@@ -94,6 +94,8 @@ export default function FocusBlockCard({
   const bodyId = `focus-block-${block.id}`;
   const areaWord = area.toLowerCase();
   const unitLabel = block.period === 'quarterly' ? 'quarter' : 'month';
+  // Auto-roll moves on to another area unless the user picks this one again.
+  const nextArea = block.nextArea ?? FOCUS_AREAS.find((other) => other !== area) ?? area;
 
   const [startDraft, setStartDraft] = useState<string | null>(null);
   function commitStart() {
@@ -329,7 +331,7 @@ export default function FocusBlockCard({
                   onChange={(onEnd) =>
                     onPatch(
                       onEnd === 'autoroll' ?
-                        { onEnd, nextArea: block.nextArea ?? FOCUS_AREAS[0] }
+                        { onEnd, nextArea: nextArea }
                       : { onEnd, nextArea: null },
                     )
                   }
@@ -337,7 +339,7 @@ export default function FocusBlockCard({
                 {block.onEnd === 'autoroll' && (
                   <Select<FocusArea>
                     label="Next area"
-                    value={block.nextArea ?? FOCUS_AREAS[0]}
+                    value={nextArea}
                     options={FOCUS_AREAS.map((next) => [next, `Next: ${next}`] as const)}
                     onChange={(nextArea) => onPatch({ nextArea })}
                   />

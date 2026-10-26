@@ -73,6 +73,12 @@ describe('upNext', () => {
     expect(rows[1]?.rolledFrom?.id).toBe('sh');
   });
 
+  it('does not call a same-area renewal an auto-roll into another area', () => {
+    const shoulders = block({ id: 'sh', series: 's1', onEnd: 'autoroll', nextArea: 'Back' });
+    const renewal = block({ id: 'renew', series: 's1', start: '2026-11-01' });
+    expect(upNext([shoulders, renewal], TODAY)[0]?.rolledFrom).toBeUndefined();
+  });
+
   it('does not call a renewal an auto-roll when its predecessor only prompts', () => {
     const biceps = block({ id: 'bi', series: 's2', area: 'Biceps' });
     const renewed = block({ id: 'next', series: 's2', area: 'Biceps', start: '2026-11-01' });

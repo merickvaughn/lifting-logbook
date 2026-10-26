@@ -88,8 +88,9 @@ export interface UpNextRow {
 
 /**
  * Queued focus blocks, soonest first. A queued block is an auto-roll when its series has
- * a block set to auto-roll that ends the day before it starts: the API creates those
- * successors itself (`expandRollovers`), so the page never does.
+ * a block set to auto-roll into its area that ends the day before it starts: the API
+ * creates those successors itself (`expandRollovers`), so the page never does. The area
+ * check keeps a same-area renewal queued by hand from passing for one.
  */
 export function upNext(blocks: readonly FocusBlock[], today: string): UpNextRow[] {
   return blocks
@@ -102,6 +103,7 @@ export function upNext(blocks: readonly FocusBlock[], today: string): UpNextRow[
           other.id !== block.id &&
           other.series === block.series &&
           other.onEnd === 'autoroll' &&
+          other.nextArea === block.area &&
           nextStart(other) === block.start,
       ),
     }));
