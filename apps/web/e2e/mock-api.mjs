@@ -227,22 +227,33 @@ function emptyFocusDayState() {
   return { modes: {}, picks: {}, trims: {}, placement: 'after', order: null, dismissed: false };
 }
 
-const isStringRecord = (value, ofArrays) =>
-  value !== null &&
-  typeof value === 'object' &&
-  !Array.isArray(value) &&
-  Object.values(value).every((v) => (ofArrays ? Array.isArray(v) && v.every((x) => typeof x === 'string') : typeof v === 'string'));
+// The limits apps/api/src/focus/focus-day-state.dto.ts enforces, so a request the
+// real API would reject with a 400 is rejected here too.
+const FOCUS_SELECTIONS = ['rules', 'rotate', 'fixed', 'pick'];
+const MAX_KEYS = 50;
+const MAX_ITEMS = 50;
+const MAX_ID = 100;
+const MAX_ORDER = 200;
+
+const isBoundedId = (x) => typeof x === 'string' && x.length <= MAX_ID;
+const isBoundedList = (v, max) => Array.isArray(v) && v.length <= max && v.every(isBoundedId);
+
+function isBoundedRecord(value, isValue) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length <= MAX_KEYS && keys.every(isBoundedId) && Object.values(value).every(isValue);
+}
 
 // The shape the real API's FocusDayStateDto accepts.
 function isFocusDayState(body) {
   return (
     body !== null &&
     typeof body === 'object' &&
-    isStringRecord(body.modes, false) &&
-    isStringRecord(body.picks, true) &&
-    isStringRecord(body.trims, true) &&
+    isBoundedRecord(body.modes, (mode) => FOCUS_SELECTIONS.includes(mode)) &&
+    isBoundedRecord(body.picks, (v) => isBoundedList(v, MAX_ITEMS)) &&
+    isBoundedRecord(body.trims, (v) => isBoundedList(v, MAX_ITEMS)) &&
     FOCUS_PLACEMENTS.includes(body.placement) &&
-    (body.order === null || (Array.isArray(body.order) && body.order.every((x) => typeof x === 'string'))) &&
+    (body.order === null || isBoundedList(body.order, MAX_ORDER)) &&
     typeof body.dismissed === 'boolean'
   );
 }

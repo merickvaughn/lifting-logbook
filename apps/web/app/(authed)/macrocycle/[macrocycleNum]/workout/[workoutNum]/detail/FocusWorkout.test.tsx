@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { emptyFocusDayState, type FocusDayPlanResponse, type FocusDayState } from '@lifting-logbook/types';
+import { focusRowIds, plannedRowIds } from '@/lib/focusWorkout';
 import { focusBlock, focusPlan, planGroup, planItem, poolEntry } from '@/lib/__tests__/focusPlanFixture';
 import FocusWorkout from './FocusWorkout';
 import type { LiftDetail } from './CollapsibleLiftList';
@@ -39,6 +40,12 @@ const LIFT_DETAILS: LiftDetail[] = [
   },
 ];
 
+const [SQUAT_ID = '', BENCH_ID = ''] = plannedRowIds(['Squat', 'Bench Press']);
+const [LATERAL_ID = '', FACE_ID = ''] = focusRowIds('b-shoulders', ['Lateral Raise', 'Face Pull']);
+
+/** jsdom has no DataTransfer; the handlers only set and read its data. */
+const DRAG = { dataTransfer: { effectAllowed: '', setData: jest.fn(), getData: () => '' } };
+
 function dayState(overrides: Partial<FocusDayState> = {}): FocusDayState {
   return { ...emptyFocusDayState(), ...overrides };
 }
@@ -55,6 +62,11 @@ function renderFocus(plan: FocusDayPlanResponse = focusPlan()) {
       plan={plan}
     />,
   );
+}
+
+/** Saves run from a queue, so the request goes out a microtask after the click. */
+async function expectSaved(state: FocusDayState) {
+  await waitFor(() => expect(mockedSave).toHaveBeenLastCalledWith('5-3-1', 1, state));
 }
 
 /** The module headings, in the order they are on the page. */
@@ -98,6 +110,12 @@ describe('FocusWorkout — summary', () => {
     expect(within(summary).getByText('Focus').nextSibling).toHaveClass('warnText');
     expect(within(summary).getByText('Focus time').nextSibling).toHaveClass('warnText');
   });
+
+  it('marks focus time over the guide by the seconds, as the API does, not the rounded minutes', () => {
+    // 20 min 20 s rounds to "20 min", but it is over a 20-minute guide.
+    renderFocus(focusPlan({ sets: 6, seconds: 1220, over: true }));
+    expect(within(summarySection()).getByText('Focus time').nextSibling).toHaveClass('warnText');
+  });
 });
 
 describe('FocusWorkout — placement', () => {
@@ -118,22 +136,54 @@ describe('FocusWorkout — placement', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'Before' }));
 
     expect(moduleOrder()).toEqual(['Workout Summary', 'Focus work', 'Planned']);
-    expect(mockedSave).toHaveBeenCalledWith('5-3-1', 1, dayState({ placement: 'before' }));
+    await expectSaved(dayState({ placement: 'before' }));
     expect(refresh).not.toHaveBeenCalled();
     expect(screen.getByRole('radio', { name: 'Before' })).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('swaps the modules when one is dragged onto the other', () => {
+  it('moves through the placements with the arrow keys, one tab stop for the group', async () => {
     renderFocus();
-    const [planned, focus] = [
-      screen.getByRole('region', { name: 'Planned' }),
-      screen.getByRole('region', { name: 'Focus work' }),
-    ];
-    fireEvent.dragStart(focus, { dataTransfer: { effectAllowed: '' } });
+    const after = screen.getByRole('radio', { name: 'After' });
+    expect(after).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('radio', { name: 'Before' })).toHaveAttribute('tabindex', '-1');
+
+    after.focus();
+    await userEvent.keyboard('{ArrowRight}');
+
+    const interleave = screen.getByRole('radio', { name: 'Interleave' });
+    expect(interleave).toHaveAttribute('aria-checked', 'true');
+    expect(interleave).toHaveFocus();
+    await expectSaved(dayState({ placement: 'interleave' }));
+
+    await userEvent.keyboard('{ArrowRight}');
+    expect(screen.getByRole('radio', { name: 'Before' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('swaps the modules when one is dragged onto the other by its grip', async () => {
+    renderFocus();
+    const planned = screen.getByRole('region', { name: 'Planned' });
+    const focus = screen.getByRole('region', { name: 'Focus work' });
+
+    fireEvent.dragStart(within(focus).getByTitle('Drag to move'), DRAG);
     fireEvent.drop(planned);
 
     expect(moduleOrder()).toEqual(['Workout Summary', 'Focus work', 'Planned']);
-    expect(mockedSave).toHaveBeenCalledWith('5-3-1', 1, dayState({ placement: 'before' }));
+    expect(DRAG.dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'focus');
+    await expectSaved(dayState({ placement: 'before' }));
+  });
+
+  it('ignores a drag that starts inside a module but not on its grip', () => {
+    renderFocus();
+    const planned = screen.getByRole('region', { name: 'Planned' });
+    const focus = screen.getByRole('region', { name: 'Focus work' });
+
+    const [historyLink] = within(planned).getAllByRole('link', { name: /History/ });
+    if (!historyLink) throw new Error('expected a History link');
+    fireEvent.dragStart(historyLink, DRAG);
+    fireEvent.drop(focus);
+
+    expect(moduleOrder()).toEqual(['Workout Summary', 'Planned', 'Focus work']);
+    expect(mockedSave).not.toHaveBeenCalled();
   });
 
   it('interleaves a focus lift after each planned lift, tagged with its area', () => {
@@ -156,19 +206,30 @@ describe('FocusWorkout — placement', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Move Lateral Raise up' }));
 
-    const order = ['f:b-shoulders:Lateral Raise', 'p:Squat#0', 'p:Bench Press#0', 'f:b-shoulders:Face Pull'];
-    expect(mockedSave).toHaveBeenCalledWith('5-3-1', 1, dayState({ placement: 'interleave', order }));
+    await expectSaved(dayState({ placement: 'interleave', order: [LATERAL_ID, SQUAT_ID, BENCH_ID, FACE_ID] }));
     expect(liftsIn('Today’s order')[0]).toBe('Lateral RaiseShoulders');
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it('reorders by dragging a lift onto another', () => {
+  it('keeps keyboard focus on the moved row, and announces where it went', async () => {
+    renderFocus(focusPlan({ dayState: dayState({ placement: 'interleave' }) }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Move Lateral Raise up' }));
+
+    // At the top its ↑ is disabled, so focus goes to its ↓ rather than to <body>.
+    expect(screen.getByRole('button', { name: 'Move Lateral Raise up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move Lateral Raise down' })).toHaveFocus();
+    expect(screen.getByText('Lateral Raise moved to position 1 of 4')).toBeInTheDocument();
+  });
+
+  it('reorders by dragging a lift onto another by its grip', () => {
     renderFocus(focusPlan({ dayState: dayState({ placement: 'interleave' }) }));
     const section = screen.getByRole('region', { name: 'Today’s order' });
     const [first, , , fourth] = Array.from(section.querySelectorAll('[data-row-id]'));
-    if (!first || !fourth) throw new Error('expected four rows');
+    const grip = fourth?.querySelector('[title="Drag to reorder"]');
+    if (!first || !grip) throw new Error('expected four rows with grips');
 
-    fireEvent.dragStart(fourth, { dataTransfer: { effectAllowed: '' } });
+    fireEvent.dragStart(grip, DRAG);
     fireEvent.drop(first);
 
     expect(liftsIn('Today’s order')).toEqual([
@@ -177,18 +238,29 @@ describe('FocusWorkout — placement', () => {
       'Lateral RaiseShoulders',
       'Bench PressTM: 285 lbs',
     ]);
+    expect(DRAG.dataTransfer.setData).toHaveBeenCalledWith('text/plain', FACE_ID);
   });
 
   it('follows a saved order and resets it', async () => {
-    const order = ['p:Bench Press#0', 'f:b-shoulders:Face Pull', 'p:Squat#0', 'f:b-shoulders:Lateral Raise'];
+    const order = [BENCH_ID, FACE_ID, SQUAT_ID, LATERAL_ID];
     renderFocus(focusPlan({ dayState: dayState({ placement: 'interleave', order }) }));
     expect(liftsIn('Today’s order')[0]).toBe('Bench PressTM: 285 lbs');
 
     await userEvent.click(screen.getByRole('button', { name: 'Reset order' }));
 
     expect(liftsIn('Today’s order')[0]).toBe('SquatTM: 315 lbs');
-    expect(mockedSave).toHaveBeenCalledWith('5-3-1', 1, dayState({ placement: 'interleave', order: null }));
+    await expectSaved(dayState({ placement: 'interleave', order: null }));
     expect(screen.queryByRole('button', { name: 'Reset order' })).not.toBeInTheDocument();
+  });
+
+  it('renders the same lift twice in a focus block as two rows', () => {
+    renderFocus(
+      focusPlan({
+        dayState: dayState({ placement: 'interleave' }),
+        groups: [planGroup({ items: [planItem('Lateral Raise'), planItem('Lateral Raise')] })],
+      }),
+    );
+    expect(liftsIn('Today’s order').filter((name) => name.startsWith('Lateral Raise'))).toHaveLength(2);
   });
 });
 
@@ -213,23 +285,47 @@ describe('FocusWorkout — over-guide advice', () => {
     renderFocus(overPlan());
     await userEvent.click(screen.getByRole('button', { name: 'Trim Face Pull' }));
 
-    expect(mockedSave).toHaveBeenCalledWith('5-3-1', 1, dayState({ trims: { 'b-shoulders': ['Face Pull'] } }));
+    await expectSaved(dayState({ trims: { 'b-shoulders': ['Face Pull'] } }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
-    expect(screen.getByText(/Trimmed today: Face Pull\./)).toBeInTheDocument();
   });
 
-  it('undoes the day’s trims', async () => {
+  it('trims once however often Trim is clicked while the save is in flight', async () => {
+    let resolveSave: (state: FocusDayState) => void = () => undefined;
+    mockedSave.mockImplementation(
+      (_p: string, _w: number, body: FocusDayState) =>
+        new Promise<FocusDayState>((resolve) => {
+          resolveSave = () => resolve(body);
+        }),
+    );
+    renderFocus(overPlan());
+    const trim = screen.getByRole('button', { name: 'Trim Face Pull' });
+
+    fireEvent.click(trim);
+    fireEvent.click(trim);
+
+    expect(trim).toBeDisabled();
+    await waitFor(() => expect(mockedSave).toHaveBeenCalledTimes(1));
+    await act(async () => resolveSave(dayState()));
+    expect(mockedSave).toHaveBeenCalledTimes(1);
+    expect(mockedSave).toHaveBeenCalledWith('5-3-1', 1, dayState({ trims: { 'b-shoulders': ['Face Pull'] } }));
+  });
+
+  it('lists only the trims the plan applies, and undoes them', async () => {
+    // Face Pull is still in the saved trims but no longer selected (another mode
+    // skips it), so the plan reports no trim for it and neither does the page.
     renderFocus(
       focusPlan({
-        dayState: dayState({ trims: { 'b-shoulders': ['Face Pull'] } }),
-        groups: [planGroup({ items: [planItem('Lateral Raise')], trimmed: ['Face Pull'] })],
+        dayState: dayState({ trims: { 'b-shoulders': ['Face Pull', 'Arnold Press'] } }),
+        groups: [planGroup({ items: [planItem('Lateral Raise')], trimmed: ['Arnold Press'] })],
       }),
     );
+    expect(screen.getByText(/Trimmed today: Arnold Press\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Trimmed today:.*Face Pull/)).not.toBeInTheDocument();
     expect(screen.getByText(/trimmed for today/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
 
-    expect(mockedSave).toHaveBeenCalledWith('5-3-1', 1, dayState({ trims: {} }));
+    await expectSaved(dayState({ trims: {} }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
@@ -239,12 +335,12 @@ describe('FocusWorkout — over-guide advice', () => {
 
     expect(screen.queryByRole('region', { name: 'Focus guide advice' })).not.toBeInTheDocument();
     expect(screen.getByText(/Over the guide; keeping everything\./)).toBeInTheDocument();
-    expect(mockedSave).toHaveBeenLastCalledWith('5-3-1', 1, dayState({ dismissed: true }));
+    await expectSaved(dayState({ dismissed: true }));
     expect(refresh).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole('button', { name: 'Show suggestion' }));
     expect(screen.getByRole('region', { name: 'Focus guide advice' })).toBeInTheDocument();
-    expect(mockedSave).toHaveBeenLastCalledWith('5-3-1', 1, dayState({ dismissed: false }));
+    await expectSaved(dayState({ dismissed: false }));
   });
 
   it('shows no advice under the guide', () => {
@@ -261,14 +357,14 @@ describe('FocusWorkout — focus block controls', () => {
     expect(within(select).getByRole('option', { name: 'Focus block default (Rules)' })).toBeInTheDocument();
 
     await userEvent.selectOptions(select, 'rotate');
-    expect(mockedSave).toHaveBeenLastCalledWith('5-3-1', 1, dayState({ modes: { 'b-shoulders': 'rotate' } }));
+    await expectSaved(dayState({ modes: { 'b-shoulders': 'rotate' } }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
   it('clears an override back to the focus block default', async () => {
     renderFocus(focusPlan({ dayState: dayState({ modes: { 'b-shoulders': 'fixed' } }) }));
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Shoulders selection today' }), '');
-    expect(mockedSave).toHaveBeenLastCalledWith('5-3-1', 1, dayState({ modes: {} }));
+    await expectSaved(dayState({ modes: {} }));
   });
 
   it('toggles pick chips', async () => {
@@ -287,11 +383,7 @@ describe('FocusWorkout — focus block controls', () => {
     expect(screen.getByRole('button', { name: '✓ Lateral Raise' })).toHaveAttribute('aria-pressed', 'true');
 
     await userEvent.click(screen.getByRole('button', { name: '+ Face Pull' }));
-    expect(mockedSave).toHaveBeenLastCalledWith(
-      '5-3-1',
-      1,
-      dayState({ picks: { 'b-shoulders': ['Lateral Raise', 'Face Pull'] } }),
-    );
+    await expectSaved(dayState({ picks: { 'b-shoulders': ['Lateral Raise', 'Face Pull'] } }));
   });
 
   it('explains overlap, skipped lifts and a reduced lift', () => {
@@ -336,5 +428,29 @@ describe('FocusWorkout — a failed save', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t save your focus work changes.');
     expect(mockedLog).toHaveBeenCalledWith('saveFocusDayState', err, { program: '5-3-1', macrocycleNum: 1, workoutNum: 1 });
     expect(moduleOrder()).toEqual(['Workout Summary', 'Planned', 'Focus work']);
+  });
+
+  it('does not revert a later change that saved, nor skip its re-plan, when an earlier save fails', async () => {
+    // The earlier change (a re-planning mode override) fails; the later layout change
+    // carries it and succeeds, so the page keeps both, re-plans, and shows no error.
+    const err = new Error('flaky');
+    mockedSave
+      .mockImplementationOnce(async () => {
+        throw err;
+      })
+      .mockImplementationOnce(async (_p: string, _w: number, body: FocusDayState) => body);
+    renderFocus();
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Shoulders selection today' }), {
+      target: { value: 'fixed' },
+    });
+    fireEvent.click(screen.getByRole('radio', { name: 'Before' }));
+
+    await waitFor(() => expect(mockedSave).toHaveBeenCalledTimes(2));
+    expect(mockedSave).toHaveBeenLastCalledWith('5-3-1', 1, dayState({ modes: { 'b-shoulders': 'fixed' }, placement: 'before' }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(moduleOrder()).toEqual(['Workout Summary', 'Focus work', 'Planned']);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(mockedLog).toHaveBeenCalledWith('saveFocusDayState', err, expect.any(Object));
   });
 });

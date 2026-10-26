@@ -123,6 +123,9 @@ describe('mock-api JSON body fidelity (#699)', () => {
     it('rejects a malformed or invalid day state with 400', async () => {
       expect((await jsonRequest(STATE, 'PUT', '{nope')).status).toBe(400);
       expect((await jsonRequest(STATE, 'PUT', JSON.stringify({ ...DAY_STATE, placement: 'sideways' }))).status).toBe(400);
+      // The real DTO's limits: modes from FOCUS_SELECTIONS, ids of at most 100 characters.
+      expect((await jsonRequest(STATE, 'PUT', JSON.stringify({ ...DAY_STATE, modes: { b: 'random' } }))).status).toBe(400);
+      expect((await jsonRequest(STATE, 'PUT', JSON.stringify({ ...DAY_STATE, order: ['x'.repeat(101)] }))).status).toBe(400);
     });
   });
 });

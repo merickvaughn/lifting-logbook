@@ -3,6 +3,7 @@ import type { FocusPlanGroupResponse } from '@lifting-logbook/types';
 import { planGroup, planItem } from './focusPlanFixture';
 import {
   describePrescription,
+  focusRowIds,
   formatClock,
   interleavedOrder,
   moveRow,
@@ -106,8 +107,24 @@ describe('skipReason and overlapNote', () => {
 });
 
 describe('row ids and order', () => {
-  it('gives a lift planned twice two ids', () => {
-    expect(plannedRowIds(['Squat', 'Bench Press', 'Squat'])).toEqual(['p:Squat#0', 'p:Bench Press#0', 'p:Squat#1']);
+  it('gives a lift listed twice two ids, and the same lift the same id on every call', () => {
+    const [squat, bench, squatAgain] = plannedRowIds(['Squat', 'Bench Press', 'Squat']);
+    expect(squat).toMatch(/^p:[0-9a-f]{8}#0$/);
+    expect(squatAgain).toBe(squat?.replace(/#0$/, '#1'));
+    expect(bench).not.toBe(squat);
+    expect(plannedRowIds(['Squat'])).toEqual([squat]);
+
+    const [first, second] = focusRowIds('b1', ['Lateral Raise', 'Lateral Raise']);
+    expect(first).toMatch(/^f:b1:[0-9a-f]{8}#0$/);
+    expect(second).toMatch(/#1$/);
+  });
+
+  it('keeps ids inside the API’s 100-character limit for the longest names', () => {
+    const longName = 'x'.repeat(100);
+    const uuid = '123e4567-e89b-12d3-a456-426614174000';
+    for (const id of [...plannedRowIds([longName]), ...focusRowIds(uuid, [longName])]) {
+      expect(id.length).toBeLessThanOrEqual(100);
+    }
   });
 
   it('puts a focus lift after each planned lift by default', () => {

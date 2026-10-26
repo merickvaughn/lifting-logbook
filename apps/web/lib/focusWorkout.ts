@@ -7,7 +7,6 @@
  */
 import { formatWeight, STANDARD_DURATIONS } from '@lifting-logbook/core';
 import type {
-  FocusDayPlanResponse,
   FocusOverlap,
   FocusPlanGroupResponse,
   FocusPlanItemResponse,
@@ -40,28 +39,6 @@ export const FOCUS_OVERLAP_DESCRIPTION: Record<FocusOverlap, string> = {
   skip: 'focus work skipped today',
   anyway: 'doing the full prescription anyway',
 };
-
-/** Each area's hue, as in the prototype, so an area keeps one color everywhere. */
-const FOCUS_AREA_HUE: Record<string, number> = {
-  Shoulders: 245,
-  Biceps: 150,
-  Triceps: 25,
-  Back: 300,
-  Chest: 200,
-  Calves: 70,
-  Glutes: 350,
-  Core: 115,
-};
-
-export function focusAreaColor(area: string): string {
-  return `oklch(0.58 0.13 ${FOCUS_AREA_HUE[area] ?? 245})`;
-}
-
-/** The area's color on a tint of itself, readable on either theme's surface. */
-export function areaTagStyle(area: string): { color: string; backgroundColor: string } {
-  const color = focusAreaColor(area);
-  return { color, backgroundColor: `color-mix(in oklch, ${color} 14%, transparent)` };
-}
 
 /** How a focus lift's sets read: the collapsed summary, each set's spec, and a hint. */
 export interface FocusPrescriptionText {
@@ -165,28 +142,40 @@ export function overlapNote(item: FocusPlanItemResponse, group: FocusPlanGroupRe
 // Row ids and the interleaved order
 // ---------------------------------------------------------------------------
 
+/** FNV-1a (32-bit) as 8 hex digits: a short, stable stand-in for a lift name in an id. */
+function nameHash(name: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < name.length; i++) {
+    hash ^= name.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
 /**
- * Persisted ids for the planned lifts, in plan order: `p:<lift>#<n>`, where `n` counts
- * earlier occurrences of the same lift. Named rather than positional so a saved order
- * survives a lift being added or removed elsewhere in the workout; counted so the same
- * lift planned twice still gets two ids (#971).
+ * `<prefix><hash>#<n>` per lift, where `n` counts earlier occurrences of the same lift.
+ * Named rather than positional, so a saved order survives a lift being added or removed
+ * elsewhere in the workout. Counted, so the same lift twice still gets two ids (#971).
+ * Hashed, so an id stays well inside the API's 100-character limit on `order` entries
+ * however long the lift's name is.
  */
-export function plannedRowIds(lifts: readonly string[]): string[] {
+function occurrenceIds(prefix: string, lifts: readonly string[]): string[] {
   const seen = new Map<string, number>();
   return lifts.map((lift) => {
     const n = seen.get(lift) ?? 0;
     seen.set(lift, n + 1);
-    return `p:${lift}#${n}`;
+    return `${prefix}${nameHash(lift)}#${n}`;
   });
 }
 
-export function focusRowId(blockId: string, lift: string): string {
-  return `f:${blockId}:${lift}`;
+/** Persisted ids for the planned lifts, in plan order. */
+export function plannedRowIds(lifts: readonly string[]): string[] {
+  return occurrenceIds('p:', lifts);
 }
 
-/** Every focus lift on today's plan, highest-priority focus block first. */
-export function focusRowIds(plan: Pick<FocusDayPlanResponse, 'groups'>): string[] {
-  return plan.groups.flatMap((group) => group.items.map((item) => focusRowId(group.block.id, item.lift)));
+/** Persisted ids for one focus block's lifts today, in its order. */
+export function focusRowIds(blockId: string, lifts: readonly string[]): string[] {
+  return occurrenceIds(`f:${blockId}:`, lifts);
 }
 
 /**

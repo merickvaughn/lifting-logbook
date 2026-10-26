@@ -23,6 +23,11 @@ function headings(page: Page) {
  * Clicks `button` until `landed` shows. The focus controls are server-rendered, so
  * a click that arrives before hydration finds no handler and is lost; a cold
  * `next dev` compile on Windows makes that window wide enough to hit.
+ *
+ * Only for clicks that are idempotent once they land, since a slow round trip can
+ * trigger a retry after the first click took effect. Every action used here is:
+ * placement radios, Keep everything / Show suggestion, Undo, Reset order, and Trim,
+ * which ignores a lift already trimmed and is disabled while a save is in flight.
  */
 async function clickOnceHydrated(button: Locator, landed: Locator) {
   await expect(async () => {

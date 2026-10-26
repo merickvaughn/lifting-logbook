@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useId, useState, type DragEvent } from 'react';
+import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { formatWeight } from '@lifting-logbook/core';
 import type { WeightUnit } from '@lifting-logbook/types';
-import { areaTagStyle } from '@/lib/focusWorkout';
+import { plannedRowIds } from '@/lib/focusWorkout';
 import type { PlannedSet, WorkoutLiftDetail } from '@/lib/workoutPlan';
 import { useTimerRowState } from '@/components/timer/WorkoutTimerProvider';
 import type { TimerRowState } from '@/components/timer/WorkoutTimerProvider';
@@ -206,12 +206,16 @@ export default function CollapsibleLiftList({
   reorder,
 }: Props) {
   const list: LiftListRow[] =
-    rows ?? liftDetails.map((_, liftIndex) => ({ kind: 'planned', id: `p:${liftIndex}`, liftIndex }));
+    rows ??
+    plannedRowIds(liftDetails.map((d) => d.lift)).map((id, liftIndex) => ({ kind: 'planned', id, liftIndex }));
   // Keyed by row id, not lift name: the same lift can appear twice in one
-  // workout, and a planned row's id carries its position, which is the
-  // identity the timer uses for it (issue #971).
+  // workout, so ids count occurrences, and a planned row also carries its
+  // position, which is the identity the timer uses for it (issue #971).
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dragging, setDragging] = useState<string | null>(null);
+  // After an arrow move: which row and arrow to keep focus on, and what to announce.
+  const [moved, setMoved] = useState<{ id: string; direction: 'up' | 'down'; message: string } | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   // Per-instance prefix for the panel ids: a bare positional id would collide
   // the moment a second list rendered on the page and silently break the
   // header's `aria-controls` target.
@@ -232,6 +236,19 @@ export default function CollapsibleLiftList({
     setExpanded((prev) => (prev.has(activeRowId) ? prev : new Set(prev).add(activeRowId)));
   }, [activeRowId]);
 
+  // A row moved by its arrow re-renders at its new position. When the arrow
+  // just pressed is now disabled (the row reached an end), focus would fall to
+  // <body>, so it goes to the row's other arrow instead.
+  useEffect(() => {
+    if (moved === null || listRef.current === null) return;
+    const item = Array.from(listRef.current.querySelectorAll<HTMLElement>('[data-row-id]')).find(
+      (el) => el.dataset.rowId === moved.id,
+    );
+    const pressed = item?.querySelector<HTMLButtonElement>(`[data-move="${moved.direction}"]`);
+    const other = item?.querySelector<HTMLButtonElement>(`[data-move="${moved.direction === 'up' ? 'down' : 'up'}"]`);
+    (pressed && !pressed.disabled ? pressed : other)?.focus();
+  }, [moved]);
+
   function toggle(id: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -241,28 +258,55 @@ export default function CollapsibleLiftList({
     });
   }
 
+  function moveByArrow(onMove: LiftListReorder['onMove'], row: LiftListRow, lift: string, from: number, to: number) {
+    onMove(from, to);
+    setMoved({
+      id: row.id,
+      direction: to < from ? 'up' : 'down',
+      message: `${lift} moved to position ${to + 1} of ${list.length}`,
+    });
+  }
+
   return (
-    <ul className={styles.liftList}>
+    <>
+    <ul className={styles.liftList} ref={listRef}>
       {list.map((row, position) => {
-        const detail = row.kind === 'planned' ? liftDetails[row.liftIndex] : undefined;
-        if (row.kind === 'planned' && detail === undefined) return null;
-        const lift = row.kind === 'planned' ? (detail?.lift ?? '') : row.lift;
+        let lift: string;
+        let label: ReactNode;
+        let summary: string;
+        let panel: ReactNode;
+        if (row.kind === 'planned') {
+          const detail = liftDetails[row.liftIndex];
+          if (detail === undefined) return null;
+          lift = detail.lift;
+          label = detail.tm > 0 ? <span className={styles.liftTM}>TM: {formatWeight(detail.tm, 'lbs', unit)}</span> : null;
+          summary = `${detail.warmUpCount > 0 ? `${detail.warmUpCount} warm-up • ` : ''}${detail.workCount} working`;
+          panel = <PlannedPanel detail={detail} liftIndex={row.liftIndex} unit={unit} timer={timer} />;
+        } else {
+          lift = row.lift;
+          label =
+            row.area !== null ?
+              <span className={styles.areaTag} data-area={row.area}>
+                {row.area}
+              </span>
+            : null;
+          summary = row.summary;
+          panel = <FocusPanel row={row} />;
+        }
         const isExpanded = expanded.has(row.id);
         const panelId = `${idBase}-lift-${position}`;
 
-        const dragProps =
+        // Only the grip starts a drag, so a drag from the header, a History
+        // link or selected text can't reorder anything. The whole row is the
+        // drop target. `setData` is what lets the drag start in Firefox.
+        const dropProps =
           reorder ?
             {
-              draggable: true,
-              onDragStart: (e: DragEvent) => {
-                setDragging(row.id);
-                e.dataTransfer.effectAllowed = 'move';
-              },
-              onDragEnd: () => setDragging(null),
               onDragOver: (e: DragEvent) => e.preventDefault(),
               onDrop: (e: DragEvent) => {
                 e.preventDefault();
-                const from = list.findIndex((r) => r.id === dragging);
+                const draggedId = dragging ?? e.dataTransfer.getData('text/plain');
+                const from = list.findIndex((r) => r.id === draggedId);
                 if (from >= 0 && from !== position) reorder.onMove(from, position);
                 setDragging(null);
               },
@@ -274,11 +318,22 @@ export default function CollapsibleLiftList({
             key={row.id}
             className={`${styles.liftItem} ${dragging === row.id ? styles.liftItemDragging : ''}`}
             data-row-id={row.id}
-            {...dragProps}
+            {...dropProps}
           >
             <div className={styles.liftItemRow}>
               {reorder && (
-                <span className={styles.grip} aria-hidden="true" title="Drag to reorder">
+                <span
+                  className={styles.grip}
+                  aria-hidden="true"
+                  title="Drag to reorder"
+                  draggable
+                  onDragStart={(e) => {
+                    setDragging(row.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', row.id);
+                  }}
+                  onDragEnd={() => setDragging(null)}
+                >
                   ⠿
                 </span>
               )}
@@ -298,24 +353,10 @@ export default function CollapsibleLiftList({
 
                 <span className={styles.liftName}>
                   {lift}
-                  {detail !== undefined && detail.tm > 0 && (
-                    <span className={styles.liftTM}>TM: {formatWeight(detail.tm, 'lbs', unit)}</span>
-                  )}
-                  {row.kind === 'focus' && row.area !== null && (
-                    <span
-                      className={styles.areaTag}
-                      style={areaTagStyle(row.area)}
-                    >
-                      {row.area}
-                    </span>
-                  )}
+                  {label}
                 </span>
 
-                <span className={styles.liftSummary}>
-                  {detail !== undefined ?
-                    `${detail.warmUpCount > 0 ? `${detail.warmUpCount} warm-up • ` : ''}${detail.workCount} working`
-                  : row.kind === 'focus' ? row.summary : ''}
-                </span>
+                <span className={styles.liftSummary}>{summary}</span>
               </button>
 
               {row.kind === 'planned' && (
@@ -333,8 +374,9 @@ export default function CollapsibleLiftList({
                     type="button"
                     className={`${styles.moveBtn} focus-ring`}
                     aria-label={`Move ${lift} up`}
+                    data-move="up"
                     disabled={position === 0}
-                    onClick={() => reorder.onMove(position, position - 1)}
+                    onClick={() => moveByArrow(reorder.onMove, row, lift, position, position - 1)}
                   >
                     ↑
                   </button>
@@ -342,8 +384,9 @@ export default function CollapsibleLiftList({
                     type="button"
                     className={`${styles.moveBtn} focus-ring`}
                     aria-label={`Move ${lift} down`}
+                    data-move="down"
                     disabled={position === list.length - 1}
-                    onClick={() => reorder.onMove(position, position + 1)}
+                    onClick={() => moveByArrow(reorder.onMove, row, lift, position, position + 1)}
                   >
                     ↓
                   </button>
@@ -357,17 +400,17 @@ export default function CollapsibleLiftList({
               id={panelId}
               className={`${styles.liftItemContent} ${isExpanded ? styles.liftItemContentVisible : ''}`}
             >
-              <div className={styles.liftItemContentInner}>
-                {row.kind === 'planned' && detail !== undefined ?
-                  <PlannedPanel detail={detail} liftIndex={row.liftIndex} unit={unit} timer={timer} />
-                : row.kind === 'focus' ?
-                  <FocusPanel row={row} />
-                : null}
-              </div>
+              <div className={styles.liftItemContentInner}>{panel}</div>
             </div>
           </li>
         );
       })}
     </ul>
+    {reorder && (
+      <p className={styles.srOnly} aria-live="polite">
+        {moved?.message ?? ''}
+      </p>
+    )}
+    </>
   );
 }
