@@ -1,4 +1,4 @@
-import { parseIsoDate, toIsoDate } from '@lifting-logbook/core';
+import { nextStart, parseIsoDate, toIsoDate } from '@lifting-logbook/core';
 import type { FocusBlockResponse } from '@lifting-logbook/types';
 import type { ProgramPhase } from './programPlan';
 import type { WorkoutDay } from './workoutPlan';
@@ -172,7 +172,7 @@ export function autoRollSource(
       b.id !== block.id &&
       b.series === block.series &&
       b.onEnd === 'autoroll' &&
-      toIsoDate(new Date(dayMs(b.rangeEnd) + MS_PER_DAY)) === block.start,
+      nextStart(b) === block.start,
   );
 }
 
@@ -182,6 +182,8 @@ export interface DatedPhase {
   type: ProgramPhase['type'];
   start: string;
   end: string;
+  /** Program weeks in the phase, as the Macrocycle Plan counts them. */
+  weeks: number;
 }
 
 /**
@@ -201,6 +203,7 @@ export function datedProgramPhases(
       .sort();
     const [start] = dates;
     const end = dates.at(-1);
-    return start && end ? [{ name: phase.name, type: phase.type, start, end }] : [];
+    const weeks = phase.endWeek - phase.startWeek + 1;
+    return start && end ? [{ name: phase.name, type: phase.type, start, end, weeks }] : [];
   });
 }

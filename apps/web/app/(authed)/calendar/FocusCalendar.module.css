@@ -119,11 +119,26 @@
   transition: box-shadow var(--transition-fast);
 }
 
-.bar:focus-visible,
 .selected {
   box-shadow:
     0 0 0 2px var(--color-surface),
     0 0 0 4px var(--color-text-heading);
+}
+
+/* Distinct from the selection ring, so keyboard focus and selection can both be seen. */
+.bar:focus-visible {
+  outline: 2px dashed var(--color-accent);
+  outline-offset: 3px;
+}
+
+.trackNote {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .ended {

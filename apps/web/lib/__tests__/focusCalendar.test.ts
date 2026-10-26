@@ -192,8 +192,8 @@ describe('datedProgramPhases', () => {
 
   it('dates each phase from its first and last workouts, leaving out phases with none', () => {
     expect(datedProgramPhases(phases, days, (d) => d.date)).toEqual([
-      { name: 'Mesocycle 1', type: 'training', start: '2026-09-07', end: '2026-09-14' },
-      { name: 'Mesocycle 2', type: 'training', start: '2026-09-21', end: '2026-09-28' },
+      { name: 'Mesocycle 1', type: 'training', start: '2026-09-07', end: '2026-09-14', weeks: 2 },
+      { name: 'Mesocycle 2', type: 'training', start: '2026-09-21', end: '2026-09-28', weeks: 2 },
     ]);
   });
 

@@ -138,6 +138,8 @@ function createInitialState() {
     // /focus/blocks (#1059) — stored focus blocks, without the derived status and range.
     // Empty by default; /__reset?withFocusBlocks=<YYYY-MM-DD> seeds a set around that day.
     focusBlocks: [],
+    // Never reused, so an id created after a delete can't collide with a remaining one.
+    nextFocusId: 1,
   };
 }
 
@@ -164,6 +166,17 @@ function focusRange(block) {
 function dayAfter(iso) {
   const [y, m, d] = iso.split('-').map(Number);
   return isoDay(utcDay(y, m - 1, d + 1));
+}
+
+// True when `predecessor` is owed an auto-roll successor among `blocks`: core's
+// expandRollovers rule, which the API's DELETE asks "owed without the deleted block,
+// not with it" (apps/api/src/focus/focus.controller.ts `remove`).
+function owesRoll(predecessor, blocks) {
+  if (predecessor.onEnd !== 'autoroll' || !predecessor.nextArea) return false;
+  const start = dayAfter(focusRange(predecessor).end);
+  return !blocks.some(
+    (b) => b.id !== predecessor.id && b.series === predecessor.series && focusRange(b).end >= start,
+  );
 }
 
 function focusResponse(block, today) {
@@ -399,7 +412,7 @@ const server = createServer(async (req, res) => {
       json(res, { statusCode: 400, message: 'today is required' }, 400);
       return;
     }
-    const id = `fb-${state.focusBlocks.length + 1}`;
+    const id = `fb-${state.nextFocusId++}`;
     const priority = body.priority ?? Math.max(0, ...state.focusBlocks.map((b) => b.priority)) + 1;
     const created = focusBlock({ ...body, id, series: body.series ?? id, priority });
     state.focusBlocks.push(created);
@@ -414,12 +427,12 @@ const server = createServer(async (req, res) => {
   if (method === 'DELETE' && parts[0] === 'focus' && parts[1] === 'blocks' && parts.length === 3) {
     const block = state.focusBlocks.find((b) => b.id === parts[2]);
     if (block) {
-      state.focusBlocks = state.focusBlocks.filter((b) => b.id !== block.id);
-      for (const b of state.focusBlocks) {
-        if (b.series === block.series && b.onEnd === 'autoroll' && dayAfter(focusRange(b).end) === block.start) {
-          b.onEnd = 'prompt';
-        }
+      const series = state.focusBlocks.filter((b) => b.series === block.series);
+      const remaining = series.filter((b) => b.id !== block.id);
+      for (const predecessor of remaining) {
+        if (owesRoll(predecessor, remaining) && !owesRoll(predecessor, series)) predecessor.onEnd = 'prompt';
       }
+      state.focusBlocks = state.focusBlocks.filter((b) => b.id !== block.id);
     }
     noContent(res);
     return;

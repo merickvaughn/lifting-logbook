@@ -20,11 +20,11 @@ const FOCUS_AREA_HUE: Record<FocusArea, number> = {
 };
 
 /**
- * An area's color. The defaults are the solid bar and dot color, dark enough for white text;
- * a higher `lightness` and lower `chroma` give a tint of the same hue.
+ * An area's color. The default lightness is the solid bar and dot color, dark enough for
+ * white text; a lower one gives a darker shade of the same hue.
  */
-export function focusAreaColor(area: FocusArea, lightness = 0.52, chroma = 0.12): string {
-  return `oklch(${lightness} ${chroma} ${FOCUS_AREA_HUE[area]})`;
+export function focusAreaColor(area: FocusArea, lightness = 0.52): string {
+  return `oklch(${lightness} 0.12 ${FOCUS_AREA_HUE[area]})`;
 }
 
 export const FOCUS_SELECTION_LABELS: Record<FocusSelection, string> = {

@@ -144,6 +144,32 @@ describe('mock-api focus blocks (#1059)', () => {
     expect(after.find((b) => b.id === 'fb-shoulders')?.onEnd).toBe('prompt');
   });
 
+  it('keeps the predecessor rolling when a later focus block still covers its roll', async () => {
+    // A third quarter in the series covers the roll whether or not Back is there.
+    await jsonRequest(
+      '/focus/blocks?today=2025-01-23',
+      'POST',
+      JSON.stringify({ series: 'fs-1', area: 'Core', period: 'quarterly', align: 'calendar', start: '2025-07-01' }),
+    );
+    await fetch(`${BASE}/focus/blocks/fb-back`, { method: 'DELETE' });
+    expect((await blocks('2025-01-23')).find((b) => b.id === 'fb-shoulders')?.onEnd).toBe('autoroll');
+  });
+
+  it('never reuses a created id after a delete', async () => {
+    const create = async () => {
+      const res = await jsonRequest(
+        '/focus/blocks?today=2025-01-23',
+        'POST',
+        JSON.stringify({ area: 'Core', period: 'monthly', align: 'calendar', start: '2025-03-01' }),
+      );
+      const created: Block = await res.json();
+      return created.id;
+    };
+    const first = await create();
+    await fetch(`${BASE}/focus/blocks/${first}`, { method: 'DELETE' });
+    expect(await create()).not.toBe(first);
+  });
+
   it('returns an ended focus block’s summary, and 404 for an unknown one', async () => {
     const res = await fetch(`${BASE}/focus/blocks/fb-biceps-prev/summary`);
     expect(await res.json()).toMatchObject({ blockId: 'fb-biceps-prev', rangeStart: '2024-12-01', sessions: 12 });

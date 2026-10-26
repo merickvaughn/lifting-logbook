@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { daysLeft, defaultFocusPool, nextStart, parseIsoDate, rangeLabel } from '@lifting-logbook/core';
 import {
   FOCUS_AREAS,
@@ -70,20 +70,38 @@ export default function FocusCalendar({ phases, unit }: Props) {
   const [loadError, setLoadError] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
 
+  // Only the latest fetch may land, so a slow earlier one can't bring back a cancelled block.
+  const latestLoad = useRef(0);
+  const shownDay = useRef<string | null>(null);
+
   const load = useCallback(async (day: string) => {
+    const request = ++latestLoad.current;
     try {
-      setBlocks(await fetchFocusBlocks(day));
+      const fresh = await fetchFocusBlocks(day);
+      if (request !== latestLoad.current) return;
+      setBlocks(fresh);
       setLoadError(false);
     } catch (err) {
       logClientError('fetchFocusBlocks', err, { today: day });
-      setLoadError(true);
+      if (request === latestLoad.current) setLoadError(true);
     }
   }, []);
 
+  // Reads the day again when the tab comes back, so a page left open past midnight moves on.
   useEffect(() => {
-    const day = localIsoDate();
-    setToday(day);
-    void load(day);
+    const sync = () => {
+      const day = localIsoDate();
+      if (day === shownDay.current) return;
+      shownDay.current = day;
+      setToday(day);
+      void load(day);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') sync();
+    };
+    sync();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [load]);
 
   if (!today) {
@@ -140,6 +158,17 @@ export default function FocusCalendar({ phases, unit }: Props) {
           </span>
           <div className={styles.track}>
             {grid}
+            {!phases.some((p) => barPlacement(p.start, p.end, view)) && (
+              <span className={styles.trackNote}>
+                {phases.length === 0 ? (
+                  <>
+                    No current macrocycle. <Link href="/programs">Choose a program</Link>
+                  </>
+                ) : (
+                  'No program phases in this window.'
+                )}
+              </span>
+            )}
             {phases.map((phase, index) => {
               const style = placementStyle(phase.start, phase.end, view);
               if (!style) return null;
@@ -240,7 +269,9 @@ export default function FocusCalendar({ phases, unit }: Props) {
           blocks={blocks}
           today={today}
           unit={unit}
-          onChanged={async (cleared) => {
+          onChanged={async (apply, cleared) => {
+            // Shown at once, so the result doesn't depend on the refetch succeeding.
+            setBlocks((current) => current && apply(current));
             if (cleared) setSelection(null);
             await load(today);
           }}
@@ -251,13 +282,11 @@ export default function FocusCalendar({ phases, unit }: Props) {
 }
 
 function PhaseDetail({ phase }: { phase: DatedPhase }) {
-  const days = (parseIsoDate(phase.end).getTime() - parseIsoDate(phase.start).getTime()) / 86_400_000 + 1;
-  const weeks = Math.ceil(days / 7);
   return (
     <section className={styles.card} aria-label="Selected program phase">
       <h2 className={styles.detailTitle}>{phase.name}</h2>
       <p className={styles.hint}>
-        {dateSpanLabel(phase.start, phase.end)} · {weeks} {weeks === 1 ? 'week' : 'weeks'}
+        {dateSpanLabel(phase.start, phase.end)} · {phase.weeks} {phase.weeks === 1 ? 'week' : 'weeks'}
       </p>
     </section>
   );
@@ -268,8 +297,11 @@ interface BlockDetailProps {
   blocks: FocusBlockResponse[];
   today: string;
   unit: WeightUnit;
-  /** Called after a change is saved; `cleared` when the selected focus block is gone. */
-  onChanged: (cleared: boolean) => Promise<void>;
+  /**
+   * Called after a change is saved with how it changes the list, which is applied before the
+   * refetch; `cleared` when the selected focus block is gone.
+   */
+  onChanged: (apply: (blocks: FocusBlockResponse[]) => FocusBlockResponse[], cleared: boolean) => Promise<void>;
 }
 
 function BlockDetail({ block, blocks, today, unit, onChanged }: BlockDetailProps) {
@@ -282,7 +314,7 @@ function BlockDetail({ block, blocks, today, unit, onChanged }: BlockDetailProps
     try {
       // Deleting a queued focus block also stops the one it rolls from creating it again.
       await deleteFocusBlock(block.id);
-      await onChanged(true);
+      await onChanged((current) => current.filter((b) => b.id !== block.id), true);
     } catch (err) {
       logClientError('deleteFocusBlock', err, { blockId: block.id });
       setError('Couldn’t cancel this focus block. Please try again.');
@@ -340,8 +372,10 @@ function ActiveDetail({
   onChanged,
 }: Pick<BlockDetailProps, 'block' | 'blocks' | 'today' | 'onChanged'>) {
   const { week, weeks } = blockWeek(block, today);
+  // Core's expandRollovers skips an auto-roll with no next area, so that one prompts too.
+  const rolls = block.onEnd === 'autoroll' && block.nextArea !== null;
   const showRenew =
-    block.onEnd === 'prompt' &&
+    !rolls &&
     daysLeft(block, today) <= RENEW_PROMPT_DAYS &&
     !blocks.some((b) => b.series === block.series && b.status === 'queued');
 
@@ -369,7 +403,7 @@ function ActiveDetail({
         <dd>{block.pool.length > 0 ? block.pool.map((p) => p.lift).join(', ') : 'Empty'}</dd>
         <dt>When it ends</dt>
         <dd>
-          {block.onEnd === 'autoroll' && block.nextArea ? `Auto-roll to ${block.nextArea}` : 'Prompt me'}
+          {rolls ? `Auto-roll to ${block.nextArea}` : 'Prompt me'}
         </dd>
       </dl>
       {showRenew && <RenewPrompt block={block} today={today} onChanged={onChanged} />}
@@ -397,10 +431,12 @@ function RenewPrompt({ block, today, onChanged }: Pick<BlockDetailProps, 'block'
     setBusy(true);
     setError(null);
     try {
-      // The successor joins this series, so it takes over this lane when this one ends.
-      await createFocusBlock(
+      // The successor joins this series and keeps its priority, as an auto-roll successor
+      // does, so it takes over this lane when this one ends.
+      const created = await createFocusBlock(
         {
           series: block.series,
+          priority: block.priority,
           area,
           period: block.period,
           align: block.align,
@@ -415,7 +451,7 @@ function RenewPrompt({ block, today, onChanged }: Pick<BlockDetailProps, 'block'
         },
         today,
       );
-      await onChanged(false);
+      await onChanged((current) => [...current, created], false);
     } catch (err) {
       logClientError('createFocusBlock', err, { series: block.series, area });
       setError('Couldn’t queue the next focus block. Please try again.');
@@ -465,9 +501,12 @@ function RenewPrompt({ block, today, onChanged }: Pick<BlockDetailProps, 'block'
   );
 }
 
+/** Two decimals at most, so a difference of decimal weights shows no float noise. */
+const WEIGHT_DELTA = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+
 function prDelta(pr: FocusBlockSummaryResponse['prs'][number], unit: WeightUnit): string {
   return pr.weight > pr.previousWeight
-    ? `+${pr.weight - pr.previousWeight} ${unit}`
+    ? `+${WEIGHT_DELTA.format(pr.weight - pr.previousWeight)} ${unit}`
     : `+${pr.reps - pr.previousReps} ${pr.reps - pr.previousReps === 1 ? 'rep' : 'reps'}`;
 }
 

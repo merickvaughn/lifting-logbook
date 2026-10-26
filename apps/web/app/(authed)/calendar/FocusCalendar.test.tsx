@@ -7,6 +7,7 @@ import {
   fetchFocusBlocks,
   fetchFocusBlockSummary,
 } from '@/lib/client-api';
+import { localIsoDate } from '@/lib/localDate';
 import { logClientError } from '@/lib/log-client-error';
 import { makeBlock } from '@/lib/__tests__/focusBlockFixture';
 
@@ -17,8 +18,8 @@ jest.mock('@/lib/client-api', () => ({
   fetchFocusBlockSummary: jest.fn(),
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
-// The prototype's "today", so the window is Sep 1 2026 – Mar 31 2027 (212 days).
-jest.mock('@/lib/localDate', () => ({ localIsoDate: () => '2026-10-23' }));
+jest.mock('@/lib/localDate', () => ({ localIsoDate: jest.fn() }));
+const mockToday = localIsoDate as jest.MockedFunction<typeof localIsoDate>;
 
 const mockFetchBlocks = fetchFocusBlocks as jest.MockedFunction<typeof fetchFocusBlocks>;
 const mockSummary = fetchFocusBlockSummary as jest.MockedFunction<typeof fetchFocusBlockSummary>;
@@ -60,6 +61,17 @@ const BICEPS_SEP = makeBlock({
   rangeEnd: '2026-09-30',
 });
 
+const BICEPS_NOV = makeBlock({
+  id: 'bi-nov',
+  series: 's2',
+  area: 'Biceps',
+  priority: 2,
+  status: 'queued',
+  start: '2026-11-01',
+  rangeStart: '2026-11-01',
+  rangeEnd: '2026-11-30',
+});
+
 function poolEntry(lift: string) {
   return {
     lift,
@@ -77,8 +89,8 @@ function poolEntry(lift: string) {
 }
 
 const PHASES = [
-  { name: 'Mesocycle 1', type: 'training' as const, start: '2026-09-07', end: '2026-09-21' },
-  { name: 'Mesocycle 2', type: 'training' as const, start: '2026-09-28', end: '2026-10-12' },
+  { name: 'Mesocycle 1', type: 'training' as const, start: '2026-09-07', end: '2026-09-21', weeks: 3 },
+  { name: 'Mesocycle 2', type: 'training' as const, start: '2026-09-28', end: '2026-10-12', weeks: 3 },
 ];
 
 function renderCalendar() {
@@ -92,6 +104,8 @@ function leftWidth(el: HTMLElement): [number, number] {
 describe('FocusCalendar', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // The prototype's "today", so the window is Sep 1 2026 – Mar 31 2027 (212 days).
+    mockToday.mockReturnValue('2026-10-23');
     mockFetchBlocks.mockResolvedValue([SHOULDERS, BACK_ROLL, BICEPS, BICEPS_SEP]);
   });
 
@@ -115,7 +129,10 @@ describe('FocusCalendar', () => {
 
   it('styles bars by status', async () => {
     renderCalendar();
-    expect(await screen.findByRole('button', { name: 'Shoulders focus block, Q4 2026, active' })).toHaveClass('bar', 'active');
+    const active = await screen.findByRole('button', { name: 'Shoulders focus block, Q4 2026, active' });
+    expect(active).toHaveClass('bar');
+    expect(active).not.toHaveClass('ended');
+    expect(active).not.toHaveClass('queued');
     expect(screen.getByRole('button', { name: 'Biceps focus block, September 2026, ended' })).toHaveClass('bar', 'ended');
     expect(screen.getByRole('button', { name: 'Back focus block, Q1 2027, queued' })).toHaveClass('bar', 'queued');
     expect(screen.getByRole('button', { name: /Mesocycle 1/ })).toHaveClass('bar', 'program');
@@ -155,19 +172,59 @@ describe('FocusCalendar', () => {
     expect(within(card).queryByText(/ends in/)).not.toBeInTheDocument();
   });
 
-  it('prompts to renew a focus block ending within ten days, and queues the renewal', async () => {
+  it('prompts to renew a focus block ending within ten days, and queues the renewal at its priority', async () => {
     const user = userEvent.setup();
-    mockCreate.mockResolvedValue(makeBlock());
+    mockCreate.mockResolvedValue(BICEPS_NOV);
     renderCalendar();
     await user.click(await screen.findByRole('button', { name: 'Biceps focus block, October 2026, active' }));
     expect(screen.getByText('Biceps (October 2026) ends in 8 days')).toBeInTheDocument();
 
+    mockFetchBlocks.mockResolvedValue([SHOULDERS, BACK_ROLL, BICEPS, BICEPS_SEP, BICEPS_NOV]);
     await user.click(screen.getByRole('button', { name: 'Renew for November' }));
+    // Priority 2, like an auto-roll successor, not the bottom of the order.
     expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ series: 's2', area: 'Biceps', start: '2026-11-01' }),
+      expect.objectContaining({ series: 's2', area: 'Biceps', start: '2026-11-01', priority: 2 }),
       '2026-10-23',
     );
-    await waitFor(() => expect(mockFetchBlocks).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('button', { name: 'Biceps focus block, November 2026, queued' })).toBeInTheDocument();
+    expect(screen.queryByText(/ends in 8 days/)).not.toBeInTheDocument();
+    expect(mockFetchBlocks).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a saved renewal even when the refetch after it fails', async () => {
+    const user = userEvent.setup();
+    mockCreate.mockResolvedValue(BICEPS_NOV);
+    renderCalendar();
+    await user.click(await screen.findByRole('button', { name: 'Biceps focus block, October 2026, active' }));
+
+    mockFetchBlocks.mockRejectedValue(new Error('network'));
+    await user.click(screen.getByRole('button', { name: 'Renew for November' }));
+    expect(await screen.findByRole('button', { name: 'Biceps focus block, November 2026, queued' })).toBeInTheDocument();
+    // The answered prompt goes away rather than sitting there disabled.
+    expect(screen.queryByRole('button', { name: 'Renew for November' })).not.toBeInTheDocument();
+  });
+
+  it('prompts for an auto-roll with no next area, which would otherwise just end', async () => {
+    const user = userEvent.setup();
+    mockFetchBlocks.mockResolvedValue([{ ...BICEPS, onEnd: 'autoroll', nextArea: null }]);
+    renderCalendar();
+    await user.click(await screen.findByRole('button', { name: /Biceps focus block, October 2026/ }));
+    expect(screen.getByText('Prompt me')).toBeInTheDocument();
+    expect(screen.getByText('Biceps (October 2026) ends in 8 days')).toBeInTheDocument();
+  });
+
+  it('reads the day again when the tab comes back after midnight', async () => {
+    renderCalendar();
+    await screen.findByRole('button', { name: /Shoulders focus block/ });
+    mockToday.mockReturnValue('2026-10-24');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(mockFetchBlocks).toHaveBeenLastCalledWith('2026-10-24'));
+  });
+
+  it('says so when there is no current macrocycle', async () => {
+    render(<FocusCalendar phases={[]} unit="lbs" />);
+    expect(await screen.findByText(/No current macrocycle/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Choose a program' })).toHaveAttribute('href', '/programs');
   });
 
   it('queues a different area with that area’s default pool', async () => {
@@ -202,6 +259,8 @@ describe('FocusCalendar', () => {
       prs: [
         { lift: 'Hammer Curl', weight: 40, reps: 12, previousWeight: 35, previousReps: 12 },
         { lift: 'Incline DB Curl', weight: 25, reps: 12, previousWeight: 25, previousReps: 10 },
+        // Decimal weights are legal; 12.3 − 10.1 is 2.2000000000000006 in floating point.
+        { lift: 'Cable Curl', weight: 12.3, reps: 10, previousWeight: 10.1, previousReps: 10 },
       ],
     });
     renderCalendar();
@@ -210,6 +269,7 @@ describe('FocusCalendar', () => {
     expect(await screen.findByText('18,340 lbs')).toBeInTheDocument();
     expect(screen.getByText('Hammer Curl: 40 lbs × 12 (+5 lbs)')).toBeInTheDocument();
     expect(screen.getByText('Incline DB Curl: 25 lbs × 12 (+2 reps)')).toBeInTheDocument();
+    expect(screen.getByText('Cable Curl: 12.3 lbs × 10 (+2.2 lbs)')).toBeInTheDocument();
   });
 
   it('logs and reports a summary that fails to load', async () => {

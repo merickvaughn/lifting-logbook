@@ -34,7 +34,8 @@ async function openCalendar(page: Page) {
 }
 
 test('the app nav links to the calendar', async ({ page }) => {
-  await page.goto('/glossary');
+  // Not warmed in beforeAll, so give its first compile the same headroom.
+  await page.goto('/glossary', { timeout: 90_000 });
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Calendar' }).click();
   await expect(page).toHaveURL(/\/calendar$/);
   await expect(page.getByRole('heading', { level: 1, name: 'Calendar' })).toBeVisible({ timeout: 90_000 });
