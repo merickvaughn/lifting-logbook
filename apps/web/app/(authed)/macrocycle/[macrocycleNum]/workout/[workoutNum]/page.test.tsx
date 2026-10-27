@@ -74,14 +74,17 @@ const LOGGED_SET = { id: '5-3-1-1-1-20260106-Squat-1', setNum: 1, weight: 200, r
 
 // `sets` is loosely typed on purpose: the planned-lift case feeds the mock the
 // id-less, spec-shaped sets the Playwright mock API sends.
-function seedWorkout(lifts: { lift: string; planned: boolean; sets: Record<string, unknown>[] }[]) {
+function seedWorkout(
+  lifts: { lift: string; planned: boolean; sets: Record<string, unknown>[] }[],
+  { skipped = false }: { skipped?: boolean } = {},
+) {
   mockedWorkout.mockResolvedValue({
     program: '5-3-1',
     macrocycleNum: 1,
     workoutNum: 1,
     week: 1,
     date: '2026-01-06',
-    skipped: false,
+    skipped,
     lifts,
   });
   mockedSpec.mockResolvedValue(lifts.map((l) => spec(l.lift)));
@@ -266,7 +269,27 @@ describe('WorkoutLoggingPage — focus work (#1060)', () => {
     expect(readOnly).toBe(false);
   });
 
-  it('leaves a workout logged in full before its focus work began as it was', async () => {
+  it('keeps offering focus work on the workout’s own day after its planned sets are logged', async () => {
+    // The usual order with focus work placed after: every planned set, then focus work.
+    seedWorkout([{ lift: 'Squat', planned: false, sets: [LOGGED_SET] }]);
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan({ today: '2026-01-06' }));
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts.map((l) => l.lift)).toEqual(['Squat', 'Lateral Raise', 'Face Pull']);
+    expect(readOnly).toBe(false);
+  });
+
+  it('offers no focus work on a skipped workout', async () => {
+    seedWorkout([PLANNED], { skipped: true });
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan());
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => l.lift)).toEqual(['Squat']);
+  });
+
+  it('leaves an older workout, logged on its own day, as it was', async () => {
     seedWorkout([{ lift: 'Squat', planned: false, sets: [LOGGED_SET] }]);
     mockedFocusPlan.mockResolvedValueOnce(focusPlan());
 

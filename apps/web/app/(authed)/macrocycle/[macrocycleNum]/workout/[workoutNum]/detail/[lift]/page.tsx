@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { builtInLiftFor, formatWeight } from '@lifting-logbook/core';
-import { fetchTrainingMaxes, fetchTrainingMaxHistory, fetchLiftRecords } from '@/lib/api';
+import { builtInLiftFor, formatWeight, lookupLift } from '@lifting-logbook/core';
+import { fetchCustomLifts, fetchTrainingMaxes, fetchTrainingMaxHistory, fetchLiftRecords } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
 import LiftHistoryFilters from './LiftHistoryFilters';
@@ -36,10 +36,16 @@ export default async function LiftDetailPage({
     .filter((r) => r.lift === lift)
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  // Unknown lift: no TM, no history, no sets — the URL is invalid or stale. A catalog
-  // lift is known even before its first set: a focus lift links here too (#1060).
+  // Unknown lift: no TM, no history, no sets — the URL is invalid or stale. A catalog or
+  // custom lift is known even before its first set: a focus lift links here too (#1060).
+  // The custom-lift list is fetched only on that path; if it fails, the page 404s as before.
+  // fallback-covered-by: apps/web/app/(authed)/macrocycle/[macrocycleNum]/workout/[workoutNum]/detail/[lift]/page.test.tsx
   if (!currentMax && tmHistory.length === 0 && setHistory.length === 0 && !builtInLiftFor(lift)) {
-    notFound();
+    const customLifts = await fetchCustomLifts().catch((err: unknown) => {
+      console.error('[LiftDetailPage] custom lifts fetch failed, treating the lift as unknown', err);
+      return [];
+    });
+    if (lookupLift(lift, customLifts).custom === undefined) notFound();
   }
 
   return (

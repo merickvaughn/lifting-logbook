@@ -1,6 +1,6 @@
 import { STANDARD_DURATIONS } from '@lifting-logbook/core';
 import type { FocusPlacement, FocusPlanGroupResponse } from '@lifting-logbook/types';
-import { planGroup, planItem } from './focusPlanFixture';
+import { focusBlock, planGroup, planItem } from './focusPlanFixture';
 import {
   describePrescription,
   focusRowIds,
@@ -175,6 +175,17 @@ describe('workoutOrder (#1060)', () => {
     ]);
     // A saved order only applies when interleaved.
     expect(describeOrder('after', [bench ?? '', pull ?? ''])).toEqual(['p0', 'p1', 'Lateral Raise', 'Face Pull']);
+  });
+
+  it('leaves out a focus lift already listed under the same name', () => {
+    const shared = [
+      planGroup({ items: [planItem('Face Pull'), planItem('Lateral Raise')] }),
+      planGroup({ block: focusBlock({ id: 'b-back', area: 'Back' }), items: [planItem('Lateral Raise'), planItem('Lat Pulldown')] }),
+    ];
+    const lifts = workoutOrder(['Face Pull'], shared, { placement: 'after', order: null }).map((entry) =>
+      entry.kind === 'planned' ? `p:${entry.liftIndex}` : `${entry.group.block.id}:${entry.item.lift}`,
+    );
+    expect(lifts).toEqual(['p:0', 'b-shoulders:Lateral Raise', 'b-back:Lat Pulldown']);
   });
 
   it('carries the row ids the details page renders', () => {

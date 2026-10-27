@@ -596,6 +596,13 @@ a program deload week says nothing about it, and the lifter set those times on t
    built the queue with, so a reorder that hasn't re-planned yet still starts the right sets.
 3. **`TIMER_RUN_SHAPE` is 6.** Item 5's third case applies: the plan an existing workout resolves to
    changed, since focus lifts can now sit ahead of planned ones.
+4. **The plan can now change mid-session, so re-anchoring checks the whole lift.** Item 4's
+   `reanchorIndex` ended a run when a phase at the key's exact position belonged to another lift,
+   but advanced when nothing sat there. A reorder that puts a shorter lift at the key's position
+   took the second path onto another lift's set. It now ends the run whenever the key's lift
+   position holds a different lift. On the details page, the focus controls that re-plan the day
+   (placement, order, mode, pick, trim) are disabled while a run is going, so in practice this guard
+   is a backstop, for example when the two routes load different focus plans.
 
 ### Alternatives considered
 
@@ -615,6 +622,8 @@ a program deload week says nothing about it, and the lifter set those times on t
 
 - `packages/core/tests/core/timer/queue.test.ts`: carried durations win over an override and deload,
   and fall through per field.
+- `packages/core/tests/core/timer/anchor.test.ts`: a shorter lift reordered into the key's position
+  ends the run instead of advancing onto another lift.
 - `apps/web/lib/__tests__/timerPlan.test.ts`: placement order, focus block order, and per-block timing
   in the built queue.
 - `apps/web/e2e/timer.spec.ts`: the timer page queues focus lifts after the planned lifts on 0:45 /

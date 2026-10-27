@@ -17,6 +17,7 @@ import { getActiveProgram } from '@/lib/active-program';
 import { loadFocusPlan } from '@/lib/loadWorkoutPlan';
 import { getPreferredUnit } from '@/lib/preferences';
 import { liftSpecsForWorkout } from '@/lib/workoutPlan';
+import { effectiveDateOf } from '@/lib/workoutStatus';
 import { hasLoggedFocusWork, withFocusLifts } from './focusLifts';
 import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WarmUpSetData, WorkingSetData, WorkoutLoggerProps } from './types';
@@ -120,12 +121,18 @@ export default async function WorkoutLoggingPage({
     };
   });
 
-  // Focus lifts join a workout that still has sets to log, or whose focus work is already
-  // under way. A workout logged in full before any focus block began stays as it was.
-  const lifts =
-    focus.plan && (!allSetsLogged(workoutLifts) || hasLoggedFocusWork(workoutLifts, focus.plan)) ?
-      withFocusLifts(workoutLifts, focus.plan, unit)
-    : workoutLifts;
+  // The focus plan is today's, so it joins the workouts the details page offers it on (not
+  // logged yet, not skipped), the workout being logged today, and one whose focus work is
+  // already under way. An older workout, logged on its own day, stays as it was: today's
+  // focus lifts logged against its date would fall outside the focus block's range.
+  const anyLogged = workoutLifts.some((l) => l.workingSets.some((s) => s.existing));
+  const offerFocus =
+    focus.plan !== null &&
+    !workout.skipped &&
+    (!anyLogged ||
+      effectiveDateOf(workout) === focus.plan.today ||
+      hasLoggedFocusWork(workoutLifts, focus.plan));
+  const lifts = offerFocus && focus.plan ? withFocusLifts(workoutLifts, focus.plan, unit) : workoutLifts;
 
   const hasBodyweightComponent = lifts.some((l) => l.isBodyweightComponent);
 

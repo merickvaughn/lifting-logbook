@@ -177,6 +177,15 @@ describe('reanchorIndex', () => {
     expect(reanchorIndex(reordered, phaseKey(at(full, rowsSet)))).toEqual({ index: -1, exact: false });
   });
 
+  it('ends rather than advancing onto another lift when a shorter lift now holds the position (#1060)', () => {
+    // The run is on Bench Press Set 2 (ordinal 2). Reordered so a one-set lift sits at
+    // position 0, nothing is at (0, 2), and advancing from there would land on Bench
+    // Press's first warm-up at position 1: a silently wrong countdown.
+    const benchSet2 = full.findIndex((p) => p.kind === 'set' && p.set.setLabel === 'Set 2');
+    const reordered = buildTimerQueue([pick(PLAN, 1), pick(PLAN, 0)], defaultTimerSettings());
+    expect(reanchorIndex(reordered, phaseKey(at(full, benchSet2)))).toEqual({ index: -1, exact: false });
+  });
+
   it('keys on the lift occurrence, so a repeated lift re-anchors onto the right one', () => {
     const twice: TimerLiftPlan[] = [pick(PLAN, 1), pick(PLAN, 1)];
     const before = buildTimerQueue(twice, defaultTimerSettings());

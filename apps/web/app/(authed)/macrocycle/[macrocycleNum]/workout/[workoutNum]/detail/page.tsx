@@ -47,14 +47,18 @@ export default async function WorkoutDetailPage({
   const timerAvailable = isTimeable(status);
   // Focus work (#1058) is offered on the same workouts the timer is: there is no
   // focus work left to do on one already logged or skipped. A failed fetch is
-  // not fatal: the page falls back to the planned lifts with a notice. Fetched
-  // before the timer's plan, which queues the focus lifts too (#1060); the
-  // custom-lift fetch `timerLifts` waits on is already in flight meanwhile.
-  const focus: FocusPlanResult =
-    timerAvailable ? await loadFocusPlan(program, workoutNum, 'WorkoutDetailPage') : { plan: null, failed: false };
+  // not fatal: the page falls back to the planned lifts with a notice. The timer's
+  // plan queues the focus lifts too (#1060), so it takes the same fetch, in flight.
+  const focusLoad: Promise<FocusPlanResult> =
+    timerAvailable ?
+      loadFocusPlan(program, workoutNum, 'WorkoutDetailPage')
+    : Promise.resolve({ plan: null, failed: false });
+  const [focus, timerLifts] = await Promise.all([
+    focusLoad,
+    timerAvailable ? plan.timerLifts(focusLoad.then((f) => f.plan)) : Promise.resolve([]),
+  ]);
   // Without an active focus block the page keeps its plain layout.
   const focusPlan = focus.plan;
-  const timerLifts = timerAvailable ? await plan.timerLifts(focusPlan) : [];
 
   const plannedSets = liftDetails.reduce((acc, d) => acc + d.warmUpCount + d.workCount, 0);
   const actualSets = workout.lifts.reduce((acc, wl) => acc + wl.sets.length, 0);

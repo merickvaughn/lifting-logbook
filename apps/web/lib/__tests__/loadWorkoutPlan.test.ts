@@ -12,7 +12,7 @@ jest.mock('@/lib/preferences', () => ({
 
 import { fetchCustomLifts, fetchFocusPlan, fetchProgramSpec, fetchTrainingMaxes, fetchWorkout } from '@/lib/api';
 import { CUSTOM_LIFTS_TIMEOUT_MS } from '@/lib/timerPlan';
-import { loadFocusPlan, loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
+import { FOCUS_PLAN_TIMEOUT_MS, loadFocusPlan, loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
 import { focusPlan } from './focusPlanFixture';
 
 const mockedWorkout = fetchWorkout as unknown as jest.Mock;
@@ -237,7 +237,8 @@ describe('loadWorkoutPlan', () => {
     mockedCustomLifts.mockResolvedValue([]);
 
     const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
-    const lifts = await plan?.timerLifts(focusPlan());
+    // Handed in flight, as the pages do, so it and the custom-lift budget run side by side.
+    const lifts = await plan?.timerLifts(Promise.resolve(focusPlan()));
 
     expect(lifts?.map((l) => [l.lift, l.durations])).toEqual([
       ['Squat', undefined],
@@ -276,5 +277,35 @@ describe('loadFocusPlan (#1060)', () => {
       expect.any(Error),
     );
     errSpy.mockRestore();
+  });
+
+  it('degrades to no focus work when the plan uses a placement or progression this build doesn’t know', async () => {
+    // The API ships first; rendering this plan would throw in `workoutOrder`.
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const plan = focusPlan();
+    mockedFocusPlan.mockResolvedValueOnce({ ...plan, dayState: { ...plan.dayState, placement: 'sideways' } });
+
+    await expect(loadFocusPlan('5-3-1', 1, 'WorkoutLoggingPage')).resolves.toEqual({ plan: null, failed: true });
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutLoggingPage] focus plan has a placement or progression this build doesn’t know, showing planned lifts only',
+    );
+    errSpy.mockRestore();
+  });
+
+  it('stops waiting for a slow focus plan after its budget', async () => {
+    jest.useFakeTimers();
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      mockedFocusPlan.mockReturnValueOnce(new Promise(() => undefined));
+
+      const loaded = loadFocusPlan('5-3-1', 1, 'WorkoutTimerPage');
+      await jest.advanceTimersByTimeAsync(FOCUS_PLAN_TIMEOUT_MS);
+
+      await expect(loaded).resolves.toEqual({ plan: null, failed: true });
+      expect(warnSpy).toHaveBeenCalledWith('[WorkoutTimerPage] focus plan fetch slow, showing planned lifts only');
+    } finally {
+      warnSpy.mockRestore();
+      jest.useRealTimers();
+    }
   });
 });

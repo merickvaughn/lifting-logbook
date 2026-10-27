@@ -166,6 +166,7 @@ describe('FocusWorkout — placement', () => {
 
     await userEvent.keyboard('{ArrowRight}');
     expect(screen.getByRole('radio', { name: 'Before' })).toHaveAttribute('aria-checked', 'true');
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
   it('swaps the modules when one is dragged onto the other by its grip', async () => {
@@ -179,6 +180,7 @@ describe('FocusWorkout — placement', () => {
     expect(moduleOrder()).toEqual(['Workout Summary', 'Focus work', 'Planned']);
     expect(DRAG.dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'focus');
     await expectSaved(dayState({ placement: 'before' }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
   it('ignores a drag that starts inside a module but not on its grip', () => {
@@ -232,7 +234,7 @@ describe('FocusWorkout — placement', () => {
     expect(screen.getByText('Lateral Raise moved to position 1 of 4')).toBeInTheDocument();
   });
 
-  it('reorders by dragging a lift onto another by its grip', () => {
+  it('reorders by dragging a lift onto another by its grip', async () => {
     renderFocus(focusPlan({ dayState: dayState({ placement: 'interleave' }) }));
     const section = screen.getByRole('region', { name: 'Today’s order' });
     const [first, , , fourth] = Array.from(section.querySelectorAll('[data-row-id]'));
@@ -249,6 +251,7 @@ describe('FocusWorkout — placement', () => {
       'Bench PressTM: 285 lbs',
     ]);
     expect(DRAG.dataTransfer.setData).toHaveBeenCalledWith('text/plain', FACE_ID);
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
   it('follows a saved order and resets it', async () => {
@@ -321,6 +324,32 @@ describe('FocusWorkout — the timed workout (#1060)', () => {
     },
   );
 
+  it('holds every re-planning change while a run is going, so it cannot end or move the run', async () => {
+    const user = userEvent.setup();
+    renderTimed(focusPlan({ dayState: dayState({ placement: 'interleave' }) }));
+    expect(screen.getByRole('button', { name: 'Move Lateral Raise up' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^Squat/ }));
+    await user.click(screen.getByRole('button', { name: 'Start timer at Squat Set 1' }));
+
+    expect(screen.getByRole('radio', { name: 'Before' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Move Lateral Raise up' })).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Shoulders selection today' })).toBeDisabled();
+    expect(screen.getByText('Focus work changes wait until the timer ends, since they reorder its queue.')).toBeInTheDocument();
+    expect(mockedSave).not.toHaveBeenCalled();
+  });
+
+  it('gives a focus lift already on the list no ▶ of its own, and says why', async () => {
+    const user = userEvent.setup();
+    renderTimed(focusPlan({ groups: [planGroup({ items: [planItem('Lateral Raise'), planItem('Lateral Raise')] })] }));
+    const focus = screen.getByRole('region', { name: 'Focus work' });
+
+    for (const header of within(focus).getAllByRole('button', { name: /^Lateral Raise/ })) await user.click(header);
+
+    expect(within(focus).getAllByRole('button', { name: 'Start timer at Lateral Raise Set 1' })).toHaveLength(1);
+    expect(within(focus).getByText('Already on today’s list, so it runs there.')).toBeInTheDocument();
+  });
+
   it('keeps each row on its place in the queue the server built until the page re-plans', async () => {
     // The lifter moves Lateral Raise up; until the refresh lands, the queue still has
     // Squat first, so Squat's ▶ must still start Squat.
@@ -333,6 +362,8 @@ describe('FocusWorkout — the timed workout (#1060)', () => {
     await user.click(screen.getByRole('button', { name: /^Squat/ }));
     await user.click(screen.getByRole('button', { name: 'Start timer at Squat Set 1' }));
     expect(screen.getByText(/Squat — Set 1 · 5 × 285 lbs/)).toBeInTheDocument();
+    // Let the reorder's save and re-plan settle inside the test.
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 });
 

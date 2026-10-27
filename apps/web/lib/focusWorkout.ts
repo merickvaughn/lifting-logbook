@@ -219,8 +219,13 @@ export type WorkoutOrderEntry =
  * group order and each its own item order, as the workout details page renders them.
  *
  * The one owner of that order: the timer queues lifts by it, the details page maps each
- * row to its place in the queue by it, and the logging page lists lifts by it, so the
- * three cannot disagree.
+ * row to its place in the queue by it, and the logging page lists lifts by it. Given the
+ * same planned lifts, the three agree; the logging page first folds logged focus lifts
+ * (which the API returns as extra unplanned lifts) back out of its planned list.
+ *
+ * A focus lift with the same name as a planned lift, or as an earlier focus lift, is left
+ * out: lift records are keyed by lift and set number, so it could not be logged apart
+ * from the first one, and timing it would ask for sets nothing can record.
  */
 export function workoutOrder(
   plannedLifts: readonly string[],
@@ -232,12 +237,17 @@ export function workoutOrder(
     id,
     liftIndex,
   }));
+  const listed = new Set(plannedLifts);
   const focus: WorkoutOrderEntry[] = groups.flatMap((group) => {
     const ids = focusRowIds(
       group.block.id,
       group.items.map((item) => item.lift),
     );
-    return group.items.map((item, index) => ({ kind: 'focus' as const, id: ids[index] ?? '', group, item }));
+    return group.items.flatMap((item, index) => {
+      if (listed.has(item.lift)) return [];
+      listed.add(item.lift);
+      return [{ kind: 'focus' as const, id: ids[index] ?? '', group, item }];
+    });
   });
   switch (dayState.placement) {
     case 'before':

@@ -25,6 +25,10 @@ export default async function WorkoutTimerPage({
   }
 
   const program = await getActiveProgram();
+  // The same focus work the details page shows, queued in the same order (#1060).
+  // Started alongside the plan's own fetches; it never rejects, so a not-found or a
+  // redirect below can leave it unawaited.
+  const focus = loadFocusPlan(program, workoutNum, 'WorkoutTimerPage');
   const plan = await loadWorkoutPlan(program, workoutNum, 'WorkoutTimerPage');
 
   if (!plan) {
@@ -40,12 +44,9 @@ export default async function WorkoutTimerPage({
     redirect(`/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail`);
   }
 
-  // The same focus work the details page shows, queued in the same order (#1060).
-  const focus = await loadFocusPlan(program, workoutNum, 'WorkoutTimerPage');
-
   return (
     <WorkoutTimerView
-      lifts={await plan.timerLifts(focus.plan)}
+      lifts={await plan.timerLifts(focus.then((f) => f.plan))}
       program={program}
       macrocycleNum={macrocycleNum}
       workoutNum={workoutNum}
