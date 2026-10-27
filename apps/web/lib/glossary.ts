@@ -10,6 +10,8 @@
  * is `docs/glossary.md`; keep the two in step.
  */
 
+import { FOCUS_AREAS } from '@lifting-logbook/types';
+
 export interface GlossaryTerm {
   /** Anchor id on the glossary page; `GlossaryLink` targets it. */
   readonly id: string;
@@ -177,6 +179,14 @@ export const GLOSSARY = [
         definition: 'The same thing as a mesocycle. The dashboard groups weeks into blocks.',
         otherMeanings: [
           '"Block periodization" strings together short blocks that each train one quality, such as volume, then intensity, then peaking.',
+        ],
+      },
+      {
+        id: 'focus-block',
+        term: 'Focus block',
+        definition: `Extra accessory work for one muscle area — ${FOCUS_AREAS.slice(0, -1).join(', ')} or ${FOCUS_AREAS[FOCUS_AREAS.length - 1]} — over a calendar month or quarter, added to every workout on a timeline separate from your program. Set them up under Programs → Focus work.`,
+        otherMeanings: [
+          'Not a block in the mesocycle sense above. This app always says "focus block" in full, never just "block".',
         ],
       },
       {

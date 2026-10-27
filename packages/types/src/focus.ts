@@ -168,6 +168,24 @@ export interface FocusDayState {
 // API contracts (#1056)
 // ---------------------------------------------------------------------------
 
+/**
+ * The API's bounds on focus blocks and the daily focus guide. The DTOs validate against
+ * them, and the setup page's steppers stop at them, so the page never offers a value the
+ * API rejects.
+ */
+export const FOCUS_LIMITS = {
+  MAX_POOL: 20,
+  MAX_LIFT_NAME: 100,
+  MAX_SETS: 20,
+  MAX_REPS: 100,
+  MAX_WEIGHT: 5000,
+  MAX_TIMER_SEC: 3600,
+  // Priorities count down from 1 among the blocks that are not ended (FocusController).
+  MAX_PRIORITY: 1000,
+  MAX_GUIDE_SETS: 100,
+  MAX_GUIDE_MINUTES: 600,
+} as const;
+
 /** The daily focus guide when the user has not set one, as in the prototype. */
 export const DEFAULT_FOCUS_BUDGET: Readonly<FocusBudget> = { sets: 9, minutes: 20 };
 

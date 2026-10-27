@@ -10,7 +10,6 @@ import type { WorkoutDay } from './workoutPlan';
 
 const MS_PER_DAY = 86_400_000;
 const MONTH = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' });
-const MONTH_DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 
 /** The first and last day the Gantt shows, both inclusive. */
 export interface CalendarWindow {
@@ -93,16 +92,6 @@ export function monthTicks(window: CalendarWindow): MonthTick[] {
     });
   }
   return ticks;
-}
-
-/** "Oct 12". */
-export function shortDate(iso: string): string {
-  return MONTH_DAY.format(parseIsoDate(iso));
-}
-
-/** "Oct 1 – Dec 31, 2026": the year of the last day. */
-export function dateSpanLabel(start: string, end: string): string {
-  return `${shortDate(start)} – ${shortDate(end)}, ${parseIsoDate(end).getUTCFullYear()}`;
 }
 
 function ordinal(n: number): string {

@@ -3,7 +3,6 @@ import {
   barPlacement,
   blockWeek,
   calendarWindow,
-  dateSpanLabel,
   datedProgramPhases,
   focusLanes,
   monthTicks,
@@ -75,12 +74,6 @@ describe('monthTicks', () => {
     expect(ticks.map((t) => t.label)).toEqual(['Sep', 'Oct', 'Nov', 'Dec', 'Jan ’27', 'Feb', 'Mar']);
     expect(ticks[0]?.left).toBe(0);
     expect(ticks[1]?.left).toBeCloseTo(pct(30));
-  });
-});
-
-describe('dateSpanLabel', () => {
-  it('names both days and the year of the last', () => {
-    expect(dateSpanLabel('2026-12-07', '2027-01-03')).toBe('Dec 7 – Jan 3, 2027');
   });
 });
 

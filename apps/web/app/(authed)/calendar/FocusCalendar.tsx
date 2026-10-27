@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { daysLeft, defaultFocusPool, nextStart, parseIsoDate, rangeLabel } from '@lifting-logbook/core';
+import { daysLeft, defaultFocusPool, nextStart, rangeLabel } from '@lifting-logbook/core';
 import {
   FOCUS_AREAS,
   type FocusArea,
@@ -17,34 +17,31 @@ import {
   barPlacement,
   blockWeek,
   calendarWindow,
-  dateSpanLabel,
   focusLanes,
   monthTicks,
-  shortDate,
   todayOffset,
   type CalendarWindow,
   type DatedPhase,
 } from '@/lib/focusCalendar';
+import { focusAreaColor } from '@/lib/focusDisplay';
 import {
-  FOCUS_OVERLAP_LABELS,
-  FOCUS_PROGRESSION_LABELS,
-  FOCUS_SELECTION_LABELS,
-  focusAreaColor,
-} from '@/lib/focusDisplay';
-import { localIsoDate } from '@/lib/localDate';
+  localToday,
+  nextMonthName,
+  OVERLAP_LABELS,
+  PROGRESSION_LABELS,
+  RENEW_WINDOW_DAYS,
+  runLabel,
+  SELECTION_LABELS,
+  shortDate,
+} from '@/lib/focusSetup';
 import { logClientError } from '@/lib/log-client-error';
 import styles from './FocusCalendar.module.css';
-
-/** The renew prompt shows from this many days before a focus block's last day. */
-const RENEW_PROMPT_DAYS = 10;
 
 const STATUS_LABELS: Record<FocusBlockStatus, string> = {
   active: 'Active',
   ended: 'Ended',
   queued: 'Queued',
 };
-
-const MONTH_LONG = new Intl.DateTimeFormat('en-US', { month: 'long', timeZone: 'UTC' });
 
 type Selection = { kind: 'phase'; index: number } | { kind: 'block'; id: string };
 
@@ -90,7 +87,7 @@ export default function FocusCalendar({ phases, unit }: Props) {
   // Reads the day again when the tab comes back, so a page left open past midnight moves on.
   useEffect(() => {
     const sync = () => {
-      const day = localIsoDate();
+      const day = localToday();
       if (day === shownDay.current) return;
       shownDay.current = day;
       setToday(day);
@@ -182,7 +179,7 @@ export default function FocusCalendar({ phases, unit }: Props) {
                     .filter(Boolean)
                     .join(' ')}
                   style={style}
-                  aria-label={`${phase.name}, ${dateSpanLabel(phase.start, phase.end)}`}
+                  aria-label={`${phase.name}, ${runLabel(phase.start, phase.end)}`}
                   aria-pressed={selected}
                   title={phase.name}
                   onClick={() => setSelection({ kind: 'phase', index })}
@@ -289,7 +286,7 @@ function PhaseDetail({ phase }: { phase: DatedPhase }) {
     <section className={styles.card} aria-label="Selected program phase">
       <h2 className={styles.detailTitle}>{phase.name}</h2>
       <p className={styles.hint}>
-        {dateSpanLabel(phase.start, phase.end)} · {phase.weeks} {phase.weeks === 1 ? 'week' : 'weeks'}
+        {runLabel(phase.start, phase.end)} · {phase.weeks} {phase.weeks === 1 ? 'week' : 'weeks'}
       </p>
     </section>
   );
@@ -343,7 +340,7 @@ function BlockDetail({ block, blocks, today, unit, onChanged }: BlockDetailProps
         </span>
       </h2>
       <p className={styles.hint}>
-        {dateSpanLabel(block.rangeStart, block.rangeEnd)} · {block.period},{' '}
+        {runLabel(block.rangeStart, block.rangeEnd)} · {block.period},{' '}
         {block.align === 'calendar' ? 'calendar-aligned' : 'custom start'}
       </p>
 
@@ -385,7 +382,7 @@ function ActiveDetail({
   const rolls = block.onEnd === 'autoroll' && block.nextArea !== null;
   const showRenew =
     !rolls &&
-    daysLeft(block, today) <= RENEW_PROMPT_DAYS &&
+    daysLeft(block, today) <= RENEW_WINDOW_DAYS &&
     !blocks.some((b) => b.series === block.series && b.status === 'queued');
 
   return (
@@ -403,11 +400,11 @@ function ActiveDetail({
       </div>
       <dl className={styles.kv}>
         <dt>Selection</dt>
-        <dd>{FOCUS_SELECTION_LABELS[block.selection]}</dd>
+        <dd>{SELECTION_LABELS[block.selection]}</dd>
         <dt>On overlap</dt>
-        <dd>{FOCUS_OVERLAP_LABELS[block.overlap]}</dd>
+        <dd>{OVERLAP_LABELS[block.overlap]}</dd>
         <dt>Progression</dt>
-        <dd>{FOCUS_PROGRESSION_LABELS[block.progression]}</dd>
+        <dd>{PROGRESSION_LABELS[block.progression]}</dd>
         <dt>Pool</dt>
         <dd>{block.pool.length > 0 ? block.pool.map((p) => p.lift).join(', ') : 'Empty'}</dd>
         <dt>When it ends</dt>
@@ -478,7 +475,7 @@ function RenewPrompt({ block, today, onChanged }: Pick<BlockDetailProps, 'block'
       <p className={styles.hint}>Choose what follows. A summary of volume and PRs appears when it ends.</p>
       <div className={styles.promptButtons}>
         <button type="button" className={`${styles.button} ${styles.primary}`} onClick={() => queue(block.area)} disabled={busy}>
-          Renew for {block.period === 'quarterly' ? 'next quarter' : MONTH_LONG.format(parseIsoDate(start))}
+          Renew for {block.period === 'quarterly' ? 'next quarter' : nextMonthName(block)}
         </button>
         <span className={styles.pickNext}>
           <select
