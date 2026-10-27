@@ -152,6 +152,93 @@ describe('buildTimerQueue — accessory durations', () => {
   });
 });
 
+describe('buildTimerQueue — durations a lift carries (#1060)', () => {
+  /** A focus lift with its focus block's timer, after a planned compound lift. */
+  function focusPlan(): TimerLiftPlan[] {
+    return [
+      {
+        lift: 'Bench Press',
+        classification: 'compound',
+        sets: [
+          { type: 'work', setLabel: 'Set 1', spec: '5 × 200 lbs' },
+          { type: 'work', setLabel: 'Set 2', spec: '3 × 230 lbs' },
+        ],
+      },
+      {
+        lift: 'Lateral Raise',
+        classification: 'accessory',
+        durations: { prep: 10, workSet: 45, restWork: 60 },
+        sets: [
+          { type: 'work', setLabel: 'Set 1', spec: '12 reps @ 25 lbs' },
+          { type: 'work', setLabel: 'Set 2', spec: '12 reps @ 25 lbs' },
+        ],
+      },
+    ];
+  }
+
+  function phasesOf(queue: readonly TimerPhase[], lift: string): [string, number][] {
+    return queue.filter((phase) => phase.lift === lift).map((phase) => [phase.kind, phase.dur]);
+  }
+
+  it('times the lift with its own durations and leaves the planned lift on the settings chain', () => {
+    const queue = buildTimerQueue(focusPlan(), settings());
+
+    // Not the accessory context's 45 s set / 90 s rest: the lift's own durations win.
+    expect(phasesOf(queue, 'Lateral Raise')).toEqual([
+      ['prep', 10],
+      ['set', 45],
+      ['rest', 60],
+      ['prep', 10],
+      ['set', 45],
+    ]);
+    expect(phasesOf(queue, 'Bench Press')).toEqual([
+      ['prep', STANDARD_DURATIONS.prep],
+      ['set', STANDARD_DURATIONS.workSet],
+      ['rest', STANDARD_DURATIONS.restWork],
+      ['prep', STANDARD_DURATIONS.prep],
+      ['set', STANDARD_DURATIONS.workSet],
+      ['rest', STANDARD_DURATIONS.restWork],
+    ]);
+  });
+
+  it('outranks a per-lift override and the deload context', () => {
+    const s = defaultTimerSettings();
+    s.overrides['Lateral Raise'] = { restWork: 300 };
+    s.context.deloadOn = true;
+    s.context.deload = { workSet: 20, prep: 0 };
+
+    const queue = buildTimerQueue(focusPlan(), s);
+
+    expect(phasesOf(queue, 'Lateral Raise').slice(0, 3)).toEqual([
+      ['prep', 10],
+      ['set', 45],
+      ['rest', 60],
+    ]);
+  });
+
+  it('falls through to the settings chain for a field the lift does not carry', () => {
+    const [bench, raise] = focusPlan();
+    if (!bench || !raise) throw new Error('fixture changed');
+    const queue = buildTimerQueue([bench, { ...raise, durations: { workSet: 45 } }], settings());
+
+    // Prep and rest come from the chain: the accessory context's rest, the preset's prep.
+    expect(phasesOf(queue, 'Lateral Raise').slice(0, 3)).toEqual([
+      ['prep', STANDARD_DURATIONS.prep],
+      ['set', 45],
+      ['rest', 90],
+    ]);
+  });
+
+  it('carries the durations through flattenSets', () => {
+    expect(flattenSets(focusPlan(), false).map((entry) => entry.durations)).toEqual([
+      undefined,
+      undefined,
+      { prep: 10, workSet: 45, restWork: 60 },
+      { prep: 10, workSet: 45, restWork: 60 },
+    ]);
+  });
+});
+
 describe('buildTimerQueue', () => {
   it('expands each set to prep -> set -> rest in performance order', () => {
     const queue = buildTimerQueue(plan(), settings());

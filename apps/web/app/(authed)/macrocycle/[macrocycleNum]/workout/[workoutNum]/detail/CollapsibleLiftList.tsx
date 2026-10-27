@@ -16,21 +16,28 @@ import styles from './detail.module.css';
  */
 export type LiftDetail = WorkoutLiftDetail;
 
-/** A planned lift, by its position in `liftDetails` — the timer's identity for it. */
+/** A planned lift, by its position in `liftDetails`. */
 export interface PlannedLiftRow {
   kind: 'planned';
   id: string;
   liftIndex: number;
+  /**
+   * The lift's position in the timer's plan — the timer's identity for it. Defaults to
+   * `liftIndex`, which it equals unless focus work is queued ahead of or among the
+   * planned lifts (#1060).
+   */
+  timerIndex?: number;
 }
 
 /**
- * A focus lift (#1058), already worded by the caller. Rendered with the planned
- * row's header and panel, but with no timer controls and no history link: the
- * timer does not queue focus lifts yet (#1060).
+ * A focus lift (#1058), already worded by the caller, rendered with the planned
+ * row's header and panel.
  */
 export interface FocusLiftRow {
   kind: 'focus';
   id: string;
+  /** The lift's position in the timer's plan (#1060); without one its sets have no ▶. */
+  timerIndex?: number;
   lift: string;
   /** Collapsed summary, e.g. "3 × 10–12". */
   summary: string;
@@ -63,8 +70,13 @@ interface Props {
   reorder?: LiftListReorder;
 }
 
+/** A row's position in the timer's plan, or `undefined` when the timer does not queue it. */
+function timerIndexOf(row: LiftListRow): number | undefined {
+  return row.kind === 'planned' ? (row.timerIndex ?? row.liftIndex) : row.timerIndex;
+}
+
 /**
- * One planned set.
+ * One set, planned or focus.
  *
  * Gains a ▶ and active/done styling only inside a `WorkoutTimerProvider`, and
  * only for sets the timer actually queues — a warm-up is not startable while
@@ -73,20 +85,19 @@ interface Props {
  */
 function SetRow({
   lift,
-  liftIndex,
-  set,
-  unit,
+  timerIndex,
+  setLabel,
+  spec,
   timer,
 }: {
   lift: string;
-  /** Position of the lift in the plan — the timer's identity for it, not the name. */
-  liftIndex: number;
-  set: PlannedSet;
-  unit: WeightUnit;
+  /** Position of the lift in the timer's plan — the timer's identity for it, not the name. */
+  timerIndex: number | undefined;
+  setLabel: string;
+  spec: string;
   timer: TimerRowState | null;
 }) {
-  const spec = `${set.reps} × ${formatWeight(set.weight, 'lbs', unit)}`;
-  const setIndex = timer === null ? null : timer.setIndexOf(liftIndex, set.setLabel);
+  const setIndex = timer === null || timerIndex === undefined ? null : timer.setIndexOf(timerIndex, setLabel);
 
   const isActive = timer != null && setIndex != null && timer.activeSetIndex === setIndex;
   const isDone = timer != null && setIndex != null && setIndex <= timer.doneThroughIndex;
@@ -101,13 +112,13 @@ function SetRow({
 
   return (
     <div className={className}>
-      <span className={styles.setLabel}>{set.setLabel}</span>
+      <span className={styles.setLabel}>{setLabel}</span>
       <span className={styles.setSpec}>{spec}</span>
       {timer != null && setIndex != null && (
         <button
           type="button"
           className={`${styles.setPlay} focus-ring`}
-          aria-label={`Start timer at ${lift} ${set.setLabel}`}
+          aria-label={`Start timer at ${lift} ${setLabel}`}
           onClick={() => timer.startAtSet(setIndex)}
         >
           <span aria-hidden="true">▶</span>
@@ -119,16 +130,26 @@ function SetRow({
 
 function PlannedPanel({
   detail,
-  liftIndex,
+  timerIndex,
   unit,
   timer,
 }: {
   detail: LiftDetail;
-  liftIndex: number;
+  timerIndex: number | undefined;
   unit: WeightUnit;
   timer: TimerRowState | null;
 }) {
   const { lift, activationMovement: movement, plannedSets } = detail;
+  const setRow = (s: PlannedSet) => (
+    <SetRow
+      key={s.setLabel}
+      lift={lift}
+      timerIndex={timerIndex}
+      setLabel={s.setLabel}
+      spec={`${s.reps} × ${formatWeight(s.weight, 'lbs', unit)}`}
+      timer={timer}
+    />
+  );
   const warmUpSets = plannedSets.filter((s) => s.type === 'warmup');
   const workSets = plannedSets.filter((s) => s.type === 'work');
   // Gated on `plannedSets`: with no training max there is nothing to time,
@@ -158,18 +179,14 @@ function PlannedPanel({
       {warmUpSets.length > 0 && (
         <div className={styles.setGroup}>
           <span className={styles.setGroupLabel}>Warm-up</span>
-          {warmUpSets.map((s) => (
-            <SetRow key={s.setLabel} lift={lift} liftIndex={liftIndex} set={s} unit={unit} timer={timer} />
-          ))}
+          {warmUpSets.map(setRow)}
         </div>
       )}
 
       {workSets.length > 0 && (
         <div className={styles.setGroup}>
           <span className={styles.setGroupLabel}>Working Sets</span>
-          {workSets.map((s) => (
-            <SetRow key={s.setLabel} lift={lift} liftIndex={liftIndex} set={s} unit={unit} timer={timer} />
-          ))}
+          {workSets.map(setRow)}
         </div>
       )}
 
@@ -180,16 +197,21 @@ function PlannedPanel({
   );
 }
 
-function FocusPanel({ row }: { row: FocusLiftRow }) {
+function FocusPanel({ row, timer }: { row: FocusLiftRow; timer: TimerRowState | null }) {
   return (
     <>
       <div className={styles.setGroup}>
         <span className={styles.setGroupLabel}>{row.groupLabel}</span>
+        {/* "Set k", as `toTimerLiftPlans` labels a focus lift's sets. */}
         {Array.from({ length: row.sets }, (_, k) => (
-          <div key={k} className={styles.setRow}>
-            <span className={styles.setLabel}>Set {k + 1}</span>
-            <span className={styles.setSpec}>{row.perSet}</span>
-          </div>
+          <SetRow
+            key={k}
+            lift={row.lift}
+            timerIndex={row.timerIndex}
+            setLabel={`Set ${k + 1}`}
+            spec={row.perSet}
+            timer={timer}
+          />
         ))}
       </div>
       <p className={styles.liftHint}>{row.hint}</p>
@@ -225,8 +247,7 @@ export default function CollapsibleLiftList({
   const timer = useTimerRowState();
   const activeLiftIndex = timer === null ? null : timer.activeLiftIndex;
   const activeRowId =
-    activeLiftIndex === null ? undefined
-    : list.find((row) => row.kind === 'planned' && row.liftIndex === activeLiftIndex)?.id;
+    activeLiftIndex === null ? undefined : list.find((row) => timerIndexOf(row) === activeLiftIndex)?.id;
 
   // Reveal the lift the timer just moved to, so the current set is visible
   // without hunting for it. Added to the same set the header toggles, so the
@@ -281,7 +302,7 @@ export default function CollapsibleLiftList({
           lift = detail.lift;
           label = detail.tm > 0 ? <span className={styles.liftTM}>TM: {formatWeight(detail.tm, 'lbs', unit)}</span> : null;
           summary = `${detail.warmUpCount > 0 ? `${detail.warmUpCount} warm-up • ` : ''}${detail.workCount} working`;
-          panel = <PlannedPanel detail={detail} liftIndex={row.liftIndex} unit={unit} timer={timer} />;
+          panel = <PlannedPanel detail={detail} timerIndex={timerIndexOf(row)} unit={unit} timer={timer} />;
         } else {
           lift = row.lift;
           label =
@@ -291,7 +312,7 @@ export default function CollapsibleLiftList({
               </span>
             : null;
           summary = row.summary;
-          panel = <FocusPanel row={row} />;
+          panel = <FocusPanel row={row} timer={timer} />;
         }
         const isExpanded = expanded.has(row.id);
         const panelId = `${idBase}-lift-${position}`;
@@ -359,14 +380,12 @@ export default function CollapsibleLiftList({
                 <span className={styles.liftSummary}>{summary}</span>
               </button>
 
-              {row.kind === 'planned' && (
-                <Link
-                  href={`/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/${encodeURIComponent(lift)}`}
-                  className={styles.liftHistoryBtn}
-                >
-                  📊 History
-                </Link>
-              )}
+              <Link
+                href={`/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/${encodeURIComponent(lift)}`}
+                className={styles.liftHistoryBtn}
+              >
+                📊 History
+              </Link>
 
               {reorder && (
                 <span className={styles.moveBtns}>

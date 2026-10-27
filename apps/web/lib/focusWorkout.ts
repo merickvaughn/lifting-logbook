@@ -7,6 +7,7 @@
  */
 import { formatWeight, STANDARD_DURATIONS } from '@lifting-logbook/core';
 import type {
+  FocusDayState,
   FocusOverlap,
   FocusPlanGroupResponse,
   FocusPlanItemResponse,
@@ -205,6 +206,79 @@ export function interleavedOrder(
     }
   }
   return [...out, ...focus.slice(next)];
+}
+
+/** One entry of a workout's performance order: a planned lift by position, or a focus lift. */
+export type WorkoutOrderEntry =
+  | { kind: 'planned'; id: string; liftIndex: number }
+  | { kind: 'focus'; id: string; group: FocusPlanGroupResponse; item: FocusPlanItemResponse };
+
+/**
+ * Every lift of the day in the order it is performed (#1060): focus work before or after
+ * the planned lifts, or mixed in by {@link interleavedOrder}. Focus blocks keep the API's
+ * group order and each its own item order, as the workout details page renders them.
+ *
+ * The one owner of that order: the timer queues lifts by it, the details page maps each
+ * row to its place in the queue by it, and the logging page lists lifts by it, so the
+ * three cannot disagree.
+ */
+export function workoutOrder(
+  plannedLifts: readonly string[],
+  groups: readonly FocusPlanGroupResponse[],
+  dayState: Pick<FocusDayState, 'placement' | 'order'>,
+): WorkoutOrderEntry[] {
+  const planned: WorkoutOrderEntry[] = plannedRowIds(plannedLifts).map((id, liftIndex) => ({
+    kind: 'planned',
+    id,
+    liftIndex,
+  }));
+  const focus: WorkoutOrderEntry[] = groups.flatMap((group) => {
+    const ids = focusRowIds(
+      group.block.id,
+      group.items.map((item) => item.lift),
+    );
+    return group.items.map((item, index) => ({ kind: 'focus' as const, id: ids[index] ?? '', group, item }));
+  });
+  switch (dayState.placement) {
+    case 'before':
+      return [...focus, ...planned];
+    case 'after':
+      return [...planned, ...focus];
+    case 'interleave': {
+      const byId = new Map([...planned, ...focus].map((entry) => [entry.id, entry]));
+      return interleavedOrder(
+        planned.map((entry) => entry.id),
+        focus.map((entry) => entry.id),
+        dayState.order,
+      ).flatMap((id) => {
+        const entry = byId.get(id);
+        return entry ? [entry] : [];
+      });
+    }
+    default: {
+      const unknown: never = dayState.placement;
+      throw new Error(`Unknown focus placement: ${String(unknown)}`);
+    }
+  }
+}
+
+/** The weight and reps a focus lift's sets start from in the logging form. */
+export function prescribedSet(rx: FocusPrescriptionResponse): { weight: number; reps: number } {
+  switch (rx.progression) {
+    // The top of the range: hitting it on every set is what moves the weight up.
+    case 'double':
+      return { weight: rx.weight, reps: rx.repsHigh };
+    case 'fixed':
+    case 'tm':
+      return { weight: rx.weight, reps: rx.reps };
+    // An RPE prescription names no weight; the lifter picks one.
+    case 'rpe':
+      return { weight: 0, reps: rx.reps };
+    default: {
+      const unknown: never = rx;
+      throw new Error(`Unknown focus progression: ${JSON.stringify(unknown)}`);
+    }
+  }
 }
 
 /** `order` with the id at `from` moved to `to`. Out-of-range moves return it unchanged. */

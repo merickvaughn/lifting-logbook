@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { formatWeight } from '@lifting-logbook/core';
+import { builtInLiftFor, formatWeight } from '@lifting-logbook/core';
 import { fetchTrainingMaxes, fetchTrainingMaxHistory, fetchLiftRecords } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
@@ -36,8 +36,9 @@ export default async function LiftDetailPage({
     .filter((r) => r.lift === lift)
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  // Unknown lift: no TM, no history, no sets — the URL is invalid or stale.
-  if (!currentMax && tmHistory.length === 0 && setHistory.length === 0) {
+  // Unknown lift: no TM, no history, no sets — the URL is invalid or stale. A catalog
+  // lift is known even before its first set: a focus lift links here too (#1060).
+  if (!currentMax && tmHistory.length === 0 && setHistory.length === 0 && !builtInLiftFor(lift)) {
     notFound();
   }
 

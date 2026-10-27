@@ -115,6 +115,34 @@ test('places focus work before, then interleaves and reorders it from the keyboa
   );
 });
 
+test('the untimed logging page lists focus lifts and logs them as lift records (#1060)', async ({ page }) => {
+  await page.goto('/macrocycle/1/workout/1');
+
+  // The overview lists the planned lifts, then the focus lifts, tagged with their area.
+  await page.getByRole('button', { name: 'Switch to overview' }).click();
+  const rows = page.getByRole('listitem');
+  await expect(rows.filter({ hasText: 'Lateral Raise' })).toContainText('Focus · Shoulders');
+  const names = await page.locator('[class*="overviewLiftName"]').allTextContents();
+  expect(names.slice(-3)).toEqual(['Lateral Raise', 'Face Pull', 'Arnold Press']);
+
+  await rows.filter({ hasText: 'Lateral Raise' }).getByRole('button', { name: 'Go to' }).click();
+  await expect(page.getByText('Focus work · Shoulders · 3 × 10–12')).toBeVisible();
+
+  // A focus set is an ordinary lift record against this workout, prefilled from its prescription.
+  const posted = page.waitForRequest(
+    (req) => req.method() === 'POST' && new URL(req.url()).pathname.endsWith('/lift-records'),
+  );
+  await expect(page.getByLabel('Weight in lbs').first()).toHaveValue('25');
+  await page.getByRole('button', { name: 'Log' }).first().click();
+  expect((await posted).postDataJSON()).toMatchObject({
+    workoutNum: 1,
+    lift: 'Lateral Raise',
+    setNum: 1,
+    weight: 25,
+    reps: 12,
+  });
+});
+
 test('falls back to the planned lifts with a notice when focus work fails to load', async ({ page, request }) => {
   await request.get(`${MOCK_API}/__reset?withFocusError=true`);
   await page.goto(DETAIL);

@@ -3,11 +3,20 @@ import userEvent from '@testing-library/user-event';
 import { emptyFocusDayState, type FocusDayPlanResponse, type FocusDayState } from '@lifting-logbook/types';
 import { focusRowIds, plannedRowIds } from '@/lib/focusWorkout';
 import { focusBlock, focusPlan, planGroup, planItem, poolEntry } from '@/lib/__tests__/focusPlanFixture';
+import { toTimerLiftPlans } from '@/lib/timerPlan';
+import WorkoutTimerProvider from '@/components/timer/WorkoutTimerProvider';
 import FocusWorkout from './FocusWorkout';
 import type { LiftDetail } from './CollapsibleLiftList';
 
 const refresh = jest.fn();
 jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
+
+jest.mock('@/lib/timerAlerts', () => ({
+  beep: jest.fn(),
+  buzz: jest.fn(),
+  requestWakeLock: jest.fn(async () => null),
+  releaseWakeLock: jest.fn(async () => undefined),
+}));
 
 jest.mock('@/lib/client-api', () => ({ saveFocusDayState: jest.fn() }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
@@ -131,13 +140,13 @@ describe('FocusWorkout — placement', () => {
     expect(moduleOrder()).toEqual(['Workout Summary', 'Focus work', 'Planned']);
   });
 
-  it('saves a placement change without re-planning the day', async () => {
+  it('applies a placement change at once, saves it, and refreshes so the timer re-queues (#1060)', async () => {
     renderFocus();
     await userEvent.click(screen.getByRole('radio', { name: 'Before' }));
 
     expect(moduleOrder()).toEqual(['Workout Summary', 'Focus work', 'Planned']);
     await expectSaved(dayState({ placement: 'before' }));
-    expect(refresh).not.toHaveBeenCalled();
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
     expect(screen.getByRole('radio', { name: 'Before' })).toHaveAttribute('aria-checked', 'true');
   });
 
@@ -208,7 +217,8 @@ describe('FocusWorkout — placement', () => {
 
     await expectSaved(dayState({ placement: 'interleave', order: [LATERAL_ID, SQUAT_ID, BENCH_ID, FACE_ID] }));
     expect(liftsIn('Today’s order')[0]).toBe('Lateral RaiseShoulders');
-    expect(refresh).not.toHaveBeenCalled();
+    // The timer queues lifts in this order, so the page re-plans (#1060).
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
   });
 
   it('keeps keyboard focus on the moved row, and announces where it went', async () => {
@@ -261,6 +271,68 @@ describe('FocusWorkout — placement', () => {
       }),
     );
     expect(liftsIn('Today’s order').filter((name) => name.startsWith('Lateral Raise'))).toHaveLength(2);
+  });
+});
+
+describe('FocusWorkout — the timed workout (#1060)', () => {
+  /** The page as the server builds it: the timer's plan from the same focus plan. */
+  function renderTimed(plan: FocusDayPlanResponse) {
+    return render(
+      <WorkoutTimerProvider
+        lifts={toTimerLiftPlans(LIFT_DETAILS, 'lbs', [], plan)}
+        program="5-3-1"
+        macrocycleNum={1}
+        workoutNum={1}
+      >
+        <FocusWorkout
+          program="5-3-1"
+          macrocycleNum={1}
+          workoutNum={1}
+          week={2}
+          unit="lbs"
+          liftDetails={LIFT_DETAILS}
+          plan={plan}
+        />
+      </WorkoutTimerProvider>,
+    );
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it.each(['before', 'after', 'interleave'] as const)(
+    'starts each row’s own sets with focus work placed %s',
+    async (placement) => {
+      const user = userEvent.setup();
+      renderTimed(focusPlan({ dayState: dayState({ placement }) }));
+
+      // Expand both lifts by their headers (not their ↑ ↓ buttons, when interleaved).
+      const headers = screen
+        .getAllByRole('button', { name: /^(Squat|Face Pull)/ })
+        .filter((button) => button.hasAttribute('aria-expanded'));
+      for (const header of headers) await user.click(header);
+
+      await user.click(screen.getByRole('button', { name: 'Start timer at Squat Set 1' }));
+      expect(screen.getByText(/Squat — Set 1 · 5 × 285 lbs/)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Start timer at Face Pull Set 2' }));
+      expect(screen.getByText(/Face Pull — Set 2 · 10–12 reps @ 25 lbs/)).toBeInTheDocument();
+    },
+  );
+
+  it('keeps each row on its place in the queue the server built until the page re-plans', async () => {
+    // The lifter moves Lateral Raise up; until the refresh lands, the queue still has
+    // Squat first, so Squat's ▶ must still start Squat.
+    const user = userEvent.setup();
+    renderTimed(focusPlan({ dayState: dayState({ placement: 'interleave' }) }));
+
+    await user.click(screen.getByRole('button', { name: 'Move Lateral Raise up' }));
+    expect(liftsIn('Today’s order')[0]).toBe('Lateral RaiseShoulders');
+
+    await user.click(screen.getByRole('button', { name: /^Squat/ }));
+    await user.click(screen.getByRole('button', { name: 'Start timer at Squat Set 1' }));
+    expect(screen.getByText(/Squat — Set 1 · 5 × 285 lbs/)).toBeInTheDocument();
   });
 });
 

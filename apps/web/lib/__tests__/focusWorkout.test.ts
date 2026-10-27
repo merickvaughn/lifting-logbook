@@ -1,5 +1,5 @@
 import { STANDARD_DURATIONS } from '@lifting-logbook/core';
-import type { FocusPlanGroupResponse } from '@lifting-logbook/types';
+import type { FocusPlacement, FocusPlanGroupResponse } from '@lifting-logbook/types';
 import { planGroup, planItem } from './focusPlanFixture';
 import {
   describePrescription,
@@ -10,8 +10,10 @@ import {
   overlapNote,
   plannedRowIds,
   plannedSeconds,
+  prescribedSet,
   skipReason,
   timerHint,
+  workoutOrder,
 } from '../focusWorkout';
 
 describe('describePrescription', () => {
@@ -146,5 +148,53 @@ describe('row ids and order', () => {
     expect(moveRow(['a', 'b', 'c'], 2, 1)).toEqual(['a', 'c', 'b']);
     expect(moveRow(['a', 'b'], 0, -1)).toEqual(['a', 'b']);
     expect(moveRow(['a', 'b'], 1, 2)).toEqual(['a', 'b']);
+  });
+});
+
+describe('workoutOrder (#1060)', () => {
+  const groups = [planGroup({ items: [planItem('Lateral Raise'), planItem('Face Pull')] })];
+  const describeOrder = (placement: FocusPlacement, order: string[] | null = null) =>
+    workoutOrder(['Squat', 'Bench Press'], groups, { placement, order }).map((entry) =>
+      entry.kind === 'planned' ? `p${entry.liftIndex}` : entry.item.lift,
+    );
+
+  it('puts focus work before, after or among the planned lifts', () => {
+    expect(describeOrder('before')).toEqual(['Lateral Raise', 'Face Pull', 'p0', 'p1']);
+    expect(describeOrder('after')).toEqual(['p0', 'p1', 'Lateral Raise', 'Face Pull']);
+    expect(describeOrder('interleave')).toEqual(['p0', 'Lateral Raise', 'p1', 'Face Pull']);
+  });
+
+  it('follows a saved interleaved order by the rows’ own ids', () => {
+    const [squat, bench] = plannedRowIds(['Squat', 'Bench Press']);
+    const [raise, pull] = focusRowIds('b-shoulders', ['Lateral Raise', 'Face Pull']);
+    expect(describeOrder('interleave', [bench ?? '', pull ?? '', squat ?? '', raise ?? ''])).toEqual([
+      'p1',
+      'Face Pull',
+      'p0',
+      'Lateral Raise',
+    ]);
+    // A saved order only applies when interleaved.
+    expect(describeOrder('after', [bench ?? '', pull ?? ''])).toEqual(['p0', 'p1', 'Lateral Raise', 'Face Pull']);
+  });
+
+  it('carries the row ids the details page renders', () => {
+    const ids = workoutOrder(['Squat'], groups, { placement: 'after', order: null }).map((entry) => entry.id);
+    expect(ids).toEqual([...plannedRowIds(['Squat']), ...focusRowIds('b-shoulders', ['Lateral Raise', 'Face Pull'])]);
+  });
+});
+
+describe('prescribedSet', () => {
+  it('starts each set from the prescription’s target', () => {
+    expect(
+      prescribedSet({ progression: 'double', sets: 3, repsLow: 10, repsHigh: 12, weight: 25, lastReps: null }),
+    ).toEqual({ weight: 25, reps: 12 });
+    expect(prescribedSet({ progression: 'fixed', sets: 3, reps: 12, weight: 30 })).toEqual({ weight: 30, reps: 12 });
+    expect(
+      prescribedSet({ progression: 'tm', sets: 3, reps: 10, weight: 25, percent: 65, trainingMax: 40 }),
+    ).toEqual({ weight: 25, reps: 10 });
+    expect(prescribedSet({ progression: 'rpe', sets: 3, reps: 12, rpe: 9, repsInReserve: 1 })).toEqual({
+      weight: 0,
+      reps: 12,
+    });
   });
 });

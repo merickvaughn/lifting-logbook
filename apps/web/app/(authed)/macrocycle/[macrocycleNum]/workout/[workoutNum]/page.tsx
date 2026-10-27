@@ -14,8 +14,10 @@ import {
   fetchWorkout,
 } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
+import { loadFocusPlan } from '@/lib/loadWorkoutPlan';
 import { getPreferredUnit } from '@/lib/preferences';
 import { liftSpecsForWorkout } from '@/lib/workoutPlan';
+import { hasLoggedFocusWork, withFocusLifts } from './focusLifts';
 import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WarmUpSetData, WorkingSetData, WorkoutLoggerProps } from './types';
 
@@ -35,6 +37,13 @@ function isBodyweightComponent(liftName: string): boolean {
   return LIFT_CATALOG.find((l) => l.id === catalogId)?.isBodyweightComponent ?? false;
 }
 
+/** A workout is read-only when every working set across every lift has a logged record. */
+function allSetsLogged(lifts: readonly LiftData[]): boolean {
+  const total = lifts.reduce((n, l) => n + l.workingSets.length, 0);
+  const logged = lifts.reduce((n, l) => n + l.workingSets.filter((s) => s.existing).length, 0);
+  return total > 0 && logged === total;
+}
+
 export default async function WorkoutLoggingPage({
   params,
 }: {
@@ -50,12 +59,15 @@ export default async function WorkoutLoggingPage({
 
   const program = await getActiveProgram();
 
-  const [workout, specs, maxes, latestBodyWeight, unit] = await Promise.all([
+  const [workout, specs, maxes, latestBodyWeight, unit, focus] = await Promise.all([
     fetchWorkout(program, workoutNum),
     fetchProgramSpec(program),
     fetchTrainingMaxes(program),
     fetchLatestBodyWeight(program),
     getPreferredUnit(),
+    // The same focus work the details page and the timer show (#1060). A failed fetch
+    // leaves the planned lifts to log.
+    loadFocusPlan(program, workoutNum, 'WorkoutLoggingPage'),
   ]);
 
   if (!workout) {
@@ -66,7 +78,7 @@ export default async function WorkoutLoggingPage({
   const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
   const liftSpecs = liftSpecsForWorkout(workout, specs);
 
-  const lifts: LiftData[] = workout.lifts.map((wl, liftIndex) => {
+  const workoutLifts: LiftData[] = workout.lifts.map((wl, liftIndex) => {
     const tm = maxMap.get(wl.lift) ?? 0;
 
     // The lift's prescription — provides warmUpPct and increment. Resolved through
@@ -108,15 +120,16 @@ export default async function WorkoutLoggingPage({
     };
   });
 
+  // Focus lifts join a workout that still has sets to log, or whose focus work is already
+  // under way. A workout logged in full before any focus block began stays as it was.
+  const lifts =
+    focus.plan && (!allSetsLogged(workoutLifts) || hasLoggedFocusWork(workoutLifts, focus.plan)) ?
+      withFocusLifts(workoutLifts, focus.plan, unit)
+    : workoutLifts;
+
   const hasBodyweightComponent = lifts.some((l) => l.isBodyweightComponent);
 
-  // A workout is read-only when every working set across every lift has a logged record.
-  const totalWorkingSets = lifts.reduce((n, l) => n + l.workingSets.length, 0);
-  const loggedCount = lifts.reduce(
-    (n, l) => n + l.workingSets.filter((s) => s.existing).length,
-    0,
-  );
-  const isReadOnly = totalWorkingSets > 0 && loggedCount === totalWorkingSets;
+  const isReadOnly = allSetsLogged(lifts);
 
   // Re-use a same-day body weight so the gate doesn't re-fire mid-session.
   // If the stored entry is from a different day, pass null → gate fires again.

@@ -172,3 +172,54 @@ test('a legacy activation placeholder produces no phase', async ({ page }) => {
   await expect(queue.filter({ hasText: /^none$/ })).toHaveCount(0);
   await expect(queue.filter({ hasText: 'Activation' })).toHaveCount(1);
 });
+
+// ---------------------------------------------------------------------------
+// Focus work (#1060)
+// ---------------------------------------------------------------------------
+//
+// `withFocus` plans one Shoulders focus block of three lifts, three sets each, on
+// its own 0:10 setup / 0:45 set / 1:00 rest timer, placed after the planned lifts.
+
+test.describe('focus work in the timed workout', () => {
+  test.beforeEach(async ({ request }) => {
+    await request.get(`${MOCK_API}/__reset?withFocus=true`);
+  });
+
+  test('the session queue runs the focus lifts after the planned lifts, on their own timer', async ({ page }) => {
+    await page.goto('/macrocycle/1/workout/1/timer');
+
+    const queue = page.getByRole('listitem');
+    await expect(queue.filter({ hasText: 'Arnold Press' }).first()).toBeVisible();
+    const rows = await queue.allTextContents();
+    const indexesOf = (pattern: RegExp) => rows.flatMap((row, index) => (pattern.test(row) ? [index] : []));
+    const planned = indexesOf(/squat|deadlift/i);
+    const focusRows = indexesOf(/Lateral Raise|Face Pull|Arnold Press/);
+    expect(planned.length).toBeGreaterThan(0);
+    expect(Math.min(...focusRows)).toBeGreaterThan(Math.max(...planned));
+
+    // A focus set runs 0:45 and rests 1:00, as its focus block says, not the preset's
+    // 1:00 set and 4:00 rest.
+    const raise = queue.filter({ hasText: 'Lateral Raise' });
+    await expect(raise.filter({ hasText: '0:45' })).toHaveCount(3);
+    await expect(raise.filter({ hasText: '1:00' })).toHaveCount(3);
+  });
+
+  test('a focus lift’s ▶ starts the timer on that set', async ({ page }) => {
+    await page.goto('/macrocycle/1/workout/1/detail');
+
+    const focus = page.getByRole('region', { name: 'Focus work' });
+    const play = focus.getByRole('button', { name: 'Start timer at Lateral Raise Set 2' });
+    // Expand the lift; retried, since a click before hydration is lost.
+    await expect(async () => {
+      if (!(await play.isVisible())) await focus.getByRole('button', { name: /^Lateral Raise/ }).click();
+      await expect(play).toBeVisible({ timeout: 1_000 });
+    }).toPass({ timeout: 20_000 });
+    await play.click();
+
+    const dock = page.getByRole('button', { name: 'Expand timer' });
+    await expect(dock).toBeVisible();
+    await expect(page.getByText(/^Lateral Raise — /)).toBeVisible();
+    // The set the timer is on is marked in the focus lift's own list.
+    await expect(focus.locator('[class*="setRowActive"]')).toContainText('Set 2');
+  });
+});

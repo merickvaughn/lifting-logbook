@@ -7,6 +7,8 @@ jest.mock('@/lib/api', () => ({
   fetchProgramSpec: jest.fn(),
   fetchTrainingMaxes: jest.fn(),
   fetchCustomLifts: jest.fn(),
+  // No active focus block unless a test says otherwise.
+  fetchFocusPlan: jest.fn().mockResolvedValue({ groups: [] }),
 }));
 
 jest.mock('@/lib/active-program', () => ({
@@ -35,13 +37,15 @@ jest.mock('./WorkoutTimerView', () => ({
   ),
 }));
 
-import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes, fetchCustomLifts } from '@/lib/api';
+import { fetchWorkout, fetchProgramSpec, fetchTrainingMaxes, fetchCustomLifts, fetchFocusPlan } from '@/lib/api';
+import { focusPlan } from '@/lib/__tests__/focusPlanFixture';
 import WorkoutTimerPage from './page';
 
 const mockedWorkout = fetchWorkout as unknown as jest.Mock;
 const mockedSpec = fetchProgramSpec as unknown as jest.Mock;
 const mockedMaxes = fetchTrainingMaxes as unknown as jest.Mock;
 const mockedCustomLifts = fetchCustomLifts as unknown as jest.Mock;
+const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
 
 function spec(lift: string) {
   return {
@@ -140,5 +144,40 @@ describe('WorkoutTimerPage — accessory classification', () => {
     });
 
     await expect(renderPage()).rejects.toThrow('REDIRECT:/macrocycle/1/workout/1/detail');
+  });
+});
+
+describe('WorkoutTimerPage — focus work (#1060)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    seedWorkout(['Squat', 'Cable Curls']);
+    mockedCustomLifts.mockResolvedValue([]);
+  });
+
+  it('queues the day’s focus lifts after the planned lifts', async () => {
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan());
+
+    expect(passedLifts(await renderPage())).toEqual([
+      ['Squat', 'compound'],
+      ['Cable Curls', 'accessory'],
+      ['Lateral Raise', 'accessory'],
+      ['Face Pull', 'accessory'],
+    ]);
+    expect(mockedFocusPlan).toHaveBeenCalledWith('5-3-1', 1, expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+  });
+
+  it('times the planned lifts alone when the focus plan fails to load', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockedFocusPlan.mockRejectedValueOnce(new Error('API down'));
+
+    expect(passedLifts(await renderPage())).toEqual([
+      ['Squat', 'compound'],
+      ['Cable Curls', 'accessory'],
+    ]);
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutTimerPage] focus plan fetch failed, showing planned lifts only',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
   });
 });

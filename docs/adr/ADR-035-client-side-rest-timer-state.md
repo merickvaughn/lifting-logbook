@@ -572,6 +572,54 @@ So shape-3 runs are dropped once, at deploy. The window before the web deploys i
 the API ships first: an old web still reads a shape-3 run against the new API's plan until it is
 replaced.
 
+## Amendment 5 — focus lifts bring their own durations (2026-10-26, [#1060](https://github.com/merickvaughn/lifting-logbook/issues/1060))
+
+### Context
+
+Focus work ([ADR-039](ADR-039-focus-block-persistence.md)) gives each focus block its own setup, set
+and rest times, and #1060 puts focus lifts into the timed workout. Those times have to win over the
+override → deload → accessory → preset chain of Amendment 1: focus work runs on its own timeline, so
+a program deload week says nothing about it, and the lifter set those times on the focus block itself.
+
+### Decision
+
+1. **`TimerLiftPlan.durations`**, an optional `Partial<TimerPresetDurations>` a lift carries into the
+   queue. `buildTimerQueue` reads each field from it first and falls through to `resolveDuration` for
+   any field it lacks. Program lifts carry none, so their timing is unchanged. The per-lift override
+   list in the settings panel hides lifts that carry durations, since an override would control
+   nothing there.
+2. **The plan is in performance order.** `toTimerLiftPlans` takes the day's focus plan and emits
+   planned and focus lifts in the order the details page shows them (`workoutOrder` in
+   `apps/web/lib/focusWorkout.ts`): focus work before, after, or interleaved. A planned lift's
+   `liftIndex` is therefore its place in the day, not its place in `workout.lifts`. The details page
+   maps each row to its queue position through the same function, from the day state the server
+   built the queue with, so a reorder that hasn't re-planned yet still starts the right sets.
+3. **`TIMER_RUN_SHAPE` is 6.** Item 5's third case applies: the plan an existing workout resolves to
+   changed, since focus lifts can now sit ahead of planned ones.
+
+### Alternatives considered
+
+| # | Option | Why not |
+|---|---|---|
+| 1 | Write each focus block's times into `settings.overrides` | Overrides are per lift name, per device, and the lifter's own. A focus lift that is also a program accessory elsewhere would inherit focus timing there, and deleting a focus block would leave its times behind. |
+| 2 | Add a fifth rung inside `resolveDurationEntry` | Every rung is a property of the settings blob. A focus block's timer is a property of the plan, and `resolveDurationEntry` has no plan to read it from without widening every call site. |
+
+### Consequences
+
+- A focus lift's timing ignores deload and the accessory context by design. Changing it means editing
+  the focus block.
+- `snapshotClassifications` still keys by name, so a focus lift named like a planned lift shares its
+  pinned classification. Its durations don't depend on classification, so the queue is unaffected.
+
+### Verification
+
+- `packages/core/tests/core/timer/queue.test.ts`: carried durations win over an override and deload,
+  and fall through per field.
+- `apps/web/lib/__tests__/timerPlan.test.ts`: placement order, focus block order, and per-block timing
+  in the built queue.
+- `apps/web/e2e/timer.spec.ts`: the timer page queues focus lifts after the planned lifts on 0:45 /
+  1:00, and a focus lift's ▶ starts its set.
+
 ## References
 
 - [Screen Wake Lock API](https://www.w3.org/TR/screen-wake-lock/) — W3C spec; §3.3 defines the
