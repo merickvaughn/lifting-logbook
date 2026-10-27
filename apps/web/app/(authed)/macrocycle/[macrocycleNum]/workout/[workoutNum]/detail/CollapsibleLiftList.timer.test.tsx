@@ -204,45 +204,77 @@ describe('CollapsibleLiftList with the timer', () => {
     expect(rowFor('Set 2')?.className).not.toContain('setRowDone');
   });
 
-  it('keeps a planned lift’s timer controls when focus lifts are mixed in ahead of it (#1058)', async () => {
-    // Interleaving reorders the rendered rows but not the timer's plan, so a
-    // planned row's ▶ must still address its own position in `liftDetails`, and
-    // a focus row — not in the timer's plan yet (#1060) — must offer none.
-    const user = userEvent.setup();
-    render(
-      <WorkoutTimerProvider lifts={TIMER_LIFTS} program="531" macrocycleNum={1} workoutNum={1}>
-        <CollapsibleLiftList
-          liftDetails={LIFT_DETAILS}
-          macrocycleNum={1}
-          workoutNum={1}
-          unit="lbs"
-          rows={[
-            {
-              kind: 'focus',
-              id: 'f:b1:Lateral Raise',
-              lift: 'Lateral Raise',
-              summary: '3 × 10–12',
-              groupLabel: 'Focus sets · Double progression',
-              sets: 3,
-              perSet: '10–12 reps @ 25 lbs',
-              hint: 'Hit 12 on every set.',
-              note: null,
-              area: 'Shoulders',
-            },
-            { kind: 'planned', id: 'p:Bench Press#0', liftIndex: 0 },
-          ]}
-        />
-      </WorkoutTimerProvider>,
-    );
-    const [focusItem, plannedItem] = screen.getAllByRole('listitem');
-    if (!focusItem || !plannedItem) throw new Error('expected two lift items');
+  describe('focus lifts in the timer’s plan (#1060)', () => {
+    /** The timer's plan with focus work first: Lateral Raise at 0, Bench Press at 1. */
+    const FOCUS_FIRST: TimerLiftPlan[] = [
+      {
+        lift: 'Lateral Raise',
+        durations: { prep: 10, workSet: 45, restWork: 60 },
+        sets: [1, 2].map((k) => ({ type: 'work' as const, setLabel: `Set ${k}`, spec: '10–12 reps @ 25 lbs' })),
+      },
+      ...TIMER_LIFTS,
+    ];
 
-    await user.click(within(focusItem).getByRole('button', { name: /Lateral Raise/ }));
-    expect(within(focusItem).queryByRole('button', { name: /^Start timer at/ })).not.toBeInTheDocument();
-    expect(within(focusItem).queryByRole('link', { name: /History/ })).not.toBeInTheDocument();
+    function focusRow(timerIndex?: number) {
+      return {
+        kind: 'focus' as const,
+        id: 'f:b1:Lateral Raise',
+        ...(timerIndex !== undefined && { timerIndex }),
+        lift: 'Lateral Raise',
+        summary: '2 × 10–12',
+        groupLabel: 'Focus sets · Double progression',
+        sets: 2,
+        perSet: '10–12 reps @ 25 lbs',
+        hint: 'Hit 12 on every set.',
+        note: null,
+        area: 'Shoulders',
+      };
+    }
 
-    await user.click(within(plannedItem).getByRole('button', { name: 'Start timer at Bench Press Set 2' }));
-    expect(screen.getByText(/Bench Press — Set 2 · 3 × 230 lbs/)).toBeInTheDocument();
+    function renderFocusFirst(rows: Parameters<typeof CollapsibleLiftList>[0]['rows']) {
+      return render(
+        <WorkoutTimerProvider lifts={FOCUS_FIRST} program="531" macrocycleNum={1} workoutNum={1}>
+          <CollapsibleLiftList liftDetails={LIFT_DETAILS} macrocycleNum={1} workoutNum={1} unit="lbs" rows={rows} />
+        </WorkoutTimerProvider>,
+      );
+    }
+
+    it('starts the timer at a focus lift’s set, and at a planned set by the lift’s place in the queue', async () => {
+      const user = userEvent.setup();
+      renderFocusFirst([focusRow(0), { kind: 'planned', id: 'p:Bench Press#0', liftIndex: 0, timerIndex: 1 }]);
+      const [focusItem, plannedItem] = screen.getAllByRole('listitem');
+      if (!focusItem || !plannedItem) throw new Error('expected two lift items');
+
+      await user.click(within(focusItem).getByRole('button', { name: 'Start timer at Lateral Raise Set 2' }));
+      expect(screen.getByText(/Lateral Raise — Set 2 · 10–12 reps @ 25 lbs/)).toBeInTheDocument();
+
+      // Bench Press is `liftDetails[0]` but the timer's lift 1: its ▶ must start Bench
+      // Press, not the focus lift that sits at index 0 of the queue.
+      await user.click(within(plannedItem).getByRole('button', { name: /1 warm-up/ }));
+      await user.click(within(plannedItem).getByRole('button', { name: 'Start timer at Bench Press Set 2' }));
+      expect(screen.getByText(/Bench Press — Set 2 · 3 × 230 lbs/)).toBeInTheDocument();
+    });
+
+    it('marks the focus lift’s active set and links to its history', async () => {
+      const user = userEvent.setup();
+      renderFocusFirst([focusRow(0)]);
+
+      await user.click(screen.getByRole('button', { name: 'Start timer at Lateral Raise Set 1' }));
+
+      expect(screen.getByText('Set 1').closest('div[class*="setRow"]')?.className).toContain('setRowActive');
+      expect(screen.getByRole('link', { name: /History/ })).toHaveAttribute(
+        'href',
+        '/macrocycle/1/workout/1/detail/Lateral%20Raise',
+      );
+    });
+
+    it('offers no ▶ on a focus row the timer does not queue', async () => {
+      const user = userEvent.setup();
+      renderFocusFirst([focusRow()]);
+
+      await user.click(screen.getByRole('button', { name: /Lateral Raise/ }));
+      expect(screen.queryByRole('button', { name: /^Start timer at/ })).not.toBeInTheDocument();
+    });
   });
 
   describe('the activation movement (#960)', () => {

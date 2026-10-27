@@ -1,8 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getActiveProgram } from '@/lib/active-program';
-import { fetchFocusPlan } from '@/lib/api';
-import { loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
+import { loadFocusPlan, loadWorkoutPlan, type FocusPlanResult } from '@/lib/loadWorkoutPlan';
 import { isTimeable } from '@/lib/workoutStatus';
 import WorkoutTimerProvider from '@/components/timer/WorkoutTimerProvider';
 import CollapsibleLiftList from './CollapsibleLiftList';
@@ -48,21 +47,18 @@ export default async function WorkoutDetailPage({
   const timerAvailable = isTimeable(status);
   // Focus work (#1058) is offered on the same workouts the timer is: there is no
   // focus work left to do on one already logged or skipped. A failed fetch is
-  // not fatal: the page falls back to the planned lifts with a notice.
-  const [timerLifts, focus] = await Promise.all([
-    timerAvailable ? plan.timerLifts() : Promise.resolve([]),
+  // not fatal: the page falls back to the planned lifts with a notice. The timer's
+  // plan queues the focus lifts too (#1060), so it takes the same fetch, in flight.
+  const focusLoad: Promise<FocusPlanResult> =
     timerAvailable ?
-      fetchFocusPlan(program, workoutNum, new Date().toISOString().slice(0, 10)).then(
-        (focusPlan) => ({ plan: focusPlan, failed: false }),
-        (err: unknown) => {
-          console.error('[WorkoutDetailPage] focus plan fetch failed, showing planned lifts only', err);
-          return { plan: null, failed: true };
-        },
-      )
-    : Promise.resolve({ plan: null, failed: false }),
+      loadFocusPlan(program, workoutNum, 'WorkoutDetailPage')
+    : Promise.resolve({ plan: null, failed: false });
+  const [focus, timerLifts] = await Promise.all([
+    focusLoad,
+    timerAvailable ? plan.timerLifts(focusLoad.then((f) => f.plan)) : Promise.resolve([]),
   ]);
   // Without an active focus block the page keeps its plain layout.
-  const focusPlan = focus.plan !== null && focus.plan.groups.length > 0 ? focus.plan : null;
+  const focusPlan = focus.plan;
 
   const plannedSets = liftDetails.reduce((acc, d) => acc + d.warmUpCount + d.workCount, 0);
   const actualSets = workout.lifts.reduce((acc, wl) => acc + wl.sets.length, 0);

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactElement } from 'react';
 import type { TimerLiftPlan } from '@lifting-logbook/core';
-import type { FocusDayPlanResponse } from '@lifting-logbook/types';
+import { emptyFocusDayState, type FocusDayPlanResponse } from '@lifting-logbook/types';
 import { focusPlan } from '@/lib/__tests__/focusPlanFixture';
 
 jest.mock('@/lib/api', () => ({
@@ -214,6 +214,17 @@ describe('WorkoutDetailPage — focus work (#1058)', () => {
     expect(html).toContain('focus-workout: Lateral Raise, Face Pull | planned: Squat, Cable Curls');
     expect(html).not.toContain('collapsible-lift-list');
     expect(mockedFocusPlan).toHaveBeenCalledWith('5-3-1', 1, expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+  });
+
+  it('queues the focus lifts for the timer in placement order (#1060)', async () => {
+    mockedFocusPlan.mockResolvedValue(focusPlan({ dayState: { ...emptyFocusDayState(), placement: 'before' } }));
+
+    expect(passedLifts(await renderPage())).toEqual([
+      ['Lateral Raise', 'accessory'],
+      ['Face Pull', 'accessory'],
+      ['Squat', 'compound'],
+      ['Cable Curls', 'accessory'],
+    ]);
   });
 
   it('keeps the plain layout, with no notice, when no focus block is active', async () => {

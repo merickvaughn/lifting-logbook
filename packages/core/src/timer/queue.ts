@@ -1,6 +1,13 @@
 import type { LiftClassification } from '@lifting-logbook/types';
 import { resolveDuration } from './settings';
-import type { TimerLiftPlan, TimerPhase, TimerSettings, TimerSetPlan } from './types';
+import type {
+  TimerDurationField,
+  TimerLiftPlan,
+  TimerPhase,
+  TimerPresetDurations,
+  TimerSettings,
+  TimerSetPlan,
+} from './types';
 
 /** A flattened `(lift, set)` pair, in performance order. */
 export interface TimerQueueSet {
@@ -16,6 +23,8 @@ export interface TimerQueueSet {
   tm?: string | undefined;
   /** The lift's activation movement, carried through so the queue can emit its phase. */
   activation?: string | undefined;
+  /** Carried down from {@link TimerLiftPlan.durations}, for the same reason as `classification`. */
+  durations?: Partial<TimerPresetDurations> | undefined;
   /**
    * Index of the {@link TimerLiftPlan} this set came from — the lift
    * occurrence's identity, carried onto every phase as `TimerPhase.liftIndex`.
@@ -63,6 +72,7 @@ export function flattenSets(
         classification: lift.classification,
         tm: lift.tm,
         activation: lift.activation,
+        durations: lift.durations,
         liftIndex,
         setOrdinal,
         firstOfLift: !opened,
@@ -112,11 +122,14 @@ export function buildTimerQueue(
   const queue: TimerPhase[] = [];
 
   sets.forEach(
-    ({ lift, classification, tm, activation, liftIndex, setOrdinal, firstOfLift, set }, setIndex) => {
+    ({ lift, classification, tm, activation, durations, liftIndex, setOrdinal, firstOfLift, set }, setIndex) => {
       const common = { lift, tm, set, setIndex, liftIndex, setOrdinal, next: null };
+      // The lift's own durations, when it brings any, win over the settings chain.
+      const resolve = (field: TimerDurationField): number =>
+        durations?.[field] ?? resolveDuration(settings, lift, field, classification);
 
       if (firstOfLift) {
-        const dur = resolveDuration(settings, lift, 'activation', classification);
+        const dur = resolve('activation');
         // Zero omits the phase, matching `prep` below — that is also the per-lift
         // "turn this one off" mechanism, via an override of `activation: 0`.
         if (activation !== undefined && activation !== '' && dur > 0) {
@@ -135,7 +148,7 @@ export function buildTimerQueue(
         }
       }
 
-      const prep = resolveDuration(settings, lift, 'prep', classification);
+      const prep = resolve('prep');
       if (prep > 0) {
         queue.push({ ...common, kind: 'prep', label: 'Get set', dur: prep });
       }
@@ -144,24 +157,14 @@ export function buildTimerQueue(
         ...common,
         kind: 'set',
         label: setLabelFor(set),
-        dur: resolveDuration(
-          settings,
-          lift,
-          set.type === 'warmup' ? 'warmupSet' : 'workSet',
-          classification,
-        ),
+        dur: resolve(set.type === 'warmup' ? 'warmupSet' : 'workSet'),
       });
 
       queue.push({
         ...common,
         kind: 'rest',
         label: 'Rest',
-        dur: resolveDuration(
-          settings,
-          lift,
-          set.type === 'warmup' ? 'restWarmup' : 'restWork',
-          classification,
-        ),
+        dur: resolve(set.type === 'warmup' ? 'restWarmup' : 'restWork'),
       });
     },
   );

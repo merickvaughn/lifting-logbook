@@ -308,3 +308,51 @@ describe('WorkoutLogger — in-progress set draft persistence (#878)', () => {
     expect(screen.getByPlaceholderText('Notes (optional)')).toHaveValue('');
   });
 });
+
+describe('WorkoutLogger — focus lifts (#1060)', () => {
+  const raise = makeLift({
+    lift: 'Lateral Raise',
+    workingSets: [{ setNum: 1, totalLoad: 25, reps: 12, amrap: false }],
+    focus: { area: 'Shoulders', summary: '1 × 10–12' },
+  });
+
+  it('marks a focus lift with its area and prescription', async () => {
+    const user = userEvent.setup();
+    render(<WorkoutLogger {...makeProps({ lifts: [makeLift(), raise] })} />);
+
+    expect(screen.queryByText(/Focus work/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Go to Lateral Raise' }));
+    expect(screen.getByText('Focus work · Shoulders · 1 × 10–12')).toBeInTheDocument();
+  });
+
+  it('logs a focus set as an ordinary lift record against the workout', async () => {
+    const user = userEvent.setup();
+    mockCreateLiftRecord.mockResolvedValue({ ...LOGGED, lift: 'Lateral Raise', weight: 25, reps: 12 });
+    render(<WorkoutLogger {...makeProps({ lifts: [raise] })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() =>
+      expect(mockCreateLiftRecord).toHaveBeenCalledWith('5-3-1', {
+        program: '5-3-1',
+        macrocycleNum: 1,
+        workoutNum: 1,
+        date: '2026-07-08',
+        lift: 'Lateral Raise',
+        setNum: 1,
+        weight: 25,
+        reps: 12,
+        notes: undefined,
+      }),
+    );
+  });
+
+  it('lets the workout finish with its focus sets unlogged', () => {
+    const squat = makeLift({
+      workingSets: [{ setNum: 1, totalLoad: 225, reps: 5, amrap: false, existing: { id: 'rec-1', weight: 225, reps: 5, notes: '' } }],
+    });
+    render(<WorkoutLogger {...makeProps({ lifts: [squat, raise] })} />);
+
+    expect(screen.getByRole('button', { name: 'Finish workout' })).toBeInTheDocument();
+  });
+});

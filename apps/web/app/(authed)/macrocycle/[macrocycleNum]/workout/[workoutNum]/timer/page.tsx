@@ -1,6 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
 import { getActiveProgram } from '@/lib/active-program';
-import { loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
+import { loadFocusPlan, loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
 import { isTimeable } from '@/lib/workoutStatus';
 import WorkoutTimerView from './WorkoutTimerView';
 
@@ -25,6 +25,10 @@ export default async function WorkoutTimerPage({
   }
 
   const program = await getActiveProgram();
+  // The same focus work the details page shows, queued in the same order (#1060).
+  // Started alongside the plan's own fetches; it never rejects, so a not-found or a
+  // redirect below can leave it unawaited.
+  const focus = loadFocusPlan(program, workoutNum, 'WorkoutTimerPage');
   const plan = await loadWorkoutPlan(program, workoutNum, 'WorkoutTimerPage');
 
   if (!plan) {
@@ -42,7 +46,7 @@ export default async function WorkoutTimerPage({
 
   return (
     <WorkoutTimerView
-      lifts={await plan.timerLifts()}
+      lifts={await plan.timerLifts(focus.then((f) => f.plan))}
       program={program}
       macrocycleNum={macrocycleNum}
       workoutNum={workoutNum}

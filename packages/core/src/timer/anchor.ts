@@ -69,9 +69,12 @@ export function comparePhaseKeys(a: TimerPhaseKey, b: TimerPhaseKey): number {
  * *advance* to the nearest surviving phase after it in emission order, not end
  * (issue #972). `index` is `-1` only when nothing survives after the key — the
  * one case where ending the session is right — or when the plan itself has
- * been reordered under the run (a phase sits at the key's position but belongs
- * to a different lift), where every position is suspect and ending is the safe
- * answer.
+ * been reordered under the run (the key's lift position now holds a different
+ * lift), where every position is suspect and ending is the safe answer. That
+ * check covers the whole lift, not only the key's exact phase: a reorder that
+ * puts a shorter lift at the key's position leaves no phase at its set ordinal,
+ * and advancing from there would land on another lift's set (issue #1060, where
+ * focus lifts made the plan reorderable mid-session).
  *
  * The queue is emitted in key order, so the first phase comparing greater is
  * the nearest survivor; no sort is needed. Phases are compared field by field
@@ -81,12 +84,11 @@ export function reanchorIndex(
   queue: readonly TimerPhase[],
   key: TimerPhaseKey,
 ): { index: number; exact: boolean } {
-  const positional = queue.findIndex((phase) => comparePosition(phase, key) === 0);
-  if (positional !== -1) {
-    const hit = queue[positional];
-    if (hit && hit.lift === key.lift) return { index: positional, exact: true };
+  if (queue.some((phase) => phase.liftIndex === key.liftIndex && phase.lift !== key.lift)) {
     return { index: -1, exact: false };
   }
+  const positional = queue.findIndex((phase) => comparePosition(phase, key) === 0);
+  if (positional !== -1) return { index: positional, exact: true };
   const next = queue.findIndex((phase) => comparePosition(phase, key) > 0);
   return { index: next, exact: false };
 }

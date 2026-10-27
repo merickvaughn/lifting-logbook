@@ -1,6 +1,6 @@
 # Proposal: Focus Work — Accessory Blocks Layered onto Every Workout
 
-**Status:** `draft`
+**Status:** `shipped`
 **Date:** 2026-10-24
 **Issue:** [#1053](https://github.com/merickvaughn/lifting-logbook/issues/1053). Sub-issues: [#1054](https://github.com/merickvaughn/lifting-logbook/issues/1054), [#1055](https://github.com/merickvaughn/lifting-logbook/issues/1055), [#1056](https://github.com/merickvaughn/lifting-logbook/issues/1056), [#1057](https://github.com/merickvaughn/lifting-logbook/issues/1057), [#1058](https://github.com/merickvaughn/lifting-logbook/issues/1058), [#1059](https://github.com/merickvaughn/lifting-logbook/issues/1059), [#1060](https://github.com/merickvaughn/lifting-logbook/issues/1060).
 

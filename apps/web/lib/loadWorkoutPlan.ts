@@ -1,8 +1,9 @@
 import 'server-only';
 
 import type { TimerLiftPlan } from '@lifting-logbook/core';
-import type { WeightUnit, WorkoutResponse } from '@lifting-logbook/types';
-import { fetchCustomLifts, fetchProgramSpec, fetchTrainingMaxes, fetchWorkout } from '@/lib/api';
+import { FOCUS_PLACEMENTS, FOCUS_PROGRESSIONS } from '@lifting-logbook/types';
+import type { FocusDayPlanResponse, WeightUnit, WorkoutResponse } from '@lifting-logbook/types';
+import { fetchCustomLifts, fetchFocusPlan, fetchProgramSpec, fetchTrainingMaxes, fetchWorkout } from '@/lib/api';
 import { getPreferredUnit } from '@/lib/preferences';
 import { CUSTOM_LIFTS_TIMEOUT_MS, toTimerLiftPlans } from '@/lib/timerPlan';
 import { withTimeout } from '@/lib/with-timeout';
@@ -59,8 +60,78 @@ export interface WorkoutPlan {
    * that round-trip on its critical path. The slow-fetch budget arms here too,
    * on first call, so a page that never mounts the timer cannot log a
    * degradation it never experienced.
+   *
+   * `focus` is the day's focus work from {@link loadFocusPlan}, or `null` for none;
+   * its lifts join the plan in placement order (#1060). It may be passed still in
+   * flight, so the custom-lift budget and the focus fetch run side by side.
    */
-  timerLifts: () => Promise<TimerLiftPlan[]>;
+  timerLifts: (
+    focus: FocusDayPlanResponse | null | Promise<FocusDayPlanResponse | null>,
+  ) => Promise<TimerLiftPlan[]>;
+}
+
+/** Which route asked for the day's focus work. */
+export type FocusPlanCaller = WorkoutPlanCaller | 'WorkoutLoggingPage';
+
+/** The day's focus work, or `null`: none active, or the fetch `failed`. */
+export interface FocusPlanResult {
+  plan: FocusDayPlanResponse | null;
+  failed: boolean;
+}
+
+/**
+ * How long the workout pages wait for the day's focus plan before showing planned lifts
+ * only. A latency budget, like {@link CUSTOM_LIFTS_TIMEOUT_MS}: focus work is optional on
+ * all three pages, and the logging and timer pages are opened mid-session. Longer than
+ * that one because the API plans the day on this request rather than reading a list.
+ */
+export const FOCUS_PLAN_TIMEOUT_MS = 3000;
+
+/**
+ * Whether every value the pages switch on is one this build knows. The API ships before
+ * the web, so a newer placement or progression would otherwise throw while rendering
+ * (`workoutOrder`, `describePrescription`) instead of falling back.
+ */
+function isKnownShape(plan: FocusDayPlanResponse): boolean {
+  return (
+    FOCUS_PLACEMENTS.includes(plan.dayState.placement) &&
+    plan.groups.every((group) =>
+      group.items.every((item) => FOCUS_PROGRESSIONS.includes(item.prescription.progression)),
+    )
+  );
+}
+
+/**
+ * Loads one workout's focus work for the server's calendar day (UTC for now, #1072).
+ *
+ * Shared by the details, timer and logging pages so all three list the same focus lifts
+ * in the same order. A failed, slow or unrecognised plan is not fatal: the caller falls
+ * back to the planned lifts, and the details page says so. A plan with no active focus
+ * block reads as `null`.
+ */
+export async function loadFocusPlan(
+  program: string,
+  workoutNum: number,
+  caller: FocusPlanCaller,
+): Promise<FocusPlanResult> {
+  const failed: FocusPlanResult = { plan: null, failed: true };
+  // fallback-covered-by: apps/web/lib/__tests__/loadWorkoutPlan.test.ts
+  const loaded = fetchFocusPlan(program, workoutNum, new Date().toISOString().slice(0, 10)).then(
+    (plan): FocusPlanResult => {
+      if (!isKnownShape(plan)) {
+        console.error(`[${caller}] focus plan has a placement or progression this build doesn’t know, showing planned lifts only`);
+        return failed;
+      }
+      return { plan: plan.groups.length > 0 ? plan : null, failed: false };
+    },
+    (err: unknown): FocusPlanResult => {
+      console.error(`[${caller}] focus plan fetch failed, showing planned lifts only`, err);
+      return failed;
+    },
+  );
+  return withTimeout(loaded, FOCUS_PLAN_TIMEOUT_MS, failed, () =>
+    console.warn(`[${caller}] focus plan fetch slow, showing planned lifts only`),
+  );
 }
 
 /**
@@ -128,6 +199,9 @@ export async function loadWorkoutPlan(
     status: statusOf(workout),
     effectiveDate: effectiveDateOf(workout),
     liftDetails,
-    timerLifts: async () => toTimerLiftPlans(liftDetails, unit, await boundedCustomLifts()),
+    timerLifts: async (focus) => {
+      const [customLifts, focusPlan] = await Promise.all([boundedCustomLifts(), focus]);
+      return toTimerLiftPlans(liftDetails, unit, customLifts, focusPlan);
+    },
   };
 }

@@ -3,20 +3,23 @@ jest.mock('@/lib/api', () => ({
   fetchProgramSpec: jest.fn(),
   fetchTrainingMaxes: jest.fn(),
   fetchCustomLifts: jest.fn(),
+  fetchFocusPlan: jest.fn(),
 }));
 
 jest.mock('@/lib/preferences', () => ({
   getPreferredUnit: jest.fn().mockResolvedValue('lbs'),
 }));
 
-import { fetchCustomLifts, fetchProgramSpec, fetchTrainingMaxes, fetchWorkout } from '@/lib/api';
+import { fetchCustomLifts, fetchFocusPlan, fetchProgramSpec, fetchTrainingMaxes, fetchWorkout } from '@/lib/api';
 import { CUSTOM_LIFTS_TIMEOUT_MS } from '@/lib/timerPlan';
-import { loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
+import { FOCUS_PLAN_TIMEOUT_MS, loadFocusPlan, loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
+import { focusPlan } from './focusPlanFixture';
 
 const mockedWorkout = fetchWorkout as unknown as jest.Mock;
 const mockedSpec = fetchProgramSpec as unknown as jest.Mock;
 const mockedMaxes = fetchTrainingMaxes as unknown as jest.Mock;
 const mockedCustomLifts = fetchCustomLifts as unknown as jest.Mock;
+const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
 
 function spec(lift: string, activation = '') {
   return {
@@ -82,7 +85,7 @@ describe('loadWorkoutPlan', () => {
     ]);
     expect(plan.liftDetails[1]).toMatchObject({ warmUpCount: 3, workCount: 3 });
     // Index-aligned with the details: the empty entry stays to hold its position.
-    expect((await plan.timerLifts()).map((l) => [l.lift, l.sets.length])).toEqual([
+    expect((await plan.timerLifts(null)).map((l) => [l.lift, l.sets.length])).toEqual([
       ['Squat', 0],
       ['Cable Curls', 6],
     ]);
@@ -129,7 +132,7 @@ describe('loadWorkoutPlan', () => {
     if (!plan) throw new Error('expected a plan');
 
     expect(plan.liftDetails.map((d) => [d.lift, d.warmUpCount, d.workCount])).toEqual([['Squat', 3, 3]]);
-    expect((await plan.timerLifts()).map((l) => [l.lift, l.sets.length])).toEqual([['Squat', 6]]);
+    expect((await plan.timerLifts(null)).map((l) => [l.lift, l.sets.length])).toEqual([['Squat', 6]]);
   });
 
   it('narrows the activation column once, keeping a movement and dropping a legacy marker', async () => {
@@ -139,7 +142,7 @@ describe('loadWorkoutPlan', () => {
     if (!plan) throw new Error('expected a plan');
 
     expect(plan.liftDetails.map((d) => d.activationMovement)).toEqual(['Hip Airplane', undefined]);
-    expect((await plan.timerLifts()).map((l) => l.activation)).toEqual(['Hip Airplane', undefined]);
+    expect((await plan.timerLifts(null)).map((l) => l.activation)).toEqual(['Hip Airplane', undefined]);
   });
 
   it('classifies built-ins from the catalog and the user’s own lifts from the fetched list', async () => {
@@ -149,7 +152,7 @@ describe('loadWorkoutPlan', () => {
     const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
     if (!plan) throw new Error('expected a plan');
 
-    expect((await plan.timerLifts()).map((l) => [l.lift, l.classification])).toEqual([
+    expect((await plan.timerLifts(null)).map((l) => [l.lift, l.classification])).toEqual([
       ['Squat', 'compound'],
       ['Cable Curls', 'accessory'],
       ['Sissy Squat', 'accessory'],
@@ -169,7 +172,7 @@ describe('loadWorkoutPlan', () => {
     // The honest cost of the fallback is the last row: the custom lift goes
     // unclassified and falls through to the preset — still in the session,
     // never dropped.
-    expect((await plan.timerLifts()).map((l) => [l.lift, l.classification])).toEqual([
+    expect((await plan.timerLifts(null)).map((l) => [l.lift, l.classification])).toEqual([
       ['Squat', 'compound'],
       ['Cable Curls', 'accessory'],
       ['Sissy Squat', undefined],
@@ -192,7 +195,7 @@ describe('loadWorkoutPlan', () => {
       const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
       if (!plan) throw new Error('expected a plan');
 
-      const lifts = plan.timerLifts();
+      const lifts = plan.timerLifts(null);
       jest.advanceTimersByTime(CUSTOM_LIFTS_TIMEOUT_MS + 1);
 
       expect((await lifts).map((l) => [l.lift, l.classification])).toEqual([['Squat', 'compound']]);
@@ -222,9 +225,86 @@ describe('loadWorkoutPlan', () => {
       expect(mockedCustomLifts).toHaveBeenCalledTimes(1);
 
       settle([]);
-      const lifts = await plan?.timerLifts();
+      const lifts = await plan?.timerLifts(null);
       expect(lifts?.map((l) => l.lift)).toEqual(['Squat']);
     } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('queues the focus plan it is handed with the planned lifts (#1060)', async () => {
+    seedWorkout(['Squat']);
+    mockedCustomLifts.mockResolvedValue([]);
+
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
+    // Handed in flight, as the pages do, so it and the custom-lift budget run side by side.
+    const lifts = await plan?.timerLifts(Promise.resolve(focusPlan()));
+
+    expect(lifts?.map((l) => [l.lift, l.durations])).toEqual([
+      ['Squat', undefined],
+      ['Lateral Raise', { prep: 10, workSet: 45, restWork: 60 }],
+      ['Face Pull', { prep: 10, workSet: 45, restWork: 60 }],
+    ]);
+  });
+});
+
+describe('loadFocusPlan (#1060)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns the day’s focus plan, asked for the server’s calendar day', async () => {
+    const plan = focusPlan();
+    mockedFocusPlan.mockResolvedValueOnce(plan);
+
+    await expect(loadFocusPlan('5-3-1', 1, 'WorkoutLoggingPage')).resolves.toEqual({ plan, failed: false });
+    expect(mockedFocusPlan).toHaveBeenCalledWith('5-3-1', 1, expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+  });
+
+  it('reads a plan with no active focus block as none', async () => {
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan({ groups: [] }));
+
+    await expect(loadFocusPlan('5-3-1', 1, 'WorkoutDetailPage')).resolves.toEqual({ plan: null, failed: false });
+  });
+
+  it('degrades to no focus work, logged against its caller, when the fetch fails', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockedFocusPlan.mockRejectedValueOnce(new Error('API down'));
+
+    await expect(loadFocusPlan('5-3-1', 1, 'WorkoutTimerPage')).resolves.toEqual({ plan: null, failed: true });
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutTimerPage] focus plan fetch failed, showing planned lifts only',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
+  });
+
+  it('degrades to no focus work when the plan uses a placement or progression this build doesn’t know', async () => {
+    // The API ships first; rendering this plan would throw in `workoutOrder`.
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const plan = focusPlan();
+    mockedFocusPlan.mockResolvedValueOnce({ ...plan, dayState: { ...plan.dayState, placement: 'sideways' } });
+
+    await expect(loadFocusPlan('5-3-1', 1, 'WorkoutLoggingPage')).resolves.toEqual({ plan: null, failed: true });
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutLoggingPage] focus plan has a placement or progression this build doesn’t know, showing planned lifts only',
+    );
+    errSpy.mockRestore();
+  });
+
+  it('stops waiting for a slow focus plan after its budget', async () => {
+    jest.useFakeTimers();
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      mockedFocusPlan.mockReturnValueOnce(new Promise(() => undefined));
+
+      const loaded = loadFocusPlan('5-3-1', 1, 'WorkoutTimerPage');
+      await jest.advanceTimersByTimeAsync(FOCUS_PLAN_TIMEOUT_MS);
+
+      await expect(loaded).resolves.toEqual({ plan: null, failed: true });
+      expect(warnSpy).toHaveBeenCalledWith('[WorkoutTimerPage] focus plan fetch slow, showing planned lifts only');
+    } finally {
+      warnSpy.mockRestore();
       jest.useRealTimers();
     }
   });

@@ -29,7 +29,9 @@ import {
   skipReason,
   timerHint,
   toMinutes,
+  workoutOrder,
 } from '@/lib/focusWorkout';
+import { useTimerRowState } from '@/components/timer/WorkoutTimerProvider';
 import CollapsibleLiftList, { type FocusLiftRow, type LiftDetail, type LiftListRow } from './CollapsibleLiftList';
 import styles from './detail.module.css';
 
@@ -50,7 +52,11 @@ const PLACEMENTS: readonly [FocusPlacement, string][] = [
 ];
 
 /** One focus block's lifts today, as list rows, without the area tag. */
-function focusRows(group: FocusPlanGroupResponse, unit: WeightUnit): FocusLiftRow[] {
+function focusRows(
+  group: FocusPlanGroupResponse,
+  unit: WeightUnit,
+  timerIndexById: ReadonlyMap<string, number>,
+): FocusLiftRow[] {
   const { block } = group;
   const ids = focusRowIds(
     block.id,
@@ -58,16 +64,21 @@ function focusRows(group: FocusPlanGroupResponse, unit: WeightUnit): FocusLiftRo
   );
   return group.items.map((item, index) => {
     const rx = describePrescription(item.prescription, unit);
+    const id = ids[index] ?? '';
+    const timerIndex = timerIndexById.get(id);
     return {
       kind: 'focus',
-      id: ids[index] ?? '',
+      id,
+      ...(timerIndex !== undefined && { timerIndex }),
       lift: item.lift,
       summary: rx.summary,
       groupLabel: `Focus sets · ${FOCUS_PROGRESSION_LABEL[block.progression]}`,
       sets: item.sets,
       perSet: rx.perSet,
       hint: `${rx.hint} ${timerHint(block.timer)}`,
-      note: overlapNote(item, group),
+      // `workoutOrder` leaves out a focus lift already on the day's list under the same
+      // name, so it has no place in the timer's queue and isn't logged separately.
+      note: overlapNote(item, group) ?? (timerIndex === undefined ? 'Already on today’s list, so it runs there.' : null),
       area: null,
     };
   });
@@ -79,8 +90,13 @@ function focusRows(group: FocusPlanGroupResponse, unit: WeightUnit): FocusLiftRo
  * work sits relative to the planned lifts.
  *
  * The plan is computed by the API from the saved day state, so a change that alters which
- * lifts run (a mode, a pick, a trim) is saved and the page refreshed; placement, order and
- * "keep everything" only change the layout and apply at once.
+ * lifts run (a mode, a pick, a trim) is saved and the page refreshed. Placement, order and
+ * "keep everything" only change the layout and apply at once; placement and order then
+ * refresh too, because the timer queues lifts in that order (#1060).
+ *
+ * Each row's place in the timer queue comes from `plan.dayState`, the state the server
+ * built the queue from, not the local state: until the refresh lands, a row reordered
+ * here still starts the timer at its own sets in the queue as it stands.
  */
 export default function FocusWorkout({ program, macrocycleNum, workoutNum, week, unit, liftDetails, plan }: Props) {
   const router = useRouter();
@@ -99,7 +115,8 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
   const latestSave = useRef(0);
   // The last state the API accepted, which a failed latest save reverts to.
   const saved = useRef<FocusDayState>(plan.dayState);
-  // Set by any change to which lifts run; the page re-plans once the queue drains.
+  // Set by any change to which lifts run, or to the order the timer queues them in; the
+  // page re-plans once the queue drains.
   const needsReplan = useRef(false);
 
   function save(next: FocusDayState, replan: boolean) {
@@ -130,6 +147,10 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
   // Controls that change which lifts run wait for the plan to catch up, so a second click
   // can't act on advice or chips the first one already changed.
   const busy = pending || saving > 0;
+  // Every change here re-plans the day, and the re-planned queue can put another lift at
+  // the running set's position, which ends the run (#1060). So they wait for the timer.
+  const timerRunning = useTimerRowState()?.running ?? false;
+  const locked = busy || timerRunning;
 
   const allPlannedSets = liftDetails.flatMap((d) => d.plannedSets);
   const plannedSetCount = allPlannedSets.length;
@@ -140,10 +161,20 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
   const overMinutes = plan.seconds / 60 > budget.minutes;
   const trimmedLifts = groups.flatMap((group) => group.trimmed);
   const suggestionGroup = suggestion ? groups.find((g) => g.block.id === suggestion.blockId) : undefined;
-  const rowsByGroup = new Map(groups.map((group) => [group.block.id, focusRows(group, unit)]));
+  const timerIndexById = new Map(
+    workoutOrder(
+      liftDetails.map((d) => d.lift),
+      groups,
+      plan.dayState,
+    ).map((entry, index) => [entry.id, index]),
+  );
+  const rowsByGroup = new Map(groups.map((group) => [group.block.id, focusRows(group, unit, timerIndexById)]));
 
   const plannedIds = plannedRowIds(liftDetails.map((d) => d.lift));
-  const plannedRows: LiftListRow[] = plannedIds.map((id, liftIndex) => ({ kind: 'planned', id, liftIndex }));
+  const plannedRows: LiftListRow[] = plannedIds.map((id, liftIndex) => {
+    const timerIndex = timerIndexById.get(id);
+    return { kind: 'planned', id, liftIndex, ...(timerIndex !== undefined && { timerIndex }) };
+  });
   const interleave = state.placement === 'interleave';
 
   function setMode(blockId: string, mode: FocusSelection | undefined) {
@@ -174,7 +205,7 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
     const nextIndex = (index + step + PLACEMENTS.length) % PLACEMENTS.length;
     const next = PLACEMENTS[nextIndex];
     if (!next) return;
-    save({ ...state, placement: next[0] }, false);
+    save({ ...state, placement: next[0] }, true);
     placementRefs.current[nextIndex]?.focus();
   }
 
@@ -206,7 +237,7 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
       onDrop: (e: DragEvent) => {
         e.preventDefault();
         if (draggingModule !== null && draggingModule !== module) {
-          save({ ...state, placement: state.placement === 'before' ? 'after' : 'before' }, false);
+          save({ ...state, placement: state.placement === 'before' ? 'after' : 'before' }, true);
         }
         setDraggingModule(null);
       },
@@ -229,7 +260,7 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
             className={styles.sel}
             aria-label={`${block.area} selection today`}
             value={override}
-            disabled={busy}
+            disabled={locked}
             onChange={(e) => setMode(block.id, FOCUS_SELECTIONS.find((mode) => mode === e.target.value))}
           >
             <option value="">Focus block default ({FOCUS_SELECTION_LABEL[block.selection]})</option>
@@ -257,7 +288,7 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
                   type="button"
                   className={`${styles.chip} ${on ? styles.chipOn : ''} focus-ring`}
                   aria-pressed={on}
-                  disabled={busy}
+                  disabled={locked}
                   onClick={() => togglePick(block.id, entry.lift)}
                 >
                   {on ? '✓ ' : '+ '}
@@ -293,7 +324,7 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
   ) {
     return (
       <div className={styles.moduleHead}>
-        {grip !== null && moduleGrip(grip)}
+        {grip !== null && !timerRunning && moduleGrip(grip)}
         <div className={styles.moduleTitle}>
           <h2 id={`${ids}-${key}`} className={styles.moduleHeading}>
             {title}
@@ -377,7 +408,12 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
             'Today’s order',
             'Planned and focus lifts mixed; drag or use the arrows to reorder',
             state.order && (
-              <button type="button" className={styles.linkBtn} onClick={() => save({ ...state, order: null }, false)}>
+              <button
+                type="button"
+                className={styles.linkBtn}
+                disabled={timerRunning}
+                onClick={() => save({ ...state, order: null }, true)}
+              >
                 Reset order
               </button>
             ),
@@ -385,7 +421,9 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
           <CollapsibleLiftList
             {...listProps}
             rows={rows}
-            reorder={{ onMove: (from, to) => save({ ...state, order: moveRow(order, from, to) }, false) }}
+            {...(!timerRunning && {
+              reorder: { onMove: (from: number, to: number) => save({ ...state, order: moveRow(order, from, to) }, true) },
+            })}
           />
         </section>
         <section aria-labelledby={`${ids}-controls`} className={styles.module}>
@@ -440,7 +478,7 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
             <button
               type="button"
               className={`${styles.btnSm} ${styles.btnSmPrimary} focus-ring`}
-              disabled={busy}
+              disabled={locked}
               onClick={trimSuggestion}
             >
               Trim {suggestion.lift}
@@ -469,7 +507,7 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
           <button
             type="button"
             className={styles.linkBtn}
-            disabled={busy}
+            disabled={locked}
             onClick={() => save({ ...state, trims: {} }, true)}
           >
             Undo
@@ -501,13 +539,17 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
               aria-checked={state.placement === value}
               tabIndex={state.placement === value ? 0 : -1}
               className={`${styles.segBtn} ${state.placement === value ? styles.segBtnOn : ''} focus-ring`}
-              onClick={() => save({ ...state, placement: value }, false)}
+              disabled={timerRunning}
+              onClick={() => save({ ...state, placement: value }, true)}
               onKeyDown={(e) => onPlacementKey(e, index)}
             >
               {label}
             </button>
           ))}
         </div>
+        {timerRunning && (
+          <p className={styles.fieldHint}>Focus work changes wait until the timer ends, since they reorder its queue.</p>
+        )}
       </div>
 
       {interleave ?

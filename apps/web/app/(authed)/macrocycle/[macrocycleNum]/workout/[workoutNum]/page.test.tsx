@@ -11,6 +11,8 @@ jest.mock('@/lib/api', () => ({
   // assertion below can prove the whole-macrocycle refetch is gone rather than
   // merely unmocked.
   fetchLiftRecords: jest.fn(),
+  // No active focus block unless a test says otherwise.
+  fetchFocusPlan: jest.fn().mockResolvedValue({ groups: [] }),
 }));
 
 jest.mock('@/lib/active-program', () => ({
@@ -35,18 +37,22 @@ jest.mock('./WorkoutLogger', () => ({
   ),
 }));
 
+import { emptyFocusDayState } from '@lifting-logbook/types';
 import {
   fetchWorkout,
   fetchProgramSpec,
   fetchTrainingMaxes,
   fetchLiftRecords,
+  fetchFocusPlan,
 } from '@/lib/api';
+import { focusPlan, planGroup, planItem } from '@/lib/__tests__/focusPlanFixture';
 import WorkoutLoggingPage from './page';
 
 const mockedWorkout = fetchWorkout as unknown as jest.Mock;
 const mockedSpec = fetchProgramSpec as unknown as jest.Mock;
 const mockedMaxes = fetchTrainingMaxes as unknown as jest.Mock;
 const mockedLiftRecords = fetchLiftRecords as unknown as jest.Mock;
+const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
 
 function spec(lift: string) {
   return {
@@ -68,14 +74,17 @@ const LOGGED_SET = { id: '5-3-1-1-1-20260106-Squat-1', setNum: 1, weight: 200, r
 
 // `sets` is loosely typed on purpose: the planned-lift case feeds the mock the
 // id-less, spec-shaped sets the Playwright mock API sends.
-function seedWorkout(lifts: { lift: string; planned: boolean; sets: Record<string, unknown>[] }[]) {
+function seedWorkout(
+  lifts: { lift: string; planned: boolean; sets: Record<string, unknown>[] }[],
+  { skipped = false }: { skipped?: boolean } = {},
+) {
   mockedWorkout.mockResolvedValue({
     program: '5-3-1',
     macrocycleNum: 1,
     workoutNum: 1,
     week: 1,
     date: '2026-01-06',
-    skipped: false,
+    skipped,
     lifts,
   });
   mockedSpec.mockResolvedValue(lifts.map((l) => spec(l.lift)));
@@ -192,5 +201,128 @@ describe('WorkoutLoggingPage — warm-ups resolve through the workout’s day (i
 
     expect(lifts[0]?.lift).toBe('Front Squat');
     expect(lifts[0]?.warmUpSets.map((s) => s.totalLoad)).toEqual([80, 100, 120]);
+  });
+});
+
+describe('WorkoutLoggingPage — focus work (#1060)', () => {
+  const PLANNED = { lift: 'Squat', planned: true, sets: [] };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function loggedRaise(setNum: number) {
+    return { id: `raise-${setNum}`, setNum, weight: 25, reps: 12, amrap: false, notes: '' };
+  }
+
+  it('lists the day’s focus lifts after the planned lifts, prescribed from their focus block', async () => {
+    seedWorkout([PLANNED]);
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan());
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts.map((l) => l.lift)).toEqual(['Squat', 'Lateral Raise', 'Face Pull']);
+    expect(lifts[1]).toEqual({
+      lift: 'Lateral Raise',
+      isBodyweightComponent: false,
+      warmUpSets: [],
+      workingSets: [1, 2, 3].map((setNum) => ({ setNum, totalLoad: 25, reps: 12, amrap: false })),
+      focus: { area: 'Shoulders', summary: '3 × 10–12' },
+    });
+    expect(readOnly).toBe(false);
+    expect(mockedFocusPlan).toHaveBeenCalledWith('5-3-1', 1, expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+  });
+
+  it('follows the day’s placement', async () => {
+    seedWorkout([PLANNED]);
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan({ dayState: { ...emptyFocusDayState(), placement: 'before' } }));
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => l.lift)).toEqual(['Lateral Raise', 'Face Pull', 'Squat']);
+  });
+
+  it('folds a focus lift’s logged sets back into it, once, with the sets still to do', async () => {
+    // A logged focus set comes back on the workout as an extra lift not in the plan.
+    seedWorkout([PLANNED, { lift: 'Lateral Raise', planned: false, sets: [loggedRaise(1)] }]);
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan());
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => l.lift)).toEqual(['Squat', 'Lateral Raise', 'Face Pull']);
+    expect(lifts[1]?.workingSets.map((s) => s.existing?.id)).toEqual(['raise-1', undefined, undefined]);
+  });
+
+  it('keeps offering focus work once it is under way, even with every planned set logged', async () => {
+    seedWorkout([
+      { lift: 'Squat', planned: false, sets: [LOGGED_SET] },
+      { lift: 'Lateral Raise', planned: false, sets: [loggedRaise(1)] },
+    ]);
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan({ groups: [planGroup({ items: [planItem('Lateral Raise', 2)] })] }));
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts.map((l) => [l.lift, l.workingSets.length])).toEqual([
+      ['Squat', 1],
+      ['Lateral Raise', 2],
+    ]);
+    expect(readOnly).toBe(false);
+  });
+
+  it('keeps offering focus work on the workout’s own day after its planned sets are logged', async () => {
+    // The usual order with focus work placed after: every planned set, then focus work.
+    seedWorkout([{ lift: 'Squat', planned: false, sets: [LOGGED_SET] }]);
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan({ today: '2026-01-06' }));
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts.map((l) => l.lift)).toEqual(['Squat', 'Lateral Raise', 'Face Pull']);
+    expect(readOnly).toBe(false);
+  });
+
+  it('offers no focus work on a skipped workout', async () => {
+    seedWorkout([PLANNED], { skipped: true });
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan());
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => l.lift)).toEqual(['Squat']);
+  });
+
+  it('leaves an older workout, logged on its own day, as it was', async () => {
+    seedWorkout([{ lift: 'Squat', planned: false, sets: [LOGGED_SET] }]);
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan());
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts.map((l) => l.lift)).toEqual(['Squat']);
+    expect(readOnly).toBe(true);
+  });
+
+  it('skips a focus lift the workout already lists, so the two never share records', async () => {
+    seedWorkout([{ lift: 'Face Pull', planned: true, sets: [] }]);
+    mockedFocusPlan.mockResolvedValueOnce(focusPlan({ plannedLifts: ['Face Pull'] }));
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => [l.lift, l.focus?.area])).toEqual([
+      ['Face Pull', undefined],
+      ['Lateral Raise', 'Shoulders'],
+    ]);
+  });
+
+  it('logs the planned lifts alone when the focus plan fails to load', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    seedWorkout([PLANNED]);
+    mockedFocusPlan.mockRejectedValueOnce(new Error('API down'));
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => l.lift)).toEqual(['Squat']);
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutLoggingPage] focus plan fetch failed, showing planned lifts only',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
   });
 });

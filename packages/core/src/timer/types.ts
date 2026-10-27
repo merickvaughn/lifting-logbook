@@ -90,6 +90,15 @@ export interface TimerLiftPlan {
    * where `kind` is a property of a lift.
    */
   activation?: string | undefined;
+  /**
+   * Durations this lift brings with it, ahead of every rung of the settings chain
+   * (per-lift override, deload, accessory, preset). A focus lift carries its focus
+   * block's own setup, set and rest times here (#1060): focus work runs on its own
+   * timeline, so neither the program's deload week nor the lifter's preset applies
+   * to it. Absent for a program lift, whose every duration resolves through
+   * `resolveDuration` as before.
+   */
+  durations?: Partial<TimerPresetDurations> | undefined;
   sets: TimerSetPlan[];
 }
 

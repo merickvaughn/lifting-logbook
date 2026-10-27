@@ -40,6 +40,11 @@ export interface LiftData {
   warmUpImplement?: string;
   warmUpSets: WarmUpSetData[];
   workingSets: WorkingSetData[];
+  /**
+   * Set on a focus lift (#1060): its focus block's area and the prescription summary,
+   * e.g. "3 × 10–12". Absent on a planned lift.
+   */
+  focus?: { area: string; summary: string };
 }
 
 export interface WorkoutLoggerProps {

@@ -1,6 +1,7 @@
 import { formatWeight, liftClassificationFor } from '@lifting-logbook/core';
 import type { ClassifiableLift, TimerLiftPlan } from '@lifting-logbook/core';
-import type { WeightUnit } from '@lifting-logbook/types';
+import type { FocusDayPlanResponse, WeightUnit } from '@lifting-logbook/types';
+import { describePrescription, workoutOrder } from './focusWorkout';
 import type { PlannedSet } from './workoutPlan';
 
 /**
@@ -67,13 +68,19 @@ export interface TimerPlanInput {
  *   added later opt out by omission, compiling clean while silently declassifying
  *   every custom lift. Pass `[]` where there is genuinely no list — a caller whose
  *   fetch failed still gets every built-in catalog lift classified.
+ * @param focus - The day's focus work (#1060), or `null` for none. Its lifts join the
+ *   plan in {@link workoutOrder}, so a planned lift's position here is its place in the
+ *   day, not its place in `details`; the details page maps rows by the same order.
+ *   Required for the same reason as `customLifts`: a caller that forgot it would
+ *   silently time a workout without its focus work.
  */
 export function toTimerLiftPlans(
   details: readonly TimerPlanInput[],
   unit: WeightUnit,
   customLifts: readonly ClassifiableLift[],
+  focus: FocusDayPlanResponse | null,
 ): TimerLiftPlan[] {
-  return details.map((detail) => ({
+  const planned = details.map((detail) => ({
       lift: detail.lift,
       classification: liftClassificationFor(detail.lift, customLifts),
       tm: detail.tm > 0 ? `TM: ${formatWeight(detail.tm, 'lbs', unit)}` : undefined,
@@ -84,4 +91,33 @@ export function toTimerLiftPlans(
         spec: `${set.reps} × ${formatWeight(set.weight, 'lbs', unit)}`,
       })),
     }));
+  if (focus === null) return planned;
+  return workoutOrder(
+    details.map((detail) => detail.lift),
+    focus.groups,
+    focus.dayState,
+  ).flatMap((entry): TimerLiftPlan[] => {
+    if (entry.kind === 'planned') {
+      const plan = planned[entry.liftIndex];
+      return plan ? [plan] : [];
+    }
+    const { item, group } = entry;
+    const { perSet } = describePrescription(item.prescription, unit);
+    const { timer } = group.block;
+    return [
+      {
+        lift: item.lift,
+        classification: liftClassificationFor(item.lift, customLifts),
+        // Focus work runs on its focus block's own timer. A focus lift has no warm-ups,
+        // so only the working-set fields are needed.
+        durations: { prep: timer.prep, workSet: timer.set, restWork: timer.rest },
+        // Labelled as the details page's focus rows label them, so `setIndexOf` finds them.
+        sets: Array.from({ length: item.sets }, (_, k) => ({
+          type: 'work' as const,
+          setLabel: `Set ${k + 1}`,
+          spec: perSet,
+        })),
+      },
+    ];
+  });
 }

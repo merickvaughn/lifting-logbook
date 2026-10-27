@@ -387,6 +387,9 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           // override — the plan keeps such entries only to hold each lift's
           // position (see `toTimerLiftPlans`).
           .filter(hasTimedSets)
+          // A focus lift runs on its focus block's own timer, which outranks any
+          // override (#1060), so a row here would control nothing.
+          .filter((lift) => lift.durations === undefined)
           // Overrides are keyed by lift *name*, so a lift that appears twice in
           // the workout shares one row. Deduped over the *timed* lifts, so an
           // occurrence with no sets cannot shadow a later one that has them.

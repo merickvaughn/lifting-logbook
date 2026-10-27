@@ -454,6 +454,11 @@ function LiftView({
   return (
     <div className={styles.liftView}>
       <h2 className={styles.liftName}>{lift.lift}</h2>
+      {lift.focus && (
+        <p className={styles.focusTag}>
+          Focus work · {lift.focus.area} · {lift.focus.summary}
+        </p>
+      )}
 
       {lift.warmUpSets.length > 0 && (
         <section className={styles.warmUpSection} aria-label="Warm-up sets">
@@ -531,6 +536,7 @@ function OverviewRow({
     <li className={styles.overviewRow}>
       <div className={styles.overviewRowHeader}>
         <strong className={styles.overviewLiftName}>{lift.lift}</strong>
+        {lift.focus && <span className={styles.focusTag}>Focus · {lift.focus.area}</span>}
         <span className={styles.overviewProgress}>
           {logged}/{total} sets
         </span>
@@ -626,9 +632,12 @@ export default function WorkoutLogger({
     setEditingSet(null);
   }
 
-  // Total sets logged across all lifts
-  const totalSets = lifts.reduce((n, l) => n + l.workingSets.length, 0);
-  const allLogged = loggedSets.size === totalSets && totalSets > 0;
+  // Every planned set logged. Focus sets (#1060) don't hold up finishing: focus work is
+  // extra, and a lifter who skips it today still finishes the workout.
+  const plannedLifts = lifts.filter((l) => !l.focus);
+  const allLogged =
+    plannedLifts.some((l) => l.workingSets.length > 0) &&
+    plannedLifts.every((l) => l.workingSets.every((ws) => loggedSets.has(`${l.lift}-${ws.setNum}`)));
 
   // Per-set clearDraft (in WorkingSetRow's handleLog) can't reach a draft written on a
   // different tab/device than the one that logged the set — sweep the whole workout's

@@ -52,14 +52,17 @@ export const TIMER_STORAGE_KEY = 'll.timer.v1';
  * so a run anchored in the old queue could re-anchor onto another lift's set
  * instead of ending. Shape 5 (#1039) renamed the run's workout key from
  * `cycleNum` to `macrocycleNum`; a shape-4 run no longer passes `isWorkoutKey`,
- * and the bump makes that drop deliberate rather than incidental. A run written under a different
+ * and the bump makes that drop deliberate rather than incidental. Shape 6 (#1060)
+ * queues the day's focus lifts, which can sit before or among the planned ones, so a
+ * planned lift's `liftIndex` no longer equals its position in the workout and a
+ * shape-5 run would re-anchor onto a focus lift's set. A run written under a different
  * version is dropped rather than resumed at the wrong phase: a run is minutes of
  * ephemeral position (the lifter taps Start again), whereas a silently wrong
  * countdown is indistinguishable from a working one. Settings are stored beside
  * it and are unaffected — they migrate field-by-field through
  * `normalizeTimerSettings` instead.
  */
-export const TIMER_RUN_SHAPE = 5;
+export const TIMER_RUN_SHAPE = 6;
 
 interface StoredBlob {
   settings: unknown;
