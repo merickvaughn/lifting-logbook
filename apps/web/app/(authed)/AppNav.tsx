@@ -8,6 +8,8 @@ import styles from './AppNav.module.css';
 const LINKS: ReadonlyArray<{ href: string; label: string; match: string }> = [
   { href: '/history', label: 'History', match: '/history' },
   { href: '/programs', label: 'Programs', match: '/programs' },
+  // The program and focus blocks on one timeline (#1059).
+  { href: '/calendar', label: 'Calendar', match: '/calendar' },
   { href: '/glossary', label: 'Glossary', match: '/glossary' },
   // Points at the /settings hub (#679), which lists every settings section plus
   // the Import tool; `match` keeps this active across the whole /settings/* subtree.

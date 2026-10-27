@@ -64,7 +64,7 @@ export function resolveProgramPlanMeta(
   return { lengthWeeks: mesocycleWeeks, mesocycleWeeks, phaseStyle: 'repeating' };
 }
 
-type PhaseTemplate = {
+export type PhaseTemplate = {
   name: string;
   startWeek: number;
   endWeek: number;
@@ -81,7 +81,7 @@ type PhaseTemplate = {
  *    scheduled weekly deload or a test week — so we never invent a "Test" phase.
  *  - 'mesocycle' (5/3/1): one "Mesocycle N" training phase per repeating block.
  */
-function buildPhaseTemplate(meta: ProgramLengthMeta): PhaseTemplate[] {
+export function buildPhaseTemplate(meta: ProgramLengthMeta): PhaseTemplate[] {
   const { lengthWeeks, mesocycleWeeks, phaseStyle } = meta;
   if (lengthWeeks <= 0) return [];
 

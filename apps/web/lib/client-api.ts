@@ -89,8 +89,10 @@ export const {
   // dead-ends the user with no way to recover short of a page reload; #911).
   fetchCustomLifts,
   // Reads too: focus block status depends on the user's calendar day (`?today=`), which
-  // only the browser knows, so the focus setup page loads them client-side (#1057).
+  // only the browser knows (ADR-039 §5), so the focus setup page (#1057) and the calendar
+  // page (#1059) load them client-side.
   fetchFocusBlocks,
+  fetchFocusBlockSummary,
   fetchFocusSettings,
   fetchFocusPlan,
   createFocusBlock,

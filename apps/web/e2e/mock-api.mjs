@@ -135,9 +135,12 @@ function createInitialState() {
     ambiguousLift: false,
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
-    // /focus/* (#1057) — the user's focus blocks and daily focus guide.
+    // /focus/* (#1057) — the user's focus blocks and daily focus guide. Empty by default;
+    // /__reset?withFocusBlocks=true seeds the setup page's set (#1057), and
+    // withFocusBlocks=<YYYY-MM-DD> seeds the calendar's set around that day (#1059).
     focusBlocks: [],
     focusGuide: { sets: 9, minutes: 20 },
+    // Never reused, so an id created after a delete can't collide with a remaining one.
     focusSeq: 0,
     // Focus work (#1058). Off by default, so a workout reads as it does for a user
     // with no focus blocks; the focus spec opts in via /__reset?withFocus=true, and
@@ -147,6 +150,65 @@ function createInitialState() {
     // Saved focus day state, by workout number.
     focusDayStates: new Map(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Focus blocks for the calendar (#1059), on the #1057 date helpers below
+// (focusRange / focusStatus / focusResponse / focusNextStart).
+// ---------------------------------------------------------------------------
+
+// True when `predecessor` is owed an auto-roll successor among `blocks`: core's
+// expandRollovers rule, which the API's DELETE asks "owed without the deleted block,
+// not with it" (apps/api/src/focus/focus.controller.ts `remove`).
+function owesRoll(predecessor, blocks) {
+  if (predecessor.onEnd !== 'autoroll' || !predecessor.nextArea) return false;
+  const start = focusNextStart(predecessor);
+  return !blocks.some(
+    (b) => b.id !== predecessor.id && b.series === predecessor.series && focusRange(b).end >= start,
+  );
+}
+
+function focusBlock(fields) {
+  return {
+    selection: 'rules',
+    overlap: 'reduce',
+    progression: 'double',
+    timer: { prep: 10, set: 45, rest: 60 },
+    onEnd: 'prompt',
+    nextArea: null,
+    pool: [],
+    ...fields,
+  };
+}
+
+// Around `today` (/__reset?withFocusBlocks=<YYYY-MM-DD>): an auto-rolling quarterly
+// Shoulders block with its queued Back successor, and a monthly Biceps block that
+// prompts, after last month's ended one.
+function seedFocusBlocks(today) {
+  const [y, m] = today.split('-').map(Number);
+  const utcDay = (year, month, day) => new Date(Date.UTC(year, month, day));
+  const quarterStart = isoDay(utcDay(y, Math.floor((m - 1) / 3) * 3, 1));
+  const shoulders = focusBlock({
+    id: 'fb-shoulders', series: 'fs-1', area: 'Shoulders', period: 'quarterly', align: 'calendar',
+    start: quarterStart, priority: 1, onEnd: 'autoroll', nextArea: 'Back',
+    pool: [focusPoolEntry('Lateral Raise'), focusPoolEntry('Face Pull')],
+  });
+  return [
+    shoulders,
+    focusBlock({
+      id: 'fb-back', series: 'fs-1', area: 'Back', period: 'quarterly', align: 'calendar',
+      start: focusNextStart(shoulders), priority: 3,
+    }),
+    focusBlock({
+      id: 'fb-biceps', series: 'fs-2', area: 'Biceps', period: 'monthly', align: 'calendar',
+      start: isoDay(utcDay(y, m - 1, 1)), priority: 2, selection: 'rotate',
+      pool: [focusPoolEntry('Hammer Curl')],
+    }),
+    focusBlock({
+      id: 'fb-biceps-prev', series: 'fs-2', area: 'Biceps', period: 'monthly', align: 'calendar',
+      start: isoDay(utcDay(y, m - 2, 1)), priority: 9,
+    }),
+  ];
 }
 
 let state = createInitialState();
@@ -524,11 +586,14 @@ const server = createServer(async (req, res) => {
     if (url.searchParams.get('withAmbiguousLift') === 'true') {
       state.ambiguousLift = true;
     }
-    if (url.searchParams.get('withFocusBlocks') === 'true') {
+    const withFocusBlocks = url.searchParams.get('withFocusBlocks');
+    if (withFocusBlocks === 'true') {
       state.focusBlocks = [
         seedFocusBlock('focus-shoulders', 'Shoulders', 1, ['Lateral Raise', 'Face Pull']),
         seedFocusBlock('focus-biceps', 'Biceps', 2, ['Hammer Curl']),
       ];
+    } else if (withFocusBlocks) {
+      state.focusBlocks = seedFocusBlocks(withFocusBlocks);
     }
     if (url.searchParams.get('withFocus') === 'true') {
       state.focus = true;
@@ -545,7 +610,8 @@ const server = createServer(async (req, res) => {
   // -------------------------------------------------------------------------
   if (parts[0] === 'focus') {
     const today = url.searchParams.get('today');
-    const needsToday = parts[1] === 'blocks' && method !== 'DELETE';
+    // The summary (#1059) takes no `today`, as in the API: its range is the block's own.
+    const needsToday = parts[1] === 'blocks' && method !== 'DELETE' && parts[3] !== 'summary';
     if (needsToday && !/^\d{4}-\d{2}-\d{2}$/.test(today ?? '')) {
       json(res, { statusCode: 400, message: 'today is required (YYYY-MM-DD)' }, 400);
       return;
@@ -617,11 +683,12 @@ const server = createServer(async (req, res) => {
         json(res, { statusCode: 404, message: 'Focus block not found' }, 404);
         return;
       }
-      // Only the predecessor whose roll the deleted block was covering, as the API's owesRoll.
-      for (const b of state.focusBlocks) {
-        if (b.id !== id && b.series === target.series && b.onEnd === 'autoroll' && focusNextStart(b) === target.start) {
-          b.onEnd = 'prompt';
-        }
+      // Only the predecessors whose roll the deleted block was covering: owed without it,
+      // not with it, as the API's owesRoll asks.
+      const series = state.focusBlocks.filter((b) => b.series === target.series);
+      const remaining = series.filter((b) => b.id !== id);
+      for (const b of remaining) {
+        if (owesRoll(b, remaining) && !owesRoll(b, series)) b.onEnd = 'prompt';
       }
       state.focusBlocks = state.focusBlocks.filter((b) => b.id !== id);
       noContent(res);
@@ -673,6 +740,28 @@ const server = createServer(async (req, res) => {
     };
     state.customLifts.push(created);
     json(res, created, 201);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // GET /focus/blocks/:id/summary — an ended focus block's totals (#1059)
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && parts[0] === 'focus' && parts[1] === 'blocks' && parts.length === 4 && parts[3] === 'summary') {
+    const block = state.focusBlocks.find((b) => b.id === parts[2]);
+    if (!block) {
+      json(res, { statusCode: 404, message: 'Focus block not found' }, 404);
+      return;
+    }
+    const { start, end } = focusRange(block);
+    json(res, {
+      blockId: block.id,
+      rangeStart: start,
+      rangeEnd: end,
+      sessions: 12,
+      sets: 68,
+      volume: 18340,
+      prs: [{ lift: 'Hammer Curl', weight: 40, reps: 12, previousWeight: 35, previousReps: 12 }],
+    });
     return;
   }
 

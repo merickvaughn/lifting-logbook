@@ -12,7 +12,7 @@ const mockedUsePathname = usePathname as unknown as jest.Mock;
 describe('AppNav', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('renders the brand home-link and the four primary links', () => {
+  it('renders the brand home-link and the five primary links', () => {
     mockedUsePathname.mockReturnValue('/macrocycle/1');
     render(<AppNav />);
 
@@ -20,6 +20,7 @@ describe('AppNav', () => {
     expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'History' })).toHaveAttribute('href', '/history');
     expect(screen.getByRole('link', { name: 'Programs' })).toHaveAttribute('href', '/programs');
+    expect(screen.getByRole('link', { name: 'Calendar' })).toHaveAttribute('href', '/calendar');
     expect(screen.getByRole('link', { name: 'Glossary' })).toHaveAttribute('href', '/glossary');
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute(
       'href',
