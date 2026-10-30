@@ -13,8 +13,11 @@ import {
   MaxLength,
   Min,
   MinLength,
+  Validate,
   ValidateIf,
   ValidateNested,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
 } from 'class-validator';
 import {
   FOCUS_ALIGNS,
@@ -47,6 +50,22 @@ import type {
 
 /** `YYYY-MM-DD`. The controller checks the day exists in its month. */
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// Picks, trims, swapTo and ruleLift name a pool lift, so each lift may appear once.
+// Case-sensitive, as those names are compared. Malformed entries are left to the other checks.
+@ValidatorConstraint({ name: 'HasUniquePoolLifts', async: false })
+class HasUniquePoolLiftsConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (!Array.isArray(value)) return true;
+    const lifts = value
+      .map((entry: unknown) => (entry as { lift?: unknown } | null)?.lift)
+      .filter((lift): lift is string => typeof lift === 'string');
+    return new Set(lifts).size === lifts.length;
+  }
+  defaultMessage(): string {
+    return 'pool must not list the same lift more than once';
+  }
+}
 
 export class FocusTimerDto implements FocusTimer {
   @IsInt() @Min(0) @Max(FOCUS_LIMITS.MAX_TIMER_SEC) prep!: number;
@@ -109,6 +128,7 @@ class FocusBlockFieldsDto {
   @ArrayMaxSize(FOCUS_LIMITS.MAX_POOL)
   @IsObject({ each: true })
   @ValidateNested({ each: true })
+  @Validate(HasUniquePoolLiftsConstraint)
   @Type(() => FocusPoolEntryDto)
   pool!: FocusPoolEntryDto[];
 }
@@ -168,6 +188,7 @@ export class UpdateFocusBlockDto implements UpdateFocusBlockRequest {
   @ArrayMaxSize(FOCUS_LIMITS.MAX_POOL)
   @IsObject({ each: true })
   @ValidateNested({ each: true })
+  @Validate(HasUniquePoolLiftsConstraint)
   @Type(() => FocusPoolEntryDto)
   pool?: FocusPoolEntryDto[];
 }

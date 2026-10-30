@@ -205,6 +205,26 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       expect((await user.create(blockBody(overrides))).statusCode).toBe(400);
     });
 
+    it('rejects a pool that lists a lift twice, on create and update (#1076)', async () => {
+      const twice = [entry('Hammer Curl'), entry('Hammer Curl', { sets: 2 })];
+      expect((await user.create(blockBody({ series: 'dup-create', pool: twice }))).statusCode).toBe(400);
+
+      const created = (await user.create(blockBody({ series: 'dup-update' }))).json() as FocusBlockResponse;
+      const url = `/focus/blocks/${created.id}?today=${TODAY}`;
+      expect((await user.inject('PATCH', url, { pool: twice })).statusCode).toBe(400);
+
+      // Names compare case-sensitively, as picks and trims do, and distinct lifts still pass.
+      const distinct = [entry('Hammer Curl'), entry('hammer curl'), entry('Incline DB Curl')];
+      const updated = await user.inject('PATCH', url, { pool: distinct });
+      expect(updated.statusCode).toBe(200);
+      expect((updated.json() as FocusBlockResponse).pool.map((e) => e.lift)).toEqual([
+        'Hammer Curl',
+        'hammer curl',
+        'Incline DB Curl',
+      ]);
+      expect((await user.create(blockBody({ series: 'dup-distinct', pool: distinct }))).statusCode).toBe(201);
+    });
+
     it('rejects a null on an update field that takes no null', async () => {
       const created = (await user.create(blockBody())).json() as FocusBlockResponse;
       const res = await user.inject('PATCH', `/focus/blocks/${created.id}?today=${TODAY}`, { area: null });
