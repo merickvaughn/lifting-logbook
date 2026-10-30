@@ -5,6 +5,7 @@ import { FOCUS_PLACEMENTS, FOCUS_PROGRESSIONS } from '@lifting-logbook/types';
 import type { FocusDayPlanResponse, WeightUnit, WorkoutResponse } from '@lifting-logbook/types';
 import { fetchCustomLifts, fetchFocusPlan, fetchProgramSpec, fetchTrainingMaxes, fetchWorkout } from '@/lib/api';
 import { getPreferredUnit } from '@/lib/preferences';
+import { getUserToday } from '@/lib/userToday';
 import { CUSTOM_LIFTS_TIMEOUT_MS, toTimerLiftPlans } from '@/lib/timerPlan';
 import { withTimeout } from '@/lib/with-timeout';
 import { buildLiftDetails } from '@/lib/workoutPlan';
@@ -102,7 +103,7 @@ function isKnownShape(plan: FocusDayPlanResponse): boolean {
 }
 
 /**
- * Loads one workout's focus work for the server's calendar day (UTC for now, #1072).
+ * Loads one workout's focus work for the user's calendar day (`getUserToday`, #1072).
  *
  * Shared by the details, timer and logging pages so all three list the same focus lifts
  * in the same order. A failed, slow or unrecognised plan is not fatal: the caller falls
@@ -115,8 +116,9 @@ export async function loadFocusPlan(
   caller: FocusPlanCaller,
 ): Promise<FocusPlanResult> {
   const failed: FocusPlanResult = { plan: null, failed: true };
+  const today = await getUserToday();
   // fallback-covered-by: apps/web/lib/__tests__/loadWorkoutPlan.test.ts
-  const loaded = fetchFocusPlan(program, workoutNum, new Date().toISOString().slice(0, 10)).then(
+  const loaded = fetchFocusPlan(program, workoutNum, today).then(
     (plan): FocusPlanResult => {
       if (!isKnownShape(plan)) {
         console.error(`[${caller}] focus plan has a placement or progression this build doesn’t know, showing planned lifts only`);
@@ -182,11 +184,12 @@ export async function loadWorkoutPlan(
       () => console.warn(`[${caller}] custom lifts fetch slow, classifying built-ins only`),
     ));
 
-  const [workout, specs, maxes, unit] = await Promise.all([
+  const [workout, specs, maxes, unit, today] = await Promise.all([
     fetchWorkout(program, workoutNum),
     fetchProgramSpec(program),
     fetchTrainingMaxes(program),
     getPreferredUnit(),
+    getUserToday(),
   ]);
 
   if (!workout) return null;
@@ -196,7 +199,7 @@ export async function loadWorkoutPlan(
   return {
     workout,
     unit,
-    status: statusOf(workout),
+    status: statusOf(workout, today),
     effectiveDate: effectiveDateOf(workout),
     liftDetails,
     timerLifts: async (focus) => {

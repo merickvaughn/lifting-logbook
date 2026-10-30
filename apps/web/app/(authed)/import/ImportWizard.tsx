@@ -23,6 +23,7 @@ import {
   previewImport,
   undoImport,
 } from '@/lib/client-api';
+import { localToday } from '@/lib/focusSetup';
 import { logClientError } from '@/lib/log-client-error';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 import { Step, STEP_LABELS } from './steps';
@@ -65,7 +66,7 @@ function stripDeltaKeySuffix(key: string): string {
 }
 
 function buildTrainingMaxesCsv(rows: EditableMax[]): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const lines = rows
     .filter((r) => Number(r.weight) > 0)
     .map((r) => `${today},"${r.lift.replace(/"/g, '""')}",${Number(r.weight)}`);

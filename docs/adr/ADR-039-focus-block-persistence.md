@@ -97,9 +97,21 @@ Five questions needed an answer:
   so `lift_record` gains an index on `(userId, lift, date)` and `ILiftRecordRepository` gains
   `getRecordsForLifts`.
 
+## Amendment 1 — `today` from `apps/web` Server Components (#1072)
+
+Decision 5 assumed the caller knows the user's day. In `apps/web`, most callers are Server
+Components, and their clock is UTC: for a user west of UTC that is tomorrow every evening.
+The browser now records its IANA time zone in a `tz` cookie (`components/TimeZoneCookie.tsx`),
+and `getUserToday()` (`lib/userToday.ts`) reads it to give the user's ISO day, falling back to
+UTC when the cookie is missing or holds a zone `Intl` doesn't recognise [5][6]. The API contract
+doesn't change: it still takes `?today=` and still stores no time zone, so alternative 6 stays
+rejected. Client Components keep computing the day from the browser clock (`localToday`).
+
 ## References
 
 1. E. F. Codd, ["A Relational Model of Data for Large Shared Data Banks"](https://doi.org/10.1145/362384.362685), *Communications of the ACM* 13(6), 1970 — §2, redundancy and derivable data.
 2. PostgreSQL 16 documentation, [§8.14 JSON Types](https://www.postgresql.org/docs/16/datatype-json.html) — `jsonb` storage and when to use JSON over relational columns.
 3. Prisma documentation, [`createMany` and `skipDuplicates`](https://www.prisma.io/docs/orm/reference/prisma-client-reference#createmany) — insert that skips rows violating a unique constraint (`ON CONFLICT DO NOTHING`).
 4. PostgreSQL 16 documentation, [§5.8 Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) — `ENABLE`/`FORCE ROW LEVEL SECURITY` and policy `USING`/`WITH CHECK`.
+5. ECMA-402, [`Intl.DateTimeFormat` — `timeZone` option](https://tc39.es/ecma402/#sec-createdatetimeformat) — IANA zone names, and the `RangeError` for an unknown one.
+6. IETF [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265), *HTTP State Management Mechanism* — the `Path` and `Max-Age` cookie attributes the `tz` cookie sets.

@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
+import TimeZoneCookie from '@/components/TimeZoneCookie';
 import AppNav from './AppNav';
 
 /**
@@ -28,6 +29,7 @@ export default async function AuthedLayout({
     return (
       <>
         <AppNav />
+        <TimeZoneCookie />
         {children}
       </>
     );
@@ -37,6 +39,7 @@ export default async function AuthedLayout({
   return (
     <>
       <AppNav />
+      <TimeZoneCookie />
       {children}
     </>
   );

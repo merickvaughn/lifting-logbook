@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { deleteStrengthGoal, recordBodyWeight, upsertStrengthGoal } from '@/lib/api';
+import { getUserToday } from '@/lib/userToday';
 import type { StrengthGoalResponse, UpsertStrengthGoalRequest } from '@lifting-logbook/types';
 
 export async function saveStrengthGoal(
@@ -27,7 +28,7 @@ export async function saveBodyWeight(
   weight: number,
   unit: 'lbs' | 'kg',
 ): Promise<void> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = await getUserToday();
   await recordBodyWeight(program, { date: today, weight, unit });
   revalidatePath('/settings/strength-goals');
 }

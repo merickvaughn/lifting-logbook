@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { fetchMacrocycleDashboard, fetchProgramSpec } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
+import { getUserToday } from '@/lib/userToday';
 import GlossaryLink from '@/components/GlossaryLink';
 import {
   deriveProgramPhases,
@@ -30,9 +31,10 @@ export default async function ProgramPlanPage({
   if (Number.isNaN(requestedMacrocycleNum) || requestedMacrocycleNum < 1) notFound();
   const program = await getActiveProgram();
 
-  const [dashboard, specs] = await Promise.all([
+  const [dashboard, specs, today] = await Promise.all([
     fetchMacrocycleDashboard(program),
     fetchProgramSpec(program),
+    getUserToday(),
   ]);
 
   if (!dashboard || dashboard.macrocycleNum !== requestedMacrocycleNum) {
@@ -41,7 +43,6 @@ export default async function ProgramPlanPage({
 
   const meta = resolveProgramPlanMeta(program, specs);
   const { durationWeeks } = deriveProgramSummary(specs, program);
-  const today = new Date().toISOString().slice(0, 10);
   const phases = deriveProgramPhases(dashboard.weeks, today, meta);
   const estCompletion = estimateCompletionDate(
     buildWorkoutDays(specs, dashboard.macrocycleStartDate, program),

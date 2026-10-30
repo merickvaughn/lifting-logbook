@@ -19,6 +19,10 @@ jest.mock('@/lib/preferences', () => ({
   getPreferredUnit: jest.fn().mockResolvedValue('lbs'),
 }));
 
+jest.mock('@/lib/userToday', () => ({
+  getUserToday: jest.fn().mockResolvedValue('2026-10-30'),
+}));
+
 jest.mock('next/navigation', () => ({
   notFound: jest.fn(() => {
     throw new Error('NOT_FOUND');

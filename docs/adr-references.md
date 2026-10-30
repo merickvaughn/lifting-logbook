@@ -216,6 +216,8 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 | [PostgreSQL 16 — JSON Types](https://www.postgresql.org/docs/16/datatype-json.html) | [ADR-039](adr/ADR-039-focus-block-persistence.md) | `jsonb` for a focus block's pool and timer and for the per-workout focus day state, each read and written whole. |
 | [Prisma — `createMany` / `skipDuplicates`](https://www.prisma.io/docs/orm/reference/prisma-client-reference#createmany) | [ADR-039](adr/ADR-039-focus-block-persistence.md) | Idempotent creation of auto-roll successors on read, against the `(userId, series, start)` unique constraint. |
 | [PostgreSQL 16 — Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) | [ADR-039](adr/ADR-039-focus-block-persistence.md) | Forced RLS and an isolation policy on `focus_block` and `focus_day_state`. |
+| [ECMA-402 — `Intl.DateTimeFormat` `timeZone` option](https://tc39.es/ecma402/#sec-createdatetimeformat) | [ADR-039](adr/ADR-039-focus-block-persistence.md) | Amendment 1: the web server turns the browser's recorded IANA zone into the user's calendar day, falling back to UTC on an unknown zone. |
+| [RFC 6265 — HTTP State Management Mechanism](https://www.rfc-editor.org/rfc/rfc6265) | [ADR-039](adr/ADR-039-focus-block-persistence.md) | Amendment 1: the `tz` cookie that carries the browser's time zone to Server Components. |
 
 ---
 
