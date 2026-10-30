@@ -6,6 +6,7 @@ import {
 } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
+import { getUserToday } from '@/lib/userToday';
 import {
   buildWorkoutDays,
   computePlannedSets,
@@ -25,11 +26,12 @@ export default async function MacrocycleDashboardPage({
   const requestedMacrocycleNum = Number(macrocycleNumParam);
   const program = await getActiveProgram();
 
-  const [dashboard, specs, maxes, unit] = await Promise.all([
+  const [dashboard, specs, maxes, unit, today] = await Promise.all([
     fetchMacrocycleDashboard(program),
     fetchProgramSpec(program),
     fetchTrainingMaxes(program),
     getPreferredUnit(),
+    getUserToday(),
   ]);
 
   if (!dashboard || dashboard.macrocycleNum !== requestedMacrocycleNum) {
@@ -58,7 +60,6 @@ export default async function MacrocycleDashboardPage({
   // workout with any logged record counts as done — consistent across the dashboard.
   const completedWorkoutNums = new Set(dashboard.completedWorkoutNums ?? []);
 
-  const today = new Date().toISOString().slice(0, 10);
   const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
 
   const weekNums = [...new Set(workoutDays.map((w) => w.week))];

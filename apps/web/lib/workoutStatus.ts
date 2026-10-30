@@ -13,9 +13,10 @@ export type WorkoutStatus = 'completed' | 'upcoming' | 'missed' | 'skipped';
  * Completed wins over skipped, intentionally: a partially-logged workout can also
  * be marked skipped, because the two are independent records. When both are true
  * the workout still reads as completed, and the detail page hides its SkipForm.
+ *
+ * `today` is the user's calendar day (`getUserToday`), not the server's UTC one.
  */
-export function workoutStatus(date: string, hasLogs: boolean, skipped: boolean): WorkoutStatus {
-  const today = new Date().toISOString().slice(0, 10);
+export function workoutStatus(date: string, hasLogs: boolean, skipped: boolean, today: string): WorkoutStatus {
   if (hasLogs) return 'completed';
   if (skipped) return 'skipped';
   if (date < today) return 'missed';
@@ -37,12 +38,15 @@ export function effectiveDateOf(workout: { date: string; overrideDate?: string |
 }
 
 /** Status inputs, derived from a workout the API returned. */
-export function statusOf(workout: {
-  date: string;
-  overrideDate?: string | null;
-  skipped: boolean;
-  lifts: { planned?: boolean }[];
-}): WorkoutStatus {
+export function statusOf(
+  workout: {
+    date: string;
+    overrideDate?: string | null;
+    skipped: boolean;
+    lifts: { planned?: boolean }[];
+  },
+  today: string,
+): WorkoutStatus {
   const hasLogs = workout.lifts.some((l) => !l.planned);
-  return workoutStatus(effectiveDateOf(workout), hasLogs, workout.skipped);
+  return workoutStatus(effectiveDateOf(workout), hasLogs, workout.skipped, today);
 }

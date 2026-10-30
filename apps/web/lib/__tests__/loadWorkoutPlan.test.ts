@@ -10,6 +10,11 @@ jest.mock('@/lib/preferences', () => ({
   getPreferredUnit: jest.fn().mockResolvedValue('lbs'),
 }));
 
+// The user's calendar day, as the browser's time-zone cookie would give it (#1072).
+jest.mock('@/lib/userToday', () => ({
+  getUserToday: jest.fn().mockResolvedValue('2026-10-30'),
+}));
+
 import { fetchCustomLifts, fetchFocusPlan, fetchProgramSpec, fetchTrainingMaxes, fetchWorkout } from '@/lib/api';
 import { CUSTOM_LIFTS_TIMEOUT_MS } from '@/lib/timerPlan';
 import { FOCUS_PLAN_TIMEOUT_MS, loadFocusPlan, loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
@@ -38,13 +43,13 @@ function spec(lift: string, activation = '') {
 }
 
 /** A future-dated, unlogged workout — the state in which the timer is offered. */
-function seedWorkout(lifts: string[], activation: Record<string, string> = {}) {
+function seedWorkout(lifts: string[], activation: Record<string, string> = {}, date = '2999-01-01') {
   mockedWorkout.mockResolvedValue({
     program: '5-3-1',
     macrocycleNum: 1,
     workoutNum: 1,
     week: 1,
-    date: '2999-01-01',
+    date,
     skipped: false,
     lifts: lifts.map((lift) => ({ lift, sets: [], planned: true })),
   });
@@ -64,6 +69,15 @@ describe('loadWorkoutPlan', () => {
     mockedMaxes.mockResolvedValue([]);
 
     await expect(loadWorkoutPlan('5-3-1', 99, 'WorkoutDetailPage')).resolves.toBeNull();
+  });
+
+  it('judges missed against the user’s calendar day, not the server’s', async () => {
+    // A workout on the user's today is still upcoming, even once UTC has moved on (#1072).
+    seedWorkout(['Squat'], {}, '2026-10-30');
+    expect((await loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage'))?.status).toBe('upcoming');
+
+    seedWorkout(['Squat'], {}, '2026-10-29');
+    expect((await loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage'))?.status).toBe('missed');
   });
 
   it('builds one detail per lift in order, keeping a lift the spec does not plan as an empty entry', async () => {
@@ -253,12 +267,12 @@ describe('loadFocusPlan (#1060)', () => {
     jest.clearAllMocks();
   });
 
-  it('returns the day’s focus plan, asked for the server’s calendar day', async () => {
+  it('returns the day’s focus plan, asked for the user’s calendar day', async () => {
     const plan = focusPlan();
     mockedFocusPlan.mockResolvedValueOnce(plan);
 
     await expect(loadFocusPlan('5-3-1', 1, 'WorkoutLoggingPage')).resolves.toEqual({ plan, failed: false });
-    expect(mockedFocusPlan).toHaveBeenCalledWith('5-3-1', 1, expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+    expect(mockedFocusPlan).toHaveBeenCalledWith('5-3-1', 1, '2026-10-30');
   });
 
   it('reads a plan with no active focus block as none', async () => {
