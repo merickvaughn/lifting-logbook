@@ -228,6 +228,28 @@ describe('FocusSetup', () => {
     );
   });
 
+  it('offers only lifts not already in the pool to add, so a pool never lists a lift twice (#1076)', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Biceps/ }));
+    const offered = () =>
+      within(screen.getByRole('combobox', { name: 'Add a lift to the Biceps pool' }))
+        .getAllByRole('option')
+        .map((option) => option.getAttribute('value'));
+    expect(offered()).not.toContain('Lateral Raise');
+    expect(offered()).toContain('Hammer Curl');
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Add a lift to the Biceps pool' }), 'Hammer Curl');
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith(
+        'bi',
+        { pool: [defaultPoolEntry('Lateral Raise'), defaultPoolEntry('Hammer Curl')] },
+        TODAY,
+      ),
+    );
+    expect(offered()).not.toContain('Hammer Curl');
+  });
+
   it('adds a focus block for the first area without one, and opens it', async () => {
     const user = userEvent.setup();
     renderPage();
