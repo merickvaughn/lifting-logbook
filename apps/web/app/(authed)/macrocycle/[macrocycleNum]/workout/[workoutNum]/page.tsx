@@ -1,12 +1,6 @@
 import { notFound } from 'next/navigation';
-import {
-  LIFT_CATALOG,
-  MROUND,
-  PROG_SPEC_WARMUP_PCTS,
-  WARMUP_BASE_REPS,
-  DEFAULT_SLOT_MAP,
-  convertWeight,
-} from '@lifting-logbook/core';
+import { LIFT_CATALOG, DEFAULT_SLOT_MAP, convertWeight } from '@lifting-logbook/core';
+import type { SetResponse } from '@lifting-logbook/types';
 import {
   fetchLatestBodyWeight,
   fetchProgramSpec,
@@ -16,11 +10,11 @@ import {
 import { getActiveProgram } from '@/lib/active-program';
 import { loadFocusPlan } from '@/lib/loadWorkoutPlan';
 import { getPreferredUnit } from '@/lib/preferences';
-import { liftSpecsForWorkout } from '@/lib/workoutPlan';
+import { computePlannedSets, liftSpecsForWorkout } from '@/lib/workoutPlan';
 import { effectiveDateOf } from '@/lib/workoutStatus';
 import { hasLoggedFocusWork, withFocusLifts } from './focusLifts';
 import WorkoutLogger from './WorkoutLogger';
-import type { LiftData, WarmUpSetData, WorkingSetData, WorkoutLoggerProps } from './types';
+import type { LiftData, LoggedSet, WarmUpSetData, WorkingSetData, WorkoutLoggerProps } from './types';
 
 /**
  * Hard-coded warm-up implement names for bodyweight-component exercises.
@@ -87,28 +81,41 @@ export default async function WorkoutLoggingPage({
     // the slot it replaced; `tm` stays the replacement's own (issue #1014).
     const spec = liftSpecs[liftIndex];
 
-    const warmUpSets: WarmUpSetData[] = spec
-      ? PROG_SPEC_WARMUP_PCTS(spec.warmUpPct)
-          .filter((p) => !isNaN(p) && p > 0)
-          .map((pct, i) => ({
-            reps: Math.max(1, WARMUP_BASE_REPS - i),
-            totalLoad: MROUND(tm * pct, spec.increment),
-          }))
-      : [];
+    // The plan comes from the spec, the same as on the details page: the API sends
+    // an unlogged planned lift with no sets, and a partly logged lift with only the
+    // sets logged so far (#1080).
+    const plannedSets = spec ? computePlannedSets(spec, tm) : [];
+    const warmUpSets: WarmUpSetData[] = plannedSets
+      .filter((s) => s.type === 'warmup')
+      .map((s) => ({ reps: s.reps, totalLoad: s.weight }));
+    const workSets = plannedSets.filter((s) => s.type === 'work');
 
-    // `planned: false` is the API's contract for "these sets are logged records"
-    // (`planned: true` lifts carry no sets on the real API). Each such set now
-    // brings its own record id and notes (issue #978), so the page no longer
+    // `planned: false` is the API's contract for "these sets are logged records".
+    // Each brings its own record id and notes (issue #978), so the page no longer
     // fetches the whole macrocycle's lift records just to look them up — which also
     // fixes a `replace`-override edge: the old name-based `.find` missed a
     // renamed lift's records, showing its logged sets as unlogged.
-    const workingSets: WorkingSetData[] = wl.sets.map((s) => ({
-      setNum: s.setNum,
-      totalLoad: s.weight,
-      reps: s.reps,
-      amrap: s.amrap,
-      existing: wl.planned ? undefined : { id: s.id, weight: s.weight, reps: s.reps, notes: s.notes },
-    }));
+    const logged = new Map((wl.planned ? [] : wl.sets).map((s) => [s.setNum, s]));
+    const toExisting = (s: SetResponse): LoggedSet => ({ id: s.id, weight: s.weight, reps: s.reps, notes: s.notes });
+
+    const workingSets: WorkingSetData[] = workSets.map((p, i) => {
+      const setNum = i + 1;
+      const record = logged.get(setNum);
+      logged.delete(setNum);
+      return {
+        setNum,
+        totalLoad: p.weight,
+        reps: p.reps,
+        // The spec's AMRAP flag marks the lift's last working set.
+        amrap: Boolean(spec?.amrap) && i === workSets.length - 1,
+        ...(record && { existing: toExisting(record) }),
+      };
+    });
+    // A logged set the plan has no slot for (an extra set, or a lift with no
+    // prescription) still shows, as logged.
+    for (const s of [...logged.values()].sort((a, b) => a.setNum - b.setNum)) {
+      workingSets.push({ setNum: s.setNum, totalLoad: s.weight, reps: s.reps, amrap: s.amrap, existing: toExisting(s) });
+    }
 
     const bwComponent = isBodyweightComponent(wl.lift);
 

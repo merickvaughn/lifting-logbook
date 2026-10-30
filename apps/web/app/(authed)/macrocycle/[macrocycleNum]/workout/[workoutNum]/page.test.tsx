@@ -76,11 +76,11 @@ function spec(lift: string) {
 
 const LOGGED_SET = { id: '5-3-1-1-1-20260106-Squat-1', setNum: 1, weight: 200, reps: 5, amrap: false, notes: 'belt' };
 
-// `sets` is loosely typed on purpose: the planned-lift case feeds the mock the
-// id-less, spec-shaped sets the Playwright mock API sends.
+// `sets` is loosely typed on purpose: one case feeds a planned lift id-less,
+// spec-shaped sets, which the real API never sends.
 function seedWorkout(
   lifts: { lift: string; planned: boolean; sets: Record<string, unknown>[] }[],
-  { skipped = false }: { skipped?: boolean } = {},
+  { skipped = false, specOverrides = {} }: { skipped?: boolean; specOverrides?: Partial<ReturnType<typeof spec>> } = {},
 ) {
   mockedWorkout.mockResolvedValue({
     program: '5-3-1',
@@ -91,7 +91,7 @@ function seedWorkout(
     skipped,
     lifts,
   });
-  mockedSpec.mockResolvedValue(lifts.map((l) => spec(l.lift)));
+  mockedSpec.mockResolvedValue(lifts.map((l) => ({ ...spec(l.lift), ...specOverrides })));
   mockedMaxes.mockResolvedValue(lifts.map((l) => ({ lift: l.lift, weight: 200 })));
 }
 
@@ -127,8 +127,8 @@ describe('WorkoutLoggingPage — logged sets come from the workout itself (issue
   });
 
   it('leaves a planned lift’s sets unlogged, even when the response carries spec-shaped sets', async () => {
-    // The real API sends `planned: true` lifts with no sets; the Playwright mock
-    // sends plan-shaped sets without ids. Either way nothing is "existing".
+    // The real API sends `planned: true` lifts with no sets; a planned lift is
+    // never logged, whatever the response carries.
     seedWorkout([{ lift: 'Squat', planned: true, sets: [{ setNum: 1, weight: 200, reps: 5, amrap: false }] }]);
 
     const { lifts, readOnly } = await renderPage();
@@ -145,6 +145,67 @@ describe('WorkoutLoggingPage — logged sets come from the workout itself (issue
 
     expect(mockedLiftRecords).not.toHaveBeenCalled();
     expect(mockedWorkout).toHaveBeenCalledWith('5-3-1', 1);
+  });
+});
+
+describe('WorkoutLoggingPage — working sets come from the plan (issue #1080)', () => {
+  // The real API's shapes (`toWorkoutResponse`): an unlogged planned lift has
+  // `sets: []`, and a partly logged lift carries only the sets logged so far.
+  const THREE_SETS = { sets: 3, reps: 5, amrap: true };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('lists an unlogged planned lift’s working sets from the plan', async () => {
+    seedWorkout([{ lift: 'Squat', planned: true, sets: [] }], { specOverrides: THREE_SETS });
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts[0]?.workingSets).toEqual([
+      { setNum: 1, totalLoad: 200, reps: 5, amrap: false },
+      { setNum: 2, totalLoad: 200, reps: 5, amrap: false },
+      { setNum: 3, totalLoad: 200, reps: 5, amrap: true },
+    ]);
+    expect(readOnly).toBe(false);
+  });
+
+  it('keeps the planned sets still to do on a partly logged lift', async () => {
+    seedWorkout([{ lift: 'Squat', planned: false, sets: [LOGGED_SET] }], { specOverrides: THREE_SETS });
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts[0]?.workingSets.map((s) => [s.setNum, s.existing?.id])).toEqual([
+      [1, LOGGED_SET.id],
+      [2, undefined],
+      [3, undefined],
+    ]);
+    expect(readOnly).toBe(false);
+  });
+
+  it('is not read-only while another lift still has planned sets to log', async () => {
+    seedWorkout([
+      { lift: 'Squat', planned: false, sets: [LOGGED_SET] },
+      { lift: 'Deadlift', planned: true, sets: [] },
+    ]);
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts[1]?.workingSets).toHaveLength(1);
+    expect(readOnly).toBe(false);
+  });
+
+  it('keeps a logged set the plan has no slot for', async () => {
+    const extra = { ...LOGGED_SET, id: 'extra', setNum: 2, weight: 180, reps: 8 };
+    seedWorkout([{ lift: 'Squat', planned: false, sets: [LOGGED_SET, extra] }]);
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts[0]?.workingSets.map((s) => [s.setNum, s.totalLoad, s.existing?.id])).toEqual([
+      [1, 200, LOGGED_SET.id],
+      [2, 180, 'extra'],
+    ]);
+    expect(readOnly).toBe(true);
   });
 });
 

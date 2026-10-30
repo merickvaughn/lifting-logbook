@@ -40,25 +40,11 @@ const WORKOUT = {
   offset: 0,
   date: '2025-01-06',
   skipped: false,
+  // Unlogged planned lifts carry no sets, as the real API sends them
+  // (`toWorkoutResponse`): pages derive the plan from PROGRAM_SPEC (#1080).
   lifts: [
-    {
-      lift: 'squat',
-      planned: true,
-      sets: [
-        { setNum: 1, weight: 195, reps: 5, amrap: false },
-        { setNum: 2, weight: 225, reps: 5, amrap: false },
-        { setNum: 3, weight: 255, reps: 5, amrap: true },
-      ],
-    },
-    {
-      lift: 'deadlift',
-      planned: true,
-      sets: [
-        { setNum: 1, weight: 230, reps: 5, amrap: false },
-        { setNum: 2, weight: 265, reps: 5, amrap: false },
-        { setNum: 3, weight: 300, reps: 5, amrap: true },
-      ],
-    },
+    { lift: 'squat', planned: true, sets: [] },
+    { lift: 'deadlift', planned: true, sets: [] },
   ],
 };
 
