@@ -1658,6 +1658,46 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(bobGet.statusCode).toBe(200);
       expect(bobGet.json().macrocycleNum).toBe(1);
     });
+
+    // Issue #1084: re-initializing always starts again at macrocycle 1, so an override left
+    // on any earlier macrocycle number came back on the new one. Deleted here from
+    // macrocycle 2, so an override on macrocycle 1 proves every number is cleared.
+    it('DELETE then re-initialize brings back no workout overrides (issue #1084)', async () => {
+      const userId = 'user-macrocycle-delete-overrides';
+      const AS_USER = { authorization: `Bearer ${userId}`, 'content-type': 'application/json' };
+      const inject = injectRaw();
+      const send = (method: 'POST' | 'PATCH', url: string, body: unknown = {}) =>
+        inject({ method, url, headers: AS_USER, payload: JSON.stringify(body) });
+      const base = `/programs/${FRESH_PROGRAM}/macrocycles`;
+      const bundle = await app
+        .get<InMemoryRepositoryFactory>(REPOSITORY_FACTORY)
+        .forUser({ id: userId, email: '', provider: 'dev' });
+
+      expect((await send('POST', `${base}/initialize`)).statusCode).toBe(201);
+      await bundle.focus.saveDayState(FRESH_PROGRAM, 1, 1, {
+        modes: {},
+        picks: {},
+        trims: {},
+        placement: 'after',
+        order: null,
+        dismissed: true,
+      });
+      expect((await send('PATCH', `${base}/1/workouts/1/reschedule`, { newDate: '2026-09-01' })).statusCode).toBe(204);
+      expect((await send('POST', `${base}/1/workouts/2/skip`)).statusCode).toBe(204);
+      expect((await send('POST', `${base}/1/workouts/1/lift-overrides`, { action: 'add', lift: 'Dips' })).statusCode).toBe(201);
+      expect((await send('POST', base)).statusCode).toBe(201);
+      expect((await send('PATCH', `${base}/2/workouts/1/reschedule`, { newDate: '2026-10-01' })).statusCode).toBe(204);
+
+      expect((await inject({ method: 'DELETE', url: `${base}/current`, headers: AS_USER })).statusCode).toBe(204);
+      expect((await send('POST', `${base}/initialize`)).statusCode).toBe(201);
+
+      expect(await bundle.focus.getDayState(FRESH_PROGRAM, 1, 1)).toBeNull();
+      for (const macrocycleNum of [1, 2]) {
+        expect((await bundle.workoutDateOverride.getOverridesForMacrocycle(FRESH_PROGRAM, macrocycleNum)).size).toBe(0);
+        expect((await bundle.workoutSkipOverride.getSkipsForMacrocycle(FRESH_PROGRAM, macrocycleNum)).size).toBe(0);
+        expect(await bundle.workoutLiftOverride.getOverrides(FRESH_PROGRAM, macrocycleNum, 1)).toEqual([]);
+      }
+    });
   });
 
   // Regression coverage for the production onboarding escape (#665 / #687).

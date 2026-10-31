@@ -43,4 +43,6 @@ export interface IFocusRepository {
     workoutNum: number,
     state: FocusDayState,
   ): Promise<FocusDayState>;
+  /** Deletes every workout's saved focus choices for a program, across all macrocycles. */
+  deleteAllDayStates(program: string): Promise<void>;
 }

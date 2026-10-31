@@ -21,4 +21,10 @@ export class InMemoryWorkoutSkipOverrideRepository implements IWorkoutSkipOverri
   async unskipWorkout(program: string, macrocycleNum: number, workoutNum: number): Promise<void> {
     this.store.get(this.key(program, macrocycleNum))?.delete(workoutNum);
   }
+
+  async deleteAllSkips(program: string): Promise<void> {
+    for (const k of this.store.keys()) {
+      if (k.slice(0, k.lastIndexOf(':')) === program) this.store.delete(k);
+    }
+  }
 }

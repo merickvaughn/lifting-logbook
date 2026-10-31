@@ -53,4 +53,10 @@ export class InMemoryWorkoutLiftOverrideRepository
       existing.filter((o) => o.lift !== lift),
     );
   }
+
+  async deleteAllOverrides(program: string): Promise<void> {
+    for (const k of this.store.keys()) {
+      if (k.split('\0')[0] === program) this.store.delete(k);
+    }
+  }
 }

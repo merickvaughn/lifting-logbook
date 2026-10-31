@@ -149,6 +149,7 @@ const _workoutDateOverrideRepo: IWorkoutDateOverrideRepository = {
   getOverride: () => Promise.resolve(null),
   getOverridesForMacrocycle: () => Promise.resolve(new Map()),
   upsertOverride: () => Promise.resolve(),
+  deleteAllOverrides: () => Promise.resolve(),
 };
 
 const _liftMetadataRepo: ILiftMetadataRepository = {
@@ -169,6 +170,7 @@ const _workoutLiftOverrideRepo: IWorkoutLiftOverrideRepository = {
   getOverrides: () => Promise.resolve([]),
   upsertOverride: () => Promise.resolve(),
   deleteOverride: () => Promise.resolve(),
+  deleteAllOverrides: () => Promise.resolve(),
 };
 
 const _macrocycleScheduledWorkoutRepo: IMacrocycleScheduledWorkoutRepository = {
@@ -180,6 +182,7 @@ const _workoutSkipOverrideRepo: IWorkoutSkipOverrideRepository = {
   getSkipsForMacrocycle: () => Promise.resolve(new Set<number>()),
   skipWorkout: () => Promise.resolve(),
   unskipWorkout: () => Promise.resolve(),
+  deleteAllSkips: () => Promise.resolve(),
 };
 
 const _userSettingsRepo: IUserSettingsRepository = {
@@ -228,6 +231,7 @@ const _focusRepo: IFocusRepository = {
   setBudget: (budget) => Promise.resolve(budget),
   getDayState: () => Promise.resolve(null),
   saveDayState: (_program, _macrocycleNum, _workoutNum, state) => Promise.resolve(state),
+  deleteAllDayStates: (): Promise<void> => Promise.resolve(),
 };
 
 const _importBatchRepo: IImportBatchRepository = {
