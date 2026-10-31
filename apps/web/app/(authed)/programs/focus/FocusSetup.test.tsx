@@ -124,7 +124,7 @@ function plan(workoutNum: number, overrides: Partial<FocusDayPlanResponse> = {})
   };
 }
 
-function renderPage() {
+function renderPage(requestedBlock?: string) {
   return render(
     <FocusSetup
       program="5-3-1"
@@ -132,6 +132,7 @@ function renderPage() {
       programLifts={['Squat', 'Overhead Press']}
       workouts={WORKOUTS}
       unit="lbs"
+      requestedBlock={requestedBlock}
     />,
   );
 }
@@ -184,6 +185,39 @@ describe('FocusSetup', () => {
     ]);
     expect(screen.getByRole('button', { name: 'Raise priority of Shoulders' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Lower priority of Biceps' })).toBeDisabled();
+  });
+
+  describe('?block= (#1078)', () => {
+    // jsdom has no layout, so it implements no scrolling.
+    const scrollIntoView = jest.fn();
+    beforeEach(() => {
+      scrollIntoView.mockReset();
+      Element.prototype.scrollIntoView = scrollIntoView;
+    });
+    afterEach(() => {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    });
+
+    it('opens the named focus block, scrolls its card into view and focuses it', async () => {
+      renderPage('bi');
+      const toggle = await screen.findByRole('button', { name: /^Biceps.*Monthly/ });
+      await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'true'));
+      expect(toggle).toHaveFocus();
+      expect(screen.getByRole('button', { name: /^Shoulders.*Quarterly/ })).toHaveAttribute('aria-expanded', 'false');
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView.mock.contexts[0]).toBe(toggle.closest('li'));
+    });
+
+    it.each([
+      ['an unknown id', 'nope'],
+      ['a block that has not started', 'roll'],
+    ])('leaves the page as it is for %s', async (_, id) => {
+      renderPage(id);
+      await screen.findByRole('button', { name: /^Biceps.*Monthly/ });
+      expect(screen.queryAllByRole('button', { expanded: true })).toEqual([]);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
   });
 
   it('lists the auto-roll successor under Up next, and Cancel deletes it', async () => {

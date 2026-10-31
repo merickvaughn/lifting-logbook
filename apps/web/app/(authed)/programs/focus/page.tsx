@@ -14,7 +14,8 @@ import FocusSetup from './FocusSetup';
  * workouts — loads here; the focus blocks themselves load in the browser, because their
  * status depends on the user's calendar day.
  */
-export default async function FocusPage() {
+export default async function FocusPage({ searchParams }: { searchParams: Promise<{ block?: string | string[] }> }) {
+  const { block } = await searchParams;
   const program = await getActiveProgram();
   const [dashboard, specs, customLifts, unit] = await Promise.all([
     fetchMacrocycleDashboard(program),
@@ -49,6 +50,7 @@ export default async function FocusPage() {
       programLifts={programLifts}
       workouts={workouts}
       unit={unit}
+      requestedBlock={typeof block === 'string' ? block : undefined}
     />
   );
 }

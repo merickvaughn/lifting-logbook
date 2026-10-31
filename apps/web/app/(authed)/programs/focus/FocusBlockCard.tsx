@@ -44,6 +44,11 @@ export function AreaDot({ area }: { area: FocusArea }) {
   return <span className={`${styles.dot} ${styles[`area${area}`]}`} aria-hidden="true" />;
 }
 
+/** The id of a focus block's card, which `?block=` scrolls into view (#1078). */
+export function focusBlockCardId(id: string): string {
+  return `focus-block-card-${id}`;
+}
+
 /**
  * The "+ Add lift…" choices: catalog lifts not in the pool, those training the area first.
  * The value is the lift's name; the empty value is the placeholder.
@@ -118,7 +123,7 @@ export default function FocusBlockCard({
   }
 
   return (
-    <li className={styles.blockCard}>
+    <li id={focusBlockCardId(block.id)} className={styles.blockCard}>
       <div className={styles.blockHead}>
         <button
           type="button"

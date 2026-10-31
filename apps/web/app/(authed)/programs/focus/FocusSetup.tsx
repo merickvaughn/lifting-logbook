@@ -47,7 +47,7 @@ import {
   type FocusWeekWorkout,
 } from '@/lib/focusSetup';
 import { logClientError } from '@/lib/log-client-error';
-import FocusBlockCard, { AreaDot } from './FocusBlockCard';
+import FocusBlockCard, { AreaDot, focusBlockCardId } from './FocusBlockCard';
 import styles from './focus.module.css';
 
 /** Blocks the user answered "Let it end" for, kept per browser. */
@@ -91,6 +91,8 @@ interface Props {
   /** Every workout of the current macrocycle; empty without one. */
   workouts: FocusWeekWorkout[];
   unit: WeightUnit;
+  /** The focus block named by `?block=`, opened once the blocks load (#1078). */
+  requestedBlock?: string;
 }
 
 /**
@@ -101,7 +103,7 @@ interface Props {
  * week's plans, so it ends up showing what the API stored — including what the API does
  * on its own, like creating an auto-roll successor or declining one on Cancel.
  */
-export default function FocusSetup({ program, macrocycleNum, programLifts, workouts, unit }: Props) {
+export default function FocusSetup({ program, macrocycleNum, programLifts, workouts, unit, requestedBlock }: Props) {
   const [today, setToday] = useState<string | null>(null);
   const [blocks, setBlocks] = useState<FocusBlock[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -127,6 +129,8 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
   const failedSinceReread = useRef(false);
   /** Follow-on blocks this page created, which are never mistaken for auto-roll successors. */
   const queuedHere = useRef(new Set<string>());
+  /** The `?block=` focus block, until the first load of the blocks has opened it. */
+  const arrival = useRef(requestedBlock);
 
   const weekWorkouts = today ? currentWeek(workouts, today) : [];
   const weekKey = weekWorkouts.map((workout) => workout.workoutNum).join(',');
@@ -202,6 +206,20 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
   useEffect(() => {
     if (today) void loadWeek(today);
   }, [today, loadWeek]);
+
+  // Opens the focus block a link named (the calendar's "Edit in Programs"), once. Only an
+  // active block has a card; an unknown, queued or ended id leaves the page as it is.
+  useEffect(() => {
+    const id = arrival.current;
+    if (!id || !blocks || !today) return;
+    arrival.current = undefined;
+    if (!activeBlocks(blocks, today).some((block) => block.id === id)) return;
+    setOpenId(id);
+    const card = document.getElementById(focusBlockCardId(id));
+    card?.scrollIntoView({ block: 'start' });
+    // Focus moves with it, as a fragment link's would, so the next Tab starts at the card.
+    card?.querySelector<HTMLElement>('[aria-controls]')?.focus({ preventScroll: true });
+  }, [blocks, today]);
 
   /**
    * Runs a save after every earlier one. Once none are left, re-reads what the saves can
