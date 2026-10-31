@@ -60,8 +60,24 @@ test('effectiveInputs: root task, package override, $TURBO_EXTENDS$, <pkg>#<task
   );
   // apps/web's real turbo.json overrides only test, so lint falls through to the root.
   assert.deepEqual(effectiveInputs(root, { tasks: { test: { dependsOn: [] } } }, 'p', 'lint'), ['src/**']);
+  // Turborepo 2.9: the package's own turbo.json beats a root <pkg>#<task> entry, and
+  // $TURBO_EXTENDS$ extends that root entry rather than the root task.
   const pinned = { tasks: { ...root.tasks, 'p#lint': { inputs: ['y/**'] } } };
-  assert.deepEqual(effectiveInputs(pinned, { tasks: { lint: { inputs: ['x/**'] } } }, 'p', 'lint'), ['y/**']);
+  assert.deepEqual(effectiveInputs(pinned, null, 'p', 'lint'), ['y/**']);
+  assert.deepEqual(effectiveInputs(pinned, { tasks: { lint: { inputs: ['x/**'] } } }, 'p', 'lint'), ['x/**']);
+  assert.deepEqual(
+    effectiveInputs(pinned, { tasks: { lint: { inputs: [TURBO_EXTENDS, 'x/**'] } } }, 'p', 'lint'),
+    ['y/**', 'x/**'],
+  );
+  // A root <pkg>#<task> with no inputs hashes every file, and extending it still does.
+  const pinnedAll = { tasks: { ...root.tasks, 'p#lint': {} } };
+  assert.equal(effectiveInputs(pinnedAll, null, 'p', 'lint'), null);
+  assert.equal(effectiveInputs(pinnedAll, { tasks: { lint: { inputs: [TURBO_EXTENDS, 'x/**'] } } }, 'p', 'lint'), null);
+});
+
+test('globToRegExp rejects brace and character-class syntax it does not model', () => {
+  assert.throws(() => globToRegExp('src/**/*.{ts,tsx}'), /Unsupported glob syntax/);
+  assert.throws(() => globToRegExp('src/[ab].ts'), /Unsupported glob syntax/);
 });
 
 test('eslintPaths reads eslint <paths>, skips non-eslint scripts, rejects unreadable shapes', () => {

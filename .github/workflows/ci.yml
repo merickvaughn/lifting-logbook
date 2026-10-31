@@ -64,8 +64,9 @@ jobs:
             exit 1
           fi
 
-      # apps/api's postinstall runs `prisma generate`, and turbo's build depends on db:generate,
-      # so no separate Prisma client step is needed (#845).
+      # apps/api's postinstall runs `prisma generate` during npm ci, so no separate Prisma client
+      # step is needed (#845). It is the only source: turbo's db:generate outputs don't match where
+      # the client is written, so its cache hits restore nothing (#1094).
       - name: Install dependencies
         run: npm ci
 
@@ -225,15 +226,17 @@ jobs:
           node-version: '20.11.1'
           cache: 'npm'
 
-      # Restore-only: this job runs after lint-and-test (needs:), whose `turbo run test` already
-      # built web and saved the cache under this exact key, so the build below is a cache hit.
-      # Safe only because build.inputs cover every file web's build reads (#845).
-      - name: Restore Turborepo cache
-        uses: actions/cache/restore@v4
+      # This job is the only one that builds web (apps/web/turbo.json drops build from web's
+      # test), so it saves under its own key and restores its previous run's web build, falling
+      # back to lint-and-test's cache for the workspace libraries. An unchanged web build is then
+      # a cache hit. Safe only because build.inputs cover every file web's build reads (#845).
+      - name: Cache Turborepo
+        uses: actions/cache@v4
         with:
           path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          key: ${{ runner.os }}-turbo-e2e-${{ github.sha }}
           restore-keys: |
+            ${{ runner.os }}-turbo-e2e-
             ${{ runner.os }}-turbo-
 
       - name: Install dependencies
@@ -251,30 +254,8 @@ jobs:
           # kept so any build-time Clerk import that still reads the key sees a valid format.
           CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
 
-      - name: Resolve Playwright version
-        id: playwright
-        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-        working-directory: apps/web
-
-      # Browser binaries are keyed on the resolved @playwright/test version, which pins them.
-      # The OS packages --with-deps installs live outside this path, so a cache hit still
-      # runs install-deps. See #845.
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
-
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
-        working-directory: apps/web
-
-      - name: Install Playwright system dependencies
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
-        working-directory: apps/web
+      - name: Install Playwright Chromium
+        uses: ./.github/actions/install-playwright-chromium
 
       - name: Run E2E tests
         run: npm run test:e2e:ci -w @lifting-logbook/web

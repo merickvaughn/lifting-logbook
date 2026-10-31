@@ -1,0 +1,38 @@
+name: Install Playwright Chromium (cached)
+description: >-
+  Install the Chromium browser Playwright needs, restoring it from the Actions cache
+  when the resolved @playwright/test version (which pins the browser build) is
+  unchanged. Shared by ci.yml's e2e job and staging.yml's integration tests so both
+  use one cache key and cannot drift apart (#845). Run after `npm ci`. The OS packages
+  that `--with-deps` installs live outside the cached path, so a cache hit still runs
+  `install-deps`.
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Playwright version
+      id: playwright
+      shell: bash
+      working-directory: apps/web
+      run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+    # The browser list is part of the key, so a job installing a different set can never
+    # restore this entry and skip its own install.
+    - name: Cache Playwright browsers
+      id: playwright-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}-chromium
+
+    - name: Install Playwright browsers
+      if: steps.playwright-cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: apps/web
+      run: npx playwright install --with-deps chromium
+
+    - name: Install Playwright system dependencies
+      if: steps.playwright-cache.outputs.cache-hit == 'true'
+      shell: bash
+      working-directory: apps/web
+      run: npx playwright install-deps chromium

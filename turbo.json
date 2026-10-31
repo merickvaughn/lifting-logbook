@@ -44,9 +44,19 @@
     // Inputs must cover every path a workspace's `eslint <paths>` script lints (apps/web lints
     // lib/ and components/; apps/mobile lints its root App.tsx) plus the shared root config and
     // the custom rules it loads, or a change there replays a cached pass without linting.
-    // Guarded by scripts/check-turbo-task-inputs.mjs. See #845.
+    // The rule files are listed without their unit tests, README or turbo log, none of which
+    // ESLint loads. no-uncovered-error-fallback also reads test files across apps/ and
+    // packages/ for coverage references, so those are inputs to every lint too.
+    // The workspace-local entries are guarded by scripts/check-turbo-task-inputs.mjs; the
+    // $TURBO_ROOT$ ones are not. See #845.
     "lint": {
-      "inputs": ["src/**", "app/**", "lib/**", "components/**", "scripts/**", "*.ts", "*.tsx", ".eslintrc*", "eslint.config*", "$TURBO_ROOT$/eslint.config.js", "$TURBO_ROOT$/tools/eslint-rules/**"]
+      "inputs": [
+        "src/**", "app/**", "lib/**", "components/**", "scripts/**", "*.ts", "*.tsx", ".eslintrc*", "eslint.config*",
+        "$TURBO_ROOT$/eslint.config.js", "$TURBO_ROOT$/tools/eslint-rules/*.js", "!$TURBO_ROOT$/tools/eslint-rules/*.test.js",
+        "$TURBO_ROOT$/apps/web/**/*.test.*", "$TURBO_ROOT$/apps/web/**/*.spec.*",
+        "$TURBO_ROOT$/apps/api/src/**/*.test.*", "$TURBO_ROOT$/apps/api/src/**/*.spec.*",
+        "$TURBO_ROOT$/packages/**/*.test.*", "$TURBO_ROOT$/packages/**/*.spec.*"
+      ]
     },
     // typecheck is build-free by design (#651): each workspace's typecheck tsconfig resolves
     // workspace deps to SOURCE, not dist. `dependsOn: ["^typecheck"]` chains upstream source

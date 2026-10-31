@@ -18,6 +18,11 @@
  *           the files no build reads (tests, and configs consumed only by test, lint or
  *           typecheck). See NOT_BUILD_INPUTS.
  *
+ * It cannot see reads outside a workspace. The root ESLint config, the custom rules in
+ * tools/eslint-rules, and the test files no-uncovered-error-fallback scans across apps/
+ * and packages/ are reached through `$TURBO_ROOT$` globs in lint.inputs, and nothing here
+ * checks those.
+ *
  * Usage: node scripts/check-turbo-task-inputs.mjs
  */
 
@@ -44,7 +49,9 @@ const BUILD_EXTENSION = /\.(?:[cm]?[jt]sx?|css|json)$/;
  * extension in a workspace that has a `build` script must be a build input.
  */
 export const NOT_BUILD_INPUTS = [
-  // Tests and their fixtures/mocks — the `test` and `typecheck` tasks read these.
+  // Tests and their fixtures/mocks — the `test` and `typecheck` tasks read these. One known
+  // exception: packages/core's tsconfig.json still compiles its src/**/*.test.ts into dist
+  // (#1093), while build.inputs deliberately leave them out.
   '**/*.test.*',
   '**/*.spec.*',
   '**/__tests__/**',
@@ -67,8 +74,15 @@ export const NOT_BUILD_INPUTS = [
 
 // --- Pure helpers (exported for unit testing — see check-turbo-task-inputs.test.mjs) ---
 
-/** Converts one Turborepo input glob (`*`, `**`, `?`) to an anchored RegExp. */
+/**
+ * Converts one Turborepo input glob (`*`, `**`, `?`) to an anchored RegExp. Braces and
+ * character classes are valid Turborepo syntax this does not model, so they throw rather
+ * than being matched literally and reported as a misleading "uncovered file".
+ */
 export function globToRegExp(glob) {
+  if (/[{}[\]]/.test(glob)) {
+    throw new Error(`Unsupported glob syntax in "${glob}": extend globToRegExp to handle {} or [].`);
+  }
   let re = '';
   for (let i = 0; i < glob.length; i++) {
     const ch = glob[i];
@@ -85,7 +99,7 @@ export function globToRegExp(glob) {
     } else if (ch === '?') {
       re += '[^/]';
     } else {
-      re += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+      re += ch.replace(/[.+^$()|\\]/g, '\\$&');
     }
   }
   return new RegExp(`^${re}$`);
@@ -114,17 +128,18 @@ export function inputsMatcher(globs, workspaceDir) {
 /**
  * The inputs Turborepo uses for `task` in a workspace, or null when none are declared
  * (Turborepo then hashes every tracked file in the package, which covers everything).
- * Precedence matches Turborepo: a root `<pkg>#<task>` entry, then the workspace's own
- * turbo.json, then the root task.
+ * Precedence matches Turborepo 2.9 (verified against its hashes): the workspace's own
+ * turbo.json, then a root `<pkg>#<task>` entry, then the root task. `$TURBO_EXTENDS$` in
+ * the workspace override extends whichever root entry would otherwise apply.
  */
 export function effectiveInputs(rootConfig, packageConfig, packageName, task) {
-  const rootInputs = rootConfig?.tasks?.[task]?.inputs ?? null;
   const pinned = rootConfig?.tasks?.[`${packageName}#${task}`];
-  if (pinned) return pinned.inputs ?? null;
+  const inherited = (pinned ?? rootConfig?.tasks?.[task])?.inputs ?? null;
   const override = packageConfig?.tasks?.[task]?.inputs;
-  if (override === undefined) return rootInputs;
+  if (override === undefined) return inherited;
   if (!override.includes(TURBO_EXTENDS)) return override;
-  return [...(rootInputs ?? []), ...override.filter((glob) => glob !== TURBO_EXTENDS)];
+  if (inherited === null) return null;
+  return [...inherited, ...override.filter((glob) => glob !== TURBO_EXTENDS)];
 }
 
 /**
@@ -173,7 +188,9 @@ function workspaceDirs(root, patterns) {
   for (const pattern of patterns) {
     if (!pattern.endsWith('/*')) throw new Error(`Unsupported workspaces pattern "${pattern}".`);
     const parent = pattern.slice(0, -2);
-    const listed = execFileSync('git', ['ls-files', '-z', '--', `${parent}/*/package.json`], { cwd: root })
+    // :(glob) so `*` stops at `/`, matching npm's one-level `<parent>/*` — a plain pathspec
+    // `*` crosses directories and would treat a nested fixture package.json as a workspace.
+    const listed = execFileSync('git', ['ls-files', '-z', '--', `:(glob)${parent}/*/package.json`], { cwd: root })
       .toString('utf8')
       .split('\0')
       .filter(Boolean);

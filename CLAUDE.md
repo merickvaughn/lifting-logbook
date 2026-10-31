@@ -608,8 +608,10 @@ node scripts/check-turbo-task-inputs.mjs && node --test scripts/check-turbo-task
 ```
 
 Both also run as CI steps (`ci.yml` → `lint-and-test`). It does not check inputs outside a
-workspace: `lint.inputs` reaches the root `eslint.config.js` and `tools/eslint-rules/**` through
-`$TURBO_ROOT$`, and the guard cannot see that. See
+workspace: `lint.inputs` reaches the root `eslint.config.js`, the rule files in
+`tools/eslint-rules/`, and the test files `no-uncovered-error-fallback` scans across `apps/` and
+`packages/` through `$TURBO_ROOT$` globs, and the guard cannot see any of those. When a custom
+rule starts reading files from somewhere new, add them to `lint.inputs` by hand. See
 [#845](https://github.com/merickvaughn/lifting-logbook/issues/845).
 
 ### Rest-timer dial phase colors (`TimerDial.module.css` ↔ `globals.css`)
