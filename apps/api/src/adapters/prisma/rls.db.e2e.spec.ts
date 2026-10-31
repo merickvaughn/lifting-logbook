@@ -508,8 +508,9 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
   // filtered by an application-level WHERE clause that happens to look correct —
   // exactly the risk class that let #644 ship silently.
   it('deletes a macrocycle scoped to the requesting user only, under real RLS (regression coverage for #647)', async () => {
-    // deleteCurrentMacrocycle issues five scoped deletes (MacrocycleDashboard, LiftRecord,
-    // TrainingMax, TrainingMaxHistory, MacrocycleScheduledWorkout). Seeding all five
+    // deleteCurrentMacrocycle issues eight scoped deletes (MacrocycleDashboard, LiftRecord,
+    // TrainingMax, TrainingMaxHistory, MacrocycleScheduledWorkout, and the three workout
+    // override tables, #1084). Seeding all eight
     // for both users — not just the dashboard — matters because #644 was a
     // per-repository DI-wiring failure, not a missing-policy failure: a future
     // regression where one specific repository fails to route through the
@@ -564,6 +565,15 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
       await owner.macrocycleScheduledWorkout.create({
         data: { userId: uid, program: PROGRAM, macrocycleNum: 1, workoutNum: 1, weekNum: 1, scheduledDate: new Date() },
       });
+      await owner.workoutDateOverride.create({
+        data: { userId: uid, program: PROGRAM, macrocycleNum: 1, workoutNum: 1, newDate: new Date() },
+      });
+      await owner.workoutSkipOverride.create({
+        data: { userId: uid, program: PROGRAM, macrocycleNum: 1, workoutNum: 2 },
+      });
+      await owner.workoutLiftOverride.create({
+        data: { userId: uid, program: PROGRAM, macrocycleNum: 1, workoutNum: 1, lift: 'Dips', action: 'add' },
+      });
     };
     await seedAllTables(userId);
     await seedAllTables(otherUserId);
@@ -582,14 +592,17 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
         owner.trainingMax.findFirst({ where: { userId: uid, program: PROGRAM } }),
         owner.trainingMaxHistory.findFirst({ where: { userId: uid, program: PROGRAM } }),
         owner.macrocycleScheduledWorkout.findFirst({ where: { userId: uid, program: PROGRAM } }),
+        owner.workoutDateOverride.findFirst({ where: { userId: uid, program: PROGRAM } }),
+        owner.workoutSkipOverride.findFirst({ where: { userId: uid, program: PROGRAM } }),
+        owner.workoutLiftOverride.findFirst({ where: { userId: uid, program: PROGRAM } }),
       ]);
 
     // The requesting user's rows are gone from every affected table...
     const mine = await findAllFor(userId);
-    expect(mine).toEqual([null, null, null, null, null]);
+    expect(mine).toEqual([null, null, null, null, null, null, null, null]);
 
     // ...but the other user's rows in every table survive — proves each of the
-    // five deletes was RLS-scoped to the requesting user, not a bug that deleted
+    // eight deletes was RLS-scoped to the requesting user, not a bug that deleted
     // every row matching the program regardless of owner.
     const others = await findAllFor(otherUserId);
     for (const row of others) expect(row).not.toBeNull();
@@ -600,6 +613,63 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
       owner.trainingMax.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.trainingMaxHistory.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.macrocycleScheduledWorkout.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
+      owner.workoutDateOverride.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
+      owner.workoutSkipOverride.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
+      owner.workoutLiftOverride.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
+    ]);
+  });
+
+  // Regression coverage for #1084: re-initializing after a delete always starts again at
+  // macrocycle 1, so overrides the user made on that macrocycle number came back on a cycle
+  // they never edited. Drives the whole repro through HTTP under the restricted role.
+  it('re-initializing after a delete brings back no workout overrides (regression coverage for #1084)', async () => {
+    const userId = `rls-e2e-fullapp-delete-overrides-${Date.now()}`;
+    const PROGRAM = 'leangains';
+    const AS_USER = { authorization: `Bearer ${userId}`, 'content-type': 'application/json' };
+    const initialize = () =>
+      inject({ method: 'POST', url: `/programs/${PROGRAM}/macrocycles/initialize`, headers: AS_USER, payload: '{}' });
+
+    expect((await initialize()).statusCode).toBe(201);
+    const overrideRequests = [
+      { method: 'PATCH', url: `/programs/${PROGRAM}/macrocycles/1/workouts/1/reschedule`, payload: JSON.stringify({ newDate: '2026-09-01' }) },
+      { method: 'POST', url: `/programs/${PROGRAM}/macrocycles/1/workouts/2/skip`, payload: '{}' },
+      { method: 'POST', url: `/programs/${PROGRAM}/macrocycles/1/workouts/1/lift-overrides`, payload: JSON.stringify({ action: 'add', lift: 'Dips' }) },
+    ];
+    for (const req of overrideRequests) {
+      const res = await inject({ ...req, headers: AS_USER });
+      expect(res.statusCode).toBeLessThan(300);
+    }
+    const countOverrides = () =>
+      Promise.all([
+        owner.workoutDateOverride.count({ where: { userId, program: PROGRAM } }),
+        owner.workoutSkipOverride.count({ where: { userId, program: PROGRAM } }),
+        owner.workoutLiftOverride.count({ where: { userId, program: PROGRAM } }),
+      ]);
+    expect(await countOverrides()).toEqual([1, 1, 1]);
+
+    const delRes = await inject({
+      method: 'DELETE',
+      url: `/programs/${PROGRAM}/macrocycles/current`,
+      headers: { authorization: `Bearer ${userId}` },
+    });
+    expect(delRes.statusCode).toBe(204);
+    expect((await initialize()).statusCode).toBe(201);
+
+    expect(await countOverrides()).toEqual([0, 0, 0]);
+    const workoutRes = await inject({
+      method: 'GET',
+      url: `/programs/${PROGRAM}/workouts/1`,
+      headers: { authorization: `Bearer ${userId}` },
+    });
+    expect(workoutRes.statusCode).toBe(200);
+    expect(workoutRes.json().overrideDate).toBeUndefined();
+
+    await Promise.all([
+      owner.macrocycleDashboard.deleteMany({ where: { userId } }),
+      owner.macrocycleScheduledWorkout.deleteMany({ where: { userId } }),
+      owner.workoutDateOverride.deleteMany({ where: { userId } }),
+      owner.workoutSkipOverride.deleteMany({ where: { userId } }),
+      owner.workoutLiftOverride.deleteMany({ where: { userId } }),
     ]);
   });
 });

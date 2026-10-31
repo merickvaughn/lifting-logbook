@@ -44,4 +44,7 @@ export interface IWorkoutLiftOverrideRepository {
     workoutNum: number,
     lift: string,
   ): Promise<void>;
+
+  /** Deletes every lift override for a program, across all macrocycles. No-op if none exist. */
+  deleteAllOverrides(program: string): Promise<void>;
 }

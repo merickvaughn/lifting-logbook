@@ -14,7 +14,10 @@ import {
   ILiftingProgramSpecRepository,
   ITrainingMaxHistoryRepository,
   ITrainingMaxRepository,
+  IWorkoutDateOverrideRepository,
 } from '../ports';
+import { IWorkoutLiftOverrideRepository } from '../ports/IWorkoutLiftOverrideRepository';
+import { IWorkoutSkipOverrideRepository } from '../ports/IWorkoutSkipOverrideRepository';
 import { IMacrocycleScheduledWorkoutRepository } from '../ports/IMacrocycleScheduledWorkoutRepository';
 import { IUserSettingsRepository } from '../ports/IUserSettingsRepository';
 import { ProgramNotFoundError } from '../ports/errors';
@@ -483,20 +486,59 @@ describe('MacrocycleGenerationService', () => {
   });
 
   describe('deleteCurrentMacrocycle', () => {
-    it('deletes lift records, training maxes, history, scheduled workouts, and the dashboard', async () => {
+    let dateOverrideRepo: jest.Mocked<IWorkoutDateOverrideRepository>;
+    let skipOverrideRepo: jest.Mocked<IWorkoutSkipOverrideRepository>;
+    let liftOverrideRepo: jest.Mocked<IWorkoutLiftOverrideRepository>;
+    let deleteRepos: typeof repos & {
+      workoutDateOverride: jest.Mocked<IWorkoutDateOverrideRepository>;
+      workoutSkipOverride: jest.Mocked<IWorkoutSkipOverrideRepository>;
+      workoutLiftOverride: jest.Mocked<IWorkoutLiftOverrideRepository>;
+    };
+
+    beforeEach(() => {
+      dateOverrideRepo = {
+        getOverride: jest.fn(),
+        getOverridesForMacrocycle: jest.fn(),
+        upsertOverride: jest.fn(),
+        deleteAllOverrides: jest.fn().mockResolvedValue(undefined),
+      };
+      skipOverrideRepo = {
+        getSkipsForMacrocycle: jest.fn(),
+        skipWorkout: jest.fn(),
+        unskipWorkout: jest.fn(),
+        deleteAllSkips: jest.fn().mockResolvedValue(undefined),
+      };
+      liftOverrideRepo = {
+        getOverrides: jest.fn(),
+        upsertOverride: jest.fn(),
+        deleteOverride: jest.fn(),
+        deleteAllOverrides: jest.fn().mockResolvedValue(undefined),
+      };
+      deleteRepos = {
+        ...repos,
+        workoutDateOverride: dateOverrideRepo,
+        workoutSkipOverride: skipOverrideRepo,
+        workoutLiftOverride: liftOverrideRepo,
+      };
+    });
+
+    it('deletes lift records, training maxes, history, scheduled workouts, overrides, and the dashboard', async () => {
       macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
 
-      await service.deleteCurrentMacrocycle(repos, PROGRAM);
+      await service.deleteCurrentMacrocycle(deleteRepos, PROGRAM);
 
       expect(liftRecordRepo.deleteAllLiftRecords).toHaveBeenCalledWith(PROGRAM);
       expect(trainingMaxHistoryRepo.deleteAllHistory).toHaveBeenCalledWith(PROGRAM);
       expect(trainingMaxRepo.deleteAllTrainingMaxes).toHaveBeenCalledWith(PROGRAM);
       expect(macrocycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 1, []);
+      expect(dateOverrideRepo.deleteAllOverrides).toHaveBeenCalledWith(PROGRAM);
+      expect(skipOverrideRepo.deleteAllSkips).toHaveBeenCalledWith(PROGRAM);
+      expect(liftOverrideRepo.deleteAllOverrides).toHaveBeenCalledWith(PROGRAM);
       expect(macrocycleDashboardRepo.deleteMacrocycleDashboard).toHaveBeenCalledWith(PROGRAM);
     });
 
     it('deletes sequentially, in a fixed order, ending with the dashboard', async () => {
-      // The five deletes share one request-scoped Prisma transaction client, which
+      // The deletes share one request-scoped Prisma transaction client, which
       // serializes queries on a single connection — asserting a real, deterministic
       // order here (rather than Promise.all's unordered settling) is itself the
       // regression guard for that constraint.
@@ -514,17 +556,29 @@ describe('MacrocycleGenerationService', () => {
       macrocycleScheduledWorkoutRepo.saveScheduledWorkouts.mockImplementation(async () => {
         order.push('macrocycleScheduledWorkout');
       });
+      dateOverrideRepo.deleteAllOverrides.mockImplementation(async () => {
+        order.push('workoutDateOverride');
+      });
+      skipOverrideRepo.deleteAllSkips.mockImplementation(async () => {
+        order.push('workoutSkipOverride');
+      });
+      liftOverrideRepo.deleteAllOverrides.mockImplementation(async () => {
+        order.push('workoutLiftOverride');
+      });
       macrocycleDashboardRepo.deleteMacrocycleDashboard.mockImplementation(async () => {
         order.push('macrocycleDashboard');
       });
 
-      await service.deleteCurrentMacrocycle(repos, PROGRAM);
+      await service.deleteCurrentMacrocycle(deleteRepos, PROGRAM);
 
       expect(order).toEqual([
         'liftRecord',
         'trainingMaxHistory',
         'trainingMax',
         'macrocycleScheduledWorkout',
+        'workoutDateOverride',
+        'workoutSkipOverride',
+        'workoutLiftOverride',
         'macrocycleDashboard',
       ]);
     });
@@ -532,15 +586,16 @@ describe('MacrocycleGenerationService', () => {
     it('propagates ProgramNotFoundError when no macrocycle exists (404 path)', async () => {
       macrocycleDashboardRepo.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError(PROGRAM));
 
-      await expect(service.deleteCurrentMacrocycle(repos, PROGRAM)).rejects.toThrow(ProgramNotFoundError);
+      await expect(service.deleteCurrentMacrocycle(deleteRepos, PROGRAM)).rejects.toThrow(ProgramNotFoundError);
       expect(macrocycleDashboardRepo.deleteMacrocycleDashboard).not.toHaveBeenCalled();
       expect(liftRecordRepo.deleteAllLiftRecords).not.toHaveBeenCalled();
+      expect(dateOverrideRepo.deleteAllOverrides).not.toHaveBeenCalled();
     });
 
     it('scopes the scheduled-workout clear to the dashboard current macrocycleNum', async () => {
       macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue({ ...stubDashboard(), macrocycleNum: 3 });
 
-      await service.deleteCurrentMacrocycle(repos, PROGRAM);
+      await service.deleteCurrentMacrocycle(deleteRepos, PROGRAM);
 
       expect(macrocycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 3, []);
     });

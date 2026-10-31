@@ -81,4 +81,10 @@ export class PrismaWorkoutLiftOverrideRepository
       where: { userId: this.userId, program, macrocycleNum, workoutNum, lift },
     });
   }
+
+  async deleteAllOverrides(program: string): Promise<void> {
+    await this.prisma.workoutLiftOverride.deleteMany({
+      where: { userId: this.userId, program },
+    });
+  }
 }

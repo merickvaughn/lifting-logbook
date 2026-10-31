@@ -275,9 +275,14 @@ export class MacrocycleGenerationService {
   /**
    * Deletes the current macrocycle for a program and every row scoped to it: the
    * MacrocycleDashboard, all LiftRecord rows across every macrocycle number, all TrainingMax
-   * rows, all TrainingMaxHistory entries, and any MacrocycleScheduledWorkout rows for the
-   * deleted macrocycle. Deliberately leaves UserSettings.activeProgram untouched — that
+   * rows, all TrainingMaxHistory entries, any MacrocycleScheduledWorkout rows for the
+   * deleted macrocycle, and every workout date, skip and lift override across every
+   * macrocycle number. Deliberately leaves UserSettings.activeProgram untouched — that
    * field is independent of macrocycle existence and is used by switchProgram's routing.
+   *
+   * The overrides go for every macrocycle number, not just the deleted one, because
+   * re-initializing always starts again at macrocycle 1: deleted from macrocycle 3, an
+   * override left on macrocycle 1 would reappear on the new macrocycle 1 (issue #1084).
    *
    * getMacrocycleDashboard(program) is called first for two reasons: it supplies the
    * macrocycleNum needed to scope the MacrocycleScheduledWorkout clear, and it throws
@@ -285,19 +290,26 @@ export class MacrocycleGenerationService {
    * delete" response with no new error-handling code — mirrors the guard
    * initializeFirstMacrocycle uses to detect "no macrocycle yet".
    *
-   * The five deletes run sequentially, not concurrently: repos.forUser() binds
+   * The deletes run sequentially, not concurrently: repos.forUser() binds
    * them all to the single interactive-transaction Prisma client RlsInterceptor
    * holds for this request, which serializes queries on one connection — a
    * Promise.all here would not parallelize anything and can throw a "queries
    * cannot run concurrently" error against the real Prisma adapter (the in-memory
    * adapter has no such constraint, so this would pass there and fail in
-   * production). Atomicity across all five is already guaranteed by that same
+   * production). Atomicity across all of them is already guaranteed by that same
    * request transaction, independent of the order below.
    */
   async deleteCurrentMacrocycle(
     repos: Pick<
-      MacrocycleRepos,
-      'macrocycleDashboard' | 'macrocycleScheduledWorkout' | 'liftRecord' | 'trainingMax' | 'trainingMaxHistory'
+      RepositoryBundle,
+      | 'macrocycleDashboard'
+      | 'macrocycleScheduledWorkout'
+      | 'liftRecord'
+      | 'trainingMax'
+      | 'trainingMaxHistory'
+      | 'workoutDateOverride'
+      | 'workoutSkipOverride'
+      | 'workoutLiftOverride'
     >,
     program: string,
   ): Promise<void> {
@@ -307,6 +319,9 @@ export class MacrocycleGenerationService {
     await repos.trainingMaxHistory.deleteAllHistory(program);
     await repos.trainingMax.deleteAllTrainingMaxes(program);
     await repos.macrocycleScheduledWorkout.saveScheduledWorkouts(program, dashboard.macrocycleNum, []);
+    await repos.workoutDateOverride.deleteAllOverrides(program);
+    await repos.workoutSkipOverride.deleteAllSkips(program);
+    await repos.workoutLiftOverride.deleteAllOverrides(program);
     await repos.macrocycleDashboard.deleteMacrocycleDashboard(program);
   }
 

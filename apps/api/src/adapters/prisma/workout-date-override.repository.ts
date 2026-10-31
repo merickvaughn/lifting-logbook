@@ -53,4 +53,10 @@ export class PrismaWorkoutDateOverrideRepository
       update: { newDate },
     });
   }
+
+  async deleteAllOverrides(program: string): Promise<void> {
+    await this.prisma.workoutDateOverride.deleteMany({
+      where: { userId: this.userId, program },
+    });
+  }
 }

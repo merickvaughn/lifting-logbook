@@ -28,4 +28,10 @@ export class PrismaWorkoutSkipOverrideRepository implements IWorkoutSkipOverride
       where: { userId: this.userId, program, macrocycleNum, workoutNum },
     });
   }
+
+  async deleteAllSkips(program: string): Promise<void> {
+    await this.prisma.workoutSkipOverride.deleteMany({
+      where: { userId: this.userId, program },
+    });
+  }
 }
