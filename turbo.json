@@ -9,10 +9,15 @@
       "inputs": ["prisma/schema.prisma", "package.json", "../../package-lock.json"],
       "outputs": ["node_modules/.prisma/**"]
     },
+    // Inputs must cover every file a build reads: a file outside them never invalidates the
+    // cache, so a change to it replays a stale build. apps/web keeps source in lib/ and
+    // components/ and at its root (middleware.ts, instrumentation.ts); apps/api's nest build
+    // reads tsconfig.build.json and nest-cli.json. Guarded by
+    // scripts/check-turbo-task-inputs.mjs. See #845.
     "build": {
       "dependsOn": ["^build", "db:generate"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
-      "inputs": ["src/**", "app/**", "!src/**/*.test.ts", "!src/**/*.spec.ts", "!src/**/__tests__/**", "tsconfig.json", "package.json", "next.config.*"]
+      "inputs": ["src/**", "app/**", "lib/**", "components/**", "middleware.ts", "instrumentation.ts", "!src/**/*.test.ts", "!src/**/*.spec.ts", "!src/**/__tests__/**", "tsconfig.json", "tsconfig.build.json", "nest-cli.json", "package.json", "next.config.*"]
     },
     // Base test task stays uncached: apps/api's suite includes Testcontainers-backed DB E2E
     // (external state), and apps/web / apps/mobile are left uncached by default. Only the
@@ -36,8 +41,12 @@
       "dependsOn": ["build"],
       "cache": true
     },
+    // Inputs must cover every path a workspace's `eslint <paths>` script lints (apps/web lints
+    // lib/ and components/; apps/mobile lints its root App.tsx) plus the shared root config and
+    // the custom rules it loads, or a change there replays a cached pass without linting.
+    // Guarded by scripts/check-turbo-task-inputs.mjs. See #845.
     "lint": {
-      "inputs": ["src/**", "app/**", "scripts/**", "*.ts", ".eslintrc*", "eslint.config*"]
+      "inputs": ["src/**", "app/**", "lib/**", "components/**", "scripts/**", "*.ts", "*.tsx", ".eslintrc*", "eslint.config*", "$TURBO_ROOT$/eslint.config.js", "$TURBO_ROOT$/tools/eslint-rules/**"]
     },
     // typecheck is build-free by design (#651): each workspace's typecheck tsconfig resolves
     // workspace deps to SOURCE, not dist. `dependsOn: ["^typecheck"]` chains upstream source

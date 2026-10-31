@@ -64,11 +64,10 @@ jobs:
             exit 1
           fi
 
+      # apps/api's postinstall runs `prisma generate`, and turbo's build depends on db:generate,
+      # so no separate Prisma client step is needed (#845).
       - name: Install dependencies
         run: npm ci
-
-      - name: Generate Prisma client
-        run: npx prisma generate --schema=apps/api/prisma/schema.prisma
 
       - name: Lint, Typecheck & Test
         run: npx turbo run lint typecheck test
@@ -105,6 +104,12 @@ jobs:
 
       - name: Unit test turbo dev-build dependency check parsing
         run: node --test scripts/check-turbo-dev-build-dep.test.mjs
+
+      - name: Verify turbo lint/build inputs cover every file those tasks read
+        run: node scripts/check-turbo-task-inputs.mjs
+
+      - name: Unit test turbo task-inputs check parsing
+        run: node --test scripts/check-turbo-task-inputs.test.mjs
 
       - name: Verify rest-timer dial phases are distinguishable in every theme
         run: node scripts/check-timer-phase-colors.mjs
@@ -182,11 +187,18 @@ jobs:
           node-version: '20.11.1'
           cache: 'npm'
 
+      # Restore-only: lint-and-test owns saving the turbo cache, so this job reuses the latest
+      # saved cache (the api build) without racing it for the same key. See #845.
+      - name: Restore Turborepo cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
       - name: Install dependencies
         run: npm ci
-
-      - name: Generate Prisma client
-        run: npx prisma generate --schema=apps/api/prisma/schema.prisma
 
       - name: Run migrations
         run: npx prisma migrate deploy --schema=apps/api/prisma/schema.prisma
@@ -213,6 +225,17 @@ jobs:
           node-version: '20.11.1'
           cache: 'npm'
 
+      # Restore-only: this job runs after lint-and-test (needs:), whose `turbo run test` already
+      # built web and saved the cache under this exact key, so the build below is a cache hit.
+      # Safe only because build.inputs cover every file web's build reads (#845).
+      - name: Restore Turborepo cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
       - name: Install dependencies
         run: npm ci
 
@@ -228,8 +251,29 @@ jobs:
           # kept so any build-time Clerk import that still reads the key sees a valid format.
           CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
 
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+        working-directory: apps/web
+
+      # Browser binaries are keyed on the resolved @playwright/test version, which pins them.
+      # The OS packages --with-deps installs live outside this path, so a cache hit still
+      # runs install-deps. See #845.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+
+      - name: Install Playwright system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
         working-directory: apps/web
 
       - name: Run E2E tests
