@@ -215,7 +215,10 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
     arrival.current = undefined;
     if (!activeBlocks(blocks, today).some((block) => block.id === id)) return;
     setOpenId(id);
-    document.getElementById(focusBlockCardId(id))?.scrollIntoView({ block: 'start' });
+    const card = document.getElementById(focusBlockCardId(id));
+    card?.scrollIntoView({ block: 'start' });
+    // Focus moves with it, as a fragment link's would, so the next Tab starts at the card.
+    card?.querySelector<HTMLElement>('[aria-controls]')?.focus({ preventScroll: true });
   }, [blocks, today]);
 
   /**

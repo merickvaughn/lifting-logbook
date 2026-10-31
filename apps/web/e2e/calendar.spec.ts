@@ -75,6 +75,7 @@ test('"Edit in Programs" opens that focus block on the setup page', async ({ pag
   const biceps = page.getByRole('button', { name: /^Biceps (Monthly|Quarterly)/ });
   await expect(biceps).toHaveAttribute('aria-expanded', 'true', { timeout: 90_000 });
   await expect(biceps).toBeInViewport();
+  await expect(biceps).toBeFocused();
   await expect(page.getByRole('button', { name: /^Shoulders (Monthly|Quarterly)/ })).toHaveAttribute('aria-expanded', 'false');
 });
 

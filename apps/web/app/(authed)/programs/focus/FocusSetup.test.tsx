@@ -198,10 +198,11 @@ describe('FocusSetup', () => {
       delete (Element.prototype as Partial<Element>).scrollIntoView;
     });
 
-    it('opens the named focus block and scrolls its card into view', async () => {
+    it('opens the named focus block, scrolls its card into view and focuses it', async () => {
       renderPage('bi');
       const toggle = await screen.findByRole('button', { name: /^Biceps.*Monthly/ });
       await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'true'));
+      expect(toggle).toHaveFocus();
       expect(screen.getByRole('button', { name: /^Shoulders.*Quarterly/ })).toHaveAttribute('aria-expanded', 'false');
       expect(scrollIntoView).toHaveBeenCalledTimes(1);
       expect(scrollIntoView.mock.contexts[0]).toBe(toggle.closest('li'));
