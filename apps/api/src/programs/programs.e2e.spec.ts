@@ -1666,11 +1666,22 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const userId = 'user-macrocycle-delete-overrides';
       const AS_USER = { authorization: `Bearer ${userId}`, 'content-type': 'application/json' };
       const inject = injectRaw();
-      const send = (method: string, url: string, body: unknown = {}) =>
-        inject({ method: method as 'POST', url, headers: AS_USER, payload: JSON.stringify(body) });
+      const send = (method: 'POST' | 'PATCH', url: string, body: unknown = {}) =>
+        inject({ method, url, headers: AS_USER, payload: JSON.stringify(body) });
       const base = `/programs/${FRESH_PROGRAM}/macrocycles`;
+      const bundle = await app
+        .get<InMemoryRepositoryFactory>(REPOSITORY_FACTORY)
+        .forUser({ id: userId, email: '', provider: 'dev' });
 
       expect((await send('POST', `${base}/initialize`)).statusCode).toBe(201);
+      await bundle.focus.saveDayState(FRESH_PROGRAM, 1, 1, {
+        modes: {},
+        picks: {},
+        trims: {},
+        placement: 'after',
+        order: null,
+        dismissed: true,
+      });
       expect((await send('PATCH', `${base}/1/workouts/1/reschedule`, { newDate: '2026-09-01' })).statusCode).toBe(204);
       expect((await send('POST', `${base}/1/workouts/2/skip`)).statusCode).toBe(204);
       expect((await send('POST', `${base}/1/workouts/1/lift-overrides`, { action: 'add', lift: 'Dips' })).statusCode).toBe(201);
@@ -1680,9 +1691,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect((await inject({ method: 'DELETE', url: `${base}/current`, headers: AS_USER })).statusCode).toBe(204);
       expect((await send('POST', `${base}/initialize`)).statusCode).toBe(201);
 
-      const bundle = await app
-        .get<InMemoryRepositoryFactory>(REPOSITORY_FACTORY)
-        .forUser({ id: userId, email: '', provider: 'dev' });
+      expect(await bundle.focus.getDayState(FRESH_PROGRAM, 1, 1)).toBeNull();
       for (const macrocycleNum of [1, 2]) {
         expect((await bundle.workoutDateOverride.getOverridesForMacrocycle(FRESH_PROGRAM, macrocycleNum)).size).toBe(0);
         expect((await bundle.workoutSkipOverride.getSkipsForMacrocycle(FRESH_PROGRAM, macrocycleNum)).size).toBe(0);

@@ -231,6 +231,7 @@ const _focusRepo: IFocusRepository = {
   setBudget: (budget) => Promise.resolve(budget),
   getDayState: () => Promise.resolve(null),
   saveDayState: (_program, _macrocycleNum, _workoutNum, state) => Promise.resolve(state),
+  deleteAllDayStates: (): Promise<void> => Promise.resolve(),
 };
 
 const _importBatchRepo: IImportBatchRepository = {

@@ -276,11 +276,13 @@ export class MacrocycleGenerationService {
    * Deletes the current macrocycle for a program and every row scoped to it: the
    * MacrocycleDashboard, all LiftRecord rows across every macrocycle number, all TrainingMax
    * rows, all TrainingMaxHistory entries, any MacrocycleScheduledWorkout rows for the
-   * deleted macrocycle, and every workout date, skip and lift override across every
-   * macrocycle number. Deliberately leaves UserSettings.activeProgram untouched — that
-   * field is independent of macrocycle existence and is used by switchProgram's routing.
+   * deleted macrocycle, and every workout date, skip and lift override and saved focus
+   * choice (FocusDayState) across every macrocycle number. Deliberately leaves
+   * UserSettings.activeProgram untouched — that field is independent of macrocycle
+   * existence and is used by switchProgram's routing. Focus blocks and the focus budget
+   * stay too: they are dated plans that outlive a macrocycle, like strength goals.
    *
-   * The overrides go for every macrocycle number, not just the deleted one, because
+   * The per-workout rows go for every macrocycle number, not just the deleted one, because
    * re-initializing always starts again at macrocycle 1: deleted from macrocycle 3, an
    * override left on macrocycle 1 would reappear on the new macrocycle 1 (issue #1084).
    *
@@ -310,6 +312,7 @@ export class MacrocycleGenerationService {
       | 'workoutDateOverride'
       | 'workoutSkipOverride'
       | 'workoutLiftOverride'
+      | 'focus'
     >,
     program: string,
   ): Promise<void> {
@@ -322,6 +325,7 @@ export class MacrocycleGenerationService {
     await repos.workoutDateOverride.deleteAllOverrides(program);
     await repos.workoutSkipOverride.deleteAllSkips(program);
     await repos.workoutLiftOverride.deleteAllOverrides(program);
+    await repos.focus.deleteAllDayStates(program);
     await repos.macrocycleDashboard.deleteMacrocycleDashboard(program);
   }
 

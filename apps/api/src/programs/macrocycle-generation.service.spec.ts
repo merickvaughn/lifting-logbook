@@ -16,6 +16,7 @@ import {
   ITrainingMaxRepository,
   IWorkoutDateOverrideRepository,
 } from '../ports';
+import { IFocusRepository } from '../ports/IFocusRepository';
 import { IWorkoutLiftOverrideRepository } from '../ports/IWorkoutLiftOverrideRepository';
 import { IWorkoutSkipOverrideRepository } from '../ports/IWorkoutSkipOverrideRepository';
 import { IMacrocycleScheduledWorkoutRepository } from '../ports/IMacrocycleScheduledWorkoutRepository';
@@ -489,10 +490,12 @@ describe('MacrocycleGenerationService', () => {
     let dateOverrideRepo: jest.Mocked<IWorkoutDateOverrideRepository>;
     let skipOverrideRepo: jest.Mocked<IWorkoutSkipOverrideRepository>;
     let liftOverrideRepo: jest.Mocked<IWorkoutLiftOverrideRepository>;
+    let focusRepo: jest.Mocked<IFocusRepository>;
     let deleteRepos: typeof repos & {
       workoutDateOverride: jest.Mocked<IWorkoutDateOverrideRepository>;
       workoutSkipOverride: jest.Mocked<IWorkoutSkipOverrideRepository>;
       workoutLiftOverride: jest.Mocked<IWorkoutLiftOverrideRepository>;
+      focus: jest.Mocked<IFocusRepository>;
     };
 
     beforeEach(() => {
@@ -514,11 +517,26 @@ describe('MacrocycleGenerationService', () => {
         deleteOverride: jest.fn(),
         deleteAllOverrides: jest.fn().mockResolvedValue(undefined),
       };
+      focusRepo = {
+        listBlocks: jest.fn(),
+        getBlock: jest.fn(),
+        createBlock: jest.fn(),
+        createBlocksIfAbsent: jest.fn(),
+        updateBlock: jest.fn(),
+        deleteBlock: jest.fn(),
+        setPriorities: jest.fn(),
+        getBudget: jest.fn(),
+        setBudget: jest.fn(),
+        getDayState: jest.fn(),
+        saveDayState: jest.fn(),
+        deleteAllDayStates: jest.fn().mockResolvedValue(undefined),
+      };
       deleteRepos = {
         ...repos,
         workoutDateOverride: dateOverrideRepo,
         workoutSkipOverride: skipOverrideRepo,
         workoutLiftOverride: liftOverrideRepo,
+        focus: focusRepo,
       };
     });
 
@@ -534,6 +552,7 @@ describe('MacrocycleGenerationService', () => {
       expect(dateOverrideRepo.deleteAllOverrides).toHaveBeenCalledWith(PROGRAM);
       expect(skipOverrideRepo.deleteAllSkips).toHaveBeenCalledWith(PROGRAM);
       expect(liftOverrideRepo.deleteAllOverrides).toHaveBeenCalledWith(PROGRAM);
+      expect(focusRepo.deleteAllDayStates).toHaveBeenCalledWith(PROGRAM);
       expect(macrocycleDashboardRepo.deleteMacrocycleDashboard).toHaveBeenCalledWith(PROGRAM);
     });
 
@@ -565,6 +584,9 @@ describe('MacrocycleGenerationService', () => {
       liftOverrideRepo.deleteAllOverrides.mockImplementation(async () => {
         order.push('workoutLiftOverride');
       });
+      focusRepo.deleteAllDayStates.mockImplementation(async () => {
+        order.push('focusDayState');
+      });
       macrocycleDashboardRepo.deleteMacrocycleDashboard.mockImplementation(async () => {
         order.push('macrocycleDashboard');
       });
@@ -579,6 +601,7 @@ describe('MacrocycleGenerationService', () => {
         'workoutDateOverride',
         'workoutSkipOverride',
         'workoutLiftOverride',
+        'focusDayState',
         'macrocycleDashboard',
       ]);
     });

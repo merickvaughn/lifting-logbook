@@ -508,9 +508,9 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
   // filtered by an application-level WHERE clause that happens to look correct —
   // exactly the risk class that let #644 ship silently.
   it('deletes a macrocycle scoped to the requesting user only, under real RLS (regression coverage for #647)', async () => {
-    // deleteCurrentMacrocycle issues eight scoped deletes (MacrocycleDashboard, LiftRecord,
-    // TrainingMax, TrainingMaxHistory, MacrocycleScheduledWorkout, and the three workout
-    // override tables, #1084). Seeding all eight
+    // deleteCurrentMacrocycle issues nine scoped deletes (MacrocycleDashboard, LiftRecord,
+    // TrainingMax, TrainingMaxHistory, MacrocycleScheduledWorkout, the three workout
+    // override tables and FocusDayState, #1084). Seeding all nine
     // for both users — not just the dashboard — matters because #644 was a
     // per-repository DI-wiring failure, not a missing-policy failure: a future
     // regression where one specific repository fails to route through the
@@ -574,6 +574,9 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
       await owner.workoutLiftOverride.create({
         data: { userId: uid, program: PROGRAM, macrocycleNum: 1, workoutNum: 1, lift: 'Dips', action: 'add' },
       });
+      await owner.focusDayState.create({
+        data: { userId: uid, program: PROGRAM, macrocycleNum: 1, workoutNum: 1, state: {} },
+      });
     };
     await seedAllTables(userId);
     await seedAllTables(otherUserId);
@@ -595,14 +598,15 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
         owner.workoutDateOverride.findFirst({ where: { userId: uid, program: PROGRAM } }),
         owner.workoutSkipOverride.findFirst({ where: { userId: uid, program: PROGRAM } }),
         owner.workoutLiftOverride.findFirst({ where: { userId: uid, program: PROGRAM } }),
+        owner.focusDayState.findFirst({ where: { userId: uid, program: PROGRAM } }),
       ]);
 
     // The requesting user's rows are gone from every affected table...
     const mine = await findAllFor(userId);
-    expect(mine).toEqual([null, null, null, null, null, null, null, null]);
+    expect(mine).toEqual([null, null, null, null, null, null, null, null, null]);
 
     // ...but the other user's rows in every table survive — proves each of the
-    // eight deletes was RLS-scoped to the requesting user, not a bug that deleted
+    // nine deletes was RLS-scoped to the requesting user, not a bug that deleted
     // every row matching the program regardless of owner.
     const others = await findAllFor(otherUserId);
     for (const row of others) expect(row).not.toBeNull();
@@ -616,6 +620,7 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
       owner.workoutDateOverride.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.workoutSkipOverride.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.workoutLiftOverride.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
+      owner.focusDayState.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
     ]);
   });
 

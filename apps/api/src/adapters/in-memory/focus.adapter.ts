@@ -80,6 +80,12 @@ export class InMemoryFocusRepository implements IFocusRepository {
     return structuredClone(state);
   }
 
+  async deleteAllDayStates(program: string): Promise<void> {
+    for (const k of this.dayStates.keys()) {
+      if ((JSON.parse(k) as [string, number, number])[0] === program) this.dayStates.delete(k);
+    }
+  }
+
   private startTaken(series: string, start: string, exceptId?: string): boolean {
     for (const block of this.blocks.values()) {
       if (block.series === series && block.start === start && block.id !== exceptId) return true;
