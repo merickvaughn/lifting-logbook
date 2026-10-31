@@ -590,6 +590,30 @@ This also runs as a CI step (`ci.yml` → `lint-and-test` → "Verify turbo dev 
 libraries"), so a drifting PR fails either way — running it locally just catches the regression
 before waiting on CI. See [#944](https://github.com/merickvaughn/lifting-logbook/issues/944).
 
+### Turbo lint/build inputs (`turbo.json`)
+
+When a task declares `inputs`, Turborepo hashes only the files those globs match, so a change to a
+file outside them replays the cached result and the task never runs on it. `lint.inputs` and
+`build.inputs` once omitted `apps/web`'s `lib/` and `components/`, so a change there silently
+skipped web's lint in CI and could restore a stale `.next`. The guard derives what each task reads
+from the repo itself: for lint, every tracked file under the paths each workspace's
+`eslint <paths>` script names; for build, every tracked source file in a workspace with a `build`
+script, minus the tests and tool configs listed in its `NOT_BUILD_INPUTS`.
+
+**Run before pushing whenever you change `turbo.json`'s `lint`/`build` inputs, a workspace's
+`lint` script, or add a source directory or root file to a workspace:**
+
+```bash
+node scripts/check-turbo-task-inputs.mjs && node --test scripts/check-turbo-task-inputs.test.mjs
+```
+
+Both also run as CI steps (`ci.yml` → `lint-and-test`). It does not check inputs outside a
+workspace: `lint.inputs` reaches the root `eslint.config.js`, the rule files in
+`tools/eslint-rules/`, and the test files `no-uncovered-error-fallback` scans across `apps/` and
+`packages/` through `$TURBO_ROOT$` globs, and the guard cannot see any of those. When a custom
+rule starts reading files from somewhere new, add them to `lint.inputs` by hand. See
+[#845](https://github.com/merickvaughn/lifting-logbook/issues/845).
+
 ### Rest-timer dial phase colors (`TimerDial.module.css` ↔ `globals.css`)
 
 The countdown ring paints exactly one of **five** states — set, rest, prep, activation, overrun — so
