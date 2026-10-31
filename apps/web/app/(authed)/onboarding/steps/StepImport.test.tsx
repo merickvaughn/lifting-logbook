@@ -22,13 +22,17 @@ describe('StepImport', () => {
 
     await user.upload(screen.getByLabelText(/training-maxes csv/i), csvFile(csv));
 
-    await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
+    // The upload handler parses after an awaited FileReader read, so its state
+    // update renders outside act(). onImported fires in the same tick as setRows
+    // but before React commits, so waiting on the mock alone can resume the test
+    // before the rows exist (#952). Every upload below waits on the rendered rows.
+    expect(await screen.findByText(/loaded 2 training maxes/i)).toBeInTheDocument();
+    expect(onImported).toHaveBeenCalledTimes(1);
     // One row per lift, latest TM, no reps.
     expect(onImported).toHaveBeenCalledWith([
       { lift: 'Squat', weight: '315', reps: '' },
       { lift: 'Bench Press', weight: '225', reps: '' },
     ]);
-    expect(screen.getByText(/loaded 2 training maxes/i)).toBeInTheDocument();
     // Editable list is rendered.
     expect(screen.getByLabelText('Weight for Squat')).toBeInTheDocument();
     expect(screen.getByLabelText('Weight for Bench Press')).toBeInTheDocument();
@@ -47,12 +51,12 @@ describe('StepImport', () => {
 
     await user.upload(screen.getByLabelText(/training-maxes csv/i), csvFile(csv));
 
-    await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
+    expect(await screen.findByLabelText('Weight for Squat')).toHaveValue(316.25);
+    expect(onImported).toHaveBeenCalledTimes(1);
     expect(onImported).toHaveBeenCalledWith([
       { lift: 'Squat', weight: '316.25', reps: '' },
       { lift: 'Bench Press', weight: '225', reps: '' },
     ]);
-    expect(screen.getByLabelText('Weight for Squat')).toHaveValue(316.25);
   });
 
   it('reflects an edited weight in the onImported payload', async () => {
@@ -67,9 +71,9 @@ describe('StepImport', () => {
     ].join('\n');
 
     await user.upload(screen.getByLabelText(/training-maxes csv/i), csvFile(csv));
-    await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
 
-    const weightInput = screen.getByLabelText('Weight for Squat');
+    const weightInput = await screen.findByLabelText('Weight for Squat');
+    expect(onImported).toHaveBeenCalledTimes(1);
     await user.clear(weightInput);
     await user.type(weightInput, '320');
 
@@ -94,9 +98,9 @@ describe('StepImport', () => {
     ].join('\n');
 
     await user.upload(screen.getByLabelText(/training-maxes csv/i), csvFile(csv));
-    await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'Remove Bench Press' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove Bench Press' }));
+    expect(onImported).toHaveBeenCalledTimes(2);
 
     await waitFor(() => {
       expect(onImported).toHaveBeenLastCalledWith([
@@ -116,10 +120,10 @@ describe('StepImport', () => {
     ].join('\n');
 
     await user.upload(screen.getByLabelText(/training-maxes csv/i), csvFile(csv));
-    await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
 
     // Remove the only row.
-    await user.click(screen.getByRole('button', { name: 'Remove Squat' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove Squat' }));
+    expect(onImported).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(onImported).toHaveBeenLastCalledWith([]));
 
     // The empty-state affordance is visible; the row list and old summary are gone.
