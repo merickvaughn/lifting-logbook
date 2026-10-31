@@ -66,6 +66,18 @@ test('an active focus block shows its progress and settings', async ({ page }) =
   );
 });
 
+test('"Edit in Programs" opens that focus block on the setup page', async ({ page }) => {
+  await openCalendar(page);
+  await page.getByRole('button', { name: 'Biceps focus block, January 2025, active' }).click();
+  await page.getByRole('region', { name: 'Selected focus block' }).getByRole('link', { name: 'Edit in Programs' }).click();
+  await expect(page).toHaveURL(/\/programs\/focus\?block=/);
+  // Not warmed in beforeAll, so give the setup page's first compile the same headroom.
+  const biceps = page.getByRole('button', { name: /^Biceps (Monthly|Quarterly)/ });
+  await expect(biceps).toHaveAttribute('aria-expanded', 'true', { timeout: 90_000 });
+  await expect(biceps).toBeInViewport();
+  await expect(page.getByRole('button', { name: /^Shoulders (Monthly|Quarterly)/ })).toHaveAttribute('aria-expanded', 'false');
+});
+
 test('renewing a focus block that is ending queues the next one', async ({ page }) => {
   await openCalendar(page);
   await page.getByRole('button', { name: 'Biceps focus block, January 2025, active' }).click();
