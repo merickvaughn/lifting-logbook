@@ -123,8 +123,10 @@ describe('StepImport', () => {
 
     // Remove the only row.
     await user.click(await screen.findByRole('button', { name: 'Remove Squat' }));
+    // Unlike the upload handler, the click handler runs inside user-event's act(),
+    // so the render has committed by the time user.click resolves.
     expect(onImported).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(onImported).toHaveBeenLastCalledWith([]));
+    expect(onImported).toHaveBeenLastCalledWith([]);
 
     // The empty-state affordance is visible; the row list and old summary are gone.
     expect(screen.getByText(/all rows removed/i)).toBeInTheDocument();
