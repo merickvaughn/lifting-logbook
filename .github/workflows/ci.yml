@@ -230,13 +230,15 @@ jobs:
       # test), so it saves under its own key and restores its previous run's web build, falling
       # back to lint-and-test's cache for the workspace libraries. An unchanged web build is then
       # a cache hit. Safe only because build.inputs cover every file web's build reads (#845).
+      # The key must not start with "<os>-turbo-": that is lint-and-test's restore key, and a
+      # prefix match returns the newest cache, so it would restore this larger archive (#1097).
       - name: Cache Turborepo
         uses: actions/cache@v4
         with:
           path: .turbo
-          key: ${{ runner.os }}-turbo-e2e-${{ github.sha }}
+          key: ${{ runner.os }}-e2e-turbo-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-turbo-e2e-
+            ${{ runner.os }}-e2e-turbo-
             ${{ runner.os }}-turbo-
 
       - name: Install dependencies
