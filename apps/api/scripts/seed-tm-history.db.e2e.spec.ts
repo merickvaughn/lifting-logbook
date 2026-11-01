@@ -29,14 +29,14 @@ const OWNER_DATABASE_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;
 // and not running in CI) — matches programs.db.e2e.spec.ts's pattern.
 const describeOrSkip = OWNER_DATABASE_URL ? describe : describe.skip;
 
-// Applied to every hook that actually touches Postgres (beforeEach/afterAll)
-// — matching programs.db.e2e.spec.ts's own placement (its comment there
-// explains #567: these hooks intermittently trip Jest's 5s default under a
-// full-suite Windows `turbo run test`, since apps/api/jest.config.js does
-// not extend the win32-capped base config). Deliberately NOT on beforeAll
-// here, which only constructs a PrismaClient (Prisma connects lazily) and
-// does no DB work of its own.
+// Applied to every hook and test in this file, since nearly all of them touch
+// Postgres. programs.db.e2e.spec.ts explains #567: DB work intermittently trips
+// Jest's 5s default under a full-suite Windows `turbo run test`, because
+// apps/api/jest.config.js does not extend the win32-capped base config. Here
+// the test bodies tripped it too, not just the hooks (#1087), so the timeout
+// is set file-wide rather than per hook.
 const DB_E2E_HOOK_TIMEOUT_MS = 30_000;
+jest.setTimeout(DB_E2E_HOOK_TIMEOUT_MS);
 
 const USER_A = 'seed-tm-history-e2e-user-a';
 const USER_B = 'seed-tm-history-e2e-user-b';
@@ -115,7 +115,7 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
   beforeEach(async () => {
     await cleanTestUsers(prisma);
     backupDir = tmpBackupDir();
-  }, DB_E2E_HOOK_TIMEOUT_MS);
+  });
 
   afterEach(() => {
     for (const dir of tmpDirs.splice(0)) {
@@ -126,7 +126,7 @@ describeOrSkip('seed-tm-history (e2e, real Postgres, owner/migrator connection)'
   afterAll(async () => {
     await cleanTestUsers(prisma);
     await prisma.$disconnect();
-  }, DB_E2E_HOOK_TIMEOUT_MS);
+  });
 
   describe('verifyProgramOwnership', () => {
     it('resolves without throwing when the program belongs to the given user', async () => {
