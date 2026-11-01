@@ -475,7 +475,8 @@ describe('weekTypeForDate', () => {
   const start = new Date(Date.UTC(2026, 0, 5));
   const day = (n: number) => new Date(Date.UTC(2026, 0, 5 + n));
   const unscheduled = { scheduled: [], overrides: new Map<number, Date>() };
-  // One day a week, so workout N is program week N.
+  // `tagged` trains one day a week, so workout N is program week N; this schedule
+  // dates two of them a week.
   const twiceAWeek = [1, 2, 3, 4, 5, 6].map((workoutNum) => ({
     workoutNum,
     scheduledDate: day((workoutNum - 1) * 3),
