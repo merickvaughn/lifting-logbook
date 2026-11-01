@@ -1,4 +1,4 @@
-import { WeekNumber } from '@lifting-logbook/types';
+import { WeekNumber, WeekType } from '@lifting-logbook/types';
 import { addDaysUTC } from '../utils/jsUtil';
 
 /**
@@ -110,6 +110,38 @@ export function specRowsForWorkoutDay<T extends { week: WeekNumber; offset: numb
   return spec
     .filter((row) => row.week === mesocycleWeek && row.offset === offset)
     .sort((a, b) => a.order - b.order);
+}
+
+/**
+ * The week type of the program week a macrocycle is in on `today`, read from the block
+ * week that program week tiles from ({@link mesocycleWeekForProgramWeek}).
+ *
+ * The program week comes from the program's own numbering, not the calendar. With a
+ * schedule, it is the week of the latest scheduled workout on or before `today` (the
+ * first one's before the macrocycle starts): a schedule sets its own pace, so a
+ * Mon/Wed/Fri 5-3-1 reaches program week 12 in calendar week 8 (ADR-037). Without one, a
+ * program week is 7 calendar days ({@link noScheduleWorkoutDateUTC}), held at the
+ * program's last week once it has ended. Feeds the dashboard's `currentWeekType` and
+ * the training-max history `source` (issue #1028).
+ */
+export function weekTypeForDate(
+  program: string,
+  macrocycleStartDate: Date,
+  programSpec: ReadonlyArray<{ week: WeekNumber; weekType?: WeekType }>,
+  scheduledWorkouts: ReadonlyArray<{ weekNum: number; scheduledDate: Date }> = [],
+  today: Date = new Date(),
+): WeekType {
+  const byDate = [...scheduledWorkouts].sort(
+    (a, b) => a.scheduledDate.getTime() - b.scheduledDate.getTime(),
+  );
+  const scheduled = byDate.filter((s) => s.scheduledDate.getTime() <= today.getTime()).pop() ?? byDate[0];
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  const elapsed = Math.max(0, today.getTime() - macrocycleStartDate.getTime());
+  const week = scheduled
+    ? scheduled.weekNum
+    : Math.min(Math.floor(elapsed / msPerWeek) + 1, Math.max(1, programLengthWeeks(program, programSpec)));
+  const mesocycleWeek = mesocycleWeekForProgramWeek(week, baseSpecMesocycleWeeks(programSpec));
+  return programSpec.find((ps) => ps.week === mesocycleWeek)?.weekType ?? 'training';
 }
 
 /**

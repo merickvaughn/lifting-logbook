@@ -152,16 +152,17 @@ Existing cycles keep their stored dates:
 
 Re-dating a cycle when the schedule changes is [#1032](https://github.com/merickvaughn/lifting-logbook/issues/1032).
 
-Three limits are not changed by this ADR:
+Two limits are not changed by this ADR, and a third was fixed later:
 - **A mid-cycle spec edit still renumbers the workouts**, as it always has.
 - **`distributeWorkouts` aligns weeks in local time**, so on a host west of UTC a schedule can
   start a week early. That is [#1031](https://github.com/merickvaughn/lifting-logbook/issues/1031);
   production runs in UTC.
-- **`weekTypeForDate` still finds the current week by counting calendar weeks** since the cycle
-  start. It feeds the dashboard's `currentWeekType` and the training-max history `source`, and it
-  also clamps instead of tiling. With a schedule's own pace, calendar weeks and program weeks
-  differ. It is latent, because no preset tags a week type, and it is tracked with the clamping in
-  [#1028](https://github.com/merickvaughn/lifting-logbook/issues/1028).
+- **`weekTypeForDate` found the current week by counting calendar weeks** since the cycle
+  start, and clamped instead of tiling. It feeds the dashboard's `currentWeekType` and the
+  training-max history `source`. Since
+  [#1028](https://github.com/merickvaughn/lifting-logbook/issues/1028) it takes the week of the
+  latest scheduled workout on or before today, counts calendar weeks only without a schedule,
+  and maps the program week through its block week.
 
 ## Verification
 

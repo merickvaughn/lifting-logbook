@@ -82,6 +82,7 @@ describe('MacrocycleGenerationService', () => {
   let liftRecordRepo: jest.Mocked<ILiftRecordRepository>;
   let userSettingsRepo: jest.Mocked<IUserSettingsRepository>;
   let macrocycleScheduledWorkoutRepo: jest.Mocked<IMacrocycleScheduledWorkoutRepository>;
+  let workoutLiftOverrideRepo: jest.Mocked<IWorkoutLiftOverrideRepository>;
   let repos: {
     macrocycleDashboard: jest.Mocked<IMacrocycleDashboardRepository>;
     macrocycleScheduledWorkout: jest.Mocked<IMacrocycleScheduledWorkoutRepository>;
@@ -90,6 +91,7 @@ describe('MacrocycleGenerationService', () => {
     trainingMaxHistory: jest.Mocked<ITrainingMaxHistoryRepository>;
     liftRecord: jest.Mocked<ILiftRecordRepository>;
     userSettings: jest.Mocked<IUserSettingsRepository>;
+    workoutLiftOverride: jest.Mocked<IWorkoutLiftOverrideRepository>;
   };
 
   beforeEach(() => {
@@ -134,6 +136,13 @@ describe('MacrocycleGenerationService', () => {
       getScheduledWorkouts: jest.fn().mockResolvedValue([]),
       saveScheduledWorkouts: jest.fn().mockResolvedValue(undefined),
     };
+    workoutLiftOverrideRepo = {
+      getOverrides: jest.fn().mockResolvedValue([]),
+      getOverridesForMacrocycle: jest.fn().mockResolvedValue(new Map()),
+      upsertOverride: jest.fn(),
+      deleteOverride: jest.fn(),
+      deleteAllOverrides: jest.fn(),
+    };
     repos = {
       macrocycleDashboard: macrocycleDashboardRepo,
       macrocycleScheduledWorkout: macrocycleScheduledWorkoutRepo,
@@ -142,6 +151,7 @@ describe('MacrocycleGenerationService', () => {
       trainingMaxHistory: trainingMaxHistoryRepo,
       liftRecord: liftRecordRepo,
       userSettings: userSettingsRepo,
+      workoutLiftOverride: workoutLiftOverrideRepo,
     };
     service = new MacrocycleGenerationService();
   });
@@ -640,6 +650,29 @@ describe('MacrocycleGenerationService', () => {
       );
       expect(result.flagged).toEqual([]);
       expect(trainingMaxRepo.saveTrainingMaxes).toHaveBeenCalledWith(PROGRAM, result.maxes);
+    });
+
+    it("progresses a Manage Lifts replacement's own max by its slot's rules (#1028)", async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue([
+        ...stubTrainingMaxes(),
+        { lift: 'Box Squat', weight: 230, dateUpdated: new Date('2026-04-18T00:00:00.000Z') },
+      ]);
+      liftRecordRepo.getLiftRecords.mockResolvedValue(
+        stubLiftRecords().map((r) => ({ ...r, lift: 'Box Squat', weight: 240 })),
+      );
+      workoutLiftOverrideRepo.getOverridesForMacrocycle.mockResolvedValue(
+        new Map([[1, [{ lift: 'Squat', action: 'replace' as const, replacedBy: 'Box Squat' }]]]),
+      );
+
+      const result = await service.recalculateMaxes(repos, PROGRAM);
+
+      expect(workoutLiftOverrideRepo.getOverridesForMacrocycle).toHaveBeenCalledWith(PROGRAM, 1);
+      expect(result.maxes).toEqual([
+        expect.objectContaining({ lift: 'Squat', weight: 250 }),
+        expect.objectContaining({ lift: 'Box Squat', weight: 245 }),
+      ]);
     });
 
     it('does not call saveMacrocycleDashboard', async () => {

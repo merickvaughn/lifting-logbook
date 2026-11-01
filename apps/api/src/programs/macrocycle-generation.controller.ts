@@ -30,8 +30,9 @@ export class MacrocycleGenerationController {
     @CurrentUser() user: AuthUser,
   ): Promise<MacrocycleDashboardResponse> {
     const repos = await this.factory.forUser(user);
-    const { dashboard, programSpec } = await this.macrocycleGenerationService.initializeFirstMacrocycle(repos, program, dto);
-    const currentWeekType = weekTypeForDate(dashboard.macrocycleDate, programSpec);
+    const { dashboard, programSpec, scheduledWorkouts } =
+      await this.macrocycleGenerationService.initializeFirstMacrocycle(repos, program, dto);
+    const currentWeekType = weekTypeForDate(program, dashboard.macrocycleDate, programSpec, scheduledWorkouts);
     return toMacrocycleDashboardResponse(dashboard, currentWeekType);
   }
 
@@ -42,8 +43,9 @@ export class MacrocycleGenerationController {
     @CurrentUser() user: AuthUser,
   ): Promise<MacrocycleDashboardResponse> {
     const repos = await this.factory.forUser(user);
-    const { dashboard: newMacrocycle, programSpec } = await this.macrocycleGenerationService.startNewMacrocycle(repos, program, dto);
-    const currentWeekType = weekTypeForDate(newMacrocycle.macrocycleDate, programSpec);
+    const { dashboard: newMacrocycle, programSpec, scheduledWorkouts } =
+      await this.macrocycleGenerationService.startNewMacrocycle(repos, program, dto);
+    const currentWeekType = weekTypeForDate(program, newMacrocycle.macrocycleDate, programSpec, scheduledWorkouts);
     return toMacrocycleDashboardResponse(newMacrocycle, currentWeekType);
   }
 

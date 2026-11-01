@@ -29,8 +29,6 @@ export class MacrocycleDashboardController {
       macrocycleDashboard.getMacrocycleDashboard(program),
       liftingProgramSpec.getProgramSpec(program),
     ]);
-    const currentWeekType = weekTypeForDate(dashboard.macrocycleDate, programSpec);
-
     const [scheduledWorkouts, completedWorkoutNums, overrideMap, skippedNums] = await Promise.all([
       macrocycleScheduledWorkout.getScheduledWorkouts(program, dashboard.macrocycleNum),
       // Only the workout numbers are needed here; the full records were fetched
@@ -39,6 +37,7 @@ export class MacrocycleDashboardController {
       workoutDateOverride.getOverridesForMacrocycle(program, dashboard.macrocycleNum),
       workoutSkipOverride.getSkipsForMacrocycle(program, dashboard.macrocycleNum),
     ]);
+    const currentWeekType = weekTypeForDate(program, dashboard.macrocycleDate, programSpec, scheduledWorkouts);
 
     const response = buildMacrocycleDashboardResponse(dashboard, currentWeekType, {
       spec: programSpec,

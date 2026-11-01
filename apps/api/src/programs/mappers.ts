@@ -101,7 +101,7 @@ export const toLiftingProgramSpecResponse = (
  * Used when no scheduled workouts exist (no-schedule mode).
  *
  * `currentWeekType` is passed explicitly because it is derived at request time
- * via `weekTypeForDate(dashboard.macrocycleDate, programSpec)`, not stored on the
+ * via `weekTypeForDate(program, dashboard.macrocycleDate, programSpec, scheduled)`, not stored on the
  * dashboard model.
  */
 export const toMacrocycleDashboardResponse = (

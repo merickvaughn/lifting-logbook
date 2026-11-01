@@ -8,6 +8,7 @@ import {
   noScheduleWorkoutDateUTC,
   programWorkoutKeys,
   specRowsForWorkoutDay,
+  weekTypeForDate,
 } from '.';
 import { LiftingProgramSpec } from '../models/LiftingProgramSpec';
 
@@ -456,5 +457,57 @@ describe('noScheduleWorkoutDateUTC', () => {
     expect(keys[3]).toEqual({ week: 2, offset: 0 }); // workoutNum 4 → week 2, offset 0
     // …and that (week, offset) yields the card/detail date macrocycleStart + 7.
     expect(iso(noScheduleWorkoutDateUTC(macrocycleStart, 2, 0))).toBe('2026-04-27');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// weekTypeForDate
+// ---------------------------------------------------------------------------
+
+describe('weekTypeForDate', () => {
+  // Moved from jsUtil.test.ts (#354's coverage) when the function moved here (#1028).
+  // A 3-week block tagged training / test / deload, one day a week.
+  const tagged = [
+    makeRow({ week: 1, weekType: 'training' }),
+    makeRow({ week: 2, weekType: 'test' }),
+    makeRow({ week: 3, weekType: 'deload' }),
+  ];
+  const start = new Date(Date.UTC(2026, 0, 5));
+  const day = (n: number) => new Date(Date.UTC(2026, 0, 5 + n));
+
+  it("returns the matching week's weekType when today is within the block", () => {
+    expect(weekTypeForDate('5-3-1', start, tagged, [], day(7))).toBe('test');
+  });
+
+  it('maps a program week past the block through its block week, not the last week', () => {
+    // Program week 5 tiles from block week 2; clamping read week 3's 'deload'.
+    expect(weekTypeForDate('5-3-1', start, tagged, [], day(28))).toBe('test');
+    // Program week 4 starts block week 1 again.
+    expect(weekTypeForDate('5-3-1', start, tagged, [], day(21))).toBe('training');
+  });
+
+  it("holds the program's last week once the program has ended", () => {
+    // 5-3-1 runs 12 weeks; week 12 tiles from block week 3.
+    expect(weekTypeForDate('5-3-1', start, tagged, [], day(7 * 30))).toBe('deload');
+  });
+
+  it("takes the week from the schedule's latest workout on or before today", () => {
+    // A schedule training twice a week reaches program week 3 in calendar week 2.
+    const scheduled = [1, 1, 2, 2, 3, 3].map((weekNum, i) => ({
+      weekNum,
+      scheduledDate: day(i * 3),
+    }));
+    expect(weekTypeForDate('5-3-1', start, tagged, scheduled, day(12))).toBe('deload');
+    expect(weekTypeForDate('5-3-1', start, tagged, scheduled, day(7))).toBe('test');
+    // Before the first scheduled workout, the first one's week.
+    expect(weekTypeForDate('5-3-1', start, tagged, scheduled, day(-2))).toBe('training');
+  });
+
+  it("returns 'training' fallback when the matched week has no weekType set", () => {
+    expect(weekTypeForDate('5-3-1', start, [makeRow()], [], start)).toBe('training');
+  });
+
+  it("returns 'training' fallback when no spec entry matches the computed week", () => {
+    expect(weekTypeForDate('5-3-1', start, [], [], start)).toBe('training');
   });
 });

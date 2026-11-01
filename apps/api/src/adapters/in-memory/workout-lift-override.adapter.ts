@@ -22,6 +22,20 @@ export class InMemoryWorkoutLiftOverrideRepository
     return this.store.get(this.key(program, macrocycleNum, workoutNum)) ?? [];
   }
 
+  async getOverridesForMacrocycle(
+    program: string,
+    macrocycleNum: number,
+  ): Promise<Map<number, LiftOverride[]>> {
+    const byWorkout = new Map<number, LiftOverride[]>();
+    for (const [k, overrides] of this.store) {
+      const [p, m, w] = k.split('\0');
+      if (p === program && Number(m) === macrocycleNum && overrides.length > 0) {
+        byWorkout.set(Number(w), [...overrides]);
+      }
+    }
+    return byWorkout;
+  }
+
   async upsertOverride(
     program: string,
     macrocycleNum: number,

@@ -1,4 +1,6 @@
-import { LiftingProgramSpec, LiftRecord, TrainingMax } from "@src/core/models";
+import { LiftingProgramSpec, LiftOverride, LiftRecord, TrainingMax } from "@src/core/models";
+import { programWorkoutKeys, specRowsForWorkoutDay } from "../../presets/programLengths";
+import { applyLiftOverrides } from "../workout/applyLiftOverrides";
 
 const ABNORMAL_KEYWORDS = ['injury', 'unusual stimulus', 'skip'];
 
@@ -19,6 +21,13 @@ export interface UpdateMaxesResult {
   flagged: MaxReductionFlag[];
 }
 
+export interface UpdateMaxesOptions {
+  /** The records' program, which numbers its workouts (`programWorkoutKeys`). Without it, only the stored block's days are numbered. */
+  program?: string;
+  /** Each workout's Manage Lifts overrides by `workoutNum`, in the order the repositories return them. */
+  liftOverrides?: ReadonlyMap<number, readonly LiftOverride[]>;
+}
+
 /**
  * Updates training maxes based on lift records and program spec.
  *
@@ -31,11 +40,19 @@ export interface UpdateMaxesResult {
  * In both training and test weeks, if the computed new TM would be lower than the current TM,
  * the update is NOT applied. Instead the lift is added to `flagged` so the caller can surface
  * the proposed reduction for explicit user review.
+ *
+ * A record's spec row is its workout day's, resolved the way the workout pages resolve
+ * it (issue #1028): the block week its program week tiles from, at the day's offset
+ * (`specRowsForWorkoutDay`), and for a Manage Lifts replacement, the row of the slot it
+ * took (`applyLiftOverrides`), so it progresses its own training max by the slot's rules.
+ * A record the day doesn't prescribe (an added lift, or a workout past the program's
+ * last day) falls back to the lift's first spec row, as before.
  */
 export function updateMaxes(
   programSpec: LiftingProgramSpec[],
   trainingMaxes: TrainingMax[],
   liftRecords: LiftRecord[],
+  options: UpdateMaxesOptions = {},
 ): UpdateMaxesResult {
   const newMaxes: TrainingMax[] = trainingMaxes.map((tm) => ({ ...tm }));
   const flagged: MaxReductionFlag[] = [];
@@ -48,6 +65,37 @@ export function updateMaxes(
   for (const tm of newMaxes) if (!maxByLift.has(tm.lift)) maxByLift.set(tm.lift, tm);
   const specByLift = new Map<string, LiftingProgramSpec>();
   for (const ps of programSpec) if (!specByLift.has(ps.lift)) specByLift.set(ps.lift, ps);
+
+  // Each workout's stored lift name → its spec row, built once per workout.
+  const days = programWorkoutKeys(options.program ?? "", programSpec);
+  const specByWorkout = new Map<number, Map<string, LiftingProgramSpec>>();
+  const specFor = (record: LiftRecord): LiftingProgramSpec | undefined => {
+    let byLift = specByWorkout.get(record.workoutNum);
+    if (!byLift) {
+      byLift = new Map();
+      const day = days[record.workoutNum - 1];
+      const dayRows = day ? specRowsForWorkoutDay(programSpec, day.week, day.offset) : [];
+      const rowBySlot = new Map<string, LiftingProgramSpec>();
+      for (const row of dayRows) if (!rowBySlot.has(row.lift)) rowBySlot.set(row.lift, row);
+      const { planned, renamed } = applyLiftOverrides(
+        [...rowBySlot.keys()],
+        options.liftOverrides?.get(record.workoutNum) ?? [],
+      );
+      for (const { lift, replaces } of planned) {
+        const row = rowBySlot.get(replaces ?? lift);
+        if (row) byLift.set(lift, row);
+      }
+      // Sets logged under a slot's earlier name belong to the slot too.
+      for (const [stored, current] of renamed) {
+        const row = byLift.get(current);
+        if (row && !byLift.has(stored)) byLift.set(stored, row);
+      }
+      // A removed lift's sets keep its own row on this day.
+      for (const [lift, row] of rowBySlot) if (!byLift.has(lift)) byLift.set(lift, row);
+      specByWorkout.set(record.workoutNum, byLift);
+    }
+    return byLift.get(record.lift) ?? specByLift.get(record.lift);
+  };
 
   // A test week's final set needs every set of that lift in the same workout,
   // best attempt first. Grouped once, lazily, on the first such set: each group
@@ -80,7 +128,7 @@ export function updateMaxes(
     const currentMax = maxByLift.get(liftName);
     if (!currentMax) throw new Error(`Training max for lift ${liftName} not found.`);
 
-    const spec = specByLift.get(liftName);
+    const spec = specFor(record);
     if (!spec) throw new Error(`Program spec for lift ${liftName} not found.`);
 
     const weekType = spec.weekType ?? 'training';

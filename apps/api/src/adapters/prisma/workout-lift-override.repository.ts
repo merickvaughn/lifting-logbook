@@ -6,6 +6,15 @@ import {
 } from '../../ports/IWorkoutLiftOverrideRepository';
 import { runBatch } from './prisma-tx.util';
 
+// mirrors WorkoutLiftOverride schema
+function toLiftOverride(r: { lift: string; action: string; replacedBy: string | null }): LiftOverride {
+  return {
+    lift: r.lift,
+    action: r.action as LiftOverride['action'],
+    ...(r.replacedBy !== null && { replacedBy: r.replacedBy }),
+  };
+}
+
 export class PrismaWorkoutLiftOverrideRepository
   implements IWorkoutLiftOverrideRepository
 {
@@ -27,12 +36,25 @@ export class PrismaWorkoutLiftOverrideRepository
       // by `lift`), and a chain of swaps would resolve out of sequence.
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
-    // mirrors WorkoutLiftOverride schema
-    return rows.map((r: { lift: string; action: string; replacedBy: string | null }) => ({
-      lift: r.lift,
-      action: r.action as LiftOverride['action'],
-      ...(r.replacedBy !== null && { replacedBy: r.replacedBy }),
-    }));
+    return rows.map(toLiftOverride);
+  }
+
+  async getOverridesForMacrocycle(
+    program: string,
+    macrocycleNum: number,
+  ): Promise<Map<number, LiftOverride[]>> {
+    const rows = await this.prisma.workoutLiftOverride.findMany({
+      where: { userId: this.userId, program, macrocycleNum },
+      // Same order as getOverrides, within each workout.
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    const byWorkout = new Map<number, LiftOverride[]>();
+    for (const r of rows) {
+      const list = byWorkout.get(r.workoutNum);
+      if (list) list.push(toLiftOverride(r));
+      else byWorkout.set(r.workoutNum, [toLiftOverride(r)]);
+    }
+    return byWorkout;
   }
 
   async upsertOverride(

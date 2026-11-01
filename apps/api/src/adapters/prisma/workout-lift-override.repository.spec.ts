@@ -44,6 +44,31 @@ describe('PrismaWorkoutLiftOverrideRepository.getOverrides', () => {
   });
 });
 
+describe('PrismaWorkoutLiftOverrideRepository.getOverridesForMacrocycle', () => {
+  it("groups the macrocycle's overrides by workout, each in the order getOverrides reads (issue #1028)", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { workoutNum: 3, lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' },
+      { workoutNum: 1, lift: 'Chin-up', action: 'add', replacedBy: null },
+      { workoutNum: 3, lift: 'Front Squat', action: 'replace', replacedBy: 'Box Squat' },
+    ]);
+    const prisma = { workoutLiftOverride: { findMany } } as unknown as PrismaClient;
+
+    const byWorkout = await new PrismaWorkoutLiftOverrideRepository(prisma, USER).getOverridesForMacrocycle('5-3-1', 2);
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { userId: USER, program: '5-3-1', macrocycleNum: 2 },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    expect([...byWorkout]).toEqual([
+      [3, [
+        { lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' },
+        { lift: 'Front Squat', action: 'replace', replacedBy: 'Box Squat' },
+      ]],
+      [1, [{ lift: 'Chin-up', action: 'add' }]],
+    ]);
+  });
+});
+
 describe('PrismaWorkoutLiftOverrideRepository.upsertOverride', () => {
   function makeWritablePrisma() {
     const deleteMany = jest.fn().mockReturnValue('delete-op');

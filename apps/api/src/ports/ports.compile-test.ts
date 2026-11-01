@@ -168,6 +168,7 @@ const _strengthGoalRepo: IStrengthGoalRepository = {
 
 const _workoutLiftOverrideRepo: IWorkoutLiftOverrideRepository = {
   getOverrides: () => Promise.resolve([]),
+  getOverridesForMacrocycle: () => Promise.resolve(new Map()),
   upsertOverride: () => Promise.resolve(),
   deleteOverride: () => Promise.resolve(),
   deleteAllOverrides: () => Promise.resolve(),

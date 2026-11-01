@@ -69,4 +69,18 @@ describe('InMemoryWorkoutLiftOverrideRepository', () => {
     expect(await repo.getOverrides('5-3-1', 2, 7)).toEqual([]);
     expect(await repo.getOverrides('leangains', 1, 1)).toEqual([{ lift: 'Dips', action: 'add' }]);
   });
+
+  it("reads one macrocycle's overrides by workout, leaving other macrocycles, programs and emptied workouts out (#1028)", async () => {
+    const repo = new InMemoryWorkoutLiftOverrideRepository();
+    await repo.upsertOverride('5-3-1', 2, 7, { lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' });
+    await repo.upsertOverride('5-3-1', 2, 7, { lift: 'Front Squat', action: 'replace', replacedBy: 'Box Squat' });
+    await repo.upsertOverride('5-3-1', 2, 8, { lift: 'Dips', action: 'add' });
+    await repo.deleteOverride('5-3-1', 2, 8, 'Dips');
+    await repo.upsertOverride('5-3-1', 3, 7, { lift: 'Dips', action: 'add' });
+    await repo.upsertOverride('leangains', 2, 7, { lift: 'Dips', action: 'add' });
+
+    expect([...(await repo.getOverridesForMacrocycle('5-3-1', 2))]).toEqual([
+      [7, await repo.getOverrides('5-3-1', 2, 7)],
+    ]);
+  });
 });

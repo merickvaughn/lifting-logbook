@@ -149,6 +149,114 @@ describe("updateMaxes", () => {
   });
 });
 
+describe("updateMaxes — a record's prescription is its workout day's (issue #1028)", () => {
+  const row = (
+    week: number,
+    offset: number,
+    lift: string,
+    reps: number,
+    increment: number,
+  ): LiftingProgramSpec => ({
+    week,
+    offset,
+    lift,
+    increment,
+    order: 1,
+    sets: 3,
+    reps,
+    amrap: true,
+    warmUpPct: "",
+    wtDecrementPct: 0,
+    activation: "",
+  });
+  const set1 = (workoutNum: number, lift: string, weight: number, reps: number) => ({
+    program: "5-3-1",
+    macrocycleNum: 1,
+    workoutNum,
+    date: new Date("2026-05-01"),
+    lift,
+    setNum: 1,
+    weight,
+    reps,
+    notes: "",
+  });
+  const max = (lift: string, weight: number): TrainingMax => ({
+    lift,
+    weight,
+    dateUpdated: new Date("2026-04-01"),
+  });
+
+  it("progresses a Manage Lifts replacement's own training max by its slot's rules", () => {
+    const spec = [row(1, 0, "Deadlift", 5, 10), row(1, 2, "Squat", 5, 5)];
+    const liftOverrides = new Map([
+      [1, [{ lift: "Deadlift", action: "replace" as const, replacedBy: "Rack Pull" }]],
+    ]);
+
+    const { maxes } = updateMaxes(
+      spec,
+      [max("Deadlift", 300), max("Rack Pull", 350)],
+      [set1(1, "Rack Pull", 360, 5)],
+      { liftOverrides },
+    );
+
+    expect(maxes).toEqual([
+      max("Deadlift", 300),
+      { lift: "Rack Pull", weight: 370, dateUpdated: new Date("2026-05-01") },
+    ]);
+  });
+
+  it("gives sets logged under a slot's earlier name the slot's prescription", () => {
+    // Squat's sets were logged before the swap; they still progress Squat's own max.
+    const spec = [row(1, 0, "Squat", 5, 5)];
+    const liftOverrides = new Map([
+      [1, [{ lift: "Squat", action: "replace" as const, replacedBy: "Front Squat" }]],
+    ]);
+
+    const { maxes } = updateMaxes(
+      spec,
+      [max("Squat", 250), max("Front Squat", 200)],
+      [set1(1, "Squat", 260, 5)],
+      { liftOverrides },
+    );
+
+    expect(maxes[0]).toEqual({ lift: "Squat", weight: 265, dateUpdated: new Date("2026-05-01") });
+    expect(maxes[1]).toEqual(max("Front Squat", 200));
+  });
+
+  it("reads a tiled program week's prescription from its block week", () => {
+    // A 3-week block across 5-3-1's 12 weeks, one day a week: workout 6 is program
+    // week 6, which tiles from block week 3 (1 rep), not week 1 (5 reps).
+    const spec = [row(1, 0, "Squat", 5, 5), row(2, 0, "Squat", 3, 5), row(3, 0, "Squat", 1, 5)];
+
+    const { maxes } = updateMaxes(spec, [max("Squat", 250)], [set1(6, "Squat", 260, 1)], {
+      program: "5-3-1",
+    });
+
+    expect(maxes).toEqual([{ lift: "Squat", weight: 265, dateUpdated: new Date("2026-05-01") }]);
+  });
+
+  it("reads the prescription of the record's own day when a lift trains on two days", () => {
+    const spec = [row(1, 0, "Squat", 8, 5), row(1, 2, "Squat", 3, 5)];
+
+    const { maxes } = updateMaxes(spec, [max("Squat", 250)], [set1(2, "Squat", 260, 3)]);
+
+    expect(maxes).toEqual([{ lift: "Squat", weight: 265, dateUpdated: new Date("2026-05-01") }]);
+  });
+
+  it("takes the week type from the record's block week", () => {
+    const spec = [
+      row(1, 0, "Squat", 5, 5),
+      { ...row(2, 0, "Squat", 5, 5), weekType: "deload" as const },
+    ];
+
+    const { maxes } = updateMaxes(spec, [max("Squat", 250)], [set1(4, "Squat", 260, 5)], {
+      program: "5-3-1",
+    });
+
+    expect(maxes).toEqual([max("Squat", 250)]);
+  });
+});
+
 describe("updateMaxes — lookup semantics (issue #983)", () => {
   function baseline() {
     const trainingMaxes = parseTrainingMaxes(loadCsvFixture("training_maxes.csv"));
