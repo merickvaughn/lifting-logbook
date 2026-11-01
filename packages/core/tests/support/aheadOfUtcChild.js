@@ -24,7 +24,8 @@
  *   - Running a real `npm run build` first and requiring the compiled
  *     `dist/` output: works and has no version coupling, but adds ~18s to
  *     what is otherwise a ~5s test suite, on every `npm test` invocation.
- * This script instead registers a minimal, single-file transpile-on-require
+ * This script instead registers (through registerTsRequire.js, shared with
+ * distributeWorkoutsTzChild.js) a minimal, single-file transpile-on-require
  * hook (via the `typescript` package, already a devDependency) for just the
  * handful of source files it needs, and a small path-alias resolver
  * mirroring packages/core/tsconfig.json's `@src/core` alias. No new
@@ -34,43 +35,9 @@
  * `testMatch` never picks this file up, so it can't run as (or be mistaken
  * for) a test in its own right; it only ever runs as a spawned child.
  */
-const Module = require("module");
 const path = require("path");
-const fs = require("fs");
-const ts = require("typescript");
-
-const CORE_SRC = path.join(__dirname, "..", "..", "src");
-
-// Resolve the `@src/core` / `@src/core/*` path alias packages/core/tsconfig.json
-// declares -- the same alias parseLiftRecords.ts and parseTrainingMaxes.ts use
-// for their real imports (e.g. `@src/core/constants`).
-const originalResolveFilename = Module._resolveFilename;
-Module._resolveFilename = function patchedResolveFilename(request, parent, isMain, options) {
-  if (request === "@src/core") {
-    return originalResolveFilename.call(this, path.join(CORE_SRC, "index.ts"), parent, isMain, options);
-  }
-  if (request.startsWith("@src/core/")) {
-    const sub = request.slice("@src/core/".length);
-    return originalResolveFilename.call(this, path.join(CORE_SRC, sub), parent, isMain, options);
-  }
-  return originalResolveFilename.call(this, request, parent, isMain, options);
-};
-
-// Minimal transpile-on-require for .ts: single-file syntactic transpile only
-// (no type-checking -- this is a test harness, not a build), mirroring this
-// repo's tsconfig.base.json `module`/`esModuleInterop` settings.
-require.extensions[".ts"] = function transpileAndCompile(mod, filename) {
-  const source = fs.readFileSync(filename, "utf8");
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2020,
-      esModuleInterop: true,
-    },
-    fileName: filename,
-  });
-  mod._compile(outputText, filename);
-};
+// Registers the transpile-on-require hook and `@src/core` alias described above.
+const { CORE_SRC } = require("./registerTsRequire");
 
 const { parseLiftRecords } = require(path.join(CORE_SRC, "utils", "parser", "parseLiftRecords.ts"));
 const { parseTrainingMaxes } = require(path.join(CORE_SRC, "utils", "parser", "parseTrainingMaxes.ts"));

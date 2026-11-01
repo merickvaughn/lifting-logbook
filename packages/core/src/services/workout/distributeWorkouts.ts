@@ -1,18 +1,20 @@
 import { UserWorkoutSchedule } from "@lifting-logbook/types";
-import { addDaysLocal } from "@src/core/utils/jsUtil";
+import { addDaysUTC } from "@src/core/utils/jsUtil";
 
 export interface DistributedWeek {
   week: number;
   workouts: Date[];
 }
 
-// Backs a date up to the Monday of its week. Uses local time to match addDaysLocal.
-// JS Date.getDay() returns 0=Sun … 6=Sat; the project encodes 0=Mon … 6=Sun via DAY_INDEX.
+// Backs a date up to UTC midnight of the Monday of its week. Works in UTC calendar
+// days, like the rest of the app: a macrocycle date is UTC midnight, which local
+// getters read as the previous evening west of UTC, putting a Monday start a week
+// early (issue #1031).
+// JS Date.getUTCDay() returns 0=Sun … 6=Sat; the project encodes 0=Mon … 6=Sun via DAY_INDEX.
 // (jsDay + 6) % 7 converts: Sun(0)→6, Mon(1)→0, Tue(2)→1, …
 function alignToMonday(date: Date): Date {
-  const base = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const offsetFromMonday = (base.getDay() + 6) % 7;
-  return addDaysLocal(base, -offsetFromMonday);
+  const offsetFromMonday = (date.getUTCDay() + 6) % 7;
+  return addDaysUTC(date, -offsetFromMonday);
 }
 
 // `UserWorkoutSchedule` keeps `days` and `weeks` as optional on a single interface
@@ -44,6 +46,9 @@ function getWeekPattern(
  * The first week is aligned to the Monday of `macrocycleStartDate`'s week; days earlier in
  * that week than the start date are still emitted, matching the design-doc contract
  * (callers wanting "future days only" should filter the first week themselves).
+ *
+ * Every date is UTC midnight of its calendar day, and the week alignment reads the
+ * start date's UTC day, so the schedule is the same on every host (issue #1031).
  *
  * Dates come out in chronological order, each week's days in weekday order however
  * the schedule lists them, so the Nth date is the Nth workout.
@@ -90,7 +95,7 @@ export function distributeWorkouts(
 
     for (const dayIndex of weekPattern) {
       if (workoutsPlaced >= macrocycleWorkouts) break;
-      weekWorkouts.push(addDaysLocal(currentWeekStart, dayIndex));
+      weekWorkouts.push(addDaysUTC(currentWeekStart, dayIndex));
       workoutsPlaced++;
     }
 
@@ -98,7 +103,7 @@ export function distributeWorkouts(
       distribution.push({ week: weekCounter + 1, workouts: weekWorkouts });
     }
 
-    currentWeekStart = addDaysLocal(currentWeekStart, 7);
+    currentWeekStart = addDaysUTC(currentWeekStart, 7);
     weekCounter++;
   }
 
