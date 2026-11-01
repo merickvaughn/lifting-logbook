@@ -230,7 +230,7 @@ This is the clearest structural evidence of the absent entity: three tables exis
 describe changes to a thing that is not itself stored.
 
 **A `replace` swaps the movement, not the slot.** On the workout pages (detail, timer
-and logger), and in progression, the replacement keeps the slot's position and its logged sets: sets logged
+and logger), the replacement keeps the slot's position and its logged sets: sets logged
 under any earlier name of the slot, through a chain of swaps, are grouped under its
 current lift. It also keeps the slot's prescription: sets, reps, AMRAP, warm-up and
 decrement percentages, increment and activation. Only the weights change, because they
@@ -247,7 +247,9 @@ workout response names the slot on the replacement's `replaces`, so clients reso
 prescription without the override table (#1014). `updateMaxes` resolves a logged set's
 prescription the same way: its workout day's row in the block week, and for a
 replacement the row of the slot it took, so the set progresses the replacement's own
-training max by the slot's rules (#1028).
+training max by the slot's rules. Sets logged under a slot's earlier name take the
+slot's row too, but progression doesn't regroup them: they progress their own lift's
+max (#1028).
 
 ### Focus blocks sit beside the ladder, not on it
 

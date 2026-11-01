@@ -160,9 +160,9 @@ Two limits are not changed by this ADR, and a third was fixed later:
 - **`weekTypeForDate` found the current week by counting calendar weeks** since the cycle
   start, and clamped instead of tiling. It feeds the dashboard's `currentWeekType` and the
   training-max history `source`. Since
-  [#1028](https://github.com/merickvaughn/lifting-logbook/issues/1028) it takes the week of the
-  latest scheduled workout on or before today, counts calendar weeks only without a schedule,
-  and maps the program week through its block week.
+  [#1028](https://github.com/merickvaughn/lifting-logbook/issues/1028) it takes the program week
+  of the latest workout dated on or before today, dating each workout as the dashboard does
+  (override, else scheduled row, else spec-relative), and maps it through its block week.
 
 ## Verification
 

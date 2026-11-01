@@ -474,40 +474,58 @@ describe('weekTypeForDate', () => {
   ];
   const start = new Date(Date.UTC(2026, 0, 5));
   const day = (n: number) => new Date(Date.UTC(2026, 0, 5 + n));
+  const unscheduled = { scheduled: [], overrides: new Map<number, Date>() };
+  // One day a week, so workout N is program week N.
+  const twiceAWeek = [1, 2, 3, 4, 5, 6].map((workoutNum) => ({
+    workoutNum,
+    scheduledDate: day((workoutNum - 1) * 3),
+  }));
 
   it("returns the matching week's weekType when today is within the block", () => {
-    expect(weekTypeForDate('5-3-1', start, tagged, [], day(7))).toBe('test');
+    expect(weekTypeForDate('5-3-1', start, tagged, unscheduled, day(7))).toBe('test');
   });
 
   it('maps a program week past the block through its block week, not the last week', () => {
     // Program week 5 tiles from block week 2; clamping read week 3's 'deload'.
-    expect(weekTypeForDate('5-3-1', start, tagged, [], day(28))).toBe('test');
+    expect(weekTypeForDate('5-3-1', start, tagged, unscheduled, day(28))).toBe('test');
     // Program week 4 starts block week 1 again.
-    expect(weekTypeForDate('5-3-1', start, tagged, [], day(21))).toBe('training');
+    expect(weekTypeForDate('5-3-1', start, tagged, unscheduled, day(21))).toBe('training');
   });
 
   it("holds the program's last week once the program has ended", () => {
     // 5-3-1 runs 12 weeks; week 12 tiles from block week 3.
-    expect(weekTypeForDate('5-3-1', start, tagged, [], day(7 * 30))).toBe('deload');
+    expect(weekTypeForDate('5-3-1', start, tagged, unscheduled, day(7 * 30))).toBe('deload');
   });
 
-  it("takes the week from the schedule's latest workout on or before today", () => {
-    // A schedule training twice a week reaches program week 3 in calendar week 2.
-    const scheduled = [1, 1, 2, 2, 3, 3].map((weekNum, i) => ({
-      weekNum,
-      scheduledDate: day(i * 3),
-    }));
-    expect(weekTypeForDate('5-3-1', start, tagged, scheduled, day(12))).toBe('deload');
-    expect(weekTypeForDate('5-3-1', start, tagged, scheduled, day(7))).toBe('test');
-    // Before the first scheduled workout, the first one's week.
-    expect(weekTypeForDate('5-3-1', start, tagged, scheduled, day(-2))).toBe('training');
+  it("takes the week of the schedule's latest workout on or before today", () => {
+    // Training twice a week reaches program week 3 in calendar week 2.
+    const dates = { scheduled: twiceAWeek, overrides: new Map<number, Date>() };
+    expect(weekTypeForDate('5-3-1', start, tagged, dates, day(7))).toBe('deload');
+    expect(weekTypeForDate('5-3-1', start, tagged, dates, day(4))).toBe('test');
+    // Before the first workout, the first one's week.
+    expect(weekTypeForDate('5-3-1', start, tagged, dates, day(-2))).toBe('training');
+  });
+
+  it('dates a rescheduled workout by its override', () => {
+    // Workout 3 moved to day 20: on day 7 the latest workout done is workout 2.
+    const dates = { scheduled: twiceAWeek, overrides: new Map([[3, day(20)]]) };
+    expect(weekTypeForDate('5-3-1', start, tagged, dates, day(7))).toBe('test');
+  });
+
+  it("ignores a scheduled row past the program's last day", () => {
+    // A row saved before #1023 can date a workout the program doesn't have.
+    const dates = {
+      scheduled: [...twiceAWeek, { workoutNum: 13, scheduledDate: day(1) }],
+      overrides: new Map<number, Date>(),
+    };
+    expect(weekTypeForDate('5-3-1', start, tagged, dates, day(4))).toBe('test');
   });
 
   it("returns 'training' fallback when the matched week has no weekType set", () => {
-    expect(weekTypeForDate('5-3-1', start, [makeRow()], [], start)).toBe('training');
+    expect(weekTypeForDate('5-3-1', start, [makeRow()], unscheduled, start)).toBe('training');
   });
 
   it("returns 'training' fallback when no spec entry matches the computed week", () => {
-    expect(weekTypeForDate('5-3-1', start, [], [], start)).toBe('training');
+    expect(weekTypeForDate('5-3-1', start, [], unscheduled, start)).toBe('training');
   });
 });

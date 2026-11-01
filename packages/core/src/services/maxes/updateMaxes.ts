@@ -22,10 +22,10 @@ export interface UpdateMaxesResult {
 }
 
 export interface UpdateMaxesOptions {
-  /** The records' program, which numbers its workouts (`programWorkoutKeys`). Without it, only the stored block's days are numbered. */
-  program?: string;
+  /** The records' program, which numbers its workouts (`programWorkoutKeys`). */
+  program: string;
   /** Each workout's Manage Lifts overrides by `workoutNum`, in the order the repositories return them. */
-  liftOverrides?: ReadonlyMap<number, readonly LiftOverride[]>;
+  liftOverrides: ReadonlyMap<number, readonly LiftOverride[]>;
 }
 
 /**
@@ -45,14 +45,16 @@ export interface UpdateMaxesOptions {
  * it (issue #1028): the block week its program week tiles from, at the day's offset
  * (`specRowsForWorkoutDay`), and for a Manage Lifts replacement, the row of the slot it
  * took (`applyLiftOverrides`), so it progresses its own training max by the slot's rules.
- * A record the day doesn't prescribe (an added lift, or a workout past the program's
- * last day) falls back to the lift's first spec row, as before.
+ * Sets logged under a slot's earlier name, before a swap, take the slot's row too, and
+ * still progress their own lift's max. A record the day doesn't prescribe (an added
+ * lift, or a workout past the program's last day) falls back to the lift's first spec
+ * row, as before.
  */
 export function updateMaxes(
   programSpec: LiftingProgramSpec[],
   trainingMaxes: TrainingMax[],
   liftRecords: LiftRecord[],
-  options: UpdateMaxesOptions = {},
+  options: UpdateMaxesOptions,
 ): UpdateMaxesResult {
   const newMaxes: TrainingMax[] = trainingMaxes.map((tm) => ({ ...tm }));
   const flagged: MaxReductionFlag[] = [];
@@ -67,7 +69,7 @@ export function updateMaxes(
   for (const ps of programSpec) if (!specByLift.has(ps.lift)) specByLift.set(ps.lift, ps);
 
   // Each workout's stored lift name → its spec row, built once per workout.
-  const days = programWorkoutKeys(options.program ?? "", programSpec);
+  const days = programWorkoutKeys(options.program, programSpec);
   const specByWorkout = new Map<number, Map<string, LiftingProgramSpec>>();
   const specFor = (record: LiftRecord): LiftingProgramSpec | undefined => {
     let byLift = specByWorkout.get(record.workoutNum);
@@ -79,7 +81,7 @@ export function updateMaxes(
       for (const row of dayRows) if (!rowBySlot.has(row.lift)) rowBySlot.set(row.lift, row);
       const { planned, renamed } = applyLiftOverrides(
         [...rowBySlot.keys()],
-        options.liftOverrides?.get(record.workoutNum) ?? [],
+        options.liftOverrides.get(record.workoutNum) ?? [],
       );
       for (const { lift, replaces } of planned) {
         const row = rowBySlot.get(replaces ?? lift);

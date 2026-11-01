@@ -63,7 +63,7 @@ describe('MacrocycleGenerationController', () => {
 
   describe('startNewMacrocycle', () => {
     it('calls service with repos, program, and dto, returns mapped response', async () => {
-      service.startNewMacrocycle.mockResolvedValue({ dashboard: stubMacrocycleDashboard(), programSpec: stubProgramSpec() });
+      service.startNewMacrocycle.mockResolvedValue({ dashboard: stubMacrocycleDashboard(), programSpec: stubProgramSpec(), scheduledWorkouts: [] });
 
       const result = await controller.startNewMacrocycle(PROGRAM, {}, MOCK_USER);
 
@@ -82,7 +82,7 @@ describe('MacrocycleGenerationController', () => {
     });
 
     it('passes fromMacrocycleNum and macrocycleDate through to service', async () => {
-      service.startNewMacrocycle.mockResolvedValue({ dashboard: stubMacrocycleDashboard(), programSpec: stubProgramSpec() });
+      service.startNewMacrocycle.mockResolvedValue({ dashboard: stubMacrocycleDashboard(), programSpec: stubProgramSpec(), scheduledWorkouts: [] });
 
       await controller.startNewMacrocycle(PROGRAM, {
         fromMacrocycleNum: 1,
@@ -116,7 +116,7 @@ describe('MacrocycleGenerationController', () => {
     });
 
     it('calls service with repos, program, and dto, returns mapped response', async () => {
-      service.initializeFirstMacrocycle.mockResolvedValue({ dashboard: stubInitDashboard(), programSpec: stubProgramSpec() });
+      service.initializeFirstMacrocycle.mockResolvedValue({ dashboard: stubInitDashboard(), programSpec: stubProgramSpec(), scheduledWorkouts: [] });
 
       const result = await controller.initializeFirstMacrocycle(PROGRAM, {}, MOCK_USER);
 
@@ -135,7 +135,7 @@ describe('MacrocycleGenerationController', () => {
     });
 
     it('passes optional macrocycleDate through to service', async () => {
-      service.initializeFirstMacrocycle.mockResolvedValue({ dashboard: stubInitDashboard(), programSpec: stubProgramSpec() });
+      service.initializeFirstMacrocycle.mockResolvedValue({ dashboard: stubInitDashboard(), programSpec: stubProgramSpec(), scheduledWorkouts: [] });
 
       await controller.initializeFirstMacrocycle(PROGRAM, { macrocycleDate: '2026-05-12' }, MOCK_USER);
 

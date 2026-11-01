@@ -116,30 +116,41 @@ export function specRowsForWorkoutDay<T extends { week: WeekNumber; offset: numb
  * The week type of the program week a macrocycle is in on `today`, read from the block
  * week that program week tiles from ({@link mesocycleWeekForProgramWeek}).
  *
- * The program week comes from the program's own numbering, not the calendar. With a
- * schedule, it is the week of the latest scheduled workout on or before `today` (the
- * first one's before the macrocycle starts): a schedule sets its own pace, so a
- * Mon/Wed/Fri 5-3-1 reaches program week 12 in calendar week 8 (ADR-037). Without one, a
- * program week is 7 calendar days ({@link noScheduleWorkoutDateUTC}), held at the
- * program's last week once it has ended. Feeds the dashboard's `currentWeekType` and
- * the training-max history `source` (issue #1028).
+ * The program week comes from the program's own numbering ({@link programWorkoutKeys}),
+ * not the calendar: it is the week of the latest workout dated on or before `today`, or
+ * the first workout's before the macrocycle starts, and the last workout's once it has
+ * ended. Each workout is dated as the Macrocycle Dashboard dates it: its override, else
+ * its scheduled date, else its spec-relative date ({@link noScheduleWorkoutDateUTC}). A
+ * schedule sets its own pace, so a Mon/Wed/Fri 5-3-1 reaches program week 12 in
+ * calendar week 8 (ADR-037), and a scheduled row supplies only a date: rows saved before
+ * #1023 carry a calendar week, and a row past the program's last day dates no workout.
+ * Feeds the dashboard's `currentWeekType` and the training-max history `source` (#1028).
  */
 export function weekTypeForDate(
   program: string,
   macrocycleStartDate: Date,
-  programSpec: ReadonlyArray<{ week: WeekNumber; weekType?: WeekType }>,
-  scheduledWorkouts: ReadonlyArray<{ weekNum: number; scheduledDate: Date }> = [],
+  programSpec: ReadonlyArray<{ week: WeekNumber; offset: number; weekType?: WeekType }>,
+  dates: {
+    scheduled: ReadonlyArray<{ workoutNum: number; scheduledDate: Date }>;
+    overrides: ReadonlyMap<number, Date>;
+  },
   today: Date = new Date(),
 ): WeekType {
-  const byDate = [...scheduledWorkouts].sort(
-    (a, b) => a.scheduledDate.getTime() - b.scheduledDate.getTime(),
-  );
-  const scheduled = byDate.filter((s) => s.scheduledDate.getTime() <= today.getTime()).pop() ?? byDate[0];
-  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
-  const elapsed = Math.max(0, today.getTime() - macrocycleStartDate.getTime());
-  const week = scheduled
-    ? scheduled.weekNum
-    : Math.min(Math.floor(elapsed / msPerWeek) + 1, Math.max(1, programLengthWeeks(program, programSpec)));
+  const scheduled = new Map(dates.scheduled.map((s) => [s.workoutNum, s.scheduledDate]));
+  const days = programWorkoutKeys(program, programSpec);
+  let week = days[0]?.week;
+  let latest = -Infinity;
+  days.forEach((day, i) => {
+    const date =
+      dates.overrides.get(i + 1) ??
+      scheduled.get(i + 1) ??
+      noScheduleWorkoutDateUTC(macrocycleStartDate, day.week, day.offset);
+    if (date.getTime() <= today.getTime() && date.getTime() >= latest) {
+      latest = date.getTime();
+      week = day.week;
+    }
+  });
+  if (week === undefined) return 'training';
   const mesocycleWeek = mesocycleWeekForProgramWeek(week, baseSpecMesocycleWeeks(programSpec));
   return programSpec.find((ps) => ps.week === mesocycleWeek)?.weekType ?? 'training';
 }

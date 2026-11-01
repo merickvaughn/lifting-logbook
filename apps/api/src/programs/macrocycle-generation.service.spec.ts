@@ -83,6 +83,7 @@ describe('MacrocycleGenerationService', () => {
   let userSettingsRepo: jest.Mocked<IUserSettingsRepository>;
   let macrocycleScheduledWorkoutRepo: jest.Mocked<IMacrocycleScheduledWorkoutRepository>;
   let workoutLiftOverrideRepo: jest.Mocked<IWorkoutLiftOverrideRepository>;
+  let workoutDateOverrideRepo: jest.Mocked<IWorkoutDateOverrideRepository>;
   let repos: {
     macrocycleDashboard: jest.Mocked<IMacrocycleDashboardRepository>;
     macrocycleScheduledWorkout: jest.Mocked<IMacrocycleScheduledWorkoutRepository>;
@@ -92,6 +93,7 @@ describe('MacrocycleGenerationService', () => {
     liftRecord: jest.Mocked<ILiftRecordRepository>;
     userSettings: jest.Mocked<IUserSettingsRepository>;
     workoutLiftOverride: jest.Mocked<IWorkoutLiftOverrideRepository>;
+    workoutDateOverride: jest.Mocked<IWorkoutDateOverrideRepository>;
   };
 
   beforeEach(() => {
@@ -143,6 +145,12 @@ describe('MacrocycleGenerationService', () => {
       deleteOverride: jest.fn(),
       deleteAllOverrides: jest.fn(),
     };
+    workoutDateOverrideRepo = {
+      getOverride: jest.fn(),
+      getOverridesForMacrocycle: jest.fn().mockResolvedValue(new Map()),
+      upsertOverride: jest.fn(),
+      deleteAllOverrides: jest.fn(),
+    };
     repos = {
       macrocycleDashboard: macrocycleDashboardRepo,
       macrocycleScheduledWorkout: macrocycleScheduledWorkoutRepo,
@@ -152,6 +160,7 @@ describe('MacrocycleGenerationService', () => {
       liftRecord: liftRecordRepo,
       userSettings: userSettingsRepo,
       workoutLiftOverride: workoutLiftOverrideRepo,
+      workoutDateOverride: workoutDateOverrideRepo,
     };
     service = new MacrocycleGenerationService();
   });
@@ -269,6 +278,43 @@ describe('MacrocycleGenerationService', () => {
       await service.startNewMacrocycle(repos, PROGRAM);
 
       expect(macrocycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 2, []);
+    });
+
+    it("reads the closing macrocycle's dates before overwriting them, and dates its history by its schedule (issue #1028)", async () => {
+      // fromMacrocycleNum 1 on a dashboard at macrocycle 2 starts a new macrocycle 2, so
+      // saveScheduledDates replaces the closing macrocycle's rows. They must be read first.
+      // By the calendar the closing macrocycle (starting in 2030) is in week 1, a training
+      // week; its schedule already dated workout 2, week 2's test day, in 2026.
+      const spec = [1, 2].map((week) => ({
+        ...stubProgramSpec()[0]!,
+        week,
+        weekType: week === 2 ? ('test' as const) : ('training' as const),
+      }));
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue({
+        ...stubDashboard(),
+        macrocycleNum: 2,
+        macrocycleDate: new Date('2030-01-07T00:00:00.000Z'),
+      });
+      programSpecRepo.getProgramSpec.mockResolvedValue(spec);
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      liftRecordRepo.getLiftRecords.mockResolvedValue(stubLiftRecords());
+      macrocycleScheduledWorkoutRepo.getScheduledWorkouts.mockResolvedValue([
+        { workoutNum: 1, weekNum: 1, scheduledDate: new Date('2026-04-20T00:00:00.000Z') },
+        { workoutNum: 2, weekNum: 1, scheduledDate: new Date('2026-04-22T00:00:00.000Z') },
+      ]);
+
+      const { dashboard } = await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 1 });
+
+      expect(dashboard.macrocycleNum).toBe(2);
+      expect(workoutLiftOverrideRepo.getOverridesForMacrocycle).toHaveBeenCalledWith(PROGRAM, 1);
+      expect(macrocycleScheduledWorkoutRepo.getScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 2);
+      expect(workoutDateOverrideRepo.getOverridesForMacrocycle).toHaveBeenCalledWith(PROGRAM, 2);
+      expect(macrocycleScheduledWorkoutRepo.getScheduledWorkouts.mock.invocationCallOrder[0]).toBeLessThan(
+        macrocycleScheduledWorkoutRepo.saveScheduledWorkouts.mock.invocationCallOrder[0]!,
+      );
+      expect(trainingMaxHistoryRepo.appendHistoryEntries).toHaveBeenCalledWith(PROGRAM, [
+        expect.objectContaining({ lift: 'Squat', weight: 270, source: 'test' }),
+      ]);
     });
   });
 
@@ -523,6 +569,7 @@ describe('MacrocycleGenerationService', () => {
       };
       liftOverrideRepo = {
         getOverrides: jest.fn(),
+        getOverridesForMacrocycle: jest.fn(),
         upsertOverride: jest.fn(),
         deleteOverride: jest.fn(),
         deleteAllOverrides: jest.fn().mockResolvedValue(undefined),

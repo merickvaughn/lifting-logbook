@@ -28,11 +28,13 @@ describe('ManageLiftsController', () => {
   beforeEach(async () => {
     liftOverrideRepoA = {
       getOverrides: jest.fn().mockResolvedValue([]),
+      getOverridesForMacrocycle: jest.fn().mockResolvedValue(new Map()),
       upsertOverride: jest.fn().mockResolvedValue(undefined),
       deleteOverride: jest.fn().mockResolvedValue(undefined),
     };
     liftOverrideRepoB = {
       getOverrides: jest.fn().mockResolvedValue([]),
+      getOverridesForMacrocycle: jest.fn().mockResolvedValue(new Map()),
       upsertOverride: jest.fn().mockResolvedValue(undefined),
       deleteOverride: jest.fn().mockResolvedValue(undefined),
     };

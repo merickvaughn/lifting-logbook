@@ -8,6 +8,10 @@ import {
 } from "@src/core";
 import { loadCsvFixture } from "../../../testUtils";
 
+// The fixtures' program, which isn't a registered preset, so its workouts number the
+// stored one-week block's days; none of these records has a lift override.
+const RPT = { program: "RPT", liftOverrides: new Map() };
+
 describe("updateMaxes", () => {
   it("updates only the correct training maxes and leaves others unchanged", () => {
     const tmData = loadCsvFixture("training_maxes.csv");
@@ -18,7 +22,7 @@ describe("updateMaxes", () => {
     const expectedMaxes = parseTrainingMaxes(newTmData);
     const programSpec = parseLiftingProgramSpec(specData);
     const liftRecords = parseLiftRecords(liftData);
-    const { maxes: updatedMaxes, flagged } = updateMaxes(programSpec, trainingMaxes, liftRecords);
+    const { maxes: updatedMaxes, flagged } = updateMaxes(programSpec, trainingMaxes, liftRecords, RPT);
     expect(Array.isArray(updatedMaxes)).toBe(true);
     expect(updatedMaxes.length).toBe(trainingMaxes.length);
     expect(Array.isArray(flagged)).toBe(true);
@@ -74,7 +78,7 @@ describe("updateMaxes", () => {
     });
     expect(updatedMaxes).toEqual(expectedMaxes);
     // Test for idempotency by re-running with updated maxes
-    expect(updateMaxes(programSpec, updatedMaxes, liftRecords).maxes).toEqual(
+    expect(updateMaxes(programSpec, updatedMaxes, liftRecords, RPT).maxes).toEqual(
       expectedMaxes,
     );
   });
@@ -89,7 +93,7 @@ describe("updateMaxes", () => {
     const liftRecords = parseLiftRecords(liftData);
     const expectedMaxes = parseTrainingMaxes(expectedData);
 
-    const { maxes: updated } = updateMaxes(programSpec, trainingMaxes, liftRecords);
+    const { maxes: updated } = updateMaxes(programSpec, trainingMaxes, liftRecords, RPT);
     expect(updated).toEqual(expectedMaxes);
 
     // Specifically verify no increment was applied
@@ -116,7 +120,7 @@ describe("updateMaxes", () => {
       notes: "injury",
     }));
 
-    const { maxes: updated } = updateMaxes(programSpec, trainingMaxes, liftRecords);
+    const { maxes: updated } = updateMaxes(programSpec, trainingMaxes, liftRecords, RPT);
     const benchMax = updated.find((m) => m.lift === "Bench P.")!;
     const originalBenchMax = trainingMaxes.find((m) => m.lift === "Bench P.")!;
     expect(benchMax.weight).toBe(originalBenchMax.weight); // unchanged
@@ -141,7 +145,7 @@ describe("updateMaxes", () => {
       notes: "",
     }));
 
-    const { maxes: updated } = updateMaxes(programSpec, trainingMaxes, liftRecords);
+    const { maxes: updated } = updateMaxes(programSpec, trainingMaxes, liftRecords, RPT);
     const benchMax = updated.find((m) => m.lift === "Bench P.")!;
     const originalBenchMax = trainingMaxes.find((m) => m.lift === "Bench P.")!;
     expect(benchMax.weight).toBe(originalBenchMax.weight);
@@ -185,18 +189,24 @@ describe("updateMaxes — a record's prescription is its workout day's (issue #1
     weight,
     dateUpdated: new Date("2026-04-01"),
   });
+  const replace = (lift: string, replacedBy: string) => ({
+    lift,
+    action: "replace" as const,
+    replacedBy,
+  });
+  const fiveThreeOne = (liftOverrides = new Map<number, ReturnType<typeof replace>[]>()) => ({
+    program: "5-3-1",
+    liftOverrides,
+  });
 
   it("progresses a Manage Lifts replacement's own training max by its slot's rules", () => {
     const spec = [row(1, 0, "Deadlift", 5, 10), row(1, 2, "Squat", 5, 5)];
-    const liftOverrides = new Map([
-      [1, [{ lift: "Deadlift", action: "replace" as const, replacedBy: "Rack Pull" }]],
-    ]);
 
     const { maxes } = updateMaxes(
       spec,
       [max("Deadlift", 300), max("Rack Pull", 350)],
       [set1(1, "Rack Pull", 360, 5)],
-      { liftOverrides },
+      fiveThreeOne(new Map([[1, [replace("Deadlift", "Rack Pull")]]])),
     );
 
     expect(maxes).toEqual([
@@ -205,22 +215,24 @@ describe("updateMaxes — a record's prescription is its workout day's (issue #1
     ]);
   });
 
-  it("gives sets logged under a slot's earlier name the slot's prescription", () => {
-    // Squat's sets were logged before the swap; they still progress Squat's own max.
+  it("gives sets logged under a chain's earlier name the slot's prescription", () => {
+    // Squat → Front Squat → Box Squat. The sets were logged while the slot held Front
+    // Squat, which the spec doesn't name: they take Squat's row and progress Front
+    // Squat's own max.
     const spec = [row(1, 0, "Squat", 5, 5)];
-    const liftOverrides = new Map([
-      [1, [{ lift: "Squat", action: "replace" as const, replacedBy: "Front Squat" }]],
-    ]);
 
     const { maxes } = updateMaxes(
       spec,
-      [max("Squat", 250), max("Front Squat", 200)],
-      [set1(1, "Squat", 260, 5)],
-      { liftOverrides },
+      [max("Squat", 250), max("Front Squat", 200), max("Box Squat", 220)],
+      [set1(1, "Front Squat", 210, 5)],
+      fiveThreeOne(new Map([[1, [replace("Squat", "Front Squat"), replace("Front Squat", "Box Squat")]]])),
     );
 
-    expect(maxes[0]).toEqual({ lift: "Squat", weight: 265, dateUpdated: new Date("2026-05-01") });
-    expect(maxes[1]).toEqual(max("Front Squat", 200));
+    expect(maxes).toEqual([
+      max("Squat", 250),
+      { lift: "Front Squat", weight: 215, dateUpdated: new Date("2026-05-01") },
+      max("Box Squat", 220),
+    ]);
   });
 
   it("reads a tiled program week's prescription from its block week", () => {
@@ -228,9 +240,7 @@ describe("updateMaxes — a record's prescription is its workout day's (issue #1
     // week 6, which tiles from block week 3 (1 rep), not week 1 (5 reps).
     const spec = [row(1, 0, "Squat", 5, 5), row(2, 0, "Squat", 3, 5), row(3, 0, "Squat", 1, 5)];
 
-    const { maxes } = updateMaxes(spec, [max("Squat", 250)], [set1(6, "Squat", 260, 1)], {
-      program: "5-3-1",
-    });
+    const { maxes } = updateMaxes(spec, [max("Squat", 250)], [set1(6, "Squat", 260, 1)], fiveThreeOne());
 
     expect(maxes).toEqual([{ lift: "Squat", weight: 265, dateUpdated: new Date("2026-05-01") }]);
   });
@@ -238,7 +248,7 @@ describe("updateMaxes — a record's prescription is its workout day's (issue #1
   it("reads the prescription of the record's own day when a lift trains on two days", () => {
     const spec = [row(1, 0, "Squat", 8, 5), row(1, 2, "Squat", 3, 5)];
 
-    const { maxes } = updateMaxes(spec, [max("Squat", 250)], [set1(2, "Squat", 260, 3)]);
+    const { maxes } = updateMaxes(spec, [max("Squat", 250)], [set1(2, "Squat", 260, 3)], fiveThreeOne());
 
     expect(maxes).toEqual([{ lift: "Squat", weight: 265, dateUpdated: new Date("2026-05-01") }]);
   });
@@ -249,9 +259,7 @@ describe("updateMaxes — a record's prescription is its workout day's (issue #1
       { ...row(2, 0, "Squat", 5, 5), weekType: "deload" as const },
     ];
 
-    const { maxes } = updateMaxes(spec, [max("Squat", 250)], [set1(4, "Squat", 260, 5)], {
-      program: "5-3-1",
-    });
+    const { maxes } = updateMaxes(spec, [max("Squat", 250)], [set1(4, "Squat", 260, 5)], fiveThreeOne());
 
     expect(maxes).toEqual([max("Squat", 250)]);
   });
@@ -270,7 +278,7 @@ describe("updateMaxes — lookup semantics (issue #983)", () => {
     // what order the flags are pushed: the sequence is the order those lifts'
     // set-1 records appear in the input, which is what the per-record scan produced.
     const { trainingMaxes, programSpec, liftRecords } = baseline();
-    const { flagged } = updateMaxes(programSpec, trainingMaxes, liftRecords);
+    const { flagged } = updateMaxes(programSpec, trainingMaxes, liftRecords, RPT);
     const flaggedLifts = new Set(["Chin-up", "Dip", "Deadlift"]);
     const expectedOrder = liftRecords
       .filter((r) => r.setNum === 1 && flaggedLifts.has(r.lift))
@@ -285,7 +293,7 @@ describe("updateMaxes — lookup semantics (issue #983)", () => {
     if (!squat) throw new Error("fixture has no Deadlift max");
     const duplicated = [...trainingMaxes, { ...squat, weight: 999 }];
 
-    const { maxes } = updateMaxes(programSpec, duplicated, liftRecords);
+    const { maxes } = updateMaxes(programSpec, duplicated, liftRecords, RPT);
 
     const [first, second] = maxes.filter((m) => m.lift === "Deadlift");
     // Deadlift is a flagged reduction in this fixture: the first entry is the
@@ -297,17 +305,17 @@ describe("updateMaxes — lookup semantics (issue #983)", () => {
   it("reports a missing training max before a missing spec, and a missing max even on a deload spec", () => {
     const { trainingMaxes, programSpec, liftRecords } = baseline();
     const withoutDeadliftMax = trainingMaxes.filter((tm) => tm.lift !== "Deadlift");
-    expect(() => updateMaxes(programSpec, withoutDeadliftMax, liftRecords)).toThrow(
+    expect(() => updateMaxes(programSpec, withoutDeadliftMax, liftRecords, RPT)).toThrow(
       "Training max for lift Deadlift not found.",
     );
 
     const withoutDeadliftSpec = programSpec.filter((ps) => ps.lift !== "Deadlift");
-    expect(() => updateMaxes(withoutDeadliftSpec, trainingMaxes, liftRecords)).toThrow(
+    expect(() => updateMaxes(withoutDeadliftSpec, trainingMaxes, liftRecords, RPT)).toThrow(
       "Program spec for lift Deadlift not found.",
     );
 
     const deloadSpec = programSpec.map((ps) => ({ ...ps, weekType: "deload" as const }));
-    expect(() => updateMaxes(deloadSpec, withoutDeadliftMax, liftRecords)).toThrow(
+    expect(() => updateMaxes(deloadSpec, withoutDeadliftMax, liftRecords, RPT)).toThrow(
       "Training max for lift Deadlift not found.",
     );
   });

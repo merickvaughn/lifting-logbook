@@ -37,7 +37,10 @@ export class MacrocycleDashboardController {
       workoutDateOverride.getOverridesForMacrocycle(program, dashboard.macrocycleNum),
       workoutSkipOverride.getSkipsForMacrocycle(program, dashboard.macrocycleNum),
     ]);
-    const currentWeekType = weekTypeForDate(program, dashboard.macrocycleDate, programSpec, scheduledWorkouts);
+    const currentWeekType = weekTypeForDate(program, dashboard.macrocycleDate, programSpec, {
+      scheduled: scheduledWorkouts,
+      overrides: overrideMap,
+    });
 
     const response = buildMacrocycleDashboardResponse(dashboard, currentWeekType, {
       spec: programSpec,

@@ -30,6 +30,7 @@ type MacrocycleRepos = Pick<
   | 'trainingMaxHistory'
   | 'userSettings'
   | 'workoutLiftOverride'
+  | 'workoutDateOverride'
 >;
 
 /**
@@ -176,15 +177,17 @@ export class MacrocycleGenerationService {
     const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program);
     const sourceMacrocycleNum = dto.fromMacrocycleNum ?? dashboard.macrocycleNum;
 
-    // The closing macrocycle's scheduled rows are read now, before saveScheduledDates can
+    // The closing macrocycle's workout dates are read now, before saveScheduledDates can
     // overwrite them: with `fromMacrocycleNum` the new macrocycle may reuse its number.
-    const [programSpec, trainingMaxes, liftRecords, liftOverrides, closingSchedule] = await Promise.all([
-      repos.liftingProgramSpec.getProgramSpec(program),
-      repos.trainingMax.getTrainingMaxes(program),
-      repos.liftRecord.getLiftRecords(program, sourceMacrocycleNum),
-      repos.workoutLiftOverride.getOverridesForMacrocycle(program, sourceMacrocycleNum),
-      repos.macrocycleScheduledWorkout.getScheduledWorkouts(program, dashboard.macrocycleNum),
-    ]);
+    const [programSpec, trainingMaxes, liftRecords, liftOverrides, closingScheduled, closingDateOverrides] =
+      await Promise.all([
+        repos.liftingProgramSpec.getProgramSpec(program),
+        repos.trainingMax.getTrainingMaxes(program),
+        repos.liftRecord.getLiftRecords(program, sourceMacrocycleNum),
+        repos.workoutLiftOverride.getOverridesForMacrocycle(program, sourceMacrocycleNum),
+        repos.macrocycleScheduledWorkout.getScheduledWorkouts(program, dashboard.macrocycleNum),
+        repos.workoutDateOverride.getOverridesForMacrocycle(program, dashboard.macrocycleNum),
+      ]);
 
     let prevDashboard = dashboard;
     if (dto.fromMacrocycleNum !== undefined) {
@@ -220,8 +223,11 @@ export class MacrocycleGenerationService {
     // Source reflects the week type of the macrocycle being closed (the previous
     // dashboard), not the new macrocycle being opened — hence `dashboard.macrocycleDate`,
     // not `newMacrocycle.macrocycleDate`.
-    const source =
-      weekTypeForDate(program, dashboard.macrocycleDate, programSpec, closingSchedule) === 'test' ? 'test' : 'program';
+    const closingWeekType = weekTypeForDate(program, dashboard.macrocycleDate, programSpec, {
+      scheduled: closingScheduled,
+      overrides: closingDateOverrides,
+    });
+    const source = closingWeekType === 'test' ? 'test' : 'program';
     const historyEntries = buildHistoryEntries(trainingMaxes, newMaxes, newMacrocycle.macrocycleDate, source);
     if (historyEntries.length > 0) {
       await repos.trainingMaxHistory.appendHistoryEntries(program, historyEntries);
