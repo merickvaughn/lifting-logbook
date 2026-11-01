@@ -4,17 +4,16 @@ import {
   getScheduleWorkoutsPerWeek,
 } from "@src/core/services/workout/distributeWorkouts";
 
-// All test dates use local time to match addDaysLocal in the implementation.
+// All test dates are UTC midnight, like a macrocycle date and like the dates the
+// implementation returns (issue #1031). Other host timezones are covered by
+// distributeWorkouts.timezone.test.ts.
 // JS Date months are 0-indexed: 4 = May. 2026-05-18 is a Monday; 2026-05-20 is a Wednesday.
 const MAY = 4;
-const MON_2026_05_18 = new Date(2026, MAY, 18);
-const WED_2026_05_20 = new Date(2026, MAY, 20);
+const MON_2026_05_18 = new Date(Date.UTC(2026, MAY, 18));
+const WED_2026_05_20 = new Date(Date.UTC(2026, MAY, 20));
 
 function ymd(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return d.toISOString().slice(0, 10);
 }
 
 describe("distributeWorkouts", () => {
@@ -129,7 +128,7 @@ describe("distributeWorkouts", () => {
     const result = distributeWorkouts(1, schedule, MON_2026_05_18);
 
     expect(result).toEqual([
-      { week: 1, workouts: [new Date(2026, MAY, 20)] },
+      { week: 1, workouts: [new Date(Date.UTC(2026, MAY, 20))] },
     ]);
   });
 

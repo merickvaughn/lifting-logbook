@@ -373,9 +373,9 @@ describe('MacrocycleGenerationService', () => {
       // numbered through the schedule's calendar weeks, so any schedule not
       // training the program's own number of days every week drifted.
       const { MON, TUE, WED, THU, FRI } = DAY_INDEX;
-      // distributeWorkouts builds local-time dates, so read the weekday back the
-      // same way (0 = Monday).
-      const weekday = (d: Date) => (d.getDay() + 6) % 7;
+      // distributeWorkouts returns UTC-midnight dates (#1031), so read the weekday
+      // back in UTC (0 = Monday).
+      const weekday = (d: Date) => (d.getUTCDay() + 6) % 7;
 
       it.each<[string, string, UserWorkoutSchedule, number, number, number[]]>([
         // 5-3-1 trains 2 days a week for 12 weeks; the rotation alternates 3 and 2.
@@ -413,6 +413,9 @@ describe('MacrocycleGenerationService', () => {
         expect(workouts.map((w) => weekday(w.scheduledDate))).toEqual(
           Array.from({ length: programDays }, (_, i) => rotation[i % rotation.length]),
         );
+        // Every rotation here trains Monday, so the first workout is on the start
+        // date itself, on any host (#1031).
+        expect(workouts[0]?.scheduledDate.toISOString()).toBe('2026-05-18T00:00:00.000Z');
       });
 
       it.each<[string, Date[]]>([
