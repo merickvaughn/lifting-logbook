@@ -2,11 +2,9 @@ import {
   addDaysUTC,
   formatDateYYYYMMDD,
   getNextDate,
-  type LiftingProgramSpec,
   parseDateStringUTC,
   parseYYYYMMDD,
   toUTCMidnight,
-  weekTypeForDate,
 } from "@src/core";
 
 describe("jsUtil", () => {
@@ -172,77 +170,6 @@ describe("jsUtil", () => {
     it("is a no-op on an already-UTC-midnight value", () => {
       const date = new Date(Date.UTC(2026, 7, 17));
       expect(toUTCMidnight(date).getTime()).toBe(date.getTime());
-    });
-  });
-
-  describe("weekTypeForDate", () => {
-    // Audit (#354): weekTypeForDate had no tests at all. These cover the
-    // matching-week path AND the `?? 'training'` neutral-return fallback
-    // so a regression in either branch is detectable.
-    const spec: LiftingProgramSpec[] = [
-      {
-        week: 1,
-        offset: 0,
-        lift: "Bench",
-        increment: 0,
-        order: 0,
-        sets: 0,
-        reps: 0,
-        amrap: false,
-        warmUpPct: "",
-        wtDecrementPct: 0,
-        activation: "",
-        weekType: "training",
-      },
-      {
-        week: 2,
-        offset: 0,
-        lift: "Bench",
-        increment: 0,
-        order: 0,
-        sets: 0,
-        reps: 0,
-        amrap: false,
-        warmUpPct: "",
-        wtDecrementPct: 0,
-        activation: "",
-        weekType: "test",
-      },
-    ];
-
-    it("returns the matching week's weekType when today is within the spec", () => {
-      const macrocycleStart = new Date(2026, 0, 5);
-      const today = new Date(2026, 0, 12); // week 2 (7 days later)
-      expect(weekTypeForDate(macrocycleStart, spec, today)).toBe("test");
-    });
-
-    it("clamps to the max week in the spec when today is past the spec's range", () => {
-      const macrocycleStart = new Date(2026, 0, 5);
-      // In-range week 2 returns "test" (baseline); past-range should also return
-      // "test" via clamp-to-max, not the "training" fallback. Asserting both
-      // pins the clamp specifically rather than incidentally matching the max.
-      expect(weekTypeForDate(macrocycleStart, spec, new Date(2026, 0, 12))).toBe(
-        "test",
-      );
-      const today = new Date(2026, 1, 28); // far past week 2
-      expect(weekTypeForDate(macrocycleStart, spec, today)).toBe("test");
-    });
-
-    it("returns 'training' fallback when the matched week has no weekType set", () => {
-      // Destructure to omit weekType — TS2375 under exactOptionalPropertyTypes
-      // rules out the simpler `{ ...spec[0]!, weekType: undefined }`.
-      const { weekType: _omit, ...rest } = spec[0]!;
-      void _omit;
-      const partialSpec: LiftingProgramSpec[] = [rest];
-      const macrocycleStart = new Date(2026, 0, 5);
-      const today = new Date(2026, 0, 5);
-      expect(weekTypeForDate(macrocycleStart, partialSpec, today)).toBe("training");
-    });
-
-    it("returns 'training' fallback when no spec entry matches the computed week", () => {
-      const macrocycleStart = new Date(2026, 0, 5);
-      const today = new Date(2026, 0, 5);
-      expect(weekTypeForDate(macrocycleStart, [], today)).toBe("training");
     });
   });
 

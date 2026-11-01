@@ -150,6 +150,29 @@ describe('MacrocycleDashboardController', () => {
     expect(result.currentWeekType).toBe('test');
   });
 
+  it("takes the current week type from the schedule's pace and reschedules (issue #1028)", async () => {
+    // A macrocycle starting in 2030 is in its first week by the calendar. Its
+    // schedule already dated workout 3 (week 2, the test week) in 2026, so the
+    // dashboard reads week 2 — until workout 3 is moved to 2030.
+    const week2Test = stubSpec('training', 2).map((r) => (r.week === 2 ? { ...r, weekType: 'test' as const } : r));
+    repo.getMacrocycleDashboard.mockResolvedValue({
+      ...stubDashboard(SCHEDULED_PROGRAM),
+      macrocycleDate: new Date('2030-01-07T00:00:00.000Z'),
+    });
+    specRepo.getProgramSpec.mockResolvedValue(week2Test);
+    scheduledRepo.getScheduledWorkouts.mockResolvedValue(stubScheduled());
+
+    expect((await controller.getCurrentMacrocycle(SCHEDULED_PROGRAM, MOCK_USER)).currentWeekType).toBe('test');
+
+    overrideRepo.getOverridesForMacrocycle.mockResolvedValue(
+      new Map([
+        [3, new Date('2030-01-14T00:00:00.000Z')],
+        [4, new Date('2030-01-16T00:00:00.000Z')],
+      ]),
+    );
+    expect((await controller.getCurrentMacrocycle(SCHEDULED_PROGRAM, MOCK_USER)).currentWeekType).toBe('training');
+  });
+
   it('returns weeks:[] when no scheduled workouts exist (no-schedule mode)', async () => {
     repo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
     specRepo.getProgramSpec.mockResolvedValue(stubSpec());

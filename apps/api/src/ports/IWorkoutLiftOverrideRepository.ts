@@ -29,6 +29,15 @@ export interface IWorkoutLiftOverrideRepository {
     workoutNum: number,
   ): Promise<LiftOverride[]>;
 
+  /**
+   * Every workout's overrides in a macrocycle, keyed by `workoutNum`, each list in the
+   * order {@link getOverrides} returns. Workouts without overrides are absent.
+   */
+  getOverridesForMacrocycle(
+    program: string,
+    macrocycleNum: number,
+  ): Promise<Map<number, LiftOverride[]>>;
+
   /** Saves `override`, replacing the lift's override of the same kind if it has one. */
   upsertOverride(
     program: string,

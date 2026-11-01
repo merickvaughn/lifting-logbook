@@ -113,7 +113,7 @@ feature is implemented (deferred).
 
 - [`packages/types/src/domain.ts`](../../packages/types/src/domain.ts) — where `WeekType` enum belongs
 - [`packages/core/src/models/LiftingProgramSpec.ts`](../../packages/core/src/models/LiftingProgramSpec.ts) — model to extend with `weekType`
-- [`packages/core/src/utils/jsUtil.ts`](../../packages/core/src/utils/jsUtil.ts) — `weekTypeForDate(cycleDate, programSpec)` derives `currentWeekType` at request time
+- [`packages/core/src/presets/programLengths.ts`](../../packages/core/src/presets/programLengths.ts) — `weekTypeForDate` derives `currentWeekType` at request time (moved from `utils/jsUtil.ts`, and given the program's workout dates, in #1028)
 - [`packages/core/src/services/maxes/updateMaxes.ts`](../../packages/core/src/services/maxes/updateMaxes.ts) — progression gate to relax for test weeks
 - [`packages/core/src/services/workout/generateLiftPlan.ts`](../../packages/core/src/services/workout/generateLiftPlan.ts) — ramp-up protocol generation basis
 - PRD §Non-Goals — "Deload / missed-session recovery" originally deferred; deload is now in scope as a distinct week type with defined progression behavior

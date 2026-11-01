@@ -1,5 +1,3 @@
-import { WeekType } from "@lifting-logbook/types";
-import { LiftingProgramSpec } from "../models";
 
 /**
  * Returns the next Monday after the given date, at least 7 days later, or the most recent occurrence of a target weekday.
@@ -155,19 +153,4 @@ export function toUTCMidnight(date: Date): Date {
   return new Date(
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
   );
-}
-
-// Returns the WeekType for the week containing `today` within a macrocycle.
-// Week 1 = days 0–6 from macrocycle start; clamped to max week in spec.
-export function weekTypeForDate(
-  macrocycleStartDate: Date,
-  programSpec: LiftingProgramSpec[],
-  today: Date = new Date(),
-): WeekType {
-  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
-  const elapsed = Math.max(0, today.getTime() - macrocycleStartDate.getTime());
-  const rawWeekNum = Math.floor(elapsed / msPerWeek) + 1;
-  const maxWeek = programSpec.reduce((m, ps) => Math.max(m, ps.week), 1);
-  const weekNum = Math.min(rawWeekNum, maxWeek);
-  return programSpec.find((ps) => ps.week === weekNum)?.weekType ?? 'training';
 }
