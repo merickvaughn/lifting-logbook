@@ -43,11 +43,9 @@ export default async function ProgramPlanPage({
 
   const meta = resolveProgramPlanMeta(program, specs);
   const { durationWeeks } = deriveProgramSummary(specs, program);
-  const phases = deriveProgramPhases(dashboard.weeks, today, meta);
-  const estCompletion = estimateCompletionDate(
-    buildWorkoutDays(specs, dashboard.macrocycleStartDate, program),
-    dashboard,
-  );
+  const days = buildWorkoutDays(specs, dashboard.macrocycleStartDate, program);
+  const phases = deriveProgramPhases(days, dashboard, today, meta);
+  const estCompletion = estimateCompletionDate(days, dashboard);
 
   return (
     <section className={styles.container}>

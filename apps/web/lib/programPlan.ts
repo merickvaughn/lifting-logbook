@@ -1,6 +1,5 @@
 import type {
   MacrocycleDashboardResponse,
-  MacrocycleWeekSummary,
   LiftingProgramSpecResponse,
 } from '@lifting-logbook/types';
 import {
@@ -99,36 +98,50 @@ export function buildPhaseTemplate(meta: ProgramLengthMeta): PhaseTemplate[] {
   return [{ name: 'Training', startWeek: 1, endWeek: lengthWeeks, type: 'training' }];
 }
 
-function phaseStatus(
-  phase: { startWeek: number; endWeek: number },
-  weekMap: Map<number, MacrocycleWeekSummary>,
-  today: string,
-): PhaseStatus {
-  const weeks = Array.from(
-    { length: phase.endWeek - phase.startWeek + 1 },
-    (_, i) => phase.startWeek + i,
-  );
-  const summaries = weeks.map((w) => weekMap.get(w));
-  // Every week in the phase must exist and be completed. With a schedule, `weeks`
-  // lists every program week (#1023). Without one it is empty, so every phase reads
-  // upcoming for the whole macrocycle (#1036).
-  if (summaries.length > 0 && summaries.every((s) => s?.completed)) return 'completed';
-  const hasStarted = summaries.some((s) =>
-    s?.workouts.some((w) => w.date <= today),
-  );
-  return hasStarted ? 'in-progress' : 'upcoming';
-}
+/** The parts of the Macrocycle Dashboard response a phase's status reads. */
+export type PhaseDashboard = Pick<
+  MacrocycleDashboardResponse,
+  'weeks' | 'dateOverrides' | 'completedWorkoutNums' | 'skippedWorkoutNums'
+>;
 
+/**
+ * Each phase of the Macrocycle Plan with its status, read from the macrocycle's
+ * workouts (`days`, from `buildWorkoutDays`) the way the Macrocycle Dashboard
+ * grid reads them:
+ * - a phase is completed once every workout in it is logged or skipped;
+ * - else it is in progress once a workout in it is logged or skipped, or dated
+ *   today or earlier, each dated by {@link workoutDateResolver}. Logging a workout
+ *   early does not move its date, so a phase trained ahead of its dates has to
+ *   count its logged workouts to read as started;
+ * - else it is upcoming.
+ *
+ * `dashboard.weeks` is empty without a schedule, which is the default for a new
+ * user, so status cannot come from its week summaries (issue #1036). This reads
+ * the same in both modes: with a schedule, a week summary is completed exactly
+ * when its workouts are logged or skipped, and lists them on the dates the
+ * resolver gives.
+ */
 export function deriveProgramPhases(
-  weeks: MacrocycleWeekSummary[],
+  days: readonly Pick<WorkoutDay, 'workoutNum' | 'week' | 'date'>[],
+  dashboard: PhaseDashboard,
   today: string,
   meta: ProgramLengthMeta,
 ): ProgramPhase[] {
-  const weekMap = new Map(weeks.map((w) => [w.week, w]));
-  return buildPhaseTemplate(meta).map((p) => ({
-    ...p,
-    status: phaseStatus(p, weekMap, today),
-  }));
+  const dateOf = workoutDateResolver(dashboard);
+  const completed = new Set(dashboard.completedWorkoutNums);
+  const skipped = new Set(dashboard.skippedWorkoutNums);
+  const done = (d: Pick<WorkoutDay, 'workoutNum'>) =>
+    completed.has(d.workoutNum) || skipped.has(d.workoutNum);
+  return buildPhaseTemplate(meta).map((p) => {
+    const phaseDays = days.filter((d) => d.week >= p.startWeek && d.week <= p.endWeek);
+    const status: PhaseStatus =
+      phaseDays.length > 0 && phaseDays.every(done)
+        ? 'completed'
+        : phaseDays.some((d) => done(d) || dateOf(d) <= today)
+          ? 'in-progress'
+          : 'upcoming';
+    return { ...p, status };
+  });
 }
 
 /**

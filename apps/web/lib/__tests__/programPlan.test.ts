@@ -5,6 +5,7 @@ import {
   deriveProgramSummary,
   estimateCompletionDate,
   resolveProgramPlanMeta,
+  type PhaseDashboard,
 } from '../programPlan';
 
 const makeWeek = (
@@ -39,6 +40,47 @@ const REPEATING_12: ProgramLengthMeta = { lengthWeeks: 12, mesocycleWeeks: 1, ph
 const REPEATING_8: ProgramLengthMeta = { lengthWeeks: 8, mesocycleWeeks: 1, phaseStyle: 'repeating' };
 const MESO_12: ProgramLengthMeta = { lengthWeeks: 12, mesocycleWeeks: 3, phaseStyle: 'mesocycle' };
 
+// One workout a week for `n` weeks, on its spec-relative date from a 2026-01-01
+// start: week 1 is 2026-01-01, week 2 2026-01-08, week 4 2026-01-22.
+const weeklyDays = (n: number) =>
+  Array.from({ length: n }, (_, i) => ({
+    workoutNum: i + 1,
+    week: i + 1,
+    date: new Date(Date.UTC(2026, 0, 1 + i * 7)).toISOString().slice(0, 10),
+  }));
+
+// With no schedule, `weeks` is empty (#1036).
+const noSchedule = (overrides: Partial<PhaseDashboard> = {}): PhaseDashboard => ({
+  weeks: [],
+  dateOverrides: {},
+  completedWorkoutNums: [],
+  skippedWorkoutNums: [],
+  ...overrides,
+});
+
+// With a schedule, `weeks` lists every workout on its scheduled date (#1023).
+const withSchedule = (
+  days: ReturnType<typeof weeklyDays>,
+  scheduled: (workoutNum: number) => string,
+  overrides: Partial<PhaseDashboard> = {},
+): PhaseDashboard => {
+  const base = noSchedule(overrides);
+  const done = new Set([...base.completedWorkoutNums, ...base.skippedWorkoutNums]);
+  const weeks = [...new Set(days.map((d) => d.week))].map((week) => {
+    const inWeek = days.filter((d) => d.week === week);
+    return {
+      week,
+      workouts: inWeek.map((d) => ({
+        workoutNum: d.workoutNum,
+        date: scheduled(d.workoutNum),
+        skipped: base.skippedWorkoutNums.includes(d.workoutNum),
+      })),
+      completed: inWeek.every((d) => done.has(d.workoutNum)),
+    };
+  });
+  return { ...base, weeks };
+};
+
 // ---------------------------------------------------------------------------
 // resolveProgramPlanMeta
 // ---------------------------------------------------------------------------
@@ -65,12 +107,10 @@ describe('resolveProgramPlanMeta', () => {
 // ---------------------------------------------------------------------------
 
 describe('deriveProgramPhases — repeating programs', () => {
-  const futureWeeks12 = Array.from({ length: 12 }, (_, i) =>
-    makeWeek(i + 1, ['2099-01-01'], false),
-  );
+  const BEFORE_START = '2025-12-01';
 
   it('renders a single flat Training phase spanning the whole program', () => {
-    const phases = deriveProgramPhases(futureWeeks12, '2026-01-01', REPEATING_12);
+    const phases = deriveProgramPhases(weeklyDays(12), noSchedule(), BEFORE_START, REPEATING_12);
     expect(phases).toHaveLength(1);
     expect(phases[0]).toMatchObject({
       name: 'Training',
@@ -81,14 +121,13 @@ describe('deriveProgramPhases — repeating programs', () => {
   });
 
   it('never fabricates a Test or Deload phase (issue #680)', () => {
-    const phases = deriveProgramPhases(futureWeeks12, '2026-01-01', REPEATING_12);
+    const phases = deriveProgramPhases(weeklyDays(12), noSchedule(), BEFORE_START, REPEATING_12);
     expect(phases.every((p) => p.type === 'training')).toBe(true);
     expect(phases.some((p) => p.name === 'Test')).toBe(false);
   });
 
   it('spans the program length for an 8-week program', () => {
-    const weeks8 = Array.from({ length: 8 }, (_, i) => makeWeek(i + 1, ['2099-01-01'], false));
-    const phases = deriveProgramPhases(weeks8, '2026-01-01', REPEATING_8);
+    const phases = deriveProgramPhases(weeklyDays(8), noSchedule(), BEFORE_START, REPEATING_8);
     expect(phases).toHaveLength(1);
     expect(phases[0]).toMatchObject({ startWeek: 1, endWeek: 8, type: 'training' });
   });
@@ -99,12 +138,10 @@ describe('deriveProgramPhases — repeating programs', () => {
 // ---------------------------------------------------------------------------
 
 describe('deriveProgramPhases — mesocycle programs', () => {
-  const futureWeeks12 = Array.from({ length: 12 }, (_, i) =>
-    makeWeek(i + 1, ['2099-01-01'], false),
-  );
+  const BEFORE_START = '2025-12-01';
 
   it('renders one training phase per mesocycle with correct week ranges', () => {
-    const phases = deriveProgramPhases(futureWeeks12, '2026-01-01', MESO_12);
+    const phases = deriveProgramPhases(weeklyDays(12), noSchedule(), BEFORE_START, MESO_12);
     expect(phases.map((p) => [p.name, p.startWeek, p.endWeek])).toEqual([
       ['Mesocycle 1', 1, 3],
       ['Mesocycle 2', 4, 6],
@@ -114,7 +151,7 @@ describe('deriveProgramPhases — mesocycle programs', () => {
   });
 
   it('keeps every mesocycle a training phase — no fabricated Test week', () => {
-    const phases = deriveProgramPhases(futureWeeks12, '2026-01-01', MESO_12);
+    const phases = deriveProgramPhases(weeklyDays(12), noSchedule(), BEFORE_START, MESO_12);
     expect(phases.every((p) => p.type === 'training')).toBe(true);
   });
 });
@@ -123,41 +160,82 @@ describe('deriveProgramPhases — mesocycle programs', () => {
 // deriveProgramPhases — status
 // ---------------------------------------------------------------------------
 
-describe('deriveProgramPhases — status', () => {
-  it('marks a mesocycle completed only when all its weeks are completed', () => {
-    const weeks = [
-      makeWeek(1, ['2026-01-01'], true),
-      makeWeek(2, ['2026-01-08'], true),
-      makeWeek(3, ['2026-01-15'], true),
-      ...Array.from({ length: 9 }, (_, i) => makeWeek(i + 4, ['2099-01-01'], false)),
-    ];
-    const phases = deriveProgramPhases(weeks, '2026-02-01', MESO_12);
+describe('deriveProgramPhases — status with no schedule (issue #1036)', () => {
+  const days = weeklyDays(12);
+
+  it('marks a mesocycle completed once every workout in it is logged or skipped', () => {
+    const dashboard = noSchedule({ completedWorkoutNums: [1, 2], skippedWorkoutNums: [3] });
+    const phases = deriveProgramPhases(days, dashboard, '2026-01-16', MESO_12);
     expect(phases[0]?.status).toBe('completed'); // Mesocycle 1 (weeks 1-3)
-    expect(phases[1]?.status).toBe('upcoming'); // Mesocycle 2 (weeks 4-6)
+    expect(phases[1]?.status).toBe('upcoming'); // Mesocycle 2 (weeks 4-6), first workout 2026-01-22
   });
 
-  it('marks a mesocycle in-progress when it has past dates but is not fully completed', () => {
-    const weeks = [
-      makeWeek(1, ['2026-01-01'], true),
-      makeWeek(2, ['2026-01-08'], false),
-      makeWeek(3, ['2026-01-15'], false),
-      ...Array.from({ length: 9 }, (_, i) => makeWeek(i + 4, ['2099-01-01'], false)),
-    ];
-    const phases = deriveProgramPhases(weeks, '2026-01-10', MESO_12);
+  it('marks a mesocycle in progress once a workout in it is dated today or earlier', () => {
+    // Week 2's workout is dated today; week 3's is not yet logged.
+    const dashboard = noSchedule({ completedWorkoutNums: [1] });
+    const phases = deriveProgramPhases(days, dashboard, '2026-01-08', MESO_12);
     expect(phases[0]?.status).toBe('in-progress');
+    expect(phases[1]?.status).toBe('upcoming');
   });
 
-  it('marks all phases upcoming when no workout dates have passed', () => {
-    const weeks = Array.from({ length: 12 }, (_, i) => makeWeek(i + 1, ['2099-01-01'], false));
-    const phases = deriveProgramPhases(weeks, '2026-01-01', REPEATING_12);
+  it('marks a mesocycle in progress once a workout in it is logged ahead of its date', () => {
+    // Mesocycle 1 done, then week 4's workout (dated 2026-01-22) logged on 2026-01-16.
+    const dashboard = noSchedule({ completedWorkoutNums: [1, 2, 3, 4] });
+    const phases = deriveProgramPhases(days, dashboard, '2026-01-16', MESO_12);
+    expect(phases[0]?.status).toBe('completed');
+    expect(phases[1]?.status).toBe('in-progress');
+    expect(phases[2]?.status).toBe('upcoming');
+  });
+
+  it('dates a rescheduled workout by its override', () => {
+    // Week 4's workout, normally 2026-01-22, moved before today.
+    const dashboard = noSchedule({ dateOverrides: { 4: '2026-01-10' } });
+    const phases = deriveProgramPhases(days, dashboard, '2026-01-12', MESO_12);
+    expect(phases[1]?.status).toBe('in-progress');
+  });
+
+  it('marks every phase upcoming before the first workout', () => {
+    const phases = deriveProgramPhases(days, noSchedule(), '2025-12-31', MESO_12);
+    expect(phases.every((p) => p.status === 'upcoming')).toBe(true);
+  });
+});
+
+describe('deriveProgramPhases — status with a schedule', () => {
+  const days = weeklyDays(12);
+  // Every other day from the start, so week 4's workout falls on 2026-01-07,
+  // not its spec-relative 2026-01-22: the schedule sets the pace (#1023).
+  const everyOtherDay = (workoutNum: number) =>
+    new Date(Date.UTC(2026, 0, 1 + (workoutNum - 1) * 2)).toISOString().slice(0, 10);
+
+  it('marks a mesocycle completed once every workout in it is logged or skipped', () => {
+    const dashboard = withSchedule(days, everyOtherDay, {
+      completedWorkoutNums: [1, 3],
+      skippedWorkoutNums: [2],
+    });
+    const phases = deriveProgramPhases(days, dashboard, '2026-01-06', MESO_12);
+    expect(phases[0]?.status).toBe('completed');
+    expect(phases[1]?.status).toBe('upcoming');
+  });
+
+  it('dates workouts by the schedule, not their spec-relative dates', () => {
+    const dashboard = withSchedule(days, everyOtherDay, { completedWorkoutNums: [1, 2, 3] });
+    const phases = deriveProgramPhases(days, dashboard, '2026-01-08', MESO_12);
+    expect(phases[0]?.status).toBe('completed');
+    expect(phases[1]?.status).toBe('in-progress'); // workout 4 scheduled 2026-01-07
+    expect(phases[2]?.status).toBe('upcoming'); // workout 7 scheduled 2026-01-13
+  });
+
+  it('marks every phase upcoming when no scheduled date has passed', () => {
+    const dashboard = withSchedule(days, () => '2099-01-01');
+    const phases = deriveProgramPhases(days, dashboard, '2026-06-01', REPEATING_12);
     expect(phases.every((p) => p.status === 'upcoming')).toBe(true);
   });
 
   it('shows the full-length plan as upcoming for a pre-#680 macrocycle with only week 1 scheduled', () => {
     // Storage predates full-length expansion: only week 1 exists in the dashboard,
     // but the plan still renders the canonical 12-week overview (weeks 2-12 upcoming).
-    const weeks = [makeWeek(1, ['2099-01-01'], false)];
-    const phases = deriveProgramPhases(weeks, '2026-01-01', REPEATING_12);
+    const dashboard = noSchedule({ weeks: [makeWeek(1, ['2099-01-01'], false)] });
+    const phases = deriveProgramPhases(days, dashboard, '2025-12-01', REPEATING_12);
     expect(phases).toHaveLength(1);
     expect(phases[0]).toMatchObject({ startWeek: 1, endWeek: 12, status: 'upcoming' });
   });
