@@ -109,8 +109,10 @@ export type PhaseDashboard = Pick<
  * workouts (`days`, from `buildWorkoutDays`) the way the Macrocycle Dashboard
  * grid reads them:
  * - a phase is completed once every workout in it is logged or skipped;
- * - else it is in progress once a workout in it is dated today or earlier, each
- *   dated by {@link workoutDateResolver};
+ * - else it is in progress once a workout in it is logged or skipped, or dated
+ *   today or earlier, each dated by {@link workoutDateResolver}. Logging a workout
+ *   early does not move its date, so a phase trained ahead of its dates has to
+ *   count its logged workouts to read as started;
  * - else it is upcoming.
  *
  * `dashboard.weeks` is empty without a schedule, which is the default for a new
@@ -128,13 +130,14 @@ export function deriveProgramPhases(
   const dateOf = workoutDateResolver(dashboard);
   const completed = new Set(dashboard.completedWorkoutNums);
   const skipped = new Set(dashboard.skippedWorkoutNums);
+  const done = (d: Pick<WorkoutDay, 'workoutNum'>) =>
+    completed.has(d.workoutNum) || skipped.has(d.workoutNum);
   return buildPhaseTemplate(meta).map((p) => {
     const phaseDays = days.filter((d) => d.week >= p.startWeek && d.week <= p.endWeek);
     const status: PhaseStatus =
-      phaseDays.length > 0 &&
-      phaseDays.every((d) => completed.has(d.workoutNum) || skipped.has(d.workoutNum))
+      phaseDays.length > 0 && phaseDays.every(done)
         ? 'completed'
-        : phaseDays.some((d) => dateOf(d) <= today)
+        : phaseDays.some((d) => done(d) || dateOf(d) <= today)
           ? 'in-progress'
           : 'upcoming';
     return { ...p, status };

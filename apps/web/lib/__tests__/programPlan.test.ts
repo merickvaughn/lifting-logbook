@@ -178,6 +178,15 @@ describe('deriveProgramPhases — status with no schedule (issue #1036)', () => 
     expect(phases[1]?.status).toBe('upcoming');
   });
 
+  it('marks a mesocycle in progress once a workout in it is logged ahead of its date', () => {
+    // Mesocycle 1 done, then week 4's workout (dated 2026-01-22) logged on 2026-01-16.
+    const dashboard = noSchedule({ completedWorkoutNums: [1, 2, 3, 4] });
+    const phases = deriveProgramPhases(days, dashboard, '2026-01-16', MESO_12);
+    expect(phases[0]?.status).toBe('completed');
+    expect(phases[1]?.status).toBe('in-progress');
+    expect(phases[2]?.status).toBe('upcoming');
+  });
+
   it('dates a rescheduled workout by its override', () => {
     // Week 4's workout, normally 2026-01-22, moved before today.
     const dashboard = noSchedule({ dateOverrides: { 4: '2026-01-10' } });
