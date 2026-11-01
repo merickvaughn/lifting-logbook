@@ -61,7 +61,7 @@ describe.each<[string, (offset: number) => boolean]>([
     expect(result.wednesdayStart).toEqual(["2026-05-18", "2026-05-20", "2026-05-22"].map(midnight));
   });
 
-  it("keeps whole calendar days across a daylight-saving change", () => {
+  it("keeps whole calendar days across the 2026-03-08 US daylight-saving change", () => {
     expect(result.acrossDstChange).toEqual(
       ["2026-03-02", "2026-03-04", "2026-03-06", "2026-03-09", "2026-03-11", "2026-03-13"].map(midnight),
     );
