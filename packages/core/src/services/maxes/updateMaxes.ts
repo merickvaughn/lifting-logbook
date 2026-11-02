@@ -1,6 +1,6 @@
 import { LiftingProgramSpec, LiftOverride, LiftRecord, TrainingMax } from "@src/core/models";
 import { programWorkoutKeys, specRowsForWorkoutDay } from "../../presets/programLengths";
-import { applyLiftOverrides } from "../workout/applyLiftOverrides";
+import { resolveDayPrescriptions } from "../workout/dayPrescriptions";
 
 const ABNORMAL_KEYWORDS = ['injury', 'unusual stimulus', 'skip'];
 
@@ -44,7 +44,7 @@ export interface UpdateMaxesOptions {
  * A record's spec row is its workout day's, resolved the way the workout pages resolve
  * it (issue #1028): the block week its program week tiles from, at the day's offset
  * (`specRowsForWorkoutDay`), and for a Manage Lifts replacement, the row of the slot it
- * took (`applyLiftOverrides`), so it progresses its own training max by the slot's rules.
+ * took (`resolveDayPrescriptions`), so it progresses its own training max by the slot's rules.
  * Sets logged under a slot's earlier name, before a swap, take the slot's row too, and
  * still progress their own lift's max. A record the day doesn't prescribe (an added
  * lift, or a workout past the program's last day) falls back to the lift's first spec
@@ -74,26 +74,12 @@ export function updateMaxes(
   const specFor = (record: LiftRecord): LiftingProgramSpec | undefined => {
     let byLift = specByWorkout.get(record.workoutNum);
     if (!byLift) {
-      byLift = new Map();
       const day = days[record.workoutNum - 1];
       const dayRows = day ? specRowsForWorkoutDay(programSpec, day.week, day.offset) : [];
-      const rowBySlot = new Map<string, LiftingProgramSpec>();
-      for (const row of dayRows) if (!rowBySlot.has(row.lift)) rowBySlot.set(row.lift, row);
-      const { planned, renamed } = applyLiftOverrides(
-        [...rowBySlot.keys()],
+      byLift = resolveDayPrescriptions(
+        dayRows,
         options.liftOverrides.get(record.workoutNum) ?? [],
-      );
-      for (const { lift, replaces } of planned) {
-        const row = rowBySlot.get(replaces ?? lift);
-        if (row) byLift.set(lift, row);
-      }
-      // Sets logged under a slot's earlier name belong to the slot too.
-      for (const [stored, current] of renamed) {
-        const row = byLift.get(current);
-        if (row && !byLift.has(stored)) byLift.set(stored, row);
-      }
-      // A removed lift's sets keep its own row on this day.
-      for (const [lift, row] of rowBySlot) if (!byLift.has(lift)) byLift.set(lift, row);
+      ).rowByStoredLift;
       specByWorkout.set(record.workoutNum, byLift);
     }
     return byLift.get(record.lift) ?? specByLift.get(record.lift);

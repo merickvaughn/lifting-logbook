@@ -4,8 +4,8 @@ import {
   LiftingProgramSpec,
   LiftOverride,
   MacrocycleDashboard,
-  applyLiftOverrides,
   programLengthWeeks,
+  resolveDayPrescriptions,
   specRowsForWorkoutDay,
 } from '@lifting-logbook/core';
 import { ProgramNotFoundError } from '../ports/errors';
@@ -49,7 +49,8 @@ export interface WorkoutDay extends AppliedLiftOverrides {
  * else past the program's canonical length is a 400.
  *
  * Planned lifts are the day's spec lifts (#1014), each listed once even when the day
- * repeats one (#1027), after the workout's lift overrides.
+ * repeats one (#1027), after the workout's lift overrides, as `resolveDayPrescriptions`
+ * applies them for progression too.
  */
 export function resolveWorkoutDay(
   program: string,
@@ -66,6 +67,6 @@ export function resolveWorkoutDay(
     );
   }
   const dayRows = workoutKey ? specRowsForWorkoutDay(spec, workoutKey.week, workoutKey.offset) : [];
-  const specLifts = [...new Set(dayRows.map((s) => s.lift))];
-  return { workoutKey, week, dayRows, ...applyLiftOverrides(specLifts, liftOverrides) };
+  const { planned, renamed, removed } = resolveDayPrescriptions(dayRows, liftOverrides);
+  return { workoutKey, week, dayRows, planned, renamed, removed };
 }
