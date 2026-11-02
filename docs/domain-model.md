@@ -244,12 +244,17 @@ store keeps the add rather than `applyLiftOverrides` inferring it, because a rep
 a lift the plan doesn't show is routine once re-saves reorder a chain of swaps: treating
 it as an add would list a lift twice when a chain is redone after an undo. The
 workout response names the slot on the replacement's `replaces`, so clients resolve the
-prescription without the override table (#1014). `updateMaxes` resolves a logged set's
-prescription the same way: its workout day's row in the block week, and for a
-replacement the row of the slot it took, so the set progresses the replacement's own
-training max by the slot's rules. Sets logged under a slot's earlier name take the
-slot's row too, but progression doesn't regroup them: they progress their own lift's
-max (#1028).
+prescription without the override table (#1014). The step from a swap to a prescription
+is `packages/core`'s `services/workout/dayPrescriptions.ts`. `plannedLiftRows` is the
+page rule: a lift takes its own row in the day, or for a replacement the row of the slot
+it `replaces`; the workout pages resolve a lift's prescription with it.
+`resolveDayPrescriptions` applies a day's overrides and maps each stored lift name to its
+row; the workout endpoint plans a day's lifts with it and `updateMaxes` resolves a logged
+set's prescription with it, so the set progresses the replacement's own training max by
+the slot's rules. It adds two rules only progression needs, since only progression sees
+sets stored under names the plan no longer shows: sets logged under a slot's earlier name
+take the slot's row, and a removed lift keeps its own row. Progression doesn't regroup
+those sets: they progress their own lift's max (#1028).
 
 ### Focus blocks sit beside the ladder, not on it
 

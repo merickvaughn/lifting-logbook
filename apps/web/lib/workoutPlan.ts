@@ -7,6 +7,7 @@ import {
   baseSpecMesocycleWeeks,
   mesocycleWeekForProgramWeek,
   noScheduleWorkoutDateUTC,
+  plannedLiftRows,
   programWorkoutKeys,
   specRowsForWorkoutDay,
 } from '@lifting-logbook/core';
@@ -214,7 +215,8 @@ export interface WorkoutLiftDetail {
  * `specRowsForWorkoutDay` the API chose the day's lifts with (issue #1014). A
  * Manage Lifts replacement is looked up by the slot it `replaces`: a swap changes
  * the movement, not the slot, so it inherits that prescription (the caller prices
- * it from the replacement's own training max).
+ * it from the replacement's own training max). Both steps are core's
+ * `plannedLiftRows`, the rule progression resolves a planned lift with too.
  *
  * `offset: null` is a workout the program has no day for (#1023): nothing on it
  * has a prescription. A response with no `offset` at all comes from an API that
@@ -234,7 +236,7 @@ export function liftSpecsForWorkout(
     const mesocycleWeek = mesocycleWeekForProgramWeek(workout.week, baseSpecMesocycleWeeks(specs));
     dayRows = specs.filter((s) => s.week === mesocycleWeek);
   }
-  return workout.lifts.map((wl) => dayRows.find((s) => s.lift === (wl.replaces ?? wl.lift)));
+  return plannedLiftRows(dayRows, workout.lifts);
 }
 
 /**
