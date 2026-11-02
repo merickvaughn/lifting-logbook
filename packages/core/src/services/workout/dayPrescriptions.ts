@@ -13,11 +13,6 @@ function rowsBySlot<Row extends LiftRow>(dayRows: readonly Row[]): Map<string, R
   return bySlot;
 }
 
-/** A swap changes the movement, not the slot, so a replacement takes its slot's row (#1014). */
-function slotRow<Row>(bySlot: ReadonlyMap<string, Row>, { lift, replaces }: PlannedLift): Row | undefined {
-  return bySlot.get(replaces ?? lift);
-}
-
 /**
  * The spec row prescribing each of a workout day's lifts, index-aligned with `lifts`:
  * a lift's own row, or for a Manage Lifts replacement the row of the slot it `replaces`,
@@ -26,8 +21,8 @@ function slotRow<Row>(bySlot: ReadonlyMap<string, Row>, { lift, replaces }: Plan
  * added through Manage Lifts or swapped into an added lift's slot (#1026).
  *
  * This is the page rule. The workout pages resolve a lift with it from the response's
- * `replaces`, and progression resolves a planned lift with it too
- * ({@link resolveDayPrescriptions}). `dayRows` are the day's own spec rows
+ * `replaces`, and {@link resolveDayPrescriptions} resolves each planned lift with it, so
+ * a change here reaches progression too. `dayRows` are the day's own spec rows
  * (`specRowsForWorkoutDay`).
  */
 export function plannedLiftRows<Row extends LiftRow>(
@@ -35,7 +30,8 @@ export function plannedLiftRows<Row extends LiftRow>(
   lifts: readonly PlannedLift[],
 ): (Row | undefined)[] {
   const bySlot = rowsBySlot(dayRows);
-  return lifts.map((lift) => slotRow(bySlot, lift));
+  // A swap changes the movement, not the slot, so a replacement takes its slot's row (#1014).
+  return lifts.map(({ lift, replaces }) => bySlot.get(replaces ?? lift));
 }
 
 /** A workout day's overrides applied, and the spec row each stored lift name takes. */
@@ -71,10 +67,11 @@ export function resolveDayPrescriptions<Row extends LiftRow>(
   const applied = applyLiftOverrides([...bySlot.keys()], overrides);
 
   const rowByStoredLift = new Map<string, Row>();
-  for (const lift of applied.planned) {
-    const row = slotRow(bySlot, lift);
-    if (row) rowByStoredLift.set(lift.lift, row);
-  }
+  const plannedRows = plannedLiftRows(dayRows, applied.planned);
+  applied.planned.forEach(({ lift }, i) => {
+    const row = plannedRows[i];
+    if (row) rowByStoredLift.set(lift, row);
+  });
   for (const [stored, current] of applied.renamed) {
     const row = rowByStoredLift.get(current);
     if (row && !rowByStoredLift.has(stored)) rowByStoredLift.set(stored, row);
