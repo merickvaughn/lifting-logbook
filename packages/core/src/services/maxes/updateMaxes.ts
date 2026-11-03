@@ -59,6 +59,12 @@ export function updateMaxes(
   const newMaxes: TrainingMax[] = trainingMaxes.map((tm) => ({ ...tm }));
   const flagged: MaxReductionFlag[] = [];
 
+  // Where a day plans a lift twice, its first occurrence progresses it, under the row
+  // `resolveDayPrescriptions` gives the lift. A later occurrence (a superset, or extra
+  // volume) has its own prescription and its own set numbers, and would otherwise be
+  // read as a second set 1 under the first occurrence's rules (#1027).
+  const progressed = liftRecords.filter((r) => !r.occurrence);
+
   // Lookups built once rather than scanned once per record (issue #983).
   // First-wins on a duplicate lift, which is exactly what the per-record
   // `findIndex` / `find` returned; the map holds the same objects that sit in
@@ -94,7 +100,7 @@ export function updateMaxes(
   const setsFor = (lift: string, workoutNum: number): LiftRecord[] => {
     if (setsByLiftAndWorkout === null) {
       setsByLiftAndWorkout = new Map();
-      for (const r of liftRecords) {
+      for (const r of progressed) {
         let byWorkout = setsByLiftAndWorkout.get(r.lift);
         if (!byWorkout) {
           byWorkout = new Map();
@@ -111,7 +117,7 @@ export function updateMaxes(
     return setsByLiftAndWorkout.get(lift)?.get(workoutNum) ?? [];
   };
 
-  liftRecords.forEach((record) => {
+  progressed.forEach((record) => {
     const liftName = record.lift;
     const currentMax = maxByLift.get(liftName);
     if (!currentMax) throw new Error(`Training max for lift ${liftName} not found.`);

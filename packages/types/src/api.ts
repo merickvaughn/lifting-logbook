@@ -99,6 +99,13 @@ export interface WorkoutLiftResponse {
    * by this name, and price it from `lift`'s own training max (issue #1014).
    */
   replaces?: LiftName;
+  /**
+   * Which occurrence of `lift` in this workout, from 0, present only above 0: a
+   * program can plan one lift twice in a day, and each occurrence lists its own
+   * sets (#1027). Log a set against an occurrence by sending this value back in
+   * {@link CreateLiftRecordRequest.occurrence}.
+   */
+  occurrence?: number;
 }
 
 /** Serialized workout as returned by the API. */
@@ -154,6 +161,8 @@ export interface LiftRecordResponse {
   workoutNum: number;
   date: string; // ISO 8601 date string
   lift: LiftName;
+  /** Which occurrence of `lift` in its workout, from 0; present only above 0 (#1027). */
+  occurrence?: number;
   setNum: number;
   weight: number;
   reps: number;
@@ -168,6 +177,8 @@ export interface CreateLiftRecordRequest {
   /** Bare calendar date ("YYYY-MM-DD", no time/offset — see CreateLiftRecordDto.date in apps/api). When omitted the server uses the scheduled date for this workout, falling back to today. */
   date?: string;
   lift: LiftName;
+  /** The workout lift's {@link WorkoutLiftResponse.occurrence}; omit for its first occurrence. */
+  occurrence?: number;
   setNum: number;
   weight: number;
   reps: number;

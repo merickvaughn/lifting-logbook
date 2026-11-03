@@ -160,7 +160,7 @@ describe("applyLiftOverrides — where logged sets belong", () => {
   it("lets a lift the plan shows keep the sets stored under its own name", () => {
     // Squat's slot was swapped and removed, then Leg Press's slot became Squat.
     // A Squat set logged in that slot must show there, not vanish with the old
-    // slot. Older Squat sets come along: sets are keyed by name alone (#1027).
+    // slot. Older Squat sets come along: overrides address a lift by name (#1109).
     const o: LiftOverride[] = [
       { lift: "Squat", action: "replace", replacedBy: "Front Squat" },
       { lift: "Front Squat", action: "remove" },
@@ -235,7 +235,7 @@ describe("applyLiftOverrides — a lift’s add and its replace, stored apart (#
       { lift: "Squat" },
     ]);
     // A lift the plan shows owns the sets under its own name (telling the two
-    // Squats' sets apart needs slot identity, #1027).
+    // Squats' sets apart needs occurrence identity in overrides, #1109).
     expect(renamed.size).toBe(0);
   });
 

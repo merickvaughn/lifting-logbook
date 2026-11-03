@@ -59,19 +59,43 @@ describe('PrismaLiftRecordRepository', () => {
       expect(prisma.liftRecord.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            userId_program_macrocycleNum_workoutNum_date_lift_setNum: {
+            userId_program_macrocycleNum_workoutNum_date_lift_occurrence_setNum: {
               userId: 'user-1',
               program: '5-3-1',
               macrocycleNum: 2,
               workoutNum: 3,
               date: new Date('2026-04-01T00:00:00.000Z'),
               lift: 'Bench Press',
+              occurrence: 0,
               setNum: 1,
             },
           },
         }),
       );
       expect(result?.weight).toBe(185);
+    });
+
+    // Issue #1027: a later occurrence's id ends in `<setNum>~<occurrence>` and
+    // must address that occurrence's row, not the first occurrence's set.
+    it('addresses a later occurrence of a lift by the occurrence in its id', async () => {
+      const prisma = makePrisma();
+      (prisma.liftRecord.update as jest.Mock).mockResolvedValue({ ...BASE_ROW, occurrence: 1 });
+      const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
+
+      const result = await repo.updateLiftRecord('5-3-1', '5-3-1-2-3-20260401-Bench Press-1~1', { weight: 95 });
+
+      expect(prisma.liftRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            userId_program_macrocycleNum_workoutNum_date_lift_occurrence_setNum: expect.objectContaining({
+              lift: 'Bench Press',
+              occurrence: 1,
+              setNum: 1,
+            }),
+          },
+        }),
+      );
+      expect(result?.occurrence).toBe(1);
     });
 
     it('correctly parses a hyphenated lift name (e.g. Chin-up)', async () => {
@@ -85,7 +109,7 @@ describe('PrismaLiftRecordRepository', () => {
       expect(prisma.liftRecord.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            userId_program_macrocycleNum_workoutNum_date_lift_setNum: expect.objectContaining({
+            userId_program_macrocycleNum_workoutNum_date_lift_occurrence_setNum: expect.objectContaining({
               date: new Date('2026-04-01T00:00:00.000Z'),
               lift: 'Chin-up',
               setNum: 2,
@@ -108,7 +132,7 @@ describe('PrismaLiftRecordRepository', () => {
       expect(prisma.liftRecord.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            userId_program_macrocycleNum_workoutNum_date_lift_setNum: expect.objectContaining({
+            userId_program_macrocycleNum_workoutNum_date_lift_occurrence_setNum: expect.objectContaining({
               date: new Date('2026-04-01T00:00:00.000Z'),
               lift: 'Romanian Dead-lift',
               setNum: 3,
@@ -289,7 +313,7 @@ describe('PrismaLiftRecordRepository', () => {
       expect(prisma.liftRecord.deleteMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            OR: [{ macrocycleNum: 2, workoutNum: 3, lift: 'Bench Press', setNum: 1 }],
+            OR: [{ macrocycleNum: 2, workoutNum: 3, lift: 'Bench Press', occurrence: 0, setNum: 1 }],
           }),
         }),
       );

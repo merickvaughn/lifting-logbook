@@ -8,7 +8,7 @@ derivable ones is tracked in
 
 > **The one thing to know.** The ladder is
 > `Program → Macrocycle → Mesocycle → Week → Workout → Lift slot → Set`, and **only the leaf is a row.**
-> `LiftRecord` carries the whole `(program, macrocycleNum, workoutNum, date, lift, setNum)`
+> `LiftRecord` carries the whole `(program, macrocycleNum, workoutNum, date, lift, occurrence, setNum)`
 > coordinate; every level above it is recomputed per request from the program spec plus a
 > handful of override rows. Section 1 explains why; if you only need the model, start at
 > section 3.
@@ -256,6 +256,17 @@ sets stored under names the plan no longer shows: sets logged under a slot's ear
 take the slot's row, and a removed lift keeps its own row. Progression doesn't regroup
 those sets: they progress their own lift's max (#1028).
 
+A day can plan one lift twice: a superset, or extra volume after the hypertrophy work.
+Each **occurrence** is its own slot. `plannedLiftRows` gives a lift's second slot its
+second row, and the workout response lists the lift twice, the later entry carrying
+`occurrence: 1`. A `LiftRecord`'s `occurrence` says which one a set was logged against,
+from 0 (`liftOccurrences` numbers them in plan order), so each occurrence keeps its own
+sets and its record id ends in `<setNum>~<occurrence>` past the first. Progression reads
+only a lift's first occurrence: a later one has its own prescription and its own set 1
+(#1027). Overrides still address a lift by name, so a swap replaces every occurrence of
+it, and a duplicate that a swap or an add makes is not told apart from a planned one yet
+(#1109).
+
 ### Focus blocks sit beside the ladder, not on it
 
 A **focus block** ([#1053](https://github.com/merickvaughn/lifting-logbook/issues/1053)) is
@@ -398,6 +409,7 @@ classDiagram
         +int workoutNum
         +date date
         +string lift
+        +int occurrence
         +int setNum
         +float weight
         +int reps
@@ -546,7 +558,7 @@ through with its closing PR rather than deleted or renumbered.
 | **D1** | **Logged `amrap` is recovered by string-sniffing free text**: `amrap: r.notes.toUpperCase().includes('AMRAP')`. Any note mentioning "amrap" flips the flag. `amrap` is a real column on `custom_program_spec` but has none for a logged set. | `apps/api/src/programs/mappers.ts:346` |
 | **D2** | ~~**`deleteCurrentMacrocycle` does not delete the workout overrides.** Its docstring opens "the current macrocycle … and every row scoped to it", then enumerates five kinds; the `repos` parameter's `Pick<>` type structurally excludes the rest. `workout_date_override`, `workout_skip_override` and `workout_lift_override` are all `(program, macrocycleNum, workoutNum)`-scoped and survive, so after delete-then-initialize the old macrocycle 1's reschedules, skips and lift overrides resurface on the new macrocycle 1. No FK cascade covers it.~~ Resolved in [PR #1088](https://github.com/merickvaughn/lifting-logbook/pull/1088) ([#1084](https://github.com/merickvaughn/lifting-logbook/issues/1084)): the delete now also removes the three override tables and `focus_day_state` (keyed the same way), for every macrocycle number, since re-initializing always starts again at macrocycle 1. (`strength_goal`, `body_weight`, focus blocks and the focus budget still survive, which is arguably correct — they outlive a macrocycle. `import_batch` survives with a `preImage` referencing deleted rows.) | ~~`apps/api/src/programs/macrocycle-generation.service.ts:288`~~ |
 | **D3** | **Renaming a custom lift silently orphans its history.** `custom_lift.id` is the REST key, and `domain.ts` claims id is independent of name "so a lift can be renamed without breaking references" — but every training table keys lifts by name string, and `update()` writes only the `custom_lift` row. There is no `updateMany` in any repository. A rename leaves `lift_record`, `training_max`, `strength_goal`, `lift_metadata`, `workout_lift_override` and `custom_program_spec` pointing at the old name. | `apps/api/src/adapters/prisma/custom-lift.repository.ts:59` |
-| **D4** | **A `LiftRecord`'s public id is unstable.** The cuid PK is never exposed; `LiftRecordResponse.id` is the synthetic composite `program-macrocycleNum-workoutNum-YYYYMMDD-lift-setNum`, parsed back to the compound unique index on `PATCH`. Editing a record's date therefore changes its id. `packages/core`'s `LiftRecord` model declares no `id` field at all. | `packages/core/src/utils/import/liftRecordNaturalKey.ts:74` |
+| **D4** | **A `LiftRecord`'s public id is unstable.** The cuid PK is never exposed; `LiftRecordResponse.id` is the synthetic composite `program-macrocycleNum-workoutNum-YYYYMMDD-lift-setNum` (`setNum~occurrence` past a lift's first occurrence, #1027), parsed back to the compound unique index on `PATCH`. Editing a record's date therefore changes its id. `packages/core`'s `LiftRecord` model declares no `id` field at all. | `packages/core/src/utils/import/liftRecordNaturalKey.ts:108` |
 | **D5** | **`WeekType` drives progression, and no shipped preset sets it.** For built-in programs `weekType` is always `undefined` → `'training'`, so only one of `updateMaxes`' three branches runs. The `test` and `deload` branches are **not dead code**: a custom program can set `weekType`, and the create DTO accepts it as an unconstrained `@IsString()` — so an arbitrary string reaches a field the domain types as a three-value union. `apps/web/lib/programPlan.ts` notes its own `deload`/`test` phase branches are unreachable. `docs/PRD.md` lists deload as a v1.0 **non-goal**; the user guide and the in-app glossary used to describe it as routine and, since ADR-038, say no shipped program schedules one. | `packages/core/src/presets/index.ts`, `create-custom-program.dto.ts` (`weekType`) |
 | **D6** | **`body_weight` is program-scoped with no uniqueness.** A weigh-in is a per-user fact, but scoping it by `program` makes it invisible after a program switch; duplicate same-day rows are legal; and the port exposes only `recordBodyWeight` + `getLatestBodyWeight`, so the accumulated series is write-only. | `apps/api/prisma/schema.prisma`, `IBodyWeightRepository` |
 

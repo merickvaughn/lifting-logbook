@@ -32,6 +32,12 @@ export interface WorkingSetData {
 
 export interface LiftData {
   lift: string;
+  /**
+   * Which occurrence of `lift` in the workout, from 0 (`WorkoutLiftResponse.occurrence`);
+   * absent means 0. A program can plan one lift twice in a day, and each occurrence logs
+   * its own sets, so the logger keys a set by occurrence as well as lift (#1027).
+   */
+  occurrence?: number;
   isBodyweightComponent: boolean;
   /**
    * For bodyweight-component lifts, the warm-up implement name shown

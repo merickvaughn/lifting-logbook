@@ -79,7 +79,7 @@ const LOGGED_SET = { id: '5-3-1-1-1-20260106-Squat-1', setNum: 1, weight: 200, r
 // `sets` is loosely typed on purpose: one case feeds a planned lift id-less,
 // spec-shaped sets, which the real API never sends.
 function seedWorkout(
-  lifts: { lift: string; planned: boolean; sets: Record<string, unknown>[] }[],
+  lifts: { lift: string; planned: boolean; sets: Record<string, unknown>[]; occurrence?: number }[],
   { skipped = false, specOverrides = {} }: { skipped?: boolean; specOverrides?: Partial<ReturnType<typeof spec>> } = {},
 ) {
   mockedWorkout.mockResolvedValue({
@@ -192,6 +192,21 @@ describe('WorkoutLoggingPage — working sets come from the plan (issue #1080)',
     const { lifts, readOnly } = await renderPage();
 
     expect(lifts[1]?.workingSets).toHaveLength(1);
+    expect(readOnly).toBe(false);
+  });
+
+  it('passes each occurrence of a lift planned twice to the logger, logged apart (issue #1027)', async () => {
+    seedWorkout([
+      { lift: 'Squat', planned: false, sets: [LOGGED_SET] },
+      { lift: 'Squat', planned: true, sets: [], occurrence: 1 },
+    ]);
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts.map((l) => [l.lift, l.occurrence, l.workingSets.map((s) => Boolean(s.existing))])).toEqual([
+      ['Squat', undefined, [true]],
+      ['Squat', 1, [false]],
+    ]);
     expect(readOnly).toBe(false);
   });
 

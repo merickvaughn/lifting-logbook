@@ -1,5 +1,6 @@
 import type { LiftOverride } from "@src/core/models/LiftOverride";
 import {
+  liftOccurrences,
   plannedLiftRows,
   resolveDayPrescriptions,
 } from "@src/core/services/workout/dayPrescriptions";
@@ -34,17 +35,72 @@ describe("plannedLiftRows — the page rule", () => {
     ).toEqual([undefined, squat, undefined]);
   });
 
-  it("takes the day's first row for a lift the day repeats (#1027)", () => {
+  it("gives each occurrence of a lift the day repeats its own row, in order (#1027)", () => {
     const second = { lift: "Squat", reps: 1 };
-    expect(plannedLiftRows([squat, second], [{ lift: "Squat" }])).toEqual([squat]);
+    expect(
+      plannedLiftRows([squat, bench, second], [{ lift: "Squat" }, { lift: "Bench Press" }, { lift: "Squat" }]),
+    ).toEqual([squat, bench, second]);
+  });
+
+  it("matches a swapped repeated slot's occurrences to the slot's rows (#1027)", () => {
+    const second = { lift: "Squat", reps: 1 };
+    expect(
+      plannedLiftRows(
+        [squat, second],
+        [
+          { lift: "Front Squat", replaces: "Squat" },
+          { lift: "Front Squat", replaces: "Squat" },
+        ],
+      ),
+    ).toEqual([squat, second]);
+  });
+
+  it("gives an occurrence past the day's rows for its lift no row", () => {
+    expect(plannedLiftRows(dayRows, [{ lift: "Squat" }, { lift: "Squat" }])).toEqual([squat, undefined]);
+  });
+});
+
+describe("liftOccurrences", () => {
+  it("numbers each lift's occurrences from 0, index-aligned", () => {
+    expect(
+      liftOccurrences([{ lift: "Squat" }, { lift: "Bench Press" }, { lift: "Squat" }, { lift: "Squat" }]),
+    ).toEqual([0, 0, 1, 2]);
   });
 });
 
 describe("resolveDayPrescriptions", () => {
-  it("lists each spec lift once, in the day's order, with no overrides", () => {
-    const { planned, rowByStoredLift } = resolveDayPrescriptions([squat, bench, { lift: "Squat", reps: 1 }], []);
-    expect(planned).toEqual([{ lift: "Squat" }, { lift: "Bench Press" }]);
+  it("lists every spec lift in the day's order, a repeated one twice, with no overrides (#1027)", () => {
+    const second = { lift: "Squat", reps: 1 };
+    const { planned, rowByStoredLift } = resolveDayPrescriptions([squat, bench, second], []);
+    expect(planned).toEqual([{ lift: "Squat" }, { lift: "Bench Press" }, { lift: "Squat" }]);
+    // Progression follows a repeated lift's first occurrence.
     expect(rowByStoredLift).toEqual(new Map([["Squat", squat], ["Bench Press", bench]]));
+  });
+
+  it("swaps every occurrence of a repeated lift, each keeping its own slot's row", () => {
+    const second = { lift: "Squat", reps: 1 };
+    const { planned, renamed, rowByStoredLift } = resolveDayPrescriptions(
+      [squat, second],
+      [replace("Squat", "Front Squat")],
+    );
+    expect(planned).toEqual([
+      { lift: "Front Squat", replaces: "Squat" },
+      { lift: "Front Squat", replaces: "Squat" },
+    ]);
+    expect(plannedLiftRows([squat, second], planned)).toEqual([squat, second]);
+    expect(renamed).toEqual(new Map([["Squat", "Front Squat"]]));
+    // Progression follows the first occurrence.
+    expect(rowByStoredLift.get("Front Squat")).toBe(squat);
+  });
+
+  it("progresses a lift a swap duplicates by its own slot's row, not the swapped slot's (#1109)", () => {
+    const frontSquat = { lift: "Front Squat", reps: 8 };
+    const { planned, rowByStoredLift } = resolveDayPrescriptions(
+      [frontSquat, squat],
+      [replace("Front Squat", "Squat")],
+    );
+    expect(planned).toEqual([{ lift: "Squat", replaces: "Front Squat" }, { lift: "Squat" }]);
+    expect(rowByStoredLift.get("Squat")).toBe(squat);
   });
 
   it("returns the overrides as applyLiftOverrides applies them", () => {

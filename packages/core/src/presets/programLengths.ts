@@ -95,8 +95,8 @@ export function mesocycleWeekForProgramWeek(week: number, mesocycleWeeks: number
  * matching the week without the offset lists every day's lifts on every day (issue
  * #1014). The workouts controller (which lifts a day plans), the web (each lift's
  * prescription) and the Macrocycle Dashboard (each card's lifts, `buildWorkoutDays`) all
- * resolve a day here, so they start from the same rows. Downstream, a lift a day
- * repeats is still collapsed to one occurrence by the workout endpoint (#1027).
+ * resolve a day here, so they start from the same rows, a lift the day plans twice
+ * included twice (#1027).
  *
  * `offset` is required: a caller without one has no day, and must decide what that
  * means rather than fall back to the whole week.

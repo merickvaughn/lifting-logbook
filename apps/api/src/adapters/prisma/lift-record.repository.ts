@@ -4,8 +4,9 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import {
   LiftRecord,
   liftRecordNaturalKey,
+  parseLiftRecordId,
   parseLiftRecordNaturalKey,
-  parseYYYYMMDD,
+  withOccurrence,
 } from '@lifting-logbook/core';
 import { ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
 
@@ -52,6 +53,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
         workoutNum: r.workoutNum,
         date: r.date,
         lift: r.lift,
+        occurrence: r.occurrence ?? 0,
         setNum: r.setNum,
         weight: r.weight,
         reps: r.reps,
@@ -66,7 +68,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     if (candidates.length === 0) return [];
 
     // Chunk the OR array to stay within Postgres parameter limits (~32k).
-    // Each candidate produces 5 bound parameters; 500 chunks ≈ 2500 params per query.
+    // Each candidate produces 6 bound parameters; 500 chunks ≈ 3000 params per query.
     const CHUNK_SIZE = 500;
     const chunks: LiftRecord[][] = [];
     for (let i = 0; i < candidates.length; i += CHUNK_SIZE) {
@@ -84,6 +86,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
               workoutNum: r.workoutNum,
               date: r.date,
               lift: r.lift,
+              occurrence: r.occurrence ?? 0,
               setNum: r.setNum,
             })),
           },
@@ -106,10 +109,11 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     try {
       const updated = await this.prisma.liftRecord.update({
         where: {
-          userId_program_macrocycleNum_workoutNum_date_lift_setNum: {
+          userId_program_macrocycleNum_workoutNum_date_lift_occurrence_setNum: {
             userId: this.userId,
             program,
             ...parsed,
+            occurrence: parsed.occurrence ?? 0,
           },
         },
         data: {
@@ -142,6 +146,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
       workoutNum: number;
       date?: Date;
       lift: string;
+      occurrence: number;
       setNum: number;
     }> = [];
     for (const k of naturalKeys) {
@@ -152,12 +157,14 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
           workoutNum: p.workoutNum,
           date: p.date,
           lift: p.lift,
+          occurrence: p.occurrence ?? 0,
           setNum: p.setNum,
         });
         continue;
       }
+      // A legacy key predates `occurrence` (#1027), when every row was occurrence 0.
       const legacy = parseLegacyLiftRecordNaturalKey(k);
-      if (legacy) clauses.push(legacy);
+      if (legacy) clauses.push({ ...legacy, occurrence: 0 });
     }
     if (clauses.length === 0) return 0;
     const { count } = await this.prisma.liftRecord.deleteMany({
@@ -175,35 +182,6 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
       where: { userId: this.userId, program },
     });
   }
-}
-
-// ID format: ${program}-${macrocycleNum}-${workoutNum}-${YYYYMMDD}-${lift}-${setNum}
-// macrocycleNum, workoutNum, setNum are integers; date is 8 UTC digits (no internal
-// delimiter, so it can never be confused with a hyphen inside the lift name,
-// e.g. "Chin-up", "Romanian Dead-lift"); lift may itself contain hyphens.
-//
-// A pre-#884 id (no date segment) fails the segment-count check below and
-// returns null, which callers already treat as "not found" (404 / no-op) —
-// a safe failure mode rather than misparsing an old-format id as some other
-// record.
-function parseLiftRecordId(
-  program: string,
-  id: string,
-): { macrocycleNum: number; workoutNum: number; date: Date; lift: string; setNum: number } | null {
-  const prefix = `${program}-`;
-  if (!id.startsWith(prefix)) return null;
-  const rest = id.slice(prefix.length);
-  const parts = rest.split('-');
-  if (parts.length < 5) return null;
-
-  const macrocycleNum = parseInt(parts[0] ?? '', 10);
-  const workoutNum = parseInt(parts[1] ?? '', 10);
-  const date = parseYYYYMMDD(parts[2] ?? '');
-  const setNum = parseInt(parts[parts.length - 1] ?? '', 10);
-  const lift = parts.slice(3, parts.length - 1).join('-');
-
-  if (isNaN(macrocycleNum) || isNaN(workoutNum) || !date || isNaN(setNum) || !lift) return null;
-  return { macrocycleNum, workoutNum, date, lift, setNum };
 }
 
 // Parses a pre-#884 natural key with no date segment:
@@ -231,6 +209,7 @@ export function rowToLiftRecord(row: {
   workoutNum: number;
   date: Date;
   lift: string;
+  occurrence?: number;
   setNum: number;
   weight: number;
   reps: number;
@@ -242,6 +221,9 @@ export function rowToLiftRecord(row: {
     workoutNum: row.workoutNum,
     date: row.date,
     lift: row.lift,
+    // Left absent at 0, as the record type reads it, so a first occurrence's record
+    // is the shape it was before occurrences existed (#1027).
+    ...withOccurrence(row.occurrence),
     setNum: row.setNum,
     weight: row.weight,
     reps: row.reps,

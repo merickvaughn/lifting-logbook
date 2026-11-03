@@ -7,6 +7,12 @@ export interface LiftRecord {
   workoutNum: number;
   date: Date;
   lift: LiftName;
+  /**
+   * Which occurrence of `lift` in its workout the set belongs to, from 0; absent
+   * means 0. A program can plan one lift twice in a day, and each occurrence logs
+   * its own sets (#1027). See `liftOccurrences`.
+   */
+  occurrence?: number;
   setNum: number;
   weight: number;
   reps: number;

@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { LIFT_CATALOG, DEFAULT_SLOT_MAP, convertWeight } from '@lifting-logbook/core';
+import { LIFT_CATALOG, DEFAULT_SLOT_MAP, convertWeight, withOccurrence } from '@lifting-logbook/core';
 import type { SetResponse } from '@lifting-logbook/types';
 import {
   fetchLatestBodyWeight,
@@ -121,6 +121,8 @@ export default async function WorkoutLoggingPage({
 
     return {
       lift: wl.lift,
+      // Each occurrence of a lift the day plans twice logs its own sets (#1027).
+      ...withOccurrence(wl.occurrence),
       isBodyweightComponent: bwComponent,
       warmUpImplement: bwComponent ? WARMUP_IMPLEMENT[wl.lift] : undefined,
       warmUpSets,

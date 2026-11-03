@@ -6,11 +6,32 @@ interface LiftRow {
   lift: string;
 }
 
-/** The day's rows by lift; where the day repeats a lift, its first row (#1027). */
-function rowsBySlot<Row extends LiftRow>(dayRows: readonly Row[]): Map<string, Row> {
-  const bySlot = new Map<string, Row>();
-  for (const row of dayRows) if (!bySlot.has(row.lift)) bySlot.set(row.lift, row);
-  return bySlot;
+/** Each name's occurrence among `names`, from 0, index-aligned with them. */
+function nthOccurrences(names: readonly string[]): number[] {
+  const seen = new Map<string, number>();
+  return names.map((name) => {
+    const n = seen.get(name) ?? 0;
+    seen.set(name, n + 1);
+    return n;
+  });
+}
+
+/**
+ * Which occurrence of its lift each entry of a workout's lift list is, from 0,
+ * index-aligned with `lifts`. A program can plan one lift twice in a day, and each
+ * occurrence logs its own sets: a lift record's `occurrence` is this number (#1027).
+ */
+export function liftOccurrences(lifts: readonly { lift: string }[]): number[] {
+  return nthOccurrences(lifts.map(({ lift }) => lift));
+}
+
+/**
+ * One lift occurrence's identity within a workout, as a string key: the workout
+ * response groups logged sets by it and the logger keys its sets by it. It leads with
+ * the occurrence's digits, so no lift name can make two keys collide.
+ */
+export function liftOccurrenceKey(lift: string, occurrence: number | undefined): string {
+  return `${occurrence ?? 0}:${lift}`;
 }
 
 /**
@@ -19,6 +40,9 @@ function rowsBySlot<Row extends LiftRow>(dayRows: readonly Row[]): Map<string, R
  * whose prescription it inherits (the caller prices it from the replacement's own
  * training max). `undefined` where the day plans none: a lift logged ad hoc, or one
  * added through Manage Lifts or swapped into an added lift's slot (#1026).
+ *
+ * Where the day plans a lift more than once, the slots match its rows in order: the
+ * second slot of a lift takes the lift's second row (#1027).
  *
  * This is the page rule. The workout pages resolve a lift with it from the response's
  * `replaces`, and {@link resolveDayPrescriptions} resolves each planned lift with it, so
@@ -29,17 +53,27 @@ export function plannedLiftRows<Row extends LiftRow>(
   dayRows: readonly Row[],
   lifts: readonly PlannedLift[],
 ): (Row | undefined)[] {
-  const bySlot = rowsBySlot(dayRows);
+  const rowsByLift = new Map<string, Row[]>();
+  for (const row of dayRows) {
+    const rows = rowsByLift.get(row.lift);
+    if (rows) rows.push(row);
+    else rowsByLift.set(row.lift, [row]);
+  }
   // A swap changes the movement, not the slot, so a replacement takes its slot's row (#1014).
-  return lifts.map(({ lift, replaces }) => bySlot.get(replaces ?? lift));
+  const slots = lifts.map(({ lift, replaces }) => replaces ?? lift);
+  const nth = nthOccurrences(slots);
+  return slots.map((slot, i) => rowsByLift.get(slot)?.[nth[i] ?? 0]);
 }
 
 /** A workout day's overrides applied, and the spec row each stored lift name takes. */
 export interface DayPrescriptions<Row> extends AppliedLiftOverrides {
   /**
    * Stored lift name → its row on this day, for progression. Each planned lift takes
-   * its row by the page rule ({@link plannedLiftRows}). Two more rules apply only here,
-   * because only progression sees sets stored under names the plan no longer shows:
+   * its row by the page rule ({@link plannedLiftRows}); a lift planned more than once
+   * takes its first occurrence's row (#1027), preferring a slot of its own over one a
+   * swap put it in.
+   * Two more rules apply only here, because only progression sees sets stored under
+   * names the plan no longer shows:
    *
    * - sets under a slot's earlier name (a key of `renamed`) take the slot's row;
    * - a spec lift the plan no longer shows, such as a removed one, keeps its own row.
@@ -51,10 +85,10 @@ export interface DayPrescriptions<Row> extends AppliedLiftOverrides {
 
 /**
  * Resolves a workout day's prescriptions: applies the workout's lift overrides to the
- * day's spec lifts, each listed once even when the day repeats one (#1027), and maps
- * each stored lift name to the row that prescribes it. The workout endpoint plans a
- * day's lifts with it and `updateMaxes` progresses a day's sets with it, so the two
- * cannot follow different rules for one swap (#1014, #1028).
+ * day's spec lifts, a lift the day plans twice listed twice (#1027), and maps each
+ * stored lift name to the row that prescribes it. The workout endpoint plans a day's
+ * lifts with it and `updateMaxes` progresses a day's sets with it, so the two cannot
+ * follow different rules for one swap (#1014, #1028).
  *
  * `overrides` must arrive in the order each was last written, as for
  * `applyLiftOverrides`.
@@ -63,20 +97,26 @@ export function resolveDayPrescriptions<Row extends LiftRow>(
   dayRows: readonly Row[],
   overrides: readonly LiftOverride[],
 ): DayPrescriptions<Row> {
-  const bySlot = rowsBySlot(dayRows);
-  const applied = applyLiftOverrides([...bySlot.keys()], overrides);
+  const applied = applyLiftOverrides(
+    dayRows.map(({ lift }) => lift),
+    overrides,
+  );
 
   const rowByStoredLift = new Map<string, Row>();
   const plannedRows = plannedLiftRows(dayRows, applied.planned);
-  applied.planned.forEach(({ lift }, i) => {
-    const row = plannedRows[i];
-    if (row) rowByStoredLift.set(lift, row);
-  });
+  // A lift's own slot first, then a slot a swap put it in: where a swap makes a lift
+  // appear twice, the lift still progresses by its own row (#1027, #1109).
+  for (const ownSlot of [true, false]) {
+    applied.planned.forEach(({ lift, replaces }, i) => {
+      const row = plannedRows[i];
+      if (row && (replaces === undefined) === ownSlot && !rowByStoredLift.has(lift)) rowByStoredLift.set(lift, row);
+    });
+  }
   for (const [stored, current] of applied.renamed) {
     const row = rowByStoredLift.get(current);
     if (row && !rowByStoredLift.has(stored)) rowByStoredLift.set(stored, row);
   }
-  for (const [lift, row] of bySlot) if (!rowByStoredLift.has(lift)) rowByStoredLift.set(lift, row);
+  for (const row of dayRows) if (!rowByStoredLift.has(row.lift)) rowByStoredLift.set(row.lift, row);
 
   return { ...applied, rowByStoredLift };
 }
