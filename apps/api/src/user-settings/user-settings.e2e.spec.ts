@@ -100,4 +100,19 @@ describe('User Settings HTTP (e2e, in-memory adapters)', () => {
     expect(cleared.statusCode).toBe(200);
     expect(cleared.json().unit).toBeNull();
   });
+
+  // Regression coverage for #1034: the schedule-shape check used to hang off a placeholder
+  // `_shape` property, which made `_shape` a whitelisted key whose own value nothing
+  // validated — so an arbitrary blob under it was accepted, stored and returned on every GET.
+  it('PATCH /users/me/settings rejects an extra key inside workoutSchedule', async () => {
+    const token = 'settings-extra-key-user';
+
+    const res = await patchJson('/users/me/settings', token, {
+      workoutSchedule: { type: 'fixed', days: [0, 2], _shape: { blob: 'x'.repeat(1024) } },
+    });
+    expect(res.statusCode).toBe(400);
+
+    const fetched = await get('/users/me/settings', token);
+    expect(fetched.json().workoutSchedule).toBeNull();
+  });
 });
