@@ -3,7 +3,7 @@
 // The editor models a program as an ordered list of workout days, each holding
 // ordered exercise *instances*. A single lift may appear on multiple days (or
 // more than once within a day) because an instance is keyed by its position
-// (day index -> `offset`, within-day index -> `order`), never by lift name.
+// (day -> `offset`, within-day index -> `order`), never by lift name.
 //
 // The persisted shape (CustomProgramSpecRow[]) is flat: one row per
 // (week, offset, lift, order). The day/instance structure is shared across the
@@ -46,6 +46,11 @@ export type LiftInstance = {
 export type WorkoutDayModel = {
   /** Client-only React key; never serialized to the API. */
   id: string;
+  /**
+   * The `offset` this day was loaded with, so an edit/clone round-trip keeps the source
+   * spacing (#761). Absent on days added in the editor.
+   */
+  offset?: number;
   instances: LiftInstance[];
 };
 
@@ -101,8 +106,11 @@ function pickWeekParams(row: CustomProgramSpecRow): WeekParams {
 /**
  * Flattens the day/instance model to persisted rows.
  *
- * - `offset` = day index among *non-empty* days (contiguous 0,1,2,… so empty
- *   days emit nothing and never open a gap).
+ * - `offset` = the day's loaded `offset` when it is still past the previous
+ *   non-empty day's, else the next free offset. A loaded program keeps its
+ *   spacing (no-schedule dates are cycleStart + offset, so a Mon/Wed/Fri 0/2/4
+ *   preset must not collapse to Mon/Tue/Wed — #761), and days added in the
+ *   editor follow on contiguously. Empty days emit nothing.
  * - `order` = 1-based position of the instance within its day (the API requires
  *   `order >= 1`).
  * - one row per (week × instance); weeks are always 1/2/3.
@@ -112,14 +120,17 @@ function pickWeekParams(row: CustomProgramSpecRow): WeekParams {
  */
 export function specsFromDays(days: WorkoutDayModel[]): CustomProgramSpecRow[] {
   const rows: CustomProgramSpecRow[] = [];
+  let prevOffset = -1;
   days
     .filter((day) => day.instances.length > 0)
-    .forEach((day, dayIdx) => {
+    .forEach((day) => {
+      const offset = Math.max(day.offset ?? 0, prevOffset + 1);
+      prevOffset = offset;
       day.instances.forEach((inst, i) => {
         for (const week of WEEKS) {
           rows.push({
             week,
-            offset: dayIdx,
+            offset,
             order: i + 1,
             lift: inst.lift,
             ...inst.weeks[week],
@@ -186,6 +197,6 @@ export function daysFromSpecs(specs: CustomProgramSpecRow[]): WorkoutDayModel[] 
           return { id: uid(), lift, weeks: { 1: pick(1), 2: pick(2), 3: pick(3) } };
         });
 
-      return { id: uid(), instances };
+      return { id: uid(), offset, instances };
     });
 }
