@@ -26,8 +26,12 @@ export function buildDraftKey(
   workoutNum: number,
   lift: string,
   setNum: number,
+  // Which occurrence of `lift` in the workout (#1027). A first occurrence's key is the
+  // one it had before occurrences existed, so a draft typed before this shipped survives.
+  occurrence?: number,
 ): string {
-  return `${KEY_PREFIX}:${program}:${macrocycleNum}:${workoutNum}:${lift}:${setNum}`;
+  const set = occurrence ? `${setNum}~${occurrence}` : `${setNum}`;
+  return `${KEY_PREFIX}:${program}:${macrocycleNum}:${workoutNum}:${lift}:${set}`;
 }
 
 function isBrowser(): boolean {

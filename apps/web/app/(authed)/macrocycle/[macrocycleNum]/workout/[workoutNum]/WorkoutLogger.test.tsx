@@ -309,6 +309,47 @@ describe('WorkoutLogger — in-progress set draft persistence (#878)', () => {
   });
 });
 
+describe('WorkoutLogger — a lift planned twice in a day (#1027)', () => {
+  const first = makeLift();
+  const second = makeLift({ occurrence: 1, workingSets: [{ setNum: 1, totalLoad: 60, reps: 12, amrap: false }] });
+
+  it('logging a set on one occurrence leaves the other unlogged', async () => {
+    const user = userEvent.setup();
+    mockCreateLiftRecord.mockResolvedValue(LOGGED);
+    render(<WorkoutLogger {...makeProps({ lifts: [first, second] })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    await waitFor(() => expect(mockCreateLiftRecord).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole('button', { name: 'Switch to overview' }));
+
+    expect(screen.getAllByText(/\d\/1 sets/).map((el) => el.textContent)).toEqual(['1/1 sets', '0/1 sets']);
+  });
+
+  it('logs a set on the second occurrence against that occurrence', async () => {
+    const user = userEvent.setup();
+    mockCreateLiftRecord.mockResolvedValue({ ...LOGGED, occurrence: 1, weight: 60, reps: 12 });
+    render(<WorkoutLogger {...makeProps({ lifts: [first, second] })} />);
+
+    const [, secondDot] = screen.getAllByRole('button', { name: 'Go to Back Squat' });
+    if (!secondDot) throw new Error('expected a navigation dot for each Back Squat occurrence');
+    await user.click(secondDot);
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() =>
+      expect(mockCreateLiftRecord).toHaveBeenCalledWith(
+        '5-3-1',
+        expect.objectContaining({ lift: 'Back Squat', occurrence: 1, setNum: 1, weight: 60, reps: 12 }),
+      ),
+    );
+  });
+
+  it('keeps each occurrence’s in-progress draft apart', () => {
+    expect(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1)).not.toBe(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1, 1));
+    // A first occurrence keeps the key a draft had before occurrences existed.
+    expect(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1, 0)).toBe(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1));
+  });
+});
+
 describe('WorkoutLogger — focus lifts (#1060)', () => {
   const raise = makeLift({
     lift: 'Lateral Raise',

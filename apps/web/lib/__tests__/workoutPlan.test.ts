@@ -298,6 +298,36 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
     expect(workSets(squat)).toEqual([[200, 10], [200, 10], [200, 10]]);
   });
 
+  it('gives each occurrence of a lift the day plans twice its own prescription, matching the dashboard card (issue #1027)', () => {
+    // Heavy squats first, then light squats for volume, on one day. Resolving by
+    // name gave both occurrences the first row.
+    const specs = [
+      makeSpec({ lift: 'Squat', order: 1, reps: 5 }),
+      makeSpec({ lift: 'Bench Press', order: 2, reps: 8 }),
+      makeSpec({ lift: 'Squat', order: 3, reps: 12 }),
+    ];
+    const details = buildLiftDetails(
+      workout(1, 0, [{ lift: 'Squat' }, { lift: 'Bench Press' }, { lift: 'Squat' }]),
+      specs,
+      [
+        { lift: 'Squat', weight: 200 },
+        { lift: 'Bench Press', weight: 150 },
+      ],
+    );
+    expect(details.map((d) => [d.lift, workSets(d)?.[0]])).toEqual([
+      ['Squat', [200, 5]],
+      ['Bench Press', [150, 8]],
+      ['Squat', [200, 12]],
+    ]);
+    // The card the workout opens from lists the same day's rows.
+    const [card] = buildWorkoutDays(specs, '2026-01-05');
+    expect(card?.lifts.map((row) => [row.lift, row.reps])).toEqual([
+      ['Squat', 5],
+      ['Bench Press', 8],
+      ['Squat', 12],
+    ]);
+  });
+
   it('plans nothing for a lift the program trains on a different day', () => {
     // A lift logged ad hoc on Monday that the program schedules for Wednesday
     // has no prescription on this day. It keeps an empty entry rather than

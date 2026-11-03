@@ -7,6 +7,7 @@ import {
   TrainingMax,
   TrainingMaxHistoryEntry,
   buildLiftRecordId,
+  liftOccurrences,
   normalizeAmrap,
   noScheduleWorkoutDateUTC,
   programLengthWeeks,
@@ -74,6 +75,7 @@ export const toLiftRecordResponse = (r: LiftRecord): LiftRecordResponse => ({
   workoutNum: r.workoutNum,
   date: isoDate(r.date),
   lift: r.lift,
+  ...(r.occurrence ? { occurrence: r.occurrence } : {}),
   setNum: r.setNum,
   weight: r.weight,
   reps: r.reps,
@@ -362,7 +364,12 @@ export const toWorkoutResponse = (
     renamedLifts,
   } = options;
 
-  const liftMap = new Map<string, SetResponse[]>();
+  // Logged sets by the lift occurrence they belong to: a lift, and which occurrence
+  // of it in this workout (#1027). The key leads with the occurrence's digits, so a
+  // lift name cannot make two keys collide.
+  const keyOf = (lift: string, occurrence: number) => `${occurrence}:${lift}`;
+  const withOccurrence = (occurrence: number) => (occurrence > 0 ? { occurrence } : {});
+  const liftMap = new Map<string, { lift: string; occurrence: number; sets: SetResponse[] }>();
   for (const r of records) {
     const set: SetResponse = {
       // From the record as stored — before the `renamedLifts` regrouping below —
@@ -375,30 +382,40 @@ export const toWorkoutResponse = (
       notes: r.notes,
     };
     const lift = renamedLifts?.get(r.lift) ?? r.lift;
-    const sets = liftMap.get(lift);
-    if (sets) sets.push(set);
-    else liftMap.set(lift, [set]);
+    const occurrence = r.occurrence ?? 0;
+    const group = liftMap.get(keyOf(lift, occurrence));
+    if (group) group.sets.push(set);
+    else liftMap.set(keyOf(lift, occurrence), { lift, occurrence, sets: [set] });
   }
 
   let lifts: WorkoutLiftResponse[];
   if (plannedLifts) {
     const emitted = new Set<string>();
-    lifts = plannedLifts.map(({ lift, replaces }) => {
-      emitted.add(lift);
-      const sets = liftMap.get(lift) ?? [];
-      return { lift, sets, planned: sets.length === 0, ...(replaces !== undefined && { replaces }) };
+    const occurrences = liftOccurrences(plannedLifts);
+    lifts = plannedLifts.map(({ lift, replaces }, i) => {
+      const occurrence = occurrences[i] ?? 0;
+      emitted.add(keyOf(lift, occurrence));
+      const sets = liftMap.get(keyOf(lift, occurrence))?.sets ?? [];
+      return {
+        lift,
+        sets,
+        planned: sets.length === 0,
+        ...(replaces !== undefined && { replaces }),
+        ...withOccurrence(occurrence),
+      };
     });
     // Append any logged lifts not in the planned list (e.g. added ad-hoc during logging).
-    for (const [lift, sets] of liftMap.entries()) {
-      if (!emitted.has(lift)) {
-        lifts.push({ lift, sets, planned: false });
+    for (const [key, { lift, occurrence, sets }] of liftMap.entries()) {
+      if (!emitted.has(key)) {
+        lifts.push({ lift, sets, planned: false, ...withOccurrence(occurrence) });
       }
     }
   } else {
-    lifts = Array.from(liftMap.entries()).map(([lift, sets]) => ({
+    lifts = Array.from(liftMap.values()).map(({ lift, occurrence, sets }) => ({
       lift,
       sets,
       planned: false,
+      ...withOccurrence(occurrence),
     }));
   }
 

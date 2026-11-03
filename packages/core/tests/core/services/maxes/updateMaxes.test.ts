@@ -253,6 +253,23 @@ describe("updateMaxes — a record's prescription is its workout day's (issue #1
     expect(maxes).toEqual([{ lift: "Squat", weight: 265, dateUpdated: new Date("2026-05-01") }]);
   });
 
+  it("progresses a lift a day plans twice from its first occurrence only (issue #1027)", () => {
+    // Squat for 5 reps, then Squat again for 12 lighter reps as extra volume. The
+    // second occurrence's set 1 meets the first row's 5 reps at a lower weight; read
+    // under the first row, it would take the training max down and flag a reduction.
+    const spec = [row(1, 0, "Squat", 5, 5), row(1, 0, "Squat", 12, 5)];
+
+    const { maxes, flagged } = updateMaxes(
+      spec,
+      [max("Squat", 250)],
+      [{ ...set1(1, "Squat", 150, 12), occurrence: 1 }, set1(1, "Squat", 260, 5)],
+      fiveThreeOne(),
+    );
+
+    expect(maxes).toEqual([{ lift: "Squat", weight: 265, dateUpdated: new Date("2026-05-01") }]);
+    expect(flagged).toEqual([]);
+  });
+
   it("takes the week type from the record's block week", () => {
     const spec = [
       row(1, 0, "Squat", 5, 5),

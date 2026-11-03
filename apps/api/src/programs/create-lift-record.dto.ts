@@ -113,6 +113,14 @@ export class CreateLiftRecordDto
   @MaxLength(100)
   lift!: string;
 
+  // Which occurrence of `lift` in the workout, from 0 (#1027); omitted means 0. The
+  // bound is a bug catcher, like `setNum`'s: no day plans one lift 20 times.
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(20)
+  occurrence?: number;
+
   // 50, not CustomProgramSpecRowDto's 20 — this is logged performance data (warm-ups,
   // drop sets, extra work) rather than a prescribed program spec, so it needs more
   // headroom, but still bounded to catch an obvious bug rather than left unbounded.

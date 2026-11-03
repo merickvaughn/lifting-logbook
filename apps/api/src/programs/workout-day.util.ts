@@ -48,8 +48,8 @@ export interface WorkoutDay extends AppliedLiftOverrides {
  * whose own week is the only one it has: it has no day, and so plans no lifts. Anything
  * else past the program's canonical length is a 400.
  *
- * Planned lifts are the day's spec lifts (#1014), each listed once even when the day
- * repeats one (#1027), after the workout's lift overrides, as `resolveDayPrescriptions`
+ * Planned lifts are the day's spec lifts (#1014), a lift the day plans twice listed
+ * twice (#1027), after the workout's lift overrides, as `resolveDayPrescriptions`
  * applies them for progression too.
  */
 export function resolveWorkoutDay(

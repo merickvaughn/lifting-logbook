@@ -19,6 +19,17 @@ import { buildDraftKey, clearDraft, readDraft, writeDraft } from './workoutDraft
 // Helpers
 // ---------------------------------------------------------------------------
 
+// A lift occurrence's identity in this workout. A program can plan one lift twice in
+// a day, so the lift's name alone would give both occurrences one key, and logging a
+// set on one would mark the other's logged too (#1027).
+function liftKey(lift: Pick<LiftData, 'lift' | 'occurrence'>): string {
+  return `${lift.occurrence ?? 0}:${lift.lift}`;
+}
+
+function setKey(lift: Pick<LiftData, 'lift' | 'occurrence'>, setNum: number): string {
+  return `${liftKey(lift)}-${setNum}`;
+}
+
 // Plan loads and logged lift records are always stored in lbs; `unit` is the
 // user's display preference. These format helpers convert for display only — the
 // numeric value logged to the API is never converted (see
@@ -158,6 +169,7 @@ function WarmUpRow({
 
 function WorkingSetRow({
   lift,
+  occurrence,
   set,
   bodyWeight,
   isBodyweightComponent,
@@ -174,6 +186,8 @@ function WorkingSetRow({
   onEditSave,
 }: {
   lift: string;
+  /** Which occurrence of `lift` in the workout (`LiftData.occurrence`); absent means 0. */
+  occurrence: number | undefined;
   set: WorkingSetData;
   bodyWeight: number | null;
   isBodyweightComponent: boolean;
@@ -207,7 +221,7 @@ function WorkingSetRow({
   // this guard an isReadOnly + unlogged row (exercised directly by the isReadOnly test in
   // WorkoutLogger.test.tsx) would still read a stray draft into unused state.
   const shouldDraft = !loggedRecord && !isReadOnly;
-  const draftStorageKey = buildDraftKey(program, macrocycleNum, workoutNum, lift, set.setNum);
+  const draftStorageKey = buildDraftKey(program, macrocycleNum, workoutNum, lift, set.setNum, occurrence);
 
   const [weightInput, setWeightInput] = useState(() => {
     if (shouldDraft) {
@@ -267,6 +281,7 @@ function WorkingSetRow({
         workoutNum,
         date,
         lift,
+        ...(occurrence ? { occurrence } : {}),
         setNum: set.setNum,
         weight,
         reps,
@@ -486,11 +501,12 @@ function LiftView({
       <section className={styles.workingSection} aria-label="Working sets">
         <ul className={styles.setList}>
           {lift.workingSets.map((ws) => {
-            const key = `${lift.lift}-${ws.setNum}`;
+            const key = setKey(lift, ws.setNum);
             return (
               <WorkingSetRow
                 key={key}
                 lift={lift.lift}
+                occurrence={lift.occurrence}
                 set={ws}
                 bodyWeight={bodyWeight}
                 isBodyweightComponent={lift.isBodyweightComponent}
@@ -528,7 +544,7 @@ function OverviewRow({
   onGoTo: () => void;
 }) {
   const logged = lift.workingSets.filter((ws) =>
-    loggedSets.has(`${lift.lift}-${ws.setNum}`),
+    loggedSets.has(setKey(lift, ws.setNum)),
   ).length;
   const total = lift.workingSets.length;
   const firstWarmUp = lift.warmUpSets[0];
@@ -589,7 +605,7 @@ export default function WorkoutLogger({
       for (const lift of lifts) {
         for (const ws of lift.workingSets) {
           if (ws.existing) {
-            m.set(`${lift.lift}-${ws.setNum}`, ws.existing);
+            m.set(setKey(lift, ws.setNum), ws.existing);
           }
         }
       }
@@ -637,7 +653,7 @@ export default function WorkoutLogger({
   const plannedLifts = lifts.filter((l) => !l.focus);
   const allLogged =
     plannedLifts.some((l) => l.workingSets.length > 0) &&
-    plannedLifts.every((l) => l.workingSets.every((ws) => loggedSets.has(`${l.lift}-${ws.setNum}`)));
+    plannedLifts.every((l) => l.workingSets.every((ws) => loggedSets.has(setKey(l, ws.setNum))));
 
   // Per-set clearDraft (in WorkingSetRow's handleLog) can't reach a draft written on a
   // different tab/device than the one that logged the set — sweep the whole workout's
@@ -645,7 +661,7 @@ export default function WorkoutLogger({
   function handleFinishWorkout() {
     for (const l of lifts) {
       for (const ws of l.workingSets) {
-        clearDraft(buildDraftKey(program, macrocycleNum, workoutNum, l.lift, ws.setNum));
+        clearDraft(buildDraftKey(program, macrocycleNum, workoutNum, l.lift, ws.setNum, l.occurrence));
       }
     }
     router.push(`/macrocycle/${macrocycleNum}`);
@@ -677,7 +693,7 @@ export default function WorkoutLogger({
         <ul className={styles.overviewList}>
           {lifts.map((lift, i) => (
             <OverviewRow
-              key={lift.lift}
+              key={liftKey(lift)}
               lift={lift}
               bodyWeight={bodyWeight}
               loggedSets={loggedSets}
@@ -744,11 +760,11 @@ export default function WorkoutLogger({
       <nav className={styles.navDots} aria-label="Lift navigation">
         {lifts.map((lift, i) => {
           const liftLogged = lift.workingSets.every((ws) =>
-            loggedSets.has(`${lift.lift}-${ws.setNum}`),
+            loggedSets.has(setKey(lift, ws.setNum)),
           );
           return (
             <button
-              key={lift.lift}
+              key={liftKey(lift)}
               className={`${styles.dot} ${i === currentLiftIdx ? styles.dotActive : ''} ${liftLogged ? styles.dotDone : ''}`}
               type="button"
               aria-label={`Go to ${lift.lift}`}

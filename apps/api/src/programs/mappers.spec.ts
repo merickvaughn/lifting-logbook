@@ -202,6 +202,40 @@ describe('toWorkoutResponse with plannedLifts', () => {
     expect(toWorkoutResponse(program, macrocycleNum, workoutNum, week, [])).not.toHaveProperty('offset');
   });
 
+  // Issue #1027: a day can plan one lift twice. Each occurrence lists only its own
+  // sets, and the later one says which occurrence it is, so a set logged against it
+  // can name it.
+  it('lists a lift planned twice as two occurrences, each with its own sets', () => {
+    const records = [record('Squat', 1, 200), { ...record('Squat', 1, 135), occurrence: 1 }];
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, {
+      plannedLifts: [{ lift: 'Squat' }, { lift: 'Bench Press' }, { lift: 'Squat' }],
+    });
+    expect(result.lifts).toHaveLength(3);
+    expect(result.lifts[0]).not.toHaveProperty('occurrence');
+    expect(result.lifts[0]?.sets.map((s) => [s.weight, s.id])).toEqual([[200, '5-3-1-1-1-20260507-Squat-1']]);
+    expect(result.lifts[1]).toMatchObject({ lift: 'Bench Press', planned: true });
+    expect(result.lifts[2]).toMatchObject({ lift: 'Squat', occurrence: 1, planned: false });
+    expect(result.lifts[2]?.sets.map((s) => [s.weight, s.id])).toEqual([[135, '5-3-1-1-1-20260507-Squat-1~1']]);
+  });
+
+  it('leaves the second occurrence of a lift planned twice unlogged until its own set is logged (#1027)', () => {
+    const records = [record('Squat', 1, 200)];
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, {
+      plannedLifts: [{ lift: 'Squat' }, { lift: 'Squat' }],
+    });
+    expect(result.lifts.map((l) => l.planned)).toEqual([false, true]);
+    expect(result.lifts[1]).toEqual({ lift: 'Squat', sets: [], planned: true, occurrence: 1 });
+  });
+
+  it('appends a logged occurrence the plan no longer has, naming it (#1027)', () => {
+    const records = [{ ...record('Squat', 1, 135), occurrence: 1 }];
+    const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });
+    expect(result.lifts).toEqual([
+      { lift: 'Squat', sets: [], planned: true },
+      expect.objectContaining({ lift: 'Squat', occurrence: 1, planned: false }),
+    ]);
+  });
+
   it('marks unlogged planned lifts as planned:true with empty sets', () => {
     const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, [], { plannedLifts: [{ lift: 'Squat' }, { lift: 'Bench Press' }] });
     expect(result.lifts).toHaveLength(2);

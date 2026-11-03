@@ -1,6 +1,7 @@
 import {
   buildLiftRecordId,
   liftRecordNaturalKey,
+  parseLiftRecordId,
   parseLiftRecordNaturalKey,
 } from './liftRecordNaturalKey';
 
@@ -81,5 +82,38 @@ describe('buildLiftRecordId', () => {
     const a = buildLiftRecordId('531', record({ date: new Date('2025-12-16') }));
     const b = buildLiftRecordId('531', record({ date: new Date('2024-01-12') }));
     expect(a).not.toBe(b);
+  });
+});
+
+describe('occurrence (#1027)', () => {
+  it('leaves a first occurrence’s key and id as they were before occurrences existed', () => {
+    expect(liftRecordNaturalKey(record({ occurrence: 0 }))).toBe('3:2:20260817:Bench Press:1');
+    expect(buildLiftRecordId('531', record({ occurrence: 0 }))).toBe('531-3-2-20260817-Bench Press-1');
+  });
+
+  it('tells a later occurrence’s set apart from the first occurrence’s', () => {
+    expect(liftRecordNaturalKey(record({ occurrence: 1 }))).toBe('3:2:20260817:Bench Press:1~1');
+    expect(buildLiftRecordId('531', record({ occurrence: 1 }))).toBe('531-3-2-20260817-Bench Press-1~1');
+  });
+
+  it('round-trips a later occurrence through the key and the id, hyphenated lift and all', () => {
+    const r = record({ lift: 'Chin-up', occurrence: 2, setNum: 3 });
+    expect(parseLiftRecordNaturalKey(liftRecordNaturalKey(r))).toEqual(r);
+    expect(parseLiftRecordId('531', buildLiftRecordId('531', r))).toEqual(r);
+  });
+
+  it('parses a first occurrence with the occurrence absent', () => {
+    expect(parseLiftRecordId('531', '531-3-2-20260817-Bench Press-1')).toEqual(record());
+    expect(parseLiftRecordNaturalKey('3:2:20260817:Bench Press:1~0')).toEqual(record());
+  });
+
+  it('rejects a malformed occurrence', () => {
+    expect(parseLiftRecordNaturalKey('3:2:20260817:Bench Press:1~x')).toBeNull();
+    expect(parseLiftRecordNaturalKey('3:2:20260817:Bench Press:1~1~1')).toBeNull();
+    expect(parseLiftRecordId('531', '531-3-2-20260817-Bench Press-1~x')).toBeNull();
+  });
+
+  it('rejects an id of another program', () => {
+    expect(parseLiftRecordId('rpt', '531-3-2-20260817-Bench Press-1')).toBeNull();
   });
 });

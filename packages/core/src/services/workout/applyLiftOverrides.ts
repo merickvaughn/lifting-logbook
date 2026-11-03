@@ -46,7 +46,7 @@ export interface AppliedLiftOverrides {
  * A lift the plan shows always owns the sets stored under its own name, even a
  * name an earlier override hid or regrouped: a set just logged against it must
  * not vanish. (Sets are keyed by name alone, so older sets under that name come
- * with it; telling them apart needs slot identity, #1027.)
+ * with it; telling them apart needs occurrence identity in overrides, #1109.)
  *
  * Overrides must arrive in the order each was last written — the repositories
  * guarantee it — because a chain depends on it: Squat → Front Squat → Box Squat

@@ -121,6 +121,8 @@ export default async function WorkoutLoggingPage({
 
     return {
       lift: wl.lift,
+      // Each occurrence of a lift the day plans twice logs its own sets (#1027).
+      ...(wl.occurrence ? { occurrence: wl.occurrence } : {}),
       isBodyweightComponent: bwComponent,
       warmUpImplement: bwComponent ? WARMUP_IMPLEMENT[wl.lift] : undefined,
       warmUpSets,

@@ -16,12 +16,15 @@ model LiftRecord {
   workoutNum    Int
   date          DateTime @db.Date
   lift          String
+  // Which occurrence of `lift` in its workout the set belongs to, from 0: a program
+  // can plan one lift twice in a day, and each occurrence logs its own sets (#1027).
+  occurrence    Int      @default(0)
   setNum        Int
   weight        Float
   reps          Int
   notes         String   @default("")
 
-  @@unique([userId, program, macrocycleNum, workoutNum, date, lift, setNum])
+  @@unique([userId, program, macrocycleNum, workoutNum, date, lift, occurrence, setNum])
   @@index([userId, program, macrocycleNum])
   @@index([userId, program, macrocycleNum, workoutNum])
   // A focus block summary reads one user's records for its pool lifts up to its last day,

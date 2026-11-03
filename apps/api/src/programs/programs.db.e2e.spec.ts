@@ -1196,6 +1196,42 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       });
       expect(count).toBe(2);
     });
+
+    // Issue #1027: a day can plan one lift twice, and each occurrence logs its own
+    // set 1. They must store as two rows, and each id must PATCH only its own.
+    it('stores a lift’s second occurrence apart from its first, each PATCHable by its own id', async () => {
+      const base = {
+        program: SEED_PROGRAM,
+        macrocycleNum: 4,
+        workoutNum: 1,
+        date: '2026-04-20',
+        lift: 'Overhead Press',
+        setNum: 1,
+        reps: 5,
+      };
+      const first = await postJson(LIFT_RECORDS_URL, { ...base, weight: 95 });
+      expect(first.statusCode).toBe(201);
+      const second = await postJson(LIFT_RECORDS_URL, { ...base, occurrence: 1, weight: 65 });
+      expect(second.statusCode).toBe(201);
+      const secondBody = second.json() as { id: string; occurrence?: number };
+      expect(secondBody.occurrence).toBe(1);
+      expect(secondBody.id).not.toBe((first.json() as { id: string }).id);
+
+      const patchRes = await patchJson(
+        `${LIFT_RECORDS_URL}/${encodeURIComponent(secondBody.id)}`,
+        { weight: 70 },
+      );
+      expect(patchRes.statusCode).toBe(200);
+
+      const rows = await prisma.liftRecord.findMany({
+        where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum: 4, workoutNum: 1, setNum: 1 },
+        orderBy: { occurrence: 'asc' },
+      });
+      expect(rows.map((r) => [r.occurrence, r.weight])).toEqual([
+        [0, 95],
+        [1, 70],
+      ]);
+    });
   });
 
   // ---------------------------------------------------------------------------

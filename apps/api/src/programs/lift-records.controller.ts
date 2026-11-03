@@ -120,6 +120,7 @@ export class LiftRecordsController {
       workoutNum: body.workoutNum,
       date: effectiveDate,
       lift: body.lift,
+      ...(body.occurrence ? { occurrence: body.occurrence } : {}),
       setNum: body.setNum,
       weight: body.weight,
       reps: body.reps,
@@ -143,6 +144,7 @@ export class LiftRecordsController {
         (r) =>
           r.workoutNum === record.workoutNum &&
           r.lift === record.lift &&
+          (r.occurrence ?? 0) === (record.occurrence ?? 0) &&
           r.setNum === record.setNum &&
           r.date.getTime() === record.date.getTime(),
       );

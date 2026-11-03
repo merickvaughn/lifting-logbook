@@ -336,6 +336,46 @@ describe('WorkoutsController', () => {
     ]);
   });
 
+  it('lists a lift the day plans twice as two occurrences, each with its own sets (issue #1027)', async () => {
+    // A custom day of Squat, Bench Press, then Squat again for extra volume. Pre-#1027
+    // the day's lifts were de-duplicated by name, so the second Squat never showed,
+    // and both occurrences' set 1 would have grouped under one name.
+    dashboardRepo.getMacrocycleDashboard.mockResolvedValue({
+      program: 'my-program',
+      macrocycleUnit: 'week',
+      macrocycleNum: 3,
+      macrocycleDate: new Date('2026-04-20T00:00:00.000Z'),
+      sheetName: '',
+      macrocycleStartWeekday: Weekday.Monday,
+    });
+    specRepo.getProgramSpec.mockResolvedValue([
+      specRow(1, 0, 'Squat', 1),
+      specRow(1, 0, 'Bench Press', 2),
+      specRow(1, 0, 'Squat', 3),
+    ]);
+    const set = (occurrence: number, weight: number) => ({
+      program: 'my-program',
+      macrocycleNum: 3,
+      workoutNum: 1,
+      date: new Date('2026-04-20T00:00:00.000Z'),
+      lift: 'Squat',
+      ...(occurrence ? { occurrence } : {}),
+      setNum: 1,
+      weight,
+      reps: 5,
+      notes: '',
+    });
+    workoutRepo.getWorkout.mockResolvedValue([set(0, 200), set(1, 135)]);
+
+    const result = await controller.getWorkout('my-program', '1', MOCK_USER);
+
+    expect(result.lifts.map((l) => [l.lift, l.occurrence, l.sets.map((s) => s.weight)])).toEqual([
+      ['Squat', undefined, [200]],
+      ['Bench Press', undefined, []],
+      ['Squat', 1, [135]],
+    ]);
+  });
+
   it('plans a second-wave 5-3-1 workout from its block week at its own offset (issue #1014)', async () => {
     // 5-3-1 tiles a 3-week block (offsets 0 and 3) across 12 weeks, so workout 8
     // is week 4 at offset 3 — block week 1's second day, not all four lifts.

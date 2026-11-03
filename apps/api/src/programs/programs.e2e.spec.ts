@@ -145,6 +145,21 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     expect(body.every((r: { macrocycleNum: number }) => r.macrocycleNum === 1)).toBe(true);
   });
 
+  // Issue #1027: a day can plan one lift twice, and each occurrence logs its own set 1.
+  // Macrocycle 77 is one no other test reads, so these records disturb nothing.
+  it('POST /programs/:program/lift-records logs a lift’s second occurrence apart from its first', async () => {
+    const base = { macrocycleNum: 77, workoutNum: 1, date: '2026-07-01', lift: 'Squat', setNum: 1, reps: 5 };
+    const first = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, { ...base, weight: 200 });
+    const second = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, { ...base, occurrence: 1, weight: 135 });
+    expect([first.statusCode, second.statusCode]).toEqual([201, 201]);
+    expect(first.json()).not.toHaveProperty('occurrence');
+    expect(second.json()).toMatchObject({ occurrence: 1, weight: 135 });
+    expect(second.json().id).not.toBe(first.json().id);
+
+    const bad = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, { ...base, occurrence: -1, weight: 135 });
+    expect(bad.statusCode).toBe(400);
+  });
+
   it('GET /programs/:program/spec returns the seeded program spec', async () => {
     const res = await get(`/programs/${SEED_PROGRAM}/spec`);
     expect(res.statusCode).toBe(200);
