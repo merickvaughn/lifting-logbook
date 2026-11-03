@@ -53,28 +53,28 @@ export default function ManageLiftsActions({ program, macrocycleNum, workoutNum,
         {lifts.map(({ lift, planned, occurrence }) => {
           const rowKey = liftOccurrenceKey(lift, occurrence);
           return (
-          <li key={rowKey} className={styles.liftItem}>
-            <span className={styles.liftName}>
-              {lift}
-              {planned && <span className={styles.plannedBadge}>planned</span>}
-            </span>
-            <span className={styles.actions}>
-              <Link href={editUrl(lift)} className={styles.btnSecondary}>
-                Edit
-              </Link>
-              <Link href={replaceUrl(lift)} className={styles.btnSecondary}>
-                Replace
-              </Link>
-              <button
-                type="button"
-                className={styles.btnDanger}
-                disabled={pending !== null}
-                onClick={() => void handleRemove(lift, rowKey)}
-              >
-                {pending === rowKey ? '…' : 'Remove'}
-              </button>
-            </span>
-          </li>
+            <li key={rowKey} className={styles.liftItem}>
+              <span className={styles.liftName}>
+                {lift}
+                {planned && <span className={styles.plannedBadge}>planned</span>}
+              </span>
+              <span className={styles.actions}>
+                <Link href={editUrl(lift)} className={styles.btnSecondary}>
+                  Edit
+                </Link>
+                <Link href={replaceUrl(lift)} className={styles.btnSecondary}>
+                  Replace
+                </Link>
+                <button
+                  type="button"
+                  className={styles.btnDanger}
+                  disabled={pending !== null}
+                  onClick={() => void handleRemove(lift, rowKey)}
+                >
+                  {pending === rowKey ? '…' : 'Remove'}
+                </button>
+              </span>
+            </li>
           );
         })}
       </ul>
