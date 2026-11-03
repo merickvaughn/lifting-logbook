@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import type { InputHTMLAttributes } from 'react';
 import { LIFT_CATALOG } from '@lifting-logbook/core';
 import { useRouter } from 'next/navigation';
 import { DEFAULT_WEIGHT_INCREMENT } from '@lifting-logbook/types';
@@ -40,6 +41,42 @@ const WEEK_LABELS: Record<EditableWeek, string> = {
 };
 
 const ALL_LIFTS: string[] = LIFT_CATALOG.map((l) => l.name as string);
+
+type NumberFieldProps = Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  'type' | 'value' | 'min' | 'max' | 'onChange' | 'onBlur'
+> & {
+  value: number;
+  min: number;
+  max?: number;
+  onCommit: (value: number) => void;
+};
+
+// Keeps the raw text in local state and commits only a finite number, clamped to [min, max],
+// so a cleared or partial field ("", "-") is "still typing" rather than a 0/NaN that blocks
+// Save, and an out-of-range entry saves as the nearest bound instead of being dropped. On blur
+// the field shows the committed value (#763).
+function NumberField({ value, min, max, onCommit, ...inputProps }: NumberFieldProps) {
+  const [draft, setDraft] = useState(String(value));
+  return (
+    <input
+      {...inputProps}
+      type="number"
+      min={min}
+      max={max}
+      value={draft}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        const n = Number(raw);
+        if (raw.trim() !== '' && Number.isFinite(n)) {
+          onCommit(Math.min(Math.max(n, min), max ?? Infinity));
+        }
+      }}
+      onBlur={() => setDraft(String(value))}
+    />
+  );
+}
 
 export default function ProgramEditor({
   mode,
@@ -136,8 +173,8 @@ export default function ProgramEditor({
 
   // Validates name + at least one exercise and returns the spec rows, or null
   // (with an error set) when invalid. Uniqueness of (week, offset, lift, order)
-  // is guaranteed by construction — offset is the day index and order is the
-  // within-day position — so no duplicate-key guard is needed here.
+  // is guaranteed by construction — offsets strictly increase across days and
+  // order is the within-day position — so no duplicate-key guard is needed here.
   function collectSpecs(): CustomProgramSpecRow[] | null {
     if (!name.trim()) {
       setError('Name is required.');
@@ -278,25 +315,23 @@ export default function ProgramEditor({
                               <tr key={week}>
                                 <td>{WEEK_LABELS[week]}</td>
                                 <td>
-                                  <input
+                                  <NumberField
                                     className={styles.specInput}
-                                    type="number"
                                     min={1}
                                     max={20}
                                     value={p.sets}
                                     aria-label={`${inst.lift} #${i + 1} Day ${n} Week ${week} sets`}
-                                    onChange={(e) => updateInstanceWeek(day.id, inst.id, week, 'sets', Number(e.target.value))}
+                                    onCommit={(v) => updateInstanceWeek(day.id, inst.id, week, 'sets', v)}
                                   />
                                 </td>
                                 <td>
-                                  <input
+                                  <NumberField
                                     className={styles.specInput}
-                                    type="number"
                                     min={1}
                                     max={20}
                                     value={p.reps}
                                     aria-label={`${inst.lift} #${i + 1} Day ${n} Week ${week} reps`}
-                                    onChange={(e) => updateInstanceWeek(day.id, inst.id, week, 'reps', Number(e.target.value))}
+                                    onCommit={(v) => updateInstanceWeek(day.id, inst.id, week, 'reps', v)}
                                   />
                                 </td>
                                 <td>
@@ -308,14 +343,13 @@ export default function ProgramEditor({
                                   />
                                 </td>
                                 <td>
-                                  <input
+                                  <NumberField
                                     className={styles.specInput}
-                                    type="number"
                                     min={0}
                                     step={2.5}
                                     value={p.increment}
                                     aria-label={`${inst.lift} #${i + 1} Day ${n} Week ${week} increment`}
-                                    onChange={(e) => updateInstanceWeek(day.id, inst.id, week, 'increment', Number(e.target.value))}
+                                    onCommit={(v) => updateInstanceWeek(day.id, inst.id, week, 'increment', v)}
                                   />
                                 </td>
                                 <td>

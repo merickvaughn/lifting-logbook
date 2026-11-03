@@ -144,8 +144,26 @@ describe('daysFromSpecs', () => {
     const days = daysFromSpecs(specs);
     expect(days).toHaveLength(3);
     expect(days.map((d) => d.instances.length)).toEqual([2, 1, 1]);
-    // Re-saving renormalizes the spaced offsets to contiguous 0/1/2.
-    expect([...new Set(specsFromDays(days).map((s) => s.offset))].sort()).toEqual([0, 1, 2]);
+    // Re-saving keeps the source spacing: no-schedule dates are cycleStart + offset, so
+    // collapsing 0/2/4 to 0/1/2 would move a Mon/Wed/Fri preset to Mon/Tue/Wed (#761).
+    expect([...new Set(specsFromDays(days).map((s) => s.offset))].sort()).toEqual([0, 2, 4]);
+  });
+
+  it('keeps the surviving days at their source offsets when a day is removed', () => {
+    const lifts = ['Squat', 'Bench Press', 'Deadlift'];
+    const specs = lifts.flatMap((lift, i) => [1, 2, 3].map((week) => legacyRow(week, lift, 1, i * 2)));
+    const withoutWednesday = daysFromSpecs(specs).filter((_, i) => i !== 1);
+    const resaved = specsFromDays(withoutWednesday);
+    expect([...new Set(resaved.map((s) => s.offset))].sort()).toEqual([0, 4]);
+  });
+
+  it('places a day added after a spaced program on the next free offset', () => {
+    const specs = [0, 2, 4].flatMap((offset) => [1, 2, 3].map((week) => legacyRow(week, 'Squat', 1, offset)));
+    const days = [...daysFromSpecs(specs), makeDay('Bench Press')];
+    const benchOffsets = specsFromDays(days)
+      .filter((s) => s.lift === 'Bench Press')
+      .map((s) => s.offset);
+    expect(new Set(benchOffsets)).toEqual(new Set([5]));
   });
 
   it('falls back to the week-1 row for weeks with no stored row', () => {
