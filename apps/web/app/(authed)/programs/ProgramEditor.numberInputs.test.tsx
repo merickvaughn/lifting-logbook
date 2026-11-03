@@ -69,4 +69,14 @@ describe('ProgramEditor — numeric inputs', () => {
     await user.tab();
     expect(screen.getByLabelText(SETS)).toHaveValue(3);
   });
+
+  it('clamps an out-of-range entry to the nearest bound instead of dropping it', async () => {
+    const user = userEvent.setup();
+    await renderWithOneLift(user);
+
+    await user.clear(screen.getByLabelText(SETS));
+    await user.type(screen.getByLabelText(SETS), '25');
+    await user.tab();
+    expect(screen.getByLabelText(SETS)).toHaveValue(20);
+  });
 });

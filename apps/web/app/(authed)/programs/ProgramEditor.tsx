@@ -52,9 +52,10 @@ type NumberFieldProps = Omit<
   onCommit: (value: number) => void;
 };
 
-// Keeps the raw text in local state and commits only a finite, in-range number, so a cleared
-// or partial field ("", "-") is "still typing" rather than a 0/NaN that blocks Save. On blur
-// the field snaps back to the last committed value (#763).
+// Keeps the raw text in local state and commits only a finite number, clamped to [min, max],
+// so a cleared or partial field ("", "-") is "still typing" rather than a 0/NaN that blocks
+// Save, and an out-of-range entry saves as the nearest bound instead of being dropped. On blur
+// the field shows the committed value (#763).
 function NumberField({ value, min, max, onCommit, ...inputProps }: NumberFieldProps) {
   const [draft, setDraft] = useState(String(value));
   return (
@@ -68,8 +69,8 @@ function NumberField({ value, min, max, onCommit, ...inputProps }: NumberFieldPr
         const raw = e.target.value;
         setDraft(raw);
         const n = Number(raw);
-        if (raw.trim() !== '' && Number.isFinite(n) && n >= min && (max === undefined || n <= max)) {
-          onCommit(n);
+        if (raw.trim() !== '' && Number.isFinite(n)) {
+          onCommit(Math.min(Math.max(n, min), max ?? Infinity));
         }
       }}
       onBlur={() => setDraft(String(value))}
