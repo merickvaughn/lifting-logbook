@@ -6,6 +6,7 @@ import {
   liftRecordNaturalKey,
   parseLiftRecordId,
   parseLiftRecordNaturalKey,
+  withOccurrence,
 } from '@lifting-logbook/core';
 import { ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
 
@@ -67,7 +68,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     if (candidates.length === 0) return [];
 
     // Chunk the OR array to stay within Postgres parameter limits (~32k).
-    // Each candidate produces 5 bound parameters; 500 chunks ≈ 2500 params per query.
+    // Each candidate produces 6 bound parameters; 500 chunks ≈ 3000 params per query.
     const CHUNK_SIZE = 500;
     const chunks: LiftRecord[][] = [];
     for (let i = 0; i < candidates.length; i += CHUNK_SIZE) {
@@ -222,7 +223,7 @@ export function rowToLiftRecord(row: {
     lift: row.lift,
     // Left absent at 0, as the record type reads it, so a first occurrence's record
     // is the shape it was before occurrences existed (#1027).
-    ...(row.occurrence ? { occurrence: row.occurrence } : {}),
+    ...withOccurrence(row.occurrence),
     setNum: row.setNum,
     weight: row.weight,
     reps: row.reps,

@@ -7,7 +7,9 @@ import {
   TrainingMax,
   TrainingMaxHistoryEntry,
   buildLiftRecordId,
+  liftOccurrenceKey,
   liftOccurrences,
+  withOccurrence,
   normalizeAmrap,
   noScheduleWorkoutDateUTC,
   programLengthWeeks,
@@ -75,7 +77,7 @@ export const toLiftRecordResponse = (r: LiftRecord): LiftRecordResponse => ({
   workoutNum: r.workoutNum,
   date: isoDate(r.date),
   lift: r.lift,
-  ...(r.occurrence ? { occurrence: r.occurrence } : {}),
+  ...withOccurrence(r.occurrence),
   setNum: r.setNum,
   weight: r.weight,
   reps: r.reps,
@@ -365,10 +367,7 @@ export const toWorkoutResponse = (
   } = options;
 
   // Logged sets by the lift occurrence they belong to: a lift, and which occurrence
-  // of it in this workout (#1027). The key leads with the occurrence's digits, so a
-  // lift name cannot make two keys collide.
-  const keyOf = (lift: string, occurrence: number) => `${occurrence}:${lift}`;
-  const withOccurrence = (occurrence: number) => (occurrence > 0 ? { occurrence } : {});
+  // of it in this workout (#1027).
   const liftMap = new Map<string, { lift: string; occurrence: number; sets: SetResponse[] }>();
   for (const r of records) {
     const set: SetResponse = {
@@ -383,9 +382,9 @@ export const toWorkoutResponse = (
     };
     const lift = renamedLifts?.get(r.lift) ?? r.lift;
     const occurrence = r.occurrence ?? 0;
-    const group = liftMap.get(keyOf(lift, occurrence));
+    const group = liftMap.get(liftOccurrenceKey(lift, occurrence));
     if (group) group.sets.push(set);
-    else liftMap.set(keyOf(lift, occurrence), { lift, occurrence, sets: [set] });
+    else liftMap.set(liftOccurrenceKey(lift, occurrence), { lift, occurrence, sets: [set] });
   }
 
   let lifts: WorkoutLiftResponse[];
@@ -394,8 +393,8 @@ export const toWorkoutResponse = (
     const occurrences = liftOccurrences(plannedLifts);
     lifts = plannedLifts.map(({ lift, replaces }, i) => {
       const occurrence = occurrences[i] ?? 0;
-      emitted.add(keyOf(lift, occurrence));
-      const sets = liftMap.get(keyOf(lift, occurrence))?.sets ?? [];
+      emitted.add(liftOccurrenceKey(lift, occurrence));
+      const sets = liftMap.get(liftOccurrenceKey(lift, occurrence))?.sets ?? [];
       return {
         lift,
         sets,

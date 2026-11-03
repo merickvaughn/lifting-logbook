@@ -13,11 +13,23 @@
 -- characters, so the old and new keys share one name. Both statements run inside
 -- Prisma's per-migration transaction, so there is no window with neither index.
 --
+-- Locking: DROP INDEX and ADD COLUMN take ACCESS EXCLUSIVE, held until commit, so
+-- reads and writes on "lift_record" wait out the unique index build. lock_timeout
+-- only bounds acquiring the lock. At today's size the build is quick; adjust before
+-- deploying against a large "lift_record".
+--
 -- Deploy ordering: this runs in the Cloud Run migration job ahead of the new API
--- revision (ADR-027). Rolling the API image back alone is safe until a second
--- occurrence is logged: the old code never writes `occurrence`, so its rows stay 0.
--- After that, the old code's update-by-key can match both occurrences' rows of one
--- set. Reverting this index needs every occurrence > 0 row deleted first.
+-- revision (ADR-027), and deploy.yml then rolls out the API before the web. Until
+-- the new web is live, a lift a day plans twice is listed twice to a web that keys
+-- sets by name and posts no `occurrence`: a set logged on its second occurrence is
+-- filed under the first, or answered 409. The window lasts one rollout.
+--
+-- Rollback: rolling the API image back alone is safe until a second occurrence is
+-- logged; the old code never writes `occurrence`, so its rows stay 0. After that,
+-- the old code's update-by-key can match both occurrences' rows of one set, its
+-- workout page groups both occurrences' sets under one lift, and its progression
+-- reads the second occurrence's set 1 as the lift's. Reverting this index needs
+-- every occurrence > 0 row deleted first.
 
 SET LOCAL lock_timeout = '5s';
 

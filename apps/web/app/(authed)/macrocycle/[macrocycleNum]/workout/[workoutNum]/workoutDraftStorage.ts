@@ -12,6 +12,8 @@
 // routing a per-keystroke local write failure through it would spam a telemetry beacon
 // for a benign, expected browser condition rather than a production incident.
 
+import { liftRecordSetSegment, withOccurrence } from '@lifting-logbook/core';
+
 export interface WorkoutSetDraft {
   weight: string;
   reps: string;
@@ -30,7 +32,7 @@ export function buildDraftKey(
   // one it had before occurrences existed, so a draft typed before this shipped survives.
   occurrence?: number,
 ): string {
-  const set = occurrence ? `${setNum}~${occurrence}` : `${setNum}`;
+  const set = liftRecordSetSegment({ setNum, ...withOccurrence(occurrence) });
   return `${KEY_PREFIX}:${program}:${macrocycleNum}:${workoutNum}:${lift}:${set}`;
 }
 

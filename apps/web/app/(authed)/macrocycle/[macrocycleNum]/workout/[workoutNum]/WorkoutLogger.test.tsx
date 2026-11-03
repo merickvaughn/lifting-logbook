@@ -343,8 +343,18 @@ describe('WorkoutLogger — a lift planned twice in a day (#1027)', () => {
     );
   });
 
-  it('keeps each occurrence’s in-progress draft apart', () => {
-    expect(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1)).not.toBe(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1, 1));
+  it('keeps each occurrence’s in-progress draft apart', async () => {
+    const user = userEvent.setup();
+    render(<WorkoutLogger {...makeProps({ lifts: [first, second] })} />);
+
+    const [, secondDot] = screen.getAllByRole('button', { name: 'Go to Back Squat' });
+    if (!secondDot) throw new Error('expected a navigation dot for each Back Squat occurrence');
+    await user.click(secondDot);
+    await user.clear(screen.getByLabelText('Reps'));
+    await user.type(screen.getByLabelText('Reps'), '10');
+
+    expect(window.localStorage.getItem(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1, 1))).toContain('"reps":"10"');
+    expect(window.localStorage.getItem(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1))).toBeNull();
     // A first occurrence keeps the key a draft had before occurrences existed.
     expect(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1, 0)).toBe(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1));
   });

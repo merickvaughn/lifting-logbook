@@ -40,15 +40,28 @@ export interface LiftRecordKey {
  * returns `"3:2:20260817:Bench Press:1"`; with `occurrence: 1`, `"3:2:20260817:Bench Press:1~1"`.
  */
 export function liftRecordNaturalKey(r: LiftRecordKey): string {
-  return `${r.macrocycleNum}:${r.workoutNum}:${formatDateYYYYMMDD(r.date)}:${r.lift}:${setSegment(r)}`;
+  return `${r.macrocycleNum}:${r.workoutNum}:${formatDateYYYYMMDD(r.date)}:${r.lift}:${liftRecordSetSegment(r)}`;
 }
 
-/** A key's last segment: the set number, then `~occurrence` past a lift's first occurrence. */
-function setSegment(r: Pick<LiftRecordKey, 'occurrence' | 'setNum'>): string {
+/**
+ * A key's last segment: the set number, then `~occurrence` past a lift's first
+ * occurrence. Every key that names one set (the natural key, the record id, the web
+ * logger's draft key) ends in it.
+ */
+export function liftRecordSetSegment(r: Pick<LiftRecordKey, 'occurrence' | 'setNum'>): string {
   return r.occurrence ? `${r.setNum}~${r.occurrence}` : `${r.setNum}`;
 }
 
-/** Inverse of {@link setSegment}; null when malformed. Occurrence 0 is left absent. */
+/**
+ * `{ occurrence }` above 0, else `{}`: how a record, a request or a response carries an
+ * occurrence, so a lift's first occurrence keeps the shape it had before occurrences
+ * existed (#1027). Spread it into the object.
+ */
+export function withOccurrence(occurrence: number | undefined): { occurrence?: number } {
+  return occurrence ? { occurrence } : {};
+}
+
+/** Inverse of {@link liftRecordSetSegment}; null when malformed. Occurrence 0 is left absent. */
 function parseSetSegment(segment: string): { setNum: number; occurrence?: number } | null {
   const [set = '', occ, ...extra] = segment.split('~');
   const setNum = parseInt(set, 10);
@@ -93,7 +106,7 @@ export function parseLiftRecordNaturalKey(key: string): LiftRecordKey | null {
  * natural key (#1027); `~` needs no escaping in a URL path.
  */
 export function buildLiftRecordId(program: string, r: LiftRecordKey): string {
-  return `${program}-${r.macrocycleNum}-${r.workoutNum}-${formatDateYYYYMMDD(r.date)}-${r.lift}-${setSegment(r)}`;
+  return `${program}-${r.macrocycleNum}-${r.workoutNum}-${formatDateYYYYMMDD(r.date)}-${r.lift}-${liftRecordSetSegment(r)}`;
 }
 
 /**

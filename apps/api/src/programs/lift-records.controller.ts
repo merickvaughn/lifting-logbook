@@ -27,6 +27,7 @@ import {
   parseLiftRecords,
   toUTCMidnight,
   validateLiftImport,
+  withOccurrence,
 } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -120,7 +121,7 @@ export class LiftRecordsController {
       workoutNum: body.workoutNum,
       date: effectiveDate,
       lift: body.lift,
-      ...(body.occurrence ? { occurrence: body.occurrence } : {}),
+      ...withOccurrence(body.occurrence),
       setNum: body.setNum,
       weight: body.weight,
       reps: body.reps,
@@ -140,13 +141,11 @@ export class LiftRecordsController {
       // rather than leaving the client stuck on a conflict it cannot resolve.
       // A payload that collides on the key but differs in content is a genuine
       // conflict and still 409s.
+      // Matched on the natural key itself, so a field added to the key reaches this
+      // lookup without a second edit (#1027).
+      const key = liftRecordNaturalKey(record);
       const existing = (await liftRecord.getLiftRecords(program, record.macrocycleNum)).find(
-        (r) =>
-          r.workoutNum === record.workoutNum &&
-          r.lift === record.lift &&
-          (r.occurrence ?? 0) === (record.occurrence ?? 0) &&
-          r.setNum === record.setNum &&
-          r.date.getTime() === record.date.getTime(),
+        (r) => liftRecordNaturalKey(r) === key,
       );
       if (
         existing &&
@@ -158,7 +157,9 @@ export class LiftRecordsController {
       }
       const existingId = existing ? buildLiftRecordId(program, existing) : null;
       throw new ConflictException(
-        `A lift record already exists for ${record.lift}, macrocycle ${record.macrocycleNum}, ` +
+        `A lift record already exists for ${record.lift}` +
+          (record.occurrence ? ` (occurrence ${record.occurrence})` : '') +
+          `, macrocycle ${record.macrocycleNum}, ` +
           `workout ${record.workoutNum}, set ${record.setNum} on ${record.date.toISOString().slice(0, 10)}` +
           (existingId
             ? `. Update it with PATCH /programs/${program}/lift-records/${existingId} instead.`

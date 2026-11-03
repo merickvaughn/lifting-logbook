@@ -38,6 +38,7 @@ export class PrismaWorkoutRepository implements IWorkoutRepository {
           workoutNum,
           date: r.date,
           lift: r.lift,
+          occurrence: r.occurrence ?? 0,
           setNum: r.setNum,
           weight: r.weight,
           reps: r.reps,

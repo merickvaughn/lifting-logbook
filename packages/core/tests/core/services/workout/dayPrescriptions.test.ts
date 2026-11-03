@@ -87,8 +87,20 @@ describe("resolveDayPrescriptions", () => {
       { lift: "Front Squat", replaces: "Squat" },
       { lift: "Front Squat", replaces: "Squat" },
     ]);
+    expect(plannedLiftRows([squat, second], planned)).toEqual([squat, second]);
     expect(renamed).toEqual(new Map([["Squat", "Front Squat"]]));
+    // Progression follows the first occurrence.
     expect(rowByStoredLift.get("Front Squat")).toBe(squat);
+  });
+
+  it("progresses a lift a swap duplicates by its own slot's row, not the swapped slot's (#1109)", () => {
+    const frontSquat = { lift: "Front Squat", reps: 8 };
+    const { planned, rowByStoredLift } = resolveDayPrescriptions(
+      [frontSquat, squat],
+      [replace("Front Squat", "Squat")],
+    );
+    expect(planned).toEqual([{ lift: "Squat", replaces: "Front Squat" }, { lift: "Squat" }]);
+    expect(rowByStoredLift.get("Squat")).toBe(squat);
   });
 
   it("returns the overrides as applyLiftOverrides applies them", () => {

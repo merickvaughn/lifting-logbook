@@ -26,6 +26,15 @@ export function liftOccurrences(lifts: readonly { lift: string }[]): number[] {
 }
 
 /**
+ * One lift occurrence's identity within a workout, as a string key: the workout
+ * response groups logged sets by it and the logger keys its sets by it. It leads with
+ * the occurrence's digits, so no lift name can make two keys collide.
+ */
+export function liftOccurrenceKey(lift: string, occurrence: number | undefined): string {
+  return `${occurrence ?? 0}:${lift}`;
+}
+
+/**
  * The spec row prescribing each of a workout day's lifts, index-aligned with `lifts`:
  * a lift's own row, or for a Manage Lifts replacement the row of the slot it `replaces`,
  * whose prescription it inherits (the caller prices it from the replacement's own
@@ -61,7 +70,8 @@ export interface DayPrescriptions<Row> extends AppliedLiftOverrides {
   /**
    * Stored lift name → its row on this day, for progression. Each planned lift takes
    * its row by the page rule ({@link plannedLiftRows}); a lift planned more than once
-   * takes its first occurrence's row, the only occurrence that progresses it (#1027).
+   * takes its first occurrence's row (#1027), preferring a slot of its own over one a
+   * swap put it in.
    * Two more rules apply only here, because only progression sees sets stored under
    * names the plan no longer shows:
    *
@@ -94,10 +104,14 @@ export function resolveDayPrescriptions<Row extends LiftRow>(
 
   const rowByStoredLift = new Map<string, Row>();
   const plannedRows = plannedLiftRows(dayRows, applied.planned);
-  applied.planned.forEach(({ lift }, i) => {
-    const row = plannedRows[i];
-    if (row && !rowByStoredLift.has(lift)) rowByStoredLift.set(lift, row);
-  });
+  // A lift's own slot first, then a slot a swap put it in: where a swap makes a lift
+  // appear twice, the lift still progresses by its own row (#1027, #1109).
+  for (const ownSlot of [true, false]) {
+    applied.planned.forEach(({ lift, replaces }, i) => {
+      const row = plannedRows[i];
+      if (row && (replaces === undefined) === ownSlot && !rowByStoredLift.has(lift)) rowByStoredLift.set(lift, row);
+    });
+  }
   for (const [stored, current] of applied.renamed) {
     const row = rowByStoredLift.get(current);
     if (row && !rowByStoredLift.has(stored)) rowByStoredLift.set(stored, row);

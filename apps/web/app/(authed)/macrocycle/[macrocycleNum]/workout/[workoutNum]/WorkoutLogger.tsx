@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { WeightUnit } from '@lifting-logbook/types';
-import { convertWeight, formatWeight, roundToDisplay } from '@lifting-logbook/core';
+import { convertWeight, formatWeight, liftOccurrenceKey, roundToDisplay, withOccurrence } from '@lifting-logbook/core';
 import {
   createLiftRecord,
   recordBodyWeight,
@@ -23,7 +23,7 @@ import { buildDraftKey, clearDraft, readDraft, writeDraft } from './workoutDraft
 // a day, so the lift's name alone would give both occurrences one key, and logging a
 // set on one would mark the other's logged too (#1027).
 function liftKey(lift: Pick<LiftData, 'lift' | 'occurrence'>): string {
-  return `${lift.occurrence ?? 0}:${lift.lift}`;
+  return liftOccurrenceKey(lift.lift, lift.occurrence);
 }
 
 function setKey(lift: Pick<LiftData, 'lift' | 'occurrence'>, setNum: number): string {
@@ -281,7 +281,7 @@ function WorkingSetRow({
         workoutNum,
         date,
         lift,
-        ...(occurrence ? { occurrence } : {}),
+        ...withOccurrence(occurrence),
         setNum: set.setNum,
         weight,
         reps,

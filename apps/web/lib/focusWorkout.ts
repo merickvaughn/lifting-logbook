@@ -224,8 +224,9 @@ export type WorkoutOrderEntry =
  * (which the API returns as extra unplanned lifts) back out of its planned list.
  *
  * A focus lift with the same name as a planned lift, or as an earlier focus lift, is left
- * out: lift records are keyed by lift and set number, so it could not be logged apart
- * from the first one, and timing it would ask for sets nothing can record.
+ * out: a focus entry carries no occurrence, so its sets would log as the first
+ * occurrence's and could not be told apart from them. Offering a duplicate like this
+ * as a second occurrence is #1109.
  */
 export function workoutOrder(
   plannedLifts: readonly string[],
