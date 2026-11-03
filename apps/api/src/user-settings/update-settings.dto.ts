@@ -56,7 +56,12 @@ class IsScheduleShapeConstraint implements ValidatorConstraintInterface {
 }
 
 export class WorkoutScheduleDto implements UserWorkoutSchedule {
+  // The cross-field shape check hangs off `type`, a real field, so the error message has a
+  // defined property regardless of which arm the caller used. It must not hang off a
+  // placeholder property: decorating one makes it a whitelisted key whose own value nothing
+  // validates, which let arbitrary payloads persist under it (#1034).
   @IsIn(['fixed', 'rotating'])
+  @Validate(IsScheduleShapeConstraint)
   type!: 'fixed' | 'rotating';
 
   @ValidateIf((o: WorkoutScheduleDto) => o.type === 'fixed')
@@ -72,11 +77,6 @@ export class WorkoutScheduleDto implements UserWorkoutSchedule {
   @ValidateIf((o: WorkoutScheduleDto) => o.type === 'rotating')
   @Validate(IsWeekPatternArrayConstraint)
   weeks?: number[][];
-
-  // Cross-field check. Attached to `type` so the error message hangs off a defined property
-  // regardless of which arm the caller used.
-  @Validate(IsScheduleShapeConstraint)
-  _shape?: never;
 }
 
 export class UpdateSettingsDto {

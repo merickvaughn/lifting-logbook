@@ -223,6 +223,16 @@ describe('UpdateSettingsDto validation', () => {
       ).rejects.toThrow();
     });
 
+    // #1034: `_shape` was a decorated placeholder, so whitelisting let it through.
+    it('rejects a `_shape` key nested inside workoutSchedule', async () => {
+      await expect(
+        pipe.transform(
+          { workoutSchedule: { type: 'fixed', days: [0], _shape: { blob: 'x' } } },
+          meta,
+        ),
+      ).rejects.toThrow();
+    });
+
     it('accepts a clean payload', async () => {
       await expect(
         pipe.transform({ workoutSchedule: { type: 'fixed', days: [0, 2, 4] } }, meta),
