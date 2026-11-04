@@ -18,6 +18,7 @@ import {
 import {
   GoogleSheetTab,
   GoogleSheetWorkbookResponse,
+  ImportClassification,
   ImportCommitResponse,
   ImportError,
   ImportKind,
@@ -207,17 +208,23 @@ export class ImportController {
 
     const tabs = tables.map(({ name, rows, overflow }): GoogleSheetTab => {
       const classification = classifyImport(rows);
-      let csv = classification.type !== null && rows.length > 1 && !overflow ? stringifyCsv(rows) : null;
+      const suggestedKind = suggestedKindFor(classification);
+      const tab = { name, rowCount: rows.length, classification, suggestedKind };
       if (overflow === 'rows') {
-        classification.reasons.push(`Tab has more than ${MAX_IMPORT_ROWS} rows, the per-import limit.`);
-      } else if (overflow === 'columns') {
-        classification.reasons.push(`Tab has data past column ${MAX_TABLE_COLUMNS}, too wide to import.`);
-      } else if (csv !== null && Buffer.byteLength(csv) > MAX_IMPORT_FILE_BYTES) {
-        // The tab is later uploaded as a file, which the multipart limit would reject.
-        classification.reasons.push('Tab is larger than the 5 MB import file limit.');
-        csv = null;
+        return { ...tab, csv: null, skipReason: `More than ${MAX_IMPORT_ROWS} rows, the per-import limit.` };
       }
-      return { name, rowCount: rows.length, classification, csv };
+      if (overflow === 'columns') {
+        return { ...tab, csv: null, skipReason: `Has data past column ${MAX_TABLE_COLUMNS}, too wide to import.` };
+      }
+      if (suggestedKind === null || rows.length < 2) {
+        return { ...tab, csv: null, skipReason: 'Not recognized as lift history, training maxes, strength goals or a program.' };
+      }
+      const csv = stringifyCsv(rows);
+      // The tab is later uploaded as a file, which the multipart limit would reject.
+      if (Buffer.byteLength(csv) > MAX_IMPORT_FILE_BYTES) {
+        return { ...tab, csv: null, skipReason: 'Larger than the 5 MB import file limit.' };
+      }
+      return { ...tab, csv, skipReason: null };
     });
 
     // Counts and detected kinds only — tab names and cell contents are user data.
@@ -646,6 +653,19 @@ export class ImportController {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     return handler.validate(parsed as any);
   }
+}
+
+/**
+ * The kind a Google Sheets tab is offered as: the classifier's pick, or for a
+ * medium/high-confidence tab that missed auto-accept, its top-scoring kind (the
+ * CSV path offers the same tab a manual pick). `classifyImport` lists every kind
+ * except the top scorer in `alternatives`, so the top scorer is the one missing.
+ */
+export function suggestedKindFor(classification: ImportClassification): ImportKind | null {
+  if (classification.type !== null) return classification.type;
+  if (classification.bucket === 'low') return null;
+  const kinds = Object.keys(IMPORT_HANDLERS) as ImportKind[];
+  return kinds.find((kind) => !classification.alternatives.some((a) => a.type === kind)) ?? null;
 }
 
 function parseJsonParam<T>(param: string | undefined): T | null {

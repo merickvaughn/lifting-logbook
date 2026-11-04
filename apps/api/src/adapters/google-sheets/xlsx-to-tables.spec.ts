@@ -84,6 +84,24 @@ describe('xlsxToTables', () => {
     expect(table?.rows).toEqual([['Bench P.', 'Squat', 'TRUE', '', 'end']]);
   });
 
+  it('decodes XML entities in shared strings, inline strings and formula strings', () => {
+    const [table] = read(
+      buildXlsx([
+        {
+          name: 'S',
+          rows: [
+            [
+              'Curls & "Rows" <BB>',
+              { attrs: 't="inlineStr"', inner: '<is><t>L: 12 &amp; R: 10</t></is>' },
+              { attrs: 't="str"', inner: '<v>caf&#233; &#x2014; ok</v>' },
+            ],
+          ],
+        },
+      ]),
+    );
+    expect(table?.rows).toEqual([['Curls & "Rows" <BB>', 'L: 12 & R: 10', 'café — ok']]);
+  });
+
   it('keeps 15 significant digits', () => {
     const [table] = read(buildXlsx([{ name: 'S', rows: [[123456789012345, 0.1 + 0.2]] }]));
     expect(table?.rows).toEqual([['123456789012345', '0.3']]);

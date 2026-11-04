@@ -56,9 +56,11 @@ const MS_PER_DAY = 86_400_000;
  * - a tab is read up to `maxRows` rows and `MAX_TABLE_COLUMNS` columns; past either,
  *   it comes back flagged in `overflow`.
  *
- * Reads only the parts needed for cell values, with a stock zip inflater and DOM
- * parser, rather than a full spreadsheet library. Each worksheet's DOM is built
- * and discarded in turn, so peak memory is the inflated parts plus one DOM.
+ * Reads only the parts needed for cell values, rather than a full spreadsheet
+ * library. The small parts (workbook, relationships, styles) go through a DOM
+ * parser; worksheets and shared strings, the parts that grow with the data, are
+ * scanned row by row and cell by cell without building a DOM, so memory stays
+ * close to the inflated XML itself and a tab stops being read at the row cap.
  */
 export function xlsxToTables(buffer: Uint8Array, { maxRows }: { maxRows: number }): WorkbookTable[] {
   let totalBytes = 0;
@@ -82,9 +84,13 @@ export function xlsxToTables(buffer: Uint8Array, { maxRows }: { maxRows: number 
     if (err instanceof XlsxReadError) throw err;
     throw new XlsxReadError('malformed', 'Not an XLSX workbook');
   }
-  const xml = (name: string) => {
+  const text = (name: string) => {
     const bytes = files[name];
-    return bytes ? parseXml(new TextDecoder().decode(bytes)) : null;
+    return bytes ? new TextDecoder().decode(bytes) : null;
+  };
+  const xml = (name: string) => {
+    const source = text(name);
+    return source === null ? null : parseXml(source);
   };
 
   const workbook = xml('xl/workbook.xml');
@@ -97,7 +103,7 @@ export function xlsxToTables(buffer: Uint8Array, { maxRows }: { maxRows: number 
     targets.set(rel.getAttribute('Id') ?? '', target.startsWith('/') ? target.slice(1) : `xl/${target}`);
   }
 
-  const sharedStrings = readSharedStrings(xml('xl/sharedStrings.xml'));
+  const sharedStrings = readSharedStrings(text('xl/sharedStrings.xml'));
   const dateStyles = readDateStyles(xml('xl/styles.xml'));
   const date1904 = elements(workbook, 'workbookPr').some((el) => {
     const v = el.getAttribute('date1904');
@@ -112,25 +118,55 @@ export function xlsxToTables(buffer: Uint8Array, { maxRows }: { maxRows: number 
     .map((sheetEl) => {
       const name = sheetEl.getAttribute('name') ?? '';
       const path = targets.get(sheetEl.getAttributeNS(REL_NS, 'id') ?? '');
-      const sheet = path ? xml(path) : null;
+      const sheet = path ? text(path) : null;
       return sheet ? { name, ...readRows(sheet, { sharedStrings, dateStyles, date1904, maxRows }) } : { name, rows: [] };
     });
 }
 
+// Element scanners for the data-sized parts. SpreadsheetML is machine-written: rows
+// and cells never nest in themselves, and text content cannot hold a raw `<`, so a
+// non-greedy match up to the closing tag is exact. An optional namespace prefix is allowed.
+const ROW_RE = /<(?:\w+:)?row\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:\w+:)?row>)/g;
+const CELL_RE = /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
+const SI_RE = /<(?:\w+:)?si\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:\w+:)?si>)/g;
+const RPH_RE = /<(?:\w+:)?rPh\b[\s\S]*?<\/(?:\w+:)?rPh>/g;
+const V_RE = /<(?:\w+:)?v(?:\s[^>]*)?>([^<]*)<\/(?:\w+:)?v>/;
+const T_RE = /<(?:\w+:)?t(?:\s[^>]*)?>([^<]*)<\/(?:\w+:)?t>/g;
+const ATTR_RE = /([\w:]+)="([^"]*)"/g;
+
+function attributes(source: string): Map<string, string> {
+  return new Map(Array.from(source.matchAll(ATTR_RE), (m) => [m[1] ?? '', decodeXml(m[2] ?? '')]));
+}
+
+function texts(source: string): string {
+  return Array.from(source.matchAll(T_RE), (m) => decodeXml(m[1] ?? '')).join('');
+}
+
+const XML_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+function decodeXml(source: string): string {
+  return source.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_, entity: string) => {
+    if (entity[0] !== '#') return XML_ENTITIES[entity.toLowerCase()] ?? '';
+    const code = entity[1] === 'x' || entity[1] === 'X' ? Number.parseInt(entity.slice(2), 16) : Number(entity.slice(1));
+    return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+  });
+}
+
 function readRows(
-  sheet: Document,
+  sheet: string,
   ctx: { sharedStrings: string[]; dateStyles: Set<number>; date1904: boolean; maxRows: number },
 ): Pick<WorkbookTable, 'rows' | 'overflow'> {
   const rows: string[][] = [];
   let overflow: WorkbookTable['overflow'];
-  rowLoop: for (const rowEl of elements(sheet, 'row')) {
+  rowLoop: for (const rowMatch of sheet.matchAll(ROW_RE)) {
     const cells: string[] = [];
     let nextCol = 0;
-    for (const c of elements(rowEl, 'c')) {
-      const ref = c.getAttribute('r');
+    for (const cellMatch of (rowMatch[1] ?? '').matchAll(CELL_RE)) {
+      const attrs = attributes(cellMatch[1] ?? '');
+      const ref = attrs.get('r');
       const col = ref ? columnIndex(ref) : nextCol;
       nextCol = col + 1;
-      const value = cellValue(c, ctx);
+      const value = cellValue(attrs, cellMatch[2] ?? '', ctx);
       if (value === '') continue;
       if (col >= MAX_TABLE_COLUMNS) {
         overflow = 'columns';
@@ -153,13 +189,14 @@ function readRows(
 }
 
 function cellValue(
-  c: Element,
+  attrs: Map<string, string>,
+  body: string,
   ctx: { sharedStrings: string[]; dateStyles: Set<number>; date1904: boolean },
 ): string {
-  const type = c.getAttribute('t') ?? 'n';
-  if (type === 'inlineStr') return textOf(c).trim();
+  const type = attrs.get('t') ?? 'n';
+  if (type === 'inlineStr') return texts(body).trim();
 
-  const raw = elements(c, 'v')[0]?.textContent ?? '';
+  const raw = decodeXml(body.match(V_RE)?.[1] ?? '');
   if (raw === '') return '';
   switch (type) {
     case 's':
@@ -173,7 +210,7 @@ function cellValue(
     default: {
       const n = Number(raw);
       if (!Number.isFinite(n)) return raw.trim();
-      if (ctx.dateStyles.has(Number(c.getAttribute('s') ?? '0'))) return serialToDate(n, ctx.date1904);
+      if (ctx.dateStyles.has(Number(attrs.get('s') ?? '0'))) return serialToDate(n, ctx.date1904);
       // Strip binary floating-point noise (e.g. 172.49999999999997 from a formula).
       return String(Number.parseFloat(n.toPrecision(15)));
     }
@@ -199,15 +236,10 @@ export function isDateFormat(formatCode: string): boolean {
   return /m/i.test(code.replace(/h+[^a-z]*m+|m+[^a-z]*s+/gi, ''));
 }
 
-function readSharedStrings(doc: Document | null): string[] {
-  if (!doc) return [];
+function readSharedStrings(source: string | null): string[] {
+  if (source === null) return [];
   // Phonetic runs (<rPh>) are annotations, not cell text.
-  return elements(doc, 'si').map((si) =>
-    elements(si, 't')
-      .filter((t) => (t.parentNode?.nodeName ?? '').replace(/^.*:/, '') !== 'rPh')
-      .map((t) => t.textContent ?? '')
-      .join(''),
-  );
+  return Array.from(source.matchAll(SI_RE), (m) => texts((m[1] ?? '').replace(RPH_RE, '')));
 }
 
 /** Indexes into `cellXfs` whose number format displays as a date. */
@@ -235,10 +267,6 @@ function columnIndex(ref: string): number {
     col = col * 26 + (code - 64);
   }
   return col - 1;
-}
-
-function textOf(el: Element): string {
-  return elements(el, 't').map((t) => t.textContent ?? '').join('');
 }
 
 function elements(root: Document | Element, localName: string): Element[] {

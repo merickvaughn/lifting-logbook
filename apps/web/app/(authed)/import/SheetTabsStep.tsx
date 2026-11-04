@@ -34,16 +34,16 @@ export function defaultTabChoices(tabs: GoogleSheetTab[]): SheetTabChoices {
 }
 
 /**
- * The kind a tab is offered as. Only tabs the classifier picked a kind for carry a
- * CSV (the API sets `csv` only when `classification.type` is set), so the fallback
- * is never reached for a tab that can be checked.
+ * The kind a tab is offered as. Every tab with a CSV has a `suggestedKind` (the API
+ * sets `csv` only then), so the fallback is never reached for a tab that can be checked.
  */
 function suggestedKind(tab: GoogleSheetTab): ImportKind {
-  return tab.classification.type ?? 'lift-records';
+  return tab.suggestedKind ?? 'lift-records';
 }
 
-export function previewKey(programId: string, tabName: string, kind: ImportKind): string {
-  return [programId, tabName, kind].join('\u0000');
+/** Identifies one preview: which workbook fetch, program, tab and kind it was taken for. */
+export function previewKey(workbookId: number, programId: string, tabName: string, kind: ImportKind): string {
+  return [workbookId, programId, tabName, kind].join('\u0000');
 }
 
 export type TabPreview =
@@ -62,6 +62,7 @@ export type TabPreviews = Record<string, TabPreview>;
  * tab's review.
  */
 export function SheetTabsStep({
+  workbookId,
   programId,
   tabs,
   choices,
@@ -69,6 +70,8 @@ export function SheetTabsStep({
   previews,
   setPreviews,
 }: {
+  /** Changes on every workbook fetch, so a response for an earlier workbook is never shown for this one. */
+  workbookId: number;
   programId: string;
   tabs: GoogleSheetTab[];
   choices: SheetTabChoices;
@@ -81,18 +84,19 @@ export function SheetTabsStep({
   // Guards against a second request for the same key before the 'loading' entry
   // has rendered (React StrictMode runs effects twice on mount).
   const inFlight = useRef<string | null>(null);
+  const keyFor = (tabName: string, kind: ImportKind) => previewKey(workbookId, programId, tabName, kind);
 
   // Preview the checked tabs under their chosen kinds, one request at a time.
-  // Keyed by program, name and kind, so changing any of them fetches a fresh
-  // preview and changing back reuses it.
+  // Keyed by workbook, program, name and kind, so changing any of them fetches a
+  // fresh preview and changing back reuses it.
   useEffect(() => {
     if (inFlight.current || Object.values(previews).some((p) => p.status === 'loading')) return;
-    const pending = Object.entries(choices).find(([name, kind]) => !previews[previewKey(programId, name, kind)]);
+    const pending = Object.entries(choices).find(([name, kind]) => !previews[previewKey(workbookId, programId, name, kind)]);
     if (!pending) return;
     const [name, kind] = pending;
     const tab = tabs.find((t) => t.name === name);
     if (!tab) return;
-    const key = previewKey(programId, name, kind);
+    const key = previewKey(workbookId, programId, name, kind);
     inFlight.current = key;
     setPreviews((prev) => ({ ...prev, [key]: { status: 'loading' } }));
     previewImport(programId, tabFile(tab), kind)
@@ -107,7 +111,7 @@ export function SheetTabsStep({
       .finally(() => {
         inFlight.current = null;
       });
-  }, [choices, previews, programId, tabs, setPreviews]);
+  }, [choices, previews, workbookId, programId, tabs, setPreviews]);
 
   // A failed preview is not retried automatically (it would loop on a persistent
   // error); toggling the tab or changing its kind clears it so it is fetched again.
@@ -115,7 +119,7 @@ export function SheetTabsStep({
     setPreviews((prev) => {
       const next = { ...prev };
       for (const kind of ALL_KINDS) {
-        const key = previewKey(programId, tabName, kind);
+        const key = keyFor(tabName, kind);
         if (next[key]?.status === 'error') delete next[key];
       }
       return next;
@@ -158,7 +162,7 @@ export function SheetTabsStep({
               {importable.map((tab, i) => {
                 const kind = choices[tab.name];
                 const checkboxId = `sheet-tab-${i}`;
-                const p = kind ? previews[previewKey(programId, tab.name, kind)] : undefined;
+                const p = kind ? previews[keyFor(tab.name, kind)] : undefined;
                 return (
                   <tr key={tab.name}>
                     <td>{i + 1}</td>
@@ -191,8 +195,8 @@ export function SheetTabsStep({
                         {ALL_KINDS.map((k) => (
                           <option key={k} value={k}>
                             {KIND_LABEL[k]}
-                            {k === tab.classification.type
-                              ? ` (detected, ${Math.round(tab.classification.confidence * 100)}%)`
+                            {k === tab.suggestedKind
+                              ? ` (${tab.classification.type ? 'detected' : 'best guess'}, ${Math.round(tab.classification.confidence * 100)}%)`
                               : ''}
                           </option>
                         ))}
@@ -214,7 +218,10 @@ export function SheetTabsStep({
           </summary>
           <ul className={styles.reasonList}>
             {skipped.map((t) => (
-              <li key={t.name}>{t.name}</li>
+              <li key={t.name}>
+                {t.name}
+                {t.skipReason ? ` — ${t.skipReason}` : ''}
+              </li>
             ))}
           </ul>
         </details>

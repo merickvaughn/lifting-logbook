@@ -10,6 +10,18 @@ describe("classifyImport", () => {
     expect(result.alternatives.length).toBe(3);
   });
 
+  // The Google Sheets import derives a below-auto-accept tab's top kind as the one
+  // kind missing from `alternatives` (#1111), so every other kind must be listed.
+  it("lists every kind except the top scorer as an alternative, even with no winner", () => {
+    const kinds = ["lift-records", "training-maxes", "strength-goals", "program-spec"];
+    for (const table of [loadCsvFixture("lift_records.csv"), [["foo", "bar"], ["1", "2"]]]) {
+      const result = classifyImport(table);
+      const listed = result.alternatives.map((a) => a.type);
+      expect(new Set(listed).size).toBe(kinds.length - 1);
+      expect(listed.every((k) => kinds.includes(k))).toBe(true);
+    }
+  });
+
   it("routes the training-maxes fixture to training-maxes", () => {
     const result = classifyImport(loadCsvFixture("training_maxes.csv"));
     expect(result.type).toBe("training-maxes");

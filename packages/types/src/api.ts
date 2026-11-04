@@ -825,12 +825,19 @@ export interface GoogleSheetTab {
   rowCount: number;
   classification: ImportClassification;
   /**
+   * The kind the tab is offered as: `classification.type` when the classifier
+   * auto-accepted one, otherwise the top-scoring kind for a medium- or
+   * high-confidence tab (the user confirms it, as in the CSV path's manual pick),
+   * otherwise `null`.
+   */
+  suggestedKind: ImportKind | null;
+  /**
    * The tab as CSV text, ready to send to the Smart Import preview/commit
-   * endpoint as a file. `null` when the tab is not importable: the classifier
-   * picked no kind (`classification.type` is null), or the tab exceeds the
-   * per-import row, width or file-size cap (the reason is in `classification.reasons`).
+   * endpoint as a file. `null` when the tab is not importable; `skipReason` says why.
    */
   csv: string | null;
+  /** Why the tab can't be imported (unrecognized, or over a row, width or file-size cap); `null` when it can. */
+  skipReason: string | null;
 }
 
 /** Response for `POST /programs/:program/import/google-sheet` (#1111). */

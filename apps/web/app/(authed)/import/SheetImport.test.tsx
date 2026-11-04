@@ -36,7 +36,14 @@ function classified(type: ImportKind | null, confidence: number): ImportClassifi
 }
 
 function tab(name: string, type: ImportKind | null, confidence: number, csv: string | null): GoogleSheetTab {
-  return { name, rowCount: 4, classification: classified(type, confidence), csv };
+  return {
+    name,
+    rowCount: 4,
+    classification: classified(type, confidence),
+    suggestedKind: csv === null ? null : type,
+    csv,
+    skipReason: csv === null ? 'Not recognized as lift history, training maxes, strength goals or a program.' : null,
+  };
 }
 
 const TABS: GoogleSheetTab[] = [
@@ -283,6 +290,87 @@ describe('Google Sheets import (#1111)', () => {
     await user.click(checkbox);
 
     expect(await within(rowFor('LIFT_RECORDS')).findByText('3 new · 0 updated · 1 skipped')).toBeInTheDocument();
+  });
+
+  it('offers a medium-confidence tab unchecked, as its best-guess kind, and says why a tab is skipped', async () => {
+    const user = userEvent.setup();
+    const medium: GoogleSheetTab = {
+      ...tab('OLD_LOG', null, 0.75, 'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\nRPT,1,1,1/1/2024,Squat,1,200,5'),
+      classification: { type: null, confidence: 0.75, bucket: 'medium', reasons: [], alternatives: [] },
+      suggestedKind: 'lift-records',
+    };
+    const tooBig: GoogleSheetTab = { ...tab('ARCHIVE', 'lift-records', 0.95, null), skipReason: 'More than 5000 rows, the per-import limit.' };
+    mockFetchSheet.mockResolvedValue({ tabs: [...TABS, medium, tooBig] });
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await fetchWorkbook(user);
+
+    expect(within(rowFor('OLD_LOG')).getByRole('checkbox')).not.toBeChecked();
+    await user.click(within(rowFor('OLD_LOG')).getByRole('checkbox'));
+    expect(screen.getByLabelText('Import OLD_LOG as')).toHaveDisplayValue('Lift History (best guess, 75%)');
+    await waitFor(() =>
+      expect(mockPreview.mock.calls.some(([, file, kind]) => file.name === 'OLD_LOG.csv' && kind === 'lift-records')).toBe(true),
+    );
+
+    await user.click(screen.getByText('2 tabs not importable'));
+    expect(screen.getByText('ARCHIVE — More than 5000 rows, the per-import limit.')).toBeInTheDocument();
+  });
+
+  it('previews a later tab again after an earlier tab commits, instead of reusing the stale overview', async () => {
+    const user = userEvent.setup();
+    mockFetchSheet.mockResolvedValue({ tabs: TABS });
+    mockCommit.mockResolvedValue({
+      ok: true,
+      data: { destination: 'lift-records', created: 3, updated: 0, skipped: 1, batchId: 'batch-1', skippedDetail: [] },
+    });
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await fetchWorkbook(user);
+    await waitFor(() => expect(within(rowFor('TRAINING_MAXES')).getByText('1 new · 0 updated · 0 skipped')).toBeInTheDocument());
+    const tmPreviews = () => mockPreview.mock.calls.filter(([, file]) => file.name === 'TRAINING_MAXES.csv').length;
+    expect(tmPreviews()).toBe(1);
+
+    await user.click(screen.getByRole('button', { name: 'Import 2 tabs' }));
+    await screen.findByRole('heading', { name: 'Map columns' });
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+    await screen.findByText('Import complete');
+    await user.click(screen.getByRole('button', { name: 'Next tab: TRAINING_MAXES' }));
+    await screen.findByText('Tab 2 of 2: TRAINING_MAXES');
+
+    await waitFor(() => expect(tmPreviews()).toBe(2));
+  });
+
+  it('treats a refetched workbook as new, so a same-named tab can be imported again', async () => {
+    const user = userEvent.setup();
+    mockFetchSheet.mockResolvedValue({ tabs: TABS });
+    // The second tab's start fails, leaving LIFT_RECORDS committed in this run.
+    let tmStarts = 0;
+    mockPreview.mockImplementation(async (_program, file, destination) => {
+      if (file.name === 'TRAINING_MAXES.csv' && ++tmStarts === 2) throw new Error('Import preview failed (HTTP 500)');
+      return PREVIEWS[destination ?? 'lift-records'];
+    });
+    mockCommit.mockResolvedValue({
+      ok: true,
+      data: { destination: 'lift-records', created: 3, updated: 0, skipped: 1, batchId: 'batch-1', skippedDetail: [] },
+    });
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await fetchWorkbook(user);
+    await waitFor(() => expect(within(rowFor('TRAINING_MAXES')).getByText('1 new · 0 updated · 0 skipped')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Import 2 tabs' }));
+    await screen.findByRole('heading', { name: 'Map columns' });
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+    await screen.findByText('Import complete');
+    await user.click(screen.getByRole('button', { name: 'Next tab: TRAINING_MAXES' }));
+    await screen.findByText('Choose tabs to import');
+    expect(screen.getByRole('button', { name: 'Import 1 tab' })).toBeInTheDocument();
+
+    // Fetching the link again starts over: both tabs are offered.
+    await user.clear(screen.getByLabelText('Google Sheets link'));
+    await user.type(screen.getByLabelText('Google Sheets link'), SHEET_URL);
+    await user.click(screen.getByRole('button', { name: 'Fetch workbook' }));
+    expect(await screen.findByRole('button', { name: 'Import 2 tabs' })).toBeInTheDocument();
   });
 
   it('keeps the link field disabled while the workbook is being fetched', async () => {

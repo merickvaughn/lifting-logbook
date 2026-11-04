@@ -9,11 +9,11 @@ import multipart from '@fastify/multipart';
 import { AppModule } from '../app.module';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainNotFoundFilter } from './not-found.filter';
-import type { GoogleSheetWorkbookResponse, ImportPreviewResponse } from '@lifting-logbook/types';
+import type { GoogleSheetWorkbookResponse, ImportKind, ImportPreviewResponse } from '@lifting-logbook/types';
 import { buildXlsx, dateSerial, zipFixture } from '../adapters/google-sheets/xlsx.fixture';
 import { MAX_XLSX_PART_BYTES } from '../adapters/google-sheets/xlsx-to-tables';
 import { RLS_SKIP_TX } from '../adapters/prisma/rls-context';
-import { ImportController } from './import.controller';
+import { ImportController, suggestedKindFor } from './import.controller';
 
 /**
  * In-memory E2E for the unified Smart Import endpoint (#477):
@@ -788,6 +788,22 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.json().message).toContain('Anyone with the link');
     });
 
+    it('offers a medium-confidence tab as its top-scoring kind, and a low-confidence tab as none', () => {
+      const alternatives = (kinds: ImportKind[]) => kinds.map((type) => ({ type, confidence: 0.3, closeCall: false }));
+      expect(
+        suggestedKindFor({
+          type: null,
+          confidence: 0.75,
+          bucket: 'medium',
+          reasons: [],
+          alternatives: alternatives(['training-maxes', 'strength-goals', 'program-spec']),
+        }),
+      ).toBe('lift-records');
+      expect(
+        suggestedKindFor({ type: null, confidence: 0.2, bucket: 'low', reasons: [], alternatives: alternatives(['lift-records']) }),
+      ).toBeNull();
+    });
+
     it('runs outside the per-request RLS transaction, since it does no DB work', () => {
       expect(Reflect.getMetadata(RLS_SKIP_TX, ImportController.prototype.fetchGoogleSheet)).toBe(true);
     });
@@ -803,7 +819,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(200);
       const [big] = (res.json() as GoogleSheetWorkbookResponse).tabs;
       expect(big?.csv).toBeNull();
-      expect(big?.classification.reasons).toContain('Tab has more than 5000 rows, the per-import limit.');
+      expect(big?.skipReason).toBe('More than 5000 rows, the per-import limit.');
     });
 
     it('returns 413 when the workbook inflates past the size cap', async () => {

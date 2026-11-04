@@ -44,6 +44,9 @@ type EditableMax = { lift: string; weight: string };
 type QueuedTab = { name: string; csv: string; kind: ImportKind };
 type CompletedTab = {
   name: string;
+  /** The workbook fetch the tab came from, the kind it was queued as, and the program it was committed to. */
+  workbookId: number;
+  kind: ImportKind;
   programId: string;
   result: ImportCommitResponse;
   batchId: string | null;
@@ -245,6 +248,10 @@ export function ImportWizard({
   const [tabIndex, setTabIndex] = useState(0);
   const [completedTabs, setCompletedTabs] = useState<CompletedTab[]>([]);
   const [tabPreviews, setTabPreviews] = useState<TabPreviews>({});
+  // Bumped on every workbook fetch. Preview keys and completed tabs carry it, so a
+  // late response or a same-named tab from an earlier workbook can't be mistaken
+  // for the current one.
+  const [workbookId, setWorkbookId] = useState(0);
   // Only a Sheets run in progress has a current or next tab; a CSV upload never does.
   const sheetRun = sourceMode === 'sheet' && step !== Step.SOURCE;
   const currentTab = sheetRun ? tabQueue[tabIndex] : undefined;
@@ -448,6 +455,7 @@ export function ImportWizard({
       setSheetTabs(tabs);
       setTabChoices(defaultTabChoices(tabs));
       // A new workbook starts a new run. Completed tabs are kept so their Undo stays available.
+      setWorkbookId((id) => id + 1);
       setTabPreviews({});
       setTabQueue([]);
       setTabIndex(0);
@@ -467,7 +475,8 @@ export function ImportWizard({
     const tab = queue[index];
     if (!tab) return;
     const tabAsFile = tabFile(tab);
-    const overview = tabPreviews[previewKey(programId, tab.name, tab.kind)];
+    // tabPreviews is emptied by every commit, so a preview found here predates no commit.
+    const overview = tabPreviews[previewKey(workbookId, programId, tab.name, tab.kind)];
     setTabIndex(index);
     setFile(tabAsFile);
     setStep(Step.ANALYZING);
@@ -475,9 +484,14 @@ export function ImportWizard({
     setStep(res ? Step.MAP_COLUMNS : Step.SOURCE);
   }
 
+  // Committed, and not since undone, for this workbook fetch, kind and program.
   function isCompleted(tab: Pick<QueuedTab, 'name' | 'kind'>): boolean {
-    return completedTabs.some((t) => t.name === tab.name && t.result.destination === tab.kind && t.programId === programId);
+    return completedTabs.some(
+      (t) =>
+        t.workbookId === workbookId && t.name === tab.name && t.kind === tab.kind && t.programId === programId && !t.undo,
+    );
   }
+  const workbookCompletedTabs = completedTabs.filter((t) => t.workbookId === workbookId);
 
   // Tabs checked in the overview that this run has not committed yet.
   const pendingSheetTabs: QueuedTab[] = (sheetTabs ?? []).flatMap((t) => {
@@ -496,21 +510,20 @@ export function ImportWizard({
     if (current && commitResult) {
       setCompletedTabs((prev) => [
         ...prev,
-        { name: current.name, programId, result: commitResult, batchId, undo: undoResult },
+        { name: current.name, workbookId, kind: current.kind, programId, result: commitResult, batchId, undo: undoResult },
       ]);
     }
     resetFileState();
     await startTab(tabQueue, tabIndex + 1);
   }
 
-  async function handleUndoCompletedTab(i: number) {
-    const entry = completedTabs[i];
-    if (!entry?.batchId || entry.undo) return;
+  async function handleUndoCompletedTab(entry: CompletedTab) {
+    if (!entry.batchId || entry.undo) return;
     setBusy(true);
     try {
       // The program the tab was committed to, which the selector may no longer show.
       const undo = await undoImport(entry.programId, entry.batchId);
-      setCompletedTabs((prev) => prev.map((t, j) => (j === i ? { ...t, undo } : t)));
+      setCompletedTabs((prev) => prev.map((t) => (t === entry ? { ...t, undo } : t)));
     } catch (e) {
       logClientError('undoImport', e, { programId: entry.programId, batchId: entry.batchId });
       setError(e instanceof Error ? e.message : 'Undo failed');
@@ -950,6 +963,8 @@ export function ImportWizard({
       if (result.ok) {
         setBatchId(result.data.batchId);
         setCommitResult(result.data);
+        // Tab previews taken before this commit no longer match what the server would compute.
+        setTabPreviews({});
         setStep(Step.DONE);
       } else {
         setCommitErrors(result.errors);
@@ -1138,6 +1153,7 @@ export function ImportWizard({
                       onChange={(e) => {
                         setSheetUrl(e.target.value);
                         setSheetTabs(null);
+                        setTabPreviews({});
                       }}
                     />
                     <p className={styles.stepHint}>
@@ -1148,6 +1164,7 @@ export function ImportWizard({
                   </div>
                   {sheetTabs && (
                     <SheetTabsStep
+                      workbookId={workbookId}
                       programId={programId}
                       tabs={sheetTabs}
                       choices={tabChoices}
@@ -1878,12 +1895,13 @@ export function ImportWizard({
                 </div>
               )}
 
-              {sourceMode === 'sheet' && completedTabs.length > 0 && (
+              {sourceMode === 'sheet' && workbookCompletedTabs.length > 0 && (
                 <div>
                   <p className={styles.stepHint}>Earlier tabs from this workbook</p>
                   <ul className={styles.skippedDetailList}>
-                    {completedTabs.map((t, i) => (
-                      <li key={t.name}>
+                    {workbookCompletedTabs.map((t, i) => (
+                      // A tab can be committed again after an undo, so the name alone is not unique.
+                      <li key={`${t.name}:${t.kind}:${i}`}>
                         {t.name} — {KIND_LABEL[t.result.destination]}: {t.result.created} created,{' '}
                         {t.result.updated} updated, {t.result.skipped} skipped.{' '}
                         {t.undo ? (
@@ -1893,7 +1911,7 @@ export function ImportWizard({
                             <button
                               type="button"
                               className={styles.undoBtn}
-                              onClick={() => handleUndoCompletedTab(i)}
+                              onClick={() => handleUndoCompletedTab(t)}
                               disabled={busy}
                             >
                               Undo {t.name}
