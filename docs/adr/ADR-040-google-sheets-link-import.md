@@ -41,8 +41,15 @@ Three questions needed an answer:
    from that ID. Redirects are followed by hand, at most three, and each hop must be HTTPS on
    `docs.google.com` or a `*.googleusercontent.com` host. A redirect to `accounts.google.com`, a
    401/403, or an HTML page means the sheet is not shared, and the API returns 422 with the
-   sharing instructions. The download is capped at 10 MB and 15 s. Each XML part is checked
-   against a 50 MB inflated-size cap before it is decompressed.
+   sharing instructions. The download is capped at 10 MB and 15 s. Before anything is
+   decompressed, each XML part is checked against an 8 MB inflated-size cap, the parts together
+   against 40 MB, and the part count against 300. A tab is read only up to `MAX_IMPORT_ROWS` rows
+   and 100 columns, and hidden tabs are skipped. Each worksheet's DOM is built and dropped in turn,
+   so peak memory is the inflated parts plus one DOM.
+4. **No database transaction around the fetch.** The handler does no database work, so it is
+   marked `@SkipRlsTransaction()`. Otherwise the per-request RLS transaction would hold a pooled
+   connection for the whole download and parse, and a slow download could outlast the
+   transaction's 15 s timeout.
 
 ## Alternatives Considered
 

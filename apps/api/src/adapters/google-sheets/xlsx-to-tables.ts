@@ -1,53 +1,87 @@
 import { DOMParser } from '@xmldom/xmldom';
 import { unzipSync } from 'fflate';
 
-/** One worksheet flattened to a rectangular table of display strings. */
+/** One visible worksheet flattened to a rectangular table of display strings. */
 export interface WorkbookTable {
   name: string;
   rows: string[][];
+  /** Set when the tab was cut short at a cap, so the caller can mark it not importable. */
+  overflow?: 'rows' | 'columns';
+}
+
+export type XlsxReadErrorCode = 'too-large' | 'malformed';
+
+export class XlsxReadError extends Error {
+  constructor(
+    readonly code: XlsxReadErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'XlsxReadError';
+  }
 }
 
 /**
- * Per-part decompressed-size cap. The download itself is capped (see
- * google-sheet-export.client), but a zip can inflate far past its own size, so
- * each XML part is checked against its declared size before it is inflated.
+ * Inflated-size caps. The download itself is capped (google-sheet-export.client),
+ * but a zip can inflate far past its own size, and each worksheet is built into a
+ * DOM several times larger than its XML. So both each part and the whole read are
+ * bounded before anything is inflated: a 5,000-row logbook tab is about 2 MB of XML.
  */
-export const MAX_XLSX_PART_BYTES = 50 * 1024 * 1024;
+export const MAX_XLSX_PART_BYTES = 8 * 1024 * 1024;
+export const MAX_XLSX_TOTAL_BYTES = 40 * 1024 * 1024;
+export const MAX_XLSX_PARTS = 300;
+/** Widest tab read. Logbook tabs use at most a few dozen columns. */
+export const MAX_TABLE_COLUMNS = 100;
 
 const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
-/** Built-in number-format ids that render as dates (ECMA-376 §18.8.30). */
-const BUILTIN_DATE_FORMATS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
+/** Built-in number-format ids that render as calendar dates (ECMA-376 §18.8.30). */
+const BUILTIN_DATE_FORMATS = new Set([14, 15, 16, 17, 22]);
 
 const MS_PER_DAY = 86_400_000;
 
 /**
- * Converts every worksheet of an XLSX workbook into a string table shaped like
- * a CSV export of that tab (#1111), so the Smart Import classifier and parsers
+ * Converts every visible worksheet of an XLSX workbook into a string table shaped
+ * like a CSV export of that tab (#1111), so the Smart Import classifier and parsers
  * consume it unchanged:
  *
  * - date-formatted numbers → `M/D/YYYY`, the legacy logbook's format read by
  *   `parseDateStringUTC`. Spreadsheet dates are zone-less day serials, so they
- *   are converted with UTC arithmetic and never touch the host time zone.
+ *   are converted with UTC arithmetic and never touch the host time zone. Times
+ *   and durations stay numbers.
  * - formula cells → their cached result (the `<v>` Google writes beside `<f>`).
  * - fully empty rows are dropped, trailing empty columns trimmed, and every row
  *   padded to one width — `parseCsvText` rejects ragged rows.
+ * - hidden tabs are skipped: they hold helper or backup data, not what the user sees.
+ * - a tab is read up to `maxRows` rows and `MAX_TABLE_COLUMNS` columns; past either,
+ *   it comes back flagged in `overflow`.
  *
- * Reads only the parts needed for cell values, with a stock zip inflater and
- * DOM parser, rather than a full spreadsheet library.
+ * Reads only the parts needed for cell values, with a stock zip inflater and DOM
+ * parser, rather than a full spreadsheet library. Each worksheet's DOM is built
+ * and discarded in turn, so peak memory is the inflated parts plus one DOM.
  */
-export function xlsxToTables(buffer: Uint8Array): WorkbookTable[] {
-  const files = unzipSync(buffer, {
-    filter: (file) => {
-      if (!/^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/[^/]+\.xml)$/.test(file.name)) {
-        return false;
-      }
-      if (file.originalSize > MAX_XLSX_PART_BYTES) {
-        throw new Error(`Workbook part ${file.name} is too large`);
-      }
-      return true;
-    },
-  });
+export function xlsxToTables(buffer: Uint8Array, { maxRows }: { maxRows: number }): WorkbookTable[] {
+  let totalBytes = 0;
+  let parts = 0;
+  let files: Record<string, Uint8Array>;
+  try {
+    files = unzipSync(buffer, {
+      filter: (file) => {
+        if (!/^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/[^/]+\.xml)$/.test(file.name)) {
+          return false;
+        }
+        totalBytes += file.originalSize;
+        parts += 1;
+        if (file.originalSize > MAX_XLSX_PART_BYTES || totalBytes > MAX_XLSX_TOTAL_BYTES || parts > MAX_XLSX_PARTS) {
+          throw new XlsxReadError('too-large', 'The workbook is too large to import.');
+        }
+        return true;
+      },
+    });
+  } catch (err) {
+    if (err instanceof XlsxReadError) throw err;
+    throw new XlsxReadError('malformed', 'Not an XLSX workbook');
+  }
   const xml = (name: string) => {
     const bytes = files[name];
     return bytes ? parseXml(new TextDecoder().decode(bytes)) : null;
@@ -55,7 +89,7 @@ export function xlsxToTables(buffer: Uint8Array): WorkbookTable[] {
 
   const workbook = xml('xl/workbook.xml');
   const rels = xml('xl/_rels/workbook.xml.rels');
-  if (!workbook || !rels) throw new Error('Not an XLSX workbook');
+  if (!workbook || !rels) throw new XlsxReadError('malformed', 'Not an XLSX workbook');
 
   const targets = new Map<string, string>();
   for (const rel of elements(rels, 'Relationship')) {
@@ -70,48 +104,58 @@ export function xlsxToTables(buffer: Uint8Array): WorkbookTable[] {
     return v === '1' || v === 'true';
   });
 
-  return elements(workbook, 'sheet').map((sheetEl) => {
-    const name = sheetEl.getAttribute('name') ?? '';
-    const path = targets.get(sheetEl.getAttributeNS(REL_NS, 'id') ?? '');
-    const sheet = path ? xml(path) : null;
-    const rows = sheet ? readRows(sheet, sharedStrings, dateStyles, date1904) : [];
-    return { name, rows };
-  });
+  return elements(workbook, 'sheet')
+    .filter((sheetEl) => {
+      const state = sheetEl.getAttribute('state');
+      return state !== 'hidden' && state !== 'veryHidden';
+    })
+    .map((sheetEl) => {
+      const name = sheetEl.getAttribute('name') ?? '';
+      const path = targets.get(sheetEl.getAttributeNS(REL_NS, 'id') ?? '');
+      const sheet = path ? xml(path) : null;
+      return sheet ? { name, ...readRows(sheet, { sharedStrings, dateStyles, date1904, maxRows }) } : { name, rows: [] };
+    });
 }
 
 function readRows(
   sheet: Document,
-  sharedStrings: string[],
-  dateStyles: Set<number>,
-  date1904: boolean,
-): string[][] {
+  ctx: { sharedStrings: string[]; dateStyles: Set<number>; date1904: boolean; maxRows: number },
+): Pick<WorkbookTable, 'rows' | 'overflow'> {
   const rows: string[][] = [];
-  for (const rowEl of elements(sheet, 'row')) {
+  let overflow: WorkbookTable['overflow'];
+  rowLoop: for (const rowEl of elements(sheet, 'row')) {
     const cells: string[] = [];
     let nextCol = 0;
     for (const c of elements(rowEl, 'c')) {
       const ref = c.getAttribute('r');
       const col = ref ? columnIndex(ref) : nextCol;
       nextCol = col + 1;
-      cells[col] = cellValue(c, sharedStrings, dateStyles, date1904);
+      const value = cellValue(c, ctx);
+      if (value === '') continue;
+      if (col >= MAX_TABLE_COLUMNS) {
+        overflow = 'columns';
+        break rowLoop;
+      }
+      cells[col] = value;
     }
-    const filled = Array.from(cells, (v) => v ?? '');
-    if (filled.some((v) => v !== '')) rows.push(filled);
+    if (cells.length === 0) continue;
+    if (rows.length >= ctx.maxRows) {
+      overflow = 'rows';
+      break;
+    }
+    rows.push(Array.from(cells, (v) => v ?? ''));
   }
 
-  let width = 0;
-  for (const row of rows) {
-    for (let i = row.length - 1; i >= width; i--) {
-      if (row[i] !== '') {
-        width = i + 1;
-        break;
-      }
-    }
-  }
-  return rows.map((row) => Array.from({ length: width }, (_, i) => row[i] ?? ''));
+  // The rows read before a cap still go back, so the tab can be classified and named.
+  const width = Math.max(0, ...rows.map((row) => row.length));
+  const padded = rows.map((row) => Array.from({ length: width }, (_, i) => row[i] ?? ''));
+  return overflow ? { rows: padded, overflow } : { rows: padded };
 }
 
-function cellValue(c: Element, sharedStrings: string[], dateStyles: Set<number>, date1904: boolean): string {
+function cellValue(
+  c: Element,
+  ctx: { sharedStrings: string[]; dateStyles: Set<number>; date1904: boolean },
+): string {
   const type = c.getAttribute('t') ?? 'n';
   if (type === 'inlineStr') return textOf(c).trim();
 
@@ -119,7 +163,7 @@ function cellValue(c: Element, sharedStrings: string[], dateStyles: Set<number>,
   if (raw === '') return '';
   switch (type) {
     case 's':
-      return (sharedStrings[Number(raw)] ?? '').trim();
+      return (ctx.sharedStrings[Number(raw)] ?? '').trim();
     case 'str':
       return raw.trim();
     case 'b':
@@ -129,9 +173,9 @@ function cellValue(c: Element, sharedStrings: string[], dateStyles: Set<number>,
     default: {
       const n = Number(raw);
       if (!Number.isFinite(n)) return raw.trim();
-      if (dateStyles.has(Number(c.getAttribute('s') ?? '0'))) return serialToDate(n, date1904);
+      if (ctx.dateStyles.has(Number(c.getAttribute('s') ?? '0'))) return serialToDate(n, ctx.date1904);
       // Strip binary floating-point noise (e.g. 172.49999999999997 from a formula).
-      return String(Number.parseFloat(n.toPrecision(12)));
+      return String(Number.parseFloat(n.toPrecision(15)));
     }
   }
 }
@@ -141,6 +185,18 @@ export function serialToDate(serial: number, date1904 = false): string {
   const epoch = date1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30);
   const d = new Date(epoch + Math.floor(serial + 1e-9) * MS_PER_DAY);
   return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
+}
+
+/**
+ * Whether a custom number format shows a calendar date. Quoted literals, escaped
+ * characters, `[...]` sections (colors, locales, elapsed `[h]`) and AM/PM markers
+ * are dropped first. A day or year token means a date; a bare `m` counts only when
+ * it is not a minute, i.e. not next to an hour or second token (`h:mm`, `mm:ss`).
+ */
+export function isDateFormat(formatCode: string): boolean {
+  const code = formatCode.replace(/"[^"]*"|\[[^\]]*\]|\\.|AM\/PM|A\/P/gi, '');
+  if (/[dy]/i.test(code)) return true;
+  return /m/i.test(code.replace(/h+[^a-z]*m+|m+[^a-z]*s+/gi, ''));
 }
 
 function readSharedStrings(doc: Document | null): string[] {
@@ -160,9 +216,7 @@ function readDateStyles(doc: Document | null): Set<number> {
   if (!doc) return styles;
   const customDate = new Set<number>();
   for (const fmt of elements(doc, 'numFmt')) {
-    // Drop quoted literals and [color]/[locale] sections before looking for date tokens.
-    const code = (fmt.getAttribute('formatCode') ?? '').replace(/"[^"]*"|\[[^\]]*\]/g, '');
-    if (/[dmy]/i.test(code)) customDate.add(Number(fmt.getAttribute('numFmtId')));
+    if (isDateFormat(fmt.getAttribute('formatCode') ?? '')) customDate.add(Number(fmt.getAttribute('numFmtId')));
   }
   const cellXfs = elements(doc, 'cellXfs')[0];
   if (!cellXfs) return styles;
@@ -192,14 +246,8 @@ function elements(root: Document | Element, localName: string): Element[] {
 }
 
 function parseXml(text: string): Document {
-  return new DOMParser({
-    errorHandler: {
-      error: (msg: string) => {
-        throw new Error(msg);
-      },
-      fatalError: (msg: string) => {
-        throw new Error(msg);
-      },
-    },
-  }).parseFromString(text, 'text/xml');
+  const fail = (msg: string) => {
+    throw new XlsxReadError('malformed', msg);
+  };
+  return new DOMParser({ errorHandler: { error: fail, fatalError: fail } }).parseFromString(text, 'text/xml');
 }

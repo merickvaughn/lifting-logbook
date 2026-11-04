@@ -71,6 +71,15 @@ describe('downloadGoogleSheetXlsx', () => {
     expect(await codeOf(downloadGoogleSheetXlsx(ID))).toBe(code);
   });
 
+  it('cancels the unread body of a response it rejects', async () => {
+    const res = new Response('<html>sign in</html>', { status: 403 });
+    if (!res.body) throw new Error('expected a response body');
+    const cancel = jest.spyOn(res.body, 'cancel');
+    fetchMock.mockResolvedValueOnce(res);
+    expect(await codeOf(downloadGoogleSheetXlsx(ID))).toBe('not-shared');
+    expect(cancel).toHaveBeenCalled();
+  });
+
   it('stops after too many redirects', async () => {
     fetchMock.mockResolvedValue(redirect('https://docs.google.com/spreadsheets/d/x/export'));
     expect(await codeOf(downloadGoogleSheetXlsx(ID))).toBe('upstream');

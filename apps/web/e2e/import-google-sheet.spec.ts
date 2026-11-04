@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 
 // Mock API base. Host pinned to 127.0.0.1 (not localhost) and port injected per run — see
 // import.spec.ts (#741, #746).
@@ -15,8 +15,11 @@ test.beforeAll(async ({ browser }, testInfo) => {
   await page.close();
 });
 
+const reset = (request: APIRequestContext, extra = '') =>
+  request.get(`${MOCK_API}/__reset?withCustomProgram=true&withGoogleSheet=true${extra}`);
+
 test.beforeEach(async ({ request }) => {
-  await request.get(`${MOCK_API}/__reset?withCustomProgram=true`);
+  await reset(request);
 });
 
 test('Google Sheets import: fetch workbook → preview tabs → commit each tab (#1111)', async ({ page }) => {
@@ -58,13 +61,26 @@ test('Google Sheets import: fetch workbook → preview tabs → commit each tab 
   await expect(page.getByText('Undone (2 restored).')).toBeVisible();
 });
 
-test('Google Sheets import: a private sheet shows sharing instructions (#1111)', async ({ page }) => {
+test('Google Sheets import: a private sheet shows sharing instructions (#1111)', async ({ page, request }) => {
+  await reset(request, '&withPrivateSheet=true');
   await page.goto('/import');
   await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
 
   await page.getByLabel('Google Sheets', { exact: true }).check();
-  await page.getByLabel('Google Sheets link').fill('not-a-sheet-link');
+  await page.getByLabel('Google Sheets link').fill(SHEET_URL);
   await page.getByRole('button', { name: 'Fetch workbook' }).click();
 
-  await expect(page.getByText('This sheet is not shared.')).toBeVisible();
+  // Scoped to <main>: in dev, Next's error overlay repeats the logged client error.
+  await expect(page.getByRole('main').getByText(/This sheet is not shared\..*Anyone with the link/)).toBeVisible();
+});
+
+test('Google Sheets import: a link that is not a Google Sheet is rejected (#1111)', async ({ page }) => {
+  await page.goto('/import');
+  await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
+
+  await page.getByLabel('Google Sheets', { exact: true }).check();
+  await page.getByLabel('Google Sheets link').fill('https://example.com/sheet');
+  await page.getByRole('button', { name: 'Fetch workbook' }).click();
+
+  await expect(page.getByRole('main').getByText('Only Google Sheets links (docs.google.com) can be imported.')).toBeVisible();
 });

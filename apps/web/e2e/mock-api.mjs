@@ -132,6 +132,11 @@ function createInitialState() {
     // low-confidence manual-picker shape, and destination=lift-records returns
     // a preview with one ambiguous lift row — exercises the #911 remap flow.
     ambiguousLift: false,
+    // Google Sheets import (#1111): googleSheet makes destination=lift-records
+    // previews return the canned LIFT_RECORDS tab's preview; privateSheet makes the
+    // workbook fetch answer like a sheet that is not link-shared.
+    googleSheet: false,
+    privateSheet: false,
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
     // /focus/* (#1057) — the user's focus blocks and daily focus guide. Empty by default;
@@ -584,6 +589,12 @@ const server = createServer(async (req, res) => {
     }
     if (url.searchParams.get('withAmbiguousLift') === 'true') {
       state.ambiguousLift = true;
+    }
+    if (url.searchParams.get('withGoogleSheet') === 'true') {
+      state.googleSheet = true;
+    }
+    if (url.searchParams.get('withPrivateSheet') === 'true') {
+      state.privateSheet = true;
     }
     const withFocusBlocks = url.searchParams.get('withFocusBlocks');
     if (withFocusBlocks === 'true') {
@@ -1143,7 +1154,7 @@ const server = createServer(async (req, res) => {
       }
 
       // A Google Sheets lift-history tab is previewed with an explicit destination (#1111).
-      if (mode === 'preview' && url.searchParams.get('destination') === 'lift-records') {
+      if (state.googleSheet && mode === 'preview' && url.searchParams.get('destination') === 'lift-records') {
         json(res, {
           classification: { type: 'lift-records', confidence: 0.95, bucket: 'high', reasons: [], alternatives: [] },
           destination: 'lift-records',
@@ -1203,11 +1214,25 @@ const server = createServer(async (req, res) => {
       return;
     }
     // POST /programs/:p/import/google-sheet — canned two-tab workbook (#1111).
-    // A link that is not a docs.google.com URL gets the real endpoint's 422-style message.
+    // Mirrors the real endpoint's failures: 400 for a link that is not a Google
+    // Sheet, 422 (with withPrivateSheet) for a sheet that is not link-shared.
     if (method === 'POST' && rest[0] === 'import' && rest[1] === 'google-sheet' && rest.length === 2) {
       const body = await readBody(req);
-      if (!String(body?.url ?? '').includes('docs.google.com')) {
-        json(res, { statusCode: 422, message: 'This sheet is not shared.' }, 422);
+      if (!String(body?.url ?? '').includes('docs.google.com/spreadsheets/d/')) {
+        json(res, { statusCode: 400, message: 'Only Google Sheets links (docs.google.com) can be imported.', error: 'Bad Request' }, 400);
+        return;
+      }
+      if (state.privateSheet) {
+        json(
+          res,
+          {
+            statusCode: 422,
+            message:
+              'This sheet is not shared. In Google Sheets, click Share and set General access to "Anyone with the link" (Viewer), then try again.',
+            error: 'Unprocessable Entity',
+          },
+          422,
+        );
         return;
       }
       json(res, {

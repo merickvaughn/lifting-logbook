@@ -9,11 +9,20 @@ export type FixtureCell =
   | number
   | null
   | { date: number }
-  | { formula: string; result: number };
+  | { formula: string; result: number }
+  /** A `<c>` element's attributes and inner XML, for cell types the shorthands don't cover. */
+  | { attrs: string; inner: string };
 
 export interface FixtureSheet {
   name: string;
   rows: FixtureCell[][];
+  state?: 'hidden' | 'veryHidden';
+}
+
+export interface FixtureOptions {
+  date1904?: boolean;
+  /** Extra custom number formats; `s="2"`, `s="3"`, … refer to them in order. */
+  numFmts?: string[];
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -29,7 +38,7 @@ export function dateSerial(year: number, month: number, day: number): number {
   return (Date.UTC(year, month - 1, day) - Date.UTC(1899, 11, 30)) / 86_400_000;
 }
 
-export function buildXlsx(sheets: FixtureSheet[]): Uint8Array {
+export function buildXlsx(sheets: FixtureSheet[], options: FixtureOptions = {}): Uint8Array<ArrayBuffer> {
   const strings: string[] = [];
   const stringIndex = (s: string) => {
     const at = strings.indexOf(s);
@@ -49,6 +58,7 @@ export function buildXlsx(sheets: FixtureSheet[]): Uint8Array {
             if (typeof cell === 'string') return `<c r="${r}" t="s"><v>${stringIndex(cell)}</v></c>`;
             if (typeof cell === 'number') return `<c r="${r}"><v>${cell}</v></c>`;
             if ('date' in cell) return `<c r="${r}" s="1"><v>${cell.date}</v></c>`;
+            if ('attrs' in cell) return `<c r="${r}" ${cell.attrs}>${cell.inner}</c>`;
             return `<c r="${r}"><f>${esc(cell.formula)}</f><v>${cell.result}</v></c>`;
           })
           .join('');
@@ -61,8 +71,13 @@ export function buildXlsx(sheets: FixtureSheet[]): Uint8Array {
   });
 
   files['xl/workbook.xml'] = strToU8(
-    `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets
-      .map((s, i) => `<sheet name="${esc(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`)
+    `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${
+      options.date1904 ? '<workbookPr date1904="1"/>' : ''
+    }<sheets>${sheets
+      .map(
+        (s, i) =>
+          `<sheet name="${esc(s.name)}" sheetId="${i + 1}"${s.state ? ` state="${s.state}"` : ''} r:id="rId${i + 1}"/>`,
+      )
       .join('')}</sheets></workbook>`,
   );
   files['xl/_rels/workbook.xml.rels'] = strToU8(
@@ -78,8 +93,18 @@ export function buildXlsx(sheets: FixtureSheet[]): Uint8Array {
       .map((s) => `<si><t xml:space="preserve">${esc(s)}</t></si>`)
       .join('')}</sst>`,
   );
+  const formats = ['M/d/yyyy', ...(options.numFmts ?? [])];
   files['xl/styles.xml'] = strToU8(
-    '<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="M/d/yyyy"/></numFmts><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>',
+    `<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="${formats.length}">${formats
+      .map((code, i) => `<numFmt numFmtId="${164 + i}" formatCode="${esc(code)}"/>`)
+      .join('')}</numFmts><cellXfs count="${formats.length + 1}"><xf numFmtId="0"/>${formats
+      .map((_, i) => `<xf numFmtId="${164 + i}" applyNumberFormat="1"/>`)
+      .join('')}</cellXfs></styleSheet>`,
   );
-  return zipSync(files);
+  return zipFixture(files);
+}
+
+/** `zipSync`, copied into a plain `ArrayBuffer`-backed array so it types as a fetch `Response` body. */
+export function zipFixture(files: Record<string, Uint8Array>): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(zipSync(files));
 }

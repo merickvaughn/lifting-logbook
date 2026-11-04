@@ -10,7 +10,10 @@ import { AppModule } from '../app.module';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainNotFoundFilter } from './not-found.filter';
 import type { GoogleSheetWorkbookResponse, ImportPreviewResponse } from '@lifting-logbook/types';
-import { buildXlsx, dateSerial } from '../adapters/google-sheets/xlsx.fixture';
+import { buildXlsx, dateSerial, zipFixture } from '../adapters/google-sheets/xlsx.fixture';
+import { MAX_XLSX_PART_BYTES } from '../adapters/google-sheets/xlsx-to-tables';
+import { RLS_SKIP_TX } from '../adapters/prisma/rls-context';
+import { ImportController } from './import.controller';
 
 /**
  * In-memory E2E for the unified Smart Import endpoint (#477):
@@ -783,6 +786,37 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
 
       expect(res.statusCode).toBe(422);
       expect(res.json().message).toContain('Anyone with the link');
+    });
+
+    it('runs outside the per-request RLS transaction, since it does no DB work', () => {
+      expect(Reflect.getMetadata(RLS_SKIP_TX, ImportController.prototype.fetchGoogleSheet)).toBe(true);
+    });
+
+    it('marks a tab over the row cap not importable, with a reason', async () => {
+      const rows = [['Date Updated', 'Lift', 'Weight'], ...Array.from({ length: 5_001 }, (_, i) => ['1/1/2026', `Lift ${i}`, 100])];
+      jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(new Response(buildXlsx([{ name: 'BIG', rows }]), { headers: { 'content-type': XLSX_TYPE } }));
+
+      const res = await fetchSheet(SHEET_URL);
+
+      expect(res.statusCode).toBe(200);
+      const [big] = (res.json() as GoogleSheetWorkbookResponse).tabs;
+      expect(big?.csv).toBeNull();
+      expect(big?.classification.reasons).toContain('Tab has more than 5000 rows, the per-import limit.');
+    });
+
+    it('returns 413 when the workbook inflates past the size cap', async () => {
+      const oversized = zipFixture({ 'xl/worksheets/sheet1.xml': new Uint8Array(MAX_XLSX_PART_BYTES + 1) });
+      jest.spyOn(global, 'fetch').mockResolvedValue(new Response(oversized, { headers: { 'content-type': XLSX_TYPE } }));
+
+      expect((await fetchSheet(SHEET_URL)).statusCode).toBe(413);
+    });
+
+    it('returns 502 when Google sends something that is not a workbook', async () => {
+      jest.spyOn(global, 'fetch').mockResolvedValue(new Response('not a zip', { headers: { 'content-type': XLSX_TYPE } }));
+
+      expect((await fetchSheet(SHEET_URL)).statusCode).toBe(502);
     });
 
     it('returns 400 and fetches nothing for a link that is not a Google Sheet', async () => {

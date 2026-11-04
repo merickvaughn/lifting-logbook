@@ -44,8 +44,14 @@ export async function downloadGoogleSheetXlsx(
     let url = new URL(workbookExportUrl(spreadsheetId));
     for (let hop = 0; ; hop++) {
       const res = await fetch(url, { redirect: 'manual', signal: controller.signal });
+      // Every branch but the success read leaves the body unread; cancel it so the
+      // connection is released now rather than at garbage collection.
+      const discard = () =>
+        // allow-skewed: best-effort cleanup; a failed cancel must not replace the fetch error being reported.
+        res.body?.cancel().catch(() => undefined);
 
       if (res.status >= 300 && res.status < 400) {
+        await discard();
         const location = res.headers.get('location');
         if (!location || hop >= MAX_REDIRECTS) {
           throw new GoogleSheetFetchError('upstream', 'Google Sheets returned too many redirects.');
@@ -61,18 +67,11 @@ export async function downloadGoogleSheetXlsx(
         continue;
       }
 
-      if (res.status === 401 || res.status === 403) throw notShared();
-      if (res.status === 404) {
-        throw new GoogleSheetFetchError('not-found', 'No Google Sheet exists at that link.');
+      const failure = failureFor(res, maxBytes);
+      if (failure) {
+        await discard();
+        throw failure;
       }
-      if (!res.ok) {
-        throw new GoogleSheetFetchError('upstream', `Google Sheets returned HTTP ${res.status}.`);
-      }
-      // A sign-in or interstitial page comes back as 200 text/html, not a workbook.
-      if ((res.headers.get('content-type') ?? '').includes('text/html')) throw notShared();
-
-      const declared = Number(res.headers.get('content-length'));
-      if (declared > maxBytes) throw tooLarge(maxBytes);
       return await readCapped(res, maxBytes);
     }
   } catch (err) {
@@ -84,6 +83,17 @@ export async function downloadGoogleSheetXlsx(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The error a non-redirect response maps to, or null when it is a workbook to read. */
+function failureFor(res: Response, maxBytes: number): GoogleSheetFetchError | null {
+  if (res.status === 401 || res.status === 403) return notShared();
+  if (res.status === 404) return new GoogleSheetFetchError('not-found', 'No Google Sheet exists at that link.');
+  if (!res.ok) return new GoogleSheetFetchError('upstream', `Google Sheets returned HTTP ${res.status}.`);
+  // A sign-in or interstitial page comes back as 200 text/html, not a workbook.
+  if ((res.headers.get('content-type') ?? '').includes('text/html')) return notShared();
+  if (Number(res.headers.get('content-length')) > maxBytes) return tooLarge(maxBytes);
+  return null;
 }
 
 async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {

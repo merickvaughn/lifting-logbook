@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
 import type { GoogleSheetTab, ImportKind, ImportPreviewResponse } from '@lifting-logbook/types';
 import { previewImport } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
@@ -33,16 +33,26 @@ export function defaultTabChoices(tabs: GoogleSheetTab[]): SheetTabChoices {
   return choices;
 }
 
-/** The kind a tab is offered as: the classifier's pick, else its strongest alternative. */
+/**
+ * The kind a tab is offered as. Only tabs the classifier picked a kind for carry a
+ * CSV (the API sets `csv` only when `classification.type` is set), so the fallback
+ * is never reached for a tab that can be checked.
+ */
 function suggestedKind(tab: GoogleSheetTab): ImportKind {
-  return tab.classification.type ?? tab.classification.alternatives[0]?.type ?? 'lift-records';
+  return tab.classification.type ?? 'lift-records';
 }
 
-function previewKey(programId: string, tabName: string, kind: ImportKind): string {
+export function previewKey(programId: string, tabName: string, kind: ImportKind): string {
   return [programId, tabName, kind].join('\u0000');
 }
 
-type TabPreview ={ status: 'loading' } | { status: 'ready'; res: ImportPreviewResponse } | { status: 'error'; message: string };
+export type TabPreview =
+  | { status: 'loading' }
+  | { status: 'ready'; res: ImportPreviewResponse }
+  | { status: 'error'; message: string };
+
+/** Overview previews by `previewKey`. Owned by the wizard so a started tab can reuse its preview. */
+export type TabPreviews = Record<string, TabPreview>;
 
 /**
  * Workbook overview for a Google Sheets import (#1111): every importable tab
@@ -56,38 +66,64 @@ export function SheetTabsStep({
   tabs,
   choices,
   onChange,
+  previews,
+  setPreviews,
 }: {
   programId: string;
   tabs: GoogleSheetTab[];
   choices: SheetTabChoices;
   onChange: (next: SheetTabChoices) => void;
+  previews: TabPreviews;
+  setPreviews: Dispatch<SetStateAction<TabPreviews>>;
 }) {
   const importable = tabs.filter((t) => t.csv !== null);
   const skipped = tabs.filter((t) => t.csv === null);
-  const [previews, setPreviews] = useState<Record<string, TabPreview>>({});
+  // Guards against a second request for the same key before the 'loading' entry
+  // has rendered (React StrictMode runs effects twice on mount).
+  const inFlight = useRef<string | null>(null);
 
-  // Preview every checked tab under its chosen kind. Keyed by program, name and
-  // kind, so changing either fetches a fresh preview and changing back reuses it.
+  // Preview the checked tabs under their chosen kinds, one request at a time.
+  // Keyed by program, name and kind, so changing any of them fetches a fresh
+  // preview and changing back reuses it.
   useEffect(() => {
-    for (const [name, kind] of Object.entries(choices)) {
-      const key = previewKey(programId, name, kind);
-      if (previews[key]) continue;
-      const tab = tabs.find((t) => t.name === name);
-      if (!tab) continue;
-      setPreviews((prev) => ({ ...prev, [key]: { status: 'loading' } }));
-      previewImport(programId, tabFile(tab), kind)
-        .then((res) => setPreviews((prev) => ({ ...prev, [key]: { status: 'ready', res } })))
-        .catch((e: unknown) => {
-          logClientError('previewImport', e, { programId, source: 'google-sheet' });
-          setPreviews((prev) => ({
-            ...prev,
-            [key]: { status: 'error', message: e instanceof Error ? e.message : 'Preview failed' },
-          }));
-        });
-    }
-  }, [choices, previews, programId, tabs]);
+    if (inFlight.current || Object.values(previews).some((p) => p.status === 'loading')) return;
+    const pending = Object.entries(choices).find(([name, kind]) => !previews[previewKey(programId, name, kind)]);
+    if (!pending) return;
+    const [name, kind] = pending;
+    const tab = tabs.find((t) => t.name === name);
+    if (!tab) return;
+    const key = previewKey(programId, name, kind);
+    inFlight.current = key;
+    setPreviews((prev) => ({ ...prev, [key]: { status: 'loading' } }));
+    previewImport(programId, tabFile(tab), kind)
+      .then((res) => setPreviews((prev) => ({ ...prev, [key]: { status: 'ready', res } })))
+      .catch((e: unknown) => {
+        logClientError('previewImport', e, { programId, source: 'google-sheet' });
+        setPreviews((prev) => ({
+          ...prev,
+          [key]: { status: 'error', message: e instanceof Error ? e.message : 'Preview failed' },
+        }));
+      })
+      .finally(() => {
+        inFlight.current = null;
+      });
+  }, [choices, previews, programId, tabs, setPreviews]);
+
+  // A failed preview is not retried automatically (it would loop on a persistent
+  // error); toggling the tab or changing its kind clears it so it is fetched again.
+  function clearFailedPreviews(tabName: string) {
+    setPreviews((prev) => {
+      const next = { ...prev };
+      for (const kind of ALL_KINDS) {
+        const key = previewKey(programId, tabName, kind);
+        if (next[key]?.status === 'error') delete next[key];
+      }
+      return next;
+    });
+  }
 
   function toggle(tab: GoogleSheetTab, checked: boolean) {
+    clearFailedPreviews(tab.name);
     const next = { ...choices };
     if (checked) next[tab.name] = suggestedKind(tab);
     else delete next[tab.name];
@@ -147,7 +183,9 @@ export function SheetTabsStep({
                         disabled={kind === undefined}
                         onChange={(e) => {
                           const picked = ALL_KINDS.find((k) => k === e.target.value);
-                          if (picked) onChange({ ...choices, [tab.name]: picked });
+                          if (!picked) return;
+                          clearFailedPreviews(tab.name);
+                          onChange({ ...choices, [tab.name]: picked });
                         }}
                       >
                         {ALL_KINDS.map((k) => (

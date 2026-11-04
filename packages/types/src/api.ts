@@ -826,8 +826,9 @@ export interface GoogleSheetTab {
   classification: ImportClassification;
   /**
    * The tab as CSV text, ready to send to the Smart Import preview/commit
-   * endpoint as a file. `null` when the tab is not importable (nothing scored
-   * above low confidence, or it exceeds the per-import row cap).
+   * endpoint as a file. `null` when the tab is not importable: the classifier
+   * picked no kind (`classification.type` is null), or the tab exceeds the
+   * per-import row, width or file-size cap (the reason is in `classification.reasons`).
    */
   csv: string | null;
 }

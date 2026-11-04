@@ -1,10 +1,19 @@
 import { strToU8, zipSync } from 'fflate';
-import { serialToDate, xlsxToTables } from './xlsx-to-tables';
+import {
+  MAX_TABLE_COLUMNS,
+  MAX_XLSX_PART_BYTES,
+  XlsxReadError,
+  isDateFormat,
+  serialToDate,
+  xlsxToTables,
+} from './xlsx-to-tables';
 import { buildXlsx, dateSerial } from './xlsx.fixture';
+
+const read = (buffer: Uint8Array, maxRows = 100) => xlsxToTables(buffer, { maxRows });
 
 describe('xlsxToTables', () => {
   it('flattens each worksheet to a rectangular string table', () => {
-    const tables = xlsxToTables(
+    const tables = read(
       buildXlsx([
         {
           name: 'LIFT_RECORDS',
@@ -48,17 +57,117 @@ describe('xlsxToTables', () => {
   });
 
   it('places cells by their column reference when earlier cells are absent', () => {
-    const [table] = xlsxToTables(buildXlsx([{ name: 'S', rows: [['A', null, 'C'], [null, 'b', null]] }]));
+    const [table] = read(buildXlsx([{ name: 'S', rows: [['A', null, 'C'], [null, 'b', null]] }]));
     expect(table?.rows).toEqual([
       ['A', '', 'C'],
       ['', 'b', ''],
     ]);
   });
 
-  it('rejects a zip that is not a workbook', () => {
-    expect(() => xlsxToTables(zipSync({ 'hello.txt': strToU8('hi') }))).toThrow('Not an XLSX workbook');
-    expect(() => xlsxToTables(strToU8('not a zip'))).toThrow();
+  it('reads formula strings, inline strings, booleans and errors', () => {
+    const [table] = read(
+      buildXlsx([
+        {
+          name: 'S',
+          rows: [
+            [
+              { attrs: 't="str"', inner: '<f>CONCAT("Bench"," P.")</f><v>Bench P.</v>' },
+              { attrs: 't="inlineStr"', inner: '<is><t>Squat</t></is>' },
+              { attrs: 't="b"', inner: '<v>1</v>' },
+              { attrs: 't="e"', inner: '<f>1/0</f><v>#DIV/0!</v>' },
+              'end',
+            ],
+          ],
+        },
+      ]),
+    );
+    expect(table?.rows).toEqual([['Bench P.', 'Squat', 'TRUE', '', 'end']]);
   });
+
+  it('keeps 15 significant digits', () => {
+    const [table] = read(buildXlsx([{ name: 'S', rows: [[123456789012345, 0.1 + 0.2]] }]));
+    expect(table?.rows).toEqual([['123456789012345', '0.3']]);
+  });
+
+  it('leaves time and duration cells as numbers instead of dates', () => {
+    const [table] = read(
+      buildXlsx([{ name: 'S', rows: [[{ attrs: 's="2"', inner: '<v>0.0625</v>' }, { attrs: 's="3"', inner: '<v>0.5</v>' }]] }], {
+        numFmts: ['[h]:mm:ss', 'h:mm AM/PM'],
+      }),
+    );
+    expect(table?.rows).toEqual([['0.0625', '0.5']]);
+  });
+
+  it('converts dates in a 1904-system workbook', () => {
+    const [table] = read(buildXlsx([{ name: 'S', rows: [[{ date: 0 }]] }], { date1904: true }));
+    expect(table?.rows).toEqual([['1/1/1904']]);
+  });
+
+  it('drops phonetic runs from shared strings', () => {
+    const files = zipSync({
+      'xl/workbook.xml': strToU8(
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>',
+      ),
+      'xl/_rels/workbook.xml.rels': strToU8(
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+      ),
+      'xl/sharedStrings.xml': strToU8(
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>Squat</t><rPh sb="0" eb="1"><t>reading</t></rPh></si></sst>',
+      ),
+      'xl/worksheets/sheet1.xml': strToU8(
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData></worksheet>',
+      ),
+    });
+    expect(read(files)[0]?.rows).toEqual([['Squat']]);
+  });
+
+  it('skips hidden and very hidden tabs', () => {
+    const tables = read(
+      buildXlsx([
+        { name: 'Visible', rows: [['a']] },
+        { name: 'Backup', rows: [['b']], state: 'hidden' },
+        { name: 'Helper', rows: [['c']], state: 'veryHidden' },
+      ]),
+    );
+    expect(tables.map((t) => t.name)).toEqual(['Visible']);
+  });
+
+  it('stops a tab at the row cap and flags it', () => {
+    const [table] = read(buildXlsx([{ name: 'S', rows: [['h'], ['1'], ['2'], ['3']] }]), 2);
+    expect(table).toEqual({ name: 'S', rows: [['h'], ['1']], overflow: 'rows' });
+  });
+
+  it('flags a tab with data past the column cap instead of padding every row to it', () => {
+    const wide: (string | null)[] = Array.from({ length: MAX_TABLE_COLUMNS + 1 }, () => null);
+    wide[MAX_TABLE_COLUMNS] = 'stray';
+    const [table] = read(buildXlsx([{ name: 'S', rows: [['a'], wide] }]));
+    expect(table).toEqual({ name: 'S', rows: [['a']], overflow: 'columns' });
+  });
+
+  it('rejects a part over the inflated-size cap before inflating it', () => {
+    const big = zipSync({ 'xl/worksheets/sheet1.xml': new Uint8Array(MAX_XLSX_PART_BYTES + 1) });
+    expect(() => read(big)).toThrow(expect.objectContaining({ code: 'too-large' }));
+  });
+
+  it('rejects a zip that is not a workbook', () => {
+    const notWorkbook = () => read(zipSync({ 'hello.txt': strToU8('hi') }));
+    expect(notWorkbook).toThrow(XlsxReadError);
+    expect(notWorkbook).toThrow(expect.objectContaining({ code: 'malformed' }));
+    expect(() => read(strToU8('not a zip'))).toThrow(expect.objectContaining({ code: 'malformed' }));
+  });
+});
+
+describe('isDateFormat', () => {
+  it.each(['M/d/yyyy', 'd-mmm-yy', 'mmm yyyy', 'mmmm', '[$-409]m/d/yy h:mm AM/PM'])('treats %s as a date', (code) => {
+    expect(isDateFormat(code)).toBe(true);
+  });
+
+  it.each(['General', '0.00', '0%', 'h:mm', 'h:mm:ss', 'mm:ss', '[h]:mm:ss', 'h:mm AM/PM', '"min" 0'])(
+    'does not treat %s as a date',
+    (code) => {
+      expect(isDateFormat(code)).toBe(false);
+    },
+  );
 });
 
 describe('serialToDate', () => {
