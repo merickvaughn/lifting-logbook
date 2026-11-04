@@ -185,6 +185,13 @@ describe('xlsxToTables', () => {
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 
+  it('drops phonetic runs from inline strings too', () => {
+    const [table] = read(
+      buildXlsx([{ name: 'S', rows: [[{ attrs: 't="inlineStr"', inner: '<is><t>Squat</t><rPh sb="0" eb="1"><t>reading</t></rPh></is>' }]] }]),
+    );
+    expect(table?.rows).toEqual([['Squat']]);
+  });
+
   it('reads prefixed elements and rich inline text runs', () => {
     const sheet =
       '<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData>' +

@@ -147,6 +147,8 @@ const isTagNameEnd = (ch: string | undefined) =>
  * opening tag (which made the earlier regex scanner quadratic). SpreadsheetML
  * rows, cells, shared strings and text runs never nest inside themselves, and
  * text cannot contain a raw `<`, so the first matching closing tag ends the element.
+ * Not handled, because Google's export never writes them: single-quoted attributes,
+ * CDATA sections and XML comments.
  */
 function* scan(source: string, name: string): Generator<ScannedElement> {
   let pos = 0;
@@ -256,7 +258,7 @@ function cellValue(
   ctx: { sharedStrings: string[]; dateStyles: Set<number>; date1904: boolean },
 ): string {
   const type = attrs.get('t') ?? 'n';
-  if (type === 'inlineStr') return texts(body).trim();
+  if (type === 'inlineStr') return texts(withoutElements(body, 'rPh')).trim();
 
   const raw = decodeXml(scan(body, 'v').next().value?.body ?? '');
   if (raw === '') return '';
