@@ -7,6 +7,9 @@ import { FastifyRequest } from 'fastify';
  */
 export const MAX_IMPORT_ROWS = 5_000;
 
+/** Upload size limit for one import file; `main.ts` registers multipart with it. */
+export const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
+
 /**
  * Reads a single uploaded CSV file from a multipart request and returns its text.
  *

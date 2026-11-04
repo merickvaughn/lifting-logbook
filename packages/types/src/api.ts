@@ -811,6 +811,40 @@ export interface ImportUndoResponse {
   flagged: Array<{ key: string; reason: string }>;
 }
 
+/** Request body for `POST /programs/:program/import/google-sheet` (#1111). */
+export interface GoogleSheetImportRequest {
+  /** A Google Sheets link (any tab) or a bare spreadsheet ID. */
+  url: string;
+}
+
+/** One worksheet of a fetched Google Sheets workbook, classified for import. */
+export interface GoogleSheetTab {
+  /** Worksheet (tab) name as shown in Google Sheets. */
+  name: string;
+  /** Non-empty rows in the tab, including the header row. */
+  rowCount: number;
+  classification: ImportClassification;
+  /**
+   * The kind the tab is offered as: `classification.type` when the classifier
+   * auto-accepted one, otherwise the top-scoring kind for a medium- or
+   * high-confidence tab (the user confirms it, as in the CSV path's manual pick),
+   * otherwise `null`.
+   */
+  suggestedKind: ImportKind | null;
+  /**
+   * The tab as CSV text, ready to send to the Smart Import preview/commit
+   * endpoint as a file. `null` when the tab is not importable; `skipReason` says why.
+   */
+  csv: string | null;
+  /** Why the tab can't be imported (unrecognized, or over a row, width or file-size cap); `null` when it can. */
+  skipReason: string | null;
+}
+
+/** Response for `POST /programs/:program/import/google-sheet` (#1111). */
+export interface GoogleSheetWorkbookResponse {
+  tabs: GoogleSheetTab[];
+}
+
 // ---------------------------------------------------------------------------
 // Custom Lifts
 // ---------------------------------------------------------------------------

@@ -1,16 +1,24 @@
 import {
+  BadGatewayException,
   BadRequestException,
+  Body,
   Controller,
   HttpCode,
   HttpStatus,
   Inject,
+  Logger,
   NotFoundException,
   Param,
+  PayloadTooLargeException,
   Post,
   Query,
   Req,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
+  GoogleSheetTab,
+  GoogleSheetWorkbookResponse,
+  ImportClassification,
   ImportCommitResponse,
   ImportError,
   ImportKind,
@@ -24,6 +32,8 @@ import {
   classifyImport,
   fuzzyColumnMapper,
   parseCsvText,
+  parseGoogleSheetUrl,
+  stringifyCsv,
   applyColumnOverrides,
   splitLiftRecordsByDestination,
   validateLiftImportSoft,
@@ -42,11 +52,22 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { RlsTxTimeout } from '../adapters/prisma/rls-context';
+import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
-import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
+import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
 import { effectiveSlotMapFor } from './effective-slot-map.util';
+import { GoogleSheetImportDto } from './google-sheet-import.dto';
+import {
+  GoogleSheetFetchError,
+  downloadGoogleSheetXlsx,
+} from '../adapters/google-sheets/google-sheet-export.client';
+import {
+  MAX_TABLE_COLUMNS,
+  WorkbookTable,
+  XlsxReadError,
+  xlsxToTables,
+} from '../adapters/google-sheets/xlsx-to-tables';
 
 /**
  * Unified Smart Import endpoint (#477, #615).
@@ -58,6 +79,8 @@ import { effectiveSlotMapFor } from './effective-slot-map.util';
  */
 @Controller('programs/:program')
 export class ImportController {
+  private readonly logger = new Logger(ImportController.name);
+
   constructor(
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
   ) {}
@@ -128,6 +151,99 @@ export class ImportController {
       preview: errors.length ? null : preview,
       errors,
     };
+  }
+
+  /**
+   * Fetches a link-shared Google Sheets workbook and classifies each tab (#1111).
+   *
+   * Returns importable tabs as CSV text; the wizard then sends each chosen tab
+   * through the regular `POST import` preview/commit flow as a file, so column
+   * mapping, review, commit and undo are identical to a CSV upload. Nothing is
+   * written here. It sits under `programs/:program` with the rest of Smart Import
+   * because the wizard always picks the program first, though it reads no program data.
+   *
+   * `@SkipRlsTransaction()`: the handler does no DB work, and without it the
+   * per-request RLS transaction would hold a pooled connection for the whole
+   * Google download and parse, which can outlast the transaction's own timeout.
+   */
+  @Post('import/google-sheet')
+  @HttpCode(HttpStatus.OK)
+  @SkipRlsTransaction()
+  async fetchGoogleSheet(@Body() body: GoogleSheetImportDto): Promise<GoogleSheetWorkbookResponse> {
+    const parsed = parseGoogleSheetUrl(body.url);
+    if (!parsed.ok) throw new BadRequestException(parsed.message);
+
+    const started = Date.now();
+    let buffer: Buffer;
+    try {
+      buffer = await downloadGoogleSheetXlsx(parsed.spreadsheetId);
+    } catch (err) {
+      // downloadGoogleSheetXlsx wraps every failure in GoogleSheetFetchError.
+      if (!(err instanceof GoogleSheetFetchError)) throw err;
+      this.logger.warn({ code: err.code, durationMs: Date.now() - started }, 'Google Sheet fetch failed (#1111)');
+      switch (err.code) {
+        case 'not-shared':
+          throw new UnprocessableEntityException(err.message);
+        case 'not-found':
+          throw new NotFoundException(err.message);
+        case 'too-large':
+          throw new PayloadTooLargeException(err.message);
+        default:
+          throw new BadGatewayException(err.message);
+      }
+    }
+
+    const parseStarted = Date.now();
+    let tables: WorkbookTable[];
+    try {
+      // +1 for the header row.
+      tables = xlsxToTables(buffer, { maxRows: MAX_IMPORT_ROWS + 1 });
+    } catch (err) {
+      if (!(err instanceof XlsxReadError)) throw err;
+      this.logger.warn({ code: err.code, bytes: buffer.length }, 'Google Sheet workbook could not be read (#1111)');
+      if (err.code === 'too-large') throw new PayloadTooLargeException(err.message);
+      throw new BadGatewayException('Google Sheets returned a workbook that could not be read.');
+    }
+    const parseMs = Date.now() - parseStarted;
+
+    const tabs = tables.map(({ name, rows, overflow }): GoogleSheetTab => {
+      const classification = classifyImport(rows);
+      const suggestedKind = suggestedKindFor(classification);
+      const tab = { name, rowCount: rows.length, classification, suggestedKind };
+      if (overflow === 'rows') {
+        return { ...tab, csv: null, skipReason: `More than ${MAX_IMPORT_ROWS} rows, the per-import limit.` };
+      }
+      if (overflow === 'columns') {
+        return { ...tab, csv: null, skipReason: `Has data past column ${MAX_TABLE_COLUMNS}, too wide to import.` };
+      }
+      if (rows.length < 2) {
+        return { ...tab, csv: null, skipReason: 'Has no data rows.' };
+      }
+      if (suggestedKind === null) {
+        return { ...tab, csv: null, skipReason: 'Not recognized as lift history, training maxes, strength goals or a program.' };
+      }
+      const csv = stringifyCsv(rows);
+      // The tab is later uploaded as a file, which the multipart limit would reject.
+      if (Buffer.byteLength(csv) > MAX_IMPORT_FILE_BYTES) {
+        return { ...tab, csv: null, skipReason: 'Larger than the 5 MB import file limit.' };
+      }
+      return { ...tab, csv, skipReason: null };
+    });
+
+    // Counts and detected kinds only — tab names and cell contents are user data.
+    this.logger.log(
+      {
+        bytes: buffer.length,
+        tabCount: tabs.length,
+        importableKinds: tabs.filter((t) => t.csv !== null).map((t) => t.suggestedKind),
+        // Importable tabs offered on a best guess rather than an auto-accepted classification.
+        bestGuessTabs: tabs.filter((t) => t.csv !== null && t.classification.type === null).length,
+        parseMs,
+        durationMs: Date.now() - started,
+      },
+      'Google Sheet workbook fetched (#1111)',
+    );
+    return { tabs };
   }
 
   @Post('import/:batchId/undo')
@@ -542,6 +658,19 @@ export class ImportController {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     return handler.validate(parsed as any);
   }
+}
+
+/**
+ * The kind a Google Sheets tab is offered as: the classifier's pick, or for a
+ * medium/high-confidence tab that missed auto-accept, its top-scoring kind (the
+ * CSV path offers the same tab a manual pick). `classifyImport` lists every kind
+ * except the top scorer in `alternatives`, so the top scorer is the one missing.
+ */
+export function suggestedKindFor(classification: ImportClassification): ImportKind | null {
+  if (classification.type !== null) return classification.type;
+  if (classification.bucket === 'low') return null;
+  const kinds = Object.keys(IMPORT_HANDLERS) as ImportKind[];
+  return kinds.find((kind) => !classification.alternatives.some((a) => a.type === kind)) ?? null;
 }
 
 function parseJsonParam<T>(param: string | undefined): T | null {

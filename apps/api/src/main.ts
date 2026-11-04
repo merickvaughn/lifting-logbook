@@ -12,6 +12,7 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { resolveCorsOrigins } from './cors.config';
 import { DomainConflictFilter } from './programs/conflict.filter';
+import { MAX_IMPORT_FILE_BYTES } from './programs/import-file.util';
 import { DomainNotFoundFilter } from './programs/not-found.filter';
 import { PrismaTransactionTimeoutFilter } from './programs/transaction-timeout.filter';
 import { VALIDATION_PIPE_OPTIONS } from './validation-pipe.config';
@@ -23,7 +24,7 @@ async function bootstrap() {
     { bufferLogs: false },
   );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await app.register(multipart as any, { limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
+  await app.register(multipart as any, { limits: { fileSize: MAX_IMPORT_FILE_BYTES, files: 1 } });
   app.useLogger(app.get(Logger));
   // PrismaTransactionTimeoutFilter extends BaseExceptionFilter, so it needs the
   // HTTP adapter to delegate non-P2028 Prisma errors to the framework default.

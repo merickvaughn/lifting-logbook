@@ -278,6 +278,27 @@ describe('createApiClient', () => {
     });
   });
 
+  describe('fetchGoogleSheetWorkbook (#1111)', () => {
+    it('POSTs the pasted link as JSON and returns the tabs', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ tabs: [] }), { status: 200 }));
+      const client = makeClient();
+      const result = await client.fetchGoogleSheetWorkbook('rpt', 'https://docs.google.com/spreadsheets/d/abc/edit');
+
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/programs/rpt/import/google-sheet');
+      expect(init.method).toBe('POST');
+      expect(init.body).toBe(JSON.stringify({ url: 'https://docs.google.com/spreadsheets/d/abc/edit' }));
+      expect(result).toEqual({ tabs: [] });
+    });
+
+    it('throws with the server message so the UI can show sharing instructions', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ statusCode: 422, message: 'This sheet is not shared.' }), { status: 422 }),
+      );
+      await expect(makeClient().fetchGoogleSheetWorkbook('rpt', 'x')).rejects.toThrow('This sheet is not shared.');
+    });
+  });
+
   describe('switchProgram', () => {
     it('sends a JSON body alongside the JSON content-type header (issue #665)', async () => {
       mockFetch.mockResolvedValue(

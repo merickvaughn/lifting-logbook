@@ -1,3 +1,19 @@
+import type { ImportKind } from '@lifting-logbook/types';
+
+export const KIND_LABEL: Record<ImportKind, string> = {
+  'lift-records': 'Lift History',
+  'training-maxes': 'Training Maxes',
+  'strength-goals': 'Strength Goals',
+  'program-spec': 'Program',
+};
+
+export const ALL_KINDS: ImportKind[] = [
+  'lift-records',
+  'training-maxes',
+  'strength-goals',
+  'program-spec',
+];
+
 /**
  * Smart Import wizard step constants.
  * Use these instead of bare integers when reading or setting the step state.

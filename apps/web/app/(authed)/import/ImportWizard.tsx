@@ -6,6 +6,7 @@ import type {
   ColumnMapping,
   CustomLiftResponse,
   CustomProgramSummaryResponse,
+  GoogleSheetTab,
   ImportCommitResponse,
   ImportDelta,
   ImportError,
@@ -20,17 +21,37 @@ import {
   commitImport,
   createCustomLift,
   fetchCustomLifts,
+  fetchGoogleSheetWorkbook,
   previewImport,
   undoImport,
 } from '@/lib/client-api';
 import { localToday } from '@/lib/focusSetup';
 import { logClientError } from '@/lib/log-client-error';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
-import { Step, STEP_LABELS } from './steps';
+import { ALL_KINDS, KIND_LABEL, Step, STEP_LABELS } from './steps';
+import {
+  SheetTabsStep,
+  defaultTabChoices,
+  previewKey,
+  tabFile,
+  type SheetTabChoices,
+  type TabPreviews,
+} from './SheetTabsStep';
 import styles from './import.module.css';
 
 type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous';
 type EditableMax = { lift: string; weight: string };
+type QueuedTab = { name: string; csv: string; kind: ImportKind };
+type CompletedTab = {
+  name: string;
+  /** The workbook fetch the tab came from, the kind it was queued as, and the program it was committed to. */
+  workbookId: number;
+  kind: ImportKind;
+  programId: string;
+  result: ImportCommitResponse;
+  batchId: string | null;
+  undo: ImportUndoResponse | null;
+};
 
 // Per-row transient state for the "create new lift" affordance on an
 // ambiguous row (issue #911) — keyed by rowIndex, mirroring liftOverrides.
@@ -72,20 +93,6 @@ function buildTrainingMaxesCsv(rows: EditableMax[]): string {
     .map((r) => `${today},"${r.lift.replace(/"/g, '""')}",${Number(r.weight)}`);
   return ['Date Updated,Lift,Weight', ...lines].join('\n');
 }
-
-const KIND_LABEL: Record<ImportKind, string> = {
-  'lift-records': 'Lift History',
-  'training-maxes': 'Training Maxes',
-  'strength-goals': 'Strength Goals',
-  'program-spec': 'Program',
-};
-
-const ALL_KINDS: ImportKind[] = [
-  'lift-records',
-  'training-maxes',
-  'strength-goals',
-  'program-spec',
-];
 
 type FieldOption = { key: string; label: string };
 
@@ -231,6 +238,25 @@ export function ImportWizard({
   // Column mapping overrides from MAP_COLUMNS step
   const [columnOverrides, setColumnOverrides] = useState<Map<string, string>>(new Map());
 
+  // Google Sheets source (#1111): the fetched workbook's tabs, which ones to
+  // import as what, and the queue of chosen tabs stepped through one at a time.
+  const [sourceMode, setSourceMode] = useState<'file' | 'sheet'>('file');
+  const [sheetUrl, setSheetUrl] = useState('');
+  const [sheetTabs, setSheetTabs] = useState<GoogleSheetTab[] | null>(null);
+  const [tabChoices, setTabChoices] = useState<SheetTabChoices>({});
+  const [tabQueue, setTabQueue] = useState<QueuedTab[]>([]);
+  const [tabIndex, setTabIndex] = useState(0);
+  const [completedTabs, setCompletedTabs] = useState<CompletedTab[]>([]);
+  const [tabPreviews, setTabPreviews] = useState<TabPreviews>({});
+  // Bumped on every workbook fetch. Preview keys and completed tabs carry it, so a
+  // late response or a same-named tab from an earlier workbook can't be mistaken
+  // for the current one.
+  const [workbookId, setWorkbookId] = useState(0);
+  // Only a Sheets run in progress has a current or next tab; a CSV upload never does.
+  const sheetRun = sourceMode === 'sheet' && step !== Step.SOURCE;
+  const currentTab = sheetRun ? tabQueue[tabIndex] : undefined;
+  const nextTab = sheetRun ? tabQueue[tabIndex + 1] : undefined;
+
   const destination = preview?.destination ?? null;
   const previewBody = preview?.preview ?? null;
 
@@ -350,12 +376,19 @@ export function ImportWizard({
     return set;
   }, [createDrafts]);
 
-  async function analyze(override?: ImportKind): Promise<ImportPreviewResponse | null> {
-    if (!programId || !file) return null;
+  // `source` defaults to the file in state; a Google Sheets tab passes its file
+  // directly because the setFile() that queued it hasn't re-rendered yet, plus
+  // the overview's preview of it when one is ready, so it isn't uploaded again.
+  async function analyze(
+    override?: ImportKind,
+    source: File | null = file,
+    cached?: ImportPreviewResponse,
+  ): Promise<ImportPreviewResponse | null> {
+    if (!programId || !source) return null;
     setError(null);
     setBusy(true);
     try {
-      const res = await previewImport(programId, file, override);
+      const res = cached ?? (await previewImport(programId, source, override));
       setPreview(res);
       previewGeneration.current += 1;
       // Every piece of state keyed to the previous preview's deltas/rows must
@@ -411,6 +444,91 @@ export function ImportWizard({
     setStep(Step.ANALYZING);
     const res = await analyze(kind);
     setStep(res ? Step.MAP_COLUMNS : Step.CLASSIFY);
+  }
+
+  async function handleFetchSheet() {
+    if (!programId || !sheetUrl.trim()) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const { tabs } = await fetchGoogleSheetWorkbook(programId, sheetUrl.trim());
+      setSheetTabs(tabs);
+      setTabChoices(defaultTabChoices(tabs));
+      // A new workbook starts a new run. Completed tabs are kept so their Undo stays available.
+      setWorkbookId((id) => id + 1);
+      setTabPreviews({});
+      setTabQueue([]);
+      setTabIndex(0);
+    } catch (e) {
+      logClientError('fetchGoogleSheetWorkbook', e, { programId });
+      setError(e instanceof Error ? e.message : 'Could not fetch the Google Sheet');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Runs one queued Google Sheets tab through the regular per-file flow,
+  // skipping CLASSIFY since the destination was already chosen per tab. A
+  // failure returns to SOURCE with the queue and completed tabs kept, so
+  // "Import N tabs" resumes with only the tabs not yet committed.
+  async function startTab(queue: QueuedTab[], index: number) {
+    const tab = queue[index];
+    if (!tab) return;
+    const tabAsFile = tabFile(tab);
+    // tabPreviews is emptied by every commit, so a preview found here predates no commit.
+    const overview = tabPreviews[previewKey(workbookId, programId, tab.name, tab.kind)];
+    setTabIndex(index);
+    setFile(tabAsFile);
+    setStep(Step.ANALYZING);
+    const res = await analyze(tab.kind, tabAsFile, overview?.status === 'ready' ? overview.res : undefined);
+    setStep(res ? Step.MAP_COLUMNS : Step.SOURCE);
+  }
+
+  // Committed, and not since undone, for this workbook fetch, kind and program.
+  function isCompleted(tab: Pick<QueuedTab, 'name' | 'kind'>): boolean {
+    return completedTabs.some(
+      (t) =>
+        t.workbookId === workbookId && t.name === tab.name && t.kind === tab.kind && t.programId === programId && !t.undo,
+    );
+  }
+
+  // Tabs checked in the overview that this run has not committed yet.
+  const pendingSheetTabs: QueuedTab[] = (sheetTabs ?? []).flatMap((t) => {
+    const kind = tabChoices[t.name];
+    return kind && t.csv !== null && !isCompleted({ name: t.name, kind }) ? [{ name: t.name, csv: t.csv, kind }] : [];
+  });
+
+  async function handleStartSheetImport() {
+    // Import in the workbook's tab order, as listed in the overview table.
+    setTabQueue(pendingSheetTabs);
+    await startTab(pendingSheetTabs, 0);
+  }
+
+  async function handleNextTab() {
+    const current = tabQueue[tabIndex];
+    if (current && commitResult) {
+      setCompletedTabs((prev) => [
+        ...prev,
+        { name: current.name, workbookId, kind: current.kind, programId, result: commitResult, batchId, undo: undoResult },
+      ]);
+    }
+    resetFileState();
+    await startTab(tabQueue, tabIndex + 1);
+  }
+
+  async function handleUndoCompletedTab(entry: CompletedTab) {
+    if (!entry.batchId || entry.undo) return;
+    setBusy(true);
+    try {
+      // The program the tab was committed to, which the selector may no longer show.
+      const undo = await undoImport(entry.programId, entry.batchId);
+      setCompletedTabs((prev) => prev.map((t) => (t === entry ? { ...t, undo } : t)));
+    } catch (e) {
+      logClientError('undoImport', e, { programId: entry.programId, batchId: entry.batchId });
+      setError(e instanceof Error ? e.message : 'Undo failed');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function enterReview() {
@@ -844,6 +962,8 @@ export function ImportWizard({
       if (result.ok) {
         setBatchId(result.data.batchId);
         setCommitResult(result.data);
+        // Tab previews taken before this commit no longer match what the server would compute.
+        setTabPreviews({});
         setStep(Step.DONE);
       } else {
         setCommitErrors(result.errors);
@@ -873,12 +993,24 @@ export function ImportWizard({
   }
 
   function reset() {
+    resetFileState();
+    setStep(Step.SOURCE);
+    setSheetTabs(null);
+    setTabChoices({});
+    setTabPreviews({});
+    setTabQueue([]);
+    setTabIndex(0);
+    setCompletedTabs([]);
+  }
+
+  // Clears everything tied to one file — shared by reset() and by moving on
+  // to the next queued Google Sheets tab, which keeps the workbook state.
+  function resetFileState() {
     // Bumped so an in-flight handleCreateLift from before this reset (only
     // reachable from the DONE step, so hard to hit, but not impossible — see
     // its own generation checks) can't repopulate liftOverrides/createDrafts
     // after this function just cleared them (#911 review, third pass).
     previewGeneration.current += 1;
-    setStep(Step.SOURCE);
     setFile(null);
     setPreview(null);
     setCommitResult(null);
@@ -906,6 +1038,11 @@ export function ImportWizard({
           <p className={styles.headerSubtitle}>
             Step {step + 1} of {STEP_LABELS.length} · {STEP_LABELS[step]}
           </p>
+          {currentTab && (
+            <p className={styles.headerSubtitle}>
+              Tab {tabIndex + 1} of {tabQueue.length}: {currentTab.name}
+            </p>
+          )}
           <nav className={styles.progressDots} aria-label="Import progress">
             {STEP_LABELS.map((label, i) => (
               <span
@@ -957,18 +1094,86 @@ export function ImportWizard({
                   </select>
                 </div>
               )}
-              <div className={styles.field}>
-                <label htmlFor="import-file" className={styles.fieldLabel}>
-                  CSV file
-                </label>
-                <input
-                  id="import-file"
-                  type="file"
-                  accept=".csv"
-                  className={styles.fileInput}
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                />
-              </div>
+              <fieldset className={`${styles.field} ${styles.sourceFieldset}`}>
+                <legend className={styles.fieldLabel}>Import from</legend>
+                <div className={styles.chipRow}>
+                  <label>
+                    <input
+                      type="radio"
+                      name="import-source"
+                      checked={sourceMode === 'file'}
+                      onChange={() => {
+                        setSourceMode('file');
+                        setError(null);
+                      }}
+                    />{' '}
+                    Upload a CSV
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="import-source"
+                      checked={sourceMode === 'sheet'}
+                      onChange={() => {
+                        setSourceMode('sheet');
+                        setError(null);
+                      }}
+                    />{' '}
+                    Google Sheets
+                  </label>
+                </div>
+              </fieldset>
+              {sourceMode === 'file' ? (
+                <div className={styles.field}>
+                  <label htmlFor="import-file" className={styles.fieldLabel}>
+                    CSV file
+                  </label>
+                  <input
+                    id="import-file"
+                    type="file"
+                    accept=".csv"
+                    className={styles.fileInput}
+                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className={styles.field}>
+                    <label htmlFor="import-sheet-url" className={styles.fieldLabel}>
+                      Google Sheets link
+                    </label>
+                    <input
+                      id="import-sheet-url"
+                      type="url"
+                      className={styles.select}
+                      placeholder="https://docs.google.com/spreadsheets/d/…"
+                      value={sheetUrl}
+                      disabled={busy}
+                      onChange={(e) => {
+                        setSheetUrl(e.target.value);
+                        setSheetTabs(null);
+                        setTabPreviews({});
+                      }}
+                    />
+                    <p className={styles.stepHint}>
+                      The sheet must be shared as &ldquo;Anyone with the link&rdquo; (Viewer) so we
+                      can read it. Anyone holding the link can then view it — you can turn sharing
+                      back off after importing.
+                    </p>
+                  </div>
+                  {sheetTabs && (
+                    <SheetTabsStep
+                      workbookId={workbookId}
+                      programId={programId}
+                      tabs={sheetTabs}
+                      choices={tabChoices}
+                      onChange={setTabChoices}
+                      previews={tabPreviews}
+                      setPreviews={setTabPreviews}
+                    />
+                  )}
+                </>
+              )}
               {error && <p className={styles.errorNote}>{error}</p>}
             </>
           )}
@@ -1689,6 +1894,36 @@ export function ImportWizard({
                 </div>
               )}
 
+              {sourceMode === 'sheet' && completedTabs.length > 0 && (
+                <div>
+                  {/* Every tab imported this session, including from an earlier fetch, so each keeps its Undo. */}
+                  <p className={styles.stepHint}>Tabs imported earlier</p>
+                  <ul className={styles.skippedDetailList}>
+                    {completedTabs.map((t, i) => (
+                      // A tab can be committed again after an undo, so the name alone is not unique.
+                      <li key={`${t.name}:${t.kind}:${i}`}>
+                        {t.name} — {KIND_LABEL[t.result.destination]}: {t.result.created} created,{' '}
+                        {t.result.updated} updated, {t.result.skipped} skipped.{' '}
+                        {t.undo ? (
+                          <span>Undone ({t.undo.restored} restored).</span>
+                        ) : (
+                          t.batchId && (
+                            <button
+                              type="button"
+                              className={styles.undoBtn}
+                              onClick={() => handleUndoCompletedTab(t)}
+                              disabled={busy}
+                            >
+                              Undo {t.name}
+                            </button>
+                          )
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {error && <p className={styles.errorNote}>{error}</p>}
             </div>
           )}
@@ -1707,7 +1942,7 @@ export function ImportWizard({
             </button>
           )}
 
-          {step === Step.SOURCE && (
+          {step === Step.SOURCE && sourceMode === 'file' && (
             <button
               type="button"
               className={styles.btnPrimary}
@@ -1715,6 +1950,28 @@ export function ImportWizard({
               disabled={!programId || !file || busy}
             >
               Analyze
+            </button>
+          )}
+
+          {step === Step.SOURCE && sourceMode === 'sheet' && !sheetTabs && (
+            <button
+              type="button"
+              className={styles.btnPrimary}
+              onClick={handleFetchSheet}
+              disabled={!programId || !sheetUrl.trim() || busy}
+            >
+              {busy ? 'Fetching…' : 'Fetch workbook'}
+            </button>
+          )}
+
+          {step === Step.SOURCE && sourceMode === 'sheet' && sheetTabs && (
+            <button
+              type="button"
+              className={styles.btnPrimary}
+              onClick={handleStartSheetImport}
+              disabled={!programId || pendingSheetTabs.length === 0 || busy}
+            >
+              Import {pendingSheetTabs.length} tab{pendingSheetTabs.length === 1 ? '' : 's'}
             </button>
           )}
 
@@ -1776,7 +2033,13 @@ export function ImportWizard({
             </button>
           )}
 
-          {step === Step.DONE && (
+          {step === Step.DONE && nextTab && (
+            <button type="button" className={styles.btnPrimary} onClick={handleNextTab} disabled={busy}>
+              Next tab: {nextTab.name}
+            </button>
+          )}
+
+          {step === Step.DONE && !nextTab && (
             <button type="button" className={styles.btnPrimary} onClick={reset}>
               Import another file
             </button>
