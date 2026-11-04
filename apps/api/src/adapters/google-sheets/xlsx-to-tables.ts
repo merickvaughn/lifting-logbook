@@ -123,15 +123,77 @@ export function xlsxToTables(buffer: Uint8Array, { maxRows }: { maxRows: number 
     });
 }
 
-// Element scanners for the data-sized parts. SpreadsheetML is machine-written: rows
-// and cells never nest in themselves, and text content cannot hold a raw `<`, so a
-// non-greedy match up to the closing tag is exact. An optional namespace prefix is allowed.
-const ROW_RE = /<(?:\w+:)?row\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:\w+:)?row>)/g;
-const CELL_RE = /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
-const SI_RE = /<(?:\w+:)?si\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:\w+:)?si>)/g;
-const RPH_RE = /<(?:\w+:)?rPh\b[\s\S]*?<\/(?:\w+:)?rPh>/g;
-const V_RE = /<(?:\w+:)?v(?:\s[^>]*)?>([^<]*)<\/(?:\w+:)?v>/;
-const T_RE = /<(?:\w+:)?t(?:\s[^>]*)?>([^<]*)<\/(?:\w+:)?t>/g;
+/** Longest start tag read. Real SpreadsheetML start tags are a few dozen characters. */
+const MAX_TAG_LENGTH = 2048;
+
+interface ScannedElement {
+  attrs: string;
+  body: string;
+  start: number;
+  end: number;
+}
+
+const isTagNameEnd = (ch: string | undefined) =>
+  ch === '>' || ch === '/' || ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r';
+
+/**
+ * Yields each `<name …>…</name>` or `<name …/>` element of `source` in order,
+ * with or without a namespace prefix. Used for the data-sized parts (worksheets
+ * and shared strings) instead of a DOM.
+ *
+ * Forward-only: every search starts where the previous one ended, so a scan is
+ * linear in the input even when the input is malformed, and a missing `>` or
+ * closing tag throws rather than being searched for again from each later
+ * opening tag (which made the earlier regex scanner quadratic). SpreadsheetML
+ * rows, cells, shared strings and text runs never nest inside themselves, and
+ * text cannot contain a raw `<`, so the first matching closing tag ends the element.
+ */
+function* scan(source: string, name: string): Generator<ScannedElement> {
+  let pos = 0;
+  for (;;) {
+    const hit = source.indexOf(name, pos);
+    if (hit < 0) return;
+    pos = hit + name.length;
+    if (!isTagNameEnd(source[pos])) continue;
+    // The name must open a tag: right after `<`, or after `<prefix:`.
+    let open = hit - 1;
+    let prefix = '';
+    if (source[open] === ':') {
+      let p = open - 1;
+      while (p > hit - 64 && /\w/.test(source[p] ?? '')) p--;
+      if (source[p] !== '<' || p === open - 1) continue;
+      prefix = source.slice(p + 1, open + 1);
+      open = p;
+    }
+    if (source[open] !== '<') continue;
+
+    const tagEnd = source.indexOf('>', pos);
+    if (tagEnd < 0 || tagEnd - open > MAX_TAG_LENGTH) throw new XlsxReadError('malformed', `Unterminated <${name}> tag`);
+    if (source[tagEnd - 1] === '/') {
+      yield { attrs: source.slice(pos, tagEnd - 1), body: '', start: open, end: tagEnd + 1 };
+      pos = tagEnd + 1;
+      continue;
+    }
+    const closeTag = `</${prefix}${name}>`;
+    const close = source.indexOf(closeTag, tagEnd + 1);
+    if (close < 0) throw new XlsxReadError('malformed', `Unclosed <${name}> element`);
+    yield { attrs: source.slice(pos, tagEnd), body: source.slice(tagEnd + 1, close), start: open, end: close + closeTag.length };
+    pos = close + closeTag.length;
+  }
+}
+
+/** `source` with every `name` element cut out. */
+function withoutElements(source: string, name: string): string {
+  let kept = '';
+  let from = 0;
+  for (const el of scan(source, name)) {
+    kept += source.slice(from, el.start);
+    from = el.end;
+  }
+  return kept + source.slice(from);
+}
+
+// Applied only to one start tag's attribute text, which scan() caps at MAX_TAG_LENGTH.
 const ATTR_RE = /([\w:]+)="([^"]*)"/g;
 
 function attributes(source: string): Map<string, string> {
@@ -139,7 +201,7 @@ function attributes(source: string): Map<string, string> {
 }
 
 function texts(source: string): string {
-  return Array.from(source.matchAll(T_RE), (m) => decodeXml(m[1] ?? '')).join('');
+  return Array.from(scan(source, 't'), (t) => decodeXml(t.body)).join('');
 }
 
 const XML_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
@@ -158,15 +220,15 @@ function readRows(
 ): Pick<WorkbookTable, 'rows' | 'overflow'> {
   const rows: string[][] = [];
   let overflow: WorkbookTable['overflow'];
-  rowLoop: for (const rowMatch of sheet.matchAll(ROW_RE)) {
+  rowLoop: for (const row of scan(sheet, 'row')) {
     const cells: string[] = [];
     let nextCol = 0;
-    for (const cellMatch of (rowMatch[1] ?? '').matchAll(CELL_RE)) {
-      const attrs = attributes(cellMatch[1] ?? '');
+    for (const cell of scan(row.body, 'c')) {
+      const attrs = attributes(cell.attrs);
       const ref = attrs.get('r');
       const col = ref ? columnIndex(ref) : nextCol;
       nextCol = col + 1;
-      const value = cellValue(attrs, cellMatch[2] ?? '', ctx);
+      const value = cellValue(attrs, cell.body, ctx);
       if (value === '') continue;
       if (col >= MAX_TABLE_COLUMNS) {
         overflow = 'columns';
@@ -196,7 +258,7 @@ function cellValue(
   const type = attrs.get('t') ?? 'n';
   if (type === 'inlineStr') return texts(body).trim();
 
-  const raw = decodeXml(body.match(V_RE)?.[1] ?? '');
+  const raw = decodeXml(scan(body, 'v').next().value?.body ?? '');
   if (raw === '') return '';
   switch (type) {
     case 's':
@@ -239,7 +301,7 @@ export function isDateFormat(formatCode: string): boolean {
 function readSharedStrings(source: string | null): string[] {
   if (source === null) return [];
   // Phonetic runs (<rPh>) are annotations, not cell text.
-  return Array.from(source.matchAll(SI_RE), (m) => texts((m[1] ?? '').replace(RPH_RE, '')));
+  return Array.from(scan(source, 'si'), (si) => texts(withoutElements(si.body, 'rPh')));
 }
 
 /** Indexes into `cellXfs` whose number format displays as a date. */

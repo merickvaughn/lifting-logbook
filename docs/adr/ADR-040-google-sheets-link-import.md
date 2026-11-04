@@ -44,10 +44,12 @@ Three questions needed an answer:
    sharing instructions. The download is capped at 10 MB and 15 s. Before anything is
    decompressed, each XML part is checked against an 8 MB inflated-size cap, the parts together
    against 40 MB, and the part count against 300. A tab is read only up to `MAX_IMPORT_ROWS` rows
-   and 100 columns, and hidden tabs are skipped. Worksheets and shared strings are scanned row by
-   row without building a DOM. Measured on an 8 MB, 60,000-row worksheet at the part cap: 12 MB of
-   heap and 117 ms, stopping at the row cap. A full DOM of the same part took about 394 MB, against
-   the API's 512 MiB Cloud Run limit.
+   and 100 columns, and hidden tabs are skipped. Worksheets and shared strings are read by a
+   forward-only scanner, not a DOM. It searches with `indexOf` from where the last match ended, so
+   it stays linear on malformed input and throws on a missing closing tag. (A lazy-regex version
+   was quadratic: 400 KB of unclosed tags took up to 30 s.) Measured on an 8 MB, 60,000-row
+   worksheet at the part cap: 16.5 MB of heap and 118 ms when stopping at the row cap. A full DOM
+   of the same part took about 394 MB, against the API's 512 MiB Cloud Run limit.
 4. **No database transaction around the fetch.** The handler does no database work, so it is
    marked `@SkipRlsTransaction()`. Otherwise the per-request RLS transaction would hold a pooled
    connection for the whole download and parse, and a slow download could outlast the

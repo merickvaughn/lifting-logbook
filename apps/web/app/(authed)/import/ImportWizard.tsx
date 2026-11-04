@@ -491,7 +491,6 @@ export function ImportWizard({
         t.workbookId === workbookId && t.name === tab.name && t.kind === tab.kind && t.programId === programId && !t.undo,
     );
   }
-  const workbookCompletedTabs = completedTabs.filter((t) => t.workbookId === workbookId);
 
   // Tabs checked in the overview that this run has not committed yet.
   const pendingSheetTabs: QueuedTab[] = (sheetTabs ?? []).flatMap((t) => {
@@ -1895,11 +1894,12 @@ export function ImportWizard({
                 </div>
               )}
 
-              {sourceMode === 'sheet' && workbookCompletedTabs.length > 0 && (
+              {sourceMode === 'sheet' && completedTabs.length > 0 && (
                 <div>
-                  <p className={styles.stepHint}>Earlier tabs from this workbook</p>
+                  {/* Every tab imported this session, including from an earlier fetch, so each keeps its Undo. */}
+                  <p className={styles.stepHint}>Tabs imported earlier</p>
                   <ul className={styles.skippedDetailList}>
-                    {workbookCompletedTabs.map((t, i) => (
+                    {completedTabs.map((t, i) => (
                       // A tab can be committed again after an undo, so the name alone is not unique.
                       <li key={`${t.name}:${t.kind}:${i}`}>
                         {t.name} — {KIND_LABEL[t.result.destination]}: {t.result.created} created,{' '}

@@ -162,6 +162,46 @@ describe('xlsxToTables', () => {
     expect(table).toEqual({ name: 'S', rows: [['a']], overflow: 'columns' });
   });
 
+  // The scanner must stay linear on malformed XML: an earlier regex version took
+  // seconds on a few hundred KB of unclosed tags and grew quadratically from there.
+  it.each([
+    ['unclosed rows', '<row>'.repeat(200_000)],
+    ['unterminated row tags', '<row '.repeat(200_000)],
+    ['unclosed cells', `<row>${'<c>'.repeat(300_000)}</row>`],
+    ['unclosed text runs', `<row><c t="inlineStr"><is>${'<t '.repeat(300_000)}</is></c></row>`],
+  ])('rejects %s quickly', (_label, body) => {
+    const sheet = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${body}</sheetData></worksheet>`;
+    const zip = zipSync({
+      'xl/workbook.xml': strToU8(
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>',
+      ),
+      'xl/_rels/workbook.xml.rels': strToU8(
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+      ),
+      'xl/worksheets/sheet1.xml': strToU8(sheet),
+    });
+    const started = Date.now();
+    expect(() => read(zip)).toThrow(expect.objectContaining({ code: 'malformed' }));
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('reads prefixed elements and rich inline text runs', () => {
+    const sheet =
+      '<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData>' +
+      '<x:row r="1"><x:c r="A1" t="inlineStr"><x:is><x:r><x:rPr/><x:t>Bench</x:t></x:r><x:r><x:t xml:space="preserve"> P.</x:t></x:r></x:is></x:c>' +
+      '<x:c r="B1"><x:f t="shared" si="0"/><x:v>180</x:v></x:c><x:c r="C1"/></x:row><x:row r="2"/></x:sheetData></x:worksheet>';
+    const zip = zipSync({
+      'xl/workbook.xml': strToU8(
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>',
+      ),
+      'xl/_rels/workbook.xml.rels': strToU8(
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+      ),
+      'xl/worksheets/sheet1.xml': strToU8(sheet),
+    });
+    expect(read(zip)[0]?.rows).toEqual([['Bench P.', '180']]);
+  });
+
   it('rejects a part over the inflated-size cap before inflating it', () => {
     const big = zipSync({ 'xl/worksheets/sheet1.xml': new Uint8Array(MAX_XLSX_PART_BYTES + 1) });
     expect(() => read(big)).toThrow(expect.objectContaining({ code: 'too-large' }));

@@ -734,6 +734,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     it('classifies each tab and returns importable tabs as CSV the import endpoint accepts', async () => {
       const workbook = buildXlsx([
         { name: 'TOC', rows: [['Contents'], ['See tabs']] },
+        { name: 'EMPTY_LOG', rows: [['Program', 'Cycle #', 'Workout #', 'Date', 'Lift', 'Set #', 'Weight', 'Reps', 'Notes']] },
         {
           name: 'LIFT_RECORDS',
           rows: [
@@ -765,6 +766,8 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       const { tabs } = res.json() as GoogleSheetWorkbookResponse;
       const byName = Object.fromEntries(tabs.map((t) => [t.name, t]));
       expect(byName['TOC']?.csv).toBeNull();
+      expect(byName['TOC']?.skipReason).toBe('Not recognized as lift history, training maxes, strength goals or a program.');
+      expect(byName['EMPTY_LOG']).toMatchObject({ csv: null, skipReason: 'Has no data rows.' });
       expect(byName['LIFT_RECORDS']?.classification.type).toBe('lift-records');
       expect(byName['TRAINING_MAXES']?.classification.type).toBe('training-maxes');
 

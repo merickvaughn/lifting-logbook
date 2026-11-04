@@ -216,7 +216,10 @@ export class ImportController {
       if (overflow === 'columns') {
         return { ...tab, csv: null, skipReason: `Has data past column ${MAX_TABLE_COLUMNS}, too wide to import.` };
       }
-      if (suggestedKind === null || rows.length < 2) {
+      if (rows.length < 2) {
+        return { ...tab, csv: null, skipReason: 'Has no data rows.' };
+      }
+      if (suggestedKind === null) {
         return { ...tab, csv: null, skipReason: 'Not recognized as lift history, training maxes, strength goals or a program.' };
       }
       const csv = stringifyCsv(rows);
@@ -232,7 +235,9 @@ export class ImportController {
       {
         bytes: buffer.length,
         tabCount: tabs.length,
-        importableKinds: tabs.filter((t) => t.csv !== null).map((t) => t.classification.type),
+        importableKinds: tabs.filter((t) => t.csv !== null).map((t) => t.suggestedKind),
+        // Importable tabs offered on a best guess rather than an auto-accepted classification.
+        bestGuessTabs: tabs.filter((t) => t.csv !== null && t.classification.type === null).length,
         parseMs,
         durationMs: Date.now() - started,
       },

@@ -371,6 +371,16 @@ describe('Google Sheets import (#1111)', () => {
     await user.type(screen.getByLabelText('Google Sheets link'), SHEET_URL);
     await user.click(screen.getByRole('button', { name: 'Fetch workbook' }));
     expect(await screen.findByRole('button', { name: 'Import 2 tabs' })).toBeInTheDocument();
+
+    // The tab committed from the first fetch keeps its Undo after the next commit.
+    await user.click(screen.getByRole('button', { name: 'Import 2 tabs' }));
+    await screen.findByRole('heading', { name: 'Map columns' });
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+    await screen.findByText('Import complete');
+    expect(screen.getByText('Tabs imported earlier')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Undo LIFT_RECORDS' })).toBeInTheDocument();
   });
 
   it('keeps the link field disabled while the workbook is being fetched', async () => {
