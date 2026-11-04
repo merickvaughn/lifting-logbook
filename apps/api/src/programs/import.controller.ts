@@ -1,16 +1,22 @@
 import {
+  BadGatewayException,
   BadRequestException,
+  Body,
   Controller,
   HttpCode,
   HttpStatus,
   Inject,
+  Logger,
   NotFoundException,
   Param,
+  PayloadTooLargeException,
   Post,
   Query,
   Req,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
+  GoogleSheetWorkbookResponse,
   ImportCommitResponse,
   ImportError,
   ImportKind,
@@ -24,6 +30,8 @@ import {
   classifyImport,
   fuzzyColumnMapper,
   parseCsvText,
+  parseGoogleSheetUrl,
+  stringifyCsv,
   applyColumnOverrides,
   splitLiftRecordsByDestination,
   validateLiftImportSoft,
@@ -47,6 +55,12 @@ import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
 import { effectiveSlotMapFor } from './effective-slot-map.util';
+import { GoogleSheetImportDto } from './google-sheet-import.dto';
+import {
+  GoogleSheetFetchError,
+  downloadGoogleSheetXlsx,
+} from '../adapters/google-sheets/google-sheet-export.client';
+import { WorkbookTable, xlsxToTables } from '../adapters/google-sheets/xlsx-to-tables';
 
 /**
  * Unified Smart Import endpoint (#477, #615).
@@ -58,6 +72,8 @@ import { effectiveSlotMapFor } from './effective-slot-map.util';
  */
 @Controller('programs/:program')
 export class ImportController {
+  private readonly logger = new Logger(ImportController.name);
+
   constructor(
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
   ) {}
@@ -128,6 +144,72 @@ export class ImportController {
       preview: errors.length ? null : preview,
       errors,
     };
+  }
+
+  /**
+   * Fetches a link-shared Google Sheets workbook and classifies each tab (#1111).
+   *
+   * Returns importable tabs as CSV text; the wizard then sends each chosen tab
+   * through the regular `POST import` preview/commit flow as a file, so column
+   * mapping, review, commit and undo are identical to a CSV upload. Nothing is
+   * written here.
+   */
+  @Post('import/google-sheet')
+  @HttpCode(HttpStatus.OK)
+  async fetchGoogleSheet(@Body() body: GoogleSheetImportDto): Promise<GoogleSheetWorkbookResponse> {
+    const parsed = parseGoogleSheetUrl(body.url);
+    if (!parsed.ok) throw new BadRequestException(parsed.message);
+
+    const started = Date.now();
+    let buffer: Buffer;
+    try {
+      buffer = await downloadGoogleSheetXlsx(parsed.spreadsheetId);
+    } catch (err) {
+      const code = err instanceof GoogleSheetFetchError ? err.code : 'upstream';
+      this.logger.warn({ code, durationMs: Date.now() - started }, 'Google Sheet fetch failed (#1111)');
+      if (!(err instanceof GoogleSheetFetchError)) throw new BadGatewayException('Could not reach Google Sheets.');
+      switch (err.code) {
+        case 'not-shared':
+          throw new UnprocessableEntityException(err.message);
+        case 'not-found':
+          throw new NotFoundException(err.message);
+        case 'too-large':
+          throw new PayloadTooLargeException(err.message);
+        default:
+          throw new BadGatewayException(err.message);
+      }
+    }
+
+    let tables: WorkbookTable[];
+    try {
+      tables = xlsxToTables(buffer);
+    } catch {
+      this.logger.warn({ bytes: buffer.length }, 'Google Sheet workbook could not be read (#1111)');
+      throw new BadGatewayException('Google Sheets returned a workbook that could not be read.');
+    }
+
+    const tabs = tables.map(({ name, rows }) => {
+      const classification = classifyImport(rows);
+      const overCap = rows.length - 1 > MAX_IMPORT_ROWS;
+      if (overCap) {
+        classification.reasons.push(`Tab has more than ${MAX_IMPORT_ROWS} rows, the per-import limit.`);
+      }
+      const importable = !overCap && rows.length > 1 &&
+        (classification.type !== null || classification.bucket !== 'low');
+      return { name, rowCount: rows.length, classification, csv: importable ? stringifyCsv(rows) : null };
+    });
+
+    // Counts and detected kinds only — tab names and cell contents are user data.
+    this.logger.log(
+      {
+        bytes: buffer.length,
+        tabCount: tabs.length,
+        importableKinds: tabs.filter((t) => t.csv !== null).map((t) => t.classification.type),
+        durationMs: Date.now() - started,
+      },
+      'Google Sheet workbook fetched (#1111)',
+    );
+    return { tabs };
   }
 
   @Post('import/:batchId/undo')

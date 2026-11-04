@@ -3,6 +3,7 @@ export * from './buildImportPreview';
 export * from './buildPreImage';
 export * from './classifyAndCount';
 export * from './classifyImport';
+export * from './googleSheetUrl';
 export * from './importThresholds';
 export * from './liftRecordNaturalKey';
 export * from './normalize-amrap';

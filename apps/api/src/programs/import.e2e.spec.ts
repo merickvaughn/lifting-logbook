@@ -9,6 +9,8 @@ import multipart from '@fastify/multipart';
 import { AppModule } from '../app.module';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainNotFoundFilter } from './not-found.filter';
+import type { GoogleSheetWorkbookResponse, ImportPreviewResponse } from '@lifting-logbook/types';
+import { buildXlsx, dateSerial } from '../adapters/google-sheets/xlsx.fixture';
 
 /**
  * In-memory E2E for the unified Smart Import endpoint (#477):
@@ -708,6 +710,88 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(undoRes.flagged).toHaveLength(1);
       expect(undoRes.flagged[0].key).toBe('bench-press');
       expect(undoRes.flagged[0].reason).toContain('modified after import');
+    });
+  });
+
+  describe('Google Sheets workbook fetch (#1111)', () => {
+    const SHEET_URL =
+      'https://docs.google.com/spreadsheets/d/15s6_k614x9FzQtHxQDxh82CjDKYqHaS-VZtmS0he-8Q/edit?gid=1210109955#gid=1210109955';
+    const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+    const fetchSheet = (url: string) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/${UUID_PROGRAM}/import/google-sheet`,
+        headers: { 'content-type': 'application/json', ...AUTH },
+        payload: JSON.stringify({ url }),
+      });
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it('classifies each tab and returns importable tabs as CSV the import endpoint accepts', async () => {
+      const workbook = buildXlsx([
+        { name: 'TOC', rows: [['Contents'], ['See tabs']] },
+        {
+          name: 'LIFT_RECORDS',
+          rows: [
+            ['Program', 'Cycle #', 'Workout #', 'Date', 'Lift', 'Set #', 'Weight', 'Reps', 'Notes'],
+            ['RPT', 38, 1, { date: dateSerial(2025, 12, 29) }, 'Bench P.', 1, 180, 8, null],
+            ['RPT', 38, 1, { date: dateSerial(2025, 12, 29) }, 'Bench P.', 2, 170, 7, null],
+            ['RPT', 38, 1, { date: dateSerial(2025, 12, 29) }, 'BB Row', 1, 175, 8, null],
+          ],
+        },
+        {
+          name: 'TRAINING_MAXES',
+          rows: [
+            ['Date Updated', 'Lift', 'Weight'],
+            [{ date: dateSerial(2026, 9, 25) }, 'Bench P.', 172.5],
+            [{ date: dateSerial(2026, 8, 15) }, 'BB Row', 190],
+          ],
+        },
+      ]);
+      const fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(new Response(workbook, { headers: { 'content-type': XLSX_TYPE } }));
+
+      const res = await fetchSheet(SHEET_URL);
+
+      expect(res.statusCode).toBe(200);
+      expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
+        'https://docs.google.com/spreadsheets/d/15s6_k614x9FzQtHxQDxh82CjDKYqHaS-VZtmS0he-8Q/export?format=xlsx',
+      );
+      const { tabs } = res.json() as GoogleSheetWorkbookResponse;
+      const byName = Object.fromEntries(tabs.map((t) => [t.name, t]));
+      expect(byName['TOC']?.csv).toBeNull();
+      expect(byName['LIFT_RECORDS']?.classification.type).toBe('lift-records');
+      expect(byName['TRAINING_MAXES']?.classification.type).toBe('training-maxes');
+
+      // The returned CSV round-trips through the existing preview unchanged.
+      const preview = (
+        await importCsv(UUID_PROGRAM, byName['LIFT_RECORDS']?.csv ?? '', '?mode=preview')
+      ).json() as ImportPreviewResponse;
+      expect(preview.destination).toBe('lift-records');
+      expect(preview.errors).toEqual([]);
+      expect(preview.preview?.creates).toBe(3);
+    });
+
+    it('returns 422 with sharing instructions when the sheet is private', async () => {
+      jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(new Response(null, { status: 307, headers: { location: 'https://accounts.google.com/ServiceLogin' } }));
+
+      const res = await fetchSheet(SHEET_URL);
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().message).toContain('Anyone with the link');
+    });
+
+    it('returns 400 and fetches nothing for a link that is not a Google Sheet', async () => {
+      const fetchSpy = jest.spyOn(global, 'fetch');
+
+      const res = await fetchSheet('https://example.com/spreadsheets/d/15s6_k614x9FzQtHxQDxh82CjDKYqHaS-VZtmS0he-8Q');
+
+      expect(res.statusCode).toBe(400);
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 });

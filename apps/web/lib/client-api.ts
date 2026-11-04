@@ -83,6 +83,7 @@ export const {
   previewImport,
   commitImport,
   undoImport,
+  fetchGoogleSheetWorkbook,
   createCustomLift,
   // Read, not just a write — but the 409 self-heal path needs to refetch the
   // live custom-lift list client-side (a stale/absent local copy otherwise

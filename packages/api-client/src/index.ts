@@ -19,6 +19,8 @@ import type {
   ImportError,
   ImportKind,
   ImportLiftRecordsResponse,
+  GoogleSheetImportRequest,
+  GoogleSheetWorkbookResponse,
   ImportPreviewResponse,
   ImportUndoResponse,
   LiftMetadataResponse,
@@ -487,6 +489,22 @@ export function createApiClient(config: ApiClientConfig) {
         throw new Error(`Undo import failed (HTTP ${res.status})`);
       }
       return (await res.json()) as ImportUndoResponse;
+    },
+
+    /**
+     * Fetch a link-shared Google Sheets workbook and classify each tab (#1111).
+     * Importable tabs come back as CSV text for the regular previewImport /
+     * commitImport flow. Throws with the server's message (e.g. how to share a
+     * private sheet) on failure.
+     */
+    fetchGoogleSheetWorkbook(program: string, url: string): Promise<GoogleSheetWorkbookResponse> {
+      const body: GoogleSheetImportRequest = { url };
+      return request(`/programs/${enc(program)}/import/google-sheet`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
     },
 
     // -- Body weight -------------------------------------------------------

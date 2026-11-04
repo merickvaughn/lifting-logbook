@@ -176,6 +176,8 @@ Each entry links back to the ADR where it is discussed and provides a brief desc
 | [Google Cloud KMS — Key Rotation](https://cloud.google.com/kms/docs/key-rotation) | [ADR-014](adr/ADR-014-credential-encryption-at-rest.md) | Automatic rotation scheduling, prior key version behaviour after rotation, and audit logging for version-level decrypt calls used in the re-encryption procedure. |
 | [Google Tink — AES-GCM AEAD](https://developers.google.com/tink/aead) | [ADR-014](adr/ADR-014-credential-encryption-at-rest.md) | Recommended implementation library for AEAD encryption on GCP; covers AES-256-GCM key generation, encrypt/decrypt API, and key rotation via keyset handles. |
 | [NIST SP 800-38D — Recommendation for Block Cipher Modes of Operation: GCM and GMAC](https://csrc.nist.gov/publications/detail/sp/800-38d/final) | [ADR-014](adr/ADR-014-credential-encryption-at-rest.md) | NIST normative recommendation for GCM mode; documents the 12-byte nonce requirement and authentication tag validation used for `config_ciphertext` integrity. |
+| [OWASP — Server-Side Request Forgery Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html) | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | The Google Sheets fetch builds its URL from a validated spreadsheet ID and allowlists every redirect host. |
+| [WHATWG Fetch — request redirect mode](https://fetch.spec.whatwg.org/#concept-request-redirect-mode) | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | `redirect: 'manual'` hands each redirect back so its host can be checked before it is followed. |
 
 ---
 
@@ -218,6 +220,11 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 | [PostgreSQL 16 — Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) | [ADR-039](adr/ADR-039-focus-block-persistence.md) | Forced RLS and an isolation policy on `focus_block` and `focus_day_state`. |
 | [ECMA-402 — `Intl.DateTimeFormat` `timeZone` option](https://tc39.es/ecma402/#sec-createdatetimeformat) | [ADR-039](adr/ADR-039-focus-block-persistence.md) | Amendment 1: the web server turns the browser's recorded IANA zone into the user's calendar day, falling back to UTC on an unknown zone. |
 | [RFC 6265 — HTTP State Management Mechanism](https://www.rfc-editor.org/rfc/rfc6265) | [ADR-039](adr/ADR-039-focus-block-persistence.md) | Amendment 1: the `tz` cookie that carries the browser's time zone to Server Components. |
+| [Google Drive Help — Share files from Google Drive](https://support.google.com/drive/answer/2494822) | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | "Anyone with the link" sharing, the access the Google Sheets import relies on instead of OAuth. |
+| [Google Visualization API — Query Language data types](https://developers.google.com/chart/interactive/docs/querylanguage#data-types) | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | One data type per column, which is why the `gviz` CSV endpoint was rejected for the logbook's mixed Notes column. |
+| [ECMA-376 — Office Open XML File Formats](https://ecma-international.org/publications-and-standards/standards/ecma-376/) | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | The SpreadsheetML parts, cell types and built-in number formats `xlsx-to-tables.ts` reads. |
+| [fflate](https://github.com/101arrowz/fflate) | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | `unzipSync` with a per-file `filter`, used to inflate only the needed XLSX parts after checking each part's size. |
+| [@xmldom/xmldom](https://github.com/xmldom/xmldom) | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | W3C DOM `DOMParser` for Node, used to read the XLSX parts' XML. |
 
 ---
 

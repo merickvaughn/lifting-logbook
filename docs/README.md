@@ -171,6 +171,7 @@ monorepo/
 | [ADR-037](adr/ADR-037-schedule-dates-program-days.md) | A Schedule Dates the Program's Workouts; It Never Numbers Them | Accepted |
 | [ADR-038](adr/ADR-038-training-time-vocabulary.md) | Training-Time Vocabulary — Macrocycle and Mesocycle | Accepted |
 | [ADR-039](adr/ADR-039-focus-block-persistence.md) | Focus Block Persistence — Server-Stored, Date-Derived, JSON Pools | Accepted |
+| [ADR-040](adr/ADR-040-google-sheets-link-import.md) | Google Sheets Import Reads a Link-Shared Workbook as XLSX, Without OAuth | Accepted |
 
 ---
 
