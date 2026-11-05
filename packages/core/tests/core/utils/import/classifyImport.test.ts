@@ -56,4 +56,18 @@ describe("classifyImport", () => {
       expect(typeof alt.closeCall).toBe("boolean");
     }
   });
+
+  // #1116: the lift-column signal must recognize the same names import resolves, or a
+  // sheet of catalog lifts scores lower than the same sheet of slot-map names.
+  it("scores a column of catalog lifts the same as a column of slot-map names", () => {
+    const tableOf = (lift: string) => [
+      ["Date", "Exercise", "Load"],
+      ["1/1/2026", lift, "100"],
+      ["1/2/2026", lift, "100"],
+    ];
+    const catalogOnly = classifyImport(tableOf("Incline Bench Press"));
+    const slotMapName = classifyImport(tableOf("Bench Press"));
+    expect(catalogOnly.confidence).toBe(slotMapName.confidence);
+    expect(catalogOnly.reasons).toEqual(slotMapName.reasons);
+  });
 });

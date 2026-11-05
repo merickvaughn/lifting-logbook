@@ -1,4 +1,5 @@
 import { CustomLift } from '@lifting-logbook/types';
+import { LIFT_CATALOG } from './lifts';
 
 /**
  * Pre-built exercise slot maps for the built-in program templates.
@@ -107,6 +108,53 @@ export function buildEffectiveSlotMap(
   }
   return Object.assign(Object.create(null), custom, DEFAULT_SLOT_MAP) as Record<string, string>;
 }
+
+/**
+ * Every built-in catalog lift, by display name and id, mapped to its display name.
+ * Import-only: adding these to DEFAULT_SLOT_MAP would also change the logger's
+ * bodyweight detection and reserve the names against custom lifts (see
+ * CatalogLift.aliases, issue #1015).
+ *
+ * The value is the display name, not the id, because that is what the rest of the
+ * app matches on: a program's `lift` is the name its picker stored, and training
+ * maxes and history are looked up by exact string. A row stored as
+ * "incline-bench-press" would never join a program's "Incline Bench Press", and a
+ * training-max row naming a catalog lift, which used to pass through as raw text and
+ * match, would stop matching (issue #1116).
+ */
+const CATALOG_IMPORT_NAMES: Readonly<Record<string, string>> = Object.fromEntries(
+  LIFT_CATALOG.flatMap((lift) => [
+    [lift.name, lift.name],
+    [lift.id, lift.name],
+  ]),
+);
+
+/**
+ * The slot map import validates against: buildEffectiveSlotMap's output plus every
+ * built-in catalog lift (issue #1116).
+ *
+ * Precedence, highest first: DEFAULT_SLOT_MAP, then custom lifts, then the catalog.
+ * A custom lift beats the catalog for the same reason it does in lookupLift: a
+ * catalog name outside DEFAULT_SLOT_MAP is not reserved, so a user may already have a
+ * custom lift with that name, and their rows must keep resolving to it.
+ */
+export function buildImportSlotMap(customLifts: readonly CustomLift[]): Record<string, string> {
+  return Object.assign(
+    Object.create(null),
+    CATALOG_IMPORT_NAMES,
+    buildEffectiveSlotMap(customLifts),
+  ) as Record<string, string>;
+}
+
+/**
+ * Every built-in string import resolves: the catalog's display names and ids, plus
+ * ALL_SLOT_MAP_ALIASES. Backs the Review step's remap datalist and the import
+ * classifier's lift-column signal. Custom-lift guards keep using the narrower
+ * canonicalAliasFor and isCanonicalAlias.
+ */
+export const IMPORT_LIFT_ALIASES: readonly string[] = Object.freeze(
+  Object.keys(buildImportSlotMap([])),
+);
 
 // Eagerly built, not lazily cached behind a mutable `let` — ALL_SLOT_MAP_ALIASES
 // (32 entries) is itself already eagerly computed from the eagerly-computed

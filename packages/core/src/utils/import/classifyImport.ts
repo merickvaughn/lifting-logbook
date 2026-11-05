@@ -3,7 +3,7 @@ import {
   ImportClassification,
   ImportKind,
 } from '@lifting-logbook/types';
-import { DEFAULT_SLOT_MAP } from '../../catalog/slotMaps';
+import { IMPORT_LIFT_ALIASES } from '../../catalog/slotMaps';
 import { SpreadsheetCell } from '../../models';
 import { bucketConfidence, clearsAutoAccept } from './importThresholds';
 
@@ -199,7 +199,7 @@ function liftColumnHitRate(headerCount: number, normRows: readonly string[][]): 
   if (normRows.length === 0) return 0;
   // Prefer a column whose header looks like a lift column; else the column with
   // the most slot-map hits across the data rows.
-  const slotKeys = new Set(Object.keys(DEFAULT_SLOT_MAP).map((k) => k.toLowerCase()));
+  const slotKeys = new Set(IMPORT_LIFT_ALIASES.map((k) => k.toLowerCase()));
   const colCount = Math.max(...normRows.map((r) => r.length), headerCount);
 
   let best = 0;

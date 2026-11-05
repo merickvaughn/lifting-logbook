@@ -16,7 +16,7 @@ import type {
   LiftClassification,
   WeightUnit,
 } from '@lifting-logbook/types';
-import { ALL_SLOT_MAP_ALIASES, formatWeight, isCanonicalAlias } from '@lifting-logbook/core';
+import { IMPORT_LIFT_ALIASES, formatWeight } from '@lifting-logbook/core';
 import type { CommitImportOpts } from '@lifting-logbook/api-client';
 import {
   commitImport,
@@ -353,7 +353,7 @@ export function ImportWizard({
   // name to the canonical built-in instead of honoring it, and hidden it from
   // the datalist entirely).
   const exactKnownLiftKeys = useMemo(() => {
-    const set = new Set<string>(ALL_SLOT_MAP_ALIASES);
+    const set = new Set<string>(IMPORT_LIFT_ALIASES);
     for (const lift of customLifts) {
       set.add(lift.name);
       set.add(lift.id);
@@ -375,7 +375,7 @@ export function ImportWizard({
   // in the first place (CustomLiftController.create/update).
   const knownLiftNamesCanonical = useMemo(() => {
     const map = new Map<string, string>();
-    for (const alias of ALL_SLOT_MAP_ALIASES) {
+    for (const alias of IMPORT_LIFT_ALIASES) {
       map.set(alias.toLowerCase(), alias);
     }
     for (const lift of customLifts) {
@@ -396,7 +396,7 @@ export function ImportWizard({
   // its lowercased name with a built-in alias or another custom lift. Text in a
   // different case can't choose between them, so the user has to.
   const caseTiedLiftNames = useMemo(() => {
-    const aliases = new Set(ALL_SLOT_MAP_ALIASES.map((alias) => alias.toLowerCase()));
+    const aliases = new Set(IMPORT_LIFT_ALIASES.map((alias) => alias.toLowerCase()));
     const seen = new Set<string>();
     const tied = new Set<string>();
     for (const lift of customLifts) {
@@ -1727,32 +1727,20 @@ export function ImportWizard({
                       )}
 
                       {/* Lift catalog datalist for ambiguous rows: every built-in
-                          canonical lift AND abbreviation/display-name alias
-                          DEFAULT_SLOT_MAP accepts (ALL_SLOT_MAP_ALIASES — both
-                          its keys and its values, so users are steered onto a
-                          name the server actually recognizes, not just its
-                          internal id), plus this user's custom lifts (#911).
-                          Only an EXACT-case shadow is excluded — a
-                          pre-existing custom lift whose name case-insensitively
-                          but not exactly matches an alias (e.g. "squat" vs.
-                          "Squat") is a distinct, genuinely reachable entry per
-                          buildEffectiveSlotMap's exact-case-only collision
-                          rule, and offering it is correct; only an exact-case
-                          match is truly unreachable by that name (the server
-                          also now refuses to create an exact-case-shadowing
-                          custom lift going forward, but a pre-existing one
-                          could still exist) (#911 review, third pass — an
-                          earlier case-insensitive-only version of this filter
-                          also hid every reachable case-variant custom lift). */}
+                          name the server resolves (IMPORT_LIFT_ALIASES — the
+                          catalog's names and ids plus DEFAULT_SLOT_MAP's
+                          abbreviations; #1116), plus this user's custom lifts
+                          (#911). Deduplicated on the exact value: a custom lift
+                          with a built-in's exact name would otherwise list that
+                          name twice. A case variant ("squat" vs. "Squat") stays
+                          listed, because it is a distinct, reachable key on the
+                          server (#911 review, third pass). */}
                       <datalist id="lift-catalog">
-                        {ALL_SLOT_MAP_ALIASES.map((alias) => (
-                          <option key={alias} value={alias} />
-                        ))}
-                        {customLifts
-                          .filter((lift) => !isCanonicalAlias(lift.name))
-                          .map((lift) => (
-                            <option key={lift.id} value={lift.name} />
-                          ))}
+                        {[...new Set([...IMPORT_LIFT_ALIASES, ...customLifts.map((lift) => lift.name)])].map(
+                          (name) => (
+                            <option key={name} value={name} />
+                          ),
+                        )}
                       </datalist>
 
                       {/* Delta table */}

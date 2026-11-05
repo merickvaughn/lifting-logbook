@@ -6,6 +6,7 @@ import type {
   ImportDelta,
   ImportPreviewResponse,
 } from '@lifting-logbook/types';
+import { LIFT_CATALOG } from '@lifting-logbook/core';
 import { ImportWizard } from './ImportWizard';
 import { commitImport, createCustomLift, dryRunImport, fetchCustomLifts, previewImport } from '@/lib/client-api';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
@@ -1252,6 +1253,31 @@ describe('ImportWizard', () => {
       expect(screen.queryByText(/needs? a lift/)).not.toBeInTheDocument();
     });
 
+    it('keeps a row unresolved when its text fits a catalog lift and a custom lift once case is ignored', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(
+        withDeltas([
+          {
+            key: '__ambiguous_1',
+            label: 'INCLINE BENCH PRESS set 1',
+            kind: 'create',
+            status: 'ambiguous',
+            rowIndex: 1,
+            originalLift: 'INCLINE BENCH PRESS',
+          },
+        ]),
+      );
+
+      render(
+        <ImportWizard
+          programs={PROGRAMS}
+          customLifts={[{ ...CUSTOM_LIFT, id: 'custom-incline', name: 'incline bench press' }]}
+        />,
+      );
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+      expect(screen.getByText(/1 row needs a lift/)).toBeInTheDocument();
+    });
+
     it('lists only the rows still needing a lift, and keeps one listed while it is being retyped', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValue(TWO_DIFFERENT_AMBIGUOUS_LIFT_PREVIEW);
@@ -2473,6 +2499,71 @@ describe('ImportWizard', () => {
       // Row 2 was explicitly excluded — it must not receive the batch-resolved
       // override even though it shares row 1's original text.
       expect(opts.liftOverrides).toEqual({ 1: 'custom-cbl-curls' });
+    });
+
+    // #1116: a sheet's "Incline Bench P." could only be mapped by creating a custom lift
+    // that duplicated the built-in, splitting that lift's history.
+    it('lists every catalog lift in the datalist', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      const { container } = render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      const options = datalistOptionValues(container);
+      expect(LIFT_CATALOG.length).toBeGreaterThan(0);
+      for (const lift of LIFT_CATALOG) {
+        expect(options).toContain(lift.name);
+      }
+      expect(options).toContain('Incline Bench Press');
+    });
+
+    it('lists a custom lift that shares a catalog name only once', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      const { container } = render(
+        <ImportWizard
+          programs={PROGRAMS}
+          customLifts={[{ ...CUSTOM_LIFT, id: 'custom-front-squat', name: 'Front Squat' }]}
+        />,
+      );
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      const options = datalistOptionValues(container);
+      expect(options.filter((option) => option === 'Front Squat')).toHaveLength(1);
+    });
+
+    it('resolves a row to a catalog lift without offering to create a custom one', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 2, updated: 0, skipped: 0, batchId: 'batch-catalog' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      for (const rowIndex of [1, 2]) {
+        const input = screen.getByLabelText(`Lift name for row ${rowIndex}`);
+        await user.clear(input);
+        await user.type(input, 'Incline Bench Press');
+        expect(within(input.closest('tr')!).queryByText(/No match — create/i)).not.toBeInTheDocument();
+      }
+
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+
+      const [, , , opts] = mockCommit.mock.calls[0] as [
+        string,
+        File,
+        string,
+        { liftOverrides?: Record<number, string> },
+      ];
+      expect(opts.liftOverrides).toEqual({ 1: 'Incline Bench Press', 2: 'Incline Bench Press' });
+      expect(mockCreateCustomLift).not.toHaveBeenCalled();
     });
 
     it('resolves an exact-case match to a custom lift over a case-insensitive canonical fallback', async () => {
