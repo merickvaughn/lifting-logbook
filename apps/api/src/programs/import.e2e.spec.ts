@@ -660,9 +660,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
           await importCsv(program, csv, `?mode=preview&destination=${destination}`)
         ).json().preview.deltas.map((d: { label: string }) => d.label);
 
-      expect(
-        await labelsFor('p3-built-in-tm-label', 'Date Updated,Lift,Weight\n1/1/2026,Bench P.,185', 'training-maxes'),
-      ).toEqual(['Bench Press']);
+      expect(await labelsFor('p3-built-in-tm-label', TM_CSV, 'training-maxes')).toEqual(['Bench Press']);
       expect(await labelsFor('p3-built-in-goal-label', GOALS_CSV, 'strength-goals')).toEqual(
         expect.arrayContaining(['Bench Press']),
       );
