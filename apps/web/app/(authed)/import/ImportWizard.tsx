@@ -179,11 +179,14 @@ function filterDeltas(deltas: ImportDelta[], filter: ReviewFilter): ImportDelta[
 
 export function ImportWizard({
   programs,
+  programsLoadFailed = false,
   customLifts: initialCustomLifts,
   unit = 'lbs',
 }: {
   /** Where this user can import to. The first is preselected. */
   programs: ImportTarget[];
+  /** A fetch behind `programs` failed, so it may be missing some, including the active one. */
+  programsLoadFailed?: boolean;
   /**
    * The user's custom lifts, for the REVIEW step's ambiguous-row remap
    * datalist (#911). Required, not optional-with-a-[]-default: silently
@@ -273,11 +276,15 @@ export function ImportWizard({
   const selectedProgram = programs.find((p) => p.id === programId);
   const availableKinds = kindsForTarget(selectedProgram);
   const destinationUnavailable = destination !== null && !availableKinds.includes(destination);
-  // Derived rather than cleared on change, so switching back to a custom program
-  // restores a tab the user had already chosen to import as a program.
-  const tabChoicesForProgram: SheetTabChoices = Object.fromEntries(
-    Object.entries(tabChoices).filter(([, kind]) => availableKinds.includes(kind)),
-  );
+
+  // A template can't take a program file, so moving to one unchecks any tab chosen as one.
+  function selectProgram(id: string) {
+    const kinds = kindsForTarget(programs.find((p) => p.id === id));
+    setProgramId(id);
+    setTabChoices((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([, kind]) => kinds.includes(kind))),
+    );
+  }
   const previewBody = preview?.preview ?? null;
 
   function mappingKey(m: ColumnMapping): string {
@@ -586,7 +593,7 @@ export function ImportWizard({
 
   // Tabs checked in the overview that this run has not committed yet.
   const pendingSheetTabs: QueuedTab[] = (sheetTabs ?? []).flatMap((t) => {
-    const kind = tabChoicesForProgram[t.name];
+    const kind = tabChoices[t.name];
     return kind && t.csv !== null && !isCompleted({ name: t.name, kind }) ? [{ name: t.name, csv: t.csv, kind }] : [];
   });
 
@@ -1153,11 +1160,19 @@ export function ImportWizard({
                 Drop in any CSV — lift history, training maxes, strength goals, or a program.
                 We&apos;ll figure out what it is.
               </p>
-              {programs.length === 0 ? (
-                <p className={styles.infoBox}>
-                  You don&apos;t have a program yet.{' '}
-                  <Link href="/programs">Choose one</Link> to import into.
+              {programsLoadFailed && (
+                <p className={styles.errorNote}>
+                  We couldn&apos;t load all of your programs, so this list may be incomplete. Reload
+                  the page to try again.
                 </p>
+              )}
+              {programs.length === 0 ? (
+                !programsLoadFailed && (
+                  <p className={styles.infoBox}>
+                    You don&apos;t have a program yet.{' '}
+                    <Link href="/programs">Choose one</Link> to import into.
+                  </p>
+                )
               ) : (
                 <div className={styles.field}>
                   <label htmlFor="import-program" className={styles.fieldLabel}>
@@ -1167,7 +1182,7 @@ export function ImportWizard({
                     id="import-program"
                     className={styles.select}
                     value={programId}
-                    onChange={(e) => setProgramId(e.target.value)}
+                    onChange={(e) => selectProgram(e.target.value)}
                   >
                     {programs.map((p) => (
                       <option key={p.id} value={p.id}>
@@ -1250,7 +1265,7 @@ export function ImportWizard({
                       programId={programId}
                       tabs={sheetTabs}
                       kinds={availableKinds}
-                      choices={tabChoicesForProgram}
+                      choices={tabChoices}
                       onChange={setTabChoices}
                       previews={tabPreviews}
                       setPreviews={setTabPreviews}

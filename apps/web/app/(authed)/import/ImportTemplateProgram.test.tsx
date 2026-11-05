@@ -174,7 +174,27 @@ describe('ImportWizard with a template program (#1115)', () => {
       expect(within(screen.getByLabelText('Import LIFT_RECORDS as')).queryByRole('option', { name: /^Program/ })).toBeNull();
     });
 
-    it('drops a tab chosen as a program when the picker moves to a template, and restores it on the way back', async () => {
+    it('lets a tab that is only a best guess at a program be imported as something else on a template', async () => {
+      const user = userEvent.setup();
+      const bestGuess: GoogleSheetTab = {
+        ...sheetTab('MYSTERY', 'program-spec'),
+        classification: { type: null, confidence: 0.5, bucket: 'medium', reasons: [], alternatives: [] },
+      };
+      mockFetchSheet.mockResolvedValue({ tabs: [bestGuess] });
+      mockPreview.mockResolvedValue(previewAs('lift-records'));
+      render(<ImportWizard programs={[TEMPLATE]} customLifts={[]} />);
+
+      await fetchWorkbook(user);
+      await user.click(within(rowFor('MYSTERY')).getByRole('checkbox'));
+
+      expect(screen.getByLabelText('Import MYSTERY as')).toHaveValue('lift-records');
+      await waitFor(() =>
+        expect(mockPreview).toHaveBeenCalledWith('5-3-1', expect.any(File), 'lift-records'),
+      );
+      expect(screen.getByRole('button', { name: 'Import 1 tab' })).toBeEnabled();
+    });
+
+    it('unchecks a tab chosen as a program when the picker moves to a template', async () => {
       const user = userEvent.setup();
       mockFetchSheet.mockResolvedValue({
         tabs: [sheetTab('LIFT_RECORDS', 'lift-records'), sheetTab('PROGRAM', 'program-spec')],
@@ -197,8 +217,33 @@ describe('ImportWizard with a template program (#1115)', () => {
       ).toBe(false);
 
       await user.selectOptions(screen.getByLabelText('Program'), 'prog-1');
-      expect(within(rowFor('PROGRAM')).getByRole('checkbox')).toBeChecked();
-      expect(screen.getByRole('button', { name: 'Import 2 tabs' })).toBeEnabled();
+      expect(within(rowFor('PROGRAM')).getByRole('checkbox')).not.toBeChecked();
+      expect(within(rowFor('PROGRAM')).getByRole('checkbox')).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Import 1 tab' })).toBeEnabled();
+    });
+  });
+
+  describe('when a program fetch failed', () => {
+    const LOAD_FAILED = /couldn.t load all of your programs/i;
+
+    it('says the list may be incomplete instead of saying the user has no program', () => {
+      render(<ImportWizard programs={[]} programsLoadFailed customLifts={[]} />);
+
+      expect(screen.getByText(LOAD_FAILED)).toBeInTheDocument();
+      expect(screen.queryByText(/don.t have a program yet/i)).not.toBeInTheDocument();
+    });
+
+    it('still offers the programs that did load', () => {
+      render(<ImportWizard programs={[CUSTOM]} programsLoadFailed customLifts={[]} />);
+
+      expect(screen.getByText(LOAD_FAILED)).toBeInTheDocument();
+      expect(screen.getByLabelText('Program')).toHaveValue('prog-1');
+    });
+
+    it('shows no warning when nothing failed', () => {
+      render(<ImportWizard programs={[CUSTOM]} customLifts={[]} />);
+
+      expect(screen.queryByText(LOAD_FAILED)).not.toBeInTheDocument();
     });
   });
 });

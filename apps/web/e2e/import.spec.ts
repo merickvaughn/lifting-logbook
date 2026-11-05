@@ -19,7 +19,8 @@ test.beforeAll(async ({ browser }, testInfo) => {
   await page.close();
 });
 
-// The Source step's program-picker lists custom programs; opt the mock into one.
+// The mock's active program is the 5-3-1 template, which the picker preselects. Opt the
+// mock into a custom program too; a test targets it by selecting it.
 test.beforeEach(async ({ request }) => {
   await request.get(`${MOCK_API}/__reset?withCustomProgram=true`);
 });
@@ -46,8 +47,9 @@ test('import wizard: a user on a template with no custom program can import (#11
 test('import wizard: Source → Classify → Review → Preview → Done', async ({ page }) => {
   await page.goto('/import');
 
-  // Source step: pick a program (pre-selected) and upload a CSV.
+  // Source step: pick a custom program and upload a CSV.
   await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
+  await page.getByLabel('Program').selectOption({ label: 'My Custom Program' });
   await page.getByLabel('CSV file').setInputFiles({
     name: 'training_maxes.csv',
     mimeType: 'text/csv',

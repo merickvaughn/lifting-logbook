@@ -55,9 +55,9 @@ export default async function ImportPage() {
     getUserSettings(),
   ]);
 
-  // On fetch failure we render with an empty list so the wizard shows its "choose
-  // a program first" guidance rather than crashing; the failure is logged so the
-  // upstream fetch problem stays observable.
+  // On fetch failure we render what we have, and tell the wizard the list may be
+  // incomplete rather than crashing; the failure is logged so the upstream fetch
+  // problem stays observable.
   let customPrograms: CustomProgramSummaryResponse[];
   if (programsResult.status === 'fulfilled') {
     customPrograms = programsResult.value;
@@ -101,5 +101,12 @@ export default async function ImportPage() {
     unit = DEFAULT_WEIGHT_UNIT;
   }
 
-  return <ImportWizard programs={programs} customLifts={customLifts} unit={unit} />;
+  return (
+    <ImportWizard
+      programs={programs}
+      programsLoadFailed={programsResult.status === 'rejected' || settingsResult.status === 'rejected'}
+      customLifts={customLifts}
+      unit={unit}
+    />
+  );
 }

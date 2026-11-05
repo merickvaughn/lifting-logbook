@@ -20,15 +20,18 @@ jest.mock('@/lib/active-program', () => ({
 jest.mock('./ImportWizard', () => ({
   ImportWizard: ({
     programs,
+    programsLoadFailed,
     customLifts,
     unit,
   }: {
     programs: unknown[];
+    programsLoadFailed: boolean;
     customLifts: unknown[];
     unit: unknown;
   }) => (
     <div
       data-programs={JSON.stringify(programs)}
+      data-programs-load-failed={String(programsLoadFailed)}
       data-custom-lifts={JSON.stringify(customLifts)}
       data-unit={JSON.stringify(unit)}
     >
@@ -64,6 +67,11 @@ async function renderedPrograms(): Promise<{ id: string; name: string; isTemplat
   const encoded = html.match(/data-programs="([^"]*)"/)?.[1];
   if (encoded === undefined) throw new Error('data-programs attribute not found');
   return JSON.parse(encoded.replace(/&quot;/g, '"'));
+}
+
+async function programsLoadFailed(): Promise<string | undefined> {
+  const html = renderToStaticMarkup((await ImportPage()) as ReactElement);
+  return html.match(/data-programs-load-failed="([^"]*)"/)?.[1];
 }
 
 describe('ImportPage — where a user can import to (#1115)', () => {
@@ -134,6 +142,7 @@ describe('ImportPage — where a user can import to (#1115)', () => {
       'ImportPage: user settings fetch failed, omitting active program',
       expect.any(Error),
     );
+    expect(await programsLoadFailed()).toBe('true');
   });
 
   it('still offers the active template when the custom programs fetch fails', async () => {
@@ -142,6 +151,14 @@ describe('ImportPage — where a user can import to (#1115)', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
 
     expect((await renderedPrograms()).map((p) => p.id)).toEqual(['5-3-1']);
+    expect(await programsLoadFailed()).toBe('true');
+  });
+
+  it('does not report a load failure when both fetches succeed', async () => {
+    mockedFetchPrograms.mockResolvedValue([]);
+    mockedGetUserSettings.mockResolvedValue({ activeProgram: null });
+
+    expect(await programsLoadFailed()).toBe('false');
   });
 });
 
