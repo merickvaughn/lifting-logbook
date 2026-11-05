@@ -140,13 +140,23 @@ them, like every other table.
   a name that is already an alternative name. Both are a case-insensitive 409, matching the
   `canonicalAliasFor` guard.
 
+**Writers that must carry the new data.** These name their fields or tables explicitly, so new data
+would be lost or left behind with no error:
+
+| # | Writer | What it does today | What it must do |
+|---|---|---|---|
+| 1 | `saveWorkout` (`workout.repository.ts`) | Deletes a workout's records and re-creates them from a fixed field list | Include `modifications`, or a save silently clears them |
+| 2 | `deleteCurrentMacrocycle` (`macrocycle-generation.service.ts`) | Deletes a program's training maxes and history, through a `Pick<>` of named repositories | Also delete `lift_modification_max` for the program, or old own maxes reappear on the next macrocycle 1, the same defect as [D2](../domain-model.md#defects). Modifications themselves stay, because they belong to the user, like custom lifts |
+| 3 | `deleteAllHistory` | Deletes a program's history | Keep deleting own-max history. The `modificationId: null` filter applies to reads only |
+| 4 | `saveTrainingMaxes` callers in `macrocycle-generation.service.ts` | Save the maxes `updateMaxes` returns | Also save the own maxes it returns, in the same request transaction |
+
 ### Alternatives considered
 
 | # | Alternative | Why not |
 |---|---|---|
-| 1 | Join table `lift_record_modification` instead of a `String[]` | Referential integrity, but the import path writes with `createMany({ skipDuplicates })`, which returns no row ids to join on, and every set read gains a join. The schema already uses `String[]` this way, and the archive rule covers the dangling-id case |
+| 1 | Join table `lift_record_modification` instead of a `String[]` | Referential integrity, but every set read gains a join, and each bulk write gains a step: `createManyAndReturn`, which only returns the rows it created, then a second insert keyed on them. The schema already uses `String[]` this way, and the archive rule covers the dangling-id case |
 | 2 | Record per lift per workout, in an override side-table | Owner decision 5. It can't show mixed grip on set 1 only |
-| 3 | A `modification` column on `training_max` | More than 50 production files mention training maxes, most keying them by `lift`, such as `maxMap.get(wl.lift)`. A second row per lift would silently overwrite entries in those maps unless every reader filters. It also changes the unique key, and a nullable column there doesn't enforce uniqueness in Postgres by default. The side table leaves all of those readers alone |
+| 3 | A `modification` column on `training_max` | More than 50 production files mention training maxes, and at least 8 look a max up by lift, such as `maxMap.get(wl.lift)` in the logger. A second row per lift could silently replace the lift's own max in those lookups unless every reader filters. It also changes the unique key, and a nullable column there doesn't enforce uniqueness in Postgres by default. The side table leaves those readers alone, at the cost of the writers listed under "Writers that must carry the new data" |
 | 4 | A composite key in `training_max.lift` (`cable-curl~<id>`) | Needs no reader changes, but puts one more vocabulary in a column [#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118) is trying to clean up, and raw keys would show up in max lists |
 | 5 | Keep variations as separate custom lifts linked to a parent | That is today's split history plus a pointer, and it can't be toggled mid-workout |
 | 6 | Parse existing notes into modifications | Repeats [D1](../domain-model.md#defects). `plus 3 mixed` and `no chalk` are read differently by a human and a regex |
@@ -335,6 +345,8 @@ so it changes with the code, not now.
 - [ ] A set with two `own` modifications is rejected. Check: a `CreateLiftRecordDto` or controller test asserts a 400.
 - [ ] Progression follows the three rules. Check: `updateMaxes` tests assert `none` moves nothing, `own` moves only its own max (including with no max yet), and `lift` or no modification moves the lift's max. Existing tests pass unchanged.
 - [ ] A lift's max history is unaffected by own-max changes. Check: an adapter test asserts the existing history read excludes rows with a `modificationId`.
+- [ ] Saving a workout keeps its sets' modifications. Check: a `saveWorkout` test in both adapters saves a record with a modification and reads it back.
+- [ ] Deleting a macrocycle clears own maxes and keeps modifications. Check: a `deleteCurrentMacrocycle` test in both adapters asserts `lift_modification_max` and own-max history are empty for the program, and the modification still lists. A new macrocycle's `updateMaxes` save also persists own maxes.
 - [ ] The Review step offers both outcomes for an unresolved row. Check: an `ImportWizard` test chooses "Modification of a lift" for `Wide-Grip CBL Curls`, with `createCustomLift` not called, and the row counts as resolved.
 - [ ] A re-import resolves with no prompt and creates nothing new. Check: an `import.e2e.spec.ts` test imports a sheet twice and asserts the second run reports no unresolved rows and only skips.
 - [ ] Rows that collapse onto one lift aren't lost. Check: an `import.e2e.spec.ts` test imports `CBL Curls` set 1 and `Wide-Grip CBL Curls` set 1 in one workout and asserts both are stored.
@@ -370,4 +382,4 @@ built.
 - [`docs/standards/training-max-precision.md`](../standards/training-max-precision.md): rounding for a plan computed from a modification's max
 - [`docs/standards/error-fallback-test-coverage.md`](../standards/error-fallback-test-coverage.md): the fallback rule for a failed fetch
 - PostgreSQL, [Arrays](https://www.postgresql.org/docs/current/arrays.html) and [Unique Constraints](https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-UNIQUE-CONSTRAINTS) (null values are distinct by default)
-- Prisma, [`createMany`](https://www.prisma.io/docs/orm/reference/prisma-client-reference#createmany) (returns a count, not rows)
+- Prisma, [`createManyAndReturn`](https://www.prisma.io/docs/orm/reference/prisma-client-reference#createmanyandreturn) (the bulk write a join table would need)
