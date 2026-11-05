@@ -53,6 +53,20 @@ export class CustomLiftConflictError extends Error {
   }
 }
 
+export class LiftModificationNotFoundError extends Error {
+  constructor(public readonly id: string) {
+    super(`Lift modification '${id}' not found`);
+    this.name = 'LiftModificationNotFoundError';
+  }
+}
+
+export class LiftModificationConflictError extends Error {
+  constructor(public readonly modificationName: string) {
+    super(`This lift already has a modification named '${modificationName}'`);
+    this.name = 'LiftModificationConflictError';
+  }
+}
+
 export class FocusBlockNotFoundError extends Error {
   constructor(public readonly id: string) {
     super(`Focus block '${id}' not found`);

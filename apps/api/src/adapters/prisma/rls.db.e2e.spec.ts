@@ -71,6 +71,7 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     await owner.trainingMax.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.focusBlock.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.focusDayState.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
+    await owner.liftModification.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
   };
 
   beforeAll(async () => {
@@ -116,6 +117,11 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
         workoutNum: 1,
         state: { modes: {}, picks: {}, trims: {}, placement: 'after', order: null, dismissed: false },
       })),
+    });
+
+    // Seed both users' lift modifications (#1151).
+    await owner.liftModification.createMany({
+      data: [USER_ALICE, USER_BOB].map((userId) => ({ userId, lift: 'bench-press', name: 'Paused' })),
     });
 
     // Seed a custom program + spec for Alice (custom_program_spec has no userId — it is isolated
@@ -205,6 +211,29 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     const bobBlock = await owner.focusBlock.findFirst({ where: { userId: USER_BOB } });
     expect(bobBlock?.priority).toBe(1);
     expect(await owner.focusDayState.count({ where: { userId: USER_BOB } })).toBe(1);
+  });
+
+  it('isolates lift_modification reads by GUC on an unscoped query, and fails closed (#1151)', async () => {
+    const rows = await asUser(appDb, USER_ALICE, (tx) => tx.liftModification.findMany());
+    expect(rows.map((row) => row.userId)).toEqual([USER_ALICE]);
+    expect(await asUser(appDb, null, (tx) => tx.liftModification.count())).toBe(0);
+  });
+
+  it("cannot write another user's lift_modification rows (#1151)", async () => {
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) =>
+        tx.liftModification.create({ data: { userId: USER_BOB, lift: 'squat', name: 'Paused' } }),
+      ),
+    ).rejects.toThrow();
+    // An unscoped update or delete reaches only Alice's own row.
+    const updated = await asUser(appDb, USER_ALICE, (tx) =>
+      tx.liftModification.updateMany({ data: { description: 'Alice was here' } }),
+    );
+    expect(updated.count).toBe(1);
+    const deleted = await asUser(appDb, USER_ALICE, (tx) => tx.liftModification.deleteMany());
+    expect(deleted.count).toBe(1);
+    const bobRow = await owner.liftModification.findFirstOrThrow({ where: { userId: USER_BOB } });
+    expect(bobRow.description).toBe('');
   });
 
   it('isolates custom_program_spec through its parent program FK policy', async () => {

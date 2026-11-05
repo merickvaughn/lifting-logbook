@@ -20,6 +20,7 @@ import {
   MacrocycleDashboardResponse,
   MacrocyclePlanResponse,
   MacrocycleWeekSummary,
+  LiftModificationRef,
   LiftOverrideResponse,
   LiftRecordResponse,
   LiftingProgramSpecResponse,
@@ -71,7 +72,26 @@ export const toTrainingMaxHistoryEntryResponse = (
   goalMet: e.goalMet,
 });
 
-export const toLiftRecordResponse = (r: LiftRecord): LiftRecordResponse => ({
+/**
+ * A set's modifications as its response names them, left out when there are none. An id with no
+ * name has lost its row to a delete racing a log, so it is not named; `modificationNamesFor` logs it.
+ */
+const modificationRefs = (
+  r: LiftRecord,
+  names: ReadonlyMap<string, string>,
+): { modifications?: LiftModificationRef[] } => {
+  const refs = (r.modifications ?? []).flatMap((id) => {
+    const name = names.get(id);
+    return name === undefined ? [] : [{ id, name }];
+  });
+  return refs.length > 0 ? { modifications: refs } : {};
+};
+
+/** `modificationNames` comes from `modificationNamesFor`. */
+export const toLiftRecordResponse = (
+  r: LiftRecord,
+  modificationNames: ReadonlyMap<string, string>,
+): LiftRecordResponse => ({
   id: buildLiftRecordId(r.program, r),
   program: r.program,
   macrocycleNum: r.macrocycleNum,
@@ -83,6 +103,7 @@ export const toLiftRecordResponse = (r: LiftRecord): LiftRecordResponse => ({
   weight: r.weight,
   reps: r.reps,
   notes: r.notes,
+  ...modificationRefs(r, modificationNames),
 });
 
 export const toLiftingProgramSpecResponse = (
@@ -325,6 +346,8 @@ export interface WorkoutResponseOptions {
    * addresses that row for `PATCH /lift-records/:id` (issue #978).
    */
   renamedLifts?: ReadonlyMap<string, string> | undefined;
+  /** The names of the modifications on the records' sets, from `modificationNamesFor`. */
+  modificationNames?: ReadonlyMap<string, string> | undefined;
 }
 
 /**
@@ -365,6 +388,7 @@ export const toWorkoutResponse = (
     macrocycleStartDate,
     offset,
     renamedLifts,
+    modificationNames = new Map<string, string>(),
   } = options;
 
   // A record stored by catalog id, as import stores it, has lost its spelling, so it
@@ -391,6 +415,7 @@ export const toWorkoutResponse = (
       reps: r.reps,
       amrap: r.notes.toUpperCase().includes('AMRAP'),
       notes: r.notes,
+      ...modificationRefs(r, modificationNames),
     };
     const lift = renamedLifts?.get(r.lift) ?? liftByStoredId.get(r.lift) ?? r.lift;
     const occurrence = r.occurrence ?? 0;

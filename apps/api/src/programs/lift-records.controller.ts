@@ -18,6 +18,7 @@ import {
   LiftRecordResponse,
 } from '@lifting-logbook/types';
 import {
+  LiftRecord,
   buildLiftRecordId,
   buildSkippedDetail,
   classifyImportRows,
@@ -25,13 +26,16 @@ import {
   liftRecordNaturalKey,
   pairWithRowNumber,
   parseCsvText,
+  parseLiftRecordId,
   parseLiftRecords,
   toUTCMidnight,
   validateLiftImport,
+  withModifications,
   withOccurrence,
 } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { assertSetModifications, modificationNamesFor } from '../lifts/lift-modification.util';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
@@ -42,6 +46,12 @@ import { toLiftRecordResponse } from './mappers';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { RlsTxTimeout } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
+
+/** Whether two sets carry the same modifications, in any order. */
+function sameModifications(a: LiftRecord, b: LiftRecord): boolean {
+  const ids = (r: LiftRecord) => [...(r.modifications ?? [])].sort().join();
+  return ids(a) === ids(b);
+}
 
 @Controller('programs/:program')
 export class LiftRecordsController {
@@ -54,10 +64,12 @@ export class LiftRecordsController {
     @Param('program') program: string,
     @CurrentUser() user: AuthUser,
   ): Promise<LiftRecordResponse[]> {
-    const { liftRecord, macrocycleDashboard } = await this.factory.forUser(user);
+    const repos = await this.factory.forUser(user);
+    const { liftRecord, macrocycleDashboard } = repos;
     const dashboard = await macrocycleDashboard.getMacrocycleDashboard(program);
     const records = await liftRecord.getLiftRecords(program, dashboard.macrocycleNum);
-    return records.map(toLiftRecordResponse);
+    const names = await modificationNamesFor(repos, records);
+    return records.map((r) => toLiftRecordResponse(r, names));
   }
 
   @Post('lift-records')
@@ -80,7 +92,10 @@ export class LiftRecordsController {
       );
     }
 
-    const { liftRecord, macrocycleScheduledWorkout } = await this.factory.forUser(user);
+    const repos = await this.factory.forUser(user);
+    const { liftRecord, macrocycleScheduledWorkout } = repos;
+
+    const modificationNames = await assertSetModifications(repos, body.lift, body.modifications ?? []);
 
     let effectiveDate: Date;
     if (body.date) {
@@ -116,7 +131,7 @@ export class LiftRecordsController {
       effectiveDate = toUTCMidnight(match?.scheduledDate ?? new Date());
     }
 
-    const record = {
+    const record: LiftRecord = {
       program,
       macrocycleNum: body.macrocycleNum,
       workoutNum: body.workoutNum,
@@ -127,6 +142,7 @@ export class LiftRecordsController {
       weight: body.weight,
       reps: body.reps,
       notes: body.notes ?? '',
+      ...withModifications(body.modifications),
     };
     const written = await liftRecord.appendLiftRecords(program, [record]);
     if (written === 0) {
@@ -152,9 +168,10 @@ export class LiftRecordsController {
         existing &&
         existing.weight === record.weight &&
         existing.reps === record.reps &&
-        existing.notes === record.notes
+        existing.notes === record.notes &&
+        sameModifications(existing, record)
       ) {
-        return toLiftRecordResponse(existing);
+        return toLiftRecordResponse(existing, modificationNames);
       }
       const existingId = existing ? buildLiftRecordId(program, existing) : null;
       throw new ConflictException(
@@ -167,7 +184,7 @@ export class LiftRecordsController {
             : '.'),
       );
     }
-    return toLiftRecordResponse(record);
+    return toLiftRecordResponse(record, modificationNames);
   }
 
   /**
@@ -275,13 +292,23 @@ export class LiftRecordsController {
     @Body() body: UpdateLiftRecordDto,
     @CurrentUser() user: AuthUser,
   ): Promise<LiftRecordResponse> {
-    const { liftRecord } = await this.factory.forUser(user);
-    const updated = await liftRecord.updateLiftRecord(program, id, body);
-    if (!updated) {
-      throw new NotFoundException(
-        `Lift record '${id}' not found for program '${program}'`,
-      );
+    const repos = await this.factory.forUser(user);
+    const { liftRecord } = repos;
+    const notFound = () => new NotFoundException(`Lift record '${id}' not found for program '${program}'`);
+
+    let checkedNames: ReadonlyMap<string, string> | undefined;
+    if (body.modifications !== undefined) {
+      // The rule needs the set's lift and what it already has, so this reads the record first.
+      const key = parseLiftRecordId(program, id);
+      const stored = key
+        ? (await liftRecord.getLiftRecords(program, key.macrocycleNum)).find((r) => buildLiftRecordId(program, r) === id)
+        : undefined;
+      if (!stored) throw notFound();
+      checkedNames = await assertSetModifications(repos, stored.lift, body.modifications, stored.modifications);
     }
-    return toLiftRecordResponse(updated);
+
+    const updated = await liftRecord.updateLiftRecord(program, id, body);
+    if (!updated) throw notFound();
+    return toLiftRecordResponse(updated, checkedNames ?? (await modificationNamesFor(repos, [updated])));
   }
 }

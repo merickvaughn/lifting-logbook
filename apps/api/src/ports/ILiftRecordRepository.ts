@@ -37,7 +37,7 @@ export interface ILiftRecordRepository {
   updateLiftRecord(
     program: string,
     id: string,
-    updates: Partial<Pick<LiftRecord, 'weight' | 'reps' | 'notes'>>,
+    updates: Partial<Pick<LiftRecord, 'weight' | 'reps' | 'notes' | 'modifications'>>,
   ): Promise<LiftRecord | null>;
 
   /**

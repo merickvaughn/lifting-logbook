@@ -9,6 +9,7 @@ import {
 import { LiftRecord, liftIdFor } from '@lifting-logbook/core';
 import { WorkoutResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { modificationNamesFor } from '../lifts/lift-modification.util';
 import { AuthUser } from '../ports/auth';
 import { WorkoutNotFoundError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
@@ -34,8 +35,9 @@ export class WorkoutsController {
     if (!isValidWorkoutNum(workoutNum)) {
       throw new BadRequestException('workoutNum must be a positive integer');
     }
+    const repos = await this.factory.forUser(user);
     const { workout, macrocycleDashboard, macrocycleScheduledWorkout, liftingProgramSpec, workoutDateOverride, workoutLiftOverride, workoutSkipOverride } =
-      await this.factory.forUser(user);
+      repos;
     const [dashboard, spec] = await Promise.all([
       currentMacrocycleOrFirst(macrocycleDashboard, program),
       liftingProgramSpec.getProgramSpec(program),
@@ -108,6 +110,7 @@ export class WorkoutsController {
       // The day's offset, or null: no key means the program has no day for it.
       offset: workoutKey ? workoutKey.offset : null,
       renamedLifts: renamed,
+      modificationNames: await modificationNamesFor(repos, adjustedRecords),
     });
   }
 }

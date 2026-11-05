@@ -110,6 +110,31 @@ export interface CustomLift extends Lift {
 }
 
 /**
+ * What a modification does to training maxes: `none` plans from the lift's max and moves no max,
+ * `lift` counts toward the lift's max, and `own` plans from and moves a max of its own.
+ */
+export const LIFT_MODIFICATION_MAX_MODES = ['none', 'lift', 'own'] as const;
+
+export type LiftModificationMaxMode = (typeof LIFT_MODIFICATION_MAX_MODES)[number];
+
+/**
+ * A change to how a lift is performed, such as Wide grip on Cable Curl. The set stays a set of
+ * that lift, and records which modifications were on. See ADR-041.
+ */
+export interface LiftModification {
+  id: string;
+  userId: string;
+  /** The lift's id: a catalog id, or a custom lift's uuid. */
+  lift: string;
+  name: string;
+  description: string;
+  maxMode: LiftModificationMaxMode;
+  /** Set when a delete finds a logged set still naming it. */
+  archivedAt: Date | null;
+  createdAt: Date;
+}
+
+/**
  * A named lift. Typed as a branded string so new lifts can be added without
  * a code change, while still enabling autocomplete from LIFT_NAMES.
  */

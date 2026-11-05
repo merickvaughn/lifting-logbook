@@ -17,4 +17,9 @@ export interface LiftRecord {
   weight: number;
   reps: number;
   notes: string;
+  /**
+   * The ids of the lift modifications on for this set; absent means none. Not part of the
+   * natural key or public id: it is still set N of this lift (ADR-041).
+   */
+  modifications?: string[];
 }

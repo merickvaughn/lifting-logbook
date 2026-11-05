@@ -61,6 +61,14 @@ export function withOccurrence(occurrence: number | undefined): { occurrence?: n
   return occurrence ? { occurrence } : {};
 }
 
+/**
+ * `{ modifications }` when there are any, else `{}`, so an unmodified record keeps the shape it
+ * had before modifications existed (ADR-041). Spread it into the object.
+ */
+export function withModifications(modifications: string[] | undefined): { modifications?: string[] } {
+  return modifications?.length ? { modifications } : {};
+}
+
 /** Inverse of {@link liftRecordSetSegment}; null when malformed. Occurrence 0 is left absent. */
 function parseSetSegment(segment: string): { setNum: number; occurrence?: number } | null {
   const [set = '', occ, ...extra] = segment.split('~');

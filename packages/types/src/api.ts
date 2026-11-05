@@ -1,4 +1,4 @@
-import { BodyWeightEntry, LiftClassification, LiftName, MovementProfile, WeightUnit, WeekNumber, MacrocycleNumber, WeekType } from './domain';
+import { BodyWeightEntry, LiftClassification, LiftModificationMaxMode, LiftName, MovementProfile, WeightUnit, WeekNumber, MacrocycleNumber, WeekType } from './domain';
 
 // ---------------------------------------------------------------------------
 // Training Maxes
@@ -83,6 +83,8 @@ export interface SetResponse {
   amrap: boolean;
   /** Free-text notes on the logged record; `''` when none. */
   notes: string;
+  /** The modifications on for this set, present only when there are any. */
+  modifications?: LiftModificationRef[];
 }
 
 /** A single lift's sets within a workout. */
@@ -167,6 +169,8 @@ export interface LiftRecordResponse {
   weight: number;
   reps: number;
   notes: string;
+  /** The modifications on for this set, present only when there are any. */
+  modifications?: LiftModificationRef[];
 }
 
 /** Request body for logging a new lift record. */
@@ -183,6 +187,11 @@ export interface CreateLiftRecordRequest {
   weight: number;
   reps: number;
   notes?: string;
+  /**
+   * The ids of the modifications on for this set. Each must belong to this user and to `lift`,
+   * with at most one whose `maxMode` is `own`. Omit when there are none.
+   */
+  modifications?: string[];
 }
 
 /** Request body for updating an existing lift record (in-session editing). */
@@ -190,6 +199,8 @@ export interface UpdateLiftRecordRequest {
   weight?: number;
   reps?: number;
   notes?: string;
+  /** Replaces the set's list, under the rules on {@link CreateLiftRecordRequest.modifications}. */
+  modifications?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -901,4 +912,44 @@ export interface UpdateCustomLiftRequest {
   classification?: LiftClassification;
   movementProfile?: MovementProfile;
   isBodyweightComponent?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Lift Modifications
+// ---------------------------------------------------------------------------
+
+/** Serialized lift modification as returned by the API. `userId` is intentionally omitted. */
+export interface LiftModificationResponse {
+  id: string; // uuid — the REST key
+  /** The lift's id: a catalog id, or a custom lift's uuid. */
+  lift: string;
+  name: string;
+  description: string;
+  maxMode: LiftModificationMaxMode;
+  createdAt: string; // ISO 8601 date string
+}
+
+/**
+ * A modification as a logged set names it. It carries the name so an archived modification is
+ * still named on the sets that used it, though the list no longer shows it.
+ */
+export interface LiftModificationRef {
+  id: string;
+  name: string;
+}
+
+/** Request body for POST /lifts/modifications. */
+export interface CreateLiftModificationRequest {
+  /** The lift, under any name it resolves by, such as `Bench Press` or `bench-press`. */
+  lift: LiftName;
+  name: string;
+  description?: string;
+  maxMode?: LiftModificationMaxMode;
+}
+
+/** Request body for PATCH /lifts/modifications/:id. All fields optional. */
+export interface UpdateLiftModificationRequest {
+  name?: string;
+  description?: string;
+  maxMode?: LiftModificationMaxMode;
 }
