@@ -704,6 +704,8 @@ export interface ImportPreview {
   creates: number;
   updates: number;
   skips: number;
+  /** Incomplete or ambiguous rows. The commit rejects the file until each is fixed or excluded. */
+  unresolved: number;
   deltas: ImportDelta[];
 }
 

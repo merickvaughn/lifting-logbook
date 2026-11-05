@@ -241,6 +241,7 @@ function PreviewCell({ preview }: { preview: TabPreview | undefined }) {
       {res.preview ? (
         <span>
           {res.preview.creates} new · {res.preview.updates} updated · {res.preview.skips} skipped
+          {res.preview.unresolved > 0 ? ` · ${res.preview.unresolved} unresolved` : ''}
         </span>
       ) : (
         <span className={styles.errorNote}>

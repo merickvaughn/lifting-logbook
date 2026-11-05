@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type {
   ColumnMapping,
@@ -346,6 +346,54 @@ export function ImportWizard({
     }
     return map;
   }, [customLifts]);
+
+  // A remap stores a custom lift's id once it's created. Show its name instead.
+  const customLiftNames = useMemo(
+    () => new Map(customLifts.map((lift) => [lift.id, lift.name])),
+    [customLifts],
+  );
+
+  // The value a commit must send for a row's lift text, or undefined if the
+  // server wouldn't recognize it. An exact match wins, because the server's slot-map
+  // lookup is exact-case: a custom lift named "squat" is a distinct, reachable
+  // key from the canonical "Squat", so it must be honored as typed (#911
+  // review, third pass). Only text that matches nothing exactly falls back to
+  // the case-insensitive canonical form. A lift named only in a remap input
+  // can't be committed until it's created.
+  const resolveLiftValue = useCallback(
+    (raw: string): string | undefined => {
+      const trimmed = raw.trim();
+      if (!trimmed) return undefined;
+      if (exactKnownLiftKeys.has(trimmed)) return trimmed;
+      return knownLiftNamesCanonical.get(trimmed.toLowerCase());
+    },
+    [exactKnownLiftKeys, knownLiftNamesCanonical],
+  );
+
+  // The counts this import will actually produce, given what the user has
+  // excluded and remapped so far. Rows counted as unresolved would fail the
+  // whole commit (#1114).
+  const reviewCounts = useMemo(() => {
+    const counts = { creates: 0, updates: 0, skips: 0, needsLift: 0, incomplete: 0 };
+    for (const d of previewBody?.deltas ?? []) {
+      if (excludedKeys.has(d.key)) continue;
+      if (d.status === 'incomplete') {
+        counts.incomplete += 1;
+      } else if (d.status === 'ambiguous') {
+        const override = d.rowIndex !== undefined ? liftOverrides.get(d.rowIndex) : undefined;
+        if (resolveLiftValue(override ?? d.originalLift ?? '')) counts.creates += 1;
+        else counts.needsLift += 1;
+      } else if (d.kind === 'create') {
+        counts.creates += 1;
+      } else if (d.kind === 'update') {
+        counts.updates += 1;
+      } else {
+        counts.skips += 1;
+      }
+    }
+    return counts;
+  }, [previewBody, excludedKeys, liftOverrides, resolveLiftValue]);
+  const unresolvedCount = reviewCounts.needsLift + reviewCounts.incomplete;
 
   // The create-in-flight guard must be keyed by the NAME actually being
   // submitted to POST /lifts/custom, not by the row's original CSV text: N
@@ -899,56 +947,15 @@ export function ImportWizard({
         });
       } else {
         const liftOverridesRecord: Record<number, string> = {};
-        // Stale entries from a *discarded* preview (e.g. an in-flight
-        // create-new resolves after the user hits Back and re-picks a
-        // destination mid-request) must never be sent for a row that isn't
-        // even ambiguous in the CURRENT preview — d.status never changes once
-        // a row is flagged ambiguous, so this set correctly identifies every
-        // rowIndex that belongs to the preview actually being committed,
-        // resolved or not (#911 review, second pass).
-        const ambiguousDeltas = (previewBody?.deltas ?? []).filter(
-          (d) => d.status === 'ambiguous' && d.rowIndex !== undefined,
-        );
-        const currentAmbiguousRowIndexes = new Set(ambiguousDeltas.map((d) => d.rowIndex as number));
-        // A row the user has explicitly excluded (× button) must not have an
-        // override sent for it either — mirrors the same guard added to
-        // applyResolvedLiftToMatchingRows (#911 review, third pass).
-        const excludedRowIndexes = new Set(
-          ambiguousDeltas.filter((d) => excludedKeys.has(d.key)).map((d) => d.rowIndex as number),
-        );
-        for (const [rowIdx, liftId] of liftOverrides.entries()) {
-          if (!currentAmbiguousRowIndexes.has(rowIdx) || excludedRowIndexes.has(rowIdx)) continue;
-          // The controlled ambiguous-row input now stores the raw (untrimmed)
-          // typed value so a just-typed trailing space isn't eaten mid-keystroke
-          // — trim here, at the one place the value actually leaves the client
-          // (#911 review). A no-op for the common case (a lift id or a
-          // datalist-selected name, neither of which ever carries whitespace).
-          const trimmed = liftId.trim();
-          // Cleared by the user (backspaced to empty) — send no override for
-          // this row so it's committed as still-unresolved, rather than an
-          // empty string (#911 review, second pass — see the controlled-input
-          // onChange handler for why liftOverrides can now hold '').
-          if (!trimmed) continue;
-          // Exact match first: a custom lift can legitimately be named a
-          // case-variant of a canonical alias (e.g. "squat" alongside
-          // "Squat") — buildEffectiveSlotMap only lets DEFAULT_SLOT_MAP win
-          // on an *exact*-case collision, so "squat" is a distinct, genuinely
-          // reachable server-side key, not a duplicate. Only when the typed
-          // text matches nothing exactly does the case-insensitive canonical
-          // fallback apply — for a user who typed "squat" meaning the
-          // canonical "Squat", the server's slot-map lookup is exact-case, so
-          // sending literally what they typed would fail the same
-          // "not recognized" check the create-new gate just correctly steered
-          // them around (#911 review, second and third passes — the second
-          // pass's case-insensitive-only resolution here would have
-          // mis-sent an exact-case-reachable custom lift's own name instead
-          // of honoring it).
-          if (exactKnownLiftKeys.has(trimmed)) {
-            liftOverridesRecord[rowIdx] = trimmed;
-          } else {
-            const canonical = knownLiftNamesCanonical.get(trimmed.toLowerCase());
-            liftOverridesRecord[rowIdx] = canonical ?? trimmed;
-          }
+        // Walks the CURRENT preview's rows, so an override left over from a
+        // discarded preview is never sent (#911 review, second pass), nor one
+        // for a row the user excluded (third pass). A row with no override
+        // still goes through resolveLiftValue: its file text may differ from a
+        // known name only by case, which the server's exact-case lookup rejects.
+        for (const d of previewBody?.deltas ?? []) {
+          if (d.status !== 'ambiguous' || d.rowIndex === undefined || excludedKeys.has(d.key)) continue;
+          const resolved = resolveLiftValue(liftOverrides.get(d.rowIndex) ?? d.originalLift ?? '');
+          if (resolved) liftOverridesRecord[d.rowIndex] = resolved;
         }
         result = await commitImport(programId, file, destination, {
           overrides: Object.keys(columnOverridesRecord).length > 0 ? columnOverridesRecord : undefined,
@@ -1390,16 +1397,18 @@ export function ImportWizard({
                       <ul className={styles.maxEditList} aria-label="Training maxes to import">
                         {reviewMaxes
                           .filter((row) => !excludedKeys.has(row.lift))
-                          .map((row) => (
+                          .map((row) => {
+                            const liftName = customLiftNames.get(row.lift) ?? row.lift;
+                            return (
                             <li key={row.lift} className={styles.maxEditRow}>
-                              <span className={styles.maxEditLift}>{row.lift}</span>
+                              <span className={styles.maxEditLift}>{liftName}</span>
                               <input
                                 type="number"
                                 className={styles.maxEditWeight}
                                 value={row.weight}
                                 min={1}
                                 step="0.01"
-                                aria-label={`Weight for ${row.lift}`}
+                                aria-label={`Weight for ${liftName}`}
                                 onChange={(e) =>
                                   setReviewMaxes((prev) =>
                                     prev
@@ -1422,12 +1431,13 @@ export function ImportWizard({
                                 onClick={() =>
                                   setExcludedKeys((prev) => new Set([...prev, row.lift]))
                                 }
-                                aria-label={`Remove ${row.lift}`}
+                                aria-label={`Remove ${liftName}`}
                               >
                                 ×
                               </button>
                             </li>
-                          ))}
+                            );
+                          })}
                       </ul>
                       {reviewMaxes.filter((r) => !excludedKeys.has(r.lift)).length === 0 && (
                         <p className={styles.infoBox}>All rows removed. Nothing will be imported.</p>
@@ -1435,6 +1445,45 @@ export function ImportWizard({
                     </>
                   ) : (
                     <>
+                      {/* These rows can sit at the end of thousands, and the commit
+                          rejects the whole file until each is fixed or excluded (#1114). */}
+                      {reviewCounts.needsLift > 0 && (
+                        <div className={styles.infoBox}>
+                          <p>
+                            {reviewCounts.needsLift === 1
+                              ? '1 row needs a lift'
+                              : `${reviewCounts.needsLift} rows need a lift`}{' '}
+                            before this file can be imported. Pick or create a lift for each one,
+                            or exclude it.
+                          </p>
+                          <button
+                            type="button"
+                            className={styles.btnSecondary}
+                            onClick={() => setReviewFilter('ambiguous')}
+                          >
+                            Show rows that need a lift
+                          </button>
+                        </div>
+                      )}
+                      {reviewCounts.incomplete > 0 && (
+                        <div className={styles.infoBox}>
+                          <p>
+                            {reviewCounts.incomplete === 1
+                              ? '1 row is missing a required value'
+                              : `${reviewCounts.incomplete} rows are missing a required value`}
+                            . Exclude {reviewCounts.incomplete === 1 ? 'it' : 'them'}, or correct
+                            the file and upload it again.
+                          </p>
+                          <button
+                            type="button"
+                            className={styles.btnSecondary}
+                            onClick={() => setReviewFilter('incomplete')}
+                          >
+                            Show incomplete rows
+                          </button>
+                        </div>
+                      )}
+
                       {/* Filter chips */}
                       <div className={styles.reviewFilter} aria-label="Filter rows">
                         {(['all', 'new', 'updates', 'skips'] as ReviewFilter[]).map((f) => (
@@ -1535,10 +1584,11 @@ export function ImportWizard({
                             // trimming it there would eat a just-typed trailing space on every
                             // keystroke, breaking multi-word names. currentLiftValue (trimmed)
                             // is for comparisons only (empty-check, knownLiftNames lookup).
-                            const rawLiftValue =
+                            const storedLiftValue =
                               (rowIndex !== undefined ? liftOverrides.get(rowIndex) : undefined) ??
                               d.originalLift ??
                               '';
+                            const rawLiftValue = customLiftNames.get(storedLiftValue) ?? storedLiftValue;
                             const currentLiftValue = rawLiftValue.trim();
                             const draft = rowIndex !== undefined ? createDrafts.get(rowIndex) : undefined;
                             const showCreateNew =
@@ -1783,18 +1833,31 @@ export function ImportWizard({
               <h2 className={styles.stepTitle}>Preview changes</h2>
               <div className={styles.countRow}>
                 <div className={styles.countPill}>
-                  <span className={styles.countValue}>{previewBody.creates}</span>
+                  <span className={styles.countValue}>{reviewCounts.creates}</span>
                   <span className={styles.countLabel}>Create</span>
                 </div>
                 <div className={styles.countPill}>
-                  <span className={styles.countValue}>{previewBody.updates}</span>
+                  <span className={styles.countValue}>{reviewCounts.updates}</span>
                   <span className={styles.countLabel}>Update</span>
                 </div>
                 <div className={styles.countPill}>
-                  <span className={styles.countValue}>{previewBody.skips}</span>
+                  <span className={styles.countValue}>{reviewCounts.skips}</span>
                   <span className={styles.countLabel}>Skip</span>
                 </div>
+                {unresolvedCount > 0 && (
+                  <div className={styles.countPill}>
+                    <span className={styles.countValue}>{unresolvedCount}</span>
+                    <span className={styles.countLabel}>Unresolved</span>
+                  </div>
+                )}
               </div>
+
+              {unresolvedCount > 0 && (
+                <p className={styles.errorNote}>
+                  This file can&apos;t be imported until {unresolvedCount === 1 ? 'that row is' : 'those rows are'}{' '}
+                  fixed or excluded. Go back to Review to resolve {unresolvedCount === 1 ? 'it' : 'them'}.
+                </p>
+              )}
 
               {preview?.split && (
                 <div className={styles.splitCard}>
@@ -2027,7 +2090,7 @@ export function ImportWizard({
               type="button"
               className={styles.btnSuccess}
               onClick={handleCommit}
-              disabled={busy || !previewBody}
+              disabled={busy || !previewBody || unresolvedCount > 0}
             >
               {busy ? 'Importing…' : 'Commit import'}
             </button>

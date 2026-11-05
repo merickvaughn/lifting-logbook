@@ -131,6 +131,8 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(body.errors).toEqual([]);
       expect(body.preview.deltas).toHaveLength(1);
       expect(body.preview.deltas[0]).toMatchObject({ status: 'ambiguous' });
+      // #1114: the commit rejects this row until it's resolved, so it isn't a create.
+      expect(body.preview).toMatchObject({ creates: 0, unresolved: 1 });
     });
 
     it('routes a training-maxes file to training-maxes', async () => {

@@ -1120,6 +1120,7 @@ const server = createServer(async (req, res) => {
               creates: 0,
               updates: 0,
               skips: 0,
+              unresolved: AMBIGUOUS_LIFT_ROWS.length,
               deltas: AMBIGUOUS_LIFT_ROWS.map((row) => ({
                 key: `__ambiguous_${row.rowIndex}`,
                 label: `Row ${row.rowIndex}: ${row.originalLift}`,
@@ -1163,6 +1164,7 @@ const server = createServer(async (req, res) => {
             creates: 2,
             updates: 0,
             skips: 0,
+            unresolved: 0,
             deltas: [
               { key: '38:1:20251229:bench-press:1', label: 'bench-press', kind: 'create', after: '180 × 8' },
               { key: '38:1:20251229:bench-press:2', label: 'bench-press', kind: 'create', after: '170 × 7' },
@@ -1203,6 +1205,7 @@ const server = createServer(async (req, res) => {
             creates: 2,
             updates: 1,
             skips: 0,
+            unresolved: 0,
             deltas: [
               { key: 'squat', label: 'squat', kind: 'create', after: '300' },
               { key: 'bench-press', label: 'bench-press', kind: 'update', before: '200', after: '210' },
