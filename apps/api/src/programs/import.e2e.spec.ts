@@ -280,6 +280,53 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(byLift['bench-press']).toBe(185); // imported lift updated
     });
 
+    // #1117: the real Lifting_Logbook_2026 sheet lists `OH Press-HV` (2024) above
+    // `OH Press` (2026), and both resolve to overhead-press. The file's order must
+    // not decide which one is kept, and both modes must count the other as a skip.
+    it('counts an in-file duplicate the same in preview and commit and keeps the most recent row', async () => {
+      const program = 'import-tm-in-file-duplicate';
+      const csv = [
+        'Date Updated,Lift,Weight',
+        '1/1/2024,OH Press-HV,95',
+        '12/29/2025,Squat,300',
+        '9/28/2026,OH Press,110',
+      ].join('\n');
+
+      const preview = (
+        await importCsv(program, csv, '?mode=preview&destination=training-maxes')
+      ).json() as ImportPreviewResponse;
+      expect(preview.preview).toMatchObject({ creates: 2, updates: 0, skips: 1 });
+      // The create shows the weight commit is about to store, not the older row's.
+      expect(preview.preview?.deltas.find((d) => d.kind === 'create' && d.label === 'overhead-press')?.after).toBe('110');
+
+      const commit = (
+        await importCsv(program, csv, '?mode=commit&destination=training-maxes')
+      ).json();
+      expect(commit).toMatchObject({ created: 2, updated: 0, skipped: 1 });
+
+      const maxes = (
+        await app.getHttpAdapter().getInstance().inject({
+          method: 'GET',
+          url: `/programs/${program}/training-maxes`,
+          headers: AUTH,
+        })
+      ).json() as Array<{ lift: string; weight: number; dateUpdated: string }>;
+      const overheadPress = maxes.find((m) => m.lift === 'overhead-press');
+      expect(overheadPress?.weight).toBe(110);
+      expect(overheadPress?.dateUpdated).toContain('2026-09-28');
+
+      // Undo compares what the import wrote against what is stored, so a batch
+      // that recorded the older row here would refuse to restore it.
+      const undo = (
+        await app.getHttpAdapter().getInstance().inject({
+          method: 'POST',
+          url: `/programs/${program}/import/${commit.batchId}/undo`,
+          headers: AUTH,
+        })
+      ).json();
+      expect(undo).toMatchObject({ restored: 2, skipped: 0, flagged: [] });
+    });
+
     it('rejects a program-spec commit to a built-in (non-UUID) program', async () => {
       const res = await importCsv('5-3-1', SPEC_CSV, '?mode=commit&destination=program-spec');
       expect(res.statusCode).toBe(400);

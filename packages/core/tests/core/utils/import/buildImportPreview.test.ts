@@ -4,6 +4,7 @@ import {
   buildTrainingMaxPreview,
   buildStrengthGoalPreview,
   buildProgramSpecPreview,
+  latestTrainingMaxFirst,
   programSpecNaturalKey,
   trainingMaxRowKind,
   strengthGoalRowKind,
@@ -88,6 +89,69 @@ describe("buildTrainingMaxPreview", () => {
     expect(preview).toMatchObject({ creates: 1, updates: 1, skips: 1 });
     const update = preview.deltas.find((d) => d.kind === "update");
     expect(update).toMatchObject({ before: "300", after: "310" });
+  });
+
+  // #1117: two rows resolving to one lift, e.g. `OH Press-HV` and `OH Press`.
+  describe("a lift named twice in the file", () => {
+    const dated = (weight: number, date: string): TrainingMax => ({
+      lift: "overhead-press",
+      weight,
+      dateUpdated: new Date(date),
+    });
+    const older = dated(95, "2024-01-01");
+    const newer = dated(110, "2026-09-28");
+
+    it.each([
+      ["older row first", [older, newer]],
+      ["newer row first", [newer, older]],
+    ])("previews the most recent row and skips the other (%s)", (_name, incoming) => {
+      const preview = buildTrainingMaxPreview(incoming, []);
+      expect(preview).toMatchObject({ creates: 1, updates: 0, skips: 1 });
+      expect(preview.deltas[0]).toMatchObject({
+        key: "overhead-press",
+        kind: "create",
+        after: "110",
+      });
+      expect(preview.deltas[1]).toMatchObject({
+        key: "overhead-press#1",
+        kind: "skip",
+        after: "95",
+      });
+    });
+
+    it("compares the most recent row against the stored max", () => {
+      const preview = buildTrainingMaxPreview([older, newer], [dated(110, "2025-01-01")]);
+      // 110 is already stored, so the newest row is a skip; the older 95 must not
+      // read as an update that would lower the max.
+      expect(preview).toMatchObject({ creates: 0, updates: 0, skips: 2 });
+    });
+  });
+});
+
+describe("latestTrainingMaxFirst", () => {
+  const row = (lift: string, weight: number, date: string): TrainingMax => ({
+    lift,
+    weight,
+    dateUpdated: new Date(date),
+  });
+
+  it("leaves rows with no duplicate lift in their original order", () => {
+    const rows = [row("b", 1, "2026-01-01"), row("a", 2, "2024-01-01"), row("c", 3, "2025-01-01")];
+    expect(latestTrainingMaxFirst(rows)).toEqual(rows);
+  });
+
+  it("keeps file order between rows dated the same day", () => {
+    const first = row("a", 1, "2026-01-01");
+    const second = row("a", 2, "2026-01-01");
+    expect(latestTrainingMaxFirst([first, second])).toEqual([first, second]);
+  });
+
+  it("puts each lift's newest row ahead of every superseded row", () => {
+    const oldA = row("a", 1, "2024-01-01");
+    const b = row("b", 2, "2025-01-01");
+    const midA = row("a", 3, "2025-01-01");
+    const newA = row("a", 4, "2026-01-01");
+    expect(latestTrainingMaxFirst([oldA, b, midA, newA])).toEqual([newA, b, oldA, midA]);
   });
 });
 

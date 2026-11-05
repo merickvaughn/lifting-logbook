@@ -72,6 +72,13 @@ describe('buildTrainingMaxPreImage', () => {
     const image = buildTrainingMaxPreImage(incoming, existing);
     expect(image['Squat']).toBeUndefined();
   });
+
+  it('records the most recent of two rows for a lift, the one commit writes (#1117)', () => {
+    const older = { ...trainingMax('Squat', 300), dateUpdated: new Date('2024-01-01T00:00:00.000Z') };
+    const newer = { ...trainingMax('Squat', 320), dateUpdated: new Date('2026-09-28T00:00:00.000Z') };
+    const image = buildTrainingMaxPreImage([older, newer], []);
+    expect(image['Squat']!.wrote).toEqual({ weight: 320, dateUpdated: '2026-09-28T00:00:00.000Z' });
+  });
 });
 
 describe('buildStrengthGoalPreImage', () => {
