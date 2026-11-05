@@ -277,6 +277,7 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 | [Pino — Redaction](https://getpino.io/#/docs/redaction) | [ADR-033](adr/ADR-033-log-header-allowlist.md) | The `redact.paths` mechanism and its path syntax; establishes that redaction is denylist-only and that wildcards match all keys at a level, not a name pattern — the limitation that motivates the allowlist serializer. |
 | [Pino — `serializers` option](https://getpino.io/#/docs/api?id=serializers-object) | [ADR-033](adr/ADR-033-log-header-allowlist.md) | The serializer hook used to filter `req` / `res` headers down to an allowlist before serialization. |
 | [pino-std-serializers — README](https://github.com/pinojs/pino-std-serializers#readme) | [ADR-033](adr/ADR-033-log-header-allowlist.md) | `pino.stdSerializers.req` / `.res`, the standard serializers the config runs first and then post-processes to replace `headers` while preserving method / url / statusCode. |
+| [pino-http — Custom serializers](https://github.com/pinojs/pino-http#custom-serializers) | [ADR-033](adr/ADR-033-log-header-allowlist.md) | Default wrapping of custom serializers around the standard ones, and the `wrapSerializers: false` option the config sets (#1127). |
 | [OWASP — Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html) | [ADR-033](adr/ADR-033-log-header-allowlist.md) | Normative guidance that access tokens, session identifiers, and authorization headers must never be written to logs — the rule ADR-033 enforces by default. |
 
 ---
