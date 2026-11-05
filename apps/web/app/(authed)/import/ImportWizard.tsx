@@ -83,8 +83,9 @@ type PlannedCommit = { file: File; opts?: CommitImportOpts; counts: ImportDryRun
 
 // ImportDelta.key can repeat a natural key with a `#N` suffix, which identifies a row
 // only in this component. The server's position key leaves a same-keyed row alone (#1123).
+// An API rolled back to before that has no rowIndex and matches the bare natural key.
 function excludeKeyFor(delta: ImportDelta): string {
-  return delta.rowIndex !== undefined ? `__row_${delta.rowIndex}` : delta.key;
+  return delta.rowIndex !== undefined ? `__row_${delta.rowIndex}` : delta.key.replace(/#\d+$/, '');
 }
 
 function buildTrainingMaxesCsv(rows: EditableMax[]): string {
@@ -1002,11 +1003,15 @@ export function ImportWizard({
       // those rows — passing excludeKeys on top would be redundant and error-prone.
       const activeMaxes = reviewMaxes.filter((r) => !excludedKeys.has(r.lift));
       // Review doesn't list a lift the file leaves unchanged, but the server still has
-      // to see it to report it as skipped (#1123). A lift Review does list is left out
-      // here: its file duplicates would otherwise be written if its own row was removed.
-      const reviewedLifts = new Set(reviewMaxes.map((r) => r.lift));
+      // to see it to report it as skipped (#1123). Only a lift's first row goes back in:
+      // an older duplicate would be written if the row ahead of it were dropped.
+      const seenLifts = new Set(reviewMaxes.map((r) => r.lift));
       const unchangedMaxes = deltas
-        .filter((d) => d.kind === 'skip' && !reviewedLifts.has(d.label))
+        .filter((d) => {
+          if (d.kind !== 'skip' || seenLifts.has(d.label)) return false;
+          seenLifts.add(d.label);
+          return true;
+        })
         .map((d) => ({ lift: d.label, weight: d.after ?? '' }));
       const csv = buildTrainingMaxesCsv([...activeMaxes, ...unchangedMaxes]);
       // No column overrides: this CSV has canonical headers and rows from a preview
@@ -1480,7 +1485,9 @@ export function ImportWizard({
 
           {/* ── REVIEW ── */}
           {step === Step.REVIEW && preview && (
-            <>
+            // Disabled during the dry run: Commit sends the request it previewed, so an
+            // edit made while it's in flight would be left out of the commit (#1123).
+            <fieldset className={styles.reviewFields} disabled={busy}>
               <h2 className={styles.stepTitle}>Review</h2>
               {reviewEditsDiscarded && (
                 <p className={styles.infoBox}>
@@ -1946,7 +1953,7 @@ export function ImportWizard({
                 </p>
               )}
               {error && <p className={styles.errorNote}>{error}</p>}
-            </>
+            </fieldset>
           )}
 
           {/* ── PREVIEW ── */}
@@ -2128,7 +2135,10 @@ export function ImportWizard({
             <button
               type="button"
               className={styles.btnSecondary}
-              onClick={() => setStep((step === Step.CLASSIFY ? Step.SOURCE : step - 1) as typeof Step[keyof typeof Step])}
+              onClick={() => {
+                setError(null);
+                setStep((step === Step.CLASSIFY ? Step.SOURCE : step - 1) as typeof Step[keyof typeof Step]);
+              }}
               disabled={busy}
             >
               Back
@@ -2192,6 +2202,8 @@ export function ImportWizard({
               onClick={enterPreview}
               disabled={
                 busy ||
+                // A create resolving after the dry run would change what Commit should send.
+                busyLiftNames.size > 0 ||
                 !previewBody ||
                 (destination === 'training-maxes' &&
                   reviewMaxes !== null &&

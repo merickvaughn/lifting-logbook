@@ -446,6 +446,23 @@ describe('createApiClient', () => {
       expect(result).toEqual({ ok: false, errors });
     });
 
+    it('dryRunImport throws on a failure that is not about the file (#1123)', async () => {
+      mockFetch.mockResolvedValue(new Response('upstream down', { status: 503 }));
+      await expect(makeClient().dryRunImport('5-3-1', file, 'lift-records')).rejects.toMatchObject({
+        name: 'ApiClientError',
+        status: 503,
+      });
+    });
+
+    it('dryRunImport throws the server message when a 400 carries no row errors (#1123)', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ message: 'Could not parse file: bad row' }), { status: 400 }),
+      );
+      await expect(makeClient().dryRunImport('5-3-1', file, 'lift-records')).rejects.toThrow(
+        'Could not parse file: bad row',
+      );
+    });
+
     it('commitImport sends excludeKeys and liftOverrides in the body, never the URL (#1121)', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ created: 0 }), { status: 200 }));
       const client = makeClient();

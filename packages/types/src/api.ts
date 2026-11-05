@@ -694,8 +694,10 @@ export interface ImportDelta {
   /** Phase 3: row health; undefined means 'ok'. */
   status?: ImportRowStatus;
   /**
-   * Phase 3: 1-based CSV data-row index (used by liftOverrides and `__row_<rowIndex>`
-   * excludeKeys on commit). Absent on training-max deltas, which are sorted by date.
+   * Phase 3: 1-based position among the parsed rows (used by liftOverrides and
+   * `__row_<rowIndex>` excludeKeys on commit). It is the CSV data row for lift records. It
+   * isn't for program specs, which parse sorted, or strength goals, which skip non-lift
+   * rows, so don't display it for those. Absent on training-max deltas, which are sorted by date.
    */
   rowIndex?: number;
   /** Phase 3: original unresolved lift name, populated on 'ambiguous' rows. */

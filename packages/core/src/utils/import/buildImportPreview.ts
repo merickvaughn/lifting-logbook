@@ -243,7 +243,11 @@ function goalValue(g: StrengthGoalEntry): string {
     : `${g.target} ${g.unit}`;
 }
 
-/** Strength goals upsert by `lift`: create if absent, update if any field differs, else skip. */
+/**
+ * Strength goals upsert by `lift`: create if absent, update if any field differs, else skip.
+ * A delta's `rowIndex` is the row's position in `incoming`, so `incoming` must be every parsed
+ * row, in order, for it to name the same row at commit.
+ */
 export function buildStrengthGoalPreview(
   incoming: StrengthGoalEntry[],
   existing: StrengthGoalEntry[],
@@ -305,7 +309,11 @@ export function programSpecRowKind(
   return programSpecComparable(prior) === programSpecComparable(r) ? 'skip' : 'update';
 }
 
-/** Program-spec rows upsert by natural key: create if absent, update if config differs, else skip. */
+/**
+ * Program-spec rows upsert by natural key: create if absent, update if config differs, else skip.
+ * A delta's `rowIndex` is the row's position in `incoming`, so `incoming` must be every parsed
+ * row, in order, for it to name the same row at commit.
+ */
 export function buildProgramSpecPreview(
   incoming: LiftingProgramSpec[],
   existing: LiftingProgramSpec[],

@@ -62,7 +62,6 @@ describe("buildLiftRecordsPreviewSoft", () => {
   it("counts incomplete and ambiguous rows as unresolved, not as creates (#1114)", () => {
     const preview = buildLiftRecordsPreviewSoft(
       {
-        valid: [liftRecord(), liftRecord({ setNum: 2 })],
         validRows: [
           { record: liftRecord(), rowIndex: 1 },
           { record: liftRecord({ setNum: 2 }), rowIndex: 2 },
@@ -175,7 +174,7 @@ describe("buildStrengthGoalPreview", () => {
     expect(preview).toMatchObject({ creates: 1, updates: 1, skips: 0 });
   });
 
-  it("gives each row its file position, including a repeat of an earlier lift (#1123)", () => {
+  it("gives each row its position, including a repeat of an earlier lift (#1123)", () => {
     const preview = buildStrengthGoalPreview([goal("squat", 400), goal("squat", 405)], []);
     expect(preview.deltas.map((d) => [d.key, d.rowIndex])).toEqual([
       ["squat", 1],
@@ -200,7 +199,7 @@ describe("buildProgramSpecPreview", () => {
     ...over,
   });
 
-  it("gives each row its file position (#1123)", () => {
+  it("gives each row its position (#1123)", () => {
     const preview = buildProgramSpecPreview([spec({ order: 1 }), spec({ order: 2 })], []);
     expect(preview.deltas.map((d) => d.rowIndex)).toEqual([1, 2]);
   });

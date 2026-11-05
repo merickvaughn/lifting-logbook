@@ -1,7 +1,7 @@
 import { IMPORT_HANDLERS } from './import-handlers';
 
 // #911 review (second pass): IMPORT_HANDLERS['lift-records'].validate is a
-// deliberate throw, not a working implementation — ImportController.commit
+// deliberate throw, not a working implementation — ImportController.resolveCommitRows
 // special-cases 'lift-records' to validate against a custom-lift-aware slot
 // map (effectiveSlotMapFor) instead of ever calling this closure. That
 // invariant previously had no direct test, only a code comment — a future

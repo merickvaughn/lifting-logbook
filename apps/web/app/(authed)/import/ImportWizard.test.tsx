@@ -1453,9 +1453,6 @@ describe('ImportWizard', () => {
     });
   });
 
-  // #911: the REVIEW step's ambiguous-row remap datalist offers the user's
-  // custom lifts alongside the built-in canonical ones, and an inline
-  // "create new lift" affordance for a genuinely unrecognized name.
   describe('Preview tiles report the dry run of the commit (#1123)', () => {
     const CSV = new File(['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n'], 'lr.csv', {
       type: 'text/csv',
@@ -1573,14 +1570,15 @@ describe('ImportWizard', () => {
         preview: {
           creates: 1,
           updates: 1,
-          skips: 2,
+          skips: 3,
           unresolved: 0,
           deltas: [
             { key: 'squat', label: 'squat', kind: 'create', after: '300' },
             { key: 'bench', label: 'bench', kind: 'update', before: '200', after: '210' },
             { key: 'deadlift', label: 'deadlift', kind: 'skip', before: '400', after: '400' },
-            // An older row in the file for a lift Review lists.
+            // Older rows in the file, for a lift Review lists and for one it doesn't.
             { key: 'bench#1', label: 'bench', kind: 'skip', before: '200', after: '190' },
+            { key: 'deadlift#1', label: 'deadlift', kind: 'skip', before: '400', after: '350' },
           ],
         },
       };
@@ -1623,6 +1621,42 @@ describe('ImportWizard', () => {
         await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
 
         expect(await previewedRows()).toEqual(['"squat",300', '"deadlift",400']);
+      });
+
+      it('does not let an older row replace an unchanged weight of zero', async () => {
+        const user = userEvent.setup();
+        mockPreview.mockResolvedValue({
+          ...TM_PREVIEW,
+          preview: {
+            creates: 1,
+            updates: 0,
+            skips: 2,
+            unresolved: 0,
+            deltas: [
+              { key: 'bench', label: 'bench', kind: 'create', after: '210' },
+              { key: 'squat', label: 'squat', kind: 'skip', before: '0', after: '0' },
+              { key: 'squat#1', label: 'squat', kind: 'skip', before: '0', after: '300' },
+            ],
+          },
+        });
+        await renderToReview(user);
+        await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+        expect(await previewedRows()).toEqual(['"bench",210']);
+      });
+
+      it('disables the Review controls while the dry run is in flight', async () => {
+        const user = userEvent.setup();
+        let respond: (result: Awaited<ReturnType<typeof dryRunImport>>) => void = () => undefined;
+        mockDryRun.mockReturnValue(new Promise((resolve) => (respond = resolve)));
+        await renderToReview(user);
+        await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+        expect(screen.getByLabelText('Weight for bench')).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+
+        respond({ ok: true, data: { destination: 'training-maxes', created: 1, updated: 1, skipped: 1 } });
+        expect(await screen.findByText('Preview changes')).toBeInTheDocument();
       });
 
       it('sends a weight edited back to the stored value, for the server to skip', async () => {
@@ -1671,9 +1705,30 @@ describe('ImportWizard', () => {
       expect(await screen.findByText('Network down')).toBeInTheDocument();
       expect(screen.getByRole('heading', { name: 'Review' })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Commit import' })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      expect(screen.queryByText('Network down')).not.toBeInTheDocument();
+    });
+
+    it('holds Next while a new lift is being created', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCreateCustomLift.mockReturnValue(new Promise(() => undefined));
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      await user.click(
+        screen.getAllByRole('button', { name: 'Create "Wide-Grip CBL Curls" as a new lift' })[0]!,
+      );
+
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled());
     });
   });
 
+  // #911: the REVIEW step's ambiguous-row remap datalist offers the user's
+  // custom lifts alongside the built-in canonical ones, and an inline
+  // "create new lift" affordance for a genuinely unrecognized name.
   describe('ambiguous-row remap: custom lifts (#911)', () => {
     it("datalist includes the user's custom lifts alongside built-in canonical lifts", async () => {
       const user = userEvent.setup();

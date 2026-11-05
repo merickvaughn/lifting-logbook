@@ -432,7 +432,7 @@ export class ImportController {
       return { classification, destination, columnMappings, preview: null, errors: softResult.hardErrors };
     }
 
-    const validWithProgram = softResult.valid.map((r) => ({ ...r, program }));
+    const validWithProgram = softResult.validRows.map(({ record }) => ({ ...record, program }));
     const existing = await repos.liftRecord.findExistingRecords(program, validWithProgram);
     const preview = buildLiftRecordsPreviewSoft(softResult, existing);
 
@@ -513,17 +513,17 @@ export class ImportController {
       });
     }
 
-    // An ambiguous OR incomplete lift-records row's excludeKeys entry uses
-    // the client's `__ambiguous_<rowIndex>` / `__incomplete_<rowIndex>` key
-    // schemes (buildImportPreview.ts) — never a natural key, so the
+    // A tab opened before #1123 sends an ambiguous OR incomplete lift-records
+    // row's excludeKeys entry as `__ambiguous_<rowIndex>` / `__incomplete_<rowIndex>`
+    // (buildImportPreview.ts) — never a natural key, so the
     // natural-key excludeKeys filter further below can't match either
     // (issue #915, fully resolved here — both statuses share the identical
     // failure mode: no other in-wizard repair path, and an excluded row that
     // still reached strict validation used to fail the WHOLE commit).
     //
-    // `__row_<rowIndex>` names any other row by position: two rows can share a
-    // natural key, and excluding one must leave the other (#1123). It applies to
-    // every destination whose preview gives its rows a rowIndex.
+    // `__row_<rowIndex>` is what the wizard sends now, for any row: two rows can
+    // share a natural key, and excluding one must leave the other (#1123). It
+    // applies to every destination whose preview gives its rows a rowIndex.
     //
     // Filtering also shortens `parsed`, which would otherwise mis-number
     // every subsequent row's validation-error `row` field —
@@ -585,7 +585,7 @@ export class ImportController {
     }
     let valid: unknown[] = rawValid;
 
-    // Filter excluded keys
+    // Filter excluded keys. Only a tab opened before #1123 still sends these.
     if (excludeKeys.size > 0) {
       if (destination === 'lift-records') {
         valid = (valid as LiftRecord[]).filter((r) => !excludeKeys.has(liftRecordNaturalKey(r)));

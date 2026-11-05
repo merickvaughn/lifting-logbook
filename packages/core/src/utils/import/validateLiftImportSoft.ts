@@ -5,7 +5,7 @@ import { LiftRecord } from '../../models';
  * Soft variant of the lift-records validator (Phase 3 — interactive REVIEW step).
  *
  * Rather than a single valid/errors split, rows are classified into four buckets:
- *   - valid:       fully valid; can be committed as-is
+ *   - validRows:   fully valid; can be committed as-is
  *   - incomplete:  missing a numeric required field (macrocycleNum, workoutNum, setNum,
  *                  weight, reps, or date); can be committed after a bulk-edit fix
  *   - ambiguous:   all numeric fields OK but lift name not in slotMap; user can
@@ -20,8 +20,6 @@ import { LiftRecord } from '../../models';
  * Called by the preview path only; the commit path continues to use validateLiftImport.
  */
 export interface LiftImportSoftResult {
-  valid: LiftRecord[];
-  /** The rows in `valid`, each with its 1-based position in the file. */
   validRows: Array<{ record: LiftRecord; rowIndex: number }>;
   incomplete: Array<{ record: LiftRecord; rowIndex: number; errors: ImportError[] }>;
   ambiguous: Array<{ record: LiftRecord; rowIndex: number; originalLift: string }>;
@@ -76,5 +74,5 @@ export function validateLiftImportSoft(
     validRows.push({ record: { ...r, lift: slotMap[liftStr]! as LiftRecord['lift'] }, rowIndex });
   });
 
-  return { valid: validRows.map((v) => v.record), validRows, incomplete, ambiguous, hardErrors };
+  return { validRows, incomplete, ambiguous, hardErrors };
 }

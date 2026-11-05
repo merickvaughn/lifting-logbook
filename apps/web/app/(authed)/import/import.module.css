@@ -242,6 +242,13 @@
 
 /* ── Preview ───────────────────────────────────────────────── */
 
+.reviewFields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .countRow {
   display: flex;
   gap: var(--space-3);

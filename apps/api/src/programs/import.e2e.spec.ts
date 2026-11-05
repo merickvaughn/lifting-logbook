@@ -1186,14 +1186,14 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('excludes one strength-goal row by its position in the file', async () => {
+    it('excludes one strength-goal row by its position', async () => {
       const res = await dryRunThenCommit('p1123-goals', GOALS_CSV, 'destination=strength-goals', {
         excludeKeys: JSON.stringify(['__row_1']),
       });
       expect(res).toMatchObject({ created: 4, skipped: 0 });
     });
 
-    it('excludes a program-spec row by its position in the file', async () => {
+    it('excludes a program-spec row by its position', async () => {
       const res = await dryRunThenCommit(UUID_PROGRAM, SPEC_CSV, 'destination=program-spec', {
         excludeKeys: JSON.stringify(['__row_1']),
       });
