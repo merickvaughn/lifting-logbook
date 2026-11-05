@@ -1206,7 +1206,7 @@ describe('ImportWizard', () => {
       mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
       mockCreateCustomLift.mockResolvedValue({
         ok: true,
-        data: { ...CUSTOM_LIFT, id: 'custom-cable-curl', name: 'Cable Curl' },
+        data: { ...CUSTOM_LIFT, id: 'custom-zottman-curl', name: 'Zottman Curl' },
       });
 
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
@@ -1214,12 +1214,12 @@ describe('ImportWizard', () => {
 
       const input = screen.getByLabelText('Lift name for row 1');
       await user.clear(input);
-      await user.type(input, 'Cable Curl');
+      await user.type(input, 'Zottman Curl');
       await user.click(within(input.closest('tr')!).getByRole('button', { name: 'Accessory' }));
-      await user.click(screen.getByRole('button', { name: 'Create "Cable Curl" as a new lift' }));
+      await user.click(screen.getByRole('button', { name: 'Create "Zottman Curl" as a new lift' }));
 
-      await waitFor(() => expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Cable Curl'));
-      await waitFor(() => expect(screen.queryByRole('button', { name: /Create "Cable Curl"/ })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Zottman Curl'));
+      await waitFor(() => expect(screen.queryByRole('button', { name: /Create "Zottman Curl"/ })).not.toBeInTheDocument());
     });
 
     it('keeps a row unresolved when its text fits two lifts once case is ignored', async () => {

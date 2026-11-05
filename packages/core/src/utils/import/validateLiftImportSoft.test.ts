@@ -121,7 +121,7 @@ describe('validateLiftImportSoft', () => {
       for (const form of [lift.name, lift.id]) {
         const result = validateLiftImportSoft([record({ lift: form })], importMap);
         expect({ form, ambiguous: result.ambiguous }).toEqual({ form, ambiguous: [] });
-        expect(builtInLiftFor(result.valid[0]!.lift)?.id).toBe(lift.id);
+        expect(builtInLiftFor(result.validRows[0]!.record.lift)?.id).toBe(lift.id);
       }
     }
   });

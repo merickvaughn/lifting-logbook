@@ -462,12 +462,12 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
 
     it('commits a row remapped to a catalog id onto the same record as its display name', async () => {
       const program = 'p3-lr-catalog-override';
-      const overrides = encodeURIComponent(JSON.stringify({ '1': 'incline-bench-press' }));
       const remapped = (
         await importCsv(
           program,
           AMBIGUOUS_LIFT_CSV,
-          `?mode=commit&destination=lift-records&liftOverrides=${overrides}`,
+          '?mode=commit&destination=lift-records',
+          { liftOverrides: JSON.stringify({ '1': 'incline-bench-press' }) },
         )
       ).json();
       expect(remapped.created).toBe(1);
