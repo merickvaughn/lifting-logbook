@@ -1401,7 +1401,7 @@ describe('ImportWizard', () => {
           updates: 0,
           skips: 0,
           unresolved: 0,
-          deltas: [{ key: 'custom-cbl-curls', label: 'custom-cbl-curls', kind: 'create', after: '90' }],
+          deltas: [{ key: 'custom-cbl-curls', label: 'Wide-Grip CBL Curls', kind: 'create', after: '90' }],
         },
       });
       mockCommit.mockResolvedValue({
@@ -1431,6 +1431,155 @@ describe('ImportWizard', () => {
   // #911: the REVIEW step's ambiguous-row remap datalist offers the user's
   // custom lifts alongside the built-in canonical ones, and an inline
   // "create new lift" affordance for a genuinely unrecognized name.
+  describe('a custom lift deleted elsewhere (#1124)', () => {
+    const UNRECOGNIZED_LIFT_FAILURE = {
+      ok: false as const,
+      errors: [
+        {
+          row: 1,
+          field: 'lift',
+          code: 'UNRECOGNIZED_LIFT' as const,
+          message: "'Wide-Grip CBL Curls' isn't a recognized lift.",
+        },
+      ],
+    };
+    const CREATE_CBL_CURLS = 'Create "Wide-Grip CBL Curls" as a new lift';
+
+    async function commitFromReview(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(screen.getByText('Commit failed:')).toBeInTheDocument());
+    }
+
+    it('refreshes the custom lifts after UNRECOGNIZED_LIFT, so the row offers Create', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCommit.mockResolvedValue(UNRECOGNIZED_LIFT_FAILURE);
+      mockFetchCustomLifts.mockResolvedValue([]);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[CUSTOM_LIFT]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+      expect(screen.queryByRole('button', { name: CREATE_CBL_CURLS })).not.toBeInTheDocument();
+
+      await commitFromReview(user);
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Commit import' })).toBeDisabled());
+      expect(mockFetchCustomLifts).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/isn't a recognized lift/)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      expect(screen.getAllByRole('button', { name: CREATE_CBL_CURLS })).toHaveLength(2);
+    });
+
+    it('shows the name of a lift created this session and deleted since, and recreating it fixes every row', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCreateCustomLift.mockResolvedValueOnce({ ok: true, data: CUSTOM_LIFT });
+      mockCommit.mockResolvedValueOnce(UNRECOGNIZED_LIFT_FAILURE);
+      mockFetchCustomLifts.mockResolvedValue([]);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      await user.click(screen.getAllByRole('button', { name: CREATE_CBL_CURLS })[0]!);
+      await waitFor(() => expect(screen.queryByText(/No match — create/i)).not.toBeInTheDocument());
+
+      await commitFromReview(user);
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Commit import' })).toBeDisabled());
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+
+      expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Wide-Grip CBL Curls');
+      expect(screen.getByLabelText('Lift name for row 2')).toHaveValue('Wide-Grip CBL Curls');
+
+      mockCreateCustomLift.mockResolvedValueOnce({
+        ok: true,
+        data: { ...CUSTOM_LIFT, id: 'custom-cbl-curls-2' },
+      });
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      await user.click(screen.getAllByRole('button', { name: CREATE_CBL_CURLS })[0]!);
+      await waitFor(() => expect(screen.queryByText(/No match — create/i)).not.toBeInTheDocument());
+
+      mockCommit.mockResolvedValueOnce({
+        ok: true,
+        data: { destination: 'lift-records', created: 2, updated: 0, skipped: 0, batchId: 'batch-cbl-2' },
+      });
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(screen.getByText('Import complete')).toBeInTheDocument());
+      expect(mockCommit.mock.lastCall?.[3]?.liftOverrides).toEqual({
+        1: 'custom-cbl-curls-2',
+        2: 'Wide-Grip CBL Curls',
+      });
+    });
+
+    it('still shows a training max by name after its lift is deleted, and sends the stored lift', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue({
+        ...TM_PREVIEW,
+        preview: {
+          creates: 1,
+          updates: 0,
+          skips: 0,
+          unresolved: 0,
+          deltas: [{ key: CUSTOM_LIFT.id, label: CUSTOM_LIFT.name, kind: 'create', after: '90' }],
+        },
+      });
+      mockCommit.mockResolvedValue(UNRECOGNIZED_LIFT_FAILURE);
+      mockFetchCustomLifts.mockResolvedValue([]);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[CUSTOM_LIFT]} />);
+      await navigateToReview(
+        user,
+        new File(['Date Updated,Lift,Weight\n1/1/2026,Wide-Grip CBL Curls,90'], 'tm.csv', { type: 'text/csv' }),
+      );
+      expect(screen.getByText(CUSTOM_LIFT.name)).toBeInTheDocument();
+
+      await commitFromReview(user);
+      await waitFor(() => expect(mockFetchCustomLifts).toHaveBeenCalledTimes(1));
+      const csv = await readFileText(mockCommit.mock.calls[0]![1]);
+      expect(csv).toContain(`"${CUSTOM_LIFT.id}",90`);
+
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      expect(screen.getByText(CUSTOM_LIFT.name)).toBeInTheDocument();
+    });
+
+    it('does not refetch for a commit failure about something else', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCommit.mockResolvedValue({
+        ok: false,
+        errors: [{ row: 1, code: 'WEIGHT_INVALID', message: 'Row 1 failed' }],
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[CUSTOM_LIFT]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+      await commitFromReview(user);
+
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Commit import' })).toBeEnabled());
+      expect(mockFetchCustomLifts).not.toHaveBeenCalled();
+    });
+
+    it('keeps the commit errors and logs when the refresh itself fails', async () => {
+      const user = userEvent.setup();
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCommit.mockResolvedValue(UNRECOGNIZED_LIFT_FAILURE);
+      mockFetchCustomLifts.mockRejectedValue(new Error('offline'));
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[CUSTOM_LIFT]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+      await commitFromReview(user);
+
+      await waitFor(() =>
+        expect(errorSpy).toHaveBeenCalledWith(
+          '[client-mutation] fetchCustomLifts failed',
+          expect.any(Error),
+          { programId: 'prog-1' },
+        ),
+      );
+      expect(screen.getByText(/isn't a recognized lift/)).toBeInTheDocument();
+    });
+  });
+
   describe('ambiguous-row remap: custom lifts (#911)', () => {
     it("datalist includes the user's custom lifts alongside built-in canonical lifts", async () => {
       const user = userEvent.setup();

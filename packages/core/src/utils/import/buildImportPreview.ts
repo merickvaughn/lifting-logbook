@@ -17,7 +17,13 @@ import { LiftImportSoftResult } from './validateLiftImportSoft';
  * Each returns `{ creates, updates, skips, unresolved, deltas }` by comparing the incoming
  * (validated) rows against what is already stored, using the same key each
  * type's write path keys on. No I/O — the caller supplies the existing rows.
+ *
+ * Validation resolves a custom lift's name to its id, and rows are stored and keyed
+ * by that id. `liftNames` (custom lift id → name) turns it back into a name for the
+ * labels a person reads (#1125); keys keep the id.
  */
+
+type LiftNames = ReadonlyMap<string, string>;
 
 function tally(deltas: ImportDelta[]): ImportPreview {
   // Incomplete and ambiguous rows are 'create' deltas so REVIEW can offer fixes,
@@ -113,6 +119,7 @@ export function buildLiftRecordsPreview(
 export function buildLiftRecordsPreviewSoft(
   softResult: LiftImportSoftResult,
   existing: LiftRecord[],
+  liftNames: LiftNames,
 ): ImportPreview {
   const existingKeys = new Set(existing.map(liftRecordNaturalKey));
   const deltas: ImportDelta[] = [];
@@ -125,7 +132,7 @@ export function buildLiftRecordsPreviewSoft(
     (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
   )) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
-    const label = `${r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+    const label = `${liftNames.get(r.lift) ?? r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
@@ -215,6 +222,7 @@ export function strengthGoalRowKind(
 export function buildTrainingMaxPreview(
   incoming: TrainingMax[],
   existing: TrainingMax[],
+  liftNames: LiftNames,
 ): ImportPreview {
   const existingByLift = new Map(existing.map((m) => [m.lift, m.weight]));
   const deltas: ImportDelta[] = [];
@@ -226,12 +234,13 @@ export function buildTrainingMaxPreview(
     (m) => trainingMaxRowKind(m, existingByLift),
   )) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
+    const label = liftNames.get(m.lift) ?? m.lift;
     const after = `${m.weight}`;
     const before = existingByLift.get(m.lift);
     deltas.push(
       before === undefined
-        ? { key: displayKey, label: m.lift, kind, after }
-        : { key: displayKey, label: m.lift, kind, before: `${before}`, after },
+        ? { key: displayKey, label, kind, after }
+        : { key: displayKey, label, kind, before: `${before}`, after },
     );
   }
   return tally(deltas);
@@ -247,6 +256,7 @@ function goalValue(g: StrengthGoalEntry): string {
 export function buildStrengthGoalPreview(
   incoming: StrengthGoalEntry[],
   existing: StrengthGoalEntry[],
+  liftNames: LiftNames,
 ): ImportPreview {
   const existingByLift = new Map(existing.map((g) => [g.lift, g]));
   const deltas: ImportDelta[] = [];
@@ -258,12 +268,13 @@ export function buildStrengthGoalPreview(
     (g) => strengthGoalRowKind(g, existingByLift),
   )) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
+    const label = liftNames.get(g.lift) ?? g.lift;
     const after = goalValue(g);
     const prior = existingByLift.get(g.lift);
     deltas.push(
       prior
-        ? { key: displayKey, label: g.lift, kind, before: goalValue(prior), after }
-        : { key: displayKey, label: g.lift, kind, after },
+        ? { key: displayKey, label, kind, before: goalValue(prior), after }
+        : { key: displayKey, label, kind, after },
     );
   }
   return tally(deltas);

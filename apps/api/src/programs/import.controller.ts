@@ -58,7 +58,7 @@ import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
-import { effectiveSlotMapFor } from './effective-slot-map.util';
+import { customLiftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
 import {
   GoogleSheetFetchError,
@@ -429,7 +429,8 @@ export class ImportController {
 
     const validWithProgram = softResult.valid.map((r) => ({ ...r, program }));
     const existing = await repos.liftRecord.findExistingRecords(program, validWithProgram);
-    const preview = buildLiftRecordsPreviewSoft(softResult, existing);
+    const liftNames = await customLiftNamesFor(repos);
+    const preview = buildLiftRecordsPreviewSoft(softResult, existing, liftNames);
 
     // Check for 1RM rows in the valid set
     const { trainingMaxes: splitMaxes } = splitLiftRecordsByDestination(validWithProgram);
@@ -438,7 +439,7 @@ export class ImportController {
       const existingMaxes = await repos.trainingMax.getTrainingMaxes(program);
       split = {
         destination: 'training-maxes',
-        preview: buildTrainingMaxPreview(splitMaxes, existingMaxes),
+        preview: buildTrainingMaxPreview(splitMaxes, existingMaxes, liftNames),
       };
     }
 
