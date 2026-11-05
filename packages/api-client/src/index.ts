@@ -431,10 +431,11 @@ export function createApiClient(config: ApiClientConfig) {
       program: string,
       file: File,
       destination?: ImportKind,
+      opts?: Pick<CommitImportOpts, 'overrides'>,
     ): Promise<ImportPreviewResponse> {
       const form = new FormData();
       form.append('file', file);
-      const res = await rawFetch(importPath(program, 'preview', destination), {
+      const res = await rawFetch(importPath(program, 'preview', destination, opts), {
         method: 'POST',
         body: form,
         cache: 'no-store',

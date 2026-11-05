@@ -393,6 +393,14 @@ describe('createApiClient', () => {
       expect(url).toBe('http://api.test/programs/5-3-1/import?mode=preview&destination=strength-goals');
     });
 
+    it('previewImport sends column overrides when supplied', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ errors: [] }), { status: 200 }));
+      const client = makeClient();
+      await client.previewImport('5-3-1', file, 'lift-records', { overrides: { Exercise: 'lift' } });
+      const [url] = lastCall();
+      expect(new URL(url).searchParams.get('overrides')).toBe('{"Exercise":"lift"}');
+    });
+
     it('previewImport throws on a non-ok response', async () => {
       mockFetch.mockResolvedValue(new Response('', { status: 500 }));
       const client = makeClient();

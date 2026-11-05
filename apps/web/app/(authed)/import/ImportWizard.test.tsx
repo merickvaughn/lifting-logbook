@@ -1164,6 +1164,151 @@ describe('ImportWizard', () => {
       expect(screen.getByRole('button', { name: 'Commit import' })).toBeEnabled();
     });
 
+    it('shows the new name when a row is retyped to a different lift and created', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue({
+        ok: true,
+        data: { ...CUSTOM_LIFT, id: 'custom-cable-curl', name: 'Cable Curl' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      const input = screen.getByLabelText('Lift name for row 1');
+      await user.clear(input);
+      await user.type(input, 'Cable Curl');
+      await user.click(within(input.closest('tr')!).getByRole('button', { name: 'Accessory' }));
+      await user.click(screen.getByRole('button', { name: 'Create "Cable Curl" as a new lift' }));
+
+      await waitFor(() => expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Cable Curl'));
+      await waitFor(() => expect(screen.queryByRole('button', { name: /Create "Cable Curl"/ })).not.toBeInTheDocument());
+    });
+
+    it('keeps a row unresolved when its text fits two lifts once case is ignored', async () => {
+      const user = userEvent.setup();
+      const lift = (id: string, name: string): CustomLiftResponse => ({ ...CUSTOM_LIFT, id, name });
+      mockPreview.mockResolvedValue(
+        withDeltas([
+          {
+            key: '__ambiguous_1',
+            label: 'HIP THRUST set 1',
+            kind: 'create',
+            status: 'ambiguous',
+            rowIndex: 1,
+            originalLift: 'HIP THRUST',
+          },
+        ]),
+      );
+
+      render(
+        <ImportWizard
+          programs={PROGRAMS}
+          customLifts={[lift('custom-a', 'Hip Thrust'), lift('custom-b', 'hip thrust')]}
+        />,
+      );
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+      expect(screen.getByText(/1 row needs a lift/)).toBeInTheDocument();
+
+      // The exact name of either lift settles it.
+      await user.clear(screen.getByLabelText('Lift name for row 1'));
+      await user.type(screen.getByLabelText('Lift name for row 1'), 'hip thrust');
+      expect(screen.queryByText(/needs? a lift/)).not.toBeInTheDocument();
+    });
+
+    it('lists only the rows still needing a lift, and keeps one listed while it is being retyped', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(TWO_DIFFERENT_AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      await user.clear(screen.getByLabelText('Lift name for row 1'));
+      await user.type(screen.getByLabelText('Lift name for row 1'), 'Squat');
+      await user.click(screen.getByRole('button', { name: 'Show rows that need a lift' }));
+
+      expect(screen.queryByLabelText('Lift name for row 1')).not.toBeInTheDocument();
+      const row2 = screen.getByLabelText('Lift name for row 2');
+      await user.clear(row2);
+      await user.type(row2, 'Squat');
+      expect(screen.getByLabelText('Lift name for row 2')).toHaveValue('Squat');
+      expect(screen.queryByText(/needs? a lift before/)).not.toBeInTheDocument();
+    });
+
+    // #1114 review: the first preview predates Map Columns, so without this every row
+    // would read as needing a lift even though the commit applies the column remap.
+    it('previews again with a column remapped on Map Columns, so the gate matches the commit', async () => {
+      const user = userEvent.setup();
+      const blank: ImportDelta = {
+        key: '__ambiguous_1',
+        label: 'Row 1',
+        kind: 'create',
+        status: 'ambiguous',
+        rowIndex: 1,
+        originalLift: '',
+      };
+      mockPreview
+        .mockResolvedValueOnce(withDeltas([blank]))
+        .mockResolvedValueOnce({
+          ...AMBIGUOUS_LIFT_PREVIEW,
+          columnMappings: [],
+          preview: {
+            creates: 1,
+            updates: 0,
+            skips: 0,
+            unresolved: 0,
+            deltas: [{ key: '1:1:20260101:back-squat:1', label: 'back-squat set 1', kind: 'create', after: '90 × 10' }],
+          },
+        });
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 1, updated: 0, skipped: 0, batchId: 'batch-map' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(screen.getByLabelText('CSV file'), AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+
+      await user.selectOptions(screen.getByLabelText('Map column Lift'), 'notes');
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
+
+      await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
+      expect(mockPreview.mock.calls[1]?.[3]).toEqual({ overrides: { Lift: 'notes' } });
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Review' })).toBeInTheDocument());
+      expect(screen.queryByText(/needs? a lift/)).not.toBeInTheDocument();
+
+      // Going back without changing anything keeps the preview and the user's work.
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      expect(screen.getByLabelText('Map column Lift')).toHaveValue('notes');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+      expect(mockPreview).toHaveBeenCalledTimes(2);
+
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+    });
+
+    it('stays on Map Columns and says so when the new preview fails', async () => {
+      const user = userEvent.setup();
+      mockPreview
+        .mockResolvedValueOnce(AMBIGUOUS_LIFT_PREVIEW)
+        .mockRejectedValueOnce(new Error('Import preview failed (HTTP 500)'));
+      jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(screen.getByLabelText('CSV file'), AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+      await user.selectOptions(screen.getByLabelText('Map column Lift'), 'notes');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+
+      await waitFor(() => expect(screen.getByText('Import preview failed (HTTP 500)')).toBeInTheDocument());
+      expect(screen.getByRole('heading', { name: 'Map columns' })).toBeInTheDocument();
+    });
+
     it('lists a custom lift by name in the Training Maxes review, and still commits its id', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValue({
@@ -1708,7 +1853,11 @@ describe('ImportWizard', () => {
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       await user.click(createButtons[0]!);
       await waitFor(() => expect(mockCreateCustomLift).toHaveBeenCalledTimes(1));
-      // Row 2 is still unresolved, so it has to be excluded before committing (#1114).
+      await waitFor(() => expect(screen.queryByText(/No match — create/i)).not.toBeInTheDocument());
+      // Row 2 must NOT be swept into row 1's override. It's blank and still counted
+      // as needing a lift, so it has to be excluded before committing (#1114).
+      expect(screen.getByLabelText('Lift name for row 2')).toHaveValue('');
+      expect(screen.getByText(/1 row needs a lift/)).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Exclude Row 2' }));
 
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview

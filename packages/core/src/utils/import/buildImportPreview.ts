@@ -14,7 +14,7 @@ import { LiftImportSoftResult } from './validateLiftImportSoft';
 /**
  * Pure before→after diff builders for the Smart Import preview step (#477).
  *
- * Each returns `{ creates, updates, skips, deltas }` by comparing the incoming
+ * Each returns `{ creates, updates, skips, unresolved, deltas }` by comparing the incoming
  * (validated) rows against what is already stored, using the same key each
  * type's write path keys on. No I/O — the caller supplies the existing rows.
  */

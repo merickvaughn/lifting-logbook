@@ -162,7 +162,7 @@ describe('Google Sheets import (#1111)', () => {
 
     await waitFor(() =>
       expect(
-        within(rowFor('LIFT_RECORDS')).getByText('3 new · 0 updated · 1 skipped · 22 unresolved'),
+        within(rowFor('LIFT_RECORDS')).getByText('3 new · 0 updated · 1 skipped · 22 to review'),
       ).toBeInTheDocument(),
     );
   });
