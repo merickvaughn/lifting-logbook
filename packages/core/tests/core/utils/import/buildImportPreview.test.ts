@@ -66,7 +66,10 @@ describe("buildLiftRecordsPreviewSoft", () => {
   it("counts incomplete and ambiguous rows as unresolved, not as creates (#1114)", () => {
     const preview = buildLiftRecordsPreviewSoft(
       {
-        valid: [liftRecord(), liftRecord({ setNum: 2 })],
+        validRows: [
+          { record: liftRecord(), rowIndex: 1 },
+          { record: liftRecord({ setNum: 2 }), rowIndex: 2 },
+        ],
         incomplete: [{ record: liftRecord({ setNum: 3 }), rowIndex: 3, errors: [] }],
         ambiguous: [{ record: liftRecord({ setNum: 4 }), rowIndex: 4, originalLift: "Mystery Lift" }],
         hardErrors: [],
@@ -82,10 +85,10 @@ describe("buildLiftRecordsPreviewSoft", () => {
   it("labels a custom lift's create and skip rows by name, keeps the id in the key, and leaves other lifts alone (#1125)", () => {
     const preview = buildLiftRecordsPreviewSoft(
       {
-        valid: [
-          liftRecord({ lift: "custom-id", setNum: 1 }),
-          liftRecord({ lift: "custom-id", setNum: 2 }),
-          liftRecord({ setNum: 3 }),
+        validRows: [
+          { record: liftRecord({ lift: "custom-id", setNum: 1 }), rowIndex: 1 },
+          { record: liftRecord({ lift: "custom-id", setNum: 2 }), rowIndex: 2 },
+          { record: liftRecord({ setNum: 3 }), rowIndex: 3 },
         ],
         incomplete: [],
         ambiguous: [],
@@ -229,6 +232,14 @@ describe("buildStrengthGoalPreview", () => {
     expect(preview).toMatchObject({ creates: 1, updates: 1, skips: 0 });
   });
 
+  it("gives each row its position, including a repeat of an earlier lift (#1123)", () => {
+    const preview = buildStrengthGoalPreview([goal("squat", 400), goal("squat", 405)], [], NO_CUSTOM_LIFTS);
+    expect(preview.deltas.map((d) => [d.key, d.rowIndex])).toEqual([
+      ["squat", 1],
+      ["squat#1", 2],
+    ]);
+  });
+
   it("labels a custom lift by name and keeps its id in the key (#1125)", () => {
     const preview = buildStrengthGoalPreview([goal("custom-id", 100)], [], CUSTOM_LIFTS);
     expect(preview.deltas[0]).toMatchObject({ key: "custom-id", label: "Cable Curl" });
@@ -249,6 +260,11 @@ describe("buildProgramSpecPreview", () => {
     wtDecrementPct: 0.1,
     activation: "",
     ...over,
+  });
+
+  it("gives each row its position (#1123)", () => {
+    const preview = buildProgramSpecPreview([spec({ order: 1 }), spec({ order: 2 })], []);
+    expect(preview.deltas.map((d) => d.rowIndex)).toEqual([1, 2]);
   });
 
   it("keys on week:offset:lift:order and detects config changes", () => {

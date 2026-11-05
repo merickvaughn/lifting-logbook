@@ -700,7 +700,12 @@ export interface ImportDelta {
   after?: string;
   /** Phase 3: row health; undefined means 'ok'. */
   status?: ImportRowStatus;
-  /** Phase 3: 1-based CSV data-row index (used by liftOverrides on commit). */
+  /**
+   * Phase 3: 1-based position among the parsed rows (used by liftOverrides and
+   * `__row_<rowIndex>` excludeKeys on commit). It is the CSV data row for lift records. It
+   * isn't for program specs, which parse sorted, or strength goals, which skip non-lift
+   * rows, so don't display it for those. Absent on training-max deltas, which are sorted by date.
+   */
   rowIndex?: number;
   /** Phase 3: original unresolved lift name, populated on 'ambiguous' rows. */
   originalLift?: string;
@@ -810,6 +815,16 @@ export interface ImportCommitResponse extends ImportWriteResult {
    * plain commit using neither, it matches the original CSV data-row number.
    */
   skippedDetail?: SkippedRecord[];
+}
+
+/**
+ * Response for `POST /programs/:program/import?mode=dry-run`: the counts a commit with
+ * the same inputs would return. Nothing is written (#1123).
+ */
+export interface ImportDryRunResponse extends ImportWriteResult {
+  destination: ImportKind;
+  /** Counts for rows split to a second destination, as on {@link ImportCommitResponse}. */
+  split?: { destination: ImportKind; created: number; updated: number; skipped: number };
 }
 
 /** Phase 3: Response for `POST /programs/:program/import/:batchId/undo`. */

@@ -16,6 +16,7 @@ import type {
   ReorderFocusBlocksRequest,
   MacrocycleDashboardResponse,
   ImportCommitResponse,
+  ImportDryRunResponse,
   ImportError,
   ImportKind,
   ImportLiftRecordsResponse,
@@ -113,7 +114,7 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 // relative (rawFetch prepends baseUrl).
 function importPath(
   program: string,
-  mode: 'preview' | 'commit',
+  mode: 'preview' | 'commit' | 'dry-run',
   destination?: ImportKind,
   opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>,
 ): string {
@@ -142,11 +143,17 @@ function commitForm(file: File, opts?: CommitImportOpts): FormData {
   return form;
 }
 
+/** The server's answer to a commit or dry run: its response, or validation errors as data. */
+export type ImportCommitResult<T> = { ok: true; data: T } | { ok: false; errors: ImportError[] };
+
 /** Phase 3 options for commitImport. */
 export interface CommitImportOpts {
   /** Map sourceHeader → destinationField to rename non-standard columns before parsing. */
   overrides?: Record<string, string>;
-  /** Natural keys of rows to exclude from the commit. */
+  /**
+   * Rows to exclude from the commit: `__row_<rowIndex>` for a row with a position, which
+   * leaves another row sharing its natural key alone (#1123), or the row's natural key.
+   */
   excludeKeys?: string[];
   /** Map of 1-based CSV row index → canonical lift id for ambiguous rows. */
   liftOverrides?: Record<number, string>;
@@ -465,9 +472,7 @@ export function createApiClient(config: ApiClientConfig) {
       file: File,
       destination: ImportKind,
       opts?: CommitImportOpts,
-    ): Promise<
-      { ok: true; data: ImportCommitResponse } | { ok: false; errors: ImportError[] }
-    > {
+    ): Promise<ImportCommitResult<ImportCommitResponse>> {
       const res = await rawFetch(importPath(program, 'commit', destination, opts), {
         method: 'POST',
         body: commitForm(file, opts),
@@ -481,6 +486,30 @@ export function createApiClient(config: ApiClientConfig) {
         ok: false,
         errors: body.errors ?? [{ row: 0, code: 'UNEXPECTED_ERROR', message: `Unexpected error (HTTP ${res.status})` }],
       };
+    },
+    /**
+     * Smart Import — reports the counts `commitImport` would return for these same
+     * arguments, and the same validation errors, without writing anything (#1123).
+     * Throws on any other failure, so an outage isn't reported as a problem with the file.
+     */
+    async dryRunImport(
+      program: string,
+      file: File,
+      destination: ImportKind,
+      opts?: CommitImportOpts,
+    ): Promise<ImportCommitResult<ImportDryRunResponse>> {
+      const path = importPath(program, 'dry-run', destination, opts);
+      const res = await rawFetch(path, {
+        method: 'POST',
+        body: commitForm(file, opts),
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        return { ok: true, data: (await res.json()) as ImportDryRunResponse };
+      }
+      const body = (await res.clone().json().catch(() => ({}))) as { errors?: ImportError[] };
+      if (body.errors) return { ok: false, errors: body.errors };
+      throw new ApiClientError(await extractErrorMessage(res, path), res.status);
     },
 
     /**

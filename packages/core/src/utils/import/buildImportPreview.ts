@@ -131,9 +131,9 @@ export function buildLiftRecordsPreviewSoft(
   const seenCounts = new Map<string, number>();
 
   // Valid rows — normal create/skip classification
-  for (const { row: r, kind, key } of classifyImportRows(
-    softResult.valid,
-    liftRecordNaturalKey,
+  for (const { row: { record: r, rowIndex }, kind, key } of classifyImportRows(
+    softResult.validRows,
+    ({ record }) => liftRecordNaturalKey(record),
     (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
   )) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
@@ -141,8 +141,8 @@ export function buildLiftRecordsPreviewSoft(
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
-        ? { key: displayKey, label, kind, before: value, after: value }
-        : { key: displayKey, label, kind, after: value },
+        ? { key: displayKey, label, kind, before: value, after: value, rowIndex }
+        : { key: displayKey, label, kind, after: value, rowIndex },
     );
   }
 
@@ -257,7 +257,11 @@ function goalValue(g: StrengthGoalEntry): string {
     : `${g.target} ${g.unit}`;
 }
 
-/** Strength goals upsert by `lift`: create if absent, update if any field differs, else skip. */
+/**
+ * Strength goals upsert by `lift`: create if absent, update if any field differs, else skip.
+ * A delta's `rowIndex` is the row's position in `incoming`, so `incoming` must be every parsed
+ * row, in order, for it to name the same row at commit.
+ */
 export function buildStrengthGoalPreview(
   incoming: StrengthGoalEntry[],
   existing: StrengthGoalEntry[],
@@ -267,19 +271,21 @@ export function buildStrengthGoalPreview(
   const deltas: ImportDelta[] = [];
   const seenCounts = new Map<string, number>();
 
+  let rowIndex = 0;
   for (const { row: g, kind, key } of classifyImportRows(
     incoming,
     (g) => g.lift,
     (g) => strengthGoalRowKind(g, existingByLift),
   )) {
+    rowIndex += 1;
     const displayKey = dedupeDisplayKey(key, seenCounts);
     const label = liftNames.get(g.lift) ?? g.lift;
     const after = goalValue(g);
     const prior = existingByLift.get(g.lift);
     deltas.push(
       prior
-        ? { key: displayKey, label, kind, before: goalValue(prior), after }
-        : { key: displayKey, label, kind, after },
+        ? { key: displayKey, label, kind, before: goalValue(prior), after, rowIndex }
+        : { key: displayKey, label, kind, after, rowIndex },
     );
   }
   return tally(deltas);
@@ -319,7 +325,11 @@ export function programSpecRowKind(
   return programSpecComparable(prior) === programSpecComparable(r) ? 'skip' : 'update';
 }
 
-/** Program-spec rows upsert by natural key: create if absent, update if config differs, else skip. */
+/**
+ * Program-spec rows upsert by natural key: create if absent, update if config differs, else skip.
+ * A delta's `rowIndex` is the row's position in `incoming`, so `incoming` must be every parsed
+ * row, in order, for it to name the same row at commit.
+ */
 export function buildProgramSpecPreview(
   incoming: LiftingProgramSpec[],
   existing: LiftingProgramSpec[],
@@ -328,11 +338,13 @@ export function buildProgramSpecPreview(
   const deltas: ImportDelta[] = [];
   const seenCounts = new Map<string, number>();
 
+  let rowIndex = 0;
   for (const { row: r, kind, key } of classifyImportRows(
     incoming,
     programSpecNaturalKey,
     (r) => programSpecRowKind(r, existingByKey),
   )) {
+    rowIndex += 1;
     // Lookup uses the true natural key `key`, not the disambiguated display
     // key below — an in-batch duplicate still describes the same stored (or
     // about-to-be-created) spec row as its first occurrence.
@@ -342,8 +354,8 @@ export function buildProgramSpecPreview(
     const after = specValue(r);
     deltas.push(
       prior
-        ? { key: displayKey, label, kind, before: specValue(prior), after }
-        : { key: displayKey, label, kind, after },
+        ? { key: displayKey, label, kind, before: specValue(prior), after, rowIndex }
+        : { key: displayKey, label, kind, after, rowIndex },
     );
   }
   return tally(deltas);
