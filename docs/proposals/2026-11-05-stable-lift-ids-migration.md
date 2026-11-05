@@ -1,6 +1,6 @@
 # Proposal: Store Lifts by Stable ID
 
-**Status:** `draft`
+**Status:** `accepted`
 **Date:** 2026-11-05
 **Issue:** [#1134](https://github.com/merickvaughn/lifting-logbook/issues/1134)
 
@@ -58,9 +58,9 @@ Every stored lift becomes a stable `LiftId`: a catalog ID or a custom lift's UUI
 | 1 | `LiftId` type | A catalog ID or a custom lift's UUID, as a branded TypeScript type. |
 | 2 | One resolver | Follows the precedence `lookupLift` already has: reserved slot names mean the built-in, then the user's custom lifts, then catalog names, IDs and aliases. Decodes legacy percent-encoded names. Returns nothing for unknown text rather than guessing. |
 | 3 | Display names | Derived from the ID at the API boundary. Responses return both `lift` and `liftName`. |
-| 4 | Program wording | A new `custom_program_spec.label` column holds a program's own wording; presets keep theirs in code. A program that says `Squat` still shows `Squat`, while history shows the catalog name. |
+| 4 | Program wording | Proposed, pending Open Question 6: a new `custom_program_spec.label` column holds a program's own wording; presets keep theirs in code. A program that says `Squat` still shows `Squat`, while history shows the catalog name. |
 | 5 | Catalog IDs | Permanent, with no foreign key because the catalog lives in code. A snapshot test fails if an ID is renamed or removed. |
-| 6 | Modified lifts | A program doesn't affect how a lift is stored, and a modified lift is not a new catalog entry. At import, a row such as `OH Press-HV` can be kept as a custom lift, or as a modification of the existing lift once that separate design lands. |
+| 6 | Modified lifts | A program doesn't affect how a lift is stored, and a modified lift is not a new catalog entry. At import, a row such as `OH Press-HV` can be kept as a custom lift, or as a modification of the existing lift once that separate design lands. So `OH Press-HV` stops resolving to `overhead-press` automatically; otherwise a file holding only that row would silently overwrite the base lift's max. |
 | 7 | Custom lifts | Archived, not deleted, so history keeps a name. New column: `custom_lift.archivedAt`. |
 | 8 | Column | `lift` keeps its name and is rewritten in place. |
 | 9 | Alternative names | Each lift has one canonical name and ID, plus alternative names used only for matching (`Bench P.`, `Flat Bench Press`). |
@@ -79,12 +79,12 @@ One top-level issue plus one sub-issue per PR, in milestone v0.4 — Alpha Relea
 | # | Pull request | Contents | Depends on | Rollback |
 |---|--------------|----------|------------|----------|
 | 1 | Matching fix and resolver ([#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118), session already in progress) | Shared resolver in core. Matching fix at the workout max lookup, lift detail page and `updateMaxes`. | None | Revert |
-| 2 | Tolerant reads everywhere ([#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135)) | Every exact-string reader compares through the resolver. Queries by lift expand to all stored spellings. Import preview warns when two rows in one file resolve to the same key, and lets the user keep one as a custom lift. No stored data changes. | 1 | Revert |
+| 2 | Tolerant reads everywhere ([#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135)) | Every exact-string reader compares through the resolver. Queries by lift expand to all stored spellings. Import preview warns when two rows in one file resolve to the same key, and lets the user keep one as a custom lift. `OH Press-HV` stops resolving automatically and is offered as a new lift. Alternative names are added to the catalog (for example `Flat Bench Press`). No stored data changes. | 1 | Revert |
 | 3 | Names at the API boundary ([#1136](https://github.com/merickvaughn/lifting-logbook/issues/1136)) | Add `liftName` to responses. Add `custom_program_spec.label`. Web renders names rather than `lift`. | 1 | Revert; the column is additive |
 | 4 | Archive custom lifts ([#1137](https://github.com/merickvaughn/lifting-logbook/issues/1137)) | Add `archivedAt`. Delete becomes archive. Archived lifts stay resolvable but are hidden from pickers. | 1 | Revert; the column is additive |
 | 5 | Migration tool, not run for real ([#1138](https://github.com/merickvaughn/lifting-logbook/issues/1138)) | `apps/api/scripts/migrate-lift-ids.ts`, following the `seed-tm-history.ts` precedent (dry run, backup, restore, role check). Applies the merge rules and writes backup and review tables. Tested in the database end-to-end suite. | 1, 2, 3 | Revert; no data has been migrated |
-| 6 | Cutover ([#1139](https://github.com/merickvaughn/lifting-logbook/issues/1139)) | All writers and pickers store IDs, including program and focus saves. Old URLs and old public record IDs are still accepted. Browser state is translated through the resolver when read. | 1, 2, 3, 4, 5 | Restore from backup while tolerant reads are still in place |
-| 7 | Enforce and clean up ([#1142](https://github.com/merickvaughn/lifting-logbook/issues/1142)) | Repository ports take `LiftId`, so a raw string is a compile error. A report query counts stored values that aren't known IDs. Tolerant spelling expansion is removed; the resolver stays at import and for old URLs. A custom lift rename test proves history follows. D3 is struck in `docs/domain-model.md`. ADR written. | 6 | Revert; stored data is not changed by this PR |
+| 6 | Cutover ([#1139](https://github.com/merickvaughn/lifting-logbook/issues/1139)) | All writers and pickers store IDs, including program and focus saves. Old URLs and old public record IDs are still accepted. Browser state is translated through the resolver when read. A snapshot test fails if a catalog ID is renamed or removed. ADR written. | 1, 2, 3, 4, 5 | Restore from backup while tolerant reads are still in place |
+| 7 | Enforce and clean up ([#1142](https://github.com/merickvaughn/lifting-logbook/issues/1142)) | Repository ports take `LiftId`, so a raw string is a compile error. A report query counts stored values that aren't known IDs. Tolerant spelling expansion is removed; the resolver stays at import and for old URLs. A custom lift rename test proves history follows. D3 is struck in `docs/domain-model.md`. | 6 | Revert; stored data is not changed by this PR |
 
 PR 3 and PR 4 can run alongside each other.
 
@@ -106,10 +106,10 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 | 4 | `strength_goal` | Identical: keep one. Different: keep the newest `updatedAt` and send the other to review. |
 | 5 | `lift_metadata` | Decode percent-encoded names first. Identical: keep one. Different: keep the row whose lift exactly matches the catalog display name if any, otherwise review. Rewrite `substitutions` to IDs and deduplicate them. |
 | 6 | `workout_lift_override` | Keep the newest `createdAt` for the same key. Rewrite `replacedBy`. |
-| 7 | `custom_program_spec` | Rewrite `lift` to the ID and copy the old value to `label`. A key collision requires the same `order`, so it is expected to be rare. Send it to review rather than delete it. |
+| 7 | `custom_program_spec` | Rewrite `lift` to the ID and, if Open Question 6 keeps the label, copy the old value to `label`. A key collision requires the same `order`, so it is expected to be rare. Send it to review rather than delete it. |
 | 8 | `focus_block.pool`, `focus_day_state.state` | Rewrite values. Pool dedupe by lift keeps the first entry and sends the rest to review. |
 | 9 | `import_batch.preImage` | Keys are not rewritten. Undo translates old keys through the resolver, matching the legacy-key fallback in `lift-record.repository.ts`. |
-| 10 | Unknown text that resolves to nothing | Create a custom lift for that user with that name, classified by the existing custom-lift default, and log it in the job report. Do not leave free text behind. |
+| 10 | Unknown text that resolves to nothing | Create a custom lift for that user with that name, classified by the existing custom-lift default, and log it in the job report. Do not leave free text behind. A stored `OH Press-HV` row takes this path once that name stops resolving. |
 
 **Row-count invariant, per table:** rows before = rows after + rows merged away, and every merged-away row exists in backup.
 
@@ -117,7 +117,7 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 
 | # | Concern | Decision |
 |---|---------|----------|
-| 1 | Backup | Before any write, per table, to a dated backup table with row-level security enabled and forced, like every other table. |
+| 1 | Backup | Before any write, to one backup table holding the run ID, source table, user ID and row contents as JSON. A normal Prisma migration creates it, with row-level security enabled and forced like every other table. |
 | 2 | Restore and rerun | Restore returns the captured state. Migrate and restore are idempotent. A rerun on migrated data changes nothing. |
 | 3 | Database role | The production superuser migrator role bypasses row-level security. The runtime `lifting_app` role sees nothing without the per-request setting. Per `docs/deploy.md`, the migrator is the owner role and data migrations run under it. |
 | 4 | Wrong connection | The script asserts the role with `SELECT current_user`. It aborts if it sees zero users, or zero rows where the expected count from a separate query is nonzero, so a wrong connection cannot look like a clean no-op. |
@@ -125,7 +125,7 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 | 6 | Query tracing | Prisma client calls rather than raw SQL where practical. Any `$queryRaw` or `$executeRaw` is wrapped in a manual span, since raw SQL is not auto-traced (ADR-024). |
 | 7 | Logging | Counts per table and per user ID through structured logging. No lift payload beyond the unresolved names, and no secrets. |
 | 8 | Rollout overlap | An old revision may write names after the job ran. Tolerant reads handle them and the rerun cleans them. |
-| 9 | Review table | A report only, with no UI in this plan. |
+| 9 | Review table | A report with no UI in this plan. The tool lists rows and marks each one resolved, which is how the owner clears them before PR 7. |
 
 ## Risk Audit
 
@@ -136,7 +136,7 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 | 3 | Security | Row-level security on new tables, tested under the restricted role. The resolver is isolated per user because custom lifts are per user. Large language model prompts keep seeing readable names only. |
 | 4 | Resilience | Each PR is revertible. Cutover rollback is restore. Tolerant reads remain until PR 7. |
 | 5 | Performance | One indexed custom-lift read per request for the resolver, cached within the request. History queries use expanded `IN` lists until PR 7. |
-| 6 | Data integrity | Merge rules, the row-count invariant and backups. The migration becomes irreversible only if backup tables are dropped, which happens no sooner than after PR 7. |
+| 6 | Data integrity | Merge rules, the row-count invariant and backups. The migration becomes irreversible only if the backup table is dropped, which happens no sooner than after PR 7. |
 | 7 | Experimental validity | N/A, no experiment. |
 | 8 | Gate calibration | The PR 7 report query reports only and does not block. The snapshot test enumerates its own inputs. The job's zero-rows abort is calibrated with a known-good populated fixture and a known-bad wrong-role run. |
 | 9 | Accessibility | Display text only. Names are unchanged where programs set their own label. |
@@ -149,7 +149,9 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 - [ ] Re-importing the same lift-record file with a mix of spellings creates 0 rows: database end-to-end test under `lifting_app`.
 - [ ] Renaming a custom lift keeps its history, maxes and metadata: end-to-end test.
 - [ ] Two rows in one file that resolve to one lift produce a preview warning, and keeping one as a custom lift stores both maxes: test with `OH Press` and `OH Press-HV`.
-- [ ] A program that says `Squat` still shows `Squat`, and history shows `Back Squat`: Playwright or component test.
+- [ ] A file holding only `OH Press-HV` doesn't change the `overhead-press` max, and the row is offered as a new lift: test.
+- [ ] `Flat Bench Press` resolves to `bench-press`: test.
+- [ ] If Open Question 6 keeps the label, a program that says `Squat` still shows `Squat`, and history shows `Back Squat`: Playwright or component test.
 - [ ] One user's custom lift does not resolve for another user: test under `lifting_app`.
 
 **Migration**
@@ -160,7 +162,8 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 - [ ] A rerun on migrated data changes nothing: test compares rows before and after.
 - [ ] Restore returns the exact pre-migration rows: test compares restored rows to the captured fixture.
 - [ ] Running with the wrong role aborts rather than reporting success: test asserts a failing exit and no writes.
-- [ ] Backup and review tables have row-level security enabled and forced: test under `lifting_app`.
+- [ ] The backup and review tables have row-level security enabled and forced: test under `lifting_app`.
+- [ ] The tool lists review rows and marks one resolved: test.
 
 **Enforcement and records**
 
