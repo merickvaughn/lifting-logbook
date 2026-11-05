@@ -82,10 +82,15 @@ type CreateLiftDraft = {
 type PlannedCommit = { file: File; opts?: CommitImportOpts; counts: ImportDryRunResponse };
 
 // ImportDelta.key can repeat a natural key with a `#N` suffix, which identifies a row
-// only in this component. The server's position key leaves a same-keyed row alone (#1123).
-// An API rolled back to before that has no rowIndex and matches the bare natural key.
+// only in this component.
+function naturalKeyOf(delta: ImportDelta): string {
+  return delta.key.replace(/#\d+$/, '');
+}
+
+// The server's position key leaves a same-keyed row alone (#1123). An API rolled back to
+// before that has no rowIndex and matches the bare natural key.
 function excludeKeyFor(delta: ImportDelta): string {
-  return delta.rowIndex !== undefined ? `__row_${delta.rowIndex}` : delta.key.replace(/#\d+$/, '');
+  return delta.rowIndex !== undefined ? `__row_${delta.rowIndex}` : naturalKeyOf(delta);
 }
 
 function buildTrainingMaxesCsv(rows: EditableMax[]): string {
@@ -1008,11 +1013,11 @@ export function ImportWizard({
       const seenLifts = new Set(reviewMaxes.map((r) => r.lift));
       const unchangedMaxes = deltas
         .filter((d) => {
-          if (d.kind !== 'skip' || seenLifts.has(d.label)) return false;
-          seenLifts.add(d.label);
+          if (d.kind !== 'skip' || seenLifts.has(naturalKeyOf(d))) return false;
+          seenLifts.add(naturalKeyOf(d));
           return true;
         })
-        .map((d) => ({ lift: d.label, weight: d.after ?? '' }));
+        .map((d) => ({ lift: naturalKeyOf(d), weight: d.after ?? '' }));
       const csv = buildTrainingMaxesCsv([...activeMaxes, ...unchangedMaxes]);
       // No column overrides: this CSV has canonical headers and rows from a preview
       // that already applied them. Sending them again would rename columns twice.
