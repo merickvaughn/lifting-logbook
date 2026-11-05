@@ -272,10 +272,8 @@ this proposal stores nothing new for it. Three consequences:
 - **Which max wins.** A file with both `OH Press` (103.75, 9/28/2026) and `OH Press-HV` (75,
   1/1/2024) now has one lift named twice. [PR #1129](https://github.com/merickvaughn/lifting-logbook/pull/1129)
   keeps the most recent, so 103.75 wins.
-- **The stable-ID plan.** [PR #1145](https://github.com/merickvaughn/lifting-logbook/pull/1145) and
-  a comment on [#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118) still treat the
-  two as things to keep separate. The owner's decision here is the later one and overrides that:
-  they are one lift. The conflict is noted on both.
+- **The stable-ID plan.** [PR #1145](https://github.com/merickvaughn/lifting-logbook/pull/1145)
+  records the same ruling: they are one lift.
 - **The slot's plan.** If the 5×12 slot returns (the sheet lists it at offset -1, which reads as
   parked), it plans from 103.75 though the last high-volume sets were around 90, and each run that
   hits its reps proposes cutting the max. That is what
@@ -287,14 +285,19 @@ Deadlift (`lift`).
 ### Sequence
 
 This builds on the [stable-ID plan](https://github.com/merickvaughn/lifting-logbook/issues/1134)
-([PR #1145](https://github.com/merickvaughn/lifting-logbook/pull/1145)), which isn't built yet:
+([PR #1145](https://github.com/merickvaughn/lifting-logbook/pull/1145)). Its first PR has merged, and
+the rest isn't built yet:
 
-- **Blocked on [#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118)**, that plan's
-  first PR. `lift_modification.lift` stores a `LiftId` from the start, and checking a set against a
-  modification's lift needs the shared resolver while `lift_record.lift` still holds mixed
-  spellings.
-- **Should follow its tolerant reads ([#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135)).**
-  A modification's history needs to follow its lift under any stored spelling.
+- **Uses what [#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118) shipped**, in
+  [PR #1147](https://github.com/merickvaughn/lifting-logbook/pull/1147). That is narrower than the plan
+  describes: `liftIdFor` and `isSameLift` take no custom lifts, and there is no `LiftId` type yet. So
+  `lift_modification.lift` is written through `lookupLift`, as `custom?.id ?? builtIn?.id`, and stored
+  as a plain string until [#1142](https://github.com/merickvaughn/lifting-logbook/issues/1142) makes
+  ports take `LiftId`. Checking a set against a modification's lift goes through the same lookup while
+  `lift_record.lift` still holds mixed spellings.
+- **Showing history should follow its tolerant reads ([#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135)).**
+  A modification's history needs to follow its lift under any stored spelling. Phase 1 reads no
+  history, so it doesn't need to wait.
 - **Its migration tool ([#1138](https://github.com/merickvaughn/lifting-logbook/issues/1138)) must
   know about `modifications`** if phase 2 here ships first. Merge rule 1 calls two rows identical
   by weight, reps and notes, so it must compare `modifications` too, or a merge could drop them.
