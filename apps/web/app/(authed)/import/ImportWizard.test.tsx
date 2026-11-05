@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type {
   CustomLiftResponse,
   CustomProgramSummaryResponse,
+  ImportDelta,
   ImportPreviewResponse,
 } from '@lifting-logbook/types';
 import { ImportWizard } from './ImportWizard';
@@ -58,6 +59,7 @@ const LIFT_RECORDS_PREVIEW: ImportPreviewResponse = {
     creates: 0,
     updates: 0,
     skips: 1,
+    unresolved: 0,
     deltas: [{ key: '1:1:20260101:bench-press:1', label: 'bench-press', kind: 'skip' }],
   },
   errors: [],
@@ -81,6 +83,7 @@ const TM_PREVIEW: ImportPreviewResponse = {
     creates: 2,
     updates: 1,
     skips: 0,
+    unresolved: 0,
     deltas: [
       { key: 'squat', label: 'squat', kind: 'create', after: '300' },
       { key: 'bench', label: 'bench', kind: 'update', before: '200', after: '210' },
@@ -157,6 +160,7 @@ const AMBIGUOUS_LIFT_PREVIEW: ImportPreviewResponse = {
     creates: 0,
     updates: 0,
     skips: 0,
+    unresolved: 2,
     deltas: [
       {
         key: '__ambiguous_1',
@@ -209,6 +213,7 @@ const TWO_DIFFERENT_AMBIGUOUS_LIFT_PREVIEW: ImportPreviewResponse = {
     creates: 0,
     updates: 0,
     skips: 0,
+    unresolved: 2,
     deltas: [
       {
         key: '__ambiguous_1',
@@ -270,6 +275,7 @@ const DELETE_RESURRECTION_PREVIEW: ImportPreviewResponse = {
     creates: 0,
     updates: 0,
     skips: 0,
+    unresolved: 1,
     deltas: [
       {
         key: '__ambiguous_1',
@@ -311,6 +317,7 @@ const BLANK_LIFT_CELL_PREVIEW: ImportPreviewResponse = {
     creates: 0,
     updates: 0,
     skips: 0,
+    unresolved: 2,
     deltas: [
       { key: '__ambiguous_1', label: 'Row 1', kind: 'create', status: 'ambiguous', rowIndex: 1, originalLift: '' },
       { key: '__ambiguous_2', label: 'Row 2', kind: 'create', status: 'ambiguous', rowIndex: 2, originalLift: '' },
@@ -357,6 +364,7 @@ const CASE_VARIANT_PREVIEW: ImportPreviewResponse = {
     creates: 0,
     updates: 0,
     skips: 0,
+    unresolved: 1,
     deltas: [
       {
         key: '__ambiguous_1',
@@ -402,6 +410,7 @@ const RACE_GEN1_PREVIEW: ImportPreviewResponse = {
     creates: 0,
     updates: 0,
     skips: 0,
+    unresolved: 1,
     deltas: [
       {
         key: '__ambiguous_1',
@@ -422,6 +431,7 @@ const RACE_GEN2_PREVIEW: ImportPreviewResponse = {
     creates: 0,
     updates: 0,
     skips: 0,
+    unresolved: 1,
     deltas: [
       {
         key: '__ambiguous_1',
@@ -574,7 +584,6 @@ describe('ImportWizard', () => {
       'prog-1',
       expect.any(File),
       'training-maxes',
-      expect.anything(),
     );
   });
 
@@ -955,6 +964,468 @@ describe('ImportWizard', () => {
 
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
     expect(screen.queryByText(/more skipped row\(s\) not shown/)).not.toBeInTheDocument();
+  });
+
+  // #1114: a row the commit would reject is neither a create nor committable.
+  describe('unresolved rows (#1114)', () => {
+    function tileValue(label: string) {
+      return screen.getByText(label).previousSibling?.textContent;
+    }
+
+    function withDeltas(deltas: ImportDelta[]): ImportPreviewResponse {
+      return {
+        ...AMBIGUOUS_LIFT_PREVIEW,
+        preview: { creates: 0, updates: 0, skips: 0, unresolved: 0, deltas },
+      };
+    }
+
+    it('counts unresolved rows apart from creates and sends no commit', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+      expect(tileValue('Create')).toBe('0');
+      expect(tileValue('Unresolved')).toBe('2');
+      const commit = screen.getByRole('button', { name: 'Commit import' });
+      expect(commit).toBeDisabled();
+      await user.click(commit);
+      expect(mockCommit).not.toHaveBeenCalled();
+    });
+
+    it('says on Review how many rows need a lift, and filters to them', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(
+        withDeltas([
+          { key: 'k1', label: 'Bench Press set 1', kind: 'skip' },
+          {
+            key: '__ambiguous_2',
+            label: 'Mystery Lift set 1',
+            kind: 'create',
+            status: 'ambiguous',
+            rowIndex: 2,
+            originalLift: 'Mystery Lift',
+          },
+        ]),
+      );
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      expect(screen.getByText(/1 row needs a lift/)).toBeInTheDocument();
+      expect(screen.getByText('Bench Press set 1')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Show rows that need a lift' }));
+      expect(screen.queryByText('Bench Press set 1')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Lift name for row 2')).toBeInTheDocument();
+    });
+
+    it('keeps a typed name that matches no lift unresolved', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      await user.clear(screen.getByLabelText('Lift name for row 1'));
+      await user.type(screen.getByLabelText('Lift name for row 1'), 'Still Not A Lift');
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+      expect(tileValue('Unresolved')).toBe('2');
+      expect(screen.getByRole('button', { name: 'Commit import' })).toBeDisabled();
+    });
+
+    it('counts a row remapped to a known lift as a create, leaving only the rest unresolved', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      await user.clear(screen.getByLabelText('Lift name for row 1'));
+      await user.type(screen.getByLabelText('Lift name for row 1'), 'Squat');
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+      expect(tileValue('Create')).toBe('1');
+      expect(tileValue('Unresolved')).toBe('1');
+      expect(screen.getByRole('button', { name: 'Commit import' })).toBeDisabled();
+    });
+
+    it('commits once every unresolved row is excluded', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 0, updated: 0, skipped: 0, batchId: 'batch-none' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 1: Wide-Grip CBL Curls' }));
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 2: Wide-Grip CBL Curls' }));
+      expect(screen.queryByText(/needs? a lift/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+      expect(tileValue('Create')).toBe('0');
+      expect(screen.queryByText('Unresolved')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+      const [, , , opts] = mockCommit.mock.calls[0] as [string, File, string, { excludeKeys?: string[] }];
+      expect(opts.excludeKeys).toEqual(['__ambiguous_1', '__ambiguous_2']);
+    });
+
+    // The server's slot-map lookup is exact-case, so an untouched 'squat' only
+    // commits if the wizard sends the name it already treats as known.
+    it('sends the known name for an untouched row that differs from it only by case', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(
+        withDeltas([
+          {
+            key: '__ambiguous_1',
+            label: 'squat set 1',
+            kind: 'create',
+            status: 'ambiguous',
+            rowIndex: 1,
+            originalLift: 'squat',
+          },
+        ]),
+      );
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 1, updated: 0, skipped: 0, batchId: 'batch-case' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+      expect(tileValue('Create')).toBe('1');
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+      const [, , , opts] = mockCommit.mock.calls[0] as [
+        string,
+        File,
+        string,
+        { liftOverrides?: Record<number, string> },
+      ];
+      expect(opts.liftOverrides).toEqual({ 1: 'Squat' });
+    });
+
+    it('blocks on an incomplete row until it is excluded', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(
+        withDeltas([
+          { key: '__incomplete_1', label: 'Row 1 (incomplete)', kind: 'create', status: 'incomplete', rowIndex: 1 },
+        ]),
+      );
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 0, updated: 0, skipped: 0, batchId: 'batch-inc' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      expect(screen.getByText(/1 row is missing a required value/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      expect(tileValue('Unresolved')).toBe('1');
+      expect(screen.getByRole('button', { name: 'Commit import' })).toBeDisabled();
+
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 1 (incomplete)' }));
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+    });
+
+    it("shows a remapped row's lift name, not its id, and counts it as a create", async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue({ ok: true, data: CUSTOM_LIFT });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
+      await user.click(
+        screen.getAllByRole('button', { name: 'Create "Wide-Grip CBL Curls" as a new lift' })[0]!,
+      );
+      await waitFor(() => expect(screen.queryByText(/No match — create/i)).not.toBeInTheDocument());
+
+      expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Wide-Grip CBL Curls');
+      expect(screen.getByLabelText('Lift name for row 2')).toHaveValue('Wide-Grip CBL Curls');
+
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      expect(tileValue('Create')).toBe('2');
+      expect(screen.queryByText('Unresolved')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Commit import' })).toBeEnabled();
+    });
+
+    it('shows the new name when a row is retyped to a different lift and created', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue({
+        ok: true,
+        data: { ...CUSTOM_LIFT, id: 'custom-cable-curl', name: 'Cable Curl' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      const input = screen.getByLabelText('Lift name for row 1');
+      await user.clear(input);
+      await user.type(input, 'Cable Curl');
+      await user.click(within(input.closest('tr')!).getByRole('button', { name: 'Accessory' }));
+      await user.click(screen.getByRole('button', { name: 'Create "Cable Curl" as a new lift' }));
+
+      await waitFor(() => expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Cable Curl'));
+      await waitFor(() => expect(screen.queryByRole('button', { name: /Create "Cable Curl"/ })).not.toBeInTheDocument());
+    });
+
+    it('keeps a row unresolved when its text fits two lifts once case is ignored', async () => {
+      const user = userEvent.setup();
+      const lift = (id: string, name: string): CustomLiftResponse => ({ ...CUSTOM_LIFT, id, name });
+      mockPreview.mockResolvedValue(
+        withDeltas([
+          {
+            key: '__ambiguous_1',
+            label: 'HIP THRUST set 1',
+            kind: 'create',
+            status: 'ambiguous',
+            rowIndex: 1,
+            originalLift: 'HIP THRUST',
+          },
+        ]),
+      );
+
+      render(
+        <ImportWizard
+          programs={PROGRAMS}
+          customLifts={[lift('custom-a', 'Hip Thrust'), lift('custom-b', 'hip thrust')]}
+        />,
+      );
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+      expect(screen.getByText(/1 row needs a lift/)).toBeInTheDocument();
+
+      // The exact name of either lift settles it.
+      await user.clear(screen.getByLabelText('Lift name for row 1'));
+      await user.type(screen.getByLabelText('Lift name for row 1'), 'hip thrust');
+      expect(screen.queryByText(/needs? a lift/)).not.toBeInTheDocument();
+    });
+
+    it('lists only the rows still needing a lift, and keeps one listed while it is being retyped', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(TWO_DIFFERENT_AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      await user.clear(screen.getByLabelText('Lift name for row 1'));
+      await user.type(screen.getByLabelText('Lift name for row 1'), 'Squat');
+      await user.click(screen.getByRole('button', { name: 'Show rows that need a lift' }));
+
+      expect(screen.queryByLabelText('Lift name for row 1')).not.toBeInTheDocument();
+      const row2 = screen.getByLabelText('Lift name for row 2');
+      await user.clear(row2);
+      await user.type(row2, 'Squat');
+      expect(screen.getByLabelText('Lift name for row 2')).toHaveValue('Squat');
+      expect(screen.queryByText(/needs? a lift before/)).not.toBeInTheDocument();
+    });
+
+    // #1114 review: the first preview predates Map Columns, so without this every row
+    // would read as needing a lift even though the commit applies the column remap.
+    it('previews again with a column remapped on Map Columns, so the gate matches the commit', async () => {
+      const user = userEvent.setup();
+      const blank: ImportDelta = {
+        key: '__ambiguous_1',
+        label: 'Row 1',
+        kind: 'create',
+        status: 'ambiguous',
+        rowIndex: 1,
+        originalLift: '',
+      };
+      mockPreview
+        .mockResolvedValueOnce(withDeltas([blank]))
+        .mockResolvedValueOnce({
+          ...AMBIGUOUS_LIFT_PREVIEW,
+          columnMappings: [],
+          preview: {
+            creates: 1,
+            updates: 0,
+            skips: 0,
+            unresolved: 0,
+            deltas: [{ key: '1:1:20260101:back-squat:1', label: 'back-squat set 1', kind: 'create', after: '90 × 10' }],
+          },
+        });
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 1, updated: 0, skipped: 0, batchId: 'batch-map' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(screen.getByLabelText('CSV file'), AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+
+      await user.selectOptions(screen.getByLabelText('Map column Lift'), 'notes');
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
+
+      await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
+      expect(mockPreview.mock.calls[1]?.[3]).toEqual({ overrides: { Lift: 'notes' } });
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Review' })).toBeInTheDocument());
+      expect(screen.queryByText(/needs? a lift/)).not.toBeInTheDocument();
+
+      // Going back without changing anything keeps the preview and the user's work.
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      expect(screen.getByLabelText('Map column Lift')).toHaveValue('notes');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+      expect(mockPreview).toHaveBeenCalledTimes(2);
+
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+    });
+
+    it('says so when a column change clears Review edits, and keeps them when the mapping is unchanged', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(screen.getByLabelText('CSV file'), AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'notes');
+      await user.selectOptions(screen.getByLabelText('Map column Reps'), 'notes');
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
+      await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
+      await screen.findByRole('heading', { name: 'Review' });
+      expect(screen.queryByText(/were cleared/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 1: Wide-Grip CBL Curls' }));
+
+      // Undoing and redoing a remap reorders it but changes nothing, so the exclusion stays.
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'weight');
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'notes');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+      await screen.findByRole('heading', { name: 'Review' });
+      expect(mockPreview).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('button', { name: 'Re-include Row 1: Wide-Grip CBL Curls' })).toBeInTheDocument();
+
+      // A real change reloads the rows and says the exclusion is gone.
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'weight');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+      await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(3));
+      await waitFor(() => expect(screen.getByText(/were cleared/)).toBeInTheDocument());
+      expect(screen.getByRole('button', { name: 'Exclude Row 1: Wide-Grip CBL Curls' })).toBeInTheDocument();
+    });
+
+    it('disables the column selects while the new preview runs', async () => {
+      const user = userEvent.setup();
+      let release: (value: ImportPreviewResponse) => void = () => {};
+      mockPreview
+        .mockResolvedValueOnce(AMBIGUOUS_LIFT_PREVIEW)
+        .mockReturnValueOnce(new Promise((resolve) => { release = resolve; }));
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(screen.getByLabelText('CSV file'), AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'notes');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+
+      expect(screen.getByLabelText('Map column Reps')).toBeDisabled();
+      release(AMBIGUOUS_LIFT_PREVIEW);
+      await screen.findByRole('heading', { name: 'Review' });
+    });
+
+    it('does not send column overrides with the rebuilt training-max file, which already applied them', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(TM_PREVIEW);
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'training-maxes', created: 2, updated: 0, skipped: 0, batchId: 'batch-swap' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(
+        screen.getByLabelText('CSV file'),
+        new File(['Date Updated,Lift,Weight\n1/1/2026,300,Squat'], 'tm.csv', { type: 'text/csv' }),
+      );
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Training Maxes')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+      await user.selectOptions(screen.getByLabelText('Map column Lift'), 'weight');
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'lift');
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
+      await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
+      expect(mockPreview.mock.calls[1]?.[3]).toEqual({ overrides: { Lift: 'weight', Weight: 'lift' } });
+      await screen.findByRole('heading', { name: 'Review' });
+
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+      expect(mockCommit.mock.calls[0]).toHaveLength(3);
+    });
+
+    it('stays on Map Columns and says so when the new preview fails', async () => {
+      const user = userEvent.setup();
+      mockPreview
+        .mockResolvedValueOnce(AMBIGUOUS_LIFT_PREVIEW)
+        .mockRejectedValueOnce(new Error('Import preview failed (HTTP 500)'));
+      jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(screen.getByLabelText('CSV file'), AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+      await user.selectOptions(screen.getByLabelText('Map column Lift'), 'notes');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+
+      await waitFor(() => expect(screen.getByText('Import preview failed (HTTP 500)')).toBeInTheDocument());
+      expect(screen.getByRole('heading', { name: 'Map columns' })).toBeInTheDocument();
+    });
+
+    it('lists a custom lift by name in the Training Maxes review, and still commits its id', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue({
+        ...TM_PREVIEW,
+        preview: {
+          creates: 1,
+          updates: 0,
+          skips: 0,
+          unresolved: 0,
+          deltas: [{ key: 'custom-cbl-curls', label: 'custom-cbl-curls', kind: 'create', after: '90' }],
+        },
+      });
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'training-maxes', created: 1, updated: 0, skipped: 0, batchId: 'batch-tm' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[CUSTOM_LIFT]} />);
+      await navigateToReview(
+        user,
+        new File(['Date Updated,Lift,Weight\n1/1/2026,Wide-Grip CBL Curls,90'], 'tm.csv', { type: 'text/csv' }),
+      );
+
+      const list = screen.getByRole('list', { name: 'Training maxes to import' });
+      expect(within(list).getByText('Wide-Grip CBL Curls')).toBeInTheDocument();
+      expect(within(list).queryByText('custom-cbl-curls')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Weight for Wide-Grip CBL Curls')).toHaveValue(90);
+
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+      const [, commitFile] = mockCommit.mock.calls[0] as [string, File, string];
+      expect(await readFileText(commitFile)).toContain('custom-cbl-curls');
+    });
   });
 
   // #911: the REVIEW step's ambiguous-row remap datalist offers the user's
@@ -1465,6 +1936,12 @@ describe('ImportWizard', () => {
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       await user.click(createButtons[0]!);
       await waitFor(() => expect(mockCreateCustomLift).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.queryByText(/No match — create/i)).not.toBeInTheDocument());
+      // Row 2 must NOT be swept into row 1's override. It's blank and still counted
+      // as needing a lift, so it has to be excluded before committing (#1114).
+      expect(screen.getByLabelText('Lift name for row 2')).toHaveValue('');
+      expect(screen.getByText(/1 row needs a lift/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 2' }));
 
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
       await user.click(screen.getByRole('button', { name: 'Commit import' }));

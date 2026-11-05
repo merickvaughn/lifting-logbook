@@ -65,6 +65,7 @@ const PREVIEWS: Record<ImportKind, ImportPreviewResponse> = {
       creates: 3,
       updates: 0,
       skips: 1,
+      unresolved: 0,
       deltas: [{ key: '38:1:20251229:bench-press:1', label: 'bench-press', kind: 'create', after: '180 × 8' }],
     },
     errors: [],
@@ -77,6 +78,7 @@ const PREVIEWS: Record<ImportKind, ImportPreviewResponse> = {
       creates: 1,
       updates: 0,
       skips: 0,
+      unresolved: 0,
       deltas: [{ key: 'bench-press', label: 'bench-press', kind: 'create', after: '172.5' }],
     },
     errors: [],
@@ -85,14 +87,14 @@ const PREVIEWS: Record<ImportKind, ImportPreviewResponse> = {
     classification: classified('strength-goals', 0.8),
     destination: 'strength-goals',
     columnMappings: [],
-    preview: { creates: 2, updates: 0, skips: 0, deltas: [] },
+    preview: { creates: 2, updates: 0, skips: 0, unresolved: 0, deltas: [] },
     errors: [],
   },
   'program-spec': {
     classification: classified('program-spec', 0.8),
     destination: 'program-spec',
     columnMappings: [],
-    preview: { creates: 0, updates: 0, skips: 0, deltas: [] },
+    preview: { creates: 0, updates: 0, skips: 0, unresolved: 0, deltas: [] },
     errors: [],
   },
 };
@@ -143,6 +145,26 @@ describe('Google Sheets import (#1111)', () => {
     expect(liftFile?.name).toBe('LIFT_RECORDS.csv');
 
     expect(screen.getByRole('button', { name: 'Import 2 tabs' })).toBeEnabled();
+  });
+
+  it('shows rows that still need a lift apart from new rows in the tab preview (#1114)', async () => {
+    const user = userEvent.setup();
+    mockFetchSheet.mockResolvedValue({ tabs: TABS });
+    mockPreview.mockImplementation(async (_program, _file, destination) => {
+      const res = PREVIEWS[destination ?? 'lift-records'];
+      return destination === 'lift-records'
+        ? { ...res, preview: { creates: 3, updates: 0, skips: 1, unresolved: 22, deltas: [] } }
+        : res;
+    });
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+
+    await fetchWorkbook(user);
+
+    await waitFor(() =>
+      expect(
+        within(rowFor('LIFT_RECORDS')).getByText('3 new · 0 updated · 1 skipped · 22 to review'),
+      ).toBeInTheDocument(),
+    );
   });
 
   it('previews a tab under the kind the user picks', async () => {

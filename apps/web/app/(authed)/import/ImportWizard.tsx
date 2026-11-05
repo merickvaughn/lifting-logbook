@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type {
   ColumnMapping,
@@ -39,7 +39,7 @@ import {
 } from './SheetTabsStep';
 import styles from './import.module.css';
 
-type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous';
+type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous' | 'needs-lift';
 type EditableMax = { lift: string; weight: string };
 type QueuedTab = { name: string; csv: string; kind: ImportKind };
 type CompletedTab = {
@@ -160,6 +160,13 @@ function bucketClass(bucket: 'high' | 'medium' | 'low'): string {
       : styles.bucketLow ?? '';
 }
 
+// Sorted, because undoing and redoing a remap changes its insertion order but not its meaning.
+function columnOverridesKey(overrides: Record<string, string>): string {
+  return JSON.stringify(Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+const NO_COLUMN_OVERRIDES = columnOverridesKey({});
+
 function filterDeltas(deltas: ImportDelta[], filter: ReviewFilter): ImportDelta[] {
   if (filter === 'all') return deltas;
   if (filter === 'incomplete') return deltas.filter((d) => d.status === 'incomplete');
@@ -232,6 +239,10 @@ export function ImportWizard({
   // out instead of writing overrides keyed to rows that no longer exist in
   // the current preview (#911 review, second pass).
   const previewGeneration = useRef(0);
+  // The column remaps the current preview was taken with.
+  const previewedColumnOverrides = useRef(NO_COLUMN_OVERRIDES);
+  const [needsLiftSnapshot, setNeedsLiftSnapshot] = useState<ReadonlySet<string>>(new Set());
+  const [reviewEditsDiscarded, setReviewEditsDiscarded] = useState(false);
   const [batchId, setBatchId] = useState<string | null>(null);
   const [undoResult, setUndoResult] = useState<ImportUndoResponse | null>(null);
 
@@ -296,11 +307,15 @@ export function ImportWizard({
     };
   }, [previewBody]);
 
-  // Filtered deltas for the REVIEW table
-  const visibleDeltas = useMemo(
-    () => filterDeltas(previewBody?.deltas ?? [], reviewFilter),
-    [previewBody, reviewFilter],
-  );
+  // Filtered deltas for the REVIEW table. 'needs-lift' lists the rows that needed
+  // a lift when the user asked to see them. It's a snapshot so a row doesn't vanish
+  // mid-typing the moment its text first matches a known lift ("Squat" on the way
+  // to "Squat (paused)").
+  const visibleDeltas = useMemo(() => {
+    const deltas = previewBody?.deltas ?? [];
+    if (reviewFilter === 'needs-lift') return deltas.filter((d) => needsLiftSnapshot.has(d.key));
+    return filterDeltas(deltas, reviewFilter);
+  }, [previewBody, reviewFilter, needsLiftSnapshot]);
 
   // Every string an ambiguous-row remap can resolve to via an EXACT-case
   // match: every canonical alias, plus this user's own custom lift names and
@@ -347,6 +362,74 @@ export function ImportWizard({
     return map;
   }, [customLifts]);
 
+  // A remap stores a custom lift's id once it's created. Show its name instead.
+  const customLiftNames = useMemo(
+    () => new Map(customLifts.map((lift) => [lift.id, lift.name])),
+    [customLifts],
+  );
+
+  // Names that fit more than one lift once case is ignored: a custom lift sharing
+  // its lowercased name with a built-in alias or another custom lift. Text in a
+  // different case can't choose between them, so the user has to.
+  const caseTiedLiftNames = useMemo(() => {
+    const aliases = new Set(ALL_SLOT_MAP_ALIASES.map((alias) => alias.toLowerCase()));
+    const seen = new Set<string>();
+    const tied = new Set<string>();
+    for (const lift of customLifts) {
+      const lower = lift.name.toLowerCase();
+      if (aliases.has(lower) || seen.has(lower)) tied.add(lower);
+      seen.add(lower);
+    }
+    return tied;
+  }, [customLifts]);
+
+  // The value a commit must send for a row's lift text, or undefined if the
+  // server wouldn't recognize it. An exact match wins, because the server's slot-map
+  // lookup is exact-case: a custom lift named "squat" is a distinct, reachable
+  // key from the canonical "Squat", so it must be honored as typed (#911
+  // review, third pass). Only text that matches nothing exactly falls back to
+  // the case-insensitive canonical form. A lift named only in a remap input
+  // can't be committed until it's created.
+  const resolveLiftValue = useCallback(
+    (raw: string): string | undefined => {
+      const trimmed = raw.trim();
+      if (!trimmed) return undefined;
+      if (exactKnownLiftKeys.has(trimmed)) return trimmed;
+      const lower = trimmed.toLowerCase();
+      if (caseTiedLiftNames.has(lower)) return undefined;
+      return knownLiftNamesCanonical.get(lower);
+    },
+    [exactKnownLiftKeys, knownLiftNamesCanonical, caseTiedLiftNames],
+  );
+
+  // A row's current lift text: its override, or the file's text if it has none.
+  // `??` matters: a cleared input ('') must not fall back to the file's text.
+  const rowLiftText = useCallback(
+    (d: ImportDelta) =>
+      (d.rowIndex !== undefined ? liftOverrides.get(d.rowIndex) : undefined) ?? d.originalLift ?? '',
+    [liftOverrides],
+  );
+
+  // What the user's fixes change about the server's counts, which describe the
+  // file as uploaded. d.status never changes once a row is flagged, so whether an
+  // ambiguous row is fixed has to be worked out from its current text. A row still
+  // unresolved here would fail the whole commit (#1114).
+  const reviewCounts = useMemo(() => {
+    const counts = { remappedCreates: 0, needsLiftKeys: new Set<string>(), incomplete: 0 };
+    for (const d of previewBody?.deltas ?? []) {
+      if (excludedKeys.has(d.key)) continue;
+      if (d.status === 'incomplete') {
+        counts.incomplete += 1;
+      } else if (d.status === 'ambiguous') {
+        if (d.rowIndex !== undefined && resolveLiftValue(rowLiftText(d))) counts.remappedCreates += 1;
+        else counts.needsLiftKeys.add(d.key);
+      }
+    }
+    return counts;
+  }, [previewBody, excludedKeys, rowLiftText, resolveLiftValue]);
+  const needsLiftCount = reviewCounts.needsLiftKeys.size;
+  const unresolvedCount = needsLiftCount + reviewCounts.incomplete;
+
   // The create-in-flight guard must be keyed by the NAME actually being
   // submitted to POST /lifts/custom, not by the row's original CSV text: N
   // ambiguous rows sharing the same originalLift each render their own
@@ -376,6 +459,31 @@ export function ImportWizard({
     return set;
   }, [createDrafts]);
 
+  // Every piece of state keyed to the previous preview's deltas/rows must be
+  // cleared when a new preview replaces them — reachable via the Back →
+  // re-pick-destination path (handlePickDestination) and a column remap
+  // (enterReview). liftOverrides and createDrafts are keyed by rowIndex; a stale
+  // entry surviving would drive a render-time decision on an unrelated row of the
+  // new preview (suppressing or fabricating its create-new affordance) and still
+  // be sent as its commit override. excludedKeys/selectedKeys are keyed by
+  // delta.key, which can collide across previews too (e.g. ambiguous rows always
+  // key as `__ambiguous_<rowIndex>`, so file A's row 1 and file B's row 1 collide)
+  // — an uncleared exclude would then silently drop an unrelated row from the new
+  // file's import with nothing in the UI explaining why. reviewMaxes is the
+  // training-maxes REVIEW step's own editable copy of the previous preview's
+  // deltas. A commit failure from the PREVIOUS preview must not still be showing
+  // either.
+  function clearPreviewRowState() {
+    previewGeneration.current += 1;
+    setLiftOverrides(new Map());
+    setCreateDrafts(new Map());
+    setExcludedKeys(new Set());
+    setSelectedKeys(new Set());
+    lastSelectedKey.current = null;
+    setReviewMaxes(null);
+    setCommitErrors(null);
+  }
+
   // `source` defaults to the file in state; a Google Sheets tab passes its file
   // directly because the setFile() that queued it hasn't re-rendered yet, plus
   // the overview's preview of it when one is ready, so it isn't uploaded again.
@@ -390,40 +498,15 @@ export function ImportWizard({
     try {
       const res = cached ?? (await previewImport(programId, source, override));
       setPreview(res);
-      previewGeneration.current += 1;
-      // Every piece of state keyed to the previous preview's deltas/rows must
-      // be cleared when analyze() replaces them — reachable via the Back →
-      // re-pick-destination path (handlePickDestination). liftOverrides and
-      // createDrafts are keyed by rowIndex; a stale entry surviving would
-      // drive a render-time decision on an unrelated row of the new preview
-      // (suppressing or fabricating its create-new affordance) and still be
-      // sent as its commit override. excludedKeys/selectedKeys are keyed by
-      // delta.key, which can collide across previews too (e.g. ambiguous rows
-      // always key as `__ambiguous_<rowIndex>`, so file A's row 1 and file B's
-      // row 1 collide) — an uncleared exclude would then silently drop an
-      // unrelated row from the new file's import with nothing in the UI
-      // explaining why. reviewMaxes is the training-maxes REVIEW step's own
-      // editable copy of the previous preview's deltas. columnOverrides is
-      // keyed by sourceHeader/__req__:<field>, which collides across files
-      // the same way delta.key does — a stale entry would silently drive
-      // effectiveMappings and the commit `overrides` param off a column
-      // mapping the user chose for a DIFFERENT file (#911 review: second pass
-      // only cleared the first two of what is now seven; third pass added
-      // this one, previously only cleared by handlePickDestination — a
-      // narrower path than analyze() itself, this function's own comment's
-      // stated canonical reset point).
-      setLiftOverrides(new Map());
-      setCreateDrafts(new Map());
-      setExcludedKeys(new Set());
-      setSelectedKeys(new Set());
-      lastSelectedKey.current = null;
-      setReviewMaxes(null);
+      clearPreviewRowState();
+      // columnOverrides is keyed by sourceHeader/__req__:<field>, which collides
+      // across files the same way delta.key does — a stale entry would silently
+      // drive effectiveMappings and the commit `overrides` param off a column
+      // mapping the user chose for a DIFFERENT file (#911 review, third pass:
+      // previously only cleared by handlePickDestination, a narrower path than
+      // analyze() itself).
       setColumnOverrides(new Map());
-      // A commit failure from the PREVIOUS preview must not still be showing
-      // once a new one replaces it — same "canonical reset point" rationale
-      // as the rest of this block, just for the PREVIEW step's own error box
-      // rather than a REVIEW-step field.
-      setCommitErrors(null);
+      previewedColumnOverrides.current = NO_COLUMN_OVERRIDES;
       return res;
     } catch (e) {
       logClientError('previewImport', e, { programId });
@@ -531,15 +614,47 @@ export function ImportWizard({
     }
   }
 
-  function enterReview() {
+  async function enterReview() {
+    let rows = previewBody;
+    let rowsReplaced = false;
+    let editsDiscarded = false;
+    // The file was previewed before this step, so a column remapped here isn't in
+    // that preview. The commit does apply it, so Review's rows and the commit gate
+    // would disagree with the commit: a remapped Lift column would block every row
+    // as needing a lift (#1114). Unchanged remaps keep the user's Review work.
+    const overridesKey = columnOverridesKey(columnOverridesRecord);
+    if (programId && file && destination && overridesKey !== previewedColumnOverrides.current) {
+      setError(null);
+      setBusy(true);
+      try {
+        const res = await previewImport(programId, file, destination, { overrides: columnOverridesRecord });
+        // Keeps what this step is showing: `columnOverrides` is keyed to the file's
+        // own headers, and the commit applies it to the original file.
+        setPreview((prev) => prev && { ...res, classification: prev.classification, columnMappings: prev.columnMappings });
+        // A new preview means new rows, so Review's edits can't carry over. Say so:
+        // an exclusion that silently vanished would write a row the user removed.
+        editsDiscarded = excludedKeys.size > 0 || liftOverrides.size > 0 || reviewMaxes !== null;
+        clearPreviewRowState();
+        previewedColumnOverrides.current = overridesKey;
+        rows = res.preview;
+        rowsReplaced = true;
+      } catch (e) {
+        logClientError('previewImport', e, { programId });
+        setError(e instanceof Error ? e.message : 'Preview failed');
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
     // Initialize TM editable list from preview deltas (create + update rows)
-    if (destination === 'training-maxes' && previewBody && reviewMaxes === null) {
+    if (destination === 'training-maxes' && rows && (reviewMaxes === null || rowsReplaced)) {
       setReviewMaxes(
-        previewBody.deltas
+        rows.deltas
           .filter((d) => d.kind === 'create' || d.kind === 'update')
           .map((d) => ({ lift: d.label, weight: d.after ?? '' })),
       );
     }
+    setReviewEditsDiscarded(editsDiscarded);
     setReviewFilter('all');
     setSelectedKeys(new Set());
     lastSelectedKey.current = null;
@@ -894,61 +1009,20 @@ export function ImportWizard({
         const activeMaxes = reviewMaxes.filter((r) => !excludedKeys.has(r.lift));
         const csv = buildTrainingMaxesCsv(activeMaxes);
         commitFile = new File([csv], file.name, { type: 'text/csv' });
-        result = await commitImport(programId, commitFile, destination, {
-          overrides: Object.keys(columnOverridesRecord).length > 0 ? columnOverridesRecord : undefined,
-        });
+        // No column overrides: this CSV has canonical headers and rows from a preview
+        // that already applied them. Sending them again would rename columns twice.
+        result = await commitImport(programId, commitFile, destination);
       } else {
         const liftOverridesRecord: Record<number, string> = {};
-        // Stale entries from a *discarded* preview (e.g. an in-flight
-        // create-new resolves after the user hits Back and re-picks a
-        // destination mid-request) must never be sent for a row that isn't
-        // even ambiguous in the CURRENT preview — d.status never changes once
-        // a row is flagged ambiguous, so this set correctly identifies every
-        // rowIndex that belongs to the preview actually being committed,
-        // resolved or not (#911 review, second pass).
-        const ambiguousDeltas = (previewBody?.deltas ?? []).filter(
-          (d) => d.status === 'ambiguous' && d.rowIndex !== undefined,
-        );
-        const currentAmbiguousRowIndexes = new Set(ambiguousDeltas.map((d) => d.rowIndex as number));
-        // A row the user has explicitly excluded (× button) must not have an
-        // override sent for it either — mirrors the same guard added to
-        // applyResolvedLiftToMatchingRows (#911 review, third pass).
-        const excludedRowIndexes = new Set(
-          ambiguousDeltas.filter((d) => excludedKeys.has(d.key)).map((d) => d.rowIndex as number),
-        );
-        for (const [rowIdx, liftId] of liftOverrides.entries()) {
-          if (!currentAmbiguousRowIndexes.has(rowIdx) || excludedRowIndexes.has(rowIdx)) continue;
-          // The controlled ambiguous-row input now stores the raw (untrimmed)
-          // typed value so a just-typed trailing space isn't eaten mid-keystroke
-          // — trim here, at the one place the value actually leaves the client
-          // (#911 review). A no-op for the common case (a lift id or a
-          // datalist-selected name, neither of which ever carries whitespace).
-          const trimmed = liftId.trim();
-          // Cleared by the user (backspaced to empty) — send no override for
-          // this row so it's committed as still-unresolved, rather than an
-          // empty string (#911 review, second pass — see the controlled-input
-          // onChange handler for why liftOverrides can now hold '').
-          if (!trimmed) continue;
-          // Exact match first: a custom lift can legitimately be named a
-          // case-variant of a canonical alias (e.g. "squat" alongside
-          // "Squat") — buildEffectiveSlotMap only lets DEFAULT_SLOT_MAP win
-          // on an *exact*-case collision, so "squat" is a distinct, genuinely
-          // reachable server-side key, not a duplicate. Only when the typed
-          // text matches nothing exactly does the case-insensitive canonical
-          // fallback apply — for a user who typed "squat" meaning the
-          // canonical "Squat", the server's slot-map lookup is exact-case, so
-          // sending literally what they typed would fail the same
-          // "not recognized" check the create-new gate just correctly steered
-          // them around (#911 review, second and third passes — the second
-          // pass's case-insensitive-only resolution here would have
-          // mis-sent an exact-case-reachable custom lift's own name instead
-          // of honoring it).
-          if (exactKnownLiftKeys.has(trimmed)) {
-            liftOverridesRecord[rowIdx] = trimmed;
-          } else {
-            const canonical = knownLiftNamesCanonical.get(trimmed.toLowerCase());
-            liftOverridesRecord[rowIdx] = canonical ?? trimmed;
-          }
+        // Walks the CURRENT preview's rows, so an override left over from a
+        // discarded preview is never sent (#911 review, second pass), nor one
+        // for a row the user excluded (third pass). A row with no override
+        // still goes through resolveLiftValue: its file text may differ from a
+        // known name only by case, which the server's exact-case lookup rejects.
+        for (const d of previewBody?.deltas ?? []) {
+          if (d.status !== 'ambiguous' || d.rowIndex === undefined || excludedKeys.has(d.key)) continue;
+          const resolved = resolveLiftValue(rowLiftText(d));
+          if (resolved) liftOverridesRecord[d.rowIndex] = resolved;
         }
         result = await commitImport(programId, file, destination, {
           overrides: Object.keys(columnOverridesRecord).length > 0 ? columnOverridesRecord : undefined,
@@ -1309,6 +1383,9 @@ export function ImportWizard({
                               <select
                                 className={styles.mappingSelect}
                                 aria-label={`Map column ${m.sourceHeader || '(unmapped)'}`}
+                                // A change while the preview runs would leave Review showing a
+                                // different mapping from the one the commit sends.
+                                disabled={busy}
                                 value={columnOverrides.get(mappingKey(m)) ?? m.destinationField}
                                 onChange={(e) => {
                                   const val = e.target.value;
@@ -1352,6 +1429,7 @@ export function ImportWizard({
               ) : (
                 <p className={styles.infoBox}>No column information available for this file.</p>
               )}
+              {error && <p className={styles.errorNote}>{error}</p>}
             </>
           )}
 
@@ -1359,6 +1437,12 @@ export function ImportWizard({
           {step === Step.REVIEW && preview && (
             <>
               <h2 className={styles.stepTitle}>Review</h2>
+              {reviewEditsDiscarded && (
+                <p className={styles.infoBox}>
+                  Changing a column reloaded this file&apos;s rows, so your earlier exclusions, lift
+                  choices and weight edits were cleared.
+                </p>
+              )}
 
               {preview.errors.length > 0 ? (
                 <div className={styles.errorBox}>
@@ -1390,16 +1474,18 @@ export function ImportWizard({
                       <ul className={styles.maxEditList} aria-label="Training maxes to import">
                         {reviewMaxes
                           .filter((row) => !excludedKeys.has(row.lift))
-                          .map((row) => (
+                          .map((row) => {
+                            const liftName = customLiftNames.get(row.lift) ?? row.lift;
+                            return (
                             <li key={row.lift} className={styles.maxEditRow}>
-                              <span className={styles.maxEditLift}>{row.lift}</span>
+                              <span className={styles.maxEditLift}>{liftName}</span>
                               <input
                                 type="number"
                                 className={styles.maxEditWeight}
                                 value={row.weight}
                                 min={1}
                                 step="0.01"
-                                aria-label={`Weight for ${row.lift}`}
+                                aria-label={`Weight for ${liftName}`}
                                 onChange={(e) =>
                                   setReviewMaxes((prev) =>
                                     prev
@@ -1422,12 +1508,13 @@ export function ImportWizard({
                                 onClick={() =>
                                   setExcludedKeys((prev) => new Set([...prev, row.lift]))
                                 }
-                                aria-label={`Remove ${row.lift}`}
+                                aria-label={`Remove ${liftName}`}
                               >
                                 ×
                               </button>
                             </li>
-                          ))}
+                            );
+                          })}
                       </ul>
                       {reviewMaxes.filter((r) => !excludedKeys.has(r.lift)).length === 0 && (
                         <p className={styles.infoBox}>All rows removed. Nothing will be imported.</p>
@@ -1435,6 +1522,46 @@ export function ImportWizard({
                     </>
                   ) : (
                     <>
+                      {/* These rows can sit at the end of thousands, and the commit
+                          rejects the whole file until each is fixed or excluded (#1114). */}
+                      {needsLiftCount > 0 && (
+                        <div className={styles.infoBox}>
+                          <p>
+                            {needsLiftCount === 1 ? '1 row needs a lift' : `${needsLiftCount} rows need a lift`}{' '}
+                            before this file can be imported. Pick or create a lift for each one,
+                            or exclude it.
+                          </p>
+                          <button
+                            type="button"
+                            className={styles.btnSecondary}
+                            onClick={() => {
+                              setNeedsLiftSnapshot(reviewCounts.needsLiftKeys);
+                              setReviewFilter('needs-lift');
+                            }}
+                          >
+                            Show rows that need a lift
+                          </button>
+                        </div>
+                      )}
+                      {reviewCounts.incomplete > 0 && (
+                        <div className={styles.infoBox}>
+                          <p>
+                            {reviewCounts.incomplete === 1
+                              ? '1 row is missing a required value'
+                              : `${reviewCounts.incomplete} rows are missing a required value`}
+                            . Exclude {reviewCounts.incomplete === 1 ? 'it' : 'them'}, or correct
+                            the file and upload it again.
+                          </p>
+                          <button
+                            type="button"
+                            className={styles.btnSecondary}
+                            onClick={() => setReviewFilter('incomplete')}
+                          >
+                            Show incomplete rows
+                          </button>
+                        </div>
+                      )}
+
                       {/* Filter chips */}
                       <div className={styles.reviewFilter} aria-label="Filter rows">
                         {(['all', 'new', 'updates', 'skips'] as ReviewFilter[]).map((f) => (
@@ -1535,10 +1662,8 @@ export function ImportWizard({
                             // trimming it there would eat a just-typed trailing space on every
                             // keystroke, breaking multi-word names. currentLiftValue (trimmed)
                             // is for comparisons only (empty-check, knownLiftNames lookup).
-                            const rawLiftValue =
-                              (rowIndex !== undefined ? liftOverrides.get(rowIndex) : undefined) ??
-                              d.originalLift ??
-                              '';
+                            const storedLiftValue = rowLiftText(d);
+                            const rawLiftValue = customLiftNames.get(storedLiftValue) ?? storedLiftValue;
                             const currentLiftValue = rawLiftValue.trim();
                             const draft = rowIndex !== undefined ? createDrafts.get(rowIndex) : undefined;
                             const showCreateNew =
@@ -1623,8 +1748,9 @@ export function ImportWizard({
                                           // back to the original CSV text on every
                                           // backspace-to-empty and could never actually
                                           // be cleared (#911 review, second pass).
-                                          // handleCommit skips empty entries when
-                                          // building the sent payload.
+                                          // A cleared row stays unresolved, which
+                                          // blocks the commit until it's fixed or
+                                          // excluded.
                                           setLiftOverrides((prev) => {
                                             const next = new Map(prev);
                                             next.set(rIdx, raw);
@@ -1783,7 +1909,7 @@ export function ImportWizard({
               <h2 className={styles.stepTitle}>Preview changes</h2>
               <div className={styles.countRow}>
                 <div className={styles.countPill}>
-                  <span className={styles.countValue}>{previewBody.creates}</span>
+                  <span className={styles.countValue}>{previewBody.creates + reviewCounts.remappedCreates}</span>
                   <span className={styles.countLabel}>Create</span>
                 </div>
                 <div className={styles.countPill}>
@@ -1794,7 +1920,20 @@ export function ImportWizard({
                   <span className={styles.countValue}>{previewBody.skips}</span>
                   <span className={styles.countLabel}>Skip</span>
                 </div>
+                {unresolvedCount > 0 && (
+                  <div className={styles.countPill}>
+                    <span className={styles.countValue}>{unresolvedCount}</span>
+                    <span className={styles.countLabel}>Unresolved</span>
+                  </div>
+                )}
               </div>
+
+              {unresolvedCount > 0 && (
+                <p className={styles.errorNote}>
+                  This file can&apos;t be imported until {unresolvedCount === 1 ? 'that row is' : 'those rows are'}{' '}
+                  fixed or excluded. Go back to Review to resolve {unresolvedCount === 1 ? 'it' : 'them'}.
+                </p>
+              )}
 
               {preview?.split && (
                 <div className={styles.splitCard}>
@@ -1985,7 +2124,7 @@ export function ImportWizard({
             <button
               type="button"
               className={styles.btnPrimary}
-              disabled={!allRequiredMapped}
+              disabled={!allRequiredMapped || busy}
               onClick={enterReview}
             >
               Next
@@ -2027,7 +2166,7 @@ export function ImportWizard({
               type="button"
               className={styles.btnSuccess}
               onClick={handleCommit}
-              disabled={busy || !previewBody}
+              disabled={busy || !previewBody || unresolvedCount > 0}
             >
               {busy ? 'Importing…' : 'Commit import'}
             </button>

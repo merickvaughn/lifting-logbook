@@ -14,16 +14,20 @@ import { LiftImportSoftResult } from './validateLiftImportSoft';
 /**
  * Pure before→after diff builders for the Smart Import preview step (#477).
  *
- * Each returns `{ creates, updates, skips, deltas }` by comparing the incoming
+ * Each returns `{ creates, updates, skips, unresolved, deltas }` by comparing the incoming
  * (validated) rows against what is already stored, using the same key each
  * type's write path keys on. No I/O — the caller supplies the existing rows.
  */
 
 function tally(deltas: ImportDelta[]): ImportPreview {
+  // Incomplete and ambiguous rows are 'create' deltas so REVIEW can offer fixes,
+  // but the commit rejects them until they're resolved, so they aren't creates (#1114).
+  const isUnresolved = (d: ImportDelta) => d.status === 'incomplete' || d.status === 'ambiguous';
   return {
-    creates: deltas.filter((d) => d.kind === 'create').length,
+    creates: deltas.filter((d) => d.kind === 'create' && !isUnresolved(d)).length,
     updates: deltas.filter((d) => d.kind === 'update').length,
     skips: deltas.filter((d) => d.kind === 'skip').length,
+    unresolved: deltas.filter(isUnresolved).length,
     deltas,
   };
 }

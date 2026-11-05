@@ -1,5 +1,6 @@
 import {
   buildLiftRecordsPreview,
+  buildLiftRecordsPreviewSoft,
   buildTrainingMaxPreview,
   buildStrengthGoalPreview,
   buildProgramSpecPreview,
@@ -53,6 +54,23 @@ describe("buildLiftRecordsPreview", () => {
     ];
     const preview = buildLiftRecordsPreview(incoming, []);
     expect(preview).toMatchObject({ creates: 2, skips: 0 });
+  });
+});
+
+describe("buildLiftRecordsPreviewSoft", () => {
+  it("counts incomplete and ambiguous rows as unresolved, not as creates (#1114)", () => {
+    const preview = buildLiftRecordsPreviewSoft(
+      {
+        valid: [liftRecord(), liftRecord({ setNum: 2 })],
+        incomplete: [{ record: liftRecord({ setNum: 3 }), rowIndex: 3, errors: [] }],
+        ambiguous: [{ record: liftRecord({ setNum: 4 }), rowIndex: 4, originalLift: "Mystery Lift" }],
+        hardErrors: [],
+      },
+      [liftRecord({ setNum: 2 })],
+    );
+
+    expect(preview).toMatchObject({ creates: 1, updates: 0, skips: 1, unresolved: 2 });
+    expect(preview.deltas).toHaveLength(4);
   });
 });
 

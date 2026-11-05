@@ -704,6 +704,11 @@ export interface ImportPreview {
   creates: number;
   updates: number;
   skips: number;
+  /**
+   * Incomplete or ambiguous rows in the file as uploaded. The commit rejects the file until
+   * each is fixed or excluded. The wizard's Preview step tracks the user's fixes on top of this.
+   */
+  unresolved: number;
   deltas: ImportDelta[];
 }
 
