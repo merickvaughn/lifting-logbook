@@ -264,7 +264,11 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     it('a block summary counts them under the restricted role, for that user only', async () => {
-      const created = await owner('POST', '/focus/blocks', blockBody({ area: 'Chest', pool: [entry('Bench Press')] }));
+      const created = await owner(
+        'POST',
+        `/focus/blocks?today=${TODAY}`,
+        blockBody({ area: 'Chest', pool: [entry('Bench Press')] }),
+      );
       expect(created.statusCode).toBe(201);
       const { id } = created.json() as FocusBlockResponse;
 
