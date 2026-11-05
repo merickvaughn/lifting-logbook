@@ -115,7 +115,10 @@ describe('request log lines through the real logging setup', () => {
   });
 
   it('still serializes the error on a failed request', async () => {
-    const line = await logLineFor('/probe/boom');
+    const url = '/probe/boom?err=1';
+    await fetch(`${baseUrl}${url}`);
+
+    const line = await logLineFor(url);
     expect(line.err).toMatchObject({
       type: 'Error',
       message: 'failed with status code 500',

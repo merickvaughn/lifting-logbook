@@ -114,6 +114,9 @@ Decision 1 describes. The header allowlist is unchanged.
 `apps/api/src/request-log-status.spec.ts` sends real requests through nestjs-pino, pino-http and
 Fastify and asserts the logged status and the allowlist on that path.
 
+`res.statusCode` can still be `null` when a client disconnects before the response starts, because
+no status was sent. The standard serializer records that case as `null` by design.
+
 `req.remoteAddress` is back in the logs as a result. It adds no new client IP, because
 `x-forwarded-for` was already allowlisted. `res.headers` stays mostly empty under Fastify: `reply.header()` values
 reach Node through `writeHead()`, so `res.getHeaders()` doesn't return them.
