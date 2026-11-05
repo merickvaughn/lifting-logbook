@@ -323,6 +323,23 @@ describe('LiftRecordsController', () => {
         },
       ]);
     });
+
+    // #1162: the same for a built-in lift, which is stored under its catalog id.
+    it('labels a skipped built-in row with its name, not its id', async () => {
+      liftRecordRepo.findExistingRecords.mockImplementation(async (_program, records) => records);
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(0);
+      const csv = [IMPORT_CSV_HEADER, '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,'].join('\n');
+
+      const result = await controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER);
+
+      expect(result.skipped).toEqual([
+        {
+          row: 1,
+          naturalKey: '1:1:20260101:bench-press:1',
+          label: 'Bench Press · macrocycle 1 workout 1 set 1 (20260101)',
+        },
+      ]);
+    });
   });
 
   describe('PATCH lift-records/:id', () => {

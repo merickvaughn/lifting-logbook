@@ -5,6 +5,7 @@ import {
   buildStrengthGoalPreview,
   buildProgramSpecPreview,
   latestTrainingMaxFirst,
+  liftRecordLabel,
   programSpecNaturalKey,
   trainingMaxRowKind,
   strengthGoalRowKind,
@@ -104,6 +105,23 @@ describe("buildLiftRecordsPreviewSoft", () => {
     expect(skipped).toMatchObject({ kind: "skip" });
     expect(skipped!.label).toMatch(/^Cable Curl · /);
     expect(builtIn!.label).toMatch(/^back-squat · /);
+  });
+});
+
+describe("liftRecordLabel", () => {
+  it("names the lift when the map knows it (#1162)", () => {
+    expect(
+      liftRecordLabel(
+        liftRecord({ lift: "bench-press" }),
+        new Map([["bench-press", "Bench Press"]]),
+      ),
+    ).toMatch(/^Bench Press · macrocycle 1 workout 1 set 1 \(\d{8}\)$/);
+  });
+
+  it("shows the stored value for a lift the map does not know, not a blank (#1162)", () => {
+    expect(
+      liftRecordLabel(liftRecord({ lift: "never-seen-lift" }), NO_CUSTOM_LIFTS),
+    ).toMatch(/^never-seen-lift · /);
   });
 });
 

@@ -18,9 +18,9 @@ import { LiftImportSoftResult } from './validateLiftImportSoft';
  * (validated) rows against what is already stored, using the same key each
  * type's write path keys on. No I/O — the caller supplies the existing rows.
  *
- * Validation resolves a custom lift's name to its id, and rows are stored and keyed
- * by that id. `liftNames` (custom lift id → name) turns it back into a name for the
- * labels a person reads (#1125); keys keep the id.
+ * Validation resolves a lift's name to its id, and rows are stored and keyed by that
+ * id. `liftNames` (lift id → name, built-in and custom) turns it back into a name for
+ * the labels a person reads (#1125, #1162); keys keep the id.
  */
 
 type LiftNames = ReadonlyMap<string, string>;

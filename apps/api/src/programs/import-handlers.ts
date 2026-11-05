@@ -31,7 +31,7 @@ import {
   liftRecordNaturalKey,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
-import { customLiftNamesFor } from './effective-slot-map.util';
+import { liftNamesFor } from './effective-slot-map.util';
 
 export interface ImportHandler<T> {
   parse(table: SpreadsheetCell[][]): T[];
@@ -95,7 +95,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     ];
     const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row.r);
     const created = await repos.liftRecord.appendLiftRecords(program, toCreate);
-    const liftNames = await customLiftNamesFor(repos);
+    const liftNames = await liftNamesFor(repos);
     // `skipped` is derived from `created` (the DB's actual insert count), not
     // `toCreate.length` (what JS classification expected to write): a
     // concurrent import racing between findExistingRecords and
@@ -137,7 +137,7 @@ const trainingMaxesHandler: ImportHandler<TrainingMax> = {
   },
   async preview(valid, program, repos) {
     const existing = await repos.trainingMax.getTrainingMaxes(program);
-    return buildTrainingMaxPreview(valid, existing, await customLiftNamesFor(repos));
+    return buildTrainingMaxPreview(valid, existing, await liftNamesFor(repos));
   },
   async commit(valid, program, repos) {
     const existing = await repos.trainingMax.getTrainingMaxes(program);
@@ -161,7 +161,7 @@ const strengthGoalsHandler: ImportHandler<StrengthGoalEntry> = {
   },
   async preview(valid, program, repos) {
     const existing = await repos.strengthGoal.getGoals(program);
-    return buildStrengthGoalPreview(valid, existing, await customLiftNamesFor(repos));
+    return buildStrengthGoalPreview(valid, existing, await liftNamesFor(repos));
   },
   async commit(valid, program, repos) {
     const existing = await repos.strengthGoal.getGoals(program);

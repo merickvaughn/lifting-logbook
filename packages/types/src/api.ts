@@ -611,12 +611,12 @@ export interface SkippedRecord {
    * Example: `"3:2:20260817:bench-press:1"` means macrocycle 3, workout 2,
    * 2026-08-17, bench-press, set 1.
    *
-   * For matching, not display: a custom lift's segment is its id. Show `label`.
+   * For matching, not display: the lift's segment is its id. Show `label`.
    */
   naturalKey: string;
   /**
-   * The skipped set as a person reads it, naming a custom lift rather than its id
-   * (issue #1158). Same wording as the row's `ImportDelta.label` on the Review step.
+   * The skipped set as a person reads it, naming the lift rather than its id
+   * (issues #1158, #1162). Same wording as the row's `ImportDelta.label` on the Review step.
    */
   label: string;
 }
