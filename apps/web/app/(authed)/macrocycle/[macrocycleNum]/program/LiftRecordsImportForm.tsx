@@ -92,7 +92,7 @@ export default function LiftRecordsImportForm({ program }: Props) {
               <ul style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
                 {successData.skipped.slice(0, MAX_RENDERED_IMPORT_SKIPS).map((s) => (
                   <li key={`${s.row}-${s.naturalKey}`}>
-                    Row {s.row}: {s.naturalKey}
+                    Row {s.row}: {s.label}
                   </li>
                 ))}
               </ul>

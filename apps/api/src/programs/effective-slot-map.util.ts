@@ -40,9 +40,9 @@ export async function effectiveSlotMapFor(repos: RepositoryBundle): Promise<Reco
 }
 
 /**
- * Custom lift id → name, so preview labels show the name a slot map resolved to
- * an id (#1125). A second list read per preview, on top of effectiveSlotMapFor's,
- * for the reason its doc comment accepts.
+ * Custom lift id → name, so preview labels and skipped-row labels show the name a
+ * slot map resolved to an id (#1125, #1158). A second list read per request, on top
+ * of effectiveSlotMapFor's, for the reason its doc comment accepts.
  */
 export async function customLiftNamesFor(repos: RepositoryBundle): Promise<Map<string, string>> {
   const customLifts = await repos.customLift.list();

@@ -238,7 +238,11 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(second.skipped).toBe(1);
       // Row 1 is the only (and thus 1-based-first) data row in LIFT_CSV.
       expect(second.skippedDetail).toEqual([
-        { row: 1, naturalKey: '1:1:20260101:bench-press:1' },
+        {
+          row: 1,
+          naturalKey: '1:1:20260101:bench-press:1',
+          label: 'bench-press · macrocycle 1 workout 1 set 1 (20260101)',
+        },
       ]);
     });
 
@@ -267,8 +271,16 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(second).toMatchObject({ created: 0, skipped: 2 });
       // Both rows are reported by row number and full (date-inclusive) natural key.
       expect(second.skippedDetail).toEqual([
-        { row: 1, naturalKey: '1:1:20251216:bench-press:1' },
-        { row: 2, naturalKey: '1:1:20240112:bench-press:1' },
+        {
+          row: 1,
+          naturalKey: '1:1:20251216:bench-press:1',
+          label: 'bench-press · macrocycle 1 workout 1 set 1 (20251216)',
+        },
+        {
+          row: 2,
+          naturalKey: '1:1:20240112:bench-press:1',
+          label: 'bench-press · macrocycle 1 workout 1 set 1 (20240112)',
+        },
       ]);
     });
 
@@ -587,6 +599,32 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.preview.deltas[0].label).not.toContain(customLiftId);
     });
 
+    // #1158: the skip stays keyed by the id, but the Done step shows the label.
+    it('labels a re-committed custom-lift row skip with its name, not its id', async () => {
+      const created = await createCustomLift({
+        name: 'Skip Label Curls',
+        classification: 'accessory',
+      });
+      expect(created.statusCode).toBe(201);
+      const { id: customLiftId } = created.json();
+      const csv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Skip Label Curls,1,90,10,',
+      ].join('\n');
+      const query = '?mode=commit&destination=lift-records';
+
+      expect((await importCsv('p3-custom-lift-skip', csv, query)).json().created).toBe(1);
+      const second = (await importCsv('p3-custom-lift-skip', csv, query)).json();
+
+      expect(second.skippedDetail).toEqual([
+        {
+          row: 1,
+          naturalKey: `1:1:20260101:${customLiftId}:1`,
+          label: 'Skip Label Curls · macrocycle 1 workout 1 set 1 (20260101)',
+        },
+      ]);
+    });
+
     // #911: liftOverrides may now resolve to a custom lift's id (not just a
     // built-in canonical id) — the self-mapping half of buildEffectiveSlotMap
     // must let an already-resolved custom-lift id pass strict validation.
@@ -897,7 +935,11 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       // against — see ImportCommitResponse.skippedDetail on row numbering after
       // splitDest/excludeKeys filtering.
       expect(reCommit.skippedDetail).toEqual([
-        { row: 1, naturalKey: '1:1:20260101:bench-press:1' },
+        {
+          row: 1,
+          naturalKey: '1:1:20260101:bench-press:1',
+          label: 'bench-press · macrocycle 1 workout 1 set 1 (20260101)',
+        },
       ]);
     });
 

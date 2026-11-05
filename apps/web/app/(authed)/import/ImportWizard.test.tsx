@@ -869,7 +869,13 @@ describe('ImportWizard', () => {
         created: 0,
         updated: 0,
         skipped: 1,
-        skippedDetail: [{ row: 1, naturalKey: '1:1:20260101:bench-press:1' }],
+        skippedDetail: [
+          {
+            row: 1,
+            naturalKey: '1:1:20260101:c29d9b22-e933-4b91-8bfe-4411ac1a04e8:1',
+            label: 'Zottman Curl · macrocycle 1 workout 1 set 1 (20260101)',
+          },
+        ],
         batchId: 'batch-lr-1',
       },
     });
@@ -887,7 +893,12 @@ describe('ImportWizard', () => {
 
     // Skipped-rows detail is behind a <details> disclosure — open it, then read the row.
     await user.click(screen.getByText('Skipped rows'));
-    expect(screen.getByText(/Row 1: 1:1:20260101:bench-press:1/)).toBeInTheDocument();
+    const skippedRow = screen.getByText(/^Row 1:/);
+    expect(skippedRow).toHaveTextContent(
+      'Row 1: Zottman Curl · macrocycle 1 workout 1 set 1 (20260101)',
+    );
+    // #1158: the natural key holds a custom lift's id, which a person never sees.
+    expect(skippedRow).not.toHaveTextContent('c29d9b22');
   });
 
   // #911 review, ninth pass: skippedDetail had the identical unbounded-render
@@ -909,6 +920,7 @@ describe('ImportWizard', () => {
         skippedDetail: Array.from({ length: totalSkipped }, (_, i) => ({
           row: i + 1,
           naturalKey: `1:1:20260101:bench-press:${i + 1}`,
+          label: `bench-press · set ${i + 1}`,
         })),
         batchId: 'batch-lr-2',
       },
@@ -946,8 +958,8 @@ describe('ImportWizard', () => {
         updated: 0,
         skipped: 2,
         skippedDetail: [
-          { row: 1, naturalKey: '1:1:20260101:bench-press:1' },
-          { row: 2, naturalKey: '1:1:20260101:bench-press:2' },
+          { row: 1, naturalKey: '1:1:20260101:bench-press:1', label: 'bench-press · set 1' },
+          { row: 2, naturalKey: '1:1:20260101:bench-press:2', label: 'bench-press · set 2' },
         ],
         batchId: 'batch-lr-3',
       },

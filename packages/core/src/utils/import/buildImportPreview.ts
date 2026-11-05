@@ -25,6 +25,11 @@ import { LiftImportSoftResult } from './validateLiftImportSoft';
 
 type LiftNames = ReadonlyMap<string, string>;
 
+/** A lift-records row as a person reads it, on the Review and Done steps. */
+export function liftRecordLabel(r: LiftRecord, liftNames: LiftNames): string {
+  return `${liftNames.get(r.lift) ?? r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+}
+
 function tally(deltas: ImportDelta[]): ImportPreview {
   // Incomplete and ambiguous rows are 'create' deltas so REVIEW can offer fixes,
   // but the commit rejects them until they're resolved, so they aren't creates (#1114).
@@ -132,7 +137,7 @@ export function buildLiftRecordsPreviewSoft(
     (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
   )) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
-    const label = `${liftNames.get(r.lift) ?? r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+    const label = liftRecordLabel(r, liftNames);
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
