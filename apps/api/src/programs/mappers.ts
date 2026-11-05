@@ -367,11 +367,15 @@ export const toWorkoutResponse = (
     renamedLifts,
   } = options;
 
-  const plannedNames = new Set(plannedLifts?.map(({ lift }) => lift));
-  const plannedNameById = new Map<string, string>();
+  // A record stored by catalog id, as import stores it, has lost its spelling, so it
+  // joins the lift the plan names, or takes that lift's swap (#1118). Keys here are ids,
+  // so a record under any other spelling, such as focus work under its catalog name,
+  // stays its own lift.
+  const liftByStoredId = new Map<string, string>();
+  for (const [from, to] of renamedLifts ?? []) liftByStoredId.set(liftIdFor(from), to);
   for (const { lift } of plannedLifts ?? []) {
     const id = liftIdFor(lift);
-    if (!plannedNameById.has(id)) plannedNameById.set(id, lift);
+    if (!liftByStoredId.has(id)) liftByStoredId.set(id, lift);
   }
 
   // Logged sets by the lift occurrence they belong to: a lift, and which occurrence
@@ -388,15 +392,14 @@ export const toWorkoutResponse = (
       amrap: r.notes.toUpperCase().includes('AMRAP'),
       notes: r.notes,
     };
-    // A set stored under another spelling of a planned lift (an import's `bench-press`
-    // under the plan's `Bench Press`) joins that lift (#1118).
-    const named = renamedLifts?.get(r.lift) ?? r.lift;
-    const lift = plannedNames.has(named) ? named : (plannedNameById.get(liftIdFor(named)) ?? named);
+    const lift = renamedLifts?.get(r.lift) ?? liftByStoredId.get(r.lift) ?? r.lift;
     const occurrence = r.occurrence ?? 0;
     const group = liftMap.get(liftOccurrenceKey(lift, occurrence));
     if (group) group.sets.push(set);
     else liftMap.set(liftOccurrenceKey(lift, occurrence), { lift, occurrence, sets: [set] });
   }
+  // Rows arrive ordered by stored name, so a group joined from two names needs sorting.
+  for (const { sets } of liftMap.values()) sets.sort((a, b) => a.setNum - b.setNum);
 
   let lifts: WorkoutLiftResponse[];
   if (plannedLifts) {

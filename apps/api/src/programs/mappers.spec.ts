@@ -188,6 +188,37 @@ describe('toWorkoutResponse with plannedLifts', () => {
     expect(result.lifts[0]?.sets[0]?.id).toBe('5-3-1-1-1-20260507-Squat-1');
   });
 
+  describe('a record stored by catalog id (#1118)', () => {
+    it('joins the planned lift, in set order, and keeps the id its row answers to', () => {
+      const records = [record('Bench Press', 2, 190), record('bench-press', 1, 200)];
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, {
+        plannedLifts: [{ lift: 'Bench Press' }],
+      });
+      expect(result.lifts).toHaveLength(1);
+      expect(result.lifts[0]?.lift).toBe('Bench Press');
+      expect(result.lifts[0]?.sets.map((s) => s.setNum)).toEqual([1, 2]);
+      expect(result.lifts[0]?.sets[0]?.id).toBe('5-3-1-1-1-20260507-bench-press-1');
+    });
+
+    it('follows a swap of the lift it was stored for', () => {
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, [record('bench-press', 1, 200)], {
+        plannedLifts: [{ lift: 'Incline Bench Press', replaces: 'Bench Press' }],
+        renamedLifts: new Map([['Bench Press', 'Incline Bench Press']]),
+      });
+      expect(result.lifts.map((l) => l.lift)).toEqual(['Incline Bench Press']);
+    });
+
+    it('leaves focus work under another spelling as its own lift', () => {
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, [record('Calf Raise', 1, 100)], {
+        plannedLifts: [{ lift: 'Calf Raises' }],
+      });
+      expect(result.lifts.map((l) => ({ lift: l.lift, planned: l.planned }))).toEqual([
+        { lift: 'Calf Raises', planned: true },
+        { lift: 'Calf Raise', planned: false },
+      ]);
+    });
+  });
+
   it('emits the day’s offset, an explicit null for "no program day", and nothing when not told (issue #1014)', () => {
     expect(toWorkoutResponse(program, macrocycleNum, workoutNum, week, [], { offset: 3 }).offset).toBe(3);
     // Offset 0 is a real day, not "no day".

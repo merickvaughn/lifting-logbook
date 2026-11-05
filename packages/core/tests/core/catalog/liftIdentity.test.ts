@@ -1,12 +1,12 @@
 import {
   LIFT_CATALOG,
-  currentMaxesByLiftId,
+  TrainingMax,
+  currentMaxLookup,
   isSameLift,
   liftIdFor,
-  parseTrainingMaxes,
+  lookupByLift,
   validateTrainingMaxImport,
 } from "@src/core";
-import { loadCsvFixture } from "../../testUtils";
 
 describe("liftIdFor (#1118)", () => {
   it.each([
@@ -61,65 +61,99 @@ describe("isSameLift (#1118)", () => {
     expect(isSameLift("Romanian Deadlift", "Deadlift")).toBe(false);
   });
 
-  it("keeps OH Press and OH Press-HV apart, since a program can plan both", () => {
-    expect(isSameLift("OH Press", "OH Press-HV")).toBe(false);
-    expect(isSameLift("OH Press", "overhead-press")).toBe(true);
-  });
-
-  it("keeps every lift the RPT fixture's training maxes list distinct, other than by spelling", () => {
-    const names = parseTrainingMaxes(loadCsvFixture("training_maxes.csv")).map((m) => m.lift);
-    expect(names.length).toBeGreaterThan(0);
-    expect(new Set(names.map(liftIdFor)).size).toBe(new Set(names).size);
+  it("treats OH Press-HV as Overhead Press: a high-volume slot of the same lift (#1140)", () => {
+    expect(isSameLift("OH Press", "OH Press-HV")).toBe(true);
+    expect(isSameLift("OH Press-HV", "overhead-press")).toBe(true);
   });
 });
 
-describe("currentMaxesByLiftId (#1118)", () => {
-  const max = (lift: string, weight: number, dateUpdated?: string) => ({
-    lift,
-    weight,
-    ...(dateUpdated !== undefined && { dateUpdated }),
+describe("lookupByLift (#1118)", () => {
+  const lookup = lookupByLift([
+    ["C. Lat Raise", 1],
+    ["Lateral Raise", 2],
+    ["Bench Press", 3],
+    ["Bench Press", 4],
+  ]);
+
+  it("prefers the exact name, so two spellings planned as slots keep their own rows", () => {
+    expect(lookup("C. Lat Raise")).toBe(1);
+    expect(lookup("Lateral Raise")).toBe(2);
   });
 
+  it("falls back to the first entry for the same lift", () => {
+    expect(lookup("lateral-raise")).toBe(1);
+    expect(lookup("bench-press")).toBe(3);
+  });
+
+  it("misses a lift it has no entry for", () => {
+    expect(lookup("Deadlift")).toBeUndefined();
+  });
+});
+
+describe("currentMaxLookup (#1118)", () => {
+  const max = (lift: string, weight: number, dateUpdated = "2025-12-29") => ({ lift, weight, dateUpdated });
+  const weightFor = (rows: ReturnType<typeof max>[], name: string) => currentMaxLookup(rows)(name)?.weight;
+
   it("finds a max stored by id from the program's name", () => {
-    const current = currentMaxesByLiftId([max("bench-press", 200, "2025-12-29")]);
-    expect(current.get(liftIdFor("Bench Press"))?.weight).toBe(200);
+    expect(weightFor([max("bench-press", 200)], "Bench Press")).toBe(200);
   });
 
   it("finds the max a real import of Bench P. stores", () => {
-    const { valid, errors } = validateTrainingMaxImport([
-      { lift: "Bench P.", weight: 200, unit: "lbs", dateUpdated: new Date("2025-12-29") },
-    ] as never);
+    const rows: TrainingMax[] = [{ lift: "Bench P." as TrainingMax["lift"], weight: 200, dateUpdated: new Date("2025-12-29") }];
+    const { valid, errors } = validateTrainingMaxImport(rows);
     expect(errors).toEqual([]);
     expect(valid[0]?.lift).toBe("bench-press");
-    expect(currentMaxesByLiftId(valid).get(liftIdFor("Bench Press"))?.weight).toBe(200);
+    expect(currentMaxLookup(valid)("Bench Press")?.weight).toBe(200);
   });
 
-  it("takes the most recently updated of two rows for one lift, in either order", () => {
+  it("takes the more recent of the exact row and the id row, in either order", () => {
     const older = max("Bench Press", 225, "2025-01-01");
-    const newer = max("bench-press", 200, "2025-12-29");
-    expect(currentMaxesByLiftId([older, newer]).get("bench-press")?.weight).toBe(200);
-    expect(currentMaxesByLiftId([newer, older]).get("bench-press")?.weight).toBe(200);
+    const newer = max("bench-press", 200);
+    expect(weightFor([older, newer], "Bench Press")).toBe(200);
+    expect(weightFor([newer, older], "Bench Press")).toBe(200);
   });
 
-  it("takes the first row on a date tie or a missing date", () => {
-    expect(
-      currentMaxesByLiftId([max("Squat", 1, "2025-01-01"), max("back-squat", 2, "2025-01-01")]).get("back-squat")
-        ?.weight,
-    ).toBe(1);
-    expect(currentMaxesByLiftId([max("Squat", 1), max("back-squat", 2)]).get("back-squat")?.weight).toBe(1);
+  it("keeps an exact row that is newer than the id row", () => {
+    expect(weightFor([max("bench-press", 200, "2025-01-01"), max("Bench Press", 225)], "Bench Press")).toBe(225);
   });
 
-  it("accepts Date as well as string dates", () => {
-    const rows = [
-      { lift: "Deadlift", weight: 1, dateUpdated: new Date("2025-01-01") },
-      { lift: "deadlift", weight: 2, dateUpdated: new Date("2025-06-01") },
-    ];
-    expect(currentMaxesByLiftId(rows).get("deadlift")?.weight).toBe(2);
+  it("gives a day's tie to the exact row, in either order", () => {
+    const exact = max("Bench Press", 225);
+    const stored = max("bench-press", 200);
+    expect(weightFor([exact, stored], "Bench Press")).toBe(225);
+    expect(weightFor([stored, exact], "Bench Press")).toBe(225);
   });
 
-  it("does not read an OH Press max as OH Press-HV's", () => {
-    const current = currentMaxesByLiftId([max("overhead-press", 115, "2025-12-29")]);
-    expect(current.get(liftIdFor("OH Press"))?.weight).toBe(115);
-    expect(current.get(liftIdFor("OH Press-HV"))).toBeUndefined();
+  it("compares by day, so a time of day can't decide it", () => {
+    const exact = { lift: "Bench Press", weight: 225, dateUpdated: new Date("2025-12-29T01:00:00Z") };
+    const stored = { lift: "bench-press", weight: 200, dateUpdated: new Date("2025-12-29T23:00:00Z") };
+    expect(currentMaxLookup([exact, stored])("Bench Press")?.weight).toBe(225);
+  });
+
+  it("keeps two slots' own maxes when a program plans both spellings", () => {
+    const rows = [max("C. Lat Raise", 12.5, "2025-01-01"), max("Lateral Raise", 25)];
+    expect(weightFor(rows, "C. Lat Raise")).toBe(12.5);
+    expect(weightFor(rows, "Lateral Raise")).toBe(25);
+  });
+
+  it("falls back to another spelling when there is no exact or id row, independent of row order", () => {
+    const rows = [max("Back Squat", 300, "2025-01-01"), max("Squat", 315)];
+    expect(weightFor([max("Back Squat", 300)], "Squat")).toBe(300);
+    expect(weightFor(rows, "back-squat")).toBe(315);
+    expect(weightFor([...rows].reverse(), "back-squat")).toBe(315);
+
+    const tied = [max("Back Squat", 300), max("Squat", 315)];
+    expect(weightFor(tied, "back-squat")).toBe(300);
+    expect(weightFor([...tied].reverse(), "back-squat")).toBe(300);
+  });
+
+  it("reads a stored overhead-press max for both OH Press and OH Press-HV", () => {
+    const rows = [max("overhead-press", 115)];
+    expect(weightFor(rows, "OH Press")).toBe(115);
+    expect(weightFor(rows, "OH Press-HV")).toBe(115);
+  });
+
+  it("misses a lift with no row", () => {
+    expect(weightFor([max("Squat", 315)], "Deadlift")).toBeUndefined();
   });
 });

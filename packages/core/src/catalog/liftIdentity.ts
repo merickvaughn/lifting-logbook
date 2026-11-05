@@ -1,23 +1,18 @@
 import { builtInLiftFor } from './builtInLift';
 
 /**
- * Accepted spellings that stay separate lifts when comparing, though the slot map sends
- * them to a catalog entry. `OH Press-HV` is its own slot in the RPT spec with its own
- * training max, about two thirds of `OH Press`, so reading one as the other would
- * prescribe the wrong weight.
- */
-const SEPARATE_SLOTS: ReadonlySet<string> = new Set(['OH Press-HV']);
-
-/**
  * The identity a stored or planned `lift` string refers to: the catalog id for any
  * spelling of a built-in lift ("Bench Press", "Bench P.", "bench-press"), otherwise the
  * string itself (a custom lift, or a name the app has never seen).
  *
  * The `lift` column holds several spellings of one lift (docs/domain-model.md), so code
  * that compares two of them goes through this rather than `===` (#1118).
+ *
+ * It takes no custom lifts, so a custom lift named after a catalog name or alias
+ * ("Face Pull") reads as the built-in here, unlike in `lookupLift`. Prefer the lookups
+ * below, which try the exact name first. The full resolver is planned in #1134.
  */
 export function liftIdFor(name: string): string {
-  if (SEPARATE_SLOTS.has(name)) return name;
   return builtInLiftFor(name)?.id ?? name;
 }
 
@@ -27,23 +22,58 @@ export function isSameLift(a: string, b: string): boolean {
 }
 
 /**
- * Each lift's current training max, keyed by {@link liftIdFor}. One lift can hold two
- * rows, such as `Bench Press` from the program and `bench-press` from an import. The most
- * recently updated one is current, so a newly imported max takes effect. On a tie or a
- * missing date the first row wins.
+ * A lookup over `[lift, value]` entries: the exact name, then any entry for the same lift.
+ * The first entry wins on a duplicate.
  */
-export function currentMaxesByLiftId<T extends { lift: string; dateUpdated?: Date | string }>(
-  maxes: readonly T[],
-): Map<string, T> {
-  const current = new Map<string, T>();
-  for (const max of maxes) {
-    const id = liftIdFor(max.lift);
-    const held = current.get(id);
-    if (!held || updatedAt(max) > updatedAt(held)) current.set(id, max);
+export function lookupByLift<T>(
+  entries: Iterable<readonly [string, T]>,
+): (name: string) => T | undefined {
+  const byName = new Map<string, T>();
+  const byId = new Map<string, T>();
+  for (const [lift, value] of entries) {
+    if (!byName.has(lift)) byName.set(lift, value);
+    const id = liftIdFor(lift);
+    if (!byId.has(id)) byId.set(id, value);
   }
-  return current;
+  return (name) => byName.get(name) ?? byId.get(liftIdFor(name));
 }
 
-function updatedAt(max: { dateUpdated?: Date | string }): number {
-  return max.dateUpdated === undefined ? Number.NEGATIVE_INFINITY : new Date(max.dateUpdated).getTime();
+/**
+ * A lookup for a lift's current training max, by any spelling.
+ *
+ * Import stores a row by catalog id with no record of which slot it came from, so a
+ * row under the exact name competes with an id row, and the more recent one is current.
+ * That lets a new import take effect over `Bench Press`. A row under another name
+ * applies only when neither exists, since one program can plan two names as separate
+ * slots with separate maxes (`C. Lat Raise` and `Lateral Raise`).
+ *
+ * Dates compare by day, the precision the API returns, so the server and the web agree.
+ * A tie goes to the exact name, otherwise to the earlier name in sort order, which keeps
+ * the answer independent of row order.
+ */
+export function currentMaxLookup<T extends { lift: string; dateUpdated: Date | string }>(
+  maxes: readonly T[],
+): (name: string) => T | undefined {
+  const byName = new Map<string, T>();
+  const byId = new Map<string, T>();
+  for (const max of maxes) {
+    const named = byName.get(max.lift);
+    if (!named || dayOf(max) > dayOf(named)) byName.set(max.lift, max);
+    const id = liftIdFor(max.lift);
+    const held = byId.get(id);
+    if (!held || dayOf(max) > dayOf(held) || (dayOf(max) === dayOf(held) && max.lift < held.lift)) {
+      byId.set(id, max);
+    }
+  }
+  return (name) => {
+    const id = liftIdFor(name);
+    const exact = byName.get(name);
+    const stored = byName.get(id);
+    if (exact && stored) return dayOf(stored) > dayOf(exact) ? stored : exact;
+    return exact ?? stored ?? byId.get(id);
+  };
+}
+
+function dayOf(max: { dateUpdated: Date | string }): number {
+  return Math.floor(new Date(max.dateUpdated).getTime() / 86_400_000);
 }

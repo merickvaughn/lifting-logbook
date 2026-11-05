@@ -383,6 +383,17 @@ describe("updateMaxes — lookup semantics (issue #983)", () => {
       expect(maxes[0]?.weight).toBe(220);
     });
 
+    it("doesn't mix two spellings a program plans as separate slots", () => {
+      const { maxes, flagged } = updateMaxes(
+        [row("C. Lat Raise"), { ...row("Lateral Raise"), order: 2 }],
+        [max("C. Lat Raise", 12.5), max("Lateral Raise", 25)],
+        [record("C. Lat Raise", 1, 12.5)],
+        RPT,
+      );
+      expect(maxes.map((m) => m.weight)).toEqual([17.5, 25]);
+      expect(flagged).toEqual([]);
+    });
+
     it("still reports a lift the program and the maxes don't know", () => {
       expect(() => updateMaxes([row("Bench Press")], [max("Bench Press", 200)], [record("deadlift")], RPT)).toThrow(
         "Training max for lift deadlift not found.",
@@ -392,15 +403,6 @@ describe("updateMaxes — lookup semantics (issue #983)", () => {
       ).toThrow("Program spec for lift Deadlift not found.");
     });
 
-    it("doesn't progress OH Press-HV's max from an OH Press set", () => {
-      const { maxes } = updateMaxes(
-        [row("OH Press"), { ...row("OH Press-HV"), order: 2 }],
-        [max("OH Press", 115), max("OH Press-HV", 75)],
-        [record("OH Press", 1, 115)],
-        RPT,
-      );
-      expect(maxes.map((m) => m.weight)).toEqual([120, 75]);
-    });
   });
 
   it("reports a missing training max before a missing spec, and a missing max even on a deload spec", () => {

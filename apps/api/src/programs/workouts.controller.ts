@@ -6,7 +6,7 @@ import {
   Logger,
   Param,
 } from '@nestjs/common';
-import { LiftRecord } from '@lifting-logbook/core';
+import { LiftRecord, liftIdFor } from '@lifting-logbook/core';
 import { WorkoutResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
@@ -89,7 +89,9 @@ export class WorkoutsController {
     // Removed lifts' records are dropped here; replaced lifts' are regrouped inside
     // the mapper (`renamedLifts`) rather than renamed on the records, so each set's
     // `id` is still built from the row as stored (issue #978).
-    const adjustedRecords = records.filter((r) => !removed.has(r.lift));
+    // A record stored by catalog id goes with its lift too (#1118).
+    const removedIds = new Set([...removed].map(liftIdFor));
+    const adjustedRecords = records.filter((r) => !removed.has(r.lift) && !removedIds.has(r.lift));
 
     // macrocycleDate is absent only on the ProgramNotFoundError fallback ({ macrocycleNum: 1 }),
     // where the spec is empty so the workoutNum guard above already 400'd. When

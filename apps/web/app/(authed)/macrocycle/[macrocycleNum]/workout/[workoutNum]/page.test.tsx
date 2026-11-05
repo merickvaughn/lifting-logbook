@@ -42,7 +42,7 @@ jest.mock('./WorkoutLogger', () => ({
 }));
 
 import { emptyFocusDayState } from '@lifting-logbook/types';
-import { validateTrainingMaxImport } from '@lifting-logbook/core';
+import { validateTrainingMaxImport, type TrainingMax } from '@lifting-logbook/core';
 import {
   fetchWorkout,
   fetchProgramSpec,
@@ -118,9 +118,10 @@ describe('WorkoutLoggingPage — a training max stored under another spelling (#
   }
 
   it('computes the plan from a max imported as Bench P.', async () => {
-    const { valid, errors } = validateTrainingMaxImport([
-      { lift: 'Bench P.', weight: 200, unit: 'lbs', dateUpdated: new Date('2025-12-29') },
-    ] as never);
+    const rows: TrainingMax[] = [
+      { lift: 'Bench P.' as TrainingMax['lift'], weight: 200, dateUpdated: new Date('2025-12-29') },
+    ];
+    const { valid, errors } = validateTrainingMaxImport(rows);
     expect(errors).toEqual([]);
     seedBench(valid.map((m) => ({ lift: m.lift, weight: m.weight, dateUpdated: '2025-12-29' })));
 

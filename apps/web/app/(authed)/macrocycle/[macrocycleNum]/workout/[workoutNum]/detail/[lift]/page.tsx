@@ -2,10 +2,9 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import {
   builtInLiftFor,
-  currentMaxesByLiftId,
+  currentMaxLookup,
   formatWeight,
   isSameLift,
-  liftIdFor,
   lookupLift,
 } from '@lifting-logbook/core';
 import { fetchCustomLifts, fetchTrainingMaxes, fetchTrainingMaxHistory, fetchLiftRecords } from '@/lib/api';
@@ -37,7 +36,7 @@ export default async function LiftDetailPage({
     getPreferredUnit(),
   ]);
 
-  const currentMax = currentMaxesByLiftId(maxes).get(liftIdFor(lift));
+  const currentMax = currentMaxLookup(maxes)(lift);
   const tmHistory = history.entries.filter((e) => isSameLift(e.lift, lift));
   const setHistory = allRecords
     .filter((r) => isSameLift(r.lift, lift))

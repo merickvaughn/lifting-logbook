@@ -89,10 +89,10 @@ describe('LiftDetailPage — rows stored under another spelling (#1118)', () => 
     expect(await renderLift('bench-press')).toContain('history-filters:2026-01-12');
   });
 
-  it('keeps OH Press-HV’s sets off the OH Press page', async () => {
-    mockedRecords.mockResolvedValue([record('OH Press', '2026-01-12'), record('OH Press-HV', '2026-01-13')]);
+  it('keeps a substitute’s sets off the page of the lift it replaces', async () => {
+    mockedRecords.mockResolvedValue([record('Deadlift', '2026-01-12'), record('Romanian Deadlift', '2026-01-13')]);
 
-    expect(await renderLift('OH Press')).toContain('history-filters:2026-01-12<');
+    expect(await renderLift('Deadlift')).toContain('history-filters:2026-01-12<');
   });
 });
 
