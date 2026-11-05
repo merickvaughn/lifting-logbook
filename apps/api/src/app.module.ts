@@ -66,6 +66,12 @@ function allowlistHeaders(headers: unknown): Record<string, unknown> {
 }
 
 export const pinoHttpOptions: PinoHttpOptions = {
+  // By default pino-http runs the standard serializers first and passes their
+  // output to custom ones. The serializers below call the standard ones
+  // themselves, so they need the raw req/res: on already-serialized input the
+  // standard res serializer finds no headersSent and logs a null statusCode, and
+  // req.remoteAddress/remotePort are lost too (#1127).
+  wrapSerializers: false,
   // Primary redaction (redact-by-default): run pino's standard req/res
   // serializer, then keep only the LOGGABLE_REQUEST_HEADERS allowlist. Any
   // header not explicitly marked safe — including auth-bearing headers nobody
