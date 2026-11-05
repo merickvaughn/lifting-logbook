@@ -584,7 +584,6 @@ describe('ImportWizard', () => {
       'prog-1',
       expect.any(File),
       'training-maxes',
-      expect.anything(),
     );
   });
 
@@ -1288,6 +1287,90 @@ describe('ImportWizard', () => {
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
       await user.click(screen.getByRole('button', { name: 'Commit import' }));
       await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+    });
+
+    it('says so when a column change clears Review edits, and keeps them when the mapping is unchanged', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(screen.getByLabelText('CSV file'), AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'notes');
+      await user.selectOptions(screen.getByLabelText('Map column Reps'), 'notes');
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
+      await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
+      await screen.findByRole('heading', { name: 'Review' });
+      expect(screen.queryByText(/were cleared/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 1: Wide-Grip CBL Curls' }));
+
+      // Undoing and redoing a remap reorders it but changes nothing, so the exclusion stays.
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'weight');
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'notes');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+      await screen.findByRole('heading', { name: 'Review' });
+      expect(mockPreview).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('button', { name: 'Re-include Row 1: Wide-Grip CBL Curls' })).toBeInTheDocument();
+
+      // A real change reloads the rows and says the exclusion is gone.
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'weight');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+      await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(3));
+      await waitFor(() => expect(screen.getByText(/were cleared/)).toBeInTheDocument());
+      expect(screen.getByRole('button', { name: 'Exclude Row 1: Wide-Grip CBL Curls' })).toBeInTheDocument();
+    });
+
+    it('disables the column selects while the new preview runs', async () => {
+      const user = userEvent.setup();
+      let release: (value: ImportPreviewResponse) => void = () => {};
+      mockPreview
+        .mockResolvedValueOnce(AMBIGUOUS_LIFT_PREVIEW)
+        .mockReturnValueOnce(new Promise((resolve) => { release = resolve; }));
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(screen.getByLabelText('CSV file'), AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'notes');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+
+      expect(screen.getByLabelText('Map column Reps')).toBeDisabled();
+      release(AMBIGUOUS_LIFT_PREVIEW);
+      await screen.findByRole('heading', { name: 'Review' });
+    });
+
+    it('does not send column overrides with the rebuilt training-max file, which already applied them', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(TM_PREVIEW);
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'training-maxes', created: 2, updated: 0, skipped: 0, batchId: 'batch-swap' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(
+        screen.getByLabelText('CSV file'),
+        new File(['Date Updated,Lift,Weight\n1/1/2026,300,Squat'], 'tm.csv', { type: 'text/csv' }),
+      );
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Training Maxes')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+      await user.selectOptions(screen.getByLabelText('Map column Lift'), 'weight');
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'lift');
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
+      await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
+      expect(mockPreview.mock.calls[1]?.[3]).toEqual({ overrides: { Lift: 'weight', Weight: 'lift' } });
+      await screen.findByRole('heading', { name: 'Review' });
+
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+      expect(mockCommit.mock.calls[0]).toHaveLength(3);
     });
 
     it('stays on Map Columns and says so when the new preview fails', async () => {

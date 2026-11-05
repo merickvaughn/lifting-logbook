@@ -160,7 +160,12 @@ function bucketClass(bucket: 'high' | 'medium' | 'low'): string {
       : styles.bucketLow ?? '';
 }
 
-const NO_COLUMN_OVERRIDES = JSON.stringify({});
+// Sorted, because undoing and redoing a remap changes its insertion order but not its meaning.
+function columnOverridesKey(overrides: Record<string, string>): string {
+  return JSON.stringify(Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+const NO_COLUMN_OVERRIDES = columnOverridesKey({});
 
 function filterDeltas(deltas: ImportDelta[], filter: ReviewFilter): ImportDelta[] {
   if (filter === 'all') return deltas;
@@ -237,6 +242,7 @@ export function ImportWizard({
   // The column remaps the current preview was taken with.
   const previewedColumnOverrides = useRef(NO_COLUMN_OVERRIDES);
   const [needsLiftSnapshot, setNeedsLiftSnapshot] = useState<ReadonlySet<string>>(new Set());
+  const [reviewEditsDiscarded, setReviewEditsDiscarded] = useState(false);
   const [batchId, setBatchId] = useState<string | null>(null);
   const [undoResult, setUndoResult] = useState<ImportUndoResponse | null>(null);
 
@@ -611,11 +617,12 @@ export function ImportWizard({
   async function enterReview() {
     let rows = previewBody;
     let rowsReplaced = false;
+    let editsDiscarded = false;
     // The file was previewed before this step, so a column remapped here isn't in
     // that preview. The commit does apply it, so Review's rows and the commit gate
     // would disagree with the commit: a remapped Lift column would block every row
     // as needing a lift (#1114). Unchanged remaps keep the user's Review work.
-    const overridesKey = JSON.stringify(columnOverridesRecord);
+    const overridesKey = columnOverridesKey(columnOverridesRecord);
     if (programId && file && destination && overridesKey !== previewedColumnOverrides.current) {
       setError(null);
       setBusy(true);
@@ -624,6 +631,9 @@ export function ImportWizard({
         // Keeps what this step is showing: `columnOverrides` is keyed to the file's
         // own headers, and the commit applies it to the original file.
         setPreview((prev) => prev && { ...res, classification: prev.classification, columnMappings: prev.columnMappings });
+        // A new preview means new rows, so Review's edits can't carry over. Say so:
+        // an exclusion that silently vanished would write a row the user removed.
+        editsDiscarded = excludedKeys.size > 0 || liftOverrides.size > 0 || reviewMaxes !== null;
         clearPreviewRowState();
         previewedColumnOverrides.current = overridesKey;
         rows = res.preview;
@@ -644,6 +654,7 @@ export function ImportWizard({
           .map((d) => ({ lift: d.label, weight: d.after ?? '' })),
       );
     }
+    setReviewEditsDiscarded(editsDiscarded);
     setReviewFilter('all');
     setSelectedKeys(new Set());
     lastSelectedKey.current = null;
@@ -998,9 +1009,9 @@ export function ImportWizard({
         const activeMaxes = reviewMaxes.filter((r) => !excludedKeys.has(r.lift));
         const csv = buildTrainingMaxesCsv(activeMaxes);
         commitFile = new File([csv], file.name, { type: 'text/csv' });
-        result = await commitImport(programId, commitFile, destination, {
-          overrides: Object.keys(columnOverridesRecord).length > 0 ? columnOverridesRecord : undefined,
-        });
+        // No column overrides: this CSV has canonical headers and rows from a preview
+        // that already applied them. Sending them again would rename columns twice.
+        result = await commitImport(programId, commitFile, destination);
       } else {
         const liftOverridesRecord: Record<number, string> = {};
         // Walks the CURRENT preview's rows, so an override left over from a
@@ -1372,6 +1383,9 @@ export function ImportWizard({
                               <select
                                 className={styles.mappingSelect}
                                 aria-label={`Map column ${m.sourceHeader || '(unmapped)'}`}
+                                // A change while the preview runs would leave Review showing a
+                                // different mapping from the one the commit sends.
+                                disabled={busy}
                                 value={columnOverrides.get(mappingKey(m)) ?? m.destinationField}
                                 onChange={(e) => {
                                   const val = e.target.value;
@@ -1423,6 +1437,12 @@ export function ImportWizard({
           {step === Step.REVIEW && preview && (
             <>
               <h2 className={styles.stepTitle}>Review</h2>
+              {reviewEditsDiscarded && (
+                <p className={styles.infoBox}>
+                  Changing a column reloaded this file&apos;s rows, so your earlier exclusions, lift
+                  choices and weight edits were cleared.
+                </p>
+              )}
 
               {preview.errors.length > 0 ? (
                 <div className={styles.errorBox}>
