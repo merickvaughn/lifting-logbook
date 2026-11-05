@@ -1073,8 +1073,15 @@ const server = createServer(async (req, res) => {
 
       if (state.ambiguousLift && destination === 'lift-records') {
         if (mode === 'commit') {
-          const liftOverridesParam = url.searchParams.get('liftOverrides');
-          const liftOverrides = liftOverridesParam ? JSON.parse(liftOverridesParam) : {};
+          // A form field since #1121, so the Playwright remap flow proves the client
+          // sends it where the real API reads it.
+          const chunks = [];
+          for await (const chunk of req) chunks.push(chunk);
+          const form = await new Response(Buffer.concat(chunks), {
+            headers: { 'content-type': req.headers['content-type'] },
+          }).formData();
+          const liftOverridesField = form.get('liftOverrides');
+          const liftOverrides = liftOverridesField ? JSON.parse(liftOverridesField) : {};
           // Derived from AMBIGUOUS_LIFT_ROWS (the same list the preview branch
           // below returns), not a hardcoded row count — growing that fixture no
           // longer requires a matching hand-edit here (#911 review). Mirrors the

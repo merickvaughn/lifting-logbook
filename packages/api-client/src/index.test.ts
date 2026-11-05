@@ -425,6 +425,37 @@ describe('createApiClient', () => {
       });
     });
 
+    it('commitImport sends excludeKeys and liftOverrides in the body, never the URL (#1121)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ created: 0 }), { status: 200 }));
+      const client = makeClient();
+      await client.commitImport('5-3-1', file, 'lift-records', {
+        // The comma matters: this list was once comma-joined, which split such a key.
+        excludeKeys: ['1:1:20260101:Rows, Cable:1'],
+        liftOverrides: { 2: 'bench-press' },
+        overrides: { Exercise: 'lift' },
+        splitDest: true,
+      });
+      const [url, init] = lastCall();
+      const { searchParams } = new URL(url);
+      expect(searchParams.has('excludeKeys')).toBe(false);
+      expect(searchParams.has('liftOverrides')).toBe(false);
+      expect(searchParams.get('overrides')).toBe('{"Exercise":"lift"}');
+      expect(searchParams.get('splitDest')).toBe('1');
+      const form = init.body as FormData;
+      expect(JSON.parse(form.get('excludeKeys') as string)).toEqual(['1:1:20260101:Rows, Cable:1']);
+      expect(JSON.parse(form.get('liftOverrides') as string)).toEqual({ '2': 'bench-press' });
+      expect((form.get('file') as File).name).toBe('records.csv');
+    });
+
+    it('commitImport sends neither field when there is nothing to exclude or remap', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ created: 0 }), { status: 200 }));
+      const client = makeClient();
+      await client.commitImport('5-3-1', file, 'lift-records', { excludeKeys: [], liftOverrides: {} });
+      const form = lastCall()[1].body as FormData;
+      expect(form.has('excludeKeys')).toBe(false);
+      expect(form.has('liftOverrides')).toBe(false);
+    });
+
     it('commitImport returns ok:false with row errors on validation failure', async () => {
       mockFetch.mockResolvedValue(
         new Response(JSON.stringify({ errors: [{ row: 5, message: 'bad row' }] }), { status: 400 }),

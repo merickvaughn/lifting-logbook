@@ -21,8 +21,9 @@ export interface ITrainingMaxRepository {
    * Smart Import commit (#488): atomically upsert `maxes` by lift and return the
    * own `{created, updated, skipped}` counts of the write — so commit counts come
    * from the write itself, not a separate pre-read that a concurrent edit could
-   * invalidate. Duplicate lifts within the batch collapse to the first occurrence
-   * (matching the preview). The whole batch runs in one transaction; a partial
+   * invalidate. Duplicate lifts within the batch collapse to the row with the most
+   * recent `dateUpdated`, with file order breaking a tie (`latestTrainingMaxFirst`,
+   * matching the preview, #1117). The whole batch runs in one transaction; a partial
    * failure rolls back.
    */
   importTrainingMaxes(program: string, maxes: TrainingMax[]): Promise<ImportWriteResult>;

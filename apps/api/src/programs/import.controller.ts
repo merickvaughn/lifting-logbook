@@ -54,7 +54,7 @@ import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
-import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
+import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
 import { effectiveSlotMapFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
@@ -95,11 +95,11 @@ export class ImportController {
     @Query('mode') mode = 'preview',
     @Query('destination') destinationParam?: string,
     @Query('overrides') overridesParam?: string,
-    @Query('excludeKeys') excludeKeysParam?: string,
-    @Query('liftOverrides') liftOverridesParam?: string,
+    @Query('excludeKeys') legacyExcludeKeys?: string,
+    @Query('liftOverrides') legacyLiftOverrides?: string,
     @Query('splitDest') splitDestParam?: string,
   ): Promise<ImportPreviewResponse | ImportCommitResponse> {
-    const csvText = await readUploadedCsv(req);
+    const { csvText, fields } = await readImportForm(req);
     let table = parseCsvText(csvText);
 
     const override = destinationParam && (Object.keys(IMPORT_HANDLERS) as ImportKind[]).includes(
@@ -112,13 +112,25 @@ export class ImportController {
       if (!override) {
         throw new BadRequestException('A valid `destination` is required to commit');
       }
+      // These moved to the request body (#1121). A tab opened before that still sends
+      // them in the URL, and ignoring its exclusions would commit the excluded rows.
+      if (legacyExcludeKeys !== undefined || legacyLiftOverrides !== undefined) {
+        throw new BadRequestException({
+          message: 'Stale client',
+          errors: [
+            {
+              row: 0,
+              code: 'UNEXPECTED_ERROR',
+              message: 'This page is out of date. Reload it and try the import again.',
+            },
+          ],
+        });
+      }
       if (columnOverrides) {
         table = applyColumnOverrides(table, columnOverrides, override);
       }
-      const excludeKeys = excludeKeysParam
-        ? new Set(excludeKeysParam.split(',').map((k) => k.trim()).filter(Boolean))
-        : new Set<string>();
-      const liftOverrides = parseJsonParam<Record<string, string>>(liftOverridesParam) ?? {};
+      const excludeKeys = parseExcludeKeys(fields.get('excludeKeys'));
+      const liftOverrides = parseLiftOverrides(fields.get('liftOverrides'));
       const splitDest = splitDestParam === '1';
       const repos = await this.factory.forUser(user);
       return this.commit(program, override, table, repos, user.id, excludeKeys, liftOverrides, splitDest);
@@ -679,5 +691,37 @@ function parseJsonParam<T>(param: string | undefined): T | null {
     return JSON.parse(param) as T;
   } catch {
     throw new BadRequestException(`Invalid JSON in query parameter: ${param}`);
+  }
+}
+
+function parseExcludeKeys(field: string | undefined): Set<string> {
+  if (field === undefined) return new Set();
+  const parsed = parseJsonField('excludeKeys', field);
+  if (!Array.isArray(parsed) || !parsed.every((key) => typeof key === 'string')) {
+    throw new BadRequestException('`excludeKeys` must be a JSON array of strings');
+  }
+  return new Set(parsed);
+}
+
+function parseLiftOverrides(field: string | undefined): Record<string, string> {
+  if (field === undefined) return {};
+  const parsed = parseJsonField('liftOverrides', field);
+  if (
+    parsed === null ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    !Object.values(parsed).every((lift) => typeof lift === 'string')
+  ) {
+    throw new BadRequestException('`liftOverrides` must be a JSON object of row index to lift');
+  }
+  return parsed as Record<string, string>;
+}
+
+/** The message names the field but not its value, which can run to megabytes. */
+function parseJsonField(name: string, field: string): unknown {
+  try {
+    return JSON.parse(field);
+  } catch {
+    throw new BadRequestException(`Invalid JSON in form field: ${name}`);
   }
 }

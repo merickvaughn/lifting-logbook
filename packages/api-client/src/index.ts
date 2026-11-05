@@ -115,23 +115,31 @@ function importPath(
   program: string,
   mode: 'preview' | 'commit',
   destination?: ImportKind,
-  opts?: CommitImportOpts,
+  opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>,
 ): string {
   const params = new URLSearchParams({ mode });
   if (destination) params.set('destination', destination);
   if (opts?.overrides && Object.keys(opts.overrides).length > 0) {
     params.set('overrides', JSON.stringify(opts.overrides));
   }
-  if (opts?.excludeKeys && opts.excludeKeys.length > 0) {
-    params.set('excludeKeys', opts.excludeKeys.join(','));
-  }
-  if (opts?.liftOverrides && Object.keys(opts.liftOverrides).length > 0) {
-    params.set('liftOverrides', JSON.stringify(opts.liftOverrides));
-  }
   if (opts?.splitDest) {
     params.set('splitDest', '1');
   }
   return `/programs/${enc(program)}/import?${params.toString()}`;
+}
+
+// Commit form. The per-row options go in the body, not the URL: with one entry per
+// row they outgrow Node's 16 KB header limit at about 300 rows (#1121).
+function commitForm(file: File, opts?: CommitImportOpts): FormData {
+  const form = new FormData();
+  if (opts?.excludeKeys && opts.excludeKeys.length > 0) {
+    form.append('excludeKeys', JSON.stringify(opts.excludeKeys));
+  }
+  if (opts?.liftOverrides && Object.keys(opts.liftOverrides).length > 0) {
+    form.append('liftOverrides', JSON.stringify(opts.liftOverrides));
+  }
+  form.append('file', file);
+  return form;
 }
 
 /** Phase 3 options for commitImport. */
@@ -460,11 +468,9 @@ export function createApiClient(config: ApiClientConfig) {
     ): Promise<
       { ok: true; data: ImportCommitResponse } | { ok: false; errors: ImportError[] }
     > {
-      const form = new FormData();
-      form.append('file', file);
       const res = await rawFetch(importPath(program, 'commit', destination, opts), {
         method: 'POST',
-        body: form,
+        body: commitForm(file, opts),
         cache: 'no-store',
       });
       if (res.ok) {
