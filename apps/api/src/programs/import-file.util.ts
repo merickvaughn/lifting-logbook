@@ -41,19 +41,19 @@ export async function readUploadedCsv(req: FastifyRequest): Promise<string> {
  * Reads the Smart Import form: the CSV file plus its text fields, in either order
  * (#1121). `req.file()` stops at the file, so it would miss a field sent after it.
  *
- * The field limits are set here so they hold however multipart was registered. Each
- * entry in a field names one row of the file, so the file's own size limit is ample,
- * and a commit has at most two fields. multipart cuts an over-long field short without
- * raising an error, which for an exclusion list would mean committing excluded rows,
- * so a truncated field is a 413. That check waits until the loop ends so the file is
- * still consumed when the field arrives first.
+ * The field size limit is set here so it holds however multipart was registered. Each
+ * entry in a field names one row of the file, so the file's own size limit is ample.
+ * multipart cuts an over-long field short without raising an error, which for an
+ * exclusion list would mean committing excluded rows, so a truncated field is a 413.
+ * That check waits until the loop ends so the file is still consumed when the field
+ * arrives first.
  */
 export async function readImportForm(
   req: FastifyRequest,
 ): Promise<{ csvText: string; fields: Map<string, string> }> {
   const parts = (req as FastifyRequest & {
-    parts(opts: { limits: { fieldSize: number; fields: number } }): AsyncIterable<MultipartPart>;
-  }).parts({ limits: { fieldSize: MAX_IMPORT_FILE_BYTES, fields: 2 } });
+    parts(opts: { limits: { fieldSize: number } }): AsyncIterable<MultipartPart>;
+  }).parts({ limits: { fieldSize: MAX_IMPORT_FILE_BYTES } });
 
   let csvText: string | null = null;
   const fields = new Map<string, string>();
@@ -69,8 +69,8 @@ export async function readImportForm(
       }
     }
   } catch (err) {
-    // multipart's own client errors (too many fields, a second file) carry a 4xx
-    // statusCode, but only an HttpException reaches the client as anything but a 500.
+    // multipart's own client errors (a second file, say) carry a 4xx statusCode, but
+    // only an HttpException reaches the client as anything but a 500.
     const { statusCode, message } = err as { statusCode?: number; message: string };
     if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
       throw new HttpException(message, statusCode);

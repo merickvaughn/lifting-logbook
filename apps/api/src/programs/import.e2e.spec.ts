@@ -838,11 +838,22 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(retry.json().created).toBe(1);
     });
 
-    it('rejects more form fields than a commit has', async () => {
-      const res = await importCsv('p1121-extra-fields', LIFT_CSV, COMMIT, {
-        excludeKeys: '[]',
-        liftOverrides: '{}',
-        another: 'x',
+    // Reading the whole form now reaches a part req.file() never looked at, and
+    // multipart's limit error must surface as itself rather than as a 500.
+    it('rejects a second file with 413', async () => {
+      const boundary = '----SmartImportBoundary';
+      const filePart = [
+        `--${boundary}`,
+        'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+        'Content-Type: text/csv',
+        '',
+        LIFT_CSV,
+      ];
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/p1121-two-files/import${COMMIT}`,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, ...AUTH },
+        payload: [...filePart, ...filePart, `--${boundary}--`].join('\r\n'),
       });
       expect(res.statusCode).toBe(413);
     });
