@@ -65,6 +65,7 @@ export function SheetTabsStep({
   workbookId,
   programId,
   tabs,
+  kinds,
   choices,
   onChange,
   previews,
@@ -74,6 +75,11 @@ export function SheetTabsStep({
   workbookId: number;
   programId: string;
   tabs: GoogleSheetTab[];
+  /**
+   * What the selected program can take. A tab detected as anything else can't be
+   * checked. A tab that is only a best guess can, since the guess may be wrong.
+   */
+  kinds: ImportKind[];
   choices: SheetTabChoices;
   onChange: (next: SheetTabChoices) => void;
   previews: TabPreviews;
@@ -85,6 +91,8 @@ export function SheetTabsStep({
   // has rendered (React StrictMode runs effects twice on mount).
   const inFlight = useRef<string | null>(null);
   const keyFor = (tabName: string, kind: ImportKind) => previewKey(workbookId, programId, tabName, kind);
+  const initialKind = (tab: GoogleSheetTab): ImportKind =>
+    kinds.includes(suggestedKind(tab)) ? suggestedKind(tab) : (kinds[0] ?? suggestedKind(tab));
 
   // Preview the checked tabs under their chosen kinds, one request at a time.
   // Keyed by workbook, program, name and kind, so changing any of them fetches a
@@ -129,7 +137,7 @@ export function SheetTabsStep({
   function toggle(tab: GoogleSheetTab, checked: boolean) {
     clearFailedPreviews(tab.name);
     const next = { ...choices };
-    if (checked) next[tab.name] = suggestedKind(tab);
+    if (checked) next[tab.name] = initialKind(tab);
     else delete next[tab.name];
     onChange(next);
   }
@@ -163,6 +171,8 @@ export function SheetTabsStep({
                 const kind = choices[tab.name];
                 const checkboxId = `sheet-tab-${i}`;
                 const p = kind ? previews[keyFor(tab.name, kind)] : undefined;
+                const detected = tab.classification.type;
+                const unavailableKind = kind === undefined && detected && !kinds.includes(detected) ? detected : null;
                 return (
                   <tr key={tab.name}>
                     <td>{i + 1}</td>
@@ -171,6 +181,7 @@ export function SheetTabsStep({
                         id={checkboxId}
                         type="checkbox"
                         checked={kind !== undefined}
+                        disabled={unavailableKind !== null}
                         onChange={(e) => toggle(tab, e.target.checked)}
                       />
                     </td>
@@ -180,27 +191,33 @@ export function SheetTabsStep({
                       </label>
                     </td>
                     <td>
-                      <select
-                        className={styles.mappingSelect}
-                        aria-label={`Import ${tab.name} as`}
-                        value={kind ?? suggestedKind(tab)}
-                        disabled={kind === undefined}
-                        onChange={(e) => {
-                          const picked = ALL_KINDS.find((k) => k === e.target.value);
-                          if (!picked) return;
-                          clearFailedPreviews(tab.name);
-                          onChange({ ...choices, [tab.name]: picked });
-                        }}
-                      >
-                        {ALL_KINDS.map((k) => (
-                          <option key={k} value={k}>
-                            {KIND_LABEL[k]}
-                            {k === tab.suggestedKind
-                              ? ` (${tab.classification.type ? 'detected' : 'best guess'}, ${Math.round(tab.classification.confidence * 100)}%)`
-                              : ''}
-                          </option>
-                        ))}
-                      </select>
+                      {unavailableKind ? (
+                        <span className={styles.stepHint}>
+                          {KIND_LABEL[unavailableKind]}: needs a custom program
+                        </span>
+                      ) : (
+                        <select
+                          className={styles.mappingSelect}
+                          aria-label={`Import ${tab.name} as`}
+                          value={kind ?? initialKind(tab)}
+                          disabled={kind === undefined}
+                          onChange={(e) => {
+                            const picked = kinds.find((k) => k === e.target.value);
+                            if (!picked) return;
+                            clearFailedPreviews(tab.name);
+                            onChange({ ...choices, [tab.name]: picked });
+                          }}
+                        >
+                          {kinds.map((k) => (
+                            <option key={k} value={k}>
+                              {KIND_LABEL[k]}
+                              {k === tab.suggestedKind
+                                ? ` (${tab.classification.type ? 'detected' : 'best guess'}, ${Math.round(tab.classification.confidence * 100)}%)`
+                                : ''}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                     <td>{Math.max(tab.rowCount - 1, 0)}</td>
                     <td>{kind === undefined ? '—' : <PreviewCell preview={p} />}</td>
