@@ -12,6 +12,7 @@ import type {
   ImportError,
   ImportKind,
   ImportPreviewResponse,
+  ImportSpellingCollision,
   ImportUndoResponse,
   LiftClassification,
   WeightUnit,
@@ -45,6 +46,7 @@ import {
   type SheetTabChoices,
   type TabPreviews,
 } from './SheetTabsStep';
+import SpellingCollisionNotice from './SpellingCollisionNotice';
 import styles from './import.module.css';
 
 type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous' | 'needs-lift';
@@ -227,6 +229,8 @@ export function ImportWizard({
 
   // Phase 3 state
   const [reviewMaxes, setReviewMaxes] = useState<EditableMax[] | null>(null);
+  // Rows of a spelling collision the user kept as custom lifts, as `key|spelling` (#1135).
+  const [keptSpellings, setKeptSpellings] = useState<ReadonlySet<string>>(new Set());
   const [plannedCommit, setPlannedCommit] = useState<PlannedCommit | null>(null);
   const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
   const [liftOverrides, setLiftOverrides] = useState<Map<number, string>>(new Map());
@@ -508,6 +512,7 @@ export function ImportWizard({
     setSelectedKeys(new Set());
     lastSelectedKey.current = null;
     setReviewMaxes(null);
+    setKeptSpellings(new Set());
     setPlannedCommit(null);
     setCommitErrors(null);
   }
@@ -688,6 +693,37 @@ export function ImportWizard({
     setSelectedKeys(new Set());
     lastSelectedKey.current = null;
     setStep(Step.REVIEW);
+  }
+
+  function remainingCollisionRows(collision: ImportSpellingCollision, kept: ReadonlySet<string>) {
+    return collision.rows.filter((row) => !kept.has(`${collision.key}|${row.spelling}`));
+  }
+
+  // The kept row goes on the list under its new lift, and leaves the stored lift it was
+  // writing to. A row that shared that lift, and was older, takes over from it, so every
+  // row's max is stored (#1135).
+  function handleKeepAsCustom(
+    collision: ImportSpellingCollision,
+    spelling: string,
+    lift: CustomLiftResponse,
+  ) {
+    const row = collision.rows.find((r) => r.spelling === spelling);
+    if (!row) return;
+    const sharing = (rows: ImportSpellingCollision['rows']) => rows.filter((r) => r.lift === row.lift);
+    const kept = new Set(keptSpellings).add(`${collision.key}|${spelling}`);
+    const wasStored = sharing(remainingCollisionRows(collision, keptSpellings))[0]?.spelling === spelling;
+    const [next] = sharing(remainingCollisionRows(collision, kept));
+    setKeptSpellings(kept);
+    setCustomLifts((prev) => [...prev, lift]);
+    setReviewMaxes((prev) => {
+      if (!prev) return prev;
+      const label = prev.find((r) => r.lift === row.lift)?.label ?? collision.label;
+      return [
+        ...(wasStored ? prev.filter((r) => r.lift !== row.lift) : prev),
+        ...(wasStored && next ? [{ lift: row.lift, label, weight: String(next.weight) }] : []),
+        { lift: lift.id, label: lift.name, weight: String(row.weight) },
+      ];
+    });
   }
 
   function handleDeltaCheckbox(key: string, shiftHeld: boolean, deltas: ImportDelta[]) {
@@ -1193,6 +1229,7 @@ export function ImportWizard({
     setCommitErrors(null);
     setError(null);
     setReviewMaxes(null);
+    setKeptSpellings(new Set());
     setPlannedCommit(null);
     setExcludedKeys(new Set());
     setLiftOverrides(new Map());
@@ -1594,6 +1631,15 @@ export function ImportWizard({
                   {destination === 'training-maxes' && reviewMaxes !== null ? (
                     <>
                       <p className={styles.stepHint}>Edit weights or remove rows before committing.</p>
+                      {previewBody.spellingCollisions?.map((collision) => (
+                        <SpellingCollisionNotice
+                          key={collision.key}
+                          label={collision.label}
+                          rows={remainingCollisionRows(collision, keptSpellings)}
+                          classifications={LIFT_CLASSIFICATIONS}
+                          onKept={(spelling, lift) => handleKeepAsCustom(collision, spelling, lift)}
+                        />
+                      ))}
                       <ul className={styles.maxEditList} aria-label="Training maxes to import">
                         {reviewMaxes
                           .filter((row) => !excludedKeys.has(row.lift))

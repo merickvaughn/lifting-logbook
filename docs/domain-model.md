@@ -163,8 +163,12 @@ four forms reach its lookup — slot names, catalog names, catalog ids and per-e
 Import can also store a custom lift's **uuid**, which is why `lookupLift` matches custom lifts
 by name *or* id. Code reading a `lift` value must tolerate all of these. To compare two of them,
 use the helpers in [`catalog/liftIdentity.ts`](../packages/core/src/catalog/liftIdentity.ts), not
-`===`. Readers still comparing exact strings are tracked in
-[#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135). `OH Press-HV` is the same lift
+`===`. `lookupByLift` and `currentMaxLookup` cross any two spellings, for what a lift has one of.
+`lookupByStoredId` and `storedIdListing` cross only through the catalog id, for what a user sets per
+name (strength goals, timer overrides, muscle overrides) and for listing history, so two names a
+program plans separately stay apart ([#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135)).
+A query by lift expands through `liftSpellings`. Focus picks and trims stay exact, because only the
+pool's own names reach them. `OH Press-HV` is the same lift
 as `OH Press`; a lighter slot's load is [#1141](https://github.com/merickvaughn/lifting-logbook/issues/1141).
 The helpers take no custom lifts, so a custom lift named after a catalog name compares equal to the
 built-in until the resolver in [#1134](https://github.com/merickvaughn/lifting-logbook/issues/1134).

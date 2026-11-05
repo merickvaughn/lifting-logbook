@@ -1,4 +1,5 @@
 import type { LiftClassification } from '@lifting-logbook/types';
+import { lookupByStoredId } from '../catalog/liftIdentity';
 import type {
   TimerBehavior,
   TimerDurationField,
@@ -217,7 +218,8 @@ export function resolveDurationEntry(
   field: TimerDurationField,
   classification: LiftClassification | undefined,
 ): { seconds: number; source: TimerDurationSource } {
-  const override = hasOwn(settings.overrides, lift) ? settings.overrides[lift]?.[field] : undefined;
+  const overrideKey = timerOverrideKey(settings, lift);
+  const override = hasOwn(settings.overrides, overrideKey) ? settings.overrides[overrideKey]?.[field] : undefined;
   if (override != null) return { seconds: override, source: 'override' };
 
   if (settings.context.deloadOn) {
@@ -263,6 +265,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * and resolve to a *function*, rendering every duration as 0:00 and letting a
  * stepper write a property onto `Object.prototype`.
  */
+/**
+ * The key in `settings.overrides` holding `lift`'s overrides: its own name, or the same lift
+ * stored through its catalog id (#1135), else `lift` itself. The panel reads and writes
+ * through this too, so a row edits the overrides the countdown follows.
+ */
+export function timerOverrideKey(settings: TimerSettings, lift: string): string {
+  const keys = Object.keys(settings.overrides).map((key) => [key, key] as const);
+  return lookupByStoredId(keys)(lift) ?? lift;
+}
+
 function hasOwn(target: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(target, key);
 }

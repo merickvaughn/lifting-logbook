@@ -47,6 +47,7 @@ import {
   buildLiftRecordsPreviewSoft,
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
+  findTrainingMaxSpellingCollisions,
   liftRecordNaturalKey,
   programSpecNaturalKey,
 } from '@lifting-logbook/core';
@@ -472,7 +473,20 @@ export class ImportController {
     const handler = IMPORT_HANDLERS[destination]!;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     const previewResult = await handler.preview(valid as any, program, repos);
-    return { errors, preview: previewResult };
+    if (destination !== 'training-maxes') return { errors, preview: previewResult };
+
+    // Only a row's parsed spelling can name the collision, and validation resolves it away.
+    const parsed = handler.parse(table) as TrainingMax[];
+    const liftNames = await liftNamesFor(repos);
+    const spellingCollisions = findTrainingMaxSpellingCollisions(
+      parsed,
+      valid as TrainingMax[],
+      (lift) => liftNames.get(lift) ?? lift,
+    );
+    return {
+      errors,
+      preview: spellingCollisions.length > 0 ? { ...previewResult, spellingCollisions } : previewResult,
+    };
   }
 
   /**

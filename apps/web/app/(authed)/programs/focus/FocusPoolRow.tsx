@@ -1,6 +1,6 @@
 'use client';
 
-import { LIFT_CATALOG } from '@lifting-logbook/core';
+import { builtInLiftFor } from '@lifting-logbook/core';
 import {
   FOCUS_INCLUDES,
   FOCUS_LIMITS,
@@ -18,7 +18,7 @@ const { MAX_SETS, MAX_REPS, MAX_WEIGHT } = FOCUS_LIMITS;
 
 /** "Side Delts, Traps (2°)": the catalog's muscles for a lift, secondary ones marked. */
 function muscleTags(lift: string): string {
-  const entry = LIFT_CATALOG.find((catalogLift) => catalogLift.name === lift);
+  const entry = builtInLiftFor(lift);
   if (!entry) return '';
   return [...entry.muscles.primary, ...entry.muscles.secondary.map((muscle) => `${muscle} (2°)`)].join(', ');
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { formatWeight } from '@lifting-logbook/core';
+import { formatWeight, storedIdListing } from '@lifting-logbook/core';
 import type { TrainingMaxHistoryEntryResponse, WeightUnit } from '@lifting-logbook/types';
 import { toggleHistoryPR, toggleHistoryGoalMet } from './actions';
 
@@ -23,19 +23,20 @@ export default function MaxHistory({
   const [liftFilter, setLiftFilter] = useState<string>('');
   const [pending, setPending] = useState<Set<string>>(new Set());
 
+  const listing = useMemo(() => storedIdListing(entries.map((e) => e.lift)), [entries]);
   const lifts = useMemo(
-    () => Array.from(new Set(entries.map((e) => e.lift))).sort(),
-    [entries],
+    () => Array.from(new Set(entries.map((e) => listing(e.lift)))).sort(),
+    [entries, listing],
   );
 
   const visible = useMemo(() => {
     let list = [...entries];
-    if (liftFilter) list = list.filter((e) => e.lift === liftFilter);
+    if (liftFilter) list = list.filter((e) => listing(e.lift) === liftFilter);
     if (filters.has('pr')) list = list.filter((e) => e.isPR);
     if (filters.has('test')) list = list.filter((e) => e.source === 'test');
     if (filters.has('goalMet')) list = list.filter((e) => e.goalMet);
     return list;
-  }, [entries, filters, liftFilter]);
+  }, [entries, filters, liftFilter, listing]);
 
   function toggleFilter(f: Filter) {
     setFilters((prev) => {

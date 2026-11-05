@@ -381,6 +381,12 @@ export const toWorkoutResponse = (
   // Logged sets by the lift occurrence they belong to: a lift, and which occurrence
   // of it in this workout (#1027).
   const liftMap = new Map<string, { lift: string; occurrence: number; sets: SetResponse[] }>();
+  const addSet = (lift: string, occurrence: number, set: SetResponse): void => {
+    const group = liftMap.get(liftOccurrenceKey(lift, occurrence));
+    if (group) group.sets.push(set);
+    else liftMap.set(liftOccurrenceKey(lift, occurrence), { lift, occurrence, sets: [set] });
+  };
+  const joining: { stored: string; lift: string; occurrence: number; set: SetResponse }[] = [];
   for (const r of records) {
     const set: SetResponse = {
       // From the record as stored — before the `renamedLifts` regrouping below —
@@ -394,9 +400,18 @@ export const toWorkoutResponse = (
     };
     const lift = renamedLifts?.get(r.lift) ?? liftByStoredId.get(r.lift) ?? r.lift;
     const occurrence = r.occurrence ?? 0;
-    const group = liftMap.get(liftOccurrenceKey(lift, occurrence));
-    if (group) group.sets.push(set);
-    else liftMap.set(liftOccurrenceKey(lift, occurrence), { lift, occurrence, sets: [set] });
+    if (lift === r.lift) addSet(lift, occurrence, set);
+    else joining.push({ stored: r.lift, lift, occurrence, set });
+  }
+  // A lift lists one set per set number, and clients key on it (#1135). A record that
+  // would join a set number the lift already has stays under its stored name, as its own
+  // lift, so both rows can still be read and edited: the row under the lift's own name
+  // keeps the slot, whichever order they arrive in.
+  for (const { stored, lift, occurrence, set } of joining) {
+    const taken = liftMap
+      .get(liftOccurrenceKey(lift, occurrence))
+      ?.sets.some((s) => s.setNum === set.setNum);
+    addSet(taken ? stored : lift, occurrence, set);
   }
   // Rows arrive ordered by stored name, so a group joined from two names needs sorting.
   for (const { sets } of liftMap.values()) sets.sort((a, b) => a.setNum - b.setNum);

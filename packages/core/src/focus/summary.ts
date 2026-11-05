@@ -1,4 +1,5 @@
 import type { FocusBlock } from '@lifting-logbook/types';
+import { lookupByLift } from '../catalog/liftIdentity';
 import type { LiftRecord } from '../models/LiftRecord';
 import { blockRange, toIsoDate } from './dates';
 
@@ -33,9 +34,10 @@ function beats(a: BestSet, b: BestSet): boolean {
  * at UTC midnight. A PR is a lift whose best set in the range beats its best set before the
  * range; a lift with no earlier history has nothing to beat, so it never counts as one.
  *
- * Records are matched to pool lifts by exact name, so the caller passes records whose
- * `lift` holds the lift's name (not a custom lift's id). Records with an invalid date are
- * ignored.
+ * A record counts for the pool entry with its exact name, otherwise for an entry under
+ * any spelling of its lift (#1135), so `bench-press` counts for `Bench Press`. The caller
+ * passes records whose `lift` holds a custom lift's name, not its id. Records with an
+ * invalid date are ignored.
  */
 export function summarizeBlock(
   records: readonly LiftRecord[],
@@ -43,6 +45,7 @@ export function summarizeBlock(
 ): FocusBlockSummary {
   const { start, end } = blockRange(block);
   const poolLifts = new Set(block.pool.map((entry) => entry.lift));
+  const poolLiftFor = lookupByLift([...poolLifts].map((lift) => [lift, lift] as const));
   const days = new Set<string>();
   const bestBefore = new Map<string, BestSet>();
   const bestDuring = new Map<string, BestSet>();
@@ -50,14 +53,15 @@ export function summarizeBlock(
   let volume = 0;
 
   for (const record of records) {
-    if (!poolLifts.has(record.lift) || Number.isNaN(record.date.getTime())) continue;
+    const poolLift = poolLiftFor(record.lift);
+    if (poolLift === undefined || Number.isNaN(record.date.getTime())) continue;
     const day = toIsoDate(record.date);
     // ISO dates compare correctly as strings.
     if (day > end) continue;
     const before = day < start;
     const best = before ? bestBefore : bestDuring;
-    const current = best.get(record.lift);
-    if (!current || beats(record, current)) best.set(record.lift, record);
+    const current = best.get(poolLift);
+    if (!current || beats(record, current)) best.set(poolLift, record);
     if (before) continue;
     days.add(day);
     sets += 1;

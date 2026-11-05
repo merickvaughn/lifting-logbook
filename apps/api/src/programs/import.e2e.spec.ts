@@ -736,6 +736,78 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     // passing through as raw display text. buildTrainingMaxPreview's delta `key`
     // carries the resolved `lift` value, so asserting on it proves resolution
     // without needing a separate read endpoint; `label` carries the name (#1125).
+    // #1135: two rows spelling one lift differently would silently store only one.
+    describe('training-max rows spelling one lift differently', () => {
+      const SQUATS = ['Date Updated,Lift,Weight', '1/1/2025,Squat,300', '1/1/2026,Back Squat,320'].join('\n');
+      const storedMaxes = async (program: string) =>
+        (
+          await app.getHttpAdapter().getInstance().inject({
+            method: 'GET',
+            url: `/programs/${program}/training-maxes`,
+            headers: AUTH,
+          })
+        ).json() as Array<{ lift: string; weight: number }>;
+
+      it('warns in the preview, naming both spellings', async () => {
+        const res = (
+          await importCsv('p-collision-preview', SQUATS, '?mode=preview&destination=training-maxes')
+        ).json() as ImportPreviewResponse;
+        expect(res.preview?.spellingCollisions).toEqual([
+          {
+            key: 'back-squat',
+            label: 'Back Squat',
+            rows: [
+              { spelling: 'Back Squat', lift: 'Back Squat', weight: 320, dateUpdated: '2026-01-01' },
+              { spelling: 'Squat', lift: 'back-squat', weight: 300, dateUpdated: '2025-01-01' },
+            ],
+          },
+        ]);
+      });
+
+      it('has no warning for a file with one spelling of each lift', async () => {
+        const csv = ['Date Updated,Lift,Weight', '1/1/2025,Squat,300', '1/1/2025,Bench P.,200'].join('\n');
+        const res = (await importCsv('p-no-collision', csv, '?mode=preview&destination=training-maxes')).json();
+        expect(res.preview).not.toHaveProperty('spellingCollisions');
+      });
+
+      it('stores both maxes when one row is kept as a custom lift', async () => {
+        const program = 'p-collision-keep';
+        const created = await createCustomLift({ name: 'Squat (kept)', classification: 'compound' });
+        expect(created.statusCode).toBe(201);
+        const { id } = created.json();
+
+        // What the wizard commits for this choice: the row left under its lift, and the kept row.
+        const csv = ['Date Updated,Lift,Weight', '1/1/2026,Back Squat,320', `1/1/2026,${id},300`].join('\n');
+        expect((await importCsv(program, csv, '?mode=commit&destination=training-maxes')).statusCode).toBe(200);
+
+        const maxes = await storedMaxes(program);
+        expect(maxes.find((m) => m.lift === 'Back Squat')?.weight).toBe(320);
+        expect(maxes.find((m) => m.lift === id)?.weight).toBe(300);
+      });
+
+      it('stores OH Press and OH Press-HV as one overhead-press max, from the most recent row', async () => {
+        const program = 'p-collision-oh-press';
+        const csv = ['Date Updated,Lift,Weight', '1/1/2024,OH Press-HV,75', '1/1/2026,OH Press,115'].join('\n');
+        const preview = (await importCsv(program, csv, '?mode=preview&destination=training-maxes')).json();
+        expect(preview.preview.spellingCollisions[0].rows.map((r: { spelling: string }) => r.spelling)).toEqual([
+          'OH Press',
+          'OH Press-HV',
+        ]);
+
+        expect((await importCsv(program, csv, '?mode=commit&destination=training-maxes')).statusCode).toBe(200);
+        const maxes = await storedMaxes(program);
+        expect(maxes.filter((m) => m.lift === 'overhead-press').map((m) => m.weight)).toEqual([115]);
+        expect(maxes.some((m) => m.lift.startsWith('OH Press'))).toBe(false);
+      });
+
+      it('still stores an imported Bench P. as bench-press', async () => {
+        const program = 'p-stored-value';
+        const csv = ['Date Updated,Lift,Weight', '1/1/2026,Bench P.,200'].join('\n');
+        expect((await importCsv(program, csv, '?mode=commit&destination=training-maxes')).statusCode).toBe(200);
+        expect((await storedMaxes(program)).map((m) => m.lift)).toEqual(['bench-press']);
+      });
+    });
+
     it('resolves an existing custom lift by name for a training-maxes import', async () => {
       const created = await createCustomLift({
         name: 'TM Import Custom Lift',

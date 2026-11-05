@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { formatWeight } from '@lifting-logbook/core';
+import { currentMaxLookup, formatWeight } from '@lifting-logbook/core';
 import {
   DEFAULT_WEIGHT_INCREMENT,
   type TrainingMaxResponse,
@@ -22,10 +22,10 @@ function buildInitialState(
   lifts: string[],
   maxes: TrainingMaxResponse[],
 ): Record<string, RowState> {
-  const maxMap = new Map(maxes.map((m) => [m.lift, m]));
+  const maxFor = currentMaxLookup(maxes);
   const state: Record<string, RowState> = {};
   for (const lift of lifts) {
-    const m = maxMap.get(lift);
+    const m = maxFor(lift);
     state[lift] = {
       value: m ? String(m.weight) : '',
       unit: m?.unit ?? 'lbs',

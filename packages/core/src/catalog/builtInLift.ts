@@ -59,6 +59,26 @@ export function builtInLiftFor(name: string): CatalogLift | undefined {
   return BUILT_IN_LIFTS.get(name);
 }
 
+const SPELLINGS_BY_ID: ReadonlyMap<string, readonly string[]> = (() => {
+  const spellings = new Map<string, string[]>();
+  for (const [spelling, lift] of BUILT_IN_LIFTS) {
+    const known = spellings.get(lift.id);
+    if (known) known.push(spelling);
+    else spellings.set(lift.id, [spelling]);
+  }
+  return spellings;
+})();
+
+/**
+ * Every string a `lift` column can hold for the same lift as `name`, including `name`: all
+ * a built-in lift's spellings, or just `name` for a custom lift or an unknown one. A query
+ * by lift expands to these, since stored rows mix them (#1135).
+ */
+export function liftSpellings(name: string): readonly string[] {
+  const lift = builtInLiftFor(name);
+  return (lift && SPELLINGS_BY_ID.get(lift.id)) ?? [name];
+}
+
 /** The slice of a custom lift {@link lookupLift} matches on. */
 export interface NamedLift {
   name: string;

@@ -1,5 +1,6 @@
 import { MUSCLE_GROUPS, type MuscleTargets } from '@lifting-logbook/types';
 import { builtInLiftFor, type NamedLift } from './builtInLift';
+import { lookupByStoredId } from './liftIdentity';
 
 /**
  * A user's override of the muscles a lift trains — the `LiftMetadata` fields this module
@@ -100,7 +101,9 @@ function legacyEncodedLiftName(lift: string): string | undefined {
  *
  * Overrides do not follow aliases: one set on "Squat" leaves "Back Squat" on its defaults.
  * Every other per-lift attribute in `LiftMetadata` is exact-name too, and alias-following
- * would let two rows claim one lift (ADR-036). `customLifts` is consulted only to map a
+ * would let two rows claim one lift (ADR-036). The one crossing is through the catalog id,
+ * which is the same lift stored another way (#1135): an override under `bench-press` applies
+ * to `Bench Press`, and the reverse. `customLifts` is consulted only to map a
  * custom lift's uuid — which import can store in a record's `lift` column — to the name its
  * overrides are keyed by.
  *
@@ -127,13 +130,14 @@ export function buildMuscleTargetResolver(
     const realName = legacyEncodedLiftName(override.lift);
     if (realName !== undefined && !byLift.has(realName)) byLift.set(realName, override);
   }
+  const overrideFor = lookupByStoredId(byLift);
   const nameById = new Map(
     customLifts.flatMap((lift) => (lift.id ? [[lift.id, lift.name] as const] : [])),
   );
 
   return (lift) => {
     const name = nameById.get(lift) ?? lift;
-    const override = byLift.get(name);
+    const override = overrideFor(name);
     if (override) {
       const primary = canonicalList(override.muscleGroups);
       const inPrimary = new Set(primary.map((label) => label.toLowerCase()));

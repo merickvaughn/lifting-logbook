@@ -595,6 +595,148 @@ describe('ImportWizard', () => {
     );
   });
 
+  describe('rows spelling one lift differently (#1135)', () => {
+    const COLLISION_PREVIEW: ImportPreviewResponse = {
+      ...TM_PREVIEW,
+      preview: {
+        creates: 2,
+        updates: 0,
+        skips: 0,
+        unresolved: 0,
+        // `Squat` stores as back-squat, and the slot map leaves `Back Squat` as written.
+        deltas: [
+          { key: 'back-squat', label: 'back-squat', kind: 'create', after: '300' },
+          { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
+        ],
+        spellingCollisions: [
+          {
+            key: 'back-squat',
+            label: 'Back Squat',
+            rows: [
+              { spelling: 'Back Squat', lift: 'Back Squat', weight: 320, dateUpdated: '2026-01-01' },
+              { spelling: 'Squat', lift: 'back-squat', weight: 300, dateUpdated: '2025-01-01' },
+            ],
+          },
+        ],
+      },
+    };
+    // Both spellings store under overhead-press, so only the newer row is on the list.
+    const SHARED_LIFT_PREVIEW: ImportPreviewResponse = {
+      ...TM_PREVIEW,
+      preview: {
+        creates: 1,
+        updates: 0,
+        skips: 1,
+        unresolved: 0,
+        deltas: [
+          { key: 'overhead-press', label: 'overhead-press', kind: 'create', after: '115' },
+          { key: 'overhead-press~2', label: 'overhead-press', kind: 'skip', after: '75' },
+        ],
+        spellingCollisions: [
+          {
+            key: 'overhead-press',
+            label: 'Overhead Press',
+            rows: [
+              { spelling: 'OH Press', lift: 'overhead-press', weight: 115, dateUpdated: '2026-01-01' },
+              { spelling: 'OH Press-HV', lift: 'overhead-press', weight: 75, dateUpdated: '2024-01-01' },
+            ],
+          },
+        ],
+      },
+    };
+    const KEPT_LIFT = { id: 'custom-1', name: 'Squat (custom)', classification: 'compound' };
+
+    async function committedCsv(user: ReturnType<typeof userEvent.setup>): Promise<string> {
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalled());
+      const committed = mockCommit.mock.calls[0]?.[1] as File;
+      return readFileText(committed);
+    }
+
+    // `rowIndex` is the row's position in the notice, most recent first.
+    async function keepAsCustom(user: ReturnType<typeof userEvent.setup>, spelling: string, rowIndex: number) {
+      const notice = screen.getByRole('status');
+      const compound = within(notice).getAllByRole('button', { name: 'Compound' })[rowIndex];
+      if (!compound) throw new Error(`No classification buttons for row ${rowIndex}`);
+      await user.click(compound);
+      await user.click(within(notice).getByRole('button', { name: `Keep ${spelling} as a custom lift` }));
+    }
+
+    beforeEach(() => {
+      mockPreview.mockResolvedValue(COLLISION_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue({ ok: true, data: KEPT_LIFT } as never);
+      mockDryRun.mockResolvedValue({ ok: true, data: { destination: 'training-maxes', created: 2, updated: 0, skipped: 0 } } as never);
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'training-maxes', created: 2, updated: 0, skipped: 0, batchId: 'batch-1' },
+      });
+    });
+
+    it('warns in Review, naming both spellings', async () => {
+      const user = userEvent.setup();
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Back Squat and Squat are both Back Squat, so one max applies, normally the most recent (Back Squat, 320 lbs).',
+      );
+    });
+
+    it('stores both maxes when a row is kept as a custom lift, and writes neither twice', async () => {
+      const user = userEvent.setup();
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+
+      expect(mockCreateCustomLift).toHaveBeenCalledWith({ name: 'Squat (custom)', classification: 'compound' });
+      // Resolved, so the warning has gone and the kept row is on the list.
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+      expect(screen.getByLabelText('Weight for Squat (custom)')).toHaveValue(300);
+
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"Back Squat",320');
+      expect(csv).toContain('"custom-1",300');
+      expect(csv).not.toContain('"back-squat"');
+    });
+
+    it('stores both maxes when the row kept is the older of two sharing a stored lift', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(SHARED_LIFT_PREVIEW);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'OH Press-HV', 1);
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"overhead-press",115');
+      expect(csv).toContain('"custom-1",75');
+    });
+
+    it('lets the older row take over a shared stored lift when the newer is kept', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(SHARED_LIFT_PREVIEW);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'OH Press', 0);
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"overhead-press",75');
+      expect(csv).toContain('"custom-1",115');
+      expect(csv).not.toContain('"overhead-press",115');
+    });
+
+    it('keeps the warning and the max as they were when the name is taken', async () => {
+      const user = userEvent.setup();
+      mockCreateCustomLift.mockResolvedValue({ ok: false, status: 409, error: 'taken' } as never);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+      expect(await screen.findByText('That name is already taken. Try another.')).toBeInTheDocument();
+      expect(screen.getByRole('status')).toBeInTheDocument();
+    });
+  });
+
   // #911 review, tenth pass: the REVIEW-step error block had no coverage at
   // all — round 9 converted its bare `.slice(0, 20)` to the shared constant
   // and added an "N more" note, matching the two already-tested sites, but

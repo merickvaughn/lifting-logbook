@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { convertWeight, evaluateStrengthTier, formatWeight, roundToDisplay } from '@lifting-logbook/core';
+import { convertWeight, evaluateStrengthTier, formatWeight, lookupByStoredId, roundToDisplay } from '@lifting-logbook/core';
 import type {
   BodyWeightResponse,
   StrengthGoalResponse,
@@ -81,9 +81,12 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
   const [savingBw, setSavingBw] = useState(false);
   const [bwError, setBwError] = useState<string | null>(null);
 
+  // A goal and its max can spell the lift differently (#1135), so a row finds its goal
+  // through this, and saves and deletes under the goal's own name rather than adding a second.
+  const goalFor = lookupByStoredId(goals.map((g) => [g.lift, g] as const));
   const initialRows = Object.fromEntries(
     trainingMaxes.map((m) => {
-      const existing = goals.find((g) => g.lift === m.lift);
+      const existing = goalFor(m.lift);
       return [
         m.lift,
         {
@@ -100,7 +103,7 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
 
   const [rows, setRows] = useState<Record<string, GoalRowState>>(initialRows);
   const [savedGoals, setSavedGoals] = useState<Record<string, boolean>>(
-    Object.fromEntries(goals.map((g) => [g.lift, true])),
+    Object.fromEntries(trainingMaxes.map((m) => [m.lift, goalFor(m.lift) !== undefined])),
   );
 
   function updateRow(lift: string, patch: Partial<GoalRowState>) {
@@ -148,7 +151,7 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
         row.goalType === 'relative'
           ? { goalType: 'relative' as const, ratio: parseFloat(row.ratio), unit: row.unit }
           : { goalType: 'absolute' as const, target: parseFloat(row.target), unit: row.unit };
-      await saveStrengthGoal(program, lift, body);
+      await saveStrengthGoal(program, goalFor(lift)?.lift ?? lift, body);
       setSavedGoals((prev) => ({ ...prev, [lift]: true }));
     } catch {
       updateRow(lift, { error: 'Save failed' });
@@ -160,7 +163,7 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
   async function handleDelete(lift: string) {
     updateRow(lift, { saving: true, error: null });
     try {
-      await removeStrengthGoal(program, lift);
+      await removeStrengthGoal(program, goalFor(lift)?.lift ?? lift);
       setSavedGoals((prev) => ({ ...prev, [lift]: false }));
       updateRow(lift, { target: '', ratio: '' });
     } catch {

@@ -9,6 +9,7 @@ import {
   hasTimedSets,
   parseDuration,
   resolveDurationEntry,
+  timerOverrideKey,
 } from '@lifting-logbook/core';
 import type {
   TimerAlertMode,
@@ -395,7 +396,8 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
           // occurrence with no sets cannot shadow a later one that has them.
           .filter((lift, index, timed) => timed.findIndex((other) => other.lift === lift.lift) === index)
           .map((lift) => {
-            const overrides = settings.overrides[lift.lift];
+            const overrideKey = timerOverrideKey(settings, lift.lift);
+            const overrides = settings.overrides[overrideKey];
             const count = overrides ? Object.keys(overrides).length : 0;
             const isOpen = openLift === lift.lift;
             const panelId = `override-${encodeURIComponent(lift.lift)}`;
@@ -472,7 +474,7 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
                         context={lift.lift}
                         step={copy.step}
                         value={entry.seconds}
-                        onChange={(value) => setOverride(lift.lift, field, value)}
+                        onChange={(value) => setOverride(overrideKey, field, value)}
                       />
                     );
                   })}
@@ -480,7 +482,7 @@ export default function TimerSettingsPanel({ settings, onChange, lifts }: Props)
                     <button
                       type="button"
                       className={`${styles.clearBtn} focus-ring`}
-                      onClick={() => clearOverrides(lift.lift)}
+                      onClick={() => clearOverrides(overrideKey)}
                     >
                       Clear overrides for {lift.lift}
                     </button>

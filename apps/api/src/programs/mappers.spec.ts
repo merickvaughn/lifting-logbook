@@ -200,6 +200,35 @@ describe('toWorkoutResponse with plannedLifts', () => {
       expect(result.lifts[0]?.sets[0]?.id).toBe('5-3-1-1-1-20260507-bench-press-1');
     });
 
+    // #1135: the logger keys a lift's sets by set number, so two records with one set
+    // number in one lift would hide one of them while `updateMaxes` still read it.
+    it.each([
+      ['the name row first', [record('Bench Press', 1, 190), record('bench-press', 1, 200)]],
+      ['the id row first', [record('bench-press', 1, 200), record('Bench Press', 1, 190)]],
+    ])('keeps a record that would repeat a set number as its own lift, with %s', (_order, records) => {
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, {
+        plannedLifts: [{ lift: 'Bench Press' }],
+      });
+      expect(
+        result.lifts.map((l) => ({ lift: l.lift, planned: l.planned, weights: l.sets.map((s) => s.weight) })),
+      ).toEqual([
+        { lift: 'Bench Press', planned: false, weights: [190] },
+        { lift: 'bench-press', planned: false, weights: [200] },
+      ]);
+      expect(result.lifts[1]?.sets[0]?.id).toBe('5-3-1-1-1-20260507-bench-press-1');
+    });
+
+    it('joins the set numbers the lift does not have yet, around one it already has', () => {
+      const records = [record('Bench Press', 2, 190), record('bench-press', 1, 200), record('bench-press', 2, 195)];
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, {
+        plannedLifts: [{ lift: 'Bench Press' }],
+      });
+      expect(result.lifts.map((l) => [l.lift, l.sets.map((s) => s.setNum)])).toEqual([
+        ['Bench Press', [1, 2]],
+        ['bench-press', [2]],
+      ]);
+    });
+
     it('follows a swap of the lift it was stored for', () => {
       const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, [record('bench-press', 1, 200)], {
         plannedLifts: [{ lift: 'Incline Bench Press', replaces: 'Bench Press' }],
