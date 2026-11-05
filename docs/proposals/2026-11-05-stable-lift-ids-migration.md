@@ -18,7 +18,7 @@ A lift is a free string in the database, and readers mostly match it by exact st
 | 2 | An imported `Bench P.` is stored as `bench-press` and doesn't match a program's `Bench Press`. | Reproduced in [#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118): every planned set computes from a max of 0, the lift detail page shows no max or sets, `GET /workouts/1` lists the lift twice, and `POST /training-maxes/recalculate` returns 500. |
 | 3 | Natural keys include the lift string. | A re-import under a different spelling does not recognize its earlier rows. |
 | 4 | Renaming a custom lift does not update rows that store the old name. | Its history is orphaned (`docs/domain-model.md` D3). |
-| 5 | `OH Press` and `OH Press-HV` both map to `overhead-press`, but have separate maxes (115 and 75) in `packages/core/tests/fixtures/training_maxes.csv` and separate slots in `packages/core/tests/fixtures/rpt_program_spec.csv`. | Through validation and classification today, 75 is written and 115 is skipped, with no errors. This was run directly; the HTTP path was not run. [PR #1129](https://github.com/merickvaughn/lifting-logbook/pull/1129) (open at the time of writing) would keep the newest row instead, treating them as one lift. |
+| 5 | `OH Press` and `OH Press-HV` are one lift named twice: per the owner, HV means high volume, the same lift at a lower weight. Both map to `overhead-press`, and the fixtures hold 115 and 75 for them (`packages/core/tests/fixtures/training_maxes.csv`). | Through validation and classification today, the first row in the file wins, with no errors. This was run directly; the HTTP path was not run. [PR #1129](https://github.com/merickvaughn/lifting-logbook/pull/1129) (open at the time of writing) keeps the most recent row instead. |
 | 6 | The shipped leangains, rpt and 5-3-1 presets have no two slots resolving to one catalog ID, and no unresolved slots. | The pair in finding 5 is not in any shipped preset. |
 | 7 | Natural keys and duplicate handling already exist (table below). In-file duplicates: first row wins and later ones count as skipped. | Idempotency needs a canonical value in the key, not a new mechanism. |
 | 8 | A re-import with a corrected weight is skipped, not updated. The same session under a different `workoutNum` is a separate row. | Stable IDs will not change either limit. |
@@ -60,7 +60,7 @@ Every stored lift becomes a stable `LiftId`: a catalog ID or a custom lift's UUI
 | 3 | Display names | Derived from the ID at the API boundary. Responses return both `lift` and `liftName`. |
 | 4 | Program wording | Proposed, pending Open Question 6: a new `custom_program_spec.label` column holds a program's own wording; presets keep theirs in code. A program that says `Squat` still shows `Squat`, while history shows the catalog name. |
 | 5 | Catalog IDs | Permanent, with no foreign key because the catalog lives in code. A snapshot test fails if an ID is renamed or removed. |
-| 6 | Modified lifts | A program doesn't affect how a lift is stored, and a modified lift is not a new catalog entry. At import, a row such as `OH Press-HV` can be kept as a custom lift, or as a modification of the existing lift once that separate design lands. So `OH Press-HV` stops resolving to `overhead-press` automatically; otherwise a file holding only that row would silently overwrite the base lift's max. |
+| 6 | Modified lifts | A program doesn't affect how a lift is stored, and a modified lift is not a new catalog entry. At import, a row such as `Wide-Grip CBL Curls` can be kept as a custom lift, or as a modification of the existing lift once [#1140](https://github.com/merickvaughn/lifting-logbook/issues/1140) lands. `OH Press-HV` is not a modified lift: it stays an alternative name of Overhead Press. |
 | 7 | Custom lifts | Archived, not deleted, so history keeps a name. New column: `custom_lift.archivedAt`. |
 | 8 | Column | `lift` keeps its name and is rewritten in place. |
 | 9 | Alternative names | Each lift has one canonical name and ID, plus alternative names used only for matching (`Bench P.`, `Flat Bench Press`). |
@@ -69,8 +69,8 @@ Every stored lift becomes a stable `LiftId`: a catalog ID or a custom lift's UUI
 |---|-----------------|--------|
 | 1 | Parallel `liftId` column with dual writes | Every natural key would need rebuilding, and tolerant reads make the mixed state safe without it. |
 | 2 | A lift table with foreign keys | The catalog lives in code and custom lifts have their own table. |
-| 3 | General slot column for the overhead press pair | Identity would depend on the program. Custom programs repeating one lift already share one max and use `occurrence`. |
-| 4 | A catalog entry for high-volume press (`overhead-press-hv`) | It is a modified lift, not a separate catalog lift, and the same case will recur for other lifts. |
+| 3 | General slot column as part of a lift's identity | Identity would depend on the program. Custom programs repeating one lift already share one max and use `occurrence`. A slot's own plan is a separate setting ([#1141](https://github.com/merickvaughn/lifting-logbook/issues/1141)). |
+| 4 | A catalog entry for high-volume press (`overhead-press-hv`) | It is the same lift, per the owner. |
 
 ## Delivery Plan
 
@@ -79,7 +79,7 @@ One top-level issue plus one sub-issue per PR, in milestone v0.4 — Alpha Relea
 | # | Pull request | Contents | Depends on | Rollback |
 |---|--------------|----------|------------|----------|
 | 1 | Matching fix and resolver ([#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118), session already in progress) | Shared resolver in core. Matching fix at the workout max lookup, lift detail page and `updateMaxes`. | None | Revert |
-| 2 | Tolerant reads everywhere ([#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135)) | Every exact-string reader compares through the resolver. Queries by lift expand to all stored spellings. Import preview warns when two rows in one file resolve to the same key, and lets the user keep one as a custom lift. `OH Press-HV` stops resolving automatically and is offered as a new lift. Alternative names are added to the catalog (for example `Flat Bench Press`). No stored data changes. | 1 | Revert |
+| 2 | Tolerant reads everywhere ([#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135)) | Every exact-string reader compares through the resolver. Queries by lift expand to all stored spellings. Import preview warns when two rows in one file resolve to the same key, and lets the user keep one as a custom lift. Alternative names are added to the catalog (for example `Flat Bench Press`). No stored data changes. | 1 | Revert |
 | 3 | Names at the API boundary ([#1136](https://github.com/merickvaughn/lifting-logbook/issues/1136)) | Add `liftName` to responses. Add `custom_program_spec.label`. Web renders names rather than `lift`. | 1 | Revert; the column is additive |
 | 4 | Archive custom lifts ([#1137](https://github.com/merickvaughn/lifting-logbook/issues/1137)) | Add `archivedAt`. Delete becomes archive. Archived lifts stay resolvable but are hidden from pickers. | 1 | Revert; the column is additive |
 | 5 | Migration tool, not run for real ([#1138](https://github.com/merickvaughn/lifting-logbook/issues/1138)) | `apps/api/scripts/migrate-lift-ids.ts`, following the `seed-tm-history.ts` precedent (dry run, backup, restore, role check). Applies the merge rules and writes backup and review tables. Tested in the database end-to-end suite. | 1, 2, 3 | Revert; no data has been migrated |
@@ -101,7 +101,7 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 | # | Data | Rule |
 |---|------|------|
 | 1 | `lift_record` | Identical weight, reps and notes: keep one. Different: keep the name-form row and send the other to review. The name-form row is probably the one logged by hand, since import is the main writer of IDs. This is a best guess because `lift_record` has no timestamp. |
-| 2 | `training_max` | Keep the newest `dateUpdated` and send the other to review. Any `overhead-press` row whose program also has an `OH Press-HV` slot goes to review, because the slot can't be recovered. |
+| 2 | `training_max` | Keep the newest `dateUpdated` and send the other to review. |
 | 3 | `training_max_history` | No unique key. Rewrite only; no rows removed. |
 | 4 | `strength_goal` | Identical: keep one. Different: keep the newest `updatedAt` and send the other to review. |
 | 5 | `lift_metadata` | Decode percent-encoded names first. Identical: keep one. Different: keep the row whose lift exactly matches the catalog display name if any, otherwise review. Rewrite `substitutions` to IDs and deduplicate them. |
@@ -109,7 +109,7 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 | 7 | `custom_program_spec` | Rewrite `lift` to the ID and, if Open Question 6 keeps the label, copy the old value to `label`. A key collision requires the same `order`, so it is expected to be rare. Send it to review rather than delete it. |
 | 8 | `focus_block.pool`, `focus_day_state.state` | Rewrite values. Pool dedupe by lift keeps the first entry and sends the rest to review. |
 | 9 | `import_batch.preImage` | Keys are not rewritten. Undo translates old keys through the resolver, matching the legacy-key fallback in `lift-record.repository.ts`. |
-| 10 | Unknown text that resolves to nothing | Create a custom lift for that user with that name, classified by the existing custom-lift default, and log it in the job report. Do not leave free text behind. A stored `OH Press-HV` row takes this path once that name stops resolving. |
+| 10 | Unknown text that resolves to nothing | Create a custom lift for that user with that name, classified by the existing custom-lift default, and log it in the job report. Do not leave free text behind. |
 
 **Row-count invariant, per table:** rows before = rows after + rows merged away, and every merged-away row exists in backup.
 
@@ -148,8 +148,8 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 - [ ] A training max imported as `Bench P.` applies to a program whose lift is `Bench Press`: a test asserts the planned weight is computed from that max.
 - [ ] Re-importing the same lift-record file with a mix of spellings creates 0 rows: database end-to-end test under `lifting_app`.
 - [ ] Renaming a custom lift keeps its history, maxes and metadata: end-to-end test.
-- [ ] Two rows in one file that resolve to one lift produce a preview warning, and keeping one as a custom lift stores both maxes: test with `OH Press` and `OH Press-HV`.
-- [ ] A file holding only `OH Press-HV` doesn't change the `overhead-press` max, and the row is offered as a new lift: test.
+- [ ] Two rows in one file that resolve to one lift produce a preview warning, and keeping one as a custom lift stores both maxes: test with `Squat` and `Back Squat`.
+- [ ] `OH Press` and `OH Press-HV` in one file store one `overhead-press` max, from the most recent row: test.
 - [ ] `Flat Bench Press` resolves to `bench-press`: test.
 - [ ] If Open Question 6 keeps the label, a program that says `Squat` still shows `Squat`, and history shows `Back Squat`: Playwright or component test.
 - [ ] One user's custom lift does not resolve for another user: test under `lifting_app`.
@@ -181,7 +181,7 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 - A catalog table in the database.
 - `body_weight` (D6).
 - Mobile.
-- The modifications data model, marking a substitution during import (for example Romanian Deadlift in place of Deadlift) and assigning imported lifts to a program. These are tracked separately ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1133) for the import options). This plan only guarantees that a modified row can stay separate as a custom lift.
+- The modifications data model, marking a substitution during import (for example Romanian Deadlift in place of Deadlift) and assigning imported lifts to a program. These are tracked separately ([#1140](https://github.com/merickvaughn/lifting-logbook/issues/1140) for modifications, [#1133](https://github.com/merickvaughn/lifting-logbook/issues/1133) for the import options). This plan only guarantees that a modified row can stay separate as a custom lift.
 - Merging semantically similar but distinct lifts, such as `Dip` and `Weighted Dip`.
 - The per-entry alias and logger bodyweight decisions in [#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015). The resolver reads aliases but does not change the logger's bodyweight check.
 
@@ -189,7 +189,7 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 
 | # | Question | Recommended answer |
 |---|----------|--------------------|
-| 1 | Does a modified lift share the base lift's training max or keep its own? | Decided by the separate modifications design. A custom lift keeps its own max today. |
+| 1 | Does a modified lift share the base lift's training max or keep its own? | Answered in [#1140](https://github.com/merickvaughn/lifting-logbook/issues/1140): per modification. An own max lives in a side table, so this plan's `training_max` work isn't affected. |
 | 2 | When two `lift_record` rows differ, is keep-name-form-and-review acceptable? | Yes. Two differing rows that are both name-form are not settled by this rule, so PR 5 must pick one deterministically and send the other to review. |
 | 3 | Should the display-name decision in [#1120](https://github.com/merickvaughn/lifting-logbook/pull/1120) stand during the transition? | Yes. Those rows are converted by the job. |
 | 4 | How many rows collide in production? | Not measured. The PR 5 dry run answers it. |
