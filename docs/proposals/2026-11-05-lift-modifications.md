@@ -1,6 +1,6 @@
 # Proposal: Lift Modifications
 
-**Status:** `draft`
+**Status:** `accepted`
 **Date:** 2026-11-05
 **Issue:** [#1140](https://github.com/merickvaughn/lifting-logbook/issues/1140)
 
@@ -307,15 +307,22 @@ The import work also builds on [#1114](https://github.com/merickvaughn/lifting-l
 [#1116](https://github.com/merickvaughn/lifting-logbook/issues/1116) and
 [#1121](https://github.com/merickvaughn/lifting-logbook/issues/1121).
 
-On approval, the issue becomes a top-level issue with one sub-issue per PR:
+[#1140](https://github.com/merickvaughn/lifting-logbook/issues/1140) is the top-level issue, with one
+sub-issue per PR:
 
-1. **Stored shape and API.** Migration, port, both adapters, `lift_modification` routes under
-   `apps/api/src/lifts/`, the record fields.
-2. **Logger toggle and display.** No own max yet: `own` behaves as `none`.
-3. **Own max and progression.** The side table, the shared plan function, `updateMaxes`, editing
-   modifications and their max in `LiftEditor`.
-4. **Import option.** The Review outcome, alternative-name resolution, the tab rules above.
-5. **Program slot start-on.** The column, program-spec import, `ProgramEditor`.
+1. **[Stored shape and API](https://github.com/merickvaughn/lifting-logbook/issues/1151).** Migration,
+   port, both adapters, `lift_modification` routes under `apps/api/src/lifts/`, the record fields.
+2. **[Logger toggle and display](https://github.com/merickvaughn/lifting-logbook/issues/1152).** No own
+   max yet: `own` behaves as `none`, in the plan and in `updateMaxes`. The `none` and `lift` progression
+   rules ship here, so logging a modified set can't move the lift's max by mistake while the phases
+   ship apart.
+3. **[Own max and progression](https://github.com/merickvaughn/lifting-logbook/issues/1153).** The side
+   table, the shared plan function, the `own` rule in `updateMaxes`, editing modifications and their max
+   in `LiftEditor`.
+4. **[Import option](https://github.com/merickvaughn/lifting-logbook/issues/1154).** The Review outcome,
+   alternative-name resolution, the tab rules above.
+5. **[Program slot start-on](https://github.com/merickvaughn/lifting-logbook/issues/1155).** The column,
+   program-spec import, `ProgramEditor`.
 
 An ADR records the storage decisions when the first PR lands. `docs/domain-model.md` is descriptive,
 so it changes with the code, not now.
@@ -370,9 +377,8 @@ so it changes with the code, not now.
 
 ## Open Questions
 
-None blocking. The product questions were put to the owner on 2026-11-05 and are recorded under
-"Decisions already made" above. This design still needs the owner's approval before any of it is
-built.
+None. The product questions were put to the owner on 2026-11-05 and are recorded under "Decisions
+already made" above. The owner approved this design the same day.
 
 ## References
 
