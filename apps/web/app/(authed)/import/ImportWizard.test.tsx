@@ -2516,6 +2516,20 @@ describe('ImportWizard', () => {
         expect(options).toContain(lift.name);
       }
       expect(options).toContain('Incline Bench Press');
+      expect(options).not.toContain('incline-bench-press');
+    });
+
+    it('recognizes a typed catalog id even though the datalist does not list it', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      const input = screen.getByLabelText('Lift name for row 1');
+      await user.clear(input);
+      await user.type(input, 'incline-bench-press');
+      expect(within(input.closest('tr')!).queryByText(/No match — create/i)).not.toBeInTheDocument();
     });
 
     it('lists a custom lift that shares a catalog name only once', async () => {

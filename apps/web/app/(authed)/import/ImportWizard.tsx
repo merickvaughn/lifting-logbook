@@ -16,7 +16,12 @@ import type {
   LiftClassification,
   WeightUnit,
 } from '@lifting-logbook/types';
-import { IMPORT_LIFT_ALIASES, formatWeight } from '@lifting-logbook/core';
+import {
+  ALL_SLOT_MAP_ALIASES,
+  IMPORT_LIFT_ALIASES,
+  LIFT_CATALOG,
+  formatWeight,
+} from '@lifting-logbook/core';
 import type { CommitImportOpts } from '@lifting-logbook/api-client';
 import {
   commitImport,
@@ -1726,21 +1731,26 @@ export function ImportWizard({
                         </div>
                       )}
 
-                      {/* Lift catalog datalist for ambiguous rows: every built-in
-                          name the server resolves (IMPORT_LIFT_ALIASES — the
-                          catalog's names and ids plus DEFAULT_SLOT_MAP's
-                          abbreviations; #1116), plus this user's custom lifts
-                          (#911). Deduplicated on the exact value: a custom lift
-                          with a built-in's exact name would otherwise list that
-                          name twice. A case variant ("squat" vs. "Squat") stays
-                          listed, because it is a distinct, reachable key on the
-                          server (#911 review, third pass). */}
+                      {/* Lift catalog datalist for ambiguous rows: DEFAULT_SLOT_MAP's
+                          names (ALL_SLOT_MAP_ALIASES), every catalog lift's display
+                          name (#1116), and this user's custom lifts (#911). A
+                          catalog id still resolves when typed; it isn't listed
+                          because each lift would then show up twice. Deduplicated
+                          on the exact value: a custom lift with a built-in's exact
+                          name would otherwise list that name twice. A case variant
+                          ("squat" vs. "Squat") stays listed, because it is a
+                          distinct, reachable key on the server (#911 review, third
+                          pass). */}
                       <datalist id="lift-catalog">
-                        {[...new Set([...IMPORT_LIFT_ALIASES, ...customLifts.map((lift) => lift.name)])].map(
-                          (name) => (
-                            <option key={name} value={name} />
-                          ),
-                        )}
+                        {[
+                          ...new Set([
+                            ...ALL_SLOT_MAP_ALIASES,
+                            ...LIFT_CATALOG.map((lift) => lift.name),
+                            ...customLifts.map((lift) => lift.name),
+                          ]),
+                        ].map((name) => (
+                          <option key={name} value={name} />
+                        ))}
                       </datalist>
 
                       {/* Delta table */}

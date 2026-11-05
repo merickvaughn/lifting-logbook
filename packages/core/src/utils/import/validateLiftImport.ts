@@ -2,7 +2,7 @@ import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import { LiftRecord } from '../../models';
 
 export interface LiftImportValidationResult {
-  /** Records that passed all validation checks, with lift abbreviations resolved to canonical IDs. */
+  /** Records that passed all validation checks, with each lift resolved to the value slotMap holds for it. */
   valid: LiftRecord[];
   /** All errors encountered across all rows. */
   errors: ImportError[];
@@ -14,8 +14,10 @@ export interface LiftImportValidationResult {
  *
  * Row numbers are 1-based and exclude the CSV header row.
  *
- * When a row is valid, its `lift` field is resolved from the CSV abbreviation
- * (e.g. "Bench P.") to the canonical lift ID (e.g. "bench-press") via slotMap.
+ * When a row is valid, its `lift` field is resolved via slotMap: from a CSV
+ * abbreviation (e.g. "Bench P.") to the canonical lift ID (e.g. "bench-press").
+ * Under buildImportSlotMap, a catalog lift outside DEFAULT_SLOT_MAP resolves to
+ * its display name instead (issue #1116).
  */
 export function validateLiftImport(
   records: LiftRecord[],

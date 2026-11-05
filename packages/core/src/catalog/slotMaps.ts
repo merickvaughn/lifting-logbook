@@ -58,8 +58,9 @@ export const DEFAULT_SLOT_MAP: Readonly<Record<string, string>> = {
  * Every string DEFAULT_SLOT_MAP resolves — its keys (the human-readable
  * abbreviations/display names it accepts, e.g. "Squat", "Bench P.") AND its
  * values (the canonical ids, e.g. "back-squat"). Used by the REVIEW step's
- * lift-catalog autocomplete datalist and its "is this lift already
- * recognized" check. Checking only the canonical-id values (an earlier
+ * lift-catalog autocomplete datalist and the custom-lift guards below; the full
+ * set of names import recognizes is IMPORT_LIFT_ALIASES. Checking only the
+ * canonical-id values (an earlier
  * version of this file exported that subset alone as `CANONICAL_LIFT_IDS`,
  * since removed as unused once this superseded it) meant a perfectly valid
  * alias like "Squat" read as unrecognized, offering to create a duplicate
@@ -137,6 +138,9 @@ const CATALOG_IMPORT_NAMES: Readonly<Record<string, string>> = Object.fromEntrie
  * A custom lift beats the catalog for the same reason it does in lookupLift: a
  * catalog name outside DEFAULT_SLOT_MAP is not reserved, so a user may already have a
  * custom lift with that name, and their rows must keep resolving to it.
+ *
+ * A value here is what import stores, which is not always a catalog id, so unlike
+ * DEFAULT_SLOT_MAP this map must not be passed to resolveLift.
  */
 export function buildImportSlotMap(customLifts: readonly CustomLift[]): Record<string, string> {
   return Object.assign(
@@ -148,9 +152,9 @@ export function buildImportSlotMap(customLifts: readonly CustomLift[]): Record<s
 
 /**
  * Every built-in string import resolves: the catalog's display names and ids, plus
- * ALL_SLOT_MAP_ALIASES. Backs the Review step's remap datalist and the import
- * classifier's lift-column signal. Custom-lift guards keep using the narrower
- * canonicalAliasFor and isCanonicalAlias.
+ * ALL_SLOT_MAP_ALIASES. Backs the Review step's "is this lift already recognized"
+ * check and the import classifier's lift-column signal. Custom-lift guards keep
+ * using the narrower canonicalAliasFor and isCanonicalAlias.
  */
 export const IMPORT_LIFT_ALIASES: readonly string[] = Object.freeze(
   Object.keys(buildImportSlotMap([])),
