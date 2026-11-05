@@ -16,6 +16,7 @@ import type {
   ReorderFocusBlocksRequest,
   MacrocycleDashboardResponse,
   ImportCommitResponse,
+  ImportDryRunResponse,
   ImportError,
   ImportKind,
   ImportLiftRecordsResponse,
@@ -113,7 +114,7 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 // relative (rawFetch prepends baseUrl).
 function importPath(
   program: string,
-  mode: 'preview' | 'commit',
+  mode: 'preview' | 'commit' | 'dry-run',
   destination?: ImportKind,
   opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>,
 ): string {
@@ -142,11 +143,17 @@ function commitForm(file: File, opts?: CommitImportOpts): FormData {
   return form;
 }
 
+/** The server's answer to a commit or dry run: its response, or validation errors as data. */
+export type ImportCommitResult<T> = { ok: true; data: T } | { ok: false; errors: ImportError[] };
+
 /** Phase 3 options for commitImport. */
 export interface CommitImportOpts {
   /** Map sourceHeader → destinationField to rename non-standard columns before parsing. */
   overrides?: Record<string, string>;
-  /** Natural keys of rows to exclude from the commit. */
+  /**
+   * Rows to exclude from the commit: `__row_<rowIndex>` for a row with a position, which
+   * leaves another row sharing its natural key alone (#1123), or the row's natural key.
+   */
   excludeKeys?: string[];
   /** Map of 1-based CSV row index → canonical lift id for ambiguous rows. */
   liftOverrides?: Record<number, string>;
@@ -211,6 +218,29 @@ export function createApiClient(config: ApiClientConfig) {
     if (!res.ok) throw new Error(await extractErrorMessage(res, path));
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
+  }
+
+  // The commit and dry-run request, which differ only in their mode and response type.
+  async function postCommitForm<T>(
+    mode: 'commit' | 'dry-run',
+    program: string,
+    file: File,
+    destination: ImportKind,
+    opts?: CommitImportOpts,
+  ): Promise<ImportCommitResult<T>> {
+    const res = await rawFetch(importPath(program, mode, destination, opts), {
+      method: 'POST',
+      body: commitForm(file, opts),
+      cache: 'no-store',
+    });
+    if (res.ok) {
+      return { ok: true, data: (await res.json()) as T };
+    }
+    const body = (await res.json().catch(() => ({}))) as { errors?: ImportError[] };
+    return {
+      ok: false,
+      errors: body.errors ?? [{ row: 0, code: 'UNEXPECTED_ERROR', message: `Unexpected error (HTTP ${res.status})` }],
+    };
   }
 
   // Like request but returns null on 404 (and 204) instead of throwing.
@@ -460,27 +490,25 @@ export function createApiClient(config: ApiClientConfig) {
      * Phase 3: pass `opts` for column overrides, row exclusions, lift remapping, or
      * 1RM split routing.
      */
-    async commitImport(
+    commitImport(
       program: string,
       file: File,
       destination: ImportKind,
       opts?: CommitImportOpts,
-    ): Promise<
-      { ok: true; data: ImportCommitResponse } | { ok: false; errors: ImportError[] }
-    > {
-      const res = await rawFetch(importPath(program, 'commit', destination, opts), {
-        method: 'POST',
-        body: commitForm(file, opts),
-        cache: 'no-store',
-      });
-      if (res.ok) {
-        return { ok: true, data: (await res.json()) as ImportCommitResponse };
-      }
-      const body = (await res.json().catch(() => ({}))) as { errors?: ImportError[] };
-      return {
-        ok: false,
-        errors: body.errors ?? [{ row: 0, code: 'UNEXPECTED_ERROR', message: `Unexpected error (HTTP ${res.status})` }],
-      };
+    ): Promise<ImportCommitResult<ImportCommitResponse>> {
+      return postCommitForm('commit', program, file, destination, opts);
+    },
+    /**
+     * Smart Import — reports the counts `commitImport` would return for these same
+     * arguments, and the same validation errors, without writing anything (#1123).
+     */
+    dryRunImport(
+      program: string,
+      file: File,
+      destination: ImportKind,
+      opts?: CommitImportOpts,
+    ): Promise<ImportCommitResult<ImportDryRunResponse>> {
+      return postCommitForm('dry-run', program, file, destination, opts);
     },
 
     /**

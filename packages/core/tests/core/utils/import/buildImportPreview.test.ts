@@ -63,6 +63,10 @@ describe("buildLiftRecordsPreviewSoft", () => {
     const preview = buildLiftRecordsPreviewSoft(
       {
         valid: [liftRecord(), liftRecord({ setNum: 2 })],
+        validRows: [
+          { record: liftRecord(), rowIndex: 1 },
+          { record: liftRecord({ setNum: 2 }), rowIndex: 2 },
+        ],
         incomplete: [{ record: liftRecord({ setNum: 3 }), rowIndex: 3, errors: [] }],
         ambiguous: [{ record: liftRecord({ setNum: 4 }), rowIndex: 4, originalLift: "Mystery Lift" }],
         hardErrors: [],
@@ -170,6 +174,14 @@ describe("buildStrengthGoalPreview", () => {
     const preview = buildStrengthGoalPreview(incoming, existing);
     expect(preview).toMatchObject({ creates: 1, updates: 1, skips: 0 });
   });
+
+  it("gives each row its file position, including a repeat of an earlier lift (#1123)", () => {
+    const preview = buildStrengthGoalPreview([goal("squat", 400), goal("squat", 405)], []);
+    expect(preview.deltas.map((d) => [d.key, d.rowIndex])).toEqual([
+      ["squat", 1],
+      ["squat#1", 2],
+    ]);
+  });
 });
 
 describe("buildProgramSpecPreview", () => {
@@ -186,6 +198,11 @@ describe("buildProgramSpecPreview", () => {
     wtDecrementPct: 0.1,
     activation: "",
     ...over,
+  });
+
+  it("gives each row its file position (#1123)", () => {
+    const preview = buildProgramSpecPreview([spec({ order: 1 }), spec({ order: 2 })], []);
+    expect(preview.deltas.map((d) => d.rowIndex)).toEqual([1, 2]);
   });
 
   it("keys on week:offset:lift:order and detects config changes", () => {

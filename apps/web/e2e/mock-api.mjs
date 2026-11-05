@@ -1064,7 +1064,7 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // POST /programs/:p/import?mode=preview|commit[&destination=]
+    // POST /programs/:p/import?mode=preview|commit|dry-run[&destination=]
     // Canned Smart Import response (#477) — classifies any upload as training-maxes,
     // unless withAmbiguousLift opted the mock into the #911 lift-records remap flow.
     if (method === 'POST' && rest[0] === 'import' && rest.length === 1) {
@@ -1072,7 +1072,7 @@ const server = createServer(async (req, res) => {
       const destination = url.searchParams.get('destination') ?? 'training-maxes';
 
       if (state.ambiguousLift && destination === 'lift-records') {
-        if (mode === 'commit') {
+        if (mode === 'commit' || mode === 'dry-run') {
           // A form field since #1121, so the Playwright remap flow proves the client
           // sends it where the real API reads it.
           const chunks = [];
@@ -1182,7 +1182,7 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      if (mode === 'commit') {
+      if (mode === 'commit' || mode === 'dry-run') {
         // batchId enables the Phase 3 undo flow.
         json(res, { destination, created: 2, updated: 1, skipped: 0, errors: [], batchId: 'batch-1' });
       } else {

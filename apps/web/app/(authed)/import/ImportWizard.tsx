@@ -9,6 +9,7 @@ import type {
   GoogleSheetTab,
   ImportCommitResponse,
   ImportDelta,
+  ImportDryRunResponse,
   ImportError,
   ImportKind,
   ImportPreviewResponse,
@@ -17,9 +18,11 @@ import type {
   WeightUnit,
 } from '@lifting-logbook/types';
 import { ALL_SLOT_MAP_ALIASES, formatWeight, isCanonicalAlias } from '@lifting-logbook/core';
+import type { CommitImportOpts } from '@lifting-logbook/api-client';
 import {
   commitImport,
   createCustomLift,
+  dryRunImport,
   fetchCustomLifts,
   fetchGoogleSheetWorkbook,
   previewImport,
@@ -73,17 +76,15 @@ type CreateLiftDraft = {
   name: string | null;
 };
 
-// The preview response disambiguates ImportDelta.key with a `#N` suffix when
-// the same natural key is yielded more than once in one batch (issue #884),
-// so React list identity and this component's Set-based select/exclude state
-// never collide across the original and an in-batch duplicate. The server's
-// excludeKeys contract still matches on the bare natural key (it can't
-// distinguish which of two same-keyed rows a suffix would refer to), so strip
-// the suffix before sending — this keeps this component's original
-// coarse-by-natural-key exclude semantics rather than silently excluding
-// nothing when a duplicate row's checkbox is used.
-function stripDeltaKeySuffix(key: string): string {
-  return key.replace(/#\d+$/, '');
+// What the wizard will send to commit, with the counts the server gave for it. The
+// Preview step shows these counts and Commit sends this exact request, so the two
+// can't drift apart.
+type PlannedCommit = { file: File; opts?: CommitImportOpts; counts: ImportDryRunResponse };
+
+// ImportDelta.key can repeat a natural key with a `#N` suffix, which identifies a row
+// only in this component. The server's position key leaves a same-keyed row alone (#1123).
+function excludeKeyFor(delta: ImportDelta): string {
+  return delta.rowIndex !== undefined ? `__row_${delta.rowIndex}` : delta.key;
 }
 
 function buildTrainingMaxesCsv(rows: EditableMax[]): string {
@@ -211,6 +212,7 @@ export function ImportWizard({
 
   // Phase 3 state
   const [reviewMaxes, setReviewMaxes] = useState<EditableMax[] | null>(null);
+  const [plannedCommit, setPlannedCommit] = useState<PlannedCommit | null>(null);
   const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
   const [liftOverrides, setLiftOverrides] = useState<Map<number, string>>(new Map());
   // Seeded from the server-fetched prop, then grown locally as the user creates
@@ -410,19 +412,17 @@ export function ImportWizard({
     [liftOverrides],
   );
 
-  // What the user's fixes change about the server's counts, which describe the
-  // file as uploaded. d.status never changes once a row is flagged, so whether an
-  // ambiguous row is fixed has to be worked out from its current text. A row still
-  // unresolved here would fail the whole commit (#1114).
+  // Rows the commit would reject until they're fixed or excluded (#1114). d.status
+  // never changes once a row is flagged, so whether an ambiguous row is fixed has to
+  // be worked out from its current text.
   const reviewCounts = useMemo(() => {
-    const counts = { remappedCreates: 0, needsLiftKeys: new Set<string>(), incomplete: 0 };
+    const counts = { needsLiftKeys: new Set<string>(), incomplete: 0 };
     for (const d of previewBody?.deltas ?? []) {
       if (excludedKeys.has(d.key)) continue;
       if (d.status === 'incomplete') {
         counts.incomplete += 1;
-      } else if (d.status === 'ambiguous') {
-        if (d.rowIndex !== undefined && resolveLiftValue(rowLiftText(d))) counts.remappedCreates += 1;
-        else counts.needsLiftKeys.add(d.key);
+      } else if (d.status === 'ambiguous' && !(d.rowIndex !== undefined && resolveLiftValue(rowLiftText(d)))) {
+        counts.needsLiftKeys.add(d.key);
       }
     }
     return counts;
@@ -481,6 +481,7 @@ export function ImportWizard({
     setSelectedKeys(new Set());
     lastSelectedKey.current = null;
     setReviewMaxes(null);
+    setPlannedCommit(null);
     setCommitErrors(null);
   }
 
@@ -991,47 +992,90 @@ export function ImportWizard({
     }
   }
 
-  async function handleCommit() {
+  // The request a commit would send for the user's current Review choices.
+  function buildCommitRequest(sourceFile: File): { file: File; opts?: CommitImportOpts } {
+    const deltas = previewBody?.deltas ?? [];
+    if (destination === 'training-maxes' && reviewMaxes !== null) {
+      // Rebuild CSV from the edited maxes list so that inline weight edits and excluded rows
+      // are authoritative at commit time. excludedKeys is enforced here (via filter) rather
+      // than via the server-side excludeKeys param, because the rebuilt CSV already omits
+      // those rows — passing excludeKeys on top would be redundant and error-prone.
+      const activeMaxes = reviewMaxes.filter((r) => !excludedKeys.has(r.lift));
+      // Review doesn't list a lift the file leaves unchanged, but the server still has
+      // to see it to report it as skipped (#1123). A lift Review does list is left out
+      // here: its file duplicates would otherwise be written if its own row was removed.
+      const reviewedLifts = new Set(reviewMaxes.map((r) => r.lift));
+      const unchangedMaxes = deltas
+        .filter((d) => d.kind === 'skip' && !reviewedLifts.has(d.label))
+        .map((d) => ({ lift: d.label, weight: d.after ?? '' }));
+      const csv = buildTrainingMaxesCsv([...activeMaxes, ...unchangedMaxes]);
+      // No column overrides: this CSV has canonical headers and rows from a preview
+      // that already applied them. Sending them again would rename columns twice.
+      return { file: new File([csv], sourceFile.name, { type: 'text/csv' }) };
+    }
+    const liftOverridesRecord: Record<number, string> = {};
+    // Walks the CURRENT preview's rows, so an override left over from a
+    // discarded preview is never sent (#911 review, second pass), nor one
+    // for a row the user excluded (third pass). A row with no override
+    // still goes through resolveLiftValue: its file text may differ from a
+    // known name only by case, which the server's exact-case lookup rejects.
+    for (const d of deltas) {
+      if (d.status !== 'ambiguous' || d.rowIndex === undefined || excludedKeys.has(d.key)) continue;
+      const resolved = resolveLiftValue(rowLiftText(d));
+      if (resolved) liftOverridesRecord[d.rowIndex] = resolved;
+    }
+    const excludeKeys = deltas.filter((d) => excludedKeys.has(d.key)).map(excludeKeyFor);
+    return {
+      file: sourceFile,
+      opts: {
+        overrides: Object.keys(columnOverridesRecord).length > 0 ? columnOverridesRecord : undefined,
+        excludeKeys: excludeKeys.length > 0 ? excludeKeys : undefined,
+        liftOverrides: Object.keys(liftOverridesRecord).length > 0 ? liftOverridesRecord : undefined,
+        // Always, so a 1RM row goes to training maxes whether or not it was remapped.
+        splitDest: destination === 'lift-records',
+      },
+    };
+  }
+
+  // Asks the server what this commit would do, so the Preview tiles report the result of
+  // the user's excludes, remaps and edits rather than the file as uploaded (#1123).
+  async function enterPreview() {
     if (!programId || !file || !destination) return;
+    const request = buildCommitRequest(file);
+    // The commit is blocked until unresolved rows are fixed, and they'd fail this dry
+    // run too, so count the rest of the file around them.
+    const unresolved = (previewBody?.deltas ?? []).filter(
+      (d) => !excludedKeys.has(d.key) && (d.status === 'incomplete' || reviewCounts.needsLiftKeys.has(d.key)),
+    );
+    const opts: CommitImportOpts | undefined =
+      unresolved.length > 0
+        ? { ...request.opts, excludeKeys: [...(request.opts?.excludeKeys ?? []), ...unresolved.map(excludeKeyFor)] }
+        : request.opts;
+    const startGeneration = previewGeneration.current;
+    setCommitErrors(null);
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await dryRunImport(programId, request.file, destination, opts);
+      if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
+      setPlannedCommit(result.ok ? { ...request, counts: result.data } : null);
+      if (!result.ok) setCommitErrors(result.errors);
+      setStep(Step.PREVIEW);
+    } catch (e) {
+      logClientError('dryRunImport', e, { programId, destination });
+      setError(e instanceof Error ? e.message : 'Preview failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCommit() {
+    if (!programId || !destination || !plannedCommit) return;
     setCommitErrors(null);
     setBusy(true);
 
-    let commitFile = file;
-
     try {
-      let result: { ok: true; data: ImportCommitResponse } | { ok: false; errors: ImportError[] };
-
-      if (destination === 'training-maxes' && reviewMaxes !== null) {
-        // Rebuild CSV from the edited maxes list so that inline weight edits and excluded rows
-        // are authoritative at commit time. excludedKeys is enforced here (via filter) rather
-        // than via the server-side excludeKeys param, because the rebuilt CSV already omits
-        // those rows — passing excludeKeys on top would be redundant and error-prone.
-        const activeMaxes = reviewMaxes.filter((r) => !excludedKeys.has(r.lift));
-        const csv = buildTrainingMaxesCsv(activeMaxes);
-        commitFile = new File([csv], file.name, { type: 'text/csv' });
-        // No column overrides: this CSV has canonical headers and rows from a preview
-        // that already applied them. Sending them again would rename columns twice.
-        result = await commitImport(programId, commitFile, destination);
-      } else {
-        const liftOverridesRecord: Record<number, string> = {};
-        // Walks the CURRENT preview's rows, so an override left over from a
-        // discarded preview is never sent (#911 review, second pass), nor one
-        // for a row the user excluded (third pass). A row with no override
-        // still goes through resolveLiftValue: its file text may differ from a
-        // known name only by case, which the server's exact-case lookup rejects.
-        for (const d of previewBody?.deltas ?? []) {
-          if (d.status !== 'ambiguous' || d.rowIndex === undefined || excludedKeys.has(d.key)) continue;
-          const resolved = resolveLiftValue(rowLiftText(d));
-          if (resolved) liftOverridesRecord[d.rowIndex] = resolved;
-        }
-        result = await commitImport(programId, file, destination, {
-          overrides: Object.keys(columnOverridesRecord).length > 0 ? columnOverridesRecord : undefined,
-          excludeKeys: excludedKeys.size > 0 ? [...excludedKeys].map(stripDeltaKeySuffix) : undefined,
-          liftOverrides:
-            Object.keys(liftOverridesRecord).length > 0 ? liftOverridesRecord : undefined,
-          splitDest: preview?.split !== undefined,
-        });
-      }
+      const result = await commitImport(programId, plannedCommit.file, destination, plannedCommit.opts);
 
       if (result.ok) {
         setBatchId(result.data.batchId);
@@ -1091,6 +1135,7 @@ export function ImportWizard({
     setCommitErrors(null);
     setError(null);
     setReviewMaxes(null);
+    setPlannedCommit(null);
     setExcludedKeys(new Set());
     setLiftOverrides(new Map());
     // customLifts is intentionally NOT reset — any lift created this session is
@@ -1900,6 +1945,7 @@ export function ImportWizard({
                   No problems found — continue to preview the changes.
                 </p>
               )}
+              {error && <p className={styles.errorNote}>{error}</p>}
             </>
           )}
 
@@ -1907,19 +1953,23 @@ export function ImportWizard({
           {step === Step.PREVIEW && previewBody && (
             <>
               <h2 className={styles.stepTitle}>Preview changes</h2>
-              <div className={styles.countRow}>
-                <div className={styles.countPill}>
-                  <span className={styles.countValue}>{previewBody.creates + reviewCounts.remappedCreates}</span>
-                  <span className={styles.countLabel}>Create</span>
-                </div>
-                <div className={styles.countPill}>
-                  <span className={styles.countValue}>{previewBody.updates}</span>
-                  <span className={styles.countLabel}>Update</span>
-                </div>
-                <div className={styles.countPill}>
-                  <span className={styles.countValue}>{previewBody.skips}</span>
-                  <span className={styles.countLabel}>Skip</span>
-                </div>
+              <div className={styles.countRow} data-testid="import-counts">
+                {plannedCommit && (
+                  <>
+                    <div className={styles.countPill}>
+                      <span className={styles.countValue}>{plannedCommit.counts.created}</span>
+                      <span className={styles.countLabel}>Create</span>
+                    </div>
+                    <div className={styles.countPill}>
+                      <span className={styles.countValue}>{plannedCommit.counts.updated}</span>
+                      <span className={styles.countLabel}>Update</span>
+                    </div>
+                    <div className={styles.countPill}>
+                      <span className={styles.countValue}>{plannedCommit.counts.skipped}</span>
+                      <span className={styles.countLabel}>Skip</span>
+                    </div>
+                  </>
+                )}
                 {unresolvedCount > 0 && (
                   <div className={styles.countPill}>
                     <span className={styles.countValue}>{unresolvedCount}</span>
@@ -1935,19 +1985,23 @@ export function ImportWizard({
                 </p>
               )}
 
-              {preview?.split && (
+              {plannedCommit?.counts.split && (
                 <div className={styles.splitCard}>
                   <p className={styles.stepHint}>
-                    Also routing to {KIND_LABEL[preview.split.destination]}:
+                    Also routing to {KIND_LABEL[plannedCommit.counts.split.destination]}:
                   </p>
-                  <div className={styles.countRow}>
+                  <div className={styles.countRow} data-testid="import-split-counts">
                     <div className={styles.countPill}>
-                      <span className={styles.countValue}>{preview.split.preview.creates}</span>
+                      <span className={styles.countValue}>{plannedCommit.counts.split.created}</span>
                       <span className={styles.countLabel}>Create</span>
                     </div>
                     <div className={styles.countPill}>
-                      <span className={styles.countValue}>{preview.split.preview.updates}</span>
+                      <span className={styles.countValue}>{plannedCommit.counts.split.updated}</span>
                       <span className={styles.countLabel}>Update</span>
+                    </div>
+                    <div className={styles.countPill}>
+                      <span className={styles.countValue}>{plannedCommit.counts.split.skipped}</span>
+                      <span className={styles.countLabel}>Skip</span>
                     </div>
                   </div>
                 </div>
@@ -1955,7 +2009,7 @@ export function ImportWizard({
 
               {commitErrors && (
                 <div className={styles.errorBox}>
-                  <strong>Commit failed:</strong>
+                  <strong>{plannedCommit ? 'Commit failed:' : "This file can't be imported yet:"}</strong>
                   <ul className={styles.errorList}>
                     {commitErrors.slice(0, MAX_RENDERED_IMPORT_ERRORS).map((e, i) => (
                       <li key={`${e.row}-${i}`}>
@@ -2135,22 +2189,9 @@ export function ImportWizard({
             <button
               type="button"
               className={styles.btnPrimary}
-              onClick={() => {
-                // Clears a stale "Commit failed:" list from a previous attempt at this
-                // exact step transition — the one seam every path into PREVIEW passes
-                // through (PREVIEW is only ever reached via this button; enterReview()
-                // above is NOT on the Back-from-PREVIEW-then-Next path, since the Back
-                // button decrements `step` directly without calling it). Without this,
-                // a failed commit → Back → fix the named rows → Next re-shows the exact
-                // same error list, unchanged, before the next real Commit click clears
-                // it — the same "stale message under a value the user already fixed"
-                // class this PR has already closed twice elsewhere (round 3's
-                // clearCreateDraftError, round 7's commitErrors-in-analyze() reset;
-                // #911 review, tenth pass).
-                setCommitErrors(null);
-                setStep(Step.PREVIEW);
-              }}
+              onClick={enterPreview}
               disabled={
+                busy ||
                 !previewBody ||
                 (destination === 'training-maxes' &&
                   reviewMaxes !== null &&
@@ -2166,7 +2207,7 @@ export function ImportWizard({
               type="button"
               className={styles.btnSuccess}
               onClick={handleCommit}
-              disabled={busy || !previewBody || unresolvedCount > 0}
+              disabled={busy || !plannedCommit || unresolvedCount > 0}
             >
               {busy ? 'Importing…' : 'Commit import'}
             </button>

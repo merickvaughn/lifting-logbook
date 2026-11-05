@@ -425,6 +425,27 @@ describe('createApiClient', () => {
       });
     });
 
+    it('dryRunImport sends what commitImport sends, under mode=dry-run (#1123)', async () => {
+      const counts = { destination: 'lift-records', created: 1, updated: 0, skipped: 0 };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(counts), { status: 200 }));
+      const client = makeClient();
+      const result = await client.dryRunImport('5-3-1', file, 'lift-records', {
+        excludeKeys: ['__row_2'],
+        splitDest: true,
+      });
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/programs/5-3-1/import?mode=dry-run&destination=lift-records&splitDest=1');
+      expect((init?.body as FormData).get('excludeKeys')).toBe('["__row_2"]');
+      expect(result).toEqual({ ok: true, data: counts });
+    });
+
+    it('dryRunImport returns validation errors as data, like commitImport (#1123)', async () => {
+      const errors = [{ row: 2, code: 'LIFT_EMPTY', message: 'Lift is empty' }];
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ errors }), { status: 400 }));
+      const result = await makeClient().dryRunImport('5-3-1', file, 'lift-records');
+      expect(result).toEqual({ ok: false, errors });
+    });
+
     it('commitImport sends excludeKeys and liftOverrides in the body, never the URL (#1121)', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ created: 0 }), { status: 200 }));
       const client = makeClient();

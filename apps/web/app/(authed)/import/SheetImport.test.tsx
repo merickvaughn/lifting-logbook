@@ -9,11 +9,12 @@ import type {
 } from '@lifting-logbook/types';
 import { ImportWizard } from './ImportWizard';
 import { defaultTabChoices } from './SheetTabsStep';
-import { commitImport, fetchGoogleSheetWorkbook, previewImport, undoImport } from '@/lib/client-api';
+import { commitImport, dryRunImport, fetchGoogleSheetWorkbook, previewImport, undoImport } from '@/lib/client-api';
 
 jest.mock('@/lib/client-api', () => ({
   previewImport: jest.fn(),
   commitImport: jest.fn(),
+  dryRunImport: jest.fn(),
   undoImport: jest.fn(),
   fetchGoogleSheetWorkbook: jest.fn(),
   createCustomLift: jest.fn(),
@@ -22,6 +23,7 @@ jest.mock('@/lib/client-api', () => ({
 
 const mockPreview = previewImport as jest.MockedFunction<typeof previewImport>;
 const mockCommit = commitImport as jest.MockedFunction<typeof commitImport>;
+const mockDryRun = dryRunImport as jest.MockedFunction<typeof dryRunImport>;
 const mockUndo = undoImport as jest.MockedFunction<typeof undoImport>;
 const mockFetchSheet = fetchGoogleSheetWorkbook as jest.MockedFunction<typeof fetchGoogleSheetWorkbook>;
 
@@ -101,6 +103,10 @@ const PREVIEWS: Record<ImportKind, ImportPreviewResponse> = {
 
 beforeEach(() => {
   jest.resetAllMocks();
+  mockDryRun.mockImplementation(async (_program, _file, destination) => ({
+    ok: true,
+    data: { destination, created: 1, updated: 0, skipped: 0 },
+  }));
   mockPreview.mockImplementation(async (_program, _file, destination) => PREVIEWS[destination ?? 'lift-records']);
 });
 

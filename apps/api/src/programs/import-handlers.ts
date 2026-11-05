@@ -1,7 +1,7 @@
 import {
   ImportError,
   ImportKind,
-  ImportPreviewResponse,
+  ImportPreview,
   ImportCommitResponse,
 } from '@lifting-logbook/types';
 import {
@@ -38,7 +38,7 @@ export interface ImportHandler<T> {
     valid: T[],
     program: string,
     repos: RepositoryBundle,
-  ): Promise<ImportPreviewResponse['preview']>;
+  ): Promise<ImportPreview>;
   commit(
     valid: T[],
     program: string,

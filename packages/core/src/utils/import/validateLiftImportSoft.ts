@@ -21,6 +21,8 @@ import { LiftRecord } from '../../models';
  */
 export interface LiftImportSoftResult {
   valid: LiftRecord[];
+  /** The rows in `valid`, each with its 1-based position in the file. */
+  validRows: Array<{ record: LiftRecord; rowIndex: number }>;
   incomplete: Array<{ record: LiftRecord; rowIndex: number; errors: ImportError[] }>;
   ambiguous: Array<{ record: LiftRecord; rowIndex: number; originalLift: string }>;
   hardErrors: ImportError[];
@@ -30,7 +32,7 @@ export function validateLiftImportSoft(
   records: LiftRecord[],
   slotMap: Readonly<Record<string, string>>,
 ): LiftImportSoftResult {
-  const valid: LiftRecord[] = [];
+  const validRows: LiftImportSoftResult['validRows'] = [];
   const incomplete: LiftImportSoftResult['incomplete'] = [];
   const ambiguous: LiftImportSoftResult['ambiguous'] = [];
   const hardErrors: ImportError[] = [];
@@ -71,8 +73,8 @@ export function validateLiftImportSoft(
       return;
     }
 
-    valid.push({ ...r, lift: slotMap[liftStr]! as LiftRecord['lift'] });
+    validRows.push({ record: { ...r, lift: slotMap[liftStr]! as LiftRecord['lift'] }, rowIndex });
   });
 
-  return { valid, incomplete, ambiguous, hardErrors };
+  return { valid: validRows.map((v) => v.record), validRows, incomplete, ambiguous, hardErrors };
 }
