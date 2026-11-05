@@ -50,12 +50,19 @@ Five questions needed an answer:
    a read of the user's modifications and the lift resolver, so it sits with the controller and both
    adapters get it. Another user's id reads the same as an unknown one, so the 400 reveals nothing.
    A set is checked through the same lookup as a create, so a modification made on `Bench Press`
-   attaches to a set logged as `bench-press`.
+   attaches to a set logged as `bench-press`. A custom lift can share a catalog lift's name, and then
+   `Cable Curl` means the custom lift while `cable-curl` means the built-in. To the lifter they are one
+   lift, so the check and the list filter accept either id. An edit also skips the lift check for ids
+   the set already has, because a custom lift renamed since leaves the set under a name that no longer
+   resolves.
 
 4. **Delete removes a modification no set names, and otherwise archives it.** Archived rows leave the
    list and take no edits, but sets still name them. The check is a query on the array inside the
-   user's rows. An archived id is still accepted on a set, so a set that names one can be edited and
-   a page open across the delete can still log. Creating an archived modification's name again brings
+   user's rows. An archived id is still accepted on a set, so a set that names one can be edited, and
+   a page open across the archive can still log. A modification no set names is gone, so a page still
+   showing it gets a 400 on the set, and the logger must refresh its toggles and keep the set's draft
+   ([#1152](https://github.com/merickvaughn/lifting-logbook/issues/1152)). Creating an archived
+   modification's name again brings
    the same row back: the unique constraint covers archived rows, and refusing would answer 409 to a
    name the user can't see. Renaming onto an archived name is still a 409.
 
@@ -72,7 +79,15 @@ Five questions needed an answer:
   ([#1154](https://github.com/merickvaughn/lifting-logbook/issues/1154)) adds no migration of its own.
   Nothing reads or writes it yet, and the API doesn't expose it.
 - An id in `lift_record.modifications` has no referential integrity. The delete rule keeps it
-  resolvable, and a read that still finds none leaves the id out of the response rather than fail.
+  resolvable except when a delete races a log, since neither sees the other's uncommitted write. A
+  read that finds no row leaves the id out of the response and logs a warning, rather than fail. The
+  window needs one user in two tabs, so it isn't worth row locks in raw SQL, which would also need
+  manual spans.
+- Until [#1142](https://github.com/merickvaughn/lifting-logbook/issues/1142), a custom lift sharing a
+  catalog name can hold the same modification name twice, once under each id, and a set logged under a
+  custom lift's old name can't take a new modification.
+- Modifications stay out of what reaches the LLM provider: `get_lift_history` strips the ids, which
+  mean nothing to it, and nothing has decided whether names and descriptions should go.
 - Duplicate names are compared exactly, as custom lift names are, so `Wide grip` and `wide grip` can
   both exist on a lift.
 - Deleting a custom lift leaves its modifications behind, with nothing to reach them by. They belong

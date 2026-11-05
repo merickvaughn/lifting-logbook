@@ -77,8 +77,8 @@ describe('toLiftRecordResponse', () => {
     expect(toLiftRecordResponse(liftRecord(), new Map())).not.toHaveProperty('modifications');
   });
 
-  // Unreachable through the delete rule, so a read carrying a data-level assertion is what
-  // stops this path from answering with an id the client could not name.
+  // Reachable only when a delete races a log, so a data-level assertion is what stops this path
+  // from answering with an id the client could not name.
   it('does not name an id that has lost its row', () => {
     const response = toLiftRecordResponse(
       liftRecord({ modifications: ['a', 'gone'] }),

@@ -95,7 +95,7 @@ export class LiftRecordsController {
     const repos = await this.factory.forUser(user);
     const { liftRecord, macrocycleScheduledWorkout } = repos;
 
-    await assertSetModifications(repos, body.lift, body.modifications ?? []);
+    const modificationNames = await assertSetModifications(repos, body.lift, body.modifications ?? []);
 
     let effectiveDate: Date;
     if (body.date) {
@@ -171,7 +171,7 @@ export class LiftRecordsController {
         existing.notes === record.notes &&
         sameModifications(existing, record)
       ) {
-        return toLiftRecordResponse(existing, await modificationNamesFor(repos, [existing]));
+        return toLiftRecordResponse(existing, modificationNames);
       }
       const existingId = existing ? buildLiftRecordId(program, existing) : null;
       throw new ConflictException(
@@ -184,7 +184,7 @@ export class LiftRecordsController {
             : '.'),
       );
     }
-    return toLiftRecordResponse(record, await modificationNamesFor(repos, [record]));
+    return toLiftRecordResponse(record, modificationNames);
   }
 
   /**
@@ -294,17 +294,21 @@ export class LiftRecordsController {
   ): Promise<LiftRecordResponse> {
     const repos = await this.factory.forUser(user);
     const { liftRecord } = repos;
-    // An id that doesn't parse addresses no record, so it falls through to the 404 below.
-    const key = parseLiftRecordId(program, id);
-    if (key && body.modifications !== undefined) {
-      await assertSetModifications(repos, key.lift, body.modifications);
+    const notFound = () => new NotFoundException(`Lift record '${id}' not found for program '${program}'`);
+
+    let checkedNames: ReadonlyMap<string, string> | undefined;
+    if (body.modifications !== undefined) {
+      // The rule needs the set's lift and what it already has, so this reads the record first.
+      const key = parseLiftRecordId(program, id);
+      const stored = key
+        ? (await liftRecord.getLiftRecords(program, key.macrocycleNum)).find((r) => buildLiftRecordId(program, r) === id)
+        : undefined;
+      if (!stored) throw notFound();
+      checkedNames = await assertSetModifications(repos, stored.lift, body.modifications, stored.modifications);
     }
+
     const updated = await liftRecord.updateLiftRecord(program, id, body);
-    if (!updated) {
-      throw new NotFoundException(
-        `Lift record '${id}' not found for program '${program}'`,
-      );
-    }
-    return toLiftRecordResponse(updated, await modificationNamesFor(repos, [updated]));
+    if (!updated) throw notFound();
+    return toLiftRecordResponse(updated, checkedNames ?? (await modificationNamesFor(repos, [updated])));
   }
 }

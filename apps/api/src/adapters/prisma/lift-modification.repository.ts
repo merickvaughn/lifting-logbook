@@ -38,23 +38,18 @@ export class PrismaLiftModificationRepository implements ILiftModificationReposi
     const archived = await this.prisma.liftModification.findFirst({
       where: { userId: this.userId, lift: input.lift, name: input.name, archivedAt: { not: null } },
     });
-    if (archived) {
-      const row = await this.prisma.liftModification.update({
-        where: { id: archived.id },
-        data: { ...details, archivedAt: null },
-      });
-      return toLiftModification(row);
-    }
     try {
-      const row = await this.prisma.liftModification.create({
-        data: { userId: this.userId, lift: input.lift, name: input.name, ...details },
-      });
+      const row = archived
+        ? await this.prisma.liftModification.update({
+            where: { id: archived.id },
+            data: { ...details, archivedAt: null },
+          })
+        : await this.prisma.liftModification.create({
+            data: { userId: this.userId, lift: input.lift, name: input.name, ...details },
+          });
       return toLiftModification(row);
     } catch (e) {
-      if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new LiftModificationConflictError(input.name);
-      }
-      throw e;
+      throw translateWriteError(e, archived?.id ?? '', input.name);
     }
   }
 
@@ -75,10 +70,7 @@ export class PrismaLiftModificationRepository implements ILiftModificationReposi
       });
       return toLiftModification(row);
     } catch (e) {
-      if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new LiftModificationConflictError(patch.name ?? owned.name);
-      }
-      throw e;
+      throw translateWriteError(e, id, patch.name ?? owned.name);
     }
   }
 
@@ -89,12 +81,24 @@ export class PrismaLiftModificationRepository implements ILiftModificationReposi
       where: { userId: this.userId, modifications: { has: id } },
       select: { id: true },
     });
+    const where = { id, userId: this.userId };
     if (!namedBySet) {
-      await this.prisma.liftModification.delete({ where: { id } });
+      const { count } = await this.prisma.liftModification.deleteMany({ where });
+      if (count === 0) throw new LiftModificationNotFoundError(id);
     } else if (!owned.archivedAt) {
-      await this.prisma.liftModification.update({ where: { id }, data: { archivedAt: new Date() } });
+      const { count } = await this.prisma.liftModification.updateMany({ where, data: { archivedAt: new Date() } });
+      if (count === 0) throw new LiftModificationNotFoundError(id);
     }
   }
+}
+
+/** A row can go between the ownership read and the write, so P2025 is the documented not found. */
+function translateWriteError(e: unknown, id: string, name: string): unknown {
+  if (e instanceof PrismaClientKnownRequestError) {
+    if (e.code === 'P2002') return new LiftModificationConflictError(name);
+    if (e.code === 'P2025') return new LiftModificationNotFoundError(id);
+  }
+  return e;
 }
 
 function toLiftModification(row: LiftModificationRow): LiftModification {

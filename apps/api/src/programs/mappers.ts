@@ -74,7 +74,7 @@ export const toTrainingMaxHistoryEntryResponse = (
 
 /**
  * A set's modifications as its response names them, left out when there are none. An id with no
- * name has lost its row, which the delete rule prevents, so it is not named.
+ * name has lost its row to a delete racing a log, so it is not named; `modificationNamesFor` logs it.
  */
 const modificationRefs = (
   r: LiftRecord,

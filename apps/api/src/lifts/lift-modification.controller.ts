@@ -18,7 +18,7 @@ import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { CreateLiftModificationDto } from './create-lift-modification.dto';
-import { modificationLiftId } from './lift-modification.util';
+import { modificationLiftId, modificationLiftIds } from './lift-modification.util';
 import { UpdateLiftModificationDto } from './update-lift-modification.dto';
 
 function toLiftModificationResponse(modification: LiftModification): LiftModificationResponse {
@@ -48,11 +48,10 @@ export class LiftModificationController {
     @Query('lift') lift?: string,
   ): Promise<LiftModificationResponse[]> {
     const { customLift, liftModification } = await this.factory.forUser(user);
-    const liftId = lift === undefined ? undefined : modificationLiftId(lift, await customLift.list());
-    if (lift !== undefined && liftId === undefined) return [];
+    const liftIds = lift === undefined ? undefined : modificationLiftIds(lift, await customLift.list());
     const modifications = await liftModification.list();
     return modifications
-      .filter((m) => !m.archivedAt && (liftId === undefined || m.lift === liftId))
+      .filter((m) => !m.archivedAt && (liftIds === undefined || liftIds.has(m.lift)))
       .map(toLiftModificationResponse);
   }
 

@@ -127,6 +127,21 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
       expect((await as('mods-invalid')('POST', '/lifts/modifications', body)).statusCode).toBe(400);
     });
 
+    it.each([
+      ['a blank name', { name: '   ' }],
+      ['a null name', { name: null }],
+      ['a name that is too long', { name: 'x'.repeat(101) }],
+      ['a null description', { description: null }],
+      ['a description that is too long', { description: 'x'.repeat(501) }],
+      ['an unknown maxMode', { maxMode: 'other' }],
+      ['an undeclared field', { lift: 'Deadlift' }],
+    ])('answers 400 to a PATCH with %s', async (_label, body) => {
+      const user = as('mods-invalid-patch');
+      const name = `Paused ${_label}`;
+      const { id } = await createOn(user, 'Squat', name);
+      expect((await user('PATCH', `/lifts/modifications/${id}`, body)).statusCode).toBe(400);
+    });
+
     it('answers 404 to PATCH and DELETE on an unknown id', async () => {
       const user = as('mods-unknown');
       expect((await user('PATCH', '/lifts/modifications/nope', { name: 'x' })).statusCode).toBe(404);
@@ -171,6 +186,41 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
       const res = await user('POST', '/programs/p/lift-records', set({ lift: 'bench-press', modifications: [paused.id] }));
       expect(res.statusCode).toBe(201);
       expect((res.json() as LiftRecordResponse).modifications).toEqual([{ id: paused.id, name: 'Paused' }]);
+    });
+
+    it.each([
+      ['before', true],
+      ['after', false],
+    ])('attaches under every spelling when a custom lift sharing a catalog name is made %s it', async (_label, customFirst) => {
+      const user = as(`mods-set-namesake-${_label}`);
+      const makeCustom = () => user('POST', '/lifts/custom', { name: 'Cable Curl', classification: 'accessory' });
+      if (customFirst) expect((await makeCustom()).statusCode).toBe(201);
+      const wide = await createOn(user, 'Cable Curl', 'Wide grip');
+      if (!customFirst) expect((await makeCustom()).statusCode).toBe(201);
+
+      const lifts = ['Cable Curl', 'cable-curl', 'Cable Curls'];
+      for (const [i, lift] of lifts.entries()) {
+        const logged = await user('POST', '/programs/p/lift-records', set({ lift, setNum: i + 1, modifications: [wide.id] }));
+        expect(logged.statusCode).toBe(201);
+        const filtered = await user('GET', `/lifts/modifications?lift=${encodeURIComponent(lift)}`);
+        expect((filtered.json() as LiftModificationResponse[]).map((m) => m.id)).toEqual([wide.id]);
+      }
+    });
+
+    it('keeps a modification on a set when its custom lift is renamed, but takes no new one', async () => {
+      const user = as('mods-set-custom-rename');
+      const custom = await user('POST', '/lifts/custom', { name: 'Old Curl', classification: 'accessory' });
+      const { id: customId } = custom.json() as { id: string };
+      const wide = await createOn(user, 'Old Curl', 'Wide grip');
+      const narrow = await createOn(user, 'Old Curl', 'Narrow grip');
+      const logged = await user('POST', '/programs/p/lift-records', set({ lift: 'Old Curl', modifications: [wide.id] }));
+      const url = `/programs/p/lift-records/${encodeURIComponent((logged.json() as LiftRecordResponse).id)}`;
+      expect((await user('PATCH', `/lifts/custom/${customId}`, { name: 'New Curl' })).statusCode).toBe(200);
+
+      const kept = await user('PATCH', url, { reps: 6, modifications: [wide.id] });
+      expect(kept.statusCode).toBe(200);
+      expect((kept.json() as LiftRecordResponse).modifications).toEqual([{ id: wide.id, name: 'Wide grip' }]);
+      expect((await user('PATCH', url, { modifications: [wide.id, narrow.id] })).statusCode).toBe(400);
     });
 
     it('leaves the field out of a set with none, sent as absent or empty', async () => {
@@ -244,10 +294,12 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
       expect(cleared.json()).not.toHaveProperty('modifications');
     });
 
-    it('answers 404, not 400, to a PATCH on an id that addresses no record', async () => {
+    it('answers 404, not 400, to a PATCH with modifications on an id that addresses no record', async () => {
       const user = as('mods-set-patch-404');
-      const res = await user('PATCH', '/programs/p/lift-records/not-an-id', { modifications: ['x'] });
-      expect(res.statusCode).toBe(404);
+      const unparseable = await user('PATCH', '/programs/p/lift-records/not-an-id', { modifications: ['x'] });
+      expect(unparseable.statusCode).toBe(404);
+      const noRow = await user('PATCH', '/programs/p/lift-records/p-1-1-20260420-Squat-1', { modifications: ['x'] });
+      expect(noRow.statusCode).toBe(404);
     });
 
     it('treats a retry as the same write only when its modifications match', async () => {
