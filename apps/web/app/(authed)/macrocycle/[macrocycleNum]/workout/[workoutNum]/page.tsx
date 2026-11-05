@@ -1,5 +1,11 @@
 import { notFound } from 'next/navigation';
-import { LIFT_CATALOG, DEFAULT_SLOT_MAP, convertWeight, withOccurrence } from '@lifting-logbook/core';
+import {
+  LIFT_CATALOG,
+  DEFAULT_SLOT_MAP,
+  convertWeight,
+  currentMaxLookup,
+  withOccurrence,
+} from '@lifting-logbook/core';
 import type { SetResponse } from '@lifting-logbook/types';
 import {
   fetchLatestBodyWeight,
@@ -70,11 +76,11 @@ export default async function WorkoutLoggingPage({
     return null; // unreachable; notFound() throws but TypeScript can't verify without Next.js types
   }
 
-  const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
+  const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
 
   const workoutLifts: LiftData[] = workout.lifts.map((wl, liftIndex) => {
-    const tm = maxMap.get(wl.lift) ?? 0;
+    const tm = maxFor(wl.lift)?.weight ?? 0;
 
     // The lift's prescription — provides warmUpPct and increment. Resolved through
     // the block week at the workout's day, and for a Manage Lifts replacement from

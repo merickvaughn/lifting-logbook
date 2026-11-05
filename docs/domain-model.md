@@ -153,7 +153,14 @@ catalog or custom-lift **id** into that same column when a row is pre-resolved t
 [`catalog/builtInLift.ts`](../packages/core/src/catalog/builtInLift.ts) opens by stating that
 four forms reach its lookup — slot names, catalog names, catalog ids and per-entry aliases.
 Import can also store a custom lift's **uuid**, which is why `lookupLift` matches custom lifts
-by name *or* id. Code reading a `lift` value must tolerate all of these.
+by name *or* id. Code reading a `lift` value must tolerate all of these. To compare two of them,
+use the helpers in [`catalog/liftIdentity.ts`](../packages/core/src/catalog/liftIdentity.ts), not
+`===`. Readers still comparing exact strings are tracked in
+[#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135). `OH Press-HV` is the same lift
+as `OH Press`; a lighter slot's load is [#1141](https://github.com/merickvaughn/lifting-logbook/issues/1141).
+The helpers take no custom lifts, so a custom lift named after a catalog name compares equal to the
+built-in until the resolver in [#1134](https://github.com/merickvaughn/lifting-logbook/issues/1134).
+Import still stores the 12 `DEFAULT_SLOT_MAP` lifts by id.
 
 When a name belongs to both a built-in and one of the user's custom lifts, `lookupLift` settles
 it. A **reserved** name (a `DEFAULT_SLOT_MAP` slot name, which the custom-lift guard refuses)

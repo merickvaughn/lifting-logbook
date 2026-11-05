@@ -19,16 +19,37 @@ test.beforeAll(async ({ browser }, testInfo) => {
   await page.close();
 });
 
-// The Source step's program-picker lists custom programs; opt the mock into one.
+// The mock's active program is the 5-3-1 template, which the picker preselects. Opt the
+// mock into a custom program too; a test targets it by selecting it.
 test.beforeEach(async ({ request }) => {
   await request.get(`${MOCK_API}/__reset?withCustomProgram=true`);
+});
+
+test('import wizard: a user on a template with no custom program can import (#1115)', async ({ page, request }) => {
+  // The mock's active program is the 5-3-1 template; this reset leaves no custom program.
+  await request.get(`${MOCK_API}/__reset`);
+  await page.goto('/import');
+
+  await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('link', { name: 'Choose one' })).toHaveCount(0);
+  await expect(page.getByLabel('Program')).toHaveValue('5-3-1');
+  await page.getByLabel('CSV file').setInputFiles({
+    name: 'training_maxes.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Date Updated,Lift,Weight\n1/1/2026,Squat,300\n1/1/2026,Bench,210'),
+  });
+  await page.getByRole('button', { name: 'Analyze' }).click();
+
+  await expect(page.getByText('Training Maxes')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeVisible();
 });
 
 test('import wizard: Source → Classify → Review → Preview → Done', async ({ page }) => {
   await page.goto('/import');
 
-  // Source step: pick a program (pre-selected) and upload a CSV.
+  // Source step: pick a custom program and upload a CSV.
   await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
+  await page.getByLabel('Program').selectOption({ label: 'My Custom Program' });
   await page.getByLabel('CSV file').setInputFiles({
     name: 'training_maxes.csv',
     mimeType: 'text/csv',

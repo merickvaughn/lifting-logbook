@@ -1,4 +1,5 @@
 import { LiftingProgramSpec, LiftOverride, LiftRecord, TrainingMax } from "@src/core/models";
+import { currentMaxLookup, lookupByLift } from "../../catalog/liftIdentity";
 import { programWorkoutKeys, specRowsForWorkoutDay } from "../../presets/programLengths";
 import { resolveDayPrescriptions } from "../workout/dayPrescriptions";
 
@@ -65,30 +66,30 @@ export function updateMaxes(
   // read as a second set 1 under the first occurrence's rules (#1027).
   const progressed = liftRecords.filter((r) => !r.occurrence);
 
-  // Lookups built once rather than scanned once per record (issue #983).
-  // First-wins on a duplicate lift, which is exactly what the per-record
-  // `findIndex` / `find` returned; the map holds the same objects that sit in
-  // `newMaxes`, so a mutation through it lands in the returned array.
-  const maxByLift = new Map<string, TrainingMax>();
-  for (const tm of newMaxes) if (!maxByLift.has(tm.lift)) maxByLift.set(tm.lift, tm);
-  const specByLift = new Map<string, LiftingProgramSpec>();
-  for (const ps of programSpec) if (!specByLift.has(ps.lift)) specByLift.set(ps.lift, ps);
+  // Lookups built once rather than scanned once per record (issue #983). A record, its
+  // max and its spec row can each spell the lift differently (#1118), so they join on
+  // `liftIdFor`. The map holds the same objects that sit in `newMaxes`, so a mutation
+  // through it lands in the returned array.
+  const maxFor = currentMaxLookup(newMaxes);
+  const programSpecFor = lookupByLift(programSpec.map((ps) => [ps.lift, ps] as const));
 
   // Each workout's stored lift name → its spec row, built once per workout.
   const days = programWorkoutKeys(options.program, programSpec);
-  const specByWorkout = new Map<number, Map<string, LiftingProgramSpec>>();
+  const specByWorkout = new Map<number, (name: string) => LiftingProgramSpec | undefined>();
   const specFor = (record: LiftRecord): LiftingProgramSpec | undefined => {
-    let byLift = specByWorkout.get(record.workoutNum);
-    if (!byLift) {
+    let dayRowFor = specByWorkout.get(record.workoutNum);
+    if (!dayRowFor) {
       const day = days[record.workoutNum - 1];
       const dayRows = day ? specRowsForWorkoutDay(programSpec, day.week, day.offset) : [];
-      byLift = resolveDayPrescriptions(
-        dayRows,
-        options.liftOverrides.get(record.workoutNum) ?? [],
-      ).rowByStoredLift;
-      specByWorkout.set(record.workoutNum, byLift);
+      dayRowFor = lookupByLift(
+        resolveDayPrescriptions(
+          dayRows,
+          options.liftOverrides.get(record.workoutNum) ?? [],
+        ).rowByStoredLift,
+      );
+      specByWorkout.set(record.workoutNum, dayRowFor);
     }
-    return byLift.get(record.lift) ?? specByLift.get(record.lift);
+    return dayRowFor(record.lift) ?? programSpecFor(record.lift);
   };
 
   // A test week's final set needs every set of that lift in the same workout,
@@ -96,30 +97,33 @@ export function updateMaxes(
   // keeps input order and is sorted by setNum descending once — a stable sort of
   // the input-ordered group is exactly what filtering then sorting the whole
   // list per record produced, without re-walking it for every final set.
-  let setsByLiftAndWorkout: Map<string, Map<number, LiftRecord[]>> | null = null;
-  const setsFor = (lift: string, workoutNum: number): LiftRecord[] => {
-    if (setsByLiftAndWorkout === null) {
-      setsByLiftAndWorkout = new Map();
+  // Keyed by the max a set reads, so sets count as one lift exactly when they share a max.
+  let setsByMaxAndWorkout: Map<TrainingMax, Map<number, LiftRecord[]>> | null = null;
+  const setsFor = (max: TrainingMax, workoutNum: number): LiftRecord[] => {
+    if (setsByMaxAndWorkout === null) {
+      setsByMaxAndWorkout = new Map();
       for (const r of progressed) {
-        let byWorkout = setsByLiftAndWorkout.get(r.lift);
+        const recordMax = maxFor(r.lift);
+        if (!recordMax) continue;
+        let byWorkout = setsByMaxAndWorkout.get(recordMax);
         if (!byWorkout) {
           byWorkout = new Map();
-          setsByLiftAndWorkout.set(r.lift, byWorkout);
+          setsByMaxAndWorkout.set(recordMax, byWorkout);
         }
         const group = byWorkout.get(r.workoutNum);
         if (group) group.push(r);
         else byWorkout.set(r.workoutNum, [r]);
       }
-      for (const byWorkout of setsByLiftAndWorkout.values()) {
+      for (const byWorkout of setsByMaxAndWorkout.values()) {
         for (const group of byWorkout.values()) group.sort((a, b) => b.setNum - a.setNum);
       }
     }
-    return setsByLiftAndWorkout.get(lift)?.get(workoutNum) ?? [];
+    return setsByMaxAndWorkout.get(max)?.get(workoutNum) ?? [];
   };
 
   progressed.forEach((record) => {
     const liftName = record.lift;
-    const currentMax = maxByLift.get(liftName);
+    const currentMax = maxFor(liftName);
     if (!currentMax) throw new Error(`Training max for lift ${liftName} not found.`);
 
     const spec = specFor(record);
@@ -135,7 +139,7 @@ export function updateMaxes(
       if (record.setNum !== spec.sets) return;
 
       // Every set of this lift in the same workout, descending: best attempt first.
-      const liftSetRecords = setsFor(liftName, record.workoutNum);
+      const liftSetRecords = setsFor(currentMax, record.workoutNum);
 
       const candidate = liftSetRecords.find((r) => r.reps > 0 && !isAbnormal(r.notes));
       if (
@@ -143,7 +147,7 @@ export function updateMaxes(
         new Date(candidate.date).getTime() > new Date(currentMax.dateUpdated).getTime()
       ) {
         if (candidate.weight < currentMax.weight) {
-          flagged.push({ lift: liftName, currentWeight: currentMax.weight, proposedWeight: candidate.weight });
+          flagged.push({ lift: currentMax.lift, currentWeight: currentMax.weight, proposedWeight: candidate.weight });
         } else {
           currentMax.weight = candidate.weight;
           currentMax.dateUpdated = candidate.date;
@@ -164,7 +168,7 @@ export function updateMaxes(
         throw new Error(`Updated weight for ${liftName} is not a valid number: ${updatedWeight}`);
       }
       if (updatedWeight < currentMax.weight) {
-        flagged.push({ lift: liftName, currentWeight: currentMax.weight, proposedWeight: updatedWeight });
+        flagged.push({ lift: currentMax.lift, currentWeight: currentMax.weight, proposedWeight: updatedWeight });
       } else {
         currentMax.weight = updatedWeight;
         currentMax.dateUpdated = record.date;

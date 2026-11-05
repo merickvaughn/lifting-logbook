@@ -5,6 +5,7 @@ import {
   WARMUP_BASE_REPS,
   activationExercise,
   baseSpecMesocycleWeeks,
+  currentMaxLookup,
   mesocycleWeekForProgramWeek,
   noScheduleWorkoutDateUTC,
   plannedLiftRows,
@@ -250,12 +251,12 @@ export function liftSpecsForWorkout(
 export function buildLiftDetails(
   workout: Pick<WorkoutResponse, 'week' | 'offset' | 'lifts'>,
   specs: readonly LiftingProgramSpecResponse[],
-  maxes: readonly Pick<TrainingMaxResponse, 'lift' | 'weight'>[],
+  maxes: readonly Pick<TrainingMaxResponse, 'lift' | 'weight' | 'dateUpdated'>[],
 ): WorkoutLiftDetail[] {
-  const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
+  const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
   return workout.lifts.map((wl, i) => {
-    const tm = maxMap.get(wl.lift) ?? 0;
+    const tm = maxFor(wl.lift)?.weight ?? 0;
     const spec = liftSpecs[i];
     const plannedSets = spec ? computePlannedSets(spec, tm) : [];
     return {

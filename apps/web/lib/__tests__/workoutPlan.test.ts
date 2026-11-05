@@ -261,6 +261,7 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
   });
   const workSets = (detail: WorkoutLiftDetail | undefined) =>
     detail?.plannedSets.filter((s) => s.type === 'work').map((s) => [s.weight, s.reps]);
+  const max = (lift: string, weight: number) => ({ lift, weight, dateUpdated: '2025-12-29' });
 
   it('plans a week-2 workout of a 1-week repeating block from its block week', () => {
     const specs = [
@@ -268,10 +269,17 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
       makeSpec({ lift: 'Squat', offset: 2 }),
     ];
     const [bench] = buildLiftDetails(workout(2, 0, [{ lift: 'Bench Press' }]), specs, [
-      { lift: 'Bench Press', weight: 200 },
+      max('Bench Press', 200),
     ]);
     expect(bench).toMatchObject({ lift: 'Bench Press', tm: 200, warmUpCount: 3, workCount: 3 });
     expect(workSets(bench)).toEqual([[200, 6], [200, 6], [200, 6]]);
+  });
+
+  it('plans from a max stored by catalog id, as import stores it (#1118)', () => {
+    const [bench] = buildLiftDetails(workout(1, 0, [{ lift: 'Bench Press' }]), [makeSpec({ lift: 'Bench Press' })], [
+      max('bench-press', 200),
+    ]);
+    expect(bench?.tm).toBe(200);
   });
 
   it('plans a second-wave week from the matching week of a 3-week block', () => {
@@ -282,7 +290,7 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
       makeSpec({ week: 3, reps: 1 }),
     ];
     const [squat] = buildLiftDetails(workout(5, 0, [{ lift: 'Squat' }]), specs, [
-      { lift: 'Squat', weight: 300 },
+      max('Squat', 300),
     ]);
     // Program week 5 is the second wave's week 2 — the 3-rep week.
     expect(workSets(squat)).toEqual([[300, 3], [300, 3], [300, 3]]);
@@ -293,7 +301,7 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
     // block week. Matching on the week alone always found Monday's row.
     const specs = [makeSpec({ offset: 0, reps: 5 }), makeSpec({ offset: 4, reps: 10 })];
     const [squat] = buildLiftDetails(workout(1, 4, [{ lift: 'Squat' }]), specs, [
-      { lift: 'Squat', weight: 200 },
+      max('Squat', 200),
     ]);
     expect(workSets(squat)).toEqual([[200, 10], [200, 10], [200, 10]]);
   });
@@ -310,8 +318,8 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
       workout(1, 0, [{ lift: 'Squat' }, { lift: 'Bench Press' }, { lift: 'Squat' }]),
       specs,
       [
-        { lift: 'Squat', weight: 200 },
-        { lift: 'Bench Press', weight: 150 },
+        max('Squat', 200),
+        max('Bench Press', 150),
       ],
     );
     expect(details.map((d) => [d.lift, workSets(d)?.[0]])).toEqual([
@@ -352,8 +360,8 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
       workout(1, 0, [{ lift: 'Front Squat', replaces: 'Squat' }]),
       [squatSlot],
       [
-        { lift: 'Squat', weight: 300 },
-        { lift: 'Front Squat', weight: 200 },
+        max('Squat', 300),
+        max('Front Squat', 200),
       ],
     );
     expect(front).toMatchObject({
@@ -387,7 +395,7 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
     const [squat] = buildLiftDetails(
       workout(3, undefined, [{ lift: 'Squat' }]),
       [makeSpec({ lift: 'Squat', offset: 2 })],
-      [{ lift: 'Squat', weight: 200 }],
+      [max('Squat', 200)],
     );
     expect(squat?.workCount).toBe(3);
   });
@@ -400,7 +408,7 @@ describe('buildLiftDetails — each lift’s prescription resolves through its d
     const [squat] = buildLiftDetails(
       workout(3, null, [{ lift: 'Squat' }]),
       [makeSpec({ lift: 'Squat', offset: 2 })],
-      [{ lift: 'Squat', weight: 200 }],
+      [max('Squat', 200)],
     );
     expect(squat).toMatchObject({ lift: 'Squat', tm: 200, warmUpCount: 0, workCount: 0 });
   });

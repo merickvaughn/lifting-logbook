@@ -36,11 +36,14 @@ export class TrainingMaxesController {
       body.maxes.map((m) => [m.lift, m.weight]),
     );
     const today = new Date();
-    const merged: TrainingMax[] = existing.map((m) =>
-      incomingMap.has(m.lift)
-        ? { lift: m.lift, weight: incomingMap.get(m.lift)!, dateUpdated: today }
-        : m,
-    );
+    // Only a changed weight is an update. The settings form sends every row, and stamping
+    // unchanged ones would make an old max look newer than an imported one (#1118).
+    const merged: TrainingMax[] = existing.map((m) => {
+      const weight = incomingMap.get(m.lift);
+      return weight !== undefined && weight !== m.weight
+        ? { lift: m.lift, weight, dateUpdated: today }
+        : m;
+    });
     for (const incoming of body.maxes) {
       if (!merged.some((m) => m.lift === incoming.lift)) {
         merged.push({ lift: incoming.lift, weight: incoming.weight, dateUpdated: today });

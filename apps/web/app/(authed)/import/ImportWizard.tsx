@@ -5,7 +5,6 @@ import Link from 'next/link';
 import type {
   ColumnMapping,
   CustomLiftResponse,
-  CustomProgramSummaryResponse,
   GoogleSheetTab,
   ImportCommitResponse,
   ImportDelta,
@@ -28,7 +27,8 @@ import {
 import { localToday } from '@/lib/focusSetup';
 import { logClientError } from '@/lib/log-client-error';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
-import { ALL_KINDS, KIND_LABEL, Step, STEP_LABELS } from './steps';
+import { KIND_LABEL, kindsForTarget, Step, STEP_LABELS } from './steps';
+import type { ImportTarget } from './steps';
 import {
   SheetTabsStep,
   defaultTabChoices,
@@ -179,10 +179,14 @@ function filterDeltas(deltas: ImportDelta[], filter: ReviewFilter): ImportDelta[
 
 export function ImportWizard({
   programs,
+  programsLoadFailed = false,
   customLifts: initialCustomLifts,
   unit = 'lbs',
 }: {
-  programs: CustomProgramSummaryResponse[];
+  /** Where this user can import to. The first is preselected. */
+  programs: ImportTarget[];
+  /** A fetch behind `programs` failed, so it may be missing some, including the active one. */
+  programsLoadFailed?: boolean;
   /**
    * The user's custom lifts, for the REVIEW step's ambiguous-row remap
    * datalist (#911). Required, not optional-with-a-[]-default: silently
@@ -269,6 +273,18 @@ export function ImportWizard({
   const nextTab = sheetRun ? tabQueue[tabIndex + 1] : undefined;
 
   const destination = preview?.destination ?? null;
+  const selectedProgram = programs.find((p) => p.id === programId);
+  const availableKinds = kindsForTarget(selectedProgram);
+  const destinationUnavailable = destination !== null && !availableKinds.includes(destination);
+
+  // A template can't take a program file, so moving to one unchecks any tab chosen as one.
+  function selectProgram(id: string) {
+    const kinds = kindsForTarget(programs.find((p) => p.id === id));
+    setProgramId(id);
+    setTabChoices((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([, kind]) => kinds.includes(kind))),
+    );
+  }
   const previewBody = preview?.preview ?? null;
 
   function mappingKey(m: ColumnMapping): string {
@@ -1144,11 +1160,19 @@ export function ImportWizard({
                 Drop in any CSV — lift history, training maxes, strength goals, or a program.
                 We&apos;ll figure out what it is.
               </p>
-              {programs.length === 0 ? (
-                <p className={styles.infoBox}>
-                  You don&apos;t have a custom program yet.{' '}
-                  <Link href="/programs">Create one</Link> to import into.
+              {programsLoadFailed && (
+                <p className={styles.errorNote}>
+                  We couldn&apos;t load all of your programs, so this list may be incomplete. Reload
+                  the page to try again.
                 </p>
+              )}
+              {programs.length === 0 ? (
+                !programsLoadFailed && (
+                  <p className={styles.infoBox}>
+                    You don&apos;t have a program yet.{' '}
+                    <Link href="/programs">Choose one</Link> to import into.
+                  </p>
+                )
               ) : (
                 <div className={styles.field}>
                   <label htmlFor="import-program" className={styles.fieldLabel}>
@@ -1158,11 +1182,11 @@ export function ImportWizard({
                     id="import-program"
                     className={styles.select}
                     value={programId}
-                    onChange={(e) => setProgramId(e.target.value)}
+                    onChange={(e) => selectProgram(e.target.value)}
                   >
                     {programs.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name}
+                        {p.isTemplate ? `${p.name} (template)` : p.name}
                       </option>
                     ))}
                   </select>
@@ -1240,6 +1264,7 @@ export function ImportWizard({
                       workbookId={workbookId}
                       programId={programId}
                       tabs={sheetTabs}
+                      kinds={availableKinds}
                       choices={tabChoices}
                       onChange={setTabChoices}
                       previews={tabPreviews}
@@ -1298,15 +1323,24 @@ export function ImportWizard({
                       </ul>
                     </div>
                   )}
+                  {destinationUnavailable && (
+                    <p className={styles.infoBox}>
+                      A program file can only be imported into a custom program, because it rewrites
+                      the program&apos;s lifts and sets. Go back and pick a custom program, or{' '}
+                      <Link href="/programs">create one</Link>.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <>
                   <p className={styles.stepHint}>
                     We couldn&apos;t confidently tell what this file is. Pick a destination,
                     or skip it.
+                    {selectedProgram?.isTemplate &&
+                      ' A program file needs a custom program, so that option is hidden for this template.'}
                   </p>
                   <div className={styles.candidateList}>
-                    {ALL_KINDS.map((kind) => {
+                    {availableKinds.map((kind) => {
                       const alt = preview.classification.alternatives.find((a) => a.type === kind);
                       const conf = alt ? Math.round(alt.confidence * 100) : null;
                       return (
@@ -2114,7 +2148,7 @@ export function ImportWizard({
             </button>
           )}
 
-          {step === Step.CLASSIFY && destination && (
+          {step === Step.CLASSIFY && destination && !destinationUnavailable && (
             <button type="button" className={styles.btnPrimary} onClick={() => setStep(Step.MAP_COLUMNS)}>
               Next
             </button>
