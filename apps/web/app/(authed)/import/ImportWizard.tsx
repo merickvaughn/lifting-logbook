@@ -5,7 +5,6 @@ import Link from 'next/link';
 import type {
   ColumnMapping,
   CustomLiftResponse,
-  CustomProgramSummaryResponse,
   GoogleSheetTab,
   ImportCommitResponse,
   ImportDelta,
@@ -31,7 +30,8 @@ import {
 import { localToday } from '@/lib/focusSetup';
 import { logClientError } from '@/lib/log-client-error';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
-import { ALL_KINDS, KIND_LABEL, Step, STEP_LABELS } from './steps';
+import { KIND_LABEL, kindsForTarget, Step, STEP_LABELS } from './steps';
+import type { ImportTarget } from './steps';
 import {
   SheetTabsStep,
   defaultTabChoices,
@@ -43,7 +43,7 @@ import {
 import styles from './import.module.css';
 
 type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous' | 'needs-lift';
-type EditableMax = { lift: string; weight: string };
+type EditableMax = { lift: string; label: string; weight: string };
 type QueuedTab = { name: string; csv: string; kind: ImportKind };
 type CompletedTab = {
   name: string;
@@ -93,7 +93,7 @@ function excludeKeyFor(delta: ImportDelta): string {
   return delta.rowIndex !== undefined ? `__row_${delta.rowIndex}` : naturalKeyOf(delta);
 }
 
-function buildTrainingMaxesCsv(rows: EditableMax[]): string {
+function buildTrainingMaxesCsv(rows: Pick<EditableMax, 'lift' | 'weight'>[]): string {
   const today = localToday();
   const lines = rows
     .filter((r) => Number(r.weight) > 0)
@@ -186,10 +186,14 @@ function filterDeltas(deltas: ImportDelta[], filter: ReviewFilter): ImportDelta[
 
 export function ImportWizard({
   programs,
+  programsLoadFailed = false,
   customLifts: initialCustomLifts,
   unit = 'lbs',
 }: {
-  programs: CustomProgramSummaryResponse[];
+  /** Where this user can import to. The first is preselected. */
+  programs: ImportTarget[];
+  /** A fetch behind `programs` failed, so it may be missing some, including the active one. */
+  programsLoadFailed?: boolean;
   /**
    * The user's custom lifts, for the REVIEW step's ambiguous-row remap
    * datalist (#911). Required, not optional-with-a-[]-default: silently
@@ -277,6 +281,18 @@ export function ImportWizard({
   const nextTab = sheetRun ? tabQueue[tabIndex + 1] : undefined;
 
   const destination = preview?.destination ?? null;
+  const selectedProgram = programs.find((p) => p.id === programId);
+  const availableKinds = kindsForTarget(selectedProgram);
+  const destinationUnavailable = destination !== null && !availableKinds.includes(destination);
+
+  // A template can't take a program file, so moving to one unchecks any tab chosen as one.
+  function selectProgram(id: string) {
+    const kinds = kindsForTarget(programs.find((p) => p.id === id));
+    setProgramId(id);
+    setTabChoices((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([, kind]) => kinds.includes(kind))),
+    );
+  }
   const previewBody = preview?.preview ?? null;
 
   function mappingKey(m: ColumnMapping): string {
@@ -658,7 +674,8 @@ export function ImportWizard({
       setReviewMaxes(
         rows.deltas
           .filter((d) => d.kind === 'create' || d.kind === 'update')
-          .map((d) => ({ lift: d.label, weight: d.after ?? '' })),
+          // A create or update row's key is the stored lift, with no duplicate suffix.
+          .map((d) => ({ lift: d.key, label: d.label, weight: d.after ?? '' })),
       );
     }
     setReviewEditsDiscarded(editsDiscarded);
@@ -998,6 +1015,26 @@ export function ImportWizard({
     }
   }
 
+  // A dry run or commit rejected a lift this list says exists, so it was deleted elsewhere
+  // (#1124). Replaces the list outright: no create can be in flight here, because Next
+  // waits for them and Commit comes after Next. A row holding a dropped lift's id goes
+  // back to the lift's name, which it shows and can create again.
+  async function refreshCustomLiftsAfterRejection() {
+    try {
+      const latest = await fetchCustomLifts();
+      const latestIds = new Set(latest.map((lift) => lift.id));
+      const droppedNames = new Map(
+        customLifts.filter((lift) => !latestIds.has(lift.id)).map((lift) => [lift.id, lift.name]),
+      );
+      setCustomLifts(latest);
+      setLiftOverrides(
+        (prev) => new Map([...prev].map(([row, lift]) => [row, droppedNames.get(lift) ?? lift])),
+      );
+    } catch (e) {
+      logClientError('fetchCustomLifts', e, { programId });
+    }
+  }
+
   // The request a commit would send for the user's current Review choices.
   function buildCommitRequest(sourceFile: File): { file: File; opts?: CommitImportOpts } {
     const deltas = previewBody?.deltas ?? [];
@@ -1071,6 +1108,9 @@ export function ImportWizard({
       setPlannedCommit(result.ok ? { ...request, counts: result.data } : null);
       if (!result.ok) setCommitErrors(result.errors);
       setStep(Step.PREVIEW);
+      if (!result.ok && result.errors.some((e) => e.code === 'UNRECOGNIZED_LIFT')) {
+        await refreshCustomLiftsAfterRejection();
+      }
     } catch (e) {
       logClientError('dryRunImport', e, { programId, destination });
       setError(e instanceof Error ? e.message : 'Preview failed');
@@ -1095,6 +1135,9 @@ export function ImportWizard({
         setStep(Step.DONE);
       } else {
         setCommitErrors(result.errors);
+        if (result.errors.some((e) => e.code === 'UNRECOGNIZED_LIFT')) {
+          await refreshCustomLiftsAfterRejection();
+        }
       }
     } catch (e) {
       logClientError('commitImport', e, { programId, destination });
@@ -1199,11 +1242,19 @@ export function ImportWizard({
                 Drop in any CSV — lift history, training maxes, strength goals, or a program.
                 We&apos;ll figure out what it is.
               </p>
-              {programs.length === 0 ? (
-                <p className={styles.infoBox}>
-                  You don&apos;t have a custom program yet.{' '}
-                  <Link href="/programs">Create one</Link> to import into.
+              {programsLoadFailed && (
+                <p className={styles.errorNote}>
+                  We couldn&apos;t load all of your programs, so this list may be incomplete. Reload
+                  the page to try again.
                 </p>
+              )}
+              {programs.length === 0 ? (
+                !programsLoadFailed && (
+                  <p className={styles.infoBox}>
+                    You don&apos;t have a program yet.{' '}
+                    <Link href="/programs">Choose one</Link> to import into.
+                  </p>
+                )
               ) : (
                 <div className={styles.field}>
                   <label htmlFor="import-program" className={styles.fieldLabel}>
@@ -1213,11 +1264,11 @@ export function ImportWizard({
                     id="import-program"
                     className={styles.select}
                     value={programId}
-                    onChange={(e) => setProgramId(e.target.value)}
+                    onChange={(e) => selectProgram(e.target.value)}
                   >
                     {programs.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name}
+                        {p.isTemplate ? `${p.name} (template)` : p.name}
                       </option>
                     ))}
                   </select>
@@ -1295,6 +1346,7 @@ export function ImportWizard({
                       workbookId={workbookId}
                       programId={programId}
                       tabs={sheetTabs}
+                      kinds={availableKinds}
                       choices={tabChoices}
                       onChange={setTabChoices}
                       previews={tabPreviews}
@@ -1353,15 +1405,24 @@ export function ImportWizard({
                       </ul>
                     </div>
                   )}
+                  {destinationUnavailable && (
+                    <p className={styles.infoBox}>
+                      A program file can only be imported into a custom program, because it rewrites
+                      the program&apos;s lifts and sets. Go back and pick a custom program, or{' '}
+                      <Link href="/programs">create one</Link>.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <>
                   <p className={styles.stepHint}>
                     We couldn&apos;t confidently tell what this file is. Pick a destination,
                     or skip it.
+                    {selectedProgram?.isTemplate &&
+                      ' A program file needs a custom program, so that option is hidden for this template.'}
                   </p>
                   <div className={styles.candidateList}>
-                    {ALL_KINDS.map((kind) => {
+                    {availableKinds.map((kind) => {
                       const alt = preview.classification.alternatives.find((a) => a.type === kind);
                       const conf = alt ? Math.round(alt.confidence * 100) : null;
                       return (
@@ -1532,7 +1593,7 @@ export function ImportWizard({
                         {reviewMaxes
                           .filter((row) => !excludedKeys.has(row.lift))
                           .map((row) => {
-                            const liftName = customLiftNames.get(row.lift) ?? row.lift;
+                            const liftName = row.label;
                             return (
                             <li key={row.lift} className={styles.maxEditRow}>
                               <span className={styles.maxEditLift}>{liftName}</span>
@@ -2183,7 +2244,7 @@ export function ImportWizard({
             </button>
           )}
 
-          {step === Step.CLASSIFY && destination && (
+          {step === Step.CLASSIFY && destination && !destinationUnavailable && (
             <button type="button" className={styles.btnPrimary} onClick={() => setStep(Step.MAP_COLUMNS)}>
               Next
             </button>

@@ -563,6 +563,32 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.preview.deltas[0].status).not.toBe('ambiguous');
     });
 
+    // #1125: the row is stored under the lift's id, but Review shows the label.
+    it('labels a lift-records row mapped to a custom lift with its name, not its id', async () => {
+      const created = await createCustomLift({
+        name: 'Label Check Curls',
+        classification: 'accessory',
+      });
+      expect(created.statusCode).toBe(201);
+      const { id: customLiftId } = created.json();
+
+      const res = (
+        await importCsv(
+          'p3-custom-lift-label',
+          [
+            'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+            '5-3-1,1,1,2026-01-01,Label Check Curls,1,90,10,',
+          ].join('\n'),
+          '?mode=preview&destination=lift-records',
+        )
+      ).json();
+
+      expect(res.errors).toEqual([]);
+      expect(res.preview.deltas).toHaveLength(1);
+      expect(res.preview.deltas[0].label).toContain('Label Check Curls');
+      expect(res.preview.deltas[0].label).not.toContain(customLiftId);
+    });
+
     // #911: liftOverrides may now resolve to a custom lift's id (not just a
     // built-in canonical id) — the self-mapping half of buildEffectiveSlotMap
     // must let an already-resolved custom-lift id pass strict validation.
@@ -593,9 +619,9 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     // per request from DEFAULT_SLOT_MAP + the user's custom lifts too (previously
     // only lift-records was custom-lift-aware, #911) — a CSV row whose raw text
     // matches an existing custom lift's name resolves to that lift's id instead of
-    // passing through as raw display text. buildTrainingMaxPreview's delta `label`
+    // passing through as raw display text. buildTrainingMaxPreview's delta `key`
     // carries the resolved `lift` value, so asserting on it proves resolution
-    // without needing a separate read endpoint.
+    // without needing a separate read endpoint; `label` carries the name (#1125).
     it('resolves an existing custom lift by name for a training-maxes import', async () => {
       const created = await createCustomLift({
         name: 'TM Import Custom Lift',
@@ -618,11 +644,14 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.errors).toEqual([]);
       expect(res.preview).not.toBeNull();
       expect(res.preview.deltas).toHaveLength(1);
-      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create', label: customLiftId });
+      expect(res.preview.deltas[0]).toMatchObject({
+        kind: 'create',
+        key: customLiftId,
+        label: 'TM Import Custom Lift',
+      });
     });
 
-    // Same as above, for strength-goals (buildStrengthGoalPreview's delta `label`
-    // also carries the resolved `lift` value).
+    // Same as above, for strength-goals.
     it('resolves an existing custom lift by name for a strength-goals import', async () => {
       const created = await createCustomLift({
         name: 'Goal Import Custom Lift',
@@ -648,7 +677,11 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.errors).toEqual([]);
       expect(res.preview).not.toBeNull();
       expect(res.preview.deltas).toHaveLength(1);
-      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create', label: customLiftId });
+      expect(res.preview.deltas[0]).toMatchObject({
+        kind: 'create',
+        key: customLiftId,
+        label: 'Goal Import Custom Lift',
+      });
     });
 
     // #914: this splitDest interaction was the second trigger discovered for this
@@ -727,6 +760,115 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       // The excluded row never reaches the classification pass, so it has no
       // skip detail entry either — excluded is not the same thing as skipped.
       expect(res.skippedDetail).toEqual([]);
+    });
+
+    // #1122: each destination's delta key has its own shape, and the wizard sends
+    // it back verbatim. These tests take the key from a real preview rather than
+    // spelling it out, so they pin the contract between the two modes.
+    describe('excluding a row by the key its preview returned (#1122)', () => {
+      const previewDeltas = async (program: string, csv: string, destination: ImportKind) => {
+        const body = (
+          await importCsv(program, csv, `?mode=preview&destination=${destination}`)
+        ).json() as ImportPreviewResponse;
+        expect(body.errors).toEqual([]);
+        return body.preview!.deltas;
+      };
+
+      const readBack = async <T,>(program: string, resource: string): Promise<T[]> =>
+        (
+          await app.getHttpAdapter().getInstance().inject({
+            method: 'GET',
+            url: `/programs/${program}/${resource}`,
+            headers: AUTH,
+          })
+        ).json() as T[];
+
+      type SpecRow = { week: number; offset: number; lift: string; order: number; sets: number };
+      const specKey = (r: SpecRow) => `${r.week}:${r.offset}:${r.lift}:${r.order}`;
+
+      const SPEC_HEADER =
+        'Week,Offset,Lift,Increment,Order,Sets,Reps,AMRAP?,Warm-Up %,WT Decrement %,Activation';
+      const specCsv = (sets: number) =>
+        [
+          SPEC_HEADER,
+          // Two rows share a lift, so excluding one by its key can't be mistaken
+          // for excluding by lift name.
+          `1,0,Bench P.,2.5,1,${sets},8,TRUE,.6,0.05,Band Flye`,
+          `2,0,Bench P.,2.5,1,${sets},8,TRUE,.6,0.05,Band Flye`,
+          `1,2,Squat,5,1,${sets},8,TRUE,.6,0.05,Band Flye`,
+        ].join('\n');
+
+      it('omits only the excluded program-spec row from the stored spec', async () => {
+        const program = '22222222-2222-2222-2222-222222221122';
+        const deltas = await previewDeltas(program, specCsv(3), 'program-spec');
+        expect(deltas).toHaveLength(3);
+        const excluded = deltas.find((d) => d.label.startsWith('Week 2'))!;
+
+        const res = await importCsv(program, specCsv(3), '?mode=commit&destination=program-spec', {
+          excludeKeys: JSON.stringify([excluded.key]),
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toMatchObject({ created: 2, updated: 0, skipped: 0 });
+
+        const stored = await readBack<SpecRow>(program, 'spec');
+        expect(stored.map(specKey).sort()).toEqual(
+          deltas
+            .map((d) => d.key)
+            .filter((k) => k !== excluded.key)
+            .sort(),
+        );
+      });
+
+      it('leaves a stored program-spec row unchanged when its update is excluded', async () => {
+        const program = '33333333-3333-3333-3333-333333331122';
+        await importCsv(program, specCsv(3), '?mode=commit&destination=program-spec');
+
+        const deltas = await previewDeltas(program, specCsv(5), 'program-spec');
+        expect(deltas.map((d) => d.kind)).toEqual(['update', 'update', 'update']);
+        const excluded = deltas.find((d) => d.label.startsWith('Week 2'))!;
+
+        const res = await importCsv(program, specCsv(5), '?mode=commit&destination=program-spec', {
+          excludeKeys: JSON.stringify([excluded.key]),
+        });
+        expect(res.json()).toMatchObject({ created: 0, updated: 2, skipped: 0 });
+
+        const stored = await readBack<SpecRow>(program, 'spec');
+        const setsByKey = Object.fromEntries(stored.map((r) => [specKey(r), r.sets]));
+        expect(setsByKey).toEqual(
+          Object.fromEntries(deltas.map((d) => [d.key, d.key === excluded.key ? 3 : 5])),
+        );
+      });
+
+      it('omits only the excluded training max', async () => {
+        const program = 'p1122-tm-exclude';
+        const csv = ['Date Updated,Lift,Weight', '12/29/2025,Bench P.,182.5', '12/29/2025,Squat,300'].join('\n');
+        const deltas = await previewDeltas(program, csv, 'training-maxes');
+        expect(deltas.map((d) => d.key).sort()).toEqual(['back-squat', 'bench-press']);
+
+        const res = await importCsv(program, csv, '?mode=commit&destination=training-maxes', {
+          excludeKeys: JSON.stringify(['bench-press']),
+        });
+        expect(res.json()).toMatchObject({ created: 1 });
+
+        const stored = await readBack<{ lift: string }>(program, 'training-maxes');
+        expect(stored.map((m) => m.lift)).toEqual(['back-squat']);
+      });
+
+      it('omits only the excluded strength goal', async () => {
+        const program = 'p1122-sg-exclude';
+        const deltas = await previewDeltas(program, GOALS_CSV, 'strength-goals');
+        expect(deltas.map((d) => d.key)).toContain('bench-press');
+
+        const res = await importCsv(program, GOALS_CSV, '?mode=commit&destination=strength-goals', {
+          excludeKeys: JSON.stringify(['bench-press']),
+        });
+        expect(res.statusCode).toBe(200);
+
+        const stored = await readBack<{ lift: string }>(program, 'strength-goals');
+        const storedLifts = stored.map((g) => g.lift);
+        expect(storedLifts).not.toContain('bench-press');
+        expect(storedLifts).toContain('back-squat');
+      });
     });
 
     it('routes 1RM rows to training-maxes without double-writing them as lift-records', async () => {

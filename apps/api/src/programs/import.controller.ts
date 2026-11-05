@@ -30,6 +30,7 @@ import {
 } from '@lifting-logbook/types';
 import {
   LiftRecord,
+  LiftingProgramSpec,
   TrainingMax,
   StrengthGoalEntry,
   classifyImport,
@@ -47,6 +48,7 @@ import {
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
   liftRecordNaturalKey,
+  programSpecNaturalKey,
 } from '@lifting-logbook/core';
 import type { SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
@@ -59,7 +61,7 @@ import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
-import { effectiveSlotMapFor } from './effective-slot-map.util';
+import { customLiftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
 import {
   GoogleSheetFetchError,
@@ -434,7 +436,8 @@ export class ImportController {
 
     const validWithProgram = softResult.validRows.map(({ record }) => ({ ...record, program }));
     const existing = await repos.liftRecord.findExistingRecords(program, validWithProgram);
-    const preview = buildLiftRecordsPreviewSoft(softResult, existing);
+    const liftNames = await customLiftNamesFor(repos);
+    const preview = buildLiftRecordsPreviewSoft(softResult, existing, liftNames);
 
     // Check for 1RM rows in the valid set
     const { trainingMaxes: splitMaxes } = splitLiftRecordsByDestination(validWithProgram);
@@ -443,7 +446,7 @@ export class ImportController {
       const existingMaxes = await repos.trainingMax.getTrainingMaxes(program);
       split = {
         destination: 'training-maxes',
-        preview: buildTrainingMaxPreview(splitMaxes, existingMaxes),
+        preview: buildTrainingMaxPreview(splitMaxes, existingMaxes, liftNames),
       };
     }
 
@@ -589,10 +592,11 @@ export class ImportController {
     if (excludeKeys.size > 0) {
       if (destination === 'lift-records') {
         valid = (valid as LiftRecord[]).filter((r) => !excludeKeys.has(liftRecordNaturalKey(r)));
+      } else if (destination === 'program-spec') {
+        valid = (valid as LiftingProgramSpec[]).filter((r) => !excludeKeys.has(programSpecNaturalKey(r)));
       } else {
-        // For upsert destinations, key = lift name; all non-lift-records types have a lift field.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Records from training-maxes/strength-goals/program-spec handlers share a `lift` field; no union type exists for these three.
-        valid = valid.filter((r: any) => !excludeKeys.has(r.lift as string));
+        // Training-max and strength-goal delta keys are the lift name.
+        valid = (valid as (TrainingMax | StrengthGoalEntry)[]).filter((r) => !excludeKeys.has(r.lift));
       }
     }
 
@@ -618,7 +622,8 @@ export class ImportController {
       const existingMaxes = await repos.trainingMax.getTrainingMaxes(program);
       split = {
         destination: 'training-maxes',
-        ...previewCounts(buildTrainingMaxPreview(splitMaxes, existingMaxes)),
+        // Only counts leave this method, so the labels need no lift names.
+        ...previewCounts(buildTrainingMaxPreview(splitMaxes, existingMaxes, new Map())),
       };
     }
     return { destination, ...previewCounts(preview), ...(split ? { split } : {}) };
