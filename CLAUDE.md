@@ -270,8 +270,8 @@ and GitHub records the approval under the owner's name. **A session may approve 
 when both of these hold:**
 
 1. **The `plan-production` summary reads `No changes.`** Read it on the run page. The API and the
-   job log don't carry it, and the job stays green when the plan fails, so a passing check proves
-   nothing.
+   job log don't carry it, and the job stays green when `terraform plan` fails, so a passing check
+   proves nothing.
 2. **The session can account for the whole release.** That means every commit since the last
    successful production deployment, not just the merge that started this run: cancelled runs leave
    their merges for the next one (83157d3 took 29 commits and a migration to production at once).
