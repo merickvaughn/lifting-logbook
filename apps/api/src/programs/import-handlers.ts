@@ -1,7 +1,7 @@
 import {
   ImportError,
   ImportKind,
-  ImportPreviewResponse,
+  ImportPreview,
   ImportCommitResponse,
 } from '@lifting-logbook/types';
 import {
@@ -27,9 +27,11 @@ import {
   classifyImportRows,
   pairWithRowNumber,
   buildSkippedDetail,
+  liftRecordLabel,
   liftRecordNaturalKey,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
+import { customLiftNamesFor } from './effective-slot-map.util';
 
 export interface ImportHandler<T> {
   parse(table: SpreadsheetCell[][]): T[];
@@ -38,7 +40,7 @@ export interface ImportHandler<T> {
     valid: T[],
     program: string,
     repos: RepositoryBundle,
-  ): Promise<ImportPreviewResponse['preview']>;
+  ): Promise<ImportPreview>;
   commit(
     valid: T[],
     program: string,
@@ -48,7 +50,7 @@ export interface ImportHandler<T> {
 
 const liftRecordsHandler: ImportHandler<LiftRecord> = {
   parse: parseLiftRecords,
-  // Never actually called: ImportController.commit special-cases 'lift-records' to
+  // Never actually called: ImportController.resolveCommitRows special-cases 'lift-records' to
   // validate against a custom-lift-aware slot map (effectiveSlotMapFor) instead of
   // calling this closure (#911) — a bare DEFAULT_SLOT_MAP here would silently stop
   // recognizing a user's custom lifts. Throws rather than falling back to the wrong
@@ -58,7 +60,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
   validate: (): never => {
     throw new Error(
       "liftRecordsHandler.validate must not be called directly for 'lift-records' — " +
-        'ImportController.commit validates this destination against a custom-lift-aware ' +
+        'ImportController.resolveCommitRows validates this destination against a custom-lift-aware ' +
         'slot map via effectiveSlotMapFor instead (see effective-slot-map.util.ts, issue #911).',
     );
   },
@@ -93,6 +95,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     ];
     const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row.r);
     const created = await repos.liftRecord.appendLiftRecords(program, toCreate);
+    const liftNames = await customLiftNamesFor(repos);
     // `skipped` is derived from `created` (the DB's actual insert count), not
     // `toCreate.length` (what JS classification expected to write): a
     // concurrent import racing between findExistingRecords and
@@ -109,7 +112,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
       created,
       updated: 0,
       skipped: classified.length - created,
-      skippedDetail: buildSkippedDetail(classified),
+      skippedDetail: buildSkippedDetail(classified, (r) => liftRecordLabel(r, liftNames)),
       preImage: buildLiftRecordsPreImage(toCreate),
     };
   },
@@ -134,7 +137,7 @@ const trainingMaxesHandler: ImportHandler<TrainingMax> = {
   },
   async preview(valid, program, repos) {
     const existing = await repos.trainingMax.getTrainingMaxes(program);
-    return buildTrainingMaxPreview(valid, existing);
+    return buildTrainingMaxPreview(valid, existing, await customLiftNamesFor(repos));
   },
   async commit(valid, program, repos) {
     const existing = await repos.trainingMax.getTrainingMaxes(program);
@@ -158,7 +161,7 @@ const strengthGoalsHandler: ImportHandler<StrengthGoalEntry> = {
   },
   async preview(valid, program, repos) {
     const existing = await repos.strengthGoal.getGoals(program);
-    return buildStrengthGoalPreview(valid, existing);
+    return buildStrengthGoalPreview(valid, existing, await customLiftNamesFor(repos));
   },
   async commit(valid, program, repos) {
     const existing = await repos.strengthGoal.getGoals(program);

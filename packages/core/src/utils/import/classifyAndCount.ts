@@ -129,8 +129,9 @@ export function pairWithRowNumber<T>(rows: readonly T[]): Array<{ r: T; row: num
  */
 export function buildSkippedDetail<T>(
   classified: readonly ClassifiedRow<{ r: T; row: number }>[],
+  labelOf: (row: T) => string,
 ): SkippedRecord[] {
   return classified
     .filter((c) => c.kind === 'skip')
-    .map((c) => ({ row: c.row.row, naturalKey: c.key }));
+    .map((c) => ({ row: c.row.row, naturalKey: c.key, label: labelOf(c.row.r) }));
 }

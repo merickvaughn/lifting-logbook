@@ -143,6 +143,7 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
     const skipped = Array.from({ length: totalSkipped }, (_, i) => ({
       row: i + 1,
       naturalKey: `5-3-1-4-1-20260420-Bench Press-${i + 1}`,
+      label: `Bench Press · set ${i + 1}`,
     }));
     mockImport.mockResolvedValue({ ok: true, data: { written: 1, skipped } });
 
@@ -159,6 +160,30 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
     ).toBeInTheDocument();
   });
 
+  // #1158: the natural key holds a custom lift's id, which a person never sees.
+  it('lists a skipped row by its label, not its natural key', async () => {
+    const skipped = [
+      {
+        row: 3,
+        naturalKey: '1:1:20260101:c29d9b22-e933-4b91-8bfe-4411ac1a04e8:1',
+        label: 'Zottman Curl · macrocycle 1 workout 1 set 1 (20260101)',
+      },
+    ];
+    mockImport.mockResolvedValue({ ok: true, data: { written: 1, skipped } });
+
+    const user = userEvent.setup();
+    await uploadAndSubmit();
+
+    await screen.findByText(/Skipped rows/);
+    await user.click(screen.getByText('Skipped rows'));
+
+    const skippedRow = screen.getByRole('listitem');
+    expect(skippedRow).toHaveTextContent(
+      'Row 3: Zottman Curl · macrocycle 1 workout 1 set 1 (20260101)',
+    );
+    expect(skippedRow).not.toHaveTextContent('c29d9b22');
+  });
+
   // #911 review, tenth pass: mirrors the error list's own "no indicator when
   // not capped" guard above — without this, a `>` accidentally flipped to
   // `>=` would render "…and 0 more skipped row(s) not shown." with the rest
@@ -167,6 +192,7 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
     const skipped = Array.from({ length: 3 }, (_, i) => ({
       row: i + 1,
       naturalKey: `5-3-1-4-1-20260420-Bench Press-${i + 1}`,
+      label: `Bench Press · set ${i + 1}`,
     }));
     mockImport.mockResolvedValue({ ok: true, data: { written: 1, skipped } });
 

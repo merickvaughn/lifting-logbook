@@ -20,13 +20,17 @@ import {
   GoogleSheetWorkbookResponse,
   ImportClassification,
   ImportCommitResponse,
+  ImportDryRunResponse,
   ImportError,
   ImportKind,
+  ImportPreview,
   ImportPreviewResponse,
   ImportUndoResponse,
+  ImportWriteResult,
 } from '@lifting-logbook/types';
 import {
   LiftRecord,
+  LiftingProgramSpec,
   TrainingMax,
   StrengthGoalEntry,
   classifyImport,
@@ -44,6 +48,7 @@ import {
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
   liftRecordNaturalKey,
+  programSpecNaturalKey,
 } from '@lifting-logbook/core';
 import type { SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
@@ -56,7 +61,7 @@ import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
-import { effectiveSlotMapFor } from './effective-slot-map.util';
+import { customLiftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
 import {
   GoogleSheetFetchError,
@@ -74,8 +79,9 @@ import {
  *
  * `mode=preview` classifies the file and returns a per-kind before→after preview
  * without writing. `mode=commit` re-parses the uploaded file server-side and writes
- * idempotently. Phase 3 adds column overrides, row exclusion, lift remapping for
- * ambiguous rows, 1RM split routing, and undo.
+ * idempotently. `mode=dry-run` takes the commit's inputs and reports the counts that
+ * commit would return, also without writing (#1123). Phase 3 adds column overrides,
+ * row exclusion, lift remapping for ambiguous rows, 1RM split routing, and undo.
  */
 @Controller('programs/:program')
 export class ImportController {
@@ -98,7 +104,7 @@ export class ImportController {
     @Query('excludeKeys') legacyExcludeKeys?: string,
     @Query('liftOverrides') legacyLiftOverrides?: string,
     @Query('splitDest') splitDestParam?: string,
-  ): Promise<ImportPreviewResponse | ImportCommitResponse> {
+  ): Promise<ImportPreviewResponse | ImportCommitResponse | ImportDryRunResponse> {
     const { csvText, fields } = await readImportForm(req);
     let table = parseCsvText(csvText);
 
@@ -108,7 +114,7 @@ export class ImportController {
 
     const columnOverrides = parseJsonParam<Record<string, string>>(overridesParam);
 
-    if (mode === 'commit') {
+    if (mode === 'commit' || mode === 'dry-run') {
       if (!override) {
         throw new BadRequestException('A valid `destination` is required to commit');
       }
@@ -133,7 +139,10 @@ export class ImportController {
       const liftOverrides = parseLiftOverrides(fields.get('liftOverrides'));
       const splitDest = splitDestParam === '1';
       const repos = await this.factory.forUser(user);
-      return this.commit(program, override, table, repos, user.id, excludeKeys, liftOverrides, splitDest);
+      const rows = await this.resolveCommitRows(override, table, repos, excludeKeys, liftOverrides, splitDest);
+      return mode === 'commit'
+        ? this.commit(program, override, rows, repos, user.id)
+        : this.dryRun(program, override, rows, repos);
     }
 
     // Preview path
@@ -425,9 +434,10 @@ export class ImportController {
       return { classification, destination, columnMappings, preview: null, errors: softResult.hardErrors };
     }
 
-    const validWithProgram = softResult.valid.map((r) => ({ ...r, program }));
+    const validWithProgram = softResult.validRows.map(({ record }) => ({ ...record, program }));
     const existing = await repos.liftRecord.findExistingRecords(program, validWithProgram);
-    const preview = buildLiftRecordsPreviewSoft(softResult, existing);
+    const liftNames = await customLiftNamesFor(repos);
+    const preview = buildLiftRecordsPreviewSoft(softResult, existing, liftNames);
 
     // Check for 1RM rows in the valid set
     const { trainingMaxes: splitMaxes } = splitLiftRecordsByDestination(validWithProgram);
@@ -436,7 +446,7 @@ export class ImportController {
       const existingMaxes = await repos.trainingMax.getTrainingMaxes(program);
       split = {
         destination: 'training-maxes',
-        preview: buildTrainingMaxPreview(splitMaxes, existingMaxes),
+        preview: buildTrainingMaxPreview(splitMaxes, existingMaxes, liftNames),
       };
     }
 
@@ -465,17 +475,19 @@ export class ImportController {
     return { errors, preview: previewResult };
   }
 
-  /** Re-parse + validate + write for a destination (400 on validation errors). */
-  private async commit(
-    program: string,
+  /**
+   * Re-parses the file and applies the user's choices, giving the rows a commit writes
+   * (400 on validation errors). The commit and the dry run both start here, so the dry
+   * run's counts describe the same rows (#1123).
+   */
+  private async resolveCommitRows(
     destination: ImportKind,
     table: SpreadsheetCell[][],
     repos: RepositoryBundle,
-    userId: string,
     excludeKeys: Set<string>,
     liftOverrides: Record<string, string>,
     splitDest: boolean,
-  ): Promise<ImportCommitResponse> {
+  ): Promise<CommitRows> {
     // Parse before any transforms: liftOverrides must remap before strict validation
     // because the strict validator rejects unknown-lift rows outright.
     const handler = IMPORT_HANDLERS[destination]!;
@@ -492,7 +504,7 @@ export class ImportController {
     }
 
     // Apply lift overrides BEFORE strict validation so remapped names pass the slot map check.
-    // Must run before the ambiguous-row exclusion filter below: both key off
+    // Must run before the row exclusion filter below: both key off
     // the row's position in `parsed` as originally parsed (1-based), and
     // .filter() (unlike this .map()) changes array length/indices — reversing
     // the order would silently apply row N's override to whatever shifted
@@ -504,13 +516,17 @@ export class ImportController {
       });
     }
 
-    // An ambiguous OR incomplete lift-records row's excludeKeys entry uses
-    // the client's `__ambiguous_<rowIndex>` / `__incomplete_<rowIndex>` key
-    // schemes (buildImportPreview.ts) — never a natural key, so the
+    // A tab opened before #1123 sends an ambiguous OR incomplete lift-records
+    // row's excludeKeys entry as `__ambiguous_<rowIndex>` / `__incomplete_<rowIndex>`
+    // (buildImportPreview.ts) — never a natural key, so the
     // natural-key excludeKeys filter further below can't match either
     // (issue #915, fully resolved here — both statuses share the identical
     // failure mode: no other in-wizard repair path, and an excluded row that
     // still reached strict validation used to fail the WHOLE commit).
+    //
+    // `__row_<rowIndex>` is what the wizard sends now, for any row: two rows can
+    // share a natural key, and excluding one must leave the other (#1123). It
+    // applies to every destination whose preview gives its rows a rowIndex.
     //
     // Filtering also shortens `parsed`, which would otherwise mis-number
     // every subsequent row's validation-error `row` field —
@@ -519,17 +535,17 @@ export class ImportController {
     // errors are remapped back to it after validation runs, so a failed
     // commit still points at the right CSV line.
     let survivingRowOriginalIndexes: number[] | null = null;
-    if (destination === 'lift-records' && excludeKeys.size > 0) {
+    if (excludeKeys.size > 0) {
       const excludedRowIndexes = new Set(
         [...excludeKeys]
-          .map((k) => /^__(?:ambiguous|incomplete)_(\d+)$/.exec(k)?.[1])
+          .map((k) => /^__(?:ambiguous|incomplete|row)_(\d+)$/.exec(k)?.[1])
           .filter((s): s is string => s !== undefined)
           .map(Number),
       );
       if (excludedRowIndexes.size > 0) {
-        const kept: LiftRecord[] = [];
+        const kept: unknown[] = [];
         const originalIndexes: number[] = [];
-        (parsed as LiftRecord[]).forEach((r, i) => {
+        parsed.forEach((r, i) => {
           const originalRowIndex = i + 1;
           if (excludedRowIndexes.has(originalRowIndex)) return;
           kept.push(r);
@@ -549,16 +565,10 @@ export class ImportController {
     // trainingMaxesHandler.validate / strengthGoalsHandler.validate (import-handlers.ts)
     // are unreachable for their destinations as a result, but stay in place (throwing
     // unconditionally) to satisfy the ImportHandler<T> interface program-spec still uses.
-    // Only lift-records ever filters rows via survivingRowOriginalIndexes above, so only
-    // its branch needs the row-number remap.
     let rawValid: unknown[];
     let errors: ImportError[];
     if (destination === 'lift-records') {
       ({ valid: rawValid, errors } = validateLiftImport(parsed as LiftRecord[], await effectiveSlotMapFor(repos)));
-      if (survivingRowOriginalIndexes) {
-        const originalIndexes = survivingRowOriginalIndexes;
-        errors = errors.map((e) => ({ ...e, row: originalIndexes[e.row - 1] ?? e.row }));
-      }
     } else if (destination === 'training-maxes') {
       ({ valid: rawValid, errors } = validateTrainingMaxImport(parsed as TrainingMax[], await effectiveSlotMapFor(repos)));
     } else if (destination === 'strength-goals') {
@@ -568,40 +578,76 @@ export class ImportController {
       ({ valid: rawValid, errors } = handler.validate(parsed as any));
     }
     if (errors.length > 0) {
-      throw new BadRequestException({ message: 'Validation failed', errors });
+      const originalIndexes = survivingRowOriginalIndexes;
+      throw new BadRequestException({
+        message: 'Validation failed',
+        errors: originalIndexes
+          ? errors.map((e) => ({ ...e, row: originalIndexes[e.row - 1] ?? e.row }))
+          : errors,
+      });
     }
     let valid: unknown[] = rawValid;
 
-    // Filter excluded keys
+    // Filter excluded keys. Only a tab opened before #1123 still sends these.
     if (excludeKeys.size > 0) {
       if (destination === 'lift-records') {
         valid = (valid as LiftRecord[]).filter((r) => !excludeKeys.has(liftRecordNaturalKey(r)));
+      } else if (destination === 'program-spec') {
+        valid = (valid as LiftingProgramSpec[]).filter((r) => !excludeKeys.has(programSpecNaturalKey(r)));
       } else {
-        // For upsert destinations, key = lift name; all non-lift-records types have a lift field.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Records from training-maxes/strength-goals/program-spec handlers share a `lift` field; no union type exists for these three.
-        valid = valid.filter((r: any) => !excludeKeys.has(r.lift as string));
+        // Training-max and strength-goal delta keys are the lift name.
+        valid = (valid as (TrainingMax | StrengthGoalEntry)[]).filter((r) => !excludeKeys.has(r.lift));
       }
     }
 
     // For splitDest, partition before committing to avoid double-writing 1RM rows as lift-records
-    const validToCommit = (destination === 'lift-records' && splitDest)
-      ? splitLiftRecordsByDestination(valid as LiftRecord[]).liftRecords
-      : valid;
+    if (destination === 'lift-records' && splitDest) {
+      const { liftRecords, trainingMaxes } = splitLiftRecordsByDestination(valid as LiftRecord[]);
+      return { rows: liftRecords, splitMaxes: trainingMaxes };
+    }
+    return { rows: valid, splitMaxes: [] };
+  }
 
+  /** The counts {@link commit} would return for these rows, without writing them (#1123). */
+  private async dryRun(
+    program: string,
+    destination: ImportKind,
+    { rows, splitMaxes }: CommitRows,
+    repos: RepositoryBundle,
+  ): Promise<ImportDryRunResponse> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
-    const { preImage, ...commitCounts } = await handler.commit(validToCommit as any, program, repos);
+    const preview = await IMPORT_HANDLERS[destination].preview(rows as any, program, repos);
+    let split: ImportDryRunResponse['split'];
+    if (splitMaxes.length > 0) {
+      const existingMaxes = await repos.trainingMax.getTrainingMaxes(program);
+      split = {
+        destination: 'training-maxes',
+        // Only counts leave this method, so the labels need no lift names.
+        ...previewCounts(buildTrainingMaxPreview(splitMaxes, existingMaxes, new Map())),
+      };
+    }
+    return { destination, ...previewCounts(preview), ...(split ? { split } : {}) };
+  }
+
+  /** Writes the rows {@link resolveCommitRows} produced. */
+  private async commit(
+    program: string,
+    destination: ImportKind,
+    { rows, splitMaxes }: CommitRows,
+    repos: RepositoryBundle,
+    userId: string,
+  ): Promise<ImportCommitResponse> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
+    const { preImage, ...commitCounts } = await IMPORT_HANDLERS[destination].commit(rows as any, program, repos);
 
     // Phase 3: 1RM split for lift-records — commit the TM partition after lift-records
     let splitResult: ImportCommitResponse['split'] | undefined;
-    if (destination === 'lift-records' && splitDest) {
-      const { trainingMaxes } = splitLiftRecordsByDestination(valid as LiftRecord[]);
-      if (trainingMaxes.length > 0) {
-        const existingMaxes = await repos.trainingMax.getTrainingMaxes(program);
-        const tmResult = await repos.trainingMax.importTrainingMaxes(program, trainingMaxes);
-        const tmPreImage = buildTrainingMaxPreImage(trainingMaxes, existingMaxes);
-        Object.assign(preImage, tmPreImage);
-        splitResult = { destination: 'training-maxes', ...tmResult };
-      }
+    if (splitMaxes.length > 0) {
+      const existingMaxes = await repos.trainingMax.getTrainingMaxes(program);
+      const tmResult = await repos.trainingMax.importTrainingMaxes(program, splitMaxes);
+      const tmPreImage = buildTrainingMaxPreImage(splitMaxes, existingMaxes);
+      Object.assign(preImage, tmPreImage);
+      splitResult = { destination: 'training-maxes', ...tmResult };
     }
 
     // Save import batch for undo; best-effort — a save failure leaves batchId null but the
@@ -670,6 +716,13 @@ export class ImportController {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     return handler.validate(parsed as any);
   }
+}
+
+/** The rows a commit writes: to its destination, and 1RM rows split off to training maxes. */
+type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[] };
+
+function previewCounts(preview: ImportPreview): ImportWriteResult {
+  return { created: preview.creates, updated: preview.updates, skipped: preview.skips };
 }
 
 /**

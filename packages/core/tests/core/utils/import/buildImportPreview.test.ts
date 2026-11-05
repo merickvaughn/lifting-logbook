@@ -16,6 +16,9 @@ import type {
   LiftingProgramSpec,
 } from "@src/core";
 
+const NO_CUSTOM_LIFTS = new Map<string, string>();
+const CUSTOM_LIFTS = new Map([["custom-id", "Cable Curl"]]);
+
 const liftRecord = (over: Partial<LiftRecord> = {}): LiftRecord => ({
   program: "p",
   macrocycleNum: 1,
@@ -62,16 +65,45 @@ describe("buildLiftRecordsPreviewSoft", () => {
   it("counts incomplete and ambiguous rows as unresolved, not as creates (#1114)", () => {
     const preview = buildLiftRecordsPreviewSoft(
       {
-        valid: [liftRecord(), liftRecord({ setNum: 2 })],
+        validRows: [
+          { record: liftRecord(), rowIndex: 1 },
+          { record: liftRecord({ setNum: 2 }), rowIndex: 2 },
+        ],
         incomplete: [{ record: liftRecord({ setNum: 3 }), rowIndex: 3, errors: [] }],
         ambiguous: [{ record: liftRecord({ setNum: 4 }), rowIndex: 4, originalLift: "Mystery Lift" }],
         hardErrors: [],
       },
       [liftRecord({ setNum: 2 })],
+      NO_CUSTOM_LIFTS,
     );
 
     expect(preview).toMatchObject({ creates: 1, updates: 0, skips: 1, unresolved: 2 });
     expect(preview.deltas).toHaveLength(4);
+  });
+
+  it("labels a custom lift's create and skip rows by name, keeps the id in the key, and leaves other lifts alone (#1125)", () => {
+    const preview = buildLiftRecordsPreviewSoft(
+      {
+        validRows: [
+          { record: liftRecord({ lift: "custom-id", setNum: 1 }), rowIndex: 1 },
+          { record: liftRecord({ lift: "custom-id", setNum: 2 }), rowIndex: 2 },
+          { record: liftRecord({ setNum: 3 }), rowIndex: 3 },
+        ],
+        incomplete: [],
+        ambiguous: [],
+        hardErrors: [],
+      },
+      [liftRecord({ lift: "custom-id", setNum: 2 })],
+      CUSTOM_LIFTS,
+    );
+
+    const [created, skipped, builtIn] = preview.deltas;
+    expect(created).toMatchObject({ kind: "create" });
+    expect(created!.label).toMatch(/^Cable Curl · /);
+    expect(created!.key).toContain("custom-id");
+    expect(skipped).toMatchObject({ kind: "skip" });
+    expect(skipped!.label).toMatch(/^Cable Curl · /);
+    expect(builtIn!.label).toMatch(/^back-squat · /);
   });
 });
 
@@ -85,10 +117,21 @@ describe("buildTrainingMaxPreview", () => {
   it("classifies create / update / skip by weight change", () => {
     const existing = [tm("squat", 300), tm("bench", 200)];
     const incoming = [tm("squat", 310), tm("bench", 200), tm("deadlift", 400)];
-    const preview = buildTrainingMaxPreview(incoming, existing);
+    const preview = buildTrainingMaxPreview(incoming, existing, NO_CUSTOM_LIFTS);
     expect(preview).toMatchObject({ creates: 1, updates: 1, skips: 1 });
     const update = preview.deltas.find((d) => d.kind === "update");
     expect(update).toMatchObject({ before: "300", after: "310" });
+  });
+
+  it("labels a custom lift by name and keeps its id in the key (#1125)", () => {
+    const preview = buildTrainingMaxPreview(
+      [tm("custom-id", 110)],
+      [tm("custom-id", 100)],
+      CUSTOM_LIFTS,
+    );
+    expect(preview.deltas).toEqual([
+      { key: "custom-id", label: "Cable Curl", kind: "update", before: "100", after: "110" },
+    ]);
   });
 
   // #1117: two rows resolving to one lift, e.g. `OH Press-HV` and `OH Press`.
@@ -105,7 +148,7 @@ describe("buildTrainingMaxPreview", () => {
       ["older row first", [older, newer]],
       ["newer row first", [newer, older]],
     ])("previews the most recent row and skips the other (%s)", (_name, incoming) => {
-      const preview = buildTrainingMaxPreview(incoming, []);
+      const preview = buildTrainingMaxPreview(incoming, [], NO_CUSTOM_LIFTS);
       expect(preview).toMatchObject({ creates: 1, updates: 0, skips: 1 });
       expect(preview.deltas[0]).toMatchObject({
         key: "overhead-press",
@@ -120,7 +163,7 @@ describe("buildTrainingMaxPreview", () => {
     });
 
     it("compares the most recent row against the stored max", () => {
-      const preview = buildTrainingMaxPreview([older, newer], [dated(110, "2025-01-01")]);
+      const preview = buildTrainingMaxPreview([older, newer], [dated(110, "2025-01-01")], NO_CUSTOM_LIFTS);
       // 110 is already stored, so the newest row is a skip; the older 95 must not
       // read as an update that would lower the max.
       expect(preview).toMatchObject({ creates: 0, updates: 0, skips: 2 });
@@ -167,8 +210,21 @@ describe("buildStrengthGoalPreview", () => {
   it("classifies create / update / skip by goal value", () => {
     const existing = [goal("squat", 400)];
     const incoming = [goal("squat", 405), goal("bench", 275)];
-    const preview = buildStrengthGoalPreview(incoming, existing);
+    const preview = buildStrengthGoalPreview(incoming, existing, NO_CUSTOM_LIFTS);
     expect(preview).toMatchObject({ creates: 1, updates: 1, skips: 0 });
+  });
+
+  it("gives each row its position, including a repeat of an earlier lift (#1123)", () => {
+    const preview = buildStrengthGoalPreview([goal("squat", 400), goal("squat", 405)], [], NO_CUSTOM_LIFTS);
+    expect(preview.deltas.map((d) => [d.key, d.rowIndex])).toEqual([
+      ["squat", 1],
+      ["squat#1", 2],
+    ]);
+  });
+
+  it("labels a custom lift by name and keeps its id in the key (#1125)", () => {
+    const preview = buildStrengthGoalPreview([goal("custom-id", 100)], [], CUSTOM_LIFTS);
+    expect(preview.deltas[0]).toMatchObject({ key: "custom-id", label: "Cable Curl" });
   });
 });
 
@@ -186,6 +242,11 @@ describe("buildProgramSpecPreview", () => {
     wtDecrementPct: 0.1,
     activation: "",
     ...over,
+  });
+
+  it("gives each row its position (#1123)", () => {
+    const preview = buildProgramSpecPreview([spec({ order: 1 }), spec({ order: 2 })], []);
+    expect(preview.deltas.map((d) => d.rowIndex)).toEqual([1, 2]);
   });
 
   it("keys on week:offset:lift:order and detects config changes", () => {

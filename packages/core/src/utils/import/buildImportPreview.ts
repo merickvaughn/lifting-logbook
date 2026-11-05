@@ -17,7 +17,18 @@ import { LiftImportSoftResult } from './validateLiftImportSoft';
  * Each returns `{ creates, updates, skips, unresolved, deltas }` by comparing the incoming
  * (validated) rows against what is already stored, using the same key each
  * type's write path keys on. No I/O — the caller supplies the existing rows.
+ *
+ * Validation resolves a custom lift's name to its id, and rows are stored and keyed
+ * by that id. `liftNames` (custom lift id → name) turns it back into a name for the
+ * labels a person reads (#1125); keys keep the id.
  */
+
+type LiftNames = ReadonlyMap<string, string>;
+
+/** A lift-records row as a person reads it, on the Review and Done steps. */
+export function liftRecordLabel(r: LiftRecord, liftNames: LiftNames): string {
+  return `${liftNames.get(r.lift) ?? r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+}
 
 function tally(deltas: ImportDelta[]): ImportPreview {
   // Incomplete and ambiguous rows are 'create' deltas so REVIEW can offer fixes,
@@ -113,24 +124,25 @@ export function buildLiftRecordsPreview(
 export function buildLiftRecordsPreviewSoft(
   softResult: LiftImportSoftResult,
   existing: LiftRecord[],
+  liftNames: LiftNames,
 ): ImportPreview {
   const existingKeys = new Set(existing.map(liftRecordNaturalKey));
   const deltas: ImportDelta[] = [];
   const seenCounts = new Map<string, number>();
 
   // Valid rows — normal create/skip classification
-  for (const { row: r, kind, key } of classifyImportRows(
-    softResult.valid,
-    liftRecordNaturalKey,
+  for (const { row: { record: r, rowIndex }, kind, key } of classifyImportRows(
+    softResult.validRows,
+    ({ record }) => liftRecordNaturalKey(record),
     (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
   )) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
-    const label = `${r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+    const label = liftRecordLabel(r, liftNames);
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
-        ? { key: displayKey, label, kind, before: value, after: value }
-        : { key: displayKey, label, kind, after: value },
+        ? { key: displayKey, label, kind, before: value, after: value, rowIndex }
+        : { key: displayKey, label, kind, after: value, rowIndex },
     );
   }
 
@@ -215,6 +227,7 @@ export function strengthGoalRowKind(
 export function buildTrainingMaxPreview(
   incoming: TrainingMax[],
   existing: TrainingMax[],
+  liftNames: LiftNames,
 ): ImportPreview {
   const existingByLift = new Map(existing.map((m) => [m.lift, m.weight]));
   const deltas: ImportDelta[] = [];
@@ -226,12 +239,13 @@ export function buildTrainingMaxPreview(
     (m) => trainingMaxRowKind(m, existingByLift),
   )) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
+    const label = liftNames.get(m.lift) ?? m.lift;
     const after = `${m.weight}`;
     const before = existingByLift.get(m.lift);
     deltas.push(
       before === undefined
-        ? { key: displayKey, label: m.lift, kind, after }
-        : { key: displayKey, label: m.lift, kind, before: `${before}`, after },
+        ? { key: displayKey, label, kind, after }
+        : { key: displayKey, label, kind, before: `${before}`, after },
     );
   }
   return tally(deltas);
@@ -243,27 +257,35 @@ function goalValue(g: StrengthGoalEntry): string {
     : `${g.target} ${g.unit}`;
 }
 
-/** Strength goals upsert by `lift`: create if absent, update if any field differs, else skip. */
+/**
+ * Strength goals upsert by `lift`: create if absent, update if any field differs, else skip.
+ * A delta's `rowIndex` is the row's position in `incoming`, so `incoming` must be every parsed
+ * row, in order, for it to name the same row at commit.
+ */
 export function buildStrengthGoalPreview(
   incoming: StrengthGoalEntry[],
   existing: StrengthGoalEntry[],
+  liftNames: LiftNames,
 ): ImportPreview {
   const existingByLift = new Map(existing.map((g) => [g.lift, g]));
   const deltas: ImportDelta[] = [];
   const seenCounts = new Map<string, number>();
 
+  let rowIndex = 0;
   for (const { row: g, kind, key } of classifyImportRows(
     incoming,
     (g) => g.lift,
     (g) => strengthGoalRowKind(g, existingByLift),
   )) {
+    rowIndex += 1;
     const displayKey = dedupeDisplayKey(key, seenCounts);
+    const label = liftNames.get(g.lift) ?? g.lift;
     const after = goalValue(g);
     const prior = existingByLift.get(g.lift);
     deltas.push(
       prior
-        ? { key: displayKey, label: g.lift, kind, before: goalValue(prior), after }
-        : { key: displayKey, label: g.lift, kind, after },
+        ? { key: displayKey, label, kind, before: goalValue(prior), after, rowIndex }
+        : { key: displayKey, label, kind, after, rowIndex },
     );
   }
   return tally(deltas);
@@ -303,7 +325,11 @@ export function programSpecRowKind(
   return programSpecComparable(prior) === programSpecComparable(r) ? 'skip' : 'update';
 }
 
-/** Program-spec rows upsert by natural key: create if absent, update if config differs, else skip. */
+/**
+ * Program-spec rows upsert by natural key: create if absent, update if config differs, else skip.
+ * A delta's `rowIndex` is the row's position in `incoming`, so `incoming` must be every parsed
+ * row, in order, for it to name the same row at commit.
+ */
 export function buildProgramSpecPreview(
   incoming: LiftingProgramSpec[],
   existing: LiftingProgramSpec[],
@@ -312,11 +338,13 @@ export function buildProgramSpecPreview(
   const deltas: ImportDelta[] = [];
   const seenCounts = new Map<string, number>();
 
+  let rowIndex = 0;
   for (const { row: r, kind, key } of classifyImportRows(
     incoming,
     programSpecNaturalKey,
     (r) => programSpecRowKind(r, existingByKey),
   )) {
+    rowIndex += 1;
     // Lookup uses the true natural key `key`, not the disambiguated display
     // key below — an in-batch duplicate still describes the same stored (or
     // about-to-be-created) spec row as its first occurrence.
@@ -326,8 +354,8 @@ export function buildProgramSpecPreview(
     const after = specValue(r);
     deltas.push(
       prior
-        ? { key: displayKey, label, kind, before: specValue(prior), after }
-        : { key: displayKey, label, kind, after },
+        ? { key: displayKey, label, kind, before: specValue(prior), after, rowIndex }
+        : { key: displayKey, label, kind, after, rowIndex },
     );
   }
   return tally(deltas);

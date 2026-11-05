@@ -15,6 +15,8 @@ import { MAX_XLSX_PART_BYTES } from '../adapters/google-sheets/xlsx-to-tables';
 import { RLS_SKIP_TX } from '../adapters/prisma/rls-context';
 import { ImportController, suggestedKindFor } from './import.controller';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS } from './import-file.util';
+import { IRepositoryFactory } from '../ports/factory';
+import { REPOSITORY_FACTORY } from '../ports/tokens';
 // By path, not package name: apps/api does not depend on the client, and the
 // package resolves to a dist/ this suite should not need built.
 import { createApiClient } from '../../../../packages/api-client/src/index';
@@ -238,7 +240,11 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(second.skipped).toBe(1);
       // Row 1 is the only (and thus 1-based-first) data row in LIFT_CSV.
       expect(second.skippedDetail).toEqual([
-        { row: 1, naturalKey: '1:1:20260101:bench-press:1' },
+        {
+          row: 1,
+          naturalKey: '1:1:20260101:bench-press:1',
+          label: 'bench-press · macrocycle 1 workout 1 set 1 (20260101)',
+        },
       ]);
     });
 
@@ -267,8 +273,16 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(second).toMatchObject({ created: 0, skipped: 2 });
       // Both rows are reported by row number and full (date-inclusive) natural key.
       expect(second.skippedDetail).toEqual([
-        { row: 1, naturalKey: '1:1:20251216:bench-press:1' },
-        { row: 2, naturalKey: '1:1:20240112:bench-press:1' },
+        {
+          row: 1,
+          naturalKey: '1:1:20251216:bench-press:1',
+          label: 'bench-press · macrocycle 1 workout 1 set 1 (20251216)',
+        },
+        {
+          row: 2,
+          naturalKey: '1:1:20240112:bench-press:1',
+          label: 'bench-press · macrocycle 1 workout 1 set 1 (20240112)',
+        },
       ]);
     });
 
@@ -561,6 +575,58 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.preview.deltas[0].status).not.toBe('ambiguous');
     });
 
+    // #1125: the row is stored under the lift's id, but Review shows the label.
+    it('labels a lift-records row mapped to a custom lift with its name, not its id', async () => {
+      const created = await createCustomLift({
+        name: 'Label Check Curls',
+        classification: 'accessory',
+      });
+      expect(created.statusCode).toBe(201);
+      const { id: customLiftId } = created.json();
+
+      const res = (
+        await importCsv(
+          'p3-custom-lift-label',
+          [
+            'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+            '5-3-1,1,1,2026-01-01,Label Check Curls,1,90,10,',
+          ].join('\n'),
+          '?mode=preview&destination=lift-records',
+        )
+      ).json();
+
+      expect(res.errors).toEqual([]);
+      expect(res.preview.deltas).toHaveLength(1);
+      expect(res.preview.deltas[0].label).toContain('Label Check Curls');
+      expect(res.preview.deltas[0].label).not.toContain(customLiftId);
+    });
+
+    // #1158: the skip stays keyed by the id, but the Done step shows the label.
+    it('labels a re-committed custom-lift row skip with its name, not its id', async () => {
+      const created = await createCustomLift({
+        name: 'Skip Label Curls',
+        classification: 'accessory',
+      });
+      expect(created.statusCode).toBe(201);
+      const { id: customLiftId } = created.json();
+      const csv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Skip Label Curls,1,90,10,',
+      ].join('\n');
+      const query = '?mode=commit&destination=lift-records';
+
+      expect((await importCsv('p3-custom-lift-skip', csv, query)).json().created).toBe(1);
+      const second = (await importCsv('p3-custom-lift-skip', csv, query)).json();
+
+      expect(second.skippedDetail).toEqual([
+        {
+          row: 1,
+          naturalKey: `1:1:20260101:${customLiftId}:1`,
+          label: 'Skip Label Curls · macrocycle 1 workout 1 set 1 (20260101)',
+        },
+      ]);
+    });
+
     // #911: liftOverrides may now resolve to a custom lift's id (not just a
     // built-in canonical id) — the self-mapping half of buildEffectiveSlotMap
     // must let an already-resolved custom-lift id pass strict validation.
@@ -591,9 +657,9 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     // per request from DEFAULT_SLOT_MAP + the user's custom lifts too (previously
     // only lift-records was custom-lift-aware, #911) — a CSV row whose raw text
     // matches an existing custom lift's name resolves to that lift's id instead of
-    // passing through as raw display text. buildTrainingMaxPreview's delta `label`
+    // passing through as raw display text. buildTrainingMaxPreview's delta `key`
     // carries the resolved `lift` value, so asserting on it proves resolution
-    // without needing a separate read endpoint.
+    // without needing a separate read endpoint; `label` carries the name (#1125).
     it('resolves an existing custom lift by name for a training-maxes import', async () => {
       const created = await createCustomLift({
         name: 'TM Import Custom Lift',
@@ -616,11 +682,14 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.errors).toEqual([]);
       expect(res.preview).not.toBeNull();
       expect(res.preview.deltas).toHaveLength(1);
-      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create', label: customLiftId });
+      expect(res.preview.deltas[0]).toMatchObject({
+        kind: 'create',
+        key: customLiftId,
+        label: 'TM Import Custom Lift',
+      });
     });
 
-    // Same as above, for strength-goals (buildStrengthGoalPreview's delta `label`
-    // also carries the resolved `lift` value).
+    // Same as above, for strength-goals.
     it('resolves an existing custom lift by name for a strength-goals import', async () => {
       const created = await createCustomLift({
         name: 'Goal Import Custom Lift',
@@ -646,7 +715,11 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.errors).toEqual([]);
       expect(res.preview).not.toBeNull();
       expect(res.preview.deltas).toHaveLength(1);
-      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create', label: customLiftId });
+      expect(res.preview.deltas[0]).toMatchObject({
+        kind: 'create',
+        key: customLiftId,
+        label: 'Goal Import Custom Lift',
+      });
     });
 
     // #914: this splitDest interaction was the second trigger discovered for this
@@ -727,6 +800,115 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.skippedDetail).toEqual([]);
     });
 
+    // #1122: each destination's delta key has its own shape, and the wizard sends
+    // it back verbatim. These tests take the key from a real preview rather than
+    // spelling it out, so they pin the contract between the two modes.
+    describe('excluding a row by the key its preview returned (#1122)', () => {
+      const previewDeltas = async (program: string, csv: string, destination: ImportKind) => {
+        const body = (
+          await importCsv(program, csv, `?mode=preview&destination=${destination}`)
+        ).json() as ImportPreviewResponse;
+        expect(body.errors).toEqual([]);
+        return body.preview!.deltas;
+      };
+
+      const readBack = async <T,>(program: string, resource: string): Promise<T[]> =>
+        (
+          await app.getHttpAdapter().getInstance().inject({
+            method: 'GET',
+            url: `/programs/${program}/${resource}`,
+            headers: AUTH,
+          })
+        ).json() as T[];
+
+      type SpecRow = { week: number; offset: number; lift: string; order: number; sets: number };
+      const specKey = (r: SpecRow) => `${r.week}:${r.offset}:${r.lift}:${r.order}`;
+
+      const SPEC_HEADER =
+        'Week,Offset,Lift,Increment,Order,Sets,Reps,AMRAP?,Warm-Up %,WT Decrement %,Activation';
+      const specCsv = (sets: number) =>
+        [
+          SPEC_HEADER,
+          // Two rows share a lift, so excluding one by its key can't be mistaken
+          // for excluding by lift name.
+          `1,0,Bench P.,2.5,1,${sets},8,TRUE,.6,0.05,Band Flye`,
+          `2,0,Bench P.,2.5,1,${sets},8,TRUE,.6,0.05,Band Flye`,
+          `1,2,Squat,5,1,${sets},8,TRUE,.6,0.05,Band Flye`,
+        ].join('\n');
+
+      it('omits only the excluded program-spec row from the stored spec', async () => {
+        const program = '22222222-2222-2222-2222-222222221122';
+        const deltas = await previewDeltas(program, specCsv(3), 'program-spec');
+        expect(deltas).toHaveLength(3);
+        const excluded = deltas.find((d) => d.label.startsWith('Week 2'))!;
+
+        const res = await importCsv(program, specCsv(3), '?mode=commit&destination=program-spec', {
+          excludeKeys: JSON.stringify([excluded.key]),
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toMatchObject({ created: 2, updated: 0, skipped: 0 });
+
+        const stored = await readBack<SpecRow>(program, 'spec');
+        expect(stored.map(specKey).sort()).toEqual(
+          deltas
+            .map((d) => d.key)
+            .filter((k) => k !== excluded.key)
+            .sort(),
+        );
+      });
+
+      it('leaves a stored program-spec row unchanged when its update is excluded', async () => {
+        const program = '33333333-3333-3333-3333-333333331122';
+        await importCsv(program, specCsv(3), '?mode=commit&destination=program-spec');
+
+        const deltas = await previewDeltas(program, specCsv(5), 'program-spec');
+        expect(deltas.map((d) => d.kind)).toEqual(['update', 'update', 'update']);
+        const excluded = deltas.find((d) => d.label.startsWith('Week 2'))!;
+
+        const res = await importCsv(program, specCsv(5), '?mode=commit&destination=program-spec', {
+          excludeKeys: JSON.stringify([excluded.key]),
+        });
+        expect(res.json()).toMatchObject({ created: 0, updated: 2, skipped: 0 });
+
+        const stored = await readBack<SpecRow>(program, 'spec');
+        const setsByKey = Object.fromEntries(stored.map((r) => [specKey(r), r.sets]));
+        expect(setsByKey).toEqual(
+          Object.fromEntries(deltas.map((d) => [d.key, d.key === excluded.key ? 3 : 5])),
+        );
+      });
+
+      it('omits only the excluded training max', async () => {
+        const program = 'p1122-tm-exclude';
+        const csv = ['Date Updated,Lift,Weight', '12/29/2025,Bench P.,182.5', '12/29/2025,Squat,300'].join('\n');
+        const deltas = await previewDeltas(program, csv, 'training-maxes');
+        expect(deltas.map((d) => d.key).sort()).toEqual(['back-squat', 'bench-press']);
+
+        const res = await importCsv(program, csv, '?mode=commit&destination=training-maxes', {
+          excludeKeys: JSON.stringify(['bench-press']),
+        });
+        expect(res.json()).toMatchObject({ created: 1 });
+
+        const stored = await readBack<{ lift: string }>(program, 'training-maxes');
+        expect(stored.map((m) => m.lift)).toEqual(['back-squat']);
+      });
+
+      it('omits only the excluded strength goal', async () => {
+        const program = 'p1122-sg-exclude';
+        const deltas = await previewDeltas(program, GOALS_CSV, 'strength-goals');
+        expect(deltas.map((d) => d.key)).toContain('bench-press');
+
+        const res = await importCsv(program, GOALS_CSV, '?mode=commit&destination=strength-goals', {
+          excludeKeys: JSON.stringify(['bench-press']),
+        });
+        expect(res.statusCode).toBe(200);
+
+        const stored = await readBack<{ lift: string }>(program, 'strength-goals');
+        const storedLifts = stored.map((g) => g.lift);
+        expect(storedLifts).not.toContain('bench-press');
+        expect(storedLifts).toContain('back-squat');
+      });
+    });
+
     it('routes 1RM rows to training-maxes without double-writing them as lift-records', async () => {
       const res = (
         await importCsv(
@@ -755,7 +937,11 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       // against — see ImportCommitResponse.skippedDetail on row numbering after
       // splitDest/excludeKeys filtering.
       expect(reCommit.skippedDetail).toEqual([
-        { row: 1, naturalKey: '1:1:20260101:bench-press:1' },
+        {
+          row: 1,
+          naturalKey: '1:1:20260101:bench-press:1',
+          label: 'bench-press · macrocycle 1 workout 1 set 1 (20260101)',
+        },
       ]);
     });
 
@@ -1012,6 +1198,204 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
 
       const retry = await importCsv(program, LIFT_CSV, COMMIT);
       expect(retry.json().created).toBe(1);
+    });
+  });
+
+  describe('dry run (mode=dry-run) matches the commit (#1123)', () => {
+    const HEADER = 'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes';
+    const LIFTS = 'destination=lift-records&splitDest=1';
+    const MAXES = 'destination=training-maxes';
+
+    const csv = (...rows: string[]) => [HEADER, ...rows].join('\n');
+    const maxesCsv = (...rows: string[]) => ['Date Updated,Lift,Weight', ...rows].join('\n');
+
+    /**
+     * Runs the dry run, then the commit, with the same inputs, and returns the counts
+     * both reported. Comparing against a real commit also proves the dry run wrote
+     * nothing: a row it had written would come back from the commit as a skip.
+     */
+    const dryRunThenCommit = async (
+      program: string,
+      file: string,
+      query: string,
+      fields: Record<string, string> = {},
+    ) => {
+      const dryRun = await importCsv(program, file, `?mode=dry-run&${query}`, fields);
+      expect(dryRun.statusCode).toBe(200);
+      const commit = await importCsv(program, file, `?mode=commit&${query}`, fields);
+      expect(commit.statusCode).toBe(200);
+      const { destination, created, updated, skipped, split } = commit.json();
+      expect(dryRun.json()).toEqual({
+        destination,
+        created,
+        updated,
+        skipped,
+        ...(split ? { split } : {}),
+      });
+      return commit.json();
+    };
+
+    // Through the repository: GET lift-records needs a macrocycle dashboard these programs lack.
+    const storedRecords = async (program: string) => {
+      const repos = await app
+        .get<IRepositoryFactory>(REPOSITORY_FACTORY)
+        .forUser({ id: process.env.DEV_USER_ID || 'dev-token', email: 'dev@example.com', provider: 'dev' });
+      return repos.liftRecord.getLiftRecords(program, 1);
+    };
+
+    it('case 1: an excluded ordinary row is not counted', async () => {
+      const res = await dryRunThenCommit(
+        'p1123-case1',
+        csv('5-3-1,1,1,2026-01-01,Bench P.,1,180,5,', '5-3-1,1,1,2026-01-01,Squat,1,250,5,'),
+        LIFTS,
+        { excludeKeys: JSON.stringify(['__row_2']) },
+      );
+      expect(res).toMatchObject({ created: 1, skipped: 0 });
+    });
+
+    it('case 2: a row remapped onto another row in the file counts as a skip', async () => {
+      const res = await dryRunThenCommit(
+        'p1123-case2-file',
+        csv('5-3-1,1,1,2026-01-01,Bench P.,1,180,5,', '5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,180,5,'),
+        LIFTS,
+        { liftOverrides: JSON.stringify({ '2': 'bench-press' }) },
+      );
+      expect(res).toMatchObject({ created: 1, skipped: 1 });
+    });
+
+    it('case 2: a row remapped onto a stored row counts as a skip', async () => {
+      const program = 'p1123-case2-stored';
+      await importCsv(program, csv('5-3-1,1,1,2026-01-01,Bench P.,1,180,5,'), `?mode=commit&${LIFTS}`);
+      const res = await dryRunThenCommit(
+        program,
+        csv('5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,180,5,'),
+        LIFTS,
+        { liftOverrides: JSON.stringify({ '1': 'bench-press' }) },
+      );
+      expect(res).toMatchObject({ created: 0, skipped: 1 });
+    });
+
+    it.each([
+      ['the second', 2, 180],
+      ['the first', 1, 185],
+    ])('case 3: excluding %s of two same-key rows writes the other', async (_label, row, weight) => {
+      const program = `p1123-case3-${row}`;
+      const res = await dryRunThenCommit(
+        program,
+        csv('5-3-1,1,1,2026-01-01,Bench P.,1,180,5,', '5-3-1,1,1,2026-01-01,Bench P.,1,185,5,'),
+        LIFTS,
+        { excludeKeys: JSON.stringify([`__row_${row}`]) },
+      );
+      expect(res).toMatchObject({ created: 1, skipped: 0 });
+      const stored = await storedRecords(program);
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toMatchObject({ lift: 'bench-press', weight });
+    });
+
+    it('case 4: a 1RM row counts as a training max only', async () => {
+      const res = await dryRunThenCommit(
+        'p1123-case4',
+        csv('5-3-1,1,1,2026-01-01,Bench P.,1,180,5,', '5-3-1,1,1,2026-01-01,Squat,1,250,1,1RM Test'),
+        LIFTS,
+      );
+      expect(res).toMatchObject({ created: 1, split: { created: 1 } });
+    });
+
+    it('case 5: an excluded 1RM row leaves nothing to route', async () => {
+      const res = await dryRunThenCommit(
+        'p1123-case5',
+        csv('5-3-1,1,1,2026-01-01,Bench P.,1,180,5,', '5-3-1,1,1,2026-01-01,Squat,1,250,1,1RM Test'),
+        LIFTS,
+        { excludeKeys: JSON.stringify(['__row_2']) },
+      );
+      expect(res).toMatchObject({ created: 1 });
+      expect(res.split).toBeUndefined();
+    });
+
+    it.each([
+      ['with no other 1RM row', ['5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,250,1,1RM Test'], 1],
+      [
+        'with another 1RM row',
+        ['5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,250,1,1RM Test', '5-3-1,1,1,2026-01-01,Bench P.,1,180,1,1RM Test'],
+        2,
+      ],
+    ])('case 6: a remapped 1RM row routes to training maxes %s', async (_label, rows, maxes) => {
+      const res = await dryRunThenCommit(`p1123-case6-${maxes}`, csv(...rows), LIFTS, {
+        liftOverrides: JSON.stringify({ '1': 'Squat' }),
+      });
+      expect(res).toMatchObject({ created: 0, split: { created: maxes } });
+    });
+
+    it('case 7: a weight cleared from the rebuilt file is not counted', async () => {
+      const program = 'p1123-case7-cleared';
+      await importCsv(program, maxesCsv('12/29/2025,Bench P.,182.5'), `?mode=commit&${MAXES}`);
+      // The wizard leaves a cleared row out of the file it rebuilds.
+      const res = await dryRunThenCommit(program, maxesCsv('12/29/2025,Squat,300'), MAXES);
+      expect(res).toMatchObject({ created: 1, updated: 0, skipped: 0 });
+    });
+
+    it('case 7: a weight edited back to the stored value counts as a skip', async () => {
+      const program = 'p1123-case7-edited';
+      await importCsv(program, maxesCsv('12/29/2025,Bench P.,182.5'), `?mode=commit&${MAXES}`);
+      const res = await dryRunThenCommit(program, maxesCsv('12/29/2025,bench-press,182.5'), MAXES);
+      expect(res).toMatchObject({ created: 0, updated: 0, skipped: 1 });
+    });
+
+    it('case 8: an unchanged training max counts as a skip', async () => {
+      const program = 'p1123-case8';
+      await importCsv(program, maxesCsv('12/29/2025,Bench P.,182.5'), `?mode=commit&${MAXES}`);
+      const res = await dryRunThenCommit(
+        program,
+        maxesCsv('12/29/2025,Squat,300', '12/29/2025,bench-press,182.5'),
+        MAXES,
+      );
+      expect(res).toMatchObject({ created: 1, updated: 0, skipped: 1 });
+    });
+
+    it('reports the same validation errors as the commit, with the row numbers from the file', async () => {
+      const file = csv(
+        '5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,180,5,',
+        '5-3-1,1,1,2026-01-01,ALSO_NOT_IN_SLOT_MAP,1,180,5,',
+      );
+      const fields = { excludeKeys: JSON.stringify(['__row_1']) };
+      const dryRun = await importCsv('p1123-errors', file, `?mode=dry-run&${LIFTS}`, fields);
+      const commit = await importCsv('p1123-errors', file, `?mode=commit&${LIFTS}`, fields);
+      expect(dryRun.statusCode).toBe(400);
+      expect(dryRun.json()).toEqual(commit.json());
+      expect(dryRun.json().errors).toEqual([expect.objectContaining({ row: 2 })]);
+    });
+
+    it('requires a destination', async () => {
+      const res = await importCsv('p1123-no-destination', csv(), '?mode=dry-run');
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('excludes one strength-goal row by its position', async () => {
+      const res = await dryRunThenCommit('p1123-goals', GOALS_CSV, 'destination=strength-goals', {
+        excludeKeys: JSON.stringify(['__row_1']),
+      });
+      expect(res).toMatchObject({ created: 4, skipped: 0 });
+    });
+
+    it('excludes a program-spec row by its position', async () => {
+      const res = await dryRunThenCommit(UUID_PROGRAM, SPEC_CSV, 'destination=program-spec', {
+        excludeKeys: JSON.stringify(['__row_1']),
+      });
+      expect(res).toMatchObject({ created: 0, updated: 0, skipped: 0 });
+    });
+
+    it('gives every lift-record preview row its position in the file', async () => {
+      const res = await importCsv(
+        'p1123-row-index',
+        csv(
+          '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+          '5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,180,5,',
+          '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+        ),
+        '?mode=preview&destination=lift-records',
+      );
+      const { preview } = res.json() as ImportPreviewResponse;
+      expect(preview?.deltas.map((d) => d.rowIndex).sort()).toEqual([1, 2, 3]);
     });
   });
 
