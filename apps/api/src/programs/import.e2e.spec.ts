@@ -14,7 +14,7 @@ import { buildXlsx, dateSerial, zipFixture } from '../adapters/google-sheets/xls
 import { MAX_XLSX_PART_BYTES } from '../adapters/google-sheets/xlsx-to-tables';
 import { RLS_SKIP_TX } from '../adapters/prisma/rls-context';
 import { ImportController, suggestedKindFor } from './import.controller';
-import { MAX_IMPORT_ROWS } from './import-file.util';
+import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS } from './import-file.util';
 // By path, not package name: apps/api does not depend on the client, and the
 // package resolves to a dist/ this suite should not need built.
 import { createApiClient } from '../../../../packages/api-client/src/index';
@@ -801,7 +801,34 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
 
   describe('commit options in the request body (#1121)', () => {
     const COMMIT = '?mode=commit&destination=lift-records';
-    const FIVE_MIB = 5 * 1024 * 1024;
+
+    // The caps the form reader took over from req.file() on this endpoint.
+    it('rejects an oversize file with 413', async () => {
+      const res = await importCsv(
+        'p1121-oversize-file',
+        LIFT_CSV + '\n' + 'x'.repeat(MAX_IMPORT_FILE_BYTES),
+        COMMIT,
+      );
+      expect(res.statusCode).toBe(413);
+    });
+
+    it('rejects a form with no file with 400', async () => {
+      const boundary = '----SmartImportBoundary';
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/p1121-no-file/import${COMMIT}`,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, ...AUTH },
+        payload: [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="excludeKeys"',
+          '',
+          '[]',
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toBe('No file uploaded');
+    });
 
     it('reads a field sent after the file', async () => {
       const res = await importCsv(
@@ -829,7 +856,10 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     // A cut-off exclusion list must never commit the rows it no longer names.
     it('rejects a field over the limit with 413 and writes nothing', async () => {
       const program = 'p1121-oversize-field';
-      const excludeKeys = JSON.stringify(['1:1:20260101:bench-press:1', 'x'.repeat(FIVE_MIB)]);
+      const excludeKeys = JSON.stringify([
+        '1:1:20260101:bench-press:1',
+        'x'.repeat(MAX_IMPORT_FILE_BYTES),
+      ]);
 
       const res = await importCsv(program, LIFT_CSV, COMMIT, { excludeKeys });
       expect(res.statusCode).toBe(413);
