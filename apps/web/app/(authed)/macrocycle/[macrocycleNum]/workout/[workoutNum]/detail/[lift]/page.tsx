@@ -1,6 +1,13 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { builtInLiftFor, formatWeight, lookupLift } from '@lifting-logbook/core';
+import {
+  builtInLiftFor,
+  currentMaxesByLiftId,
+  formatWeight,
+  isSameLift,
+  liftIdFor,
+  lookupLift,
+} from '@lifting-logbook/core';
 import { fetchCustomLifts, fetchTrainingMaxes, fetchTrainingMaxHistory, fetchLiftRecords } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
@@ -30,10 +37,10 @@ export default async function LiftDetailPage({
     getPreferredUnit(),
   ]);
 
-  const currentMax = maxes.find((m) => m.lift === lift);
-  const tmHistory = history.entries.filter((e) => e.lift === lift);
+  const currentMax = currentMaxesByLiftId(maxes).get(liftIdFor(lift));
+  const tmHistory = history.entries.filter((e) => isSameLift(e.lift, lift));
   const setHistory = allRecords
-    .filter((r) => r.lift === lift)
+    .filter((r) => isSameLift(r.lift, lift))
     .sort((a, b) => b.date.localeCompare(a.date));
 
   // Unknown lift: no TM, no history, no sets — the URL is invalid or stale. A catalog or

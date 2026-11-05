@@ -7,6 +7,7 @@ import {
   TrainingMax,
   TrainingMaxHistoryEntry,
   buildLiftRecordId,
+  liftIdFor,
   liftOccurrenceKey,
   liftOccurrences,
   withOccurrence,
@@ -366,6 +367,13 @@ export const toWorkoutResponse = (
     renamedLifts,
   } = options;
 
+  const plannedNames = new Set(plannedLifts?.map(({ lift }) => lift));
+  const plannedNameById = new Map<string, string>();
+  for (const { lift } of plannedLifts ?? []) {
+    const id = liftIdFor(lift);
+    if (!plannedNameById.has(id)) plannedNameById.set(id, lift);
+  }
+
   // Logged sets by the lift occurrence they belong to: a lift, and which occurrence
   // of it in this workout (#1027).
   const liftMap = new Map<string, { lift: string; occurrence: number; sets: SetResponse[] }>();
@@ -380,7 +388,10 @@ export const toWorkoutResponse = (
       amrap: r.notes.toUpperCase().includes('AMRAP'),
       notes: r.notes,
     };
-    const lift = renamedLifts?.get(r.lift) ?? r.lift;
+    // A set stored under another spelling of a planned lift (an import's `bench-press`
+    // under the plan's `Bench Press`) joins that lift (#1118).
+    const named = renamedLifts?.get(r.lift) ?? r.lift;
+    const lift = plannedNames.has(named) ? named : (plannedNameById.get(liftIdFor(named)) ?? named);
     const occurrence = r.occurrence ?? 0;
     const group = liftMap.get(liftOccurrenceKey(lift, occurrence));
     if (group) group.sets.push(set);

@@ -22,12 +22,25 @@ jest.mock('next/navigation', () => ({
   }),
 }));
 
-jest.mock('./LiftHistoryFilters', () => ({ __esModule: true, default: () => <div>history-filters</div> }));
+jest.mock('./LiftHistoryFilters', () => ({
+  __esModule: true,
+  default: ({ records }: { records: { date: string }[] }) => (
+    <div>history-filters:{records.map((r) => r.date).join(',')}</div>
+  ),
+}));
 
-import { fetchCustomLifts } from '@/lib/api';
+import {
+  fetchCustomLifts,
+  fetchLiftRecords,
+  fetchTrainingMaxes,
+  fetchTrainingMaxHistory,
+} from '@/lib/api';
 import LiftDetailPage from './page';
 
 const mockedCustomLifts = fetchCustomLifts as unknown as jest.Mock;
+const mockedMaxes = fetchTrainingMaxes as unknown as jest.Mock;
+const mockedHistory = fetchTrainingMaxHistory as unknown as jest.Mock;
+const mockedRecords = fetchLiftRecords as unknown as jest.Mock;
 
 async function renderLift(lift: string): Promise<string> {
   const element = (await LiftDetailPage({
@@ -35,6 +48,53 @@ async function renderLift(lift: string): Promise<string> {
   })) as ReactElement;
   return renderToStaticMarkup(element);
 }
+
+describe('LiftDetailPage — rows stored under another spelling (#1118)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedCustomLifts.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    mockedMaxes.mockResolvedValue([]);
+    mockedHistory.mockResolvedValue({ entries: [] });
+    mockedRecords.mockResolvedValue([]);
+  });
+
+  const record = (lift: string, date: string) => ({ id: date, lift, date, setNum: 1, weight: 180, reps: 8, notes: '' });
+
+  it('lists imported maxes and sets stored by id under the program’s name', async () => {
+    mockedMaxes.mockResolvedValue([{ lift: 'bench-press', weight: 200, unit: 'lbs', dateUpdated: '2025-12-29' }]);
+    mockedHistory.mockResolvedValue({
+      entries: [{ id: 'h1', lift: 'bench-press', weight: 190, unit: 'lbs', date: '2025-06-01', isPR: false }],
+    });
+    mockedRecords.mockResolvedValue([
+      record('bench-press', '2026-01-05'),
+      record('Bench Press', '2026-01-12'),
+      record('Squat', '2026-01-13'),
+    ]);
+
+    const html = await renderLift('Bench Press');
+
+    expect(html).toContain('200');
+    expect(html).not.toContain('No training max set.');
+    expect(html).toContain('2025-06-01');
+    // Both spellings of the lift, newest first, and nothing from another lift.
+    expect(html).toContain('history-filters:2026-01-12,2026-01-05');
+  });
+
+  it('shows the same rows when opened by the stored id', async () => {
+    mockedRecords.mockResolvedValue([record('Bench Press', '2026-01-12')]);
+
+    expect(await renderLift('bench-press')).toContain('history-filters:2026-01-12');
+  });
+
+  it('keeps OH Press-HV’s sets off the OH Press page', async () => {
+    mockedRecords.mockResolvedValue([record('OH Press', '2026-01-12'), record('OH Press-HV', '2026-01-13')]);
+
+    expect(await renderLift('OH Press')).toContain('history-filters:2026-01-12<');
+  });
+});
 
 describe('LiftDetailPage — a lift with nothing logged yet (#1060)', () => {
   beforeEach(() => {

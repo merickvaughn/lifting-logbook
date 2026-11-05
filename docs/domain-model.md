@@ -153,7 +153,12 @@ catalog or custom-lift **id** into that same column when a row is pre-resolved t
 [`catalog/builtInLift.ts`](../packages/core/src/catalog/builtInLift.ts) opens by stating that
 four forms reach its lookup — slot names, catalog names, catalog ids and per-entry aliases.
 Import can also store a custom lift's **uuid**, which is why `lookupLift` matches custom lifts
-by name *or* id. Code reading a `lift` value must tolerate all of these.
+by name *or* id. Code reading a `lift` value must tolerate all of these. To compare two of them,
+use `liftIdFor` or `isSameLift` ([`catalog/liftIdentity.ts`](../packages/core/src/catalog/liftIdentity.ts)),
+not `===`. The logger's and the macrocycle page's max lookups, the lift detail page, the workout
+endpoint and `updateMaxes` do. `OH Press-HV` stays separate from `OH Press` there, because a program
+can plan both with different maxes. Import still stores the 12 `DEFAULT_SLOT_MAP` lifts by id
+([#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118)).
 
 When a name belongs to both a built-in and one of the user's custom lifts, `lookupLift` settles
 it. A **reserved** name (a `DEFAULT_SLOT_MAP` slot name, which the custom-lift guard refuses)

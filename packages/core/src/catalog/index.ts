@@ -1,5 +1,6 @@
 export * from './builtInLift';
 export * from './classify';
+export * from './liftIdentity';
 export * from './lifts';
 export * from './muscles';
 export * from './patterns';

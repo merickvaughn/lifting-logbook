@@ -319,6 +319,90 @@ describe("updateMaxes — lookup semantics (issue #983)", () => {
     expect(second?.weight).toBe(999);
   });
 
+  describe("a lift spelled differently across its record, max and spec row (#1118)", () => {
+    const row = (lift: string, weekType?: "test"): LiftingProgramSpec => ({
+      week: 1,
+      offset: 0,
+      lift,
+      increment: 5,
+      order: 1,
+      sets: 3,
+      reps: 8,
+      amrap: false,
+      warmUpPct: "0.6",
+      wtDecrementPct: 0,
+      activation: "",
+      ...(weekType && { weekType }),
+    });
+    const max = (lift: string, weight: number, date = "2025-12-29"): TrainingMax =>
+      ({ lift, weight, dateUpdated: new Date(date) }) as TrainingMax;
+    const record = (lift: string, setNum = 1, weight = 200) =>
+      ({
+        program: "RPT",
+        macrocycleNum: 1,
+        workoutNum: 1,
+        date: new Date("2026-01-05"),
+        lift,
+        setNum,
+        weight,
+        reps: 8,
+        notes: "",
+      }) as Parameters<typeof updateMaxes>[2][number];
+
+    it("progresses a max and a record stored by id against a spec row named by display name", () => {
+      const { maxes, flagged } = updateMaxes(
+        [row("Bench Press")],
+        [max("bench-press", 200)],
+        [record("bench-press")],
+        RPT,
+      );
+      expect(maxes).toEqual([{ lift: "bench-press", weight: 205, dateUpdated: new Date("2026-01-05") }]);
+      expect(flagged).toEqual([]);
+    });
+
+    it("progresses a max stored under the program's name from a record stored by id", () => {
+      const { maxes } = updateMaxes([row("Bench Press")], [max("Bench Press", 200)], [record("bench-press")], RPT);
+      expect(maxes[0]).toMatchObject({ lift: "Bench Press", weight: 205 });
+    });
+
+    it("progresses the most recently updated of two max rows, and flags it by its own name", () => {
+      const rows = [max("Bench Press", 225, "2025-01-01"), max("bench-press", 300, "2025-12-29")];
+      const { maxes, flagged } = updateMaxes([row("Bench Press")], rows, [record("bench-press")], RPT);
+      expect(maxes[0]?.weight).toBe(225);
+      expect(maxes[1]?.weight).toBe(300);
+      expect(flagged).toEqual([{ lift: "bench-press", currentWeight: 300, proposedWeight: 205 }]);
+    });
+
+    it("gathers a test week's sets across spellings", () => {
+      const { maxes } = updateMaxes(
+        [row("Bench Press", "test")],
+        [max("Bench Press", 200)],
+        [record("Bench Press", 2, 210), record("bench-press", 3, 220)],
+        RPT,
+      );
+      expect(maxes[0]?.weight).toBe(220);
+    });
+
+    it("still reports a lift the program and the maxes don't know", () => {
+      expect(() => updateMaxes([row("Bench Press")], [max("Bench Press", 200)], [record("deadlift")], RPT)).toThrow(
+        "Training max for lift deadlift not found.",
+      );
+      expect(() =>
+        updateMaxes([row("Bench Press")], [max("deadlift", 200)], [record("Deadlift")], RPT),
+      ).toThrow("Program spec for lift Deadlift not found.");
+    });
+
+    it("doesn't progress OH Press-HV's max from an OH Press set", () => {
+      const { maxes } = updateMaxes(
+        [row("OH Press"), { ...row("OH Press-HV"), order: 2 }],
+        [max("OH Press", 115), max("OH Press-HV", 75)],
+        [record("OH Press", 1, 115)],
+        RPT,
+      );
+      expect(maxes.map((m) => m.weight)).toEqual([120, 75]);
+    });
+  });
+
   it("reports a missing training max before a missing spec, and a missing max even on a deload spec", () => {
     const { trainingMaxes, programSpec, liftRecords } = baseline();
     const withoutDeadliftMax = trainingMaxes.filter((tm) => tm.lift !== "Deadlift");

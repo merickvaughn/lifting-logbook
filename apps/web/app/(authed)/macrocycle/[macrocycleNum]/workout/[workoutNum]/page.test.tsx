@@ -42,6 +42,7 @@ jest.mock('./WorkoutLogger', () => ({
 }));
 
 import { emptyFocusDayState } from '@lifting-logbook/types';
+import { validateTrainingMaxImport } from '@lifting-logbook/core';
 import {
   fetchWorkout,
   fetchProgramSpec,
@@ -105,6 +106,49 @@ async function renderPage(): Promise<{ lifts: LiftData[]; readOnly: boolean }> {
   const readOnly = html.match(/data-readonly="([^"]*)"/)?.[1] === 'true';
   return { lifts: JSON.parse(encoded.replace(/&quot;/g, '"')), readOnly };
 }
+
+describe('WorkoutLoggingPage — a training max stored under another spelling (#1118)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function seedBench(maxes: { lift: string; weight: number; dateUpdated: string }[]) {
+    seedWorkout([{ lift: 'Bench Press', planned: true, sets: [] }]);
+    mockedMaxes.mockResolvedValue(maxes);
+  }
+
+  it('computes the plan from a max imported as Bench P.', async () => {
+    const { valid, errors } = validateTrainingMaxImport([
+      { lift: 'Bench P.', weight: 200, unit: 'lbs', dateUpdated: new Date('2025-12-29') },
+    ] as never);
+    expect(errors).toEqual([]);
+    seedBench(valid.map((m) => ({ lift: m.lift, weight: m.weight, dateUpdated: '2025-12-29' })));
+
+    const { lifts } = await renderPage();
+
+    expect(lifts[0]?.workingSets[0]?.totalLoad).toBe(200);
+  });
+
+  it('computes from the same weight whichever spelling the max is stored under', async () => {
+    seedBench([{ lift: 'bench-press', weight: 200, dateUpdated: '2025-12-29' }]);
+    const byId = (await renderPage()).lifts[0]?.workingSets;
+    seedBench([{ lift: 'Bench Press', weight: 200, dateUpdated: '2025-12-29' }]);
+    const byName = (await renderPage()).lifts[0]?.workingSets;
+
+    expect(byId).toEqual(byName);
+  });
+
+  it('lets a newly imported max take over from an older one under the program’s name', async () => {
+    seedBench([
+      { lift: 'Bench Press', weight: 100, dateUpdated: '2025-01-01' },
+      { lift: 'bench-press', weight: 200, dateUpdated: '2025-12-29' },
+    ]);
+
+    const { lifts } = await renderPage();
+
+    expect(lifts[0]?.workingSets[0]?.totalLoad).toBe(200);
+  });
+});
 
 describe('WorkoutLoggingPage — logged sets come from the workout itself (issue #978)', () => {
   beforeEach(() => {

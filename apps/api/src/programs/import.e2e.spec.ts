@@ -99,6 +99,47 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     '1,0,Bench P.,2.5,1,3,8,TRUE,.6,0.05,Band Flye',
   ].join('\n');
 
+  describe('rows imported under a spelling the program does not use (#1118)', () => {
+    const BENCH_PROGRAM = '22222222-2222-2222-2222-222222222222';
+    const inject = (method: 'GET' | 'POST', path: string) =>
+      app.getHttpAdapter().getInstance().inject({ method, url: `/programs/${BENCH_PROGRAM}${path}`, headers: AUTH });
+
+    it('joins the program’s lift in the workout, and recalculating maxes succeeds', async () => {
+      const spec = [
+        'Week,Offset,Lift,Increment,Order,Sets,Reps,AMRAP?,Warm-Up %,WT Decrement %,Activation',
+        '1,0,Bench Press,2.5,1,3,8,TRUE,.6,0.05,Band Flye',
+      ].join('\n');
+      expect((await importCsv(BENCH_PROGRAM, spec, '?mode=commit&destination=program-spec')).statusCode).toBe(200);
+      const tm = ['Date Updated,Lift,Weight', '12/29/2025,Bench P.,200'].join('\n');
+      expect((await importCsv(BENCH_PROGRAM, tm, '?mode=commit&destination=training-maxes')).statusCode).toBe(200);
+      const init = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/${BENCH_PROGRAM}/macrocycles/initialize`,
+        headers: { ...AUTH, 'content-type': 'application/json' },
+        payload: JSON.stringify({ macrocycleDate: '2026-01-05' }),
+      });
+      expect(init.statusCode).toBe(201);
+      const records = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        `${BENCH_PROGRAM},1,1,2026-01-05,Bench P.,1,200,8,`,
+      ].join('\n');
+      expect((await importCsv(BENCH_PROGRAM, records, '?mode=commit&destination=lift-records')).statusCode).toBe(200);
+
+      // Stored by id, which this fix leaves alone: readers compare through liftIdFor.
+      const maxes = (await inject('GET', '/training-maxes')).json();
+      expect(maxes).toEqual([expect.objectContaining({ lift: 'bench-press', weight: 200 })]);
+
+      const workout = (await inject('GET', '/workouts/1')).json();
+      expect(workout.lifts).toEqual([
+        expect.objectContaining({ lift: 'Bench Press', planned: false, sets: [expect.objectContaining({ weight: 200 })] }),
+      ]);
+
+      const recalc = await inject('POST', '/training-maxes/recalculate');
+      expect(recalc.statusCode).toBe(200);
+      expect(recalc.json().maxes).toEqual([expect.objectContaining({ lift: 'bench-press', weight: 202.5 })]);
+    });
+  });
+
   describe('preview (mode=preview) classifies and writes nothing', () => {
     it('routes a lift-history file to lift-records with a create preview', async () => {
       const res = await importCsv('import-lr-prev', LIFT_CSV, '?mode=preview');
