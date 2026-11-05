@@ -1,4 +1,4 @@
-import { DEFAULT_SLOT_MAP, ALL_SLOT_MAP_ALIASES, LIFT_CATALOG, resolveLift, buildEffectiveSlotMap } from "@src/core";
+import { DEFAULT_SLOT_MAP, ALL_SLOT_MAP_ALIASES, IMPORT_LIFT_ALIASES, LIFT_CATALOG, resolveLift, buildEffectiveSlotMap, buildImportSlotMap, builtInLiftFor, canonicalAliasFor, isCanonicalAlias } from "@src/core";
 import { FOCUS_AREAS, FOCUS_AREA_MUSCLES, type Lift, type CustomLift } from "@lifting-logbook/types";
 
 describe("LIFT_CATALOG", () => {
@@ -406,5 +406,79 @@ describe("buildEffectiveSlotMap", () => {
     const merged = buildEffectiveSlotMap([]);
     expect(Object.prototype.hasOwnProperty.call(merged, 'toString')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(merged, 'constructor')).toBe(false);
+  });
+});
+
+describe("buildImportSlotMap", () => {
+  const customLift = (name: string, id: string): CustomLift => ({
+    id,
+    name,
+    classification: 'accessory',
+    movementProfile: { patterns: [], jointActions: [], complexity: 'simple' },
+    userId: 'user-1',
+    isCustom: true,
+    createdAt: new Date('2026-01-01'),
+  });
+
+  it("keeps every DEFAULT_SLOT_MAP entry's value", () => {
+    const merged = buildImportSlotMap([]);
+    for (const [slot, id] of Object.entries(DEFAULT_SLOT_MAP)) {
+      expect(merged[slot]).toBe(id);
+    }
+  });
+
+  it("lets a custom lift keep a catalog name that is not reserved", () => {
+    const merged = buildImportSlotMap([customLift('Front Squat', 'custom-front-squat')]);
+    expect(merged['Front Squat']).toBe('custom-front-squat');
+    // The catalog entry stays reachable by id.
+    expect(merged['front-squat']).toBe('Front Squat');
+  });
+
+  it("does not let a custom lift redirect a DEFAULT_SLOT_MAP name", () => {
+    const merged = buildImportSlotMap([customLift('Squat', 'custom-squat')]);
+    expect(merged['Squat']).toBe('back-squat');
+  });
+
+  it("does not resolve an unrecognized name via an inherited Object.prototype member", () => {
+    const merged = buildImportSlotMap([]);
+    expect(Object.prototype.hasOwnProperty.call(merged, 'toString')).toBe(false);
+  });
+
+  // Catalog names are recognized by import without becoming reserved: reserving them
+  // would refuse custom lifts the guard has always allowed, flip the logger's bodyweight
+  // detection for Pull-up, and take "Cable Row" away from a custom lift (#1015).
+  it("leaves the custom-lift guard and bodyweight vocabulary alone", () => {
+    for (const name of ['Incline Bench Press', 'Pull-up', 'Cable Row']) {
+      expect(canonicalAliasFor(name)).toBeUndefined();
+      expect(isCanonicalAlias(name)).toBe(false);
+      expect(Object.keys(DEFAULT_SLOT_MAP)).not.toContain(name);
+    }
+  });
+});
+
+describe("IMPORT_LIFT_ALIASES", () => {
+  it("lists every catalog display name and id, and every slot-map alias", () => {
+    expect(LIFT_CATALOG.length).toBeGreaterThan(0);
+    for (const lift of LIFT_CATALOG) {
+      expect(IMPORT_LIFT_ALIASES).toContain(lift.name);
+      expect(IMPORT_LIFT_ALIASES).toContain(lift.id);
+    }
+    for (const alias of ALL_SLOT_MAP_ALIASES) {
+      expect(IMPORT_LIFT_ALIASES).toContain(alias);
+    }
+  });
+
+  // The wizard falls back to a case-insensitive match, so two entries that differ only
+  // by case must refer to one lift or a typed name could land on the wrong one.
+  it("never has two case variants that refer to different lifts", () => {
+    const merged = buildImportSlotMap([]);
+    const liftByLowercase = new Map<string, string>();
+    for (const alias of IMPORT_LIFT_ALIASES) {
+      const id = builtInLiftFor(merged[alias]!)?.id;
+      expect(id).toBeDefined();
+      const seen = liftByLowercase.get(alias.toLowerCase());
+      if (seen !== undefined) expect({ alias, id }).toEqual({ alias, id: seen });
+      liftByLowercase.set(alias.toLowerCase(), id!);
+    }
   });
 });

@@ -180,10 +180,10 @@ export class LiftRecordsController {
    *
    * Lift abbreviations (e.g. "Bench P.") are resolved to canonical lift IDs
    * (e.g. "bench-press") via a slot map built fresh per request:
-   * DEFAULT_SLOT_MAP plus the calling user's own custom lifts, by exact name
-   * (effectiveSlotMapFor / buildEffectiveSlotMap — issue #911). DEFAULT_SLOT_MAP
-   * wins on a name collision, so a custom lift can never shadow a canonical
-   * abbreviation. Programs do not restrict which lifts may be imported — all
+   * DEFAULT_SLOT_MAP, the calling user's own custom lifts and the built-in catalog,
+   * by exact name (effectiveSlotMapFor / buildImportSlotMap — issues #911, #1116).
+   * DEFAULT_SLOT_MAP wins on a name collision, so a custom lift can never shadow a
+   * canonical abbreviation. Programs do not restrict which lifts may be imported — all
    * lifts present in the effective slot map are accepted for any program.
    * (Preloaded template programs become custom programs when edited; custom
    * programs have no lift restrictions.)

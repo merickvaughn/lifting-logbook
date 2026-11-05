@@ -1,4 +1,4 @@
-import { validateTrainingMaxImport } from "@src/core";
+import { buildImportSlotMap, validateTrainingMaxImport } from "@src/core";
 import { TrainingMax } from "@src/core/models";
 
 const TEST_SLOT_MAP: Readonly<Record<string, string>> = {
@@ -103,4 +103,16 @@ describe("validateTrainingMaxImport", () => {
       expect(valid[0]!.lift).toBe(liftStr);
     },
   );
+
+  // #1116: a catalog name outside the slot map used to pass through as raw text, which
+  // is what a program's lift holds and what the logger looks a max up by. Storing the
+  // catalog id here would leave Leangains' "Romanian Deadlift" with no training max.
+  it("keeps storing a catalog lift outside the slot map under its display name", () => {
+    const { valid, errors } = validateTrainingMaxImport(
+      [makeMax({ lift: "Romanian Deadlift" as TrainingMax["lift"] })],
+      buildImportSlotMap([]),
+    );
+    expect(errors).toHaveLength(0);
+    expect(valid[0]!.lift).toBe("Romanian Deadlift");
+  });
 });
