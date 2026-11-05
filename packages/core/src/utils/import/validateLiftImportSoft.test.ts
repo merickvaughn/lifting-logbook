@@ -1,5 +1,7 @@
 import { validateLiftImportSoft } from './validateLiftImportSoft';
-import { DEFAULT_SLOT_MAP } from '../../catalog/slotMaps';
+import { builtInLiftFor } from '../../catalog/builtInLift';
+import { LIFT_CATALOG } from '../../catalog/lifts';
+import { DEFAULT_SLOT_MAP, buildImportSlotMap } from '../../catalog/slotMaps';
 import type { LiftRecord } from '../../models';
 
 function record(overrides: Partial<LiftRecord> = {}): LiftRecord {
@@ -109,4 +111,18 @@ describe('validateLiftImportSoft', () => {
       expect(result.validRows).toHaveLength(0);
     },
   );
+
+  // #1116: these rows used to land in `ambiguous`, so the only way through was a
+  // custom lift duplicating the built-in.
+  it("does not flag any catalog lift's display name or id as ambiguous", () => {
+    const importMap = buildImportSlotMap([]);
+    expect(LIFT_CATALOG.length).toBeGreaterThan(0);
+    for (const lift of LIFT_CATALOG) {
+      for (const form of [lift.name, lift.id]) {
+        const result = validateLiftImportSoft([record({ lift: form })], importMap);
+        expect({ form, ambiguous: result.ambiguous }).toEqual({ form, ambiguous: [] });
+        expect(builtInLiftFor(result.validRows[0]!.record.lift)?.id).toBe(lift.id);
+      }
+    }
+  });
 });

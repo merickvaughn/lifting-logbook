@@ -1,4 +1,4 @@
-import { validateLiftImport } from "@src/core";
+import { LIFT_CATALOG, buildImportSlotMap, builtInLiftFor, validateLiftImport } from "@src/core";
 import { LiftRecord } from "@src/core/models";
 
 /** Minimal slot map covering the fixture abbreviations we test against. */
@@ -179,5 +179,43 @@ describe("validateLiftImport", () => {
         expect(errors[0]).toMatchObject({ row: 1, field: "lift", code: "UNRECOGNIZED_LIFT" });
       },
     );
+  });
+
+  // #1116: a real sheet's "Incline Bench P." could not be remapped to the built-in.
+  describe("against buildImportSlotMap", () => {
+    const importMap = buildImportSlotMap([]);
+
+    it("resolves every catalog lift's display name and id to that lift", () => {
+      expect(LIFT_CATALOG.length).toBeGreaterThan(0);
+      for (const lift of LIFT_CATALOG) {
+        for (const form of [lift.name, lift.id]) {
+          const records = [makeRecord({ lift: form as LiftRecord["lift"] })];
+          const { valid, errors } = validateLiftImport(records, importMap);
+          expect({ form, errors }).toEqual({ form, errors: [] });
+          expect(builtInLiftFor(valid[0]!.lift)?.id).toBe(lift.id);
+        }
+      }
+    });
+
+    it("stores a catalog lift outside the slot map under the name a program uses", () => {
+      for (const form of ["Incline Bench Press", "incline-bench-press"]) {
+        const records = [makeRecord({ lift: form as LiftRecord["lift"] })];
+        expect(validateLiftImport(records, importMap).valid[0]!.lift).toBe("Incline Bench Press");
+      }
+    });
+
+    it("keeps resolving existing abbreviations to the same ids", () => {
+      const expected = {
+        "Bench P.": "bench-press",
+        "BB Row": "barbell-row",
+        "OH Press": "overhead-press",
+        "CBL Curls": "cable-curl",
+        "Squat": "back-squat",
+      };
+      for (const [abbreviation, id] of Object.entries(expected)) {
+        const records = [makeRecord({ lift: abbreviation as LiftRecord["lift"] })];
+        expect(validateLiftImport(records, importMap).valid[0]!.lift).toBe(id);
+      }
+    });
   });
 });

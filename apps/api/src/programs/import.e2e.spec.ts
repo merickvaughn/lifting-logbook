@@ -453,6 +453,41 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(failRes.statusCode).toBe(400);
     });
 
+    // #1116: catalog lifts outside DEFAULT_SLOT_MAP resolve without a custom lift. The
+    // id and the display name store the same value, so they can't split a lift's history.
+    const CATALOG_LIFT_CSV = [
+      'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+      '5-3-1,1,1,2026-01-01,Incline Bench Press,1,180,5,',
+    ].join('\n');
+
+    it('commits a row remapped to a catalog id onto the same record as its display name', async () => {
+      const program = 'p3-lr-catalog-override';
+      const remapped = (
+        await importCsv(
+          program,
+          AMBIGUOUS_LIFT_CSV,
+          '?mode=commit&destination=lift-records',
+          { liftOverrides: JSON.stringify({ '1': 'incline-bench-press' }) },
+        )
+      ).json();
+      expect(remapped.created).toBe(1);
+
+      const byName = (
+        await importCsv(program, CATALOG_LIFT_CSV, '?mode=commit&destination=lift-records')
+      ).json();
+      expect(byName).toMatchObject({ created: 0, skipped: 1 });
+    });
+
+    it('does not flag a row naming a catalog lift as ambiguous in preview', async () => {
+      const res = (
+        await importCsv('p3-lr-catalog-preview', CATALOG_LIFT_CSV, '?mode=preview&destination=lift-records')
+      ).json();
+      expect(res.errors).toEqual([]);
+      expect(res.preview.deltas).toHaveLength(1);
+      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create' });
+      expect(res.preview.deltas[0].status).not.toBe('ambiguous');
+    });
+
     // Regression guard (#911 review, fourth pass, resolving issue #915 for
     // its only real trigger surface): an ambiguous row's excludeKeys entry
     // uses the client's `__ambiguous_<rowIndex>` key scheme, which can never

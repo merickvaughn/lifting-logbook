@@ -1,10 +1,11 @@
-import { buildEffectiveSlotMap, LIFT_CATALOG } from '@lifting-logbook/core';
+import { buildImportSlotMap, LIFT_CATALOG } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
 
 /**
  * Builds the per-request slot map used everywhere a CSV `lift` value is
- * validated against a user's own custom lifts: DEFAULT_SLOT_MAP plus the
- * requesting user's own custom lifts (issue #911). Call sites: all three
+ * validated against a user's own custom lifts: DEFAULT_SLOT_MAP, the requesting
+ * user's own custom lifts (issue #911) and the built-in catalog (issue #1116).
+ * Call sites: all three
  * lift-records paths (ImportController's previewLiftRecords and commit
  * paths, and the legacy LiftRecordsController.importLiftRecords endpoint),
  * plus ImportController's training-maxes and strength-goals preview
@@ -36,7 +37,7 @@ import { RepositoryBundle } from '../ports/factory';
  */
 export async function effectiveSlotMapFor(repos: RepositoryBundle): Promise<Record<string, string>> {
   const customLifts = await repos.customLift.list();
-  return buildEffectiveSlotMap(customLifts);
+  return buildImportSlotMap(customLifts);
 }
 
 /**

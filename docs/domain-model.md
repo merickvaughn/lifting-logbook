@@ -168,6 +168,14 @@ bodyweight detection, import validation and the custom-lift collision guard, and
 `Weighted Pull-ups` there would flip it to a bodyweight-component lift. Those are separate
 decisions, tracked in [#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015).
 
+Import also accepts every catalog display name and id, through `buildImportSlotMap`, without adding
+them to `DEFAULT_SLOT_MAP` ([#1116](https://github.com/merickvaughn/lifting-logbook/issues/1116)).
+Precedence is `DEFAULT_SLOT_MAP`, then the user's custom lifts, then the catalog. A catalog lift
+outside `DEFAULT_SLOT_MAP` is stored under its **display name**, the string a program's `lift` holds
+and the one training maxes and history are matched against. A `DEFAULT_SLOT_MAP` key still stores
+its catalog id. That id does not match a program's display name, so those rows don't join by exact
+string ([#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118)).
+
 Every schema column references a lift by **name string**, not by `Lift.id` — see divergence
 D3. But the column is not single-vocabulary: the import path can persist a canonical
 catalog or custom-lift **id** into that same column when a row is pre-resolved through
