@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import { currentMaxLookup } from '@lifting-logbook/core';
 import {
   fetchMacrocycleDashboard,
   fetchProgramSpec,
@@ -60,7 +61,7 @@ export default async function MacrocycleDashboardPage({
   // workout with any logged record counts as done — consistent across the dashboard.
   const completedWorkoutNums = new Set(dashboard.completedWorkoutNums ?? []);
 
-  const maxMap = new Map(maxes.map((m) => [m.lift, m.weight]));
+  const maxFor = currentMaxLookup(maxes);
 
   const weekNums = [...new Set(workoutDays.map((w) => w.week))];
 
@@ -85,7 +86,7 @@ export default async function MacrocycleDashboardPage({
           status,
           lifts: w.lifts.map((spec) => ({
             name: spec.lift,
-            sets: computePlannedSets(spec, maxMap.get(spec.lift) ?? 0),
+            sets: computePlannedSets(spec, maxFor(spec.lift)?.weight ?? 0),
           })),
         };
       }),

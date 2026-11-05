@@ -42,6 +42,26 @@ describe('TrainingMaxesController', () => {
   });
 
   describe('updateTrainingMaxes', () => {
+    it('stamps only a changed weight, so saving the form can’t age an imported max (#1118)', async () => {
+      const unchanged = new Date('2025-01-01');
+      repo.getTrainingMaxes.mockResolvedValue([
+        { lift: 'Squat', weight: 315, dateUpdated: unchanged },
+        { lift: 'Bench Press', weight: 225, dateUpdated: unchanged },
+      ]);
+      repo.saveTrainingMaxes.mockResolvedValue(undefined);
+
+      await controller.updateTrainingMaxes('5-3-1', {
+        maxes: [
+          { lift: 'Squat', weight: 325, unit: 'lbs' },
+          { lift: 'Bench Press', weight: 225, unit: 'lbs' },
+        ],
+      }, MOCK_USER);
+
+      const saved = repo.saveTrainingMaxes.mock.calls[0]?.[1] as { lift: string; dateUpdated: Date }[];
+      expect(saved.find((m) => m.lift === 'Bench Press')?.dateUpdated).toBe(unchanged);
+      expect(saved.find((m) => m.lift === 'Squat')?.dateUpdated).not.toBe(unchanged);
+    });
+
     it('merges incoming maxes into existing set and returns updated list', async () => {
       repo.getTrainingMaxes.mockResolvedValue([
         { lift: 'Squat', weight: 315, dateUpdated: new Date('2026-04-20') },

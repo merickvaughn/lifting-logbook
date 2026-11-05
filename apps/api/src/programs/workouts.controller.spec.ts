@@ -232,6 +232,15 @@ describe('WorkoutsController', () => {
 
       expect(result.lifts.map((l) => l.lift)).toEqual(['Bench Press']);
     });
+
+    it('hides sets stored by catalog id when their lift is removed (#1118)', async () => {
+      workoutRepo.getWorkout.mockResolvedValue([logged('back-squat', 1)]);
+      liftOverrideRepo.getOverrides.mockResolvedValue([{ lift: 'Squat', action: 'remove' }]);
+
+      const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
+
+      expect(result.lifts.map((l) => l.lift)).toEqual(['Bench Press']);
+    });
   });
 
   it('returns 400 only when workoutNum exceeds the full canonical length, not one block (issue #740)', async () => {
