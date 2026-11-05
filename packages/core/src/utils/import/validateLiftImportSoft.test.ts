@@ -22,17 +22,25 @@ describe('validateLiftImportSoft', () => {
   it('puts a fully-valid row in the valid bucket', () => {
     const r = record({ lift: KNOWN_LIFT });
     const result = validateLiftImportSoft([r], SLOT_MAP);
-    expect(result.valid).toHaveLength(1);
+    expect(result.validRows).toHaveLength(1);
     expect(result.incomplete).toHaveLength(0);
     expect(result.ambiguous).toHaveLength(0);
     expect(result.hardErrors).toHaveLength(0);
+  });
+
+  it('records the file position of each valid row (#1123)', () => {
+    const result = validateLiftImportSoft(
+      [record({ lift: KNOWN_LIFT }), record({ lift: UNKNOWN_LIFT }), record({ lift: KNOWN_LIFT })],
+      SLOT_MAP,
+    );
+    expect(result.validRows.map((v) => v.rowIndex)).toEqual([1, 3]);
   });
 
   it('puts a row with NaN weight in the incomplete bucket', () => {
     const r = record({ lift: KNOWN_LIFT, weight: NaN });
     const result = validateLiftImportSoft([r], SLOT_MAP);
     expect(result.incomplete).toHaveLength(1);
-    expect(result.valid).toHaveLength(0);
+    expect(result.validRows).toHaveLength(0);
     expect(result.incomplete[0]!.errors).toMatchObject([{ field: 'weight', code: 'WEIGHT_INVALID' }]);
   });
 
@@ -41,7 +49,7 @@ describe('validateLiftImportSoft', () => {
     const result = validateLiftImportSoft([r], SLOT_MAP);
     expect(result.ambiguous).toHaveLength(1);
     expect(result.ambiguous[0]!.originalLift).toBe(UNKNOWN_LIFT);
-    expect(result.valid).toHaveLength(0);
+    expect(result.validRows).toHaveLength(0);
   });
 
   it('handles a mix of valid, incomplete, and ambiguous rows', () => {
@@ -51,14 +59,14 @@ describe('validateLiftImportSoft', () => {
       record({ lift: UNKNOWN_LIFT }),
     ];
     const result = validateLiftImportSoft(rows, SLOT_MAP);
-    expect(result.valid).toHaveLength(1);
+    expect(result.validRows).toHaveLength(1);
     expect(result.incomplete).toHaveLength(1);
     expect(result.ambiguous).toHaveLength(1);
   });
 
   it('returns empty buckets for empty input', () => {
     const result = validateLiftImportSoft([], SLOT_MAP);
-    expect(result.valid).toHaveLength(0);
+    expect(result.validRows).toHaveLength(0);
     expect(result.incomplete).toHaveLength(0);
     expect(result.ambiguous).toHaveLength(0);
     expect(result.hardErrors).toHaveLength(0);
@@ -71,7 +79,7 @@ describe('validateLiftImportSoft', () => {
   it('trims whitespace before resolving a known lift', () => {
     const r = record({ lift: `  ${KNOWN_LIFT}  ` });
     const result = validateLiftImportSoft([r], SLOT_MAP);
-    expect(result.valid).toHaveLength(1);
+    expect(result.validRows).toHaveLength(1);
     expect(result.ambiguous).toHaveLength(0);
   });
 
@@ -85,7 +93,7 @@ describe('validateLiftImportSoft', () => {
     const result = validateLiftImportSoft([r], SLOT_MAP);
     expect(result.ambiguous).toHaveLength(1);
     expect(result.ambiguous[0]!.originalLift).toBe('');
-    expect(result.valid).toHaveLength(0);
+    expect(result.validRows).toHaveLength(0);
   });
 
   // Regression guard (#911 review): membership must be Object.hasOwn, not the `in`
@@ -98,7 +106,7 @@ describe('validateLiftImportSoft', () => {
       const r = record({ lift: liftStr });
       const result = validateLiftImportSoft([r], SLOT_MAP);
       expect(result.ambiguous).toHaveLength(1);
-      expect(result.valid).toHaveLength(0);
+      expect(result.validRows).toHaveLength(0);
     },
   );
 });

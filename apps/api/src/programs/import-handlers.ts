@@ -1,7 +1,7 @@
 import {
   ImportError,
   ImportKind,
-  ImportPreviewResponse,
+  ImportPreview,
   ImportCommitResponse,
 } from '@lifting-logbook/types';
 import {
@@ -40,7 +40,7 @@ export interface ImportHandler<T> {
     valid: T[],
     program: string,
     repos: RepositoryBundle,
-  ): Promise<ImportPreviewResponse['preview']>;
+  ): Promise<ImportPreview>;
   commit(
     valid: T[],
     program: string,
@@ -50,7 +50,7 @@ export interface ImportHandler<T> {
 
 const liftRecordsHandler: ImportHandler<LiftRecord> = {
   parse: parseLiftRecords,
-  // Never actually called: ImportController.commit special-cases 'lift-records' to
+  // Never actually called: ImportController.resolveCommitRows special-cases 'lift-records' to
   // validate against a custom-lift-aware slot map (effectiveSlotMapFor) instead of
   // calling this closure (#911) — a bare DEFAULT_SLOT_MAP here would silently stop
   // recognizing a user's custom lifts. Throws rather than falling back to the wrong
@@ -60,7 +60,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
   validate: (): never => {
     throw new Error(
       "liftRecordsHandler.validate must not be called directly for 'lift-records' — " +
-        'ImportController.commit validates this destination against a custom-lift-aware ' +
+        'ImportController.resolveCommitRows validates this destination against a custom-lift-aware ' +
         'slot map via effectiveSlotMapFor instead (see effective-slot-map.util.ts, issue #911).',
     );
   },

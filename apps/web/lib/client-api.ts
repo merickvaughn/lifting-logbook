@@ -82,6 +82,7 @@ export const {
   importLiftRecords,
   previewImport,
   commitImport,
+  dryRunImport,
   undoImport,
   fetchGoogleSheetWorkbook,
   createCustomLift,
