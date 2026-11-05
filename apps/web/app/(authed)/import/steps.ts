@@ -14,6 +14,23 @@ export const ALL_KINDS: ImportKind[] = [
   'program-spec',
 ];
 
+/** A program the wizard can import into. */
+export type ImportTarget = {
+  id: string;
+  name: string;
+  /** A built-in template rather than a custom program. Its spec can't be written to. */
+  isTemplate?: boolean;
+};
+
+/**
+ * What can be imported into a program. Lift history, training maxes and strength
+ * goals are stored per program under any program name, but a template's spec is
+ * built in, so the API rejects a program-spec commit to one.
+ */
+export function kindsForTarget(target: ImportTarget | undefined): ImportKind[] {
+  return target?.isTemplate ? ALL_KINDS.filter((kind) => kind !== 'program-spec') : ALL_KINDS;
+}
+
 /**
  * Smart Import wizard step constants.
  * Use these instead of bare integers when reading or setting the step state.

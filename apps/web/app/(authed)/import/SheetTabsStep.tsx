@@ -65,6 +65,7 @@ export function SheetTabsStep({
   workbookId,
   programId,
   tabs,
+  kinds,
   choices,
   onChange,
   previews,
@@ -74,6 +75,8 @@ export function SheetTabsStep({
   workbookId: number;
   programId: string;
   tabs: GoogleSheetTab[];
+  /** What the selected program can take. A tab detected as anything else can't be checked. */
+  kinds: ImportKind[];
   choices: SheetTabChoices;
   onChange: (next: SheetTabChoices) => void;
   previews: TabPreviews;
@@ -163,6 +166,7 @@ export function SheetTabsStep({
                 const kind = choices[tab.name];
                 const checkboxId = `sheet-tab-${i}`;
                 const p = kind ? previews[keyFor(tab.name, kind)] : undefined;
+                const unavailable = kind === undefined && !kinds.includes(suggestedKind(tab));
                 return (
                   <tr key={tab.name}>
                     <td>{i + 1}</td>
@@ -171,6 +175,7 @@ export function SheetTabsStep({
                         id={checkboxId}
                         type="checkbox"
                         checked={kind !== undefined}
+                        disabled={unavailable}
                         onChange={(e) => toggle(tab, e.target.checked)}
                       />
                     </td>
@@ -180,27 +185,33 @@ export function SheetTabsStep({
                       </label>
                     </td>
                     <td>
-                      <select
-                        className={styles.mappingSelect}
-                        aria-label={`Import ${tab.name} as`}
-                        value={kind ?? suggestedKind(tab)}
-                        disabled={kind === undefined}
-                        onChange={(e) => {
-                          const picked = ALL_KINDS.find((k) => k === e.target.value);
-                          if (!picked) return;
-                          clearFailedPreviews(tab.name);
-                          onChange({ ...choices, [tab.name]: picked });
-                        }}
-                      >
-                        {ALL_KINDS.map((k) => (
-                          <option key={k} value={k}>
-                            {KIND_LABEL[k]}
-                            {k === tab.suggestedKind
-                              ? ` (${tab.classification.type ? 'detected' : 'best guess'}, ${Math.round(tab.classification.confidence * 100)}%)`
-                              : ''}
-                          </option>
-                        ))}
-                      </select>
+                      {unavailable ? (
+                        <span className={styles.stepHint}>
+                          {KIND_LABEL[suggestedKind(tab)]}: needs a custom program
+                        </span>
+                      ) : (
+                        <select
+                          className={styles.mappingSelect}
+                          aria-label={`Import ${tab.name} as`}
+                          value={kind ?? suggestedKind(tab)}
+                          disabled={kind === undefined}
+                          onChange={(e) => {
+                            const picked = kinds.find((k) => k === e.target.value);
+                            if (!picked) return;
+                            clearFailedPreviews(tab.name);
+                            onChange({ ...choices, [tab.name]: picked });
+                          }}
+                        >
+                          {kinds.map((k) => (
+                            <option key={k} value={k}>
+                              {KIND_LABEL[k]}
+                              {k === tab.suggestedKind
+                                ? ` (${tab.classification.type ? 'detected' : 'best guess'}, ${Math.round(tab.classification.confidence * 100)}%)`
+                                : ''}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                     <td>{Math.max(tab.rowCount - 1, 0)}</td>
                     <td>{kind === undefined ? '—' : <PreviewCell preview={p} />}</td>

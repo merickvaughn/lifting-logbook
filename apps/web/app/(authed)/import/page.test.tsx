@@ -10,6 +10,10 @@ jest.mock('@/lib/preferences', () => ({
   getPreferredUnit: jest.fn(),
 }));
 
+jest.mock('@/lib/active-program', () => ({
+  getUserSettings: jest.fn(),
+}));
+
 // Stub the wizard so the test isolates the page's own fetch/fallback logic —
 // echo the received props so assertions can inspect exactly what the page
 // passed down, matching the OnboardingPage test's established pattern.
@@ -35,11 +39,14 @@ jest.mock('./ImportWizard', () => ({
 
 import { fetchCustomPrograms, fetchCustomLifts } from '@/lib/api';
 import { getPreferredUnit } from '@/lib/preferences';
+import { getUserSettings } from '@/lib/active-program';
+import { PROGRAMS } from '@/lib/programs';
 import ImportPage from './page';
 
 const mockedFetchPrograms = fetchCustomPrograms as unknown as jest.Mock;
 const mockedFetchCustomLifts = fetchCustomLifts as unknown as jest.Mock;
 const mockedGetPreferredUnit = getPreferredUnit as unknown as jest.Mock;
+const mockedGetUserSettings = getUserSettings as unknown as jest.Mock;
 
 const PROGRAM = { id: 'prog-1', name: 'My Program', description: null, baseTemplate: null, createdAt: '2026-01-01' };
 const CUSTOM_LIFT = {
@@ -52,10 +59,97 @@ const CUSTOM_LIFT = {
   createdAt: '2026-01-01T00:00:00.000Z',
 };
 
+async function renderedPrograms(): Promise<{ id: string; name: string; isTemplate?: boolean }[]> {
+  const html = renderToStaticMarkup((await ImportPage()) as ReactElement);
+  const encoded = html.match(/data-programs="([^"]*)"/)?.[1];
+  if (encoded === undefined) throw new Error('data-programs attribute not found');
+  return JSON.parse(encoded.replace(/&quot;/g, '"'));
+}
+
+describe('ImportPage — where a user can import to (#1115)', () => {
+  const OTHER_ID = '11111111-1111-1111-1111-111111111111';
+  const OTHER = { ...PROGRAM, id: OTHER_ID, name: 'Other Program' };
+  const RPT_NAME = PROGRAMS.find((p) => p.id === 'rpt')?.name;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedGetPreferredUnit.mockResolvedValue('lbs');
+    mockedFetchCustomLifts.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('offers the active template to a user with no custom program', async () => {
+    mockedFetchPrograms.mockResolvedValue([]);
+    mockedGetUserSettings.mockResolvedValue({ activeProgram: 'rpt' });
+
+    expect(RPT_NAME).toBeTruthy();
+    expect(await renderedPrograms()).toEqual([{ id: 'rpt', name: RPT_NAME, isTemplate: true }]);
+  });
+
+  it('puts the active template ahead of custom programs', async () => {
+    mockedFetchPrograms.mockResolvedValue([PROGRAM]);
+    mockedGetUserSettings.mockResolvedValue({ activeProgram: '5-3-1' });
+
+    expect((await renderedPrograms()).map((p) => p.id)).toEqual(['5-3-1', 'prog-1']);
+  });
+
+  it('puts an active custom program first and adds no template', async () => {
+    mockedFetchPrograms.mockResolvedValue([PROGRAM, OTHER]);
+    mockedGetUserSettings.mockResolvedValue({ activeProgram: OTHER_ID });
+
+    expect((await renderedPrograms()).map((p) => p.id)).toEqual([OTHER_ID, 'prog-1']);
+  });
+
+  it('adds nothing for an account with no active program, so it gets the guidance instead', async () => {
+    mockedFetchPrograms.mockResolvedValue([]);
+    mockedGetUserSettings.mockResolvedValue({ activeProgram: null });
+
+    expect(await renderedPrograms()).toEqual([]);
+  });
+
+  it('names a template the catalog does not list by its slug', async () => {
+    mockedFetchPrograms.mockResolvedValue([]);
+    mockedGetUserSettings.mockResolvedValue({ activeProgram: '5-3-1' });
+
+    expect(await renderedPrograms()).toEqual([{ id: '5-3-1', name: '5-3-1', isTemplate: true }]);
+  });
+
+  it('does not offer an active custom program missing from the list as a template', async () => {
+    mockedFetchPrograms.mockResolvedValue([PROGRAM]);
+    mockedGetUserSettings.mockResolvedValue({ activeProgram: 'e6d3e12d-bf4d-4618-a0ae-6194ff13ba8a' });
+
+    expect((await renderedPrograms()).map((p) => p.id)).toEqual(['prog-1']);
+  });
+
+  it('keeps custom programs and logs when the settings fetch fails', async () => {
+    mockedFetchPrograms.mockResolvedValue([PROGRAM]);
+    mockedGetUserSettings.mockRejectedValue(new Error('API down'));
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect((await renderedPrograms()).map((p) => p.id)).toEqual(['prog-1']);
+    expect(errSpy).toHaveBeenCalledWith(
+      'ImportPage: user settings fetch failed, omitting active program',
+      expect.any(Error),
+    );
+  });
+
+  it('still offers the active template when the custom programs fetch fails', async () => {
+    mockedFetchPrograms.mockRejectedValue(new Error('API down'));
+    mockedGetUserSettings.mockResolvedValue({ activeProgram: '5-3-1' });
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect((await renderedPrograms()).map((p) => p.id)).toEqual(['5-3-1']);
+  });
+});
+
 describe('ImportPage — custom programs / custom lifts fetch (#911)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedGetPreferredUnit.mockResolvedValue('lbs');
+    mockedGetUserSettings.mockResolvedValue({ activeProgram: null });
   });
 
   // #911 review, eighth pass: jest.clearAllMocks() (above) resets call
