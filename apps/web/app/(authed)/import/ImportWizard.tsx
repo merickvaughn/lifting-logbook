@@ -2051,7 +2051,7 @@ export function ImportWizard({
                   <ul className={styles.skippedDetailList}>
                     {commitResult.skippedDetail.slice(0, MAX_RENDERED_IMPORT_SKIPS).map((s) => (
                       <li key={`${s.row}-${s.naturalKey}`}>
-                        Row {s.row}: {s.naturalKey}
+                        Row {s.row}: {s.label}
                       </li>
                     ))}
                   </ul>

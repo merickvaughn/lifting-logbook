@@ -155,7 +155,9 @@ describe('pairWithRowNumber', () => {
 });
 
 describe('buildSkippedDetail', () => {
-  it('extracts row and natural key only for skipped rows, in order', () => {
+  const labelOf = (r: Row) => `label ${r.k}`;
+
+  it('extracts row, natural key and label only for skipped rows, in order', () => {
     const kindOf = (k: string): ImportRowKind => (k === 'b' ? 'skip' : 'create');
     const classified = [
       ...classifyImportRows(
@@ -165,7 +167,9 @@ describe('buildSkippedDetail', () => {
       ),
     ];
 
-    expect(buildSkippedDetail(classified)).toEqual([{ row: 2, naturalKey: 'b' }]);
+    expect(buildSkippedDetail(classified, labelOf)).toEqual([
+      { row: 2, naturalKey: 'b', label: 'label b' },
+    ]);
   });
 
   it('returns an empty array when nothing was skipped', () => {
@@ -173,7 +177,7 @@ describe('buildSkippedDetail', () => {
       ...classifyImportRows(pairWithRowNumber<Row>([{ k: 'a' }]), ({ r }) => r.k, () => 'create'),
     ];
 
-    expect(buildSkippedDetail(classified)).toEqual([]);
+    expect(buildSkippedDetail(classified, labelOf)).toEqual([]);
   });
 
   it('reports an in-batch duplicate at its own (later) row number, not the original occurrence', () => {
@@ -185,6 +189,8 @@ describe('buildSkippedDetail', () => {
     // yielded as 'skip' regardless of the classifier's answer (classifyImportRows'
     // own duplicate-detection) — buildSkippedDetail reports it at row 2, its own
     // batch position, not row 1's.
-    expect(buildSkippedDetail(classified)).toEqual([{ row: 2, naturalKey: 'x' }]);
+    expect(buildSkippedDetail(classified, labelOf)).toEqual([
+      { row: 2, naturalKey: 'x', label: 'label x' },
+    ]);
   });
 });

@@ -27,6 +27,7 @@ import {
   classifyImportRows,
   pairWithRowNumber,
   buildSkippedDetail,
+  liftRecordLabel,
   liftRecordNaturalKey,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
@@ -94,6 +95,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     ];
     const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row.r);
     const created = await repos.liftRecord.appendLiftRecords(program, toCreate);
+    const liftNames = await customLiftNamesFor(repos);
     // `skipped` is derived from `created` (the DB's actual insert count), not
     // `toCreate.length` (what JS classification expected to write): a
     // concurrent import racing between findExistingRecords and
@@ -110,7 +112,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
       created,
       updated: 0,
       skipped: classified.length - created,
-      skippedDetail: buildSkippedDetail(classified),
+      skippedDetail: buildSkippedDetail(classified, (r) => liftRecordLabel(r, liftNames)),
       preImage: buildLiftRecordsPreImage(toCreate),
     };
   },

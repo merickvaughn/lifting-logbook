@@ -293,6 +293,36 @@ describe('LiftRecordsController', () => {
         expect.arrayContaining([expect.objectContaining({ lift: 'custom-wide-grip-cbl-curls' })]),
       );
     });
+
+    // #1158: the skip stays keyed by the id, but the upload form shows the label.
+    it('labels a skipped custom-lift row with its name, not its id', async () => {
+      const customLift: CustomLift = {
+        id: 'custom-wide-grip-cbl-curls',
+        name: 'Wide-Grip CBL Curls',
+        classification: 'accessory',
+        movementProfile: { patterns: [], jointActions: [], complexity: 'simple' },
+        userId: MOCK_USER.id,
+        isCustom: true,
+        createdAt: new Date('2026-01-01'),
+      };
+      customLiftRepo.list.mockResolvedValue([customLift]);
+      liftRecordRepo.findExistingRecords.mockImplementation(async (_program, records) => records);
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(0);
+      const csv = [
+        IMPORT_CSV_HEADER,
+        '5-3-1,1,1,2026-01-01,Wide-Grip CBL Curls,1,90,10,',
+      ].join('\n');
+
+      const result = await controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER);
+
+      expect(result.skipped).toEqual([
+        {
+          row: 1,
+          naturalKey: '1:1:20260101:custom-wide-grip-cbl-curls:1',
+          label: 'Wide-Grip CBL Curls · macrocycle 1 workout 1 set 1 (20260101)',
+        },
+      ]);
+    });
   });
 
   describe('PATCH lift-records/:id', () => {
