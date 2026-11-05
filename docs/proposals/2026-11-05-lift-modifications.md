@@ -43,7 +43,9 @@ performed the same way.
 | 2 | **Modification** | The same lift, performed differently | Wide grip on Cable Curl, Mixed grip on Deadlift | The lift, plus the modifications on each set |
 | 3 | **Substitution** | A different lift takes its place | Romanian Deadlift for Deadlift | A different lift, with its own catalog entry, max and history |
 
-Substitution stays a separate design and is out of scope here. The two relate in four ways:
+Substitution is tracked separately in
+[#1133](https://github.com/merickvaughn/lifting-logbook/issues/1133) and is out of scope here. The
+two relate in four ways:
 
 - They compose. A substituted lift can have its own modifications, such as Romanian Deadlift with
   Paused.
@@ -82,8 +84,8 @@ Two new tables and three new columns. All additive.
 model LiftModification {
   id               String    @id @default(uuid())
   userId           String
-  // The lift's canonical ID from #1118: a catalog id or a custom lift's uuid. No foreign key,
-  // because catalog lifts are not rows.
+  // The lift's LiftId from #1134: a catalog id or a custom lift's uuid. No foreign key, because
+  // catalog lifts are not rows.
   lift             String
   name             String    // "Wide grip"
   description      String    @default("")
@@ -209,13 +211,16 @@ match" area today offers one outcome: create a new lift. It gains a second:
   max for that name. For `Wide-Grip CBL Curls` the form suggests Cable Curl and `Wide-Grip`.
 
 Mapping to an existing lift stays as it is, through the input above. That is the alternative-name
-case. A later substitution design can add a third outcome here.
+case. [#1133](https://github.com/merickvaughn/lifting-logbook/issues/1133) adds marking a
+substitution to the same step.
 
 **Creating it stores the sheet's spelling as an alternative name.** The wizard then treats the row
 as resolved, exactly as it does for a lift created mid-import. Import resolves alternative names on
-the server: the import slot map from `buildImportSlotMap`
-([PR #1120](https://github.com/merickvaughn/lifting-logbook/pull/1120)) gains them, and a second
-lookup attaches the modification. So:
+the server, through the one resolver in the
+[stable-ID plan](https://github.com/merickvaughn/lifting-logbook/issues/1134) or, until that lands,
+the import slot map from `buildImportSlotMap`
+([PR #1120](https://github.com/merickvaughn/lifting-logbook/pull/1120)). The answer is the lift plus
+the modification. So:
 
 - A re-import of the same sheet resolves with no prompt, and its natural keys match.
 - The commit request gains no new field, which avoids conflict with the transport change in
@@ -237,7 +242,7 @@ the user confirms, and the form opens only when the user picks this outcome.
 | 2 | Training maxes | `Wide-Grip CBL Curls`, 65, `maxMode` `own` | `lift_modification_max`. The Cable Curl max is untouched |
 | 3 | Training maxes | Same row, `maxMode` `none` or `lift` | A skip, listed with its reason. Never merged into the lift's max |
 | 4 | Strength goals | A row naming a modification | A skip, listed with its reason |
-| 5 | Program | `Wide-Grip CBL Curls` slot | `lift` = the Cable Curl id, `modifications` = [Wide grip] as start-on |
+| 5 | Program | `Wide-Grip CBL Curls` slot | `lift` = the Cable Curl id, `modifications` = [Wide grip] as start-on. The stable-ID plan's `label` column keeps the program's own wording |
 
 **Collapsing names can collide.** Once `CBL Curls` and `Wide-Grip CBL Curls` share a `lift`, a file
 with set 1 of each in one workout on one date has two rows with one natural key, and
@@ -257,8 +262,10 @@ this proposal stores nothing new for it. Three consequences:
 - **Which max wins.** A file with both `OH Press` (103.75, 9/28/2026) and `OH Press-HV` (75,
   1/1/2024) now has one lift named twice. [PR #1129](https://github.com/merickvaughn/lifting-logbook/pull/1129)
   keeps the most recent, so 103.75 wins.
-- **#1118.** A comment there says any fix must keep the two as separate things. The owner's decision
-  overrides that. They are one lift.
+- **The stable-ID plan.** [PR #1145](https://github.com/merickvaughn/lifting-logbook/pull/1145) and
+  a comment on [#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118) still treat the
+  two as things to keep separate. The owner's decision here is the later one and overrides that:
+  they are one lift. The conflict is noted on both.
 - **The slot's plan.** If the 5×12 slot returns (the sheet lists it at offset -1, which reads as
   parked), it plans from 103.75 though the last high-volume sets were around 90, and each run that
   hits its reps proposes cutting the max. That is what
@@ -269,14 +276,26 @@ Deadlift (`lift`).
 
 ### Sequence
 
-Blocked on [#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118): `lift_modification.lift`
-and `lift_record.lift` need its canonical ID, and until then a custom-lift rename would orphan
-modifications the way [D3](../domain-model.md#defects) orphans everything else. The import work
-also builds on [#1114](https://github.com/merickvaughn/lifting-logbook/issues/1114),
+This builds on the [stable-ID plan](https://github.com/merickvaughn/lifting-logbook/issues/1134)
+([PR #1145](https://github.com/merickvaughn/lifting-logbook/pull/1145)), which isn't built yet:
+
+- **Blocked on [#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118)**, that plan's
+  first PR. `lift_modification.lift` stores a `LiftId` from the start, and checking a set against a
+  modification's lift needs the shared resolver while `lift_record.lift` still holds mixed
+  spellings.
+- **Should follow its tolerant reads ([#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135)).**
+  A modification's history needs to follow its lift under any stored spelling.
+- **Its migration tool ([#1138](https://github.com/merickvaughn/lifting-logbook/issues/1138)) must
+  know about `modifications`** if phase 2 here ships first. Merge rule 1 calls two rows identical
+  by weight, reps and notes, so it must compare `modifications` too, or a merge could drop them.
+  The ids are uuids, so the tool has nothing to rewrite.
+- **Alternative names.** The plan's model gives each lift alternative names used for matching. If
+  those land in a table, `alternativeNames` should move there with an optional modification id,
+  rather than keep two lists.
+
+The import work also builds on [#1114](https://github.com/merickvaughn/lifting-logbook/issues/1114),
 [#1116](https://github.com/merickvaughn/lifting-logbook/issues/1116) and
-[#1121](https://github.com/merickvaughn/lifting-logbook/issues/1121). If #1118 stores lift alternative
-names in a table, `alternativeNames` should move there with an optional modification id, rather
-than keep two lists.
+[#1121](https://github.com/merickvaughn/lifting-logbook/issues/1121).
 
 On approval, the issue becomes a top-level issue with one sub-issue per PR:
 
