@@ -39,7 +39,7 @@ import { CreateLiftRecordDto } from './create-lift-record.dto';
 import { UpdateLiftRecordDto } from './update-lift-record.dto';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
-import { customLiftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
+import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { RlsTxTimeout } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 
@@ -262,7 +262,7 @@ export class LiftRecordsController {
       classified.filter((c) => c.kind === 'create').map((c) => c.row.r),
     );
 
-    const liftNames = await customLiftNamesFor(repos);
+    const liftNames = await liftNamesFor(repos);
     const skipped = buildSkippedDetail(classified, (r) => liftRecordLabel(r, liftNames));
 
     return { written, skipped };

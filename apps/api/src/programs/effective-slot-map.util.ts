@@ -1,4 +1,4 @@
-import { buildEffectiveSlotMap } from '@lifting-logbook/core';
+import { buildEffectiveSlotMap, LIFT_CATALOG } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
 
 /**
@@ -40,11 +40,13 @@ export async function effectiveSlotMapFor(repos: RepositoryBundle): Promise<Reco
 }
 
 /**
- * Custom lift id → name, so preview labels and skipped-row labels show the name a
- * slot map resolved to an id (#1125, #1158). A second list read per request, on top
- * of effectiveSlotMapFor's, for the reason its doc comment accepts.
+ * Lift id → name, built-in and custom, so preview labels and skipped-row labels show
+ * the name a slot map resolved to an id (#1125, #1158, #1162). A second list read per
+ * request, on top of effectiveSlotMapFor's, for the reason its doc comment accepts.
  */
-export async function customLiftNamesFor(repos: RepositoryBundle): Promise<Map<string, string>> {
+export async function liftNamesFor(repos: RepositoryBundle): Promise<Map<string, string>> {
   const customLifts = await repos.customLift.list();
-  return new Map(customLifts.map((lift) => [lift.id, lift.name]));
+  return new Map(
+    [...LIFT_CATALOG, ...customLifts].map((lift): [string, string] => [lift.id, lift.name]),
+  );
 }

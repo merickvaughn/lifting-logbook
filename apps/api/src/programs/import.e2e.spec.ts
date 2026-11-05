@@ -241,7 +241,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
         {
           row: 1,
           naturalKey: '1:1:20260101:bench-press:1',
-          label: 'bench-press · macrocycle 1 workout 1 set 1 (20260101)',
+          label: 'Bench Press · macrocycle 1 workout 1 set 1 (20260101)',
         },
       ]);
     });
@@ -274,12 +274,12 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
         {
           row: 1,
           naturalKey: '1:1:20251216:bench-press:1',
-          label: 'bench-press · macrocycle 1 workout 1 set 1 (20251216)',
+          label: 'Bench Press · macrocycle 1 workout 1 set 1 (20251216)',
         },
         {
           row: 2,
           naturalKey: '1:1:20240112:bench-press:1',
-          label: 'bench-press · macrocycle 1 workout 1 set 1 (20240112)',
+          label: 'Bench Press · macrocycle 1 workout 1 set 1 (20240112)',
         },
       ]);
     });
@@ -369,7 +369,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       ).json() as ImportPreviewResponse;
       expect(preview.preview).toMatchObject({ creates: 2, updates: 0, skips: 1 });
       // The create shows the weight commit is about to store, not the older row's.
-      expect(preview.preview?.deltas.find((d) => d.kind === 'create' && d.label === 'overhead-press')?.after).toBe('110');
+      expect(preview.preview?.deltas.find((d) => d.kind === 'create' && d.key === 'overhead-press')?.after).toBe('110');
 
       const commit = (
         await importCsv(program, csv, '?mode=commit&destination=training-maxes')
@@ -623,6 +623,49 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
           label: 'Skip Label Curls · macrocycle 1 workout 1 set 1 (20260101)',
         },
       ]);
+    });
+
+    // #1162: a built-in lift is stored under its catalog id, which reads no better.
+    it('labels a built-in lift-records row with its display name on Review and on a re-commit skip', async () => {
+      const program = 'p3-built-in-lift-label';
+      const csv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-01,Bench Press,1,185,5,',
+      ].join('\n');
+      const label = 'Bench Press · macrocycle 1 workout 1 set 1 (20260101)';
+
+      const preview = (
+        await importCsv(program, csv, '?mode=preview&destination=lift-records')
+      ).json();
+      expect(preview.errors).toEqual([]);
+      expect(preview.preview.deltas).toHaveLength(1);
+      expect(preview.preview.deltas[0]).toMatchObject({
+        key: '1:1:20260101:bench-press:1',
+        label,
+      });
+      expect(preview.preview.deltas[0].label).not.toContain('bench-press');
+
+      const query = '?mode=commit&destination=lift-records';
+      expect((await importCsv(program, csv, query)).json().created).toBe(1);
+      const second = (await importCsv(program, csv, query)).json();
+      expect(second.skippedDetail).toEqual([
+        { row: 1, naturalKey: '1:1:20260101:bench-press:1', label },
+      ]);
+      expect(second.skippedDetail[0].label).not.toContain('bench-press');
+    });
+
+    it('labels built-in lifts by display name in training-max and strength-goal previews', async () => {
+      const labelsFor = async (program: string, csv: string, destination: string) =>
+        (
+          await importCsv(program, csv, `?mode=preview&destination=${destination}`)
+        ).json().preview.deltas.map((d: { label: string }) => d.label);
+
+      expect(
+        await labelsFor('p3-built-in-tm-label', 'Date Updated,Lift,Weight\n1/1/2026,Bench P.,185', 'training-maxes'),
+      ).toEqual(['Bench Press']);
+      expect(await labelsFor('p3-built-in-goal-label', GOALS_CSV, 'strength-goals')).toEqual(
+        expect.arrayContaining(['Bench Press']),
+      );
     });
 
     // #911: liftOverrides may now resolve to a custom lift's id (not just a
@@ -938,7 +981,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
         {
           row: 1,
           naturalKey: '1:1:20260101:bench-press:1',
-          label: 'bench-press · macrocycle 1 workout 1 set 1 (20260101)',
+          label: 'Bench Press · macrocycle 1 workout 1 set 1 (20260101)',
         },
       ]);
     });
