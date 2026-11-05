@@ -7,6 +7,7 @@ import {
 import { classifyImportRows } from './classifyAndCount';
 import { liftRecordNaturalKey } from './liftRecordNaturalKey';
 import {
+  latestTrainingMaxFirst,
   programSpecComparable,
   programSpecNaturalKey,
   programSpecRowKind,
@@ -66,7 +67,7 @@ export function buildTrainingMaxPreImage(
   const image: ImportPreImage = {};
 
   for (const { row: m, kind, key } of classifyImportRows(
-    incoming,
+    latestTrainingMaxFirst(incoming),
     (m) => m.lift,
     (m) => trainingMaxRowKind(m, existingWeightByLift),
   )) {

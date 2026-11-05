@@ -1,4 +1,4 @@
-import { TrainingMax, classifyAndCount, trainingMaxRowKind } from '@lifting-logbook/core';
+import { TrainingMax, classifyAndCount, latestTrainingMaxFirst, trainingMaxRowKind } from '@lifting-logbook/core';
 import { ImportWriteResult } from '@lifting-logbook/types';
 import { ITrainingMaxRepository } from '../../ports/ITrainingMaxRepository';
 import { SEED_PROGRAM, seedTrainingMaxes } from './fixtures';
@@ -37,7 +37,7 @@ export class InMemoryTrainingMaxRepository implements ITrainingMaxRepository {
     // Shared classify/dedupe/tally loop (#532) so this adapter's counts match the
     // Prisma adapter's and the preview path's for the same input.
     const result = await classifyAndCount(
-      maxes,
+      latestTrainingMaxFirst(maxes),
       (m) => m.lift,
       (m) => trainingMaxRowKind(m, existingByLift),
       (m) => {

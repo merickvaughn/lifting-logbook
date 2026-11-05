@@ -177,6 +177,26 @@ export function trainingMaxRowKind(
   return before === m.weight ? 'skip' : 'update';
 }
 
+/**
+ * Moves each lift's most recent row ahead of its older rows (#1117). A file can
+ * name one lift twice, e.g. `OH Press-HV` from 2024 and `OH Press` from 2026, which
+ * both resolve to overhead-press. `classifyImportRows` keeps the first row for a
+ * key and skips the rest, so every training-max preview and commit path passes its
+ * rows through here, and the row kept is the newest rather than whichever the file
+ * lists first. Rows dated the same day keep file order. Input with no duplicate
+ * lift comes back in its original order.
+ */
+export function latestTrainingMaxFirst(maxes: readonly TrainingMax[]): TrainingMax[] {
+  const latestByLift = new Map<string, TrainingMax>();
+  for (const m of maxes) {
+    const latest = latestByLift.get(m.lift);
+    if (!latest || m.dateUpdated.getTime() > latest.dateUpdated.getTime()) {
+      latestByLift.set(m.lift, m);
+    }
+  }
+  return [...latestByLift.values(), ...maxes.filter((m) => latestByLift.get(m.lift) !== m)];
+}
+
 /** Classify one strength-goal row vs the stored goals (keyed by lift). */
 export function strengthGoalRowKind(
   g: StrengthGoalEntry,
@@ -197,7 +217,7 @@ export function buildTrainingMaxPreview(
   const seenCounts = new Map<string, number>();
 
   for (const { row: m, kind, key } of classifyImportRows(
-    incoming,
+    latestTrainingMaxFirst(incoming),
     (m) => m.lift,
     (m) => trainingMaxRowKind(m, existingByLift),
   )) {

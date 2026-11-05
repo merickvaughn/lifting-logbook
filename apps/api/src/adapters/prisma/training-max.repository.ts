@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { TrainingMax, classifyAndCount, trainingMaxRowKind } from '@lifting-logbook/core';
+import { TrainingMax, classifyAndCount, latestTrainingMaxFirst, trainingMaxRowKind } from '@lifting-logbook/core';
 import { ImportWriteResult } from '@lifting-logbook/types';
 import { ITrainingMaxRepository } from '../../ports/ITrainingMaxRepository';
 import { IMPORT_BATCH_TX_OPTIONS, runBatch, runInteractive } from './prisma-tx.util';
@@ -66,7 +66,7 @@ export class PrismaTrainingMaxRepository implements ITrainingMaxRepository {
         // Shared classify/dedupe/tally loop (#532) so every adapter reports counts
         // identically; the create/update/skip decision is trainingMaxRowKind.
         return classifyAndCount(
-          maxes,
+          latestTrainingMaxFirst(maxes),
           (m) => m.lift,
           (m) => trainingMaxRowKind(m, existingByLift),
           (m) =>

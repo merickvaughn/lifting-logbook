@@ -65,6 +65,40 @@ describe('import-commit count parity (in-memory vs Prisma)', () => {
     expect(prismaResult).toEqual(memResult);
   });
 
+  it('training maxes: both adapters keep the most recent duplicate whatever the file order (#1117)', async () => {
+    const older: TrainingMax = { lift: 'overhead-press', weight: 95, dateUpdated: new Date('2024-01-01T00:00:00.000Z') };
+    const newer: TrainingMax = { lift: 'overhead-press', weight: 110, dateUpdated: new Date('2026-09-28T00:00:00.000Z') };
+
+    for (const incoming of [[older, newer], [newer, older]]) {
+      const mem = new InMemoryTrainingMaxRepository();
+      const memResult = await mem.importTrainingMaxes(PROGRAM, incoming);
+      expect(memResult).toEqual({ created: 1, updated: 0, skipped: 1 });
+      expect(await mem.getTrainingMaxes(PROGRAM)).toEqual([newer]);
+
+      const tx = {
+        trainingMax: {
+          findMany: jest.fn().mockResolvedValue([]),
+          upsert: jest.fn().mockResolvedValue({}),
+        },
+      };
+      const prisma = {
+        $transaction: jest.fn((cb: (t: typeof tx) => unknown) => cb(tx)),
+      } as unknown as PrismaClient;
+      const prismaResult = await new PrismaTrainingMaxRepository(prisma, USER).importTrainingMaxes(
+        PROGRAM,
+        incoming,
+      );
+      expect(prismaResult).toEqual(memResult);
+      expect(tx.trainingMax.upsert).toHaveBeenCalledTimes(1);
+      expect(tx.trainingMax.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ weight: 110, dateUpdated: newer.dateUpdated }),
+          update: { weight: 110, dateUpdated: newer.dateUpdated },
+        }),
+      );
+    }
+  });
+
   it('strength goals: identical counts for create/update/skip/dedupe', async () => {
     const existing: StrengthGoalEntry[] = [
       { lift: 'Squat', goalType: 'absolute', unit: 'lbs', target: 400, updatedAt: at },
