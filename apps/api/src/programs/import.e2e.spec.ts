@@ -520,6 +520,32 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.preview.deltas[0].status).not.toBe('ambiguous');
     });
 
+    // #1125: the row is stored under the lift's id, but Review shows the label.
+    it('labels a lift-records row mapped to a custom lift with its name, not its id', async () => {
+      const created = await createCustomLift({
+        name: 'Label Check Curls',
+        classification: 'accessory',
+      });
+      expect(created.statusCode).toBe(201);
+      const { id: customLiftId } = created.json();
+
+      const res = (
+        await importCsv(
+          'p3-custom-lift-label',
+          [
+            'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+            '5-3-1,1,1,2026-01-01,Label Check Curls,1,90,10,',
+          ].join('\n'),
+          '?mode=preview&destination=lift-records',
+        )
+      ).json();
+
+      expect(res.errors).toEqual([]);
+      expect(res.preview.deltas).toHaveLength(1);
+      expect(res.preview.deltas[0].label).toContain('Label Check Curls');
+      expect(res.preview.deltas[0].label).not.toContain(customLiftId);
+    });
+
     // #911: liftOverrides may now resolve to a custom lift's id (not just a
     // built-in canonical id) — the self-mapping half of buildEffectiveSlotMap
     // must let an already-resolved custom-lift id pass strict validation.
@@ -550,9 +576,9 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     // per request from DEFAULT_SLOT_MAP + the user's custom lifts too (previously
     // only lift-records was custom-lift-aware, #911) — a CSV row whose raw text
     // matches an existing custom lift's name resolves to that lift's id instead of
-    // passing through as raw display text. buildTrainingMaxPreview's delta `label`
+    // passing through as raw display text. buildTrainingMaxPreview's delta `key`
     // carries the resolved `lift` value, so asserting on it proves resolution
-    // without needing a separate read endpoint.
+    // without needing a separate read endpoint; `label` carries the name (#1125).
     it('resolves an existing custom lift by name for a training-maxes import', async () => {
       const created = await createCustomLift({
         name: 'TM Import Custom Lift',
@@ -575,11 +601,14 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.errors).toEqual([]);
       expect(res.preview).not.toBeNull();
       expect(res.preview.deltas).toHaveLength(1);
-      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create', label: customLiftId });
+      expect(res.preview.deltas[0]).toMatchObject({
+        kind: 'create',
+        key: customLiftId,
+        label: 'TM Import Custom Lift',
+      });
     });
 
-    // Same as above, for strength-goals (buildStrengthGoalPreview's delta `label`
-    // also carries the resolved `lift` value).
+    // Same as above, for strength-goals.
     it('resolves an existing custom lift by name for a strength-goals import', async () => {
       const created = await createCustomLift({
         name: 'Goal Import Custom Lift',
@@ -605,7 +634,11 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.errors).toEqual([]);
       expect(res.preview).not.toBeNull();
       expect(res.preview.deltas).toHaveLength(1);
-      expect(res.preview.deltas[0]).toMatchObject({ kind: 'create', label: customLiftId });
+      expect(res.preview.deltas[0]).toMatchObject({
+        kind: 'create',
+        key: customLiftId,
+        label: 'Goal Import Custom Lift',
+      });
     });
 
     // #914: this splitDest interaction was the second trigger discovered for this

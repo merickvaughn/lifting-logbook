@@ -30,6 +30,7 @@ import {
   liftRecordNaturalKey,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
+import { customLiftNamesFor } from './effective-slot-map.util';
 
 export interface ImportHandler<T> {
   parse(table: SpreadsheetCell[][]): T[];
@@ -134,7 +135,7 @@ const trainingMaxesHandler: ImportHandler<TrainingMax> = {
   },
   async preview(valid, program, repos) {
     const existing = await repos.trainingMax.getTrainingMaxes(program);
-    return buildTrainingMaxPreview(valid, existing);
+    return buildTrainingMaxPreview(valid, existing, await customLiftNamesFor(repos));
   },
   async commit(valid, program, repos) {
     const existing = await repos.trainingMax.getTrainingMaxes(program);
@@ -158,7 +159,7 @@ const strengthGoalsHandler: ImportHandler<StrengthGoalEntry> = {
   },
   async preview(valid, program, repos) {
     const existing = await repos.strengthGoal.getGoals(program);
-    return buildStrengthGoalPreview(valid, existing);
+    return buildStrengthGoalPreview(valid, existing, await customLiftNamesFor(repos));
   },
   async commit(valid, program, repos) {
     const existing = await repos.strengthGoal.getGoals(program);

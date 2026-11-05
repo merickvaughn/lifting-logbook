@@ -40,7 +40,7 @@ import {
 import styles from './import.module.css';
 
 type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous' | 'needs-lift';
-type EditableMax = { lift: string; weight: string };
+type EditableMax = { lift: string; label: string; weight: string };
 type QueuedTab = { name: string; csv: string; kind: ImportKind };
 type CompletedTab = {
   name: string;
@@ -651,7 +651,8 @@ export function ImportWizard({
       setReviewMaxes(
         rows.deltas
           .filter((d) => d.kind === 'create' || d.kind === 'update')
-          .map((d) => ({ lift: d.label, weight: d.after ?? '' })),
+          // A create or update row's key is the stored lift, with no duplicate suffix.
+          .map((d) => ({ lift: d.key, label: d.label, weight: d.after ?? '' })),
       );
     }
     setReviewEditsDiscarded(editsDiscarded);
@@ -991,6 +992,26 @@ export function ImportWizard({
     }
   }
 
+  // A commit rejected a lift this list says exists, so it was deleted elsewhere
+  // (#1124). Replaces the list outright: no row can be waiting on a create here,
+  // because such a row blocks the commit. A row holding a dropped lift's id goes
+  // back to the lift's name, which it shows and can create again.
+  async function refreshCustomLiftsAfterCommit() {
+    try {
+      const latest = await fetchCustomLifts();
+      const latestIds = new Set(latest.map((lift) => lift.id));
+      const droppedNames = new Map(
+        customLifts.filter((lift) => !latestIds.has(lift.id)).map((lift) => [lift.id, lift.name]),
+      );
+      setCustomLifts(latest);
+      setLiftOverrides(
+        (prev) => new Map([...prev].map(([row, lift]) => [row, droppedNames.get(lift) ?? lift])),
+      );
+    } catch (e) {
+      logClientError('fetchCustomLifts', e, { programId });
+    }
+  }
+
   async function handleCommit() {
     if (!programId || !file || !destination) return;
     setCommitErrors(null);
@@ -1041,6 +1062,9 @@ export function ImportWizard({
         setStep(Step.DONE);
       } else {
         setCommitErrors(result.errors);
+        if (result.errors.some((e) => e.code === 'UNRECOGNIZED_LIFT')) {
+          await refreshCustomLiftsAfterCommit();
+        }
       }
     } catch (e) {
       logClientError('commitImport', e, { programId, destination });
@@ -1475,7 +1499,7 @@ export function ImportWizard({
                         {reviewMaxes
                           .filter((row) => !excludedKeys.has(row.lift))
                           .map((row) => {
-                            const liftName = customLiftNames.get(row.lift) ?? row.lift;
+                            const liftName = row.label;
                             return (
                             <li key={row.lift} className={styles.maxEditRow}>
                               <span className={styles.maxEditLift}>{liftName}</span>
