@@ -9,6 +9,7 @@ import {
   CustomLiftNotFoundError,
   FocusBlockNotFoundError,
   HistoryEntryNotFoundError,
+  LiftModificationNotFoundError,
   ProgramNotFoundError,
   StrengthGoalNotFoundError,
   WorkoutNotFoundError,
@@ -20,7 +21,8 @@ type DomainNotFound =
   | HistoryEntryNotFoundError
   | StrengthGoalNotFoundError
   | CustomLiftNotFoundError
-  | FocusBlockNotFoundError;
+  | FocusBlockNotFoundError
+  | LiftModificationNotFoundError;
 
 /**
  * Translates framework-agnostic domain "not found" errors raised by port
@@ -34,6 +36,7 @@ type DomainNotFound =
   StrengthGoalNotFoundError,
   CustomLiftNotFoundError,
   FocusBlockNotFoundError,
+  LiftModificationNotFoundError,
 )
 export class DomainNotFoundFilter implements ExceptionFilter {
   catch(err: DomainNotFound, host: ArgumentsHost): void {

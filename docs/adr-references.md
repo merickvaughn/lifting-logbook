@@ -225,6 +225,9 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 | [ECMA-376 — Office Open XML File Formats](https://ecma-international.org/publications-and-standards/standards/ecma-376/) | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | The SpreadsheetML parts, cell types and built-in number formats `xlsx-to-tables.ts` reads. |
 | [fflate](https://github.com/101arrowz/fflate) | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | `unzipSync` with a per-file `filter`, used to inflate only the needed XLSX parts after checking each part's size. |
 | [@xmldom/xmldom](https://github.com/xmldom/xmldom) | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | W3C DOM `DOMParser` for Node, used to read the XLSX parts' XML. |
+| [PostgreSQL 16 — Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) | [ADR-041](adr/ADR-041-lift-modification-storage.md) | Forced RLS and an isolation policy on `lift_modification`. |
+| [PostgreSQL 16 — `ALTER TABLE`, Notes](https://www.postgresql.org/docs/16/sql-altertable.html#SQL-ALTERTABLE-NOTES), [Arrays](https://www.postgresql.org/docs/16/arrays.html) | [ADR-041](adr/ADR-041-lift-modification-storage.md) | `lift_record.modifications` is a `text[]`, and adding it with a constant default doesn't rewrite the table. |
+| [Prisma — `createManyAndReturn`](https://www.prisma.io/docs/orm/reference/prisma-client-reference#createmanyandreturn) | [ADR-041](adr/ADR-041-lift-modification-storage.md) | The bulk write a join table would need, one reason `text[]` was chosen over it. |
 
 ---
 

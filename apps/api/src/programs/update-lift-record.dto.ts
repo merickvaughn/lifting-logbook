@@ -1,6 +1,6 @@
-import { IsInt, IsNumber, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsInt, IsNumber, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { UpdateLiftRecordRequest } from '@lifting-logbook/types';
-import { MAX_NOTES_LENGTH, MAX_REPS, MAX_WEIGHT } from './lift-record.limits';
+import { MAX_NOTES_LENGTH, MAX_REPS, MAX_SET_MODIFICATIONS, MAX_WEIGHT } from './lift-record.limits';
 
 // `implements` is only weakly protective here: every member of
 // UpdateLiftRecordRequest is already optional, so an *empty* class would also satisfy
@@ -36,4 +36,12 @@ export class UpdateLiftRecordDto implements UpdateLiftRecordRequest {
   @IsString()
   @MaxLength(MAX_NOTES_LENGTH)
   notes?: string;
+
+  // Replaces the set's list; an empty array clears it. See CreateLiftRecordDto.modifications.
+  @ValidateIf((o: UpdateLiftRecordDto) => o.modifications !== undefined)
+  @IsArray()
+  @ArrayMaxSize(MAX_SET_MODIFICATIONS)
+  @ArrayUnique()
+  @IsString({ each: true })
+  modifications?: string[];
 }

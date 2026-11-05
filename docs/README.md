@@ -172,6 +172,7 @@ monorepo/
 | [ADR-038](adr/ADR-038-training-time-vocabulary.md) | Training-Time Vocabulary — Macrocycle and Mesocycle | Accepted |
 | [ADR-039](adr/ADR-039-focus-block-persistence.md) | Focus Block Persistence — Server-Stored, Date-Derived, JSON Pools | Accepted |
 | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | Google Sheets Import Reads a Link-Shared Workbook as XLSX, Without OAuth | Accepted |
+| [ADR-041](adr/ADR-041-lift-modification-storage.md) | Lift Modifications Are Rows Keyed to a Lift, and Each Set Records Their Ids | Accepted |
 
 ---
 

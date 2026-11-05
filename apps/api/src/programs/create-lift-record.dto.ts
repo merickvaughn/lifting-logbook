@@ -1,4 +1,7 @@
 import {
+  ArrayMaxSize,
+  ArrayUnique,
+  IsArray,
   IsDateString,
   IsInt,
   IsNotEmpty,
@@ -9,6 +12,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { CreateLiftRecordRequest } from '@lifting-logbook/types';
@@ -18,6 +22,7 @@ import {
   BARE_DATE_STRING_OPTIONS,
   MAX_NOTES_LENGTH,
   MAX_REPS,
+  MAX_SET_MODIFICATIONS,
   MAX_WEIGHT,
 } from './lift-record.limits';
 
@@ -145,4 +150,13 @@ export class CreateLiftRecordDto
   @IsString()
   @MaxLength(MAX_NOTES_LENGTH)
   notes?: string;
+
+  // Whether each id belongs to this user and this lift needs a read, so the controller checks
+  // that through assertSetModifications. @ValidateIf, not @IsOptional(): null is not "none".
+  @ValidateIf((o: CreateLiftRecordDto) => o.modifications !== undefined)
+  @IsArray()
+  @ArrayMaxSize(MAX_SET_MODIFICATIONS)
+  @ArrayUnique()
+  @IsString({ each: true })
+  modifications?: string[];
 }

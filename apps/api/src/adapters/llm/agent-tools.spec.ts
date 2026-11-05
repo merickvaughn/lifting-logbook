@@ -68,6 +68,15 @@ describe('agent-tools', () => {
       expect(repos.liftRecord.getLiftRecords).toHaveBeenCalledWith('5-3-1', 2);
     });
 
+    it('leaves modifications out of the lift history it returns', async () => {
+      const repos = mkRepos();
+      (repos.liftRecord.getLiftRecords as jest.Mock).mockResolvedValue([
+        { lift: 'bench-press', setNum: 1, modifications: ['paused-id'] },
+      ]);
+      const result = await dispatchTool('get_lift_history', {}, repos, REQ);
+      expect(result).toEqual({ ok: true, data: [{ lift: 'bench-press', setNum: 1 }] });
+    });
+
     it('routes get_training_maxes', async () => {
       const repos = mkRepos();
       const result = await dispatchTool('get_training_maxes', {}, repos, REQ);

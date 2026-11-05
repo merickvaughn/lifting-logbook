@@ -23,6 +23,9 @@ model LiftRecord {
   weight        Float
   reps          Int
   notes         String   @default("")
+  // The ids of the lift_modification rows on for this set; empty means unmodified (#1151).
+  // Not part of the natural key: it is still set N of this lift.
+  modifications String[] @default([])
 
   @@unique([userId, program, macrocycleNum, workoutNum, date, lift, occurrence, setNum])
   @@index([userId, program, macrocycleNum])
@@ -187,6 +190,29 @@ model CustomLift {
   @@unique([userId, name])
   @@index([userId])
   @@map("custom_lift")
+}
+
+// A change to how a lift is performed, linked to that lift (#1151, ADR-041).
+model LiftModification {
+  id               String    @id @default(uuid())
+  userId           String
+  // The lift's id: a catalog id or a custom lift's uuid, written through lookupLift. No foreign
+  // key, because catalog lifts are not rows.
+  lift             String
+  name             String
+  description      String    @default("")
+  // 'none' | 'lift' | 'own', with a CHECK constraint
+  maxMode          String    @default("none")
+  // Sheet spellings that mean this lift with this modification on. Nothing writes them until
+  // import does (#1154).
+  alternativeNames String[]  @default([])
+  // Set when a delete finds a logged set still naming it: hidden from the list, still named on
+  // those sets.
+  archivedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@unique([userId, lift, name])
+  @@map("lift_modification")
 }
 
 model UserSettings {

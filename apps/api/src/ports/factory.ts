@@ -7,6 +7,7 @@ import { IMacrocycleScheduledWorkoutRepository } from './IMacrocycleScheduledWor
 import { IImportBatchRepository } from './IImportBatchRepository';
 import { ILiftMetadataRepository } from './ILiftMetadataRepository';
 import { ILiftingProgramSpecRepository } from './ILiftingProgramSpecRepository';
+import { ILiftModificationRepository } from './ILiftModificationRepository';
 import { ILiftRecordRepository } from './ILiftRecordRepository';
 import { IProgramPhilosophyRepository } from './IProgramPhilosophyRepository';
 import { IStrengthGoalRepository } from './IStrengthGoalRepository';
@@ -27,6 +28,7 @@ export interface RepositoryBundle {
   importBatch: IImportBatchRepository;
   liftMetadata: ILiftMetadataRepository;
   liftingProgramSpec: ILiftingProgramSpecRepository;
+  liftModification: ILiftModificationRepository;
   liftRecord: ILiftRecordRepository;
   programPhilosophy: IProgramPhilosophyRepository;
   strengthGoal: IStrengthGoalRepository;

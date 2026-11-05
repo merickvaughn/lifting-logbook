@@ -1,0 +1,111 @@
+import { PrismaClient } from '@prisma/client';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { LiftModification, LiftModificationMaxMode } from '@lifting-logbook/types';
+import {
+  CreateLiftModificationInput,
+  ILiftModificationRepository,
+  UpdateLiftModificationPatch,
+} from '../../ports/ILiftModificationRepository';
+import { LiftModificationConflictError, LiftModificationNotFoundError } from '../../ports/errors';
+
+interface LiftModificationRow {
+  id: string;
+  userId: string;
+  lift: string;
+  name: string;
+  description: string;
+  maxMode: string;
+  archivedAt: Date | null;
+  createdAt: Date;
+}
+
+export class PrismaLiftModificationRepository implements ILiftModificationRepository {
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly userId: string,
+  ) {}
+
+  async list(): Promise<LiftModification[]> {
+    const rows = await this.prisma.liftModification.findMany({
+      where: { userId: this.userId },
+      orderBy: { name: 'asc' },
+    });
+    return rows.map(toLiftModification);
+  }
+
+  async create(input: CreateLiftModificationInput): Promise<LiftModification> {
+    const details = { description: input.description ?? '', maxMode: input.maxMode ?? 'none' };
+    const archived = await this.prisma.liftModification.findFirst({
+      where: { userId: this.userId, lift: input.lift, name: input.name, archivedAt: { not: null } },
+    });
+    if (archived) {
+      const row = await this.prisma.liftModification.update({
+        where: { id: archived.id },
+        data: { ...details, archivedAt: null },
+      });
+      return toLiftModification(row);
+    }
+    try {
+      const row = await this.prisma.liftModification.create({
+        data: { userId: this.userId, lift: input.lift, name: input.name, ...details },
+      });
+      return toLiftModification(row);
+    } catch (e) {
+      if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new LiftModificationConflictError(input.name);
+      }
+      throw e;
+    }
+  }
+
+  async update(id: string, patch: UpdateLiftModificationPatch): Promise<LiftModification> {
+    // The PK is `id` alone, so guard on userId, as PrismaCustomLiftRepository does.
+    const owned = await this.prisma.liftModification.findFirst({
+      where: { id, userId: this.userId, archivedAt: null },
+    });
+    if (!owned) throw new LiftModificationNotFoundError(id);
+    try {
+      const row = await this.prisma.liftModification.update({
+        where: { id },
+        data: {
+          ...(patch.name !== undefined ? { name: patch.name } : {}),
+          ...(patch.description !== undefined ? { description: patch.description } : {}),
+          ...(patch.maxMode !== undefined ? { maxMode: patch.maxMode } : {}),
+        },
+      });
+      return toLiftModification(row);
+    } catch (e) {
+      if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new LiftModificationConflictError(patch.name ?? owned.name);
+      }
+      throw e;
+    }
+  }
+
+  async delete(id: string): Promise<void> {
+    const owned = await this.prisma.liftModification.findFirst({ where: { id, userId: this.userId } });
+    if (!owned) throw new LiftModificationNotFoundError(id);
+    const namedBySet = await this.prisma.liftRecord.findFirst({
+      where: { userId: this.userId, modifications: { has: id } },
+      select: { id: true },
+    });
+    if (!namedBySet) {
+      await this.prisma.liftModification.delete({ where: { id } });
+    } else if (!owned.archivedAt) {
+      await this.prisma.liftModification.update({ where: { id }, data: { archivedAt: new Date() } });
+    }
+  }
+}
+
+function toLiftModification(row: LiftModificationRow): LiftModification {
+  return {
+    id: row.id,
+    userId: row.userId,
+    lift: row.lift,
+    name: row.name,
+    description: row.description,
+    maxMode: row.maxMode as LiftModificationMaxMode,
+    archivedAt: row.archivedAt,
+    createdAt: row.createdAt,
+  };
+}

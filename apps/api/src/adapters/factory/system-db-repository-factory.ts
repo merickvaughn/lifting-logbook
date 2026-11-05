@@ -8,6 +8,7 @@ import { PrismaBodyWeightRepository } from '../prisma/body-weight.repository';
 import { PrismaCustomLiftRepository } from '../prisma/custom-lift.repository';
 import { PrismaFocusRepository } from '../prisma/focus.repository';
 import { PrismaImportBatchRepository } from '../prisma/import-batch.repository';
+import { PrismaLiftModificationRepository } from '../prisma/lift-modification.repository';
 import { PrismaLiftRecordRepository } from '../prisma/lift-record.repository';
 import { PrismaStrengthGoalRepository } from '../prisma/strength-goal.repository';
 import { PrismaTrainingMaxRepository } from '../prisma/training-max.repository';
@@ -24,6 +25,7 @@ import { InMemoryMacrocycleDashboardRepository } from '../in-memory/macrocycle-d
 import { InMemoryImportBatchRepository } from '../in-memory/import-batch.adapter';
 import { InMemoryLiftMetadataRepository } from '../in-memory/lift-metadata.adapter';
 import { InMemoryLiftingProgramSpecRepository } from '../in-memory/lifting-program-spec.adapter';
+import { InMemoryLiftModificationRepository } from '../in-memory/lift-modification.adapter';
 import { InMemoryLiftRecordRepository } from '../in-memory/lift-record.adapter';
 import { InMemoryProgramPhilosophyRepository } from '../in-memory/program-philosophy.adapter';
 import { InMemoryStrengthGoalRepository } from '../in-memory/strength-goal.adapter';
@@ -100,6 +102,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
         macrocycleScheduledWorkout: new PrismaMacrocycleScheduledWorkoutRepository(prisma, userId),
         importBatch: new PrismaImportBatchRepository(prisma, userId),
         liftMetadata: new PrismaLiftMetadataRepository(prisma, userId),
+        liftModification: new PrismaLiftModificationRepository(prisma, userId),
         liftRecord: new PrismaLiftRecordRepository(prisma, userId),
         programPhilosophy: this.philosophyRepo,
         strengthGoal: new PrismaStrengthGoalRepository(prisma, userId),
@@ -127,6 +130,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
       importBatch: new InMemoryImportBatchRepository(),
       liftMetadata: new InMemoryLiftMetadataRepository(),
       liftingProgramSpec: this.programSpecRepo,
+      liftModification: new InMemoryLiftModificationRepository(userId, sharedRecords),
       liftRecord: new InMemoryLiftRecordRepository(sharedRecords),
       programPhilosophy: this.philosophyRepo,
       strengthGoal: new InMemoryStrengthGoalRepository(),

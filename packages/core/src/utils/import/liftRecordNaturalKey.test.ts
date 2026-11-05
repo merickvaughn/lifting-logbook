@@ -3,6 +3,7 @@ import {
   liftRecordNaturalKey,
   parseLiftRecordId,
   parseLiftRecordNaturalKey,
+  withModifications,
 } from './liftRecordNaturalKey';
 
 function record(overrides: Partial<Parameters<typeof liftRecordNaturalKey>[0]> = {}) {
@@ -16,7 +17,21 @@ function record(overrides: Partial<Parameters<typeof liftRecordNaturalKey>[0]> =
   };
 }
 
+describe('withModifications', () => {
+  it('carries a list that has ids, and leaves out an empty or absent one', () => {
+    expect(withModifications(['a'])).toEqual({ modifications: ['a'] });
+    expect(withModifications([])).toEqual({});
+    expect(withModifications(undefined)).toEqual({});
+  });
+});
+
 describe('liftRecordNaturalKey', () => {
+  it('leaves modifications out of the key and the public id', () => {
+    const modified = { ...record(), modifications: ['a'] };
+    expect(liftRecordNaturalKey(modified)).toBe(liftRecordNaturalKey(record()));
+    expect(buildLiftRecordId('p', modified)).toBe(buildLiftRecordId('p', record()));
+  });
+
   it('includes the date segment in the key', () => {
     expect(liftRecordNaturalKey(record())).toBe('3:2:20260817:Bench Press:1');
   });
