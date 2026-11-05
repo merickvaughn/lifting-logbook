@@ -27,6 +27,7 @@ import {
 } from '@lifting-logbook/types';
 import {
   LiftRecord,
+  LiftingProgramSpec,
   TrainingMax,
   StrengthGoalEntry,
   classifyImport,
@@ -44,6 +45,7 @@ import {
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
   liftRecordNaturalKey,
+  programSpecNaturalKey,
 } from '@lifting-logbook/core';
 import type { SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
@@ -576,10 +578,11 @@ export class ImportController {
     if (excludeKeys.size > 0) {
       if (destination === 'lift-records') {
         valid = (valid as LiftRecord[]).filter((r) => !excludeKeys.has(liftRecordNaturalKey(r)));
+      } else if (destination === 'program-spec') {
+        valid = (valid as LiftingProgramSpec[]).filter((r) => !excludeKeys.has(programSpecNaturalKey(r)));
       } else {
-        // For upsert destinations, key = lift name; all non-lift-records types have a lift field.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Records from training-maxes/strength-goals/program-spec handlers share a `lift` field; no union type exists for these three.
-        valid = valid.filter((r: any) => !excludeKeys.has(r.lift as string));
+        // Training-max and strength-goal delta keys are the lift name.
+        valid = (valid as (TrainingMax | StrengthGoalEntry)[]).filter((r) => !excludeKeys.has(r.lift));
       }
     }
 
