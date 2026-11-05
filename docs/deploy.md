@@ -426,10 +426,12 @@ gh api repos/merickvaughn/lifting-logbook/actions/runs/$RUNID/pending_deployment
 
 The `production` environment id is `15694632193`. To **reject** instead, use `-f state=rejected`.
 
-**Assisted approval.** A tool or assistant may run the approve command on your behalf, but only
-after surfacing the run link and a short risk summary — the `plan-production` blast radius
-above — and getting an explicit go-ahead. Never approve silently: this is an outward-facing
-production action, and approving is what applies the pending Terraform and Prisma diffs.
+**Assisted approval.** A Claude Code session may run the approve command for you without asking
+only under the conditions in [`CLAUDE.md` → Waiting on a deploy](../CLAUDE.md#waiting-on-a-deploy):
+the plan reads `No changes` and the session can account for the whole release. Any other case
+needs the run link, a short risk summary — the `plan-production` blast radius above — and your
+explicit go-ahead. Never approve silently: this is an outward-facing production action, and
+approving is what applies the pending Terraform and Prisma diffs.
 
 ### Web image: single build, runtime public config (ADR-028)
 

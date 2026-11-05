@@ -254,6 +254,47 @@ If `--format json` is not supported by the installed `gh` version, fall back to 
     - **Proposal Status**: if this PR ships, accepts, or declines a proposal, update the `**Status:**` field in the matching `docs/proposals/*.md` file **and** its ROADMAP.md Proposals-table row in the same PR, so the proposal file and the roadmap never diverge
 13. Write the stub's `<!-- next-session-context -->` block and display it as the closing output of the session
 
+### Waiting on a deploy
+
+**Staging has no approval gate.** The `staging` environment has no protection rules, so a session
+waiting on staging is waiting on CI or the deploy mutex. Don't describe that wait as needing approval.
+
+**Production is the only gate.** In a `Deploy` run, `deploy-production` pauses at
+`environment: production` until `brownm09` approves. Find the run with
+`gh run list --workflow Deploy --branch main --status waiting`, and always give the owner its URL:
+`https://github.com/merickvaughn/lifting-logbook/actions/runs/<run-id>`.
+
+`gh` is signed in as that reviewer, so a session can approve through the
+[`pending_deployments` API](https://docs.github.com/en/rest/actions/workflow-runs#review-pending-deployments-for-a-workflow-run),
+and GitHub records the approval under the owner's name. **A session may approve for the owner only
+when both of these hold:**
+
+1. **The `plan-production` summary reads `No changes.`** Read it on the run page. The API and the
+   job log don't carry it, and the job stays green when `terraform plan` fails, so a passing check
+   proves nothing.
+2. **The session can account for the whole release.** That means every commit since the last
+   successful production deployment, not just the merge that started this run: cancelled runs leave
+   their merges for the next one (83157d3 took 29 commits and a migration to production at once).
+   Read each change in the range, including any migration, and be able to say what it does and why
+   it belongs in this release:
+   ```bash
+   LAST=$(gh api graphql -f query='query{repository(owner:"merickvaughn",name:"lifting-logbook"){deployments(environments:["production"],first:20,orderBy:{field:CREATED_AT,direction:DESC}){nodes{commitOid latestStatus{state}}}}}' --jq '[.data.repository.deployments.nodes[]|select(.latestStatus.state=="SUCCESS")][0].commitOid')
+   git fetch origin main
+   git log --oneline "$LAST"..<run-sha>
+   git diff --name-only "$LAST" <run-sha> -- apps/api/prisma/migrations infra/terraform
+   ```
+
+When both hold, approve with the `POST` command in
+[`docs/deploy.md` → Approving a production deploy](docs/deploy.md#approving-a-production-deploy),
+using this run's ID and a `comment` saying what was checked. Then tell the owner: the run URL, the
+plan result and the commit range.
+
+**Otherwise stop and send the owner the link, with what you found.** That covers a non-empty plan, a
+failed plan, a summary you can't read, and a migration or other change you can't account for. Don't
+reject the deployment; that's the owner's call. The approval is what applies the release, and
+[#540](https://github.com/merickvaughn/lifting-logbook/issues/540) is the incident where one click
+applied a production change unrelated to the merge that triggered it.
+
 ### REST-endpoint fallback when the shared GraphQL rate limit is exhausted
 
 The `gh pr *` commands the steps above depend on — `gh pr create` (step 7), `gh pr merge`
