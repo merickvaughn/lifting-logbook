@@ -14,6 +14,10 @@ import { buildXlsx, dateSerial, zipFixture } from '../adapters/google-sheets/xls
 import { MAX_XLSX_PART_BYTES } from '../adapters/google-sheets/xlsx-to-tables';
 import { RLS_SKIP_TX } from '../adapters/prisma/rls-context';
 import { ImportController, suggestedKindFor } from './import.controller';
+import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS } from './import-file.util';
+// By path, not package name: apps/api does not depend on the client, and the
+// package resolves to a dist/ this suite should not need built.
+import { createApiClient } from '../../../../packages/api-client/src/index';
 
 /**
  * In-memory E2E for the unified Smart Import endpoint (#477):
@@ -48,14 +52,29 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
   const AUTH = { authorization: 'Bearer dev-token' };
   const UUID_PROGRAM = '11111111-1111-1111-1111-111111111111';
 
-  const importCsv = (program: string, csv: string, query = '') => {
+  const importCsv = (
+    program: string,
+    csv: string,
+    query = '',
+    fields: Record<string, string> = {},
+    order: 'fields-first' | 'file-first' = 'fields-first',
+  ) => {
     const boundary = '----SmartImportBoundary';
-    const payload = [
+    const filePart = [
       `--${boundary}`,
       'Content-Disposition: form-data; name="file"; filename="upload.csv"',
       'Content-Type: text/csv',
       '',
       csv,
+    ];
+    const fieldParts = Object.entries(fields).flatMap(([name, value]) => [
+      `--${boundary}`,
+      `Content-Disposition: form-data; name="${name}"`,
+      '',
+      value,
+    ]);
+    const payload = [
+      ...(order === 'fields-first' ? [...fieldParts, ...filePart] : [...filePart, ...fieldParts]),
       `--${boundary}--`,
     ].join('\r\n');
     return app.getHttpAdapter().getInstance().inject({
@@ -360,12 +379,12 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     ].join('\n');
 
     it('commits an ambiguous-lift row when liftOverrides remaps it before validation', async () => {
-      const overrides = encodeURIComponent(JSON.stringify({ '1': 'bench-press' }));
       const res = (
         await importCsv(
           'p3-lr-override',
           AMBIGUOUS_LIFT_CSV,
-          `?mode=commit&destination=lift-records&liftOverrides=${overrides}`,
+          '?mode=commit&destination=lift-records',
+          { liftOverrides: JSON.stringify({ '1': 'bench-press' }) },
         )
       ).json();
       expect(res.created).toBe(1);
@@ -396,7 +415,8 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       const res = await importCsv(
         'p3-lr-exclude-ambiguous',
         twoRowCsv,
-        '?mode=commit&destination=lift-records&excludeKeys=__ambiguous_2',
+        '?mode=commit&destination=lift-records',
+        { excludeKeys: JSON.stringify(['__ambiguous_2']) },
       );
       expect(res.statusCode).toBe(200);
       // Only row 1 (Bench P.) committed — row 2 was excluded, not merely left
@@ -417,7 +437,8 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       const res = await importCsv(
         'p3-lr-exclude-incomplete',
         twoRowCsv,
-        '?mode=commit&destination=lift-records&excludeKeys=__incomplete_2',
+        '?mode=commit&destination=lift-records',
+        { excludeKeys: JSON.stringify(['__incomplete_2']) },
       );
       expect(res.statusCode).toBe(200);
       expect(res.json().created).toBe(1);
@@ -438,7 +459,8 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       const res = await importCsv(
         'p3-lr-exclude-row-numbering',
         threeRowCsv,
-        '?mode=commit&destination=lift-records&excludeKeys=__ambiguous_1',
+        '?mode=commit&destination=lift-records',
+        { excludeKeys: JSON.stringify(['__ambiguous_1']) },
       );
       expect(res.statusCode).toBe(400);
       const body = res.json() as { errors: { row: number; field: string }[] };
@@ -513,12 +535,12 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(created.statusCode).toBe(201);
       const { id: customLiftId } = created.json();
 
-      const overrides = encodeURIComponent(JSON.stringify({ '1': customLiftId }));
       const res = (
         await importCsv(
           'p3-lr-custom-id-override',
           AMBIGUOUS_LIFT_CSV,
-          `?mode=commit&destination=lift-records&liftOverrides=${overrides}`,
+          '?mode=commit&destination=lift-records',
+          { liftOverrides: JSON.stringify({ '1': customLiftId }) },
         )
       ).json();
       expect(res.created).toBe(1);
@@ -647,12 +669,12 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     it('excludes rows whose natural key matches excludeKeys', async () => {
       // Natural key for LIFT_CSV row: macrocycleNum:workoutNum:YYYYMMDD:lift:setNum
       // = 1:1:20260101:bench-press:1 (date joined the key in issue #884)
-      const excludeParam = encodeURIComponent('1:1:20260101:bench-press:1');
       const res = (
         await importCsv(
           'p3-lr-exclude',
           LIFT_CSV,
-          `?mode=commit&destination=lift-records&excludeKeys=${excludeParam}`,
+          '?mode=commit&destination=lift-records',
+          { excludeKeys: JSON.stringify(['1:1:20260101:bench-press:1']) },
         )
       ).json();
       // Row was excluded — nothing created and nothing skipped
@@ -762,6 +784,193 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(undoRes.flagged).toHaveLength(1);
       expect(undoRes.flagged[0].key).toBe('bench-press');
       expect(undoRes.flagged[0].reason).toContain('modified after import');
+    });
+  });
+
+  // A commit must work however many rows were remapped or excluded (#1121). In the
+  // query string, about 300 remapped rows overran Node's 16 KB header limit. inject()
+  // never goes through Node's HTTP parser, so these use a real socket and the real
+  // client: anything else would pass with the bug still present.
+  describe('commit options sent through the real client (#1121)', () => {
+    const REQUEST_TIMEOUT_MS = 60_000;
+    const HEADER = 'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes';
+    const setNums = Array.from({ length: MAX_IMPORT_ROWS }, (_, i) => i + 1);
+    const csvFile = (lift: string) =>
+      new File(
+        [[HEADER, ...setNums.map((n) => `5-3-1,1,1,2026-01-01,${lift},${n},180,5,`)].join('\n')],
+        'upload.csv',
+        { type: 'text/csv' },
+      );
+
+    let client: ReturnType<typeof createApiClient>;
+
+    beforeAll(async () => {
+      await app.listen(0, '127.0.0.1');
+      client = createApiClient({
+        baseUrl: await app.getUrl(),
+        getAuthHeaders: async () => AUTH,
+        requestTimeoutMs: REQUEST_TIMEOUT_MS,
+      });
+    });
+
+    it(`commits with ${MAX_IMPORT_ROWS} liftOverrides entries`, async () => {
+      const created = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: '/lifts/custom',
+        headers: { 'content-type': 'application/json', ...AUTH },
+        payload: JSON.stringify({ name: 'Bulk Remap Lift', classification: 'accessory' }),
+      });
+      expect(created.statusCode).toBe(201);
+      const { id: customLiftId } = created.json() as { id: string };
+
+      const result = await client.commitImport(
+        'p1121-overrides',
+        csvFile('NOT_IN_SLOT_MAP'),
+        'lift-records',
+        { liftOverrides: Object.fromEntries(setNums.map((n) => [n, customLiftId])) },
+      );
+
+      expect(result).toMatchObject({ ok: true, data: { created: MAX_IMPORT_ROWS } });
+    }, REQUEST_TIMEOUT_MS);
+
+    it(`commits with ${MAX_IMPORT_ROWS} excludeKeys entries, honouring every one`, async () => {
+      const result = await client.commitImport(
+        'p1121-excludes',
+        csvFile('Bench P.'),
+        'lift-records',
+        { excludeKeys: setNums.map((n) => `1:1:20260101:bench-press:${n}`) },
+      );
+
+      // Dropping the keys would show as 5,000 created rather than a failure.
+      expect(result).toMatchObject({ ok: true, data: { created: 0 } });
+    }, REQUEST_TIMEOUT_MS);
+  });
+
+  describe('commit options in the request body (#1121)', () => {
+    const COMMIT = '?mode=commit&destination=lift-records';
+
+    // The caps the form reader took over from req.file() on this endpoint.
+    it('rejects an oversize file with 413', async () => {
+      const res = await importCsv(
+        'p1121-oversize-file',
+        LIFT_CSV + '\n' + 'x'.repeat(MAX_IMPORT_FILE_BYTES),
+        COMMIT,
+      );
+      expect(res.statusCode).toBe(413);
+    });
+
+    it('rejects a form with no file with 400', async () => {
+      const boundary = '----SmartImportBoundary';
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/p1121-no-file/import${COMMIT}`,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, ...AUTH },
+        payload: [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="excludeKeys"',
+          '',
+          '[]',
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toBe('No file uploaded');
+    });
+
+    it('reads a field sent after the file', async () => {
+      const res = await importCsv(
+        'p1121-field-after-file',
+        LIFT_CSV,
+        COMMIT,
+        { excludeKeys: JSON.stringify(['1:1:20260101:bench-press:1']) },
+        'file-first',
+      );
+      expect(res.statusCode).toBe(200);
+      expect(res.json().created).toBe(0);
+    });
+
+    it('accepts a field larger than the 1 MiB multipart default', async () => {
+      const unmatchedKeys = Array.from({ length: 5_000 }, (_, i) => `${'x'.repeat(300)}${i}`);
+      const excludeKeys = JSON.stringify(['1:1:20260101:bench-press:1', ...unmatchedKeys]);
+      expect(excludeKeys.length).toBeGreaterThan(1024 * 1024);
+
+      const res = await importCsv('p1121-large-field', LIFT_CSV, COMMIT, { excludeKeys });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().created).toBe(0);
+    });
+
+    // A cut-off exclusion list must never commit the rows it no longer names.
+    it('rejects a field over the limit with 413 and writes nothing', async () => {
+      const program = 'p1121-oversize-field';
+      const excludeKeys = JSON.stringify([
+        '1:1:20260101:bench-press:1',
+        'x'.repeat(MAX_IMPORT_FILE_BYTES),
+      ]);
+
+      const res = await importCsv(program, LIFT_CSV, COMMIT, { excludeKeys });
+      expect(res.statusCode).toBe(413);
+
+      const retry = await importCsv(program, LIFT_CSV, COMMIT);
+      expect(retry.json().created).toBe(1);
+    });
+
+    // Reading the whole form now reaches a part req.file() never looked at, and
+    // multipart's limit error must surface as itself rather than as a 500.
+    it('rejects a second file with 413', async () => {
+      const boundary = '----SmartImportBoundary';
+      const filePart = [
+        `--${boundary}`,
+        'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+        'Content-Type: text/csv',
+        '',
+        LIFT_CSV,
+      ];
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/p1121-two-files/import${COMMIT}`,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, ...AUTH },
+        payload: [...filePart, ...filePart, `--${boundary}--`].join('\r\n'),
+      });
+      expect(res.statusCode).toBe(413);
+    });
+
+    it.each([
+      ['excludeKeys', 'not json'],
+      ['excludeKeys', '"a-string"'],
+      ['excludeKeys', '[1]'],
+      ['liftOverrides', 'not json'],
+      ['liftOverrides', '["bench-press"]'],
+      ['liftOverrides', 'null'],
+      ['liftOverrides', '{"1":2}'],
+    ])('rejects %s=%s with 400 and writes nothing', async (name, value) => {
+      const program = `p1121-bad-${name}-${encodeURIComponent(value)}`;
+
+      const res = await importCsv(program, LIFT_CSV, COMMIT, { [name]: value });
+      expect(res.statusCode).toBe(400);
+
+      const retry = await importCsv(program, LIFT_CSV, COMMIT);
+      expect(retry.json().created).toBe(1);
+    });
+
+    // A browser tab opened before this change still sends these in the URL. Ignoring
+    // them would commit the rows that tab's user excluded, so it is told to reload.
+    it.each([
+      ['excludeKeys', '1:1:20260101:bench-press:1'],
+      ['liftOverrides', '{"1":"bench-press"}'],
+    ])('rejects %s in the query string and writes nothing', async (name, value) => {
+      const program = `p1121-legacy-${name}`;
+
+      const res = await importCsv(
+        program,
+        LIFT_CSV,
+        `${COMMIT}&${name}=${encodeURIComponent(value)}`,
+      );
+      expect(res.statusCode).toBe(400);
+      expect(res.json().errors[0].message).toMatch(/reload/i);
+
+      const retry = await importCsv(program, LIFT_CSV, COMMIT);
+      expect(retry.json().created).toBe(1);
     });
   });
 
