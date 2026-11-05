@@ -178,7 +178,7 @@ These apply when two rows resolve to the same key. "Review" means the row is sav
 - A catalog table in the database.
 - `body_weight` (D6).
 - Mobile.
-- The modifications data model, marking a substitution during import (for example Romanian Deadlift in place of Deadlift) and assigning imported lifts to a program. These are being designed separately. This plan only guarantees that a modified row can stay separate as a custom lift.
+- The modifications data model, marking a substitution during import (for example Romanian Deadlift in place of Deadlift) and assigning imported lifts to a program. These are tracked separately ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1133) for the import options). This plan only guarantees that a modified row can stay separate as a custom lift.
 - Merging semantically similar but distinct lifts, such as `Dip` and `Weighted Dip`.
 - The per-entry alias and logger bodyweight decisions in [#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015). The resolver reads aliases but does not change the logger's bodyweight check.
 
