@@ -129,7 +129,7 @@ function importPath(
   return `/programs/${enc(program)}/import?${params.toString()}`;
 }
 
-// Commit form. The per-row options go in the body, not the URL: with one entry per
+// Import form. The per-row options go in the body, not the URL: with one entry per
 // row they outgrow Node's 16 KB header limit at about 300 rows (#1121).
 function commitForm(file: File, opts?: CommitImportOpts): FormData {
   const form = new FormData();
@@ -155,7 +155,7 @@ export interface CommitImportOpts {
    * leaves another row sharing its natural key alone (#1123), or the row's natural key.
    */
   excludeKeys?: string[];
-  /** Map of 1-based CSV row index → canonical lift id for ambiguous rows. */
+  /** Map of 1-based row index → lift id: ambiguous lift-record rows, or strength-goal rows kept apart. */
   liftOverrides?: Record<number, string>;
   /** When true, 1RM lift-record rows are split to Training Maxes. */
   splitDest?: boolean;
@@ -446,13 +446,11 @@ export function createApiClient(config: ApiClientConfig) {
       program: string,
       file: File,
       destination?: ImportKind,
-      opts?: Pick<CommitImportOpts, 'overrides'>,
+      opts?: Pick<CommitImportOpts, 'overrides' | 'liftOverrides'>,
     ): Promise<ImportPreviewResponse> {
-      const form = new FormData();
-      form.append('file', file);
       const res = await rawFetch(importPath(program, 'preview', destination, opts), {
         method: 'POST',
-        body: form,
+        body: commitForm(file, opts),
         cache: 'no-store',
       });
       if (!res.ok) {
