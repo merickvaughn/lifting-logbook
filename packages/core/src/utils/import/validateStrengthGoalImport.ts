@@ -2,7 +2,7 @@ import { ImportError, ImportGoalSpellingCollision, IMPORT_ERROR_FIELD_LIFT } fro
 import { liftIdFor } from '../../catalog/liftIdentity';
 import { DEFAULT_SLOT_MAP } from '../../catalog/slotMaps';
 import { StrengthGoalEntry } from '../../models';
-import { goalValue } from './buildImportPreview';
+import { goalValue } from './goalValue';
 
 /** A collision as validation finds it. The caller knows the lift's name, so adds the label. */
 export type StrengthGoalSpellingCollision = Omit<ImportGoalSpellingCollision, 'label'>;

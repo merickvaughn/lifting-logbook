@@ -288,6 +288,16 @@ export function ImportWizard({
     );
   }
   const previewBody = preview?.preview ?? null;
+  // Goal rows spelling one lift differently, by row position (#1169).
+  const goalRowSpellings = useMemo(
+    () =>
+      new Map(
+        (previewBody?.goalSpellingCollisions ?? []).flatMap((collision) =>
+          collision.rows.flatMap((row) => row.rowIndexes.map((i) => [i, row.spelling] as const)),
+        ),
+      ),
+    [previewBody],
+  );
 
   function mappingKey(m: ColumnMapping): string {
     return m.sourceHeader || `__req__:${m.destinationField}`;
@@ -720,6 +730,22 @@ export function ImportWizard({
     });
   }
 
+  // A collision's spellings as excluding rows leaves them. An excluded row isn't written, so a
+  // spelling shows its first row still included, and the first of those is the one stored.
+  function writtenGoalRows(collision: ImportGoalSpellingCollision) {
+    const included = new Map(
+      (previewBody?.deltas ?? []).filter((d) => !excludedKeys.has(d.key)).map((d) => [d.rowIndex, d] as const),
+    );
+    return collision.rows
+      .flatMap((row) => {
+        const rowIndex = row.rowIndexes.find((i) => included.has(i));
+        if (rowIndex === undefined) return [];
+        return [{ row: { ...row, value: included.get(rowIndex)?.after ?? row.value }, rowIndex }];
+      })
+      .sort((a, b) => a.rowIndex - b.rowIndex)
+      .map(({ row }) => row);
+  }
+
   // A goal file has no editable list to move the row on, so the kept rows go in as overrides and
   // the server previews the result: the rows' labels and kinds, and any collision left (#1169).
   // That renumbers the `#N` keys, so exclusions follow their rows across. Returns the error to
@@ -737,7 +763,12 @@ export function ImportWizard({
         liftOverrides: Object.fromEntries(overrides),
       });
       const deltas = res.preview?.deltas;
-      if (!deltas) return 'Could not update the preview. Try again.';
+      if (!deltas) throw new Error(res.errors[0]?.message ?? 'Preview returned no rows');
+      // A successful create can name a lift another row already spells, which merges them
+      // and would lose that row's goal.
+      if (deltas.filter((d) => naturalKeyOf(d) === lift.id).length > row.rowIndexes.length) {
+        return `${lift.name} already has a goal in this import. Try another name.`;
+      }
       const excludedRows = new Set(
         previewBody?.deltas.filter((d) => excludedKeys.has(d.key)).map((d) => d.rowIndex),
       );
@@ -1183,8 +1214,12 @@ export function ImportWizard({
       if (resolved) liftOverridesRecord[d.rowIndex] = resolved;
     }
     // A goal file's only overrides are rows kept as custom lifts, none of them ambiguous (#1169).
+    // An excluded row's stays out: if its lift was since deleted, the commit would reject it.
     if (destination === 'strength-goals') {
-      for (const [rowIndex, lift] of liftOverrides) liftOverridesRecord[rowIndex] = lift;
+      for (const d of deltas) {
+        const lift = d.rowIndex !== undefined ? liftOverrides.get(d.rowIndex) : undefined;
+        if (lift && d.rowIndex !== undefined && !excludedKeys.has(d.key)) liftOverridesRecord[d.rowIndex] = lift;
+      }
     }
     const excludeKeys = deltas.filter((d) => excludedKeys.has(d.key)).map(excludeKeyFor);
     return {
@@ -1779,15 +1814,7 @@ export function ImportWizard({
                           key={collision.key}
                           kind="goal"
                           label={collision.label}
-                          // An excluded row isn't written, so it can't collide.
-                          rows={collision.rows.filter((row) =>
-                            row.rowIndexes.some(
-                              (rowIndex) =>
-                                !previewBody.deltas.some(
-                                  (d) => d.rowIndex === rowIndex && excludedKeys.has(d.key),
-                                ),
-                            ),
-                          )}
+                          rows={writtenGoalRows(collision)}
                           onKeep={(row, name, classification) =>
                             handleKeepAsCustom('goal', name, classification, (lift) => keepGoalRow(row, lift))
                           }
@@ -1924,11 +1951,7 @@ export function ImportWizard({
                             const rowIndex = d.rowIndex;
                             // The API names a lift once, so rows spelling it differently would
                             // read the same. They read as the file wrote them (#1169).
-                            const rowLabel =
-                              previewBody.goalSpellingCollisions
-                                ?.flatMap((collision) => collision.rows)
-                                .find((row) => rowIndex !== undefined && row.rowIndexes.includes(rowIndex))
-                                ?.spelling ?? d.label;
+                            const rowLabel = (rowIndex !== undefined && goalRowSpellings.get(rowIndex)) || d.label;
                             // rawLiftValue (untrimmed) drives the controlled input's `value` —
                             // trimming it there would eat a just-typed trailing space on every
                             // keystroke, breaking multi-word names. currentLiftValue (trimmed)

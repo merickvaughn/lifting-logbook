@@ -919,6 +919,41 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
         expect(maxes.map((m) => m.lift)).toEqual(['bench-press']);
       });
 
+      it('still ignores liftOverrides for program specs', async () => {
+        // A program-spec commit needs a custom program, which this shared id is.
+        const program = UUID_PROGRAM;
+        const fields = { liftOverrides: JSON.stringify({ '1': 'not-a-lift' }) };
+        const query = 'destination=program-spec';
+        const plain = (await importCsv(program, SPEC_CSV, `?mode=preview&${query}`)).json();
+        const overridden = (await importCsv(program, SPEC_CSV, `?mode=preview&${query}`, fields)).json();
+        expect(plain.preview.deltas.length).toBeGreaterThan(0);
+        expect(overridden.preview.deltas).toEqual(plain.preview.deltas);
+
+        const commit = await importCsv(program, SPEC_CSV, `?mode=commit&${query}`, fields);
+        expect(commit.statusCode).toBe(200);
+        const repeat = (await importCsv(program, SPEC_CSV, `?mode=preview&${query}`)).json();
+        expect(repeat.preview.deltas.map((d: { key: string }) => d.key)).toEqual(
+          plain.preview.deltas.map((d: { key: string }) => d.key),
+        );
+        expect(repeat.preview.deltas.every((d: { kind: string }) => d.kind === 'skip')).toBe(true);
+      });
+
+      it('rejects a goal override whose lift no longer exists, on preview, dry run and commit', async () => {
+        const program = 'p-goal-dead-override';
+        const fields = { liftOverrides: JSON.stringify({ '1': 'deleted-custom-lift-id' }) };
+
+        const preview = (await importCsv(program, SQUATS, '?mode=preview&destination=strength-goals', fields)).json();
+        expect(preview.preview).toBeNull();
+        expect(preview.errors).toEqual([expect.objectContaining({ row: 1, code: 'UNRECOGNIZED_LIFT' })]);
+
+        for (const mode of ['dry-run', 'commit']) {
+          const res = await importCsv(program, SQUATS, `?mode=${mode}&destination=strength-goals`, fields);
+          expect(res.statusCode).toBe(400);
+          expect(res.json().errors).toEqual([expect.objectContaining({ row: 1, code: 'UNRECOGNIZED_LIFT' })]);
+        }
+        expect(await storedGoals(program)).toEqual([]);
+      });
+
       it('rejects a malformed liftOverrides field on a goal preview', async () => {
         const res = await importCsv('p-goal-bad-overrides', SQUATS, '?mode=preview&destination=strength-goals', {
           liftOverrides: '[1]',

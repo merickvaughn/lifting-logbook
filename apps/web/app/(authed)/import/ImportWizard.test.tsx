@@ -1152,6 +1152,124 @@ describe('ImportWizard', () => {
       expect(mockDryRun.mock.calls[0]?.[3]?.liftOverrides).toBeUndefined();
     });
 
+    it('retries a failed preview by reusing the lift the first Keep left behind', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockReset();
+      mockPreview
+        .mockResolvedValueOnce(GOALS_PREVIEW)
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValue(KEPT_PREVIEW);
+      mockCreateCustomLift
+        .mockResolvedValueOnce({ ok: true, data: KEPT_LIFT } as never)
+        .mockResolvedValueOnce({ ok: false, conflictMessage: 'exists' } as never);
+      mockFetchCustomLifts.mockResolvedValue([KEPT_LIFT] as never);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await toReview(user);
+      await keep(user, 'Squat', 0);
+      await screen.findByText('Could not update the preview. Try again.');
+
+      await user.click(within(screen.getByRole('status')).getByRole('button', { name: 'Keep Squat as a custom lift' }));
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await waitFor(() => expect(mockDryRun).toHaveBeenCalled());
+      expect(mockDryRun.mock.calls[0]?.[3]?.liftOverrides).toEqual({ 1: 'custom-1' });
+    });
+
+    it('shows an error when the new preview comes back with no rows', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockReset();
+      mockPreview
+        .mockResolvedValueOnce(GOALS_PREVIEW)
+        .mockResolvedValue({ ...GOALS_PREVIEW, preview: null, errors: [{ row: 1, code: 'UNRECOGNIZED_LIFT', message: 'gone' }] });
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await toReview(user);
+      await keep(user, 'Squat', 0);
+      expect(await screen.findByText('Could not update the preview. Try again.')).toBeInTheDocument();
+      expect(screen.getByRole('status')).toBeInTheDocument();
+    });
+
+    it('refuses a new lift name that another row already spells, since it would merge them', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockReset();
+      mockPreview.mockResolvedValueOnce(GOALS_PREVIEW).mockResolvedValue({
+        ...KEPT_PREVIEW,
+        preview: {
+          ...KEPT_PREVIEW.preview!,
+          deltas: [
+            ...KEPT_PREVIEW.preview!.deltas,
+            { key: 'custom-1#1', label: 'Squat (custom)', kind: 'skip', after: '300 lbs', rowIndex: 4 },
+          ],
+        },
+      });
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await toReview(user);
+      await keep(user, 'Squat', 0);
+      expect(
+        await screen.findByText('Squat (custom) already has a goal in this import. Try another name.'),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await waitFor(() => expect(mockDryRun).toHaveBeenCalled());
+      expect(mockDryRun.mock.calls[0]?.[3]?.liftOverrides).toBeUndefined();
+    });
+
+    it('names the row actually stored once a spelling\'s first row is excluded', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockReset();
+      mockPreview.mockResolvedValue({
+        ...GOALS_PREVIEW,
+        preview: {
+          creates: 1,
+          updates: 0,
+          skips: 2,
+          unresolved: 0,
+          deltas: [
+            { key: 'overhead-press', label: 'Overhead Press', kind: 'create', after: '150 lbs', rowIndex: 1 },
+            { key: 'overhead-press#1', label: 'Overhead Press', kind: 'skip', after: '100 lbs', rowIndex: 2 },
+            { key: 'overhead-press#2', label: 'Overhead Press', kind: 'skip', after: '160 lbs', rowIndex: 3 },
+          ],
+          goalSpellingCollisions: [
+            {
+              key: 'overhead-press',
+              label: 'Overhead Press',
+              rows: [
+                { spelling: 'OH Press', lift: 'overhead-press', value: '150 lbs', rowIndexes: [1, 3] },
+                { spelling: 'OH Press-HV', lift: 'overhead-press', value: '100 lbs', rowIndexes: [2] },
+              ],
+            },
+          ],
+        },
+      });
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await toReview(user);
+      await user.click(screen.getAllByRole('button', { name: 'Exclude OH Press' })[0]!);
+
+      const notice = screen.getByRole('status');
+      expect(notice).toHaveTextContent('OH Press-HV and OH Press are both Overhead Press');
+      expect(notice).toHaveTextContent('only the first goal in this file is stored (OH Press-HV, 100 lbs)');
+      expect(notice).toHaveTextContent('Keep OH Press (160 lbs) as a custom lift');
+    });
+
+    it('leaves an excluded kept row out of the overrides', async () => {
+      const user = userEvent.setup();
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await toReview(user);
+      await keep(user, 'Squat', 0);
+      await user.click(await screen.findByRole('button', { name: 'Exclude Squat (custom)' }));
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await waitFor(() => expect(mockDryRun).toHaveBeenCalled());
+      expect(mockDryRun.mock.calls[0]?.[3]?.liftOverrides).toBeUndefined();
+      expect(mockDryRun.mock.calls[0]?.[3]?.excludeKeys).toEqual(['__row_1']);
+    });
+
+    it('says a kept goal needs a training max to show on the goals page', async () => {
+      const user = userEvent.setup();
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await toReview(user);
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'A kept goal shows on the goals page once its custom lift has a training max.',
+      );
+    });
+
     it('does not reuse a custom lift the file already has a goal for', async () => {
       const user = userEvent.setup();
       mockPreview.mockReset();

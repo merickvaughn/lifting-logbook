@@ -18,6 +18,7 @@ import {
 import {
   GoogleSheetTab,
   GoogleSheetWorkbookResponse,
+  IMPORT_ERROR_FIELD_LIFT,
   ImportClassification,
   ImportCommitResponse,
   ImportDryRunResponse,
@@ -160,13 +161,14 @@ export class ImportController {
 
     const columnMappings = fuzzyColumnMapper(table[0] ?? [], destination);
     const repos = await this.factory.forUser(user);
+    // Only a strength-goal preview applies these (#1169).
+    const liftOverrides = parseLiftOverrides(fields.get('liftOverrides'));
 
     // For lift-records, use soft validation so incomplete/ambiguous rows appear in REVIEW
     if (destination === 'lift-records') {
       return this.previewLiftRecords(program, classification, destination, table, columnMappings, repos);
     }
 
-    const liftOverrides = parseLiftOverrides(fields.get('liftOverrides'));
     const { errors, preview } = await this.preview(program, destination, table, repos, liftOverrides);
     return {
       classification,
@@ -535,6 +537,12 @@ export class ImportController {
     if (destination === 'lift-records' || destination === 'strength-goals') {
       parsed = withLiftOverrides(parsed as (LiftRecord | StrengthGoalEntry)[], liftOverrides);
     }
+    if (destination === 'strength-goals') {
+      const overrideErrors = await unrecognizedGoalOverrides(liftOverrides, repos);
+      if (overrideErrors.length > 0) {
+        throw new BadRequestException({ message: 'Validation failed', errors: overrideErrors });
+      }
+    }
 
     // A tab opened before #1123 sends an ambiguous OR incomplete lift-records
     // row's excludeKeys entry as `__ambiguous_<rowIndex>` / `__incomplete_<rowIndex>`
@@ -738,6 +746,8 @@ export class ImportController {
     }
     if (destination === 'strength-goals') {
       // A kept row previews under its custom lift, as the commit will store it (#1169).
+      const overrideErrors = await unrecognizedGoalOverrides(liftOverrides, repos);
+      if (overrideErrors.length > 0) return { valid: [], errors: overrideErrors };
       return validateStrengthGoalImport(
         withLiftOverrides(parsed as StrengthGoalEntry[], liftOverrides),
         await effectiveSlotMapFor(repos),
@@ -754,6 +764,28 @@ function withLiftOverrides<R extends { lift: unknown }>(rows: R[], liftOverrides
     const canonical = liftOverrides[String(i + 1)];
     return canonical ? { ...r, lift: canonical } : r;
   });
+}
+
+/**
+ * Overrides naming no known lift. A goal row's own lift may be free text, but an override is a
+ * lift the user picked, so one that's gone was deleted after the Keep. Stored, its goal would sit
+ * under an id nothing resolves (#1169). `row` is the row's position before any exclusions.
+ */
+async function unrecognizedGoalOverrides(
+  liftOverrides: Record<string, string>,
+  repos: RepositoryBundle,
+): Promise<ImportError[]> {
+  const overrides = Object.entries(liftOverrides);
+  if (overrides.length === 0) return [];
+  const slotMap = await effectiveSlotMapFor(repos);
+  return overrides
+    .filter(([, lift]) => !Object.prototype.hasOwnProperty.call(slotMap, lift))
+    .map(([row]) => ({
+      row: Number(row),
+      field: IMPORT_ERROR_FIELD_LIFT,
+      code: 'UNRECOGNIZED_LIFT',
+      message: "The custom lift chosen for this row no longer exists. Exclude the row, or go back and keep it as a new lift.",
+    }));
 }
 
 /** The rows a commit writes: to its destination, and 1RM rows split off to training maxes. */

@@ -131,7 +131,7 @@ function importPath(
 
 // Import form. The per-row options go in the body, not the URL: with one entry per
 // row they outgrow Node's 16 KB header limit at about 300 rows (#1121).
-function commitForm(file: File, opts?: CommitImportOpts): FormData {
+function importForm(file: File, opts?: CommitImportOpts): FormData {
   const form = new FormData();
   if (opts?.excludeKeys && opts.excludeKeys.length > 0) {
     form.append('excludeKeys', JSON.stringify(opts.excludeKeys));
@@ -441,6 +441,7 @@ export function createApiClient(config: ApiClientConfig) {
     /**
      * Smart Import — classify + preview a CSV without writing (#477). Pass a
      * `destination` to override the classifier (e.g. after a low-confidence pick).
+     * `liftOverrides` applies only to a strength-goal preview (#1169).
      */
     async previewImport(
       program: string,
@@ -450,7 +451,7 @@ export function createApiClient(config: ApiClientConfig) {
     ): Promise<ImportPreviewResponse> {
       const res = await rawFetch(importPath(program, 'preview', destination, opts), {
         method: 'POST',
-        body: commitForm(file, opts),
+        body: importForm(file, opts),
         cache: 'no-store',
       });
       if (!res.ok) {
@@ -473,7 +474,7 @@ export function createApiClient(config: ApiClientConfig) {
     ): Promise<ImportCommitResult<ImportCommitResponse>> {
       const res = await rawFetch(importPath(program, 'commit', destination, opts), {
         method: 'POST',
-        body: commitForm(file, opts),
+        body: importForm(file, opts),
         cache: 'no-store',
       });
       if (res.ok) {
@@ -499,7 +500,7 @@ export function createApiClient(config: ApiClientConfig) {
       const path = importPath(program, 'dry-run', destination, opts);
       const res = await rawFetch(path, {
         method: 'POST',
-        body: commitForm(file, opts),
+        body: importForm(file, opts),
         cache: 'no-store',
       });
       if (res.ok) {
