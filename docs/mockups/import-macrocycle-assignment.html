@@ -302,6 +302,12 @@
   /* Rendering rebuilds the controls, so focus goes back to the same control, or to a nearby one. */
   function restoreFocus(key) {
     if (!key) return;
+    /* After a join, the same button would belong to the next boundary, and a second press would join again. */
+    var joined = /^b(\d+)-join$/.exec(key);
+    if (joined) {
+      document.getElementById('card-' + (Number(joined[1]) - 1)).focus();
+      return;
+    }
     var target = document.querySelector('[data-k="' + key + '"]');
     if (!target || target.disabled) {
       var pair = key.replace(/earlier$/, '#').replace(/later$/, 'earlier').replace(/#$/, 'later');
@@ -357,6 +363,7 @@
   }
 
   function programName(st) { return PROGRAMS[st.program].name; }
+  function stretchName(st) { return programName(st) + ' from ' + fmt(st.first); }
 
   function renderDecision(box) {
     var before = sessions[loneIndex - 1].t, lone = sessions[loneIndex].t, after = sessions[breakStart].t;
@@ -471,7 +478,8 @@
     var lower = i > 0 ? starts[i - 1] : 0;
     var upper = i + 1 < starts.length ? starts[i + 1] : sessions.length;
     var next = start + delta;
-    if (next === loneIndex) next += delta;
+    /* A boundary can't sit on the lone workout or on the break, which the decision above controls. */
+    while (next === loneIndex || next === breakStart) next += delta;
     return next > lower && next < upper ? next : null;
   }
 
@@ -496,7 +504,8 @@
     }, 'Macrocycles joined.');
   }
 
-  function splitAtLargestGap(st) {
+  /* Where a split would land, or -1 if this stretch has nowhere to split. */
+  function splitPoint(st) {
     var best = -1, bestGap = -1, mid = (st.from + st.to) / 2;
     for (var i = st.from + 1; i <= st.to; i++) {
       if (i === loneIndex) continue;
@@ -506,7 +515,11 @@
       /* Equal gaps split nearest the middle, not at the first workout. */
       if (g > bestGap || (g === bestGap && Math.abs(i - mid) < Math.abs(best - mid))) { bestGap = g; best = i; }
     }
-    if (best < 0) return;
+    return best;
+  }
+
+  function splitAtLargestGap(st) {
+    var best = splitPoint(st);
     change(function () {
       if (best === breakStart) setBreak(true);
       else state.starts.push(best);
@@ -517,11 +530,12 @@
     var b = el('div', { class: 'boundary' });
     b.appendChild(el('span', { class: 'why' }, boundaryWhy(prev, st)));
     /* The break is settled by the decision above, so it has no move buttons. */
+    var name = stretchName(st);
     if (st.from !== breakStart) {
-      b.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'b' + i + '-earlier', disabled: moveTarget(st.from, -1) === null, 'aria-label': 'Move this boundary one workout earlier', onclick: function () { moveBoundary(st.from, -1); } }, '← Earlier'));
-      b.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'b' + i + '-later', disabled: moveTarget(st.from, 1) === null, 'aria-label': 'Move this boundary one workout later', onclick: function () { moveBoundary(st.from, 1); } }, 'Later →'));
+      b.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'b' + i + '-earlier', disabled: moveTarget(st.from, -1) === null, 'aria-label': 'Start ' + name + ' one workout earlier', onclick: function () { moveBoundary(st.from, -1); } }, '← Earlier'));
+      b.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'b' + i + '-later', disabled: moveTarget(st.from, 1) === null, 'aria-label': 'Start ' + name + ' one workout later', onclick: function () { moveBoundary(st.from, 1); } }, 'Later →'));
     }
-    b.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'b' + i + '-join', onclick: function () { removeBoundary(st.from); } }, 'Join'));
+    b.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'b' + i + '-join', 'aria-label': 'Join ' + name + ' with the macrocycle before it', onclick: function () { removeBoundary(st.from); } }, 'Join'));
     box.appendChild(b);
   }
 
@@ -531,6 +545,7 @@
     list.forEach(function (st, i) {
       if (i > 0) renderBoundary(box, list[i - 1], st, i);
 
+      var name = stretchName(st);
       var card = el('section', { class: 'card' + (state.selected === i ? ' selected' : ''), id: 'card-' + i, tabindex: '-1' });
       var head = el('div', { class: 'card-head' });
       head.appendChild(el('h2', {}, programName(st) + ' · ' + fmt(st.first) + ' to ' + fmt(st.last, true)));
@@ -540,9 +555,10 @@
 
       var fields = el('div', { class: 'fields' });
       var pl = el('label', {}, 'Program');
-      var ps = el('select', { 'data-k': 'program-' + i, onchange: function (e) {
+      var ps = el('select', { 'data-k': 'program-' + i, 'aria-label': 'Program for ' + name, onchange: function (e) {
         var v = e.target.value;
-        change(function () { st.list.forEach(function (s) { s.program = v; }); }, 'Program changed to ' + PROGRAMS[v].name + '.');
+        /* Includes a lone workout not yet filed, so filing it later doesn't mix programs. */
+        change(function () { sessions.slice(st.from, st.to + 1).forEach(function (s) { s.program = v; }); }, 'Program changed to ' + PROGRAMS[v].name + '.');
       } });
       Object.keys(PROGRAMS).forEach(function (k) {
         var o = el('option', { value: k }, PROGRAMS[k].name);
@@ -553,7 +569,7 @@
       fields.appendChild(pl);
 
       var sl = el('label', {}, 'Status');
-      var ss = el('select', { 'data-k': 'status-' + i, onchange: function (e) {
+      var ss = el('select', { 'data-k': 'status-' + i, 'aria-label': 'Status for ' + name, onchange: function (e) {
         var v = e.target.value;
         change(function () { state.statusOverride[sessions[st.from].t] = v; }, 'Status changed to ' + LABEL[v] + '.');
       } });
@@ -571,8 +587,8 @@
       sl.appendChild(ss);
       fields.appendChild(sl);
 
-      if (st.count > 1) {
-        fields.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'split-' + i, onclick: function () { splitAtLargestGap(st); } }, 'Split at largest gap'));
+      if (splitPoint(st) >= 0) {
+        fields.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'split-' + i, 'aria-label': 'Split ' + name + ' at its largest gap', onclick: function () { splitAtLargestGap(st); } }, 'Split at largest gap'));
       }
       card.appendChild(fields);
 
