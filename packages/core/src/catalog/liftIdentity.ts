@@ -39,6 +39,43 @@ export function lookupByLift<T>(
 }
 
 /**
+ * A lookup over `[lift, value]` entries that crosses spellings only through the catalog id:
+ * the exact name, then the entry stored under the name's id, or for a name that is an id,
+ * the first entry under a spelling of it.
+ *
+ * `Bench Press` finds a `bench-press` entry and the reverse. Two names stay apart, even for
+ * one lift, because a program can set them up separately (`C. Lat Raise`, `Lateral Raise`),
+ * so use this over {@link lookupByLift} for anything a user can set per slot (#1135).
+ */
+export function lookupByStoredId<T>(
+  entries: Iterable<readonly [string, T]>,
+): (name: string) => T | undefined {
+  const byName = new Map<string, T>();
+  const byNamedId = new Map<string, T>();
+  for (const [lift, value] of entries) {
+    if (!byName.has(lift)) byName.set(lift, value);
+    const id = liftIdFor(lift);
+    if (lift !== id && !byNamedId.has(id)) byNamedId.set(id, value);
+  }
+  return (name) => byName.get(name) ?? byName.get(liftIdFor(name)) ?? byNamedId.get(name);
+}
+
+/**
+ * What to list each of `names` as, where one row per lift is wanted: a name stored as a
+ * catalog id joins a spelling of that lift (the first in sort order) when `names` has one,
+ * and every other name stays itself. The same rule as {@link lookupByStoredId}: `bench-press`
+ * lists as `Bench Press`, while `C. Lat Raise` and `Lateral Raise` stay two rows (#1135).
+ */
+export function storedIdListing(names: Iterable<string>): (name: string) => string {
+  const namedById = new Map<string, string>();
+  for (const name of [...new Set(names)].sort()) {
+    const id = liftIdFor(name);
+    if (name !== id && !namedById.has(id)) namedById.set(id, name);
+  }
+  return (name) => namedById.get(name) ?? name;
+}
+
+/**
  * A lookup for a lift's current training max, by any spelling.
  *
  * Import stores a row by catalog id with no record of which slot it came from, so a

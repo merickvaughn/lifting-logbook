@@ -107,6 +107,21 @@ async function renderPage(): Promise<{ lifts: LiftData[]; readOnly: boolean }> {
   return { lifts: JSON.parse(encoded.replace(/&quot;/g, '"')), readOnly };
 }
 
+describe('WorkoutLoggingPage — two records with one set number (#1135)', () => {
+  it('shows both, so the record updateMaxes also reads can be seen and edited', async () => {
+    // The API keeps the stored-id row as its own lift when its set number is taken.
+    seedWorkout([
+      { lift: 'Bench Press', planned: false, sets: [{ ...LOGGED_SET, id: 'name-row', weight: 190 }] },
+      { lift: 'bench-press', planned: false, sets: [{ ...LOGGED_SET, id: 'id-row', weight: 200 }] },
+    ]);
+    mockedSpec.mockResolvedValue([spec('Bench Press')]);
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => l.workingSets.map((s) => s.existing?.id))).toEqual([['name-row'], ['id-row']]);
+  });
+});
+
 describe('WorkoutLoggingPage — a training max stored under another spelling (#1118)', () => {
   beforeEach(() => {
     jest.clearAllMocks();

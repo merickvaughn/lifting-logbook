@@ -114,6 +114,7 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
   // --- Horizontal push pattern ---
   {
     id: 'bench-press', name: 'Bench Press', classification: 'compound',
+    aliases: ['Flat Bench Press'],
     movementProfile: { patterns: ['push', 'horizontal'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Chest'], secondary: ['Triceps', 'Front Delts'] },
   },

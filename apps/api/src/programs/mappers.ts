@@ -405,6 +405,12 @@ export const toWorkoutResponse = (
   // Logged sets by the lift occurrence they belong to: a lift, and which occurrence
   // of it in this workout (#1027).
   const liftMap = new Map<string, { lift: string; occurrence: number; sets: SetResponse[] }>();
+  const addSet = (lift: string, occurrence: number, set: SetResponse): void => {
+    const group = liftMap.get(liftOccurrenceKey(lift, occurrence));
+    if (group) group.sets.push(set);
+    else liftMap.set(liftOccurrenceKey(lift, occurrence), { lift, occurrence, sets: [set] });
+  };
+  const joining: { stored: string; lift: string; occurrence: number; set: SetResponse }[] = [];
   for (const r of records) {
     const set: SetResponse = {
       // From the record as stored — before the `renamedLifts` regrouping below —
@@ -419,9 +425,39 @@ export const toWorkoutResponse = (
     };
     const lift = renamedLifts?.get(r.lift) ?? liftByStoredId.get(r.lift) ?? r.lift;
     const occurrence = r.occurrence ?? 0;
-    const group = liftMap.get(liftOccurrenceKey(lift, occurrence));
-    if (group) group.sets.push(set);
-    else liftMap.set(liftOccurrenceKey(lift, occurrence), { lift, occurrence, sets: [set] });
+    if (lift === r.lift) addSet(lift, occurrence, set);
+    else joining.push({ stored: r.lift, lift, occurrence, set });
+  }
+  // A lift lists one set per set number, and clients key on it (#1135). A record that
+  // would join a set number the lift already has stays under its stored name, as its own
+  // lift, so both rows can still be read and edited: the row under the lift's own name
+  // keeps the slot, whichever order they arrive in. A record staying put can take a slot
+  // another record meant to join (with swaps `A→B` and `B→C`), so this repeats until nothing
+  // moves. It settles because a record staying under its own name can't clash with another
+  // there: they would be the same row.
+  const slot = (lift: string, occurrence: number, setNum: number) =>
+    `${liftOccurrenceKey(lift, occurrence)}|${setNum}`;
+  const directSlots = [...liftMap.values()].flatMap(({ lift, occurrence, sets }) =>
+    sets.map((s) => slot(lift, occurrence, s.setNum)),
+  );
+  const staying = new Set<(typeof joining)[number]>();
+  for (let settled = false; !settled; ) {
+    settled = true;
+    const slots = new Set(directSlots);
+    for (const row of staying) slots.add(slot(row.stored, row.occurrence, row.set.setNum));
+    for (const row of joining) {
+      if (staying.has(row)) continue;
+      const wanted = slot(row.lift, row.occurrence, row.set.setNum);
+      if (slots.has(wanted)) {
+        staying.add(row);
+        settled = false;
+      } else {
+        slots.add(wanted);
+      }
+    }
+  }
+  for (const row of joining) {
+    addSet(staying.has(row) ? row.stored : row.lift, row.occurrence, row.set);
   }
   // Rows arrive ordered by stored name, so a group joined from two names needs sorting.
   for (const { sets } of liftMap.values()) sets.sort((a, b) => a.setNum - b.setNum);

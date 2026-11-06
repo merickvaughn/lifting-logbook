@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
   CustomLiftResponse,
@@ -593,6 +593,326 @@ describe('ImportWizard', () => {
       'training-maxes',
       undefined,
     );
+  });
+
+  describe('rows spelling one lift differently (#1135)', () => {
+    const COLLISION_PREVIEW: ImportPreviewResponse = {
+      ...TM_PREVIEW,
+      preview: {
+        creates: 2,
+        updates: 0,
+        skips: 0,
+        unresolved: 0,
+        // `Squat` stores as back-squat, and the slot map leaves `Back Squat` as written.
+        deltas: [
+          { key: 'back-squat', label: 'Back Squat', kind: 'create', after: '300' },
+          { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
+        ],
+        spellingCollisions: [
+          {
+            key: 'back-squat',
+            label: 'Back Squat',
+            rows: [
+              { spelling: 'Back Squat', lift: 'Back Squat', weight: 320, dateUpdated: '2026-01-01' },
+              { spelling: 'Squat', lift: 'back-squat', weight: 300, dateUpdated: '2025-01-01' },
+            ],
+          },
+        ],
+      },
+    };
+    // Both spellings store under overhead-press, so only the newer row is on the list.
+    const SHARED_LIFT_PREVIEW: ImportPreviewResponse = {
+      ...TM_PREVIEW,
+      preview: {
+        creates: 1,
+        updates: 0,
+        skips: 1,
+        unresolved: 0,
+        deltas: [
+          { key: 'overhead-press', label: 'overhead-press', kind: 'create', after: '115' },
+          { key: 'overhead-press~2', label: 'overhead-press', kind: 'skip', after: '75' },
+        ],
+        spellingCollisions: [
+          {
+            key: 'overhead-press',
+            label: 'Overhead Press',
+            rows: [
+              { spelling: 'OH Press', lift: 'overhead-press', weight: 115, dateUpdated: '2026-01-01' },
+              { spelling: 'OH Press-HV', lift: 'overhead-press', weight: 75, dateUpdated: '2024-01-01' },
+            ],
+          },
+        ],
+      },
+    };
+    const KEPT_LIFT = { id: 'custom-1', name: 'Squat (custom)', classification: 'compound' };
+
+    async function committedCsv(user: ReturnType<typeof userEvent.setup>): Promise<string> {
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalled());
+      const committed = mockCommit.mock.calls[0]?.[1] as File;
+      return readFileText(committed);
+    }
+
+    // `rowIndex` is the row's position in the notice, most recent first.
+    async function keepAsCustom(user: ReturnType<typeof userEvent.setup>, spelling: string, rowIndex: number) {
+      const notice = screen.getByRole('status');
+      const compound = within(notice).getAllByRole('button', { name: 'Compound' })[rowIndex];
+      if (!compound) throw new Error(`No classification buttons for row ${rowIndex}`);
+      await user.click(compound);
+      await user.click(within(notice).getByRole('button', { name: `Keep ${spelling} as a custom lift` }));
+    }
+
+    beforeEach(() => {
+      mockPreview.mockResolvedValue(COLLISION_PREVIEW);
+      mockCreateCustomLift.mockResolvedValue({ ok: true, data: KEPT_LIFT } as never);
+      mockDryRun.mockResolvedValue({ ok: true, data: { destination: 'training-maxes', created: 2, updated: 0, skipped: 0 } } as never);
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'training-maxes', created: 2, updated: 0, skipped: 0, batchId: 'batch-1' },
+      });
+    });
+
+    it('warns in Review, naming both spellings', async () => {
+      const user = userEvent.setup();
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Back Squat and Squat are both Back Squat. Their maxes are stored separately',
+      );
+      expect(screen.getByRole('status')).toHaveTextContent('not always the most recent');
+    });
+
+    it('says only the most recent is stored when the rows share a stored lift', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(SHARED_LIFT_PREVIEW);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'OH Press and OH Press-HV are both Overhead Press, so only the most recent max in this file is stored (OH Press, 115 lbs).',
+      );
+    });
+
+    it('says which rows share a stored lift when only some do', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue({
+        ...TM_PREVIEW,
+        preview: {
+          creates: 2,
+          updates: 0,
+          skips: 1,
+          unresolved: 0,
+          deltas: [
+            { key: 'bench-press', label: 'Bench Press', kind: 'create', after: '210' },
+            { key: 'Flat Bench Press', label: 'Flat Bench Press', kind: 'create', after: '220' },
+          ],
+          spellingCollisions: [
+            {
+              key: 'bench-press',
+              label: 'Bench Press',
+              rows: [
+                { spelling: 'Flat Bench Press', lift: 'Flat Bench Press', weight: 220, dateUpdated: '2026-01-01' },
+                { spelling: 'Bench P.', lift: 'bench-press', weight: 210, dateUpdated: '2025-01-01' },
+                { spelling: 'Bench Press', lift: 'bench-press', weight: 200, dateUpdated: '2024-01-01' },
+              ],
+            },
+          ],
+        },
+      });
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      const notice = screen.getByRole('status');
+      expect(notice).toHaveTextContent('Their maxes are stored separately');
+      expect(notice).toHaveTextContent(
+        'Of Bench P. and Bench Press, only the most recent max in this file is stored (Bench P., 210 lbs).',
+      );
+      // The list names the stored lifts as the file did.
+      expect(screen.getByLabelText('Weight for Bench P.')).toHaveValue(210);
+    });
+
+    it('names rows stored separately as the file did, since the API names both after the lift', async () => {
+      const user = userEvent.setup();
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      expect(screen.getByLabelText('Weight for Squat')).toHaveValue(300);
+      expect(screen.getByLabelText('Weight for Back Squat')).toHaveValue(320);
+    });
+
+    it('shows the conflict message when the list can\'t be re-read after a 409', async () => {
+      const user = userEvent.setup();
+      mockCreateCustomLift.mockResolvedValue({ ok: false, conflictMessage: 'that name is reserved' } as never);
+      mockFetchCustomLifts.mockRejectedValue(new Error('offline'));
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+      expect(await screen.findByText('that name is reserved')).toBeInTheDocument();
+    });
+
+    it('does not reuse a custom lift the file already has a row for', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue({
+        ...COLLISION_PREVIEW,
+        preview: {
+          creates: 2,
+          updates: 0,
+          skips: 1,
+          unresolved: 0,
+          deltas: [
+            { key: 'back-squat', label: 'Back Squat', kind: 'create', after: '300' },
+            { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
+            { key: 'custom-1', label: 'Squat (custom)', kind: 'skip', after: '150' },
+          ],
+          spellingCollisions: COLLISION_PREVIEW.preview?.spellingCollisions,
+        },
+      });
+      mockCreateCustomLift.mockResolvedValue({ ok: false, conflictMessage: 'taken' } as never);
+      mockFetchCustomLifts.mockResolvedValue([KEPT_LIFT] as never);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+      expect(await screen.findByText('Squat (custom) already has a max in this import. Try another name.')).toBeInTheDocument();
+    });
+
+    it('blocks Next, Back and other rows while a Keep is pending, so the commit includes the kept row', async () => {
+      const user = userEvent.setup();
+      let finish: (value: unknown) => void = () => undefined;
+      mockCreateCustomLift.mockReturnValue(new Promise((resolve) => { finish = resolve; }) as never);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+
+      expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Keep Back Squat as a custom lift' })).toBeDisabled();
+
+      await act(async () => finish({ ok: true, data: KEPT_LIFT }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"custom-1",300');
+    });
+
+    it('keeps an edit made to the row\'s weight in Review', async () => {
+      const user = userEvent.setup();
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      const weight = screen.getByLabelText('Weight for Squat');
+      await user.clear(weight);
+      await user.type(weight, '305');
+      await keepAsCustom(user, 'Squat', 1);
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"custom-1",305');
+    });
+
+    it('reuses a custom lift of that name left by an earlier import', async () => {
+      const user = userEvent.setup();
+      mockCreateCustomLift.mockResolvedValue({ ok: false, conflictMessage: 'taken' } as never);
+      mockFetchCustomLifts.mockResolvedValue([KEPT_LIFT] as never);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"custom-1",300');
+    });
+
+    it('does not put one custom lift on the list twice', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue({
+        ...COLLISION_PREVIEW,
+        preview: {
+          creates: 3,
+          updates: 0,
+          skips: 0,
+          unresolved: 0,
+          deltas: [
+            { key: 'back-squat', label: 'Back Squat', kind: 'create', after: '300' },
+            { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
+            { key: 'BS', label: 'BS', kind: 'create', after: '280' },
+          ],
+          spellingCollisions: [
+            {
+              key: 'back-squat',
+              label: 'Back Squat',
+              rows: [
+                { spelling: 'Back Squat', lift: 'Back Squat', weight: 320, dateUpdated: '2026-01-01' },
+                { spelling: 'Squat', lift: 'back-squat', weight: 300, dateUpdated: '2025-01-01' },
+                { spelling: 'BS', lift: 'BS', weight: 280, dateUpdated: '2024-01-01' },
+              ],
+            },
+          ],
+        },
+      });
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+      await screen.findByLabelText('Weight for Squat (custom)');
+
+      mockCreateCustomLift.mockResolvedValue({ ok: false, conflictMessage: 'taken' } as never);
+      mockFetchCustomLifts.mockResolvedValue([KEPT_LIFT] as never);
+      const name = screen.getByRole('textbox', { name: 'Custom lift name for BS' });
+      await user.clear(name);
+      await user.type(name, 'Squat (custom)');
+      await keepAsCustom(user, 'BS', 1);
+      expect(await screen.findByText('Squat (custom) already has a max in this import. Try another name.')).toBeInTheDocument();
+    });
+
+    it('stores both maxes when a row is kept as a custom lift, and writes neither twice', async () => {
+      const user = userEvent.setup();
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+
+      expect(mockCreateCustomLift).toHaveBeenCalledWith({ name: 'Squat (custom)', classification: 'compound' });
+      // Resolved, so the warning has gone and the kept row is on the list.
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+      expect(screen.getByLabelText('Weight for Squat (custom)')).toHaveValue(300);
+
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"Back Squat",320');
+      expect(csv).toContain('"custom-1",300');
+      expect(csv).not.toContain('"back-squat"');
+    });
+
+    it('stores both maxes when the row kept is the older of two sharing a stored lift', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(SHARED_LIFT_PREVIEW);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'OH Press-HV', 1);
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"overhead-press",115');
+      expect(csv).toContain('"custom-1",75');
+    });
+
+    it('lets the older row take over a shared stored lift when the newer is kept', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(SHARED_LIFT_PREVIEW);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'OH Press', 0);
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"overhead-press",75');
+      expect(csv).toContain('"custom-1",115');
+      expect(csv).not.toContain('"overhead-press",115');
+    });
+
+    it('shows the server\'s reason, and keeps the warning, when the name can\'t be used', async () => {
+      const user = userEvent.setup();
+      mockCreateCustomLift.mockResolvedValue({ ok: false, conflictMessage: "'Squat (custom)' is reserved" } as never);
+      mockFetchCustomLifts.mockResolvedValue([]);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+      expect(await screen.findByText("'Squat (custom)' is reserved")).toBeInTheDocument();
+      expect(screen.getByRole('status')).toBeInTheDocument();
+    });
   });
 
   // #911 review, tenth pass: the REVIEW-step error block had no coverage at

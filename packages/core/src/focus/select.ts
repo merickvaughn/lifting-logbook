@@ -7,6 +7,7 @@ import {
   type FocusPoolEntry,
   type FocusSelection,
 } from '@lifting-logbook/types';
+import { isSameLift } from '../catalog/liftIdentity';
 import type { ResolvedMuscleTargets } from '../catalog/muscles';
 
 /** Lift name → muscles. Built by `buildMuscleTargetResolver`, so user overrides apply. */
@@ -65,7 +66,11 @@ function own<T>(record: Readonly<Record<string, T>> | undefined, key: string): T
 
 /** True when a `rule` entry's lift is planned today, so the rule keeps it out. */
 function ruleExcludes(entry: FocusPoolEntry, plannedLifts: readonly string[]): boolean {
-  return entry.include === 'rule' && entry.ruleLift !== '' && plannedLifts.includes(entry.ruleLift);
+  return (
+    entry.include === 'rule' &&
+    entry.ruleLift !== '' &&
+    plannedLifts.some((planned) => isSameLift(planned, entry.ruleLift))
+  );
 }
 
 /**

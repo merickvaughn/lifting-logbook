@@ -20,6 +20,7 @@ import {
   FocusPoolEntry,
   emptyFocusDayState,
 } from '@lifting-logbook/types';
+import { PrismaLiftRecordRepository } from '../adapters/prisma/lift-record.repository';
 import { AppModule } from '../app.module';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from '../programs/conflict.filter';
@@ -215,6 +216,70 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect(plan.budget).toEqual({ sets: 6, minutes: 15 });
     expect(plan.groups.map((group) => [group.block.id, group.trimmed])).toEqual([[blockId, ['Rope Pushdown']]]);
     expect(plan.sets).toBe(0);
+  });
+
+  describe('a lift under any stored spelling (#1135)', () => {
+    const record = (lift: string, date: string, weight: number, setNum = 1) => ({
+      userId: USER_OWNER,
+      program: PROGRAM,
+      macrocycleNum: 1,
+      workoutNum: 1,
+      date: new Date(`${date}T00:00:00.000Z`),
+      lift,
+      setNum,
+      weight,
+      reps: 5,
+    });
+
+    beforeEach(async () => {
+      await prisma.liftRecord.deleteMany({ where: { userId: { in: USERS } } });
+      await prisma.liftRecord.createMany({
+        data: [
+          record('Bench Press', '2026-10-10', 200),
+          record('bench-press', '2026-10-11', 210),
+          record('Bench P.', '2026-10-12', 220),
+          record('Flat Bench Press', '2026-10-13', 230),
+          record('Back Squat', '2026-10-10', 300),
+          record('bench-press', '2026-12-01', 999),
+          { ...record('bench-press', '2026-10-10', 888), userId: USER_OTHER },
+        ],
+      });
+    });
+
+    it('getRecordsForLifts finds rows under every spelling, keeping how each is stored', async () => {
+      const repository = new PrismaLiftRecordRepository(prisma, USER_OWNER);
+      const records = await repository.getRecordsForLifts(['Bench Press'], new Date('2026-10-31T00:00:00.000Z'));
+      expect(records.map((r) => [r.lift, r.weight]).sort()).toEqual([
+        ['Bench P.', 220],
+        ['Bench Press', 200],
+        ['Flat Bench Press', 230],
+        ['bench-press', 210],
+      ]);
+    });
+
+    it('getRecordsForLifts finds them from the catalog id too', async () => {
+      const repository = new PrismaLiftRecordRepository(prisma, USER_OWNER);
+      const records = await repository.getRecordsForLifts(['bench-press'], new Date('2026-10-31T00:00:00.000Z'));
+      expect(records).toHaveLength(4);
+    });
+
+    it('a block summary counts the name and its catalog id under the restricted role, for that user only', async () => {
+      const created = await owner(
+        'POST',
+        `/focus/blocks?today=${TODAY}`,
+        blockBody({ area: 'Chest', pool: [entry('Bench Press')] }),
+      );
+      expect(created.statusCode).toBe(201);
+      const { id } = created.json() as FocusBlockResponse;
+
+      const res = await owner('GET', `/focus/blocks/${id}/summary`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject<Partial<FocusBlockSummaryResponse>>({
+        sessions: 2,
+        sets: 2,
+        volume: (200 + 210) * 5,
+      });
+    });
   });
 
   it('GET /focus/blocks/:id/summary reads records across programs up to the block end', async () => {

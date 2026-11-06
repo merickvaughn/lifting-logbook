@@ -132,6 +132,8 @@ function createInitialState() {
     // low-confidence manual-picker shape, and destination=lift-records returns
     // a preview with one ambiguous lift row — exercises the #911 remap flow.
     ambiguousLift: false,
+    // When true, a training-maxes preview reports `Squat` and `Back Squat` as one lift (#1135).
+    spellingCollision: false,
     // Google Sheets import (#1111): googleSheet makes destination=lift-records
     // previews return the canned LIFT_RECORDS tab's preview; privateSheet makes the
     // workbook fetch answer like a sheet that is not link-shared.
@@ -589,6 +591,9 @@ const server = createServer(async (req, res) => {
     }
     if (url.searchParams.get('withAmbiguousLift') === 'true') {
       state.ambiguousLift = true;
+    }
+    if (url.searchParams.get('withSpellingCollision') === 'true') {
+      state.spellingCollision = true;
     }
     if (url.searchParams.get('withGoogleSheet') === 'true') {
       state.googleSheet = true;
@@ -1210,13 +1215,33 @@ const server = createServer(async (req, res) => {
             : {}),
           preview: {
             creates: 2,
-            updates: 1,
+            updates: state.spellingCollision ? 0 : 1,
             skips: 0,
             unresolved: 0,
-            deltas: [
-              { key: 'squat', label: 'squat', kind: 'create', after: '300' },
-              { key: 'bench-press', label: 'bench-press', kind: 'update', before: '200', after: '210' },
-            ],
+            deltas: state.spellingCollision
+              ? [
+                  // `Squat` stores as back-squat, and the slot map leaves `Back Squat` as written.
+                  { key: 'back-squat', label: 'Back Squat', kind: 'create', after: '300' },
+                  { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
+                ]
+              : [
+                  { key: 'squat', label: 'squat', kind: 'create', after: '300' },
+                  { key: 'bench-press', label: 'bench-press', kind: 'update', before: '200', after: '210' },
+                ],
+            ...(state.spellingCollision
+              ? {
+                  spellingCollisions: [
+                    {
+                      key: 'back-squat',
+                      label: 'Back Squat',
+                      rows: [
+                        { spelling: 'Back Squat', lift: 'Back Squat', weight: 320, dateUpdated: '2026-01-01' },
+                        { spelling: 'Squat', lift: 'back-squat', weight: 300, dateUpdated: '2025-01-01' },
+                      ],
+                    },
+                  ],
+                }
+              : {}),
           },
           errors: [],
         });

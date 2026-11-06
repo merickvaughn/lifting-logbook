@@ -733,6 +733,27 @@ export interface ImportPreview {
    */
   unresolved: number;
   deltas: ImportDelta[];
+  /** Training-max rows under different spellings of one lift; absent when there are none. */
+  spellingCollisions?: ImportSpellingCollision[];
+}
+
+/**
+ * Rows of one training-max file that spell one lift differently (`Squat` and `Back Squat`), so
+ * they can't all apply as its max. The user can keep any of them as a custom lift (#1135).
+ */
+export interface ImportSpellingCollision {
+  /** The lift's identity: its catalog id. */
+  key: string;
+  /** Display name of the lift. */
+  label: string;
+  /** The newest row for each spelling, most recent first. */
+  rows: {
+    spelling: string;
+    /** The stored `lift` this row writes to. Two rows can share one, and the first stores. */
+    lift: string;
+    weight: number;
+    dateUpdated: string;
+  }[];
 }
 
 /**

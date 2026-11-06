@@ -1,3 +1,4 @@
+import { liftIdFor } from '@lifting-logbook/core';
 import type { TrainingMaxHistoryEntryResponse } from '@lifting-logbook/types';
 
 export interface TmAtTimeIndex {
@@ -22,27 +23,52 @@ export interface TmAtTimeIndex {
  * A linear scan rather than a binary search on purpose: `<=` and
  * `localeCompare` only agree for ISO dates, and the original assumed nothing
  * about the strings beyond what those two operators do.
+ *
+ * The lift can be spelled differently on each side (#1135), and this follows the rule
+ * `currentMaxLookup` applies to the current max: entries under the exact name and under
+ * the catalog id compete, the more recent one winning and a tie going to the exact name.
+ * An entry under another name applies only when neither has any entries, and a tie there
+ * goes to the earlier name in sort order.
  */
 export function buildTmAtTimeIndex(
   entries: readonly TrainingMaxHistoryEntryResponse[],
 ): TmAtTimeIndex {
   const byLift = new Map<string, TrainingMaxHistoryEntryResponse[]>();
-  for (const entry of entries) {
-    const group = byLift.get(entry.lift);
+  const byId = new Map<string, TrainingMaxHistoryEntryResponse[]>();
+  const addTo = (
+    groups: Map<string, TrainingMaxHistoryEntryResponse[]>,
+    key: string,
+    entry: TrainingMaxHistoryEntryResponse,
+  ) => {
+    const group = groups.get(key);
     if (group) group.push(entry);
-    else byLift.set(entry.lift, [entry]);
+    else groups.set(key, [entry]);
+  };
+  for (const entry of entries) {
+    addTo(byLift, entry.lift, entry);
+    addTo(byId, liftIdFor(entry.lift), entry);
   }
-  for (const group of byLift.values()) {
-    group.sort((a, b) => b.date.localeCompare(a.date));
+  for (const groups of [byLift, byId]) {
+    for (const group of groups.values()) {
+      group.sort(
+        (a, b) => b.date.localeCompare(a.date) || (a.lift < b.lift ? -1 : a.lift > b.lift ? 1 : 0),
+      );
+    }
   }
   return {
     find(lift, date) {
-      const group = byLift.get(lift);
-      if (!group) return null;
-      for (const entry of group) {
-        if (entry.date <= date) return entry;
-      }
-      return null;
+      const inForce = (group: readonly TrainingMaxHistoryEntryResponse[] | undefined) => {
+        for (const entry of group ?? []) {
+          if (entry.date <= date) return entry;
+        }
+        return null;
+      };
+      const id = liftIdFor(lift);
+      if (!byLift.has(lift) && !byLift.has(id)) return inForce(byId.get(id));
+      const exact = inForce(byLift.get(lift));
+      const stored = inForce(byLift.get(id));
+      if (exact && stored) return stored.date.localeCompare(exact.date) > 0 ? stored : exact;
+      return exact ?? stored;
     },
   };
 }

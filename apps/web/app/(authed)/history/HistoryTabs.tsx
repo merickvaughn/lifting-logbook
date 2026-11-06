@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { formatWeight } from '@lifting-logbook/core';
+import { formatWeight, liftIdFor, storedIdListing } from '@lifting-logbook/core';
 import type { TrainingMaxHistoryEntryResponse, WeightUnit } from '@lifting-logbook/types';
 import type { EnrichedRecord } from './page';
 import styles from './history.module.css';
@@ -57,24 +57,27 @@ function LiftHistoryTab({ records, unit }: { records: EnrichedRecord[]; unit: We
   const [search, setSearch] = useState('');
   const [liftFilter, setLiftFilter] = useState('');
 
+  const listing = useMemo(() => storedIdListing(records.map((r) => r.lift)), [records]);
   const lifts = useMemo(
-    () => Array.from(new Set(records.map((r) => r.lift))).sort(),
-    [records],
+    () => Array.from(new Set(records.map((r) => listing(r.lift)))).sort(),
+    [records, listing],
   );
 
   const visible = useMemo(() => {
     const q = search.toLowerCase();
     return records.filter((r) => {
-      if (liftFilter && r.lift !== liftFilter) return false;
+      if (liftFilter && listing(r.lift) !== liftFilter) return false;
       if (q) {
-        const matchesLift = r.lift.toLowerCase().includes(q);
+        const matchesLift = [r.lift, listing(r.lift), liftIdFor(r.lift)].some((name) =>
+          name.toLowerCase().includes(q),
+        );
         const matchesDate = r.date.includes(q);
         const matchesNotes = r.notes.toLowerCase().includes(q);
         if (!matchesLift && !matchesDate && !matchesNotes) return false;
       }
       return true;
     });
-  }, [records, search, liftFilter]);
+  }, [records, search, liftFilter, listing]);
 
   return (
     <div>
@@ -157,20 +160,22 @@ function TmTimelineTab({
 }) {
   const [liftFilter, setLiftFilter] = useState('');
 
+  const listing = useMemo(() => storedIdListing(entries.map((e) => e.lift)), [entries]);
   const lifts = useMemo(
-    () => Array.from(new Set(entries.map((e) => e.lift))).sort(),
-    [entries],
+    () => Array.from(new Set(entries.map((e) => listing(e.lift)))).sort(),
+    [entries, listing],
   );
 
   const byLift = useMemo(() => {
     const filtered = liftFilter
-      ? entries.filter((e) => e.lift === liftFilter)
+      ? entries.filter((e) => listing(e.lift) === liftFilter)
       : entries;
     const groups = new Map<string, TrainingMaxHistoryEntryResponse[]>();
     for (const e of filtered) {
-      const group = groups.get(e.lift) ?? [];
+      const lift = listing(e.lift);
+      const group = groups.get(lift) ?? [];
       group.push(e);
-      groups.set(e.lift, group);
+      groups.set(lift, group);
     }
     return Array.from(groups.entries())
       .sort(([a], [b]) => a.localeCompare(b))
@@ -178,7 +183,7 @@ function TmTimelineTab({
         lift,
         entries: es.slice().sort((a, b) => b.date.localeCompare(a.date)),
       }));
-  }, [entries, liftFilter]);
+  }, [entries, liftFilter, listing]);
 
   return (
     <div>

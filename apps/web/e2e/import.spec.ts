@@ -76,6 +76,31 @@ test('import wizard: Source → Classify → Review → Preview → Done', async
   await expect(page.getByRole('button', { name: 'Undo this import' })).toBeVisible();
 });
 
+test('import wizard REVIEW: rows spelling one lift differently can be kept apart (#1135)', async ({ page, request }) => {
+  await request.get(`${MOCK_API}/__reset?withSpellingCollision=true`);
+  await page.goto('/import');
+
+  await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
+  await page.getByLabel('CSV file').setInputFiles({
+    name: 'training_maxes.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Date Updated,Lift,Weight\n1/1/2025,Squat,300\n1/1/2026,Back Squat,320'),
+  });
+  await page.getByRole('button', { name: 'Analyze' }).click();
+  await expect(page.getByText('Training Maxes')).toBeVisible();
+  await page.getByRole('button', { name: 'Next', exact: true }).click(); // → Map columns
+  await page.getByRole('button', { name: 'Next', exact: true }).click(); // → Review
+
+  const notice = page.getByRole('status').filter({ hasText: 'are both Back Squat' });
+  await expect(notice).toContainText('Back Squat and Squat are both Back Squat');
+
+  await notice.getByRole('button', { name: 'Compound' }).nth(1).click();
+  await notice.getByRole('button', { name: 'Keep Squat as a custom lift' }).click();
+
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByLabel('Weight for Squat (custom)')).toHaveValue('300');
+});
+
 test('import wizard REVIEW: remove a TM row then commit', async ({ page }) => {
   await page.goto('/import');
 

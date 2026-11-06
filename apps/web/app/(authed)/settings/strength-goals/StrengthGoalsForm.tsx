@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { convertWeight, evaluateStrengthTier, formatWeight, roundToDisplay } from '@lifting-logbook/core';
+import { convertWeight, evaluateStrengthTier, formatWeight, lookupByStoredId, roundToDisplay } from '@lifting-logbook/core';
 import type {
   BodyWeightResponse,
   StrengthGoalResponse,
@@ -81,9 +81,12 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
   const [savingBw, setSavingBw] = useState(false);
   const [bwError, setBwError] = useState<string | null>(null);
 
+  // A goal and its max can spell the lift differently (#1135), so a row finds its goal
+  // through this, and saves and deletes under the goal's own name rather than adding a second.
+  const goalFor = lookupByStoredId(goals.map((g) => [g.lift, g] as const));
   const initialRows = Object.fromEntries(
     trainingMaxes.map((m) => {
-      const existing = goals.find((g) => g.lift === m.lift);
+      const existing = goalFor(m.lift);
       return [
         m.lift,
         {
@@ -100,11 +103,27 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
 
   const [rows, setRows] = useState<Record<string, GoalRowState>>(initialRows);
   const [savedGoals, setSavedGoals] = useState<Record<string, boolean>>(
-    Object.fromEntries(goals.map((g) => [g.lift, true])),
+    Object.fromEntries(trainingMaxes.map((m) => [m.lift, goalFor(m.lift) !== undefined])),
   );
 
   function updateRow(lift: string, patch: Partial<GoalRowState>) {
     setRows((prev) => ({ ...prev, [lift]: { ...prev[lift], ...patch } }));
+  }
+
+  // Two rows can reach one goal (`Bench Press` and `bench-press`), so a save or delete updates
+  // both. Otherwise the other row keeps old values, and saving it writes them back.
+  function rowsOfGoal(goalLift: string): string[] {
+    const reaches = lookupByStoredId([[goalLift, goalLift] as const]);
+    return trainingMaxes
+      .map((m) => m.lift)
+      .filter((lift) => (goalFor(lift)?.lift ?? reaches(lift)) === goalLift);
+  }
+
+  function updateRows(lifts: readonly string[], patchFor: (lift: string) => Partial<GoalRowState>) {
+    setRows((prev) => ({
+      ...prev,
+      ...Object.fromEntries(lifts.map((lift) => [lift, { ...prev[lift], ...patchFor(lift) }])),
+    }));
   }
 
   async function handleSaveBw() {
@@ -142,31 +161,60 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
         return;
       }
     }
-    updateRow(lift, { saving: true, error: null });
+    const goalLift = goalFor(lift)?.lift ?? lift;
+    const lifts = rowsOfGoal(goalLift);
+    updateRows(lifts, () => ({ saving: true }));
+    updateRow(lift, { error: null });
     try {
       const body =
         row.goalType === 'relative'
           ? { goalType: 'relative' as const, ratio: parseFloat(row.ratio), unit: row.unit }
           : { goalType: 'absolute' as const, target: parseFloat(row.target), unit: row.unit };
-      await saveStrengthGoal(program, lift, body);
-      setSavedGoals((prev) => ({ ...prev, [lift]: true }));
+      await saveStrengthGoal(program, goalLift, body);
+      updateRows(lifts, () => ({
+        goalType: row.goalType,
+        target: row.target,
+        unit: row.unit,
+        ratio: row.ratio,
+      }));
+      setSavedGoals((prev) => ({ ...prev, ...Object.fromEntries(lifts.map((l) => [l, true])) }));
     } catch {
       updateRow(lift, { error: 'Save failed' });
     } finally {
-      updateRow(lift, { saving: false });
+      updateRows(lifts, () => ({ saving: false }));
     }
   }
 
   async function handleDelete(lift: string) {
-    updateRow(lift, { saving: true, error: null });
+    const goalLift = goalFor(lift)?.lift ?? lift;
+    const lifts = rowsOfGoal(goalLift);
+    updateRows(lifts, () => ({ saving: true }));
+    updateRow(lift, { error: null });
     try {
-      await removeStrengthGoal(program, lift);
-      setSavedGoals((prev) => ({ ...prev, [lift]: false }));
-      updateRow(lift, { target: '', ratio: '' });
+      await removeStrengthGoal(program, goalLift);
+      // A row can then reach another goal for its lift, which is what a reload would show.
+      const remaining = lookupByStoredId(
+        goals.filter((g) => g.lift !== goalLift).map((g) => [g.lift, g] as const),
+      );
+      updateRows(lifts, (l) => {
+        const next = remaining(l);
+        return next
+          ? {
+              goalType: next.goalType,
+              target: String(next.target ?? ''),
+              unit: next.unit,
+              ratio: String(next.ratio ?? ''),
+            }
+          : { target: '', ratio: '' };
+      });
+      setSavedGoals((prev) => ({
+        ...prev,
+        ...Object.fromEntries(lifts.map((l) => [l, remaining(l) !== undefined])),
+      }));
     } catch {
       updateRow(lift, { error: 'Delete failed' });
     } finally {
-      updateRow(lift, { saving: false });
+      updateRows(lifts, () => ({ saving: false }));
     }
   }
 

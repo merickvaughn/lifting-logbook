@@ -1,3 +1,4 @@
+import { liftIdFor } from '@lifting-logbook/core';
 import type { FocusDayPlanResponse, FocusPlanGroupResponse, FocusPlanItemResponse, WeightUnit } from '@lifting-logbook/types';
 import { describePrescription, prescribedSet, workoutOrder } from '@/lib/focusWorkout';
 import type { LiftData, WorkingSetData } from './types';
@@ -31,11 +32,22 @@ function focusLift(
  * Whether a workout lift is a focus lift's logged sets: focus sets are logged as ordinary
  * lift records against the workout, which the API returns as an extra lift not in the plan.
  */
-function isLoggedFocusLift(lift: LiftData, plan: FocusDayPlanResponse): boolean {
+function isLoggedFocusLift(lift: LiftData, plan: FocusDayPlanResponse, lifts: readonly LiftData[]): boolean {
   return (
     !plan.plannedLifts.includes(lift.lift) &&
-    plan.groups.some((group) => group.items.some((item) => item.lift === lift.lift))
+    plan.groups.some((group) =>
+      group.items.some((item) => item.lift === lift.lift || isStoredIdOf(lift.lift, item.lift, lifts)),
+    )
   );
+}
+
+/**
+ * Whether `stored` holds a focus lift's sets by its catalog id (#1135). Not when the workout
+ * lists the focus lift under its own name: those sets belong to that entry, and this one has
+ * to stay listed so its sets can be read.
+ */
+function isStoredIdOf(stored: string, focusLift: string, lifts: readonly LiftData[]): boolean {
+  return liftIdFor(focusLift) === stored && !lifts.some((lift) => lift.lift === focusLift);
 }
 
 /**
@@ -50,7 +62,7 @@ export function withFocusLifts(lifts: readonly LiftData[], plan: FocusDayPlanRes
   const loggedFocus = new Map<string, LiftData>();
   const base: LiftData[] = [];
   for (const lift of lifts) {
-    if (isLoggedFocusLift(lift, plan)) loggedFocus.set(lift.lift, lift);
+    if (isLoggedFocusLift(lift, plan, lifts)) loggedFocus.set(lift.lift, lift);
     else base.push(lift);
   }
 
@@ -63,11 +75,12 @@ export function withFocusLifts(lifts: readonly LiftData[], plan: FocusDayPlanRes
       const lift = base[entry.liftIndex];
       return lift ? [lift] : [];
     }
-    return [focusLift(entry.group, entry.item, loggedFocus.get(entry.item.lift), unit)];
+    const logged = loggedFocus.get(entry.item.lift) ?? loggedFocus.get(liftIdFor(entry.item.lift));
+    return [focusLift(entry.group, entry.item, logged, unit)];
   });
 }
 
 /** True when the workout already has logged sets for one of the plan's focus lifts. */
 export function hasLoggedFocusWork(lifts: readonly LiftData[], plan: FocusDayPlanResponse): boolean {
-  return lifts.some((lift) => isLoggedFocusLift(lift, plan) && lift.workingSets.some((s) => s.existing));
+  return lifts.some((lift) => isLoggedFocusLift(lift, plan, lifts) && lift.workingSets.some((s) => s.existing));
 }

@@ -12,6 +12,7 @@ import type {
   ImportError,
   ImportKind,
   ImportPreviewResponse,
+  ImportSpellingCollision,
   ImportUndoResponse,
   LiftClassification,
   WeightUnit,
@@ -35,6 +36,7 @@ import {
 import { localToday } from '@/lib/focusSetup';
 import { logClientError } from '@/lib/log-client-error';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
+import { LIFT_CLASSIFICATIONS } from './liftClassifications';
 import { KIND_LABEL, kindsForTarget, Step, STEP_LABELS } from './steps';
 import type { ImportTarget } from './steps';
 import {
@@ -45,6 +47,7 @@ import {
   type SheetTabChoices,
   type TabPreviews,
 } from './SheetTabsStep';
+import SpellingCollisionNotice from './SpellingCollisionNotice';
 import styles from './import.module.css';
 
 type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous' | 'needs-lift';
@@ -147,23 +150,6 @@ function getAllFieldsForKind(kind: ImportKind): FieldOption[] {
   return KIND_FIELDS[kind] ?? [];
 }
 
-// Exhaustive BY CONSTRUCTION (issue #911 review) — LIFT_CLASSIFICATION_LABELS
-// is typed Record<LiftClassification, string>, so the compiler itself rejects
-// an incomplete map if LiftClassification ever gains a member. The earlier
-// hand-written array version made the identical "exhaustive" claim in its own
-// comment but was just a plain array literal — it type-checked fine with a
-// member missing, silently leaving that value unreachable in the "create new
-// lift" affordance despite the comment (#911 review, third pass — this is
-// the same overclaiming-comment pattern the second pass already corrected
-// once in this same PR, in effective-slot-map.util.ts).
-const LIFT_CLASSIFICATION_LABELS: Record<LiftClassification, string> = {
-  compound: 'Compound',
-  accessory: 'Accessory',
-};
-const LIFT_CLASSIFICATIONS: { value: LiftClassification; label: string }[] = (
-  Object.entries(LIFT_CLASSIFICATION_LABELS) as [LiftClassification, string][]
-).map(([value, label]) => ({ value, label }));
-
 function bucketClass(bucket: 'high' | 'medium' | 'low'): string {
   return bucket === 'high'
     ? styles.bucketHigh ?? ''
@@ -227,6 +213,8 @@ export function ImportWizard({
 
   // Phase 3 state
   const [reviewMaxes, setReviewMaxes] = useState<EditableMax[] | null>(null);
+  // Rows of a spelling collision the user kept as custom lifts, as `key|spelling` (#1135).
+  const [keptSpellings, setKeptSpellings] = useState<ReadonlySet<string>>(new Set());
   const [plannedCommit, setPlannedCommit] = useState<PlannedCommit | null>(null);
   const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
   const [liftOverrides, setLiftOverrides] = useState<Map<number, string>>(new Map());
@@ -508,6 +496,7 @@ export function ImportWizard({
     setSelectedKeys(new Set());
     lastSelectedKey.current = null;
     setReviewMaxes(null);
+    setKeptSpellings(new Set());
     setPlannedCommit(null);
     setCommitErrors(null);
   }
@@ -676,11 +665,21 @@ export function ImportWizard({
     }
     // Initialize TM editable list from preview deltas (create + update rows)
     if (destination === 'training-maxes' && rows && (reviewMaxes === null || rowsReplaced)) {
+      // The API names a lift once, so rows stored separately for one lift would read the same
+      // (`Squat` stores as back-squat, whose name is Back Squat). The list names them as the
+      // file did. Rows are most recent first, so a stored lift takes its newest row's spelling.
+      const spellingOf = new Map(
+        (rows.spellingCollisions ?? []).flatMap((collision) =>
+          new Set(collision.rows.map((row) => row.lift)).size > 1
+            ? [...collision.rows].reverse().map((row) => [row.lift, row.spelling] as const)
+            : [],
+        ),
+      );
       setReviewMaxes(
         rows.deltas
           .filter((d) => d.kind === 'create' || d.kind === 'update')
           // A create or update row's key is the stored lift, with no duplicate suffix.
-          .map((d) => ({ lift: d.key, label: d.label, weight: d.after ?? '' })),
+          .map((d) => ({ lift: d.key, label: spellingOf.get(d.key) ?? d.label, weight: d.after ?? '' })),
       );
     }
     setReviewEditsDiscarded(editsDiscarded);
@@ -688,6 +687,81 @@ export function ImportWizard({
     setSelectedKeys(new Set());
     lastSelectedKey.current = null;
     setStep(Step.REVIEW);
+  }
+
+  function remainingCollisionRows(collision: ImportSpellingCollision, kept: ReadonlySet<string>) {
+    return collision.rows.filter((row) => !kept.has(`${collision.key}|${row.spelling}`));
+  }
+
+  // The kept row goes on the list under its new lift, and leaves the stored lift it was
+  // writing to, keeping any edit made to its weight. A row that shared that lift, and was
+  // older, takes over from it, so every row's max is stored (#1135).
+  function applyKeptRow(
+    collision: ImportSpellingCollision,
+    row: ImportSpellingCollision['rows'][number],
+    lift: CustomLiftResponse,
+  ) {
+    const sharing = (rows: ImportSpellingCollision['rows']) => rows.filter((r) => r.lift === row.lift);
+    const kept = new Set(keptSpellings).add(`${collision.key}|${row.spelling}`);
+    const wasStored = sharing(remainingCollisionRows(collision, keptSpellings))[0]?.spelling === row.spelling;
+    const [next] = sharing(remainingCollisionRows(collision, kept));
+    setKeptSpellings(kept);
+    setReviewMaxes((prev) => {
+      if (!prev) return prev;
+      const current = prev.find((r) => r.lift === row.lift);
+      return [
+        ...(wasStored ? prev.filter((r) => r.lift !== row.lift) : prev),
+        ...(wasStored && next
+          ? [{ lift: row.lift, label: current?.label ?? collision.label, weight: String(next.weight) }]
+          : []),
+        { lift: lift.id, label: lift.name, weight: wasStored && current ? current.weight : String(row.weight) },
+      ];
+    });
+  }
+
+  // Holds `busy` for the whole request. That blocks Back, Next and the other Keep buttons, so
+  // what this applies can't land on a replaced preview, be left out of the commit Next would
+  // freeze, or race another Keep. Returns the error to show, if any.
+  async function handleKeepAsCustom(
+    collision: ImportSpellingCollision,
+    row: ImportSpellingCollision['rows'][number],
+    name: string,
+    classification: LiftClassification,
+  ): Promise<string | null> {
+    setBusy(true);
+    try {
+      const result = await createCustomLift({ name, classification });
+      if (result.ok) {
+        sessionCreatedLiftIds.current.add(result.data.id);
+        setCustomLifts((prev) => [...prev, result.data]);
+        applyKeptRow(collision, row, result.data);
+        return null;
+      }
+      // An earlier import left this lift behind, as a Keep creates it before the commit.
+      let existing: CustomLiftResponse | undefined;
+      try {
+        existing = (await refetchCustomLifts()).find((lift) => lift.name === name);
+      } catch (e) {
+        logClientError('fetchCustomLifts', e, { programId, source: 'spelling-collision' });
+      }
+      if (!existing) return result.conflictMessage;
+      const reusedId = existing.id;
+      // Reusing it here would replace, or repeat, the max this import already has for it.
+      if (
+        reviewMaxes?.some((max) => max.lift === reusedId) ||
+        previewBody?.deltas.some((d) => naturalKeyOf(d) === reusedId)
+      ) {
+        return `${name} already has a max in this import. Try another name.`;
+      }
+      applyKeptRow(collision, row, existing);
+      return null;
+    } catch (e) {
+      // No lift name in the context: it is free text from the user's file.
+      logClientError('createCustomLift', e, { programId, source: 'spelling-collision' });
+      return 'Could not create the lift. Try again.';
+    } finally {
+      setBusy(false);
+    }
   }
 
   function handleDeltaCheckbox(key: string, shiftHeld: boolean, deltas: ImportDelta[]) {
@@ -833,6 +907,50 @@ export function ImportWizard({
     });
   }
 
+  // Re-reads the list after a 409, returning what the server sent.
+  //
+  // Ungated by previewGeneration — same rule as the successful-create
+  // branch of handleCreateLift: a freshly refetched list is authoritative server
+  // truth, independent of whether this preview has since been
+  // discarded. Gating it here (an earlier version of this fix) meant
+  // this branch and the create-success branch enforced contradictory
+  // rules for the identical class of data, one asserting the rule the
+  // other violated — the discarded refetch cost the user the exact
+  // extra POST + 409 + refetch round trip this self-heal exists to
+  // avoid (#911 review, fifth pass).
+  //
+  // Merge rather than replace wholesale. `fetchedLifts` is
+  // authoritative for every id it contains, but this refetch can be in
+  // flight concurrently with a DIFFERENT ambiguous row's own
+  // handleCreateLift call — two rows with different original text each
+  // get their own independent create, so nothing here serializes them.
+  // If that sibling row's create succeeds and appends to customLifts
+  // before this refetch resolves, `fetchedLifts` — a snapshot
+  // the server returned for a request issued before that append —
+  // won't contain it, and replacing wholesale would silently drop a
+  // lift that was genuinely, successfully created just moments ago
+  // (issue #921).
+  //
+  // Restoring a `prev` entry `fetchedLifts` doesn't know about is only
+  // safe when `sessionCreatedLiftIds` confirms it's exactly that kind
+  // of sibling-row race — not the *initial* server-fetched customLifts
+  // prop, and not anything an earlier refetch returned. Without that
+  // scope, this same merge would just as happily resurrect a lift that
+  // was genuinely deleted server-side (e.g. via Settings, in another
+  // tab) between entering local state and this refetch running —
+  // trading #921's bug for the opposite one (#921 review).
+  async function refetchCustomLifts(): Promise<CustomLiftResponse[]> {
+    const fetchedLifts = await fetchCustomLifts();
+    setCustomLifts((prev) => {
+      const fetchedIds = new Set(fetchedLifts.map((l) => l.id));
+      const missingButSessionCreated = prev.filter(
+        (p) => !fetchedIds.has(p.id) && sessionCreatedLiftIds.current.has(p.id),
+      );
+      return [...fetchedLifts, ...missingButSessionCreated];
+    });
+    return fetchedLifts;
+  }
+
   // Creates `name` as a new custom lift and resolves this (and every matching)
   // ambiguous row to it. Only ever fires on an explicit click (issue #911) —
   // never automatically from typing — since a value that already exactly
@@ -885,51 +1003,7 @@ export function ImportWizard({
         let latest: CustomLiftResponse[] | null = null;
         let refetchFailed = false;
         try {
-          latest = await fetchCustomLifts();
-          // Ungated by previewGeneration — same rule as the successful-create
-          // branch above: a freshly refetched list is authoritative server
-          // truth, independent of whether this preview has since been
-          // discarded. Gating it here (an earlier version of this fix) meant
-          // this branch and the create-success branch enforced contradictory
-          // rules for the identical class of data, one asserting the rule the
-          // other violated — the discarded refetch cost the user the exact
-          // extra POST + 409 + refetch round trip this self-heal exists to
-          // avoid (#911 review, fifth pass).
-          //
-          // Merge rather than replace wholesale. `fetchedLifts` is
-          // authoritative for every id it contains, but this refetch can be in
-          // flight concurrently with a DIFFERENT ambiguous row's own
-          // handleCreateLift call — two rows with different original text each
-          // get their own independent create, so nothing here serializes them.
-          // If that sibling row's create succeeds and appends to customLifts
-          // (below) before this refetch resolves, `fetchedLifts` — a snapshot
-          // the server returned for a request issued before that append —
-          // won't contain it, and replacing wholesale would silently drop a
-          // lift that was genuinely, successfully created just moments ago
-          // (issue #921).
-          //
-          // Restoring a `prev` entry `fetchedLifts` doesn't know about is only
-          // safe when `sessionCreatedLiftIds` confirms it's exactly that kind
-          // of sibling-row race — not the *initial* server-fetched customLifts
-          // prop, and not anything an earlier refetch returned. Without that
-          // scope, this same merge would just as happily resurrect a lift that
-          // was genuinely deleted server-side (e.g. via Settings, in another
-          // tab) between entering local state and this refetch running —
-          // trading #921's bug for the opposite one (#921 review).
-          //
-          // Captured into a `const` rather than reading the outer `let latest`
-          // from inside the updater below: a `let`'s narrowing (non-null, just
-          // assigned above) doesn't survive into a closure, so referencing
-          // `latest` there would need a non-null assertion even though it
-          // provably can't be null at this point in the try block.
-          const fetchedLifts = latest;
-          setCustomLifts((prev) => {
-            const fetchedIds = new Set(fetchedLifts.map((l) => l.id));
-            const missingButSessionCreated = prev.filter(
-              (p) => !fetchedIds.has(p.id) && sessionCreatedLiftIds.current.has(p.id),
-            );
-            return [...fetchedLifts, ...missingButSessionCreated];
-          });
+          latest = await refetchCustomLifts();
         } catch (fetchErr) {
           refetchFailed = true;
           // Never include `name` — free text lifted straight from the user's
@@ -1193,6 +1267,7 @@ export function ImportWizard({
     setCommitErrors(null);
     setError(null);
     setReviewMaxes(null);
+    setKeptSpellings(new Set());
     setPlannedCommit(null);
     setExcludedKeys(new Set());
     setLiftOverrides(new Map());
@@ -1594,6 +1669,16 @@ export function ImportWizard({
                   {destination === 'training-maxes' && reviewMaxes !== null ? (
                     <>
                       <p className={styles.stepHint}>Edit weights or remove rows before committing.</p>
+                      {previewBody.spellingCollisions?.map((collision) => (
+                        <SpellingCollisionNotice
+                          key={collision.key}
+                          label={collision.label}
+                          rows={remainingCollisionRows(collision, keptSpellings)}
+                          onKeep={(row, name, classification) =>
+                            handleKeepAsCustom(collision, row, name, classification)
+                          }
+                        />
+                      ))}
                       <ul className={styles.maxEditList} aria-label="Training maxes to import">
                         {reviewMaxes
                           .filter((row) => !excludedKeys.has(row.lift))

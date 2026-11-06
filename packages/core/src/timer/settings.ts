@@ -1,4 +1,5 @@
 import type { LiftClassification } from '@lifting-logbook/types';
+import { lookupByStoredId } from '../catalog/liftIdentity';
 import type {
   TimerBehavior,
   TimerDurationField,
@@ -159,6 +160,17 @@ function structuredCloneish(
 }
 
 /**
+ * The key in `settings.overrides` holding `lift`'s overrides: its own name, or the same lift
+ * stored through its catalog id (#1135), else `lift` itself. The panel reads and writes
+ * through this too, so a row edits the overrides the countdown follows.
+ */
+export function timerOverrideKey(settings: TimerSettings, lift: string): string {
+  if (hasOwn(settings.overrides, lift)) return lift;
+  const keys = Object.keys(settings.overrides).map((key) => [key, key] as const);
+  return lookupByStoredId(keys)(lift) ?? lift;
+}
+
+/**
  * The resolved duration alone — see {@link resolveDurationEntry}, which this
  * delegates to and which documents the precedence chain.
  *
@@ -217,7 +229,8 @@ export function resolveDurationEntry(
   field: TimerDurationField,
   classification: LiftClassification | undefined,
 ): { seconds: number; source: TimerDurationSource } {
-  const override = hasOwn(settings.overrides, lift) ? settings.overrides[lift]?.[field] : undefined;
+  const overrideKey = timerOverrideKey(settings, lift);
+  const override = hasOwn(settings.overrides, overrideKey) ? settings.overrides[overrideKey]?.[field] : undefined;
   if (override != null) return { seconds: override, source: 'override' };
 
   if (settings.context.deloadOn) {

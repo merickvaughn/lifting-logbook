@@ -15,6 +15,9 @@ export interface ILiftRecordRepository {
    * Every record of the given lifts dated on or before `through`, across all of the user's
    * programs and macrocycles — what a focus block summary needs, since focus blocks run on
    * a timeline of their own (#1056). Served by `@@index([userId, lift, date])`.
+   *
+   * Finds a lift under any stored spelling (`liftSpellings`, #1135), and each record keeps
+   * the name it is stored under.
    */
   getRecordsForLifts(lifts: readonly string[], through: Date): Promise<LiftRecord[]>;
 

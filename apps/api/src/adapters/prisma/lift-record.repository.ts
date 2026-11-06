@@ -4,6 +4,7 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import {
   LiftRecord,
   liftRecordNaturalKey,
+  liftSpellings,
   parseLiftRecordId,
   parseLiftRecordNaturalKey,
   withModifications,
@@ -40,7 +41,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
   async getRecordsForLifts(lifts: readonly string[], through: Date): Promise<LiftRecord[]> {
     if (lifts.length === 0) return [];
     const rows = await this.prisma.liftRecord.findMany({
-      where: { userId: this.userId, lift: { in: [...lifts] }, date: { lte: through } },
+      where: { userId: this.userId, lift: { in: [...new Set(lifts.flatMap(liftSpellings))] }, date: { lte: through } },
     });
     return rows.map(rowToLiftRecord);
   }

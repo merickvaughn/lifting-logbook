@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
-import { TrainingMaxHistoryEntry } from '@lifting-logbook/core';
+import { TrainingMaxHistoryEntry, liftSpellings } from '@lifting-logbook/core';
 import { ITrainingMaxHistoryRepository, TrainingMaxHistoryFilters } from '../../ports/ITrainingMaxHistoryRepository';
 import { HistoryEntryNotFoundError } from '../../ports/errors';
 
@@ -15,7 +15,7 @@ export class PrismaTrainingMaxHistoryRepository implements ITrainingMaxHistoryRe
       where: {
         userId: this.userId,
         program,
-        ...(filters?.lift !== undefined && { lift: filters.lift }),
+        ...(filters?.lift !== undefined && { lift: { in: [...liftSpellings(filters.lift)] } }),
         ...(filters?.source !== undefined && { source: filters.source }),
         ...(filters?.isPR !== undefined && { isPR: filters.isPR }),
       },

@@ -1,4 +1,4 @@
-import { TrainingMaxHistoryEntry } from '@lifting-logbook/core';
+import { TrainingMaxHistoryEntry, liftSpellings } from '@lifting-logbook/core';
 import { ITrainingMaxHistoryRepository, TrainingMaxHistoryFilters } from '../../ports/ITrainingMaxHistoryRepository';
 import { HistoryEntryNotFoundError } from '../../ports/errors';
 
@@ -8,7 +8,10 @@ export class InMemoryTrainingMaxHistoryRepository implements ITrainingMaxHistory
 
   async getHistory(program: string, filters?: TrainingMaxHistoryFilters): Promise<TrainingMaxHistoryEntry[]> {
     let entries = [...(this.entriesByProgram.get(program) ?? [])];
-    if (filters?.lift !== undefined) entries = entries.filter((e) => e.lift === filters.lift);
+    if (filters?.lift !== undefined) {
+      const wanted = liftSpellings(filters.lift);
+      entries = entries.filter((e) => wanted.includes(e.lift));
+    }
     if (filters?.source !== undefined) entries = entries.filter((e) => e.source === filters.source);
     if (filters?.isPR !== undefined) entries = entries.filter((e) => e.isPR === filters.isPR);
     return entries.sort((a, b) => b.date.getTime() - a.date.getTime());

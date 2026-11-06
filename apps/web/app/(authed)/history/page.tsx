@@ -1,3 +1,4 @@
+import { storedIdListing } from '@lifting-logbook/core';
 import { fetchLiftRecords, fetchTrainingMaxHistory } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
@@ -42,9 +43,12 @@ export default async function HistoryPage() {
 
   const sortedRecords = records.slice().sort((a, b) => b.date.localeCompare(a.date));
 
+  // A record stored by catalog id shares its lift's PR with a record under the lift's name (#1135).
+  const listing = storedIdListing(sortedRecords.map((r) => r.lift));
   const maxByLift = new Map<string, number>();
   for (const r of sortedRecords) {
-    maxByLift.set(r.lift, Math.max(maxByLift.get(r.lift) ?? 0, r.weight));
+    const lift = listing(r.lift);
+    maxByLift.set(lift, Math.max(maxByLift.get(lift) ?? 0, r.weight));
   }
 
   // Walk oldest→newest; first record per lift that equals the max is the PR.
@@ -52,9 +56,10 @@ export default async function HistoryPage() {
   const prSeenLifts = new Set<string>();
   for (let i = sortedRecords.length - 1; i >= 0; i--) {
     const r = sortedRecords[i];
-    if (!prSeenLifts.has(r.lift) && r.weight >= (maxByLift.get(r.lift) ?? 0)) {
+    const lift = listing(r.lift);
+    if (!prSeenLifts.has(lift) && r.weight >= (maxByLift.get(lift) ?? 0)) {
       prRecordIds.add(r.id);
-      prSeenLifts.add(r.lift);
+      prSeenLifts.add(lift);
     }
   }
 

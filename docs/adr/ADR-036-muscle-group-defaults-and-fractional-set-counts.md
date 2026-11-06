@@ -232,6 +232,14 @@ name. Both follow its "single-joint moves carry no direction" rule:
 
 All of these count as "Isolation / other".
 
+## Amendment 2: an override crosses the catalog id (2026-11-05, [#1135](https://github.com/merickvaughn/lifting-logbook/issues/1135))
+
+Decision 2 still holds between names: an override on "Squat" leaves "Back Squat" on its defaults. A
+catalog id is not another name for this purpose, because import can store any lift by id
+(`docs/domain-model.md`, D3), so an override under `bench-press` now applies to `Bench Press`, and the
+reverse. An exact match still wins. This goes through `lookupByStoredId` in
+`packages/core/src/catalog/liftIdentity.ts`.
+
 ## References
 
 - Pelland, J. C., Remmert, J. F., Robinson, Z. P., Hinson, S. R., Zourdos, M. C. "The Resistance
