@@ -53,6 +53,38 @@ describe('StrengthGoalsForm across stored spellings', () => {
     expect(saveStrengthGoal).toHaveBeenCalledWith('5-3-1', 'bench-press', expect.anything());
   });
 
+  describe('two rows reaching one goal', () => {
+    it('updates both when one saves, so the other can\'t write the old value back', async () => {
+      const user = userEvent.setup();
+      renderForm([max('Bench Press'), max('bench-press')], [goal('Bench Press')]);
+      const target = screen.getByLabelText('Target weight for Bench Press');
+      await user.clear(target);
+      await user.type(target, '250');
+      await user.click(screen.getAllByRole('button', { name: /save/i })[0] as HTMLElement);
+      await waitFor(() => expect(saveStrengthGoal).toHaveBeenCalled());
+      await waitFor(() => expect(screen.getByLabelText('Target weight for bench-press')).toHaveValue(250));
+    });
+
+    it('clears both when one deletes, so the other offers no second delete', async () => {
+      const user = userEvent.setup();
+      renderForm([max('Bench Press'), max('bench-press')], [goal('Bench Press')]);
+      expect(screen.getAllByRole('button', { name: /(delete|remove)/i })).toHaveLength(2);
+      await user.click(screen.getAllByRole('button', { name: /(delete|remove)/i })[0] as HTMLElement);
+      await waitFor(() => expect(removeStrengthGoal).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /(delete|remove)/i })).not.toBeInTheDocument(),
+      );
+    });
+
+    it('leaves a row with its own goal alone', async () => {
+      const user = userEvent.setup();
+      renderForm([max('Bench Press'), max('bench-press')], [goal('Bench Press'), goal('bench-press')]);
+      await user.click(screen.getAllByRole('button', { name: /(delete|remove)/i })[0] as HTMLElement);
+      await waitFor(() => expect(removeStrengthGoal).toHaveBeenCalledWith('5-3-1', 'Bench Press'));
+      await waitFor(() => expect(screen.getAllByRole('button', { name: /(delete|remove)/i })).toHaveLength(1));
+    });
+  });
+
   it('deletes the goal under the name it is stored as', async () => {
     const user = userEvent.setup();
     renderForm([max('Bench Press')], [goal('bench-press')]);

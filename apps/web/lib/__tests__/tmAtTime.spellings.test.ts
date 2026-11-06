@@ -29,4 +29,21 @@ describe('buildTmAtTimeIndex across stored spellings', () => {
     ]);
     expect(index.find('Lateral Raise', '2026-04-01')?.weight).toBe(40);
   });
+
+  it('does not cross to another name when the lift has entries, none in force yet', () => {
+    const index = buildTmAtTimeIndex([
+      entry('C. Lat Raise', '2026-03-01', 25),
+      entry('Lateral Raise', '2026-01-01', 40),
+    ]);
+    expect(index.find('C. Lat Raise', '2026-02-01')).toBeNull();
+  });
+
+  it('breaks a same-day tie between other names by sort order, whatever the input order', () => {
+    const a = entry('C. Lat Raise', '2026-01-01', 25);
+    const b = entry('Lateral Raise', '2026-01-01', 40);
+    // Neither is this name or the id, so both are other names for it.
+    const name = 'Lat Raise';
+    expect(buildTmAtTimeIndex([a, b]).find(name, '2026-02-01')?.lift).toBe('C. Lat Raise');
+    expect(buildTmAtTimeIndex([b, a]).find(name, '2026-02-01')?.lift).toBe('C. Lat Raise');
+  });
 });

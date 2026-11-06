@@ -58,6 +58,21 @@ describe('HistoryTabs across stored spellings', () => {
     expect(screen.queryByText(/300 lbs × 5/)).not.toBeInTheDocument();
   });
 
+  it('finds the bench-press rows when searching for Bench Press', async () => {
+    const user = userEvent.setup();
+    render(
+      <HistoryTabs
+        records={[record('a', 'Bench Press', 200), record('b', 'bench-press', 210), record('c', 'Back Squat', 300)]}
+        tmEntries={[]}
+        unit="lbs"
+      />,
+    );
+    await user.type(screen.getByPlaceholderText(/search/i), 'bench press');
+    expect(screen.getByText(/200 lbs × 5/)).toBeInTheDocument();
+    expect(screen.getByText(/210 lbs × 5/)).toBeInTheDocument();
+    expect(screen.queryByText(/300 lbs × 5/)).not.toBeInTheDocument();
+  });
+
   it('keeps two names for one lift as two options', () => {
     render(
       <HistoryTabs

@@ -3,10 +3,15 @@ import { liftIdFor } from '../../catalog/liftIdentity';
 import { DEFAULT_SLOT_MAP } from '../../catalog/slotMaps';
 import { TrainingMax } from '../../models';
 
+/** A collision as validation finds it. The caller knows the lift's name, so adds the label. */
+export type TrainingMaxSpellingCollision = Omit<ImportSpellingCollision, 'label'>;
+
 export interface TrainingMaxImportValidationResult {
   /** Rows that passed validation, with lift names resolved to canonical IDs where known. */
   valid: TrainingMax[];
   errors: ImportError[];
+  /** Valid rows that spell one lift differently (#1135). */
+  spellingCollisions: TrainingMaxSpellingCollision[];
 }
 
 /**
@@ -24,6 +29,7 @@ export function validateTrainingMaxImport(
 ): TrainingMaxImportValidationResult {
   const valid: TrainingMax[] = [];
   const errors: ImportError[] = [];
+  const spellings: SpelledRow[] = [];
 
   maxes.forEach((m, i) => {
     const row = i + 1;
@@ -48,49 +54,52 @@ export function validateTrainingMaxImport(
       const resolved = Object.prototype.hasOwnProperty.call(slotMap, liftStr)
         ? slotMap[liftStr]!
         : liftStr;
-      valid.push({ ...m, lift: resolved as TrainingMax['lift'] });
+      const row = { ...m, lift: resolved as TrainingMax['lift'] };
+      valid.push(row);
+      spellings.push({ spelling: liftStr, row });
     }
   });
 
-  return { valid, errors };
+  return { valid, errors, spellingCollisions: spellingCollisionsOf(spellings) };
+}
+
+interface SpelledRow {
+  /** The lift as the file wrote it, which resolving loses. */
+  spelling: string;
+  row: TrainingMax;
 }
 
 /**
- * Finds parsed training-max rows that resolve to one lift while spelling it differently
- * (#1135). `maxes` are the rows as parsed and `valid` is the result of validating them, so
- * the two line up: a preview only reaches this when no row failed validation.
+ * The rows that resolve to one lift while spelling it differently (#1135).
  *
  * Rows sharing a spelling aren't a collision. Two spellings can store under one key, so only
  * the newest stores (`OH Press`, `OH Press-HV`), or under two, since the slot map leaves a
  * display name as written (`Squat` stores as `back-squat`, `Back Squat` as itself). Either
  * way a reader takes one max for the lift, so both are reported.
  *
- * Rows order most recent first, ties in file order, which is how `latestTrainingMaxFirst`
- * picks the one stored under a shared key.
+ * Each spelling appears at its newest row. They order most recent first, ties by that row's
+ * place in the file, which is how `latestTrainingMaxFirst` picks the one stored under a
+ * shared key.
  */
-export function findTrainingMaxSpellingCollisions(
-  maxes: readonly TrainingMax[],
-  valid: readonly TrainingMax[],
-  labelFor: (lift: string) => string,
-): ImportSpellingCollision[] {
-  const newestBySpelling = new Map<string, Map<string, TrainingMax>>();
-  valid.forEach((row, i) => {
-    const spelling = String(maxes[i]?.lift ?? '').trim();
+function spellingCollisionsOf(rows: readonly SpelledRow[]): TrainingMaxSpellingCollision[] {
+  const newestBySpelling = new Map<string, Map<string, { row: TrainingMax; index: number }>>();
+  rows.forEach(({ spelling, row }, index) => {
     const id = liftIdFor(row.lift);
-    const spellings = newestBySpelling.get(id) ?? new Map<string, TrainingMax>();
+    const spellings = newestBySpelling.get(id) ?? new Map<string, { row: TrainingMax; index: number }>();
     newestBySpelling.set(id, spellings);
     const newest = spellings.get(spelling);
-    if (!newest || row.dateUpdated.getTime() > newest.dateUpdated.getTime()) spellings.set(spelling, row);
+    if (!newest || row.dateUpdated.getTime() > newest.row.dateUpdated.getTime()) {
+      spellings.set(spelling, { row, index });
+    }
   });
 
   return [...newestBySpelling.entries()]
     .filter(([, spellings]) => spellings.size > 1)
     .map(([key, spellings]) => ({
       key,
-      label: labelFor(key),
       rows: [...spellings.entries()]
-        .sort(([, a], [, b]) => b.dateUpdated.getTime() - a.dateUpdated.getTime())
-        .map(([spelling, row]) => ({
+        .sort(([, a], [, b]) => b.row.dateUpdated.getTime() - a.row.dateUpdated.getTime() || a.index - b.index)
+        .map(([spelling, { row }]) => ({
           spelling,
           lift: row.lift,
           weight: row.weight,

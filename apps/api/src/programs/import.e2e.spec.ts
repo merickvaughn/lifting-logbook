@@ -729,13 +729,6 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.created).toBe(1);
     });
 
-    // #914: the slot map used for training-maxes preview/commit is now built fresh
-    // per request from DEFAULT_SLOT_MAP + the user's custom lifts too (previously
-    // only lift-records was custom-lift-aware, #911) — a CSV row whose raw text
-    // matches an existing custom lift's name resolves to that lift's id instead of
-    // passing through as raw display text. buildTrainingMaxPreview's delta `key`
-    // carries the resolved `lift` value, so asserting on it proves resolution
-    // without needing a separate read endpoint; `label` carries the name (#1125).
     // #1135: two rows spelling one lift differently would silently store only one.
     describe('training-max rows spelling one lift differently', () => {
       const SQUATS = ['Date Updated,Lift,Weight', '1/1/2025,Squat,300', '1/1/2026,Back Squat,320'].join('\n');
@@ -808,6 +801,13 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       });
     });
 
+    // #914: the slot map used for training-maxes preview/commit is now built fresh
+    // per request from DEFAULT_SLOT_MAP + the user's custom lifts too (previously
+    // only lift-records was custom-lift-aware, #911) — a CSV row whose raw text
+    // matches an existing custom lift's name resolves to that lift's id instead of
+    // passing through as raw display text. buildTrainingMaxPreview's delta `key`
+    // carries the resolved `lift` value, so asserting on it proves resolution
+    // without needing a separate read endpoint; `label` carries the name (#1125).
     it('resolves an existing custom lift by name for a training-maxes import', async () => {
       const created = await createCustomLift({
         name: 'TM Import Custom Lift',

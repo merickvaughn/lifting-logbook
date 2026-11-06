@@ -160,6 +160,17 @@ function structuredCloneish(
 }
 
 /**
+ * The key in `settings.overrides` holding `lift`'s overrides: its own name, or the same lift
+ * stored through its catalog id (#1135), else `lift` itself. The panel reads and writes
+ * through this too, so a row edits the overrides the countdown follows.
+ */
+export function timerOverrideKey(settings: TimerSettings, lift: string): string {
+  if (hasOwn(settings.overrides, lift)) return lift;
+  const keys = Object.keys(settings.overrides).map((key) => [key, key] as const);
+  return lookupByStoredId(keys)(lift) ?? lift;
+}
+
+/**
  * The resolved duration alone — see {@link resolveDurationEntry}, which this
  * delegates to and which documents the precedence chain.
  *
@@ -265,16 +276,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * and resolve to a *function*, rendering every duration as 0:00 and letting a
  * stepper write a property onto `Object.prototype`.
  */
-/**
- * The key in `settings.overrides` holding `lift`'s overrides: its own name, or the same lift
- * stored through its catalog id (#1135), else `lift` itself. The panel reads and writes
- * through this too, so a row edits the overrides the countdown follows.
- */
-export function timerOverrideKey(settings: TimerSettings, lift: string): string {
-  const keys = Object.keys(settings.overrides).map((key) => [key, key] as const);
-  return lookupByStoredId(keys)(lift) ?? lift;
-}
-
 function hasOwn(target: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(target, key);
 }

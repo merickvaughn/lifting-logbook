@@ -40,6 +40,15 @@ describe('summarizeBlock across stored spellings', () => {
     );
     expect(summary.prs.map((pr) => pr.lift)).toEqual(['C. Lat Raise']);
   });
+
+  it('does not credit a separately planned name to a pool lift', () => {
+    const pool = block({ period: 'monthly', start: '2026-09-01', pool: [entry('Lateral Raise')] });
+    const summary = summarizeBlock(
+      [record('C. Lat Raise', '2026-08-15', 20), record('C. Lat Raise', '2026-09-02', 22), record('Lateral Raise', '2026-09-03', 25)],
+      pool,
+    );
+    expect(summary).toMatchObject({ sessions: 1, sets: 1, prs: [] });
+  });
 });
 
 describe('a rule lift across stored spellings', () => {

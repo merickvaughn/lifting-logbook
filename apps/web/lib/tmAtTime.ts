@@ -27,7 +27,8 @@ export interface TmAtTimeIndex {
  * The lift can be spelled differently on each side (#1135), and this follows the rule
  * `currentMaxLookup` applies to the current max: entries under the exact name and under
  * the catalog id compete, the more recent one winning and a tie going to the exact name.
- * An entry under another name applies only when neither has one.
+ * An entry under another name applies only when neither has any entries, and a tie there
+ * goes to the earlier name in sort order.
  */
 export function buildTmAtTimeIndex(
   entries: readonly TrainingMaxHistoryEntryResponse[],
@@ -49,7 +50,9 @@ export function buildTmAtTimeIndex(
   }
   for (const groups of [byLift, byId]) {
     for (const group of groups.values()) {
-      group.sort((a, b) => b.date.localeCompare(a.date));
+      group.sort(
+        (a, b) => b.date.localeCompare(a.date) || (a.lift < b.lift ? -1 : a.lift > b.lift ? 1 : 0),
+      );
     }
   }
   return {
@@ -61,10 +64,11 @@ export function buildTmAtTimeIndex(
         return null;
       };
       const id = liftIdFor(lift);
+      if (!byLift.has(lift) && !byLift.has(id)) return inForce(byId.get(id));
       const exact = inForce(byLift.get(lift));
       const stored = inForce(byLift.get(id));
       if (exact && stored) return stored.date.localeCompare(exact.date) > 0 ? stored : exact;
-      return exact ?? stored ?? inForce(byId.get(id));
+      return exact ?? stored;
     },
   };
 }

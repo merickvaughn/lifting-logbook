@@ -1,25 +1,16 @@
-import {
-  findTrainingMaxSpellingCollisions,
-  latestTrainingMaxFirst,
-  validateTrainingMaxImport,
-  type TrainingMax,
-} from '@src/core';
+import { latestTrainingMaxFirst, validateTrainingMaxImport, type TrainingMax } from '@src/core';
 
 const row = (lift: string, weight: number, date: string): TrainingMax =>
   ({ lift, weight, dateUpdated: new Date(`${date}T00:00:00.000Z`) }) as TrainingMax;
 
-function collisions(rows: TrainingMax[]) {
-  const { valid } = validateTrainingMaxImport(rows);
-  return findTrainingMaxSpellingCollisions(rows, valid, (lift) => `label:${lift}`);
-}
+const collisions = (rows: TrainingMax[]) => validateTrainingMaxImport(rows).spellingCollisions;
 
 // #1135: two rows in one file that resolve to one lift can't both apply as its max.
-describe('findTrainingMaxSpellingCollisions', () => {
+describe('training-max spelling collisions', () => {
   it('names both spellings of Squat and Back Squat, most recent first, with where each stores', () => {
     expect(collisions([row('Squat', 300, '2025-01-01'), row('Back Squat', 320, '2026-01-01')])).toEqual([
       {
         key: 'back-squat',
-        label: 'label:back-squat',
         rows: [
           { spelling: 'Back Squat', lift: 'Back Squat', weight: 320, dateUpdated: '2026-01-01' },
           { spelling: 'Squat', lift: 'back-squat', weight: 300, dateUpdated: '2025-01-01' },
@@ -42,6 +33,20 @@ describe('findTrainingMaxSpellingCollisions', () => {
     const { valid } = validateTrainingMaxImport(rows);
     expect(latestTrainingMaxFirst(valid)[0]?.weight).toBe(75);
     expect(collisions(rows)[0]?.rows[0]).toMatchObject({ spelling: 'OH Press-HV', weight: 75 });
+  });
+
+  it('breaks a tie by the newest row\'s place in the file, not where the spelling first appeared', () => {
+    const rows = [
+      row('OH Press-HV', 75, '2024-01-01'),
+      row('OH Press', 115, '2026-01-01'),
+      row('OH Press-HV', 80, '2026-01-01'),
+    ];
+    const { valid } = validateTrainingMaxImport(rows);
+    expect(latestTrainingMaxFirst(valid)[0]?.weight).toBe(115);
+    expect(collisions(rows)[0]?.rows.map((r) => [r.spelling, r.weight])).toEqual([
+      ['OH Press', 115],
+      ['OH Press-HV', 80],
+    ]);
   });
 
   it('flags an alternative name, which stores as written', () => {

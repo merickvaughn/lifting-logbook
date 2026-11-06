@@ -68,7 +68,7 @@ function LiftHistoryTab({ records, unit }: { records: EnrichedRecord[]; unit: We
     return records.filter((r) => {
       if (liftFilter && listing(r.lift) !== liftFilter) return false;
       if (q) {
-        const matchesLift = r.lift.toLowerCase().includes(q);
+        const matchesLift = r.lift.toLowerCase().includes(q) || listing(r.lift).toLowerCase().includes(q);
         const matchesDate = r.date.includes(q);
         const matchesNotes = r.notes.toLowerCase().includes(q);
         if (!matchesLift && !matchesDate && !matchesNotes) return false;

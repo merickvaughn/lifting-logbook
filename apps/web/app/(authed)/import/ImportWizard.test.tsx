@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
   CustomLiftResponse,
@@ -678,8 +678,105 @@ describe('ImportWizard', () => {
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
       expect(screen.getByRole('status')).toHaveTextContent(
-        'Back Squat and Squat are both Back Squat, so one max applies, normally the most recent (Back Squat, 320 lbs).',
+        'Back Squat and Squat are both Back Squat. Their maxes are stored separately',
       );
+      expect(screen.getByRole('status')).toHaveTextContent('not always the most recent');
+    });
+
+    it('says only the most recent is stored when the rows share a stored lift', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(SHARED_LIFT_PREVIEW);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'OH Press and OH Press-HV are both Overhead Press, so only the most recent max is stored (OH Press, 115 lbs).',
+      );
+    });
+
+    it('blocks Next, Back and other rows while a Keep is pending, so the commit includes the kept row', async () => {
+      const user = userEvent.setup();
+      let finish: (value: unknown) => void = () => undefined;
+      mockCreateCustomLift.mockReturnValue(new Promise((resolve) => { finish = resolve; }) as never);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+
+      expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Keep Back Squat as a custom lift' })).toBeDisabled();
+
+      await act(async () => finish({ ok: true, data: KEPT_LIFT }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"custom-1",300');
+    });
+
+    it('keeps an edit made to the row\'s weight in Review', async () => {
+      const user = userEvent.setup();
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      const weight = screen.getByLabelText('Weight for back-squat');
+      await user.clear(weight);
+      await user.type(weight, '305');
+      await keepAsCustom(user, 'Squat', 1);
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"custom-1",305');
+    });
+
+    it('reuses a custom lift of that name left by an earlier import', async () => {
+      const user = userEvent.setup();
+      mockCreateCustomLift.mockResolvedValue({ ok: false, conflictMessage: 'taken' } as never);
+      mockFetchCustomLifts.mockResolvedValue([KEPT_LIFT] as never);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+
+      const csv = await committedCsv(user);
+      expect(csv).toContain('"custom-1",300');
+    });
+
+    it('does not put one custom lift on the list twice', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue({
+        ...COLLISION_PREVIEW,
+        preview: {
+          creates: 3,
+          updates: 0,
+          skips: 0,
+          unresolved: 0,
+          deltas: [
+            { key: 'back-squat', label: 'back-squat', kind: 'create', after: '300' },
+            { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
+            { key: 'BS', label: 'BS', kind: 'create', after: '280' },
+          ],
+          spellingCollisions: [
+            {
+              key: 'back-squat',
+              label: 'Back Squat',
+              rows: [
+                { spelling: 'Back Squat', lift: 'Back Squat', weight: 320, dateUpdated: '2026-01-01' },
+                { spelling: 'Squat', lift: 'back-squat', weight: 300, dateUpdated: '2025-01-01' },
+                { spelling: 'BS', lift: 'BS', weight: 280, dateUpdated: '2024-01-01' },
+              ],
+            },
+          ],
+        },
+      });
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+      await screen.findByLabelText('Weight for Squat (custom)');
+
+      mockCreateCustomLift.mockResolvedValue({ ok: false, conflictMessage: 'taken' } as never);
+      mockFetchCustomLifts.mockResolvedValue([KEPT_LIFT] as never);
+      const name = screen.getByRole('textbox', { name: 'Custom lift name for BS' });
+      await user.clear(name);
+      await user.type(name, 'Squat (custom)');
+      await keepAsCustom(user, 'BS', 1);
+      expect(await screen.findByText('Squat (custom) is already on this list. Try another name.')).toBeInTheDocument();
     });
 
     it('stores both maxes when a row is kept as a custom lift, and writes neither twice', async () => {
@@ -726,13 +823,14 @@ describe('ImportWizard', () => {
       expect(csv).not.toContain('"overhead-press",115');
     });
 
-    it('keeps the warning and the max as they were when the name is taken', async () => {
+    it('shows the server\'s reason, and keeps the warning, when the name can\'t be used', async () => {
       const user = userEvent.setup();
-      mockCreateCustomLift.mockResolvedValue({ ok: false, status: 409, error: 'taken' } as never);
+      mockCreateCustomLift.mockResolvedValue({ ok: false, conflictMessage: "'Squat (custom)' is reserved" } as never);
+      mockFetchCustomLifts.mockResolvedValue([]);
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
       await keepAsCustom(user, 'Squat', 1);
-      expect(await screen.findByText('That name is already taken. Try another.')).toBeInTheDocument();
+      expect(await screen.findByText("'Squat (custom)' is reserved")).toBeInTheDocument();
       expect(screen.getByRole('status')).toBeInTheDocument();
     });
   });

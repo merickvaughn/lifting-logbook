@@ -271,6 +271,31 @@ describe('toWorkoutResponse with plannedLifts', () => {
       ]);
     });
 
+    it('keeps one set per set number through a chain of swaps', () => {
+      const records = [record('A', 1, 100), record('B', 1, 110), record('C', 1, 120)];
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, {
+        plannedLifts: [{ lift: 'C', replaces: 'B' }],
+        renamedLifts: new Map([['B', 'C'], ['A', 'B']]),
+      });
+      expect(result.lifts.map((l) => [l.lift, l.sets.map((s) => s.weight)])).toEqual([
+        ['C', [120]],
+        ['A', [100]],
+        ['B', [110]],
+      ]);
+    });
+
+    it('still follows a chain of swaps when nothing is taken', () => {
+      const records = [record('A', 1, 100), record('B', 1, 110)];
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, {
+        plannedLifts: [{ lift: 'C', replaces: 'B' }],
+        renamedLifts: new Map([['B', 'C'], ['A', 'B']]),
+      });
+      expect(result.lifts.map((l) => [l.lift, l.sets.map((s) => s.weight)])).toEqual([
+        ['C', [110]],
+        ['B', [100]],
+      ]);
+    });
+
     it('follows a swap of the lift it was stored for', () => {
       const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, [record('bench-press', 1, 200)], {
         plannedLifts: [{ lift: 'Incline Bench Press', replaces: 'Bench Press' }],

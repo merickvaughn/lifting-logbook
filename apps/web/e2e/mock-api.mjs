@@ -1218,10 +1218,16 @@ const server = createServer(async (req, res) => {
             updates: 1,
             skips: 0,
             unresolved: 0,
-            deltas: [
-              { key: 'squat', label: 'squat', kind: 'create', after: '300' },
-              { key: 'bench-press', label: 'bench-press', kind: 'update', before: '200', after: '210' },
-            ],
+            deltas: state.spellingCollision
+              ? [
+                  // `Squat` stores as back-squat, and the slot map leaves `Back Squat` as written.
+                  { key: 'back-squat', label: 'back-squat', kind: 'create', after: '300' },
+                  { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
+                ]
+              : [
+                  { key: 'squat', label: 'squat', kind: 'create', after: '300' },
+                  { key: 'bench-press', label: 'bench-press', kind: 'update', before: '200', after: '210' },
+                ],
             ...(state.spellingCollision
               ? {
                   spellingCollisions: [
@@ -1230,7 +1236,7 @@ const server = createServer(async (req, res) => {
                       label: 'Back Squat',
                       rows: [
                         { spelling: 'Back Squat', lift: 'Back Squat', weight: 320, dateUpdated: '2026-01-01' },
-                        { spelling: 'Squat', lift: 'squat', weight: 300, dateUpdated: '2025-01-01' },
+                        { spelling: 'Squat', lift: 'back-squat', weight: 300, dateUpdated: '2025-01-01' },
                       ],
                     },
                   ],

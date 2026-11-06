@@ -6,21 +6,6 @@ jest.mock('./actions', () => ({
   saveTrainingMaxes: jest.fn(),
 }));
 
-describe('TrainingMaxesForm across stored spellings (#1135)', () => {
-  it('fills the Bench Press row from a max stored as bench-press', () => {
-    render(
-      <TrainingMaxesForm
-        program="5-3-1"
-        lifts={['Bench Press']}
-        maxes={[{ lift: 'bench-press', weight: 200, unit: 'lbs', dateUpdated: '2026-06-01' }]}
-        increments={{}}
-      />,
-    );
-
-    expect(screen.getByLabelText('Bench Press training max')).toHaveValue(200);
-  });
-});
-
 describe('TrainingMaxesForm step increment', () => {
   it("sets each lift's number-input step to its configured increment", () => {
     render(

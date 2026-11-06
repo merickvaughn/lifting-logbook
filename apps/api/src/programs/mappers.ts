@@ -431,12 +431,33 @@ export const toWorkoutResponse = (
   // A lift lists one set per set number, and clients key on it (#1135). A record that
   // would join a set number the lift already has stays under its stored name, as its own
   // lift, so both rows can still be read and edited: the row under the lift's own name
-  // keeps the slot, whichever order they arrive in.
-  for (const { stored, lift, occurrence, set } of joining) {
-    const taken = liftMap
-      .get(liftOccurrenceKey(lift, occurrence))
-      ?.sets.some((s) => s.setNum === set.setNum);
-    addSet(taken ? stored : lift, occurrence, set);
+  // keeps the slot, whichever order they arrive in. A record staying put can take a slot
+  // another record meant to join (with swaps `A→B` and `B→C`), so this repeats until nothing
+  // moves. It settles because a record staying under its own name can't clash with another
+  // there: they would be the same row.
+  const slot = (lift: string, occurrence: number, setNum: number) =>
+    `${liftOccurrenceKey(lift, occurrence)}|${setNum}`;
+  const directSlots = [...liftMap.values()].flatMap(({ lift, occurrence, sets }) =>
+    sets.map((s) => slot(lift, occurrence, s.setNum)),
+  );
+  const staying = new Set<(typeof joining)[number]>();
+  for (let settled = false; !settled; ) {
+    settled = true;
+    const slots = new Set(directSlots);
+    for (const row of staying) slots.add(slot(row.stored, row.occurrence, row.set.setNum));
+    for (const row of joining) {
+      if (staying.has(row)) continue;
+      const wanted = slot(row.lift, row.occurrence, row.set.setNum);
+      if (slots.has(wanted)) {
+        staying.add(row);
+        settled = false;
+      } else {
+        slots.add(wanted);
+      }
+    }
+  }
+  for (const row of joining) {
+    addSet(staying.has(row) ? row.stored : row.lift, row.occurrence, row.set);
   }
   // Rows arrive ordered by stored name, so a group joined from two names needs sorting.
   for (const { sets } of liftMap.values()) sets.sort((a, b) => a.setNum - b.setNum);

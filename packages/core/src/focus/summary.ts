@@ -1,5 +1,5 @@
 import type { FocusBlock } from '@lifting-logbook/types';
-import { lookupByLift } from '../catalog/liftIdentity';
+import { lookupByStoredId } from '../catalog/liftIdentity';
 import type { LiftRecord } from '../models/LiftRecord';
 import { blockRange, toIsoDate } from './dates';
 
@@ -34,10 +34,11 @@ function beats(a: BestSet, b: BestSet): boolean {
  * at UTC midnight. A PR is a lift whose best set in the range beats its best set before the
  * range; a lift with no earlier history has nothing to beat, so it never counts as one.
  *
- * A record counts for the pool entry with its exact name, otherwise for an entry under
- * any spelling of its lift (#1135), so `bench-press` counts for `Bench Press`. The caller
- * passes records whose `lift` holds a custom lift's name, not its id. Records with an
- * invalid date are ignored.
+ * A record counts for the pool entry with its exact name, or through the catalog id (#1135),
+ * so `bench-press` counts for `Bench Press`. Two names stay apart: a program can plan
+ * `C. Lat Raise` separately from a pool's `Lateral Raise`, and history keeps them apart too.
+ * The caller passes records whose `lift` holds a custom lift's name, not its id. Records with
+ * an invalid date are ignored.
  */
 export function summarizeBlock(
   records: readonly LiftRecord[],
@@ -45,7 +46,7 @@ export function summarizeBlock(
 ): FocusBlockSummary {
   const { start, end } = blockRange(block);
   const poolLifts = new Set(block.pool.map((entry) => entry.lift));
-  const poolLiftFor = lookupByLift([...poolLifts].map((lift) => [lift, lift] as const));
+  const poolLiftFor = lookupByStoredId([...poolLifts].map((lift) => [lift, lift] as const));
   const days = new Set<string>();
   const bestBefore = new Map<string, BestSet>();
   const bestDuring = new Map<string, BestSet>();

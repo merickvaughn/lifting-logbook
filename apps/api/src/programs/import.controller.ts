@@ -47,7 +47,7 @@ import {
   buildLiftRecordsPreviewSoft,
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
-  findTrainingMaxSpellingCollisions,
+  type TrainingMaxSpellingCollision,
   liftRecordNaturalKey,
   programSpecNaturalKey,
 } from '@lifting-logbook/core';
@@ -468,24 +468,23 @@ export class ImportController {
     table: SpreadsheetCell[][],
     repos: RepositoryBundle,
   ): Promise<{ errors: ImportError[]; preview: ImportPreviewResponse['preview'] }> {
-    const { valid, errors } = await this.parseAndValidate(destination, table, repos);
+    const { valid, errors, spellingCollisions = [] } = await this.parseAndValidate(destination, table, repos);
     if (errors.length) return { errors, preview: null };
     const handler = IMPORT_HANDLERS[destination]!;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     const previewResult = await handler.preview(valid as any, program, repos);
-    if (destination !== 'training-maxes') return { errors, preview: previewResult };
+    if (spellingCollisions.length === 0) return { errors, preview: previewResult };
 
-    // Only a row's parsed spelling can name the collision, and validation resolves it away.
-    const parsed = handler.parse(table) as TrainingMax[];
     const liftNames = await liftNamesFor(repos);
-    const spellingCollisions = findTrainingMaxSpellingCollisions(
-      parsed,
-      valid as TrainingMax[],
-      (lift) => liftNames.get(lift) ?? lift,
-    );
     return {
       errors,
-      preview: spellingCollisions.length > 0 ? { ...previewResult, spellingCollisions } : previewResult,
+      preview: {
+        ...previewResult,
+        spellingCollisions: spellingCollisions.map((collision) => ({
+          ...collision,
+          label: liftNames.get(collision.key) ?? collision.key,
+        })),
+      },
     };
   }
 
@@ -687,7 +686,7 @@ export class ImportController {
     destination: ImportKind,
     table: SpreadsheetCell[][],
     repos: RepositoryBundle,
-  ): Promise<{ valid: unknown[]; errors: ImportError[] }> {
+  ): Promise<{ valid: unknown[]; errors: ImportError[]; spellingCollisions?: TrainingMaxSpellingCollision[] }> {
     // lift-records must never reach here. Its only current caller — preview()
     // — branches lift-records off to previewLiftRecords before ever calling
     // this method (see the destination check immediately above this.preview's

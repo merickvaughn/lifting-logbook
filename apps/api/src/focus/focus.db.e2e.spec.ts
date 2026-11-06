@@ -263,7 +263,7 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(records).toHaveLength(4);
     });
 
-    it('a block summary counts them under the restricted role, for that user only', async () => {
+    it('a block summary counts the name and its catalog id under the restricted role, for that user only', async () => {
       const created = await owner(
         'POST',
         `/focus/blocks?today=${TODAY}`,
@@ -275,9 +275,9 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
       const res = await owner('GET', `/focus/blocks/${id}/summary`);
       expect(res.statusCode).toBe(200);
       expect(res.json()).toMatchObject<Partial<FocusBlockSummaryResponse>>({
-        sessions: 4,
-        sets: 4,
-        volume: (200 + 210 + 220 + 230) * 5,
+        sessions: 2,
+        sets: 2,
+        volume: (200 + 210) * 5,
       });
     });
   });

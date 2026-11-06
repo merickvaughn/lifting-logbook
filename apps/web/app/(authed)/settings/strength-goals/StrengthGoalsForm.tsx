@@ -110,6 +110,20 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
     setRows((prev) => ({ ...prev, [lift]: { ...prev[lift], ...patch } }));
   }
 
+  // Two rows can reach one goal (`Bench Press` and `bench-press`), so a save or delete updates
+  // both. Otherwise the other row keeps old values, and saving it writes them back.
+  function updateRowsOfGoal(goalLift: string, patch: Partial<GoalRowState>, saved: boolean) {
+    const reaches = lookupByStoredId([[goalLift, goalLift] as const]);
+    const lifts = trainingMaxes
+      .map((m) => m.lift)
+      .filter((lift) => (goalFor(lift)?.lift ?? reaches(lift)) === goalLift);
+    setRows((prev) => ({
+      ...prev,
+      ...Object.fromEntries(lifts.map((lift) => [lift, { ...prev[lift], ...patch }])),
+    }));
+    setSavedGoals((prev) => ({ ...prev, ...Object.fromEntries(lifts.map((lift) => [lift, saved])) }));
+  }
+
   async function handleSaveBw() {
     const w = parseFloat(bwInput);
     if (isNaN(w) || w <= 0) {
@@ -151,8 +165,13 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
         row.goalType === 'relative'
           ? { goalType: 'relative' as const, ratio: parseFloat(row.ratio), unit: row.unit }
           : { goalType: 'absolute' as const, target: parseFloat(row.target), unit: row.unit };
-      await saveStrengthGoal(program, goalFor(lift)?.lift ?? lift, body);
-      setSavedGoals((prev) => ({ ...prev, [lift]: true }));
+      const goalLift = goalFor(lift)?.lift ?? lift;
+      await saveStrengthGoal(program, goalLift, body);
+      updateRowsOfGoal(
+        goalLift,
+        { goalType: row.goalType, target: row.target, unit: row.unit, ratio: row.ratio },
+        true,
+      );
     } catch {
       updateRow(lift, { error: 'Save failed' });
     } finally {
@@ -163,9 +182,9 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
   async function handleDelete(lift: string) {
     updateRow(lift, { saving: true, error: null });
     try {
-      await removeStrengthGoal(program, goalFor(lift)?.lift ?? lift);
-      setSavedGoals((prev) => ({ ...prev, [lift]: false }));
-      updateRow(lift, { target: '', ratio: '' });
+      const goalLift = goalFor(lift)?.lift ?? lift;
+      await removeStrengthGoal(program, goalLift);
+      updateRowsOfGoal(goalLift, { target: '', ratio: '' }, false);
     } catch {
       updateRow(lift, { error: 'Delete failed' });
     } finally {
