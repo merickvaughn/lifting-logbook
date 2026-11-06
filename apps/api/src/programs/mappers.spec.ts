@@ -43,19 +43,61 @@ describe('toLiftRecordResponse', () => {
   // Regression for issue #884: the public id must include a date segment so two
   // records sharing every other field on different dates get distinct ids.
   it('builds an id including the date segment', () => {
-    const response = toLiftRecordResponse(liftRecord());
+    const response = toLiftRecordResponse(liftRecord(), new Map());
     expect(response.id).toBe('5-3-1-4-1-20260420-Bench Press-1');
   });
 
   it('builds an id for a hyphenated lift name without ambiguity', () => {
-    const response = toLiftRecordResponse(liftRecord({ lift: 'Romanian Dead-lift' }));
+    const response = toLiftRecordResponse(liftRecord({ lift: 'Romanian Dead-lift' }), new Map());
     expect(response.id).toBe('5-3-1-4-1-20260420-Romanian Dead-lift-1');
   });
 
   it('produces different ids for records differing only by date', () => {
-    const a = toLiftRecordResponse(liftRecord({ date: new Date('2025-12-16') }));
-    const b = toLiftRecordResponse(liftRecord({ date: new Date('2024-01-12') }));
+    const a = toLiftRecordResponse(liftRecord({ date: new Date('2025-12-16') }), new Map());
+    const b = toLiftRecordResponse(liftRecord({ date: new Date('2024-01-12') }), new Map());
     expect(a.id).not.toBe(b.id);
+  });
+
+  it('names the modifications on a set, and leaves the id unchanged by them', () => {
+    const response = toLiftRecordResponse(
+      liftRecord({ modifications: ['a', 'b'] }),
+      new Map([
+        ['a', 'Paused'],
+        ['b', 'No chalk'],
+      ]),
+    );
+    expect(response.modifications).toEqual([
+      { id: 'a', name: 'Paused' },
+      { id: 'b', name: 'No chalk' },
+    ]);
+    expect(response.id).toBe('5-3-1-4-1-20260420-Bench Press-1');
+  });
+
+  it('leaves the field out when a set has no modifications', () => {
+    expect(toLiftRecordResponse(liftRecord(), new Map())).not.toHaveProperty('modifications');
+  });
+
+  // Reachable only when a delete races a log, so a data-level assertion is what stops this path
+  // from answering with an id the client could not name.
+  it('does not name an id that has lost its row', () => {
+    const response = toLiftRecordResponse(
+      liftRecord({ modifications: ['a', 'gone'] }),
+      new Map([['a', 'Paused']]),
+    );
+    expect(response.modifications).toEqual([{ id: 'a', name: 'Paused' }]);
+    expect(toLiftRecordResponse(liftRecord({ modifications: ['gone'] }), new Map())).not.toHaveProperty(
+      'modifications',
+    );
+  });
+
+  it('toWorkoutResponse names the modifications on each set', () => {
+    const paused = liftRecord({ modifications: ['a'] });
+    const plain = liftRecord({ setNum: 2 });
+    const workout = toWorkoutResponse('5-3-1', 4, 1, 1, [paused, plain], {
+      modificationNames: new Map([['a', 'Paused']]),
+    });
+    expect(workout.lifts[0]?.sets[0]?.modifications).toEqual([{ id: 'a', name: 'Paused' }]);
+    expect(workout.lifts[0]?.sets[1]).not.toHaveProperty('modifications');
   });
 });
 

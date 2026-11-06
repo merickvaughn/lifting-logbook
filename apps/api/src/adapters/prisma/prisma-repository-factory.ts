@@ -12,6 +12,7 @@ import { PrismaMacrocycleDashboardRepository } from './macrocycle-dashboard.repo
 import { PrismaMacrocycleScheduledWorkoutRepository } from './macrocycle-scheduled-workout.repository';
 import { PrismaImportBatchRepository } from './import-batch.repository';
 import { PrismaLiftMetadataRepository } from './lift-metadata.repository';
+import { PrismaLiftModificationRepository } from './lift-modification.repository';
 import { PrismaLiftRecordRepository } from './lift-record.repository';
 import { PrismaStrengthGoalRepository } from './strength-goal.repository';
 import { PrismaTrainingMaxRepository } from './training-max.repository';
@@ -61,6 +62,7 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
       macrocycleScheduledWorkout: new PrismaMacrocycleScheduledWorkoutRepository(db, user.id),
       importBatch: new PrismaImportBatchRepository(db, user.id),
       liftMetadata: new PrismaLiftMetadataRepository(db, user.id),
+      liftModification: new PrismaLiftModificationRepository(db, user.id),
       liftRecord: new PrismaLiftRecordRepository(db, user.id),
       programPhilosophy: this.philosophyRepo,
       strengthGoal: new PrismaStrengthGoalRepository(db, user.id),

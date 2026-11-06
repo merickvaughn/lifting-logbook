@@ -35,6 +35,26 @@ async function flattenConstraintKeys(dto: CreateLiftRecordDto): Promise<string[]
 }
 
 describe('CreateLiftRecordDto validation', () => {
+  describe('modifications', () => {
+    it.each([
+      ['absent', {}],
+      ['empty', { modifications: [] }],
+      ['a list of ids', { modifications: ['a', 'b'] }],
+    ])('accepts %s', async (_label, overrides) => {
+      expect(await flattenConstraintKeys(dtoWith(overrides))).toEqual([]);
+    });
+
+    it.each([
+      ['null', { modifications: null }, 'modifications.isArray'],
+      ['a bare string', { modifications: 'a' }, 'modifications.isArray'],
+      ['a repeated id', { modifications: ['a', 'a'] }, 'modifications.arrayUnique'],
+      ['a non-string id', { modifications: [1] }, 'modifications.isString'],
+      ['too many ids', { modifications: Array.from({ length: 21 }, (_, i) => `${i}`) }, 'modifications.arrayMaxSize'],
+    ])('rejects %s', async (_label, overrides, key) => {
+      expect(await flattenConstraintKeys(dtoWith(overrides))).toContain(key);
+    });
+  });
+
   // ----- valid-input pass-through -----
 
   it('accepts a fully-populated well-formed body', async () => {

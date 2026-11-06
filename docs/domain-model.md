@@ -118,6 +118,28 @@ That is a **separate per-user table keyed by lift *name***, while `CustomLift` i
 - Per-user lift attributes still live in two unrelated stores under two different keys. That is why
   a custom-lift rename orphans its overrides (D3).
 
+### Modifications change how a lift is performed
+
+A **modification** is a user-defined change to how a lift is performed, such as Wide grip on Cable
+Curl. The set stays a set of that lift, and records which modifications were on. An alternative name
+(`OH Press-HV`) is the same lift performed the same way and stores nothing new; a substitution is a
+different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1133)). See the
+[proposal](proposals/2026-11-05-lift-modifications.md) and
+[ADR-041](adr/ADR-041-lift-modification-storage.md).
+
+- `lift_modification` holds them per user, unique on `(userId, lift, name)`. `lift` is a catalog id or
+  a custom lift's uuid, written through `lookupLift`, with no foreign key because catalog lifts aren't
+  rows. `maxMode` is `none`, `lift` or `own`: what it does to training maxes. Nothing reads `maxMode`
+  yet except the rule below, because progression changes in
+  [#1152](https://github.com/merickvaughn/lifting-logbook/issues/1152) and
+  [#1153](https://github.com/merickvaughn/lifting-logbook/issues/1153).
+- `lift_record.modifications` holds the ids on for a set, and isn't part of its natural key or id.
+  Writes check that each id belongs to the user and the set's lift, with at most one `own`
+  (`assertSetModifications`). `LiftRecordResponse` and `SetResponse` name each as `{ id, name }`.
+- Delete removes a modification no set names, and otherwise archives it: gone from the list, still
+  named on those sets. Creating its name again brings the same row back.
+- The routes are under `/lifts/modifications`. The logger doesn't use them yet.
+
 ### Two name registries, one bridge
 
 | Registry | Count | Purpose |
@@ -433,6 +455,16 @@ classDiagram
         +float weight
         +int reps
         +string notes
+        +string[] modifications
+    }
+    class LiftModification {
+        <<persisted>>
+        +uuid id
+        +string lift
+        +string name
+        +string description
+        +string maxMode
+        +datetime archivedAt
     }
     class TrainingMax {
         <<persisted>>
@@ -512,6 +544,8 @@ classDiagram
     CatalogLift --|> Lift
     CatalogLift *-- MuscleTargets : default muscles
     LiftMetadata ..> Lift : overrides muscles by exact NAME - no FK
+    LiftModification ..> Lift : by lift id - no FK
+    LiftRecord ..> LiftModification : ids on each set - no FK
     TrainingMax ..> TrainingMaxHistory : appended on change
 ```
 
@@ -526,16 +560,16 @@ The four edges worth reading twice:
 
 ### What the database looks like
 
-**18 models, 1 relation, 0 enums.** The sole relation is
+**19 models, 1 relation, 0 enums.** The sole relation is
 `CustomProgram → CustomProgramSpec` (`onDelete: Cascade`). Every other model is a flat
 table scoped by a bare `userId String`; there is no `User` model (Clerk owns identity)
 and therefore almost nothing cascades.
 
-Ten exhaustive TypeScript unions — `WeekType`, `LiftClassification`, `MovementTag`,
+Eleven exhaustive TypeScript unions — `WeekType`, `LiftClassification`, `MovementTag`,
 `JointAction`, `MovementComplexity`, `WeightUnit`, `LiftOverrideAction`,
-`TrainingMaxHistorySource`, `ImportKind`, `goalType` — are stored as bare `String`.
-CHECK constraints exist on `training_max_history.source`, `strength_goal.unit`,
-`body_weight.unit`, and every enum column of `focus_block` (area, next area, period, alignment,
+`TrainingMaxHistorySource`, `ImportKind`, `goalType`, `LiftModificationMaxMode` — are stored as
+bare `String`. CHECK constraints exist on `training_max_history.source`, `strength_goal.unit`,
+`body_weight.unit`, `lift_modification.maxMode`, and every enum column of `focus_block` (area, next area, period, alignment,
 selection, overlap, progression, end behavior). `focus_block.pool`, `focus_block.timer` and
 `focus_day_state.state` are JSON, validated by DTOs on write and re-parsed on read
 ([ADR-039](adr/ADR-039-focus-block-persistence.md)).

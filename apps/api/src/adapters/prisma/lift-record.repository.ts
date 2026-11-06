@@ -7,6 +7,7 @@ import {
   liftSpellings,
   parseLiftRecordId,
   parseLiftRecordNaturalKey,
+  withModifications,
   withOccurrence,
 } from '@lifting-logbook/core';
 import { ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
@@ -59,6 +60,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
         weight: r.weight,
         reps: r.reps,
         notes: r.notes,
+        modifications: r.modifications ?? [],
       })),
       skipDuplicates: true,
     });
@@ -102,7 +104,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
   async updateLiftRecord(
     program: string,
     id: string,
-    updates: Partial<Pick<LiftRecord, 'weight' | 'reps' | 'notes'>>,
+    updates: Partial<Pick<LiftRecord, 'weight' | 'reps' | 'notes' | 'modifications'>>,
   ): Promise<LiftRecord | null> {
     const parsed = parseLiftRecordId(program, id);
     if (!parsed) return null;
@@ -121,6 +123,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
           ...(updates.weight !== undefined && { weight: updates.weight }),
           ...(updates.reps !== undefined && { reps: updates.reps }),
           ...(updates.notes !== undefined && { notes: updates.notes }),
+          ...(updates.modifications !== undefined && { modifications: updates.modifications }),
         },
       });
       return rowToLiftRecord(updated);
@@ -215,6 +218,7 @@ export function rowToLiftRecord(row: {
   weight: number;
   reps: number;
   notes: string;
+  modifications?: string[];
 }): LiftRecord {
   return {
     program: row.program,
@@ -229,5 +233,6 @@ export function rowToLiftRecord(row: {
     weight: row.weight,
     reps: row.reps,
     notes: row.notes,
+    ...withModifications(row.modifications),
   };
 }

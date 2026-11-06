@@ -43,6 +43,7 @@ export class PrismaWorkoutRepository implements IWorkoutRepository {
           weight: r.weight,
           reps: r.reps,
           notes: r.notes,
+          modifications: r.modifications ?? [],
         })),
       }),
     ]);

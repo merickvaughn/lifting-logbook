@@ -1,4 +1,10 @@
-import { LiftRecord, buildLiftRecordId, liftRecordNaturalKey, liftSpellings } from '@lifting-logbook/core';
+import {
+  LiftRecord,
+  buildLiftRecordId,
+  liftRecordNaturalKey,
+  liftSpellings,
+  withModifications,
+} from '@lifting-logbook/core';
 import { ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
 
 export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
@@ -49,17 +55,18 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
   async updateLiftRecord(
     program: string,
     id: string,
-    updates: Partial<Pick<LiftRecord, 'weight' | 'reps' | 'notes'>>,
+    updates: Partial<Pick<LiftRecord, 'weight' | 'reps' | 'notes' | 'modifications'>>,
   ): Promise<LiftRecord | null> {
     const records = this.store.get(program) ?? [];
     const idx = records.findIndex((r) => buildLiftRecordId(r.program, r) === id);
     if (idx === -1) return null;
-    const current = records[idx] as LiftRecord;
+    const { modifications, ...current } = records[idx] as LiftRecord;
     const updated: LiftRecord = {
       ...current,
       weight: updates.weight ?? current.weight,
       reps: updates.reps ?? current.reps,
       notes: updates.notes ?? current.notes,
+      ...withModifications(updates.modifications ?? modifications),
     };
     const next = [...records];
     next[idx] = updated;

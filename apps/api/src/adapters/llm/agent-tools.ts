@@ -67,7 +67,9 @@ export async function dispatchTool(
         const macrocycleNum =
           typeof args.macrocycleNum === 'number' ? args.macrocycleNum : request.macrocycleNum - 1;
         const records = await repos.liftRecord.getLiftRecords(request.program, macrocycleNum);
-        return { ok: true, data: records };
+        // Modifications stay out of what reaches the provider: the ids mean nothing to it, and
+        // nothing has decided whether their names and descriptions should go (ADR-041).
+        return { ok: true, data: records.map(({ modifications: _modifications, ...record }) => record) };
       }
       case 'get_training_maxes': {
         const maxes = await repos.trainingMax.getTrainingMaxes(request.program);

@@ -47,3 +47,6 @@ export const MAX_REPS = 1000;
 // Matches the nearest precedent for a free-text field in this controller family
 // (workout-skip.controller.ts's SkipWorkoutDto.reason).
 export const MAX_NOTES_LENGTH = 500;
+
+// A bug catcher, like `occurrence`'s bound: no set has 20 modifications on.
+export const MAX_SET_MODIFICATIONS = 20;

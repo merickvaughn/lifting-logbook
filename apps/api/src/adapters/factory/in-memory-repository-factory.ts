@@ -10,6 +10,7 @@ import { InMemoryMacrocycleScheduledWorkoutRepository } from '../in-memory/macro
 import { InMemoryImportBatchRepository } from '../in-memory/import-batch.adapter';
 import { InMemoryLiftMetadataRepository } from '../in-memory/lift-metadata.adapter';
 import { InMemoryLiftingProgramSpecRepository } from '../in-memory/lifting-program-spec.adapter';
+import { InMemoryLiftModificationRepository } from '../in-memory/lift-modification.adapter';
 import { InMemoryLiftRecordRepository } from '../in-memory/lift-record.adapter';
 import { InMemoryProgramPhilosophyRepository } from '../in-memory/program-philosophy.adapter';
 import { InMemoryStrengthGoalRepository } from '../in-memory/strength-goal.adapter';
@@ -47,6 +48,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
         importBatch: new InMemoryImportBatchRepository(),
         liftMetadata: new InMemoryLiftMetadataRepository(),
         liftingProgramSpec: new InMemoryLiftingProgramSpecRepository(preSeed),
+        liftModification: new InMemoryLiftModificationRepository(user.id, sharedRecords),
         liftRecord: new InMemoryLiftRecordRepository(sharedRecords),
         programPhilosophy: new InMemoryProgramPhilosophyRepository(),
         strengthGoal: new InMemoryStrengthGoalRepository(),

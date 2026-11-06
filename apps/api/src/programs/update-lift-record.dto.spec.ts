@@ -16,6 +16,25 @@ async function flattenConstraintKeys(dto: UpdateLiftRecordDto): Promise<string[]
 }
 
 describe('UpdateLiftRecordDto validation', () => {
+  describe('modifications', () => {
+    it('accepts a list of ids, and an empty list to clear them', async () => {
+      for (const modifications of [['a', 'b'], []]) {
+        const dto = plainToInstance(UpdateLiftRecordDto, { modifications });
+        expect(await flattenConstraintKeys(dto)).toEqual([]);
+      }
+    });
+
+    it.each([
+      ['null', null, 'modifications.isArray'],
+      ['a repeated id', ['a', 'a'], 'modifications.arrayUnique'],
+      ['a non-string id', [1], 'modifications.isString'],
+      ['too many ids', Array.from({ length: 21 }, (_, i) => `${i}`), 'modifications.arrayMaxSize'],
+    ])('rejects %s', async (_label, modifications, key) => {
+      const dto = plainToInstance(UpdateLiftRecordDto, { modifications });
+      expect(await flattenConstraintKeys(dto)).toContain(key);
+    });
+  });
+
   // ----- valid-input pass-through -----
 
   it('accepts a well-formed partial update (weight + reps)', async () => {

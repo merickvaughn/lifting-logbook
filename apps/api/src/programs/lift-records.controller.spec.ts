@@ -3,11 +3,11 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { Test, TestingModule } from '@nestjs/testing';
 import { FastifyRequest } from 'fastify';
 import { Weekday } from '@lifting-logbook/core';
-import { CustomLift } from '@lifting-logbook/types';
+import { CustomLift, LiftModification, LiftModificationMaxMode } from '@lifting-logbook/types';
 import { ICustomLiftRepository } from '../ports/ICustomLiftRepository';
 import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
 import { ILiftRecordRepository } from '../ports/ILiftRecordRepository';
-import { IRepositoryFactory } from '../ports/factory';
+import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { RLS_TX_TIMEOUT_KEY } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
@@ -98,6 +98,70 @@ describe('LiftRecordsController', () => {
       expect(result).toHaveLength(1);
       expect(result[0]?.lift).toBe('Bench Press');
       expect(result[0]?.date).toBe('2026-04-20');
+    });
+  });
+
+  describe('POST lift-records with modifications', () => {
+    const modification = (id: string, lift: string, maxMode: LiftModificationMaxMode): LiftModification => ({
+      id,
+      userId: MOCK_USER.id,
+      lift,
+      name: id,
+      description: '',
+      maxMode,
+      archivedAt: null,
+      createdAt: new Date(),
+    });
+    const body = (modifications: string[]) => ({
+      macrocycleNum: 4,
+      workoutNum: 1,
+      date: '2026-04-20',
+      lift: 'Bench Press',
+      setNum: 1,
+      weight: 180,
+      reps: 5,
+      modifications,
+    });
+
+    beforeEach(() => {
+      factory.forUser.mockResolvedValue({
+        liftRecord: liftRecordRepo,
+        macrocycleDashboard: dashboardRepo,
+        customLift: customLiftRepo,
+        liftModification: {
+          list: jest.fn().mockResolvedValue([
+            modification('own-1', 'bench-press', 'own'),
+            modification('own-2', 'bench-press', 'own'),
+            modification('lift-1', 'bench-press', 'lift'),
+            modification('squat-1', 'squat', 'none'),
+          ]),
+        },
+      } as unknown as RepositoryBundle);
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(1);
+    });
+
+    it('rejects a set with two `own` modifications, writing nothing', async () => {
+      await expect(controller.createLiftRecord('5-3-1', body(['own-1', 'own-2']), MOCK_USER)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unknown id and a modification of another lift', async () => {
+      await expect(controller.createLiftRecord('5-3-1', body(['nope']), MOCK_USER)).rejects.toThrow(BadRequestException);
+      await expect(controller.createLiftRecord('5-3-1', body(['squat-1']), MOCK_USER)).rejects.toThrow(BadRequestException);
+      expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
+    });
+
+    it('accepts one `own` beside another mode, and writes the ids', async () => {
+      const result = await controller.createLiftRecord('5-3-1', body(['own-1', 'lift-1']), MOCK_USER);
+      expect(liftRecordRepo.appendLiftRecords).toHaveBeenCalledWith('5-3-1', [
+        expect.objectContaining({ modifications: ['own-1', 'lift-1'] }),
+      ]);
+      expect(result.modifications).toEqual([
+        { id: 'own-1', name: 'own-1' },
+        { id: 'lift-1', name: 'lift-1' },
+      ]);
     });
   });
 

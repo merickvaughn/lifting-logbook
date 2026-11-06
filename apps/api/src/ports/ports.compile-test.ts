@@ -15,6 +15,7 @@ import { IFocusRepository } from './IFocusRepository';
 import { IMacrocycleDashboardRepository } from './IMacrocycleDashboardRepository';
 import { IMacrocycleScheduledWorkoutRepository } from './IMacrocycleScheduledWorkoutRepository';
 import { ILiftingProgramSpecRepository } from './ILiftingProgramSpecRepository';
+import { ILiftModificationRepository } from './ILiftModificationRepository';
 import { ILiftRecordRepository } from './ILiftRecordRepository';
 import { IProgramPhilosophyRepository } from './IProgramPhilosophyRepository';
 import { ITrainingMaxRepository } from './ITrainingMaxRepository';
@@ -220,6 +221,23 @@ const _customLiftRepo: ICustomLiftRepository = {
   delete: () => Promise.resolve(),
 };
 
+const _liftModificationRepo: ILiftModificationRepository = {
+  list: () => Promise.resolve([]),
+  create: (input) =>
+    Promise.resolve({
+      id: '',
+      userId: '',
+      lift: input.lift,
+      name: input.name,
+      description: input.description ?? '',
+      maxMode: input.maxMode ?? 'none',
+      archivedAt: null,
+      createdAt: new Date(),
+    }),
+  update: (id) => Promise.reject(new Error(id)),
+  delete: () => Promise.resolve(),
+};
+
 const _focusRepo: IFocusRepository = {
   listBlocks: () => Promise.resolve([]),
   getBlock: () => Promise.resolve(null),
@@ -249,6 +267,7 @@ const _repositoryBundle: RepositoryBundle = {
   macrocycleScheduledWorkout: _macrocycleScheduledWorkoutRepo,
   liftMetadata: _liftMetadataRepo,
   liftingProgramSpec: _programSpecRepo,
+  liftModification: _liftModificationRepo,
   liftRecord: _liftRecordRepo,
   programPhilosophy: _programPhilosophyRepo,
   strengthGoal: _strengthGoalRepo,
