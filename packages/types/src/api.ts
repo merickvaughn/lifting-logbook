@@ -738,8 +738,8 @@ export interface ImportPreview {
 }
 
 /**
- * Rows of one training-max file that spell one lift differently (`Squat` and `Back Squat`),
- * so only one max applies to it. The user can keep any of them as a custom lift (#1135).
+ * Rows of one training-max file that spell one lift differently (`Squat` and `Back Squat`), so
+ * they can't all apply as its max. The user can keep any of them as a custom lift (#1135).
  */
 export interface ImportSpellingCollision {
   /** The lift's identity: its catalog id. */

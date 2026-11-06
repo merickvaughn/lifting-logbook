@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { formatWeight, storedIdListing } from '@lifting-logbook/core';
+import { formatWeight, liftIdFor, storedIdListing } from '@lifting-logbook/core';
 import type { TrainingMaxHistoryEntryResponse, WeightUnit } from '@lifting-logbook/types';
 import type { EnrichedRecord } from './page';
 import styles from './history.module.css';
@@ -68,7 +68,9 @@ function LiftHistoryTab({ records, unit }: { records: EnrichedRecord[]; unit: We
     return records.filter((r) => {
       if (liftFilter && listing(r.lift) !== liftFilter) return false;
       if (q) {
-        const matchesLift = r.lift.toLowerCase().includes(q) || listing(r.lift).toLowerCase().includes(q);
+        const matchesLift = [r.lift, listing(r.lift), liftIdFor(r.lift)].some((name) =>
+          name.toLowerCase().includes(q),
+        );
         const matchesDate = r.date.includes(q);
         const matchesNotes = r.notes.toLowerCase().includes(q);
         if (!matchesLift && !matchesDate && !matchesNotes) return false;

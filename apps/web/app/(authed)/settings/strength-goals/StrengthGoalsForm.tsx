@@ -112,16 +112,18 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
 
   // Two rows can reach one goal (`Bench Press` and `bench-press`), so a save or delete updates
   // both. Otherwise the other row keeps old values, and saving it writes them back.
-  function updateRowsOfGoal(goalLift: string, patch: Partial<GoalRowState>, saved: boolean) {
+  function rowsOfGoal(goalLift: string): string[] {
     const reaches = lookupByStoredId([[goalLift, goalLift] as const]);
-    const lifts = trainingMaxes
+    return trainingMaxes
       .map((m) => m.lift)
       .filter((lift) => (goalFor(lift)?.lift ?? reaches(lift)) === goalLift);
+  }
+
+  function updateRows(lifts: readonly string[], patchFor: (lift: string) => Partial<GoalRowState>) {
     setRows((prev) => ({
       ...prev,
-      ...Object.fromEntries(lifts.map((lift) => [lift, { ...prev[lift], ...patch }])),
+      ...Object.fromEntries(lifts.map((lift) => [lift, { ...prev[lift], ...patchFor(lift) }])),
     }));
-    setSavedGoals((prev) => ({ ...prev, ...Object.fromEntries(lifts.map((lift) => [lift, saved])) }));
   }
 
   async function handleSaveBw() {
@@ -159,36 +161,60 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
         return;
       }
     }
-    updateRow(lift, { saving: true, error: null });
+    const goalLift = goalFor(lift)?.lift ?? lift;
+    const lifts = rowsOfGoal(goalLift);
+    updateRows(lifts, () => ({ saving: true }));
+    updateRow(lift, { error: null });
     try {
       const body =
         row.goalType === 'relative'
           ? { goalType: 'relative' as const, ratio: parseFloat(row.ratio), unit: row.unit }
           : { goalType: 'absolute' as const, target: parseFloat(row.target), unit: row.unit };
-      const goalLift = goalFor(lift)?.lift ?? lift;
       await saveStrengthGoal(program, goalLift, body);
-      updateRowsOfGoal(
-        goalLift,
-        { goalType: row.goalType, target: row.target, unit: row.unit, ratio: row.ratio },
-        true,
-      );
+      updateRows(lifts, () => ({
+        goalType: row.goalType,
+        target: row.target,
+        unit: row.unit,
+        ratio: row.ratio,
+      }));
+      setSavedGoals((prev) => ({ ...prev, ...Object.fromEntries(lifts.map((l) => [l, true])) }));
     } catch {
       updateRow(lift, { error: 'Save failed' });
     } finally {
-      updateRow(lift, { saving: false });
+      updateRows(lifts, () => ({ saving: false }));
     }
   }
 
   async function handleDelete(lift: string) {
-    updateRow(lift, { saving: true, error: null });
+    const goalLift = goalFor(lift)?.lift ?? lift;
+    const lifts = rowsOfGoal(goalLift);
+    updateRows(lifts, () => ({ saving: true }));
+    updateRow(lift, { error: null });
     try {
-      const goalLift = goalFor(lift)?.lift ?? lift;
       await removeStrengthGoal(program, goalLift);
-      updateRowsOfGoal(goalLift, { target: '', ratio: '' }, false);
+      // A row can then reach another goal for its lift, which is what a reload would show.
+      const remaining = lookupByStoredId(
+        goals.filter((g) => g.lift !== goalLift).map((g) => [g.lift, g] as const),
+      );
+      updateRows(lifts, (l) => {
+        const next = remaining(l);
+        return next
+          ? {
+              goalType: next.goalType,
+              target: String(next.target ?? ''),
+              unit: next.unit,
+              ratio: String(next.ratio ?? ''),
+            }
+          : { target: '', ratio: '' };
+      });
+      setSavedGoals((prev) => ({
+        ...prev,
+        ...Object.fromEntries(lifts.map((l) => [l, remaining(l) !== undefined])),
+      }));
     } catch {
       updateRow(lift, { error: 'Delete failed' });
     } finally {
-      updateRow(lift, { saving: false });
+      updateRows(lifts, () => ({ saving: false }));
     }
   }
 

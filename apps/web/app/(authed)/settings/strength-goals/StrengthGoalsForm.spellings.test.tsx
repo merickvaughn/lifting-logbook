@@ -76,12 +76,39 @@ describe('StrengthGoalsForm across stored spellings', () => {
       );
     });
 
+    it('disables both while one deletes, so the other can\'t delete a goal already gone', async () => {
+      const user = userEvent.setup();
+      let finish: () => void = () => undefined;
+      (removeStrengthGoal as jest.Mock).mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+      renderForm([max('Bench Press'), max('bench-press')], [goal('Bench Press')]);
+      const [first, second] = screen.getAllByRole('button', { name: /(delete|remove)/i });
+      await user.click(first as HTMLElement);
+      expect(second).toBeDisabled();
+      finish();
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /(delete|remove)/i })).not.toBeInTheDocument(),
+      );
+    });
+
     it('leaves a row with its own goal alone', async () => {
       const user = userEvent.setup();
-      renderForm([max('Bench Press'), max('bench-press')], [goal('Bench Press'), goal('bench-press')]);
+      (removeStrengthGoal as jest.Mock).mockResolvedValue(undefined);
+      renderForm([max('Bench Press'), max('Deadlift')], [goal('Bench Press'), goal('Deadlift')]);
       await user.click(screen.getAllByRole('button', { name: /(delete|remove)/i })[0] as HTMLElement);
       await waitFor(() => expect(removeStrengthGoal).toHaveBeenCalledWith('5-3-1', 'Bench Press'));
       await waitFor(() => expect(screen.getAllByRole('button', { name: /(delete|remove)/i })).toHaveLength(1));
+      expect(screen.getByLabelText('Target weight for Deadlift')).toHaveValue(200);
+    });
+
+    it('shows the goal a row still reaches after its own is deleted', async () => {
+      const user = userEvent.setup();
+      (removeStrengthGoal as jest.Mock).mockResolvedValue(undefined);
+      const other: StrengthGoalResponse = { ...goal('Bench Press'), target: 300 };
+      renderForm([max('Bench Press'), max('bench-press')], [other, goal('bench-press')]);
+      await user.click(screen.getAllByRole('button', { name: /(delete|remove)/i })[1] as HTMLElement);
+      await waitFor(() => expect(removeStrengthGoal).toHaveBeenCalledWith('5-3-1', 'bench-press'));
+      await waitFor(() => expect(screen.getByLabelText('Target weight for bench-press')).toHaveValue(300));
+      expect(screen.getAllByRole('button', { name: /(delete|remove)/i })).toHaveLength(2);
     });
   });
 

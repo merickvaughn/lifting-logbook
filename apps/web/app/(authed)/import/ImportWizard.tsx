@@ -665,11 +665,21 @@ export function ImportWizard({
     }
     // Initialize TM editable list from preview deltas (create + update rows)
     if (destination === 'training-maxes' && rows && (reviewMaxes === null || rowsReplaced)) {
+      // The API names a lift once, so rows stored separately for one lift would read the same
+      // (`Squat` stores as back-squat, whose name is Back Squat). The list names them as the
+      // file did. Rows are most recent first, so a stored lift takes its newest row's spelling.
+      const spellingOf = new Map(
+        (rows.spellingCollisions ?? []).flatMap((collision) =>
+          new Set(collision.rows.map((row) => row.lift)).size > 1
+            ? [...collision.rows].reverse().map((row) => [row.lift, row.spelling] as const)
+            : [],
+        ),
+      );
       setReviewMaxes(
         rows.deltas
           .filter((d) => d.kind === 'create' || d.kind === 'update')
           // A create or update row's key is the stored lift, with no duplicate suffix.
-          .map((d) => ({ lift: d.key, label: d.label, weight: d.after ?? '' })),
+          .map((d) => ({ lift: d.key, label: spellingOf.get(d.key) ?? d.label, weight: d.after ?? '' })),
       );
     }
     setReviewEditsDiscarded(editsDiscarded);
@@ -728,10 +738,20 @@ export function ImportWizard({
         return null;
       }
       // An earlier import left this lift behind, as a Keep creates it before the commit.
-      const existing = (await refetchCustomLifts()).find((lift) => lift.name === name);
+      let existing: CustomLiftResponse | undefined;
+      try {
+        existing = (await refetchCustomLifts()).find((lift) => lift.name === name);
+      } catch (e) {
+        logClientError('fetchCustomLifts', e, { programId, source: 'spelling-collision' });
+      }
       if (!existing) return result.conflictMessage;
-      if (reviewMaxes?.some((max) => max.lift === existing.id)) {
-        return `${name} is already on this list. Try another name.`;
+      const reusedId = existing.id;
+      // Reusing it here would replace, or repeat, the max this import already has for it.
+      if (
+        reviewMaxes?.some((max) => max.lift === reusedId) ||
+        previewBody?.deltas.some((d) => naturalKeyOf(d) === reusedId)
+      ) {
+        return `${name} already has a max in this import. Try another name.`;
       }
       applyKeptRow(collision, row, existing);
       return null;
@@ -887,12 +907,6 @@ export function ImportWizard({
     });
   }
 
-  // Creates `name` as a new custom lift and resolves this (and every matching)
-  // ambiguous row to it. Only ever fires on an explicit click (issue #911) —
-  // never automatically from typing — since a value that already exactly
-  // matches a known name would either 409 or silently create an unreachable
-  // shadowed lift (buildEffectiveSlotMap lets DEFAULT_SLOT_MAP win on collision).
-  //
   // Re-reads the list after a 409, returning what the server sent.
   //
   // Ungated by previewGeneration — same rule as the successful-create
@@ -937,6 +951,11 @@ export function ImportWizard({
     return fetchedLifts;
   }
 
+  // Creates `name` as a new custom lift and resolves this (and every matching)
+  // ambiguous row to it. Only ever fires on an explicit click (issue #911) —
+  // never automatically from typing — since a value that already exactly
+  // matches a known name would either 409 or silently create an unreachable
+  // shadowed lift (buildEffectiveSlotMap lets DEFAULT_SLOT_MAP win on collision).
   async function handleCreateLift(
     name: string,
     matchOriginalLift: string,

@@ -1215,13 +1215,13 @@ const server = createServer(async (req, res) => {
             : {}),
           preview: {
             creates: 2,
-            updates: 1,
+            updates: state.spellingCollision ? 0 : 1,
             skips: 0,
             unresolved: 0,
             deltas: state.spellingCollision
               ? [
                   // `Squat` stores as back-squat, and the slot map leaves `Back Squat` as written.
-                  { key: 'back-squat', label: 'back-squat', kind: 'create', after: '300' },
+                  { key: 'back-squat', label: 'Back Squat', kind: 'create', after: '300' },
                   { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
                 ]
               : [

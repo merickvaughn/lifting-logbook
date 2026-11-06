@@ -605,7 +605,7 @@ describe('ImportWizard', () => {
         unresolved: 0,
         // `Squat` stores as back-squat, and the slot map leaves `Back Squat` as written.
         deltas: [
-          { key: 'back-squat', label: 'back-squat', kind: 'create', after: '300' },
+          { key: 'back-squat', label: 'Back Squat', kind: 'create', after: '300' },
           { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
         ],
         spellingCollisions: [
@@ -689,8 +689,88 @@ describe('ImportWizard', () => {
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
       expect(screen.getByRole('status')).toHaveTextContent(
-        'OH Press and OH Press-HV are both Overhead Press, so only the most recent max is stored (OH Press, 115 lbs).',
+        'OH Press and OH Press-HV are both Overhead Press, so only the most recent max in this file is stored (OH Press, 115 lbs).',
       );
+    });
+
+    it('says which rows share a stored lift when only some do', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue({
+        ...TM_PREVIEW,
+        preview: {
+          creates: 2,
+          updates: 0,
+          skips: 1,
+          unresolved: 0,
+          deltas: [
+            { key: 'bench-press', label: 'Bench Press', kind: 'create', after: '210' },
+            { key: 'Flat Bench Press', label: 'Flat Bench Press', kind: 'create', after: '220' },
+          ],
+          spellingCollisions: [
+            {
+              key: 'bench-press',
+              label: 'Bench Press',
+              rows: [
+                { spelling: 'Flat Bench Press', lift: 'Flat Bench Press', weight: 220, dateUpdated: '2026-01-01' },
+                { spelling: 'Bench P.', lift: 'bench-press', weight: 210, dateUpdated: '2025-01-01' },
+                { spelling: 'Bench Press', lift: 'bench-press', weight: 200, dateUpdated: '2024-01-01' },
+              ],
+            },
+          ],
+        },
+      });
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      const notice = screen.getByRole('status');
+      expect(notice).toHaveTextContent('Their maxes are stored separately');
+      expect(notice).toHaveTextContent(
+        'Of Bench P. and Bench Press, only the most recent max in this file is stored (Bench P., 210 lbs).',
+      );
+      // The list names the stored lifts as the file did.
+      expect(screen.getByLabelText('Weight for Bench P.')).toHaveValue(210);
+    });
+
+    it('names rows stored separately as the file did, since the API names both after the lift', async () => {
+      const user = userEvent.setup();
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      expect(screen.getByLabelText('Weight for Squat')).toHaveValue(300);
+      expect(screen.getByLabelText('Weight for Back Squat')).toHaveValue(320);
+    });
+
+    it('shows the conflict message when the list can\'t be re-read after a 409', async () => {
+      const user = userEvent.setup();
+      mockCreateCustomLift.mockResolvedValue({ ok: false, conflictMessage: 'that name is reserved' } as never);
+      mockFetchCustomLifts.mockRejectedValue(new Error('offline'));
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+      expect(await screen.findByText('that name is reserved')).toBeInTheDocument();
+    });
+
+    it('does not reuse a custom lift the file already has a row for', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue({
+        ...COLLISION_PREVIEW,
+        preview: {
+          creates: 2,
+          updates: 0,
+          skips: 1,
+          unresolved: 0,
+          deltas: [
+            { key: 'back-squat', label: 'Back Squat', kind: 'create', after: '300' },
+            { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
+            { key: 'custom-1', label: 'Squat (custom)', kind: 'skip', after: '150' },
+          ],
+          spellingCollisions: COLLISION_PREVIEW.preview?.spellingCollisions,
+        },
+      });
+      mockCreateCustomLift.mockResolvedValue({ ok: false, conflictMessage: 'taken' } as never);
+      mockFetchCustomLifts.mockResolvedValue([KEPT_LIFT] as never);
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
+      await keepAsCustom(user, 'Squat', 1);
+      expect(await screen.findByText('Squat (custom) already has a max in this import. Try another name.')).toBeInTheDocument();
     });
 
     it('blocks Next, Back and other rows while a Keep is pending, so the commit includes the kept row', async () => {
@@ -715,7 +795,7 @@ describe('ImportWizard', () => {
       const user = userEvent.setup();
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await navigateToReview(user, new File(['Date Updated,Lift,Weight'], 'tm.csv', { type: 'text/csv' }));
-      const weight = screen.getByLabelText('Weight for back-squat');
+      const weight = screen.getByLabelText('Weight for Squat');
       await user.clear(weight);
       await user.type(weight, '305');
       await keepAsCustom(user, 'Squat', 1);
@@ -748,7 +828,7 @@ describe('ImportWizard', () => {
           skips: 0,
           unresolved: 0,
           deltas: [
-            { key: 'back-squat', label: 'back-squat', kind: 'create', after: '300' },
+            { key: 'back-squat', label: 'Back Squat', kind: 'create', after: '300' },
             { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '320' },
             { key: 'BS', label: 'BS', kind: 'create', after: '280' },
           ],
@@ -776,7 +856,7 @@ describe('ImportWizard', () => {
       await user.clear(name);
       await user.type(name, 'Squat (custom)');
       await keepAsCustom(user, 'BS', 1);
-      expect(await screen.findByText('Squat (custom) is already on this list. Try another name.')).toBeInTheDocument();
+      expect(await screen.findByText('Squat (custom) already has a max in this import. Try another name.')).toBeInTheDocument();
     });
 
     it('stores both maxes when a row is kept as a custom lift, and writes neither twice', async () => {

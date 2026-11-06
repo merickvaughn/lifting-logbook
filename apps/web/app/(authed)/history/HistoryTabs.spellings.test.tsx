@@ -58,7 +58,7 @@ describe('HistoryTabs across stored spellings', () => {
     expect(screen.queryByText(/300 lbs × 5/)).not.toBeInTheDocument();
   });
 
-  it('finds the bench-press rows when searching for Bench Press', async () => {
+  it.each(['bench press', 'bench-press'])('finds both spellings when searching for %s', async (search) => {
     const user = userEvent.setup();
     render(
       <HistoryTabs
@@ -67,7 +67,7 @@ describe('HistoryTabs across stored spellings', () => {
         unit="lbs"
       />,
     );
-    await user.type(screen.getByPlaceholderText(/search/i), 'bench press');
+    await user.type(screen.getByPlaceholderText(/search/i), search);
     expect(screen.getByText(/200 lbs × 5/)).toBeInTheDocument();
     expect(screen.getByText(/210 lbs × 5/)).toBeInTheDocument();
     expect(screen.queryByText(/300 lbs × 5/)).not.toBeInTheDocument();
