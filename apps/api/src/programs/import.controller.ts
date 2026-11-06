@@ -18,6 +18,7 @@ import {
 import {
   GoogleSheetTab,
   GoogleSheetWorkbookResponse,
+  IMPORT_ERROR_FIELD_LIFT,
   ImportClassification,
   ImportCommitResponse,
   ImportDryRunResponse,
@@ -47,6 +48,7 @@ import {
   buildLiftRecordsPreviewSoft,
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
+  type StrengthGoalSpellingCollision,
   type TrainingMaxSpellingCollision,
   liftRecordNaturalKey,
   programSpecNaturalKey,
@@ -159,13 +161,15 @@ export class ImportController {
 
     const columnMappings = fuzzyColumnMapper(table[0] ?? [], destination);
     const repos = await this.factory.forUser(user);
+    // Only a strength-goal preview applies these (#1169).
+    const liftOverrides = parseLiftOverrides(fields.get('liftOverrides'));
 
     // For lift-records, use soft validation so incomplete/ambiguous rows appear in REVIEW
     if (destination === 'lift-records') {
       return this.previewLiftRecords(program, classification, destination, table, columnMappings, repos);
     }
 
-    const { errors, preview } = await this.preview(program, destination, table, repos);
+    const { errors, preview } = await this.preview(program, destination, table, repos, liftOverrides);
     return {
       classification,
       destination,
@@ -467,23 +471,31 @@ export class ImportController {
     destination: ImportKind,
     table: SpreadsheetCell[][],
     repos: RepositoryBundle,
+    liftOverrides: Record<string, string>,
   ): Promise<{ errors: ImportError[]; preview: ImportPreviewResponse['preview'] }> {
-    const { valid, errors, spellingCollisions = [] } = await this.parseAndValidate(destination, table, repos);
+    const {
+      valid,
+      errors,
+      spellingCollisions = [],
+      goalSpellingCollisions = [],
+    } = await this.parseAndValidate(destination, table, repos, liftOverrides);
     if (errors.length) return { errors, preview: null };
     const handler = IMPORT_HANDLERS[destination]!;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     const previewResult = await handler.preview(valid as any, program, repos);
-    if (spellingCollisions.length === 0) return { errors, preview: previewResult };
+    if (spellingCollisions.length === 0 && goalSpellingCollisions.length === 0) {
+      return { errors, preview: previewResult };
+    }
 
     const liftNames = await liftNamesFor(repos);
+    const labelled = <C extends { key: string }>(collisions: C[]) =>
+      collisions.map((collision) => ({ ...collision, label: liftNames.get(collision.key) ?? collision.key }));
     return {
       errors,
       preview: {
         ...previewResult,
-        spellingCollisions: spellingCollisions.map((collision) => ({
-          ...collision,
-          label: liftNames.get(collision.key) ?? collision.key,
-        })),
+        ...(spellingCollisions.length > 0 ? { spellingCollisions: labelled(spellingCollisions) } : {}),
+        ...(goalSpellingCollisions.length > 0 ? { goalSpellingCollisions: labelled(goalSpellingCollisions) } : {}),
       },
     };
   }
@@ -522,11 +534,14 @@ export class ImportController {
     // .filter() (unlike this .map()) changes array length/indices — reversing
     // the order would silently apply row N's override to whatever shifted
     // into row N's old position after an earlier row was removed.
-    if (destination === 'lift-records' && Object.keys(liftOverrides).length > 0) {
-      parsed = (parsed as LiftRecord[]).map((r, i) => {
-        const canonical = liftOverrides[String(i + 1)];
-        return canonical ? { ...r, lift: canonical } : r;
-      });
+    if (destination === 'lift-records' || destination === 'strength-goals') {
+      parsed = withLiftOverrides(parsed as (LiftRecord | StrengthGoalEntry)[], liftOverrides);
+    }
+    if (destination === 'strength-goals') {
+      const overrideErrors = await unrecognizedGoalOverrides(liftOverrides, repos);
+      if (overrideErrors.length > 0) {
+        throw new BadRequestException({ message: 'Validation failed', errors: overrideErrors });
+      }
     }
 
     // A tab opened before #1123 sends an ambiguous OR incomplete lift-records
@@ -686,7 +701,13 @@ export class ImportController {
     destination: ImportKind,
     table: SpreadsheetCell[][],
     repos: RepositoryBundle,
-  ): Promise<{ valid: unknown[]; errors: ImportError[]; spellingCollisions?: TrainingMaxSpellingCollision[] }> {
+    liftOverrides: Record<string, string>,
+  ): Promise<{
+    valid: unknown[];
+    errors: ImportError[];
+    spellingCollisions?: TrainingMaxSpellingCollision[];
+    goalSpellingCollisions?: StrengthGoalSpellingCollision[];
+  }> {
     // lift-records must never reach here. Its only current caller — preview()
     // — branches lift-records off to previewLiftRecords before ever calling
     // this method (see the destination check immediately above this.preview's
@@ -724,11 +745,47 @@ export class ImportController {
       return validateTrainingMaxImport(parsed as TrainingMax[], await effectiveSlotMapFor(repos));
     }
     if (destination === 'strength-goals') {
-      return validateStrengthGoalImport(parsed as StrengthGoalEntry[], await effectiveSlotMapFor(repos));
+      // A kept row previews under its custom lift, as the commit will store it (#1169).
+      const overrideErrors = await unrecognizedGoalOverrides(liftOverrides, repos);
+      if (overrideErrors.length > 0) return { valid: [], errors: overrideErrors };
+      return validateStrengthGoalImport(
+        withLiftOverrides(parsed as StrengthGoalEntry[], liftOverrides),
+        await effectiveSlotMapFor(repos),
+      );
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     return handler.validate(parsed as any);
   }
+}
+
+/** Replaces the lift of each overridden row. `liftOverrides` keys are 1-based positions in `rows`. */
+function withLiftOverrides<R extends { lift: unknown }>(rows: R[], liftOverrides: Record<string, string>): R[] {
+  return rows.map((r, i) => {
+    const canonical = liftOverrides[String(i + 1)];
+    return canonical ? { ...r, lift: canonical } : r;
+  });
+}
+
+/**
+ * Overrides naming no known lift. A goal row's own lift may be free text, but an override is a
+ * lift the user picked, so one that's gone was deleted after the Keep. Stored, its goal would sit
+ * under an id nothing resolves (#1169). `row` is the row's position before any exclusions.
+ */
+async function unrecognizedGoalOverrides(
+  liftOverrides: Record<string, string>,
+  repos: RepositoryBundle,
+): Promise<ImportError[]> {
+  const overrides = Object.entries(liftOverrides);
+  if (overrides.length === 0) return [];
+  const slotMap = await effectiveSlotMapFor(repos);
+  return overrides
+    .filter(([, lift]) => !Object.prototype.hasOwnProperty.call(slotMap, lift))
+    .map(([row]) => ({
+      row: Number(row),
+      field: IMPORT_ERROR_FIELD_LIFT,
+      code: 'UNRECOGNIZED_LIFT',
+      message: "The custom lift chosen for this row no longer exists. Exclude the row, or go back and keep it as a new lift.",
+    }));
 }
 
 /** The rows a commit writes: to its destination, and 1RM rows split off to training maxes. */

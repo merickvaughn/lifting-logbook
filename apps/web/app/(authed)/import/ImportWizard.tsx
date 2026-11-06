@@ -12,6 +12,7 @@ import type {
   ImportError,
   ImportKind,
   ImportPreviewResponse,
+  ImportGoalSpellingCollision,
   ImportSpellingCollision,
   ImportUndoResponse,
   LiftClassification,
@@ -287,6 +288,16 @@ export function ImportWizard({
     );
   }
   const previewBody = preview?.preview ?? null;
+  // Goal rows spelling one lift differently, by row position (#1169).
+  const goalRowSpellings = useMemo(
+    () =>
+      new Map(
+        (previewBody?.goalSpellingCollisions ?? []).flatMap((collision) =>
+          collision.rows.flatMap((row) => row.rowIndexes.map((i) => [i, row.spelling] as const)),
+        ),
+      ),
+    [previewBody],
+  );
 
   function mappingKey(m: ColumnMapping): string {
     return m.sourceHeader || `__req__:${m.destinationField}`;
@@ -719,14 +730,68 @@ export function ImportWizard({
     });
   }
 
+  // A collision's spellings as excluding rows leaves them. An excluded row isn't written, so a
+  // spelling shows its first row still included, and the first of those is the one stored.
+  function writtenGoalRows(collision: ImportGoalSpellingCollision) {
+    const included = new Map(
+      (previewBody?.deltas ?? []).filter((d) => !excludedKeys.has(d.key)).map((d) => [d.rowIndex, d] as const),
+    );
+    return collision.rows
+      .flatMap((row) => {
+        const rowIndex = row.rowIndexes.find((i) => included.has(i));
+        if (rowIndex === undefined) return [];
+        return [{ row: { ...row, value: included.get(rowIndex)?.after ?? row.value }, rowIndex }];
+      })
+      .sort((a, b) => a.rowIndex - b.rowIndex)
+      .map(({ row }) => row);
+  }
+
+  // A goal file has no editable list to move the row on, so the kept rows go in as overrides and
+  // the server previews the result: the rows' labels and kinds, and any collision left (#1169).
+  // That renumbers the `#N` keys, so exclusions follow their rows across. Returns the error to
+  // show, if any.
+  async function keepGoalRow(
+    row: ImportGoalSpellingCollision['rows'][number],
+    lift: CustomLiftResponse,
+  ): Promise<string | null> {
+    if (!programId || !file) return 'Could not update the preview. Try again.';
+    const overrides = new Map(liftOverrides);
+    for (const rowIndex of row.rowIndexes) overrides.set(rowIndex, lift.id);
+    try {
+      const res = await previewImport(programId, file, 'strength-goals', {
+        overrides: columnOverridesRecord,
+        liftOverrides: Object.fromEntries(overrides),
+      });
+      const deltas = res.preview?.deltas;
+      if (!deltas) throw new Error(res.errors[0]?.message ?? 'Preview returned no rows');
+      // A successful create can name a lift another row already spells, which merges them
+      // and would lose that row's goal.
+      if (deltas.filter((d) => naturalKeyOf(d) === lift.id).length > row.rowIndexes.length) {
+        return `${lift.name} already has a goal in this import. Try another name.`;
+      }
+      const excludedRows = new Set(
+        previewBody?.deltas.filter((d) => excludedKeys.has(d.key)).map((d) => d.rowIndex),
+      );
+      setLiftOverrides(overrides);
+      setPreview((prev) => prev && { ...res, classification: prev.classification, columnMappings: prev.columnMappings });
+      setExcludedKeys(new Set(deltas.filter((d) => excludedRows.has(d.rowIndex)).map((d) => d.key)));
+      setSelectedKeys(new Set());
+      lastSelectedKey.current = null;
+      return null;
+    } catch (e) {
+      logClientError('previewImport', e, { programId, source: 'spelling-collision' });
+      return 'Could not update the preview. Try again.';
+    }
+  }
+
   // Holds `busy` for the whole request. That blocks Back, Next and the other Keep buttons, so
   // what this applies can't land on a replaced preview, be left out of the commit Next would
   // freeze, or race another Keep. Returns the error to show, if any.
   async function handleKeepAsCustom(
-    collision: ImportSpellingCollision,
-    row: ImportSpellingCollision['rows'][number],
+    noun: 'max' | 'goal',
     name: string,
     classification: LiftClassification,
+    apply: (lift: CustomLiftResponse) => string | null | Promise<string | null>,
   ): Promise<string | null> {
     setBusy(true);
     try {
@@ -734,8 +799,7 @@ export function ImportWizard({
       if (result.ok) {
         sessionCreatedLiftIds.current.add(result.data.id);
         setCustomLifts((prev) => [...prev, result.data]);
-        applyKeptRow(collision, row, result.data);
-        return null;
+        return await apply(result.data);
       }
       // An earlier import left this lift behind, as a Keep creates it before the commit.
       let existing: CustomLiftResponse | undefined;
@@ -751,10 +815,9 @@ export function ImportWizard({
         reviewMaxes?.some((max) => max.lift === reusedId) ||
         previewBody?.deltas.some((d) => naturalKeyOf(d) === reusedId)
       ) {
-        return `${name} already has a max in this import. Try another name.`;
+        return `${name} already has a ${noun} in this import. Try another name.`;
       }
-      applyKeptRow(collision, row, existing);
-      return null;
+      return await apply(existing);
     } catch (e) {
       // No lift name in the context: it is free text from the user's file.
       logClientError('createCustomLift', e, { programId, source: 'spelling-collision' });
@@ -1149,6 +1212,14 @@ export function ImportWizard({
       if (d.status !== 'ambiguous' || d.rowIndex === undefined || excludedKeys.has(d.key)) continue;
       const resolved = resolveLiftValue(rowLiftText(d));
       if (resolved) liftOverridesRecord[d.rowIndex] = resolved;
+    }
+    // A goal file's only overrides are rows kept as custom lifts, none of them ambiguous (#1169).
+    // An excluded row's stays out: if its lift was since deleted, the commit would reject it.
+    if (destination === 'strength-goals') {
+      for (const d of deltas) {
+        const lift = d.rowIndex !== undefined ? liftOverrides.get(d.rowIndex) : undefined;
+        if (lift && d.rowIndex !== undefined && !excludedKeys.has(d.key)) liftOverridesRecord[d.rowIndex] = lift;
+      }
     }
     const excludeKeys = deltas.filter((d) => excludedKeys.has(d.key)).map(excludeKeyFor);
     return {
@@ -1673,9 +1744,17 @@ export function ImportWizard({
                         <SpellingCollisionNotice
                           key={collision.key}
                           label={collision.label}
-                          rows={remainingCollisionRows(collision, keptSpellings)}
+                          kind="max"
+                          rows={remainingCollisionRows(collision, keptSpellings).map((row) => ({
+                            ...row,
+                            value: `${row.weight} lbs`,
+                            date: row.dateUpdated,
+                          }))}
                           onKeep={(row, name, classification) =>
-                            handleKeepAsCustom(collision, row, name, classification)
+                            handleKeepAsCustom('max', name, classification, (lift) => {
+                              applyKeptRow(collision, row, lift);
+                              return null;
+                            })
                           }
                         />
                       ))}
@@ -1730,6 +1809,17 @@ export function ImportWizard({
                     </>
                   ) : (
                     <>
+                      {previewBody.goalSpellingCollisions?.map((collision) => (
+                        <SpellingCollisionNotice
+                          key={collision.key}
+                          kind="goal"
+                          label={collision.label}
+                          rows={writtenGoalRows(collision)}
+                          onKeep={(row, name, classification) =>
+                            handleKeepAsCustom('goal', name, classification, (lift) => keepGoalRow(row, lift))
+                          }
+                        />
+                      ))}
                       {/* These rows can sit at the end of thousands, and the commit
                           rejects the whole file until each is fixed or excluded (#1114). */}
                       {needsLiftCount > 0 && (
@@ -1859,6 +1949,9 @@ export function ImportWizard({
                             // typed/selected value (liftOverrides holds it once the user
                             // has interacted; otherwise it's still the original raw text).
                             const rowIndex = d.rowIndex;
+                            // The API names a lift once, so rows spelling it differently would
+                            // read the same. They read as the file wrote them (#1169).
+                            const rowLabel = (rowIndex !== undefined && goalRowSpellings.get(rowIndex)) || d.label;
                             // rawLiftValue (untrimmed) drives the controlled input's `value` —
                             // trimming it there would eat a just-typed trailing space on every
                             // keystroke, breaking multi-word names. currentLiftValue (trimmed)
@@ -1908,7 +2001,7 @@ export function ImportWizard({
                                     onClick={(e) =>
                                       handleDeltaCheckbox(d.key, e.shiftKey, visibleDeltas)
                                     }
-                                    aria-label={`Select ${d.label}`}
+                                    aria-label={`Select ${rowLabel}`}
                                   />
                                 </td>
                                 <td className={styles.deltaLabel}>
@@ -2031,7 +2124,7 @@ export function ImportWizard({
                                       )}
                                     </>
                                   ) : (
-                                    d.label
+                                    rowLabel
                                   )}
                                 </td>
                                 <td>
@@ -2059,7 +2152,7 @@ export function ImportWizard({
                                     <button
                                       type="button"
                                       className={styles.maxEditRemove}
-                                      aria-label={`Exclude ${d.label}`}
+                                      aria-label={`Exclude ${rowLabel}`}
                                       onClick={() =>
                                         setExcludedKeys((prev) => new Set([...prev, d.key]))
                                       }
@@ -2070,7 +2163,7 @@ export function ImportWizard({
                                     <button
                                       type="button"
                                       className={styles.undoExclude}
-                                      aria-label={`Re-include ${d.label}`}
+                                      aria-label={`Re-include ${rowLabel}`}
                                       onClick={() =>
                                         setExcludedKeys((prev) => {
                                           const next = new Set(prev);

@@ -134,6 +134,8 @@ function createInitialState() {
     ambiguousLift: false,
     // When true, a training-maxes preview reports `Squat` and `Back Squat` as one lift (#1135).
     spellingCollision: false,
+    // When true, a strength-goals preview reports `Squat` and `Back Squat` as one lift (#1169).
+    goalSpellingCollision: false,
     // Google Sheets import (#1111): googleSheet makes destination=lift-records
     // previews return the canned LIFT_RECORDS tab's preview; privateSheet makes the
     // workbook fetch answer like a sheet that is not link-shared.
@@ -594,6 +596,9 @@ const server = createServer(async (req, res) => {
     }
     if (url.searchParams.get('withSpellingCollision') === 'true') {
       state.spellingCollision = true;
+    }
+    if (url.searchParams.get('withGoalSpellingCollision') === 'true') {
+      state.goalSpellingCollision = true;
     }
     if (url.searchParams.get('withGoogleSheet') === 'true') {
       state.googleSheet = true;
@@ -1075,6 +1080,53 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && rest[0] === 'import' && rest.length === 1) {
       const mode = url.searchParams.get('mode') ?? 'preview';
       const destination = url.searchParams.get('destination') ?? 'training-maxes';
+
+      if (state.goalSpellingCollision) {
+        // A form field, so the Playwright keep flow proves the client sends it where the real
+        // API reads it: on the preview that moves the row, and on the commit that stores it.
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const form = await new Response(Buffer.concat(chunks), {
+          headers: { 'content-type': req.headers['content-type'] },
+        }).formData();
+        const kept = JSON.parse(form.get('liftOverrides') ?? '{}')['1'];
+        if (mode === 'commit' || mode === 'dry-run') {
+          json(res, { destination: 'strength-goals', created: kept ? 2 : 1, updated: 0, skipped: kept ? 0 : 1, errors: [], batchId: 'batch-1' });
+          return;
+        }
+        json(res, {
+          classification: { type: 'strength-goals', confidence: 0.95, bucket: 'high', reasons: ['Matched the goal tiers'], alternatives: [] },
+          destination: 'strength-goals',
+          preview: {
+            creates: 2,
+            updates: 0,
+            skips: 0,
+            unresolved: 0,
+            deltas: [
+              kept
+                ? { key: kept, label: state.customLifts.find((l) => l.id === kept)?.name ?? kept, kind: 'create', after: '350 lbs', rowIndex: 1 }
+                : { key: 'back-squat', label: 'Back Squat', kind: 'create', after: '350 lbs', rowIndex: 1 },
+              { key: 'Back Squat', label: 'Back Squat', kind: 'create', after: '400 lbs', rowIndex: 2 },
+            ],
+            ...(kept
+              ? {}
+              : {
+                  goalSpellingCollisions: [
+                    {
+                      key: 'back-squat',
+                      label: 'Back Squat',
+                      rows: [
+                        { spelling: 'Squat', lift: 'back-squat', value: '350 lbs', rowIndexes: [1] },
+                        { spelling: 'Back Squat', lift: 'Back Squat', value: '400 lbs', rowIndexes: [2] },
+                      ],
+                    },
+                  ],
+                }),
+          },
+          errors: [],
+        });
+        return;
+      }
 
       if (state.ambiguousLift && destination === 'lift-records') {
         if (mode === 'commit' || mode === 'dry-run') {

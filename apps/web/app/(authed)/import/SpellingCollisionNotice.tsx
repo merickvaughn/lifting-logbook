@@ -1,11 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import type { ImportSpellingCollision, LiftClassification } from '@lifting-logbook/types';
+import type { LiftClassification } from '@lifting-logbook/types';
 import { LIFT_CLASSIFICATIONS } from './liftClassifications';
 import styles from './import.module.css';
 
-type CollisionRow = ImportSpellingCollision['rows'][number];
+interface CollisionRow {
+  spelling: string;
+  /** The stored `lift` this row writes to. Two rows can share one, and the first stores. */
+  lift: string;
+  /** What the row sets, as the warning shows it: `300 lbs`. */
+  value: string;
+  date?: string;
+}
 
 function KeepRowForm({
   row,
@@ -31,7 +38,7 @@ function KeepRowForm({
   return (
     <div className={styles.createLiftAffordance}>
       <span className={styles.createLiftPrompt}>
-        Keep {row.spelling} ({row.weight} lbs, {row.dateUpdated}) as a custom lift
+        Keep {row.spelling} ({row.value}{row.date ? `, ${row.date}` : ''}) as a custom lift
       </span>
       <input
         type="text"
@@ -70,50 +77,65 @@ function KeepRowForm({
 const list = (names: readonly string[]) =>
   `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 
-// What the warning says depends on where the rows store: under one stored lift only the newest
-// is written, while under two both are written, and which one a program reads depends on the
-// name it plans. `rows` is most recent first, so each stored lift's first row is the one written.
-function collisionMessage(label: string, rows: readonly CollisionRow[]): string {
+// Maxes and goals differ in which row wins a shared lift, and in who reads them.
+const COPY = {
+  max: {
+    stored: 'most recent max',
+    separate:
+      'Their maxes are stored separately, but a program uses one of them for this lift, and not always the most recent.',
+    kept: '',
+  },
+  goal: {
+    stored: 'first goal',
+    separate: 'Their goals are stored separately, but the goals page may show only one of them for this lift.',
+    // The page draws a card per training max, and a new custom lift has none yet.
+    kept: ' A kept goal shows on the goals page once its custom lift has a training max.',
+  },
+};
+
+// What the warning says depends on where the rows store: under one stored lift only one row is
+// written, while under two both are written, and which one is read depends on the name asked
+// for. Each stored lift's first row in `rows` is the one written.
+function collisionMessage(kind: keyof typeof COPY, label: string, rows: readonly CollisionRow[]): string {
+  const copy = COPY[kind];
   const byLift = new Map<string, CollisionRow[]>();
   for (const row of rows) byLift.set(row.lift, [...(byLift.get(row.lift) ?? []), row]);
-  const onlyNewest = (shared: readonly CollisionRow[]) => {
-    const [newest] = shared;
-    return `only the most recent max in this file is stored (${newest?.spelling}, ${newest?.weight} lbs)`;
+  const onlyOne = (shared: readonly CollisionRow[]) => {
+    const [written] = shared;
+    return `only the ${copy.stored} in this file is stored (${written?.spelling}, ${written?.value})`;
   };
   const named = `${list(rows.map((row) => row.spelling))} are both ${label}`;
   if (byLift.size === 1) {
-    return `${named}, so ${onlyNewest(rows)}. To keep another max, keep its row as a custom lift.`;
+    return `${named}, so ${onlyOne(rows)}. To keep another ${kind}, keep its row as a custom lift.${copy.kept}`;
   }
   const shared = [...byLift.values()]
     .filter((group) => group.length > 1)
-    .map((group) => `Of ${list(group.map((row) => row.spelling))}, ${onlyNewest(group)}.`);
-  return [
-    `${named}. Their maxes are stored separately, but a program uses one of them for this lift, and not always the most recent.`,
-    ...shared,
-    'To keep them apart, keep a row as a custom lift.',
-  ].join(' ');
+    .map((group) => `Of ${list(group.map((row) => row.spelling))}, ${onlyOne(group)}.`);
+  return [`${named}. ${copy.separate}`, ...shared, `To keep them apart, keep a row as a custom lift.${copy.kept}`].join(' ');
 }
 
 /**
- * Warns that rows of a training-max file spell one lift differently, and lets the user keep any
- * of them as a custom lift instead (#1135).
+ * Warns that rows of a training-max or strength-goal file spell one lift differently, and lets
+ * the user keep any of them as a custom lift instead (#1135, #1169).
  *
  * `rows` leaves out the ones already kept, and with one left there is nothing to warn about.
  * The wizard's fieldset disables these controls while `onKeep` runs.
  */
-export default function SpellingCollisionNotice({
+export default function SpellingCollisionNotice<R extends CollisionRow>({
+  kind,
   label,
   rows,
   onKeep,
 }: {
+  kind: keyof typeof COPY;
   label: string;
-  rows: ImportSpellingCollision['rows'];
-  onKeep: (row: CollisionRow, name: string, classification: LiftClassification) => Promise<string | null>;
+  rows: readonly R[];
+  onKeep: (row: R, name: string, classification: LiftClassification) => Promise<string | null>;
 }) {
   if (rows.length < 2) return null;
   return (
     <div className={styles.infoBox} role="status">
-      <p>{collisionMessage(label, rows)}</p>
+      <p>{collisionMessage(kind, label, rows)}</p>
       {rows.map((row) => (
         <KeepRowForm
           key={row.spelling}

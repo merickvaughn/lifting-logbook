@@ -1,10 +1,17 @@
-import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
+import { ImportError, ImportGoalSpellingCollision, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
+import { liftIdFor } from '../../catalog/liftIdentity';
 import { DEFAULT_SLOT_MAP } from '../../catalog/slotMaps';
 import { StrengthGoalEntry } from '../../models';
+import { goalValue } from './goalValue';
+
+/** A collision as validation finds it. The caller knows the lift's name, so adds the label. */
+export type StrengthGoalSpellingCollision = Omit<ImportGoalSpellingCollision, 'label'>;
 
 export interface StrengthGoalImportValidationResult {
   valid: StrengthGoalEntry[];
   errors: ImportError[];
+  /** Valid rows that spell one lift differently (#1169). */
+  goalSpellingCollisions: StrengthGoalSpellingCollision[];
 }
 
 /**
@@ -22,6 +29,7 @@ export function validateStrengthGoalImport(
 ): StrengthGoalImportValidationResult {
   const valid: StrengthGoalEntry[] = [];
   const errors: ImportError[] = [];
+  const spellings: SpelledGoal[] = [];
 
   goals.forEach((g, i) => {
     const row = i + 1;
@@ -50,9 +58,46 @@ export function validateStrengthGoalImport(
       const resolved = Object.prototype.hasOwnProperty.call(slotMap, liftStr)
         ? slotMap[liftStr]!
         : liftStr;
-      valid.push({ ...g, lift: resolved });
+      const goal = { ...g, lift: resolved };
+      valid.push(goal);
+      spellings.push({ spelling: liftStr, rowIndex: row, goal });
     }
   });
 
-  return { valid, errors };
+  return { valid, errors, goalSpellingCollisions: goalSpellingCollisionsOf(spellings) };
+}
+
+interface SpelledGoal {
+  /** The lift as the file wrote it, which resolving loses. */
+  spelling: string;
+  rowIndex: number;
+  goal: StrengthGoalEntry;
+}
+
+/**
+ * The rows that resolve to one lift while spelling it differently (#1169).
+ *
+ * Rows sharing a spelling aren't a collision. Two spellings can store under one key, so only
+ * the first stores (`OH Press`, `OH Press-HV`), or under two, since the slot map leaves a
+ * display name as written (`Squat` stores as `back-squat`, `Back Squat` as itself). Either
+ * way a reader takes one goal for the lift, so both are reported.
+ *
+ * Goals upsert first-row-wins, so each spelling shows its first row, and they list in file
+ * order. `rowIndexes` covers a spelling's other rows too: keeping only its first would let a
+ * later row of that spelling take its place under the lift the user just moved it away from.
+ */
+function goalSpellingCollisionsOf(rows: readonly SpelledGoal[]): StrengthGoalSpellingCollision[] {
+  const bySpelling = new Map<string, Map<string, StrengthGoalSpellingCollision['rows'][number]>>();
+  for (const { spelling, rowIndex, goal } of rows) {
+    const id = liftIdFor(goal.lift);
+    const spellings = bySpelling.get(id) ?? new Map<string, StrengthGoalSpellingCollision['rows'][number]>();
+    bySpelling.set(id, spellings);
+    const seen = spellings.get(spelling);
+    if (seen) seen.rowIndexes.push(rowIndex);
+    else spellings.set(spelling, { spelling, lift: goal.lift, value: goalValue(goal), rowIndexes: [rowIndex] });
+  }
+
+  return [...bySpelling.entries()]
+    .filter(([, spellings]) => spellings.size > 1)
+    .map(([key, spellings]) => ({ key, rows: [...spellings.values()] }));
 }
