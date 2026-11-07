@@ -2,6 +2,7 @@ import {
   LiftRecord,
   buildLiftRecordId,
   liftRecordNaturalKey,
+  liftRecordSameSetKey,
   liftSpellings,
   withModifications,
 } from '@lifting-logbook/core';
@@ -48,8 +49,8 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
 
   async findExistingRecords(program: string, candidates: LiftRecord[]): Promise<LiftRecord[]> {
     const stored = this.store.get(program) ?? [];
-    const existingKeys = new Set(stored.map(liftRecordNaturalKey));
-    return candidates.filter((r) => existingKeys.has(liftRecordNaturalKey(r)));
+    const existingKeys = new Set(stored.map(liftRecordSameSetKey));
+    return candidates.filter((r) => existingKeys.has(liftRecordSameSetKey(r)));
   }
 
   async updateLiftRecord(

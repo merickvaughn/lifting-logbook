@@ -131,10 +131,11 @@ Where [#947](https://github.com/merickvaughn/lifting-logbook/issues/947) differs
   goal in lbs", which would have turned every relative goal, the default in the app, into an
   absolute one. `parseStrengthGoals` reads both columns, so this isn't quite "the shapes the parsers
   already accept".
-- **Import changed in two small ways, so exports come back clean.** It now accepts the four lift
-  names built-in presets use that the catalog holds only as aliases, such as `Calf Raises`, and
-  stores them as written. A file with an `Occurrence` column also identifies itself as lift records,
-  so one made mostly of custom lifts still classifies.
+- **Import changed in three small ways, so exports come back clean.** It now accepts every lift name
+  the catalog holds only as an alias, such as `Calf Raises`, and stores it as written, which affects
+  any file, not only an export. A set already logged under another spelling of the lift counts as a
+  duplicate. A file with an `Occurrence` column identifies itself as lift records, so one made
+  mostly of custom lifts still classifies.
 - **The reads run in their own transaction.** The endpoint uses `@SkipRlsTransaction()` so that
   building the archive doesn't hold a pooled connection.
 

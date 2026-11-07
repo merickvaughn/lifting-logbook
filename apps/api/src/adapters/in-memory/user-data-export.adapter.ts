@@ -35,7 +35,7 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
       strengthGoals: this.strengthGoal.allByProgram(),
       customPrograms: [],
       customLifts: (await this.customLift.list()).map((lift) => {
-        const { userId: _userId, ...rest } = lift as typeof lift & { userId?: string };
+        const { userId: _userId, ...rest } = lift;
         return rest;
       }),
       userSettings: settings,

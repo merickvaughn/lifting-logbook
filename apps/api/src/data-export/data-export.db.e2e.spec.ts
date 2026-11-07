@@ -241,6 +241,11 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
     await cleanUsers(prisma);
     await seedUser(prisma, USER_OWNER, 'owner-marker', OWNER_PROGRAM_ID);
     await seedUser(prisma, USER_OTHER, OTHER_MARK, OTHER_PROGRAM_ID);
+    // `logbook.json` holds one settings row, so only the value can show whose it is.
+    await prisma.userSettings.update({
+      where: { userId: USER_OTHER },
+      data: { activeProgram: OTHER_PROGRAM_ID },
+    });
     await prisma.customProgram.create({
       data: { id: IMPORT_PROGRAM_ID, userId: USER_IMPORT, name: 'import target' },
     });
@@ -325,6 +330,10 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
     },
   );
 
+  it("holds the owner's settings, not another user's", () => {
+    expect(logbook.tables['userSettings']).toMatchObject({ activeProgram: ACTIVE_PROGRAM });
+  });
+
   it('never shows another user, in any file', () => {
     const paths = Object.keys(files);
     expect(paths.length).toBeGreaterThanOrEqual(5);
@@ -367,6 +376,8 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(preview.classification.type).toBe(kind);
       expect(preview.destination).toBe(kind);
       expect(preview.errors).toEqual([]);
+      // `errors` can't catch a lift it doesn't recognize: that row is only marked for a decision.
+      expect(preview.preview?.unresolved).toBe(0);
     });
 
     it('commits, and writes its rows', async () => {
@@ -385,5 +396,35 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
       where: { userId_program_lift: { userId: USER_IMPORT, program: ACTIVE_PROGRAM, lift: 'bench-press' } },
     });
     expect(goal).toMatchObject({ goalType: 'relative', ratio: 1.5, unit: 'kg' });
+  });
+
+  it('skips a set already logged under another spelling of the lift', async () => {
+    const macrocycleNum = 77;
+    await prisma.liftRecord.create({
+      data: {
+        userId: USER_IMPORT,
+        program: ACTIVE_PROGRAM,
+        macrocycleNum,
+        workoutNum: 1,
+        date: new Date('2026-03-01T00:00:00.000Z'),
+        lift: 'calf-raise',
+        setNum: 1,
+        weight: 100,
+        reps: 10,
+        notes: '',
+      },
+    });
+
+    const res = await upload(
+      USER_IMPORT,
+      ACTIVE_PROGRAM,
+      'commit',
+      `Program,Macrocycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes\n${ACTIVE_PROGRAM},${macrocycleNum},1,2026-03-01,Calf Raises,1,100,10,\n`,
+      'lift-records',
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as ImportCommitResponse).created).toBe(0);
+    expect(await prisma.liftRecord.count({ where: { userId: USER_IMPORT, macrocycleNum } })).toBe(1);
   });
 });

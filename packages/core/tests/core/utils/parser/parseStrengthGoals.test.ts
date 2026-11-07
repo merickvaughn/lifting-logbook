@@ -61,6 +61,18 @@ describe("parseStrengthGoals", () => {
     expect(goals[0]).toMatchObject({ lift: "Squat", target: 420 });
   });
 
+  it("drops footer labels matched whole, and keeps a lift that only starts like one", () => {
+    const goals = parseStrengthGoals([
+      ["Lift", "Current TM", "Intermediate"],
+      ["Note Press", "100", "200"],
+      ["Weighted Dips", "50", "90"],
+      ["Note: tiers are from the 2022 table", "1", "2"],
+      ["Goal Date", "1", "2"],
+      ["Weight", "175", "180"],
+    ]);
+    expect(goals.map((g) => g.lift)).toEqual(["Note Press", "Weighted Dips"]);
+  });
+
   it("returns an empty array when there is no Lift header row", () => {
     expect(parseStrengthGoals([])).toEqual([]);
     expect(parseStrengthGoals([["Weight", "175"], ["Squat", "250"]])).toEqual([]);

@@ -4,6 +4,7 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import {
   LiftRecord,
   liftRecordNaturalKey,
+  liftRecordSameSetKey,
   liftSpellings,
   parseLiftRecordId,
   parseLiftRecordNaturalKey,
@@ -71,7 +72,8 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     if (candidates.length === 0) return [];
 
     // Chunk the OR array to stay within Postgres parameter limits (~32k).
-    // Each candidate produces 6 bound parameters; 500 chunks ≈ 3000 params per query.
+    // Each candidate produces 5 bound parameters plus one per spelling of its lift, under ten in
+    // all, so a chunk of 500 stays near 5000 params per query.
     const CHUNK_SIZE = 500;
     const chunks: LiftRecord[][] = [];
     for (let i = 0; i < candidates.length; i += CHUNK_SIZE) {
@@ -88,7 +90,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
               macrocycleNum: r.macrocycleNum,
               workoutNum: r.workoutNum,
               date: r.date,
-              lift: r.lift,
+              lift: { in: [...liftSpellings(r.lift)] },
               occurrence: r.occurrence ?? 0,
               setNum: r.setNum,
             })),
@@ -97,8 +99,8 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
       ),
     );
 
-    const existingKeys = new Set(rowGroups.flat().map(liftRecordNaturalKey));
-    return candidates.filter((r) => existingKeys.has(liftRecordNaturalKey(r)));
+    const existingKeys = new Set(rowGroups.flat().map(liftRecordSameSetKey));
+    return candidates.filter((r) => existingKeys.has(liftRecordSameSetKey(r)));
   }
 
   async updateLiftRecord(

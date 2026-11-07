@@ -111,8 +111,8 @@ export function buildEffectiveSlotMap(
 }
 
 /**
- * Every built-in catalog lift, by display name and id, mapped to its display name.
- * Import-only: adding these to DEFAULT_SLOT_MAP would also change the logger's
+ * Every built-in catalog lift, by display name and id, mapped to its display name, plus each alias
+ * mapped to itself. Import-only: adding these to DEFAULT_SLOT_MAP would also change the logger's
  * bodyweight detection and reserve the names against custom lifts (see
  * CatalogLift.aliases, issue #1015).
  *

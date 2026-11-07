@@ -240,7 +240,7 @@ describe('PrismaLiftRecordRepository', () => {
                 macrocycleNum: 2,
                 workoutNum: 3,
                 date: new Date('2026-04-01T00:00:00.000Z'),
-                lift: 'Bench Press',
+                lift: { in: expect.arrayContaining(['Bench Press', 'bench-press']) },
                 setNum: 1,
               }),
             ],

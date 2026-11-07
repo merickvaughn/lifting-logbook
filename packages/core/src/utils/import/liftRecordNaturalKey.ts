@@ -1,3 +1,4 @@
+import { liftSpellings } from '../../catalog/builtInLift';
 import { formatDateYYYYMMDD, parseYYYYMMDD } from '../jsUtil';
 
 /** The fields that identify one logged set within a (userId, program) scope. */
@@ -41,6 +42,15 @@ export interface LiftRecordKey {
  */
 export function liftRecordNaturalKey(r: LiftRecordKey): string {
   return `${r.macrocycleNum}:${r.workoutNum}:${formatDateYYYYMMDD(r.date)}:${r.lift}:${liftRecordSetSegment(r)}`;
+}
+
+/**
+ * The natural key with every spelling of a built-in lift made equal, for asking whether a set is
+ * already logged. Stored rows mix spellings (#1135) and the database's unique key can't see that,
+ * so `Calf Raises` and `calf-raise` on one set would otherwise both be written (#947).
+ */
+export function liftRecordSameSetKey(r: LiftRecordKey): string {
+  return liftRecordNaturalKey({ ...r, lift: liftSpellings(r.lift)[0] ?? r.lift });
 }
 
 /**

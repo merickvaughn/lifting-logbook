@@ -201,6 +201,18 @@ describe('serializeStrengthGoals', () => {
     expect(classifyImport(table).type).toBe('strength-goals');
   });
 
+  it.each(['Note Press', 'Note', "Today's Lift", 'Today', 'Start Date Squat', 'Goal Date', 'Weight'])(
+    'keeps a goal on a custom lift named %s, though a ladder file uses words like it as labels',
+    (lift) => {
+      const table = parseCsvText(
+        serializeStrengthGoals([{ lift, goalType: 'absolute', target: 200, unit: 'lbs' }], today),
+      );
+      expect(parseStrengthGoals(table)).toEqual([
+        { lift, goalType: 'absolute', target: 200, unit: 'lbs', updatedAt: today },
+      ]);
+    },
+  );
+
   it('writes a file with no goal rows that parses as empty and stays classified', () => {
     const table = parseCsvText(serializeStrengthGoals([], today));
     expect(parseStrengthGoals(table)).toEqual([]);

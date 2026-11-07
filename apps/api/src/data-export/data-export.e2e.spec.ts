@@ -8,7 +8,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import multipart from '@fastify/multipart';
 import type { InjectOptions } from 'fastify';
 import { strFromU8, unzipSync } from 'fflate';
-import type { ImportPreviewResponse } from '@lifting-logbook/types';
+import type { ImportCommitResponse, ImportPreviewResponse } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
@@ -169,5 +169,11 @@ describe('Download My Data HTTP (e2e, in-memory adapters)', () => {
     expect(preview.classification.type).toBe(kind);
     expect(preview.destination).toBe(kind);
     expect(preview.errors).toEqual([]);
+    // `errors` can't catch a lift it doesn't recognize: that row is only marked for a decision.
+    expect(preview.preview?.unresolved).toBe(0);
+
+    const committed = await upload(target, 'commit', csv, kind);
+    expect(committed.statusCode).toBeLessThan(300);
+    expect((committed.json() as ImportCommitResponse).created).toBeGreaterThan(0);
   });
 });

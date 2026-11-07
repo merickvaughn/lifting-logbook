@@ -30,6 +30,25 @@ describe('a query by lift, across stored spellings', () => {
     expect(records.map((r) => r.lift).sort()).toEqual(['Bench P.', 'Bench Press', 'bench-press']);
   });
 
+  it('findExistingRecords treats a set logged under another spelling as already logged', async () => {
+    const repository = new InMemoryLiftRecordRepository(new Map());
+    const record = (lift: string, setNum = 1) => ({
+      program: 'p',
+      macrocycleNum: 1,
+      workoutNum: 1,
+      date: JAN,
+      lift,
+      setNum,
+      weight: 100,
+      reps: 5,
+      notes: '',
+    });
+    await repository.appendLiftRecords('p', [record('calf-raise')]);
+
+    const candidates = [record('Calf Raises'), record('Calf Raises', 2), record('Back Squat')];
+    expect(await repository.findExistingRecords('p', candidates)).toEqual([candidates[0]]);
+  });
+
   it('getHistory filters to every spelling of the lift', async () => {
     const repository = new InMemoryTrainingMaxHistoryRepository();
     const entry = (lift: string) => ({

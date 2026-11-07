@@ -1,4 +1,4 @@
-import { strToU8, zip } from 'fflate';
+import { AsyncZipDeflate, strToU8, Zip } from 'fflate';
 import {
   serializeLiftRecords,
   serializeProgramSpec,
@@ -113,12 +113,40 @@ function uniqueFolder(program: string, rows: UserDataRows, taken: Set<string>): 
   return folder;
 }
 
-/** Compresses off the event loop, since a long history takes seconds and the API has one vCPU. */
-export function zipExportFiles(files: Record<string, string>): Promise<Uint8Array> {
-  const data = Object.fromEntries(Object.entries(files).map(([path, text]) => [path, strToU8(text)]));
-  return new Promise((resolve, reject) => {
-    zip(data, (err, archive) => (err ? reject(err) : resolve(archive)));
+/**
+ * Compresses off the event loop, since a long history takes seconds and the API has one vCPU, and
+ * one file at a time: fflate's `zip` starts a worker per file at once, which doubled peak memory on
+ * a 41-file export.
+ */
+export async function zipExportFiles(files: Record<string, string>): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let failed: (err: Error) => void = () => undefined;
+  const archived = new Promise<void>((resolve, reject) => {
+    failed = reject;
+    const archive = new Zip((err, chunk, final) => {
+      if (err) return reject(err);
+      chunks.push(chunk);
+      if (final) resolve();
+    });
+    void (async () => {
+      for (const [path, text] of Object.entries(files)) {
+        await new Promise<void>((done, fail) => {
+          const entry = new AsyncZipDeflate(path);
+          archive.add(entry);
+          const forward = entry.ondata;
+          entry.ondata = (err, chunk, final) => {
+            forward.call(entry, err, chunk, final);
+            if (err) fail(err);
+            else if (final) done();
+          };
+          entry.push(strToU8(text), true);
+        });
+      }
+      archive.end();
+    })().catch(failed);
   });
+  await archived;
+  return Buffer.concat(chunks);
 }
 
 /** For the `Content-Disposition` header, for clients other than the web page, which names its own. */
