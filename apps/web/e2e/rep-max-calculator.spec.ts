@@ -23,7 +23,8 @@ const dialog = (page: Page) => page.getByRole('dialog', { name: 'Rep max calcula
 test.beforeAll(async ({ browser }, testInfo) => {
   test.setTimeout(300_000);
   const page = await browser.newPage({ baseURL: testInfo.project.use.baseURL });
-  for (const [, route] of VIEWS) {
+  const manageLifts = `${WORKOUT}/detail/manage-lifts`;
+  for (const route of [...VIEWS.map(([, route]) => route), manageLifts]) {
     await page.goto(route, { timeout: 90_000 });
     await expect(trigger(page)).toBeVisible({ timeout: 90_000 });
   }
@@ -54,9 +55,10 @@ async function openCalculator(page: Page) {
 
 for (const [view, route] of VIEWS) {
   test(`opens from the ${view} view without moving the page, at phone width`, async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: 812 });
+    // Short enough that every view can scroll.
+    await page.setViewportSize({ width: 375, height: 600 });
     await page.goto(route);
-    await expect(trigger(page)).toBeVisible();
+    await expect(page.getByRole('banner').getByRole('button', { name: 'Rep max calculator' })).toBeVisible();
 
     // Partway down the page, the button is still on screen.
     await page.evaluate(() => window.scrollTo(0, 100));
@@ -76,23 +78,13 @@ for (const [view, route] of VIEWS) {
     await expectNoHorizontalScroll(page);
     expect(await scrollY(page)).toBe(100);
   });
-
-  test(`leaves the end of the ${view} view clear, at phone width`, async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: 812 });
-    await page.goto(route);
-    await expect(trigger(page)).toBeVisible();
-
-    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-    const clear = await trigger(page).evaluate((button) => {
-      const top = button.getBoundingClientRect().top;
-      // Everything before the button in the page, ignoring what is fixed to the screen.
-      const row = button.parentElement;
-      const before = row?.previousElementSibling?.getBoundingClientRect().bottom ?? 0;
-      return before <= top;
-    });
-    expect(clear).toBe(true);
-  });
 }
+
+test('stays out of the header on views without it', async ({ page }) => {
+  await page.goto('/glossary');
+  await expect(page.getByRole('banner')).toBeVisible();
+  await expect(trigger(page)).toHaveCount(0);
+});
 
 test('keeps an unsaved set and the URL', async ({ page }) => {
   await page.goto(WORKOUT);
@@ -121,6 +113,7 @@ test('keeps an unsaved set and the URL', async ({ page }) => {
 });
 
 test('closes when the browser goes back, and leaves nothing to press behind it', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 500 });
   await page.goto(`${WORKOUT}/detail`);
   const backUrl = page.url();
 
@@ -129,15 +122,28 @@ test('closes when the browser goes back, and leaves nothing to press behind it',
   await openCalculator(page);
   await page.keyboard.press('Escape');
   await expect(dialog(page)).toBeHidden();
-  await page.getByRole('link', { name: /manage lifts/i }).click();
-  await expect(page).toHaveURL(/manage-lifts/);
+  await page.evaluate(() => window.scrollTo(0, 200));
+  await expect.poll(() => scrollY(page)).toBe(200);
 
+  // Where Back lands with the dialog closed. The timer dock focuses its start button when this
+  // view mounts, which can scroll it, so the position to keep is this one, not the 200.
+  const manageLifts = page.getByRole('link', { name: /manage lifts/i });
+  await manageLifts.click();
+  await expect(page).toHaveURL(/manage-lifts/);
+  await page.goBack();
+  await expect(page).toHaveURL(backUrl);
+  await expect.poll(() => scrollY(page)).toBeGreaterThan(0);
+  const landing = await scrollY(page);
+
+  await manageLifts.click();
+  await expect(page).toHaveURL(/manage-lifts/);
   await openCalculator(page);
   await dialog(page).getByLabel('Weight (lbs)').fill('200');
 
   await page.goBack();
   await expect(page).toHaveURL(backUrl);
   await expect(dialog(page)).toBeHidden();
+  await expect.poll(() => scrollY(page)).toBe(landing);
 
   await openCalculator(page);
   await expect(dialog(page).getByLabel('Weight (lbs)')).toHaveValue('200');
@@ -169,8 +175,8 @@ test('works by keyboard alone, at phone width', async ({ page }) => {
 
   // Reach the button by tabbing, as a keyboard user would.
   const isOnTrigger = () =>
-    page.evaluate(() => document.activeElement?.textContent === 'Rep max calculator');
-  for (let presses = 0; presses < 100 && !(await isOnTrigger()); presses++) {
+    page.evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Rep max calculator');
+  for (let presses = 0; presses < 20 && !(await isOnTrigger()); presses++) {
     await page.keyboard.press('Tab');
   }
   await expect(trigger(page)).toBeFocused();

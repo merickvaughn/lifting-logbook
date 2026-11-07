@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { estimateRepMax } from '@lifting-logbook/core';
+import { APP_NAV_TOOLS_ID } from '@/lib/app-nav-tools';
 import RepMaxCalculator from './RepMaxCalculator';
 
 let mockPathname = '/macrocycle/1/workout/1';
@@ -8,9 +9,19 @@ jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
 }));
 
+/** The calculator with the app header's slot for its button. */
+function InNav({ unit = 'lbs' }: { unit?: 'lbs' | 'kg' }) {
+  return (
+    <>
+      <div id={APP_NAV_TOOLS_ID} data-testid="nav-tools" />
+      <RepMaxCalculator unit={unit} />
+    </>
+  );
+}
+
 async function openWith(weight: string, reps: string, unit: 'lbs' | 'kg' = 'lbs') {
   const user = userEvent.setup();
-  render(<RepMaxCalculator unit={unit} />);
+  render(<InNav unit={unit} />);
   await user.click(screen.getByRole('button', { name: 'Rep max calculator' }));
   if (weight) await user.type(screen.getByLabelText(`Weight (${unit})`), weight);
   if (reps) await user.type(screen.getByLabelText('Reps'), reps);
@@ -23,8 +34,16 @@ function rowFor(count: number) {
 
 describe('RepMaxCalculator', () => {
   it('is closed until asked for', () => {
-    render(<RepMaxCalculator unit="lbs" />);
+    render(<InNav />);
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('puts its button in the app header, labelled for what it opens', () => {
+    render(<InNav />);
+    const button = within(screen.getByTestId('nav-tools')).getByRole('button', {
+      name: 'Rep max calculator',
+    });
+    expect(button).toHaveTextContent('Rep max');
   });
 
   it('estimates a one-rep max from a set', async () => {
@@ -212,7 +231,7 @@ describe('RepMaxCalculator', () => {
     render(
       <>
         <button type="button">Start timed workout</button>
-        <RepMaxCalculator unit="lbs" />
+        <InNav />
       </>,
     );
     await user.click(screen.getByRole('button', { name: 'Rep max calculator' }));
@@ -225,7 +244,7 @@ describe('RepMaxCalculator', () => {
 
   it('closes when the page changes, and keeps the entries', async () => {
     const user = userEvent.setup();
-    const { rerender } = render(<RepMaxCalculator unit="lbs" />);
+    const { rerender } = render(<InNav />);
     const trigger = screen.getByRole('button', { name: 'Rep max calculator' });
     await user.click(trigger);
     await user.type(screen.getByLabelText('Weight (lbs)'), '200');
@@ -233,7 +252,7 @@ describe('RepMaxCalculator', () => {
     const start = mockPathname;
     mockPathname = `${start}/detail`;
     try {
-      rerender(<RepMaxCalculator unit="lbs" />);
+      rerender(<InNav />);
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(trigger).toHaveFocus();
 
@@ -251,6 +270,30 @@ describe('RepMaxCalculator', () => {
     expect(dialog).toBeInTheDocument();
     await user.click(dialog.parentElement as HTMLElement);
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('stays open when a drag from an input ends on the backdrop', async () => {
+    const user = await openWith('200', '');
+    const dialog = screen.getByRole('dialog');
+    await user.pointer([
+      { keys: '[MouseLeft>]', target: screen.getByLabelText('Weight (lbs)') },
+      { target: dialog.parentElement as HTMLElement },
+      { keys: '[/MouseLeft]' },
+    ]);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('forgets unreadable text when closed, since the field reopens empty', async () => {
+    const user = await openWith('', '');
+    const weight = screen.getByLabelText('Weight (lbs)');
+    Object.defineProperty(weight, 'validity', { configurable: true, value: { badInput: true } });
+    fireEvent.input(weight);
+    expect(screen.getByText('Enter a number.')).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Rep max calculator' }));
+    expect(screen.queryByText('Enter a number.')).toBeNull();
+    expect(screen.getByLabelText('Weight (lbs)')).not.toHaveAttribute('aria-invalid');
   });
 
   it('keeps the entries when reopened', async () => {

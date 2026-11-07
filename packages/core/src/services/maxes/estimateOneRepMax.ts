@@ -13,9 +13,10 @@ export function estimateOneRepMax(
 }
 
 /**
- * Estimates the weight for `targetReps` from a set of `weight` × `reps`, floored to
- * `increment`, and 0 for invalid input. It inverts {@link estimateOneRepMax}: from a one-rep
- * max, `estimateRepMax(oneRepMax, 1, n)` is the weight for n reps.
+ * Estimates the weight for `targetReps`, from 1 to {@link MAX_ESTIMATE_REPS}, from a set of
+ * `weight` × `reps`, floored to `increment`. An invalid `weight` or `reps` gives 0. It inverts
+ * {@link estimateOneRepMax}: from a one-rep max, `estimateRepMax(oneRepMax, 1, n)` is the
+ * weight for n reps.
  *
  * It works from the set, not from a floored one-rep max, because flooring twice
  * understates the set itself: 210 × 3 floors to a 220 one-rep max, which gives 207.5 for 3 reps.

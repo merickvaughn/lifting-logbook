@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { usePathname } from 'next/navigation';
 import {
   ESTIMATE_FLOOR_INCREMENT,
@@ -10,6 +11,7 @@ import {
   formatWeight,
 } from '@lifting-logbook/core';
 import type { WeightUnit } from '@lifting-logbook/types';
+import { APP_NAV_TOOLS_ID } from '@/lib/app-nav-tools';
 import styles from './RepMaxCalculator.module.css';
 
 /** Focusable descendants, in DOM order: the set the focus trap cycles through. */
@@ -48,13 +50,14 @@ function repsMessage(text: string): string | null {
  * nothing is saved, and the page behind it is left as it was, so a lifter can use it
  * mid-workout. The entries stay until the page does, for checking again between sets.
  *
- * The button sticks to the bottom of the screen, so a lifter partway down a page can reach
- * it without scrolling. Render it after the page's content: that keeps it in order for the
- * keyboard, and its place in the flow keeps the end of the page clear of it.
+ * The button goes in the sticky app header through a portal, so a lifter partway down a page
+ * can reach it without scrolling and it covers nothing. On the server and until this mounts,
+ * there is no button.
  *
  * Weights are entered and shown in the lifter's preferred unit, with no conversion.
  */
 export default function RepMaxCalculator({ unit }: { unit: WeightUnit }) {
+  const [toolsSlot, setToolsSlot] = useState<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
   const [weight, setWeight] = useState('');
   const [reps, setReps] = useState('');
@@ -66,8 +69,13 @@ export default function RepMaxCalculator({ unit }: { unit: WeightUnit }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const weightRef = useRef<HTMLInputElement>(null);
+  const pressedBackdropRef = useRef(false);
   const id = useId();
   const pathname = usePathname();
+
+  useEffect(() => {
+    setToolsSlot(document.getElementById(APP_NAV_TOOLS_ID));
+  }, []);
 
   // A layout keeps this mounted across a workout's views, and Back doesn't pass through
   // the dialog's Close button, so a new page has to close it.
@@ -81,7 +89,7 @@ export default function RepMaxCalculator({ unit }: { unit: WeightUnit }) {
     if (!open) return;
     const trigger = triggerRef.current;
     const dialog = dialogRef.current;
-    weightRef.current?.focus();
+    weightRef.current?.focus({ preventScroll: true });
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
@@ -110,10 +118,11 @@ export default function RepMaxCalculator({ unit }: { unit: WeightUnit }) {
       }
     }
 
-    // The page can move focus on its own: the timer dock does when it mounts.
+    // The page can move focus on its own: the timer dock does when it mounts. Back can land
+    // here mid-restore, and scrolling to the input would cancel the page's scroll restoration.
     function onFocusIn(event: FocusEvent) {
       if (dialog && event.target instanceof Node && !dialog.contains(event.target)) {
-        weightRef.current?.focus();
+        weightRef.current?.focus({ preventScroll: true });
       }
     }
 
@@ -122,6 +131,9 @@ export default function RepMaxCalculator({ unit }: { unit: WeightUnit }) {
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('focusin', onFocusIn);
+      // The inputs reopen empty, so what they couldn't read no longer applies.
+      setWeightUnreadable(false);
+      setRepsUnreadable(false);
       trigger?.focus();
     };
   }, [open]);
@@ -142,23 +154,31 @@ export default function RepMaxCalculator({ unit }: { unit: WeightUnit }) {
 
   return (
     <>
-      <div className={styles.row}>
-        <button
-          ref={triggerRef}
-          type="button"
-          className={`${styles.trigger} focus-ring`}
-          aria-haspopup="dialog"
-          onClick={() => setOpen(true)}
-        >
-          Rep max calculator
-        </button>
-      </div>
+      {toolsSlot &&
+        createPortal(
+          <button
+            ref={triggerRef}
+            type="button"
+            className={`${styles.trigger} focus-ring`}
+            aria-label="Rep max calculator"
+            aria-haspopup="dialog"
+            onClick={() => setOpen(true)}
+          >
+            Rep max
+          </button>,
+          toolsSlot,
+        )}
 
       {open && (
         <div
           className={styles.overlay}
+          // Only a press that starts here closes it: dragging a selection out of an input
+          // ends in a click on the backdrop too.
+          onMouseDown={(event) => {
+            pressedBackdropRef.current = event.target === event.currentTarget;
+          }}
           onClick={(event) => {
-            if (event.target === event.currentTarget) setOpen(false);
+            if (pressedBackdropRef.current && event.target === event.currentTarget) setOpen(false);
           }}
         >
           <div
