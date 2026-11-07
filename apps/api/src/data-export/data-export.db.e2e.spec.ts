@@ -9,7 +9,8 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import multipart from '@fastify/multipart';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { strFromU8, unzipSync } from 'fflate';
-import type { ImportKind, ImportPreviewResponse } from '@lifting-logbook/types';
+import type { ImportCommitResponse, ImportKind, ImportPreviewResponse } from '@lifting-logbook/types';
+import { PrismaService } from '../adapters/prisma/prisma.service';
 import { AppModule } from '../app.module';
 import { UserDataRows } from '../ports/IUserDataExportRepository';
 import { DomainConflictFilter } from '../programs/conflict.filter';
@@ -28,7 +29,8 @@ const SECOND_PROGRAM = 'rpt';
 const OWNER_PROGRAM_ID = '0e947000-0000-4000-8000-000000000001';
 const OTHER_PROGRAM_ID = '0e947000-0000-4000-8000-000000000002';
 const IMPORT_PROGRAM_ID = '0e947000-0000-4000-8000-000000000003';
-// In every row seeded for USER_OTHER, so a leak of any of its tables shows up in the archive.
+// In most rows seeded for USER_OTHER, so a leak of those shows up in the archive's text. The exact
+// row counts below catch a leak from the tables with no text column to carry it.
 const OTHER_MARK = 'other-user-marker';
 
 /**
@@ -89,7 +91,7 @@ async function cleanUsers(prisma: PrismaClient): Promise<void> {
   await prisma.importBatch.deleteMany({ where });
 }
 
-/** One row in every user-scoped table. `mark` lands in a text column of each. */
+/** At least one row in every user-scoped table. `mark` lands in a text column of most. */
 async function seedUser(
   prisma: PrismaClient,
   userId: string,
@@ -286,8 +288,10 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
   }, DB_E2E_HOOK_TIMEOUT_MS);
 
   it('runs as the restricted role, not the owner', async () => {
-    expect(APP_ROLE_URL).not.toBe(OWNER_DATABASE_URL);
-    expect(new URL(APP_ROLE_URL ?? '').username).toBe('lifting_app');
+    const rows = await app.get(PrismaService, { strict: false }).$queryRaw<
+      Array<{ role: string; rolsuper: boolean; rolbypassrls: boolean }>
+    >`SELECT current_user::text AS role, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user`;
+    expect(rows).toEqual([{ role: 'lifting_app', rolsuper: false, rolbypassrls: false }]);
   });
 
   it('accounts for every model in the schema', () => {
@@ -303,6 +307,23 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
     const rows = Array.isArray(table) ? table : [table];
     expect(rows.filter(Boolean).length).toBeGreaterThan(0);
   });
+
+  // USER_OTHER has rows in every table too, so a leak from any of them changes the count.
+  it.each(Object.entries(LOGBOOK_KEYS).filter(([model]) => model !== 'CustomProgramSpec'))(
+    "holds exactly the owner's %s rows in %s",
+    async (model, key) => {
+      const delegates = prisma as unknown as Record<
+        string,
+        { count(args: { where: { userId: string } }): Promise<number> }
+      >;
+      const stored = await delegates[model.charAt(0).toLowerCase() + model.slice(1)]!.count({
+        where: { userId: USER_OWNER },
+      });
+      const table = logbook.tables[key];
+      expect(stored).toBeGreaterThan(0);
+      expect(Array.isArray(table) ? table.length : 1).toBe(stored);
+    },
+  );
 
   it('never shows another user, in any file', () => {
     const paths = Object.keys(files);
@@ -348,13 +369,17 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(preview.errors).toEqual([]);
     });
 
-    it('commits', async () => {
+    it('commits, and writes its rows', async () => {
       const res = await upload(USER_IMPORT, program, 'commit', csv(), kind);
       expect(res.statusCode).toBe(200);
+      expect((res.json() as ImportCommitResponse).created).toBeGreaterThan(0);
     });
   });
 
-  it('restored the relative goal and the goal in kg as they were', async () => {
+  it('restores the relative goal and the goal in kg as they were', async () => {
+    const committed = await upload(USER_IMPORT, ACTIVE_PROGRAM, 'commit', files['strength-goals.csv']!, 'strength-goals');
+    expect(committed.statusCode).toBe(200);
+
     // The import stores a built-in lift under its catalog id, whatever the file spelled it.
     const goal = await prisma.strengthGoal.findUnique({
       where: { userId_program_lift: { userId: USER_IMPORT, program: ACTIVE_PROGRAM, lift: 'bench-press' } },

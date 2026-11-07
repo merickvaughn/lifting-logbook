@@ -6,13 +6,25 @@ import { downloadDataExport } from '@/lib/client-api';
 import { localToday } from '@/lib/focusSetup';
 import { logClientError } from '@/lib/log-client-error';
 
+// A browser may start the download after the click returns, and iOS Safari fails if the URL is
+// gone by then. FileSaver.js waits this long for the same reason.
+const REVOKE_DELAY_MS = 40_000;
+
 function saveFile(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   link.download = fileName;
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
+}
+
+function failureMessage(err: unknown): string {
+  // The browser's own text for this is about an aborted operation, not a download.
+  if (err instanceof Error && err.name === 'TimeoutError') {
+    return 'Your download took too long, so nothing was saved. Please try again in a moment.';
+  }
+  return err instanceof Error ? err.message : 'Failed to download your data.';
 }
 
 export default function DataSettingsPage() {
@@ -27,7 +39,7 @@ export default function DataSettingsPage() {
       saveFile(archive, `lifting-logbook-export-${localToday()}.zip`);
     } catch (err) {
       logClientError('downloadDataExport', err);
-      setError(err instanceof Error ? err.message : 'Failed to download your data.');
+      setError(failureMessage(err));
     } finally {
       setDownloading(false);
     }

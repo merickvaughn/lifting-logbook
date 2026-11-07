@@ -7,8 +7,9 @@ import { InMemoryTrainingMaxRepository } from './training-max.adapter';
 
 /**
  * Lift records, training maxes, strength goals, custom lifts and settings, which is what the
- * endpoint's in-memory tests read. Every other table is empty here: `logbook.json` coverage is
- * proven against Postgres, in user-data-export.db.e2e.spec.ts.
+ * endpoint's in-memory tests read. Every other table is empty here, and row shapes and order
+ * follow the in-memory stores. Only Postgres is authoritative for `logbook.json`, which is proven
+ * in data-export.db.e2e.spec.ts.
  */
 export class InMemoryUserDataExportRepository implements IUserDataExportRepository {
   constructor(
@@ -33,7 +34,10 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
       trainingMaxes: this.trainingMax.allByProgram(),
       strengthGoals: this.strengthGoal.allByProgram(),
       customPrograms: [],
-      customLifts: await this.customLift.list(),
+      customLifts: (await this.customLift.list()).map((lift) => {
+        const { userId: _userId, ...rest } = lift as typeof lift & { userId?: string };
+        return rest;
+      }),
       userSettings: settings,
       macrocycleDashboards: [],
       macrocycleScheduledWorkouts: [],

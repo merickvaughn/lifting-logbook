@@ -119,6 +119,24 @@ describe('Download My Data HTTP (e2e, in-memory adapters)', () => {
     expect(logged).not.toContain('Squat');
   });
 
+  it('writes a custom lift by name, and leaves the user id out of logbook.json', async () => {
+    const user = 'export-custom-lift';
+    const created = await inject({
+      method: 'POST',
+      url: '/lifts/custom',
+      headers: { ...auth(user), 'content-type': 'application/json' },
+      payload: JSON.stringify({ name: 'Zercher Squat', classification: 'compound' }),
+    });
+    expect(created.statusCode).toBeLessThan(300);
+    const { id } = created.json() as { id: string };
+
+    const files = unzip((await exportFor(user)).rawPayload);
+    const logbook = JSON.parse(files['logbook.json']!);
+
+    expect(logbook.tables.customLifts).toEqual([expect.objectContaining({ id, name: 'Zercher Squat' })]);
+    expect(files['logbook.json']).not.toContain('"userId"');
+  });
+
   it.each([
     ['lift-records.csv', 'lift-records'],
     ['training-maxes.csv', 'training-maxes'],
@@ -127,7 +145,8 @@ describe('Download My Data HTTP (e2e, in-memory adapters)', () => {
     const source = `export-source-${kind}`;
     const target = `export-target-${kind}`;
     const seed: Record<string, string> = {
-      'lift-records': `${LIFT_RECORD_HEADER}\n${PROGRAM},1,1,2026-01-05,Squat,1,200,5,\n${PROGRAM},1,1,2026-01-05,Bench Press,1,150,5,\n`,
+      // `Calf Raises` is a built-in preset's own name for a catalog lift, stored as written.
+      'lift-records': `${LIFT_RECORD_HEADER}\n${PROGRAM},1,1,2026-01-05,Squat,1,200,5,\n${PROGRAM},1,1,2026-01-05,Calf Raises,1,150,5,\n`,
       'training-maxes': 'Date Updated,Lift,Weight\n2026-01-05,Squat,300\n2026-01-05,Bench Press,200\n',
       'strength-goals':
         "Today's Date,2026-01-05,,,\nLift,Current TM,Intermediate,Advanced,Elite\nSquat,,400,,\nBench Press,,300,,\nGoal Date,N/A,,,\n",

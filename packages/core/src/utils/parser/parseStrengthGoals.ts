@@ -83,19 +83,18 @@ export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry
     if (!lift || lc === 'weight' || STOP.some((s) => lc.startsWith(s))) continue;
 
     const unit = norm(row[unitIdx]) === 'kg' ? 'kg' : 'lbs';
-    const ratio = ratioIdx >= 0 ? num(row[ratioIdx]) : undefined;
-    if (ratio !== undefined) {
-      entries.push({ lift, goalType: 'relative', unit, updatedAt, ratio });
-      continue;
-    }
-
     const tiers = tierIdxs
       .map((c) => num(row[c]))
       .filter((n): n is number => n !== undefined)
       // Sort ascending so "next milestone" is the numerically lowest tier above
       // the Current TM regardless of column order in the export.
       .sort((a, b) => a - b);
-    if (tiers.length === 0) continue;
+    if (tiers.length === 0) {
+      // A ratio beside tiers may only be for display, so the goal is relative only with none.
+      const ratio = ratioIdx >= 0 ? num(row[ratioIdx]) : undefined;
+      if (ratio !== undefined) entries.push({ lift, goalType: 'relative', unit, updatedAt, ratio });
+      continue;
+    }
 
     const currentTM = currentTmIdx >= 0 ? num(row[currentTmIdx]) : undefined;
     // Next milestone: lowest tier strictly above the Current TM; else the top tier

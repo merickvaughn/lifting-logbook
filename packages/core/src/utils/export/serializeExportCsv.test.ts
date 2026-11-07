@@ -91,6 +91,11 @@ describe('serializeLiftRecords', () => {
     const table = parseCsvText(serializeLiftRecords([record()]));
     expect(classifyImport(table).type).toBe('lift-records');
   });
+
+  it('is classified as lift records when no lift name is recognized', () => {
+    const table = parseCsvText(serializeLiftRecords([record({ lift: 'Zercher Squat' })]));
+    expect(classifyImport(table).type).toBe('lift-records');
+  });
 });
 
 describe('splitLiftRecordsForImport', () => {
@@ -208,6 +213,20 @@ describe('serializeStrengthGoals', () => {
     );
     expect(goals).toMatchObject([{ lift: 'Squat', goalType: 'absolute', target: 280, unit: 'lbs' }]);
   });
+
+  it('keeps the tiers when a sheet shows a ratio beside them', () => {
+    const goals = parseStrengthGoals(
+      parseCsvText(['Lift,Current TM,Ratio,Intermediate,Advanced', 'Squat,250,1.5,280,350'].join('\n')),
+    );
+    expect(goals).toMatchObject([{ lift: 'Squat', goalType: 'absolute', target: 280 }]);
+  });
+
+  it('keeps the value of an older relative goal that holds a target and no ratio', () => {
+    const table = parseCsvText(
+      serializeStrengthGoals([{ lift: 'Squat', goalType: 'relative', target: 400, ratio: null, unit: 'lbs' }], today),
+    );
+    expect(parseStrengthGoals(table)).toMatchObject([{ lift: 'Squat', target: 400 }]);
+  });
 });
 
 describe('serializeProgramSpec', () => {
@@ -230,6 +249,11 @@ describe('serializeProgramSpec', () => {
     const table = parseCsvText(serializeProgramSpec([spec]));
     expect(parseLiftingProgramSpec(table)).toEqual([spec]);
     expect(classifyImport(table).type).toBe('program-spec');
+  });
+
+  it('escapes a week type, which the custom-program API accepts as free text', () => {
+    const [, row] = parseCsvText(serializeProgramSpec([{ ...spec, weekType: '=HYPERLINK("x")' }]));
+    expect(row![row!.length - 1]).toBe(`'=HYPERLINK("x")`);
   });
 
   it('leaves a missing week type empty, which the parser defaults', () => {

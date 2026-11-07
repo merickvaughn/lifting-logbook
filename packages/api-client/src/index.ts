@@ -705,8 +705,8 @@ export function createApiClient(config: ApiClientConfig) {
 
     // -- User settings -----------------------------------------------------
     /**
-     * Download My Data (#947): the whole logbook as one zip. The server allows its read 30s and
-     * then has to build the archive, so this outlasts the default bound.
+     * Download My Data (#947): the whole logbook as one zip. The server allows its reads 30s and
+     * then builds the archive outside that, so this outlasts the default bound.
      */
     async downloadDataExport(): Promise<Blob> {
       const path = '/users/me/export';

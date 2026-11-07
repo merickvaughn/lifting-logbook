@@ -50,6 +50,18 @@ describe('RlsContextService', () => {
       });
     });
 
+    it('uses a longer timeout when the caller passes one', async () => {
+      const tx = { $executeRaw: jest.fn().mockResolvedValue(undefined) };
+      const prisma = {
+        $transaction: jest.fn(async (cb: (client: typeof tx) => Promise<unknown>) => cb(tx)),
+      } as unknown as PrismaService;
+      const service = new RlsContextService(makeCls({ [RLS_USER_ID_KEY]: 'user-42' }), prisma);
+
+      await service.withUserContext(async () => 'ok', 30_000);
+
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 30_000 });
+    });
+
     it('clears the tx-client binding even when fn throws', async () => {
       const tx = { $executeRaw: jest.fn().mockResolvedValue(undefined) };
       const prisma = {

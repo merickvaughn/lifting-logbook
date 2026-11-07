@@ -26,9 +26,10 @@ describe('Settings → Data', () => {
 
   afterEach(() => click.mockRestore());
 
-  it('saves the archive under a dated name, then releases its URL', async () => {
+  it('saves the archive under a dated name, then releases its URL once the browser has had time', async () => {
     const archive = new Blob(['zip']);
     download.mockResolvedValue(archive);
+    const later = jest.spyOn(global, 'setTimeout');
     render(<DataSettingsPage />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
@@ -42,7 +43,21 @@ describe('Settings → Data', () => {
         download: expect.stringMatching(/^lifting-logbook-export-\d{4}-\d{2}-\d{2}\.zip$/),
       },
     ]);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+
+    const revoke = later.mock.calls.find(([, delay]) => delay === 40_000);
+    later.mockRestore();
+    (revoke![0] as () => void)();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:export');
+  });
+
+  it('explains a download that timed out in its own words', async () => {
+    download.mockRejectedValue(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+    render(<DataSettingsPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your download took too long');
   });
 
   it('shows and reports a failed download, and lets the user try again', async () => {

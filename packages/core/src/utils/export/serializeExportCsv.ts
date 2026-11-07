@@ -68,7 +68,7 @@ export const LIFT_RECORD_EXPORT_HEADERS: readonly string[] = [
 ];
 
 /** Joins a set's modification ids in the `Modifications` column. Ids are uuids, so never contain it. */
-export const LIFT_RECORD_MODIFICATION_SEPARATOR = ';';
+const LIFT_RECORD_MODIFICATION_SEPARATOR = ';';
 
 /** The reserved program holding workouts outside any cycle (decision 23 of the same proposal). */
 const NON_CYCLE_PROGRAM = 'non-cycle';
@@ -181,8 +181,9 @@ export function serializeStrengthGoals(goals: readonly StrengthGoalExportRow[], 
     row("Today's Date", today),
     STRENGTH_GOAL_HEADERS,
     ...goals.map((g) =>
-      g.goalType === 'relative'
-        ? row(escapeCsvFormula(g.lift), '', '', '', '', g.ratio ?? null, g.unit)
+      // Older rows are `relative` with a target and no ratio, so this follows the value they hold.
+      g.goalType === 'relative' && g.ratio != null
+        ? row(escapeCsvFormula(g.lift), '', '', '', '', g.ratio, g.unit)
         : row(escapeCsvFormula(g.lift), '', g.target ?? null, '', '', '', g.unit),
     ),
     row('Goal Date', 'N/A'),
@@ -204,7 +205,7 @@ export function serializeProgramSpec(rows: readonly ProgramSpecExportRow[]): str
       escapeCsvFormula(r.warmUpPct),
       r.wtDecrementPct,
       escapeCsvFormula(r.activation),
-      r.weekType ?? '',
+      escapeCsvFormula(r.weekType ?? ''),
     ]),
   ]);
 }
