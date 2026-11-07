@@ -1,6 +1,7 @@
 import {
   LiftRecord,
   buildLiftRecordId,
+  findAlreadyLogged,
   liftRecordNaturalKey,
   liftSpellings,
   withModifications,
@@ -47,9 +48,7 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
   }
 
   async findExistingRecords(program: string, candidates: LiftRecord[]): Promise<LiftRecord[]> {
-    const stored = this.store.get(program) ?? [];
-    const existingKeys = new Set(stored.map(liftRecordNaturalKey));
-    return candidates.filter((r) => existingKeys.has(liftRecordNaturalKey(r)));
+    return findAlreadyLogged(candidates, this.store.get(program) ?? []);
   }
 
   async updateLiftRecord(

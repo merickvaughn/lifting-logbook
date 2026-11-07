@@ -7,6 +7,7 @@ import type { Options as PinoHttpOptions } from 'pino-http';
 import { RepositoryFactoryModule } from './adapters/factory/repository-factory.module';
 import { AuthModule } from './auth/auth.module';
 import { CustomProgramsModule } from './custom-programs/custom-programs.module';
+import { DataExportModule } from './data-export/data-export.module';
 import { FocusModule } from './focus/focus.module';
 import { HealthModule } from './health/health.module';
 import { LiftsModule } from './lifts/lifts.module';
@@ -126,6 +127,7 @@ export const pinoHttpOptions: PinoHttpOptions = {
     }),
     AuthModule,
     CustomProgramsModule,
+    DataExportModule,
     FocusModule,
     HealthModule,
     LiftsModule,

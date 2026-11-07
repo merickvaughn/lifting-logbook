@@ -1,3 +1,4 @@
+import { liftSpellings } from '../../catalog/builtInLift';
 import { formatDateYYYYMMDD, parseYYYYMMDD } from '../jsUtil';
 
 /** The fields that identify one logged set within a (userId, program) scope. */
@@ -10,6 +11,8 @@ export interface LiftRecordKey {
   occurrence?: number;
   setNum: number;
 }
+
+type LoggedSet = LiftRecordKey & { weight: number; reps: number };
 
 /**
  * Returns the stringified natural key for a lift record:
@@ -41,6 +44,25 @@ export interface LiftRecordKey {
  */
 export function liftRecordNaturalKey(r: LiftRecordKey): string {
   return `${r.macrocycleNum}:${r.workoutNum}:${formatDateYYYYMMDD(r.date)}:${r.lift}:${liftRecordSetSegment(r)}`;
+}
+
+/**
+ * The candidates already logged in `stored`: the same natural key, or the same set under another
+ * spelling of the lift. Stored rows mix spellings (#1135) and the database's unique key can't see
+ * that, so `Calf Raises` and `calf-raise` on one set would otherwise both be written (#947).
+ *
+ * Another spelling must also match on weight and reps, because it isn't always the same set: one
+ * day can hold `Pull-up` and `Weighted Pull-ups` as two slots, and both are the catalog's `pull-up`.
+ */
+export function findAlreadyLogged<R extends LoggedSet>(
+  candidates: readonly R[],
+  stored: readonly LoggedSet[],
+): R[] {
+  const sameSetKey = (r: LoggedSet): string =>
+    `${liftRecordNaturalKey({ ...r, lift: liftSpellings(r.lift)[0] ?? r.lift })}|${r.weight}|${r.reps}`;
+  const exact = new Set(stored.map(liftRecordNaturalKey));
+  const sameSet = new Set(stored.map(sameSetKey));
+  return candidates.filter((r) => exact.has(liftRecordNaturalKey(r)) || sameSet.has(sameSetKey(r)));
 }
 
 /**

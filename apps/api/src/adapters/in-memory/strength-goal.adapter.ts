@@ -15,6 +15,12 @@ export class InMemoryStrengthGoalRepository implements IStrengthGoalRepository {
     return m;
   }
 
+  allByProgram(): (StrengthGoalEntry & { program: string })[] {
+    return [...this.store].flatMap(([program, goals]) =>
+      [...goals.values()].map((goal) => ({ ...goal, program })),
+    );
+  }
+
   async getGoals(program: string): Promise<StrengthGoalEntry[]> {
     return Array.from(this.programMap(program).values());
   }

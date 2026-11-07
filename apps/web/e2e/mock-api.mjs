@@ -786,6 +786,20 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
+  // GET /users/me/export: the end-of-central-directory record alone is a valid empty zip.
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && url.pathname === '/users/me/export') {
+    const emptyZip = Buffer.alloc(22);
+    emptyZip.writeUInt32LE(0x06054b50, 0);
+    res.writeHead(200, {
+      'Content-Type': 'application/zip',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(emptyZip);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
   // GET /users/me/settings
   // -------------------------------------------------------------------------
   if (method === 'GET' && url.pathname === '/users/me/settings') {

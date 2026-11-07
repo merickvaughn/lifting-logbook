@@ -61,6 +61,28 @@ describe("parseStrengthGoals", () => {
     expect(goals[0]).toMatchObject({ lift: "Squat", target: 420 });
   });
 
+  it("drops a ladder's footer rows, however they're worded, and keeps a lift named like Weight", () => {
+    const goals = parseStrengthGoals([
+      ["Lift", "Current TM", "Intermediate"],
+      ["Weighted Dips", "50", "90"],
+      ["Note: tiers are from the 2022 table", "1", "2"],
+      ["Notes", "5", "10"],
+      ["Goal Dates", "1", "2024"],
+      ["Goal Date (target)", "1", "2027"],
+      ["Weight", "175", "180"],
+    ]);
+    expect(goals.map((g) => g.lift)).toEqual(["Weighted Dips"]);
+  });
+
+  it("needs both export columns before it treats a footer label as a lift", () => {
+    const goals = parseStrengthGoals([
+      ["Lift", "Current TM", "Intermediate", "Ratio"],
+      ["Goal Date", "", "2024", ""],
+      ["Squat", "", "", "1.5"],
+    ]);
+    expect(goals.map((g) => g.lift)).toEqual(["Squat"]);
+  });
+
   it("returns an empty array when there is no Lift header row", () => {
     expect(parseStrengthGoals([])).toEqual([]);
     expect(parseStrengthGoals([["Weight", "175"], ["Squat", "250"]])).toEqual([]);

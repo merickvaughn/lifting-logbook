@@ -17,7 +17,7 @@ export interface LiftImportValidationResult {
  * When a row is valid, its `lift` field is resolved via slotMap: from a CSV
  * abbreviation (e.g. "Bench P.") to the canonical lift ID (e.g. "bench-press").
  * Under buildImportSlotMap, a catalog lift outside DEFAULT_SLOT_MAP resolves to
- * its display name instead (issue #1116).
+ * its display name instead (issue #1116), and an alias stays as written (issue #947).
  */
 export function validateLiftImport(
   records: LiftRecord[],

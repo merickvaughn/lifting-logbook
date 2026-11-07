@@ -1,5 +1,5 @@
 /**
- * The four user-configurable settings sections, in display order.
+ * The settings sections, in display order.
  *
  * Single source of truth for the settings sub-nav ({@link SettingsNav}) and the
  * `/settings` hub cards, so the label/route pairs can never drift between the
@@ -43,5 +43,10 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     href: '/settings/units',
     label: 'Units',
     description: 'Choose lbs or kg for how weights are displayed across the app.',
+  },
+  {
+    href: '/settings/data',
+    label: 'Data',
+    description: 'Download a copy of everything in your logbook.',
   },
 ];

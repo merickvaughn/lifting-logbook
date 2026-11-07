@@ -1,6 +1,6 @@
 # Proposal: Download My Data — Full Logbook Export
 
-**Status:** `draft`
+**Status:** `shipped`
 **Date:** 2026-08-26
 **Issue:** [#947](https://github.com/merickvaughn/lifting-logbook/issues/947)
 
@@ -41,6 +41,13 @@ destinations** — no new import path to build, and no format invented for this 
 exports the app stores"; this proposal makes that sentence true of the app itself rather than only
 of its predecessor. `logbook.json` carries `schemaVersion` and `exportedAt` so a future restore
 path can migrate older bundles.
+
+The lift-record CSV uses the format in decision 22 of
+[`2026-11-06-import-macrocycle-assignment.md`](2026-11-06-import-macrocycle-assignment.md), so a
+backup keeps a set's occurrence, modifications and macrocycle status, and it splits into parts
+between macrocycles past the importer's 5,000-row limit. The owner chose one shared export on
+2026-11-06. [#1181](https://github.com/merickvaughn/lifting-logbook/issues/1181) adds a filtered
+download on the same screen, and whichever ships first builds the serializer and the screen.
 
 One gap is worth naming rather than discovering later: the `program-spec` import writes only
 `CustomProgramSpec` rows (`apps/api/src/adapters/prisma/hybrid-program-spec.repository.ts`), while
@@ -116,6 +123,28 @@ system — which is a different job from keeping two devices in agreement.
 - **Zip dependency.** The chosen approach adds one zip library to `apps/web` only, keeping the
   API a pure data boundary that returns CSV text plus JSON. The alternative — five separate
   download links, zero new dependencies — was considered and rejected on UX grounds.
+
+## As built
+
+Where [#947](https://github.com/merickvaughn/lifting-logbook/issues/947) differs from the above:
+
+- **The API builds the zip.** `apps/api` already depends on `fflate`, so this added no dependency,
+  and `apps/web` only saves the response.
+- **More than one program.** `lift-records.csv` covers every program, because its `Program` column
+  says which. The other three CSVs can't name a program, since `/import` takes it from the URL. The
+  root holds them for the active program, and each other program with any gets a folder under
+  `other-programs/`. A single-program account sees exactly the five files.
+- **Strength goals gained optional `Ratio` and `Unit` columns.** The ladder can only say "absolute
+  goal in lbs", which would have turned every relative goal, the default in the app, into an
+  absolute one. `parseStrengthGoals` reads both columns, so this isn't quite "the shapes the parsers
+  already accept".
+- **Import changed in three small ways, so exports come back clean.** It now accepts every lift name
+  the catalog holds only as an alias, such as `Calf Raises`, and stores it as written, which affects
+  any file, not only an export. A set already logged under another spelling of the lift counts as a
+  duplicate. A file with an `Occurrence` column identifies itself as lift records, so one made
+  mostly of custom lifts still classifies.
+- **The reads run in their own transaction.** The endpoint uses `@SkipRlsTransaction()` so that
+  building the archive doesn't hold a pooled connection.
 
 ## References
 
