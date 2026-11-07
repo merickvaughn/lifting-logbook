@@ -24,6 +24,7 @@ import { PrismaWorkoutRepository } from './workout.repository';
 import { HybridLiftingProgramSpecRepository } from './hybrid-program-spec.repository';
 import { InMemoryProgramPhilosophyRepository } from '../in-memory/program-philosophy.adapter';
 import { InMemoryLiftingProgramSpecRepository } from '../in-memory/lifting-program-spec.adapter';
+import { PrismaUserDataExportRepository } from './user-data-export.repository';
 import { PrismaUserSettingsRepository } from './user-settings.repository';
 
 @Injectable()
@@ -68,6 +69,7 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
       strengthGoal: new PrismaStrengthGoalRepository(db, user.id),
       trainingMax: new PrismaTrainingMaxRepository(db, user.id),
       trainingMaxHistory: new PrismaTrainingMaxHistoryRepository(db, user.id),
+      userDataExport: new PrismaUserDataExportRepository(db, user.id),
       userSettings: new PrismaUserSettingsRepository(db, user.id),
       workout: new PrismaWorkoutRepository(db, user.id),
       workoutDateOverride: new PrismaWorkoutDateOverrideRepository(db, user.id),

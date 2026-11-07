@@ -16,6 +16,7 @@ import { InMemoryProgramPhilosophyRepository } from '../in-memory/program-philos
 import { InMemoryStrengthGoalRepository } from '../in-memory/strength-goal.adapter';
 import { InMemoryTrainingMaxRepository } from '../in-memory/training-max.adapter';
 import { InMemoryTrainingMaxHistoryRepository } from '../in-memory/training-max-history.adapter';
+import { InMemoryUserDataExportRepository } from '../in-memory/user-data-export.adapter';
 import { InMemoryUserSettingsRepository } from '../in-memory/user-settings.adapter';
 import { InMemoryWorkoutDateOverrideRepository } from '../in-memory/workout-date-override.adapter';
 import { InMemoryWorkoutLiftOverrideRepository } from '../in-memory/workout-lift-override.adapter';
@@ -39,9 +40,13 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       const sharedRecords: Map<string, LiftRecord[]> = preSeed
         ? new Map([[SEED_PROGRAM, seedLiftRecords()]])
         : new Map();
+      const customLift = new InMemoryCustomLiftRepository(user.id);
+      const strengthGoal = new InMemoryStrengthGoalRepository();
+      const trainingMax = new InMemoryTrainingMaxRepository(preSeed);
+      const userSettings = new InMemoryUserSettingsRepository();
       this.bundles.set(user.id, {
         bodyWeight: new InMemoryBodyWeightRepository(),
-        customLift: new InMemoryCustomLiftRepository(user.id),
+        customLift,
         focus: new InMemoryFocusRepository(),
         macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(preSeed),
         macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
@@ -51,10 +56,17 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
         liftModification: new InMemoryLiftModificationRepository(user.id, sharedRecords),
         liftRecord: new InMemoryLiftRecordRepository(sharedRecords),
         programPhilosophy: new InMemoryProgramPhilosophyRepository(),
-        strengthGoal: new InMemoryStrengthGoalRepository(),
-        trainingMax: new InMemoryTrainingMaxRepository(preSeed),
+        strengthGoal,
+        trainingMax,
         trainingMaxHistory: new InMemoryTrainingMaxHistoryRepository(),
-        userSettings: new InMemoryUserSettingsRepository(),
+        userDataExport: new InMemoryUserDataExportRepository(
+          sharedRecords,
+          trainingMax,
+          strengthGoal,
+          customLift,
+          userSettings,
+        ),
+        userSettings,
         workout: new InMemoryWorkoutRepository(sharedRecords),
         workoutDateOverride: new InMemoryWorkoutDateOverrideRepository(),
         workoutLiftOverride: new InMemoryWorkoutLiftOverrideRepository(),

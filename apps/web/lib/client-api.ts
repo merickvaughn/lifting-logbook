@@ -85,6 +85,8 @@ export const {
   dryRunImport,
   undoImport,
   fetchGoogleSheetWorkbook,
+  // A read, but the browser has to receive it to save it (#947).
+  downloadDataExport,
   createCustomLift,
   // Read, not just a write — but the 409 self-heal path needs to refetch the
   // live custom-lift list client-side (a stale/absent local copy otherwise

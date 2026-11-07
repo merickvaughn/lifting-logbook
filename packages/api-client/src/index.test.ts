@@ -299,6 +299,31 @@ describe('createApiClient', () => {
     });
   });
 
+  describe('downloadDataExport (#947)', () => {
+    it('returns the archive as a blob, with auth and its own timeout', async () => {
+      mockFetch.mockResolvedValue(new Response('zip-bytes', { status: 200 }));
+
+      const blob = await makeClient().downloadDataExport();
+
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/users/me/export');
+      expect(init.headers).toEqual(AUTH);
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(await blob.text()).toBe('zip-bytes');
+    });
+
+    it('throws with the server message and status on failure', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ message: 'No access' }), { status: 403 }),
+      );
+
+      await expect(makeClient().downloadDataExport()).rejects.toMatchObject({
+        message: expect.stringContaining('No access'),
+        status: 403,
+      });
+    });
+  });
+
   describe('switchProgram', () => {
     it('sends a JSON body alongside the JSON content-type header (issue #665)', async () => {
       mockFetch.mockResolvedValue(

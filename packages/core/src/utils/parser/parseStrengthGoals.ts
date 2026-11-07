@@ -26,6 +26,9 @@ import { parseDateStringUTC, toUTCMidnight } from '../jsUtil';
  * NOTE (#477): full multi-tier goals + per-tier goal dates need a model change and
  * are tracked as a follow-up; the header/tier matching here is name-based and
  * tolerant so minor export variations still parse.
+ *
+ * Optional `Ratio` and `Unit` columns, which Download My Data writes (#947), carry what the
+ * ladder can't: a `Ratio` value makes the goal relative, and `Unit` of `kg` overrides lbs.
  */
 export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry[] {
   const norm = (c: SpreadsheetCell | undefined): string =>
@@ -38,11 +41,15 @@ export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry
 
   // Classify columns: the Current-TM column vs. the goal-tier columns (in order).
   let currentTmIdx = -1;
+  let ratioIdx = -1;
+  let unitIdx = -1;
   const tierIdxs: number[] = [];
   for (let c = 1; c < headerNames.length; c++) {
     const name = headerNames[c]!;
     if (!name) continue;
     if (name.includes('current') || name === 'tm') currentTmIdx = c;
+    else if (name === 'ratio') ratioIdx = c;
+    else if (name === 'unit') unitIdx = c;
     else tierIdxs.push(c);
   }
 
@@ -64,15 +71,23 @@ export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry
     return isNaN(n) ? undefined : n;
   };
 
-  // Metadata/footer rows that are not lifts.
-  const STOP = ['goal date', 'note', 'start date', "today's date", 'today', 'weight'];
+  // Metadata/footer rows that are not lifts. `Weight` is matched whole: by prefix it also drops
+  // a lift such as "Weighted Dips" (#947).
+  const STOP = ['goal date', 'note', 'start date', "today's date", 'today'];
 
   const entries: StrengthGoalEntry[] = [];
   for (let i = headerIdx + 1; i < data.length; i++) {
     const row = data[i] ?? [];
     const lift = String(row[0] ?? '').trim();
     const lc = lift.toLowerCase();
-    if (!lift || STOP.some((s) => lc.startsWith(s))) continue;
+    if (!lift || lc === 'weight' || STOP.some((s) => lc.startsWith(s))) continue;
+
+    const unit = norm(row[unitIdx]) === 'kg' ? 'kg' : 'lbs';
+    const ratio = ratioIdx >= 0 ? num(row[ratioIdx]) : undefined;
+    if (ratio !== undefined) {
+      entries.push({ lift, goalType: 'relative', unit, updatedAt, ratio });
+      continue;
+    }
 
     const tiers = tierIdxs
       .map((c) => num(row[c]))
@@ -92,7 +107,7 @@ export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry
     entries.push({
       lift,
       goalType: 'absolute',
-      unit: 'lbs',
+      unit,
       updatedAt,
       ...(target !== undefined ? { target } : {}),
     });

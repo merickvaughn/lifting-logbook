@@ -13,6 +13,7 @@ import { IProgramPhilosophyRepository } from './IProgramPhilosophyRepository';
 import { IStrengthGoalRepository } from './IStrengthGoalRepository';
 import { ITrainingMaxHistoryRepository } from './ITrainingMaxHistoryRepository';
 import { ITrainingMaxRepository } from './ITrainingMaxRepository';
+import { IUserDataExportRepository } from './IUserDataExportRepository';
 import { IUserSettingsRepository } from './IUserSettingsRepository';
 import { IWorkoutDateOverrideRepository } from './IWorkoutDateOverrideRepository';
 import { IWorkoutLiftOverrideRepository } from './IWorkoutLiftOverrideRepository';
@@ -34,6 +35,7 @@ export interface RepositoryBundle {
   strengthGoal: IStrengthGoalRepository;
   trainingMax: ITrainingMaxRepository;
   trainingMaxHistory: ITrainingMaxHistoryRepository;
+  userDataExport: IUserDataExportRepository;
   userSettings: IUserSettingsRepository;
   workout: IWorkoutRepository;
   workoutDateOverride: IWorkoutDateOverrideRepository;
