@@ -355,8 +355,9 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
   });
 
   it('restored the relative goal and the goal in kg as they were', async () => {
+    // The import stores a built-in lift under its catalog id, whatever the file spelled it.
     const goal = await prisma.strengthGoal.findUnique({
-      where: { userId_program_lift: { userId: USER_IMPORT, program: ACTIVE_PROGRAM, lift: 'Bench Press' } },
+      where: { userId_program_lift: { userId: USER_IMPORT, program: ACTIVE_PROGRAM, lift: 'bench-press' } },
     });
     expect(goal).toMatchObject({ goalType: 'relative', ratio: 1.5, unit: 'kg' });
   });
