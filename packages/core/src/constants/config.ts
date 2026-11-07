@@ -22,10 +22,12 @@ export const MROUND = (number: number, multiple: number) => {
   return Math.round(number / multiple) * multiple;
 };
 
+export const ESTIMATE_FLOOR_INCREMENT = 2.5;
+
 // Floors down to the nearest lower multiple of `increment` (default 2.5 lb
 // plates), for formula-derived estimates — see docs/standards/training-max-precision.md.
 // Zero-guard matches MROUND above: degrade to the unrounded value instead of dividing by zero.
-export const floorToIncrement = (value: number, increment = 2.5): number => {
+export const floorToIncrement = (value: number, increment = ESTIMATE_FLOOR_INCREMENT): number => {
   if (increment === 0) return value;
   return Math.floor(value / increment) * increment;
 };

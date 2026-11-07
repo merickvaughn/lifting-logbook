@@ -39,6 +39,11 @@
   gap: var(--space-1);
 }
 
+/* Empty on most pages, where it mustn't add a gap to the row. */
+.tools:empty {
+  display: none;
+}
+
 .link {
   display: inline-flex;
   align-items: center;

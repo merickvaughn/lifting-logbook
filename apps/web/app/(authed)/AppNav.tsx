@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { APP_NAV_TOOLS_ID } from '@/lib/app-nav-tools';
 import styles from './AppNav.module.css';
 
 /** Primary destinations surfaced on every authed screen. */
@@ -50,6 +51,8 @@ export default function AppNav() {
             </Link>
           );
         })}
+        {/* Inside the nav so that a short control wraps with the links, not onto its own row. */}
+        <div id={APP_NAV_TOOLS_ID} className={styles.tools} />
       </nav>
     </header>
   );
