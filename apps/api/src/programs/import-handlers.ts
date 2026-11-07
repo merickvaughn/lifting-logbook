@@ -24,11 +24,10 @@ import {
   buildTrainingMaxPreImage,
   buildStrengthGoalPreImage,
   buildProgramSpecPreImage,
-  classifyImportRows,
+  classifyLiftRecordRows,
   pairWithRowNumber,
   buildSkippedDetail,
   liftRecordLabel,
-  liftRecordNaturalKey,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
 import { liftNamesFor } from './effective-slot-map.util';
@@ -71,9 +70,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
   },
   async commit(valid, program, repos) {
     const records = valid.map((r) => ({ ...r, program }));
-    const existingKeys = new Set(
-      (await repos.liftRecord.findExistingRecords(program, records)).map(liftRecordNaturalKey),
-    );
+    const existing = await repos.liftRecord.findExistingRecords(program, records);
     // Row numbers below are batch-relative — 1-based within *this* commit
     // batch, i.e. after any Phase 3 excludeKeys/splitDest filtering the
     // controller already applied. For a plain commit (neither) that matches
@@ -88,11 +85,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     // first means `toCreate` is already exactly what should be written, so
     // the DB's own `createMany({ skipDuplicates: true })` skip logic is
     // belt-and-suspenders rather than the source of truth for the count.
-    const classified = [
-      ...classifyImportRows(rows, ({ r }) => liftRecordNaturalKey(r), (_row, k) =>
-        existingKeys.has(k) ? 'skip' : 'create',
-      ),
-    ];
+    const classified = [...classifyLiftRecordRows(rows, ({ r }) => r, existing)];
     const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row.r);
     const created = await repos.liftRecord.appendLiftRecords(program, toCreate);
     const liftNames = await liftNamesFor(repos);

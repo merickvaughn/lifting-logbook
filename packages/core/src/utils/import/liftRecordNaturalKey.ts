@@ -1,5 +1,6 @@
 import { liftSpellings } from '../../catalog/builtInLift';
 import { formatDateYYYYMMDD, parseYYYYMMDD } from '../jsUtil';
+import { type ClassifiedRow, classifyImportRows } from './classifyAndCount';
 
 /** The fields that identify one logged set within a (userId, program) scope. */
 export interface LiftRecordKey {
@@ -47,22 +48,59 @@ export function liftRecordNaturalKey(r: LiftRecordKey): string {
 }
 
 /**
- * The candidates already logged in `stored`: the same natural key, or the same set under another
- * spelling of the lift. Stored rows mix spellings (#1135) and the database's unique key can't see
- * that, so `Calf Raises` and `calf-raise` on one set would otherwise both be written (#947).
+ * What two rows share when they are the same set under different spellings of the lift: the
+ * natural key with one spelling standing in for all of them, plus weight and reps.
  *
- * Another spelling must also match on weight and reps, because it isn't always the same set: one
- * day can hold `Pull-up` and `Weighted Pull-ups` as two slots, and both are the catalog's `pull-up`.
+ * Weight and reps are part of it because another spelling isn't always the same set: one day can
+ * hold `Pull-up` and `Weighted Pull-ups` as two slots, and both are the catalog's `pull-up`.
+ */
+function sameSetKey(r: LoggedSet): string {
+  return `${liftRecordNaturalKey({ ...r, lift: liftSpellings(r.lift)[0] ?? r.lift })}|${r.weight}|${r.reps}`;
+}
+
+/**
+ * The candidates already logged in `stored`: the same natural key, or the same set under another
+ * spelling of the lift ({@link sameSetKey}). Stored rows mix spellings (#1135) and the database's
+ * unique key can't see that, so `Calf Raises` and `calf-raise` on one set would otherwise both be
+ * written (#947).
  */
 export function findAlreadyLogged<R extends LoggedSet>(
   candidates: readonly R[],
   stored: readonly LoggedSet[],
 ): R[] {
-  const sameSetKey = (r: LoggedSet): string =>
-    `${liftRecordNaturalKey({ ...r, lift: liftSpellings(r.lift)[0] ?? r.lift })}|${r.weight}|${r.reps}`;
   const exact = new Set(stored.map(liftRecordNaturalKey));
   const sameSet = new Set(stored.map(sameSetKey));
   return candidates.filter((r) => exact.has(liftRecordNaturalKey(r)) || sameSet.has(sameSetKey(r)));
+}
+
+/**
+ * Classifies lift-record rows for one import: every path that previews or commits one goes through
+ * this, so they report the same counts. A row is a skip when its natural key is in `stored` or
+ * earlier in the file, or when an earlier row being created is the same set under another spelling
+ * (#1191).
+ *
+ * Each row keeps its own natural key as `key`, including one skipped for another spelling, because
+ * that's the key it would be stored under. `stored` should come from `findExistingRecords`, which
+ * returns the candidates already logged, so a row stored under another spelling is matched there.
+ */
+export function classifyLiftRecordRows<T>(
+  rows: readonly T[],
+  recordOf: (row: T) => LoggedSet,
+  stored: readonly LiftRecordKey[],
+): Generator<ClassifiedRow<T>> {
+  const storedKeys = new Set(stored.map(liftRecordNaturalKey));
+  const creating = new Set<string>();
+  return classifyImportRows(
+    rows,
+    (row) => liftRecordNaturalKey(recordOf(row)),
+    (row, key) => {
+      if (storedKeys.has(key)) return 'skip';
+      const set = sameSetKey(recordOf(row));
+      if (creating.has(set)) return 'skip';
+      creating.add(set);
+      return 'create';
+    },
+  );
 }
 
 /**
