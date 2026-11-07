@@ -801,6 +801,167 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       });
     });
 
+    // #1169: strength goals upsert by lift too, and the first row wins.
+    describe('strength-goal rows spelling one lift differently', () => {
+      const goalsCsv = (...rows: string[]) =>
+        ['Weight,175,,,', "Today's Date,6/9/2026,,,", 'Lift,Current TM,Intermediate,Advanced,Elite', ...rows].join('\n');
+      const SQUATS = goalsCsv('Squat,250,350,,', 'Back Squat,250,400,,');
+      const PRESSES = goalsCsv('OH Press,100,150,,', 'OH Press-HV,50,100,,');
+      const storedGoals = async (program: string) => {
+        const goals = (
+          await app.getHttpAdapter().getInstance().inject({
+            method: 'GET',
+            url: `/programs/${program}/strength-goals`,
+            headers: AUTH,
+          })
+        ).json() as Array<{ lift: string; target: number }>;
+        return goals.map((g) => [g.lift, g.target]).sort();
+      };
+      const keptLift = async (name: string) => {
+        const created = await createCustomLift({ name, classification: 'compound' });
+        expect(created.statusCode).toBe(201);
+        return created.json() as { id: string; name: string };
+      };
+
+      it('warns in the preview, naming both spellings', async () => {
+        const res = (
+          await importCsv('p-goal-collision-preview', SQUATS, '?mode=preview&destination=strength-goals')
+        ).json() as ImportPreviewResponse;
+        expect(res.preview?.goalSpellingCollisions).toEqual([
+          {
+            key: 'back-squat',
+            label: 'Back Squat',
+            rows: [
+              { spelling: 'Squat', lift: 'back-squat', value: '350 lbs', rowIndexes: [1] },
+              { spelling: 'Back Squat', lift: 'Back Squat', value: '400 lbs', rowIndexes: [2] },
+            ],
+          },
+        ]);
+        expect(res.preview).not.toHaveProperty('spellingCollisions');
+      });
+
+      it('has no warning for a file with one spelling of each lift', async () => {
+        const csv = goalsCsv('Squat,250,350,,', 'Bench P.,185,250,,');
+        const res = (await importCsv('p-goal-no-collision', csv, '?mode=preview&destination=strength-goals')).json();
+        expect(res.preview).not.toHaveProperty('goalSpellingCollisions');
+      });
+
+      it('stores what it always did when nothing is overridden', async () => {
+        const program = 'p-goal-unchanged';
+        expect((await importCsv(program, SQUATS, '?mode=commit&destination=strength-goals')).statusCode).toBe(200);
+        expect(await storedGoals(program)).toEqual([
+          ['Back Squat', 400],
+          ['back-squat', 350],
+        ]);
+
+        const shared = 'p-goal-unchanged-shared';
+        expect((await importCsv(shared, PRESSES, '?mode=commit&destination=strength-goals')).statusCode).toBe(200);
+        expect(await storedGoals(shared)).toEqual([['overhead-press', 150]]);
+      });
+
+      it('previews a kept row under its custom lift, with no warning left', async () => {
+        const { id, name } = await keptLift('Squat goal (preview)');
+        const res = (
+          await importCsv('p-goal-keep-preview', SQUATS, '?mode=preview&destination=strength-goals', {
+            liftOverrides: JSON.stringify({ '1': id }),
+          })
+        ).json() as ImportPreviewResponse;
+        expect(res.preview).not.toHaveProperty('goalSpellingCollisions');
+        expect(res.preview?.deltas.find((d) => d.rowIndex === 1)).toMatchObject({ key: id, label: name, kind: 'create' });
+      });
+
+      it('stores both goals when one row is kept, for rows stored separately', async () => {
+        const program = 'p-goal-keep';
+        const { id } = await keptLift('Squat goal (kept)');
+        const res = await importCsv(program, SQUATS, '?mode=commit&destination=strength-goals', {
+          liftOverrides: JSON.stringify({ '1': id }),
+        });
+        expect(res.statusCode).toBe(200);
+        expect(await storedGoals(program)).toEqual(
+          [
+            ['Back Squat', 400],
+            [id, 350],
+          ].sort(),
+        );
+      });
+
+      it('stores both goals when the stored row is kept, so the other takes over the shared lift', async () => {
+        const program = 'p-goal-keep-shared';
+        const { id } = await keptLift('OH Press goal (kept)');
+        const fields = { liftOverrides: JSON.stringify({ '1': id }) };
+
+        const dryRun = (await importCsv(program, PRESSES, '?mode=dry-run&destination=strength-goals', fields)).json();
+        expect(dryRun).toMatchObject({ created: 2, skipped: 0 });
+
+        expect((await importCsv(program, PRESSES, '?mode=commit&destination=strength-goals', fields)).statusCode).toBe(200);
+        expect(await storedGoals(program)).toEqual(
+          [
+            ['overhead-press', 100],
+            [id, 150],
+          ].sort(),
+        );
+      });
+
+      it('still ignores liftOverrides for training maxes', async () => {
+        const program = 'p-goal-tm-overrides';
+        const csv = ['Date Updated,Lift,Weight', '1/1/2026,Bench P.,200'].join('\n');
+        const fields = { liftOverrides: JSON.stringify({ '1': 'not-a-lift' }) };
+        const preview = (await importCsv(program, csv, '?mode=preview&destination=training-maxes', fields)).json();
+        expect(preview.preview.deltas.map((d: { key: string }) => d.key)).toEqual(['bench-press']);
+        expect((await importCsv(program, csv, '?mode=commit&destination=training-maxes', fields)).statusCode).toBe(200);
+        const maxes = (
+          await app.getHttpAdapter().getInstance().inject({
+            method: 'GET',
+            url: `/programs/${program}/training-maxes`,
+            headers: AUTH,
+          })
+        ).json() as Array<{ lift: string }>;
+        expect(maxes.map((m) => m.lift)).toEqual(['bench-press']);
+      });
+
+      it('still ignores liftOverrides for program specs', async () => {
+        // A program-spec commit needs a custom program, which this shared id is.
+        const program = UUID_PROGRAM;
+        const fields = { liftOverrides: JSON.stringify({ '1': 'not-a-lift' }) };
+        const query = 'destination=program-spec';
+        const plain = (await importCsv(program, SPEC_CSV, `?mode=preview&${query}`)).json();
+        const overridden = (await importCsv(program, SPEC_CSV, `?mode=preview&${query}`, fields)).json();
+        expect(plain.preview.deltas.length).toBeGreaterThan(0);
+        expect(overridden.preview.deltas).toEqual(plain.preview.deltas);
+
+        const commit = await importCsv(program, SPEC_CSV, `?mode=commit&${query}`, fields);
+        expect(commit.statusCode).toBe(200);
+        const repeat = (await importCsv(program, SPEC_CSV, `?mode=preview&${query}`)).json();
+        expect(repeat.preview.deltas.map((d: { key: string }) => d.key)).toEqual(
+          plain.preview.deltas.map((d: { key: string }) => d.key),
+        );
+        expect(repeat.preview.deltas.every((d: { kind: string }) => d.kind === 'skip')).toBe(true);
+      });
+
+      it('rejects a goal override whose lift no longer exists, on preview, dry run and commit', async () => {
+        const program = 'p-goal-dead-override';
+        const fields = { liftOverrides: JSON.stringify({ '1': 'deleted-custom-lift-id' }) };
+
+        const preview = (await importCsv(program, SQUATS, '?mode=preview&destination=strength-goals', fields)).json();
+        expect(preview.preview).toBeNull();
+        expect(preview.errors).toEqual([expect.objectContaining({ row: 1, code: 'UNRECOGNIZED_LIFT' })]);
+
+        for (const mode of ['dry-run', 'commit']) {
+          const res = await importCsv(program, SQUATS, `?mode=${mode}&destination=strength-goals`, fields);
+          expect(res.statusCode).toBe(400);
+          expect(res.json().errors).toEqual([expect.objectContaining({ row: 1, code: 'UNRECOGNIZED_LIFT' })]);
+        }
+        expect(await storedGoals(program)).toEqual([]);
+      });
+
+      it('rejects a malformed liftOverrides field on a goal preview', async () => {
+        const res = await importCsv('p-goal-bad-overrides', SQUATS, '?mode=preview&destination=strength-goals', {
+          liftOverrides: '[1]',
+        });
+        expect(res.statusCode).toBe(400);
+      });
+    });
+
     // #914: the slot map used for training-maxes preview/commit is now built fresh
     // per request from DEFAULT_SLOT_MAP + the user's custom lifts too (previously
     // only lift-records was custom-lift-aware, #911) — a CSV row whose raw text

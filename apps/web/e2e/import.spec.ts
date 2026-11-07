@@ -101,6 +101,37 @@ test('import wizard REVIEW: rows spelling one lift differently can be kept apart
   await expect(page.getByLabel('Weight for Squat (custom)')).toHaveValue('300');
 });
 
+test('import wizard REVIEW: goal rows spelling one lift differently can be kept apart (#1169)', async ({ page, request }) => {
+  await request.get(`${MOCK_API}/__reset?withGoalSpellingCollision=true`);
+  await page.goto('/import');
+
+  await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
+  await page.getByLabel('CSV file').setInputFiles({
+    name: 'strength_goals.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Lift,Current TM,Intermediate\nSquat,250,350\nBack Squat,250,400'),
+  });
+  await page.getByRole('button', { name: 'Analyze' }).click();
+  await expect(page.getByText('Strength Goals')).toBeVisible();
+  await page.getByRole('button', { name: 'Next', exact: true }).click(); // → Map columns
+  await page.getByRole('button', { name: 'Next', exact: true }).click(); // → Review
+
+  const notice = page.getByRole('status').filter({ hasText: 'are both Back Squat' });
+  await expect(notice).toContainText('Squat and Back Squat are both Back Squat');
+
+  await notice.getByRole('button', { name: 'Compound' }).first().click();
+  await notice.getByRole('button', { name: 'Keep Squat as a custom lift' }).click();
+
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Exclude Squat (custom)' })).toBeVisible();
+
+  // The mock reports two creates only if the override reached it on the dry run and the commit.
+  await page.getByRole('button', { name: 'Next', exact: true }).click(); // → Preview
+  await page.getByRole('button', { name: 'Commit import' }).click();
+  await expect(page.getByText('Import complete')).toBeVisible();
+  await expect(page.getByText('2 created')).toBeVisible();
+});
+
 test('import wizard REVIEW: remove a TM row then commit', async ({ page }) => {
   await page.goto('/import');
 

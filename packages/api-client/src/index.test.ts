@@ -401,6 +401,15 @@ describe('createApiClient', () => {
       expect(new URL(url).searchParams.get('overrides')).toBe('{"Exercise":"lift"}');
     });
 
+    it('previewImport sends lift overrides in the body, as the commit does (#1169)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ errors: [] }), { status: 200 }));
+      const client = makeClient();
+      await client.previewImport('5-3-1', file, 'strength-goals', { liftOverrides: { 1: 'custom-1' } });
+      const [url, init] = lastCall();
+      expect(new URL(url).searchParams.has('liftOverrides')).toBe(false);
+      expect((init.body as FormData).get('liftOverrides')).toBe('{"1":"custom-1"}');
+    });
+
     it('previewImport throws on a non-ok response', async () => {
       mockFetch.mockResolvedValue(new Response('', { status: 500 }));
       const client = makeClient();

@@ -6,6 +6,7 @@ import {
   TrainingMax,
 } from '../../models';
 import { classifyImportRows } from './classifyAndCount';
+import { goalValue } from './goalValue';
 import { liftRecordNaturalKey } from './liftRecordNaturalKey';
 import { normalizeAmrap } from './normalize-amrap';
 import { formatDateYYYYMMDD } from '../jsUtil';
@@ -249,12 +250,6 @@ export function buildTrainingMaxPreview(
     );
   }
   return tally(deltas);
-}
-
-function goalValue(g: StrengthGoalEntry): string {
-  return g.goalType === 'relative'
-    ? `${g.ratio}× bodyweight`
-    : `${g.target} ${g.unit}`;
 }
 
 /**

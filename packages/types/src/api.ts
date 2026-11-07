@@ -735,6 +735,8 @@ export interface ImportPreview {
   deltas: ImportDelta[];
   /** Training-max rows under different spellings of one lift; absent when there are none. */
   spellingCollisions?: ImportSpellingCollision[];
+  /** Strength-goal rows under different spellings of one lift; absent when there are none. */
+  goalSpellingCollisions?: ImportGoalSpellingCollision[];
 }
 
 /**
@@ -753,6 +755,27 @@ export interface ImportSpellingCollision {
     lift: string;
     weight: number;
     dateUpdated: string;
+  }[];
+}
+
+/**
+ * Rows of one strength-goal file that spell one lift differently, so they can't all apply as its
+ * goal. The user can keep any of them as a custom lift, through `liftOverrides` (#1169).
+ */
+export interface ImportGoalSpellingCollision {
+  /** The lift's identity: its catalog id. */
+  key: string;
+  /** Display name of the lift. */
+  label: string;
+  /** One entry per spelling, in file order. */
+  rows: {
+    spelling: string;
+    /** The stored `lift` this spelling writes to. Two can share one, and the first stores. */
+    lift: string;
+    /** The goal from this spelling's first row, as a preview shows it. */
+    value: string;
+    /** Every row with this spelling, as positions among the parsed rows. */
+    rowIndexes: number[];
   }[];
 }
 
