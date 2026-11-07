@@ -1,8 +1,8 @@
 import {
   LiftRecord,
   buildLiftRecordId,
+  findAlreadyLogged,
   liftRecordNaturalKey,
-  liftRecordSameSetKey,
   liftSpellings,
   withModifications,
 } from '@lifting-logbook/core';
@@ -48,9 +48,7 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
   }
 
   async findExistingRecords(program: string, candidates: LiftRecord[]): Promise<LiftRecord[]> {
-    const stored = this.store.get(program) ?? [];
-    const existingKeys = new Set(stored.map(liftRecordSameSetKey));
-    return candidates.filter((r) => existingKeys.has(liftRecordSameSetKey(r)));
+    return findAlreadyLogged(candidates, this.store.get(program) ?? []);
   }
 
   async updateLiftRecord(

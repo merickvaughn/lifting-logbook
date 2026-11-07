@@ -71,18 +71,19 @@ export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry
     return isNaN(n) ? undefined : n;
   };
 
-  // Metadata/footer rows that are not lifts, matched whole: by prefix they also drop a lift such as
-  // "Weighted Dips" or "Note Press" (#947). A file with a `Ratio` column is an export, whose footer
-  // holds no value and is skipped below, so there a custom lift named "Weight" stays a lift.
-  const FOOTER_LABELS = new Set(['weight', 'goal date', 'note', 'start date', "today's date", 'today']);
-  const isFooter = (name: string): boolean =>
-    ratioIdx < 0 && (FOOTER_LABELS.has(name) || name.startsWith('note:'));
+  // Metadata/footer rows that are not lifts. `Weight` is matched whole: by prefix it also drops
+  // a lift such as "Weighted Dips" (#947).
+  const STOP = ['goal date', 'note', 'start date', "today's date", 'today'];
+  // An export's footer holds no value, so it's skipped below whatever its name, and any name in
+  // its first column is a lift: a custom lift can be called "Note Press" or "Weight".
+  const isExport = ratioIdx >= 0 && unitIdx >= 0;
 
   const entries: StrengthGoalEntry[] = [];
   for (let i = headerIdx + 1; i < data.length; i++) {
     const row = data[i] ?? [];
     const lift = String(row[0] ?? '').trim();
-    if (!lift || isFooter(lift.toLowerCase())) continue;
+    const lc = lift.toLowerCase();
+    if (!lift || (!isExport && (lc === 'weight' || STOP.some((s) => lc.startsWith(s))))) continue;
 
     const unit = norm(row[unitIdx]) === 'kg' ? 'kg' : 'lbs';
     const tiers = tierIdxs

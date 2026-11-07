@@ -120,9 +120,7 @@ function uniqueFolder(program: string, rows: UserDataRows, taken: Set<string>): 
  */
 export async function zipExportFiles(files: Record<string, string>): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
-  let failed: (err: Error) => void = () => undefined;
-  const archived = new Promise<void>((resolve, reject) => {
-    failed = reject;
+  await new Promise<void>((resolve, reject) => {
     const archive = new Zip((err, chunk, final) => {
       if (err) return reject(err);
       chunks.push(chunk);
@@ -143,9 +141,8 @@ export async function zipExportFiles(files: Record<string, string>): Promise<Uin
         });
       }
       archive.end();
-    })().catch(failed);
+    })().catch(reject);
   });
-  await archived;
   return Buffer.concat(chunks);
 }
 

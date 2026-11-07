@@ -49,6 +49,29 @@ describe('a query by lift, across stored spellings', () => {
     expect(await repository.findExistingRecords('p', candidates)).toEqual([candidates[0]]);
   });
 
+  it('findExistingRecords keeps a second slot that spells the same catalog lift differently', async () => {
+    const repository = new InMemoryLiftRecordRepository(new Map());
+    const set = (lift: string, weight: number) => ({
+      program: 'p',
+      macrocycleNum: 1,
+      workoutNum: 1,
+      date: JAN,
+      lift,
+      setNum: 1,
+      weight,
+      reps: 5,
+      notes: '',
+    });
+    await repository.appendLiftRecords('p', [set('Pull-up', 0)]);
+
+    const weighted = set('Weighted Pull-ups', 45);
+    expect(await repository.findExistingRecords('p', [weighted])).toEqual([]);
+
+    // The same spelling is the same set whatever it weighed: a correction, not a second set.
+    const corrected = set('Pull-up', 10);
+    expect(await repository.findExistingRecords('p', [corrected])).toEqual([corrected]);
+  });
+
   it('getHistory filters to every spelling of the lift', async () => {
     const repository = new InMemoryTrainingMaxHistoryRepository();
     const entry = (lift: string) => ({

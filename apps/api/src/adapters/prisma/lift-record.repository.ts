@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import {
   LiftRecord,
-  liftRecordSameSetKey,
+  findAlreadyLogged,
   liftSpellings,
   parseLiftRecordId,
   parseLiftRecordNaturalKey,
@@ -71,8 +71,8 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     if (candidates.length === 0) return [];
 
     // Chunk the OR array to stay within Postgres parameter limits (~32k).
-    // Each candidate produces 5 bound parameters plus one per spelling of its lift, under ten in
-    // all, so a chunk of 500 stays near 5000 params per query.
+    // Each candidate produces 5 bound parameters plus one per spelling of its lift, at most six
+    // today, so a chunk of 500 stays near 5500 params per query.
     const CHUNK_SIZE = 500;
     const chunks: LiftRecord[][] = [];
     for (let i = 0; i < candidates.length; i += CHUNK_SIZE) {
@@ -98,8 +98,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
       ),
     );
 
-    const existingKeys = new Set(rowGroups.flat().map(liftRecordSameSetKey));
-    return candidates.filter((r) => existingKeys.has(liftRecordSameSetKey(r)));
+    return findAlreadyLogged(candidates, rowGroups.flat());
   }
 
   async updateLiftRecord(
