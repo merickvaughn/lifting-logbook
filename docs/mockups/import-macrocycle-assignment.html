@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import: Assign Step</title>
+<!--
+  UI prototype for the Assign step in
+  docs/proposals/2026-11-06-import-macrocycle-assignment.md.
+  It governs the interface only. The proposal and segmentLiftHistory own the rules, and the
+  status logic here is a small sample copy of them.
+  Self-contained: no network requests, no build step. Sample data only; nothing is saved.
+  Colors start from the app's navy theme in apps/web/app/globals.css. Accent, success and muted
+  are darker here so text and white marks reach 4.5:1. The real step needs status tokens per theme.
+-->
+<style>
+  :root {
+    --color-bg: #fafaf8;
+    --color-surface: #f8f9fa;
+    --color-surface-alt: #ecf0f1;
+    --color-border: #dfe4e6;
+    --color-border-strong: #bcc5c9;
+    --color-text: #1a1a1a;
+    --color-text-muted: #5f6b6d;
+    --color-text-heading: #2c3e50;
+    --color-header-from: #2c3e50;
+    --color-header-to: #34495e;
+    --color-accent: #2471a3;
+    --color-success: #1e8449;
+    --color-warn-bg: #fff3cd;
+    --color-warn-border: #e6c65c;
+    --color-warn-text: #856404;
+    --color-llm: #6c3483;
+    --color-llm-soft: #f6f0fa;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--color-bg); color: var(--color-text); font: 1rem/1.5 var(--font-sans); }
+  button, select { font: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .55; }
+  :focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
+
+  .proto { background: #1f2b38; color: #fff; padding: 10px 16px; font-size: .875rem; }
+  .proto-inner { max-width: 880px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+  .proto strong { font-weight: 600; }
+  .proto fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+  .proto legend { float: left; padding: 0; margin-right: 6px; color: #c9d4dc; }
+  .proto label { display: inline-flex; gap: 4px; align-items: center; }
+
+  header.app { background: linear-gradient(135deg, var(--color-header-from), var(--color-header-to)); color: #fff; padding: 14px 16px; font-weight: 600; }
+  header.app div { max-width: 880px; margin: 0 auto; }
+
+  main { max-width: 880px; margin: 0 auto; padding: 16px; }
+  ol.steps { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0; margin: 0 0 18px; font-size: .8125rem; color: var(--color-text-muted); }
+  ol.steps li[aria-current] { color: var(--color-accent); font-weight: 700; }
+  ol.steps li.new::after { content: " (new)"; font-weight: 400; }
+
+  h1 { font-size: 1.375rem; margin: 0 0 4px; color: var(--color-text-heading); }
+  h2 { font-size: 1rem; margin: 0; color: var(--color-text-heading); }
+  .lede { margin: 0 0 16px; color: var(--color-text-muted); }
+
+  .panel { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+  .panel.decide { background: var(--color-warn-bg); border-color: var(--color-warn-border); }
+  .panel.llm { background: var(--color-llm-soft); border-color: #d9c5e6; }
+  .panel p { margin: 4px 0 10px; }
+  .panel p:last-child { margin-bottom: 0; }
+  .eyebrow { font-size: .75rem; font-weight: 700; letter-spacing: .02em; }
+  .decide .eyebrow { color: var(--color-warn-text); }
+  .llm .eyebrow { color: var(--color-llm); }
+  .options { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .btn { border: 1px solid var(--color-border-strong); background: #fff; color: var(--color-text); border-radius: 6px; padding: 5px 10px; font-size: .875rem; }
+  .btn:hover:not(:disabled) { border-color: var(--color-accent); }
+  .btn[aria-pressed="true"] { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+  .btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: #fff; font-weight: 600; padding: 8px 16px; font-size: 1rem; }
+
+  .timeline { display: flex; gap: 2px; min-height: 36px; margin: 8px 0 4px; overflow-x: auto; }
+  .seg { flex-shrink: 0; min-width: 12px; border: 2px solid transparent; border-radius: 4px; padding: 0; color: #fff; font-size: .75rem; font-weight: 700; overflow: hidden; white-space: nowrap; }
+  .seg[aria-current="true"] { border-color: var(--color-text); }
+  .gap { flex: 0 0 auto; align-self: center; font-size: .6875rem; color: var(--color-text-muted); padding: 0 3px; white-space: nowrap; }
+  .s-completed { background: var(--color-success); }
+  .s-overran { background: repeating-linear-gradient(90deg, #1e8449 0 10px, #145a32 10px 13px); }
+  .s-abandoned { background: repeating-linear-gradient(135deg, #5f6b6d 0 6px, #4d5859 6px 12px); }
+  .s-in-progress { background: var(--color-accent); }
+  .s-unset { background: #fff; color: var(--color-text); border: 2px dashed var(--color-text-muted); }
+  .axis { display: flex; justify-content: space-between; font-size: .75rem; color: var(--color-text-muted); }
+
+  .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; padding: 12px 14px; }
+  .card.selected { border-color: var(--color-accent); box-shadow: 0 0 0 1px var(--color-accent); }
+  .card-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; align-items: baseline; }
+  .badge { display: inline-block; font-size: .75rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--color-surface-alt); color: var(--color-text-heading); }
+  .reason { margin: 6px 0 10px; font-size: .875rem; color: var(--color-text-muted); }
+  .fields { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; font-size: .8125rem; }
+  .fields label { display: flex; flex-direction: column; gap: 2px; color: var(--color-text-muted); }
+  .fields select { padding: 4px 6px; color: var(--color-text); background: #fff; border: 1px solid var(--color-border-strong); border-radius: 6px; }
+  .check { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: .8125rem; }
+  .check input { margin-top: 2px; flex: none; }
+  .maxes { border-collapse: collapse; margin-top: 10px; font-size: .8125rem; width: 100%; }
+  .maxes caption { text-align: left; font-weight: 700; color: var(--color-text-heading); margin-bottom: 4px; }
+  .maxes th, .maxes td { text-align: left; padding: 4px 8px 4px 0; border-top: 1px solid var(--color-border); }
+  .maxes select, .maxes input { padding: 4px 6px; max-width: 100%; color: var(--color-text); background: #fff; border: 1px solid var(--color-border-strong); border-radius: 6px; }
+  .maxes input { display: block; margin-top: 4px; width: 90px; }
+
+  .boundary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 14px; margin: 0 8px; border-left: 2px dashed var(--color-border-strong); font-size: .8125rem; }
+  .boundary .why { flex: 1 1 220px; color: var(--color-text-heading); font-weight: 600; }
+
+  .summary { position: sticky; bottom: 0; background: var(--color-bg); border-top: 1px solid var(--color-border); padding: 12px 0; margin-top: 16px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; }
+  .summary p { margin: 0; font-size: .875rem; flex: 1 1 320px; }
+  @media (max-width: 600px) { .summary { position: static; } }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div class="proto">
+  <div class="proto-inner">
+    <strong>Prototype. Sample data; nothing is saved.</strong>
+    <fieldset>
+      <legend>LLM:</legend>
+      <label><input type="radio" name="mode" value="rules" checked> Off (rules only)</label>
+      <label><input type="radio" name="mode" value="ready"> Available</label>
+      <label><input type="radio" name="mode" value="wait"> Waiting</label>
+      <label><input type="radio" name="mode" value="llm"> Suggestions in</label>
+      <label><input type="radio" name="mode" value="down"> Unavailable</label>
+    </fieldset>
+    <label><input type="checkbox" id="fileCol"> File has a Macrocycle # column</label>
+    <label><input type="checkbox" id="hasLive" checked> A live RPT macrocycle exists</label>
+    <button type="button" class="btn" id="reset">Reset</button>
+  </div>
+</div>
+
+<header class="app"><div>Lifting Logbook</div></header>
+
+<main>
+  <ol class="steps" aria-label="Import steps">
+    <li>Source</li><li>Analyzing</li><li>Classify</li><li>Map columns</li><li>Review</li>
+    <li class="new" aria-current="step">Assign</li><li>Preview</li><li>Done</li>
+  </ol>
+
+  <h1 id="page-h" tabindex="-1">Assign your history to macrocycles</h1>
+  <p class="lede">We grouped your workouts using their dates. These are suggestions: change anything before you continue. Macrocycles are numbered by date, so yours may be renumbered. Past macrocycles are saved as history.</p>
+
+  <section class="panel" aria-labelledby="stored-h">
+    <h2 id="stored-h">What about the workouts you’ve already stored?</h2>
+    <div id="stored"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="tl-h">
+    <h2 id="tl-h">Your history at a glance</h2>
+    <div class="timeline" id="timeline"></div>
+    <div class="axis" id="axis"></div>
+  </section>
+
+  <div id="notices"></div>
+  <div id="stretches"></div>
+
+  <div class="summary">
+    <p id="summary"></p>
+    <button type="button" class="btn primary" id="next">Continue to Preview</button>
+  </div>
+  <div class="sr" role="status" aria-live="polite" id="live"></div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var DAY = 86400000;
+  var BREAK_DAYS = 14;
+  /* The sample's import date. The real step uses today. */
+  var TODAY = Date.parse('2026-01-25T00:00:00Z');
+  /* The number the sample file gives the workouts on both sides of the break. */
+  var FILE_NUMBER = 3;
+  var DATELESS_ROWS = 3;
+  var PROGRAMS = {
+    rpt: { name: 'RPT', workouts: 24, weeks: 8 },
+    '5-3-1': { name: '5/3/1', workouts: 24, weeks: 12 },
+    leangains: { name: 'Leangains', workouts: 36, weeks: 12 },
+    none: { name: 'No matching program' }
+  };
+  /* Sample numbers. The real step gets these from the mode=assign response. */
+  var LIVE_SETS = 18;
+  var REPLACE_SCOPES = {
+    imported: { label: 'All imported history', detail: 'Removes 412 imported sets in 3 macrocycles. Your live macrocycles and older history stay.' },
+    all: { label: 'All history', detail: 'Removes 980 sets in 7 macrocycles, including live ones with their schedules. Training maxes stay.' },
+    range: { label: 'A date range', detail: 'Removes the 96 sets stored from Jun 1 to Sep 1, 2025, of any origin, and shortens 1 macrocycle. Rows outside the range are added if they’re new.' }
+  };
+  var MAX_ROWS = [
+    { lift: 'Squat', current: 315, computed: 305 },
+    { lift: 'Bench Press', current: 225, computed: 230 },
+    { lift: 'Deadlift', current: null, computed: 385 }
+  ];
+
+  function day(s) { return Date.parse(s + 'T00:00:00Z'); }
+  function fmt(t, withYear) {
+    var o = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+    if (withYear) o.year = 'numeric';
+    return new Date(t).toLocaleDateString('en-US', o);
+  }
+  function days(a, b) { return Math.round((b - a) / DAY); }
+  function spread(from, to, count, program) {
+    var a = day(from), b = day(to), out = [];
+    for (var i = 0; i < count; i++) {
+      out.push({ t: a + Math.round((b - a) * i / (count - 1) / DAY) * DAY, program: program });
+    }
+    return out;
+  }
+
+  var state, sessions, loneIndex, breakStart;
+
+  function init() {
+    var a = spread('2025-02-03', '2025-03-30', 24, 'rpt');
+    var b = spread('2025-04-02', '2025-06-08', 24, 'rpt');
+    var c = spread('2025-06-11', '2025-07-20', 12, '5-3-1');
+    var lone = [{ t: day('2025-08-02'), program: '5-3-1', lone: true }];
+    var d = spread('2025-08-12', '2025-09-14', 10, '5-3-1');
+    var e = spread('2025-09-16', '2025-11-02', 21, 'none');
+    var f = spread('2025-11-04', '2026-01-18', 20, 'rpt');
+    sessions = a.concat(b, c, lone, d, e, f);
+    loneIndex = a.length + b.length + c.length;
+    breakStart = loneIndex + 1;
+    state = {
+      /* Every boundary except the break, which the lifter's decision switches on and off. */
+      starts: [0, a.length, a.length + b.length, breakStart + d.length, breakStart + d.length + e.length],
+      lone: null,
+      conflict: 'keep',
+      notes: false,
+      statusOverride: {},
+      suggestions: {},
+      selected: 0,
+      replace: null,
+      continueRun: false,
+      endLive: false,
+      maxChoice: {},
+      maxEntered: {}
+    };
+  }
+
+  function mode() { return document.querySelector('input[name=mode]:checked').value; }
+  function setMode(value) { document.querySelector('input[name=mode][value=' + value + ']').checked = true; }
+  function fileCol() { return document.getElementById('fileCol').checked; }
+
+  function breakOn() { return fileCol() ? state.conflict === 'split' : state.lone !== 'merge'; }
+  function setBreak(on) {
+    if (fileCol()) state.conflict = on ? 'split' : 'keep';
+    else state.lone = on ? 'before' : 'merge';
+  }
+  function loneUndecided() { return !fileCol() && state.lone === null; }
+  function loneExcluded() { return !fileCol() && state.lone !== 'merge' && state.lone !== 'before'; }
+
+  function effectiveStarts() {
+    var starts = state.starts.slice();
+    if (breakOn() && starts.indexOf(breakStart) < 0) starts.push(breakStart);
+    return starts.sort(function (a, b) { return a - b; });
+  }
+
+  /* Sample copy of decisions 6, 7 and 9 in the proposal, which own these rules. */
+  function statusOf(st, isLast) {
+    var key = sessions[st.from].t;
+    if (state.statusOverride[key]) return state.statusOverride[key];
+    if (st.program === 'none' || st.mixed) return 'unset';
+    var p = PROGRAMS[st.program];
+    if (st.count > p.workouts) return 'unset';
+    if (st.count === p.workouts) return 'completed';
+    if (!isLast || days(st.last, TODAY) > BREAK_DAYS) return 'abandoned';
+    return st.days > p.weeks * 7 ? 'overran' : 'in-progress';
+  }
+
+  function stretches() {
+    var starts = effectiveStarts();
+    return starts.map(function (from, i) {
+      var to = (i + 1 < starts.length ? starts[i + 1] : sessions.length) - 1;
+      var list = sessions.slice(from, to + 1).filter(function (s) { return !(s.lone && loneExcluded()); });
+      var tally = {};
+      list.forEach(function (s) { tally[s.program] = (tally[s.program] || 0) + 1; });
+      var names = Object.keys(tally).sort(function (x, y) { return tally[y] - tally[x]; });
+      var first = list[0].t, last = list[list.length - 1].t;
+      var st = { from: from, to: to, count: list.length, program: names[0], mixed: names.length > 1, names: names, first: first, last: last, days: days(first, last) + 1, list: list };
+      st.status = statusOf(st, i === starts.length - 1);
+      return st;
+    });
+  }
+
+  var LABEL = { completed: 'Completed', overran: 'Ran past its length', abandoned: 'Unfinished', 'in-progress': 'In progress', unset: 'Status needed' };
+  var MARK = { completed: '✓', overran: '⏱', abandoned: '○', 'in-progress': '▶', unset: '?' };
+
+  function reason(st, isLast) {
+    if (st.mixed) return 'These workouts mix ' + st.names.map(function (n) { return PROGRAMS[n].name; }).join(' and ') + '. Move the boundary, pick one program, or choose a status.';
+    if (st.program === 'none') return st.count + ' workouts that don’t line up with a program you have. They’ll be stored under the program you picked at the Source step and flagged as unmatched. With no known length, we can’t tell whether this was finished, so please choose a status.';
+    var p = PROGRAMS[st.program], weeks = (st.days / 7).toFixed(1);
+    if (st.count > p.workouts) return st.count + ' workouts, but ' + p.name + ' has ' + p.workouts + '. This may be more than one macrocycle: split it or choose a status.';
+    if (st.count === p.workouts && st.days <= p.weeks * 7) return 'All ' + p.workouts + ' workouts, inside the ' + p.weeks + ' weeks expected.';
+    if (st.count === p.workouts) return 'All ' + p.workouts + ' workouts, in ' + weeks + ' weeks instead of the ' + p.weeks + ' expected.';
+    if (isLast && days(st.last, TODAY) > BREAK_DAYS) return st.count + ' of ' + p.workouts + ' workouts, and the last one was ' + days(st.last, TODAY) + ' days before this import.';
+    if (isLast && st.days > p.weeks * 7) return st.count + ' of ' + p.workouts + ' workouts over ' + weeks + ' weeks, past the ' + p.weeks + ' expected, and nothing after it in this file.';
+    if (isLast) return st.count + ' of ' + p.workouts + ' workouts so far, still inside the ' + p.weeks + ' weeks expected.';
+    return st.count + ' of ' + p.workouts + ' workouts over ' + weeks + ' weeks, then a new start or a different program.';
+  }
+
+  /* A lone one-lift workout doesn't shorten a break. Used by the timeline and the boundary text. */
+  function gapBetween(prev, next) {
+    var trained = prev.list.filter(function (s) { return !s.lone; });
+    return days(trained[trained.length - 1].t, next.first);
+  }
+
+  function boundaryWhy(prev, next) {
+    if (next.from === breakStart && loneUndecided()) return 'Undecided: answer the Aug 2 question above';
+    var gap = gapBetween(prev, next);
+    if (gap > BREAK_DAYS) return 'New macrocycle: ' + gap + '-day break (over ' + BREAK_DAYS + ' days)';
+    if (prev.program !== next.program) return 'New macrocycle: different program, ' + gap + ' days later';
+    if (prev.program !== 'none' && prev.count >= PROGRAMS[prev.program].workouts) return 'New macrocycle: the program was finished';
+    return 'New macrocycle: you placed this boundary';
+  }
+
+  function el(tag, attrs, text) {
+    var n = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === 'class') n.className = attrs[k];
+      else if (k === 'onclick') n.addEventListener('click', attrs[k]);
+      else if (k === 'onchange') n.addEventListener('change', attrs[k]);
+      else if (k === 'disabled') n.disabled = attrs[k];
+      else n.setAttribute(k, attrs[k]);
+    });
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  function announce(msg) { document.getElementById('live').textContent = msg; }
+
+  /* Rendering rebuilds the controls, so focus goes back to the same control, or to a nearby one. */
+  function restoreFocus(key) {
+    if (!key) return;
+    /* After a join, the same button would belong to the next boundary, and a second press would join again. */
+    var joined = /^b(\d+)-join$/.exec(key);
+    if (joined) {
+      document.getElementById('card-' + (Number(joined[1]) - 1)).focus();
+      return;
+    }
+    var target = document.querySelector('[data-k="' + key + '"]');
+    if (!target || target.disabled) {
+      var pair = key.replace(/earlier$/, '#').replace(/later$/, 'earlier').replace(/#$/, 'later');
+      target = document.querySelector('[data-k="' + pair + '"]');
+    }
+    if (!target || target.disabled) target = document.getElementById('page-h');
+    target.focus();
+  }
+
+  function change(fn, msg) {
+    var active = document.activeElement;
+    var key = active && active.getAttribute ? active.getAttribute('data-k') : null;
+    fn();
+    render();
+    restoreFocus(key);
+    if (msg) announce(msg);
+  }
+
+  function optionButton(label, pressed, onClick) {
+    return el('button', { type: 'button', class: 'btn', 'data-k': 'opt-' + label, 'aria-pressed': String(pressed), onclick: onClick }, label);
+  }
+
+  function renderTimeline(list) {
+    var box = document.getElementById('timeline');
+    box.textContent = '';
+    list.forEach(function (st, i) {
+      if (i > 0) {
+        var gap = gapBetween(list[i - 1], st);
+        var undecided = st.from === breakStart && loneUndecided();
+        if (gap > BREAK_DAYS) box.appendChild(el('span', { class: 'gap', 'aria-hidden': 'true' }, gap + 'd' + (undecided ? '?' : '')));
+      }
+      var seg = el('button', {
+        type: 'button',
+        class: 'seg s-' + st.status,
+        'data-k': 'seg-' + i,
+        'aria-current': String(state.selected === i),
+        'aria-label': programName(st) + ', ' + fmt(st.first) + ' to ' + fmt(st.last) + ', ' + LABEL[st.status] + '. Jump to details.',
+        onclick: function () {
+          state.selected = i;
+          render();
+          var card = document.getElementById('card-' + i);
+          card.scrollIntoView({ block: 'center' });
+          card.focus();
+        }
+      }, MARK[st.status]);
+      seg.style.flex = Math.max(st.days, 8) + ' 0 0';
+      box.appendChild(seg);
+    });
+    var axis = document.getElementById('axis');
+    axis.textContent = '';
+    axis.appendChild(el('span', {}, fmt(sessions[0].t, true)));
+    axis.appendChild(el('span', {}, fmt(sessions[sessions.length - 1].t, true)));
+  }
+
+  function programName(st) { return PROGRAMS[st.program].name; }
+  function stretchName(st) { return programName(st) + ' from ' + fmt(st.first); }
+
+  function renderDecision(box) {
+    var before = sessions[loneIndex - 1].t, lone = sessions[loneIndex].t, after = sessions[breakStart].t;
+    var section;
+    if (fileCol()) {
+      section = el('section', { class: 'panel decide' });
+      section.appendChild(el('div', { class: 'eyebrow' }, 'FILE AND DATES DISAGREE'));
+      section.appendChild(el('p', {}, 'Your file numbers the workouts on both sides of a ' + days(before, after) + '-day break (' + fmt(before) + ' to ' + fmt(after) + ') as macrocycle ' + FILE_NUMBER + '. A one-lift workout on ' + fmt(lone) + ' falls inside it and doesn’t count toward the break. We kept your numbering. Split them if that break was a restart.'));
+      var fo = el('div', { class: 'options' });
+      fo.appendChild(optionButton('Keep the file’s numbering', state.conflict === 'keep', function () { change(function () { state.conflict = 'keep'; }, 'Keeping the numbering from the file.'); }));
+      fo.appendChild(optionButton('Split at the break', state.conflict === 'split', function () { change(function () { state.conflict = 'split'; }, 'Split at the break.'); }));
+      section.appendChild(fo);
+    } else {
+      section = el('section', { class: 'panel decide' });
+      section.appendChild(el('div', { class: 'eyebrow' }, 'YOUR CALL'));
+      section.appendChild(el('h2', {}, 'One-lift workout on ' + fmt(lone) + ', in the middle of a break'));
+      section.appendChild(el('p', {}, 'Bench Press only, between ' + fmt(before) + ' and ' + fmt(after) + '. If it counts as training, the gaps are ' + days(before, lone) + ' and ' + days(lone, after) + ' days, neither over ' + BREAK_DAYS + ', and the two macrocycles around it become one.'));
+      var lo = el('div', { class: 'options' });
+      lo.appendChild(optionButton('Keep the break, file it with the earlier macrocycle', state.lone === 'before', function () { change(function () { state.lone = 'before'; }, 'Break kept. The ' + fmt(lone) + ' workout joins the earlier macrocycle.'); }));
+      lo.appendChild(optionButton('It ended the break: join them', state.lone === 'merge', function () { change(function () { state.lone = 'merge'; }, 'Macrocycles joined.'); }));
+      lo.appendChild(optionButton('Keep the break, make it a non-cycle workout', state.lone === 'noncycle', function () { change(function () { state.lone = 'noncycle'; }, 'Break kept. The ' + fmt(lone) + ' workout will be stored as a non-cycle workout, outside any macrocycle.'); }));
+      lo.appendChild(optionButton('Leave this workout out', state.lone === 'exclude', function () { change(function () { state.lone = 'exclude'; }, 'The ' + fmt(lone) + ' workout will not be imported.'); }));
+      section.appendChild(lo);
+    }
+    box.appendChild(section);
+  }
+
+  function renderUnplaced(box) {
+    var section = el('section', { class: 'panel' });
+    section.appendChild(el('h2', {}, DATELESS_ROWS + ' rows have no date'));
+    section.appendChild(el('p', {}, 'They can’t be placed in a macrocycle, so they won’t be imported unless you add dates. Your other choices here are discarded if you change rows at Review.'));
+    section.appendChild(el('button', { type: 'button', class: 'btn', onclick: function () { announce('This prototype doesn’t go back to Review.'); } }, 'Back to Review'));
+    box.appendChild(section);
+  }
+
+  function notesChoice(locked) {
+    var label = el('label', { class: 'check' });
+    label.style.margin = '0 0 10px';
+    var cb = el('input', { type: 'checkbox', 'data-k': 'notes', onchange: function (e) { change(function () { state.notes = e.target.checked; }, e.target.checked ? 'Notes will be included.' : 'Notes will be left out.'); } });
+    cb.checked = state.notes;
+    cb.disabled = locked;
+    label.appendChild(cb);
+    label.appendChild(el('span', {}, ' Include my workout notes. Off by default.'));
+    return label;
+  }
+
+  function renderLlm(box) {
+    var m = mode();
+    if (m === 'ready') {
+      var ask = panelLlm('Use suggestions from Ollama, the model this server uses? It receives your sets (date, lift name, set number, weight and reps) and the groupings above. A very long file sends every set around breaks and a summary of the rest. Custom lift and program names are replaced with placeholders. Nothing is sent until you answer.');
+      ask.appendChild(notesChoice(false));
+      var answers = el('div', { class: 'options' });
+      answers.appendChild(el('button', { type: 'button', class: 'btn primary', 'data-k': 'ask', onclick: function () { change(function () { setMode('wait'); }, 'Looking for suggestions. You can carry on.'); } }, 'Yes, use suggestions'));
+      answers.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'ask-no', onclick: function () { change(function () { setMode('rules'); }, 'No suggestions for this import.'); } }, 'Not this time'));
+      ask.appendChild(answers);
+      box.appendChild(ask);
+    }
+    if (m === 'wait') {
+      box.appendChild(panelLlm('Looking for suggestions. You can carry on: everything below is already complete without them.'));
+    }
+    if (m === 'down') {
+      box.appendChild(panelLlm('Suggestions aren’t available right now. Everything below comes from your dates and is complete without them.'));
+    }
+    if (m === 'llm') {
+      var p = panelLlm('Suggestions only. Nothing changes unless you accept it.');
+      p.appendChild(el('p', { class: 'reason' }, state.notes ? 'Your notes were included.' : 'Your notes weren’t sent.'));
+      if (!fileCol() && (state.suggestions.lone || state.lone === null)) {
+        p.appendChild(suggestion('lone', state.notes
+          ? 'Aug 2: your note reads “hotel gym, bench only.” Keep the break.'
+          : 'Aug 2: a single lift between two longer gaps looks like a layoff, not a return. Keep the break.',
+          function () { state.lone = 'before'; }));
+      }
+      p.appendChild(suggestion('note', 'Sep 16 to Nov 2: these workouts rotate push, pull and legs days. This doesn’t match a program you have. You could create a custom program from it after importing.'));
+      p.appendChild(el('p', { class: 'reason' }, 'One other suggestion was dropped because it named a lift that isn’t in this file.'));
+      box.appendChild(p);
+    }
+  }
+
+  function renderStored() {
+    var box = document.getElementById('stored');
+    box.textContent = '';
+    var o = el('div', { class: 'options' });
+    o.appendChild(optionButton('Add new workouts only', state.replace === null, function () {
+      change(function () { state.replace = null; }, 'Adding new workouts only.');
+    }));
+    Object.keys(REPLACE_SCOPES).forEach(function (k) {
+      o.appendChild(optionButton('Replace: ' + REPLACE_SCOPES[k].label, state.replace === k, function () {
+        change(function () { state.replace = k; }, 'Replacing ' + REPLACE_SCOPES[k].label.toLowerCase() + '. You’ll confirm the counts at Preview.');
+      }));
+    });
+    box.appendChild(o);
+    if (state.replace === null) {
+      box.appendChild(el('p', { class: 'reason' }, 'Workouts you’ve already imported are skipped, so importing this file twice adds nothing.'));
+      return;
+    }
+    box.appendChild(el('p', { class: 'reason' }, REPLACE_SCOPES[state.replace].detail + ' You’ll confirm these counts at Preview. We keep a backup for 30 days, and you can undo this until then.'));
+  }
+
+  function canContinue(st) {
+    return st.program !== 'none' && !st.mixed && st.count < PROGRAMS[st.program].workouts && days(st.last, TODAY) <= BREAK_DAYS;
+  }
+
+  function liveBlocks() {
+    return state.continueRun && liveRemains() && !state.endLive;
+  }
+
+  /* Replacing all history removes the live macrocycle, so there's nothing left to end. */
+  function liveRemains() {
+    var last = stretches().slice(-1)[0];
+    return document.getElementById('hasLive').checked && last.program === 'rpt' && state.replace !== 'all';
+  }
+
+  function enteredValue(m) {
+    var v = Number(state.maxEntered[m.lift]);
+    return v > 0 ? v : null;
+  }
+
+  function maxesMissing() {
+    return state.continueRun && MAX_ROWS.some(function (m) {
+      var c = state.maxChoice[m.lift];
+      return m.current === null && c !== 'overwrite' && !(c === 'enter' && enteredValue(m) !== null);
+    });
+  }
+
+  /* The file's last stretch is the only one that can continue as current. */
+  function renderContinue(card, st) {
+    var name = stretchName(st);
+    var label = el('label', { class: 'check' });
+    var cb = el('input', { type: 'checkbox', 'data-k': 'continue-run', 'aria-label': 'Continue ' + name + ' as my current macrocycle', onchange: function (e) {
+      change(function () { state.continueRun = e.target.checked; }, e.target.checked ? 'This run will continue as your current macrocycle.' : 'This run will be saved as history.');
+    } });
+    cb.checked = state.continueRun;
+    label.appendChild(cb);
+    label.appendChild(el('span', {}, ' Continue this as my current macrocycle'));
+    card.appendChild(label);
+    if (!state.continueRun) {
+      card.appendChild(el('p', { class: 'reason' }, 'Otherwise it’s saved as history, not as your current macrocycle.'));
+      return;
+    }
+    var left = PROGRAMS[st.program].workouts - st.count;
+    card.appendChild(el('p', { class: 'reason' }, 'The ' + left + ' workouts left are scheduled from your next training day after today. If you undo this later, any sets you’ve logged on it stay in your history.'));
+    if (liveRemains()) {
+      var end = el('label', { class: 'check' });
+      var ec = el('input', { type: 'checkbox', 'data-k': 'end-live', onchange: function (e) { change(function () { state.endLive = e.target.checked; }, e.target.checked ? 'Your live macrocycle will end.' : 'Your live macrocycle stays.'); } });
+      ec.checked = state.endLive;
+      end.appendChild(ec);
+      end.appendChild(el('span', {}, ' End my live ' + PROGRAMS[st.program].name + ' macrocycle (' + LIVE_SETS + ' sets logged). Its sets stay in your history.'));
+      card.appendChild(end);
+    }
+    var table = el('table', { class: 'maxes' });
+    table.appendChild(el('caption', {}, 'Training maxes for this run'));
+    var head = el('tr', {});
+    ['Lift', 'Current', 'From this run', 'Use'].forEach(function (h) { head.appendChild(el('th', { scope: 'col' }, h)); });
+    table.appendChild(head);
+    MAX_ROWS.forEach(function (m) {
+      var tr = el('tr', {});
+      tr.appendChild(el('td', {}, m.lift));
+      tr.appendChild(el('td', {}, m.current === null ? 'None' : String(m.current)));
+      tr.appendChild(el('td', {}, String(m.computed)));
+      var td = el('td', {});
+      var sel = el('select', { 'data-k': 'max-' + m.lift, 'aria-label': 'Training max for ' + m.lift, onchange: function (e) {
+        change(function () { state.maxChoice[m.lift] = e.target.value; }, m.lift + ' max: ' + e.target.options[e.target.selectedIndex].text + '.');
+      } });
+      var choice = state.maxChoice[m.lift] || (m.current === null ? '' : 'keep');
+      if (m.current === null) {
+        var blank = el('option', { value: '' }, 'Choose');
+        blank.disabled = true;
+        sel.appendChild(blank);
+      } else {
+        sel.appendChild(el('option', { value: 'keep' }, 'Keep ' + m.current));
+      }
+      sel.appendChild(el('option', { value: 'overwrite' }, 'Overwrite with ' + m.computed));
+      if (m.current === null) sel.appendChild(el('option', { value: 'enter' }, 'Enter a value'));
+      sel.value = choice;
+      td.appendChild(sel);
+      if (choice === 'enter') {
+        var inp = el('input', { type: 'number', min: '1', 'data-k': 'max-enter-' + m.lift, 'aria-label': 'Enter training max for ' + m.lift, onchange: function (e) {
+          var v = e.target.value;
+          change(function () { state.maxEntered[m.lift] = v; }, m.lift + ' max set to ' + v + '.');
+        } });
+        inp.value = state.maxEntered[m.lift] || '';
+        td.appendChild(inp);
+      }
+      tr.appendChild(td);
+      table.appendChild(tr);
+    });
+    card.appendChild(table);
+  }
+
+  function renderNotices() {
+    renderStored();
+    var box = document.getElementById('notices');
+    box.textContent = '';
+    renderDecision(box);
+    renderUnplaced(box);
+    renderLlm(box);
+  }
+
+  function panelLlm(text) {
+    var p = el('section', { class: 'panel llm' });
+    p.appendChild(el('div', { class: 'eyebrow' }, 'SUGGESTIONS FROM AN AI MODEL'));
+    p.appendChild(el('p', {}, text));
+    return p;
+  }
+
+  /* Omit onAccept for a plain note, which can only be dismissed. */
+  function suggestion(id, text, onAccept) {
+    var wrap = el('div', {});
+    wrap.style.margin = '0 0 10px';
+    var answer = state.suggestions[id];
+    wrap.appendChild(el('p', {}, text));
+    if (answer) {
+      wrap.appendChild(el('p', { class: 'reason' }, answer === 'accepted' ? 'Accepted.' : 'Dismissed.'));
+    } else {
+      var row = el('div', { class: 'options' });
+      if (onAccept) row.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'accept-' + id, 'aria-label': 'Accept: ' + text, onclick: function () { change(function () { state.suggestions[id] = 'accepted'; onAccept(); }, 'Suggestion accepted.'); } }, 'Accept'));
+      row.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'dismiss-' + id, 'aria-label': 'Dismiss: ' + text, onclick: function () { change(function () { state.suggestions[id] = 'dismissed'; }, 'Suggestion dismissed.'); } }, 'Dismiss'));
+      wrap.appendChild(row);
+    }
+    return wrap;
+  }
+
+  /* Where a boundary lands if moved, or null if it can't move that way. */
+  function moveTarget(start, delta) {
+    var starts = effectiveStarts();
+    var i = starts.indexOf(start);
+    var lower = i > 0 ? starts[i - 1] : 0;
+    var upper = i + 1 < starts.length ? starts[i + 1] : sessions.length;
+    var next = start + delta;
+    /* A boundary can't sit on the lone workout or on the break, which the decision above controls. */
+    while (next === loneIndex || next === breakStart) next += delta;
+    return next > lower && next < upper ? next : null;
+  }
+
+  function moveBoundary(start, delta) {
+    var next = moveTarget(start, delta);
+    if (next === null) return;
+    change(function () {
+      state.starts[state.starts.indexOf(start)] = next;
+      /* A status the lifter chose stays with the stretch when its boundary moves. */
+      var from = sessions[start].t, to = sessions[next].t;
+      if (state.statusOverride[from]) {
+        state.statusOverride[to] = state.statusOverride[from];
+        delete state.statusOverride[from];
+      }
+    }, 'Boundary moved to ' + fmt(sessions[next].t) + '.');
+  }
+
+  function removeBoundary(start) {
+    change(function () {
+      if (start === breakStart) setBreak(false);
+      state.starts = state.starts.filter(function (s) { return s !== start; });
+    }, 'Macrocycles joined.');
+  }
+
+  /* Where a split would land, or -1 if this stretch has nowhere to split. */
+  function splitPoint(st) {
+    var best = -1, bestGap = -1, mid = (st.from + st.to) / 2;
+    for (var i = st.from + 1; i <= st.to; i++) {
+      if (i === loneIndex) continue;
+      /* A lone workout doesn't shorten a break, so measure across it. */
+      var prev = i === breakStart ? loneIndex - 1 : i - 1;
+      var g = sessions[i].t - sessions[prev].t;
+      /* Equal gaps split nearest the middle, not at the first workout. */
+      if (g > bestGap || (g === bestGap && Math.abs(i - mid) < Math.abs(best - mid))) { bestGap = g; best = i; }
+    }
+    return best;
+  }
+
+  function splitAtLargestGap(st) {
+    var best = splitPoint(st);
+    change(function () {
+      if (best === breakStart) setBreak(true);
+      else state.starts.push(best);
+    }, 'Split at ' + fmt(sessions[best].t) + '.');
+  }
+
+  function renderBoundary(box, prev, st, i) {
+    var b = el('div', { class: 'boundary' });
+    b.appendChild(el('span', { class: 'why' }, boundaryWhy(prev, st)));
+    /* The break is settled by the decision above, so it has no move buttons. */
+    var name = stretchName(st);
+    if (st.from !== breakStart) {
+      b.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'b' + i + '-earlier', disabled: moveTarget(st.from, -1) === null, 'aria-label': 'Start ' + name + ' one workout earlier', onclick: function () { moveBoundary(st.from, -1); } }, '← Earlier'));
+      b.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'b' + i + '-later', disabled: moveTarget(st.from, 1) === null, 'aria-label': 'Start ' + name + ' one workout later', onclick: function () { moveBoundary(st.from, 1); } }, 'Later →'));
+    }
+    b.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'b' + i + '-join', 'aria-label': 'Join ' + name + ' with the macrocycle before it', onclick: function () { removeBoundary(st.from); } }, 'Join'));
+    box.appendChild(b);
+  }
+
+  function renderStretches(list) {
+    var box = document.getElementById('stretches');
+    box.textContent = '';
+    list.forEach(function (st, i) {
+      if (i > 0) renderBoundary(box, list[i - 1], st, i);
+
+      var name = stretchName(st);
+      var card = el('section', { class: 'card' + (state.selected === i ? ' selected' : ''), id: 'card-' + i, tabindex: '-1' });
+      var head = el('div', { class: 'card-head' });
+      head.appendChild(el('h2', {}, programName(st) + ' · ' + fmt(st.first) + ' to ' + fmt(st.last, true)));
+      head.appendChild(el('span', { class: 'badge' }, MARK[st.status] + ' ' + LABEL[st.status]));
+      card.appendChild(head);
+      card.appendChild(el('p', { class: 'reason' }, reason(st, i === list.length - 1)));
+
+      var fields = el('div', { class: 'fields' });
+      var pl = el('label', {}, 'Program');
+      var ps = el('select', { 'data-k': 'program-' + i, 'aria-label': 'Program for ' + name, onchange: function (e) {
+        var v = e.target.value;
+        /* Includes a lone workout not yet filed, so filing it later doesn't mix programs. */
+        change(function () { sessions.slice(st.from, st.to + 1).forEach(function (s) { s.program = v; }); }, 'Program changed to ' + PROGRAMS[v].name + '.');
+      } });
+      Object.keys(PROGRAMS).forEach(function (k) {
+        var o = el('option', { value: k }, PROGRAMS[k].name);
+        if (k === st.program) o.selected = true;
+        ps.appendChild(o);
+      });
+      pl.appendChild(ps);
+      fields.appendChild(pl);
+
+      var sl = el('label', {}, 'Status');
+      /* A run continuing as current is in progress, so its status can't say otherwise. */
+      var locked = state.continueRun && i === list.length - 1 && canContinue(st);
+      var ss = el('select', { 'data-k': 'status-' + i, 'aria-label': 'Status for ' + name, disabled: locked, onchange: function (e) {
+        var v = e.target.value;
+        change(function () { state.statusOverride[sessions[st.from].t] = v; }, 'Status changed to ' + LABEL[v] + '.');
+      } });
+      if (st.status === 'unset') {
+        var blank = el('option', { value: '' }, 'Choose a status');
+        blank.disabled = true;
+        blank.selected = true;
+        ss.appendChild(blank);
+      }
+      ['completed', 'overran', 'abandoned', 'in-progress'].forEach(function (k) {
+        var o = el('option', { value: k }, LABEL[k]);
+        if (locked ? k === 'in-progress' : k === st.status) o.selected = true;
+        ss.appendChild(o);
+      });
+      sl.appendChild(ss);
+      fields.appendChild(sl);
+
+      if (splitPoint(st) >= 0) {
+        fields.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'split-' + i, 'aria-label': 'Split ' + name + ' at its largest gap', onclick: function () { splitAtLargestGap(st); } }, 'Split at largest gap'));
+      }
+      card.appendChild(fields);
+
+      if (i === list.length - 1 && canContinue(st)) renderContinue(card, st);
+      box.appendChild(card);
+    });
+  }
+
+  function renderSummary(list) {
+    /* Continuing only applies while the last stretch still qualifies. */
+    var continuing = state.continueRun && canContinue(list[list.length - 1]);
+    var open = (loneUndecided() ? 1 : 0) + list.filter(function (st) { return st.status === 'unset'; }).length;
+    if (continuing && liveBlocks()) open++;
+    if (continuing && maxesMissing()) open++;
+    var saved = continuing ? list.length - 1 : list.length;
+    var workouts = list.slice(0, saved).reduce(function (n, st) { return n + st.count; }, 0);
+    var changed = continuing ? MAX_ROWS.filter(function (m) { var c = state.maxChoice[m.lift]; return c === 'overwrite' || (c === 'enter' && enteredValue(m) !== null); }).length : 0;
+    var text = 'Saves ' + saved + ' past macrocycle' + (saved === 1 ? '' : 's') + ' from ' + workouts + ' workouts, ' + (!fileCol() && state.lone === 'noncycle' ? 'stores 1 non-cycle workout, ' : '') + 'and leaves out ' + DATELESS_ROWS + ' rows with no date. ';
+    text += continuing
+      ? 'The last run becomes your current macrocycle' + (liveRemains() ? ', ending your live one' : '') + '. ' + changed + (changed === 1 ? ' training max changes.' : ' training maxes change.')
+      : (state.replace === null || state.replace === 'imported' ? 'Your current macrocycle stays as it is. ' : '') + 'This file has no one-rep-max rows, so your training maxes won’t change.';
+    if (state.replace !== null) text += ' Replaces ' + REPLACE_SCOPES[state.replace].label.toLowerCase() + '.';
+    if (open) text = open + (open === 1 ? ' decision' : ' decisions') + ' left. ' + text;
+    document.getElementById('summary').textContent = text;
+    document.getElementById('next').disabled = open > 0;
+  }
+
+  function render() {
+    var list = stretches();
+    if (state.selected >= list.length) state.selected = list.length - 1;
+    renderTimeline(list);
+    renderNotices();
+    renderStretches(list);
+    renderSummary(list);
+  }
+
+  var MODE_MESSAGE = {
+    rules: 'Suggestions are off.',
+    ready: 'Suggestions are available.',
+    wait: 'Looking for suggestions. You can carry on.',
+    llm: 'Suggestions are ready.',
+    down: 'Suggestions aren’t available.'
+  };
+  document.querySelectorAll('input[name=mode]').forEach(function (r) {
+    r.addEventListener('change', function () {
+      render();
+      announce(MODE_MESSAGE[r.value]);
+      /* The real step lands here when a provider is configured: yes is the default answer. */
+      if (r.value === 'ready') document.querySelector('[data-k="ask"]').focus();
+    });
+  });
+  document.getElementById('fileCol').addEventListener('change', render);
+  document.getElementById('hasLive').addEventListener('change', render);
+  document.getElementById('reset').addEventListener('click', function () {
+    setMode('rules');
+    document.getElementById('fileCol').checked = false;
+    document.getElementById('hasLive').checked = true;
+    init();
+    render();
+    announce('Reset.');
+  });
+  document.getElementById('next').addEventListener('click', function () { announce('This prototype stops here.'); });
+
+  init();
+  render();
+})();
+</script>
+</body>
+</html>
