@@ -99,7 +99,8 @@
   .maxes { border-collapse: collapse; margin-top: 10px; font-size: .8125rem; width: 100%; }
   .maxes caption { text-align: left; font-weight: 700; color: var(--color-text-heading); margin-bottom: 4px; }
   .maxes th, .maxes td { text-align: left; padding: 4px 8px 4px 0; border-top: 1px solid var(--color-border); }
-  .maxes select { padding: 4px 6px; max-width: 100%; color: var(--color-text); background: #fff; border: 1px solid var(--color-border-strong); border-radius: 6px; }
+  .maxes select, .maxes input { padding: 4px 6px; max-width: 100%; color: var(--color-text); background: #fff; border: 1px solid var(--color-border-strong); border-radius: 6px; }
+  .maxes input { display: block; margin-top: 4px; width: 90px; }
 
   .boundary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 14px; margin: 0 8px; border-left: 2px dashed var(--color-border-strong); font-size: .8125rem; }
   .boundary .why { flex: 1 1 220px; color: var(--color-text-heading); font-weight: 600; }
@@ -229,10 +230,10 @@
       suggestions: {},
       selected: 0,
       replace: null,
-      replaceConfirmed: false,
       continueRun: false,
       endLive: false,
-      maxChoice: {}
+      maxChoice: {},
+      maxEntered: {}
     };
   }
 
@@ -440,7 +441,7 @@
   function renderLlm(box) {
     var m = mode();
     if (m === 'ready') {
-      var ask = panelLlm('Use suggestions from Ollama, the model this server uses? It receives every set: date, lift name, set number, weight and reps. Custom lift names are replaced with placeholders. Nothing is sent until you answer.');
+      var ask = panelLlm('Use suggestions from Ollama, the model this server uses? It receives your sets (date, lift name, set number, weight and reps) and the groupings above. A very long file sends every set around breaks and a summary of the rest. Custom lift and program names are replaced with placeholders. Nothing is sent until you answer.');
       ask.appendChild(notesChoice(false));
       var answers = el('div', { class: 'options' });
       answers.appendChild(el('button', { type: 'button', class: 'btn primary', 'data-k': 'ask', onclick: function () { change(function () { setMode('wait'); }, 'Looking for suggestions. You can carry on.'); } }, 'Yes, use suggestions'));
@@ -474,11 +475,11 @@
     box.textContent = '';
     var o = el('div', { class: 'options' });
     o.appendChild(optionButton('Add new workouts only', state.replace === null, function () {
-      change(function () { state.replace = null; state.replaceConfirmed = false; }, 'Adding new workouts only.');
+      change(function () { state.replace = null; }, 'Adding new workouts only.');
     }));
     Object.keys(REPLACE_SCOPES).forEach(function (k) {
       o.appendChild(optionButton('Replace: ' + REPLACE_SCOPES[k].label, state.replace === k, function () {
-        change(function () { state.replace = k; state.replaceConfirmed = false; }, 'Replacing ' + REPLACE_SCOPES[k].label.toLowerCase() + '. Confirm the counts to continue.');
+        change(function () { state.replace = k; }, 'Replacing ' + REPLACE_SCOPES[k].label.toLowerCase() + '. You’ll confirm the counts at Preview.');
       }));
     });
     box.appendChild(o);
@@ -486,13 +487,7 @@
       box.appendChild(el('p', { class: 'reason' }, 'Workouts you’ve already imported are skipped, so importing this file twice adds nothing.'));
       return;
     }
-    box.appendChild(el('p', { class: 'reason' }, REPLACE_SCOPES[state.replace].detail + ' We keep a backup for 30 days, and you can undo this.'));
-    var label = el('label', { class: 'check' });
-    var cb = el('input', { type: 'checkbox', 'data-k': 'replace-confirm', onchange: function (e) { change(function () { state.replaceConfirmed = e.target.checked; }, e.target.checked ? 'Confirmed.' : 'Not confirmed.'); } });
-    cb.checked = state.replaceConfirmed;
-    label.appendChild(cb);
-    label.appendChild(el('span', {}, ' I understand this removes what’s listed above.'));
-    box.appendChild(label);
+    box.appendChild(el('p', { class: 'reason' }, REPLACE_SCOPES[state.replace].detail + ' You’ll confirm these counts at Preview. We keep a backup for 30 days, and you can undo this until then.'));
   }
 
   function canContinue(st) {
@@ -505,11 +500,20 @@
 
   /* Replacing all history removes the live macrocycle, so there's nothing left to end. */
   function liveRemains() {
-    return document.getElementById('hasLive').checked && state.replace !== 'all';
+    var last = stretches().slice(-1)[0];
+    return document.getElementById('hasLive').checked && last.program === 'rpt' && state.replace !== 'all';
+  }
+
+  function enteredValue(m) {
+    var v = Number(state.maxEntered[m.lift]);
+    return v > 0 ? v : null;
   }
 
   function maxesMissing() {
-    return state.continueRun && MAX_ROWS.some(function (m) { return m.current === null && state.maxChoice[m.lift] !== 'overwrite'; });
+    return state.continueRun && MAX_ROWS.some(function (m) {
+      var c = state.maxChoice[m.lift];
+      return m.current === null && c !== 'overwrite' && !(c === 'enter' && enteredValue(m) !== null);
+    });
   }
 
   /* The file's last stretch is the only one that can continue as current. */
@@ -534,7 +538,7 @@
       var ec = el('input', { type: 'checkbox', 'data-k': 'end-live', onchange: function (e) { change(function () { state.endLive = e.target.checked; }, e.target.checked ? 'Your live macrocycle will end.' : 'Your live macrocycle stays.'); } });
       ec.checked = state.endLive;
       end.appendChild(ec);
-      end.appendChild(el('span', {}, ' End my live RPT macrocycle (' + LIVE_SETS + ' sets logged). Its sets stay in your history.'));
+      end.appendChild(el('span', {}, ' End my live ' + PROGRAMS[st.program].name + ' macrocycle (' + LIVE_SETS + ' sets logged). Its sets stay in your history.'));
       card.appendChild(end);
     }
     var table = el('table', { class: 'maxes' });
@@ -560,8 +564,17 @@
         sel.appendChild(el('option', { value: 'keep' }, 'Keep ' + m.current));
       }
       sel.appendChild(el('option', { value: 'overwrite' }, 'Overwrite with ' + m.computed));
+      if (m.current === null) sel.appendChild(el('option', { value: 'enter' }, 'Enter a value'));
       sel.value = choice;
       td.appendChild(sel);
+      if (choice === 'enter') {
+        var inp = el('input', { type: 'number', min: '1', 'data-k': 'max-enter-' + m.lift, 'aria-label': 'Enter training max for ' + m.lift, onchange: function (e) {
+          var v = e.target.value;
+          change(function () { state.maxEntered[m.lift] = v; }, m.lift + ' max set to ' + v + '.');
+        } });
+        inp.value = state.maxEntered[m.lift] || '';
+        td.appendChild(inp);
+      }
       tr.appendChild(td);
       table.appendChild(tr);
     });
@@ -594,8 +607,8 @@
       wrap.appendChild(el('p', { class: 'reason' }, answer === 'accepted' ? 'Accepted.' : 'Dismissed.'));
     } else {
       var row = el('div', { class: 'options' });
-      if (onAccept) row.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'accept-' + id, onclick: function () { change(function () { state.suggestions[id] = 'accepted'; onAccept(); }, 'Suggestion accepted.'); } }, 'Accept'));
-      row.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'dismiss-' + id, onclick: function () { change(function () { state.suggestions[id] = 'dismissed'; }, 'Suggestion dismissed.'); } }, 'Dismiss'));
+      if (onAccept) row.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'accept-' + id, 'aria-label': 'Accept: ' + text, onclick: function () { change(function () { state.suggestions[id] = 'accepted'; onAccept(); }, 'Suggestion accepted.'); } }, 'Accept'));
+      row.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'dismiss-' + id, 'aria-label': 'Dismiss: ' + text, onclick: function () { change(function () { state.suggestions[id] = 'dismissed'; }, 'Suggestion dismissed.'); } }, 'Dismiss'));
       wrap.appendChild(row);
     }
     return wrap;
@@ -699,7 +712,9 @@
       fields.appendChild(pl);
 
       var sl = el('label', {}, 'Status');
-      var ss = el('select', { 'data-k': 'status-' + i, 'aria-label': 'Status for ' + name, onchange: function (e) {
+      /* A run continuing as current is in progress, so its status can't say otherwise. */
+      var locked = state.continueRun && i === list.length - 1 && canContinue(st);
+      var ss = el('select', { 'data-k': 'status-' + i, 'aria-label': 'Status for ' + name, disabled: locked, onchange: function (e) {
         var v = e.target.value;
         change(function () { state.statusOverride[sessions[st.from].t] = v; }, 'Status changed to ' + LABEL[v] + '.');
       } });
@@ -711,7 +726,7 @@
       }
       ['completed', 'overran', 'abandoned', 'in-progress'].forEach(function (k) {
         var o = el('option', { value: k }, LABEL[k]);
-        if (k === st.status) o.selected = true;
+        if (locked ? k === 'in-progress' : k === st.status) o.selected = true;
         ss.appendChild(o);
       });
       sl.appendChild(ss);
@@ -733,10 +748,9 @@
     var open = (loneUndecided() ? 1 : 0) + list.filter(function (st) { return st.status === 'unset'; }).length;
     if (continuing && liveBlocks()) open++;
     if (continuing && maxesMissing()) open++;
-    if (state.replace !== null && !state.replaceConfirmed) open++;
     var saved = continuing ? list.length - 1 : list.length;
     var workouts = list.slice(0, saved).reduce(function (n, st) { return n + st.count; }, 0);
-    var changed = continuing ? MAX_ROWS.filter(function (m) { return state.maxChoice[m.lift] === 'overwrite'; }).length : 0;
+    var changed = continuing ? MAX_ROWS.filter(function (m) { var c = state.maxChoice[m.lift]; return c === 'overwrite' || (c === 'enter' && enteredValue(m) !== null); }).length : 0;
     var text = 'Saves ' + saved + ' past macrocycle' + (saved === 1 ? '' : 's') + ' from ' + workouts + ' workouts, and leaves out ' + DATELESS_ROWS + ' rows with no date. ';
     text += continuing
       ? 'The last run becomes your current macrocycle' + (liveRemains() ? ', ending your live one' : '') + '. ' + changed + (changed === 1 ? ' training max changes.' : ' training maxes change.')
@@ -773,7 +787,14 @@
   });
   document.getElementById('fileCol').addEventListener('change', render);
   document.getElementById('hasLive').addEventListener('change', render);
-  document.getElementById('reset').addEventListener('click', function () { init(); render(); announce('Reset.'); });
+  document.getElementById('reset').addEventListener('click', function () {
+    setMode('rules');
+    document.getElementById('fileCol').checked = false;
+    document.getElementById('hasLive').checked = true;
+    init();
+    render();
+    announce('Reset.');
+  });
   document.getElementById('next').addEventListener('click', function () { announce('This prototype stops here.'); });
 
   init();
