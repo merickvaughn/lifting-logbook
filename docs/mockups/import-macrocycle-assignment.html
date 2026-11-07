@@ -532,7 +532,7 @@
       return;
     }
     var left = PROGRAMS[st.program].workouts - st.count;
-    card.appendChild(el('p', { class: 'reason' }, 'The ' + left + ' workouts left are scheduled from your next training day after today. You can undo this until you log a set on it.'));
+    card.appendChild(el('p', { class: 'reason' }, 'The ' + left + ' workouts left are scheduled from your next training day after today. If you undo this later, any sets you’ve logged on it stay in your history.'));
     if (liveRemains()) {
       var end = el('label', { class: 'check' });
       var ec = el('input', { type: 'checkbox', 'data-k': 'end-live', onchange: function (e) { change(function () { state.endLive = e.target.checked; }, e.target.checked ? 'Your live macrocycle will end.' : 'Your live macrocycle stays.'); } });
