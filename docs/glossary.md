@@ -57,6 +57,19 @@ above. How lifts are classified is in [domain-model.md §2](domain-model.md#2-th
 
 ---
 
+## Rep max
+
+**Rep max (RM)** — the heaviest weight you can manage for a given number of reps of a lift, so a
+5-rep max (5RM) is the most you can lift for 5. A one-rep max (1RM) is the case with one rep.
+
+The rep max calculator (`apps/web/components/RepMaxCalculator.tsx`) estimates these from one set
+using the Brzycki formula, through `estimateOneRepMax` and `estimateRepMax` in `packages/core`. The
+results are formula-derived, so they floor to the plate increment
+([training-max-precision.md](standards/training-max-precision.md)). It saves nothing and changes no
+training max. The in-app glossary has the same entry.
+
+---
+
 ## Overloaded terms
 
 | Word | Meanings you will meet | What this repo says instead |

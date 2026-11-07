@@ -122,6 +122,13 @@ export const GLOSSARY = [
           'The heaviest weight you can manage for a single rep of a given lift. Setup can estimate it from a heavier set of several reps using the Brzycki formula.',
       },
       {
+        id: 'rep-max',
+        term: 'Rep max',
+        aka: ['RM'],
+        definition:
+          'The heaviest weight you can manage for a given number of reps of a lift, so your 5-rep max (5RM) is the most you can lift for 5. The rep max calculator on the workout and training max screens estimates these from one set using the Brzycki formula. It only calculates: it saves nothing and changes no training max.',
+      },
+      {
         id: 'amrap',
         term: 'AMRAP',
         definition:

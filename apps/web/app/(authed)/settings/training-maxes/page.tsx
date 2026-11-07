@@ -6,9 +6,11 @@ import {
 import { DEFAULT_WEIGHT_INCREMENT } from '@lifting-logbook/types';
 import { getActiveProgram, getUserSettings } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
+import RepMaxCalculator from '@/components/RepMaxCalculator';
 import TrainingMaxesForm from './TrainingMaxesForm';
 import { resolveStepIncrements } from './increments';
 import MaxHistory from './MaxHistory';
+import styles from './TrainingMaxesForm.module.css';
 
 export default async function TrainingMaxesPage() {
   const program = await getActiveProgram();
@@ -26,6 +28,9 @@ export default async function TrainingMaxesPage() {
 
   return (
     <>
+      <div className={styles.tools}>
+        <RepMaxCalculator unit={unit} />
+      </div>
       <TrainingMaxesForm
         program={program}
         lifts={lifts}

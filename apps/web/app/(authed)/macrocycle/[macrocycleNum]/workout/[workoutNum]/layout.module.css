@@ -1,0 +1,6 @@
+/* The same gutter as the workout views below it, so the right edges line up on a phone. */
+.tools {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: var(--space-2) var(--space-4) 0;
+}

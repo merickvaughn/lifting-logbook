@@ -4,6 +4,12 @@
   margin: 0 auto;
 }
 
+.tools {
+  padding: 0 var(--space-4);
+  max-width: 640px;
+  margin: 0 auto;
+}
+
 .headingRow {
   display: flex;
   align-items: center;
