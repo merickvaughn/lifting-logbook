@@ -413,6 +413,7 @@
       var lo = el('div', { class: 'options' });
       lo.appendChild(optionButton('Keep the break, file it with the earlier macrocycle', state.lone === 'before', function () { change(function () { state.lone = 'before'; }, 'Break kept. The ' + fmt(lone) + ' workout joins the earlier macrocycle.'); }));
       lo.appendChild(optionButton('It ended the break: join them', state.lone === 'merge', function () { change(function () { state.lone = 'merge'; }, 'Macrocycles joined.'); }));
+      lo.appendChild(optionButton('Keep the break, make it a non-cycle workout', state.lone === 'noncycle', function () { change(function () { state.lone = 'noncycle'; }, 'Break kept. The ' + fmt(lone) + ' workout will be stored as a non-cycle workout, outside any macrocycle.'); }));
       lo.appendChild(optionButton('Leave this workout out', state.lone === 'exclude', function () { change(function () { state.lone = 'exclude'; }, 'The ' + fmt(lone) + ' workout will not be imported.'); }));
       section.appendChild(lo);
     }
@@ -751,7 +752,7 @@
     var saved = continuing ? list.length - 1 : list.length;
     var workouts = list.slice(0, saved).reduce(function (n, st) { return n + st.count; }, 0);
     var changed = continuing ? MAX_ROWS.filter(function (m) { var c = state.maxChoice[m.lift]; return c === 'overwrite' || (c === 'enter' && enteredValue(m) !== null); }).length : 0;
-    var text = 'Saves ' + saved + ' past macrocycle' + (saved === 1 ? '' : 's') + ' from ' + workouts + ' workouts, and leaves out ' + DATELESS_ROWS + ' rows with no date. ';
+    var text = 'Saves ' + saved + ' past macrocycle' + (saved === 1 ? '' : 's') + ' from ' + workouts + ' workouts, ' + (!fileCol() && state.lone === 'noncycle' ? 'stores 1 non-cycle workout, ' : '') + 'and leaves out ' + DATELESS_ROWS + ' rows with no date. ';
     text += continuing
       ? 'The last run becomes your current macrocycle' + (liveRemains() ? ', ending your live one' : '') + '. ' + changed + (changed === 1 ? ' training max changes.' : ' training maxes change.')
       : (state.replace === null || state.replace === 'imported' ? 'Your current macrocycle stays as it is. ' : '') + 'This file has no one-rep-max rows, so your training maxes won’t change.';
