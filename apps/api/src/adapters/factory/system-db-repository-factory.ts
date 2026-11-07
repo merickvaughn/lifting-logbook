@@ -39,6 +39,8 @@ import { InMemoryWorkoutRepository } from '../in-memory/workout.adapter';
 import { PrismaMacrocycleScheduledWorkoutRepository } from '../prisma/macrocycle-scheduled-workout.repository';
 import { PrismaWorkoutSkipOverrideRepository } from '../prisma/workout-skip-override.repository';
 import { InMemoryWorkoutSkipOverrideRepository } from '../in-memory/workout-skip-override.adapter';
+import { PrismaUserDataExportRepository } from '../prisma/user-data-export.repository';
+import { InMemoryUserDataExportRepository } from '../in-memory/user-data-export.adapter';
 import { PrismaUserSettingsRepository } from '../prisma/user-settings.repository';
 
 interface UserDataSourceRow {
@@ -108,6 +110,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
         strengthGoal: new PrismaStrengthGoalRepository(prisma, userId),
         trainingMax: new PrismaTrainingMaxRepository(prisma, userId),
         trainingMaxHistory: new PrismaTrainingMaxHistoryRepository(prisma, userId),
+        userDataExport: new PrismaUserDataExportRepository(prisma, userId),
         userSettings: new PrismaUserSettingsRepository(prisma, userId),
         workout: new PrismaWorkoutRepository(prisma, userId),
         workoutDateOverride: new PrismaWorkoutDateOverrideRepository(prisma, userId),
@@ -121,9 +124,13 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     // immediately visible via GET /workouts/:workoutNum (mirrors Prisma behavior
     // and matches InMemoryRepositoryFactory).
     const sharedRecords: Map<string, LiftRecord[]> = new Map();
+    const customLift = new InMemoryCustomLiftRepository(userId);
+    const strengthGoal = new InMemoryStrengthGoalRepository();
+    const trainingMax = new InMemoryTrainingMaxRepository();
+    const userSettings = new InMemoryUserSettingsRepository();
     return {
       bodyWeight: new InMemoryBodyWeightRepository(),
-      customLift: new InMemoryCustomLiftRepository(userId),
+      customLift,
       focus: new InMemoryFocusRepository(),
       macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(),
       macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
@@ -133,10 +140,17 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
       liftModification: new InMemoryLiftModificationRepository(userId, sharedRecords),
       liftRecord: new InMemoryLiftRecordRepository(sharedRecords),
       programPhilosophy: this.philosophyRepo,
-      strengthGoal: new InMemoryStrengthGoalRepository(),
-      trainingMax: new InMemoryTrainingMaxRepository(),
+      strengthGoal,
+      trainingMax,
       trainingMaxHistory: new InMemoryTrainingMaxHistoryRepository(),
-      userSettings: new InMemoryUserSettingsRepository(),
+      userDataExport: new InMemoryUserDataExportRepository(
+        sharedRecords,
+        trainingMax,
+        strengthGoal,
+        customLift,
+        userSettings,
+      ),
+      userSettings,
       workout: new InMemoryWorkoutRepository(sharedRecords),
       workoutDateOverride: new InMemoryWorkoutDateOverrideRepository(),
       workoutLiftOverride: new InMemoryWorkoutLiftOverrideRepository(),

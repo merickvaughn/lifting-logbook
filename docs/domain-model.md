@@ -146,7 +146,7 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
 |---|---|---|
 | `LIFT_NAMES` (`domain.ts`) | 12 | Autocomplete / onboarding fallback |
 | `LIFT_CATALOG` (`core/catalog/lifts.ts`) | 39 | The real catalog: the four axes plus default muscles |
-| `CatalogLift.aliases` (per entry) | 4 | Preset names that are neither catalog nor slot names (`Weighted Pull-ups`, `Incline DB Press`, `Calf Raises`, `Lateral Raises`) |
+| `CatalogLift.aliases` (per entry) | 5 | Names that are neither catalog nor slot names: four that presets use (`Weighted Pull-ups`, `Incline DB Press`, `Calf Raises`, `Lateral Raises`), and `Flat Bench Press` |
 
 They share 7 names exactly and diverge on 5 — `Squat`/`Back Squat`, `Dips`/`Dip`,
 `Face Pulls`/`Face Pull`, `Cable Curls`/`Cable Curl`, `Cable Lat Raise`/`Lateral Raise`.
@@ -175,6 +175,11 @@ outside `DEFAULT_SLOT_MAP` is stored under its **display name**, the string a pr
 and the one training maxes and history are matched against. A `DEFAULT_SLOT_MAP` key still stores
 its catalog id. That id does not match a program's display name, so those rows don't join by exact
 string ([#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118)).
+
+Import accepts the per-entry aliases too, stored **as written**, because a preset's plan and training
+maxes match on that string and Download My Data has to bring those rows back
+([#947](https://github.com/merickvaughn/lifting-logbook/issues/947)). A set already logged under
+another spelling of the lift counts as a duplicate, so re-importing a file doesn't double it.
 
 Every schema column references a lift by **name string**, not by `Lift.id` — see divergence
 D3. But the column is not single-vocabulary: the import path can persist a canonical

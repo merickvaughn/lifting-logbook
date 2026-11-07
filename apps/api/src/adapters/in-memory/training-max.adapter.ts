@@ -12,6 +12,12 @@ export class InMemoryTrainingMaxRepository implements ITrainingMaxRepository {
       : new Map();
   }
 
+  allByProgram(): (TrainingMax & { program: string })[] {
+    return [...this.maxesByProgram].flatMap(([program, maxes]) =>
+      maxes.map((max) => ({ ...max, program })),
+    );
+  }
+
   async getTrainingMaxes(program: string): Promise<TrainingMax[]> {
     return this.maxesByProgram.get(program) ?? [];
   }

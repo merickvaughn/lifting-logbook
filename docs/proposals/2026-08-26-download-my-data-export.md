@@ -1,6 +1,6 @@
 # Proposal: Download My Data — Full Logbook Export
 
-**Status:** `draft`
+**Status:** `shipped`
 **Date:** 2026-08-26
 **Issue:** [#947](https://github.com/merickvaughn/lifting-logbook/issues/947)
 
@@ -123,6 +123,28 @@ system — which is a different job from keeping two devices in agreement.
 - **Zip dependency.** The chosen approach adds one zip library to `apps/web` only, keeping the
   API a pure data boundary that returns CSV text plus JSON. The alternative — five separate
   download links, zero new dependencies — was considered and rejected on UX grounds.
+
+## As built
+
+Where [#947](https://github.com/merickvaughn/lifting-logbook/issues/947) differs from the above:
+
+- **The API builds the zip.** `apps/api` already depends on `fflate`, so this added no dependency,
+  and `apps/web` only saves the response.
+- **More than one program.** `lift-records.csv` covers every program, because its `Program` column
+  says which. The other three CSVs can't name a program, since `/import` takes it from the URL. The
+  root holds them for the active program, and each other program with any gets a folder under
+  `other-programs/`. A single-program account sees exactly the five files.
+- **Strength goals gained optional `Ratio` and `Unit` columns.** The ladder can only say "absolute
+  goal in lbs", which would have turned every relative goal, the default in the app, into an
+  absolute one. `parseStrengthGoals` reads both columns, so this isn't quite "the shapes the parsers
+  already accept".
+- **Import changed in three small ways, so exports come back clean.** It now accepts every lift name
+  the catalog holds only as an alias, such as `Calf Raises`, and stores it as written, which affects
+  any file, not only an export. A set already logged under another spelling of the lift counts as a
+  duplicate. A file with an `Occurrence` column identifies itself as lift records, so one made
+  mostly of custom lifts still classifies.
+- **The reads run in their own transaction.** The endpoint uses `@SkipRlsTransaction()` so that
+  building the archive doesn't hold a pooled connection.
 
 ## References
 

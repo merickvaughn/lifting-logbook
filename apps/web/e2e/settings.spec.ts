@@ -64,6 +64,27 @@ test('units section saves the selected weight unit', async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------
+// Settings → Data: the one action saves a dated archive (#947).
+// ---------------------------------------------------------------------------
+
+test('data section downloads the logbook as a dated zip', async ({ page }) => {
+  await page.goto('/settings');
+  await page
+    .getByRole('navigation', { name: 'Settings sections' })
+    .getByRole('link', { name: 'Data' })
+    .click();
+  await expect(page).toHaveURL(/\/settings\/data$/);
+  await expect(page.getByRole('heading', { name: 'Data' })).toBeVisible();
+
+  const downloadStarted = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download my data' }).click();
+  const download = await downloadStarted;
+
+  expect(download.suggestedFilename()).toMatch(/^lifting-logbook-export-\d{4}-\d{2}-\d{2}\.zip$/);
+  expect(await download.failure()).toBeNull();
+});
+
+// ---------------------------------------------------------------------------
 // Settings hub: the previously-orphaned /import wizard is reachable by link.
 // ---------------------------------------------------------------------------
 
