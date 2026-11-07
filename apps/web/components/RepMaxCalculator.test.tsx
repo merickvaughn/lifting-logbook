@@ -1,7 +1,12 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { estimateRepMax } from '@lifting-logbook/core';
 import RepMaxCalculator from './RepMaxCalculator';
+
+let mockPathname = '/macrocycle/1/workout/1';
+jest.mock('next/navigation', () => ({
+  usePathname: () => mockPathname,
+}));
 
 async function openWith(weight: string, reps: string, unit: 'lbs' | 'kg' = 'lbs') {
   const user = userEvent.setup();
@@ -49,11 +54,85 @@ describe('RepMaxCalculator', () => {
     ['zero weight', '0', '5', 'Enter a weight above 0.'],
     ['negative weight', '-10', '5', 'Enter a weight above 0.'],
     ['a weight that floors to nothing', '2', '1', 'Too light to estimate: estimates round down to the nearest 2.5 lbs.'],
+    ['a weight past any real set', '10000', '5', 'Enter a weight up to 9999 lbs.'],
+    ['a stray exponent', '1e21', '5', 'Enter a weight up to 9999 lbs.'],
+    ['a weight whose estimate would overflow', '1e307', '5', 'Enter a weight up to 9999 lbs.'],
   ])('explains %s rather than showing 0', async (_name, weight, reps, message) => {
     await openWith(weight, reps);
     expect(screen.getByText(message)).toBeInTheDocument();
     expect(screen.queryByText('Estimated one-rep max')).toBeNull();
     expect(screen.queryByText(/^0( |$)/)).toBeNull();
+  });
+
+  it.each(['Weight (lbs)', 'Reps'])('explains text %s can not read', async (label) => {
+    await openWith('', '');
+    const input = screen.getByLabelText(label);
+
+    // jsdom's number inputs never report badInput, so the browser's half is in the e2e spec.
+    const report = (badInput: boolean) => {
+      Object.defineProperty(input, 'validity', { configurable: true, value: { badInput } });
+      fireEvent.input(input);
+    };
+
+    report(true);
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAccessibleDescription('Enter a number.');
+    expect(screen.queryByText('Enter a weight and reps from one set.')).toBeNull();
+
+    report(false);
+    expect(input).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByText('Enter a weight and reps from one set.')).toBeInTheDocument();
+  });
+
+  it('announces through a status region that was already there', async () => {
+    await openWith('', '');
+    const status = screen.getByRole('status');
+    expect(status).toBeEmptyDOMElement();
+
+    await userEvent.setup().type(screen.getByLabelText('Weight (lbs)'), '-1');
+    expect(screen.getByRole('status')).toBe(status);
+    expect(status).toHaveTextContent('Enter a weight above 0.');
+
+    const user = userEvent.setup();
+    await user.clear(screen.getByLabelText('Weight (lbs)'));
+    await user.type(screen.getByLabelText('Weight (lbs)'), '200');
+    await user.type(screen.getByLabelText('Reps'), '5');
+    expect(screen.getByRole('status')).toBe(status);
+    expect(status).toHaveTextContent('Estimated one-rep max225 lbs');
+  });
+
+  it.each([
+    ['1.25', '1.25 lbs', '218.75 lbs'],
+    ['2.5', '2.5 lbs', '217.5 lbs'],
+    ['5', '5 lbs', '215 lbs'],
+    ['10', '10 lbs', '210 lbs'],
+  ])('rounds down to %s when asked', async (value, option, twoReps) => {
+    const user = await openWith('225', '1');
+    const rounding = screen.getByLabelText('Round down to');
+    await user.selectOptions(rounding, value);
+    expect(rounding).toHaveDisplayValue(option);
+    expect(rowFor(2)).toHaveTextContent(twoReps);
+  });
+
+  it('rounds the one-rep max down as well', async () => {
+    const user = await openWith('210', '3');
+    expect(screen.getByText('Estimated one-rep max').parentElement).toHaveTextContent('220 lbs');
+    await user.selectOptions(screen.getByLabelText('Round down to'), '1.25');
+    expect(screen.getByText('Estimated one-rep max').parentElement).toHaveTextContent('221.25 lbs');
+  });
+
+  it('says what a set is too light for at the chosen rounding', async () => {
+    const user = await openWith('8', '1');
+    expect(screen.getByText('Estimated one-rep max').parentElement).toHaveTextContent('7.5 lbs');
+    await user.selectOptions(screen.getByLabelText('Round down to'), '10');
+    expect(
+      screen.getByText('Too light to estimate: estimates round down to the nearest 10 lbs.'),
+    ).toBeInTheDocument();
+  });
+
+  it('rounds down to 2.5 until told otherwise', async () => {
+    await openWith('', '');
+    expect(screen.getByLabelText('Round down to')).toHaveDisplayValue('2.5 lbs');
   });
 
   it('points the invalid field at its message', async () => {
@@ -85,7 +164,7 @@ describe('RepMaxCalculator', () => {
     expect(screen.getByLabelText(label)).toBeInTheDocument();
     expect(screen.getByText('Estimated one-rep max').parentElement).toHaveTextContent(oneRm);
     expect(rowFor(10)).toHaveTextContent(tenReps);
-    expect(screen.getByText(/rounded down to the nearest/)).toHaveTextContent(increment);
+    expect(screen.getByLabelText('Round down to')).toHaveDisplayValue(increment);
   });
 
   it('makes no API call while being used', async () => {
@@ -108,11 +187,14 @@ describe('RepMaxCalculator', () => {
     const trigger = screen.getByRole('button', { name: 'Rep max calculator' });
     const weight = screen.getByLabelText('Weight (lbs)');
     const reps = screen.getByLabelText('Reps');
+    const rounding = screen.getByLabelText('Round down to');
     const close = within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' });
 
     expect(weight).toHaveFocus();
     await user.tab();
     expect(reps).toHaveFocus();
+    await user.tab();
+    expect(rounding).toHaveFocus();
     await user.tab();
     expect(close).toHaveFocus();
     await user.tab();
@@ -123,6 +205,43 @@ describe('RepMaxCalculator', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(trigger).toHaveFocus();
+  });
+
+  it('takes focus back when the page moves it', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <button type="button">Start timed workout</button>
+        <RepMaxCalculator unit="lbs" />
+      </>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Rep max calculator' }));
+    const outside = screen.getByText('Start timed workout');
+
+    act(() => outside.focus());
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByLabelText('Weight (lbs)')).toHaveFocus();
+  });
+
+  it('closes when the page changes, and keeps the entries', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<RepMaxCalculator unit="lbs" />);
+    const trigger = screen.getByRole('button', { name: 'Rep max calculator' });
+    await user.click(trigger);
+    await user.type(screen.getByLabelText('Weight (lbs)'), '200');
+
+    const start = mockPathname;
+    mockPathname = `${start}/detail`;
+    try {
+      rerender(<RepMaxCalculator unit="lbs" />);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(trigger).toHaveFocus();
+
+      await user.click(trigger);
+      expect(screen.getByLabelText('Weight (lbs)')).toHaveValue(200);
+    } finally {
+      mockPathname = start;
+    }
   });
 
   it('closes from the backdrop but not from a click inside', async () => {
@@ -136,9 +255,11 @@ describe('RepMaxCalculator', () => {
 
   it('keeps the entries when reopened', async () => {
     const user = await openWith('200', '5');
+    await user.selectOptions(screen.getByLabelText('Round down to'), '5');
     await user.keyboard('{Escape}');
     await user.click(screen.getByRole('button', { name: 'Rep max calculator' }));
     expect(screen.getByLabelText('Weight (lbs)')).toHaveValue(200);
     expect(screen.getByLabelText('Reps')).toHaveValue(5);
+    expect(screen.getByLabelText('Round down to')).toHaveDisplayValue('5 lbs');
   });
 });

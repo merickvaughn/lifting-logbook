@@ -64,9 +64,10 @@ above. How lifts are classified is in [domain-model.md §2](domain-model.md#2-th
 
 The rep max calculator (`apps/web/components/RepMaxCalculator.tsx`) estimates these from one set
 using the Brzycki formula, through `estimateOneRepMax` and `estimateRepMax` in `packages/core`. The
-results are formula-derived, so they floor to the plate increment
-([training-max-precision.md](standards/training-max-precision.md)). It saves nothing and changes no
-training max. The in-app glossary has the same entry.
+results are formula-derived, so they floor to a plate increment
+([training-max-precision.md](standards/training-max-precision.md)): 2.5 unless the lifter picks
+1.25, 5 or 10 in the calculator. It saves nothing and changes no training max. The in-app glossary
+has the same entry.
 
 ---
 

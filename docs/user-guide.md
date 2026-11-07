@@ -119,7 +119,7 @@ The page has two parts:
 
 ### Rep max calculator
 
-The **Rep max calculator** button on this page and on every workout view opens a calculator over the page you're on. Enter a weight and reps from one set, and it shows your estimated one-rep max and the estimated weight for 1 to 10 reps, in your preferred unit. It only calculates: it saves nothing and changes no training max, and closing it leaves the page as it was, including any set you've typed but not logged.
+The **Rep max calculator** button stays at the bottom of the screen on this page and on every workout view, and opens a calculator over the page you're on. Enter a weight and reps from one set, and it shows your estimated one-rep max and the estimated weight for 1 to 10 reps, in your preferred unit. Estimates round down to the nearest 2.5, and you can change that to 1.25, 5 or 10 to suit your plates. It only calculates: it saves nothing and changes no training max, and closing it leaves the page as it was, including any set you've typed but not logged.
 
 ---
 

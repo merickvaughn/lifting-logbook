@@ -1,6 +1,5 @@
 import RepMaxCalculator from '@/components/RepMaxCalculator';
 import { getPreferredUnit } from '@/lib/preferences';
-import styles from './layout.module.css';
 
 /**
  * What every view of a workout shares: the rep max calculator (#1183). Mounted here, not
@@ -10,10 +9,8 @@ export default async function WorkoutLayout({ children }: { children: React.Reac
   const unit = await getPreferredUnit();
   return (
     <>
-      <div className={styles.tools}>
-        <RepMaxCalculator unit={unit} />
-      </div>
       {children}
+      <RepMaxCalculator unit={unit} />
     </>
   );
 }

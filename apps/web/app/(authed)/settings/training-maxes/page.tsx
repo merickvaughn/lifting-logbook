@@ -10,7 +10,6 @@ import RepMaxCalculator from '@/components/RepMaxCalculator';
 import TrainingMaxesForm from './TrainingMaxesForm';
 import { resolveStepIncrements } from './increments';
 import MaxHistory from './MaxHistory';
-import styles from './TrainingMaxesForm.module.css';
 
 export default async function TrainingMaxesPage() {
   const program = await getActiveProgram();
@@ -28,9 +27,6 @@ export default async function TrainingMaxesPage() {
 
   return (
     <>
-      <div className={styles.tools}>
-        <RepMaxCalculator unit={unit} />
-      </div>
       <TrainingMaxesForm
         program={program}
         lifts={lifts}
@@ -39,6 +35,7 @@ export default async function TrainingMaxesPage() {
         unit={unit}
       />
       <MaxHistory initialEntries={history.entries} program={program} unit={unit} />
+      <RepMaxCalculator unit={unit} />
     </>
   );
 }
