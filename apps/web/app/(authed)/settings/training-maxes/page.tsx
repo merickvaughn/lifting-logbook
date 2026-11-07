@@ -6,6 +6,7 @@ import {
 import { DEFAULT_WEIGHT_INCREMENT } from '@lifting-logbook/types';
 import { getActiveProgram, getUserSettings } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
+import RepMaxCalculator from '@/components/RepMaxCalculator';
 import TrainingMaxesForm from './TrainingMaxesForm';
 import { resolveStepIncrements } from './increments';
 import MaxHistory from './MaxHistory';
@@ -34,6 +35,7 @@ export default async function TrainingMaxesPage() {
         unit={unit}
       />
       <MaxHistory initialEntries={history.entries} program={program} unit={unit} />
+      <RepMaxCalculator unit={unit} />
     </>
   );
 }

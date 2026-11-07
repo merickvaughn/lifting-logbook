@@ -117,6 +117,10 @@ The page has two parts:
 - **Training Maxes Editor** — one input per lift. Saving writes a new entry to history and updates the value used by future workouts.
 - **Max History** — a table of every change with the date and a PR badge when the new value is your highest ever. Useful for sanity-checking long-term progress.
 
+### Rep max calculator
+
+The **Rep max calculator** button stays at the bottom of the screen on this page and on every workout view, and opens a calculator over the page you're on. Enter a weight and reps from one set, and it shows your estimated one-rep max and the estimated weight for 1 to 10 reps, in your preferred unit. Estimates round down to the nearest 2.5, and you can change that to 1.25, 5 or 10 to suit your plates. It only calculates: it saves nothing and changes no training max, and closing it leaves the page as it was, including any set you've typed but not logged.
+
 ---
 
 ## Strength goals
@@ -193,6 +197,7 @@ The app has its own glossary at `/glossary` (the **Glossary** link in the top na
 
 - **Lift** — a named movement you train and log, such as Back Squat, Bench Press or Face Pull, either built in or one you create. Every movement is a lift here, accessories included. Other apps and most training writing call it an exercise; the two words mean the same thing. In powerlifting, "the lifts" means only the squat, bench press and deadlift.
 - **1RM (one-rep max)** — the heaviest weight you can manage for a single rep of a given lift. The onboarding flow can estimate it from a heavier-rep set using the [Brzycki formula](https://en.wikipedia.org/wiki/One-repetition_maximum#Brzycki).
+- **Rep max (RM)** — the heaviest weight you can manage for a given number of reps of a lift, so your 5-rep max (5RM) is the most you can lift for 5. The [rep max calculator](#rep-max-calculator) estimates these from one set.
 - **Training max (TM)** — a working number, typically 85–90 % of your 1RM, that every percentage in the program is calculated from. Lower than your true 1RM by design.
 - **AMRAP** — "as many reps as possible." The last set of certain lifts is performed to technical failure; the rep count you hit is what drives training-max adjustments.
 - **Deload** — a planned lighter week to manage fatigue. Commonly scheduled every fourth week in strength programming generally, but **none of the built-in programs currently schedules one** — deload is a documented non-goal for v1.0 (see [PRD.md](PRD.md)), and no shipped program marks a week as a deload.
