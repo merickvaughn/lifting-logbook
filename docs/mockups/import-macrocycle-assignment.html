@@ -94,7 +94,12 @@
   .fields { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; font-size: .8125rem; }
   .fields label { display: flex; flex-direction: column; gap: 2px; color: var(--color-text-muted); }
   .fields select { padding: 4px 6px; color: var(--color-text); background: #fff; border: 1px solid var(--color-border-strong); border-radius: 6px; }
-  .warn-note { margin: 8px 0 0; font-size: .8125rem; color: var(--color-warn-text); }
+  .check { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: .8125rem; }
+  .check input { margin-top: 2px; flex: none; }
+  .maxes { border-collapse: collapse; margin-top: 10px; font-size: .8125rem; width: 100%; }
+  .maxes caption { text-align: left; font-weight: 700; color: var(--color-text-heading); margin-bottom: 4px; }
+  .maxes th, .maxes td { text-align: left; padding: 4px 8px 4px 0; border-top: 1px solid var(--color-border); }
+  .maxes select { padding: 4px 6px; max-width: 100%; color: var(--color-text); background: #fff; border: 1px solid var(--color-border-strong); border-radius: 6px; }
 
   .boundary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 14px; margin: 0 8px; border-left: 2px dashed var(--color-border-strong); font-size: .8125rem; }
   .boundary .why { flex: 1 1 220px; color: var(--color-text-heading); font-weight: 600; }
@@ -119,6 +124,7 @@
       <label><input type="radio" name="mode" value="down"> Unavailable</label>
     </fieldset>
     <label><input type="checkbox" id="fileCol"> File has a Macrocycle # column</label>
+    <label><input type="checkbox" id="hasLive" checked> A live RPT macrocycle exists</label>
     <button type="button" class="btn" id="reset">Reset</button>
   </div>
 </div>
@@ -132,7 +138,12 @@
   </ol>
 
   <h1 id="page-h" tabindex="-1">Assign your history to macrocycles</h1>
-  <p class="lede">We grouped your workouts using their dates. These are suggestions: change anything before you continue. Past macrocycles are saved as history, and your current macrocycle stays as it is.</p>
+  <p class="lede">We grouped your workouts using their dates. These are suggestions: change anything before you continue. Macrocycles are numbered by date, so yours may be renumbered. Past macrocycles are saved as history.</p>
+
+  <section class="panel" aria-labelledby="stored-h">
+    <h2 id="stored-h">What about the workouts you’ve already stored?</h2>
+    <div id="stored"></div>
+  </section>
 
   <section class="panel" aria-labelledby="tl-h">
     <h2 id="tl-h">Your history at a glance</h2>
@@ -167,6 +178,18 @@
     leangains: { name: 'Leangains', workouts: 36, weeks: 12 },
     none: { name: 'No matching program' }
   };
+  /* Sample numbers. The real step gets these from the mode=assign response. */
+  var LIVE_SETS = 18;
+  var REPLACE_SCOPES = {
+    imported: { label: 'All imported history', detail: 'Removes 412 imported sets in 3 macrocycles. Your live macrocycles and older history stay.' },
+    all: { label: 'All history', detail: 'Removes 980 sets in 7 macrocycles, including live ones with their schedules. Training maxes stay.' },
+    range: { label: 'A date range', detail: 'Removes the 96 sets stored from Jun 1 to Sep 1, 2025, of any origin, and shortens 1 macrocycle. Rows outside the range are added if they’re new.' }
+  };
+  var MAX_ROWS = [
+    { lift: 'Squat', current: 315, computed: 305 },
+    { lift: 'Bench Press', current: 225, computed: 230 },
+    { lift: 'Deadlift', current: null, computed: 385 }
+  ];
 
   function day(s) { return Date.parse(s + 'T00:00:00Z'); }
   function fmt(t, withYear) {
@@ -204,7 +227,12 @@
       notes: false,
       statusOverride: {},
       suggestions: {},
-      selected: 0
+      selected: 0,
+      replace: null,
+      replaceConfirmed: false,
+      continueRun: false,
+      endLive: false,
+      maxChoice: {}
     };
   }
 
@@ -399,8 +427,7 @@
   }
 
   function notesChoice(locked) {
-    var label = el('label', { class: 'fields' });
-    label.style.flexDirection = 'row';
+    var label = el('label', { class: 'check' });
     label.style.margin = '0 0 10px';
     var cb = el('input', { type: 'checkbox', 'data-k': 'notes', onchange: function (e) { change(function () { state.notes = e.target.checked; }, e.target.checked ? 'Notes will be included.' : 'Notes will be left out.'); } });
     cb.checked = state.notes;
@@ -413,9 +440,12 @@
   function renderLlm(box) {
     var m = mode();
     if (m === 'ready') {
-      var ask = panelLlm('Want suggestions from Ollama, the model this server uses? It receives each session’s date, lift names and top set. Custom lift names are replaced with placeholders. Nothing is sent until you ask.');
+      var ask = panelLlm('Use suggestions from Ollama, the model this server uses? It receives every set: date, lift name, set number, weight and reps. Custom lift names are replaced with placeholders. Nothing is sent until you answer.');
       ask.appendChild(notesChoice(false));
-      ask.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'ask', onclick: function () { change(function () { setMode('wait'); }, 'Looking for suggestions. You can carry on.'); } }, 'Ask for suggestions'));
+      var answers = el('div', { class: 'options' });
+      answers.appendChild(el('button', { type: 'button', class: 'btn primary', 'data-k': 'ask', onclick: function () { change(function () { setMode('wait'); }, 'Looking for suggestions. You can carry on.'); } }, 'Yes, use suggestions'));
+      answers.appendChild(el('button', { type: 'button', class: 'btn', 'data-k': 'ask-no', onclick: function () { change(function () { setMode('rules'); }, 'No suggestions for this import.'); } }, 'Not this time'));
+      ask.appendChild(answers);
       box.appendChild(ask);
     }
     if (m === 'wait') {
@@ -439,7 +469,107 @@
     }
   }
 
+  function renderStored() {
+    var box = document.getElementById('stored');
+    box.textContent = '';
+    var o = el('div', { class: 'options' });
+    o.appendChild(optionButton('Add new workouts only', state.replace === null, function () {
+      change(function () { state.replace = null; state.replaceConfirmed = false; }, 'Adding new workouts only.');
+    }));
+    Object.keys(REPLACE_SCOPES).forEach(function (k) {
+      o.appendChild(optionButton('Replace: ' + REPLACE_SCOPES[k].label, state.replace === k, function () {
+        change(function () { state.replace = k; state.replaceConfirmed = false; }, 'Replacing ' + REPLACE_SCOPES[k].label.toLowerCase() + '. Confirm the counts to continue.');
+      }));
+    });
+    box.appendChild(o);
+    if (state.replace === null) {
+      box.appendChild(el('p', { class: 'reason' }, 'Workouts you’ve already imported are skipped, so importing this file twice adds nothing.'));
+      return;
+    }
+    box.appendChild(el('p', { class: 'reason' }, REPLACE_SCOPES[state.replace].detail + ' We keep a backup for 30 days, and you can undo this.'));
+    var label = el('label', { class: 'check' });
+    var cb = el('input', { type: 'checkbox', 'data-k': 'replace-confirm', onchange: function (e) { change(function () { state.replaceConfirmed = e.target.checked; }, e.target.checked ? 'Confirmed.' : 'Not confirmed.'); } });
+    cb.checked = state.replaceConfirmed;
+    label.appendChild(cb);
+    label.appendChild(el('span', {}, ' I understand this removes what’s listed above.'));
+    box.appendChild(label);
+  }
+
+  function canContinue(st) {
+    return st.program !== 'none' && !st.mixed && st.count < PROGRAMS[st.program].workouts && days(st.last, TODAY) <= BREAK_DAYS;
+  }
+
+  function liveBlocks() {
+    return state.continueRun && liveRemains() && !state.endLive;
+  }
+
+  /* Replacing all history removes the live macrocycle, so there's nothing left to end. */
+  function liveRemains() {
+    return document.getElementById('hasLive').checked && state.replace !== 'all';
+  }
+
+  function maxesMissing() {
+    return state.continueRun && MAX_ROWS.some(function (m) { return m.current === null && state.maxChoice[m.lift] !== 'overwrite'; });
+  }
+
+  /* The file's last stretch is the only one that can continue as current. */
+  function renderContinue(card, st) {
+    var name = stretchName(st);
+    var label = el('label', { class: 'check' });
+    var cb = el('input', { type: 'checkbox', 'data-k': 'continue-run', 'aria-label': 'Continue ' + name + ' as my current macrocycle', onchange: function (e) {
+      change(function () { state.continueRun = e.target.checked; }, e.target.checked ? 'This run will continue as your current macrocycle.' : 'This run will be saved as history.');
+    } });
+    cb.checked = state.continueRun;
+    label.appendChild(cb);
+    label.appendChild(el('span', {}, ' Continue this as my current macrocycle'));
+    card.appendChild(label);
+    if (!state.continueRun) {
+      card.appendChild(el('p', { class: 'reason' }, 'Otherwise it’s saved as history, not as your current macrocycle.'));
+      return;
+    }
+    var left = PROGRAMS[st.program].workouts - st.count;
+    card.appendChild(el('p', { class: 'reason' }, 'The ' + left + ' workouts left are scheduled from your next training day after today. You can undo this until you log a set on it.'));
+    if (liveRemains()) {
+      var end = el('label', { class: 'check' });
+      var ec = el('input', { type: 'checkbox', 'data-k': 'end-live', onchange: function (e) { change(function () { state.endLive = e.target.checked; }, e.target.checked ? 'Your live macrocycle will end.' : 'Your live macrocycle stays.'); } });
+      ec.checked = state.endLive;
+      end.appendChild(ec);
+      end.appendChild(el('span', {}, ' End my live RPT macrocycle (' + LIVE_SETS + ' sets logged). Its sets stay in your history.'));
+      card.appendChild(end);
+    }
+    var table = el('table', { class: 'maxes' });
+    table.appendChild(el('caption', {}, 'Training maxes for this run'));
+    var head = el('tr', {});
+    ['Lift', 'Current', 'From this run', 'Use'].forEach(function (h) { head.appendChild(el('th', { scope: 'col' }, h)); });
+    table.appendChild(head);
+    MAX_ROWS.forEach(function (m) {
+      var tr = el('tr', {});
+      tr.appendChild(el('td', {}, m.lift));
+      tr.appendChild(el('td', {}, m.current === null ? 'None' : String(m.current)));
+      tr.appendChild(el('td', {}, String(m.computed)));
+      var td = el('td', {});
+      var sel = el('select', { 'data-k': 'max-' + m.lift, 'aria-label': 'Training max for ' + m.lift, onchange: function (e) {
+        change(function () { state.maxChoice[m.lift] = e.target.value; }, m.lift + ' max: ' + e.target.options[e.target.selectedIndex].text + '.');
+      } });
+      var choice = state.maxChoice[m.lift] || (m.current === null ? '' : 'keep');
+      if (m.current === null) {
+        var blank = el('option', { value: '' }, 'Choose');
+        blank.disabled = true;
+        sel.appendChild(blank);
+      } else {
+        sel.appendChild(el('option', { value: 'keep' }, 'Keep ' + m.current));
+      }
+      sel.appendChild(el('option', { value: 'overwrite' }, 'Overwrite with ' + m.computed));
+      sel.value = choice;
+      td.appendChild(sel);
+      tr.appendChild(td);
+      table.appendChild(tr);
+    });
+    card.appendChild(table);
+  }
+
   function renderNotices() {
+    renderStored();
     var box = document.getElementById('notices');
     box.textContent = '';
     renderDecision(box);
@@ -592,17 +722,26 @@
       }
       card.appendChild(fields);
 
-      if (i === list.length - 1 && (st.status === 'overran' || st.status === 'in-progress')) {
-        card.appendChild(el('p', { class: 'warn-note' }, 'This is the last macrocycle in the file. It’ll be saved as history, not as your current macrocycle.'));
-      }
+      if (i === list.length - 1 && canContinue(st)) renderContinue(card, st);
       box.appendChild(card);
     });
   }
 
   function renderSummary(list) {
+    /* Continuing only applies while the last stretch still qualifies. */
+    var continuing = state.continueRun && canContinue(list[list.length - 1]);
     var open = (loneUndecided() ? 1 : 0) + list.filter(function (st) { return st.status === 'unset'; }).length;
-    var workouts = list.reduce(function (n, st) { return n + st.count; }, 0);
-    var text = 'Saves ' + list.length + ' past macrocycle' + (list.length === 1 ? '' : 's') + ' with ' + workouts + ' workouts, and leaves out ' + DATELESS_ROWS + ' rows with no date. Your current macrocycle stays as it is. This file has no one-rep-max rows, so your training maxes won’t change.';
+    if (continuing && liveBlocks()) open++;
+    if (continuing && maxesMissing()) open++;
+    if (state.replace !== null && !state.replaceConfirmed) open++;
+    var saved = continuing ? list.length - 1 : list.length;
+    var workouts = list.slice(0, saved).reduce(function (n, st) { return n + st.count; }, 0);
+    var changed = continuing ? MAX_ROWS.filter(function (m) { return state.maxChoice[m.lift] === 'overwrite'; }).length : 0;
+    var text = 'Saves ' + saved + ' past macrocycle' + (saved === 1 ? '' : 's') + ' from ' + workouts + ' workouts, and leaves out ' + DATELESS_ROWS + ' rows with no date. ';
+    text += continuing
+      ? 'The last run becomes your current macrocycle' + (liveRemains() ? ', ending your live one' : '') + '. ' + changed + (changed === 1 ? ' training max changes.' : ' training maxes change.')
+      : (state.replace === null || state.replace === 'imported' ? 'Your current macrocycle stays as it is. ' : '') + 'This file has no one-rep-max rows, so your training maxes won’t change.';
+    if (state.replace !== null) text += ' Replaces ' + REPLACE_SCOPES[state.replace].label.toLowerCase() + '.';
     if (open) text = open + (open === 1 ? ' decision' : ' decisions') + ' left. ' + text;
     document.getElementById('summary').textContent = text;
     document.getElementById('next').disabled = open > 0;
@@ -625,9 +764,15 @@
     down: 'Suggestions aren’t available.'
   };
   document.querySelectorAll('input[name=mode]').forEach(function (r) {
-    r.addEventListener('change', function () { render(); announce(MODE_MESSAGE[r.value]); });
+    r.addEventListener('change', function () {
+      render();
+      announce(MODE_MESSAGE[r.value]);
+      /* The real step lands here when a provider is configured: yes is the default answer. */
+      if (r.value === 'ready') document.querySelector('[data-k="ask"]').focus();
+    });
   });
   document.getElementById('fileCol').addEventListener('change', render);
+  document.getElementById('hasLive').addEventListener('change', render);
   document.getElementById('reset').addEventListener('click', function () { init(); render(); announce('Reset.'); });
   document.getElementById('next').addEventListener('click', function () { announce('This prototype stops here.'); });
 
