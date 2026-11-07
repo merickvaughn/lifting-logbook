@@ -3,5 +3,6 @@ export * from './parseLiftingProgramSpec';
 export * from './parseLiftRecords';
 export * from './parseStrengthGoals';
 export * from './parseTrainingMaxes';
+export * from './serializeCsvText';
 export * from './stringifyCsv';
 export * from './tableToObjects';

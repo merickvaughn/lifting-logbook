@@ -36,9 +36,13 @@ export class RlsContextService {
   /**
    * Run `fn` inside a short-lived transaction with `app.current_user_id` set to the CLS userId, so
    * repositories built inside `fn` are RLS-scoped to the caller. When there is no Prisma client
-   * (in-memory mode), `fn` runs directly with no transaction.
+   * (in-memory mode), `fn` runs directly with no transaction. A caller whose one operation reads a
+   * lot can pass a longer `timeoutMs`.
    */
-  async withUserContext<T>(fn: () => Promise<T>): Promise<T> {
+  async withUserContext<T>(
+    fn: () => Promise<T>,
+    timeoutMs: number = RlsContextService.SHORT_TX_TIMEOUT_MS,
+  ): Promise<T> {
     if (!this.prisma) {
       return fn();
     }
@@ -63,7 +67,7 @@ export class RlsContextService {
           this.cls.set(RLS_TX_CLIENT, undefined);
         }
       },
-      { timeout: RlsContextService.SHORT_TX_TIMEOUT_MS },
+      { timeout: timeoutMs },
     );
   }
 }

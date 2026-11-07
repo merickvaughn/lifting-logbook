@@ -33,6 +33,9 @@ export interface ILiftRecordRepository {
    * `date` is part of the key (issue #884): two sets can otherwise legitimately
    * share the same (macrocycleNum, workoutNum, lift, setNum) tuple on different real
    * calendar dates and must not be treated as duplicates of each other.
+   * A set under another spelling of a built-in lift counts too, when weight and reps also match
+   * (`findAlreadyLogged`, #947). That goes by the built-in spellings alone, so a row stored as the
+   * text of a custom lift named like one can match it.
    * Used by the CSV import endpoint to identify which rows will be skipped as duplicates.
    */
   findExistingRecords(program: string, candidates: LiftRecord[]): Promise<LiftRecord[]>;

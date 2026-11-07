@@ -26,6 +26,9 @@ import { parseDateStringUTC, toUTCMidnight } from '../jsUtil';
  * NOTE (#477): full multi-tier goals + per-tier goal dates need a model change and
  * are tracked as a follow-up; the header/tier matching here is name-based and
  * tolerant so minor export variations still parse.
+ *
+ * Optional `Ratio` and `Unit` columns, which Download My Data writes (#947), carry what the
+ * ladder can't: a `Ratio` value makes the goal relative, and `Unit` of `kg` overrides lbs.
  */
 export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry[] {
   const norm = (c: SpreadsheetCell | undefined): string =>
@@ -38,11 +41,15 @@ export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry
 
   // Classify columns: the Current-TM column vs. the goal-tier columns (in order).
   let currentTmIdx = -1;
+  let ratioIdx = -1;
+  let unitIdx = -1;
   const tierIdxs: number[] = [];
   for (let c = 1; c < headerNames.length; c++) {
     const name = headerNames[c]!;
     if (!name) continue;
     if (name.includes('current') || name === 'tm') currentTmIdx = c;
+    else if (name === 'ratio') ratioIdx = c;
+    else if (name === 'unit') unitIdx = c;
     else tierIdxs.push(c);
   }
 
@@ -64,23 +71,33 @@ export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry
     return isNaN(n) ? undefined : n;
   };
 
-  // Metadata/footer rows that are not lifts.
-  const STOP = ['goal date', 'note', 'start date', "today's date", 'today', 'weight'];
+  // Metadata/footer rows that are not lifts. `Weight` is matched whole: by prefix it also drops
+  // a lift such as "Weighted Dips" (#947).
+  const STOP = ['goal date', 'note', 'start date', "today's date", 'today'];
+  // An export's footer holds no value, so it's skipped below whatever its name, and any name in
+  // its first column is a lift: a custom lift can be called "Note Press" or "Weight".
+  const isExport = ratioIdx >= 0 && unitIdx >= 0;
 
   const entries: StrengthGoalEntry[] = [];
   for (let i = headerIdx + 1; i < data.length; i++) {
     const row = data[i] ?? [];
     const lift = String(row[0] ?? '').trim();
     const lc = lift.toLowerCase();
-    if (!lift || STOP.some((s) => lc.startsWith(s))) continue;
+    if (!lift || (!isExport && (lc === 'weight' || STOP.some((s) => lc.startsWith(s))))) continue;
 
+    const unit = norm(row[unitIdx]) === 'kg' ? 'kg' : 'lbs';
     const tiers = tierIdxs
       .map((c) => num(row[c]))
       .filter((n): n is number => n !== undefined)
       // Sort ascending so "next milestone" is the numerically lowest tier above
       // the Current TM regardless of column order in the export.
       .sort((a, b) => a - b);
-    if (tiers.length === 0) continue;
+    if (tiers.length === 0) {
+      // A ratio beside tiers may only be for display, so the goal is relative only with none.
+      const ratio = ratioIdx >= 0 ? num(row[ratioIdx]) : undefined;
+      if (ratio !== undefined) entries.push({ lift, goalType: 'relative', unit, updatedAt, ratio });
+      continue;
+    }
 
     const currentTM = currentTmIdx >= 0 ? num(row[currentTmIdx]) : undefined;
     // Next milestone: lowest tier strictly above the Current TM; else the top tier
@@ -92,7 +109,7 @@ export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry
     entries.push({
       lift,
       goalType: 'absolute',
-      unit: 'lbs',
+      unit,
       updatedAt,
       ...(target !== undefined ? { target } : {}),
     });

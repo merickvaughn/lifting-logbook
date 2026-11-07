@@ -1,4 +1,4 @@
-import { LIFT_CATALOG, buildImportSlotMap, builtInLiftFor, validateLiftImport } from "@src/core";
+import { LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, validateLiftImport } from "@src/core";
 import { LiftRecord } from "@src/core/models";
 
 /** Minimal slot map covering the fixture abbreviations we test against. */
@@ -195,6 +195,17 @@ describe("validateLiftImport", () => {
           expect(builtInLiftFor(valid[0]!.lift)?.id).toBe(lift.id);
         }
       }
+    });
+
+    it("accepts every lift a preset names, and stores a preset's own name as written (#947)", () => {
+      const lifts = new Set(Object.values(PRESET_BASE_SPECS).flat().map((spec) => spec.lift));
+      expect(lifts.size).toBeGreaterThan(0);
+      for (const lift of lifts) {
+        const { errors } = validateLiftImport([makeRecord({ lift: lift as LiftRecord["lift"] })], importMap);
+        expect({ lift, errors }).toEqual({ lift, errors: [] });
+      }
+      const { valid } = validateLiftImport([makeRecord({ lift: "Calf Raises" as LiftRecord["lift"] })], importMap);
+      expect(valid[0]!.lift).toBe("Calf Raises");
     });
 
     it("stores a catalog lift outside the slot map under the name a program uses", () => {

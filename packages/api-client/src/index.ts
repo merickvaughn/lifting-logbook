@@ -109,6 +109,7 @@ const JSON_HEADERS: Record<string, string> = { 'Content-Type': 'application/json
 // above any real request in this app (Cloud Run's own default request timeout is
 // 5 minutes) while still bounding the wait a hung request forces on the caller.
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DATA_EXPORT_TIMEOUT_MS = 60_000;
 
 // Smart-import endpoint path with mode + optional destination override. Returned
 // relative (rawFetch prepends baseUrl).
@@ -703,6 +704,19 @@ export function createApiClient(config: ApiClientConfig) {
     },
 
     // -- User settings -----------------------------------------------------
+    /**
+     * Download My Data (#947): the whole logbook as one zip. The server allows its reads 30s and
+     * then builds the archive outside that, so this outlasts the default bound.
+     */
+    async downloadDataExport(): Promise<Blob> {
+      const path = '/users/me/export';
+      const res = await rawFetch(path, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(DATA_EXPORT_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new ApiClientError(await extractErrorMessage(res, path), res.status);
+      return res.blob();
+    },
     fetchUserSettings(): Promise<UserSettingsResponse> {
       return request('/users/me/settings', { cache: 'no-store' });
     },

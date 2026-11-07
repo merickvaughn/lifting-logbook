@@ -53,6 +53,11 @@ interface KindProfile {
    * Elite / Goal Date) live in an interior header row and tier columns.
    */
   scanAllCells: boolean;
+  /**
+   * A header only this app's own export writes. It identifies the file, so its extra columns and
+   * its lift names don't count against it: an account of custom lifts has no recognized names.
+   */
+  exportToken?: string;
 }
 
 const PROFILES: readonly KindProfile[] = [
@@ -67,6 +72,7 @@ const PROFILES: readonly KindProfile[] = [
     usesLiftColumn: true,
     transposed: false,
     scanAllCells: false,
+    exportToken: 'occurrence',
   },
   {
     kind: 'training-maxes',
@@ -157,8 +163,11 @@ function scoreKind(
   );
 
   // Weighted sum. Lift-using kinds reserve weight for catalog hit rate.
+  const isExport = profile.exportToken !== undefined && hasToken(ctx.headers, profile.exportToken);
   let score: number;
-  if (profile.usesLiftColumn) {
+  if (isExport) {
+    score = 0.4 * tokenScore + 0.2 * distinctScore + 0.15 + 0.25;
+  } else if (profile.usesLiftColumn) {
     score =
       0.4 * tokenScore + 0.2 * distinctScore + 0.15 * shapeScore + 0.25 * ctx.liftHitRate;
   } else {
@@ -174,6 +183,9 @@ function scoreKind(
   }
   if (matchedDistinct.length) {
     reasons.push(`Distinctive marker${matchedDistinct.length > 1 ? 's' : ''}: ${matchedDistinct.join(', ')}`);
+  }
+  if (isExport) {
+    reasons.push(`Has the ${profile.exportToken} column a Lifting Logbook export writes`);
   }
   if (profile.usesLiftColumn && ctx.liftHitRate > 0) {
     reasons.push(`${Math.round(ctx.liftHitRate * 100)}% of values matched known lifts`);

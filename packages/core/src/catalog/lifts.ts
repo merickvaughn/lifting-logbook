@@ -8,10 +8,11 @@ import { Lift, MuscleTargets } from '@lifting-logbook/types';
  *     lift reads them only when it shares a built-in's name or alias. See ADR-036.
  *   - aliases: other names the built-in program presets use for this lift (e.g.
  *     "Calf Raises"). `builtInLiftFor` recognizes them — so they classify and count — but
- *     they are deliberately NOT import slot names: `DEFAULT_SLOT_MAP` also drives the
- *     logger's bodyweight detection, import validation and the custom-lift collision
- *     guard, each a separate decision (issue #1015). Aliasing "Weighted Pull-ups" there,
- *     for instance, would flip it to a bodyweight-component lift.
+ *     they are deliberately NOT in `DEFAULT_SLOT_MAP`, which also drives the logger's
+ *     bodyweight detection and the custom-lift collision guard, each a separate decision
+ *     (issue #1015). Aliasing "Weighted Pull-ups" there, for instance, would flip it to a
+ *     bodyweight-component lift. Import alone accepts them, through `buildImportSlotMap`,
+ *     so a preset's own rows can be restored (issue #947).
  */
 export interface CatalogLift extends Lift {
   muscles: MuscleTargets;

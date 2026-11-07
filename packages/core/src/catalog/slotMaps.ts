@@ -111,8 +111,8 @@ export function buildEffectiveSlotMap(
 }
 
 /**
- * Every built-in catalog lift, by display name and id, mapped to its display name.
- * Import-only: adding these to DEFAULT_SLOT_MAP would also change the logger's
+ * Every built-in catalog lift, by display name and id, mapped to its display name, plus each alias
+ * mapped to itself. Import-only: adding these to DEFAULT_SLOT_MAP would also change the logger's
  * bodyweight detection and reserve the names against custom lifts (see
  * CatalogLift.aliases, issue #1015).
  *
@@ -127,6 +127,8 @@ const CATALOG_IMPORT_NAMES: Readonly<Record<string, string>> = Object.fromEntrie
   LIFT_CATALOG.flatMap((lift) => [
     [lift.name, lift.name],
     [lift.id, lift.name],
+    // A preset's own name stays as written: its plan and training maxes match on that string (#947).
+    ...(lift.aliases ?? []).map((alias) => [alias, alias]),
   ]),
 );
 
@@ -151,7 +153,7 @@ export function buildImportSlotMap(customLifts: readonly CustomLift[]): Record<s
 }
 
 /**
- * Every built-in string import resolves: the catalog's display names and ids, plus
+ * Every built-in string import resolves: the catalog's display names, ids and aliases, plus
  * ALL_SLOT_MAP_ALIASES. Backs the Review step's "is this lift already recognized"
  * check and the import classifier's lift-column signal. Custom-lift guards keep
  * using the narrower canonicalAliasFor and isCanonicalAlias.
