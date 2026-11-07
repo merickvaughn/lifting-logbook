@@ -324,11 +324,10 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       });
 
       it.each([
-        ['weight', row('Calf Raises', 100, 10), row('calf-raise', 110, 10)],
-        ['reps', row('Calf Raises', 100, 10), row('calf-raise', 100, 12)],
-        ['weight, for two slots of one catalog lift', row('Pull-up', 25, 8), row('Weighted Pull-ups', 45, 5)],
-      ])('creates two rows when the %s differs', async (label, first, second) => {
-        const program = `p1191-${label.split(',')[0]}-${label.length}`;
+        ['weight', 'p1191-weight', row('Calf Raises', 100, 10), row('calf-raise', 110, 10)],
+        ['reps', 'p1191-reps', row('Calf Raises', 100, 10), row('calf-raise', 100, 12)],
+        ['weight, for two slots of one catalog lift', 'p1191-slots', row('Pull-up', 25, 8), row('Weighted Pull-ups', 45, 5)],
+      ])('creates two rows when the %s differs', async (_label, program, first, second) => {
         const { preview, dryRun, commit } = await importAllModes(program, first, second);
 
         expect(preview).toMatchObject({ creates: 2, skips: 0 });

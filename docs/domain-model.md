@@ -179,7 +179,10 @@ string ([#1118](https://github.com/merickvaughn/lifting-logbook/issues/1118)).
 Import accepts the per-entry aliases too, stored **as written**, because a preset's plan and training
 maxes match on that string and Download My Data has to bring those rows back
 ([#947](https://github.com/merickvaughn/lifting-logbook/issues/947)). A set already logged under
-another spelling of the lift counts as a duplicate, so re-importing a file doesn't double it.
+another spelling of the lift, or listed under one earlier in the same file
+([#1191](https://github.com/merickvaughn/lifting-logbook/issues/1191)), counts as a duplicate when
+weight and reps also match, so re-importing a file doesn't double it. Weight and reps have to match
+because one day can hold `Pull-up` and `Weighted Pull-ups` as two slots of the catalog's `pull-up`.
 
 Every schema column references a lift by **name string**, not by `Lift.id` — see divergence
 D3. But the column is not single-vocabulary: the import path can persist a canonical
