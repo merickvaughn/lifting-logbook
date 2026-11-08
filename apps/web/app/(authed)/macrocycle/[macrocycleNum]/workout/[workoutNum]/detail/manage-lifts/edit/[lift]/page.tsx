@@ -1,6 +1,8 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { fetchLiftMetadata } from '@/lib/api';
+import { isSameLift } from '@lifting-logbook/core';
+import { fetchLiftMetadata, fetchWorkout } from '@/lib/api';
+import { getActiveProgram } from '@/lib/active-program';
 import LiftEditor from '@/components/LiftEditor';
 
 export default async function EditLiftPage({
@@ -16,7 +18,18 @@ export default async function EditLiftPage({
     notFound();
   }
 
-  const lift = liftParam;
+  const lift = decodeURIComponent(liftParam);
+
+  // The metadata API answers for any lift name, so it can't say a lift is unknown (#1190).
+  // A lift is editable here when this workout plans it, which is where Manage Lifts links
+  // from. fetchWorkout returns null only for a 404; any other failure throws to the error
+  // boundary, as does a failed metadata fetch.
+  const program = await getActiveProgram();
+  const workout = await fetchWorkout(program, workoutNum);
+  if (!workout || !workout.lifts.some((planned) => isSameLift(planned.lift, lift))) {
+    notFound();
+  }
+
   const metadata = await fetchLiftMetadata(lift);
 
   return (
