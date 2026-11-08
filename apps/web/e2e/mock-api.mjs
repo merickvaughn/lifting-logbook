@@ -732,6 +732,16 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
+  // GET /lifts/:lift/metadata — like the real API (lift-metadata.controller.ts), any lift
+  // gets a response: empty defaults when none is stored. Never a 404 (#1190).
+  // -------------------------------------------------------------------------
+  const metadataMatch = /^\/lifts\/([^/]+)\/metadata$/.exec(url.pathname);
+  if (method === 'GET' && metadataMatch) {
+    json(res, { lift: decodeURIComponent(metadataMatch[1]), muscleGroups: [], substitutions: [], foundational: false });
+    return;
+  }
+
+  // -------------------------------------------------------------------------
   // GET /lifts/custom — list the user's custom lifts (#911)
   // -------------------------------------------------------------------------
   if (method === 'GET' && url.pathname === '/lifts/custom') {
