@@ -358,6 +358,24 @@ describe('LiftRecordsController', () => {
       );
     });
 
+    it('writes one row for a set the file names under two spellings of a lift (#1191)', async () => {
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(3);
+      const csv = [
+        IMPORT_CSV_HEADER,
+        '5-3-1,1,1,2026-01-01,Calf Raises,1,100,10,',
+        '5-3-1,1,1,2026-01-01,calf-raise,1,100,10,',
+        '5-3-1,1,1,2026-01-01,Pull-up,1,25,8,',
+        '5-3-1,1,1,2026-01-01,Weighted Pull-ups,1,45,5,',
+      ].join('\n');
+
+      const result = await controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER);
+
+      const written = liftRecordRepo.appendLiftRecords.mock.calls.flatMap(([, rows]) => rows);
+      expect(written.map((r) => r.lift)).toEqual(['Calf Raises', 'Pull-up', 'Weighted Pull-ups']);
+      expect(result.written).toBe(3);
+      expect(result.skipped).toEqual([expect.objectContaining({ row: 2 })]);
+    });
+
     // #1158: the skip stays keyed by the id, but the upload form shows the label.
     it('labels a skipped custom-lift row with its name, not its id', async () => {
       const customLift: CustomLift = {

@@ -21,7 +21,7 @@ import {
   LiftRecord,
   buildLiftRecordId,
   buildSkippedDetail,
-  classifyImportRows,
+  classifyLiftRecordRows,
   liftRecordLabel,
   liftRecordNaturalKey,
   pairWithRowNumber,
@@ -206,7 +206,8 @@ export class LiftRecordsController {
    * programs have no lift restrictions.)
    *
    * Rows whose natural key (macrocycleNum, workoutNum, date, lift, setNum) already exist
-   * for the program — or that repeat an earlier row's key within this same file —
+   * for the program — or that repeat an earlier row's key within this same file, or
+   * repeat an earlier row under another spelling of the lift (#1191) —
    * are skipped and reported in the `skipped` response field. `written`/`skipped`
    * both come from one up-front classification pass (issue #884), so a same-key
    * duplicate within the file is reported rather than silently vanishing, and the
@@ -258,19 +259,8 @@ export class LiftRecordsController {
     // (which may reorder nothing but does filter).
     const rows = pairWithRowNumber(valid.map((r) => ({ ...r, program })));
 
-    const dupKeys = new Set(
-      (await liftRecord.findExistingRecords(program, rows.map(({ r }) => r))).map(
-        liftRecordNaturalKey,
-      ),
-    );
-
-    const classified = [
-      ...classifyImportRows(
-        rows,
-        ({ r }) => liftRecordNaturalKey(r),
-        (_x, k) => (dupKeys.has(k) ? 'skip' : 'create'),
-      ),
-    ];
+    const existing = await liftRecord.findExistingRecords(program, rows.map(({ r }) => r));
+    const classified = [...classifyLiftRecordRows(rows, ({ r }) => r, existing)];
 
     // `written` comes directly from the database's createMany count so it is
     // accurate even if a concurrent import caused additional rows to be skipped.

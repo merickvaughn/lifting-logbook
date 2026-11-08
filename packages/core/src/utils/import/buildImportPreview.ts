@@ -7,7 +7,7 @@ import {
 } from '../../models';
 import { classifyImportRows } from './classifyAndCount';
 import { goalValue } from './goalValue';
-import { liftRecordNaturalKey } from './liftRecordNaturalKey';
+import { classifyLiftRecordRows } from './liftRecordNaturalKey';
 import { normalizeAmrap } from './normalize-amrap';
 import { formatDateYYYYMMDD } from '../jsUtil';
 import { LiftImportSoftResult } from './validateLiftImportSoft';
@@ -89,21 +89,17 @@ export function parseProgramSpecNaturalKey(
 /**
  * Lift records are append-only: a row either creates (new natural key) or skips
  * (key already present, whether already stored or repeated earlier in this
- * same file — issue #884 — both surface as a 'skip' delta).
+ * same file — issue #884 — both surface as a 'skip' delta). So does a row that
+ * repeats an earlier one under another spelling (issue #1191).
  */
 export function buildLiftRecordsPreview(
   incoming: LiftRecord[],
   existing: LiftRecord[],
 ): ImportPreview {
-  const existingKeys = new Set(existing.map(liftRecordNaturalKey));
   const deltas: ImportDelta[] = [];
   const seenCounts = new Map<string, number>();
 
-  for (const { row: r, kind, key } of classifyImportRows(
-    incoming,
-    liftRecordNaturalKey,
-    (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
-  )) {
+  for (const { row: r, kind, key } of classifyLiftRecordRows(incoming, (r) => r, existing)) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
     const label = `${r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
     const value = `${r.weight} × ${r.reps}`;
@@ -127,15 +123,14 @@ export function buildLiftRecordsPreviewSoft(
   existing: LiftRecord[],
   liftNames: LiftNames,
 ): ImportPreview {
-  const existingKeys = new Set(existing.map(liftRecordNaturalKey));
   const deltas: ImportDelta[] = [];
   const seenCounts = new Map<string, number>();
 
   // Valid rows — normal create/skip classification
-  for (const { row: { record: r, rowIndex }, kind, key } of classifyImportRows(
+  for (const { row: { record: r, rowIndex }, kind, key } of classifyLiftRecordRows(
     softResult.validRows,
-    ({ record }) => liftRecordNaturalKey(record),
-    (_r, k) => (existingKeys.has(k) ? 'skip' : 'create'),
+    ({ record }) => record,
+    existing,
   )) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
     const label = liftRecordLabel(r, liftNames);

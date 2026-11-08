@@ -48,6 +48,38 @@ describe("buildLiftRecordsPreview", () => {
     expect(preview.skips).toBe(1);
   });
 
+  it("counts one set under two spellings in a file as a duplicate (#1191)", () => {
+    const incoming = [liftRecord({ lift: "Calf Raises" }), liftRecord({ lift: "calf-raise" })];
+    expect(buildLiftRecordsPreview(incoming, [])).toMatchObject({ creates: 1, skips: 1 });
+  });
+
+  it.each([
+    ["weight", { weight: 110 }],
+    ["reps", { reps: 8 }],
+    ["occurrence", { occurrence: 1 }],
+  ])("keeps two spellings in a file apart when the %s differs (#1191)", (_label, over) => {
+    const incoming = [
+      liftRecord({ lift: "Calf Raises" }),
+      liftRecord({ lift: "calf-raise", ...over }),
+    ];
+    expect(buildLiftRecordsPreview(incoming, [])).toMatchObject({ creates: 2, skips: 0 });
+  });
+
+  it("keeps two spellings apart when the matching row was itself skipped (#1191)", () => {
+    // The second row repeats the first's key, so it is never written and can't make the third a repeat.
+    const incoming = [
+      liftRecord({ lift: "calf-raise", weight: 100 }),
+      liftRecord({ lift: "calf-raise", weight: 120 }),
+      liftRecord({ lift: "Calf Raises", weight: 120 }),
+    ];
+    expect(buildLiftRecordsPreview(incoming, [])).toMatchObject({ creates: 2, skips: 1 });
+  });
+
+  it("does not treat a custom lift's name as another spelling (#1191)", () => {
+    const incoming = [liftRecord({ lift: "Calf Thing" }), liftRecord({ lift: "calf-raise" })];
+    expect(buildLiftRecordsPreview(incoming, [])).toMatchObject({ creates: 2, skips: 0 });
+  });
+
   // Regression for issue #884: two sets sharing every field except date are
   // genuinely different records (e.g. a macrocycle-numbering reset reusing the
   // same macrocycle/workout/set combo years apart) and must both be creates, not

@@ -286,6 +286,70 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       ]);
     });
 
+    describe('one file naming a set under two spellings of a lift (#1191)', () => {
+      const HEADER = 'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes';
+      const QUERY = 'destination=lift-records';
+      const row = (lift: string, weight: number, reps: number) =>
+        `5-3-1,1,1,2026-01-01,${lift},1,${weight},${reps},`;
+
+      const storedRecords = async (program: string) => {
+        const repos = await app
+          .get<IRepositoryFactory>(REPOSITORY_FACTORY)
+          .forUser({ id: process.env.DEV_USER_ID || 'dev-token', email: 'dev@example.com', provider: 'dev' });
+        return repos.liftRecord.getLiftRecords(program, 1);
+      };
+
+      /** Previews, dry-runs, then commits one file, and returns what each reported. */
+      const importAllModes = async (program: string, ...rows: string[]) => {
+        const file = [HEADER, ...rows].join('\n');
+        const { preview } = (await importCsv(program, file, `?mode=preview&${QUERY}`)).json();
+        const dryRun = (await importCsv(program, file, `?mode=dry-run&${QUERY}`)).json();
+        const commit = (await importCsv(program, file, `?mode=commit&${QUERY}`)).json();
+        return { preview, dryRun, commit };
+      };
+
+      it('creates one row and reports one skip when weight and reps match', async () => {
+        const program = 'p1191-same-set';
+        const { preview, dryRun, commit } = await importAllModes(
+          program,
+          row('Calf Raises', 100, 10),
+          row('calf-raise', 100, 10),
+        );
+
+        expect(preview).toMatchObject({ creates: 1, skips: 1 });
+        expect(dryRun).toMatchObject({ created: 1, skipped: 1 });
+        expect(commit).toMatchObject({ created: 1, skipped: 1 });
+        expect(commit.skippedDetail).toEqual([expect.objectContaining({ row: 2 })]);
+        expect((await storedRecords(program)).map((r) => r.lift)).toEqual(['Calf Raises']);
+      });
+
+      it.each([
+        ['weight', 'p1191-weight', row('Calf Raises', 100, 10), row('calf-raise', 110, 10)],
+        ['reps', 'p1191-reps', row('Calf Raises', 100, 10), row('calf-raise', 100, 12)],
+        ['weight, for two slots of one catalog lift', 'p1191-slots', row('Pull-up', 25, 8), row('Weighted Pull-ups', 45, 5)],
+      ])('creates two rows when the %s differs', async (_label, program, first, second) => {
+        const { preview, dryRun, commit } = await importAllModes(program, first, second);
+
+        expect(preview).toMatchObject({ creates: 2, skips: 0 });
+        expect(dryRun).toMatchObject({ created: 2, skipped: 0 });
+        expect(commit).toMatchObject({ created: 2, skipped: 0 });
+        expect(await storedRecords(program)).toHaveLength(2);
+      });
+
+      it('still creates the later spelling when the earlier row is excluded', async () => {
+        const program = 'p1191-excluded';
+        const file = [HEADER, row('Calf Raises', 100, 10), row('calf-raise', 100, 10)].join('\n');
+        const commit = (
+          await importCsv(program, file, `?mode=commit&${QUERY}`, {
+            excludeKeys: JSON.stringify(['__row_1']),
+          })
+        ).json();
+
+        expect(commit).toMatchObject({ created: 1, skipped: 0 });
+        expect((await storedRecords(program)).map((r) => r.lift)).toEqual(['calf-raise']);
+      });
+    });
+
     it('commits training maxes and is idempotent on re-run', async () => {
       const first = (
         await importCsv('import-tm', TM_CSV, '?mode=commit&destination=training-maxes')
