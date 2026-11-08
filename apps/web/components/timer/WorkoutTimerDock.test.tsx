@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TimerLiftPlan } from '@lifting-logbook/core';
 import WorkoutTimerProvider, { useTimerRowState } from './WorkoutTimerProvider';
@@ -34,7 +34,7 @@ function Harness({ lifts = LIFTS }: { lifts?: TimerLiftPlan[] }) {
 function StartButton() {
   const timer = useTimerRowState();
   return (
-    <button type="button" onClick={() => timer?.startSession()}>
+    <button type="button" data-timer-start onClick={() => timer?.startSession()}>
       Start timed workout
     </button>
   );
@@ -148,5 +148,33 @@ describe('WorkoutTimerDock', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Expand timer' })).not.toBeInTheDocument();
     });
+
+    it('hands focus to the start button when the session ends, since the dock is gone', async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+      await user.click(screen.getByRole('button', { name: 'Start timed workout' }));
+      await user.click(screen.getByRole('button', { name: 'Expand timer' }));
+
+      await user.click(screen.getByRole('button', { name: 'End timer' }));
+
+      expect(screen.getByRole('button', { name: 'Start timed workout' })).toHaveFocus();
+    });
+
+    it('takes focus back when the page moves it outside the sheet', async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+      await user.click(screen.getByRole('button', { name: 'Start timed workout' }));
+      await user.click(screen.getByRole('button', { name: 'Expand timer' }));
+
+      act(() => screen.getByRole('button', { name: 'Start timed workout' }).focus());
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Back to workout/ })).toHaveFocus();
+    });
+  });
+
+  it('leaves focus where it is when the page loads', () => {
+    render(<Harness />);
+    expect(document.body).toHaveFocus();
   });
 });

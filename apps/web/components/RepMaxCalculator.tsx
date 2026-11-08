@@ -12,10 +12,8 @@ import {
 } from '@lifting-logbook/core';
 import type { WeightUnit } from '@lifting-logbook/types';
 import { APP_NAV_TOOLS_ID } from '@/lib/app-nav-tools';
+import { useFocusTrap } from '@/lib/useFocusTrap';
 import styles from './RepMaxCalculator.module.css';
-
-/** Focusable descendants, in DOM order: the set the focus trap cycles through. */
-const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled])';
 
 /** The rep counts the table estimates a weight for. */
 const REP_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
@@ -83,59 +81,19 @@ export default function RepMaxCalculator({ unit }: { unit: WeightUnit }) {
     setOpen(false);
   }, [pathname]);
 
-  // Dialog semantics: move focus in on open, hand it back on close, close on Escape,
-  // and keep focus inside while it is open.
+  useFocusTrap(dialogRef, {
+    active: open,
+    onEscape: () => setOpen(false),
+    initialFocusRef: weightRef,
+    // Safari doesn't focus a button on click, so the opener can be <body>.
+    returnFocus: () => triggerRef.current,
+  });
+
+  // The inputs reopen empty, so what they couldn't read no longer applies.
   useEffect(() => {
-    if (!open) return;
-    const trigger = triggerRef.current;
-    const dialog = dialogRef.current;
-    weightRef.current?.focus({ preventScroll: true });
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setOpen(false);
-        return;
-      }
-      if (event.key !== 'Tab' || !dialog) return;
-
-      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE));
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (!first || !last) return;
-
-      const active = document.activeElement;
-      // A click on the dialog's text leaves focus on <body>, outside the dialog.
-      if (!dialog.contains(active)) {
-        event.preventDefault();
-        first.focus();
-      } else if (event.shiftKey && active === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    // The page can move focus on its own: the timer dock does when it mounts. Back can land
-    // here mid-restore, and scrolling to the input would cancel the page's scroll restoration.
-    function onFocusIn(event: FocusEvent) {
-      if (dialog && event.target instanceof Node && !dialog.contains(event.target)) {
-        weightRef.current?.focus({ preventScroll: true });
-      }
-    }
-
-    document.addEventListener('keydown', onKeyDown);
-    document.addEventListener('focusin', onFocusIn);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      document.removeEventListener('focusin', onFocusIn);
-      // The inputs reopen empty, so what they couldn't read no longer applies.
-      setWeightUnreadable(false);
-      setRepsUnreadable(false);
-      trigger?.focus();
-    };
+    if (open) return;
+    setWeightUnreadable(false);
+    setRepsUnreadable(false);
   }, [open]);
 
   const display = (value: number) => formatWeight(value, unit, unit);

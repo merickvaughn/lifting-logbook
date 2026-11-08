@@ -9,6 +9,7 @@ import {
   primaryActionLabel,
   signedTime,
 } from '@/lib/timerLabels';
+import { useFocusTrap } from '@/lib/useFocusTrap';
 import type { UseWorkoutTimerResult } from '@/lib/useWorkoutTimer';
 import TimerDial from './TimerDial';
 import styles from './WorkoutTimerDock.module.css';
@@ -18,10 +19,6 @@ interface Props {
   macrocycleNum: number;
   workoutNum: number;
 }
-
-/** Focusable descendants, in DOM order — the set the focus trap cycles through. */
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * The docked mini-timer, and the full-screen sheet it expands into.
@@ -34,13 +31,10 @@ export default function WorkoutTimerDock({ timer, macrocycleNum, workoutNum }: P
   const [expanded, setExpanded] = useState(false);
 
   const sheetRef = useRef<HTMLDivElement>(null);
-  // Where focus was before the sheet opened, so it can be handed back on close.
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
 
   const close = useCallback(() => setExpanded(false), []);
 
   function open() {
-    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setExpanded(true);
   }
 
@@ -50,49 +44,16 @@ export default function WorkoutTimerDock({ timer, macrocycleNum, workoutNum }: P
     if (!running) setExpanded(false);
   }, [running]);
 
-  // Dialog semantics: move focus in on open, hand it back on close, close on
-  // Escape, and keep Tab inside while it is open.
-  useEffect(() => {
-    if (!expanded) {
-      const previous = restoreFocusRef.current;
-      restoreFocusRef.current = null;
-      // The saved element is a dock control, and the dock unmounts when the
-      // session ends — so closing the sheet by ending the session would focus a
-      // detached node, which is a silent no-op that drops focus to <body>. Fall
-      // back to the start button, which is on the page either way.
-      if (previous && document.contains(previous)) previous.focus();
-      else document.querySelector<HTMLElement>('[data-timer-start]')?.focus();
-      return;
-    }
-
-    const sheet = sheetRef.current;
-    sheet?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        close();
-        return;
-      }
-      if (event.key !== 'Tab' || !sheet) return;
-
-      const focusable = Array.from(sheet.querySelectorAll<HTMLElement>(FOCUSABLE));
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (!first || !last) return;
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [expanded, close]);
+  useFocusTrap(sheetRef, {
+    active: expanded,
+    onEscape: close,
+    // The opener is a dock control, and the dock unmounts when the session
+    // ends, so closing the sheet by ending the session would focus a detached
+    // node and drop focus to <body>. Fall back to the start button, which is on
+    // the page either way.
+    returnFocus: (opener) =>
+      opener?.isConnected ? opener : document.querySelector<HTMLElement>('[data-timer-start]'),
+  });
 
   if (!running || !phase) return null;
 

@@ -125,8 +125,7 @@ test('closes when the browser goes back, and leaves nothing to press behind it',
   await page.evaluate(() => window.scrollTo(0, 200));
   await expect.poll(() => scrollY(page)).toBe(200);
 
-  // Where Back lands with the dialog closed. The timer dock focuses its start button when this
-  // view mounts, which can scroll it, so the position to keep is this one, not the 200.
+  // Where Back lands with the dialog closed: the position to keep is this one, not the 200.
   const manageLifts = page.getByRole('link', { name: /manage lifts/i });
   await manageLifts.click();
   await expect(page).toHaveURL(/manage-lifts/);
