@@ -39,9 +39,12 @@ export function useFocusTrap(
   { active, onEscape, initialFocusRef, returnFocus }: FocusTrapOptions,
 ): void {
   // Read through a ref, so a caller passing new callbacks each render doesn't re-run the
-  // effect, which would move focus back to the start on every render.
+  // effect, which would move focus back to the start on every render. Updated in an effect
+  // rather than during render, declared before the trap's effect so it runs first.
   const optionsRef = useRef({ onEscape, initialFocusRef, returnFocus });
-  optionsRef.current = { onEscape, initialFocusRef, returnFocus };
+  useEffect(() => {
+    optionsRef.current = { onEscape, initialFocusRef, returnFocus };
+  });
 
   // Declared before the trap's effect, so on unmount this cleanup runs first and the
   // trap's cleanup can tell an unmount from a close.

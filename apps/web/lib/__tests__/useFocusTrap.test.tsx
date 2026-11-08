@@ -4,10 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { useFocusTrap } from '../useFocusTrap';
 import type { FocusTrapOptions } from '../useFocusTrap';
 
-type Extra = Pick<FocusTrapOptions, 'returnFocus'> & { startOnSecond?: boolean };
+type PageProps = Pick<FocusTrapOptions, 'returnFocus'> & { startOnSecond?: boolean };
 
 /** A page with one control outside, and a dialog with three inside. */
-function Page({ returnFocus, startOnSecond }: Extra) {
+function Page({ returnFocus, startOnSecond }: PageProps) {
   const [open, setOpen] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const secondRef = useRef<HTMLInputElement>(null);
@@ -37,7 +37,7 @@ function Page({ returnFocus, startOnSecond }: Extra) {
   );
 }
 
-async function openPage(props: Extra = {}) {
+async function openPage(props: PageProps = {}) {
   const user = userEvent.setup();
   const view = render(<Page {...props} />);
   await user.click(screen.getByRole('button', { name: 'Open' }));
