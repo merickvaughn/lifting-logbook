@@ -813,6 +813,14 @@ describe('segmentLiftHistory', () => {
       const result = segment(rows);
       expect(result.stretches.map((s) => s.fileMacrocycleNum)).toEqual([1, 2]);
       expect(result.conflicts).toEqual([{ kind: 'numbers-overlap', stretches: [0, 1] }]);
+      // Overlapping by 10 days, number 2 runs alongside number 1 rather than restarting it.
+      expect(result.stretches[0]?.status).toBe('in-progress');
+    });
+
+    it('reads a restart of the same program overlapping by a day as following it', () => {
+      const first = run(RPT_DAYS, 0, 6, { extra: () => ({ macrocycleNum: 1 }) });
+      const rows = [...first, ...run(RPT_DAYS, lastDay(first) - 1, 5, { extra: () => ({ macrocycleNum: 2 }) })];
+      expect(segment(rows).stretches[0]?.reasons.status).toEqual({ kind: 'next-is-restart' });
     });
 
     it('does not flag two different programs whose numbers run at the same time, nor end one early', () => {

@@ -969,8 +969,9 @@ const HAND_OFF_DAYS = 7;
 
 /**
  * For each stretch (in start order), the index of the stretch that follows it, or
- * `undefined`: the earliest to start after it that also ends after it, in its own group or
- * in a group not running alongside it. In file mode a program's numbers can run alongside
+ * `undefined`: the earliest to start after it that also ends after it, in its own group
+ * when it starts no more than {@link HAND_OFF_DAYS} before this one ends, or in a group not
+ * running alongside it. In file mode a program's numbers can run alongside
  * another program's (decision 8), and that program's later numbers don't follow this one. A
  * group runs alongside a stretch when one of its stretches starts inside it more than
  * {@link HAND_OFF_DAYS} before it ends, or it starts inside one of the group's that much
@@ -1001,7 +1002,12 @@ function followers(spans: readonly { start: number; end: number }[], groups: rea
     for (let j = i + 1; j < spans.length; j++) {
       const group = groups[j];
       if (group === undefined || (spans[j]?.end ?? -Infinity) <= end) continue;
-      if (group === groups[i]) return j;
+      if (group === groups[i]) {
+        // The same program overlapping by more than a hand-off is two numbers at once (a
+        // `numbers-overlap` conflict), not a restart.
+        if ((spans[j]?.start ?? Infinity) >= end - handOff) return j;
+        continue;
+      }
       let along = checked.get(group);
       if (along === undefined) checked.set(group, (along = alongside(group, start, end)));
       if (!along) return j;
