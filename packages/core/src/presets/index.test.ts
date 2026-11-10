@@ -1,9 +1,14 @@
 import {
   PRESET_BASE_SPECS,
   parseProgramSpecFlexible,
-  detectPresetSuperset,
+  BUILT_IN_KNOWN_PROGRAMS,
+  KnownProgram,
   inferProgramFromLiftRecords,
+  knownProgramFromSpec,
+  liftKey,
+  matchProgramForLifts,
 } from '.';
+import { matchProgramForKeys, programNameKey } from './programMatching';
 
 const LIFTS_531 = ['Squat', 'Bench Press', 'Deadlift', 'Overhead Press'];
 const LIFTS_LEANGAINS = [
@@ -126,44 +131,23 @@ describe('parseProgramSpecFlexible', () => {
   });
 });
 
-describe('detectPresetSuperset', () => {
-  it('returns true when liftHistory contains all 5-3-1 lifts', () => {
-    expect(detectPresetSuperset(LIFTS_531, '5-3-1')).toBe(true);
+describe('BUILT_IN_KNOWN_PROGRAMS', () => {
+  it('knows each preset, its lifts and the length of one run', () => {
+    const byId = new Map(BUILT_IN_KNOWN_PROGRAMS.map((p) => [p.id, p]));
+    expect(byId.get('leangains')).toMatchObject({ workoutCount: 36, lengthWeeks: 12 });
+    expect(byId.get('rpt')).toMatchObject({ workoutCount: 24, lengthWeeks: 8 });
+    expect(byId.get('5-3-1')).toMatchObject({ workoutCount: 24, lengthWeeks: 12 });
+    expect(byId.get('5-3-1')?.lifts.size).toBe(4);
   });
 
-  it('returns true when liftHistory is a strict superset of 5-3-1 lifts', () => {
-    expect(detectPresetSuperset([...LIFTS_531, 'Barbell Row', 'Chin-up'], '5-3-1')).toBe(true);
-  });
-
-  it('returns false when a required 5-3-1 lift is missing', () => {
-    const withoutOhp = LIFTS_531.filter((l) => l !== 'Overhead Press');
-    expect(detectPresetSuperset(withoutOhp, '5-3-1')).toBe(false);
-  });
-
-  it('returns false for an unknown presetId', () => {
-    expect(detectPresetSuperset(LIFTS_531, 'unknown-program')).toBe(false);
-  });
-
-  it('returns false for an empty liftHistory when the preset has lifts', () => {
-    expect(detectPresetSuperset([], '5-3-1')).toBe(false);
-  });
-
-  it('returns true when liftHistory covers all leangains lifts', () => {
-    expect(detectPresetSuperset(LIFTS_LEANGAINS, 'leangains')).toBe(true);
-  });
-
-  it('returns false for leangains when a unique lift is missing', () => {
-    const withoutPullups = LIFTS_LEANGAINS.filter((l) => l !== 'Weighted Pull-ups');
-    expect(detectPresetSuperset(withoutPullups, 'leangains')).toBe(false);
-  });
-
-  it('returns true when liftHistory covers all rpt lifts', () => {
-    expect(detectPresetSuperset(LIFTS_RPT, 'rpt')).toBe(true);
-  });
-
-  it('returns false for rpt when Barbell Row is missing', () => {
-    const withoutRow = LIFTS_RPT.filter((l) => l !== 'Barbell Row');
-    expect(detectPresetSuperset(withoutRow, 'rpt')).toBe(false);
+  it("expects each lift's sets in its author's order", () => {
+    const byId = new Map(BUILT_IN_KNOWN_PROGRAMS.map((p) => [p.id, p]));
+    // RPT and Leangains compounds fall from a top set; accessories are straight sets.
+    expect(byId.get('rpt')?.setOrder.get(liftKey('Bench Press'))).toBe('descending');
+    expect(byId.get('rpt')?.setOrder.get(liftKey('Calf Raises'))).toBe('straight');
+    expect(byId.get('leangains')?.setOrder.get(liftKey('Incline DB Press'))).toBe('straight');
+    // Wendler's 5/3/1 climbs to its top set, whatever the preset's rows say (#1086).
+    expect(byId.get('5-3-1')?.setOrder.get(liftKey('Squat'))).toBe('ascending');
   });
 });
 
@@ -176,8 +160,11 @@ describe('inferProgramFromLiftRecords', () => {
     expect(inferProgramFromLiftRecords(LIFTS_531)).toBe('5-3-1');
   });
 
-  it("returns '5-3-1' for a strict superset of those lifts", () => {
-    expect(inferProgramFromLiftRecords([...LIFTS_531, 'Barbell Row'])).toBe('5-3-1');
+  it('returns the smallest program containing every lift, not one the history covers', () => {
+    // Squat and bench alone sit inside all three presets; 5-3-1 is the smallest.
+    expect(inferProgramFromLiftRecords(['Squat', 'Bench Press'])).toBe('5-3-1');
+    // Barbell Row is outside 5-3-1, so the four 5-3-1 lifts plus a row are RPT.
+    expect(inferProgramFromLiftRecords([...LIFTS_531, 'Barbell Row'])).toBe('rpt');
   });
 
   it("returns 'leangains' when history covers all leangains lifts", () => {
@@ -188,16 +175,71 @@ describe('inferProgramFromLiftRecords', () => {
     expect(inferProgramFromLiftRecords(LIFTS_RPT)).toBe('rpt');
   });
 
-  it("returns 'leangains' not 'rpt' when history has both rpt and leangains lifts", () => {
+  it('returns null when no program contains every lift', () => {
     const combined = [...new Set([...LIFTS_LEANGAINS, ...LIFTS_RPT])];
-    expect(inferProgramFromLiftRecords(combined)).toBe('leangains');
+    expect(inferProgramFromLiftRecords(combined)).toBeNull();
+    expect(inferProgramFromLiftRecords(['Face Pull'])).toBeNull();
   });
 
-  it('returns null when history matches no preset', () => {
-    expect(inferProgramFromLiftRecords(['Squat', 'Bench Press'])).toBeNull();
+  it('leaves out a lift in no built-in program, as import segmentation does', () => {
+    expect(inferProgramFromLiftRecords(['Squat', 'Face Pull'])).toBe('5-3-1');
   });
 
-  it('returns null for a single-lift history that matches no preset', () => {
-    expect(inferProgramFromLiftRecords(['Squat'])).toBeNull();
+  it('matches a lift under any of its spellings', () => {
+    expect(inferProgramFromLiftRecords(['bench-press', 'Barbell Row'])).toBe('rpt');
+  });
+});
+
+describe('matchProgramForKeys', () => {
+  const custom = (id: string, lifts: string[]): KnownProgram => ({
+    id,
+    name: id,
+    lifts: new Set(lifts.map(liftKey)),
+    workoutCount: 12,
+    lengthWeeks: 4,
+    setOrder: new Map(lifts.map((lift) => [liftKey(lift), 'descending'])),
+  });
+  const a = custom('a', ['Squat', 'Bench Press', 'Face Pull']);
+  const b = custom('b', ['Squat', 'Bench Press', 'Barbell Row']);
+  const keys = (lifts: string[]) => new Set(lifts.map(liftKey));
+
+  it('gives a tie to the Source program when it is one of the tied programs', () => {
+    expect(matchProgramForKeys(keys(['Squat']), [a, b], 'b')).toEqual({ program: b, tiedWith: ['a'], bySetOrder: false });
+  });
+
+  it('gives a tie to the first program otherwise, naming the rest', () => {
+    expect(matchProgramForKeys(keys(['Squat']), [a, b], 'rpt')).toEqual({ program: a, tiedWith: ['b'], bySetOrder: false });
+    expect(matchProgramForLifts(['Squat'], [a, b])).toEqual({ program: a, tiedWith: ['b'], bySetOrder: false });
+  });
+
+  it('prefers the program whose set order agrees with the most sessions over the smallest', () => {
+    // Squat and bench fit 5-3-1 (smallest) and RPT; descending sets agree only with RPT.
+    const squatBench = keys(['Squat', 'Bench Press']);
+    const match = matchProgramForKeys(squatBench, BUILT_IN_KNOWN_PROGRAMS, undefined, new Map([['rpt', 3]]));
+    expect(match).toMatchObject({ program: { id: 'rpt' }, bySetOrder: true });
+    expect(matchProgramForKeys(squatBench, BUILT_IN_KNOWN_PROGRAMS)?.program.id).toBe('5-3-1');
+  });
+});
+
+describe('programNameKey', () => {
+  it('drops Latin accents but keeps the vowel signs that tell words apart in other scripts', () => {
+    expect(programNameKey('Leangáins')).toBe('leangains');
+    expect(programNameKey('5/3/1')).toBe(programNameKey('5-3-1'));
+    expect(programNameKey('बल')).not.toBe(programNameKey('बाल'));
+    expect(programNameKey('शक्ति')).not.toBe(programNameKey('शक्त'));
+    expect(programNameKey('-')).toBe('');
+  });
+});
+
+describe('knownProgramFromSpec', () => {
+  const row = { week: 1 as const, offset: 0 };
+
+  it('reads each lift set order from its wtDecrementPct, unless the author order overrides it', () => {
+    const spec = [
+      { ...row, lift: 'Squat', wtDecrementPct: 0.1 },
+      { ...row, lift: 'Leg Curl', wtDecrementPct: 0 },
+    ];
+    expect([...knownProgramFromSpec('x', spec).setOrder.values()]).toEqual(['descending', 'straight']);
+    expect([...knownProgramFromSpec('x', spec, 'ascending').setOrder.values()]).toEqual(['ascending', 'straight']);
   });
 });
