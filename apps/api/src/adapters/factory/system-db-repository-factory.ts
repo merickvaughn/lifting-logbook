@@ -14,6 +14,7 @@ import { PrismaStrengthGoalRepository } from '../prisma/strength-goal.repository
 import { PrismaTrainingMaxRepository } from '../prisma/training-max.repository';
 import { PrismaTrainingMaxHistoryRepository } from '../prisma/training-max-history.repository';
 import { PrismaMacrocycleDashboardRepository } from '../prisma/macrocycle-dashboard.repository';
+import { PrismaMacrocycleRepository } from '../prisma/macrocycle.repository';
 import { PrismaLiftMetadataRepository } from '../prisma/lift-metadata.repository';
 import { PrismaWorkoutDateOverrideRepository } from '../prisma/workout-date-override.repository';
 import { PrismaWorkoutLiftOverrideRepository } from '../prisma/workout-lift-override.repository';
@@ -22,6 +23,7 @@ import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
 import { InMemoryFocusRepository } from '../in-memory/focus.adapter';
 import { InMemoryMacrocycleDashboardRepository } from '../in-memory/macrocycle-dashboard.adapter';
+import { InMemoryMacrocycleRepository } from '../in-memory/macrocycle.adapter';
 import { InMemoryImportBatchRepository } from '../in-memory/import-batch.adapter';
 import { InMemoryLiftMetadataRepository } from '../in-memory/lift-metadata.adapter';
 import { InMemoryLiftingProgramSpecRepository } from '../in-memory/lifting-program-spec.adapter';
@@ -100,6 +102,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
         bodyWeight: new PrismaBodyWeightRepository(prisma, userId),
         customLift: new PrismaCustomLiftRepository(prisma, userId),
         focus: new PrismaFocusRepository(prisma, userId),
+        macrocycle: new PrismaMacrocycleRepository(prisma, userId),
         macrocycleDashboard: new PrismaMacrocycleDashboardRepository(prisma, userId),
         macrocycleScheduledWorkout: new PrismaMacrocycleScheduledWorkoutRepository(prisma, userId),
         importBatch: new PrismaImportBatchRepository(prisma, userId),
@@ -132,6 +135,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift,
       focus: new InMemoryFocusRepository(),
+      macrocycle: new InMemoryMacrocycleRepository(),
       macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(),
       macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
       importBatch: new InMemoryImportBatchRepository(),

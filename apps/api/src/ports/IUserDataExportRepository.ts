@@ -21,6 +21,7 @@ export interface UserDataRows {
   customLifts: { id: string; name: string }[];
   /** Null until the user changes a setting. */
   userSettings: { activeProgram: string | null } | null;
+  macrocycles: StoredRow[];
   macrocycleDashboards: StoredRow[];
   macrocycleScheduledWorkouts: StoredRow[];
   trainingMaxHistory: StoredRow[];

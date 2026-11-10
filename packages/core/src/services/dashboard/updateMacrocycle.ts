@@ -6,7 +6,7 @@ export function updateMacrocycle(
   prevMacrocycle: MacrocycleDashboard,
   overrides: UpdateMacrocycleOverrides = {},
 ): MacrocycleDashboard {
-  const prevNum = prevMacrocycle.macrocycleNum;
+  const newNum = overrides.macrocycleNum ?? prevMacrocycle.macrocycleNum + 1;
   const prevDate = new Date(prevMacrocycle.macrocycleDate);
   const { targetWeekday, today, overrideDate } = overrides;
   let targetWeekdayNum = 0;
@@ -24,10 +24,10 @@ export function updateMacrocycle(
   const macrocycleDate =
     overrideDate ?? getNextDate(prevDate, targetWeekdayNum, today);
   // Update sheet link
-  const newSheetName = `${prevMacrocycle.program}_Cycle_${prevNum + 1}_${formatDateYYYYMMDD(macrocycleDate)}`;
+  const newSheetName = `${prevMacrocycle.program}_Cycle_${newNum}_${formatDateYYYYMMDD(macrocycleDate)}`;
   return {
     ...prevMacrocycle,
-    macrocycleNum: prevNum + 1,
+    macrocycleNum: newNum,
     macrocycleDate: macrocycleDate,
     sheetName: newSheetName,
     macrocycleStartWeekday: overrides.updateStartWeekday

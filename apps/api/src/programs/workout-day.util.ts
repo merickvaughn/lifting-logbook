@@ -8,24 +8,24 @@ import {
   resolveDayPrescriptions,
   specRowsForWorkoutDay,
 } from '@lifting-logbook/core';
-import { ProgramNotFoundError } from '../ports/errors';
-import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
+import { RepositoryBundle } from '../ports/factory';
 import { ScheduledWorkout } from '../ports/IMacrocycleScheduledWorkoutRepository';
+import { dashboardOrNull, nextMacrocycleNumber } from './macrocycle-history.util';
 import { workoutKeyForWorkoutNum } from './mappers';
 
 /**
- * The program's current macrocycle dashboard, or `{ macrocycleNum: 1 }` before one exists,
- * which is the macrocycle a program's workout routes address until it is initialized.
+ * The program's current macrocycle dashboard or, before one exists, the number the first
+ * live macrocycle will take, which is the macrocycle a program's workout routes address until
+ * it is initialized. That's 1 for a program with no history, and the number past any
+ * imported or legacy macrocycle otherwise, so workout and focus routes never read or write
+ * imported history (ADR-042).
  */
 export async function currentMacrocycleOrFirst(
-  dashboards: IMacrocycleDashboardRepository,
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard'>,
   program: string,
-): Promise<MacrocycleDashboard | { macrocycleNum: 1 }> {
-  // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
-  return dashboards.getMacrocycleDashboard(program).catch((err: unknown) => {
-    if (err instanceof ProgramNotFoundError) return { macrocycleNum: 1 as const };
-    throw err;
-  });
+): Promise<MacrocycleDashboard | { macrocycleNum: number }> {
+  const dashboard = await dashboardOrNull(repos, program);
+  return dashboard ?? { macrocycleNum: await nextMacrocycleNumber(repos, program, null) };
 }
 
 export interface WorkoutDay extends AppliedLiftOverrides {

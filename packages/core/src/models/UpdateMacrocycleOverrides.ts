@@ -10,4 +10,9 @@ export interface UpdateMacrocycleOverrides {
   today?: Date;
   overrideDate?: Date;
   updateStartWeekday?: boolean;
+  /**
+   * The new macrocycle's number, allocated by the caller from what's stored. Without it the
+   * number is the previous one + 1, which can land on a number already taken (ADR-042).
+   */
+  macrocycleNum?: number;
 }

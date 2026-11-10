@@ -46,6 +46,7 @@ describe('HistoryTabs across stored spellings', () => {
       <HistoryTabs
         records={[record('a', 'Bench Press', 200), record('b', 'bench-press', 210), record('c', 'Back Squat', 300)]}
         tmEntries={[]}
+        macrocycles={[]}
         unit="lbs"
       />,
     );
@@ -64,6 +65,7 @@ describe('HistoryTabs across stored spellings', () => {
       <HistoryTabs
         records={[record('a', 'Bench Press', 200), record('b', 'bench-press', 210), record('c', 'Back Squat', 300)]}
         tmEntries={[]}
+        macrocycles={[]}
         unit="lbs"
       />,
     );
@@ -78,6 +80,7 @@ describe('HistoryTabs across stored spellings', () => {
       <HistoryTabs
         records={[record('a', 'C. Lat Raise', 20), record('b', 'Lateral Raise', 40)]}
         tmEntries={[]}
+        macrocycles={[]}
         unit="lbs"
       />,
     );
@@ -90,6 +93,7 @@ describe('HistoryTabs across stored spellings', () => {
       <HistoryTabs
         records={[]}
         tmEntries={[tmEntry('a', 'Bench Press', 200), tmEntry('b', 'bench-press', 210)]}
+        macrocycles={[]}
         unit="lbs"
       />,
     );

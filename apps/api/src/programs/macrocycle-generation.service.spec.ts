@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Logger } from '@nestjs/common';
-import { PRESET_BASE_SPECS, Weekday, distributeWorkouts } from '@lifting-logbook/core';
+import { PRESET_BASE_SPECS, Weekday, distributeWorkouts, programWorkoutKeys } from '@lifting-logbook/core';
 import { DAY_INDEX, UserWorkoutSchedule } from '@lifting-logbook/types';
 
 // distributeWorkouts is wrapped, not replaced: every test calls through to the real
@@ -22,6 +22,8 @@ import { IWorkoutSkipOverrideRepository } from '../ports/IWorkoutSkipOverrideRep
 import { IMacrocycleScheduledWorkoutRepository } from '../ports/IMacrocycleScheduledWorkoutRepository';
 import { IUserSettingsRepository } from '../ports/IUserSettingsRepository';
 import { ProgramNotFoundError } from '../ports/errors';
+import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
+import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { buildHistoryEntries, MacrocycleGenerationService } from './macrocycle-generation.service';
 
 const PROGRAM = '5-3-1';
@@ -73,6 +75,9 @@ const stubLiftRecords = () => [
   },
 ];
 
+const macrocycleRow = (macrocycleNum: number, overrides: Partial<MacrocycleRow> = {}): MacrocycleRow =>
+  macrocycleRowFixture(macrocycleNum, { program: PROGRAM, ...overrides });
+
 describe('MacrocycleGenerationService', () => {
   let service: MacrocycleGenerationService;
   let macrocycleDashboardRepo: jest.Mocked<IMacrocycleDashboardRepository>;
@@ -84,7 +89,9 @@ describe('MacrocycleGenerationService', () => {
   let macrocycleScheduledWorkoutRepo: jest.Mocked<IMacrocycleScheduledWorkoutRepository>;
   let workoutLiftOverrideRepo: jest.Mocked<IWorkoutLiftOverrideRepository>;
   let workoutDateOverrideRepo: jest.Mocked<IWorkoutDateOverrideRepository>;
+  let macrocycleRepo: InMemoryMacrocycleRepository;
   let repos: {
+    macrocycle: InMemoryMacrocycleRepository;
     macrocycleDashboard: jest.Mocked<IMacrocycleDashboardRepository>;
     macrocycleScheduledWorkout: jest.Mocked<IMacrocycleScheduledWorkoutRepository>;
     liftingProgramSpec: jest.Mocked<ILiftingProgramSpecRepository>;
@@ -127,7 +134,12 @@ describe('MacrocycleGenerationService', () => {
       updateLiftRecord: jest.fn(),
       deleteLiftRecordsByNaturalKeys: jest.fn(),
       deleteAllLiftRecords: jest.fn().mockResolvedValue(undefined),
+      getLoggedWorkoutNums: jest.fn().mockResolvedValue(new Set<number>()),
+      getRecordsForLifts: jest.fn(),
+      getMacrocycleDateRanges: jest.fn().mockResolvedValue(new Map()),
     };
+    // Macrocycle 1 is the stub dashboard's; tests that name others add them.
+    macrocycleRepo = new InMemoryMacrocycleRepository([macrocycleRow(1)]);
     userSettingsRepo = {
       getSettings: jest
         .fn()
@@ -137,6 +149,7 @@ describe('MacrocycleGenerationService', () => {
     macrocycleScheduledWorkoutRepo = {
       getScheduledWorkouts: jest.fn().mockResolvedValue([]),
       saveScheduledWorkouts: jest.fn().mockResolvedValue(undefined),
+      deleteAllScheduledWorkouts: jest.fn().mockResolvedValue(undefined),
     };
     workoutLiftOverrideRepo = {
       getOverrides: jest.fn().mockResolvedValue([]),
@@ -152,6 +165,7 @@ describe('MacrocycleGenerationService', () => {
       deleteAllOverrides: jest.fn(),
     };
     repos = {
+      macrocycle: macrocycleRepo,
       macrocycleDashboard: macrocycleDashboardRepo,
       macrocycleScheduledWorkout: macrocycleScheduledWorkoutRepo,
       liftingProgramSpec: programSpecRepo,
@@ -215,14 +229,90 @@ describe('MacrocycleGenerationService', () => {
       programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
       trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
       liftRecordRepo.getLiftRecords.mockResolvedValue(stubLiftRecords());
+      macrocycleRepo.seed(macrocycleRow(3));
 
       const { dashboard: result } = await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 3 });
 
       expect(liftRecordRepo.getLiftRecords).toHaveBeenCalledWith(PROGRAM, 3);
+      // The next free number, which here is also the source + 1.
       expect(result.macrocycleNum).toBe(4);
     });
 
+    // ADR-042: the source + 1 can be taken, so the new macrocycle takes the next free number.
+    it('gives a fromMacrocycleNum start the next free number, not the source + 1', async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue({ ...stubDashboard(), macrocycleNum: 3 });
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      liftRecordRepo.getLiftRecords.mockResolvedValue(stubLiftRecords());
+      macrocycleRepo.seed(macrocycleRow(2));
+      macrocycleRepo.seed(macrocycleRow(3));
+
+      const { dashboard: result } = await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 1 });
+
+      expect(result.macrocycleNum).toBe(4);
+      expect(await macrocycleRepo.findByNumber(PROGRAM, 4)).toMatchObject({ origin: 'live', status: 'in-progress' });
+    });
+
+    it('rejects a fromMacrocycleNum that is imported history, writing nothing', async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      macrocycleRepo.seed(macrocycleRow(4, { origin: 'imported', status: 'completed' }));
+
+      await expect(service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 4 })).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'macrocycle-read-only' },
+      });
+      expect(trainingMaxRepo.saveTrainingMaxes).not.toHaveBeenCalled();
+      expect(macrocycleDashboardRepo.saveMacrocycleDashboard).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unknown fromMacrocycleNum with 404', async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+
+      await expect(service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 9 })).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'macrocycle-not-found' },
+      });
+      expect(trainingMaxRepo.saveTrainingMaxes).not.toHaveBeenCalled();
+    });
+
+    // Decision 1: starting the next macrocycle closes the current one's row.
+    it.each([
+      ['completed', 'every workout', 0, new Date('2026-05-04T00:00:00.000Z')],
+      ['abandoned', 'all but one workout', 1, new Date('2026-05-04T00:00:00.000Z')],
+      ['abandoned', 'no workout', Infinity, null],
+    ] as const)('closes the current row as %s with %s logged', async (status, _label, missing, last) => {
+      const workouts = programWorkoutKeys(PROGRAM, stubProgramSpec()).map((_key, i) => i + 1);
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      liftRecordRepo.getLiftRecords.mockResolvedValue([]);
+      liftRecordRepo.getLoggedWorkoutNums.mockResolvedValue(new Set(workouts.slice(0, Math.max(0, workouts.length - missing))));
+      liftRecordRepo.getMacrocycleDateRanges.mockResolvedValue(
+        last ? new Map([[1, { first: new Date('2026-04-20T00:00:00.000Z'), last }]]) : new Map(),
+      );
+
+      await service.startNewMacrocycle(repos, PROGRAM);
+
+      // With no sets, the row ends on its own start date.
+      expect(await macrocycleRepo.findByNumber(PROGRAM, 1)).toMatchObject({
+        status,
+        endDate: last ?? macrocycleRow(1).startDate,
+      });
+    });
+
+    it('keeps a status the lifter chose when it closes the current row', async () => {
+      await macrocycleRepo.deleteAllExcept(PROGRAM, []);
+      macrocycleRepo.seed(macrocycleRow(1, { status: 'overran', statusChosen: true }));
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      liftRecordRepo.getLiftRecords.mockResolvedValue([]);
+
+      await service.startNewMacrocycle(repos, PROGRAM);
+
+      expect(await macrocycleRepo.findByNumber(PROGRAM, 1)).toMatchObject({ status: 'overran' });
+    });
+
     it('throws BadRequestException when fromMacrocycleNum has no records', async () => {
+      macrocycleRepo.seed(macrocycleRow(5));
       macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
       programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
       trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
@@ -281,8 +371,8 @@ describe('MacrocycleGenerationService', () => {
     });
 
     it("reads the closing macrocycle's dates before overwriting them, and dates its history by its schedule (issue #1028)", async () => {
-      // fromMacrocycleNum 1 on a dashboard at macrocycle 2 starts a new macrocycle 2, so
-      // saveScheduledDates replaces the closing macrocycle's rows. They must be read first.
+      // fromMacrocycleNum 1 on a dashboard at macrocycle 2 starts macrocycle 3 (ADR-042; it
+      // reused 2 before). The closing macrocycle's rows are still read before anything is saved.
       // By the calendar the closing macrocycle (starting in 2030) is in week 1, a training
       // week; its schedule already dated workout 2, week 2's test day, in 2026.
       const spec = [1, 2].map((week) => ({
@@ -303,9 +393,11 @@ describe('MacrocycleGenerationService', () => {
         { workoutNum: 2, weekNum: 1, scheduledDate: new Date('2026-04-22T00:00:00.000Z') },
       ]);
 
+      macrocycleRepo.seed(macrocycleRow(2));
+
       const { dashboard } = await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 1 });
 
-      expect(dashboard.macrocycleNum).toBe(2);
+      expect(dashboard.macrocycleNum).toBe(3);
       expect(workoutLiftOverrideRepo.getOverridesForMacrocycle).toHaveBeenCalledWith(PROGRAM, 1);
       expect(macrocycleScheduledWorkoutRepo.getScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 2);
       expect(workoutDateOverrideRepo.getOverridesForMacrocycle).toHaveBeenCalledWith(PROGRAM, 2);
@@ -319,6 +411,26 @@ describe('MacrocycleGenerationService', () => {
   });
 
   describe('initializeFirstMacrocycle', () => {
+    // A program with no macrocycle yet.
+    beforeEach(() => macrocycleRepo.deleteAllExcept(PROGRAM, []));
+
+    // ADR-042: the first live macrocycle takes the number past any imported history.
+    it('numbers the first live macrocycle past imported history, and gives it a live row', async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError(PROGRAM));
+      macrocycleRepo.seed(macrocycleRow(1, { origin: 'imported', status: 'completed' }));
+      macrocycleRepo.seed(macrocycleRow(2, { origin: 'imported', status: 'abandoned' }));
+
+      const { dashboard } = await service.initializeFirstMacrocycle(repos, PROGRAM, { macrocycleDate: '2026-11-02' });
+
+      expect(dashboard.macrocycleNum).toBe(3);
+      expect(dashboard.sheetName).toBe(`${PROGRAM}_Cycle_3_20261102`);
+      expect(await macrocycleRepo.findByNumber(PROGRAM, 3)).toMatchObject({
+        origin: 'live',
+        status: 'in-progress',
+        startDate: new Date('2026-11-02T00:00:00.000Z'),
+      });
+    });
+
     it('creates and saves a macrocycle-1 dashboard when none exists', async () => {
       macrocycleDashboardRepo.getMacrocycleDashboard.mockRejectedValue(
         new ProgramNotFoundError(PROGRAM),
@@ -605,15 +717,39 @@ describe('MacrocycleGenerationService', () => {
 
       await service.deleteCurrentMacrocycle(deleteRepos, PROGRAM);
 
-      expect(liftRecordRepo.deleteAllLiftRecords).toHaveBeenCalledWith(PROGRAM);
+      // No imported macrocycles, so nothing is kept.
+      expect(liftRecordRepo.deleteAllLiftRecords).toHaveBeenCalledWith(PROGRAM, []);
       expect(trainingMaxHistoryRepo.deleteAllHistory).toHaveBeenCalledWith(PROGRAM);
       expect(trainingMaxRepo.deleteAllTrainingMaxes).toHaveBeenCalledWith(PROGRAM);
-      expect(macrocycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 1, []);
-      expect(dateOverrideRepo.deleteAllOverrides).toHaveBeenCalledWith(PROGRAM);
-      expect(skipOverrideRepo.deleteAllSkips).toHaveBeenCalledWith(PROGRAM);
-      expect(liftOverrideRepo.deleteAllOverrides).toHaveBeenCalledWith(PROGRAM);
-      expect(focusRepo.deleteAllDayStates).toHaveBeenCalledWith(PROGRAM);
+      expect(macrocycleScheduledWorkoutRepo.deleteAllScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, []);
+      expect(dateOverrideRepo.deleteAllOverrides).toHaveBeenCalledWith(PROGRAM, []);
+      expect(skipOverrideRepo.deleteAllSkips).toHaveBeenCalledWith(PROGRAM, []);
+      expect(liftOverrideRepo.deleteAllOverrides).toHaveBeenCalledWith(PROGRAM, []);
+      expect(focusRepo.deleteAllDayStates).toHaveBeenCalledWith(PROGRAM, []);
+      expect(await macrocycleRepo.list(PROGRAM)).toEqual([]);
       expect(macrocycleDashboardRepo.deleteMacrocycleDashboard).toHaveBeenCalledWith(PROGRAM);
+    });
+
+    // Imported history survives a delete with its rows; live and legacy macrocycles go (ADR-042).
+    it('keeps imported macrocycles and their rows, and removes live and legacy ones', async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue({ ...stubDashboard(), macrocycleNum: 3 });
+      macrocycleRepo.seed(macrocycleRow(2, { origin: 'imported', status: 'completed' }));
+      macrocycleRepo.seed(macrocycleRow(3));
+      macrocycleRepo.seed(macrocycleRow(4, { origin: 'legacy', status: 'unknown' }));
+
+      await service.deleteCurrentMacrocycle(deleteRepos, PROGRAM);
+
+      for (const deleteAll of [
+        liftRecordRepo.deleteAllLiftRecords,
+        macrocycleScheduledWorkoutRepo.deleteAllScheduledWorkouts,
+        dateOverrideRepo.deleteAllOverrides,
+        skipOverrideRepo.deleteAllSkips,
+        liftOverrideRepo.deleteAllOverrides,
+        focusRepo.deleteAllDayStates,
+      ]) {
+        expect(deleteAll).toHaveBeenCalledWith(PROGRAM, [2]);
+      }
+      expect((await macrocycleRepo.list(PROGRAM)).map((m) => m.macrocycleNum)).toEqual([2]);
     });
 
     it('deletes sequentially, in a fixed order, ending with the dashboard', async () => {
@@ -632,7 +768,7 @@ describe('MacrocycleGenerationService', () => {
       trainingMaxRepo.deleteAllTrainingMaxes.mockImplementation(async () => {
         order.push('trainingMax');
       });
-      macrocycleScheduledWorkoutRepo.saveScheduledWorkouts.mockImplementation(async () => {
+      macrocycleScheduledWorkoutRepo.deleteAllScheduledWorkouts.mockImplementation(async () => {
         order.push('macrocycleScheduledWorkout');
       });
       dateOverrideRepo.deleteAllOverrides.mockImplementation(async () => {
@@ -646,6 +782,9 @@ describe('MacrocycleGenerationService', () => {
       });
       focusRepo.deleteAllDayStates.mockImplementation(async () => {
         order.push('focusDayState');
+      });
+      jest.spyOn(macrocycleRepo, 'deleteAllExcept').mockImplementation(async () => {
+        order.push('macrocycle');
       });
       macrocycleDashboardRepo.deleteMacrocycleDashboard.mockImplementation(async () => {
         order.push('macrocycleDashboard');
@@ -662,6 +801,7 @@ describe('MacrocycleGenerationService', () => {
         'workoutSkipOverride',
         'workoutLiftOverride',
         'focusDayState',
+        'macrocycle',
         'macrocycleDashboard',
       ]);
     });
@@ -675,13 +815,6 @@ describe('MacrocycleGenerationService', () => {
       expect(dateOverrideRepo.deleteAllOverrides).not.toHaveBeenCalled();
     });
 
-    it('scopes the scheduled-workout clear to the dashboard current macrocycleNum', async () => {
-      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue({ ...stubDashboard(), macrocycleNum: 3 });
-
-      await service.deleteCurrentMacrocycle(deleteRepos, PROGRAM);
-
-      expect(macrocycleScheduledWorkoutRepo.saveScheduledWorkouts).toHaveBeenCalledWith(PROGRAM, 3, []);
-    });
   });
 
   describe('recalculateMaxes', () => {

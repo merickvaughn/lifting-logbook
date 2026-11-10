@@ -476,6 +476,7 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
 
     expect(res.statusCode).toBe(201);
     await owner.macrocycleDashboard.deleteMany({ where: { userId } });
+    await owner.macrocycle.deleteMany({ where: { userId } });
   });
 
   it('reads back data that genuinely exists instead of failing closed (regression test for #644)', async () => {
@@ -502,6 +503,7 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).program).toBe('leangains');
     await owner.macrocycleDashboard.deleteMany({ where: { userId } });
+    await owner.macrocycle.deleteMany({ where: { userId } });
   });
 
   // switchProgram (SwitchProgramController) exercises a second HTTP entry point into the same
@@ -527,6 +529,7 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
     expect(JSON.parse(res.body)).toEqual({ activeProgram: 'leangains', macrocycleNum: 1 });
 
     await owner.macrocycleDashboard.deleteMany({ where: { userId } });
+    await owner.macrocycle.deleteMany({ where: { userId } });
     await owner.userSettings.deleteMany({ where: { userId } });
   });
 
@@ -642,6 +645,7 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
 
     await Promise.all([
       owner.macrocycleDashboard.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
+      owner.macrocycle.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.liftRecord.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.trainingMax.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.trainingMaxHistory.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
@@ -700,6 +704,7 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
 
     await Promise.all([
       owner.macrocycleDashboard.deleteMany({ where: { userId } }),
+      owner.macrocycle.deleteMany({ where: { userId } }),
       owner.macrocycleScheduledWorkout.deleteMany({ where: { userId } }),
       owner.workoutDateOverride.deleteMany({ where: { userId } }),
       owner.workoutSkipOverride.deleteMany({ where: { userId } }),

@@ -29,9 +29,9 @@ export class PrismaWorkoutSkipOverrideRepository implements IWorkoutSkipOverride
     });
   }
 
-  async deleteAllSkips(program: string): Promise<void> {
+  async deleteAllSkips(program: string, keep: readonly number[] = []): Promise<void> {
     await this.prisma.workoutSkipOverride.deleteMany({
-      where: { userId: this.userId, program },
+      where: { userId: this.userId, program, macrocycleNum: { notIn: [...keep] } },
     });
   }
 }

@@ -10,6 +10,7 @@ import {
   TrainingMax,
   TrainingMaxHistoryEntry,
   updateMacrocycle,
+  toUTCMidnight,
   updateMaxes,
   weekTypeForDate,
   WEEKDAY_MAP,
@@ -19,9 +20,16 @@ import { RepositoryBundle } from '../ports';
 import { ScheduledWorkout } from '../ports/IMacrocycleScheduledWorkoutRepository';
 import { ProgramNotFoundError } from '../ports/errors';
 import { StartNewMacrocycleDto } from './start-new-macrocycle.dto';
+import {
+  assertMacrocycleWritable,
+  closingStatus,
+  ensureCurrentRow,
+  nextMacrocycleNumber,
+} from './macrocycle-history.util';
 
 type MacrocycleRepos = Pick<
   RepositoryBundle,
+  | 'macrocycle'
   | 'macrocycleDashboard'
   | 'macrocycleScheduledWorkout'
   | 'liftingProgramSpec'
@@ -176,18 +184,35 @@ export class MacrocycleGenerationService {
   ): Promise<MacrocycleGenerationResult> {
     const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program);
     const sourceMacrocycleNum = dto.fromMacrocycleNum ?? dashboard.macrocycleNum;
+    const closingRow = await ensureCurrentRow(repos, dashboard);
+    // Imported history can't feed the training maxes, and a number with no macrocycle has no
+    // records to feed them (proposal decision 2).
+    if (dto.fromMacrocycleNum !== undefined) {
+      await assertMacrocycleWritable(repos, program, dto.fromMacrocycleNum);
+    }
+    // One past every stored number, not the source + 1, so `fromMacrocycleNum` can't reuse a
+    // number and a new macrocycle can't land on imported history (ADR-042).
+    const newMacrocycleNum = await nextMacrocycleNumber(repos, program, dashboard);
 
-    // The closing macrocycle's workout dates are read now, before saveScheduledDates can
-    // overwrite them: with `fromMacrocycleNum` the new macrocycle may reuse its number.
-    const [programSpec, trainingMaxes, liftRecords, liftOverrides, closingScheduled, closingDateOverrides] =
-      await Promise.all([
-        repos.liftingProgramSpec.getProgramSpec(program),
-        repos.trainingMax.getTrainingMaxes(program),
-        repos.liftRecord.getLiftRecords(program, sourceMacrocycleNum),
-        repos.workoutLiftOverride.getOverridesForMacrocycle(program, sourceMacrocycleNum),
-        repos.macrocycleScheduledWorkout.getScheduledWorkouts(program, dashboard.macrocycleNum),
-        repos.workoutDateOverride.getOverridesForMacrocycle(program, dashboard.macrocycleNum),
-      ]);
+    const [
+      programSpec,
+      trainingMaxes,
+      liftRecords,
+      liftOverrides,
+      closingScheduled,
+      closingDateOverrides,
+      closingWorkoutNums,
+      closingRange,
+    ] = await Promise.all([
+      repos.liftingProgramSpec.getProgramSpec(program),
+      repos.trainingMax.getTrainingMaxes(program),
+      repos.liftRecord.getLiftRecords(program, sourceMacrocycleNum),
+      repos.workoutLiftOverride.getOverridesForMacrocycle(program, sourceMacrocycleNum),
+      repos.macrocycleScheduledWorkout.getScheduledWorkouts(program, dashboard.macrocycleNum),
+      repos.workoutDateOverride.getOverridesForMacrocycle(program, dashboard.macrocycleNum),
+      repos.liftRecord.getLoggedWorkoutNums(program, dashboard.macrocycleNum),
+      repos.liftRecord.getMacrocycleDateRanges(program, dashboard.macrocycleNum),
+    ]);
 
     let prevDashboard = dashboard;
     if (dto.fromMacrocycleNum !== undefined) {
@@ -203,14 +228,31 @@ export class MacrocycleGenerationService {
       prevDashboard = { ...dashboard, macrocycleNum: dto.fromMacrocycleNum, macrocycleDate: minDate };
     }
 
-    const macrocycleOverrides = dto.macrocycleDate
-      ? { overrideDate: new Date(dto.macrocycleDate) }
-      : {};
-
-    const newMacrocycle = updateMacrocycle(prevDashboard, macrocycleOverrides);
+    const newMacrocycle = updateMacrocycle(prevDashboard, {
+      macrocycleNum: newMacrocycleNum,
+      ...(dto.macrocycleDate && { overrideDate: new Date(dto.macrocycleDate) }),
+    });
     // Deliberate: flagged reductions are silently blocked here — they are not surfaced
     // to the caller when advancing a macrocycle. Use recalculateMaxes to review flagged reductions.
     const { maxes: newMaxes } = updateMaxes(programSpec, trainingMaxes, liftRecords, { program, liftOverrides });
+
+    // The new row goes first: a concurrent request that took this number makes it throw a 409
+    // before anything else is written (the request transaction rolls back the rest anyway).
+    await repos.macrocycle.create({
+      program,
+      macrocycleNum: newMacrocycle.macrocycleNum,
+      startDate: toUTCMidnight(newMacrocycle.macrocycleDate),
+      status: 'in-progress',
+      origin: 'live',
+    });
+    // The closing macrocycle ends on its last session, or its start with none (decision 1). A
+    // status the lifter chose stays.
+    await repos.macrocycle.close(program, dashboard.macrocycleNum, {
+      endDate: closingRange.get(dashboard.macrocycleNum)?.last ?? closingRow.startDate,
+      status: closingRow.statusChosen
+        ? closingRow.status
+        : closingStatus(closingWorkoutNums, programWorkoutKeys(program, programSpec).length),
+    });
 
     // Write order: maxes → scheduled dates → dashboard. If dashboard write fails,
     // macrocycleNum hasn't advanced in the dashboard so a retry is safe. Scheduled date
@@ -237,7 +279,7 @@ export class MacrocycleGenerationService {
   }
 
   async initializeFirstMacrocycle(
-    repos: Pick<MacrocycleRepos, 'macrocycleDashboard' | 'macrocycleScheduledWorkout' | 'liftingProgramSpec' | 'userSettings'>,
+    repos: Pick<MacrocycleRepos, 'macrocycle' | 'macrocycleDashboard' | 'macrocycleScheduledWorkout' | 'liftingProgramSpec' | 'userSettings'>,
     program: string,
     dto: { macrocycleDate?: string } = {},
   ): Promise<MacrocycleGenerationResult> {
@@ -267,12 +309,14 @@ export class MacrocycleGenerationService {
       throw new Error(`No Weekday mapping for UTC day index ${macrocycleDate.getUTCDay()}`);
     }
 
+    // 1 for a program with no history; after imported history, the number past it (ADR-042).
+    const macrocycleNum = await nextMacrocycleNumber(repos, program, null);
     const dashboard: MacrocycleDashboard = {
       program,
       macrocycleUnit: defaults.macrocycleUnit,
-      macrocycleNum: 1,
+      macrocycleNum,
       macrocycleDate,
-      sheetName: `${program}_Cycle_1_${formatDateYYYYMMDD(macrocycleDate)}`,
+      sheetName: `${program}_Cycle_${macrocycleNum}_${formatDateYYYYMMDD(macrocycleDate)}`,
       macrocycleStartWeekday: weekdayName,
       programType: defaults.programType,
     };
@@ -281,7 +325,14 @@ export class MacrocycleGenerationService {
       repos.userSettings.getSettings(),
       repos.liftingProgramSpec.getProgramSpec(program),
     ]);
-    // Without a schedule, or a seeded spec, this clears any rows a deleted macrocycle 1 left.
+    await repos.macrocycle.create({
+      program,
+      macrocycleNum,
+      startDate: toUTCMidnight(macrocycleDate),
+      status: 'in-progress',
+      origin: 'live',
+    });
+    // Without a schedule, or a seeded spec, this clears any rows a deleted macrocycle left.
     const scheduledWorkouts = await saveScheduledDates(repos, program, dashboard.macrocycleNum, dashboard.macrocycleDate, programSpec, settings.workoutSchedule, this.logger);
     await repos.macrocycleDashboard.saveMacrocycleDashboard(dashboard);
     return { dashboard, programSpec, scheduledWorkouts };
@@ -289,20 +340,19 @@ export class MacrocycleGenerationService {
 
   /**
    * Deletes the current macrocycle for a program and every row scoped to it: the
-   * MacrocycleDashboard, all LiftRecord rows across every macrocycle number, all TrainingMax
-   * rows, all TrainingMaxHistory entries, any MacrocycleScheduledWorkout rows for the
-   * deleted macrocycle, and every workout date, skip and lift override and saved focus
-   * choice (FocusDayState) across every macrocycle number. Deliberately leaves
+   * MacrocycleDashboard, all TrainingMax rows, all TrainingMaxHistory entries, and for every
+   * macrocycle number except imported ones, its LiftRecord, MacrocycleScheduledWorkout,
+   * workout date, skip and lift override, saved focus choice (FocusDayState) and Macrocycle
+   * rows. Imported macrocycles are history and stay with their records (ADR-042). Deliberately leaves
    * UserSettings.activeProgram untouched — that field is independent of macrocycle
    * existence and is used by switchProgram's routing. Focus blocks and the focus budget
    * stay too: they are dated plans that outlive a macrocycle, like strength goals.
    *
-   * The per-workout rows go for every macrocycle number, not just the deleted one, because
-   * re-initializing always starts again at macrocycle 1: deleted from macrocycle 3, an
-   * override left on macrocycle 1 would reappear on the new macrocycle 1 (issue #1084).
+   * The per-workout rows go for every number but the imported ones, not just the deleted
+   * one, because re-initializing takes the first number past what's left: an override left
+   * on a legacy number would otherwise reappear on a later macrocycle given it (issue #1084).
    *
-   * getMacrocycleDashboard(program) is called first for two reasons: it supplies the
-   * macrocycleNum needed to scope the MacrocycleScheduledWorkout clear, and it throws
+   * getMacrocycleDashboard(program) is called first because it throws
    * ProgramNotFoundError (-> 404) when nothing exists, giving a free "nothing to
    * delete" response with no new error-handling code — mirrors the guard
    * initializeFirstMacrocycle uses to detect "no macrocycle yet".
@@ -319,6 +369,7 @@ export class MacrocycleGenerationService {
   async deleteCurrentMacrocycle(
     repos: Pick<
       RepositoryBundle,
+      | 'macrocycle'
       | 'macrocycleDashboard'
       | 'macrocycleScheduledWorkout'
       | 'liftRecord'
@@ -331,16 +382,22 @@ export class MacrocycleGenerationService {
     >,
     program: string,
   ): Promise<void> {
-    const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program);
+    await repos.macrocycleDashboard.getMacrocycleDashboard(program);
+    // Imported history survives a delete with its records (proposal decision 2); `live` and
+    // `legacy` macrocycles go, from every table that holds a number.
+    const keep = (await repos.macrocycle.list(program))
+      .filter((m) => m.origin === 'imported')
+      .map((m) => m.macrocycleNum);
 
-    await repos.liftRecord.deleteAllLiftRecords(program);
+    await repos.liftRecord.deleteAllLiftRecords(program, keep);
     await repos.trainingMaxHistory.deleteAllHistory(program);
     await repos.trainingMax.deleteAllTrainingMaxes(program);
-    await repos.macrocycleScheduledWorkout.saveScheduledWorkouts(program, dashboard.macrocycleNum, []);
-    await repos.workoutDateOverride.deleteAllOverrides(program);
-    await repos.workoutSkipOverride.deleteAllSkips(program);
-    await repos.workoutLiftOverride.deleteAllOverrides(program);
-    await repos.focus.deleteAllDayStates(program);
+    await repos.macrocycleScheduledWorkout.deleteAllScheduledWorkouts(program, keep);
+    await repos.workoutDateOverride.deleteAllOverrides(program, keep);
+    await repos.workoutSkipOverride.deleteAllSkips(program, keep);
+    await repos.workoutLiftOverride.deleteAllOverrides(program, keep);
+    await repos.focus.deleteAllDayStates(program, keep);
+    await repos.macrocycle.deleteAllExcept(program, keep);
     await repos.macrocycleDashboard.deleteMacrocycleDashboard(program);
   }
 

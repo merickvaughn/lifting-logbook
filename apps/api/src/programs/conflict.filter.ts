@@ -9,6 +9,7 @@ import {
   CustomLiftConflictError,
   FocusBlockConflictError,
   LiftModificationConflictError,
+  MacrocycleNumberConflictError,
   ReservedLiftNameConflictError,
 } from '../ports/errors';
 
@@ -16,7 +17,8 @@ type DomainConflict =
   | CustomLiftConflictError
   | ReservedLiftNameConflictError
   | FocusBlockConflictError
-  | LiftModificationConflictError;
+  | LiftModificationConflictError
+  | MacrocycleNumberConflictError;
 
 /**
  * Translates framework-agnostic domain "conflict" errors raised by port
@@ -28,6 +30,7 @@ type DomainConflict =
   ReservedLiftNameConflictError,
   FocusBlockConflictError,
   LiftModificationConflictError,
+  MacrocycleNumberConflictError,
 )
 export class DomainConflictFilter implements ExceptionFilter {
   catch(err: DomainConflict, host: ArgumentsHost): void {
@@ -36,6 +39,8 @@ export class DomainConflictFilter implements ExceptionFilter {
       statusCode: HttpStatus.CONFLICT,
       message: err.message,
       error: 'Conflict',
+      // A client tells this 409 from the others by its code (ADR-042).
+      ...(err instanceof MacrocycleNumberConflictError && { code: err.code }),
     });
   }
 }

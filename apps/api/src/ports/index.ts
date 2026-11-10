@@ -5,6 +5,7 @@ export * from './tokens';
 export * from './IBodyWeightRepository';
 export * from './IFocusRepository';
 export * from './IMacrocycleDashboardRepository';
+export * from './IMacrocycleRepository';
 export * from './IMacrocyclePlanningAgent';
 export * from './ILiftingProgramSpecRepository';
 export * from './ILiftRecordRepository';

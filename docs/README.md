@@ -173,6 +173,7 @@ monorepo/
 | [ADR-039](adr/ADR-039-focus-block-persistence.md) | Focus Block Persistence — Server-Stored, Date-Derived, JSON Pools | Accepted |
 | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | Google Sheets Import Reads a Link-Shared Workbook as XLSX, Without OAuth | Accepted |
 | [ADR-041](adr/ADR-041-lift-modification-storage.md) | Lift Modifications Are Rows Keyed to a Lift, and Each Set Records Their Ids | Accepted |
+| [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | Every Macrocycle Gets a Row, and a New One Takes the Next Free Number | Accepted |
 
 ---
 

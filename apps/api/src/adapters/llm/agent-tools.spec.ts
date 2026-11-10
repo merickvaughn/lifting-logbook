@@ -8,12 +8,20 @@ import {
   sanitizeGoal,
   toAnthropicTools,
 } from './agent-tools';
+import { macrocycleRowFixture } from '../in-memory/macrocycle.adapter';
 import { RepositoryBundle } from '../../ports/factory';
+import { MacrocycleRow } from '../../ports/IMacrocycleRepository';
 import { MacrocyclePlanRequest, WithRlsContext } from '../../ports/IMacrocyclePlanningAgent';
 
 const REQ: MacrocyclePlanRequest = { program: '5-3-1', goal: 'gain', macrocycleNum: 3 };
 
+const macrocycleRow = (overrides: Partial<MacrocycleRow> = {}): MacrocycleRow =>
+  macrocycleRowFixture(2, { startDate: new Date('2026-09-01T00:00:00.000Z'), ...overrides });
+
 const mkRepos = (): RepositoryBundle => ({
+  macrocycle: {
+    findByNumber: jest.fn().mockResolvedValue(macrocycleRow()),
+  } as unknown as RepositoryBundle['macrocycle'],
   macrocycleDashboard: {
     getMacrocycleDashboard: jest.fn().mockResolvedValue({ program: '5-3-1', programType: '5-3-1' }),
     saveMacrocycleDashboard: jest.fn(),
@@ -75,6 +83,50 @@ describe('agent-tools', () => {
       ]);
       const result = await dispatchTool('get_lift_history', {}, repos, REQ);
       expect(result).toEqual({ ok: true, data: [{ lift: 'bench-press', setNum: 1 }] });
+    });
+
+    // Notes reach the provider only from sets logged in the app (ADR-042).
+    describe('notes', () => {
+      const sets = [
+        { lift: 'Squat', setNum: 1, date: new Date('2026-09-10T00:00:00.000Z'), notes: 'from a file' },
+        { lift: 'Squat', setNum: 1, date: new Date('2026-09-20T00:00:00.000Z'), notes: 'logged in the app' },
+      ];
+      const notesFor = async (row: MacrocycleRow | null, args: Record<string, unknown>) => {
+        const repos = mkRepos();
+        (repos.liftRecord.getLiftRecords as jest.Mock).mockResolvedValue(sets);
+        (repos.macrocycle.findByNumber as jest.Mock).mockResolvedValue(row);
+        const result = await dispatchTool('get_lift_history', args, repos, REQ);
+        expect(repos.macrocycle.findByNumber).toHaveBeenCalledWith('5-3-1', typeof args.macrocycleNum === 'number' ? args.macrocycleNum : 2);
+        return (result.data as { notes: string }[]).map((s) => s.notes);
+      };
+
+      it.each([
+        ['the default lookup', {}],
+        ['a number the model chooses', { macrocycleNum: 1 }],
+      ])('keeps every note of a live macrocycle, for %s', async (_label, args) => {
+        expect(await notesFor(macrocycleRow(), args)).toEqual(['from a file', 'logged in the app']);
+      });
+
+      it.each([
+        ['imported', 'the default lookup', {}],
+        ['imported', 'a number the model chooses', { macrocycleNum: 1 }],
+        ['legacy', 'the default lookup', {}],
+        ['legacy', 'a number the model chooses', { macrocycleNum: 1 }],
+      ] as const)('leaves out every note of an %s macrocycle, for %s', async (origin, _label, args) => {
+        expect(await notesFor(macrocycleRow({ origin }), args)).toEqual(['', '']);
+      });
+
+      it('leaves out notes on a number with no macrocycle row', async () => {
+        expect(await notesFor(null, {})).toEqual(['', '']);
+      });
+
+      it.each([
+        ['the default lookup', {}],
+        ['a number the model chooses', { macrocycleNum: 1 }],
+      ])('leaves out notes dated up to importedThrough and keeps later ones, for %s', async (_label, args) => {
+        const row = macrocycleRow({ importedThrough: new Date('2026-09-10T00:00:00.000Z') });
+        expect(await notesFor(row, args)).toEqual(['', 'logged in the app']);
+      });
     });
 
     it('routes get_training_maxes', async () => {

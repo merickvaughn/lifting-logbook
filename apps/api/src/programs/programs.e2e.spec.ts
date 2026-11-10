@@ -146,17 +146,21 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   });
 
   // Issue #1027: a day can plan one lift twice, and each occurrence logs its own set 1.
-  // Macrocycle 77 is one no other test reads, so these records disturb nothing.
+  // A user of its own, with its own macrocycle 1, so these records disturb no other test.
   it('POST /programs/:program/lift-records logs a lift’s second occurrence apart from its first', async () => {
-    const base = { macrocycleNum: 77, workoutNum: 1, date: '2026-07-01', lift: 'Squat', setNum: 1, reps: 5 };
-    const first = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, { ...base, weight: 200 });
-    const second = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, { ...base, occurrence: 1, weight: 135 });
+    const headers = { 'content-type': 'application/json', authorization: 'Bearer user-occurrence' };
+    const postAs = (url: string, body: unknown) =>
+      app.getHttpAdapter().getInstance().inject({ method: 'POST', url, headers, payload: JSON.stringify(body) });
+    expect((await postAs(`/programs/${SEED_PROGRAM}/macrocycles/initialize`, {})).statusCode).toBe(201);
+    const base = { macrocycleNum: 1, workoutNum: 1, date: '2026-07-01', lift: 'Squat', setNum: 1, reps: 5 };
+    const first = await postAs(`/programs/${SEED_PROGRAM}/lift-records`, { ...base, weight: 200 });
+    const second = await postAs(`/programs/${SEED_PROGRAM}/lift-records`, { ...base, occurrence: 1, weight: 135 });
     expect([first.statusCode, second.statusCode]).toEqual([201, 201]);
     expect(first.json()).not.toHaveProperty('occurrence');
     expect(second.json()).toMatchObject({ occurrence: 1, weight: 135 });
     expect(second.json().id).not.toBe(first.json().id);
 
-    const bad = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, { ...base, occurrence: -1, weight: 135 });
+    const bad = await postAs(`/programs/${SEED_PROGRAM}/lift-records`, { ...base, occurrence: -1, weight: 135 });
     expect(bad.statusCode).toBe(400);
   });
 
@@ -228,14 +232,16 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('PATCH reschedule with non-active macrocycleNum returns 400', async () => {
-      // Seed's active macrocycle is 1 (these tests run before any new-macrocycle writes).
-      // Cycle 2 is not the active macrocycle, so an override there could never be read.
+    it('PATCH reschedule with a macrocycleNum the program lacks returns 404', async () => {
+      // Seed's active macrocycle is 1 (these tests run before any new-macrocycle writes), and
+      // the program has no macrocycle 2 (ADR-042). The 400 for a stored, non-active
+      // macrocycle is covered in reschedule.controller.spec.ts.
       const res = await patchJson(
         `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/reschedule`,
         { newDate: '2026-06-01' },
       );
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
     });
 
     it('PATCH reschedule requires auth', async () => {
@@ -344,19 +350,19 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
     it('POST /programs/:program/macrocycles with fromMacrocycleNum uses that macrocycle\'s records', async () => {
       // Pre-condition: macrocycle is at 2 (advanced by previous test).
-      // fromMacrocycleNum=1 re-pins "advance from macrocycle 1", producing macrocycleNum=2 again — not normal
-      // advancement, but confirms that fromMacrocycleNum overrides the current counter.
+      // fromMacrocycleNum=1 takes its maxes from macrocycle 1's records, but the new macrocycle
+      // still takes the next free number, 3, so it can't reuse 2 (ADR-042).
       expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(2);
       const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, { fromMacrocycleNum: 1 });
       expect(res.statusCode).toBe(201);
       const body = res.json();
-      expect(body.macrocycleNum).toBe(2);
+      expect(body.macrocycleNum).toBe(3);
       expect(body.macrocycleStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
 
     it('POST /programs/:program/macrocycles with macrocycleDate pins the new macrocycle\'s start date', async () => {
-      // Pre-condition: fromMacrocycleNum re-pinned macrocycle to 2; advancing normally moves it to 3.
-      expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(2);
+      // Pre-condition: the previous test moved the macrocycle to 3; advancing normally moves it to 4.
+      expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(3);
       const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, {
         macrocycleDate: '2026-06-01',
       });
@@ -364,9 +370,11 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.json().macrocycleStartDate).toBe('2026-06-01');
     });
 
-    it('POST /programs/:program/macrocycles with fromMacrocycleNum having no records returns 400', async () => {
+    // A number the program doesn't have is a 404 since ADR-042; it was a 400 for having no records.
+    it('POST /programs/:program/macrocycles with an unknown fromMacrocycleNum returns 404', async () => {
       const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, { fromMacrocycleNum: 99 });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
     });
 
     it('POST /programs/unknown/macrocycles returns 404', async () => {
@@ -377,7 +385,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
   // -------------------------------------------------------------------------
   // Multi-workout progression scenario — order-sensitive, continues from the
-  // state left by 'write operations' above: macrocycleNum=3, dev-token user.
+  // state left by 'write operations' above: macrocycleNum=4, dev-token user.
   //
   // TMs after write operations (deterministic trace):
   //   Squat:          315 lbs  (macrocycle-1 set-1 was 205 lbs → proposed 210 < 315 → flagged, not applied)
@@ -385,7 +393,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   //   Deadlift:       405 lbs  (no macrocycle-1 DL records; unchanged from seed)
   //   Overhead Press: 145 lbs  (no macrocycle-1 OHP records; unchanged from seed)
   //
-  // Macrocycle 3 records logged below use dates newer than the seed dateUpdated (2026-04-13),
+  // Macrocycle 4 records logged below use dates newer than the seed dateUpdated (2026-04-13),
   // so the progression gate (record.date > max.dateUpdated) passes for hits.
   // Both Squat (200+5=205 < 315) and Deadlift (300+10=310 < 405) would be reductions
   // → both flagged, not applied.
@@ -404,7 +412,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     it('logs workout 1 — Squat hits target, Bench Press misses', async () => {
       // Squat set 1: reps=5 >= spec.reps=5 → progression gate passes
       const squatRes = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 3,
+        macrocycleNum: 4,
         workoutNum: 1,
         date: '2026-07-01',
         lift: 'Squat',
@@ -417,7 +425,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
       // Bench Press set 1: reps=3 < spec.reps=5 → progression gate fails
       const benchRes = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 3,
+        macrocycleNum: 4,
         workoutNum: 1,
         date: '2026-07-01',
         lift: 'Bench Press',
@@ -432,7 +440,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     it('logs workout 2 — Deadlift hits target, Overhead Press misses', async () => {
       // Deadlift set 1: reps=5 >= spec.reps=5 → progression gate passes
       const dlRes = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 3,
+        macrocycleNum: 4,
         workoutNum: 2,
         date: '2026-07-08',
         lift: 'Deadlift',
@@ -445,7 +453,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
       // Overhead Press set 1: reps=2 < spec.reps=5 → progression gate fails
       const ohpRes = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 3,
+        macrocycleNum: 4,
         workoutNum: 2,
         date: '2026-07-08',
         lift: 'Overhead Press',
@@ -461,7 +469,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const res = await get(`/programs/${SEED_PROGRAM}/workouts/1`);
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.macrocycleNum).toBe(3);
+      expect(body.macrocycleNum).toBe(4);
       expect(body.workoutNum).toBe(1);
       const liftNames = body.lifts.map((l: { lift: string }) => l.lift);
       expect(liftNames).toContain('Squat');
@@ -493,7 +501,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const res = await get(`/programs/${SEED_PROGRAM}/workouts/2`);
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.macrocycleNum).toBe(3);
+      expect(body.macrocycleNum).toBe(4);
       expect(body.workoutNum).toBe(2);
       const liftNames = body.lifts.map((l: { lift: string }) => l.lift);
       expect(liftNames).toContain('Deadlift');
@@ -540,10 +548,10 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   //
   // Order-sensitive, continues from the state left by the multi-workout
   // scenario above:
-  //   macrocycleNum:   3
+  //   macrocycleNum:   4
   //   TMs:        Squat 315, Bench 225, Deadlift 405, Overhead Press 145
   //               (all dateUpdated 2026-04-13 — none updated by prior recalc)
-  //   records:    macrocycle-3 set-1 entries for all 4 lifts (none updated TMs)
+  //   records:    macrocycle-4 set-1 entries for all 4 lifts (none updated TMs)
   //
   // Goal: drive at least one lift through a genuine TM increase across two
   // macrocycle-advance boundaries and assert the updated maxes persist into the
@@ -560,12 +568,12 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     // mutates adapter state (macrocycleNum, training maxes, dateUpdated) that the
     // next one reads. Reordering will silently break expected-weight assertions
     // because the TM/dateUpdated gates in updateMaxes depend on prior state.
-    it('advances macrocycle 3 → 4 to clear prior-scenario state; TMs unchanged', async () => {
-      // Existing macrocycle-3 records were all flagged → updateMaxes leaves TMs at
+    it('advances macrocycle 4 → 5 to clear prior-scenario state; TMs unchanged', async () => {
+      // Existing macrocycle-4 records were all flagged → updateMaxes leaves TMs at
       // 315/225/405/145. Advancing now just bumps macrocycleNum.
       const advanceRes = await post(`/programs/${SEED_PROGRAM}/macrocycles`);
       expect(advanceRes.statusCode).toBe(201);
-      expect(advanceRes.json().macrocycleNum).toBe(4);
+      expect(advanceRes.json().macrocycleNum).toBe(5);
 
       const tmRes = await get(`/programs/${SEED_PROGRAM}/training-maxes`);
       expect(tmRes.statusCode).toBe(200);
@@ -577,38 +585,38 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(findTm('Overhead Press').weight).toBe(145);
     });
 
-    it('macrocycle 4: logs records that drive Squat + Bench progression, leaves DL + OHP unchanged', async () => {
+    it('macrocycle 5: logs records that drive Squat + Bench progression, leaves DL + OHP unchanged', async () => {
       // Date 2026-08-03 > all current TMs' dateUpdated (2026-04-13) → gate passes on date.
       // Squat: 315 + 5 = 320 > current TM 315 → applies (TM → 320).
       const squat = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 4, workoutNum: 1, date: '2026-08-03',
+        macrocycleNum: 5, workoutNum: 1, date: '2026-08-03',
         lift: 'Squat', setNum: 1, weight: 315, reps: 5, notes: '',
       });
       expect(squat.statusCode).toBe(201);
 
       // Bench: 225 + 5 = 230 > current TM 225 → applies (TM → 230).
       const bench = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 4, workoutNum: 1, date: '2026-08-03',
+        macrocycleNum: 5, workoutNum: 1, date: '2026-08-03',
         lift: 'Bench Press', setNum: 1, weight: 225, reps: 5, notes: '',
       });
       expect(bench.statusCode).toBe(201);
 
       // Deadlift: reps 3 < spec.reps 5 → gate fails (TM unchanged at 405).
       const dl = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 4, workoutNum: 1, date: '2026-08-03',
+        macrocycleNum: 5, workoutNum: 1, date: '2026-08-03',
         lift: 'Deadlift', setNum: 1, weight: 300, reps: 3, notes: '',
       });
       expect(dl.statusCode).toBe(201);
 
       // OHP: reps 2 < spec.reps 5 → gate fails (TM unchanged at 145).
       const ohp = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 4, workoutNum: 1, date: '2026-08-03',
+        macrocycleNum: 5, workoutNum: 1, date: '2026-08-03',
         lift: 'Overhead Press', setNum: 1, weight: 100, reps: 2, notes: '',
       });
       expect(ohp.statusCode).toBe(201);
     });
 
-    it('macrocycle 4 → 5: recalculate applies Squat + Bench increases with no flags', async () => {
+    it('macrocycle 5 → 6: recalculate applies Squat + Bench increases with no flags', async () => {
       const res = await post(`/programs/${SEED_PROGRAM}/training-maxes/recalculate`);
       expect(res.statusCode).toBe(200);
       const body = res.json() as {
@@ -624,13 +632,13 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(body.flagged).toEqual([]);
     });
 
-    it('macrocycle 4 → 5: POST /macrocycles persists updated maxes into macrocycle 5 (carry-forward)', async () => {
+    it('macrocycle 5 → 6: POST /macrocycles persists updated maxes into macrocycle 6 (carry-forward)', async () => {
       const advanceRes = await post(`/programs/${SEED_PROGRAM}/macrocycles`);
       expect(advanceRes.statusCode).toBe(201);
-      expect(advanceRes.json().macrocycleNum).toBe(5);
+      expect(advanceRes.json().macrocycleNum).toBe(6);
 
-      // Carry-forward assertion: the maxes that downstream macrocycle-5 planned
-      // weights will be computed from must reflect macrocycle-4 outcomes.
+      // Carry-forward assertion: the maxes that downstream macrocycle-6 planned
+      // weights will be computed from must reflect macrocycle-5 outcomes.
       const tmRes = await get(`/programs/${SEED_PROGRAM}/training-maxes`);
       expect(tmRes.statusCode).toBe(200);
       const findTm = (lift: string) =>
@@ -641,40 +649,40 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(findTm('Overhead Press').weight).toBe(145);
     });
 
-    it('macrocycle 5: logs records with different per-lift outcomes than macrocycle 4', async () => {
+    it('macrocycle 6: logs records with different per-lift outcomes than macrocycle 5', async () => {
       // Date 2026-09-07 > all current TMs' dateUpdated (Squat/Bench: 2026-08-03;
       // DL/OHP: 2026-04-13) → gate passes on date for every lift.
 
       // Squat: reps 3 < 5 → gate fails (TM unchanged at 320).
       const squat = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 5, workoutNum: 1, date: '2026-09-07',
+        macrocycleNum: 6, workoutNum: 1, date: '2026-09-07',
         lift: 'Squat', setNum: 1, weight: 322, reps: 3, notes: '',
       });
       expect(squat.statusCode).toBe(201);
 
       // Bench: 232 + 5 = 237 > current TM 230 → applies (TM → 237).
       const bench = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 5, workoutNum: 1, date: '2026-09-07',
+        macrocycleNum: 6, workoutNum: 1, date: '2026-09-07',
         lift: 'Bench Press', setNum: 1, weight: 232, reps: 5, notes: '',
       });
       expect(bench.statusCode).toBe(201);
 
       // Deadlift: 410 + 10 = 420 > current TM 405 → applies (TM → 420).
       const dl = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 5, workoutNum: 1, date: '2026-09-07',
+        macrocycleNum: 6, workoutNum: 1, date: '2026-09-07',
         lift: 'Deadlift', setNum: 1, weight: 410, reps: 5, notes: '',
       });
       expect(dl.statusCode).toBe(201);
 
       // OHP: 145 + 5 = 150 > current TM 145 → applies (TM → 150).
       const ohp = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 5, workoutNum: 1, date: '2026-09-07',
+        macrocycleNum: 6, workoutNum: 1, date: '2026-09-07',
         lift: 'Overhead Press', setNum: 1, weight: 145, reps: 5, notes: '',
       });
       expect(ohp.statusCode).toBe(201);
     });
 
-    it('macrocycle 5 → 6: recalculate composes correctly across the second boundary', async () => {
+    it('macrocycle 6 → 7: recalculate composes correctly across the second boundary', async () => {
       const res = await post(`/programs/${SEED_PROGRAM}/training-maxes/recalculate`);
       expect(res.statusCode).toBe(200);
       const body = res.json() as {
@@ -690,10 +698,10 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(body.flagged).toEqual([]);
     });
 
-    it('macrocycle 5 → 6: POST /macrocycles persists final composed maxes into macrocycle 6', async () => {
+    it('macrocycle 6 → 7: POST /macrocycles persists final composed maxes into macrocycle 7', async () => {
       const advanceRes = await post(`/programs/${SEED_PROGRAM}/macrocycles`);
       expect(advanceRes.statusCode).toBe(201);
-      expect(advanceRes.json().macrocycleNum).toBe(6);
+      expect(advanceRes.json().macrocycleNum).toBe(7);
 
       const tmRes = await get(`/programs/${SEED_PROGRAM}/training-maxes`);
       expect(tmRes.statusCode).toBe(200);
@@ -1531,17 +1539,18 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('POST skip with non-active macrocycleNum returns 400', async () => {
+    it('POST skip with a macrocycleNum the program lacks returns 404', async () => {
       const token = await setupSkipUser('skip-e2e-nac-post');
-      // The fresh user's active macrocycle is 1; macrocycle 2 is not active, so a skip
-      // there could never be read.
+      // The fresh user's active macrocycle is 1 and there's no macrocycle 2 (ADR-042). The
+      // 400 for a stored, non-active macrocycle is covered in workout-skip.controller.spec.ts.
       const res = await app.getHttpAdapter().getInstance().inject({
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/skip`,
         headers: { 'content-type': 'application/json', authorization: token },
         payload: JSON.stringify({}),
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
     });
 
     it('DELETE unskip with unknown program returns 404', async () => {
@@ -1564,14 +1573,15 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('DELETE unskip with non-active macrocycleNum returns 400', async () => {
+    it('DELETE unskip with a macrocycleNum the program lacks returns 404', async () => {
       const token = await setupSkipUser('skip-e2e-nac-delete');
       const res = await app.getHttpAdapter().getInstance().inject({
         method: 'DELETE',
         url: `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/skip`,
         headers: { authorization: token },
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
     });
   });
 
@@ -1803,6 +1813,17 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   describe('POST/PATCH /lift-records — request-body validation (regression for #893)', () => {
     const AS_VALIDATION = { authorization: 'Bearer lift-record-validation-user' };
     const LIFT_RECORDS_URL = `/programs/${SEED_PROGRAM}/lift-records`;
+
+    // Macrocycle 1 has to exist to take sets (ADR-042).
+    beforeAll(async () => {
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/${SEED_PROGRAM}/macrocycles/initialize`,
+        headers: { 'content-type': 'application/json', ...AS_VALIDATION },
+        payload: '{}',
+      });
+      expect(res.statusCode).toBe(201);
+    });
 
     const validBody = (overrides: Record<string, unknown> = {}) => ({
       program: SEED_PROGRAM,

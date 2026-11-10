@@ -1,4 +1,4 @@
-import { BodyWeightEntry, LiftClassification, LiftModificationMaxMode, LiftName, MovementProfile, WeightUnit, WeekNumber, MacrocycleNumber, WeekType } from './domain';
+import { BodyWeightEntry, LiftClassification, LiftModificationMaxMode, LiftName, MovementProfile, WeightUnit, WeekNumber, MacrocycleNumber, MacrocycleOrigin, MacrocycleStatus, WeekType } from './domain';
 
 // ---------------------------------------------------------------------------
 // Training Maxes
@@ -269,6 +269,26 @@ export interface MacrocycleWeekSummary {
   week: WeekNumber;
   workouts: WorkoutSummary[];
   completed: boolean;
+}
+
+/** One macrocycle, past or current, from `GET /programs/:program/macrocycles` (ADR-042). */
+export interface MacrocycleSummaryResponse {
+  /** Stable across renumbering; the number isn't. */
+  id: string;
+  macrocycleNum: MacrocycleNumber;
+  /** `YYYY-MM-DD`. */
+  startDate: string;
+  /** `YYYY-MM-DD`, or null while current or when nothing dates the end. */
+  endDate: string | null;
+  /**
+   * As it reads today: an `in-progress` macrocycle whose last session is more than 14 days old
+   * reads as `abandoned`, unless it's current or the lifter chose the status.
+   */
+  status: MacrocycleStatus;
+  origin: MacrocycleOrigin;
+  /** The dashboard points at it. */
+  current: boolean;
+  unmatched: boolean;
 }
 
 /** Serialized macrocycle dashboard as returned by the API. */

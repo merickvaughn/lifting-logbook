@@ -14,10 +14,9 @@ import { programLengthWeeks } from '@lifting-logbook/core';
 import { IsOptional, IsString, MaxLength } from 'class-validator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
-import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
-import { ILiftingProgramSpecRepository } from '../ports/ILiftingProgramSpecRepository';
-import { IRepositoryFactory } from '../ports/factory';
+import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { assertMacrocycleWritable } from './macrocycle-history.util';
 import { isValidWorkoutNum, workoutKeyForWorkoutNum } from './mappers';
 
 class SkipWorkoutDto {
@@ -52,15 +51,9 @@ export class WorkoutSkipController {
       throw new BadRequestException('workoutNum must be a positive integer');
     }
 
-    const { workoutSkipOverride, liftingProgramSpec, macrocycleDashboard } =
-      await this.factory.forUser(user);
-    await this.assertActiveInBoundsTarget(
-      program,
-      macrocycleNum,
-      workoutNum,
-      liftingProgramSpec,
-      macrocycleDashboard,
-    );
+    const repos = await this.factory.forUser(user);
+    const { workoutSkipOverride } = repos;
+    await this.assertActiveInBoundsTarget(program, macrocycleNum, workoutNum, repos);
     await workoutSkipOverride.skipWorkout(program, macrocycleNum, workoutNum, dto.reason);
   }
 
@@ -82,15 +75,9 @@ export class WorkoutSkipController {
       throw new BadRequestException('workoutNum must be a positive integer');
     }
 
-    const { workoutSkipOverride, liftingProgramSpec, macrocycleDashboard } =
-      await this.factory.forUser(user);
-    await this.assertActiveInBoundsTarget(
-      program,
-      macrocycleNum,
-      workoutNum,
-      liftingProgramSpec,
-      macrocycleDashboard,
-    );
+    const repos = await this.factory.forUser(user);
+    const { workoutSkipOverride } = repos;
+    await this.assertActiveInBoundsTarget(program, macrocycleNum, workoutNum, repos);
     await workoutSkipOverride.unskipWorkout(program, macrocycleNum, workoutNum);
   }
 
@@ -99,17 +86,18 @@ export class WorkoutSkipController {
    * surface, so the endpoint can't silently record dead data (a 204 with no
    * visible effect — the failure mode #773 flagged). Shared by both skip (POST)
    * and unskip (DELETE); mirrors the RescheduleController bounds/macrocycle checks
-   * (#773/#775). Order matters — spec (404) → workoutNum bound (400) → active
-   * macrocycle (400) — so the cheapest, most-specific failure wins and the dashboard
-   * is only loaded once the workoutNum is known to be in range.
+   * (#773/#775). Order matters — spec (404) → workoutNum bound (400) → imported or
+   * unknown macrocycle (409/404, ADR-042) → active macrocycle (400) — so the cheapest,
+   * most-specific failure wins and the dashboard is only loaded once the workoutNum is
+   * known to be in range.
    */
   private async assertActiveInBoundsTarget(
     program: string,
     macrocycleNum: number,
     workoutNum: number,
-    liftingProgramSpec: ILiftingProgramSpecRepository,
-    macrocycleDashboard: IMacrocycleDashboardRepository,
+    repos: RepositoryBundle,
   ): Promise<void> {
+    const { liftingProgramSpec, macrocycleDashboard } = repos;
     const spec = await liftingProgramSpec.getProgramSpec(program);
     if (spec.length === 0) {
       throw new NotFoundException(`Program '${program}' not found`);
@@ -124,6 +112,8 @@ export class WorkoutSkipController {
         `workoutNum ${workoutNum} exceeds the program's ${programLengthWeeks(program, spec)}-week schedule`,
       );
     }
+
+    await assertMacrocycleWritable(repos, program, macrocycleNum);
 
     // getMacrocycleDashboard throws ProgramNotFoundError when the program has no
     // macrocycle. Its macrocycleNum is the *active* macrocycle, and the entire read model (GET

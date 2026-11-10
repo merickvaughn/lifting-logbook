@@ -86,6 +86,7 @@ export const {
   fetchProgramSpec,
   fetchTrainingMaxes,
   fetchTrainingMaxHistory,
+  fetchMacrocycles,
   updateTrainingMaxHistoryEntry,
   updateTrainingMaxes,
   fetchWorkout,

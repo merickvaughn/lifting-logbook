@@ -10,7 +10,7 @@ import {
   withModifications,
   withOccurrence,
 } from '@lifting-logbook/core';
-import { ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
+import { DateRange, ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
 
 export class PrismaLiftRecordRepository implements ILiftRecordRepository {
   constructor(
@@ -181,9 +181,25 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     return count;
   }
 
-  async deleteAllLiftRecords(program: string): Promise<void> {
+  async getMacrocycleDateRanges(program: string, macrocycleNum?: number): Promise<Map<number, DateRange>> {
+    // Grouped in SQL and served by `@@index([userId, program, macrocycleNum])`, so listing a
+    // program's macrocycles reads no sets.
+    const rows = await this.prisma.liftRecord.groupBy({
+      by: ['macrocycleNum'],
+      where: { userId: this.userId, program, ...(macrocycleNum === undefined ? {} : { macrocycleNum }) },
+      _min: { date: true },
+      _max: { date: true },
+    });
+    const ranges = new Map<number, DateRange>();
+    for (const r of rows) {
+      if (r._min.date && r._max.date) ranges.set(r.macrocycleNum, { first: r._min.date, last: r._max.date });
+    }
+    return ranges;
+  }
+
+  async deleteAllLiftRecords(program: string, keep: readonly number[] = []): Promise<void> {
     await this.prisma.liftRecord.deleteMany({
-      where: { userId: this.userId, program },
+      where: { userId: this.userId, program, macrocycleNum: { notIn: [...keep] } },
     });
   }
 }

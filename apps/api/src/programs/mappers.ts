@@ -19,6 +19,8 @@ import {
 import {
   MacrocycleDashboardResponse,
   MacrocyclePlanResponse,
+  MacrocycleStatus,
+  MacrocycleSummaryResponse,
   MacrocycleWeekSummary,
   LiftModificationRef,
   LiftOverrideResponse,
@@ -35,6 +37,7 @@ import {
   WorkoutSummary,
 } from '@lifting-logbook/types';
 import { MacrocyclePlanResult } from '../ports/IMacrocyclePlanningAgent';
+import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { ScheduledWorkout } from '../ports/IMacrocycleScheduledWorkoutRepository';
 import { LiftOverride } from '../ports/IWorkoutLiftOverrideRepository';
 
@@ -42,6 +45,22 @@ import { LiftOverride } from '../ports/IWorkoutLiftOverrideRepository';
 // values must be stored as UTC midnight; adapters parsing external sources
 // (e.g. Sheets) are responsible for normalizing before the mapper runs.
 const isoDate = (d: Date): string => d.toISOString().slice(0, 10);
+
+/** `status` is the row's status as it reads today (`statusAsRead`), not as stored. */
+export const toMacrocycleSummaryResponse = (
+  row: MacrocycleRow,
+  current: boolean,
+  status: MacrocycleStatus,
+): MacrocycleSummaryResponse => ({
+  id: row.id,
+  macrocycleNum: row.macrocycleNum,
+  startDate: isoDate(row.startDate),
+  endDate: row.endDate ? isoDate(row.endDate) : null,
+  status,
+  origin: row.origin,
+  current,
+  unmatched: row.unmatched,
+});
 
 export const toStrengthGoalResponse = (g: StrengthGoalEntry): StrengthGoalResponse => ({
   lift: g.lift,

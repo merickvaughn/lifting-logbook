@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
 import { ILiftingProgramSpecRepository } from '../ports/ILiftingProgramSpecRepository';
 import { IWorkoutDateOverrideRepository } from '../ports/IWorkoutDateOverrideRepository';
@@ -55,11 +56,18 @@ describe('RescheduleController', () => {
     // new macrocycle-match check compares the path macrocycleNum against this dashboard macrocycleNum.
     dashboardRepoA = { getMacrocycleDashboard: jest.fn().mockResolvedValue({ macrocycleNum: 3 }), saveMacrocycleDashboard: jest.fn() } as unknown as jest.Mocked<IMacrocycleDashboardRepository>;
     dashboardRepoB = { getMacrocycleDashboard: jest.fn().mockResolvedValue({ macrocycleNum: 3 }), saveMacrocycleDashboard: jest.fn() } as unknown as jest.Mocked<IMacrocycleDashboardRepository>;
+    // 3 is current, 7 is stored but not active, and 1 is imported (ADR-042).
+    const macrocycleRepoA = new InMemoryMacrocycleRepository([
+      macrocycleRowFixture(1, { origin: 'imported', status: 'completed' }),
+      macrocycleRowFixture(3),
+      macrocycleRowFixture(7),
+    ]);
+    const macrocycleRepoB = new InMemoryMacrocycleRepository([macrocycleRowFixture(3)]);
     factory = {
       forUser: jest.fn().mockImplementation(async (user) =>
         user.id === MOCK_USER_A.id
-          ? { macrocycleDashboard: dashboardRepoA, workoutDateOverride: overrideRepoA, liftingProgramSpec: specRepoA }
-          : { macrocycleDashboard: dashboardRepoB, workoutDateOverride: overrideRepoB, liftingProgramSpec: specRepoB },
+          ? { macrocycleDashboard: dashboardRepoA, workoutDateOverride: overrideRepoA, liftingProgramSpec: specRepoA, macrocycle: macrocycleRepoA }
+          : { macrocycleDashboard: dashboardRepoB, workoutDateOverride: overrideRepoB, liftingProgramSpec: specRepoB, macrocycle: macrocycleRepoB },
       ),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -154,6 +162,16 @@ describe('RescheduleController', () => {
     await expect(
       controller.reschedule('5-3-1', '7', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
     ).rejects.toBeInstanceOf(BadRequestException);
+    expect(overrideRepoA.upsertOverride).not.toHaveBeenCalled();
+  });
+
+  it('rejects an imported macrocycle with 409 and a number the program lacks with 404', async () => {
+    await expect(
+      controller.reschedule('5-3-1', '1', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
+    ).rejects.toMatchObject({ status: 409, response: { code: 'macrocycle-read-only' } });
+    await expect(
+      controller.reschedule('5-3-1', '5', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
+    ).rejects.toMatchObject({ status: 404, response: { code: 'macrocycle-not-found' } });
     expect(overrideRepoA.upsertOverride).not.toHaveBeenCalled();
   });
 });

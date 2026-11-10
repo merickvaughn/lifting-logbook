@@ -69,6 +69,7 @@ async function cleanTestUsers(prisma: PrismaClient): Promise<void> {
   await prisma.trainingMax.deleteMany({ where: { userId: { in: users } } });
   await prisma.trainingMaxHistory.deleteMany({ where: { userId: { in: users } } });
   await prisma.macrocycleDashboard.deleteMany({ where: { userId: { in: users } } });
+  await prisma.macrocycle.deleteMany({ where: { userId: { in: users } } });
   await prisma.workoutLiftOverride.deleteMany({ where: { userId: { in: users } } });
   await prisma.workoutDateOverride.deleteMany({ where: { userId: { in: users } } });
   await prisma.strengthGoal.deleteMany({ where: { userId: { in: users } } });
@@ -386,17 +387,18 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, { fromMacrocycleNum: 1 });
       expect(res.statusCode).toBe(201);
       const body = res.json();
-      expect(body.macrocycleNum).toBe(2);
+      // ADR-042: the new macrocycle takes the next free number, never a stored one.
+      expect(body.macrocycleNum).toBe(3);
       expect(body.macrocycleStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
-      // Verify the re-pinned macrocycle is persisted to the DB (not just returned in the response).
+      // Verify the new macrocycle is persisted to the DB (not just returned in the response).
       const getRes = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
       expect(getRes.statusCode).toBe(200);
-      expect(getRes.json().macrocycleNum).toBe(2);
+      expect(getRes.json().macrocycleNum).toBe(3);
     });
 
     it('POST /programs/:program/macrocycles with macrocycleDate pins the new macrocycle\'s start date', async () => {
-      expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(2);
+      expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(3);
       const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, {
         macrocycleDate: '2026-06-01',
       });
@@ -404,9 +406,10 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(res.json().macrocycleStartDate).toBe('2026-06-01');
     });
 
-    it('POST /programs/:program/macrocycles with fromMacrocycleNum having no records returns 400', async () => {
+    it('POST /programs/:program/macrocycles with a fromMacrocycleNum the program lacks returns 404', async () => {
       const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, { fromMacrocycleNum: 99 });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe('macrocycle-not-found');
     });
 
     it('POST /programs/unknown/macrocycles returns 404', async () => {
@@ -1343,6 +1346,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       await prisma.liftRecord.deleteMany({ where: { userId: USER_HIST } });
       await prisma.trainingMaxHistory.deleteMany({ where: { userId: USER_HIST } });
       await prisma.macrocycleDashboard.deleteMany({ where: { userId: USER_HIST } });
+      await prisma.macrocycle.deleteMany({ where: { userId: USER_HIST } });
     });
 
     it('GET lift-records returns 2 seeded records for current macrocycle', async () => {

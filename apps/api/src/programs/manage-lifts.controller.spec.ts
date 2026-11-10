@@ -1,6 +1,8 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { LIFT_NAMES } from '@lifting-logbook/types';
+import { LIFT_NAMES, MacrocycleOrigin } from '@lifting-logbook/types';
+import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
+import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
 import { ILiftingProgramSpecRepository } from '../ports/ILiftingProgramSpecRepository';
 import { IWorkoutLiftOverrideRepository } from '../ports/IWorkoutLiftOverrideRepository';
@@ -10,6 +12,9 @@ import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { ManageLiftsController } from './manage-lifts.controller';
 
 const MOCK_USER_A = { id: 'user-a', email: 'a@example.com', provider: 'dev' };
+
+const macrocycleRow = (macrocycleNum: number, origin: MacrocycleOrigin): MacrocycleRow =>
+  macrocycleRowFixture(macrocycleNum, { origin, status: origin === 'live' ? 'in-progress' : 'completed' });
 
 const STUB_SPEC = [{ lift: 'Squat' }] as unknown as Awaited<
   ReturnType<ILiftingProgramSpecRepository['getProgramSpec']>
@@ -24,6 +29,7 @@ describe('ManageLiftsController', () => {
   let dashboardRepoA: jest.Mocked<IMacrocycleDashboardRepository>;
   let dashboardRepoB: jest.Mocked<IMacrocycleDashboardRepository>;
   let factory: jest.Mocked<IRepositoryFactory>;
+  let macrocycleRepoA: InMemoryMacrocycleRepository;
 
   beforeEach(async () => {
     liftOverrideRepoA = {
@@ -43,11 +49,14 @@ describe('ManageLiftsController', () => {
     dashboardRepoA = { getMacrocycleDashboard: jest.fn().mockResolvedValue({}), saveMacrocycleDashboard: jest.fn() } as unknown as jest.Mocked<IMacrocycleDashboardRepository>;
     dashboardRepoB = { getMacrocycleDashboard: jest.fn().mockResolvedValue({}), saveMacrocycleDashboard: jest.fn() } as unknown as jest.Mocked<IMacrocycleDashboardRepository>;
     const customLiftRepo = { list: jest.fn().mockResolvedValue([]) };
+    // Macrocycle 3 is the live one; 2 is imported history.
+    macrocycleRepoA = new InMemoryMacrocycleRepository([macrocycleRow(3, 'live'), macrocycleRow(2, 'imported')]);
+    const macrocycleRepoB = new InMemoryMacrocycleRepository([macrocycleRow(3, 'live')]);
     factory = {
       forUser: jest.fn().mockImplementation(async (user) =>
         user.id === MOCK_USER_A.id
-          ? { macrocycleDashboard: dashboardRepoA, workoutLiftOverride: liftOverrideRepoA, liftingProgramSpec: specRepoA, customLift: customLiftRepo }
-          : { macrocycleDashboard: dashboardRepoB, workoutLiftOverride: liftOverrideRepoB, liftingProgramSpec: specRepoB, customLift: customLiftRepo },
+          ? { macrocycle: macrocycleRepoA, macrocycleDashboard: dashboardRepoA, workoutLiftOverride: liftOverrideRepoA, liftingProgramSpec: specRepoA, customLift: customLiftRepo }
+          : { macrocycle: macrocycleRepoB, macrocycleDashboard: dashboardRepoB, workoutLiftOverride: liftOverrideRepoB, liftingProgramSpec: specRepoB, customLift: customLiftRepo },
       ),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -151,6 +160,39 @@ describe('ManageLiftsController', () => {
       await controller.deleteOverride('5-3-1', '3', '1', 'Squat', MOCK_USER_A);
 
       expect(liftOverrideRepoB.deleteOverride).not.toHaveBeenCalled();
+    });
+  });
+
+  // Imported history is read-only, and a number the program doesn't have is a 404 (ADR-042).
+  describe('macrocycle guard', () => {
+    it.each([
+      ['upsert', () => controller.upsertOverride('5-3-1', '2', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A)],
+      ['delete', () => controller.deleteOverride('5-3-1', '2', '1', 'Squat', MOCK_USER_A)],
+    ])('rejects an override %s on an imported macrocycle with 409', async (_label, call) => {
+      await expect(call()).rejects.toMatchObject({ status: 409, response: { code: 'macrocycle-read-only' } });
+      expect(liftOverrideRepoA.upsertOverride).not.toHaveBeenCalled();
+      expect(liftOverrideRepoA.deleteOverride).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['upsert', () => controller.upsertOverride('5-3-1', '9', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A)],
+      ['delete', () => controller.deleteOverride('5-3-1', '9', '1', 'Squat', MOCK_USER_A)],
+    ])('rejects an override %s on an unknown macrocycle with 404', async (_label, call) => {
+      await expect(call()).rejects.toMatchObject({ status: 404, response: { code: 'macrocycle-not-found' } });
+      expect(liftOverrideRepoA.upsertOverride).not.toHaveBeenCalled();
+      expect(liftOverrideRepoA.deleteOverride).not.toHaveBeenCalled();
+    });
+
+    it('keeps a legacy macrocycle writable', async () => {
+      await macrocycleRepoA.create({
+        program: '5-3-1',
+        macrocycleNum: 1,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        status: 'unknown',
+        origin: 'legacy',
+      });
+      await controller.upsertOverride('5-3-1', '1', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A);
+      expect(liftOverrideRepoA.upsertOverride).toHaveBeenCalledTimes(1);
     });
   });
 });
