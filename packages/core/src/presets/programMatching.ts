@@ -41,6 +41,10 @@ export function liftKey(name: string): string {
  * `wtDecrementPct` (above 0 is a reverse pyramid, else straight sets) unless
  * `compoundSetOrder` overrides it for every lift that pyramids, which the built-in 5/3/1
  * needs: its rows prescribe descending weights, but Wendler's sets climb (#1086).
+ *
+ * It sets no `name`. For a custom program, add the lifter's name for it
+ * (`{ ...knownProgramFromSpec(id, spec), name }`) so a `Program` cell can name it and ties
+ * go by name.
  */
 export function knownProgramFromSpec(
   id: string,
@@ -63,16 +67,17 @@ export function knownProgramFromSpec(
 }
 
 /**
- * A program name or `Program` cell reduced to lowercase letters and digits in any script,
- * with accents dropped: "5/3/1" and "5-3-1" are both "531", "Leangáins" is "leangains" and
- * "Сила" keeps its letters. A cell of only punctuation ("-") reduces to "".
+ * A program name or `Program` cell reduced to lowercase letters, marks and digits in any
+ * script, with the accents NFKD splits off Latin, Greek and Cyrillic letters dropped:
+ * "5/3/1" and "5-3-1" are both "531", "Leangáins" is "leangains", and "Сила" and "बाल"
+ * keep their letters and vowel signs. A cell of only punctuation ("-") reduces to "".
  */
 export function programNameKey(value: string): string {
   return value
     .normalize('NFKD')
-    .replace(/\p{M}/gu, '')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]/gu, '');
+    .replace(/[^\p{L}\p{M}\p{N}]/gu, '');
 }
 
 /**
@@ -107,24 +112,23 @@ export interface ProgramMatch {
 }
 
 /**
- * The known program a set of lifts belongs to (decision 9 of the import macrocycle
- * proposal), or `null` when none contains them all or there are no lifts.
+ * The smallest known program containing every one of `lifts` (decision 9 of the import
+ * macrocycle proposal), or `null` when none does or there are none. A tie goes to the first
+ * in `programs` order, with `tiedWith` naming the rest.
+ */
+export function matchProgramForLifts(lifts: Iterable<string>, programs: readonly KnownProgram[]): ProgramMatch | null {
+  return matchProgramForKeys(new Set([...lifts].map(liftKey)), programs);
+}
+
+/**
+ * Decision 9's match for lifts already reduced to {@link liftKey}s, or `null` when no
+ * program contains them all or there are none.
  *
  * Among the programs containing every lift, those whose set order agrees with the most
  * sessions win (`setOrderAgreement`, by program id, when the caller has set-order
  * evidence); then the smallest. A remaining tie goes to `sourceProgram` when it's one of
  * them, and otherwise to the first in `programs` order, with `tiedWith` naming the rest.
  */
-export function matchProgramForLifts(
-  lifts: Iterable<string>,
-  programs: readonly KnownProgram[],
-  sourceProgram?: string,
-  setOrderAgreement?: ReadonlyMap<string, number>,
-): ProgramMatch | null {
-  return matchProgramForKeys(new Set([...lifts].map(liftKey)), programs, sourceProgram, setOrderAgreement);
-}
-
-/** {@link matchProgramForLifts} for lifts already reduced to {@link liftKey}s. */
 export function matchProgramForKeys(
   keys: ReadonlySet<string>,
   programs: readonly KnownProgram[],

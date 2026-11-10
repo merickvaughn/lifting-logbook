@@ -8,6 +8,7 @@ import {
   liftKey,
   matchProgramForLifts,
 } from '.';
+import { matchProgramForKeys, programNameKey } from './programMatching';
 
 const LIFTS_531 = ['Squat', 'Bench Press', 'Deadlift', 'Overhead Press'];
 const LIFTS_LEANGAINS = [
@@ -177,7 +178,11 @@ describe('inferProgramFromLiftRecords', () => {
   it('returns null when no program contains every lift', () => {
     const combined = [...new Set([...LIFTS_LEANGAINS, ...LIFTS_RPT])];
     expect(inferProgramFromLiftRecords(combined)).toBeNull();
-    expect(inferProgramFromLiftRecords(['Squat', 'Face Pull'])).toBeNull();
+    expect(inferProgramFromLiftRecords(['Face Pull'])).toBeNull();
+  });
+
+  it('leaves out a lift in no built-in program, as import segmentation does', () => {
+    expect(inferProgramFromLiftRecords(['Squat', 'Face Pull'])).toBe('5-3-1');
   });
 
   it('matches a lift under any of its spellings', () => {
@@ -185,7 +190,7 @@ describe('inferProgramFromLiftRecords', () => {
   });
 });
 
-describe('matchProgramForLifts', () => {
+describe('matchProgramForKeys', () => {
   const custom = (id: string, lifts: string[]): KnownProgram => ({
     id,
     name: id,
@@ -196,20 +201,33 @@ describe('matchProgramForLifts', () => {
   });
   const a = custom('a', ['Squat', 'Bench Press', 'Face Pull']);
   const b = custom('b', ['Squat', 'Bench Press', 'Barbell Row']);
+  const keys = (lifts: string[]) => new Set(lifts.map(liftKey));
 
   it('gives a tie to the Source program when it is one of the tied programs', () => {
-    expect(matchProgramForLifts(['Squat'], [a, b], 'b')).toEqual({ program: b, tiedWith: ['a'], bySetOrder: false });
+    expect(matchProgramForKeys(keys(['Squat']), [a, b], 'b')).toEqual({ program: b, tiedWith: ['a'], bySetOrder: false });
   });
 
   it('gives a tie to the first program otherwise, naming the rest', () => {
-    expect(matchProgramForLifts(['Squat'], [a, b], 'rpt')).toEqual({ program: a, tiedWith: ['b'], bySetOrder: false });
+    expect(matchProgramForKeys(keys(['Squat']), [a, b], 'rpt')).toEqual({ program: a, tiedWith: ['b'], bySetOrder: false });
+    expect(matchProgramForLifts(['Squat'], [a, b])).toEqual({ program: a, tiedWith: ['b'], bySetOrder: false });
   });
 
   it('prefers the program whose set order agrees with the most sessions over the smallest', () => {
     // Squat and bench fit 5-3-1 (smallest) and RPT; descending sets agree only with RPT.
-    const match = matchProgramForLifts(['Squat', 'Bench Press'], BUILT_IN_KNOWN_PROGRAMS, undefined, new Map([['rpt', 3]]));
+    const squatBench = keys(['Squat', 'Bench Press']);
+    const match = matchProgramForKeys(squatBench, BUILT_IN_KNOWN_PROGRAMS, undefined, new Map([['rpt', 3]]));
     expect(match).toMatchObject({ program: { id: 'rpt' }, bySetOrder: true });
-    expect(matchProgramForLifts(['Squat', 'Bench Press'], BUILT_IN_KNOWN_PROGRAMS)?.program.id).toBe('5-3-1');
+    expect(matchProgramForKeys(squatBench, BUILT_IN_KNOWN_PROGRAMS)?.program.id).toBe('5-3-1');
+  });
+});
+
+describe('programNameKey', () => {
+  it('drops Latin accents but keeps the vowel signs that tell words apart in other scripts', () => {
+    expect(programNameKey('Leangáins')).toBe('leangains');
+    expect(programNameKey('5/3/1')).toBe(programNameKey('5-3-1'));
+    expect(programNameKey('बल')).not.toBe(programNameKey('बाल'));
+    expect(programNameKey('शक्ति')).not.toBe(programNameKey('शक्त'));
+    expect(programNameKey('-')).toBe('');
   });
 });
 

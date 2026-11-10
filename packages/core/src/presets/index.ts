@@ -1,5 +1,5 @@
 import { LiftingProgramSpec } from '../models/LiftingProgramSpec';
-import { KnownProgram, knownProgramFromSpec, matchProgramForLifts, SetOrder } from './programMatching';
+import { KnownProgram, knownProgramFromSpec, liftKey, matchProgramForLifts, SetOrder } from './programMatching';
 
 // Canonical program-length registry + read-time block expansion (issue #680).
 export * from './programLengths';
@@ -114,11 +114,16 @@ export const BUILT_IN_KNOWN_PROGRAMS: readonly KnownProgram[] = Object.entries(
   PRESET_BASE_SPECS,
 ).map(([id, spec]) => knownProgramFromSpec(id, spec, AUTHOR_SET_ORDER[id]));
 
+const BUILT_IN_LIFTS: ReadonlySet<string> = new Set(BUILT_IN_KNOWN_PROGRAMS.flatMap((p) => [...p.lifts]));
+
 /**
- * The built-in program a lift history belongs to: the smallest one containing every lift
- * in it ({@link matchProgramForLifts}). `null` when no built-in program contains them all.
+ * The built-in program a lift history belongs to: the smallest one containing every lift in
+ * it that some built-in program has ({@link matchProgramForLifts}). A lift in none of them
+ * (an accessory) is left out, as import segmentation does. `null` when no built-in program
+ * contains the rest, or there are none.
  */
 export function inferProgramFromLiftRecords(liftHistory: string[]): string | null {
-  const match = matchProgramForLifts(liftHistory, BUILT_IN_KNOWN_PROGRAMS);
+  const known = liftHistory.filter((lift) => BUILT_IN_LIFTS.has(liftKey(lift)));
+  const match = matchProgramForLifts(known, BUILT_IN_KNOWN_PROGRAMS);
   return match ? match.program.id : null;
 }

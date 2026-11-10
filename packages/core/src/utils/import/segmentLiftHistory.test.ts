@@ -1,4 +1,4 @@
-import { KnownProgram, liftKey } from '../../presets';
+import { KnownProgram, knownProgramFromSpec, liftKey } from '../../presets';
 import { classifySetOrder, LiftHistoryRow, segmentLiftHistory, SegmentLiftHistoryOptions } from './segmentLiftHistory';
 
 /** Day 0 is Monday 5 January 2026, UTC. */
@@ -121,6 +121,17 @@ describe('segmentLiftHistory', () => {
       expect(result.stretches[0]?.reasons.status).toEqual({ kind: 'next-is-unmatched' });
     });
 
+    it("compares the next stretch's Program column before its lifts", () => {
+      // GZCLP's main lifts are 5/3/1's, so by lifts it would read as a restart.
+      const first = run(FIVE_THREE_ONE_DAYS, 0, 6, { extra: () => ({ program: '5/3/1' }) });
+      const gzclp = segment([...first, ...run(FIVE_THREE_ONE_DAYS, lastDay(first) + 20, 6, { extra: () => ({ program: 'GZCLP' }) })]);
+      expect(gzclp.stretches[0]?.reasons.status).toEqual({ kind: 'next-is-different-program' });
+      // A known program named over lifts it doesn't have is still that program.
+      const rpt = run(RPT_DAYS, 0, 6, { extra: () => ({ program: 'RPT' }) });
+      const named = segment([...rpt, ...run(RPT_DAYS, lastDay(rpt) + 20, 6, { extra: () => ({ program: '5/3/1' }) })]);
+      expect(named.stretches[0]?.reasons.status).toEqual({ kind: 'next-is-different-program' });
+    });
+
     it('is in progress as the last stretch inside its expected length', () => {
       const result = segment(run(RPT_DAYS, 0, 6));
       expect(result.stretches[0]?.status).toBe('in-progress');
@@ -167,6 +178,35 @@ describe('segmentLiftHistory', () => {
       const result = segment(rows);
       expect(result.stretches[0]?.sessions.map((s) => s.workoutNum)).toEqual([1, 2, 3, 3, 5]);
       expect(result.stretches[0]?.completedWorkouts).toBe(4);
+    });
+
+    it("counts up a restart's blank first workout rather than borrowing the last run's number", () => {
+      const first = run(RPT_DAYS, 0, 10, { extra: (i) => ({ workoutNum: i + 1 }) });
+      // After a 42-day break: blank, 2, 3, 4, 5.
+      const rows = [...first, ...run(RPT_DAYS, lastDay(first) + 42, 5, { extra: (i) => ({ workoutNum: i === 0 ? null : i + 1 }) })];
+      const result = segment(rows);
+      expect(result.stretches).toHaveLength(2);
+      expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'gap', days: 42 });
+      expect(result.stretches[1]?.sessions.map((s) => s.workoutNum)).toEqual([1, 2, 3, 4, 5]);
+      expect(result.stretches[1]?.completedWorkouts).toBe(5);
+    });
+
+    it('does the same after a finished run', () => {
+      const first = run(FIVE_THREE_ONE_DAYS, 0, 24, { extra: (i) => ({ workoutNum: i + 1 }) });
+      const rows = [...first, ...run(FIVE_THREE_ONE_DAYS, lastDay(first) + 2, 4, { extra: (i) => ({ workoutNum: i === 0 ? null : i + 1 }) })];
+      const result = segment(rows);
+      expect(result.stretches).toHaveLength(2);
+      expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'previous-run-finished' });
+      expect(result.stretches[1]?.sessions.map((s) => s.workoutNum)).toEqual([1, 2, 3, 4]);
+    });
+
+    it('counts sessions for a stretch with no Workout # even when others in the file have one', () => {
+      const unnumbered = run(FIVE_THREE_ONE_DAYS, 0, 24);
+      const rows = [...unnumbered, ...run(FIVE_THREE_ONE_DAYS, lastDay(unnumbered) + 2, 3, { extra: (i) => ({ workoutNum: i + 1 }) })];
+      const result = segment(rows);
+      expect(result.stretches[0]).toMatchObject({ completedWorkouts: 24, status: 'completed' });
+      expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'previous-run-finished' });
+      expect(result.stretches[1]?.sessions.map((s) => s.workoutNum)).toEqual([1, 2, 3]);
     });
 
     it('continues the same stretch across a 10-day gap with no fallback', () => {
@@ -291,6 +331,46 @@ describe('segmentLiftHistory', () => {
       ]);
       expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'previous-fits-no-program' });
       expect(result.stretches[2]?.reasons.start).toEqual({ kind: 'previous-run-finished' });
+    });
+
+    it('splits off a transition session before the run before it has settled', () => {
+      // RPT's legs and pull days also fit Leangains; then a day mixing RPT and Leangains lifts.
+      const before = run([RPT_DAYS[1] ?? [], RPT_DAYS[2] ?? []], 0, 2);
+      const rows = [
+        ...before,
+        ...session(lastDay(before) + 2, ['Bench Press', 'Barbell Row', 'Incline DB Press']),
+        ...run(RPT_DAYS, lastDay(before) + 4, 6),
+      ];
+      const result = segment(rows);
+      expect(result.stretches.map((s) => [s.matched, s.sessions.length, s.reasons.start.kind])).toEqual([
+        [true, 2, 'first-session'],
+        [false, 1, 'lift-outside-program'],
+        [true, 6, 'previous-fits-no-program'],
+      ]);
+    });
+
+    it('starts one where a Program value naming no known program first appears in a matched run', () => {
+      const first = run(RPT_DAYS, 0, 6);
+      const rows = [...first, ...run(RPT_DAYS, lastDay(first) + 2, 6, { extra: () => ({ program: 'GZCLP' }) })];
+      const result = segment(rows);
+      expect(result.stretches.map((s) => [s.program, s.matched])).toEqual([
+        ['rpt', true],
+        ['rpt', false],
+      ]);
+      expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'program-column-changed', from: null, to: 'GZCLP' });
+    });
+
+    it("reads a Program cell naming a custom program with no lifts yet as unknown", () => {
+      const empty: KnownProgram = { ...knownProgramFromSpec('custom-1', []), name: 'My Plan' };
+      const result = segment(run(RPT_DAYS, 0, 5, { extra: () => ({ program: 'My Plan' }) }), { customPrograms: [empty] });
+      expect(result.stretches).toHaveLength(1);
+      expect(result.stretches[0]).toMatchObject({ matched: false, candidateProgram: 'rpt' });
+    });
+
+    it('tells apart names in scripts whose vowel signs are combining marks', () => {
+      const first = run(RPT_DAYS, 0, 6, { extra: () => ({ program: 'बल' }) });
+      const rows = [...first, ...run(RPT_DAYS, lastDay(first) + 2, 6, { extra: () => ({ program: 'बाल' }) })];
+      expect(segment(rows).stretches[1]?.reasons.start).toEqual({ kind: 'program-column-changed', from: 'बल', to: 'बाल' });
     });
 
     it('compares Program cells in any script, and reads a cell of only punctuation as blank', () => {
@@ -440,6 +520,33 @@ describe('segmentLiftHistory', () => {
     });
   });
 
+  describe('a custom program', () => {
+    // One repeating one-week block of three days, as the lifter wrote it.
+    const block = ['Kettlebell Swing', 'Goblet Squat', 'Farmer Carry'].map((lift, offset) => ({ week: 1 as const, offset: offset * 2, lift }));
+    const kbPlan: KnownProgram = { ...knownProgramFromSpec('custom-kb', block), name: 'KB Plan' };
+    const kbDays = block.map((row) => [row.lift]);
+
+    it('is open-ended: a run never finishes or overruns by length', () => {
+      expect(kbPlan.workoutCount).toBe(3);
+      const result = segment(run(kbDays, 0, 30), { customPrograms: [kbPlan] });
+      expect(result.stretches).toHaveLength(1);
+      expect(result.stretches[0]).toMatchObject({
+        program: 'custom-kb',
+        matched: true,
+        status: 'in-progress',
+        expectedWorkouts: null,
+        completedWorkouts: 30,
+      });
+      expect(result.stretches[0]?.reasons.status).toEqual({ kind: 'open-ended' });
+    });
+
+    it('is named by a Program cell holding the name the caller gives it', () => {
+      const result = segment(run(kbDays, 0, 6, { extra: () => ({ program: 'kb plan' }) }), { customPrograms: [kbPlan] });
+      expect(result.stretches[0]?.program).toBe('custom-kb');
+      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: 'kb plan' });
+    });
+  });
+
   describe('workout numbering (decisions 6 and 9)', () => {
     it("keeps a file's numbers", () => {
       const result = segment(run(RPT_DAYS, 0, 3, { extra: (i) => ({ workoutNum: i + 3 }) }));
@@ -551,7 +658,7 @@ describe('segmentLiftHistory', () => {
     });
   });
 
-  it('segments 20,000 sessions of a lift in no known program in linear time', () => {
+  it('segments 20,000 sessions of a lift in no known program in under 3 seconds', () => {
     const rows = Array.from({ length: 20_000 }, (_, i): Row => ({ id: `${i}`, date: day(i), lift: 'Zercher Squat' }));
     const started = Date.now();
     const result = segment(rows);
@@ -585,6 +692,16 @@ describe('segmentLiftHistory', () => {
       const result = segment(rows);
       expect(Date.now() - started).toBeLessThan(3_000);
       expect(new Set(result.stretches.map((s) => s.program))).toEqual(new Set(['rpt', '5-3-1']));
+    });
+
+    it('segments one 20,000-session stretch of known lifts with set weights in under 3 seconds', () => {
+      // An unknown label keeps it one stretch, so matching and the set-order tallies run on one long draft.
+      const rows = withSets(run(RPT_DAYS, 0, 20_000, { spacing: 1, extra: () => ({ program: 'GZCLP' }) }), 'descending');
+      const started = Date.now();
+      const result = segment(rows);
+      expect(Date.now() - started).toBeLessThan(3_000);
+      expect(result.stretches).toHaveLength(1);
+      expect(result.stretches[0]?.candidateProgram).toBe('rpt');
     });
 
     it('survives every row on one day', () => {
@@ -674,6 +791,48 @@ describe('segmentLiftHistory', () => {
       expect(result.conflicts).toEqual([]);
       // Nothing starts after the 5/3/1 number ends, so it is judged against the import date.
       expect(result.stretches[0]?.status).toBe('in-progress');
+    });
+
+    it("does not take another program's later number as what follows one still running", () => {
+      const rows = [
+        ...run(FIVE_THREE_ONE_DAYS, 0, 14, { spacing: 3, extra: () => ({ program: '5/3/1', macrocycleNum: 1 }) }),
+        ...run([['Rowing Machine']], 1, 7, { spacing: 3, extra: () => ({ program: 'Conditioning', macrocycleNum: 1 }) }),
+        ...session(41, ['Rowing Machine'], { program: 'Conditioning', macrocycleNum: 2 }),
+      ];
+      const result = segment(rows, { importDate: day(42) });
+      const fiveThreeOne = result.stretches.find((s) => s.program === '5-3-1');
+      expect(fiveThreeOne?.status).toBe('in-progress');
+    });
+
+    it('flags an unlabelled number overlapping a labelled one of the same program', () => {
+      const rows = [
+        ...run(RPT_DAYS, 0, 4, { spacing: 4, extra: () => ({ macrocycleNum: 1 }) }),
+        ...run(RPT_DAYS, 2, 4, { spacing: 4, extra: () => ({ program: 'RPT', macrocycleNum: 2 }) }),
+      ];
+      expect(segment(rows).conflicts).toEqual([{ kind: 'numbers-overlap', stretches: [0, 1] }]);
+    });
+
+    it("keeps a blank Program cell with its own session's program when two programs share a number", () => {
+      const rows = [
+        ...run(FIVE_THREE_ONE_DAYS, 0, 6, { spacing: 4, extra: () => ({ program: '5/3/1', macrocycleNum: 1 }) }),
+        ...run([['Rowing Machine']], 1, 6, { spacing: 4, extra: () => ({ program: 'Conditioning', macrocycleNum: 1 }) }),
+        // The day after a Conditioning row: Deadlift's cell is blank, Overhead Press's isn't.
+        { id: '24:Deadlift', date: day(24), lift: 'Deadlift', macrocycleNum: 1 },
+        { id: '24:Overhead Press', date: day(24), lift: 'Overhead Press', program: '5/3/1', macrocycleNum: 1 },
+      ];
+      const result = segment(rows);
+      const fiveThreeOne = result.stretches.find((s) => s.program === '5-3-1');
+      expect(fiveThreeOne?.matched).toBe(true);
+      expect(fiveThreeOne?.sessions.flatMap((s) => s.rows.map((r) => r.id))).toContain('24:Deadlift');
+    });
+
+    it('counts sessions for a number with no Workout # when other numbers have them', () => {
+      const first = run(FIVE_THREE_ONE_DAYS, 0, 24, { extra: () => ({ macrocycleNum: 1 }) });
+      const rows = [
+        ...first,
+        ...run(FIVE_THREE_ONE_DAYS, lastDay(first) + 2, 3, { extra: (i) => ({ macrocycleNum: 2, workoutNum: i + 1 }) }),
+      ];
+      expect(segment(rows).stretches[0]).toMatchObject({ completedWorkouts: 24, status: 'completed' });
     });
 
     it('does not flag numbers that follow one another', () => {
