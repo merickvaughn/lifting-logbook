@@ -232,6 +232,7 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 | [Prisma — Error message reference, `P2002`](https://www.prisma.io/docs/orm/reference/error-reference#p2002) | [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | The unique-key violation the adapter maps to a 409 `macrocycle-number-taken`. |
 | [PostgreSQL 16 — `INSERT`, `ON CONFLICT`](https://www.postgresql.org/docs/16/sql-insert.html#SQL-ON-CONFLICT), [PL/pgSQL `GET DIAGNOSTICS`](https://www.postgresql.org/docs/16/plpgsql-statements.html#PLPGSQL-STATEMENTS-DIAGNOSTICS) | [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | `macrocycle_backfill_rows()` skips existing rows and reports how many it inserted, so it can run again. |
 | [PostgreSQL 16 — Explicit locking, row-level locks](https://www.postgresql.org/docs/16/explicit-locking.html#LOCKING-ROWS) | [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | A second insert of a key held by an uncommitted transaction waits, then fails, which the concurrency test relies on. |
+| [PostgreSQL 16 — Advisory lock functions](https://www.postgresql.org/docs/16/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS) | [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | Page writes take a per-user advisory lock shared and imports take it exclusive, with the `try` form, released at transaction end (#1198). |
 
 ---
 

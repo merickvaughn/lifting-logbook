@@ -4,16 +4,19 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { skipWorkout, unskipWorkout } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
 import styles from './SkipForm.module.css';
 
 interface Props {
   program: string;
   macrocycleNum: number;
+  /** The macrocycle's stable id, sent with the write (#1198). */
+  macrocycleId?: string | undefined;
   workoutNum: number;
   skipped: boolean;
 }
 
-export default function SkipForm({ program, macrocycleNum, workoutNum, skipped }: Props) {
+export default function SkipForm({ program, macrocycleNum, macrocycleId, workoutNum, skipped }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
@@ -24,12 +27,13 @@ export default function SkipForm({ program, macrocycleNum, workoutNum, skipped }
     setLoading(true);
     setError(null);
     try {
-      await skipWorkout(program, macrocycleNum, workoutNum, reason || undefined);
+      await skipWorkout(program, macrocycleNum, workoutNum, reason || undefined, macrocycleId);
       setOpen(false);
       router.refresh();
     } catch (e) {
       logClientError('skipWorkout', e, { program, macrocycleNum, workoutNum });
-      setError('Failed to skip workout. Please try again.');
+      if (followMovedMacrocycle(e)) return;
+      setError(writeFailureMessage(e, 'Failed to skip workout. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -39,12 +43,13 @@ export default function SkipForm({ program, macrocycleNum, workoutNum, skipped }
     setLoading(true);
     setError(null);
     try {
-      await unskipWorkout(program, macrocycleNum, workoutNum);
+      await unskipWorkout(program, macrocycleNum, workoutNum, macrocycleId);
       setOpen(false);
       router.refresh();
     } catch (e) {
       logClientError('unskipWorkout', e, { program, macrocycleNum, workoutNum });
-      setError('Failed to undo skip. Please try again.');
+      if (followMovedMacrocycle(e)) return;
+      setError(writeFailureMessage(e, 'Failed to undo skip. Please try again.'));
     } finally {
       setLoading(false);
     }

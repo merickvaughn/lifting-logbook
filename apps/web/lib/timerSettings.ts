@@ -128,7 +128,8 @@ function isWorkoutKey(value: unknown): value is TimerWorkoutKey {
   return (
     typeof value.program === 'string' &&
     typeof value.macrocycleNum === 'number' &&
-    typeof value.workoutNum === 'number'
+    typeof value.workoutNum === 'number' &&
+    (value.macrocycleId === undefined || typeof value.macrocycleId === 'string')
   );
 }
 
@@ -177,8 +178,16 @@ function isRunShape(value: unknown): value is UnvalidatedRun {
   );
 }
 
+/**
+ * Whether two keys name the same workout. With the macrocycle's stable id on both, the id
+ * decides, so a run follows its macrocycle when its number changes (#1198). A key without
+ * one, such as a run saved before ids, falls back to the number.
+ */
 export function sameWorkout(a: TimerWorkoutKey, b: TimerWorkoutKey): boolean {
-  return a.program === b.program && a.macrocycleNum === b.macrocycleNum && a.workoutNum === b.workoutNum;
+  if (a.program !== b.program || a.workoutNum !== b.workoutNum) return false;
+  return a.macrocycleId !== undefined && b.macrocycleId !== undefined
+    ? a.macrocycleId === b.macrocycleId
+    : a.macrocycleNum === b.macrocycleNum;
 }
 
 /**
@@ -198,8 +207,9 @@ export function loadTimerRun(workout: TimerWorkoutKey): TimerRunState | null {
   if (!isRunShape(run)) return null;
   if (!sameWorkout(run.workout, workout)) return null;
   // `run` is `UnvalidatedRun` here — `.classifications` is `unknown`, not yet a
-  // real value. This is what makes it one.
-  return { ...run, classifications: normalizeClassifications(run.classifications) };
+  // real value. This is what makes it one. The run takes the caller's key, so a run
+  // saved before ids, or before a renumbering, is saved under the current one (#1198).
+  return { ...run, workout, classifications: normalizeClassifications(run.classifications) };
 }
 
 /** Persists the run, leaving settings untouched. `null` ends the session. */

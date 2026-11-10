@@ -75,6 +75,8 @@ interface Props {
   lifts: TimerLiftPlan[];
   program: string;
   macrocycleNum: number;
+  /** The macrocycle's stable id, which keys the persisted run (#1198). */
+  macrocycleId?: string | undefined;
   workoutNum: number;
   children: React.ReactNode;
 }
@@ -90,12 +92,13 @@ export default function WorkoutTimerProvider({
   lifts,
   program,
   macrocycleNum,
+  macrocycleId,
   workoutNum,
   children,
 }: Props) {
   const workout = useMemo(
-    () => ({ program, macrocycleNum, workoutNum }),
-    [program, macrocycleNum, workoutNum],
+    () => ({ program, macrocycleNum, workoutNum, ...(macrocycleId !== undefined && { macrocycleId }) }),
+    [program, macrocycleNum, workoutNum, macrocycleId],
   );
 
   const timer: UseWorkoutTimerResult = useWorkoutTimer(lifts, workout);

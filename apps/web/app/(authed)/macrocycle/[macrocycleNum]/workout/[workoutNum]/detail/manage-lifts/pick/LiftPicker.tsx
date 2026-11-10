@@ -4,11 +4,14 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { upsertLiftOverride } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import { followMovedMacrocycle } from '@/lib/macrocycleUrl';
 import styles from './LiftPicker.module.css';
 
 interface Props {
   program: string;
   macrocycleNum: number;
+  /** The macrocycle's stable id, sent with the write (#1198). */
+  macrocycleId?: string | undefined;
   workoutNum: number;
   action: 'add' | 'replace';
   replacing?: string;
@@ -19,6 +22,7 @@ interface Props {
 export default function LiftPicker({
   program,
   macrocycleNum,
+  macrocycleId,
   workoutNum,
   action,
   replacing,
@@ -41,9 +45,9 @@ export default function LiftPicker({
           action: 'replace',
           lift: replacing,
           replacedBy: lift,
-        });
+        }, macrocycleId);
       } else {
-        await upsertLiftOverride(program, macrocycleNum, workoutNum, { action: 'add', lift });
+        await upsertLiftOverride(program, macrocycleNum, workoutNum, { action: 'add', lift }, macrocycleId);
       }
       router.push(backHref);
       router.refresh();
@@ -58,6 +62,7 @@ export default function LiftPicker({
         workoutNum,
         lift,
       });
+      followMovedMacrocycle(err);
     } finally {
       setPending(null);
     }

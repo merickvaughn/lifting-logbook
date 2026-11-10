@@ -1,4 +1,4 @@
-import type { CreateFocusBlockRequest } from '@lifting-logbook/types';
+import { emptyFocusDayState, type CreateFocusBlockRequest } from '@lifting-logbook/types';
 import { createApiClient } from './index';
 
 const AUTH = { Authorization: 'Bearer identity', 'X-Clerk-Authorization': 'Bearer clerk' };
@@ -602,6 +602,57 @@ describe('createApiClient', () => {
       const [url, init] = lastCall();
       expect(url).toBe('http://api.test/focus/blocks/gone');
       expect(init.method).toBe('DELETE');
+    });
+  });
+
+  describe('the macrocycle id on page writes (#1198)', () => {
+    const ID = { 'X-Macrocycle-Id': 'mc-a' };
+    const ok = () => mockFetch.mockImplementation(async () => new Response(JSON.stringify({}), { status: 200 }));
+    const headersOf = () => lastCall()[1].headers as Record<string, string>;
+
+    it('sends the id as a header on every page write that takes one', async () => {
+      ok();
+      const client = makeClient();
+      const calls: [string, () => Promise<unknown>][] = [
+        ['rescheduleWorkout', () => client.rescheduleWorkout('5-3-1', 1, 2, '2026-07-01', 'mc-a')],
+        ['skipWorkout', () => client.skipWorkout('5-3-1', 1, 2, undefined, 'mc-a')],
+        ['unskipWorkout', () => client.unskipWorkout('5-3-1', 1, 2, 'mc-a')],
+        ['createLiftRecord', () => client.createLiftRecord(
+          '5-3-1',
+          { program: '5-3-1', macrocycleNum: 1, workoutNum: 2, date: '2026-07-01', lift: 'Squat', setNum: 1, weight: 225, reps: 5 },
+          'mc-a',
+        )],
+        ['updateLiftRecord', () => client.updateLiftRecord('5-3-1', 'rec-1', {}, 'mc-a')],
+        ['upsertLiftOverride', () => client.upsertLiftOverride('5-3-1', 1, 2, { action: 'add', lift: 'Dips' }, 'mc-a')],
+        ['deleteLiftOverride', () => client.deleteLiftOverride('5-3-1', 1, 2, 'Dips', 'mc-a')],
+        ['saveFocusDayState', () => client.saveFocusDayState('5-3-1', 2, emptyFocusDayState(), 'mc-a')],
+      ];
+      for (const [name, call] of calls) {
+        await call();
+        expect({ name, headers: headersOf() }).toEqual({ name, headers: expect.objectContaining(ID) });
+      }
+    });
+
+    it('sends no id header when the caller has none', async () => {
+      ok();
+      await makeClient().rescheduleWorkout('5-3-1', 1, 2, '2026-07-01');
+      expect(headersOf()).not.toHaveProperty('X-Macrocycle-Id');
+    });
+
+    it('carries the error code and body on the thrown error', async () => {
+      const body = { statusCode: 409, code: 'macrocycle-moved', message: 'Moved', macrocycleNum: 2 };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(body), { status: 409 }));
+      await expect(makeClient().skipWorkout('5-3-1', 1, 2, undefined, 'mc-a')).rejects.toMatchObject({
+        name: 'ApiClientError',
+        status: 409,
+        code: 'macrocycle-moved',
+        body: expect.objectContaining({ macrocycleNum: 2 }),
+      });
+    });
+
+    it('leaves the code undefined for an error body without one', async () => {
+      mockFetch.mockResolvedValue(new Response('upstream down', { status: 503 }));
+      await expect(makeClient().skipWorkout('5-3-1', 1, 2)).rejects.toMatchObject({ status: 503, code: undefined });
     });
   });
 });

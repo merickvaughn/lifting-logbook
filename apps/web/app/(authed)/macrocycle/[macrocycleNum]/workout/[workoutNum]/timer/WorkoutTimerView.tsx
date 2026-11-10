@@ -21,19 +21,21 @@ interface Props {
   lifts: TimerLiftPlan[];
   program: string;
   macrocycleNum: number;
+  /** The macrocycle's stable id, which keys the persisted run (#1198). */
+  macrocycleId?: string | undefined;
   workoutNum: number;
   week: number;
 }
 
 type Tab = 'live' | 'settings';
 
-export default function WorkoutTimerView({ lifts, program, macrocycleNum, workoutNum, week }: Props) {
+export default function WorkoutTimerView({ lifts, program, macrocycleNum, macrocycleId, workoutNum, week }: Props) {
   const [tab, setTab] = useState<Tab>('live');
 
   // Stable identity so the hook's mount effect does not re-run every render.
   const workout = useMemo(
-    () => ({ program, macrocycleNum, workoutNum }),
-    [program, macrocycleNum, workoutNum],
+    () => ({ program, macrocycleNum, workoutNum, ...(macrocycleId !== undefined && { macrocycleId }) }),
+    [program, macrocycleNum, workoutNum, macrocycleId],
   );
 
   const timer = useWorkoutTimer(lifts, workout);

@@ -4,16 +4,19 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { rescheduleWorkout } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
 import styles from './RescheduleForm.module.css';
 
 interface Props {
   program: string;
   macrocycleNum: number;
+  /** The macrocycle's stable id, sent with the write (#1198). */
+  macrocycleId?: string | undefined;
   workoutNum: number;
   currentDate: string;
 }
 
-export default function RescheduleForm({ program, macrocycleNum, workoutNum, currentDate }: Props) {
+export default function RescheduleForm({ program, macrocycleNum, macrocycleId, workoutNum, currentDate }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [newDate, setNewDate] = useState('');
@@ -25,12 +28,13 @@ export default function RescheduleForm({ program, macrocycleNum, workoutNum, cur
     setLoading(true);
     setError(null);
     try {
-      await rescheduleWorkout(program, macrocycleNum, workoutNum, newDate);
+      await rescheduleWorkout(program, macrocycleNum, workoutNum, newDate, macrocycleId);
       setOpen(false);
       router.refresh();
     } catch (err) {
       logClientError('rescheduleWorkout', err, { program, macrocycleNum, workoutNum });
-      setError('Failed to reschedule. Please try again.');
+      if (followMovedMacrocycle(err)) return;
+      setError(writeFailureMessage(err, 'Failed to reschedule. Please try again.'));
     } finally {
       setLoading(false);
     }

@@ -90,6 +90,47 @@ The owner's reason for the split: migrations run while the previous API revision
 - Download My Data includes the table.
 - **Rollback:** reverting the API image is safe, because the old code ignores the table. Dropping the table loses only the rows, which the function can rebuild for any number still stored.
 
+## Amendment: the stable id ([#1198](https://github.com/merickvaughn/lifting-logbook/issues/1198))
+
+**Date:** 2026-11-10
+
+Once [#1199](https://github.com/merickvaughn/lifting-logbook/issues/1199) can renumber macrocycles, a page left open across a renumbering would post to its old number, which then names a different macrocycle. Proposal decision 3 answers this with the row's id, which never changes. This amendment adds it before any number can move.
+
+1. **A workout read returns its macrocycle's id.** `GET` workout responses carry `macrocycleId`. The current macrocycle gets its row first if it has none.
+
+2. **Page writes send the id in an `X-Macrocycle-Id` header.** The routes are lift-record `POST` and `PATCH`, lift-override `POST` and `DELETE`, reschedule, skip `POST` and `DELETE`, `PUT` focus-state, and `fromMacrocycleNum`. Imports address macrocycles by the file's numbers, not a page's, so they don't send one. The owner chose:
+   - a header over the URL path, so every route keeps its shape and a client without the id still works;
+   - page writes only, over every write.
+
+3. **The API checks the id against the number in the request.**
+   - An id whose row has a different number returns 409 `macrocycle-moved`. The body carries the row's current `macrocycleNum`, and nothing is written.
+   - An id with no row in the program returns 404 `macrocycle-not-found`.
+   - A write with no id is accepted and logged as `Macrocycle write without an id (#1198)` with its route. That log shows when every client sends one. [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200) turns it into a 400.
+
+4. **Page writes and imports exclude each other through a per-user advisory lock.** Page writes take it shared and imports take it exclusive, both with the `try` form inside the request's transaction, so the lock is released when the transaction ends [6].
+   - A request that can't take it returns 409 `import-in-progress` at once rather than waiting.
+   - The key is (`1171`, `hashtext(userId)`), so two users never contend.
+   - The lock is raw SQL, which OpenTelemetry doesn't trace ([ADR-024](ADR-024-prisma-otel-sdk-override.md)), so it runs inside a manual `macrocycle.try_lock` span.
+   - An import holds it for its whole commit. #1199's renumbering runs inside imports, so no page write can land between a renumber and its check.
+
+5. **The web app follows a moved macrocycle.**
+   - Workout pages (logger, detail, timer, manage lifts, lift picker, lift editor) redirect to the number the workout was read from when the URL's differs. The read always names the current macrocycle, so the redirect can't loop.
+   - A write that gets `macrocycle-moved` reloads the page at the new number. `import-in-progress` asks the lifter to try again.
+   - The logger's unsent-set drafts are keyed by the id. A draft saved under the old number key moves to the id key the first time it's read, which the owner chose over keeping both keys.
+   - The timer's saved run matches by the id when both sides have one, and by number otherwise. A matched run takes the current key, so its next save carries the id. The run's storage shape is unchanged.
+
+**Alternatives rejected:**
+
+- **The id in the URL path.** Every route and link would change shape at once, and the previous API revision, still serving during the deploy, couldn't answer it.
+- **Blocking a page write while an import runs.** A page write would hold a connection and a transaction for the length of an import. A 409 the lifter can retry costs less.
+- **Checking the id on imports.** An import names macrocycles by the file's numbers, which the importer resolves itself.
+
+**Consequences:**
+
+- A page open across a renumbering can't write to another macrocycle. Before #1200, a client that sends no id still can, and the log names it.
+- A page write during an import fails with a 409 instead of writing into numbers the import is moving.
+- **Rollback:** reverting the API image is safe. The previous revision ignores the header and never takes the lock. Reverting the web image drops the header, and the API accepts writes without it until #1200.
+
 ## References
 
 1. [PostgreSQL 16 — Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html)
@@ -97,3 +138,4 @@ The owner's reason for the split: migrations run while the previous API revision
 3. [PostgreSQL 16 — `INSERT`, `ON CONFLICT` clause](https://www.postgresql.org/docs/16/sql-insert.html#SQL-ON-CONFLICT)
 4. [PostgreSQL 16 — PL/pgSQL, obtaining the result status (`GET DIAGNOSTICS`)](https://www.postgresql.org/docs/16/plpgsql-statements.html#PLPGSQL-STATEMENTS-DIAGNOSTICS)
 5. [PostgreSQL 16 — Explicit locking, row-level locks](https://www.postgresql.org/docs/16/explicit-locking.html#LOCKING-ROWS): a second insert of a key held by an uncommitted transaction waits for that transaction, then fails, which the concurrency test relies on.
+6. [PostgreSQL 16 — Advisory lock functions](https://www.postgresql.org/docs/16/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS): `pg_try_advisory_xact_lock` and its `_shared` form return at once and release at transaction end.

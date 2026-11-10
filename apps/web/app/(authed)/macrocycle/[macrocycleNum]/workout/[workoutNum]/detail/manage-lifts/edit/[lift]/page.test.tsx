@@ -14,6 +14,9 @@ jest.mock('next/navigation', () => ({
   notFound: jest.fn(() => {
     throw new Error('NOT_FOUND');
   }),
+  redirect: jest.fn((url: string) => {
+    throw new Error(`REDIRECT:${url}`);
+  }),
 }));
 
 jest.mock('@/components/LiftEditor', () => ({
@@ -34,6 +37,7 @@ const mockedMetadata = fetchLiftMetadata as unknown as jest.Mock;
 const mockedNotFound = notFound as unknown as jest.Mock;
 
 const workout = (...lifts: string[]) => ({
+  macrocycleNum: 1,
   week: 1,
   lifts: lifts.map((lift) => ({ lift, planned: true, sets: [] })),
 });
@@ -106,5 +110,10 @@ describe('EditLiftPage (#1190)', () => {
 
     await expect(renderEdit('squat')).rejects.toThrow('API 500');
     expect(mockedNotFound).not.toHaveBeenCalled();
+  });
+
+  it('redirects an old URL to the number the workout was read from (#1198)', async () => {
+    mockedWorkout.mockResolvedValue({ ...workout('squat'), macrocycleNum: 2 });
+    await expect(renderEdit('squat')).rejects.toThrow('REDIRECT:/macrocycle/2/workout/1/detail/manage-lifts/edit/squat');
   });
 });

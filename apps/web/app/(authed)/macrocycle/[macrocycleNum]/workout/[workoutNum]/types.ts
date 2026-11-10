@@ -56,6 +56,11 @@ export interface LiftData {
 export interface WorkoutLoggerProps {
   program: string;
   macrocycleNum: number;
+  /**
+   * The macrocycle's stable id, sent with every write and used to key drafts, so a page left
+   * open across a renumbering can't write into another macrocycle (#1198).
+   */
+  macrocycleId?: string;
   workoutNum: number;
   /** ISO date string for this workout (used when creating lift records). */
   date: string;

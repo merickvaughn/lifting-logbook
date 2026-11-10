@@ -15,6 +15,7 @@ import {
 import { rangeLabel } from '@lifting-logbook/core';
 import { saveFocusDayState } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
 import {
   FOCUS_OVERLAP_DESCRIPTION,
   FOCUS_PROGRESSION_LABEL,
@@ -38,6 +39,8 @@ import styles from './detail.module.css';
 interface Props {
   program: string;
   macrocycleNum: number;
+  /** The macrocycle's stable id, sent with each save (#1198). */
+  macrocycleId?: string | undefined;
   workoutNum: number;
   week: number;
   unit: WeightUnit;
@@ -98,7 +101,7 @@ function focusRows(
  * built the queue from, not the local state: until the refresh lands, a row reordered
  * here still starts the timer at its own sets in the queue as it stands.
  */
-export default function FocusWorkout({ program, macrocycleNum, workoutNum, week, unit, liftDetails, plan }: Props) {
+export default function FocusWorkout({ program, macrocycleNum, macrocycleId, workoutNum, week, unit, liftDetails, plan }: Props) {
   const router = useRouter();
   const ids = useId();
   const [state, setState] = useState<FocusDayState>(plan.dayState);
@@ -127,12 +130,13 @@ export default function FocusWorkout({ program, macrocycleNum, workoutNum, week,
     setSaving((n) => n + 1);
     saveQueue.current = saveQueue.current.then(async () => {
       try {
-        saved.current = await saveFocusDayState(program, workoutNum, next);
+        saved.current = await saveFocusDayState(program, workoutNum, next, macrocycleId);
       } catch (e) {
         logClientError('saveFocusDayState', e, { program, macrocycleNum, workoutNum });
+        if (followMovedMacrocycle(e)) return;
         if (seq === latestSave.current) {
           setState(saved.current);
-          setError('Couldn’t save your focus work changes. Please try again.');
+          setError(writeFailureMessage(e, 'Couldn’t save your focus work changes. Please try again.'));
         }
       } finally {
         setSaving((n) => n - 1);

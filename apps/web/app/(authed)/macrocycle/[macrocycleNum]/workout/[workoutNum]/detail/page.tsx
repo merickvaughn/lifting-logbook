@@ -1,7 +1,8 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getActiveProgram } from '@/lib/active-program';
 import { loadFocusPlan, loadWorkoutPlan, type FocusPlanResult } from '@/lib/loadWorkoutPlan';
+import { movedWorkoutPath } from '@/lib/macrocycleUrl';
 import { isTimeable } from '@/lib/workoutStatus';
 import WorkoutTimerProvider from '@/components/timer/WorkoutTimerProvider';
 import CollapsibleLiftList from './CollapsibleLiftList';
@@ -40,6 +41,10 @@ export default async function WorkoutDetailPage({
   // `effectiveDate` comes off the plan rather than being recomputed here, so the
   // date this page displays is the same one `statusOf` derived the status from.
   const { workout, unit, status, effectiveDate, liftDetails } = plan;
+  // The plan is the current macrocycle's, so an old URL follows it (#1198).
+  const moved = movedWorkoutPath(`/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail`, macrocycleNum, workout.macrocycleNum);
+  if (moved) redirect(moved);
+  const { macrocycleId } = workout;
 
   // A finished or skipped workout has nothing left to time, so the timer is not
   // mounted at all rather than being mounted and hidden. The timer route applies
@@ -95,6 +100,7 @@ export default async function WorkoutDetailPage({
         <FocusWorkout
           program={program}
           macrocycleNum={macrocycleNum}
+          macrocycleId={macrocycleId}
           workoutNum={workoutNum}
           week={workout.week}
           unit={unit}
@@ -155,6 +161,7 @@ export default async function WorkoutDetailPage({
         <RescheduleForm
           program={program}
           macrocycleNum={macrocycleNum}
+          macrocycleId={macrocycleId}
           workoutNum={workoutNum}
           currentDate={effectiveDate}
         />
@@ -162,6 +169,7 @@ export default async function WorkoutDetailPage({
           <SkipForm
             program={program}
             macrocycleNum={macrocycleNum}
+            macrocycleId={macrocycleId}
             workoutNum={workoutNum}
             skipped={workout.skipped}
           />
@@ -177,6 +185,7 @@ export default async function WorkoutDetailPage({
           lifts={timerLifts}
           program={program}
           macrocycleNum={macrocycleNum}
+          macrocycleId={macrocycleId}
           workoutNum={workoutNum}
         >
           {body}

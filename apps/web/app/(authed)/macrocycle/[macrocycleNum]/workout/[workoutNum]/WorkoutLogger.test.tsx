@@ -5,6 +5,8 @@ import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WorkoutLoggerProps } from './types';
 import { createLiftRecord, recordBodyWeight } from '@/lib/client-api';
 import { buildDraftKey } from './workoutDraftStorage';
+import { ApiClientError } from '@lifting-logbook/api-client';
+import { reloadAtMacrocycle } from '@/lib/macrocycleUrl';
 
 // jest.mock is hoisted above the imports, so `createLiftRecord`/`recordBodyWeight`
 // resolve to the jest.fn() mocks below.
@@ -18,6 +20,25 @@ jest.mock('@/lib/client-api', () => ({
   recordBodyWeight: jest.fn(),
   rescheduleWorkout: jest.fn(),
 }));
+
+// Only the reload is replaced: jsdom can't navigate, and the test checks where it goes. The
+// module calls its own reload internally, so `followMovedMacrocycle` is rebuilt here on the real
+// `movedMacrocycleNum` to reach the mock.
+jest.mock('@/lib/macrocycleUrl', () => {
+  const actual = jest.requireActual('@/lib/macrocycleUrl');
+  const reloadAtMacrocycle = jest.fn();
+  return {
+    ...actual,
+    reloadAtMacrocycle,
+    followMovedMacrocycle: (err: unknown) => {
+      const num = actual.movedMacrocycleNum(err);
+      if (num === null) return false;
+      reloadAtMacrocycle(num);
+      return true;
+    },
+  };
+});
+const mockReload = reloadAtMacrocycle as jest.MockedFunction<typeof reloadAtMacrocycle>;
 
 const mockCreateLiftRecord = createLiftRecord as jest.MockedFunction<typeof createLiftRecord>;
 const mockRecordBodyWeight = recordBodyWeight as jest.MockedFunction<typeof recordBodyWeight>;
@@ -143,6 +164,7 @@ describe('WorkoutLogger — weight-unit display preference', () => {
     expect(mockCreateLiftRecord).toHaveBeenCalledWith(
       '5-3-1',
       expect.objectContaining({ weight: 225, reps: 5, setNum: 1, lift: 'Back Squat' }),
+      undefined,
     );
   });
 
@@ -339,6 +361,7 @@ describe('WorkoutLogger — a lift planned twice in a day (#1027)', () => {
       expect(mockCreateLiftRecord).toHaveBeenCalledWith(
         '5-3-1',
         expect.objectContaining({ lift: 'Back Squat', occurrence: 1, setNum: 1, weight: 60, reps: 12 }),
+        undefined,
       ),
     );
   });
@@ -394,7 +417,7 @@ describe('WorkoutLogger — focus lifts (#1060)', () => {
         weight: 25,
         reps: 12,
         notes: undefined,
-      }),
+      }, undefined),
     );
   });
 
@@ -405,5 +428,63 @@ describe('WorkoutLogger — focus lifts (#1060)', () => {
     render(<WorkoutLogger {...makeProps({ lifts: [squat, raise] })} />);
 
     expect(screen.getByRole('button', { name: 'Finish workout' })).toBeInTheDocument();
+  });
+});
+
+describe('WorkoutLogger — a renumbered macrocycle (#1198)', () => {
+  beforeEach(() => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('sends the macrocycle id with the write', async () => {
+    const user = userEvent.setup();
+    mockCreateLiftRecord.mockResolvedValue(LOGGED);
+    render(<WorkoutLogger {...makeProps({ macrocycleId: 'mc-a' })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() => expect(mockCreateLiftRecord).toHaveBeenCalled());
+    expect(mockCreateLiftRecord.mock.calls[0]?.[2]).toBe('mc-a');
+  });
+
+  it('reloads at the new number when the API says the macrocycle moved, and keeps the draft', async () => {
+    const user = userEvent.setup();
+    mockCreateLiftRecord.mockRejectedValue(
+      new ApiClientError('moved', 409, 'macrocycle-moved', { code: 'macrocycle-moved', macrocycleNum: 2 }),
+    );
+    render(<WorkoutLogger {...makeProps({ macrocycleId: 'mc-a' })} />);
+
+    await user.clear(screen.getByLabelText('Weight in lbs'));
+    await user.type(screen.getByLabelText('Weight in lbs'), '225');
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() => expect(mockReload).toHaveBeenCalledWith(2));
+    expect(screen.queryByText('Failed to log set. Try again.')).not.toBeInTheDocument();
+    expect(window.localStorage.getItem(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1, undefined, 'mc-a'))).not.toBeNull();
+  });
+
+  it('asks for a retry while an import holds the lock, without reloading', async () => {
+    const user = userEvent.setup();
+    mockCreateLiftRecord.mockRejectedValue(new ApiClientError('busy', 409, 'import-in-progress'));
+    render(<WorkoutLogger {...makeProps({ macrocycleId: 'mc-a' })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() => expect(screen.getByText(/An import is updating your macrocycles/)).toBeInTheDocument());
+    expect(mockReload).not.toHaveBeenCalled();
+  });
+
+  it('reports a duplicate-set 409 as before, without reloading', async () => {
+    const user = userEvent.setup();
+    mockCreateLiftRecord.mockRejectedValue(new ApiClientError('duplicate', 409));
+    render(<WorkoutLogger {...makeProps({ macrocycleId: 'mc-a' })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() => expect(screen.getByText('Failed to log set. Try again.')).toBeInTheDocument());
+    expect(mockReload).not.toHaveBeenCalled();
   });
 });

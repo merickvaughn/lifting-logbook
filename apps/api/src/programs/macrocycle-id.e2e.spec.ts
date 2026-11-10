@@ -64,8 +64,8 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
     const workout = await inject('GET', `${base}/workouts/1`);
     expect(workout.statusCode).toBe(200);
     const id = (workout.json() as WorkoutResponse).macrocycleId;
-    expect(id).toEqual(expect.any(String));
-    return { inject, repos, id: id as string };
+    if (typeof id !== 'string') throw new Error('the workout read returned no macrocycle id');
+    return { inject, repos, id };
   };
 
   const logBody = (setNum: number) => ({

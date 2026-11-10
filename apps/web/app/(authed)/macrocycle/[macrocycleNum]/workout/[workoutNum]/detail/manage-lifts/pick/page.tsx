@@ -1,7 +1,8 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
-import { fetchLiftCatalog } from '@/lib/api';
+import { fetchLiftCatalog, fetchWorkout } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
+import { movedWorkoutPath } from '@/lib/macrocycleUrl';
 import LiftPicker from './LiftPicker';
 import styles from './pick.module.css';
 
@@ -24,7 +25,20 @@ export default async function LiftPickerPage({
 
   const validAction = action === 'replace' ? 'replace' : 'add';
   const program = await getActiveProgram();
-  const catalog = await fetchLiftCatalog(program);
+  // The workout is read for the macrocycle's id, which the write sends (#1198).
+  const [catalog, workout] = await Promise.all([fetchLiftCatalog(program), fetchWorkout(program, workoutNum)]);
+  if (!workout) {
+    notFound();
+  }
+  const moved = movedWorkoutPath(
+    `/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts/pick`,
+    macrocycleNum,
+    workout.macrocycleNum,
+  );
+  if (moved) {
+    const query = new URLSearchParams({ action: validAction, ...(replacing !== undefined && { replacing }) });
+    redirect(`${moved}?${query.toString()}`);
+  }
 
   const backHref = `/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts`;
   const title = validAction === 'replace' ? `Replace ${replacing ?? 'lift'}` : 'Add Lift';
@@ -42,6 +56,7 @@ export default async function LiftPickerPage({
       <LiftPicker
         program={program}
         macrocycleNum={macrocycleNum}
+        macrocycleId={workout.macrocycleId}
         workoutNum={workoutNum}
         action={validAction}
         replacing={replacing}

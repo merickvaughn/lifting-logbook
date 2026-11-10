@@ -68,7 +68,7 @@ describe('MacrocycleGenerationController', () => {
       const result = await controller.startNewMacrocycle(PROGRAM, {}, MOCK_USER);
 
       expect(factory.forUser).toHaveBeenCalledWith(MOCK_USER);
-      expect(service.startNewMacrocycle).toHaveBeenCalledWith(MOCK_BUNDLE, PROGRAM, {});
+      expect(service.startNewMacrocycle).toHaveBeenCalledWith(MOCK_BUNDLE, PROGRAM, {}, undefined);
       expect(result).toEqual({
         program: PROGRAM,
         macrocycleNum: 2,
@@ -89,10 +89,20 @@ describe('MacrocycleGenerationController', () => {
         macrocycleDate: '2026-05-01',
       }, MOCK_USER);
 
-      expect(service.startNewMacrocycle).toHaveBeenCalledWith(MOCK_BUNDLE, PROGRAM, {
-        fromMacrocycleNum: 1,
-        macrocycleDate: '2026-05-01',
-      });
+      expect(service.startNewMacrocycle).toHaveBeenCalledWith(
+        MOCK_BUNDLE,
+        PROGRAM,
+        { fromMacrocycleNum: 1, macrocycleDate: '2026-05-01' },
+        undefined,
+      );
+    });
+
+    it('passes the macrocycle id header through to the service (#1198)', async () => {
+      service.startNewMacrocycle.mockResolvedValue({ dashboard: stubMacrocycleDashboard(), programSpec: stubProgramSpec(), scheduledWorkouts: [] });
+
+      await controller.startNewMacrocycle(PROGRAM, { fromMacrocycleNum: 1 }, MOCK_USER, 'mc-a');
+
+      expect(service.startNewMacrocycle).toHaveBeenCalledWith(MOCK_BUNDLE, PROGRAM, { fromMacrocycleNum: 1 }, 'mc-a');
     });
 
     it('propagates service errors (e.g. 404 from unknown program)', async () => {

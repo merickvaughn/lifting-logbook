@@ -1,9 +1,10 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 import { isSameLift } from '@lifting-logbook/core';
 import { fetchLiftMetadata, fetchWorkout } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import LiftEditor from '@/components/LiftEditor';
+import { movedWorkoutPath } from '@/lib/macrocycleUrl';
 
 export default async function EditLiftPage({
   params,
@@ -29,6 +30,12 @@ export default async function EditLiftPage({
   if (!workout || !workout.lifts.some((planned) => isSameLift(planned.lift, lift))) {
     notFound();
   }
+  const moved = movedWorkoutPath(
+    `/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts/edit/${liftParam}`,
+    macrocycleNum,
+    workout.macrocycleNum,
+  );
+  if (moved) redirect(moved);
 
   const metadata = await fetchLiftMetadata(lift);
 

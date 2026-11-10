@@ -1,4 +1,4 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import {
   LIFT_CATALOG,
   DEFAULT_SLOT_MAP,
@@ -15,6 +15,7 @@ import {
 } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { loadFocusPlan } from '@/lib/loadWorkoutPlan';
+import { movedWorkoutPath } from '@/lib/macrocycleUrl';
 import { getPreferredUnit } from '@/lib/preferences';
 import { computePlannedSets, liftSpecsForWorkout } from '@/lib/workoutPlan';
 import { effectiveDateOf } from '@/lib/workoutStatus';
@@ -75,6 +76,9 @@ export default async function WorkoutLoggingPage({
     notFound();
     return null; // unreachable; notFound() throws but TypeScript can't verify without Next.js types
   }
+  // The workout read is the current macrocycle's, so an old URL follows it (#1198).
+  const moved = movedWorkoutPath(`/macrocycle/${macrocycleNum}/workout/${workoutNum}`, macrocycleNum, workout.macrocycleNum);
+  if (moved) redirect(moved);
 
   const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
@@ -165,6 +169,7 @@ export default async function WorkoutLoggingPage({
   const props: WorkoutLoggerProps = {
     program,
     macrocycleNum,
+    ...(workout.macrocycleId !== undefined && { macrocycleId: workout.macrocycleId }),
     workoutNum,
     date: workout.date,
     lifts,

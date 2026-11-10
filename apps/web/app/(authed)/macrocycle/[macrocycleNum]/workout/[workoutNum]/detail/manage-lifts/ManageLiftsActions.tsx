@@ -6,17 +6,20 @@ import Link from 'next/link';
 import { liftOccurrenceKey } from '@lifting-logbook/core';
 import { upsertLiftOverride } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
 import type { WorkoutLiftResponse } from '@lifting-logbook/types';
 import styles from './ManageLiftsActions.module.css';
 
 interface Props {
   program: string;
   macrocycleNum: number;
+  /** The macrocycle's stable id, sent with the write (#1198). */
+  macrocycleId?: string | undefined;
   workoutNum: number;
   lifts: WorkoutLiftResponse[];
 }
 
-export default function ManageLiftsActions({ program, macrocycleNum, workoutNum, lifts }: Props) {
+export default function ManageLiftsActions({ program, macrocycleNum, macrocycleId, workoutNum, lifts }: Props) {
   const router = useRouter();
   // The row being removed, by its occurrence key: a day can plan one lift twice (#1027).
   const [pending, setPending] = useState<string | null>(null);
@@ -26,11 +29,12 @@ export default function ManageLiftsActions({ program, macrocycleNum, workoutNum,
     setPending(rowKey);
     setError(null);
     try {
-      await upsertLiftOverride(program, macrocycleNum, workoutNum, { action: 'remove', lift });
+      await upsertLiftOverride(program, macrocycleNum, workoutNum, { action: 'remove', lift }, macrocycleId);
       router.refresh();
     } catch (err) {
       logClientError('upsertLiftOverride', err, { action: 'remove', program, macrocycleNum, workoutNum, lift });
-      setError(`Failed to remove ${lift}. Please try again.`);
+      if (followMovedMacrocycle(err)) return;
+      setError(writeFailureMessage(err, `Failed to remove ${lift}. Please try again.`));
     } finally {
       setPending(null);
     }

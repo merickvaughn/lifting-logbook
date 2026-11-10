@@ -34,7 +34,7 @@ const specRow = (week: number, offset: number, lift: string, order: number) => (
 describe('WorkoutsController', () => {
   let controller: WorkoutsController;
   let workoutRepo: jest.Mocked<IWorkoutRepository>;
-  let macrocycleRepo: Pick<jest.Mocked<IMacrocycleRepository>, 'highestNumber'>;
+  let macrocycleRepo: Pick<jest.Mocked<IMacrocycleRepository>, 'highestNumber' | 'findByNumber' | 'ensure'>;
   let dashboardRepo: jest.Mocked<IMacrocycleDashboardRepository>;
   let specRepo: jest.Mocked<ILiftingProgramSpecRepository>;
   let overrideRepo: jest.Mocked<IWorkoutDateOverrideRepository>;
@@ -45,7 +45,12 @@ describe('WorkoutsController', () => {
 
   beforeEach(async () => {
     workoutRepo = { getWorkout: jest.fn(), saveWorkout: jest.fn() };
-    macrocycleRepo = { highestNumber: jest.fn().mockResolvedValue(0) };
+    macrocycleRepo = {
+      highestNumber: jest.fn().mockResolvedValue(0),
+      // No row unless a test seeds one, so responses carry no macrocycleId (#1198).
+      findByNumber: jest.fn().mockResolvedValue(null),
+      ensure: jest.fn().mockResolvedValue(undefined),
+    };
     dashboardRepo = {
       getMacrocycleDashboard: jest.fn(),
       saveMacrocycleDashboard: jest.fn(),
@@ -611,6 +616,30 @@ describe('WorkoutsController', () => {
       const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
 
       expect(result.overrideDate).toBeUndefined();
+    });
+
+    it('returns the macrocycle row id with the workout (#1198)', async () => {
+      dashboardRepo.getMacrocycleDashboard.mockResolvedValue(baseDashboard);
+      specRepo.getProgramSpec.mockResolvedValue(baseSpec);
+      workoutRepo.getWorkout.mockResolvedValue([baseRecord]);
+      overrideRepo.getOverride.mockResolvedValue(null);
+      macrocycleRepo.findByNumber.mockResolvedValue({
+        id: 'mc-3',
+        program: '5-3-1',
+        macrocycleNum: 3,
+        startDate: new Date('2026-04-20T00:00:00.000Z'),
+        endDate: null,
+        status: 'in-progress',
+        statusChosen: false,
+        origin: 'live',
+        unmatched: false,
+        importedThrough: null,
+      });
+
+      const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
+
+      expect(macrocycleRepo.findByNumber).toHaveBeenCalledWith('5-3-1', 3);
+      expect(result.macrocycleId).toBe('mc-3');
     });
   });
 

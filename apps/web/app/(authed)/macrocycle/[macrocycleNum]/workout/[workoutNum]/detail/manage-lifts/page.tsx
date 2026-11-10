@@ -1,7 +1,8 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 import { fetchWorkout } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
+import { movedWorkoutPath } from '@/lib/macrocycleUrl';
 import ManageLiftsActions from './ManageLiftsActions';
 import styles from './manage-lifts.module.css';
 
@@ -24,6 +25,12 @@ export default async function ManageLiftsPage({
   if (!workout) {
     notFound();
   }
+  const moved = movedWorkoutPath(
+    `/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts`,
+    macrocycleNum,
+    workout.macrocycleNum,
+  );
+  if (moved) redirect(moved);
 
   return (
     <main className={styles.container}>
@@ -43,6 +50,7 @@ export default async function ManageLiftsPage({
         <ManageLiftsActions
           program={program}
           macrocycleNum={macrocycleNum}
+          macrocycleId={workout.macrocycleId}
           workoutNum={workoutNum}
           lifts={workout.lifts}
         />

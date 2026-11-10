@@ -60,3 +60,31 @@ it('clearDraft silently no-ops when localStorage.removeItem throws', () => {
 // defines `window`, and reliably faking its absence needs a suppression-policy-flagged
 // cast on the delete. It's implicitly proven correct on every production server
 // render — if it were broken, apps/web's workout page couldn't render at all.
+
+describe('drafts keyed by the macrocycle id (#1198)', () => {
+  it('keys by id and workout, without the program or number', () => {
+    expect(buildDraftKey('5-3-1', 2, 3, 'Back Squat', 1, undefined, 'mc-a')).toBe('workout-draft:id:mc-a:3:Back Squat:1');
+    expect(buildDraftKey('5-3-1', 9, 3, 'Back Squat', 1, undefined, 'mc-a')).toBe(
+      buildDraftKey('5-3-1', 2, 3, 'Back Squat', 1, undefined, 'mc-a'),
+    );
+  });
+
+  it('moves a draft saved under the number key to the id key on first read', () => {
+    const legacy = buildDraftKey('5-3-1', 2, 3, 'Back Squat', 1);
+    const keyed = buildDraftKey('5-3-1', 2, 3, 'Back Squat', 1, undefined, 'mc-a');
+    writeDraft(legacy, { weight: '225', reps: '5', notes: '' });
+
+    expect(readDraft(keyed, legacy)).toEqual({ weight: '225', reps: '5', notes: '' });
+    expect(window.localStorage.getItem(legacy)).toBeNull();
+    expect(readDraft(keyed)).toEqual({ weight: '225', reps: '5', notes: '' });
+    // Another macrocycle, even one renumbered onto the old number, doesn't see it.
+    expect(readDraft(buildDraftKey('5-3-1', 2, 3, 'Back Squat', 1, undefined, 'mc-b'), legacy)).toBeNull();
+  });
+
+  it('prefers a draft already under the id key and leaves the legacy one alone', () => {
+    writeDraft('legacy', { weight: '1', reps: '1', notes: '' });
+    writeDraft('keyed', { weight: '2', reps: '2', notes: '' });
+    expect(readDraft('keyed', 'legacy')?.weight).toBe('2');
+    expect(window.localStorage.getItem('legacy')).not.toBeNull();
+  });
+});

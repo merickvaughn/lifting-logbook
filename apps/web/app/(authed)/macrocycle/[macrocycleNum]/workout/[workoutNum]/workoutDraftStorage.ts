@@ -22,6 +22,11 @@ export interface WorkoutSetDraft {
 
 const KEY_PREFIX = 'workout-draft';
 
+/**
+ * A set's draft key. With the macrocycle's stable id it's keyed by that id (#1198), so a draft
+ * follows its macrocycle when the number changes and never shows on another macrocycle. Without
+ * one it's the key drafts had before, by program and number.
+ */
 export function buildDraftKey(
   program: string,
   macrocycleNum: number,
@@ -31,9 +36,12 @@ export function buildDraftKey(
   // Which occurrence of `lift` in the workout (#1027). A first occurrence's key is the
   // one it had before occurrences existed, so a draft typed before this shipped survives.
   occurrence?: number,
+  macrocycleId?: string,
 ): string {
   const set = liftRecordSetSegment({ setNum, ...withOccurrence(occurrence) });
-  return `${KEY_PREFIX}:${program}:${macrocycleNum}:${workoutNum}:${lift}:${set}`;
+  return macrocycleId
+    ? `${KEY_PREFIX}:id:${macrocycleId}:${workoutNum}:${lift}:${set}`
+    : `${KEY_PREFIX}:${program}:${macrocycleNum}:${workoutNum}:${lift}:${set}`;
 }
 
 function isBrowser(): boolean {
@@ -48,10 +56,22 @@ function isDraftShape(value: unknown): value is WorkoutSetDraft {
   return typeof v.weight === 'string' && typeof v.reps === 'string' && typeof v.notes === 'string';
 }
 
-export function readDraft(key: string): WorkoutSetDraft | null {
+/**
+ * The draft at `key`. With no draft there, one saved under `legacyKey` (the number-keyed key a
+ * page used before it had the macrocycle's id) is moved to `key` and returned, so a draft typed
+ * across the deploy isn't lost (#1198).
+ */
+export function readDraft(key: string, legacyKey?: string): WorkoutSetDraft | null {
   if (!isBrowser()) return null;
   try {
-    const raw = window.localStorage.getItem(key);
+    let raw = window.localStorage.getItem(key);
+    if (raw === null && legacyKey !== undefined) {
+      raw = window.localStorage.getItem(legacyKey);
+      if (raw !== null) {
+        window.localStorage.setItem(key, raw);
+        window.localStorage.removeItem(legacyKey);
+      }
+    }
     if (raw === null) return null;
     const parsed: unknown = JSON.parse(raw);
     return isDraftShape(parsed) ? parsed : null;

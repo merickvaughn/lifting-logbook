@@ -165,31 +165,54 @@ export interface CommitImportOpts {
 
 // Carries the upstream HTTP status alongside the message so a caller that needs
 // to distinguish failure classes (e.g. 401/403 auth failures vs. a generic 500)
-// can do so without re-parsing the message string. Currently thrown only by
-// requestVoidIdempotent — the other request helpers can adopt this if a caller
-// needs it.
+// can do so without re-parsing the message string. `code` is the API's own error
+// code when it sends one, such as `macrocycle-moved` (#1198), and `body` the whole
+// error response.
 export class ApiClientError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly code?: string,
+    public readonly body?: Readonly<Record<string, unknown>>,
   ) {
     super(message);
     this.name = 'ApiClientError';
   }
 }
 
+/** The header a workout page sends its macrocycle's stable id in (#1198). */
+export const MACROCYCLE_ID_HEADER = 'X-Macrocycle-Id';
+
 // NestJS ValidationPipe returns { statusCode, message: string | string[], error }.
 // Surface that detail so error UIs can show actionable text instead of just
 // "Request failed: 400".
-async function extractErrorMessage(res: Response, path: string): Promise<string> {
+async function readError(res: Response, path: string): Promise<ApiClientError> {
+  let body: Record<string, unknown> | undefined;
   try {
-    const body = (await res.json()) as { message?: string | string[] };
-    if (Array.isArray(body.message)) return body.message.join('; ');
-    if (typeof body.message === 'string') return body.message;
+    const parsed: unknown = await res.json();
+    if (parsed !== null && typeof parsed === 'object') body = parsed as Record<string, unknown>;
   } catch {
     // fall through to generic
   }
-  return `API ${res.status} ${res.statusText} for ${path}`;
+  const raw = body?.message;
+  const message = Array.isArray(raw)
+    ? raw.join('; ')
+    : typeof raw === 'string'
+      ? raw
+      : `API ${res.status} ${res.statusText} for ${path}`;
+  return new ApiClientError(message, res.status, typeof body?.code === 'string' ? body.code : undefined, body);
+}
+
+async function extractErrorMessage(res: Response, path: string): Promise<string> {
+  return (await readError(res, path)).message;
+}
+
+/** JSON headers plus the page's macrocycle id, when it has one. */
+function macrocycleHeaders(macrocycleId: string | undefined, json = true): Record<string, string> {
+  return {
+    ...(json ? JSON_HEADERS : {}),
+    ...(macrocycleId ? { [MACROCYCLE_ID_HEADER]: macrocycleId } : {}),
+  };
 }
 
 export function createApiClient(config: ApiClientConfig) {
@@ -217,7 +240,7 @@ export function createApiClient(config: ApiClientConfig) {
   // Throws a rich error on !ok; returns undefined on 204; otherwise parses JSON.
   async function request<T>(path: string, init?: FetchInit): Promise<T> {
     const res = await rawFetch(path, init);
-    if (!res.ok) throw new Error(await extractErrorMessage(res, path));
+    if (!res.ok) throw await readError(res, path);
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
@@ -358,13 +381,14 @@ export function createApiClient(config: ApiClientConfig) {
       macrocycleNum: number,
       workoutNum: number,
       newDate: string,
+      macrocycleId?: string,
     ): Promise<void> {
       // Typed against the shared contract so a change to RescheduleRequest surfaces
       // here at compile time rather than as a silently malformed request body.
       const body: RescheduleRequest = { newDate };
       return request(
         `/programs/${enc(program)}/macrocycles/${macrocycleNum}/workouts/${workoutNum}/reschedule`,
-        { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(body), cache: 'no-store' },
+        { method: 'PATCH', headers: macrocycleHeaders(macrocycleId), body: JSON.stringify(body), cache: 'no-store' },
       );
     },
     skipWorkout(
@@ -372,21 +396,22 @@ export function createApiClient(config: ApiClientConfig) {
       macrocycleNum: number,
       workoutNum: number,
       reason?: string,
+      macrocycleId?: string,
     ): Promise<void> {
       return request(
         `/programs/${enc(program)}/macrocycles/${macrocycleNum}/workouts/${workoutNum}/skip`,
         {
           method: 'POST',
-          headers: JSON_HEADERS,
+          headers: macrocycleHeaders(macrocycleId),
           body: JSON.stringify(reason !== undefined ? { reason } : {}),
           cache: 'no-store',
         },
       );
     },
-    unskipWorkout(program: string, macrocycleNum: number, workoutNum: number): Promise<void> {
+    unskipWorkout(program: string, macrocycleNum: number, workoutNum: number, macrocycleId?: string): Promise<void> {
       return request(
         `/programs/${enc(program)}/macrocycles/${macrocycleNum}/workouts/${workoutNum}/skip`,
-        { method: 'DELETE', cache: 'no-store' },
+        { method: 'DELETE', headers: macrocycleHeaders(macrocycleId, false), cache: 'no-store' },
       );
     },
 
@@ -394,10 +419,10 @@ export function createApiClient(config: ApiClientConfig) {
     fetchLiftRecords(program: string): Promise<LiftRecordResponse[]> {
       return request(`/programs/${enc(program)}/lift-records`, { cache: 'no-store' });
     },
-    createLiftRecord(program: string, body: CreateLiftRecordRequest): Promise<LiftRecordResponse> {
+    createLiftRecord(program: string, body: CreateLiftRecordRequest, macrocycleId?: string): Promise<LiftRecordResponse> {
       return request(`/programs/${enc(program)}/lift-records`, {
         method: 'POST',
-        headers: JSON_HEADERS,
+        headers: macrocycleHeaders(macrocycleId),
         body: JSON.stringify(body),
         cache: 'no-store',
       });
@@ -406,10 +431,11 @@ export function createApiClient(config: ApiClientConfig) {
       program: string,
       id: string,
       body: UpdateLiftRecordRequest,
+      macrocycleId?: string,
     ): Promise<LiftRecordResponse> {
       return request(`/programs/${enc(program)}/lift-records/${enc(id)}`, {
         method: 'PATCH',
-        headers: JSON_HEADERS,
+        headers: macrocycleHeaders(macrocycleId),
         body: JSON.stringify(body),
         cache: 'no-store',
       });
@@ -590,10 +616,11 @@ export function createApiClient(config: ApiClientConfig) {
       macrocycleNum: number,
       workoutNum: number,
       body: CreateLiftOverrideRequest,
+      macrocycleId?: string,
     ): Promise<LiftOverrideResponse> {
       return request(
         `/programs/${enc(program)}/macrocycles/${macrocycleNum}/workouts/${workoutNum}/lift-overrides`,
-        { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body), cache: 'no-store' },
+        { method: 'POST', headers: macrocycleHeaders(macrocycleId), body: JSON.stringify(body), cache: 'no-store' },
       );
     },
     deleteLiftOverride(
@@ -601,10 +628,11 @@ export function createApiClient(config: ApiClientConfig) {
       macrocycleNum: number,
       workoutNum: number,
       lift: string,
+      macrocycleId?: string,
     ): Promise<void> {
       return request(
         `/programs/${enc(program)}/macrocycles/${macrocycleNum}/workouts/${workoutNum}/lift-overrides/${enc(lift)}`,
-        { method: 'DELETE', cache: 'no-store' },
+        { method: 'DELETE', headers: macrocycleHeaders(macrocycleId, false), cache: 'no-store' },
       );
     },
 
@@ -699,10 +727,15 @@ export function createApiClient(config: ApiClientConfig) {
     fetchFocusDayState(program: string, workoutNum: number): Promise<FocusDayState> {
       return request(`/programs/${enc(program)}/workouts/${workoutNum}/focus-state`, { cache: 'no-store' });
     },
-    saveFocusDayState(program: string, workoutNum: number, body: FocusDayState): Promise<FocusDayState> {
+    saveFocusDayState(
+      program: string,
+      workoutNum: number,
+      body: FocusDayState,
+      macrocycleId?: string,
+    ): Promise<FocusDayState> {
       return request(`/programs/${enc(program)}/workouts/${workoutNum}/focus-state`, {
         method: 'PUT',
-        headers: JSON_HEADERS,
+        headers: macrocycleHeaders(macrocycleId),
         body: JSON.stringify(body),
         cache: 'no-store',
       });
