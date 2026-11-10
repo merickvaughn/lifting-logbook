@@ -26,9 +26,24 @@ export interface NewMacrocycle {
   origin: MacrocycleOrigin;
 }
 
+/**
+ * The user's macrocycle write lock (proposal decision 13). Page writes take it `shared`, so
+ * they run side by side; imports take it `exclusive`, so nothing writes while one runs.
+ */
+export type MacrocycleLockMode = 'shared' | 'exclusive';
+
 export interface IMacrocycleRepository {
+  /**
+   * Tries to take the user's macrocycle write lock until the request's transaction ends, without
+   * waiting. False when a conflicting holder has it.
+   */
+  tryLock(mode: MacrocycleLockMode): Promise<boolean>;
+
   /** Every macrocycle of a program, in start-date order, ties by number. */
   list(program: string): Promise<MacrocycleRow[]>;
+
+  /** The user's row with this stable id, in any program. */
+  findById(id: string): Promise<MacrocycleRow | null>;
 
   findByNumber(program: string, macrocycleNum: number): Promise<MacrocycleRow | null>;
 

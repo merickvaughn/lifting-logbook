@@ -26,8 +26,26 @@ export function macrocycleRowFixture(macrocycleNum: number, overrides: Partial<M
 export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
   private readonly rows: MacrocycleRow[] = [];
 
+  /** Set to make every {@link tryLock} fail, as if another writer held the lock. */
+  lockHeld = false;
+
   constructor(seed: readonly MacrocycleRow[] = []) {
     this.rows.push(...seed.map((row) => ({ ...row })));
+  }
+
+  async tryLock(): Promise<boolean> {
+    return !this.lockHeld;
+  }
+
+  async findById(id: string): Promise<MacrocycleRow | null> {
+    const row = this.rows.find((r) => r.id === id);
+    return row ? { ...row } : null;
+  }
+
+  /** Changes a row's number in place, as the renumbering in #1199 will, for tests. */
+  renumber(program: string, from: number, to: number): void {
+    const row = this.rows.find((r) => r.program === program && r.macrocycleNum === from);
+    if (row) row.macrocycleNum = to;
   }
 
   async list(program: string): Promise<MacrocycleRow[]> {

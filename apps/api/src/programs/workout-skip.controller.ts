@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  Headers,
   HttpCode,
   HttpStatus,
   Inject,
@@ -16,7 +17,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { assertMacrocycleWritable } from './macrocycle-history.util';
+import { MACROCYCLE_ID_HEADER, assertMacrocycleWritable, checkMacrocycleId } from './macrocycle-history.util';
 import { isValidWorkoutNum, workoutKeyForWorkoutNum } from './mappers';
 
 class SkipWorkoutDto {
@@ -40,6 +41,7 @@ export class WorkoutSkipController {
     @Param('workoutNum') workoutNumParam: string,
     @Body() dto: SkipWorkoutDto,
     @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
   ): Promise<void> {
     const macrocycleNum = Number.parseInt(macrocycleNumParam, 10);
     const workoutNum = Number.parseInt(workoutNumParam, 10);
@@ -53,7 +55,7 @@ export class WorkoutSkipController {
 
     const repos = await this.factory.forUser(user);
     const { workoutSkipOverride } = repos;
-    await this.assertActiveInBoundsTarget(program, macrocycleNum, workoutNum, repos);
+    await this.assertActiveInBoundsTarget(program, macrocycleNum, workoutNum, repos, macrocycleId, 'POST skip');
     await workoutSkipOverride.skipWorkout(program, macrocycleNum, workoutNum, dto.reason);
   }
 
@@ -64,6 +66,7 @@ export class WorkoutSkipController {
     @Param('macrocycleNum') macrocycleNumParam: string,
     @Param('workoutNum') workoutNumParam: string,
     @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
   ): Promise<void> {
     const macrocycleNum = Number.parseInt(macrocycleNumParam, 10);
     const workoutNum = Number.parseInt(workoutNumParam, 10);
@@ -77,7 +80,7 @@ export class WorkoutSkipController {
 
     const repos = await this.factory.forUser(user);
     const { workoutSkipOverride } = repos;
-    await this.assertActiveInBoundsTarget(program, macrocycleNum, workoutNum, repos);
+    await this.assertActiveInBoundsTarget(program, macrocycleNum, workoutNum, repos, macrocycleId, 'DELETE skip');
     await workoutSkipOverride.unskipWorkout(program, macrocycleNum, workoutNum);
   }
 
@@ -96,6 +99,8 @@ export class WorkoutSkipController {
     macrocycleNum: number,
     workoutNum: number,
     repos: RepositoryBundle,
+    macrocycleId: string | undefined,
+    route: string,
   ): Promise<void> {
     const { liftingProgramSpec, macrocycleDashboard } = repos;
     const spec = await liftingProgramSpec.getProgramSpec(program);
@@ -113,6 +118,7 @@ export class WorkoutSkipController {
       );
     }
 
+    await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, route);
     await assertMacrocycleWritable(repos, program, macrocycleNum);
 
     // getMacrocycleDashboard throws ProgramNotFoundError when the program has no

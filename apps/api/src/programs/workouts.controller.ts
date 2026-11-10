@@ -16,6 +16,7 @@ import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { isValidWorkoutNum, toWorkoutResponse } from './mappers';
 import { currentMacrocycleOrFirst, resolveWorkoutDay } from './workout-day.util';
+import { macrocycleIdFor } from './macrocycle-history.util';
 
 @Controller('programs/:program')
 export class WorkoutsController {
@@ -101,7 +102,8 @@ export class WorkoutsController {
     // dashboard card derives its date from (issue #745).
     const macrocycleStartDate = 'macrocycleDate' in dashboard ? dashboard.macrocycleDate : undefined;
 
-    return toWorkoutResponse(program, dashboard.macrocycleNum, workoutNum, week, adjustedRecords, {
+    const macrocycleId = await macrocycleIdFor(repos, program, dashboard.macrocycleNum);
+    const response = toWorkoutResponse(program, dashboard.macrocycleNum, workoutNum, week, adjustedRecords, {
       overrideDate: overrideDate ?? undefined,
       plannedLifts: planned,
       scheduledDate,
@@ -112,5 +114,6 @@ export class WorkoutsController {
       renamedLifts: renamed,
       modificationNames: await modificationNamesFor(repos, adjustedRecords),
     });
+    return macrocycleId ? { ...response, macrocycleId } : response;
   }
 }

@@ -22,6 +22,7 @@ import { ProgramNotFoundError } from '../ports/errors';
 import { StartNewMacrocycleDto } from './start-new-macrocycle.dto';
 import {
   assertMacrocycleWritable,
+  checkMacrocycleId,
   closingStatus,
   ensureCurrentRow,
   nextMacrocycleNumber,
@@ -181,12 +182,16 @@ export class MacrocycleGenerationService {
     repos: MacrocycleRepos,
     program: string,
     dto: StartNewMacrocycleDto = {},
+    macrocycleId?: string,
   ): Promise<MacrocycleGenerationResult> {
     const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program);
     const sourceMacrocycleNum = dto.fromMacrocycleNum ?? dashboard.macrocycleNum;
+    // A stale page's source id is a 409 (decision 3). Imported history can't feed the training
+    // maxes, and a number with no macrocycle has no records to feed them (decision 2).
+    if (dto.fromMacrocycleNum !== undefined) {
+      await checkMacrocycleId(repos, program, dto.fromMacrocycleNum, macrocycleId, 'POST macrocycles');
+    }
     const closingRow = await ensureCurrentRow(repos, dashboard);
-    // Imported history can't feed the training maxes, and a number with no macrocycle has no
-    // records to feed them (proposal decision 2).
     if (dto.fromMacrocycleNum !== undefined) {
       await assertMacrocycleWritable(repos, program, dto.fromMacrocycleNum);
     }

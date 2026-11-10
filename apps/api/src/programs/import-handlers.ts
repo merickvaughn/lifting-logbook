@@ -31,7 +31,7 @@ import {
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
 import { liftNamesFor } from './effective-slot-map.util';
-import { ensureFileNumberRows, legacyRowsPreImage } from './macrocycle-history.util';
+import { ensureFileNumberRows, legacyRowsPreImage, lockForImport } from './macrocycle-history.util';
 
 export interface ImportHandler<T> {
   parse(table: SpreadsheetCell[][]): T[];
@@ -70,6 +70,8 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     return buildLiftRecordsPreview(records, existing);
   },
   async commit(valid, program, repos) {
+    // No page write runs while a file's numbers are written (proposal decision 13).
+    await lockForImport(repos);
     const records = valid.map((r) => ({ ...r, program }));
     const existing = await repos.liftRecord.findExistingRecords(program, records);
     // Row numbers below are batch-relative — 1-based within *this* commit

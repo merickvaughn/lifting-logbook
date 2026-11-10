@@ -1,8 +1,14 @@
 import { Macrocycle, PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { MacrocycleOrigin, MacrocycleStatus } from '@lifting-logbook/types';
+import { trace } from '@opentelemetry/api';
 import { MacrocycleNumberConflictError } from '../../ports/errors';
-import { IMacrocycleRepository, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
+import {
+  IMacrocycleRepository,
+  MacrocycleLockMode,
+  MacrocycleRow,
+  NewMacrocycle,
+} from '../../ports/IMacrocycleRepository';
 
 function toRow(row: Macrocycle): MacrocycleRow {
   return {
@@ -20,11 +26,46 @@ function toRow(row: Macrocycle): MacrocycleRow {
   };
 }
 
+/**
+ * The first key of the two-key advisory lock form, so this lock can't collide with another
+ * feature's lock on the same user hash. Arbitrary, but fixed: #1199's renumbering takes the same
+ * key.
+ */
+export const MACROCYCLE_LOCK_NAMESPACE = 1171;
+
+const tracer = trace.getTracer('prisma-macrocycle-repository');
+
 export class PrismaMacrocycleRepository implements IMacrocycleRepository {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly userId: string,
   ) {}
+
+  async tryLock(mode: MacrocycleLockMode): Promise<boolean> {
+    // Raw SQL isn't auto-traced (ADR-024), hence the manual span. The `_xact_` forms release at
+    // the end of the request's transaction (RlsInterceptor), so nothing has to unlock.
+    return tracer.startActiveSpan('macrocycle.try_lock', async (span) => {
+      try {
+        span.setAttribute('lock.mode', mode);
+        const rows =
+          mode === 'shared'
+            ? await this.prisma.$queryRaw<{ locked: boolean }[]>`
+                SELECT pg_try_advisory_xact_lock_shared(${MACROCYCLE_LOCK_NAMESPACE}::int, hashtext(${this.userId})) AS locked`
+            : await this.prisma.$queryRaw<{ locked: boolean }[]>`
+                SELECT pg_try_advisory_xact_lock(${MACROCYCLE_LOCK_NAMESPACE}::int, hashtext(${this.userId})) AS locked`;
+        const locked = rows[0]?.locked === true;
+        span.setAttribute('lock.acquired', locked);
+        return locked;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
+  async findById(id: string): Promise<MacrocycleRow | null> {
+    const row = await this.prisma.macrocycle.findFirst({ where: { id, userId: this.userId } });
+    return row ? toRow(row) : null;
+  }
 
   async list(program: string): Promise<MacrocycleRow[]> {
     const rows = await this.prisma.macrocycle.findMany({

@@ -4,6 +4,7 @@ import {
   ConflictException,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Inject,
@@ -43,7 +44,13 @@ import { CreateLiftRecordDto } from './create-lift-record.dto';
 import { UpdateLiftRecordDto } from './update-lift-record.dto';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
-import { assertMacrocycleWritable, ensureFileNumberRows } from './macrocycle-history.util';
+import {
+  MACROCYCLE_ID_HEADER,
+  assertMacrocycleWritable,
+  checkMacrocycleId,
+  ensureFileNumberRows,
+  lockForImport,
+} from './macrocycle-history.util';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { RlsTxTimeout } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
@@ -79,6 +86,7 @@ export class LiftRecordsController {
     @Param('program') program: string,
     @Body() body: CreateLiftRecordDto,
     @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
   ): Promise<LiftRecordResponse> {
     // `body.program` is unused by the write itself (the route param is authoritative
     // below) but is now a declared, validated part of the accepted contract
@@ -95,6 +103,7 @@ export class LiftRecordsController {
 
     const repos = await this.factory.forUser(user);
     const { liftRecord, macrocycleScheduledWorkout } = repos;
+    await checkMacrocycleId(repos, program, body.macrocycleNum, macrocycleId, 'POST lift-records');
     await assertMacrocycleWritable(repos, program, body.macrocycleNum);
 
     const modificationNames = await assertSetModifications(repos, body.lift, body.modifications ?? []);
@@ -248,6 +257,7 @@ export class LiftRecordsController {
     // custom lift can ever resolve here.
     const repos = await this.factory.forUser(user);
     const { liftRecord } = repos;
+    await lockForImport(repos);
 
     const { valid, errors } = validateLiftImport(parsed, await effectiveSlotMapFor(repos));
     if (errors.length > 0) {
@@ -283,12 +293,14 @@ export class LiftRecordsController {
     @Param('id') id: string,
     @Body() body: UpdateLiftRecordDto,
     @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
   ): Promise<LiftRecordResponse> {
     const repos = await this.factory.forUser(user);
     const { liftRecord } = repos;
     const notFound = () => new NotFoundException(`Lift record '${id}' not found for program '${program}'`);
     const key = parseLiftRecordId(program, id);
     if (!key) throw notFound();
+    await checkMacrocycleId(repos, program, key.macrocycleNum, macrocycleId, 'PATCH lift-records/:id');
     await assertMacrocycleWritable(repos, program, key.macrocycleNum);
 
     let checkedNames: ReadonlyMap<string, string> | undefined;

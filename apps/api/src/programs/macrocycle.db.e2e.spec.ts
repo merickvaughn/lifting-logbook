@@ -9,9 +9,12 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { PrismaClient } from '@prisma/client';
+import { emptyFocusDayState } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { seedTrainingMaxes } from '../adapters/in-memory/fixtures';
-import { PrismaMacrocycleRepository } from '../adapters/prisma/macrocycle.repository';
+import multipart from '@fastify/multipart';
+import { MACROCYCLE_LOCK_NAMESPACE, PrismaMacrocycleRepository } from '../adapters/prisma/macrocycle.repository';
+import { MACROCYCLE_ID_HEADER } from './macrocycle-history.util';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
@@ -33,7 +36,8 @@ const USER_BACKFILL = 'macrocycle-db-backfill';
 const USER_BACKFILL_BARE = 'macrocycle-db-backfill-bare';
 const USER_RACE = 'macrocycle-db-race';
 const USER_ENSURE = 'macrocycle-db-ensure';
-const USERS = [USER_ALICE, USER_BOB, USER_BACKFILL, USER_BACKFILL_BARE, USER_RACE, USER_ENSURE];
+const USER_LOCK = 'macrocycle-db-lock';
+const USERS = [USER_ALICE, USER_BOB, USER_BACKFILL, USER_BACKFILL_BARE, USER_RACE, USER_ENSURE, USER_LOCK];
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const isoDay = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : null);
@@ -247,6 +251,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
     await cleanup(owner);
     process.env.DATABASE_URL = APP_DB_URL;
     app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), { logger: false });
+    await app.register(multipart as never, { limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
     app.useGlobalFilters(new DomainNotFoundFilter(), new DomainConflictFilter());
     app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
     await app.init();
@@ -259,13 +264,18 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
     await owner?.$disconnect().catch(() => undefined);
   }, DB_E2E_HOOK_TIMEOUT_MS);
 
-  const inject = (method: 'GET' | 'POST', url: string, body?: unknown) =>
+  const injectAs = (user: string, method: string, url: string, body?: unknown, macrocycleId?: string) =>
     app.getHttpAdapter().getInstance().inject({
-      method,
+      method: method as 'GET',
       url,
-      headers: { authorization: `Bearer ${USER_RACE}`, 'content-type': 'application/json' },
-      payload: JSON.stringify(body ?? {}),
+      headers: {
+        authorization: `Bearer ${user}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(macrocycleId === undefined ? {} : { [MACROCYCLE_ID_HEADER]: macrocycleId }),
+      },
+      ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
     });
+  const inject = (method: 'GET' | 'POST', url: string, body?: unknown) => injectAs(USER_RACE, method, url, body ?? {});
 
   /**
    * Waits until a backend is blocked by `pid`'s locks. Other DB suites share this database,
@@ -358,5 +368,107 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       await appDb.$disconnect();
     }
     expect(await owner.macrocycle.count({ where: { userId: USER_ENSURE, program: PROGRAM } })).toBe(1);
+  });
+
+  describe('the macrocycle write lock (#1198)', () => {
+    const base = `/programs/${PROGRAM}`;
+    let macrocycleId = '';
+    let recordId = '';
+
+    beforeAll(async () => {
+      expect((await injectAs(USER_LOCK, 'POST', `${base}/macrocycles/initialize`, { macrocycleDate: '2026-01-05' })).statusCode).toBe(201);
+      await owner.trainingMax.createMany({
+        data: seedTrainingMaxes().map((max) => ({ userId: USER_LOCK, program: PROGRAM, ...max })),
+      });
+      macrocycleId = (await injectAs(USER_LOCK, 'GET', `${base}/workouts/1`)).json().macrocycleId;
+      const logged = await injectAs(USER_LOCK, 'POST', `${base}/lift-records`, logBody(1), macrocycleId);
+      expect(logged.statusCode).toBe(201);
+      recordId = logged.json().id;
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    function logBody(setNum: number) {
+      return { macrocycleNum: 1, workoutNum: 1, date: '2026-01-05', lift: 'Squat', setNum, weight: 225, reps: 5 };
+    }
+
+    const pageWrites = () => [
+      { method: 'POST', url: `${base}/lift-records`, body: logBody(2) },
+      { method: 'PATCH', url: `${base}/lift-records/${encodeURIComponent(recordId)}`, body: { reps: 6 } },
+      { method: 'POST', url: `${base}/macrocycles/1/workouts/1/lift-overrides`, body: { lift: 'Bench Press', action: 'remove' } },
+      { method: 'DELETE', url: `${base}/macrocycles/1/workouts/1/lift-overrides/Bench%20Press` },
+      { method: 'PATCH', url: `${base}/macrocycles/1/workouts/1/reschedule`, body: { newDate: '2026-01-07' } },
+      { method: 'POST', url: `${base}/macrocycles/1/workouts/1/skip`, body: {} },
+      { method: 'DELETE', url: `${base}/macrocycles/1/workouts/1/skip` },
+      { method: 'PUT', url: `${base}/workouts/1/focus-state`, body: { ...emptyFocusDayState(), dismissed: true } },
+      { method: 'POST', url: `${base}/macrocycles`, body: { fromMacrocycleNum: 1 } },
+    ];
+
+    const upload = (url: string) => {
+      const boundary = '----MacrocycleLockBoundary';
+      return app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${USER_LOCK}` },
+        payload: [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+          'Content-Type: text/csv',
+          '',
+          'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes\n5-3-1,4,1,2025-03-03,Squat,1,200,5,',
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+    };
+    const imports = [`${base}/lift-records/import`, `${base}/import?mode=commit&destination=lift-records`];
+
+    /** Holds the user's lock from another connection, as #1199's renumbering will. */
+    const holdLock = (mode: 'shared' | 'exclusive') =>
+      holdOpen(owner, null, (tx) =>
+        mode === 'shared'
+          ? tx.$queryRaw`SELECT pg_advisory_xact_lock_shared(${MACROCYCLE_LOCK_NAMESPACE}::int, hashtext(${USER_LOCK}))::text`
+          : tx.$queryRaw`SELECT pg_advisory_xact_lock(${MACROCYCLE_LOCK_NAMESPACE}::int, hashtext(${USER_LOCK}))::text`,
+      );
+
+    const storedSets = () => owner.liftRecord.count({ where: { userId: USER_LOCK } });
+
+    it('answers every page write and both imports with 409 import-in-progress while a rewrite holds it, writing nothing', async () => {
+      const before = await storedSets();
+      const harness = await holdLock('exclusive');
+      try {
+        for (const write of pageWrites()) {
+          const res = await injectAs(USER_LOCK, write.method, write.url, write.body, macrocycleId);
+          expect({ url: write.url, status: res.statusCode, code: res.json().code }).toEqual({
+            url: write.url,
+            status: 409,
+            code: 'import-in-progress',
+          });
+        }
+        for (const url of imports) {
+          const res = await upload(url);
+          expect({ url, status: res.statusCode, code: res.json().code }).toEqual({ url, status: 409, code: 'import-in-progress' });
+        }
+      } finally {
+        harness.release();
+        await harness.done;
+      }
+      expect(await storedSets()).toBe(before);
+      expect(await owner.workoutSkipOverride.count({ where: { userId: USER_LOCK } })).toBe(0);
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: { not: 1 } } })).toBe(0);
+    });
+
+    it('lets page writes share it, while an import has to wait for them', async () => {
+      const harness = await holdLock('shared');
+      try {
+        const write = await injectAs(USER_LOCK, 'POST', `${base}/macrocycles/1/workouts/1/skip`, {}, macrocycleId);
+        expect(write.statusCode).toBe(204);
+        for (const url of imports) {
+          const res = await upload(url);
+          expect({ url, status: res.statusCode, code: res.json().code }).toEqual({ url, status: 409, code: 'import-in-progress' });
+        }
+      } finally {
+        harness.release();
+        await harness.done;
+      }
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 4 } })).toBe(0);
+    });
   });
 });

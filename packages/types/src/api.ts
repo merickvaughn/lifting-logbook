@@ -114,6 +114,12 @@ export interface WorkoutLiftResponse {
 export interface WorkoutResponse {
   program: string;
   macrocycleNum: MacrocycleNumber;
+  /**
+   * The macrocycle's stable id, which a renumbering doesn't change. Every write a workout page
+   * makes sends it, so a page left open can't write into another macrocycle (#1198). Absent
+   * when the program has no macrocycle yet.
+   */
+  macrocycleId?: string;
   workoutNum: number;
   /** The *program* week — past the stored block, for a tiled program. */
   week: WeekNumber;
