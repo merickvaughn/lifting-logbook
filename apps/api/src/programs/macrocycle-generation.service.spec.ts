@@ -22,7 +22,7 @@ import { IWorkoutSkipOverrideRepository } from '../ports/IWorkoutSkipOverrideRep
 import { IMacrocycleScheduledWorkoutRepository } from '../ports/IMacrocycleScheduledWorkoutRepository';
 import { IUserSettingsRepository } from '../ports/IUserSettingsRepository';
 import { ProgramNotFoundError } from '../ports/errors';
-import { InMemoryMacrocycleRepository } from '../adapters/in-memory/macrocycle.adapter';
+import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { buildHistoryEntries, MacrocycleGenerationService } from './macrocycle-generation.service';
 
@@ -75,19 +75,8 @@ const stubLiftRecords = () => [
   },
 ];
 
-const macrocycleRow = (macrocycleNum: number, overrides: Partial<MacrocycleRow> = {}): MacrocycleRow => ({
-  id: `m-${macrocycleNum}`,
-  program: PROGRAM,
-  macrocycleNum,
-  startDate: new Date(Date.UTC(2026, macrocycleNum, 1)),
-  endDate: null,
-  status: 'in-progress',
-  statusChosen: false,
-  origin: 'live',
-  unmatched: false,
-  importedThrough: null,
-  ...overrides,
-});
+const macrocycleRow = (macrocycleNum: number, overrides: Partial<MacrocycleRow> = {}): MacrocycleRow =>
+  macrocycleRowFixture(macrocycleNum, { program: PROGRAM, ...overrides });
 
 describe('MacrocycleGenerationService', () => {
   let service: MacrocycleGenerationService;

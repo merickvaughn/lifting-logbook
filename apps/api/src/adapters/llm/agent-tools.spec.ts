@@ -8,25 +8,15 @@ import {
   sanitizeGoal,
   toAnthropicTools,
 } from './agent-tools';
+import { macrocycleRowFixture } from '../in-memory/macrocycle.adapter';
 import { RepositoryBundle } from '../../ports/factory';
 import { MacrocycleRow } from '../../ports/IMacrocycleRepository';
 import { MacrocyclePlanRequest, WithRlsContext } from '../../ports/IMacrocyclePlanningAgent';
 
 const REQ: MacrocyclePlanRequest = { program: '5-3-1', goal: 'gain', macrocycleNum: 3 };
 
-const macrocycleRow = (overrides: Partial<MacrocycleRow> = {}): MacrocycleRow => ({
-  id: 'm-2',
-  program: '5-3-1',
-  macrocycleNum: 2,
-  startDate: new Date('2026-09-01T00:00:00.000Z'),
-  endDate: null,
-  status: 'in-progress',
-  statusChosen: false,
-  origin: 'live',
-  unmatched: false,
-  importedThrough: null,
-  ...overrides,
-});
+const macrocycleRow = (overrides: Partial<MacrocycleRow> = {}): MacrocycleRow =>
+  macrocycleRowFixture(2, { startDate: new Date('2026-09-01T00:00:00.000Z'), ...overrides });
 
 const mkRepos = (): RepositoryBundle => ({
   macrocycle: {

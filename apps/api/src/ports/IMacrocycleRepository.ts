@@ -21,7 +21,7 @@ export interface NewMacrocycle {
   program: string;
   macrocycleNum: number;
   startDate: Date;
-  endDate?: Date | null;
+  endDate?: Date;
   status: MacrocycleStatus;
   origin: MacrocycleOrigin;
 }
@@ -42,10 +42,19 @@ export interface IMacrocycleRepository {
   create(macrocycle: NewMacrocycle): Promise<MacrocycleRow>;
 
   /**
-   * Ends a macrocycle: sets its end date, and its status unless the lifter chose one.
-   * No-op when the program has no such number.
+   * Inserts each row whose number the program doesn't have yet, and leaves the rest alone, so
+   * two requests ensuring the same row both succeed.
    */
-  close(program: string, macrocycleNum: number, end: { endDate: Date | null; status: MacrocycleStatus }): Promise<void>;
+  ensure(macrocycles: readonly NewMacrocycle[]): Promise<void>;
+
+  /**
+   * Ends a macrocycle: sets its end date and status. No-op when the program has no such
+   * number. The caller keeps a status the lifter chose.
+   */
+  close(program: string, macrocycleNum: number, end: { endDate: Date; status: MacrocycleStatus }): Promise<void>;
+
+  /** Deletes the program's rows numbered in `macrocycleNums`. */
+  delete(program: string, macrocycleNums: readonly number[]): Promise<void>;
 
   /** Deletes the program's rows except those numbered in `keep`. */
   deleteAllExcept(program: string, keep: readonly number[]): Promise<void>;

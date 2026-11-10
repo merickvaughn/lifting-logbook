@@ -1,8 +1,9 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
-import { MacrocycleDashboard, toUTCMidnight } from '@lifting-logbook/core';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { ImportPreImage, MacrocycleDashboard, toUTCMidnight } from '@lifting-logbook/core';
 import { MacrocycleStatus } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
-import { MacrocycleRow } from '../ports/IMacrocycleRepository';
+import { DateRange, dateRangesByMacrocycle } from '../ports/ILiftRecordRepository';
+import { MacrocycleRow, NewMacrocycle } from '../ports/IMacrocycleRepository';
 import { ProgramNotFoundError } from '../ports/errors';
 
 /**
@@ -14,6 +15,13 @@ type HistoryRepos = Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard'>
 
 /** A break longer than this ends a run (proposal decision 4); an older `in-progress` reads as `abandoned`. */
 export const STALE_AFTER_DAYS = 14;
+
+/**
+ * The highest macrocycle number a file may carry: the bound `POST lift-records` already
+ * applies. Numbers are allocated past the highest stored one, so an unbounded file number
+ * would push every later macrocycle past it, or overflow the column.
+ */
+export const MAX_FILE_MACROCYCLE_NUM = 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -30,34 +38,42 @@ export async function dashboardOrNull(
 
 /**
  * The number the program's next new macrocycle takes: one past every number stored, so it
- * can't land on an imported or legacy one. The dashboard counts too, for a current macrocycle
- * the previous API revision started without a row.
+ * can't land on an imported or legacy one. The current macrocycle (`dashboard`, already loaded
+ * by the caller) counts too, for one the previous API revision started without a row.
  */
-export async function nextMacrocycleNumber(repos: HistoryRepos, program: string): Promise<number> {
-  const [highest, dashboard] = await Promise.all([
-    repos.macrocycle.highestNumber(program),
-    dashboardOrNull(repos, program),
-  ]);
-  return Math.max(highest, dashboard?.macrocycleNum ?? 0) + 1;
+export async function nextMacrocycleNumber(
+  repos: Pick<RepositoryBundle, 'macrocycle'>,
+  program: string,
+  dashboard: Pick<MacrocycleDashboard, 'macrocycleNum'> | null,
+): Promise<number> {
+  return Math.max(await repos.macrocycle.highestNumber(program), dashboard?.macrocycleNum ?? 0) + 1;
 }
 
-/**
- * The current macrocycle's row, created as `live` if it has none: the previous API revision
- * started macrocycles without one (see the migration's deploy note).
- */
-export async function ensureCurrentRow(
-  repos: Pick<RepositoryBundle, 'macrocycle'>,
-  dashboard: MacrocycleDashboard,
-): Promise<MacrocycleRow> {
-  const row = await repos.macrocycle.findByNumber(dashboard.program, dashboard.macrocycleNum);
-  if (row) return row;
-  return repos.macrocycle.create({
+/** The row the current macrocycle gets when it has none. */
+function currentRow(dashboard: MacrocycleDashboard): NewMacrocycle {
+  return {
     program: dashboard.program,
     macrocycleNum: dashboard.macrocycleNum,
     startDate: toUTCMidnight(dashboard.macrocycleDate),
     status: 'in-progress',
     origin: 'live',
-  });
+  };
+}
+
+/**
+ * The current macrocycle's row, created as `live` if it has none: the previous API revision
+ * started macrocycles without one (see the migration's deploy note). A concurrent request
+ * creating it too is no conflict, and makes the same row from the same dashboard.
+ */
+export async function ensureCurrentRow(
+  repos: Pick<RepositoryBundle, 'macrocycle'>,
+  dashboard: MacrocycleDashboard,
+): Promise<Pick<MacrocycleRow, 'startDate' | 'status' | 'statusChosen'>> {
+  const row = await repos.macrocycle.findByNumber(dashboard.program, dashboard.macrocycleNum);
+  if (row) return row;
+  const created = currentRow(dashboard);
+  await repos.macrocycle.ensure([created]);
+  return { ...created, statusChosen: false };
 }
 
 function readOnly(program: string, macrocycleNum: number): ConflictException {
@@ -88,65 +104,129 @@ export async function assertMacrocycleWritable(
   repos: HistoryRepos,
   program: string,
   macrocycleNum: number,
-): Promise<MacrocycleRow> {
+): Promise<void> {
   const row = await repos.macrocycle.findByNumber(program, macrocycleNum);
   if (row) {
     if (row.origin === 'imported') throw readOnly(program, macrocycleNum);
-    return row;
+    return;
   }
   const dashboard = await dashboardOrNull(repos, program);
-  if (dashboard?.macrocycleNum === macrocycleNum) return ensureCurrentRow(repos, dashboard);
-  throw unknownNumber(program, macrocycleNum);
+  if (dashboard?.macrocycleNum !== macrocycleNum) throw unknownNumber(program, macrocycleNum);
+  await repos.macrocycle.ensure([currentRow(dashboard)]);
 }
 
 /**
  * Guards an import path that takes macrocycle numbers from a file (`POST lift-records/import`
- * and flag-off commits). Rows can't join an `imported` macrocycle, and a number with no row
- * gets a `legacy` one dated by the file's rows, so every stored number has a row (decision 2).
- * Counting duplicates and renumbering by date come with #1199.
+ * and flag-off commits). Rows can't join an `imported` macrocycle, a number must be from 1 to
+ * {@link MAX_FILE_MACROCYCLE_NUM}, and a number with no row gets a `legacy` one dated by the
+ * file's rows, so every stored number has a row (decision 2). Returns the numbers given a
+ * `legacy` row, so undoing the import can remove them. Counting duplicates and renumbering by
+ * date come with #1199.
  */
 export async function ensureFileNumberRows(
   repos: HistoryRepos,
   program: string,
   rows: readonly { macrocycleNum: number; date: Date }[],
-): Promise<void> {
-  const ranges = new Map<number, { first: Date; last: Date }>();
-  for (const { macrocycleNum, date } of rows) {
-    const range = ranges.get(macrocycleNum);
-    if (!range) ranges.set(macrocycleNum, { first: date, last: date });
-    else {
-      if (date < range.first) range.first = date;
-      if (date > range.last) range.last = date;
-    }
+): Promise<number[]> {
+  const ranges = dateRangesByMacrocycle(rows);
+  const outOfRange = [...ranges.keys()].filter((n) => !Number.isInteger(n) || n < 1 || n > MAX_FILE_MACROCYCLE_NUM);
+  if (outOfRange.length > 0) {
+    throw new BadRequestException(
+      `Macrocycle numbers must be from 1 to ${MAX_FILE_MACROCYCLE_NUM}; the file has ${outOfRange.join(', ')}.`,
+    );
   }
-  const dashboard = await dashboardOrNull(repos, program);
+  const [stored, dashboard] = await Promise.all([repos.macrocycle.list(program), dashboardOrNull(repos, program)]);
+  const storedByNumber = new Map(stored.map((row) => [row.macrocycleNum, row]));
+  const missing: NewMacrocycle[] = [];
   for (const [macrocycleNum, { first, last }] of [...ranges].sort(([a], [b]) => a - b)) {
-    const row = await repos.macrocycle.findByNumber(program, macrocycleNum);
+    const row = storedByNumber.get(macrocycleNum);
     if (row?.origin === 'imported') throw readOnly(program, macrocycleNum);
     if (row) continue;
-    if (dashboard?.macrocycleNum === macrocycleNum) {
-      await ensureCurrentRow(repos, dashboard);
-      continue;
-    }
-    await repos.macrocycle.create({
-      program,
-      macrocycleNum,
-      startDate: toUTCMidnight(first),
-      endDate: toUTCMidnight(last),
-      status: 'unknown',
-      origin: 'legacy',
-    });
+    missing.push(
+      dashboard?.macrocycleNum === macrocycleNum
+        ? currentRow(dashboard)
+        : {
+            program,
+            macrocycleNum,
+            startDate: toUTCMidnight(first),
+            endDate: toUTCMidnight(last),
+            status: 'unknown',
+            origin: 'legacy',
+          },
+    );
   }
+  await repos.macrocycle.ensure(missing);
+  return missing.filter((m) => m.origin === 'legacy').map((m) => m.macrocycleNum);
+}
+
+/**
+ * An import batch's pre-image keys its sets by natural key, which starts with a digit, so a
+ * `legacy` row the import created is recorded under this prefix instead.
+ */
+const LEGACY_ROW_KEY = 'macrocycle-row:';
+
+/** Pre-image entries for the `legacy` rows an import created. */
+export function legacyRowsPreImage(macrocycleNums: readonly number[]): ImportPreImage {
+  return Object.fromEntries(
+    macrocycleNums.map((macrocycleNum) => [`${LEGACY_ROW_KEY}${macrocycleNum}`, { kind: 'created', wrote: { macrocycleNum } }]),
+  );
+}
+
+/** Splits a lift-records pre-image's keys into set keys and the `legacy` rows' numbers. */
+export function splitLegacyRowKeys(keys: readonly string[]): { setKeys: string[]; legacyNums: number[] } {
+  return {
+    setKeys: keys.filter((k) => !k.startsWith(LEGACY_ROW_KEY)),
+    legacyNums: keys.filter((k) => k.startsWith(LEGACY_ROW_KEY)).map((k) => Number(k.slice(LEGACY_ROW_KEY.length))),
+  };
+}
+
+/**
+ * Undoes {@link ensureFileNumberRows} for an undone import: removes each of `macrocycleNums`
+ * that is still `legacy` and has no sets left. A number the lifter logged sets into since
+ * keeps its row.
+ */
+export async function removeEmptyLegacyRows(
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>,
+  program: string,
+  macrocycleNums: readonly number[],
+): Promise<void> {
+  if (macrocycleNums.length === 0) return;
+  const [rows, ranges] = await Promise.all([
+    repos.macrocycle.list(program),
+    repos.liftRecord.getMacrocycleDateRanges(program),
+  ]);
+  const empty = rows
+    .filter((r) => r.origin === 'legacy' && macrocycleNums.includes(r.macrocycleNum) && !ranges.has(r.macrocycleNum))
+    .map((r) => r.macrocycleNum);
+  await repos.macrocycle.delete(program, empty);
 }
 
 /**
  * The status a macrocycle closes with when the next one starts (decisions 6 and 7): `completed`
  * once every workout of the program has a logged set, else `abandoned`, since starting the
- * next one is a restart. With no known length nothing can tell, so it's `unknown`.
+ * next one is a restart. A workout number past the program's length doesn't count towards it.
+ * With no known length nothing can tell, so it's `unknown`.
  */
-export function closingStatus(loggedWorkouts: number, programWorkouts: number): MacrocycleStatus {
+export function closingStatus(loggedWorkoutNums: ReadonlySet<number>, programWorkouts: number): MacrocycleStatus {
   if (programWorkouts === 0) return 'unknown';
-  return loggedWorkouts >= programWorkouts ? 'completed' : 'abandoned';
+  const logged = [...loggedWorkoutNums].filter((n) => n >= 1 && n <= programWorkouts).length;
+  return logged >= programWorkouts ? 'completed' : 'abandoned';
+}
+
+/**
+ * A row's dates as the list shows them: widened to cover its sets, since a set logged into a
+ * closed macrocycle, or uploaded into a legacy one, doesn't move the stored dates. A missing
+ * end date stays missing.
+ */
+export function datesAsRead(
+  row: Pick<MacrocycleRow, 'startDate' | 'endDate'>,
+  sets: DateRange | undefined,
+): Pick<MacrocycleRow, 'startDate' | 'endDate'> {
+  if (!sets) return { startDate: row.startDate, endDate: row.endDate };
+  return {
+    startDate: sets.first < row.startDate ? toUTCMidnight(sets.first) : row.startDate,
+    endDate: row.endDate && sets.last > row.endDate ? toUTCMidnight(sets.last) : row.endDate,
+  };
 }
 
 /**

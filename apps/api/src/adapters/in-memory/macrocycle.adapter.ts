@@ -3,6 +3,26 @@ import { MacrocycleStatus } from '@lifting-logbook/types';
 import { MacrocycleNumberConflictError } from '../../ports/errors';
 import { IMacrocycleRepository, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
 
+/**
+ * A stored row for tests: a `live`, `in-progress` 5-3-1 macrocycle starting on the first of
+ * month `macrocycleNum` of 2026, with `overrides` on top.
+ */
+export function macrocycleRowFixture(macrocycleNum: number, overrides: Partial<MacrocycleRow> = {}): MacrocycleRow {
+  return {
+    id: `m-${macrocycleNum}`,
+    program: '5-3-1',
+    macrocycleNum,
+    startDate: new Date(Date.UTC(2026, macrocycleNum, 1)),
+    endDate: null,
+    status: 'in-progress',
+    statusChosen: false,
+    origin: 'live',
+    unmatched: false,
+    importedThrough: null,
+    ...overrides,
+  };
+}
+
 export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
   private readonly rows: MacrocycleRow[] = [];
 
@@ -46,15 +66,22 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
     return { ...row };
   }
 
-  async close(
-    program: string,
-    macrocycleNum: number,
-    end: { endDate: Date | null; status: MacrocycleStatus },
-  ): Promise<void> {
+  async ensure(macrocycles: readonly NewMacrocycle[]): Promise<void> {
+    for (const macrocycle of macrocycles) {
+      if (!(await this.findByNumber(macrocycle.program, macrocycle.macrocycleNum))) await this.create(macrocycle);
+    }
+  }
+
+  async close(program: string, macrocycleNum: number, end: { endDate: Date; status: MacrocycleStatus }): Promise<void> {
     const row = this.rows.find((r) => r.program === program && r.macrocycleNum === macrocycleNum);
     if (!row) return;
     row.endDate = end.endDate;
-    if (!row.statusChosen) row.status = end.status;
+    row.status = end.status;
+  }
+
+  async delete(program: string, macrocycleNums: readonly number[]): Promise<void> {
+    const kept = this.rows.filter((r) => r.program !== program || !macrocycleNums.includes(r.macrocycleNum));
+    this.rows.splice(0, this.rows.length, ...kept);
   }
 
   async deleteAllExcept(program: string, keep: readonly number[]): Promise<void> {

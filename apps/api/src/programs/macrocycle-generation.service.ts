@@ -192,7 +192,7 @@ export class MacrocycleGenerationService {
     }
     // One past every stored number, not the source + 1, so `fromMacrocycleNum` can't reuse a
     // number and a new macrocycle can't land on imported history (ADR-042).
-    const newMacrocycleNum = await nextMacrocycleNumber(repos, program);
+    const newMacrocycleNum = await nextMacrocycleNumber(repos, program, dashboard);
 
     const [
       programSpec,
@@ -202,7 +202,7 @@ export class MacrocycleGenerationService {
       closingScheduled,
       closingDateOverrides,
       closingWorkoutNums,
-      dateRanges,
+      closingRange,
     ] = await Promise.all([
       repos.liftingProgramSpec.getProgramSpec(program),
       repos.trainingMax.getTrainingMaxes(program),
@@ -211,7 +211,7 @@ export class MacrocycleGenerationService {
       repos.macrocycleScheduledWorkout.getScheduledWorkouts(program, dashboard.macrocycleNum),
       repos.workoutDateOverride.getOverridesForMacrocycle(program, dashboard.macrocycleNum),
       repos.liftRecord.getLoggedWorkoutNums(program, dashboard.macrocycleNum),
-      repos.liftRecord.getMacrocycleDateRanges(program),
+      repos.liftRecord.getMacrocycleDateRanges(program, dashboard.macrocycleNum),
     ]);
 
     let prevDashboard = dashboard;
@@ -245,10 +245,13 @@ export class MacrocycleGenerationService {
       status: 'in-progress',
       origin: 'live',
     });
-    // The closing macrocycle ends on its last session, or its start with none (decision 1).
+    // The closing macrocycle ends on its last session, or its start with none (decision 1). A
+    // status the lifter chose stays.
     await repos.macrocycle.close(program, dashboard.macrocycleNum, {
-      endDate: dateRanges.get(dashboard.macrocycleNum)?.last ?? closingRow.startDate,
-      status: closingStatus(closingWorkoutNums.size, programWorkoutKeys(program, programSpec).length),
+      endDate: closingRange.get(dashboard.macrocycleNum)?.last ?? closingRow.startDate,
+      status: closingRow.statusChosen
+        ? closingRow.status
+        : closingStatus(closingWorkoutNums, programWorkoutKeys(program, programSpec).length),
     });
 
     // Write order: maxes → scheduled dates → dashboard. If dashboard write fails,
@@ -307,7 +310,7 @@ export class MacrocycleGenerationService {
     }
 
     // 1 for a program with no history; after imported history, the number past it (ADR-042).
-    const macrocycleNum = await nextMacrocycleNumber(repos, program);
+    const macrocycleNum = await nextMacrocycleNumber(repos, program, null);
     const dashboard: MacrocycleDashboard = {
       program,
       macrocycleUnit: defaults.macrocycleUnit,

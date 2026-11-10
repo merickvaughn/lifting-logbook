@@ -37,10 +37,11 @@ The owner's reason for the split: migrations run while the previous API revision
 
 3. **Live macrocycles keep their rows current.**
    - Creating a macrocycle creates its row as `live` and `in-progress`.
-   - Starting the next one closes the previous row. Its end date is its last set's date. It's `completed` when every workout of the program has a logged set, and `abandoned` otherwise, because starting the next one is a restart.
+   - Starting the next one closes the previous row. Its end date is its last set's date. It's `completed` when every workout of the program has a logged set, and `abandoned` otherwise, because starting the next one is a restart. A workout number past the program's length doesn't count.
    - A program with no known length closes as `unknown`.
    - A status the lifter chose is never overwritten.
    - On read, an `in-progress` row whose last session is more than 14 days old reads as `abandoned`, so it can't go stale. This excludes the current macrocycle and a status the lifter chose.
+   - On read, a row's dates widen to cover its sets. Sets logged into a closed macrocycle, or uploaded into a legacy one, don't move the stored dates.
 
 4. **Writes check the macrocycle's row first.**
    - An `imported` number returns 409 with code `macrocycle-read-only`.
@@ -52,8 +53,8 @@ The owner's reason for the split: migrations run while the previous API revision
      - Lift-override `POST` and `DELETE`.
      - Reschedule.
      - Skip `POST` and `DELETE`.
-   - The current macrocycle gets its row on first write if it has none, for macrocycles the previous API revision started.
-   - A file number with no row gets a `legacy` row dated by the file's sets.
+   - The current macrocycle gets its row on first write if it has none, for macrocycles the previous API revision started. That insert uses `ON CONFLICT DO NOTHING` [3], so two requests creating the row at once both succeed.
+   - A file number with no row gets a `legacy` row dated by the file's sets. A file number must be from 1 to 1000, the bound `POST lift-records` applies, so a typo can't push every later number past it. Undoing the import removes a `legacy` row it created once the row has no sets left.
    - With no dashboard, workout and focus routes address the highest number + 1, so an imported number 1 is never read or written as live.
    - Deleting the current macrocycle keeps `imported` rows and their sets.
 

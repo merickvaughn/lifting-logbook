@@ -15,6 +15,7 @@ import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { isValidWorkoutNum, workoutKeyForWorkoutNum } from './mappers';
+import { assertMacrocycleWritable } from './macrocycle-history.util';
 import { RescheduleDto } from './reschedule.dto';
 
 @Controller('programs/:program')
@@ -42,7 +43,8 @@ export class RescheduleController {
       throw new BadRequestException('workoutNum must be a positive integer');
     }
 
-    const { macrocycleDashboard, workoutDateOverride, liftingProgramSpec } = await this.factory.forUser(user);
+    const repos = await this.factory.forUser(user);
+    const { macrocycleDashboard, workoutDateOverride, liftingProgramSpec } = repos;
 
     const spec = await liftingProgramSpec.getProgramSpec(program);
     if (spec.length === 0) {
@@ -61,6 +63,9 @@ export class RescheduleController {
         `workoutNum ${workoutNum} exceeds the program's ${programLengthWeeks(program, spec)}-week schedule`,
       );
     }
+
+    // An imported macrocycle is read-only (409) and an unknown number is a 404 (ADR-042).
+    await assertMacrocycleWritable(repos, program, macrocycleNum);
 
     // getMacrocycleDashboard throws ProgramNotFoundError when the program has no macrocycle.
     // Its macrocycleNum is the *active* macrocycle, and the entire read model (GET workout,

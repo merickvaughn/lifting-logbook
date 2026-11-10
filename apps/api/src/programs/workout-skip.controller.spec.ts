@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
 import { ILiftingProgramSpecRepository } from '../ports/ILiftingProgramSpecRepository';
 import { IWorkoutSkipOverrideRepository } from '../ports/IWorkoutSkipOverrideRepository';
@@ -58,6 +59,8 @@ describe('WorkoutSkipController', () => {
         workoutSkipOverride: skipRepo,
         liftingProgramSpec: specRepo,
         macrocycleDashboard: dashboardRepo,
+        // 2 is current; 1 and 7 are stored but not active (ADR-042).
+        macrocycle: new InMemoryMacrocycleRepository([1, 2, 7].map((n) => macrocycleRowFixture(n))),
       }),
     };
     const module: TestingModule = await Test.createTestingModule({

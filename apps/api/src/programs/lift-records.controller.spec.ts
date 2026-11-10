@@ -4,7 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { FastifyRequest } from 'fastify';
 import { Weekday } from '@lifting-logbook/core';
 import { CustomLift, LiftModification, LiftModificationMaxMode, MacrocycleOrigin } from '@lifting-logbook/types';
-import { InMemoryMacrocycleRepository } from '../adapters/in-memory/macrocycle.adapter';
+import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { ProgramNotFoundError } from '../ports/errors';
 import { ICustomLiftRepository } from '../ports/ICustomLiftRepository';
@@ -28,18 +28,8 @@ function csvUploadRequest(csvText: string): FastifyRequest {
 
 const MOCK_USER = { id: 'test-user', email: 'test@example.com', provider: 'dev' };
 
-const macrocycleRow = (macrocycleNum: number, origin: MacrocycleOrigin): MacrocycleRow => ({
-  id: `m-${macrocycleNum}`,
-  program: '5-3-1',
-  macrocycleNum,
-  startDate: new Date(Date.UTC(2026, macrocycleNum, 1)),
-  endDate: null,
-  status: origin === 'live' ? 'in-progress' : 'completed',
-  statusChosen: false,
-  origin,
-  unmatched: false,
-  importedThrough: null,
-});
+const macrocycleRow = (macrocycleNum: number, origin: MacrocycleOrigin): MacrocycleRow =>
+  macrocycleRowFixture(macrocycleNum, { origin, status: origin === 'live' ? 'in-progress' : 'completed' });
 
 const SEED_DASHBOARD = {
   program: '5-3-1',

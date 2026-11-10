@@ -11,6 +11,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import { PrismaClient } from '@prisma/client';
 import { AppModule } from '../app.module';
 import { seedTrainingMaxes } from '../adapters/in-memory/fixtures';
+import { PrismaMacrocycleRepository } from '../adapters/prisma/macrocycle.repository';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
@@ -31,7 +32,8 @@ const USER_BOB = 'macrocycle-db-bob';
 const USER_BACKFILL = 'macrocycle-db-backfill';
 const USER_BACKFILL_BARE = 'macrocycle-db-backfill-bare';
 const USER_RACE = 'macrocycle-db-race';
-const USERS = [USER_ALICE, USER_BOB, USER_BACKFILL, USER_BACKFILL_BARE, USER_RACE];
+const USER_ENSURE = 'macrocycle-db-ensure';
+const USERS = [USER_ALICE, USER_BOB, USER_BACKFILL, USER_BACKFILL_BARE, USER_RACE, USER_ENSURE];
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const isoDay = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : null);
@@ -167,16 +169,23 @@ describeOrSkip('macrocycle table (e2e, lifting_app role)', () => {
      * runs in an owner transaction that's rolled back once `body` has read what it needs.
      */
     async function withBackfill(body: (tx: PrismaClient) => Promise<void>): Promise<void> {
-      await expect(
-        owner.$transaction(
+      try {
+        await owner.$transaction(
           async (tx) => {
+            // Another suite's uncommitted row fails this fast instead of stalling both.
+            await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
             await tx.$queryRaw`SELECT "macrocycle_backfill_rows"()`;
             await body(tx as unknown as PrismaClient);
             throw new Rollback();
           },
           { timeout: DB_E2E_HOOK_TIMEOUT_MS },
-        ),
-      ).rejects.toBeInstanceOf(Rollback);
+        );
+      } catch (err) {
+        // A failed assertion surfaces as itself, with its diff.
+        if (err instanceof Rollback) return;
+        throw err;
+      }
+      throw new Error('the backfill transaction committed');
     }
 
     const rowsFor = (tx: PrismaClient, userId: string) =>
@@ -258,16 +267,50 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       payload: JSON.stringify(body ?? {}),
     });
 
-  /** Waits until a backend is blocked on a lock, which is the API's insert behind the harness's. */
-  async function waitForLockWait(): Promise<void> {
-    for (let attempt = 0; attempt < 100; attempt++) {
+  /**
+   * Waits until a backend is blocked by `pid`'s locks. Other DB suites share this database,
+   * so any other lock wait doesn't count.
+   */
+  async function waitForBlockedBy(pid: number): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt++) {
       const rows = await owner.$queryRaw<Array<{ waiting: number }>>`
-        SELECT count(*)::int AS waiting FROM pg_stat_activity
-        WHERE wait_event_type = 'Lock' AND query ILIKE '%"macrocycle"%'`;
+        SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE ${pid}::int = ANY(pg_blocking_pids(pid))`;
       if ((rows[0]?.waiting ?? 0) > 0) return;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    throw new Error('the API never blocked on the harness row');
+    throw new Error(`nothing ever blocked on backend ${pid}`);
+  }
+
+  /**
+   * Runs `insert` in a transaction it holds open until the returned `release` is called, so
+   * no other transaction can see the row. Resolves once the row is in, with the backend's pid.
+   */
+  async function holdOpen(
+    client: PrismaClient,
+    userId: string | null,
+    insert: (tx: PrismaClient) => Promise<unknown>,
+  ): Promise<{ pid: number; release: () => void; done: Promise<void> }> {
+    let release = () => undefined as void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let inserted = (_pid: number) => undefined as void;
+    const insertedPid = new Promise<number>((resolve) => {
+      inserted = resolve;
+    });
+    const done = client.$transaction(
+      async (tx) => {
+        if (userId !== null) await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+        await insert(tx as unknown as PrismaClient);
+        const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+        inserted(rows[0]?.pid ?? -1);
+        await released;
+      },
+      { timeout: DB_E2E_HOOK_TIMEOUT_MS },
+    );
+    // A failed insert rejects `done` before the pid arrives.
+    const pid = await Promise.race([insertedPid, done.then(() => -1)]);
+    return { pid, release, done };
   }
 
   it('a number taken while the next macrocycle starts is a 409, with nothing written', async () => {
@@ -276,25 +319,17 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       data: seedTrainingMaxes().map((max) => ({ userId: USER_RACE, program: PROGRAM, ...max })),
     });
 
-    let release = () => undefined as void;
-    const released = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    // The harness takes number 2 in a transaction it holds open, so the API can't see it.
-    const harness = owner.$transaction(
-      async (tx) => {
-        await tx.macrocycle.create({
-          data: { userId: USER_RACE, program: PROGRAM, macrocycleNum: 2, startDate: day('2026-02-02'), status: 'in-progress', origin: 'live' },
-        });
-        await released;
-      },
-      { timeout: DB_E2E_HOOK_TIMEOUT_MS },
+    // The harness takes number 2 before the request starts, in a transaction it holds open.
+    const harness = await holdOpen(owner, null, (tx) =>
+      tx.macrocycle.create({
+        data: { userId: USER_RACE, program: PROGRAM, macrocycleNum: 2, startDate: day('2026-02-02'), status: 'in-progress', origin: 'live' },
+      }),
     );
 
     const startNext = inject('POST', `/programs/${PROGRAM}/macrocycles`);
-    await waitForLockWait();
-    release();
-    await harness;
+    await waitForBlockedBy(harness.pid);
+    harness.release();
+    await harness.done;
     const res = await startNext;
 
     expect(res.statusCode).toBe(409);
@@ -307,5 +342,21 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       [2, 'in-progress', null],
     ]);
     expect(await owner.macrocycleScheduledWorkout.count({ where: { userId: USER_RACE, macrocycleNum: { gt: 1 } } })).toBe(0);
+  });
+
+  it('two requests ensuring the same row both succeed, leaving one row', async () => {
+    const appDb = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+    const row = { program: PROGRAM, macrocycleNum: 1, startDate: day('2026-03-02'), status: 'in-progress', origin: 'live' } as const;
+    const ensure = (tx: PrismaClient) => new PrismaMacrocycleRepository(tx, USER_ENSURE).ensure([row]);
+    try {
+      const first = await holdOpen(appDb, USER_ENSURE, ensure);
+      const second = asUser(appDb, USER_ENSURE, ensure);
+      await waitForBlockedBy(first.pid);
+      first.release();
+      await expect(Promise.all([first.done, second])).resolves.toEqual([undefined, undefined]);
+    } finally {
+      await appDb.$disconnect();
+    }
+    expect(await owner.macrocycle.count({ where: { userId: USER_ENSURE, program: PROGRAM } })).toBe(1);
   });
 });

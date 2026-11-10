@@ -71,14 +71,35 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     }
   }
 
-  async close(
-    program: string,
-    macrocycleNum: number,
-    end: { endDate: Date | null; status: MacrocycleStatus },
-  ): Promise<void> {
-    const where = { userId: this.userId, program, macrocycleNum };
-    await this.prisma.macrocycle.updateMany({ where, data: { endDate: end.endDate } });
-    await this.prisma.macrocycle.updateMany({ where: { ...where, statusChosen: false }, data: { status: end.status } });
+  async ensure(macrocycles: readonly NewMacrocycle[]): Promise<void> {
+    if (macrocycles.length === 0) return;
+    // ON CONFLICT DO NOTHING: a row a concurrent request just inserted is kept, not a 409.
+    await this.prisma.macrocycle.createMany({
+      data: macrocycles.map((m) => ({
+        userId: this.userId,
+        program: m.program,
+        macrocycleNum: m.macrocycleNum,
+        startDate: m.startDate,
+        endDate: m.endDate ?? null,
+        status: m.status,
+        origin: m.origin,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  async close(program: string, macrocycleNum: number, end: { endDate: Date; status: MacrocycleStatus }): Promise<void> {
+    await this.prisma.macrocycle.updateMany({
+      where: { userId: this.userId, program, macrocycleNum },
+      data: { endDate: end.endDate, status: end.status },
+    });
+  }
+
+  async delete(program: string, macrocycleNums: readonly number[]): Promise<void> {
+    if (macrocycleNums.length === 0) return;
+    await this.prisma.macrocycle.deleteMany({
+      where: { userId: this.userId, program, macrocycleNum: { in: [...macrocycleNums] } },
+    });
   }
 
   async deleteAllExcept(program: string, keep: readonly number[]): Promise<void> {

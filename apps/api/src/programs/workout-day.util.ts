@@ -8,9 +8,9 @@ import {
   resolveDayPrescriptions,
   specRowsForWorkoutDay,
 } from '@lifting-logbook/core';
-import { ProgramNotFoundError } from '../ports/errors';
 import { RepositoryBundle } from '../ports/factory';
 import { ScheduledWorkout } from '../ports/IMacrocycleScheduledWorkoutRepository';
+import { dashboardOrNull, nextMacrocycleNumber } from './macrocycle-history.util';
 import { workoutKeyForWorkoutNum } from './mappers';
 
 /**
@@ -24,12 +24,8 @@ export async function currentMacrocycleOrFirst(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard'>,
   program: string,
 ): Promise<MacrocycleDashboard | { macrocycleNum: number }> {
-  // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
-  const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program).catch((err: unknown) => {
-    if (err instanceof ProgramNotFoundError) return null;
-    throw err;
-  });
-  return dashboard ?? { macrocycleNum: (await repos.macrocycle.highestNumber(program)) + 1 };
+  const dashboard = await dashboardOrNull(repos, program);
+  return dashboard ?? { macrocycleNum: await nextMacrocycleNumber(repos, program, null) };
 }
 
 export interface WorkoutDay extends AppliedLiftOverrides {

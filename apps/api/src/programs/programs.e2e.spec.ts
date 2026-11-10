@@ -232,14 +232,16 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('PATCH reschedule with non-active macrocycleNum returns 400', async () => {
-      // Seed's active macrocycle is 1 (these tests run before any new-macrocycle writes).
-      // Cycle 2 is not the active macrocycle, so an override there could never be read.
+    it('PATCH reschedule with a macrocycleNum the program lacks returns 404', async () => {
+      // Seed's active macrocycle is 1 (these tests run before any new-macrocycle writes), and
+      // the program has no macrocycle 2 (ADR-042). The 400 for a stored, non-active
+      // macrocycle is covered in reschedule.controller.spec.ts.
       const res = await patchJson(
         `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/reschedule`,
         { newDate: '2026-06-01' },
       );
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
     });
 
     it('PATCH reschedule requires auth', async () => {
@@ -1537,17 +1539,18 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('POST skip with non-active macrocycleNum returns 400', async () => {
+    it('POST skip with a macrocycleNum the program lacks returns 404', async () => {
       const token = await setupSkipUser('skip-e2e-nac-post');
-      // The fresh user's active macrocycle is 1; macrocycle 2 is not active, so a skip
-      // there could never be read.
+      // The fresh user's active macrocycle is 1 and there's no macrocycle 2 (ADR-042). The
+      // 400 for a stored, non-active macrocycle is covered in workout-skip.controller.spec.ts.
       const res = await app.getHttpAdapter().getInstance().inject({
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/skip`,
         headers: { 'content-type': 'application/json', authorization: token },
         payload: JSON.stringify({}),
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
     });
 
     it('DELETE unskip with unknown program returns 404', async () => {
@@ -1570,14 +1573,15 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('DELETE unskip with non-active macrocycleNum returns 400', async () => {
+    it('DELETE unskip with a macrocycleNum the program lacks returns 404', async () => {
       const token = await setupSkipUser('skip-e2e-nac-delete');
       const res = await app.getHttpAdapter().getInstance().inject({
         method: 'DELETE',
         url: `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/skip`,
         headers: { authorization: token },
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
     });
   });
 

@@ -6,7 +6,7 @@ import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { buildMacrocycleDashboardResponse, scheduleCoverage, toMacrocycleSummaryResponse } from './mappers';
-import { dashboardOrNull, statusAsRead } from './macrocycle-history.util';
+import { dashboardOrNull, datesAsRead, statusAsRead } from './macrocycle-history.util';
 import { MacrocycleGenerationService } from './macrocycle-generation.service';
 
 @Controller('programs/:program')
@@ -88,10 +88,11 @@ export class MacrocycleDashboardController {
     const today = new Date();
     return rows.map((row) => {
       const current = dashboard?.macrocycleNum === row.macrocycleNum;
+      const sets = dateRanges.get(row.macrocycleNum);
       return toMacrocycleSummaryResponse(
-        row,
+        { ...row, ...datesAsRead(row, sets) },
         current,
-        statusAsRead(row, { current, lastSession: dateRanges.get(row.macrocycleNum)?.last ?? null, today }),
+        statusAsRead(row, { current, lastSession: sets?.last ?? null, today }),
       );
     });
   }

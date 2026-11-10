@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { LIFT_NAMES, MacrocycleOrigin } from '@lifting-logbook/types';
-import { InMemoryMacrocycleRepository } from '../adapters/in-memory/macrocycle.adapter';
+import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
 import { ILiftingProgramSpecRepository } from '../ports/ILiftingProgramSpecRepository';
@@ -13,18 +13,8 @@ import { ManageLiftsController } from './manage-lifts.controller';
 
 const MOCK_USER_A = { id: 'user-a', email: 'a@example.com', provider: 'dev' };
 
-const macrocycleRow = (macrocycleNum: number, origin: MacrocycleOrigin): MacrocycleRow => ({
-  id: `m-${macrocycleNum}`,
-  program: '5-3-1',
-  macrocycleNum,
-  startDate: new Date(Date.UTC(2026, macrocycleNum, 1)),
-  endDate: null,
-  status: origin === 'live' ? 'in-progress' : 'completed',
-  statusChosen: false,
-  origin,
-  unmatched: false,
-  importedThrough: null,
-});
+const macrocycleRow = (macrocycleNum: number, origin: MacrocycleOrigin): MacrocycleRow =>
+  macrocycleRowFixture(macrocycleNum, { origin, status: origin === 'live' ? 'in-progress' : 'completed' });
 
 const STUB_SPEC = [{ lift: 'Squat' }] as unknown as Awaited<
   ReturnType<ILiftingProgramSpecRepository['getProgramSpec']>

@@ -1,5 +1,12 @@
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
-import { closingStatus, STALE_AFTER_DAYS, statusAsRead } from './macrocycle-history.util';
+import {
+  closingStatus,
+  datesAsRead,
+  legacyRowsPreImage,
+  splitLegacyRowKeys,
+  STALE_AFTER_DAYS,
+  statusAsRead,
+} from './macrocycle-history.util';
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 
@@ -58,16 +65,50 @@ describe('statusAsRead', () => {
 });
 
 describe('closingStatus', () => {
+  const workouts = (...nums: number[]) => new Set(nums);
+  const first = (n: number) => workouts(...Array.from({ length: n }, (_, i) => i + 1));
+
   it('is completed once every workout has a logged set', () => {
-    expect(closingStatus(12, 12)).toBe('completed');
+    expect(closingStatus(first(12), 12)).toBe('completed');
   });
 
   it('is abandoned with workouts left, since starting the next one is a restart', () => {
-    expect(closingStatus(11, 12)).toBe('abandoned');
-    expect(closingStatus(0, 12)).toBe('abandoned');
+    expect(closingStatus(first(11), 12)).toBe('abandoned');
+    expect(closingStatus(workouts(), 12)).toBe('abandoned');
+  });
+
+  it("doesn't count a workout number past the program's length towards it", () => {
+    expect(closingStatus(workouts(...first(11), 13), 12)).toBe('abandoned');
   });
 
   it('is unknown when the program has no known length', () => {
-    expect(closingStatus(3, 0)).toBe('unknown');
+    expect(closingStatus(first(3), 0)).toBe('unknown');
+  });
+});
+
+describe('datesAsRead', () => {
+  const stored = { startDate: day('2026-03-02'), endDate: day('2026-04-10') };
+
+  it('keeps the stored dates when the sets fall inside them, or there are none', () => {
+    expect(datesAsRead(stored, { first: day('2026-03-04'), last: day('2026-04-08') })).toEqual(stored);
+    expect(datesAsRead(stored, undefined)).toEqual(stored);
+  });
+
+  it('widens to a set logged before the start or after the end', () => {
+    expect(datesAsRead(stored, { first: day('2026-02-27'), last: day('2026-04-20') })).toEqual({
+      startDate: day('2026-02-27'),
+      endDate: day('2026-04-20'),
+    });
+  });
+
+  it('leaves a missing end date missing', () => {
+    expect(datesAsRead({ ...stored, endDate: null }, { first: day('2026-03-04'), last: day('2026-05-01') }).endDate).toBeNull();
+  });
+});
+
+describe('legacy rows in an import pre-image', () => {
+  it("round-trips the numbers apart from the sets' natural keys", () => {
+    const keys = ['3:1:20260302:squat:1', ...Object.keys(legacyRowsPreImage([3, 5]))];
+    expect(splitLegacyRowKeys(keys)).toEqual({ setKeys: ['3:1:20260302:squat:1'], legacyNums: [3, 5] });
   });
 });

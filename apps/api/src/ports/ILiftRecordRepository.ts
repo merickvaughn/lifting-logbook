@@ -1,5 +1,24 @@
 import { LiftRecord } from '@lifting-logbook/core';
 
+export interface DateRange {
+  first: Date;
+  last: Date;
+}
+
+/** Each macrocycle number's first and last date among `rows`. */
+export function dateRangesByMacrocycle(rows: Iterable<{ macrocycleNum: number; date: Date }>): Map<number, DateRange> {
+  const ranges = new Map<number, DateRange>();
+  for (const { macrocycleNum, date } of rows) {
+    const range = ranges.get(macrocycleNum);
+    if (!range) ranges.set(macrocycleNum, { first: date, last: date });
+    else {
+      if (date < range.first) range.first = date;
+      if (date > range.last) range.last = date;
+    }
+  }
+  return ranges;
+}
+
 export interface ILiftRecordRepository {
   getLiftRecords(program: string, macrocycleNum: number): Promise<LiftRecord[]>;
 
@@ -54,10 +73,11 @@ export interface ILiftRecordRepository {
   deleteLiftRecordsByNaturalKeys(program: string, naturalKeys: string[]): Promise<number>;
 
   /**
-   * Each macrocycle's first and last record date, keyed by number, for the program. Numbers
-   * with no records are absent. A grouped query, so a list of macrocycles reads no sets.
+   * Each macrocycle's first and last record date, keyed by number, for the program, or for
+   * just `macrocycleNum` when given. Numbers with no records are absent. A grouped query, so a
+   * list of macrocycles reads no sets.
    */
-  getMacrocycleDateRanges(program: string): Promise<Map<number, { first: Date; last: Date }>>;
+  getMacrocycleDateRanges(program: string, macrocycleNum?: number): Promise<Map<number, DateRange>>;
 
   /**
    * Deletes every lift record for a program, across all macrocycles except those numbered in

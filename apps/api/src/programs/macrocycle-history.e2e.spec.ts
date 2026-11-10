@@ -144,6 +144,18 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
     it('is empty for a program with no history', async () => {
       expect(await as('history-list-empty').list()).toEqual([]);
     });
+
+    it('widens a closed macrocycle to cover a set logged after its end', async () => {
+      const user = as('history-list-widen');
+      await user.initialize('2026-01-05');
+      expect((await user.log(1, '2026-01-07')).statusCode).toBe(201);
+      await user.startNext({ macrocycleDate: '2026-02-02' });
+      expect((await user.list())[0]).toMatchObject({ macrocycleNum: 1, endDate: '2026-01-07' });
+
+      expect((await user.log(1, '2026-01-20', 2)).statusCode).toBe(201);
+
+      expect((await user.list())[0]).toMatchObject({ macrocycleNum: 1, startDate: '2026-01-05', endDate: '2026-01-20' });
+    });
   });
 
   describe('imported history stays off the live pages', () => {
@@ -254,9 +266,9 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
     ] as const;
 
     it.each([
-      ['an imported macrocycle', 1],
-      ['an unknown number', 7],
-    ])('rejects every write on %s with a 4xx, and leaves the training maxes alone', async (label, num) => {
+      ['an imported macrocycle', 1, 409, 'macrocycle-read-only'],
+      ['an unknown number', 7, 404, 'macrocycle-not-found'],
+    ])('rejects every write on %s with its code, and leaves the training maxes alone', async (label, num, status, code) => {
       const user = as(`history-guard-${num}`);
       await user.seedImported(1, '2025-01-06', '2025-02-17');
       await user.initialize('2026-01-05');
@@ -264,13 +276,13 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       const bundle = await user.repos();
       const recordsBefore = await bundle.liftRecord.getLiftRecords(PROGRAM, num);
 
-      const results: [string, number, boolean][] = [];
+      const results: [string, number, unknown][] = [];
       for (const [route, method, url, body] of routes(num)) {
-        const status = (await user.inject(method, url, body)).statusCode;
-        results.push([route, status, status >= 400 && status < 500]);
+        const res = await user.inject(method, url, body);
+        results.push([route, res.statusCode, (res.json() as { code?: unknown }).code]);
       }
-      // Each row names its route and status, so a failure says which one let the write through.
-      expect(results).toEqual(routes(num).map(([route]) => [route, expect.any(Number), true]));
+      // Each row names its route, so a failure says which one let the write through.
+      expect(results).toEqual(routes(num).map(([route]) => [route, status, code]));
 
       expect((await user.inject('GET', `/programs/${PROGRAM}/training-maxes`)).json()).toEqual(maxesBefore);
       expect(await bundle.liftRecord.getLiftRecords(PROGRAM, num)).toEqual(recordsBefore);
@@ -322,6 +334,66 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       });
       expect(edit.statusCode).toBe(200);
       expect(edit.json()).toMatchObject({ weight: 205 });
+    });
+
+    it.each([0, 1001])('rejects a file macrocycle number of %i with 400, writing nothing', async (num) => {
+      const user = as(`history-file-range-${num}`);
+      const upload = await csvUpload(`history-file-range-${num}`, [HEADER, `${PROGRAM},${num},1,2025-03-03,Squat,1,200,5,`].join('\n'));
+
+      expect(upload.statusCode).toBe(400);
+      expect(await user.list()).toEqual([]);
+      expect(await (await user.repos()).liftRecord.getMacrocycleDateRanges(PROGRAM)).toEqual(new Map());
+    });
+  });
+
+  describe('undoing an import', () => {
+    const commit = (user: string, csv: string) => {
+      const boundary = '----MacrocycleHistoryImportBoundary';
+      return app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/${PROGRAM}/import?mode=commit&destination=lift-records`,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${user}` },
+        payload: [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+          'Content-Type: text/csv',
+          '',
+          csv,
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+    };
+    const HEADER = 'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes';
+
+    it('removes the legacy macrocycle the import created, and keeps one it found', async () => {
+      const user = as('history-undo');
+      await (await user.repos()).macrocycle.ensure([
+        { program: PROGRAM, macrocycleNum: 6, startDate: day('2025-05-05'), status: 'unknown', origin: 'legacy' },
+      ]);
+      const res = await commit(
+        'history-undo',
+        [HEADER, `${PROGRAM},5,1,2025-03-03,Squat,1,200,5,`, `${PROGRAM},6,1,2025-05-05,Squat,1,210,5,`].join('\n'),
+      );
+      expect(res.statusCode).toBe(200);
+      const { batchId } = res.json() as { batchId: string };
+      expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[5, 'legacy'], [6, 'legacy']]);
+
+      const undo = await user.inject('POST', `/programs/${PROGRAM}/import/${batchId}/undo`);
+
+      expect(undo.statusCode).toBe(200);
+      expect(undo.json()).toMatchObject({ restored: 2, skipped: 0, flagged: [] });
+      expect((await user.list()).map((m) => m.macrocycleNum)).toEqual([6]);
+    });
+
+    it('keeps a legacy macrocycle the lifter logged sets into since', async () => {
+      const user = as('history-undo-logged');
+      const res = await commit('history-undo-logged', [HEADER, `${PROGRAM},5,1,2025-03-03,Squat,1,200,5,`].join('\n'));
+      const { batchId } = res.json() as { batchId: string };
+      expect((await user.log(5, '2025-03-04', 2)).statusCode).toBe(201);
+
+      await user.inject('POST', `/programs/${PROGRAM}/import/${batchId}/undo`);
+
+      expect((await user.list()).map((m) => m.macrocycleNum)).toEqual([5]);
     });
   });
 

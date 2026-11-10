@@ -6,7 +6,7 @@ import {
   liftSpellings,
   withModifications,
 } from '@lifting-logbook/core';
-import { ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
+import { DateRange, dateRangesByMacrocycle, ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
 
 export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
   constructor(private readonly store: Map<string, LiftRecord[]>) {}
@@ -82,17 +82,11 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
     return before.length - after.length;
   }
 
-  async getMacrocycleDateRanges(program: string): Promise<Map<number, { first: Date; last: Date }>> {
-    const ranges = new Map<number, { first: Date; last: Date }>();
-    for (const r of this.store.get(program) ?? []) {
-      const range = ranges.get(r.macrocycleNum);
-      if (!range) ranges.set(r.macrocycleNum, { first: r.date, last: r.date });
-      else {
-        if (r.date < range.first) range.first = r.date;
-        if (r.date > range.last) range.last = r.date;
-      }
-    }
-    return ranges;
+  async getMacrocycleDateRanges(program: string, macrocycleNum?: number): Promise<Map<number, DateRange>> {
+    const records = this.store.get(program) ?? [];
+    return dateRangesByMacrocycle(
+      macrocycleNum === undefined ? records : records.filter((r) => r.macrocycleNum === macrocycleNum),
+    );
   }
 
   async deleteAllLiftRecords(program: string, keep: readonly number[] = []): Promise<void> {
