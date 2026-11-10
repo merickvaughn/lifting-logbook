@@ -1,4 +1,5 @@
 import { RepositoryBundle } from '../../ports/factory';
+import { MacrocycleRow } from '../../ports/IMacrocycleRepository';
 import {
   MacrocyclePlanRequest,
   MacrocyclePlanResult,
@@ -49,6 +50,17 @@ export function buildUserMessage(req: MacrocyclePlanRequest): string {
 // Tool dispatch
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether a set's notes may reach the provider: only sets the lifter logged in the app, in a
+ * `live` macrocycle and after any `importedThrough` date. Imported and legacy notes came from
+ * a file, or can't be told apart from ones that did, and the lifter never chose to share them
+ * (proposal decisions 3 and 11, ADR-042). A number with no macrocycle row can't be vouched for.
+ */
+function notesVouchedFor(macrocycle: MacrocycleRow | null, date: Date): boolean {
+  if (macrocycle?.origin !== 'live') return false;
+  return macrocycle.importedThrough === null || date > macrocycle.importedThrough;
+}
+
 export interface ToolResult {
   ok: boolean;
   data?: unknown;
@@ -66,10 +78,18 @@ export async function dispatchTool(
       case 'get_lift_history': {
         const macrocycleNum =
           typeof args.macrocycleNum === 'number' ? args.macrocycleNum : request.macrocycleNum - 1;
-        const records = await repos.liftRecord.getLiftRecords(request.program, macrocycleNum);
+        const [records, macrocycle] = await Promise.all([
+          repos.liftRecord.getLiftRecords(request.program, macrocycleNum),
+          repos.macrocycle.findByNumber(request.program, macrocycleNum),
+        ]);
         // Modifications stay out of what reaches the provider: the ids mean nothing to it, and
         // nothing has decided whether their names and descriptions should go (ADR-041).
-        return { ok: true, data: records.map(({ modifications: _modifications, ...record }) => record) };
+        return {
+          ok: true,
+          data: records.map(({ modifications: _modifications, ...record }) =>
+            notesVouchedFor(macrocycle, record.date) ? record : { ...record, notes: '' },
+          ),
+        };
       }
       case 'get_training_maxes': {
         const maxes = await repos.trainingMax.getTrainingMaxes(request.program);

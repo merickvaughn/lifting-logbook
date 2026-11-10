@@ -53,6 +53,15 @@ export interface ILiftRecordRepository {
    */
   deleteLiftRecordsByNaturalKeys(program: string, naturalKeys: string[]): Promise<number>;
 
-  /** Deletes every lift record for a program, across all macrocycles. No-op if none exist. */
-  deleteAllLiftRecords(program: string): Promise<void>;
+  /**
+   * Each macrocycle's first and last record date, keyed by number, for the program. Numbers
+   * with no records are absent. A grouped query, so a list of macrocycles reads no sets.
+   */
+  getMacrocycleDateRanges(program: string): Promise<Map<number, { first: Date; last: Date }>>;
+
+  /**
+   * Deletes every lift record for a program, across all macrocycles except those numbered in
+   * `keep`. No-op if none exist.
+   */
+  deleteAllLiftRecords(program: string, keep?: readonly number[]): Promise<void>;
 }

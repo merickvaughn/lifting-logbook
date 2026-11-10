@@ -82,7 +82,22 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
     return before.length - after.length;
   }
 
-  async deleteAllLiftRecords(program: string): Promise<void> {
-    this.store.delete(program);
+  async getMacrocycleDateRanges(program: string): Promise<Map<number, { first: Date; last: Date }>> {
+    const ranges = new Map<number, { first: Date; last: Date }>();
+    for (const r of this.store.get(program) ?? []) {
+      const range = ranges.get(r.macrocycleNum);
+      if (!range) ranges.set(r.macrocycleNum, { first: r.date, last: r.date });
+      else {
+        if (r.date < range.first) range.first = r.date;
+        if (r.date > range.last) range.last = r.date;
+      }
+    }
+    return ranges;
+  }
+
+  async deleteAllLiftRecords(program: string, keep: readonly number[] = []): Promise<void> {
+    const kept = (this.store.get(program) ?? []).filter((r) => keep.includes(r.macrocycleNum));
+    if (kept.length > 0) this.store.set(program, kept);
+    else this.store.delete(program);
   }
 }

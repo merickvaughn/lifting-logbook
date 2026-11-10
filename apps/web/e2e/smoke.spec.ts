@@ -195,6 +195,16 @@ test('history page tabs render lift history and TM timeline', async ({ page }) =
   await expect(page.getByRole('heading', { name: 'bench-press' })).toBeVisible();
 });
 
+// #1197: the past-macrocycles list shows an imported macrocycle with its status and dates.
+test('history page lists past macrocycles with status and dates', async ({ page }) => {
+  await page.goto('/history');
+  await page.getByRole('tab', { name: 'Macrocycles' }).click();
+
+  const imported = page.getByRole('row').filter({ hasText: 'Imported' });
+  await expect(imported.getByRole('cell')).toHaveText(['1', '2024-09-02', '2024-10-25', 'Completed', 'Imported']);
+  await expect(page.getByRole('row').filter({ hasText: '(current)' })).toContainText('In progress');
+});
+
 // ---------------------------------------------------------------------------
 // 8. Programs page: catalog loads, switch dialog opens
 // ---------------------------------------------------------------------------

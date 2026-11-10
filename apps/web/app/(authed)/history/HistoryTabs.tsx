@@ -2,19 +2,27 @@
 
 import { useState, useMemo } from 'react';
 import { formatWeight, liftIdFor, storedIdListing } from '@lifting-logbook/core';
-import type { TrainingMaxHistoryEntryResponse, WeightUnit } from '@lifting-logbook/types';
+import type {
+  MacrocycleOrigin,
+  MacrocycleStatus,
+  MacrocycleSummaryResponse,
+  TrainingMaxHistoryEntryResponse,
+  WeightUnit,
+} from '@lifting-logbook/types';
 import type { EnrichedRecord } from './page';
 import styles from './history.module.css';
 
-type Tab = 'history' | 'timeline';
+type Tab = 'history' | 'timeline' | 'macrocycles';
 
 export default function HistoryTabs({
   records,
   tmEntries,
+  macrocycles,
   unit,
 }: {
   records: EnrichedRecord[];
   tmEntries: TrainingMaxHistoryEntryResponse[];
+  macrocycles: MacrocycleSummaryResponse[];
   unit: WeightUnit;
 }) {
   const [tab, setTab] = useState<Tab>('history');
@@ -40,15 +48,78 @@ export default function HistoryTabs({
         >
           TM Timeline
         </button>
+        <button
+          type="button"
+          role="tab"
+          className={`${styles.tab} ${tab === 'macrocycles' ? styles.tabActive : ''}`}
+          onClick={() => setTab('macrocycles')}
+          aria-selected={tab === 'macrocycles'}
+        >
+          Macrocycles
+        </button>
       </div>
 
       <div role="tabpanel">
-        {tab === 'history' ? (
-          <LiftHistoryTab records={records} unit={unit} />
-        ) : (
-          <TmTimelineTab entries={tmEntries} unit={unit} />
-        )}
+        {tab === 'history' && <LiftHistoryTab records={records} unit={unit} />}
+        {tab === 'timeline' && <TmTimelineTab entries={tmEntries} unit={unit} />}
+        {tab === 'macrocycles' && <MacrocyclesTab macrocycles={macrocycles} />}
       </div>
+    </div>
+  );
+}
+
+// The import prototype's wording (docs/mockups/import-macrocycle-assignment.html), plus
+// "Status unknown" for history whose status nothing records (proposal decision 18).
+const STATUS_LABEL: Record<MacrocycleStatus, string> = {
+  completed: 'Completed',
+  overran: 'Ran past its length',
+  abandoned: 'Unfinished',
+  'in-progress': 'In progress',
+  unknown: 'Status unknown',
+};
+
+const ORIGIN_LABEL: Record<MacrocycleOrigin, string> = {
+  imported: 'Imported',
+  live: 'Logged here',
+  legacy: 'Earlier records',
+  'non-cycle': 'Outside a macrocycle',
+};
+
+/** Every macrocycle of the program, newest first (ADR-042). */
+function MacrocyclesTab({ macrocycles }: { macrocycles: MacrocycleSummaryResponse[] }) {
+  if (macrocycles.length === 0) {
+    return <p className={styles.empty}>No macrocycles yet.</p>;
+  }
+  return (
+    <div className={styles.tableWrapper}>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th>Macrocycle</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Status</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {macrocycles
+            .slice()
+            .reverse()
+            .map((m) => (
+              <tr key={m.id}>
+                <td>
+                  {m.macrocycleNum}
+                  {m.current && ' (current)'}
+                </td>
+                <td>{m.startDate}</td>
+                <td>{m.endDate ?? '—'}</td>
+                <td>{STATUS_LABEL[m.status]}</td>
+                <td>{ORIGIN_LABEL[m.origin]}</td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
     </div>
   );
 }

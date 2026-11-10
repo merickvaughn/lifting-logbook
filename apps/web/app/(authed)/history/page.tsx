@@ -1,9 +1,10 @@
 import { storedIdListing } from '@lifting-logbook/core';
-import { fetchLiftRecords, fetchTrainingMaxHistory } from '@/lib/api';
+import { fetchLiftRecords, fetchMacrocycles, fetchTrainingMaxHistory } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
 import type {
   LiftRecordResponse,
+  MacrocycleSummaryResponse,
   TrainingMaxHistoryEntryResponse,
   WeightUnit,
 } from '@lifting-logbook/types';
@@ -27,7 +28,7 @@ export default async function HistoryPage() {
   // The `.catch()` fallbacks keep the tabs rendering (graceful degradation);
   // `loadFailed` distinguishes a real fetch failure from a genuinely empty history.
   let loadFailed = false;
-  const [records, { entries: tmEntries }, unit] = await Promise.all([
+  const [records, { entries: tmEntries }, macrocycles, unit] = await Promise.all([
     // fallback-covered-by: apps/web/e2e/staging.spec.ts
     fetchLiftRecords(program).catch((): LiftRecordResponse[] => {
       loadFailed = true;
@@ -37,6 +38,11 @@ export default async function HistoryPage() {
     fetchTrainingMaxHistory(program).catch(() => {
       loadFailed = true;
       return { entries: [] as TrainingMaxHistoryEntryResponse[] };
+    }),
+    // fallback-covered-by: apps/web/app/(authed)/history/page.test.tsx
+    fetchMacrocycles(program).catch((): MacrocycleSummaryResponse[] => {
+      loadFailed = true;
+      return [];
     }),
     getPreferredUnit(),
   ]);
@@ -91,7 +97,7 @@ export default async function HistoryPage() {
           temporary — refresh the page in a moment to try again.
         </p>
       )}
-      <HistoryTabs records={enriched} tmEntries={tmEntries} unit={unit} />
+      <HistoryTabs records={enriched} tmEntries={tmEntries} macrocycles={macrocycles} unit={unit} />
     </main>
   );
 }

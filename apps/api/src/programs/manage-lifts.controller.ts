@@ -18,6 +18,7 @@ import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { toLiftOverrideResponse, isValidWorkoutNum } from './mappers';
 import { LiftOverrideDto } from './lift-override.dto';
+import { assertMacrocycleWritable } from './macrocycle-history.util';
 
 @Controller('programs/:program')
 export class ManageLiftsController {
@@ -59,7 +60,8 @@ export class ManageLiftsController {
       throw new BadRequestException("replacedBy is required when action is 'replace'");
     }
 
-    const { macrocycleDashboard, workoutLiftOverride, liftingProgramSpec } = await this.factory.forUser(user);
+    const repos = await this.factory.forUser(user);
+    const { macrocycleDashboard, workoutLiftOverride, liftingProgramSpec } = repos;
 
     const spec = await liftingProgramSpec.getProgramSpec(program);
     if (spec.length === 0) {
@@ -67,6 +69,7 @@ export class ManageLiftsController {
     }
 
     await macrocycleDashboard.getMacrocycleDashboard(program);
+    await assertMacrocycleWritable(repos, program, macrocycleNum);
 
     const override = {
       lift: dto.lift,
@@ -96,7 +99,8 @@ export class ManageLiftsController {
       throw new BadRequestException('workoutNum must be a positive integer');
     }
 
-    const { workoutLiftOverride } = await this.factory.forUser(user);
-    await workoutLiftOverride.deleteOverride(program, macrocycleNum, workoutNum, decodeURIComponent(lift));
+    const repos = await this.factory.forUser(user);
+    await assertMacrocycleWritable(repos, program, macrocycleNum);
+    await repos.workoutLiftOverride.deleteOverride(program, macrocycleNum, workoutNum, decodeURIComponent(lift));
   }
 }

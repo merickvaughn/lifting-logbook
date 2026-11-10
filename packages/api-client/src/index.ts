@@ -28,6 +28,7 @@ import type {
   LiftOverrideResponse,
   LiftingProgramSpecResponse,
   LiftRecordResponse,
+  MacrocycleSummaryResponse,
   PatchLiftMetadataRequest,
   RecordBodyWeightRequest,
   RescheduleRequest,
@@ -298,6 +299,10 @@ export function createApiClient(config: ApiClientConfig) {
         body: JSON.stringify(options),
         cache: 'no-store',
       });
+    },
+    /** Every macrocycle of the program, past and current, in start-date order (ADR-042). */
+    fetchMacrocycles(program: string): Promise<MacrocycleSummaryResponse[]> {
+      return request(`/programs/${enc(program)}/macrocycles`, { cache: 'no-store' });
     },
     // Idempotent delete: a 404 (no existing macrocycle) is treated as success, matching
     // deleteStrengthGoal/deleteCustomProgram below.

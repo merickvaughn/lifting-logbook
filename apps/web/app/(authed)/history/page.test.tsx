@@ -5,6 +5,7 @@ import type { EnrichedRecord } from './page';
 jest.mock('@/lib/api', () => ({
   fetchLiftRecords: jest.fn(),
   fetchTrainingMaxHistory: jest.fn(),
+  fetchMacrocycles: jest.fn().mockResolvedValue([]),
 }));
 jest.mock('@/lib/active-program', () => ({
   getActiveProgram: jest.fn().mockResolvedValue('5-3-1'),
@@ -14,10 +15,12 @@ jest.mock('@/lib/preferences', () => ({
 }));
 jest.mock('./HistoryTabs', () => ({
   __esModule: true,
-  default: ({ records }: { records: unknown }) => <div data-records={JSON.stringify(records)} />,
+  default: ({ records, macrocycles }: { records: unknown; macrocycles: unknown }) => (
+    <div data-records={JSON.stringify(records)} data-macrocycles={JSON.stringify(macrocycles)} />
+  ),
 }));
 
-import { fetchLiftRecords, fetchTrainingMaxHistory } from '@/lib/api';
+import { fetchLiftRecords, fetchMacrocycles, fetchTrainingMaxHistory } from '@/lib/api';
 import HistoryPage from './page';
 
 const record = (id: string, lift: string, date: string, weight: number) => ({
@@ -71,5 +74,40 @@ describe('HistoryPage across stored spellings', () => {
     const records = await renderRecords();
 
     expect(records.every((r) => r.isPR)).toBe(true);
+  });
+});
+
+// #1197: the Macrocycles tab's list, and the notice when it can't be loaded.
+describe('HistoryPage macrocycles', () => {
+  const MACROCYCLE = {
+    id: 'm-1',
+    macrocycleNum: 1,
+    startDate: '2026-01-05',
+    endDate: '2026-02-01',
+    status: 'completed',
+    origin: 'imported',
+    current: false,
+    unmatched: false,
+  };
+
+  beforeEach(() => {
+    (fetchLiftRecords as jest.Mock).mockResolvedValue([]);
+    (fetchTrainingMaxHistory as jest.Mock).mockResolvedValue({ entries: [] });
+  });
+
+  it('passes the program\'s macrocycles to the tabs, with no notice', async () => {
+    (fetchMacrocycles as jest.Mock).mockResolvedValue([MACROCYCLE]);
+    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    expect(fetchMacrocycles).toHaveBeenCalledWith('5-3-1');
+    const encoded = html.match(/data-macrocycles="([^"]*)"/)?.[1] ?? '';
+    expect(JSON.parse(encoded.replace(/&quot;/g, '"'))).toEqual([MACROCYCLE]);
+    expect(html).not.toContain('role="status"');
+  });
+
+  it('shows the load notice when the macrocycles can\'t be fetched', async () => {
+    (fetchMacrocycles as jest.Mock).mockRejectedValue(new Error('API unavailable'));
+    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    expect(html).toContain('role="status"');
+    expect(html).toContain('data-macrocycles="[]"');
   });
 });

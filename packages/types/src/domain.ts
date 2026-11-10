@@ -182,6 +182,23 @@ export type WeekType = 'training' | 'test' | 'deload';
  */
 export type MacrocycleNumber = number;
 
+/**
+ * How a macrocycle ended, or that it hasn't. `unknown` is a macrocycle stored before the
+ * `macrocycle` table existed, whose ending nothing recorded. See ADR-042.
+ */
+export const MACROCYCLE_STATUSES = ['completed', 'abandoned', 'overran', 'in-progress', 'unknown'] as const;
+
+export type MacrocycleStatus = (typeof MACROCYCLE_STATUSES)[number];
+
+/**
+ * Where a macrocycle came from: `live` was started in the app, `imported` came from a file
+ * through the Assign step and is read-only, `legacy` predates the table or came from a file
+ * number with no Assign step, and `non-cycle` holds workouts outside any plan. See ADR-042.
+ */
+export const MACROCYCLE_ORIGINS = ['imported', 'live', 'legacy', 'non-cycle'] as const;
+
+export type MacrocycleOrigin = (typeof MACROCYCLE_ORIGINS)[number];
+
 /** Strength classification tier relative to bodyweight-based standards. */
 export type StrengthTier = 'intermediate' | 'advanced' | 'elite';
 

@@ -84,6 +84,23 @@ export class FocusBlockConflictError extends Error {
   }
 }
 
+/**
+ * A program already has a macrocycle with this number, usually one a concurrent request
+ * created between this request's read and its insert (ADR-042). The request transaction rolls
+ * back, so nothing is written.
+ */
+export class MacrocycleNumberConflictError extends Error {
+  readonly code = 'macrocycle-number-taken';
+
+  constructor(
+    public readonly program: string,
+    public readonly macrocycleNum: number,
+  ) {
+    super(`Program '${program}' already has a macrocycle ${macrocycleNum}. Reload and try again.`);
+    this.name = 'MacrocycleNumberConflictError';
+  }
+}
+
 // Distinct from CustomLiftConflictError: reusing that error's message for a
 // name that case-insensitively shadows a built-in canonical alias asserted
 // something false — no custom lift by that name exists — and made this

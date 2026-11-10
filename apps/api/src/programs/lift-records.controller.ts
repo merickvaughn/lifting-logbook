@@ -43,6 +43,7 @@ import { CreateLiftRecordDto } from './create-lift-record.dto';
 import { UpdateLiftRecordDto } from './update-lift-record.dto';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
+import { assertMacrocycleWritable, ensureFileNumberRows } from './macrocycle-history.util';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { RlsTxTimeout } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
@@ -94,6 +95,7 @@ export class LiftRecordsController {
 
     const repos = await this.factory.forUser(user);
     const { liftRecord, macrocycleScheduledWorkout } = repos;
+    await assertMacrocycleWritable(repos, program, body.macrocycleNum);
 
     const modificationNames = await assertSetModifications(repos, body.lift, body.modifications ?? []);
 
@@ -261,13 +263,13 @@ export class LiftRecordsController {
 
     const existing = await liftRecord.findExistingRecords(program, rows.map(({ r }) => r));
     const classified = [...classifyLiftRecordRows(rows, ({ r }) => r, existing)];
+    const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row.r);
+    // Imported history is read-only, and a new file number gets a `legacy` row (ADR-042).
+    await ensureFileNumberRows(repos, program, toCreate);
 
     // `written` comes directly from the database's createMany count so it is
     // accurate even if a concurrent import caused additional rows to be skipped.
-    const written = await liftRecord.appendLiftRecords(
-      program,
-      classified.filter((c) => c.kind === 'create').map((c) => c.row.r),
-    );
+    const written = await liftRecord.appendLiftRecords(program, toCreate);
 
     const liftNames = await liftNamesFor(repos);
     const skipped = buildSkippedDetail(classified, (r) => liftRecordLabel(r, liftNames));
@@ -285,14 +287,16 @@ export class LiftRecordsController {
     const repos = await this.factory.forUser(user);
     const { liftRecord } = repos;
     const notFound = () => new NotFoundException(`Lift record '${id}' not found for program '${program}'`);
+    const key = parseLiftRecordId(program, id);
+    if (!key) throw notFound();
+    await assertMacrocycleWritable(repos, program, key.macrocycleNum);
 
     let checkedNames: ReadonlyMap<string, string> | undefined;
     if (body.modifications !== undefined) {
       // The rule needs the set's lift and what it already has, so this reads the record first.
-      const key = parseLiftRecordId(program, id);
-      const stored = key
-        ? (await liftRecord.getLiftRecords(program, key.macrocycleNum)).find((r) => buildLiftRecordId(program, r) === id)
-        : undefined;
+      const stored = (await liftRecord.getLiftRecords(program, key.macrocycleNum)).find(
+        (r) => buildLiftRecordId(program, r) === id,
+      );
       if (!stored) throw notFound();
       checkedNames = await assertSetModifications(repos, stored.lift, body.modifications, stored.modifications);
     }

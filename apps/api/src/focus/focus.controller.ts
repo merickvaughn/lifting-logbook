@@ -231,7 +231,7 @@ export class FocusWorkoutController {
   ): Promise<FocusDayState> {
     const workoutNum = parseWorkoutNum(workoutNumParam);
     const repos = await this.factory.forUser(user);
-    const { macrocycleNum } = await currentMacrocycleOrFirst(repos.macrocycleDashboard, program);
+    const { macrocycleNum } = await currentMacrocycleOrFirst(repos, program);
     return (await repos.focus.getDayState(program, macrocycleNum, workoutNum)) ?? emptyFocusDayState();
   }
 
@@ -244,7 +244,7 @@ export class FocusWorkoutController {
   ): Promise<FocusDayState> {
     const workoutNum = parseWorkoutNum(workoutNumParam);
     const repos = await this.factory.forUser(user);
-    const { macrocycleNum } = await currentMacrocycleOrFirst(repos.macrocycleDashboard, program);
+    const { macrocycleNum } = await currentMacrocycleOrFirst(repos, program);
     return repos.focus.saveDayState(program, macrocycleNum, workoutNum, {
       modes: { ...dto.modes },
       picks: { ...dto.picks },

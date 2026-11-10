@@ -22,4 +22,6 @@ export interface ScheduledWorkout {
 export interface IMacrocycleScheduledWorkoutRepository {
   getScheduledWorkouts(program: string, macrocycleNum: number): Promise<ScheduledWorkout[]>;
   saveScheduledWorkouts(program: string, macrocycleNum: number, workouts: ScheduledWorkout[]): Promise<void>;
+  /** Deletes every scheduled row for a program except those of the macrocycles numbered in `keep`. */
+  deleteAllScheduledWorkouts(program: string, keep?: readonly number[]): Promise<void>;
 }

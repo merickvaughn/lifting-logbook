@@ -20,6 +20,25 @@ describe("updateMacrocycle", () => {
     expect(updated.macrocycleDate).toEqual(new Date(2026, 0, 19, 0, 0, 0, 0));
   });
 
+  // ADR-042: the API allocates the next free number, which needn't be the previous + 1.
+  it("takes an allocated macrocycleNum for the number and the sheet name", () => {
+    const prev: MacrocycleDashboard = {
+      program: "RPT",
+      macrocycleUnit: "Week",
+      macrocycleNum: 1,
+      macrocycleDate: new Date(2026, 0, 5, 0, 0, 0, 0),
+      sheetName: "RPT_Cycle_1_20260105",
+      macrocycleStartWeekday: Weekday.Monday,
+    };
+    const updated = updateMacrocycle(prev, {
+      macrocycleNum: 4,
+      targetWeekday: "Monday" as Weekday,
+      today: new Date(2026, 0, 20, 0, 0, 0, 0),
+    });
+    expect(updated.macrocycleNum).toBe(4);
+    expect(updated.sheetName).toBe("RPT_Cycle_4_20260119");
+  });
+
   it("can update to a different weekday if specified", () => {
     const prev: MacrocycleDashboard = {
       program: "RPT",

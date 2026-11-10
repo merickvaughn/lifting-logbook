@@ -36,10 +36,10 @@ export class WorkoutsController {
       throw new BadRequestException('workoutNum must be a positive integer');
     }
     const repos = await this.factory.forUser(user);
-    const { workout, macrocycleDashboard, macrocycleScheduledWorkout, liftingProgramSpec, workoutDateOverride, workoutLiftOverride, workoutSkipOverride } =
+    const { workout, macrocycleScheduledWorkout, liftingProgramSpec, workoutDateOverride, workoutLiftOverride, workoutSkipOverride } =
       repos;
     const [dashboard, spec] = await Promise.all([
-      currentMacrocycleOrFirst(macrocycleDashboard, program),
+      currentMacrocycleOrFirst(repos, program),
       liftingProgramSpec.getProgramSpec(program),
     ]);
     const [records, overrideDate, liftOverrides, scheduledWorkouts, skippedNums] = await Promise.all([

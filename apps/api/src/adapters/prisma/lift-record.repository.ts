@@ -181,9 +181,25 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     return count;
   }
 
-  async deleteAllLiftRecords(program: string): Promise<void> {
-    await this.prisma.liftRecord.deleteMany({
+  async getMacrocycleDateRanges(program: string): Promise<Map<number, { first: Date; last: Date }>> {
+    // Grouped in SQL and served by `@@index([userId, program, macrocycleNum])`, so listing a
+    // program's macrocycles reads no sets.
+    const rows = await this.prisma.liftRecord.groupBy({
+      by: ['macrocycleNum'],
       where: { userId: this.userId, program },
+      _min: { date: true },
+      _max: { date: true },
+    });
+    const ranges = new Map<number, { first: Date; last: Date }>();
+    for (const r of rows) {
+      if (r._min.date && r._max.date) ranges.set(r.macrocycleNum, { first: r._min.date, last: r._max.date });
+    }
+    return ranges;
+  }
+
+  async deleteAllLiftRecords(program: string, keep: readonly number[] = []): Promise<void> {
+    await this.prisma.liftRecord.deleteMany({
+      where: { userId: this.userId, program, macrocycleNum: { notIn: [...keep] } },
     });
   }
 }

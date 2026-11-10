@@ -2,6 +2,7 @@ import { BadRequestException, Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Weekday } from '@lifting-logbook/core';
 import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
+import { IMacrocycleRepository } from '../ports/IMacrocycleRepository';
 import { IMacrocycleScheduledWorkoutRepository } from '../ports/IMacrocycleScheduledWorkoutRepository';
 import { ILiftingProgramSpecRepository } from '../ports/ILiftingProgramSpecRepository';
 import { IWorkoutDateOverrideRepository } from '../ports/IWorkoutDateOverrideRepository';
@@ -33,6 +34,7 @@ const specRow = (week: number, offset: number, lift: string, order: number) => (
 describe('WorkoutsController', () => {
   let controller: WorkoutsController;
   let workoutRepo: jest.Mocked<IWorkoutRepository>;
+  let macrocycleRepo: Pick<jest.Mocked<IMacrocycleRepository>, 'highestNumber'>;
   let dashboardRepo: jest.Mocked<IMacrocycleDashboardRepository>;
   let specRepo: jest.Mocked<ILiftingProgramSpecRepository>;
   let overrideRepo: jest.Mocked<IWorkoutDateOverrideRepository>;
@@ -43,6 +45,7 @@ describe('WorkoutsController', () => {
 
   beforeEach(async () => {
     workoutRepo = { getWorkout: jest.fn(), saveWorkout: jest.fn() };
+    macrocycleRepo = { highestNumber: jest.fn().mockResolvedValue(0) };
     dashboardRepo = {
       getMacrocycleDashboard: jest.fn(),
       saveMacrocycleDashboard: jest.fn(),
@@ -70,6 +73,7 @@ describe('WorkoutsController', () => {
     factory = {
       forUser: jest.fn().mockResolvedValue({
         workout: workoutRepo,
+        macrocycle: macrocycleRepo,
         macrocycleDashboard: dashboardRepo,
         macrocycleScheduledWorkout: scheduledWorkoutRepo,
         liftingProgramSpec: specRepo,
@@ -692,6 +696,20 @@ describe('WorkoutsController', () => {
 
       expect(result.lifts).toHaveLength(2);
       expect(result.lifts[0]).toMatchObject({ lift: 'Squat', planned: true });
+      expect(workoutRepo.getWorkout).toHaveBeenCalledWith('5-3-1', 1, 1);
+    });
+
+    // With no dashboard, the routes address the number past stored history, so they never
+    // read imported sets (ADR-042).
+    it('falls back to the number past stored macrocycles when the program has history', async () => {
+      dashboardRepo.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
+      macrocycleRepo.highestNumber.mockResolvedValue(3);
+      specRepo.getProgramSpec.mockResolvedValue(twoLiftSpec);
+      workoutRepo.getWorkout.mockRejectedValue(new WorkoutNotFoundError('5-3-1', 4, 1));
+
+      await controller.getWorkout('5-3-1', '1', MOCK_USER);
+
+      expect(workoutRepo.getWorkout).toHaveBeenCalledWith('5-3-1', 4, 1);
     });
 
     it('rethrows non-ProgramNotFoundError errors from getMacrocycleDashboard', async () => {

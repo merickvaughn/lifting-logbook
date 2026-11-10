@@ -17,6 +17,9 @@ export interface IWorkoutDateOverrideRepository {
     newDate: Date,
   ): Promise<void>;
 
-  /** Deletes every date override for a program, across all macrocycles. No-op if none exist. */
-  deleteAllOverrides(program: string): Promise<void>;
+  /**
+   * Deletes every date override for a program, across all macrocycles except those numbered in
+   * `keep`. No-op if none exist.
+   */
+  deleteAllOverrides(program: string, keep?: readonly number[]): Promise<void>;
 }

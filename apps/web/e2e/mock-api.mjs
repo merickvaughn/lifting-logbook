@@ -67,6 +67,12 @@ const TM_HISTORY = {
   ],
 };
 
+// GET /programs/:p/macrocycles (#1197): one imported macrocycle before the current one.
+const MACROCYCLES = [
+  { id: 'mc-1', macrocycleNum: 1, startDate: '2024-09-02', endDate: '2024-10-25', status: 'completed', origin: 'imported', current: false, unmatched: false },
+  { id: 'mc-2', macrocycleNum: 2, startDate: '2025-01-06', endDate: null, status: 'in-progress', origin: 'live', current: true, unmatched: false },
+];
+
 const INITIAL_TRAINING_MAXES = [
   { lift: 'squat', weight: 300, unit: 'lbs', dateUpdated: '2025-01-01' },
   { lift: 'bench-press', weight: 200, unit: 'lbs', dateUpdated: '2025-01-01' },
@@ -900,6 +906,12 @@ const server = createServer(async (req, res) => {
   // -------------------------------------------------------------------------
   if (parts[0] === 'programs' && parts.length >= 3) {
     const rest = parts.slice(2);
+
+    // GET /programs/:p/macrocycles
+    if (method === 'GET' && rest[0] === 'macrocycles' && rest.length === 1) {
+      json(res, MACROCYCLES);
+      return;
+    }
 
     // GET /programs/:p/macrocycles/current
     if (method === 'GET' && rest[0] === 'macrocycles' && rest[1] === 'current') {

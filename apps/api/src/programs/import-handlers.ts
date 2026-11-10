@@ -31,6 +31,7 @@ import {
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
 import { liftNamesFor } from './effective-slot-map.util';
+import { ensureFileNumberRows } from './macrocycle-history.util';
 
 export interface ImportHandler<T> {
   parse(table: SpreadsheetCell[][]): T[];
@@ -87,6 +88,8 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     // belt-and-suspenders rather than the source of truth for the count.
     const classified = [...classifyLiftRecordRows(rows, ({ r }) => r, existing)];
     const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row.r);
+    // Imported history is read-only, and a new file number gets a `legacy` row (ADR-042).
+    await ensureFileNumberRows(repos, program, toCreate);
     const created = await repos.liftRecord.appendLiftRecords(program, toCreate);
     const liftNames = await liftNamesFor(repos);
     // `skipped` is derived from `created` (the DB's actual insert count), not

@@ -537,7 +537,11 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
 
   describe('focus block summary', () => {
     const user = as('focus-e2e-summary');
-    const log = (date: string, lift: string, weight: number, reps: number, setNum = 1) =>
+    // Macrocycle 1 has to exist to take sets (ADR-042).
+    beforeAll(async () => {
+      expect((await user.inject('POST', `/programs/${PROGRAM}/macrocycles/initialize`, {})).statusCode).toBe(201);
+    });
+    const log =(date: string, lift: string, weight: number, reps: number, setNum = 1) =>
       user.inject('POST', `/programs/${PROGRAM}/lift-records`, {
         macrocycleNum: 1,
         workoutNum: 1,

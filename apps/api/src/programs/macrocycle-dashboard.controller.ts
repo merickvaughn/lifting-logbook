@@ -1,11 +1,12 @@
 import { Controller, Delete, Get, HttpCode, HttpStatus, Inject, Logger, Param } from '@nestjs/common';
-import { MacrocycleDashboardResponse } from '@lifting-logbook/types';
+import { MacrocycleDashboardResponse, MacrocycleSummaryResponse } from '@lifting-logbook/types';
 import { weekTypeForDate } from '@lifting-logbook/core';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { buildMacrocycleDashboardResponse, scheduleCoverage } from './mappers';
+import { buildMacrocycleDashboardResponse, scheduleCoverage, toMacrocycleSummaryResponse } from './mappers';
+import { dashboardOrNull, statusAsRead } from './macrocycle-history.util';
 import { MacrocycleGenerationService } from './macrocycle-generation.service';
 
 @Controller('programs/:program')
@@ -67,6 +68,32 @@ export class MacrocycleDashboardController {
       }
     }
     return response;
+  }
+
+  /**
+   * Every macrocycle of the program, past and current, in start-date order, each with its
+   * stable id (ADR-042). Dates and sessions come from one grouped query, so this reads no sets.
+   */
+  @Get('macrocycles')
+  async listMacrocycles(
+    @Param('program') program: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<MacrocycleSummaryResponse[]> {
+    const repos = await this.factory.forUser(user);
+    const [rows, dateRanges, dashboard] = await Promise.all([
+      repos.macrocycle.list(program),
+      repos.liftRecord.getMacrocycleDateRanges(program),
+      dashboardOrNull(repos, program),
+    ]);
+    const today = new Date();
+    return rows.map((row) => {
+      const current = dashboard?.macrocycleNum === row.macrocycleNum;
+      return toMacrocycleSummaryResponse(
+        row,
+        current,
+        statusAsRead(row, { current, lastSession: dateRanges.get(row.macrocycleNum)?.last ?? null, today }),
+      );
+    });
   }
 
   @Delete('macrocycles/current')

@@ -39,6 +39,7 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
         return rest;
       }),
       userSettings: settings,
+      macrocycles: [],
       macrocycleDashboards: [],
       macrocycleScheduledWorkouts: [],
       trainingMaxHistory: [],

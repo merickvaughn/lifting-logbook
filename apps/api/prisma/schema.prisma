@@ -287,6 +287,36 @@ model MacrocycleScheduledWorkout {
   @@map("macrocycle_scheduled_workout")
 }
 
+// One row per macrocycle a user has, past and current (#1171, #1197; ADR-042).
+// `macrocycle_dashboard` still points at the current one. The seven tables that hold a
+// macrocycleNum (lift_record, macrocycle_dashboard, the three workout override tables,
+// focus_day_state, macrocycle_scheduled_workout) key on (userId, program, macrocycleNum),
+// so this row's `id` is the macrocycle's only stable identity once numbers follow dates.
+model Macrocycle {
+  id              String    @id @default(uuid())
+  userId          String
+  program         String
+  macrocycleNum   Int
+  startDate       DateTime  @db.Date
+  // Null while the macrocycle is current, or when nothing dates its end.
+  endDate         DateTime? @db.Date
+  // completed | abandoned | overran | in-progress | unknown
+  status          String
+  // The lifter set `status` themselves, so no rule may change it.
+  statusChosen    Boolean   @default(false)
+  // imported | live | legacy | non-cycle
+  origin          String
+  // Its lifts don't all belong to a known program (proposal decision 9).
+  unmatched       Boolean   @default(false)
+  // A continued imported run's sets dated up to here came from the file (#1180).
+  importedThrough DateTime? @db.Date
+  createdAt       DateTime  @default(now())
+
+  @@unique([userId, program, macrocycleNum])
+  @@index([userId, program, startDate])
+  @@map("macrocycle")
+}
+
 model CustomProgram {
   id           String              @id @default(uuid())
   userId       String

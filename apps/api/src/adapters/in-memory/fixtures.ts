@@ -1,4 +1,5 @@
 import { MacrocycleDashboard, LiftRecord, TrainingMax, Weekday } from '@lifting-logbook/core';
+import { MacrocycleRow } from '../../ports/IMacrocycleRepository';
 
 /**
  * Seed data for the in-memory adapters used in v0.2 to wire the API end-to-end
@@ -19,6 +20,20 @@ export const seedMacrocycleDashboard = (): MacrocycleDashboard => ({
   sheetName: '',
   macrocycleStartWeekday: Weekday.Monday,
   programType: '5-3-1',
+});
+
+/** The seeded dashboard's own `macrocycle` row, as the backfill would give it (ADR-042). */
+export const seedMacrocycleRow = (): MacrocycleRow => ({
+  id: '00000000-0000-4000-8000-000000000001',
+  program: SEED_PROGRAM,
+  macrocycleNum: 1,
+  startDate: new Date('2026-04-20T00:00:00.000Z'),
+  endDate: null,
+  status: 'in-progress',
+  statusChosen: false,
+  origin: 'live',
+  unmatched: false,
+  importedThrough: null,
 });
 
 export const seedTrainingMaxes = (): TrainingMax[] => [

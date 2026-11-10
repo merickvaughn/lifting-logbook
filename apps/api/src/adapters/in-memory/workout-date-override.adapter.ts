@@ -39,9 +39,10 @@ export class InMemoryWorkoutDateOverrideRepository
     this.store.set(this.key(program, macrocycleNum, workoutNum), newDate);
   }
 
-  async deleteAllOverrides(program: string): Promise<void> {
+  async deleteAllOverrides(program: string, keep: readonly number[] = []): Promise<void> {
     for (const k of this.store.keys()) {
-      if (k.split('\0')[0] === program) this.store.delete(k);
+      const [p, m] = k.split('\0');
+      if (p === program && !keep.includes(Number(m))) this.store.delete(k);
     }
   }
 }

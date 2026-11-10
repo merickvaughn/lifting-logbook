@@ -3,7 +3,10 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { Test, TestingModule } from '@nestjs/testing';
 import { FastifyRequest } from 'fastify';
 import { Weekday } from '@lifting-logbook/core';
-import { CustomLift, LiftModification, LiftModificationMaxMode } from '@lifting-logbook/types';
+import { CustomLift, LiftModification, LiftModificationMaxMode, MacrocycleOrigin } from '@lifting-logbook/types';
+import { InMemoryMacrocycleRepository } from '../adapters/in-memory/macrocycle.adapter';
+import { MacrocycleRow } from '../ports/IMacrocycleRepository';
+import { ProgramNotFoundError } from '../ports/errors';
 import { ICustomLiftRepository } from '../ports/ICustomLiftRepository';
 import { IMacrocycleDashboardRepository } from '../ports/IMacrocycleDashboardRepository';
 import { ILiftRecordRepository } from '../ports/ILiftRecordRepository';
@@ -24,6 +27,19 @@ function csvUploadRequest(csvText: string): FastifyRequest {
 }
 
 const MOCK_USER = { id: 'test-user', email: 'test@example.com', provider: 'dev' };
+
+const macrocycleRow = (macrocycleNum: number, origin: MacrocycleOrigin): MacrocycleRow => ({
+  id: `m-${macrocycleNum}`,
+  program: '5-3-1',
+  macrocycleNum,
+  startDate: new Date(Date.UTC(2026, macrocycleNum, 1)),
+  endDate: null,
+  status: origin === 'live' ? 'in-progress' : 'completed',
+  statusChosen: false,
+  origin,
+  unmatched: false,
+  importedThrough: null,
+});
 
 const SEED_DASHBOARD = {
   program: '5-3-1',
@@ -52,6 +68,7 @@ describe('LiftRecordsController', () => {
   let dashboardRepo: jest.Mocked<IMacrocycleDashboardRepository>;
   let customLiftRepo: jest.Mocked<ICustomLiftRepository>;
   let factory: jest.Mocked<IRepositoryFactory>;
+  let macrocycleRepo: InMemoryMacrocycleRepository;
 
   beforeEach(async () => {
     liftRecordRepo = {
@@ -63,7 +80,7 @@ describe('LiftRecordsController', () => {
       deleteAllLiftRecords: jest.fn().mockResolvedValue(undefined),
     };
     dashboardRepo = {
-      getMacrocycleDashboard: jest.fn(),
+      getMacrocycleDashboard: jest.fn().mockRejectedValue(new ProgramNotFoundError('5-3-1')),
       saveMacrocycleDashboard: jest.fn(),
       deleteMacrocycleDashboard: jest.fn().mockResolvedValue(undefined),
     };
@@ -73,9 +90,12 @@ describe('LiftRecordsController', () => {
       update: jest.fn(),
       delete: jest.fn(),
     };
+    // Macrocycle 4 is the live one; 3 is imported history.
+    macrocycleRepo = new InMemoryMacrocycleRepository([macrocycleRow(4, 'live'), macrocycleRow(3, 'imported')]);
     factory = {
       forUser: jest.fn().mockResolvedValue({
         liftRecord: liftRecordRepo,
+        macrocycle: macrocycleRepo,
         macrocycleDashboard: dashboardRepo,
         customLift: customLiftRepo,
       }),
@@ -126,6 +146,7 @@ describe('LiftRecordsController', () => {
     beforeEach(() => {
       factory.forUser.mockResolvedValue({
         liftRecord: liftRecordRepo,
+        macrocycle: macrocycleRepo,
         macrocycleDashboard: dashboardRepo,
         customLift: customLiftRepo,
         liftModification: {
@@ -358,6 +379,35 @@ describe('LiftRecordsController', () => {
       );
     });
 
+    // A file number with no macrocycle gets a `legacy` one dated by its rows (ADR-042).
+    it('gives a new file number a legacy macrocycle, dated by its rows', async () => {
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(2);
+      const csv = [
+        IMPORT_CSV_HEADER,
+        '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+        '5-3-1,1,2,2026-01-08,Bench P.,1,185,5,',
+      ].join('\n');
+
+      await controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER);
+
+      expect(await macrocycleRepo.findByNumber('5-3-1', 1)).toMatchObject({
+        origin: 'legacy',
+        status: 'unknown',
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2026-01-08T00:00:00.000Z'),
+      });
+    });
+
+    it('rejects rows numbered like an imported macrocycle with 409, writing nothing', async () => {
+      const csv = [IMPORT_CSV_HEADER, '5-3-1,3,1,2026-01-01,Bench P.,1,180,5,'].join('\n');
+
+      await expect(controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER)).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'macrocycle-read-only' },
+      });
+      expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
+    });
+
     it('writes one row for a set the file names under two spellings of a lift (#1191)', async () => {
       liftRecordRepo.appendLiftRecords.mockResolvedValue(3);
       const csv = [
@@ -451,6 +501,41 @@ describe('LiftRecordsController', () => {
       await expect(
         controller.updateLiftRecord('5-3-1', 'unknown-id', { weight: 200 }, MOCK_USER),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // Imported history is read-only, and a number the program doesn't have is a 404 (ADR-042).
+  describe('macrocycle guard', () => {
+    const set = (macrocycleNum: number) => ({
+      program: '5-3-1',
+      macrocycleNum,
+      workoutNum: 1,
+      date: '2026-04-20',
+      lift: 'Bench Press',
+      setNum: 1,
+      weight: 180,
+      reps: 5,
+    });
+
+    it.each([
+      [3, 409, 'macrocycle-read-only'],
+      [9, 404, 'macrocycle-not-found'],
+    ])('rejects a set on macrocycle %i with %i', async (macrocycleNum, status, code) => {
+      await expect(controller.createLiftRecord('5-3-1', set(macrocycleNum), MOCK_USER)).rejects.toMatchObject({
+        status,
+        response: { code },
+      });
+      expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [3, 409, 'macrocycle-read-only'],
+      [9, 404, 'macrocycle-not-found'],
+    ])('rejects an edit on macrocycle %i with %i', async (macrocycleNum, status, code) => {
+      await expect(
+        controller.updateLiftRecord('5-3-1', `5-3-1-${macrocycleNum}-1-20260420-Bench Press-1`, { weight: 185 }, MOCK_USER),
+      ).rejects.toMatchObject({ status, response: { code } });
+      expect(liftRecordRepo.updateLiftRecord).not.toHaveBeenCalled();
     });
   });
 });

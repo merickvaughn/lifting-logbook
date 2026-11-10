@@ -87,7 +87,7 @@ export async function loadFocusWorkoutContext(
   program: string,
   workoutNum: number,
 ): Promise<FocusWorkoutContext> {
-  const { macrocycleNum } = await currentMacrocycleOrFirst(repos.macrocycleDashboard, program);
+  const { macrocycleNum } = await currentMacrocycleOrFirst(repos, program);
   const [spec, liftOverrides, scheduledWorkouts, settings, customLifts] = await Promise.all([
     repos.liftingProgramSpec.getProgramSpec(program),
     repos.workoutLiftOverride.getOverrides(program, macrocycleNum, workoutNum),

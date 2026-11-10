@@ -13,6 +13,7 @@ import { IRepositoryFactory, RepositoryBundle } from './factory';
 import { ICustomLiftRepository } from './ICustomLiftRepository';
 import { IFocusRepository } from './IFocusRepository';
 import { IMacrocycleDashboardRepository } from './IMacrocycleDashboardRepository';
+import { IMacrocycleRepository } from './IMacrocycleRepository';
 import { IMacrocycleScheduledWorkoutRepository } from './IMacrocycleScheduledWorkoutRepository';
 import { ILiftingProgramSpecRepository } from './ILiftingProgramSpecRepository';
 import { ILiftModificationRepository } from './ILiftModificationRepository';
@@ -73,6 +74,7 @@ const _liftRecordRepo: ILiftRecordRepository = {
     Promise.resolve([]),
   getLoggedWorkoutNums: (): Promise<Set<number>> =>
     Promise.resolve(new Set()),
+  getMacrocycleDateRanges: () => Promise.resolve(new Map()),
   getRecordsForLifts: (): Promise<LiftRecord[]> =>
     Promise.resolve([]),
   appendLiftRecords: (): Promise<number> =>
@@ -178,6 +180,7 @@ const _workoutLiftOverrideRepo: IWorkoutLiftOverrideRepository = {
 const _macrocycleScheduledWorkoutRepo: IMacrocycleScheduledWorkoutRepository = {
   getScheduledWorkouts: () => Promise.resolve([]),
   saveScheduledWorkouts: () => Promise.resolve(),
+  deleteAllScheduledWorkouts: (): Promise<void> => Promise.resolve(),
 };
 
 const _workoutSkipOverrideRepo: IWorkoutSkipOverrideRepository = {
@@ -253,6 +256,23 @@ const _focusRepo: IFocusRepository = {
   deleteAllDayStates: (): Promise<void> => Promise.resolve(),
 };
 
+const _macrocycleRepo: IMacrocycleRepository = {
+  list: () => Promise.resolve([]),
+  findByNumber: () => Promise.resolve(null),
+  highestNumber: () => Promise.resolve(0),
+  create: (row) =>
+    Promise.resolve({
+      ...row,
+      id: 'id',
+      endDate: row.endDate ?? null,
+      statusChosen: false,
+      unmatched: false,
+      importedThrough: null,
+    }),
+  close: (): Promise<void> => Promise.resolve(),
+  deleteAllExcept: (): Promise<void> => Promise.resolve(),
+};
+
 const _importBatchRepo: IImportBatchRepository = {
   save: (): Promise<void> => Promise.resolve(),
   findById: () => Promise.resolve(null),
@@ -263,6 +283,7 @@ const _repositoryBundle: RepositoryBundle = {
   bodyWeight: _bodyWeightRepo,
   customLift: _customLiftRepo,
   focus: _focusRepo,
+  macrocycle: _macrocycleRepo,
   macrocycleDashboard: _macrocycleDashboardRepo,
   macrocycleScheduledWorkout: _macrocycleScheduledWorkoutRepo,
   liftMetadata: _liftMetadataRepo,

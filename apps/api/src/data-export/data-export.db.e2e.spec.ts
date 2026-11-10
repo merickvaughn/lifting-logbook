@@ -41,6 +41,7 @@ const OTHER_MARK = 'other-user-marker';
 const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = {
   LiftRecord: 'liftRecords',
   TrainingMax: 'trainingMaxes',
+  Macrocycle: 'macrocycles',
   MacrocycleDashboard: 'macrocycleDashboards',
   TrainingMaxHistory: 'trainingMaxHistory',
   BodyWeight: 'bodyWeights',
@@ -73,6 +74,7 @@ async function cleanUsers(prisma: PrismaClient): Promise<void> {
   const where = { userId: { in: USERS } };
   await prisma.liftRecord.deleteMany({ where });
   await prisma.trainingMax.deleteMany({ where });
+  await prisma.macrocycle.deleteMany({ where });
   await prisma.macrocycleDashboard.deleteMany({ where });
   await prisma.trainingMaxHistory.deleteMany({ where });
   await prisma.bodyWeight.deleteMany({ where });
@@ -134,6 +136,9 @@ async function seedUser(
       sheetName: mark,
       macrocycleStartWeekday: 'Monday',
     },
+  });
+  await prisma.macrocycle.create({
+    data: { userId, program, macrocycleNum: 1, startDate: DAY, status: 'in-progress', origin: 'live' },
   });
   await prisma.trainingMaxHistory.create({
     data: { userId, program, lift: mark, weight: 300, date: DAY, source: 'test' },

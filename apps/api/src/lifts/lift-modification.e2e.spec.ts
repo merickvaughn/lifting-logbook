@@ -24,8 +24,7 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
     await app.close();
   });
 
-  /** Each test takes its own user, since the in-memory factory keeps a bundle per user. */
-  const as = (user: string) => (method: string, url: string, body?: unknown) =>
+  const inject = (user: string, method: string, url: string, body?: unknown) =>
     app.getHttpAdapter().getInstance().inject({
       method: method as 'GET',
       url,
@@ -35,6 +34,19 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
           : { 'content-type': 'application/json', authorization: `Bearer ${user}` },
       ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
     });
+
+  /**
+   * Each test takes its own user, since the in-memory factory keeps a bundle per user. A user's
+   * first request starts rpt's macrocycle 1, which has to exist to take sets (ADR-042).
+   */
+  const started = new Set<string>();
+  const as = (user: string) => async (method: string, url: string, body?: unknown) => {
+    if (!started.has(user)) {
+      started.add(user);
+      await inject(user, 'POST', '/programs/rpt/macrocycles/initialize', {});
+    }
+    return inject(user, method, url, body);
+  };
 
   const set = (overrides: Record<string, unknown> = {}) => ({
     macrocycleNum: 1,
@@ -161,7 +173,7 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
 
       const logged = await other(
         'POST',
-        '/programs/p/lift-records',
+        '/programs/rpt/lift-records',
         set({ modifications: [modification.id] }),
       );
       expect(logged.statusCode).toBe(400);
@@ -172,18 +184,18 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
     it('stores the ids on a set, and names them in the response', async () => {
       const user = as('mods-set');
       const paused = await createOn(user, 'Bench Press', 'Paused');
-      const res = await user('POST', '/programs/p/lift-records', set({ modifications: [paused.id] }));
+      const res = await user('POST', '/programs/rpt/lift-records', set({ modifications: [paused.id] }));
       expect(res.statusCode).toBe(201);
       const record = res.json() as LiftRecordResponse;
       expect(record.modifications).toEqual([{ id: paused.id, name: 'Paused' }]);
       // Modifications are not part of the public id: it is still set 1 of this lift.
-      expect(record.id).toBe('p-1-1-20260420-Bench Press-1');
+      expect(record.id).toBe('rpt-1-1-20260420-Bench Press-1');
     });
 
     it('attaches a modification on a lift spelled differently', async () => {
       const user = as('mods-set-spelling');
       const paused = await createOn(user, 'Bench Press', 'Paused');
-      const res = await user('POST', '/programs/p/lift-records', set({ lift: 'bench-press', modifications: [paused.id] }));
+      const res = await user('POST', '/programs/rpt/lift-records', set({ lift: 'bench-press', modifications: [paused.id] }));
       expect(res.statusCode).toBe(201);
       expect((res.json() as LiftRecordResponse).modifications).toEqual([{ id: paused.id, name: 'Paused' }]);
     });
@@ -200,7 +212,7 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
 
       const lifts = ['Cable Curl', 'cable-curl', 'Cable Curls'];
       for (const [i, lift] of lifts.entries()) {
-        const logged = await user('POST', '/programs/p/lift-records', set({ lift, setNum: i + 1, modifications: [wide.id] }));
+        const logged = await user('POST', '/programs/rpt/lift-records', set({ lift, setNum: i + 1, modifications: [wide.id] }));
         expect(logged.statusCode).toBe(201);
         const filtered = await user('GET', `/lifts/modifications?lift=${encodeURIComponent(lift)}`);
         expect((filtered.json() as LiftModificationResponse[]).map((m) => m.id)).toEqual([wide.id]);
@@ -213,8 +225,8 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
       const { id: customId } = custom.json() as { id: string };
       const wide = await createOn(user, 'Old Curl', 'Wide grip');
       const narrow = await createOn(user, 'Old Curl', 'Narrow grip');
-      const logged = await user('POST', '/programs/p/lift-records', set({ lift: 'Old Curl', modifications: [wide.id] }));
-      const url = `/programs/p/lift-records/${encodeURIComponent((logged.json() as LiftRecordResponse).id)}`;
+      const logged = await user('POST', '/programs/rpt/lift-records', set({ lift: 'Old Curl', modifications: [wide.id] }));
+      const url = `/programs/rpt/lift-records/${encodeURIComponent((logged.json() as LiftRecordResponse).id)}`;
       expect((await user('PATCH', `/lifts/custom/${customId}`, { name: 'New Curl' })).statusCode).toBe(200);
 
       const kept = await user('PATCH', url, { reps: 6, modifications: [wide.id] });
@@ -225,10 +237,10 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
 
     it('leaves the field out of a set with none, sent as absent or empty', async () => {
       const user = as('mods-set-none');
-      const absent = await user('POST', '/programs/p/lift-records', set());
+      const absent = await user('POST', '/programs/rpt/lift-records', set());
       expect(absent.statusCode).toBe(201);
       expect(absent.json()).not.toHaveProperty('modifications');
-      const empty = await user('POST', '/programs/p/lift-records', set({ setNum: 2, modifications: [] }));
+      const empty = await user('POST', '/programs/rpt/lift-records', set({ setNum: 2, modifications: [] }));
       expect(empty.statusCode).toBe(201);
       expect(empty.json()).not.toHaveProperty('modifications');
     });
@@ -236,9 +248,9 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
     it("rejects a modification of a different lift, and leaves no set behind", async () => {
       const user = as('mods-set-other-lift');
       const paused = await createOn(user, 'Squat', 'Paused');
-      const res = await user('POST', '/programs/p/lift-records', set({ modifications: [paused.id] }));
+      const res = await user('POST', '/programs/rpt/lift-records', set({ modifications: [paused.id] }));
       expect(res.statusCode).toBe(400);
-      expect((await user('POST', '/programs/p/lift-records', set())).statusCode).toBe(201);
+      expect((await user('POST', '/programs/rpt/lift-records', set())).statusCode).toBe(201);
     });
 
     it('rejects two `own` modifications on one set, and allows one beside the others', async () => {
@@ -249,11 +261,11 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
       const noChalk = await createOn(user, 'Cable Curl', 'No chalk');
       const lift = 'Cable Curl';
 
-      const twoOwn = await user('POST', '/programs/p/lift-records', set({ lift, modifications: [wide.id, narrow.id] }));
+      const twoOwn = await user('POST', '/programs/rpt/lift-records', set({ lift, modifications: [wide.id, narrow.id] }));
       expect(twoOwn.statusCode).toBe(400);
       const oneOwn = await user(
         'POST',
-        '/programs/p/lift-records',
+        '/programs/rpt/lift-records',
         set({ lift, modifications: [wide.id, mixed.id, noChalk.id] }),
       );
       expect(oneOwn.statusCode).toBe(201);
@@ -262,9 +274,9 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
     it('shows a rename on sets already logged', async () => {
       const user = as('mods-set-rename');
       const paused = await createOn(user, 'Bench Press', 'Paused');
-      await user('POST', '/programs/p/lift-records', set({ modifications: [paused.id] }));
+      await user('POST', '/programs/rpt/lift-records', set({ modifications: [paused.id] }));
       await user('PATCH', `/lifts/modifications/${paused.id}`, { name: 'Long pause' });
-      const edited = await user('PATCH', '/programs/p/lift-records/p-1-1-20260420-Bench Press-1', { reps: 6 });
+      const edited = await user('PATCH', '/programs/rpt/lift-records/rpt-1-1-20260420-Bench Press-1', { reps: 6 });
       expect(edited.statusCode).toBe(200);
       expect((edited.json() as LiftRecordResponse).modifications).toEqual([{ id: paused.id, name: 'Long pause' }]);
     });
@@ -275,8 +287,8 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
       const wide = await createOn(user, 'Bench Press', 'Wide grip', 'own');
       const narrow = await createOn(user, 'Bench Press', 'Narrow grip', 'own');
       const squatOnly = await createOn(user, 'Squat', 'High bar');
-      await user('POST', '/programs/p/lift-records', set({ modifications: [paused.id] }));
-      const url = '/programs/p/lift-records/p-1-1-20260420-Bench Press-1';
+      await user('POST', '/programs/rpt/lift-records', set({ modifications: [paused.id] }));
+      const url = '/programs/rpt/lift-records/rpt-1-1-20260420-Bench Press-1';
 
       const replaced = await user('PATCH', url, { modifications: [wide.id] });
       expect(replaced.statusCode).toBe(200);
@@ -296,9 +308,9 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
 
     it('answers 404, not 400, to a PATCH with modifications on an id that addresses no record', async () => {
       const user = as('mods-set-patch-404');
-      const unparseable = await user('PATCH', '/programs/p/lift-records/not-an-id', { modifications: ['x'] });
+      const unparseable = await user('PATCH', '/programs/rpt/lift-records/not-an-id', { modifications: ['x'] });
       expect(unparseable.statusCode).toBe(404);
-      const noRow = await user('PATCH', '/programs/p/lift-records/p-1-1-20260420-Squat-1', { modifications: ['x'] });
+      const noRow = await user('PATCH', '/programs/rpt/lift-records/rpt-1-1-20260420-Squat-1', { modifications: ['x'] });
       expect(noRow.statusCode).toBe(404);
     });
 
@@ -307,13 +319,13 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
       const paused = await createOn(user, 'Bench Press', 'Paused');
       const noChalk = await createOn(user, 'Bench Press', 'No chalk');
       const both = set({ modifications: [paused.id, noChalk.id] });
-      expect((await user('POST', '/programs/p/lift-records', both)).statusCode).toBe(201);
+      expect((await user('POST', '/programs/rpt/lift-records', both)).statusCode).toBe(201);
 
-      const reordered = await user('POST', '/programs/p/lift-records', set({ modifications: [noChalk.id, paused.id] }));
+      const reordered = await user('POST', '/programs/rpt/lift-records', set({ modifications: [noChalk.id, paused.id] }));
       expect(reordered.statusCode).toBe(201);
       expect((reordered.json() as LiftRecordResponse).modifications).toHaveLength(2);
 
-      const different = await user('POST', '/programs/p/lift-records', set({ modifications: [paused.id] }));
+      const different = await user('POST', '/programs/rpt/lift-records', set({ modifications: [paused.id] }));
       expect(different.statusCode).toBe(409);
     });
   });
@@ -365,7 +377,7 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
     it('brings an archived modification back when its name is created again', async () => {
       const user = as('mods-restore');
       const paused = await createOn(user, 'Bench Press', 'Paused');
-      await user('POST', '/programs/p/lift-records', set({ modifications: [paused.id] }));
+      await user('POST', '/programs/rpt/lift-records', set({ modifications: [paused.id] }));
       await user('DELETE', `/lifts/modifications/${paused.id}`);
 
       const res = await user('POST', '/lifts/modifications', {
@@ -383,11 +395,11 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
     it('removes an archived modification once no set names it', async () => {
       const user = as('mods-archived-then-unused');
       const paused = await createOn(user, 'Bench Press', 'Paused');
-      await user('POST', '/programs/p/lift-records', set({ modifications: [paused.id] }));
+      await user('POST', '/programs/rpt/lift-records', set({ modifications: [paused.id] }));
       await user('DELETE', `/lifts/modifications/${paused.id}`);
       // Still named: another delete changes nothing.
       expect((await user('DELETE', `/lifts/modifications/${paused.id}`)).statusCode).toBe(204);
-      await user('PATCH', '/programs/p/lift-records/p-1-1-20260420-Bench Press-1', { modifications: [] });
+      await user('PATCH', '/programs/rpt/lift-records/rpt-1-1-20260420-Bench Press-1', { modifications: [] });
       expect((await user('DELETE', `/lifts/modifications/${paused.id}`)).statusCode).toBe(204);
       expect((await user('DELETE', `/lifts/modifications/${paused.id}`)).statusCode).toBe(404);
     });

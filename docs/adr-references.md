@@ -228,6 +228,10 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 | [PostgreSQL 16 — Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) | [ADR-041](adr/ADR-041-lift-modification-storage.md) | Forced RLS and an isolation policy on `lift_modification`. |
 | [PostgreSQL 16 — `ALTER TABLE`, Notes](https://www.postgresql.org/docs/16/sql-altertable.html#SQL-ALTERTABLE-NOTES), [Arrays](https://www.postgresql.org/docs/16/arrays.html) | [ADR-041](adr/ADR-041-lift-modification-storage.md) | `lift_record.modifications` is a `text[]`, and adding it with a constant default doesn't rewrite the table. |
 | [Prisma — `createManyAndReturn`](https://www.prisma.io/docs/orm/reference/prisma-client-reference#createmanyandreturn) | [ADR-041](adr/ADR-041-lift-modification-storage.md) | The bulk write a join table would need, one reason `text[]` was chosen over it. |
+| [PostgreSQL 16 — Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) | [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | Forced RLS and an isolation policy on `macrocycle`. |
+| [Prisma — Error message reference, `P2002`](https://www.prisma.io/docs/orm/reference/error-reference#p2002) | [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | The unique-key violation the adapter maps to a 409 `macrocycle-number-taken`. |
+| [PostgreSQL 16 — `INSERT`, `ON CONFLICT`](https://www.postgresql.org/docs/16/sql-insert.html#SQL-ON-CONFLICT), [PL/pgSQL `GET DIAGNOSTICS`](https://www.postgresql.org/docs/16/plpgsql-statements.html#PLPGSQL-STATEMENTS-DIAGNOSTICS) | [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | `macrocycle_backfill_rows()` skips existing rows and reports how many it inserted, so it can run again. |
+| [PostgreSQL 16 — Explicit locking, row-level locks](https://www.postgresql.org/docs/16/explicit-locking.html#LOCKING-ROWS) | [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | A second insert of a key held by an uncommitted transaction waits, then fails, which the concurrency test relies on. |
 
 ---
 
