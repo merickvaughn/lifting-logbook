@@ -75,7 +75,7 @@ export function knownProgramFromSpec(
 export function programNameKey(value: string): string {
   return value
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^\p{L}\p{M}\p{N}]/gu, '');
 }

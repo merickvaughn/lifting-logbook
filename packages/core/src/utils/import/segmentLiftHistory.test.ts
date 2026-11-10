@@ -74,6 +74,31 @@ function segment(rows: Row[], options: Partial<SegmentLiftHistoryOptions> = {}) 
   });
 }
 
+/**
+ * A scale test checks growth, not wall clock, which varies with the host: an input 4 times
+ * larger costs about 4 times as much when linear and 16 when quadratic. The allowance absorbs
+ * timer noise on a small input.
+ */
+const GROWTH_LIMIT = 10;
+const GROWTH_ALLOWANCE_MS = 50;
+
+/**
+ * The best of two timings for each input, alternating sizes so both see the same load, and
+ * the large input's last result.
+ */
+function timeGrowth(smallRows: Row[], largeRows: Row[]) {
+  const timed = (rows: Row[]) => {
+    const started = performance.now();
+    const result = segment(rows);
+    return { ms: performance.now() - started, result };
+  };
+  const small1 = timed(smallRows);
+  const large1 = timed(largeRows);
+  const small2 = timed(smallRows);
+  const large2 = timed(largeRows);
+  return { small: Math.min(small1.ms, small2.ms), large: Math.min(large1.ms, large2.ms), result: large2.result };
+}
+
 describe('segmentLiftHistory', () => {
   describe('gaps (decision 4)', () => {
     it.each([
@@ -658,12 +683,12 @@ describe('segmentLiftHistory', () => {
     });
   });
 
-  it('segments 20,000 sessions of a lift in no known program in under 3 seconds', () => {
-    const rows = Array.from({ length: 20_000 }, (_, i): Row => ({ id: `${i}`, date: day(i), lift: 'Zercher Squat' }));
-    const started = Date.now();
-    const result = segment(rows);
-    // The quadratic version took 5.7 s on this input; the linear one about 0.2 s.
-    expect(Date.now() - started).toBeLessThan(3_000);
+  it('grows linearly over 20,000 sessions of a lift in no known program', () => {
+    // The quadratic version took 5.7 s at 20,000 sessions; the linear one about 0.2 s.
+    const rowsFor = (sessions: number) =>
+      Array.from({ length: sessions }, (_, i): Row => ({ id: `${i}`, date: day(i), lift: 'Zercher Squat' }));
+    const { small, large, result } = timeGrowth(rowsFor(5_000), rowsFor(20_000));
+    expect(large).toBeLessThan(GROWTH_LIMIT * small + GROWTH_ALLOWANCE_MS);
     expect(result.stretches).toHaveLength(1);
   });
 
@@ -696,25 +721,23 @@ describe('segmentLiftHistory', () => {
 
     it('grows linearly on one long stretch of known lifts with set weights', () => {
       // An unknown label keeps it one stretch, so matching and the set-order tallies run on
-      // one long draft. A wall-clock limit varies with the host; the growth from 4,000 to
-      // 16,000 sessions doesn't (about 4x when linear, 16x when quadratic).
+      // one long draft.
       const rowsFor = (sessions: number) =>
         withSets(run(RPT_DAYS, 0, sessions, { spacing: 1, extra: () => ({ program: 'GZCLP' }) }), 'descending');
-      const fastest = (rows: Row[]) => {
-        let best = Infinity;
-        for (let i = 0; i < 2; i++) {
-          const started = performance.now();
-          segment(rows);
-          best = Math.min(best, performance.now() - started);
-        }
-        return best;
-      };
-      const small = fastest(rowsFor(4_000));
-      const large = rowsFor(16_000);
-      expect(fastest(large)).toBeLessThan(8 * small + 200);
-      const result = segment(large);
+      const { small, large, result } = timeGrowth(rowsFor(4_000), rowsFor(16_000));
+      expect(large).toBeLessThan(GROWTH_LIMIT * small + GROWTH_ALLOWANCE_MS);
       expect(result.stretches).toHaveLength(1);
       expect(result.stretches[0]?.candidateProgram).toBe('rpt');
+    });
+
+    it('grows linearly when every file number has its own Program label', () => {
+      // "Block 1", "Block 2", …: one session each, so there are as many program groups as stretches.
+      const rowsFor = (numbers: number) =>
+        run(RPT_DAYS, 0, numbers, { spacing: 1, extra: (i) => ({ program: `Block ${i + 1}`, macrocycleNum: i + 1 }) });
+      const { small, large, result } = timeGrowth(rowsFor(3_000), rowsFor(12_000));
+      expect(large).toBeLessThan(GROWTH_LIMIT * small + GROWTH_ALLOWANCE_MS);
+      expect(result.stretches).toHaveLength(12_000);
+      expect(result.conflicts).toEqual([]);
     });
 
     it('survives every row on one day', () => {
@@ -837,6 +860,55 @@ describe('segmentLiftHistory', () => {
       const fiveThreeOne = result.stretches.find((s) => s.program === '5-3-1');
       expect(fiveThreeOne?.matched).toBe(true);
       expect(fiveThreeOne?.sessions.flatMap((s) => s.rows.map((r) => r.id))).toContain('24:Deadlift');
+    });
+
+    it('gives a blank Program cell the nearest label above it on its day', () => {
+      // Each day: the 5/3/1 lifts, then a labelled Conditioning row, then a blank one.
+      const rows = Array.from({ length: 6 }, (_, i): Row[] => [
+        ...session(i * 4, FIVE_THREE_ONE_DAYS[i % 2] ?? [], { program: '5/3/1', macrocycleNum: 1 }),
+        { id: `${i * 4}:row`, date: day(i * 4), lift: 'Rowing Machine', program: 'Conditioning', macrocycleNum: 1 },
+        { id: `${i * 4}:row again`, date: day(i * 4), lift: 'Rowing Machine', macrocycleNum: 1 },
+      ]).flat();
+      const result = segment(rows, { importDate: day(26) });
+      const fiveThreeOne = result.stretches.find((s) => s.program === '5-3-1');
+      expect(fiveThreeOne).toMatchObject({ matched: true, status: 'in-progress' });
+      expect(fiveThreeOne?.sessions.flatMap((s) => s.rows)).toHaveLength(12);
+    });
+
+    describe('a switch where the programs overlap by a few days', () => {
+      // RPT #1 every 2 days over days 0–10, 5/3/1 #1 over 12 days from `switchDay`, then RPT #2.
+      const switchAt = (switchDay: number) => [
+        ...run(RPT_DAYS, 0, 6, { extra: () => ({ program: 'RPT', macrocycleNum: 1 }) }),
+        ...run(FIVE_THREE_ONE_DAYS, switchDay, 6, { extra: () => ({ program: '5/3/1', macrocycleNum: 1 }) }),
+        ...run(RPT_DAYS, switchDay + 12, 5, { extra: () => ({ program: 'RPT', macrocycleNum: 2 }) }),
+      ];
+      const statuses = (switchDay: number) => {
+        const [rpt, fiveThreeOne] = segment(switchAt(switchDay)).stretches;
+        return [rpt?.program, rpt?.reasons.status, fiveThreeOne?.program, fiveThreeOne?.reasons.status];
+      };
+
+      it.each([
+        ['on the last day', 10],
+        ['by a day', 9],
+        ['by a week', 3],
+      ])('reads an overlap %s as a hand-off on both sides', (_, switchDay) => {
+        expect(statuses(switchDay)).toEqual([
+          'rpt',
+          { kind: 'next-is-different-program' },
+          '5-3-1',
+          { kind: 'next-is-different-program' },
+        ]);
+      });
+
+      it('reads an overlap of more than a week as two programs running alongside', () => {
+        // 5/3/1 starts 8 days before RPT #1 ends: RPT #2 follows RPT #1, and nothing follows 5/3/1.
+        expect(statuses(2)).toEqual([
+          'rpt',
+          { kind: 'next-is-restart' },
+          '5-3-1',
+          { kind: 'inside-expected-length', weeksSinceStart: 3 },
+        ]);
+      });
     });
 
     it('counts sessions for a number with no Workout # when other numbers have them', () => {

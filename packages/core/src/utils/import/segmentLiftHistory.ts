@@ -254,6 +254,13 @@ function isValidDate(date: Date | null | undefined): date is Date {
   return date instanceof Date && !Number.isNaN(date.getTime());
 }
 
+/** A row with a valid date: only these are placed. */
+type Dated<T extends LiftHistoryRow> = T & { date: Date };
+
+function isDated<T extends LiftHistoryRow>(row: T): row is Dated<T> {
+  return isValidDate(row.date);
+}
+
 function isFiniteNumber(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -281,10 +288,9 @@ function sessionOrders(rows: readonly LiftHistoryRow[]): Map<string, SetOrder> {
   return orders;
 }
 
-function toSessions<T extends LiftHistoryRow>(rows: readonly T[]): Session<T>[] {
+function toSessions<T extends LiftHistoryRow>(rows: readonly Dated<T>[]): Session<T>[] {
   const byDay = new Map<number, Session<T>>();
   for (const row of rows) {
-    if (!isValidDate(row.date)) continue;
     const date = toUTCMidnight(row.date);
     let session = byDay.get(date.getTime());
     if (!session) {
@@ -323,15 +329,24 @@ function stretchWorkoutNums<T>(sessions: readonly Session<T>[]): number[] | unde
   const firstIndex = sessions.findIndex((s) => s.workoutNums.length > 0);
   const first = sessions[firstIndex];
   if (!first) return undefined;
-  const firstNum = minOf(first.workoutNums);
-  let above = firstNum;
+  const leading = leadingWorkoutNums(minOf(first.workoutNums), firstIndex);
+  let above = 0;
   return sessions.map((session, i) => {
     if (session.workoutNums.length > 0) {
       above = maxOf(session.workoutNums);
       return minOf(session.workoutNums);
     }
-    return i < firstIndex ? Math.max(1, firstNum - (firstIndex - i)) : above;
+    return leading[i] ?? above;
   });
+}
+
+/**
+ * The numbers `blanks` sessions before a stretch's first `Workout #` take, in session order:
+ * they count up to `first`, never below 1 (two blanks before workout 3 are 1 and 2). Both
+ * the `workoutNum` the lifter sees and the completed count use this, so they can't disagree.
+ */
+function leadingWorkoutNums(first: number, blanks: number): number[] {
+  return Array.from({ length: blanks }, (_, i) => Math.max(1, first - (blanks - i)));
 }
 
 /**
@@ -382,7 +397,11 @@ interface Draft<T> {
   allLifts: Map<string, string>;
   /** The lifts some known program contains. */
   knownLifts: Set<string>;
-  /** The distinct numbers {@link stretchWorkoutNums} gives the sessions so far, once one has a `Workout #`. */
+  /**
+   * Every file `Workout #` seen so far (a session may have several), plus the numbers the
+   * blank sessions before the first one count up to ({@link leadingWorkoutNums}). Empty until
+   * a session has one.
+   */
   workoutNums: Set<number>;
   /** The highest `Workout #` of the latest session that had one; `undefined` until one does. */
   lastWorkoutNum?: number;
@@ -408,6 +427,17 @@ interface ProgramCell {
   program?: KnownProgram;
 }
 
+const BUILT_IN_IDS: ReadonlySet<string> = new Set(BUILT_IN_KNOWN_PROGRAMS.map((p) => p.id));
+
+/**
+ * A custom program is open-ended (owner decision on #1202): its spec may be one repeating
+ * block, so it never finishes by length and is never `completed` or `overran`. Known by id,
+ * so a copy of a built-in still has the built-in's length.
+ */
+function isOpenEnded(program: KnownProgram): boolean {
+  return !BUILT_IN_IDS.has(program.id);
+}
+
 /** Ties between custom programs go by name (owner decision 3), in one collation on every host. */
 const NAME_ORDER = new Intl.Collator('en');
 
@@ -416,7 +446,6 @@ class Segmenter<T extends LiftHistoryRow> {
   /** Every lift some known program contains. A lift outside them all never splits a run. */
   private readonly liftsInAnyProgram: ReadonlySet<string>;
   private readonly cells = new Map<string, ProgramCell>();
-  private readonly builtIn: ReadonlySet<KnownProgram> = new Set(BUILT_IN_KNOWN_PROGRAMS);
 
   constructor(private readonly options: SegmentLiftHistoryOptions) {
     const custom = [...(options.customPrograms ?? [])].sort(
@@ -478,10 +507,9 @@ class Segmenter<T extends LiftHistoryRow> {
     }
     if (session.workoutNums.length > 0) {
       if (draft.lastWorkoutNum === undefined) {
-        // The blank sessions before it count up to the stretch's first number, never below 1.
-        const first = minOf(session.workoutNums);
-        const blanks = Math.min(draft.sessions.length - 1, first - 1);
-        for (let k = 1; k <= blanks; k++) draft.workoutNums.add(first - k);
+        for (const num of leadingWorkoutNums(minOf(session.workoutNums), draft.sessions.length - 1)) {
+          draft.workoutNums.add(num);
+        }
       }
       for (const num of session.workoutNums) draft.workoutNums.add(num);
       draft.lastWorkoutNum = maxOf(session.workoutNums);
@@ -506,10 +534,6 @@ class Segmenter<T extends LiftHistoryRow> {
   /** Decision 6: distinct workout numbers when the stretch has a `Workout #`, else sessions. */
   private completedWorkouts(draft: Draft<T>): number {
     return draft.lastWorkoutNum !== undefined ? draft.workoutNums.size : draft.sessions.length;
-  }
-
-  private isCustom(program: KnownProgram): boolean {
-    return !this.builtIn.has(program);
   }
 
   /**
@@ -538,7 +562,7 @@ class Segmenter<T extends LiftHistoryRow> {
     // A custom program is open-ended (owner decision on #1202): its spec may be one
     // repeating block, so only a built-in run finishes by length.
     const program = draft.followed;
-    if (program && !this.isCustom(program) && this.completedWorkouts(draft) >= program.workoutCount) {
+    if (program && !isOpenEnded(program) && this.completedWorkouts(draft) >= program.workoutCount) {
       return { kind: 'previous-run-finished' };
     }
 
@@ -675,12 +699,13 @@ class Segmenter<T extends LiftHistoryRow> {
    * when its `Program` cell is blank too), and a row with none to take is `unnumbered`. A
    * blank `Program` cell belongs with the rest of its number.
    */
-  byFileNumbers(rows: readonly T[]): { drafts: Draft<T>[]; unnumbered: T[] } {
+  byFileNumbers(rows: readonly Dated<T>[]): { drafts: Draft<T>[]; unnumbered: T[] } {
     const cellKey = (row: T) => {
       const value = programCell(row.program);
       return value === undefined ? undefined : this.cell(value).key;
     };
-    const numbered: { row: T; num: number; key: string | undefined }[] = [];
+    /** `session` is the row's number and day, so rows of one session share it. */
+    const numbered: { row: Dated<T>; num: number; key: string | undefined; session: string }[] = [];
     const unnumbered: T[] = [];
     const lastByProgram = new Map<string, number>();
     let lastAny: number | undefined;
@@ -697,27 +722,37 @@ class Segmenter<T extends LiftHistoryRow> {
       }
       lastAny = num;
       if (key !== undefined) lastByProgram.set(key, num);
-      numbered.push({ row, num, key });
+      numbered.push({ row, num, key, session: `${num}|${toUTCMidnight(row.date).getTime()}` });
     }
 
-    // A blank `Program` cell belongs with its own session (same day and number) first, then
-    // with the nearest labelled row of its number, so two programs sharing a number on
-    // alternate days don't trade rows.
-    const sessionId = (row: T, num: number) => `${toUTCMidnight(row.date ?? new Date(NaN)).getTime()}\u0000${num}`;
+    // A blank `Program` cell belongs with the nearest labelled row above it in its own
+    // session (same day and number); one above the session's first label takes that label.
+    // Only a session with no label looks wider: the nearest labelled row above of its number,
+    // else the number's first. So two programs sharing a number, whether on one day or on
+    // alternate days, don't trade rows.
     const firstKey = new Map<number, string>();
-    const sessionKey = new Map<string, string>();
-    for (const { row, num, key } of numbered) {
+    const firstInSession = new Map<string, string>();
+    for (const { num, key, session } of numbered) {
       if (key === undefined) continue;
       if (!firstKey.has(num)) firstKey.set(num, key);
-      const id = sessionId(row, num);
-      if (!sessionKey.has(id)) sessionKey.set(id, key);
+      if (!firstInSession.has(session)) firstInSession.set(session, key);
     }
     const lastKey = new Map<number, string>();
-    const groups = new Map<string, { num: number; key: string; rows: T[] }>();
-    for (const { row, num, key } of numbered) {
-      if (key !== undefined) lastKey.set(num, key);
-      const programKey = key ?? sessionKey.get(sessionId(row, num)) ?? lastKey.get(num) ?? firstKey.get(num) ?? '';
-      const id = `${programKey}\u0000${num}`;
+    const lastInSession = new Map<string, string>();
+    const groups = new Map<string, { num: number; key: string; rows: Dated<T>[] }>();
+    for (const { row, num, key, session } of numbered) {
+      if (key !== undefined) {
+        lastKey.set(num, key);
+        lastInSession.set(session, key);
+      }
+      const programKey =
+        key ??
+        lastInSession.get(session) ??
+        firstInSession.get(session) ??
+        lastKey.get(num) ??
+        firstKey.get(num) ??
+        '';
+      const id = `${num}|${programKey}`;
       const group = groups.get(id) ?? { num, key: programKey, rows: [] };
       group.rows.push(row);
       groups.set(id, group);
@@ -825,7 +860,7 @@ class Segmenter<T extends LiftHistoryRow> {
         endDate: last.date,
         sessions: draft.sessions.map((s, n) => ({ date: s.date, rows: s.rows, workoutNum: nums?.[n] ?? n + 1 })),
         completedWorkouts: completed,
-        expectedWorkouts: matchedProgram && !this.isCustom(matchedProgram) ? matchedProgram.workoutCount : null,
+        expectedWorkouts: matchedProgram && !isOpenEnded(matchedProgram) ? matchedProgram.workoutCount : null,
         status,
         reasons: { start: draft.start, program: reason, status: statusReason },
       };
@@ -846,8 +881,8 @@ class Segmenter<T extends LiftHistoryRow> {
     firstDate: Date,
     next: { program: string | undefined } | undefined,
   ): { status: StretchStatus; statusReason: StretchStatusReason } {
-    const custom = this.isCustom(program);
-    if (!custom && completed >= program.workoutCount) {
+    const openEnded = isOpenEnded(program);
+    if (!openEnded && completed >= program.workoutCount) {
       return { status: 'completed', statusReason: { kind: 'all-workouts-done' } };
     }
     if (next) {
@@ -864,7 +899,7 @@ class Segmenter<T extends LiftHistoryRow> {
     if (daysBeforeImport > BREAK_DAYS) {
       return { status: 'abandoned', statusReason: { kind: 'last-session-stale', daysBeforeImport } };
     }
-    if (custom) return { status: 'in-progress', statusReason: { kind: 'open-ended' } };
+    if (openEnded) return { status: 'in-progress', statusReason: { kind: 'open-ended' } };
     const daysSinceStart = daysBetween(firstDate, importDate);
     const weeksSinceStart = Math.floor(daysSinceStart / 7);
     return daysSinceStart >= program.lengthWeeks * 7
@@ -926,30 +961,52 @@ function indexesByGroup(groups: readonly string[]): Map<string, number[]> {
 }
 
 /**
+ * Two programs' stretches that overlap by this many days or fewer are a hand-off, not two
+ * programs running alongside: a lifter switching mid-week often logs the old program's last
+ * session on or after the new one's first (owner decision on #1202).
+ */
+const HAND_OFF_DAYS = 7;
+
+/**
  * For each stretch (in start order), the index of the stretch that follows it, or
- * `undefined`: the earliest to start after it ends in its own group or in any group none of
- * whose stretches overlaps it. In file mode a program's numbers can run alongside another
- * program's (decision 8), and that program's later numbers don't follow this one.
+ * `undefined`: the earliest to start after it that also ends after it, in its own group or
+ * in a group not running alongside it. In file mode a program's numbers can run alongside
+ * another program's (decision 8), and that program's later numbers don't follow this one. A
+ * group runs alongside a stretch when one of its stretches starts inside it more than
+ * {@link HAND_OFF_DAYS} before it ends, or it starts inside one of the group's that much
+ * before that one ends. A shorter overlap is a hand-off, so the program taken over from is
+ * followed by the one that took over.
  */
 function followers(spans: readonly { start: number; end: number }[], groups: readonly string[]): (number | undefined)[] {
-  const byGroup = [...indexesByGroup(groups)].map(([group, indexes]) => {
-    const starts = indexes.map((i) => spans[i]?.start ?? 0);
-    // The latest end among the group's first k stretches, so an overlap check is one search.
+  const byGroup = new Map<string, { starts: number[]; reachBy: number[] }>();
+  for (const [group, indexes] of indexesByGroup(groups)) {
+    // The latest end among the group's first k stretches, so each overlap check is one search.
     let reach = -Infinity;
-    const reachBy = indexes.map((i) => (reach = Math.max(reach, spans[i]?.end ?? -Infinity)));
-    return { group, indexes, starts, reachBy };
-  });
+    byGroup.set(group, {
+      starts: indexes.map((i) => spans[i]?.start ?? 0),
+      reachBy: indexes.map((i) => (reach = Math.max(reach, spans[i]?.end ?? -Infinity))),
+    });
+  }
+  const handOff = HAND_OFF_DAYS * DAY_MS;
+  const alongside = (group: string, start: number, end: number): boolean => {
+    const g = byGroup.get(group);
+    if (!g) return false;
+    if ((g.starts[firstAfter(g.starts, start - 1)] ?? Infinity) < end - handOff) return true;
+    const startedBefore = firstAfter(g.starts, start) - 1;
+    return startedBefore >= 0 && (g.reachBy[startedBefore] ?? -Infinity) > start + handOff;
+  };
   return spans.map(({ start, end }, i) => {
-    let best: number | undefined;
-    for (const g of byGroup) {
-      const after = firstAfter(g.starts, end);
-      if (g.group !== groups[i] && after > 0 && (g.reachBy[after - 1] ?? -Infinity) >= start) continue;
-      const candidate = g.indexes[after];
-      if (candidate !== undefined && (best === undefined || (spans[candidate]?.start ?? 0) < (spans[best]?.start ?? 0))) {
-        best = candidate;
-      }
+    const checked = new Map<string, boolean>();
+    // Stepping forward in start order keeps this linear however many groups a file has.
+    for (let j = i + 1; j < spans.length; j++) {
+      const group = groups[j];
+      if (group === undefined || (spans[j]?.end ?? -Infinity) <= end) continue;
+      if (group === groups[i]) return j;
+      let along = checked.get(group);
+      if (along === undefined) checked.set(group, (along = alongside(group, start, end)));
+      if (!along) return j;
     }
-    return best;
+    return undefined;
   });
 }
 
@@ -982,8 +1039,8 @@ export function segmentLiftHistory<T extends LiftHistoryRow>(
   rows: readonly T[],
   options: SegmentLiftHistoryOptions,
 ): SegmentedLiftHistory<T> {
-  const unplaced = rows.filter((row) => !isValidDate(row.date));
-  const dated = rows.filter((row) => isValidDate(row.date));
+  const unplaced = rows.filter((row) => !isDated(row));
+  const dated = rows.filter(isDated);
   const segmenter = new Segmenter<T>(options);
 
   if (dated.some((row) => isFiniteNumber(row.macrocycleNum))) {
