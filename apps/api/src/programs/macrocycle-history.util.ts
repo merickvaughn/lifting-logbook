@@ -19,7 +19,9 @@ export const STALE_AFTER_DAYS = 14;
 /**
  * The highest macrocycle number a file may carry: the bound `POST lift-records` already
  * applies. Numbers are allocated past the highest stored one, so an unbounded file number
- * would push every later macrocycle past it, or overflow the column.
+ * would push every later macrocycle past it, or overflow the column. The lowest is 0, not
+ * the 1 a live macrocycle starts at: spreadsheet exports number a first cycle 0
+ * (`packages/core/tests/fixtures/lift_records.csv`).
  */
 export const MAX_FILE_MACROCYCLE_NUM = 1000;
 
@@ -117,7 +119,7 @@ export async function assertMacrocycleWritable(
 
 /**
  * Guards an import path that takes macrocycle numbers from a file (`POST lift-records/import`
- * and flag-off commits). Rows can't join an `imported` macrocycle, a number must be from 1 to
+ * and flag-off commits). Rows can't join an `imported` macrocycle, a number must be from 0 to
  * {@link MAX_FILE_MACROCYCLE_NUM}, and a number with no row gets a `legacy` one dated by the
  * file's rows, so every stored number has a row (decision 2). Returns the numbers given a
  * `legacy` row, so undoing the import can remove them. Counting duplicates and renumbering by
@@ -129,10 +131,10 @@ export async function ensureFileNumberRows(
   rows: readonly { macrocycleNum: number; date: Date }[],
 ): Promise<number[]> {
   const ranges = dateRangesByMacrocycle(rows);
-  const outOfRange = [...ranges.keys()].filter((n) => !Number.isInteger(n) || n < 1 || n > MAX_FILE_MACROCYCLE_NUM);
+  const outOfRange = [...ranges.keys()].filter((n) => !Number.isInteger(n) || n < 0 || n > MAX_FILE_MACROCYCLE_NUM);
   if (outOfRange.length > 0) {
     throw new BadRequestException(
-      `Macrocycle numbers must be from 1 to ${MAX_FILE_MACROCYCLE_NUM}; the file has ${outOfRange.join(', ')}.`,
+      `Macrocycle numbers must be from 0 to ${MAX_FILE_MACROCYCLE_NUM}; the file has ${outOfRange.join(', ')}.`,
     );
   }
   const [stored, dashboard] = await Promise.all([repos.macrocycle.list(program), dashboardOrNull(repos, program)]);

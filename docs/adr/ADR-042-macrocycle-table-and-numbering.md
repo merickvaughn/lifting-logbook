@@ -54,7 +54,7 @@ The owner's reason for the split: migrations run while the previous API revision
      - Reschedule.
      - Skip `POST` and `DELETE`.
    - The current macrocycle gets its row on first write if it has none, for macrocycles the previous API revision started. That insert uses `ON CONFLICT DO NOTHING` [3], so two requests creating the row at once both succeed.
-   - A file number with no row gets a `legacy` row dated by the file's sets. A file number must be from 1 to 1000, the bound `POST lift-records` applies, so a typo can't push every later number past it. Undoing the import removes a `legacy` row it created once the row has no sets left.
+   - A file number with no row gets a `legacy` row dated by the file's sets. A file number must be from 0 to 1000, so a typo can't push every later number past it. The upper bound is the one `POST lift-records` applies; the lower is 0 because spreadsheet exports number a first cycle 0. Undoing the import removes a `legacy` row it created once the row has no sets left.
    - With no dashboard, workout and focus routes address the highest number + 1, so an imported number 1 is never read or written as live.
    - Deleting the current macrocycle keeps `imported` rows and their sets.
 

@@ -336,13 +336,21 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       expect(edit.json()).toMatchObject({ weight: 205 });
     });
 
-    it.each([0, 1001])('rejects a file macrocycle number of %i with 400, writing nothing', async (num) => {
+    it.each([-1, 1001])('rejects a file macrocycle number of %i with 400, writing nothing', async (num) => {
       const user = as(`history-file-range-${num}`);
       const upload = await csvUpload(`history-file-range-${num}`, [HEADER, `${PROGRAM},${num},1,2025-03-03,Squat,1,200,5,`].join('\n'));
 
       expect(upload.statusCode).toBe(400);
       expect(await user.list()).toEqual([]);
       expect(await (await user.repos()).liftRecord.getMacrocycleDateRanges(PROGRAM)).toEqual(new Map());
+    });
+
+    it('accepts a file macrocycle number of 0, which spreadsheet exports use for a first cycle', async () => {
+      const user = as('history-file-zero');
+      const upload = await csvUpload('history-file-zero', [HEADER, `${PROGRAM},0,1,2025-03-03,Squat,1,200,5,`].join('\n'));
+
+      expect(upload.statusCode).toBe(201);
+      expect(await user.list()).toEqual([expect.objectContaining({ macrocycleNum: 0, origin: 'legacy' })]);
     });
   });
 
