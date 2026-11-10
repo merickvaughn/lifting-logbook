@@ -58,12 +58,12 @@ function withSets(rows: readonly Row[], order: 'ascending' | 'descending'): Row[
 }
 
 const lastDay = (rows: readonly Row[]): number =>
-  Math.max(
-    ...rows.flatMap((r) =>
+  rows.reduce(
+    (last, r) =>
       r.date && !Number.isNaN(r.date.getTime())
-        ? [Math.round((r.date.getTime() - day(0).getTime()) / 86_400_000)]
-        : [],
-    ),
+        ? Math.max(last, Math.round((r.date.getTime() - day(0).getTime()) / 86_400_000))
+        : last,
+    -Infinity,
   );
 
 function segment(rows: Row[], options: Partial<SegmentLiftHistoryOptions> = {}) {
@@ -105,6 +105,22 @@ describe('segmentLiftHistory', () => {
       expect(result.stretches[0]?.reasons.status).toEqual({ kind: 'next-is-different-program' });
     });
 
+    it('is judged against the program the next stretch is a candidate for when that one is unmatched', () => {
+      const first = run(FIVE_THREE_ONE_DAYS, 0, 6);
+      const restart = run([['Squat', 'Bench Press', 'Face Pull'], ['Deadlift', 'Overhead Press']], lastDay(first) + 20, 6);
+      const result = segment([...first, ...restart]);
+      expect(result.stretches[1]).toMatchObject({ matched: false, candidateProgram: '5-3-1' });
+      expect(result.stretches[0]?.reasons.status).toEqual({ kind: 'next-is-restart' });
+    });
+
+    it('says when the next stretch has no program to compare', () => {
+      const first = run(FIVE_THREE_ONE_DAYS, 0, 6);
+      const rows = [...first, ...run([['Kettlebell Swing']], lastDay(first) + 20, 6)];
+      const result = segment(rows, { sourceProgram: '5-3-1' });
+      expect(result.stretches[0]?.status).toBe('abandoned');
+      expect(result.stretches[0]?.reasons.status).toEqual({ kind: 'next-is-unmatched' });
+    });
+
     it('is in progress as the last stretch inside its expected length', () => {
       const result = segment(run(RPT_DAYS, 0, 6));
       expect(result.stretches[0]?.status).toBe('in-progress');
@@ -130,6 +146,27 @@ describe('segmentLiftHistory', () => {
       expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'workout-number-fell-back', from: 6, to: 1 });
       expect(result.stretches[0]?.status).toBe('abandoned');
       expect(result.stretches[0]?.reasons.status).toEqual({ kind: 'next-is-restart' });
+    });
+
+    it('still sees the fallback with a blank Workout # cell, which takes the number of the session above', () => {
+      const numbered = (start: number) =>
+        run(RPT_DAYS, start, 10, { extra: (i) => ({ workoutNum: i + 1 }) });
+      const first = numbered(0);
+      const rows = [...first, ...numbered(lastDay(first) + 2)].map((row, i) =>
+        i === 4 ? { ...row, workoutNum: null } : row,
+      );
+      const result = segment(rows);
+      expect(result.stretches).toHaveLength(2);
+      expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'workout-number-fell-back', from: 10, to: 1 });
+      expect(result.stretches[0]?.completedWorkouts).toBe(10);
+    });
+
+    it('numbers blank sessions from the one above, and counts up to the first number', () => {
+      // Sessions numbered blank, blank, 3, blank, 5.
+      const rows = run(RPT_DAYS, 0, 5, { extra: (i) => ({ workoutNum: i === 2 ? 3 : i === 4 ? 5 : null }) });
+      const result = segment(rows);
+      expect(result.stretches[0]?.sessions.map((s) => s.workoutNum)).toEqual([1, 2, 3, 3, 5]);
+      expect(result.stretches[0]?.completedWorkouts).toBe(4);
     });
 
     it('continues the same stretch across a 10-day gap with no fallback', () => {
@@ -238,6 +275,53 @@ describe('segmentLiftHistory', () => {
       expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'program-column-changed', from: null, to: '5-3-1' });
     });
 
+    it('splits off a first session whose lifts no one program contains', () => {
+      // Barbell Row is RPT-only and Incline DB Press Leangains-only: a transition day.
+      const rpt = run(RPT_DAYS, 2, 24);
+      const rows = [
+        ...session(0, ['Barbell Row', 'Incline DB Press']),
+        ...rpt,
+        ...run(FIVE_THREE_ONE_DAYS, lastDay(rpt) + 2, 24),
+      ];
+      const result = segment(rows);
+      expect(result.stretches.map((s) => [s.program, s.matched, s.sessions.length])).toEqual([
+        ['rpt', false, 1],
+        ['rpt', true, 24],
+        ['5-3-1', true, 24],
+      ]);
+      expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'previous-fits-no-program' });
+      expect(result.stretches[2]?.reasons.start).toEqual({ kind: 'previous-run-finished' });
+    });
+
+    it('compares Program cells in any script, and reads a cell of only punctuation as blank', () => {
+      // Both runs are RPT's lifts, so only the labels tell them apart.
+      const first = run(RPT_DAYS, 0, 6, { extra: () => ({ program: 'Сила' }) });
+      const labelled = [...first, ...run(RPT_DAYS, lastDay(first) + 2, 6, { extra: () => ({ program: 'Масса' }) })];
+      expect(segment(labelled).stretches[1]?.reasons.start).toEqual({
+        kind: 'program-column-changed',
+        from: 'Сила',
+        to: 'Масса',
+      });
+      const leangains = run(LEANGAINS_DAYS, 0, 6);
+      const dashed = [...leangains, ...run(RPT_DAYS, lastDay(leangains) + 2, 6)].map((row) => ({ ...row, program: '-' }));
+      const result = segment(dashed);
+      expect(result.stretches.map((s) => s.program)).toEqual(['leangains', 'rpt']);
+      expect(result.stretches[1]?.reasons.start.kind).toBe('lift-outside-program');
+    });
+
+    it('keeps a stretch labelled with an unknown program whole and unmatched, offering its lifts as the candidate', () => {
+      const result = segment(run(FIVE_THREE_ONE_DAYS, 0, 30, { extra: () => ({ program: 'GZCLP' }) }));
+      expect(result.stretches).toHaveLength(1);
+      expect(result.stretches[0]).toMatchObject({
+        program: 'rpt',
+        matched: false,
+        status: null,
+        candidateProgram: '5-3-1',
+        liftsOutsideProgram: [],
+      });
+      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: 'GZCLP' });
+    });
+
     it('continues where a Program value first appears and names the program the lifts are in', () => {
       const first = run(RPT_DAYS, 0, 2);
       const rows = [...first, ...run(RPT_DAYS, lastDay(first) + 2, 2, { extra: () => ({ program: 'RPT' }) })];
@@ -251,12 +335,28 @@ describe('segmentLiftHistory', () => {
     it.each([
       [[100, 90, 80], 'descending'],
       [[80, 90, 100], 'ascending'],
-      [[90, 100, 100], 'ascending'],
       [[50, 50, 50], 'straight'],
+      // Warm-ups, then straight sets at the top weight.
+      [[90, 100, 100], 'straight'],
+      [[95, 135, 185, 225, 225, 225], 'straight'],
+      // Warm-ups, then a reverse pyramid: every set after the top is lighter than the last.
       [[60, 100, 90, 80], 'descending'],
+      // 5/3/1's climb, then back-off sets that level off (Boring But Big, First Set Last).
+      [[135, 155, 175, 135, 135, 135], 'ascending'],
       [[100], null],
     ])('reads %j as %s', (weights, order) => {
       expect(classifySetOrder(weights)).toBe(order);
+    });
+
+    it('reads a session too large to spread into one call', () => {
+      expect(classifySetOrder(Array.from({ length: 200_000 }, (_, i) => 200_000 - i))).toBe('descending');
+    });
+
+    it('matches 5/3/1 with back-off sets, not RPT', () => {
+      const rows = run(FIVE_THREE_ONE_DAYS, 0, 8).flatMap((row) =>
+        [135, 155, 175, 135, 135, 135].map((weight, i) => ({ ...row, id: `${row.id}:${i}`, setNum: i + 1, weight })),
+      );
+      expect(segment(rows).stretches[0]?.program).toBe('5-3-1');
     });
 
     it('starts a new stretch where a settled set order turns around (RPT to 5/3/1, no column)', () => {
@@ -460,6 +560,46 @@ describe('segmentLiftHistory', () => {
     expect(result.stretches).toHaveLength(1);
   });
 
+  describe('at the scale of a real file', () => {
+    // About 5,000 rows: 300 RPT sessions then 400 5/3/1 sessions, three weighed sets per lift.
+    const history = (fileNumbers: boolean) => {
+      const rpt = withSets(run(RPT_DAYS, 0, 300), 'descending');
+      const fiveThreeOne = withSets(run(FIVE_THREE_ONE_DAYS, lastDay(rpt) + 2, 400), 'ascending');
+      const rows = [...rpt, ...fiveThreeOne];
+      if (!fileNumbers) return rows;
+      const sessionOf = (row: Row) => Math.round(((row.date?.getTime() ?? 0) - day(0).getTime()) / 172_800_000);
+      return rows.map((row) => ({
+        ...row,
+        macrocycleNum: Math.floor(sessionOf(row) / 24) + 1,
+        workoutNum: (sessionOf(row) % 24) + 1,
+      }));
+    };
+
+    it.each([
+      ['by dates', false],
+      ['by file numbers', true],
+    ])('segments %s in well under 3 seconds', (_, fileNumbers) => {
+      const rows = history(fileNumbers);
+      expect(rows.length).toBeGreaterThan(4_500);
+      const started = Date.now();
+      const result = segment(rows);
+      expect(Date.now() - started).toBeLessThan(3_000);
+      expect(new Set(result.stretches.map((s) => s.program))).toEqual(new Set(['rpt', '5-3-1']));
+    });
+
+    it('survives every row on one day', () => {
+      const rows = Array.from({ length: 150_000 }, (_, i): Row => ({
+        id: `${i}`,
+        date: day(0),
+        lift: 'Squat',
+        setNum: i + 1,
+        weight: 100,
+        workoutNum: 1,
+      }));
+      expect(segment(rows).stretches).toHaveLength(1);
+    });
+  });
+
   describe("a file's macrocycle numbers (decision 8)", () => {
     it('keeps its groupings and flags a break inside one number, without lone flags', () => {
       const first = run(RPT_DAYS, 0, 3, { extra: () => ({ macrocycleNum: 1 }) });
@@ -520,6 +660,20 @@ describe('segmentLiftHistory', () => {
       const result = segment(rows);
       expect(result.stretches.map((s) => s.fileMacrocycleNum)).toEqual([1, 2]);
       expect(result.conflicts).toEqual([{ kind: 'numbers-overlap', stretches: [0, 1] }]);
+    });
+
+    it('does not flag two different programs whose numbers run at the same time, nor end one early', () => {
+      const rows = [
+        ...run(FIVE_THREE_ONE_DAYS, 0, 6, { spacing: 4, extra: () => ({ program: '5/3/1', macrocycleNum: 1 }) }),
+        ...run(RPT_DAYS, 1, 6, { spacing: 4, extra: () => ({ program: 'RPT', macrocycleNum: 1 }) }),
+        ...run([['Kettlebell Swing']], 2, 6, { spacing: 4, extra: () => ({ program: 'Kettlebells', macrocycleNum: 1 }) }),
+        ...run([['Rowing Machine']], 3, 6, { spacing: 4, extra: () => ({ program: 'Conditioning', macrocycleNum: 1 }) }),
+      ];
+      const result = segment(rows);
+      expect(result.stretches).toHaveLength(4);
+      expect(result.conflicts).toEqual([]);
+      // Nothing starts after the 5/3/1 number ends, so it is judged against the import date.
+      expect(result.stretches[0]?.status).toBe('in-progress');
     });
 
     it('does not flag numbers that follow one another', () => {

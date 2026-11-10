@@ -7,7 +7,21 @@ export * from './googleSheetUrl';
 export * from './importThresholds';
 export * from './liftRecordNaturalKey';
 export * from './normalize-amrap';
-export * from './segmentLiftHistory';
+export { BREAK_DAYS, segmentLiftHistory } from './segmentLiftHistory';
+export type {
+  FileNumberConflict,
+  HistorySession,
+  HistoryStretch,
+  LiftHistoryRow,
+  LoneSession,
+  SegmentedLiftHistory,
+  SegmentLiftHistoryOptions,
+  SetOrderChange,
+  StretchProgramReason,
+  StretchStartReason,
+  StretchStatus,
+  StretchStatusReason,
+} from './segmentLiftHistory';
 export * from './splitLiftRecords';
 export * from './validateLiftImport';
 export * from './validateLiftImportSoft';

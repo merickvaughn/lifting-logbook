@@ -2,7 +2,7 @@ import { BUILT_IN_KNOWN_PROGRAMS } from '../../presets';
 import {
   KnownProgram,
   liftKey,
-  matchProgramForLifts,
+  matchProgramForKeys,
   programNameKey,
   programNamedBy,
   programsContaining,
@@ -83,6 +83,8 @@ export type StretchStartReason =
   | { kind: 'program-column-changed'; from: string | null; to: string }
   | { kind: 'lift-outside-program'; lifts: string[] }
   | { kind: 'set-order-changed'; lifts: SetOrderChange[] }
+  /** The stretch before had lifts no one program contains (a transition day), and this session fits one. */
+  | { kind: 'previous-fits-no-program' }
   | { kind: 'workout-number-fell-back'; from: number; to: number }
   | { kind: 'file-macrocycle'; macrocycleNum: number };
 
@@ -98,6 +100,8 @@ export type StretchStatusReason =
   | { kind: 'all-workouts-done' }
   | { kind: 'next-is-restart' }
   | { kind: 'next-is-different-program' }
+  /** A stretch starts after this one, but its program is unknown until the lifter confirms it. */
+  | { kind: 'next-is-unmatched' }
   | { kind: 'last-session-stale'; daysBeforeImport: number }
   | { kind: 'past-expected-length'; weeksSinceStart: number }
   | { kind: 'inside-expected-length'; weeksSinceStart: number }
@@ -105,8 +109,9 @@ export type StretchStatusReason =
 
 export interface HistoryStretch<T> {
   /**
-   * The suggested program: the one the file's `Program` column names, else the one its
-   * lifts match, else the Source program.
+   * The suggested program: the known one the file's `Program` column names, else the one its
+   * lifts match, else the Source program. A stretch whose column names no known program
+   * ("GZCLP") is stored under the Source program, unmatched, for the lifter to map.
    */
   program: string;
   /**
@@ -118,13 +123,15 @@ export interface HistoryStretch<T> {
   matched: boolean;
   /**
    * The lifts that keep the stretch from matching, as first spelled in the file: those
-   * outside `candidateProgram` when there is one, else outside `program`. Empty when matched.
+   * outside `candidateProgram` when there is one, else outside `program`. Empty when matched,
+   * and empty for a stretch unmatched only because its column names no known program.
    */
   liftsOutsideProgram: string[];
   /**
-   * For an unmatched stretch whose only lifts outside a known program are in no known
-   * program at all (an accessory), that program: the one the stretch is if the lifter
-   * confirms those lifts progress the same way.
+   * For an unmatched stretch, the known program it is if the lifter confirms it: the one its
+   * lifts match when its column names no known program or a lift in no known program (an
+   * accessory) is all that's outside, or the column's program when only accessories are
+   * outside that.
    */
   candidateProgram?: string;
   /** The file's macrocycle number, when the file has them (decision 8). */
@@ -173,17 +180,43 @@ export interface SegmentedLiftHistory<T> {
   conflicts: FileNumberConflict[];
 }
 
+function maxOf(values: readonly number[]): number {
+  let max = -Infinity;
+  for (const v of values) if (v > max) max = v;
+  return max;
+}
+
+function minOf(values: readonly number[]): number {
+  let min = Infinity;
+  for (const v of values) if (v < min) min = v;
+  return min;
+}
+
 /**
- * The order a lift's working sets ran in, by where the heaviest is: first is `descending`,
- * last is `ascending`, all equal is `straight`, and in the middle (warm-ups, then a reverse
- * pyramid) is `descending` from there on. Fewer than 2 weights give no order.
+ * The order a lift's sets ran in, by where the heaviest is. The file has no warm-up flag, so
+ * sets climbing to the top may be warm-ups:
+ * - all equal, or 2 or more closing sets at the top weight (warm-ups, then straight sets): `straight`;
+ * - the first set: `descending`;
+ * - only the last set: `ascending`;
+ * - in the middle: `descending` when every set after the top is lighter than the one before
+ *   (warm-ups, then a reverse pyramid), and `ascending` when they level off (5/3/1's climb,
+ *   then back-off sets such as Boring But Big or First Set Last).
+ *
+ * Fewer than 2 weights give no order.
  */
 export function classifySetOrder(weights: readonly number[]): SetOrder | null {
   if (weights.length < 2) return null;
-  const heaviest = Math.max(...weights);
-  if (weights.every((w) => w === heaviest)) return 'straight';
-  if (weights[0] === heaviest) return 'descending';
-  return weights[weights.length - 1] === heaviest ? 'ascending' : 'descending';
+  const top = maxOf(weights);
+  if (weights.every((w) => w === top)) return 'straight';
+  if (weights[0] === top) return 'descending';
+  let closingAtTop = 0;
+  for (let i = weights.length - 1; i >= 0 && weights[i] === top; i--) closingAtTop++;
+  if (closingAtTop >= 2) return 'straight';
+  if (closingAtTop === 1) return 'ascending';
+  for (let i = weights.lastIndexOf(top) + 1; i < weights.length; i++) {
+    if ((weights[i] ?? 0) >= (weights[i - 1] ?? 0)) return 'ascending';
+  }
+  return 'descending';
 }
 
 interface Session<T> {
@@ -191,8 +224,9 @@ interface Session<T> {
   rows: T[];
   /** liftKey → the lift as first spelled. */
   lifts: Map<string, string>;
-  /** The first non-blank `Program` cell, trimmed. */
+  /** The first `Program` cell with a letter or digit, trimmed. */
   programValue?: string;
+  /** The file's `Workout #` cells; a session with none takes the session above's (see `fillWorkoutNums`). */
   workoutNums: number[];
   /** liftKey → the order its sets ran in, for lifts with 2 or more weighed sets. */
   orders: Map<string, SetOrder>;
@@ -215,7 +249,9 @@ function sessionOrders(rows: readonly LiftHistoryRow[]): Map<string, SetOrder> {
   for (const row of rows) {
     if ((row.occurrence ?? 0) !== 0 || !isFiniteNumber(row.weight)) continue;
     const key = liftKey(row.lift);
-    sets.set(key, [...(sets.get(key) ?? []), row]);
+    let liftRows = sets.get(key);
+    if (!liftRows) sets.set(key, (liftRows = []));
+    liftRows.push(row);
   }
   const orders = new Map<string, SetOrder>();
   for (const [key, liftRows] of sets) {
@@ -240,13 +276,42 @@ function toSessions<T extends LiftHistoryRow>(rows: readonly T[]): Session<T>[] 
     session.rows.push(row);
     const key = liftKey(row.lift);
     if (!session.lifts.has(key)) session.lifts.set(key, row.lift.trim());
-    const program = row.program?.trim();
-    if (program && session.programValue === undefined) session.programValue = program;
+    if (session.programValue === undefined) {
+      const program = programCell(row.program);
+      if (program !== undefined) session.programValue = program;
+    }
     if (isFiniteNumber(row.workoutNum)) session.workoutNums.push(row.workoutNum);
   }
   const sessions = [...byDay.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
   for (const session of sessions) session.orders = sessionOrders(session.rows);
   return sessions;
+}
+
+/** A `Program` cell trimmed, or `undefined` when it has no letter or digit ("", "-", "—"), which counts as blank. */
+function programCell(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && programNameKey(trimmed) ? trimmed : undefined;
+}
+
+/**
+ * Decision 6 for a file that numbers workouts: a session with no `Workout #` takes the
+ * number of the session above it, and sessions before the first number count up to it
+ * (two blank sessions before workout 3 are 1 and 2), never below 1.
+ */
+function fillWorkoutNums<T>(sessions: readonly Session<T>[]): void {
+  const firstIndex = sessions.findIndex((s) => s.workoutNums.length > 0);
+  const first = sessions[firstIndex];
+  if (!first) return;
+  const firstNum = minOf(first.workoutNums);
+  sessions.forEach((session, i) => {
+    if (session.workoutNums.length > 0) return;
+    if (i < firstIndex) {
+      session.workoutNums = [Math.max(1, firstNum - (firstIndex - i))];
+      return;
+    }
+    const above = sessions[i - 1];
+    session.workoutNums = above ? [maxOf(above.workoutNums)] : [];
+  });
 }
 
 /**
@@ -289,8 +354,10 @@ interface Draft<T> {
   sessions: Session<T>[];
   start: StretchStartReason;
   fileMacrocycleNum?: number;
+  /** In file mode, the program key the file's group was keyed on, so overlaps compare like with like. */
+  groupKey?: string;
   /** The first `Program` value, its comparison key, and the known program it names. */
-  column?: { value: string; key: string; program?: KnownProgram };
+  column?: ProgramCell;
   /** liftKey → the lift as first spelled. */
   allLifts: Map<string, string>;
   /** The lifts some known program contains. */
@@ -300,43 +367,62 @@ interface Draft<T> {
   agreement: Map<string, number>;
   /** liftKey → how often each set order was seen. */
   orders: Map<string, Map<SetOrder, number>>;
-  /** Decision 9's match for the known lifts, set order first. */
+  /** Decision 9's match for the known lifts, set order first; `null` when no program contains them. */
   match: ProgramMatch | null;
-  /** The program the draft is following: its column's, else `match`'s. */
+  /**
+   * The program the draft is following: the known one its column names, else `match`'s. A
+   * column naming no known program means none, so no length or lift rule applies.
+   */
   followed?: KnownProgram;
   /** Sessions in a row `followed` has been the same program. */
   followedFor: number;
 }
 
+interface ProgramCell {
+  value: string;
+  /** One key for every spelling: the known program's id, else `name:` and its letters and digits. */
+  key: string;
+  program?: KnownProgram;
+}
+
+/** Ties between custom programs go by name (owner decision 3), in one collation on every host. */
+const NAME_ORDER = new Intl.Collator('en');
+
 class Segmenter<T extends LiftHistoryRow> {
   private readonly programs: readonly KnownProgram[];
   /** Every lift some known program contains. A lift outside them all never splits a run. */
   private readonly liftsInAnyProgram: ReadonlySet<string>;
-  private readonly fileNumbersWorkouts: boolean;
+  private readonly cells = new Map<string, ProgramCell>();
 
   constructor(
-    private readonly sessions: readonly Session<T>[],
     private readonly options: SegmentLiftHistoryOptions,
+    /** Whether any row has a `Workout #`; completed workouts then count distinct numbers. */
+    private readonly fileNumbersWorkouts: boolean,
   ) {
-    const custom = [...(options.customPrograms ?? [])].sort((a, b) =>
-      (a.name ?? a.id).localeCompare(b.name ?? b.id),
+    const custom = [...(options.customPrograms ?? [])].sort(
+      (a, b) => NAME_ORDER.compare(a.name ?? a.id, b.name ?? b.id) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
     this.programs = [...BUILT_IN_KNOWN_PROGRAMS, ...custom];
     this.liftsInAnyProgram = new Set(this.programs.flatMap((p) => [...p.lifts]));
-    this.fileNumbersWorkouts =
-      sessions.length > 0 && sessions.every((s) => s.workoutNums.length === s.rows.length);
   }
 
-  /** One key for every spelling of a `Program` cell: the known program it names, else its letters and digits. */
-  columnKey(value: string): string {
-    return programNamedBy(value, this.programs)?.id ?? `name:${programNameKey(value)}`;
+  /** A non-blank `Program` value's key and known program, worked out once per distinct value. */
+  cell(value: string): ProgramCell {
+    let cell = this.cells.get(value);
+    if (!cell) {
+      const program = programNamedBy(value, this.programs);
+      cell = { value, key: program?.id ?? `name:${programNameKey(value)}`, ...(program ? { program } : {}) };
+      this.cells.set(value, cell);
+    }
+    return cell;
   }
 
-  private newDraft(start: StretchStartReason, fileMacrocycleNum?: number): Draft<T> {
+  private newDraft(start: StretchStartReason, fileMacrocycleNum?: number, groupKey?: string): Draft<T> {
     return {
       sessions: [],
       start,
       ...(fileMacrocycleNum !== undefined ? { fileMacrocycleNum } : {}),
+      ...(groupKey !== undefined ? { groupKey } : {}),
       allLifts: new Map(),
       knownLifts: new Set(),
       workoutNums: new Set(),
@@ -361,14 +447,7 @@ class Segmenter<T extends LiftHistoryRow> {
 
   private add(draft: Draft<T>, session: Session<T>): void {
     draft.sessions.push(session);
-    if (!draft.column && session.programValue !== undefined) {
-      const program = programNamedBy(session.programValue, this.programs);
-      draft.column = {
-        value: session.programValue,
-        key: this.columnKey(session.programValue),
-        ...(program ? { program } : {}),
-      };
-    }
+    if (!draft.column && session.programValue !== undefined) draft.column = this.cell(session.programValue);
     for (const [key, name] of session.lifts) {
       if (!draft.allLifts.has(key)) draft.allLifts.set(key, name);
       if (this.liftsInAnyProgram.has(key)) draft.knownLifts.add(key);
@@ -384,22 +463,11 @@ class Segmenter<T extends LiftHistoryRow> {
         draft.agreement.set(program.id, (draft.agreement.get(program.id) ?? 0) + 1);
       }
     }
-    draft.match = matchProgramForLifts(
-      draft.knownLifts,
-      this.programs,
-      this.options.sourceProgram,
-      draft.agreement,
-    );
-    const followed = draft.column?.program ?? draft.match?.program;
+    draft.match = matchProgramForKeys(draft.knownLifts, this.programs, this.options.sourceProgram, draft.agreement);
+    const followed = draft.column ? draft.column.program : draft.match?.program;
     draft.followedFor = !followed ? 0 : followed === draft.followed ? draft.followedFor + 1 : 1;
     if (followed) draft.followed = followed;
     else delete draft.followed;
-  }
-
-  private draftOf(sessions: readonly Session<T>[], start: StretchStartReason, fileMacrocycleNum?: number): Draft<T> {
-    const draft = this.newDraft(start, fileMacrocycleNum);
-    for (const session of sessions) this.add(draft, session);
-    return draft;
   }
 
   private completedWorkouts(draft: Draft<T>): number {
@@ -409,36 +477,41 @@ class Segmenter<T extends LiftHistoryRow> {
   /**
    * Whether the program the draft follows has held for a week of its sessions
    * (`workoutCount / lengthWeeks`, rounded up). Before then a run's first sessions may fit
-   * a smaller program than the one it is.
+   * a smaller program than the one it is. A followed program always has lifts, so both
+   * counts are at least 1.
    */
   private settled(draft: Draft<T>): boolean {
     const program = draft.followed;
-    if (!program || program.workoutCount === 0 || program.lengthWeeks === 0) return false;
-    return draft.followedFor >= Math.ceil(program.workoutCount / program.lengthWeeks);
+    return program !== undefined && draft.followedFor >= Math.ceil(program.workoutCount / program.lengthWeeks);
   }
 
-  /** Why `this.sessions[i]` can't continue `draft`, or `null` when it does (decisions 4, 6, 7 and 9). */
-  private boundary(draft: Draft<T>, i: number): StretchStartReason | null {
-    const next = this.sessions[i];
+  private knownLiftsOf(session: Session<T>): Set<string> {
+    return new Set([...session.lifts.keys()].filter((key) => this.liftsInAnyProgram.has(key)));
+  }
+
+  /** Why `sessions[i]` can't continue `draft`, or `null` when it does (decisions 4, 6, 7 and 9). */
+  private boundary(draft: Draft<T>, sessions: readonly Session<T>[], i: number): StretchStartReason | null {
+    const next = sessions[i];
     const last = draft.sessions[draft.sessions.length - 1];
     if (!next || !last) return null;
     const days = daysBetween(last.date, next.date);
     if (days > BREAK_DAYS) return { kind: 'gap', days };
 
     const program = draft.followed;
-    if (program && program.workoutCount > 0 && this.completedWorkouts(draft) >= program.workoutCount) {
+    if (program && this.completedWorkouts(draft) >= program.workoutCount) {
       return { kind: 'previous-run-finished' };
     }
 
     if (next.programValue !== undefined) {
+      const nextCell = this.cell(next.programValue);
       if (draft.column) {
-        if (draft.column.key !== this.columnKey(next.programValue)) {
+        if (draft.column.key !== nextCell.key) {
           return { kind: 'program-column-changed', from: draft.column.value, to: next.programValue };
         }
       } else {
         // A value appearing mid-stretch splits only when it names a program the stretch's
         // lifts can't belong to; otherwise the lifts decide, as with no column.
-        const named = programNamedBy(next.programValue, this.programs);
+        const named = nextCell.program;
         if (named && [...draft.knownLifts].some((key) => !named.lifts.has(key))) {
           return { kind: 'program-column-changed', from: null, to: next.programValue };
         }
@@ -448,15 +521,23 @@ class Segmenter<T extends LiftHistoryRow> {
     // A stretch with a `Program` value is the program it names: a blank cell after it
     // continues it, so lifts and set order can't split it.
     if (!draft.column) {
+      // A stretch whose lifts no one program contains (a transition day) can't follow any
+      // program, so the first session after it that fits one starts a new stretch.
+      if (draft.knownLifts.size > 0 && !draft.match) {
+        const nextKnown = this.knownLiftsOf(next);
+        if (nextKnown.size > 0 && programsContaining(nextKnown, this.programs).length > 0) {
+          return { kind: 'previous-fits-no-program' };
+        }
+      }
       const outside = this.liftsOutside(draft, next);
       if (outside) return outside;
-      const order = this.setOrderChange(draft, i);
+      const order = this.setOrderChange(draft, sessions, i);
       if (order) return order;
     }
 
-    if (this.fileNumbersWorkouts) {
-      const from = Math.max(...last.workoutNums);
-      const to = Math.min(...next.workoutNums);
+    if (this.fileNumbersWorkouts && last.workoutNums.length > 0 && next.workoutNums.length > 0) {
+      const from = maxOf(last.workoutNums);
+      const to = minOf(next.workoutNums);
       if (to < from) return { kind: 'workout-number-fell-back', from, to };
     }
     return null;
@@ -470,7 +551,7 @@ class Segmenter<T extends LiftHistoryRow> {
    * can't show here (decision 9).
    */
   private liftsOutside(draft: Draft<T>, next: Session<T>): StretchStartReason | null {
-    const nextKnown = [...next.lifts.keys()].filter((key) => this.liftsInAnyProgram.has(key));
+    const nextKnown = [...this.knownLiftsOf(next)];
     if (draft.knownLifts.size === 0 || nextKnown.length === 0) return null;
     let outside: string[];
     if (this.settled(draft) && draft.followed) {
@@ -506,15 +587,15 @@ class Segmenter<T extends LiftHistoryRow> {
    * the stretch's splits, if the next session that shows an order, before any break, does
    * too. One odd session doesn't split a run.
    */
-  private setOrderChange(draft: Draft<T>, i: number): StretchStartReason | null {
+  private setOrderChange(draft: Draft<T>, sessions: readonly Session<T>[], i: number): StretchStartReason | null {
     if (!this.settled(draft)) return null;
-    const next = this.sessions[i];
+    const next = sessions[i];
     if (!next) return null;
     const change = this.compareOrder(draft, next);
     if (!Array.isArray(change)) return null;
-    for (let j = i + 1; j < this.sessions.length; j++) {
-      const later = this.sessions[j];
-      const before = this.sessions[j - 1];
+    for (let j = i + 1; j < sessions.length; j++) {
+      const later = sessions[j];
+      const before = sessions[j - 1];
       if (!later || !before || daysBetween(before.date, later.date) > BREAK_DAYS) return null;
       const seen = this.compareOrder(draft, later);
       if (seen === 'no-signal') continue;
@@ -523,11 +604,12 @@ class Segmenter<T extends LiftHistoryRow> {
     return null;
   }
 
-  byDates(): Draft<T>[] {
+  byDates(sessions: readonly Session<T>[]): Draft<T>[] {
+    if (this.fileNumbersWorkouts) fillWorkoutNums(sessions);
     const drafts: Draft<T>[] = [];
-    this.sessions.forEach((session, i) => {
+    sessions.forEach((session, i) => {
       const current = drafts[drafts.length - 1];
-      const reason = current ? this.boundary(current, i) : { kind: 'first-session' as const };
+      const reason = current ? this.boundary(current, sessions, i) : { kind: 'first-session' as const };
       if (current && !reason) {
         this.add(current, session);
         return;
@@ -547,8 +629,8 @@ class Segmenter<T extends LiftHistoryRow> {
    */
   byFileNumbers(rows: readonly T[]): { drafts: Draft<T>[]; unnumbered: T[] } {
     const cellKey = (row: T) => {
-      const value = row.program?.trim();
-      return value ? this.columnKey(value) : undefined;
+      const value = programCell(row.program);
+      return value === undefined ? undefined : this.cell(value).key;
     };
     const numbered: { row: T; num: number; key: string | undefined }[] = [];
     const unnumbered: T[] = [];
@@ -573,18 +655,24 @@ class Segmenter<T extends LiftHistoryRow> {
     const firstKey = new Map<number, string>();
     for (const { num, key } of numbered) if (key !== undefined && !firstKey.has(num)) firstKey.set(num, key);
     const lastKey = new Map<number, string>();
-    const groups = new Map<string, { num: number; rows: T[] }>();
+    const groups = new Map<string, { num: number; key: string; rows: T[] }>();
     for (const { row, num, key } of numbered) {
       if (key !== undefined) lastKey.set(num, key);
       const programKey = key ?? lastKey.get(num) ?? firstKey.get(num) ?? '';
       const id = `${programKey}\u0000${num}`;
-      const group = groups.get(id) ?? { num, rows: [] };
+      const group = groups.get(id) ?? { num, key: programKey, rows: [] };
       group.rows.push(row);
       groups.set(id, group);
     }
 
     const drafts = [...groups.values()]
-      .map((group) => this.draftOf(toSessions(group.rows), { kind: 'file-macrocycle', macrocycleNum: group.num }, group.num))
+      .map((group) => {
+        const sessions = toSessions(group.rows);
+        if (this.fileNumbersWorkouts) fillWorkoutNums(sessions);
+        const draft = this.newDraft({ kind: 'file-macrocycle', macrocycleNum: group.num }, group.num, group.key);
+        for (const session of sessions) this.add(draft, session);
+        return draft;
+      })
       .sort((a, b) => (a.sessions[0]?.date.getTime() ?? 0) - (b.sessions[0]?.date.getTime() ?? 0));
     return { drafts, unnumbered };
   }
@@ -617,7 +705,7 @@ class Segmenter<T extends LiftHistoryRow> {
       };
     }
     const match = draft.match;
-    if (match && draft.knownLifts.size === draft.allLifts.size) {
+    if (!column && match && draft.knownLifts.size === draft.allLifts.size) {
       return {
         program: match.program,
         id: match.program.id,
@@ -626,32 +714,40 @@ class Segmenter<T extends LiftHistoryRow> {
       };
     }
     // Unmatched: stored under the Source program (decision 9). A lift in no known program
-    // doesn't split the run, but the lifter confirms it progresses like the rest before the
-    // stretch counts as the program its other lifts match.
+    // doesn't split the run, and a column naming no known program ("GZCLP") is the lifter's
+    // own label; either way the lifter confirms the program its lifts match.
     const source = this.programs.find((p) => p.id === this.options.sourceProgram);
     const reference = match?.program ?? source;
     return {
       program: undefined,
       id: this.options.sourceProgram,
-      reason: { kind: 'source' },
+      reason: column ? { kind: 'column', value: column.value } : { kind: 'source' },
       outside: reference ? outsideOf(reference) : [...draft.allLifts.values()],
       ...(match ? { candidate: match.program.id } : {}),
     };
   }
 
   build(drafts: readonly Draft<T>[]): HistoryStretch<T>[] {
-    const resolved = drafts.map((draft) => ({ draft, ...this.resolveProgram(draft) }));
-    return resolved.map(({ draft, program, id, reason, outside, candidate }, i) => {
-      const sessions = draft.sessions;
-      const first = sessions[0];
-      const last = sessions[sessions.length - 1];
+    const resolved = drafts.map((draft) => {
+      const r = this.resolveProgram(draft);
+      const matchedProgram = r.outside.length === 0 ? r.program : undefined;
+      const first = draft.sessions[0];
+      const last = draft.sessions[draft.sessions.length - 1];
       if (!first || !last) throw new Error('A stretch has at least one session.');
-      const matchedProgram = outside.length === 0 ? program : undefined;
+      return { draft, ...r, matchedProgram, first, last };
+    });
+    const starts = resolved.map((r) => r.first.date.getTime());
+    return resolved.map(({ draft, id, reason, outside, candidate, matchedProgram, first, last }) => {
       const matched = matchedProgram !== undefined;
       const completed = this.completedWorkouts(draft);
-      const next = resolved[i + 1];
+      // The stretch that follows is the first to start after this one ends; in file mode a
+      // number can run alongside another (decision 8), and that one doesn't follow it.
+      const following = resolved[firstAfter(starts, last.date.getTime())];
+      const next = following
+        ? { program: following.matchedProgram?.id ?? following.candidate }
+        : undefined;
       const { status, statusReason } = matchedProgram
-        ? this.status(matchedProgram, completed, last.date, first.date, next ? next.id === id : undefined)
+        ? this.status(matchedProgram, completed, last.date, first.date, next)
         : { status: null, statusReason: { kind: 'unmatched' } as const };
       return {
         program: id,
@@ -661,10 +757,10 @@ class Segmenter<T extends LiftHistoryRow> {
         ...(draft.fileMacrocycleNum !== undefined ? { fileMacrocycleNum: draft.fileMacrocycleNum } : {}),
         startDate: first.date,
         endDate: last.date,
-        sessions: sessions.map((s, n) => ({
+        sessions: draft.sessions.map((s, n) => ({
           date: s.date,
           rows: s.rows,
-          workoutNum: this.fileNumbersWorkouts ? Math.min(...s.workoutNums) : n + 1,
+          workoutNum: this.fileNumbersWorkouts && s.workoutNums.length > 0 ? minOf(s.workoutNums) : n + 1,
         })),
         completedWorkouts: completed,
         expectedWorkouts: matchedProgram ? matchedProgram.workoutCount : null,
@@ -675,25 +771,28 @@ class Segmenter<T extends LiftHistoryRow> {
   }
 
   /**
-   * Decisions 6 and 7. `nextIsSameProgram` is `undefined` for the file's last stretch.
-   * Every stretch but the last is followed by a restart or a different program, so one with
-   * workouts left is `abandoned`, which wins over `overran`.
+   * Decisions 6 and 7. `next` is the stretch that starts after this one ends, with its
+   * matched or candidate program, or `undefined` when none does. A stretch with workouts
+   * left and one after it is `abandoned`, which wins over `overran`.
    */
   private status(
     program: KnownProgram,
     completed: number,
     lastDate: Date,
     firstDate: Date,
-    nextIsSameProgram: boolean | undefined,
+    next: { program: string | undefined } | undefined,
   ): { status: StretchStatus; statusReason: StretchStatusReason } {
     if (completed >= program.workoutCount) {
       return { status: 'completed', statusReason: { kind: 'all-workouts-done' } };
     }
-    if (nextIsSameProgram !== undefined) {
-      return {
-        status: 'abandoned',
-        statusReason: { kind: nextIsSameProgram ? 'next-is-restart' : 'next-is-different-program' },
-      };
+    if (next) {
+      const kind =
+        next.program === undefined
+          ? 'next-is-unmatched'
+          : next.program === program.id
+            ? 'next-is-restart'
+            : 'next-is-different-program';
+      return { status: 'abandoned', statusReason: { kind } };
     }
     const importDate = toUTCMidnight(this.options.importDate);
     const daysBeforeImport = daysBetween(lastDate, importDate);
@@ -709,7 +808,9 @@ class Segmenter<T extends LiftHistoryRow> {
 
   /**
    * Decision 8's conflicts: a break over 14 days inside one number, measured without the
-   * sessions decision 5 would call lone, and two numbers of one program whose dates interleave.
+   * sessions decision 5 would call lone, and numbers of one file program whose dates
+   * interleave. Each stretch that overlaps an earlier one is reported once, against the
+   * earlier stretch reaching furthest.
    */
   fileNumberConflicts(drafts: readonly Draft<T>[], stretches: readonly HistoryStretch<T>[]): FileNumberConflict[] {
     const conflicts: FileNumberConflict[] = [];
@@ -723,24 +824,52 @@ class Segmenter<T extends LiftHistoryRow> {
         if (days > BREAK_DAYS) conflicts.push({ kind: 'gap-inside-number', stretch: i, from, to, days });
       }
     });
-    stretches.forEach((a, i) => {
-      stretches.forEach((b, j) => {
-        if (j <= i || a.program !== b.program) return;
-        if (a.startDate.getTime() <= b.endDate.getTime() && b.startDate.getTime() <= a.endDate.getTime()) {
-          conflicts.push({ kind: 'numbers-overlap', stretches: [i, j] });
-        }
-      });
+    const byGroup = new Map<string, number[]>();
+    drafts.forEach((draft, i) => {
+      const key = draft.groupKey ?? '';
+      let indexes = byGroup.get(key);
+      if (!indexes) byGroup.set(key, (indexes = []));
+      indexes.push(i);
     });
+    for (const indexes of byGroup.values()) {
+      // `stretches` is in start order, so each group's indexes are too.
+      let reach = -Infinity;
+      let reachIndex = -1;
+      for (const i of indexes) {
+        const stretch = stretches[i];
+        if (!stretch) continue;
+        if (reachIndex >= 0 && stretch.startDate.getTime() <= reach) {
+          conflicts.push({ kind: 'numbers-overlap', stretches: [reachIndex, i] });
+        }
+        if (stretch.endDate.getTime() > reach) {
+          reach = stretch.endDate.getTime();
+          reachIndex = i;
+        }
+      }
+    }
     return conflicts;
   }
+}
+
+/** The index of the first of `sorted` greater than `value`, or `sorted.length`. */
+function firstAfter(sorted: readonly number[], value: number): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((sorted[mid] ?? Infinity) > value) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
 }
 
 /**
  * Groups imported lift history into suggested macrocycles from its dates.
  *
  * - A gap of more than {@link BREAK_DAYS} days between sessions, a finished run, a change in
- *   the file's `Program` column, a lift the stretch's program can't have, a settled set
- *   order turning around, or a file workout number falling back starts a new stretch.
+ *   the file's `Program` column, a lift the stretch's program can't have, a transition day
+ *   ending, a settled set order turning around, or a file workout number falling back
+ *   starts a new stretch.
  * - A file with macrocycle numbers keeps its own groupings instead (decision 8): blank
  *   numbers take the one above, rows with none to take are `unnumbered`, and `conflicts`
  *   reports where the numbers disagree with the dates.
@@ -753,16 +882,16 @@ export function segmentLiftHistory<T extends LiftHistoryRow>(
 ): SegmentedLiftHistory<T> {
   const unplaced = rows.filter((row) => !isValidDate(row.date));
   const dated = rows.filter((row) => isValidDate(row.date));
-  const sessions = toSessions(dated);
+  const segmenter = new Segmenter<T>(options, dated.some((row) => isFiniteNumber(row.workoutNum)));
 
   if (dated.some((row) => isFiniteNumber(row.macrocycleNum))) {
     // The file has already placed its sessions, so none is flagged as lone (decision 8).
-    const segmenter = new Segmenter(sessions, options);
     const { drafts, unnumbered } = segmenter.byFileNumbers(dated);
     const stretches = segmenter.build(drafts);
     return { stretches, lone: [], unplaced, unnumbered, conflicts: segmenter.fileNumberConflicts(drafts, stretches) };
   }
 
+  const sessions = toSessions(dated);
   const lone: LoneSession<T>[] = [];
   const kept: Session<T>[] = [];
   sessions.forEach((session, i) => {
@@ -779,6 +908,5 @@ export function segmentLiftHistory<T extends LiftHistoryRow>(
     });
   });
 
-  const segmenter = new Segmenter(kept, options);
-  return { stretches: segmenter.build(segmenter.byDates()), lone, unplaced, unnumbered: [], conflicts: [] };
+  return { stretches: segmenter.build(segmenter.byDates(kept)), lone, unplaced, unnumbered: [], conflicts: [] };
 }

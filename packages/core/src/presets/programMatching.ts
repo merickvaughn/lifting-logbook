@@ -62,9 +62,17 @@ export function knownProgramFromSpec(
   };
 }
 
-/** A program name or `Program` cell reduced to lowercase letters and digits: "5/3/1" and "5-3-1" are both "531". */
+/**
+ * A program name or `Program` cell reduced to lowercase letters and digits in any script,
+ * with accents dropped: "5/3/1" and "5-3-1" are both "531", "Leangáins" is "leangains" and
+ * "Сила" keeps its letters. A cell of only punctuation ("-") reduces to "".
+ */
 export function programNameKey(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return value
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '');
 }
 
 /**
@@ -113,7 +121,16 @@ export function matchProgramForLifts(
   sourceProgram?: string,
   setOrderAgreement?: ReadonlyMap<string, number>,
 ): ProgramMatch | null {
-  const keys = new Set([...lifts].map(liftKey));
+  return matchProgramForKeys(new Set([...lifts].map(liftKey)), programs, sourceProgram, setOrderAgreement);
+}
+
+/** {@link matchProgramForLifts} for lifts already reduced to {@link liftKey}s. */
+export function matchProgramForKeys(
+  keys: ReadonlySet<string>,
+  programs: readonly KnownProgram[],
+  sourceProgram?: string,
+  setOrderAgreement?: ReadonlyMap<string, number>,
+): ProgramMatch | null {
   if (keys.size === 0) return null;
   let candidates = programsContaining(keys, programs);
   if (candidates.length === 0) return null;
