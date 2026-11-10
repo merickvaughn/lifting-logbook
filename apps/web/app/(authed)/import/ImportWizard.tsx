@@ -34,7 +34,7 @@ import {
   previewImport,
   undoImport,
 } from '@/lib/client-api';
-import { localToday } from '@/lib/focusSetup';
+import { localToday } from '@/lib/calendarDay';
 import { logClientError } from '@/lib/log-client-error';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 import { LIFT_CLASSIFICATIONS } from './liftClassifications';

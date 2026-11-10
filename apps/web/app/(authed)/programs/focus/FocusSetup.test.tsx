@@ -33,8 +33,8 @@ jest.mock('@/lib/client-api', () => ({
   updateFocusSettings: jest.fn(),
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
-jest.mock('@/lib/focusSetup', () => ({
-  ...jest.requireActual('@/lib/focusSetup'),
+jest.mock('@/lib/calendarDay', () => ({
+  ...jest.requireActual('@/lib/calendarDay'),
   localToday: () => '2026-10-26',
 }));
 

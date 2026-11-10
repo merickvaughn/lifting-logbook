@@ -34,7 +34,6 @@ import {
   currentWeek,
   endsIn,
   followOnBlock,
-  localToday,
   newFocusBlock,
   nextMonthName,
   renewalPrompts,
@@ -46,6 +45,7 @@ import {
   withPriorities,
   type FocusWeekWorkout,
 } from '@/lib/focusSetup';
+import { localToday } from '@/lib/calendarDay';
 import { logClientError } from '@/lib/log-client-error';
 import FocusBlockCard, { AreaDot, focusBlockCardId } from './FocusBlockCard';
 import styles from './focus.module.css';

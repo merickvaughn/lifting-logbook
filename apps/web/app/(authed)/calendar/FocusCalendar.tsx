@@ -24,8 +24,8 @@ import {
   type DatedPhase,
 } from '@/lib/focusCalendar';
 import { focusAreaColor } from '@/lib/focusDisplay';
+import { localToday } from '@/lib/calendarDay';
 import {
-  localToday,
   nextMonthName,
   OVERLAP_LABELS,
   PROGRESSION_LABELS,

@@ -62,16 +62,6 @@ export const INCLUDE_LABELS: Readonly<Record<FocusInclude, string>> = {
   off: 'Off',
 };
 
-/**
- * The user's calendar day as an ISO date, from the browser's clock and time zone. Every
- * focus endpoint takes it as `?today=`, since the server cannot know the user's zone.
- */
-export function localToday(now: Date = new Date()): string {
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${now.getFullYear()}-${month}-${day}`;
-}
-
 /** Active focus blocks, highest priority first. */
 export function activeBlocks(blocks: readonly FocusBlock[], today: string): FocusBlock[] {
   return blocks
