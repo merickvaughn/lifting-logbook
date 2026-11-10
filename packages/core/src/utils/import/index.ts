@@ -7,6 +7,7 @@ export * from './googleSheetUrl';
 export * from './importThresholds';
 export * from './liftRecordNaturalKey';
 export * from './normalize-amrap';
+export * from './segmentLiftHistory';
 export * from './splitLiftRecords';
 export * from './validateLiftImport';
 export * from './validateLiftImportSoft';
