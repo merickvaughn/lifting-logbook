@@ -694,12 +694,25 @@ describe('segmentLiftHistory', () => {
       expect(new Set(result.stretches.map((s) => s.program))).toEqual(new Set(['rpt', '5-3-1']));
     });
 
-    it('segments one 20,000-session stretch of known lifts with set weights in under 3 seconds', () => {
-      // An unknown label keeps it one stretch, so matching and the set-order tallies run on one long draft.
-      const rows = withSets(run(RPT_DAYS, 0, 20_000, { spacing: 1, extra: () => ({ program: 'GZCLP' }) }), 'descending');
-      const started = Date.now();
-      const result = segment(rows);
-      expect(Date.now() - started).toBeLessThan(3_000);
+    it('grows linearly on one long stretch of known lifts with set weights', () => {
+      // An unknown label keeps it one stretch, so matching and the set-order tallies run on
+      // one long draft. A wall-clock limit varies with the host; the growth from 4,000 to
+      // 16,000 sessions doesn't (about 4x when linear, 16x when quadratic).
+      const rowsFor = (sessions: number) =>
+        withSets(run(RPT_DAYS, 0, sessions, { spacing: 1, extra: () => ({ program: 'GZCLP' }) }), 'descending');
+      const fastest = (rows: Row[]) => {
+        let best = Infinity;
+        for (let i = 0; i < 2; i++) {
+          const started = performance.now();
+          segment(rows);
+          best = Math.min(best, performance.now() - started);
+        }
+        return best;
+      };
+      const small = fastest(rowsFor(4_000));
+      const large = rowsFor(16_000);
+      expect(fastest(large)).toBeLessThan(8 * small + 200);
+      const result = segment(large);
       expect(result.stretches).toHaveLength(1);
       expect(result.stretches[0]?.candidateProgram).toBe('rpt');
     });
