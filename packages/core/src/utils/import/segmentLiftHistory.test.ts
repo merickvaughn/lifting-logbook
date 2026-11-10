@@ -1,5 +1,5 @@
 import { KnownProgram, liftKey } from '../../presets';
-import { LiftHistoryRow, segmentLiftHistory, SegmentLiftHistoryOptions } from './segmentLiftHistory';
+import { classifySetOrder, LiftHistoryRow, segmentLiftHistory, SegmentLiftHistoryOptions } from './segmentLiftHistory';
 
 /** Day 0 is Monday 5 January 2026, UTC. */
 const day = (n: number): Date => new Date(Date.UTC(2026, 0, 5 + n));
@@ -23,7 +23,7 @@ interface Row extends LiftHistoryRow {
   id: string;
 }
 
-type Extra = Partial<Pick<Row, 'program' | 'macrocycleNum' | 'workoutNum'>>;
+type Extra = Partial<Pick<Row, 'program' | 'macrocycleNum' | 'workoutNum' | 'setNum' | 'weight'>>;
 
 function session(dayNum: number, lifts: readonly string[], extra: Extra = {}): Row[] {
   return lifts.map((lift) => ({ id: `${dayNum}:${lift}`, date: day(dayNum), lift, ...extra }));
@@ -39,6 +39,22 @@ function run(
   return Array.from({ length: count }, (_, i) =>
     session(start + i * spacing, days[i % days.length] ?? [], extra(i)),
   ).flat();
+}
+
+const WEIGHTS = { descending: [100, 90, 80], ascending: [80, 90, 100], straight: [50, 50, 50] } as const;
+/** Lifts the RPT preset prescribes as straight sets. */
+const STRAIGHT_LIFTS = new Set(['Calf Raises']);
+
+/** Each row becomes three sets: compounds in `order`, straight-set accessories at one weight. */
+function withSets(rows: readonly Row[], order: 'ascending' | 'descending'): Row[] {
+  return rows.flatMap((row) =>
+    (STRAIGHT_LIFTS.has(row.lift) ? WEIGHTS.straight : WEIGHTS[order]).map((weight, i) => ({
+      ...row,
+      id: `${row.id}:${i + 1}`,
+      setNum: i + 1,
+      weight,
+    })),
+  );
 }
 
 const lastDay = (rows: readonly Row[]): number =>
@@ -195,19 +211,104 @@ describe('segmentLiftHistory', () => {
       expect(result.stretches).toHaveLength(1);
       expect(result.stretches[0]?.program).toBe('rpt');
     });
+
+    it('starts one on a move to a larger program (5/3/1 to RPT) once the first has held a week', () => {
+      // 5/3/1 is 24 workouts over 12 weeks: two sessions settle it.
+      const first = run(FIVE_THREE_ONE_DAYS, 0, 4);
+      const result = segment([...first, ...run(RPT_DAYS, lastDay(first) + 2, 3)], { sourceProgram: '5-3-1' });
+      expect(result.stretches.map((s) => s.program)).toEqual(['5-3-1', 'rpt']);
+      expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'lift-outside-program', lifts: ['Barbell Row'] });
+      expect(result.stretches[0]?.reasons.status).toEqual({ kind: 'next-is-different-program' });
+    });
+
+    it('does not compare spellings of one program in the Program column', () => {
+      const first = run(FIVE_THREE_ONE_DAYS, 0, 3, { extra: () => ({ program: '5/3/1' }) });
+      const rows = [...first, ...run(FIVE_THREE_ONE_DAYS, lastDay(first) + 2, 3, { extra: () => ({ program: '5-3-1' }) })];
+      expect(segment(rows).stretches).toHaveLength(1);
+      const custom = run([['Zercher Squat']], 0, 2, { extra: () => ({ program: 'My Plan' }) });
+      const more = run([['Zercher Squat']], lastDay(custom) + 2, 2, { extra: () => ({ program: 'my-plan' }) });
+      expect(segment([...custom, ...more]).stretches).toHaveLength(1);
+    });
+
+    it('starts one where a Program value first appears and names a program the lifts so far are not in', () => {
+      const first = run(RPT_DAYS, 0, 4);
+      const rows = [...first, ...run(FIVE_THREE_ONE_DAYS, lastDay(first) + 2, 4, { extra: () => ({ program: '5-3-1' }) })];
+      const result = segment(rows);
+      expect(result.stretches.map((s) => s.program)).toEqual(['rpt', '5-3-1']);
+      expect(result.stretches[1]?.reasons.start).toEqual({ kind: 'program-column-changed', from: null, to: '5-3-1' });
+    });
+
+    it('continues where a Program value first appears and names the program the lifts are in', () => {
+      const first = run(RPT_DAYS, 0, 2);
+      const rows = [...first, ...run(RPT_DAYS, lastDay(first) + 2, 2, { extra: () => ({ program: 'RPT' }) })];
+      const result = segment(rows);
+      expect(result.stretches).toHaveLength(1);
+      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: 'RPT' });
+    });
+  });
+
+  describe('set order', () => {
+    it.each([
+      [[100, 90, 80], 'descending'],
+      [[80, 90, 100], 'ascending'],
+      [[90, 100, 100], 'ascending'],
+      [[50, 50, 50], 'straight'],
+      [[60, 100, 90, 80], 'descending'],
+      [[100], null],
+    ])('reads %j as %s', (weights, order) => {
+      expect(classifySetOrder(weights)).toBe(order);
+    });
+
+    it('starts a new stretch where a settled set order turns around (RPT to 5/3/1, no column)', () => {
+      const first = withSets(run(RPT_DAYS, 0, 4), 'descending');
+      const rows = [...first, ...withSets(run(FIVE_THREE_ONE_DAYS, lastDay(first) + 2, 4), 'ascending')];
+      const result = segment(rows);
+      expect(result.stretches.map((s) => s.program)).toEqual(['rpt', '5-3-1']);
+      expect(result.stretches[1]?.reasons.start).toEqual({
+        kind: 'set-order-changed',
+        lifts: [
+          { lift: 'Squat', from: 'descending', to: 'ascending' },
+          { lift: 'Bench Press', from: 'descending', to: 'ascending' },
+        ],
+      });
+      expect(result.stretches[1]?.reasons.program).toEqual({ kind: 'lifts', tiedWith: [], bySetOrder: true });
+      expect(result.stretches[0]?.status).toBe('abandoned');
+    });
+
+    it('does not split a run at one session whose sets run the other way', () => {
+      const first = withSets(run(RPT_DAYS, 0, 4), 'descending');
+      const odd = withSets(session(lastDay(first) + 2, ['Squat', 'Bench Press']), 'ascending');
+      const rows = [...first, ...odd, ...withSets(run(RPT_DAYS, lastDay(first) + 4, 3), 'descending')];
+      expect(segment(rows).stretches).toHaveLength(1);
+    });
+
+    it('matches the program whose order the sessions follow before the smallest', () => {
+      const descending = segment(withSets(run(FIVE_THREE_ONE_DAYS, 0, 4), 'descending')).stretches[0];
+      expect(descending?.program).toBe('rpt');
+      expect(descending?.reasons.program).toEqual({ kind: 'lifts', tiedWith: [], bySetOrder: true });
+      expect(segment(withSets(run(FIVE_THREE_ONE_DAYS, 0, 4), 'ascending')).stretches[0]?.program).toBe('5-3-1');
+    });
   });
 
   describe('program precedence (decision 9)', () => {
-    it("takes the file's column over the lifts", () => {
+    it("takes the file's column over the lifts, unmatched when its lifts are not all in it", () => {
       const result = segment(run(RPT_DAYS, 0, 3, { extra: () => ({ program: '5/3/1' }) }));
-      expect(result.stretches[0]?.program).toBe('5-3-1');
+      expect(result.stretches[0]).toMatchObject({ program: '5-3-1', matched: false, status: null });
       expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: '5/3/1' });
+      expect(result.stretches[0]?.liftsOutsideProgram).toEqual([
+        'Barbell Row',
+        'Romanian Deadlift',
+        'Calf Raises',
+        'Weighted Pull-ups',
+        'Dips',
+      ]);
+      expect(result.stretches[0]?.candidateProgram).toBeUndefined();
     });
 
     it('takes the lifts over the Source program', () => {
       const result = segment(run(RPT_DAYS, 0, 3), { sourceProgram: '5-3-1' });
       expect(result.stretches[0]?.program).toBe('rpt');
-      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'lifts', tiedWith: [] });
+      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'lifts', tiedWith: [], bySetOrder: false });
     });
 
     describe('a tie', () => {
@@ -217,6 +318,7 @@ describe('segmentLiftHistory', () => {
         lifts: new Set(lifts.map(liftKey)),
         workoutCount: 12,
         lengthWeeks: 4,
+        setOrder: new Map(lifts.map((lift) => [liftKey(lift), 'descending'])),
       });
       const customPrograms = [
         custom('zeta', ['Squat', 'Bench Press', 'Barbell Row']),
@@ -227,13 +329,13 @@ describe('segmentLiftHistory', () => {
       it('goes to the Source program', () => {
         const result = segment(rows, { customPrograms, sourceProgram: 'zeta' });
         expect(result.stretches[0]?.program).toBe('zeta');
-        expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'lifts', tiedWith: ['alpha'] });
+        expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'lifts', tiedWith: ['alpha'], bySetOrder: false });
       });
 
       it('goes to the first program by name when the Source program is not tied, naming the rest', () => {
         const result = segment(rows, { customPrograms, sourceProgram: 'rpt' });
         expect(result.stretches[0]?.program).toBe('alpha');
-        expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'lifts', tiedWith: ['zeta'] });
+        expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'lifts', tiedWith: ['zeta'], bySetOrder: false });
       });
     });
   });
@@ -334,23 +436,80 @@ describe('segmentLiftHistory', () => {
         liftsOutsideProgram: ['Face Pull'],
       });
     });
+
+    it('names the column program as the candidate when only a lift in no known program is outside it', () => {
+      const rows = [...run(RPT_DAYS, 0, 3), ...session(6, ['Bench Press', 'Face Pull'])].map((row) => ({
+        ...row,
+        program: 'RPT',
+      }));
+      expect(segment(rows).stretches[0]).toMatchObject({
+        program: 'rpt',
+        matched: false,
+        candidateProgram: 'rpt',
+        liftsOutsideProgram: ['Face Pull'],
+      });
+    });
+  });
+
+  it('segments 20,000 sessions of a lift in no known program in linear time', () => {
+    const rows = Array.from({ length: 20_000 }, (_, i): Row => ({ id: `${i}`, date: day(i), lift: 'Zercher Squat' }));
+    const started = Date.now();
+    const result = segment(rows);
+    // The quadratic version took 5.7 s on this input; the linear one about 0.2 s.
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(result.stretches).toHaveLength(1);
   });
 
   describe("a file's macrocycle numbers (decision 8)", () => {
     it('keeps its groupings and flags a break inside one number, without lone flags', () => {
       const first = run(RPT_DAYS, 0, 3, { extra: () => ({ macrocycleNum: 1 }) });
+      const end = lastDay(first);
       const rows = [
         ...first,
-        ...session(lastDay(first) + 10, ['Squat'], { macrocycleNum: 1 }),
-        ...run(RPT_DAYS, lastDay(first) + 30, 3, { extra: () => ({ macrocycleNum: 1 }) }),
+        // In date mode this session would be lone: it hides the 20-day break on either side of it.
+        ...session(end + 10, ['Squat'], { macrocycleNum: 1 }),
+        ...run(RPT_DAYS, end + 20, 3, { extra: () => ({ macrocycleNum: 1 }) }),
       ];
       const result = segment(rows);
       expect(result.stretches).toHaveLength(1);
       expect(result.stretches[0]).toMatchObject({ fileMacrocycleNum: 1, reasons: { start: { kind: 'file-macrocycle', macrocycleNum: 1 } } });
+      expect(result.stretches[0]?.sessions).toHaveLength(7);
       expect(result.lone).toEqual([]);
       expect(result.conflicts).toEqual([
-        { kind: 'gap-inside-number', stretch: 0, from: day(lastDay(first) + 10), to: day(lastDay(first) + 30), days: 20 },
+        { kind: 'gap-inside-number', stretch: 0, from: day(end), to: day(end + 20), days: 20 },
       ]);
+    });
+
+    it('gives a blank number the one above it, and leaves rows with none to take unnumbered', () => {
+      // Numbers only on each group's first row, as a sheet often has them.
+      const lead = session(0, ['Squat']);
+      const first = run(RPT_DAYS, 2, 3, { extra: (i) => (i === 0 ? { macrocycleNum: 1 } : {}) });
+      const second = run(RPT_DAYS, lastDay(first) + 2, 3, { extra: (i) => (i === 0 ? { macrocycleNum: 2 } : {}) });
+      const result = segment([...lead, ...first, ...second]);
+      expect(result.stretches.map((s) => [s.fileMacrocycleNum, s.sessions.length])).toEqual([
+        [1, 3],
+        [2, 3],
+      ]);
+      expect(result.unnumbered.map((r) => r.id)).toEqual(['0:Squat']);
+    });
+
+    it('takes a blank number only from a row in the same program', () => {
+      const first = run(RPT_DAYS, 0, 2, { extra: () => ({ program: 'rpt', macrocycleNum: 1 }) });
+      const other = run(FIVE_THREE_ONE_DAYS, lastDay(first) + 2, 2, { extra: () => ({ program: '5-3-1' }) });
+      const result = segment([...first, ...other]);
+      expect(result.stretches).toHaveLength(1);
+      expect(result.unnumbered).toHaveLength(other.length);
+    });
+
+    it("keeps one number together across spellings and blank Program cells", () => {
+      // "5/3/1", then "5-3-1", then a blank cell, then "5-3-1" again.
+      const rows = run(FIVE_THREE_ONE_DAYS, 0, 4, {
+        extra: (i) => ({ macrocycleNum: 1, program: i === 0 ? '5/3/1' : i === 2 ? null : '5-3-1' }),
+      });
+      const result = segment(rows);
+      expect(result.stretches).toHaveLength(1);
+      expect(result.stretches[0]?.program).toBe('5-3-1');
+      expect(result.conflicts).toEqual([]);
     });
 
     it('flags two numbers in one program whose dates interleave', () => {

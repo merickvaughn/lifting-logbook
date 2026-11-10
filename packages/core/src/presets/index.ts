@@ -1,10 +1,11 @@
 import { LiftingProgramSpec } from '../models/LiftingProgramSpec';
-import { KnownProgram, knownProgramFromSpec, matchProgramForLifts } from './programMatching';
+import { KnownProgram, knownProgramFromSpec, matchProgramForLifts, SetOrder } from './programMatching';
 
 // Canonical program-length registry + read-time block expansion (issue #680).
 export * from './programLengths';
 // Matching lift history to a program (import macrocycle proposal, decision 9).
-export * from './programMatching';
+export { knownProgramFromSpec, liftKey, matchProgramForLifts } from './programMatching';
+export type { KnownProgram, ProgramMatch, SetOrder } from './programMatching';
 
 /**
  * Built-in program specs, keyed by program ID. Single source of truth for
@@ -101,20 +102,23 @@ export function parseProgramSpecFlexible(rows: unknown[]): LiftingProgramSpec[] 
   return result;
 }
 
+/**
+ * Set orders a program's author prescribes where its spec rows say otherwise. Wendler's
+ * 5/3/1 climbs to its top set (65/75/85%), but the preset's rows descend like RPT's (#1086),
+ * so a lifter's real 5/3/1 history would never match it by set order.
+ */
+const AUTHOR_SET_ORDER: Record<string, SetOrder> = { '5-3-1': 'ascending' };
+
 /** The built-in programs as {@link KnownProgram}s, in {@link PRESET_BASE_SPECS} order. */
 export const BUILT_IN_KNOWN_PROGRAMS: readonly KnownProgram[] = Object.entries(
   PRESET_BASE_SPECS,
-).map(([id, spec]) => knownProgramFromSpec(id, spec));
+).map(([id, spec]) => knownProgramFromSpec(id, spec, AUTHOR_SET_ORDER[id]));
 
 /**
  * The built-in program a lift history belongs to: the smallest one containing every lift
- * in it, with `sourceProgram` settling a tie ({@link matchProgramForLifts}). `null` when
- * no built-in program contains them all.
+ * in it ({@link matchProgramForLifts}). `null` when no built-in program contains them all.
  */
-export function inferProgramFromLiftRecords(
-  liftHistory: string[],
-  sourceProgram?: string,
-): string | null {
-  const match = matchProgramForLifts(liftHistory, BUILT_IN_KNOWN_PROGRAMS, sourceProgram);
+export function inferProgramFromLiftRecords(liftHistory: string[]): string | null {
+  const match = matchProgramForLifts(liftHistory, BUILT_IN_KNOWN_PROGRAMS);
   return match ? match.program.id : null;
 }

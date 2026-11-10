@@ -4,6 +4,7 @@ import {
   BUILT_IN_KNOWN_PROGRAMS,
   KnownProgram,
   inferProgramFromLiftRecords,
+  knownProgramFromSpec,
   liftKey,
   matchProgramForLifts,
 } from '.';
@@ -137,6 +138,16 @@ describe('BUILT_IN_KNOWN_PROGRAMS', () => {
     expect(byId.get('5-3-1')).toMatchObject({ workoutCount: 24, lengthWeeks: 12 });
     expect(byId.get('5-3-1')?.lifts.size).toBe(4);
   });
+
+  it("expects each lift's sets in its author's order", () => {
+    const byId = new Map(BUILT_IN_KNOWN_PROGRAMS.map((p) => [p.id, p]));
+    // RPT and Leangains compounds fall from a top set; accessories are straight sets.
+    expect(byId.get('rpt')?.setOrder.get(liftKey('Bench Press'))).toBe('descending');
+    expect(byId.get('rpt')?.setOrder.get(liftKey('Calf Raises'))).toBe('straight');
+    expect(byId.get('leangains')?.setOrder.get(liftKey('Incline DB Press'))).toBe('straight');
+    // Wendler's 5/3/1 climbs to its top set, whatever the preset's rows say (#1086).
+    expect(byId.get('5-3-1')?.setOrder.get(liftKey('Squat'))).toBe('ascending');
+  });
 });
 
 describe('inferProgramFromLiftRecords', () => {
@@ -181,15 +192,36 @@ describe('matchProgramForLifts', () => {
     lifts: new Set(lifts.map(liftKey)),
     workoutCount: 12,
     lengthWeeks: 4,
+    setOrder: new Map(lifts.map((lift) => [liftKey(lift), 'descending'])),
   });
   const a = custom('a', ['Squat', 'Bench Press', 'Face Pull']);
   const b = custom('b', ['Squat', 'Bench Press', 'Barbell Row']);
 
   it('gives a tie to the Source program when it is one of the tied programs', () => {
-    expect(matchProgramForLifts(['Squat'], [a, b], 'b')).toEqual({ program: b, tiedWith: ['a'] });
+    expect(matchProgramForLifts(['Squat'], [a, b], 'b')).toEqual({ program: b, tiedWith: ['a'], bySetOrder: false });
   });
 
   it('gives a tie to the first program otherwise, naming the rest', () => {
-    expect(matchProgramForLifts(['Squat'], [a, b], 'rpt')).toEqual({ program: a, tiedWith: ['b'] });
+    expect(matchProgramForLifts(['Squat'], [a, b], 'rpt')).toEqual({ program: a, tiedWith: ['b'], bySetOrder: false });
+  });
+
+  it('prefers the program whose set order agrees with the most sessions over the smallest', () => {
+    // Squat and bench fit 5-3-1 (smallest) and RPT; descending sets agree only with RPT.
+    const match = matchProgramForLifts(['Squat', 'Bench Press'], BUILT_IN_KNOWN_PROGRAMS, undefined, new Map([['rpt', 3]]));
+    expect(match).toMatchObject({ program: { id: 'rpt' }, bySetOrder: true });
+    expect(matchProgramForLifts(['Squat', 'Bench Press'], BUILT_IN_KNOWN_PROGRAMS)?.program.id).toBe('5-3-1');
+  });
+});
+
+describe('knownProgramFromSpec', () => {
+  const row = { week: 1 as const, offset: 0 };
+
+  it('reads each lift set order from its wtDecrementPct, unless the author order overrides it', () => {
+    const spec = [
+      { ...row, lift: 'Squat', wtDecrementPct: 0.1 },
+      { ...row, lift: 'Leg Curl', wtDecrementPct: 0 },
+    ];
+    expect([...knownProgramFromSpec('x', spec).setOrder.values()]).toEqual(['descending', 'straight']);
+    expect([...knownProgramFromSpec('x', spec, 'ascending').setOrder.values()]).toEqual(['ascending', 'straight']);
   });
 });
