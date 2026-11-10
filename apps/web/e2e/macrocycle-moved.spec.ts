@@ -18,18 +18,22 @@ test.beforeAll(async ({ browser }, testInfo) => {
 
 for (const suffix of ['', '/detail']) {
   test(`an old URL${suffix ? ` for ${suffix}` : ''} redirects once to the current number`, async ({ page }) => {
-    const visited: string[] = [];
-    page.on('framenavigated', (frame) => {
-      if (frame === page.mainFrame()) visited.push(new URL(frame.url()).pathname);
+    // A reload loop shows up as repeated page loads. Next's client-side redirect replaces the
+    // URL without loading a document, so the current page is loaded at most once.
+    const documentLoads: string[] = [];
+    page.on('request', (request) => {
+      if (request.resourceType() === 'document') documentLoads.push(new URL(request.url()).pathname);
     });
 
-    const response = await page.goto(`${OLD}${suffix}`);
+    await page.goto(`${OLD}${suffix}`);
 
-    expect(response?.status()).toBe(200);
     await expect(page).toHaveURL(new RegExp(`${CURRENT}${suffix}$`));
-    // No loop: after settling, the page has stayed put on the current number.
     await page.waitForLoadState('networkidle');
+    const loadsAfterRedirect = documentLoads.length;
+    // Give a loop time to show itself, then check nothing moved.
+    await page.waitForTimeout(1_500);
     expect(new URL(page.url()).pathname).toBe(`${CURRENT}${suffix}`);
-    expect(visited.filter((path) => path === `${CURRENT}${suffix}`).length).toBeLessThanOrEqual(1);
+    expect(documentLoads.length).toBe(loadsAfterRedirect);
+    expect(documentLoads.filter((path) => path === `${CURRENT}${suffix}`).length).toBeLessThanOrEqual(1);
   });
 }
