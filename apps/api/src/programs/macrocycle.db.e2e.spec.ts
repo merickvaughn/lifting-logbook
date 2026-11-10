@@ -150,9 +150,12 @@ describeOrSkip('macrocycle table (e2e, lifting_app role)', () => {
           macrocycleStartWeekday: 'Monday',
         },
       });
-      // 5 and 6 have only an override or a focus state, so they date from 4.
+      // 5 to 7 have only a skip, a focus state or a lift override, so they date from 4.
       await owner.workoutSkipOverride.create({ data: { userId: user, program: PROGRAM, macrocycleNum: 5, workoutNum: 2 } });
       await owner.focusDayState.create({ data: { userId: user, program: PROGRAM, macrocycleNum: 6, workoutNum: 1, state: {} } });
+      await owner.workoutLiftOverride.create({
+        data: { userId: user, program: PROGRAM, macrocycleNum: 7, workoutNum: 1, lift: 'Dips', action: 'add' },
+      });
       // A user whose only number has nothing to date it.
       await owner.workoutDateOverride.create({
         data: { userId: USER_BACKFILL_BARE, program: PROGRAM, macrocycleNum: 2, workoutNum: 1, newDate: day('2026-04-01') },
@@ -197,6 +200,7 @@ describeOrSkip('macrocycle table (e2e, lifting_app role)', () => {
           { num: 4, start: '2026-06-01', end: null, status: 'in-progress', origin: 'live' },
           { num: 5, start: '2026-06-01', end: null, status: 'unknown', origin: 'legacy' },
           { num: 6, start: '2026-06-01', end: null, status: 'unknown', origin: 'legacy' },
+          { num: 7, start: '2026-06-01', end: null, status: 'unknown', origin: 'legacy' },
         ]);
       });
     });

@@ -76,6 +76,18 @@ describeOrSkip('Lift modifications HTTP (e2e, PrismaRepositoryFactory)', () => {
     process.env.DATABASE_URL = APP_ROLE_URL;
     prisma = new PrismaClient({ datasources: { db: { url: OWNER_URL } } });
     await cleanUsers(prisma);
+    // Sets can only be logged to a macrocycle the program has (ADR-042).
+    await prisma.macrocycle.deleteMany({ where: { userId: { in: USERS } } });
+    await prisma.macrocycle.createMany({
+      data: USERS.map((userId) => ({
+        userId,
+        program: PROGRAM,
+        macrocycleNum: 1,
+        startDate: new Date('2026-04-20T00:00:00.000Z'),
+        status: 'in-progress',
+        origin: 'live',
+      })),
+    });
 
     app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), { logger: false });
     app.useGlobalFilters(new DomainNotFoundFilter(), new DomainConflictFilter());
@@ -87,6 +99,7 @@ describeOrSkip('Lift modifications HTTP (e2e, PrismaRepositoryFactory)', () => {
   afterAll(async () => {
     await app?.close();
     await cleanUsers(prisma).catch(() => undefined);
+    await prisma?.macrocycle.deleteMany({ where: { userId: { in: USERS } } }).catch(() => undefined);
     await prisma?.$disconnect();
   }, DB_E2E_HOOK_TIMEOUT_MS);
 
