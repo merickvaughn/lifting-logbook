@@ -1,7 +1,7 @@
 import 'server-only';
 
 import type { TimerLiftPlan } from '@lifting-logbook/core';
-import { FOCUS_PLACEMENTS, FOCUS_PROGRESSIONS } from '@lifting-logbook/types';
+import { FOCUS_PLACEMENTS, FOCUS_PROGRESSION_TYPES } from '@lifting-logbook/types';
 import type { FocusDayPlanResponse, WeightUnit, WorkoutResponse } from '@lifting-logbook/types';
 import { fetchCustomLifts, fetchFocusPlan, fetchProgramSpec, fetchTrainingMaxes, fetchWorkout } from '@/lib/api';
 import { getPreferredUnit } from '@/lib/preferences';
@@ -97,7 +97,7 @@ function isKnownShape(plan: FocusDayPlanResponse): boolean {
   return (
     FOCUS_PLACEMENTS.includes(plan.dayState.placement) &&
     plan.groups.every((group) =>
-      group.items.every((item) => FOCUS_PROGRESSIONS.includes(item.prescription.progression)),
+      group.items.every((item) => FOCUS_PROGRESSION_TYPES.includes(item.prescription.progression)),
     )
   );
 }

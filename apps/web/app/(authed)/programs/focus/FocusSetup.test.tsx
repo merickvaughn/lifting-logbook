@@ -107,7 +107,7 @@ function plan(workoutNum: number, overrides: Partial<FocusDayPlanResponse> = {})
             sets: 2,
             reducedFrom: 3,
             entry,
-            prescription: { progression: 'double', sets: 2, repsLow: 10, repsHigh: 12, weight: 25, lastReps: null },
+            prescription: { progression: 'double', sets: 2, repsLow: 10, repsHigh: 12, weight: 25, lastReps: null, progressed: false },
           },
         ],
         skipped: [],

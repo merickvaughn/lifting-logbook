@@ -136,7 +136,7 @@ export default function FocusPoolRow({
             />
           </div>
         }
-        {(progression === 'double' || progression === 'fixed') && (
+        {(progression === 'double' || progression === 'manual') && (
           <div className={styles.mini}>
             <span aria-hidden="true">Weight</span>
             <Stepper
@@ -149,7 +149,7 @@ export default function FocusPoolRow({
             />
           </div>
         )}
-        {progression === 'tm' && (
+        {progression === 'percent_wave' && (
           <div className={styles.mini}>
             <span aria-hidden="true">TM · %</span>
             <span className={styles.pair}>

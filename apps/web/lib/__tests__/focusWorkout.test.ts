@@ -20,7 +20,7 @@ describe('describePrescription', () => {
   it('words a double-progression range, with the last session when there is one', () => {
     expect(
       describePrescription(
-        { progression: 'double', sets: 3, repsLow: 10, repsHigh: 12, weight: 25, lastReps: [12, 11, 10] },
+        { progression: 'double', sets: 3, repsLow: 10, repsHigh: 12, weight: 25, lastReps: [12, 11, 10], progressed: false },
         'lbs',
       ),
     ).toEqual({
@@ -30,19 +30,28 @@ describe('describePrescription', () => {
     });
   });
 
+  it('says the weight went up once every last rep reached the top (#1213)', () => {
+    expect(
+      describePrescription(
+        { progression: 'double', sets: 3, repsLow: 10, repsHigh: 12, weight: 27.5, lastReps: [12, 12, 12], progressed: true },
+        'lbs',
+      ).hint,
+    ).toBe('Last time: 12, 12, 12. Every set hit 12, so the weight is up: start at 10.');
+  });
+
   it('collapses a one-number range and drops the last-time note without history', () => {
     const text = describePrescription(
-      { progression: 'double', sets: 2, repsLow: 15, repsHigh: 15, weight: 20, lastReps: null },
+      { progression: 'double', sets: 2, repsLow: 15, repsHigh: 15, weight: 20, lastReps: null, progressed: false },
       'lbs',
     );
     expect(text.summary).toBe('2 × 15');
     expect(text.hint).toBe('Hit 15 on every set and the weight goes up next time.');
   });
 
-  it('words fixed, percent-of-training-max and RPE prescriptions', () => {
-    expect(describePrescription({ progression: 'fixed', sets: 3, reps: 12, weight: 30 }, 'lbs').summary).toBe('3 × 12');
+  it('words manual, percent-of-training-max and RPE prescriptions', () => {
+    expect(describePrescription({ progression: 'manual', sets: 3, reps: 12, weight: 30 }, 'lbs').summary).toBe('3 × 12');
     expect(
-      describePrescription({ progression: 'tm', sets: 3, reps: 10, weight: 25, percent: 65, trainingMax: 40 }, 'lbs'),
+      describePrescription({ progression: 'percent_wave', sets: 3, reps: 10, weight: 25, percent: 65, trainingMax: 40 }, 'lbs'),
     ).toEqual({ summary: '3 × 10 @ 65%', perSet: '10 reps @ 25 lbs', hint: '65% of a 40 lbs training max.' });
     expect(describePrescription({ progression: 'rpe', sets: 3, reps: 12, rpe: 9, repsInReserve: 1 }, 'lbs')).toEqual({
       summary: '3 × 12 @ RPE 9',
@@ -55,7 +64,7 @@ describe('describePrescription', () => {
   });
 
   it('shows weights in the lifter’s unit', () => {
-    expect(describePrescription({ progression: 'fixed', sets: 1, reps: 10, weight: 22.05, }, 'kg').perSet).toBe('10 reps @ 10 kg');
+    expect(describePrescription({ progression: 'manual', sets: 1, reps: 10, weight: 22.05, }, 'kg').perSet).toBe('10 reps @ 10 kg');
   });
 });
 
@@ -197,11 +206,14 @@ describe('workoutOrder (#1060)', () => {
 describe('prescribedSet', () => {
   it('starts each set from the prescription’s target', () => {
     expect(
-      prescribedSet({ progression: 'double', sets: 3, repsLow: 10, repsHigh: 12, weight: 25, lastReps: null }),
+      prescribedSet({ progression: 'double', sets: 3, repsLow: 10, repsHigh: 12, weight: 25, lastReps: null, progressed: false }),
     ).toEqual({ weight: 25, reps: 12 });
-    expect(prescribedSet({ progression: 'fixed', sets: 3, reps: 12, weight: 30 })).toEqual({ weight: 30, reps: 12 });
     expect(
-      prescribedSet({ progression: 'tm', sets: 3, reps: 10, weight: 25, percent: 65, trainingMax: 40 }),
+      prescribedSet({ progression: 'double', sets: 3, repsLow: 10, repsHigh: 12, weight: 27.5, lastReps: [12, 12, 12], progressed: true }),
+    ).toEqual({ weight: 27.5, reps: 10 });
+    expect(prescribedSet({ progression: 'manual', sets: 3, reps: 12, weight: 30 })).toEqual({ weight: 30, reps: 12 });
+    expect(
+      prescribedSet({ progression: 'percent_wave', sets: 3, reps: 10, weight: 25, percent: 65, trainingMax: 40 }),
     ).toEqual({ weight: 25, reps: 10 });
     expect(prescribedSet({ progression: 'rpe', sets: 3, reps: 12, rpe: 9, repsInReserve: 1 })).toEqual({
       weight: 0,

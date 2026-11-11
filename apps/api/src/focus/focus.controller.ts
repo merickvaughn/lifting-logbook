@@ -56,6 +56,7 @@ import { currentMacrocycleOrFirst } from '../programs/workout-day.util';
 import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { checkMacrocycleId, lockForMacrocycleWrite } from '../programs/macrocycle-history.util';
 import {
+  carryMaxEdits,
   loadFocusBlocks,
   loadFocusWorkoutContext,
   parseIsoDateParam,
@@ -73,8 +74,7 @@ export class FocusController {
   @Get('blocks')
   async list(@Query('today') todayParam: string | undefined, @CurrentUser() user: AuthUser): Promise<FocusBlockResponse[]> {
     const today = parseToday(todayParam);
-    const { focus } = await this.factory.forUser(user);
-    const blocks = await loadFocusBlocks(focus, today);
+    const blocks = await loadFocusBlocks(await this.factory.forUser(user), today);
     return blocks.map((block) => toFocusBlockResponse(block, today));
   }
 
@@ -125,9 +125,10 @@ export class FocusController {
     @CurrentUser() user: AuthUser,
   ): Promise<FocusBlockResponse[]> {
     const today = parseToday(todayParam);
-    const { focus } = await this.factory.forUser(user);
+    const repos = await this.factory.forUser(user);
+    const { focus } = repos;
     // Materialized first, so a successor due today is one of the blocks to order.
-    const current = new Set(notEnded(await loadFocusBlocks(focus, today), today).map((block) => block.id));
+    const current = new Set(notEnded(await loadFocusBlocks(repos, today), today).map((block) => block.id));
     const listed = new Set(dto.ids);
     if (listed.size !== dto.ids.length || listed.size !== current.size || dto.ids.some((id) => !current.has(id))) {
       throw new BadRequestException('ids must list every focus block that has not ended, exactly once');
@@ -159,7 +160,9 @@ export class FocusController {
     if (dto.onEnd !== undefined) patch.onEnd = dto.onEnd;
     if (dto.nextArea !== undefined) patch.nextArea = dto.nextArea;
     if (dto.pool !== undefined) patch.pool = dto.pool.map((entry) => ({ ...entry }));
+    const before = patch.pool === undefined ? null : await focus.getBlock(id);
     const updated = await focus.updateBlock(id, patch);
+    if (before) await carryMaxEdits(focus, before, updated, today);
     return toFocusBlockResponse(updated, today);
   }
 
@@ -283,7 +286,7 @@ export class FocusWorkoutController {
     const repos = await this.factory.forUser(user);
     const context = await loadFocusWorkoutContext(repos, program, workoutNum);
     const [blocks, budget, savedState, metadata] = await Promise.all([
-      loadFocusBlocks(repos.focus, today),
+      loadFocusBlocks(repos, today),
       repos.focus.getBudget(),
       repos.focus.getDayState(program, context.macrocycleNum, workoutNum),
       // All of the user's rows, as buildMuscleTargetResolver requires: it maps legacy
@@ -324,10 +327,13 @@ export class FocusWorkoutController {
 /** A date after every block's range, so a block not started yet counts as started. */
 const AFTER_EVERY_BLOCK = '9999-12-31';
 
-/** True when core's `expandRollovers` gives `predecessor` a successor, among `blocks`. */
+/**
+ * True when core's `expandRollovers` gives `predecessor` a successor, among `blocks`. Only
+ * whether one is owed matters, so its pool and increment are placeholders.
+ */
 function owesRoll(predecessor: FocusBlock, blocks: readonly FocusBlock[]): boolean {
   const start = nextStart(predecessor);
-  return expandRollovers([predecessor, ...blocks.filter((b) => b.id !== predecessor.id)], AFTER_EVERY_BLOCK, () => [])
+  return expandRollovers([predecessor, ...blocks.filter((b) => b.id !== predecessor.id)], AFTER_EVERY_BLOCK, () => [], 0)
     .some((successor) => successor.series === predecessor.series && successor.start === start);
 }
 

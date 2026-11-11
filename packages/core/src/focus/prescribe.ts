@@ -9,18 +9,25 @@ export type FocusPrescription =
       repsHigh: number;
       weight: number;
       lastReps: readonly number[] | null;
+      /** Every last rep reached `repsHigh`, so `weight` is up by the increment. */
+      progressed: boolean;
     }
-  | { progression: 'fixed'; sets: number; reps: number; weight: number }
-  | { progression: 'tm'; sets: number; reps: number; weight: number; percent: number; trainingMax: number }
+  | { progression: 'manual'; sets: number; reps: number; weight: number }
+  | { progression: 'percent_wave'; sets: number; reps: number; weight: number; percent: number; trainingMax: number }
   | { progression: 'rpe'; sets: number; reps: number; rpe: number; repsInReserve: number };
 
 /**
  * A focus lift's prescription for `sets` sets under its block's progression.
  *
- * Double and fixed progression use the entry's weight as entered, never rounded. A percent
- * of training max is a computed per-workout weight, so it rounds to the nearest loadable
- * plate combination at the program's configured `increment`
- * (docs/standards/training-max-precision.md, rule 3).
+ * Manual progression uses the entry's weight as entered, never rounded. Double progression
+ * does too, until every rep in `lastReps` reached `repsHigh`: then the plan is that weight
+ * plus `increment`, from the bottom of the range (#1213). Nothing is stored for it, so
+ * whatever records `lastReps` records the weight they were done at as `weight`.
+ *
+ * A percent of training max is a computed per-workout weight, so it rounds to the nearest
+ * loadable plate combination at the program's configured `increment`
+ * (docs/standards/training-max-precision.md, rule 3). Its max moves when the block rolls
+ * over (`expandRollovers`).
  */
 export function prescribe(
   block: Pick<FocusBlock, 'progression'>,
@@ -30,9 +37,9 @@ export function prescribe(
 ): FocusPrescription {
   const progression = block.progression;
   switch (progression) {
-    case 'fixed':
+    case 'manual':
       return { progression, sets, reps: entry.repsHigh, weight: entry.weight };
-    case 'tm':
+    case 'percent_wave':
       return {
         progression,
         sets,
@@ -43,15 +50,19 @@ export function prescribe(
       };
     case 'rpe':
       return { progression, sets, reps: entry.repsHigh, rpe: entry.rpe, repsInReserve: 10 - entry.rpe };
-    case 'double':
+    case 'double': {
+      const last = entry.lastReps ?? [];
+      const progressed = last.length > 0 && last.every((reps) => reps >= entry.repsHigh);
       return {
         progression,
         sets,
         repsLow: entry.repsLow,
         repsHigh: entry.repsHigh,
-        weight: entry.weight,
+        weight: progressed ? entry.weight + increment : entry.weight,
         lastReps: entry.lastReps ?? null,
+        progressed,
       };
+    }
     default: {
       const unknown: never = progression;
       throw new Error(`Unknown focus progression: ${String(unknown)}`);

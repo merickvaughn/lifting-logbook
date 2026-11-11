@@ -324,6 +324,7 @@ function planFromFocusBlocks(program, workoutNum, today) {
             repsHigh: entry.repsHigh,
             weight: entry.weight,
             lastReps: null,
+            progressed: false,
           },
         })),
       skipped: [],
@@ -521,7 +522,7 @@ function buildFocusPlan(workoutNum, today, dayState) {
     lift: entry.lift,
     sets: entry.sets,
     entry,
-    prescription: { progression: 'double', sets: entry.sets, repsLow: entry.repsLow, repsHigh: entry.repsHigh, weight: entry.weight, lastReps: null },
+    prescription: { progression: 'double', sets: entry.sets, repsLow: entry.repsLow, repsHigh: entry.repsHigh, weight: entry.weight, lastReps: null, progressed: false },
   }));
   const items = all.filter((item) => !trims.includes(item.lift));
   const cost = (sets) => sets * (FOCUS_TIMER.prep + FOCUS_TIMER.set) + Math.max(0, sets - 1) * FOCUS_TIMER.rest + FOCUS_TIMER.rest;

@@ -1,4 +1,5 @@
 import type { MuscleGroup } from './domain';
+import type { ProgressionType } from './progression';
 
 /**
  * Focus work (#1053): user-configured accessory blocks that target one muscle area for a
@@ -64,9 +65,32 @@ export type FocusSelection = (typeof FOCUS_SELECTIONS)[number];
 export const FOCUS_OVERLAPS = ['swap', 'reduce', 'skip', 'anyway'] as const;
 export type FocusOverlap = (typeof FOCUS_OVERLAPS)[number];
 
-/** How a pool lift's sets are prescribed. */
-export const FOCUS_PROGRESSIONS = ['double', 'fixed', 'tm', 'rpe'] as const;
-export type FocusProgression = (typeof FOCUS_PROGRESSIONS)[number];
+/**
+ * How a pool lift's sets are prescribed and progress: the shared `PROGRESSION_TYPES`
+ * a focus block can use (#1213). `linear` and `amrap_gated` are left out, as nothing in a
+ * focus block plans or records a session the way they read one.
+ */
+export const FOCUS_PROGRESSION_TYPES = ['double', 'manual', 'percent_wave', 'rpe'] as const satisfies readonly ProgressionType[];
+export type FocusProgression = (typeof FOCUS_PROGRESSION_TYPES)[number];
+
+/**
+ * The values focus blocks stored before they shared the progression vocabulary, and what
+ * each became (#1213). `double` and `rpe` kept their names. Requests take only the new
+ * values; this is read-side only, until #1220 removes it.
+ */
+const LEGACY_FOCUS_PROGRESSION_VALUES: ReadonlyMap<string, FocusProgression> = new Map([
+  ['fixed', 'manual'],
+  ['tm', 'percent_wave'],
+]);
+
+/**
+ * A stored focus progression in the current vocabulary, reading a value stored before
+ * migration `20261111120000_focus_progression_types` as its new name; undefined if unknown.
+ */
+export function toFocusProgression(value: string): FocusProgression | undefined {
+  const current = FOCUS_PROGRESSION_TYPES.find((type) => type === value);
+  return current ?? LEGACY_FOCUS_PROGRESSION_VALUES.get(value);
+}
 
 /** What happens when a block ends: prompt the user, or roll into `nextArea` automatically. */
 export const FOCUS_ON_ENDS = ['prompt', 'autoroll'] as const;
@@ -106,15 +130,24 @@ export interface FocusPoolEntry {
   repsLow: number;
   /** Top of the rep range; the rep target for the other progressions. */
   repsHigh: number;
-  /** Working weight for double and fixed progression. Directly known: never rounded. */
+  /**
+   * Working weight for `double` and `manual` progression. Directly known: never rounded.
+   * Under `double`, the weight `lastReps` were done at.
+   */
   weight: number;
-  /** Training max for `tm` progression. */
+  /**
+   * Training max for `percent_wave` progression. Raised by the increment when the block's
+   * auto-roll successor is created.
+   */
   trainingMax: number;
-  /** Percent of `trainingMax` for `tm` progression (0–100). */
+  /** Percent of `trainingMax` for `percent_wave` progression (0–100). */
   percent: number;
   /** Target RPE for `rpe` progression. */
   rpe: number;
-  /** Reps from the last session, shown as a double-progression hint. */
+  /**
+   * Reps from the last session at `weight`. Under `double` progression, every one at
+   * `repsHigh` plans the next session at `weight` plus the increment.
+   */
   lastReps?: readonly number[];
 }
 
@@ -255,9 +288,11 @@ export type FocusPrescriptionResponse =
       repsHigh: number;
       weight: number;
       lastReps: readonly number[] | null;
+      /** Every last rep reached `repsHigh`, so `weight` is up by the increment. */
+      progressed: boolean;
     }
-  | { progression: 'fixed'; sets: number; reps: number; weight: number }
-  | { progression: 'tm'; sets: number; reps: number; weight: number; percent: number; trainingMax: number }
+  | { progression: 'manual'; sets: number; reps: number; weight: number }
+  | { progression: 'percent_wave'; sets: number; reps: number; weight: number; percent: number; trainingMax: number }
   | { progression: 'rpe'; sets: number; reps: number; rpe: number; repsInReserve: number };
 
 export interface FocusPlanItemResponse {

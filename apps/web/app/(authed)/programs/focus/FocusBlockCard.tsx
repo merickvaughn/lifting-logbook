@@ -6,7 +6,7 @@ import {
   FOCUS_AREAS,
   FOCUS_LIMITS,
   FOCUS_OVERLAPS,
-  FOCUS_PROGRESSIONS,
+  FOCUS_PROGRESSION_TYPES,
   FOCUS_SELECTIONS,
   type FocusArea,
   type FocusBlock,
@@ -246,7 +246,7 @@ export default function FocusBlockCard({
             <Field label="Progression" stack>
               <Seg
                 label="Progression"
-                options={FOCUS_PROGRESSIONS.map((progression) => [progression, PROGRESSION_LABELS[progression]] as const)}
+                options={FOCUS_PROGRESSION_TYPES.map((progression) => [progression, PROGRESSION_LABELS[progression]] as const)}
                 value={block.progression}
                 onChange={(progression) => onPatch({ progression })}
               />

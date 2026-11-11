@@ -28,8 +28,8 @@ export const FOCUS_SELECTION_LABEL: Record<FocusSelection, string> = {
 
 export const FOCUS_PROGRESSION_LABEL: Record<FocusProgression, string> = {
   double: 'Double progression',
-  fixed: 'Fixed',
-  tm: '% of TM',
+  manual: 'Fixed',
+  percent_wave: '% of TM',
   rpe: 'RPE',
 };
 
@@ -53,19 +53,22 @@ export function describePrescription(rx: FocusPrescriptionResponse, unit: Weight
     case 'double': {
       const reps = rx.repsLow === rx.repsHigh ? String(rx.repsHigh) : `${rx.repsLow}–${rx.repsHigh}`;
       const last = rx.lastReps && rx.lastReps.length > 0 ? `Last time: ${rx.lastReps.join(', ')}. ` : '';
+      const next = rx.progressed
+        ? `Every set hit ${rx.repsHigh}, so the weight is up: start at ${rx.repsLow}.`
+        : `Hit ${rx.repsHigh} on every set and the weight goes up next time.`;
       return {
         summary: `${rx.sets} × ${reps}`,
         perSet: `${reps} reps @ ${formatWeight(rx.weight, 'lbs', unit)}`,
-        hint: `${last}Hit ${rx.repsHigh} on every set and the weight goes up next time.`,
+        hint: `${last}${next}`,
       };
     }
-    case 'fixed':
+    case 'manual':
       return {
         summary: `${rx.sets} × ${rx.reps}`,
         perSet: `${rx.reps} reps @ ${formatWeight(rx.weight, 'lbs', unit)}`,
         hint: 'Fixed prescription. You set the weight.',
       };
-    case 'tm':
+    case 'percent_wave':
       return {
         summary: `${rx.sets} × ${rx.reps} @ ${rx.percent}%`,
         perSet: `${rx.reps} reps @ ${formatWeight(rx.weight, 'lbs', unit)}`,
@@ -276,11 +279,12 @@ export function workoutOrder(
 /** The weight and reps a focus lift's sets start from in the logging form. */
 export function prescribedSet(rx: FocusPrescriptionResponse): { weight: number; reps: number } {
   switch (rx.progression) {
-    // The top of the range: hitting it on every set is what moves the weight up.
+    // The top of the range: hitting it on every set is what moves the weight up. Once it
+    // has moved, the bottom of the range.
     case 'double':
-      return { weight: rx.weight, reps: rx.repsHigh };
-    case 'fixed':
-    case 'tm':
+      return { weight: rx.weight, reps: rx.progressed ? rx.repsLow : rx.repsHigh };
+    case 'manual':
+    case 'percent_wave':
       return { weight: rx.weight, reps: rx.reps };
     // An RPE prescription names no weight; the lifter picks one.
     case 'rpe':

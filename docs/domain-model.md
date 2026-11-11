@@ -353,6 +353,12 @@ A focus block names its areas through `FOCUS_AREA_MUSCLES`, which maps each of t
 onto `MUSCLE_GROUPS`; whether a planned lift overlaps one is decided by the muscle resolver
 (§2), so a user's muscle overrides apply.
 
+A focus block's `progression` is one of `double`, `manual`, `percent_wave` and `rpe`, from the
+same `PROGRESSION_TYPES` vocabulary as a lift ([#1213](https://github.com/merickvaughn/lifting-logbook/issues/1213)).
+A `double` entry's next weight is **derived** in `prescribe` from the `lastReps` it carries, and a
+`percent_wave` entry's max moves into the block's auto-roll successor when that row is created
+([ADR-039](adr/ADR-039-focus-block-persistence.md), Amendment 2).
+
 ---
 
 ## 4. Prescribed vs. logged

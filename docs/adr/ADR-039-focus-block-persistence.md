@@ -107,6 +107,66 @@ UTC when the cookie is missing or holds a zone `Intl` doesn't recognise [5][6]. 
 doesn't change: it still takes `?today=` and still stores no time zone, so alternative 6 stays
 rejected. Client Components keep computing the day from the browser clock (`localToday`).
 
+## Amendment 2 — progression types and the successor pool (#1213)
+
+The `progression` column now holds the shared lift vocabulary
+([proposal](../proposals/2026-11-10-lift-progression-types.md), "Focus blocks"): `double`,
+`manual` (was `fixed`), `percent_wave` (was `tm`) and `rpe`. Migration
+`20261111120000_focus_progression_types` renames the stored values and swaps the CHECK. It is
+the first migration to update `focus_block` rows, and the table has `FORCE ROW LEVEL SECURITY`
+[4], which binds the table owner. For a role that doesn't bypass RLS, an UPDATE with no
+`app.current_user_id` matches nothing. `docs/deploy.md` says the migrator bypasses it, but the
+migration doesn't depend on that: it turns FORCE off around its one UPDATE, so the owner sees
+every row either way, and back on after it [7]. PostgreSQL runs a multi-statement
+query string as one transaction [8], and Prisma Migrate sends a migration file that way, as the
+"cannot run inside a transaction block" error from `CREATE INDEX CONCURRENTLY` in a migration
+shows. So a failure leaves FORCE on. Until the migration has run, a read maps an old value to its
+new name; that mapping is read-side only, and
+[#1220](https://github.com/merickvaughn/lifting-logbook/issues/1220) removes it. The DB e2e suite
+runs the file as one query, as a table owner that is neither superuser nor `BYPASSRLS`, so it fails
+if the FORCE handling is removed.
+
+**Deploy window and rollback.** Migrations run before the new API revision serves (ADR-027), so
+for a short window the old API reads rows the migration renamed. The old `prescribe` has no case
+for `manual` or `percent_wave` and throws, so the focus plan for such a block returns 500 until the
+new revision takes traffic. The web treats that like any failed focus plan (`loadFocusPlan`): the
+workout shows its planned lifts and the details page says the focus plan didn't load. The same
+fallback covers the next window, the new API with the old web, whose shape check doesn't know the
+new values. Block reads are unaffected, because the old repository casts the stored value without
+checking it, and only writes are validated. Rolling back the API alone after the migration has run hits the same
+500, so a rollback reverses the data first:
+
+```sql
+ALTER TABLE "focus_block" DROP CONSTRAINT "focus_block_progression_check";
+ALTER TABLE "focus_block" NO FORCE ROW LEVEL SECURITY;
+UPDATE "focus_block" SET "progression" = CASE "progression" WHEN 'manual' THEN 'fixed' WHEN 'percent_wave' THEN 'tm' END
+WHERE "progression" IN ('manual', 'percent_wave');
+ALTER TABLE "focus_block" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "focus_block" ADD CONSTRAINT "focus_block_progression_check"
+  CHECK ("progression" IN ('double', 'fixed', 'tm', 'rpe'));
+```
+
+Decision 4 changes for `percent_wave`. A block is one wave, so its training maxes carry into
+the successor: a successor lift that the block also had keeps the block's entry, with its max
+raised by the user's `defaultWeightIncrement`. Other successor lifts still come from
+`defaultFocusPool(area)`, and the other progression types are unchanged. The successor is stored
+on the first read after its block starts, so a max edited later in the block would otherwise never
+reach it: while the successor is still queued, an edit to a block's training max moves the
+successor's max for the same lift by the same amount, which keeps any edit already made to the
+successor. Other settings edits still don't follow
+([#1222](https://github.com/merickvaughn/lifting-logbook/issues/1222)).
+
+A `double` entry progresses in the prescription instead: once every rep in its `lastReps` reached
+`repsHigh`, it plans its weight plus the increment. Nothing extra is stored for that, so whatever
+writes `lastReps` must also write the weight those reps were done at
+([#1221](https://github.com/merickvaughn/lifting-logbook/issues/1221)).
+
+The two use different increments on purpose. A `double` bump is planned inside a workout, so it
+uses the increment that workout's weights round to: the program day's increment, or the user's
+default when the day has none, the same increment a `percent_wave` weight in that workout rounds to.
+A successor is created when focus blocks are read, outside any workout and any program, so it
+uses the user's default.
+
 ## References
 
 1. E. F. Codd, ["A Relational Model of Data for Large Shared Data Banks"](https://doi.org/10.1145/362384.362685), *Communications of the ACM* 13(6), 1970 — §2, redundancy and derivable data.
@@ -115,3 +175,5 @@ rejected. Client Components keep computing the day from the browser clock (`loca
 4. PostgreSQL 16 documentation, [§5.8 Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) — `ENABLE`/`FORCE ROW LEVEL SECURITY` and policy `USING`/`WITH CHECK`.
 5. ECMA-402, [`Intl.DateTimeFormat` — `timeZone` option](https://tc39.es/ecma402/#sec-createdatetimeformat) — IANA zone names, and the `RangeError` for an unknown one.
 6. IETF [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265), *HTTP State Management Mechanism* — the `Path` and `Max-Age` cookie attributes the `tz` cookie sets.
+7. PostgreSQL 16 documentation, [`ALTER TABLE`](https://www.postgresql.org/docs/16/sql-altertable.html) — `NO FORCE ROW LEVEL SECURITY` / `FORCE ROW LEVEL SECURITY`.
+8. PostgreSQL 16 documentation, [§55.2.2.1 Multiple Statements in a Simple Query](https://www.postgresql.org/docs/16/protocol-flow.html#PROTOCOL-FLOW-MULTI-STATEMENT) — a multi-statement query string runs as one implicit transaction.

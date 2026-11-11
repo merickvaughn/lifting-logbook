@@ -13,26 +13,47 @@ describe('prescribe', () => {
       repsHigh: 15,
       weight: 27.3,
       lastReps: [15, 14],
+      progressed: false,
     });
-    expect(prescribe({ progression: 'double' }, pool, 3, 2.5)).toMatchObject({ lastReps: null });
+    expect(prescribe({ progression: 'double' }, pool, 3, 2.5)).toMatchObject({ lastReps: null, progressed: false });
+    expect(prescribe({ progression: 'double' }, { ...pool, lastReps: [] }, 3, 2.5)).toMatchObject({
+      weight: 27.3,
+      progressed: false,
+    });
   });
 
-  it('fixed never rounds the entered weight', () => {
-    expect(prescribe({ progression: 'fixed' }, pool, 2, 2.5)).toEqual({ progression: 'fixed', sets: 2, reps: 15, weight: 27.3 });
+  it('double progression adds the increment once every last rep reached the top of the range (#1213)', () => {
+    const topped = { ...pool, weight: 30, lastReps: [15, 15, 16] };
+    expect(prescribe({ progression: 'double' }, topped, 3, 2.5)).toEqual({
+      progression: 'double',
+      sets: 3,
+      repsLow: 12,
+      repsHigh: 15,
+      weight: 32.5,
+      lastReps: [15, 15, 16],
+      progressed: true,
+    });
+    expect(prescribe({ progression: 'double' }, topped, 3, 5)).toMatchObject({ weight: 35 });
   });
 
-  it('percent of training max rounds to the configured plate increment', () => {
+  // `manual` was `fixed` and `percent_wave` was `tm` before #1213: the same entry plans the
+  // same sets, reps and weights under its new value.
+  it('manual (was fixed) never rounds the entered weight', () => {
+    expect(prescribe({ progression: 'manual' }, pool, 2, 2.5)).toEqual({ progression: 'manual', sets: 2, reps: 15, weight: 27.3 });
+  });
+
+  it('percent_wave (was tm) rounds a percent of training max to the configured plate increment', () => {
     // 65% of 95 = 61.75
-    expect(prescribe({ progression: 'tm' }, pool, 3, 2.5)).toEqual({
-      progression: 'tm',
+    expect(prescribe({ progression: 'percent_wave' }, pool, 3, 2.5)).toEqual({
+      progression: 'percent_wave',
       sets: 3,
       reps: 15,
       weight: 62.5,
       percent: 65,
       trainingMax: 95,
     });
-    expect(prescribe({ progression: 'tm' }, pool, 3, 5)).toMatchObject({ weight: 60 });
-    expect(prescribe({ progression: 'tm' }, pool, 3, 1.25)).toMatchObject({ weight: 61.25 });
+    expect(prescribe({ progression: 'percent_wave' }, pool, 3, 5)).toMatchObject({ weight: 60 });
+    expect(prescribe({ progression: 'percent_wave' }, pool, 3, 1.25)).toMatchObject({ weight: 61.25 });
   });
 
   it('RPE reports reps in reserve', () => {
@@ -46,8 +67,8 @@ describe('prescribe', () => {
   });
 
   it('throws on a progression it does not know', () => {
-    expect(() => prescribe({ progression: 'bogus' as FocusProgression }, pool, 3, 2.5)).toThrow(
-      'Unknown focus progression: bogus',
+    expect(() => prescribe({ progression: 'tm' as FocusProgression }, pool, 3, 2.5)).toThrow(
+      'Unknown focus progression: tm',
     );
   });
 });
