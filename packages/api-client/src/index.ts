@@ -48,8 +48,6 @@ import type {
 } from '@lifting-logbook/types';
 import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 
-export { MACROCYCLE_ID_HEADER };
-
 // ---------------------------------------------------------------------------
 // @lifting-logbook/api-client
 //

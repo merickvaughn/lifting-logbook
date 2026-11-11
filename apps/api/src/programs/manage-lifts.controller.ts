@@ -12,14 +12,14 @@ import {
   Param,
   Post,
 } from '@nestjs/common';
-import { LIFT_NAMES, LiftOverrideResponse } from '@lifting-logbook/types';
+import { LIFT_NAMES, LiftOverrideResponse, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { toLiftOverrideResponse, isValidWorkoutNum } from './mappers';
 import { LiftOverrideDto } from './lift-override.dto';
-import { MACROCYCLE_ID_HEADER, assertMacrocycleWritable, checkMacrocycleId } from './macrocycle-history.util';
+import { assertMacrocycleWritable, checkMacrocycleId } from './macrocycle-history.util';
 
 @Controller('programs/:program')
 export class ManageLiftsController {

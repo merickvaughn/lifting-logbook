@@ -31,6 +31,11 @@ export interface IMacrocycleRepository {
    * Takes the user's macrocycle write lock (proposal decision 13) in shared mode until the
    * request's transaction ends, without waiting. Page writes share it, so they run side by side.
    * False when an import holds it exclusively.
+   *
+   * The lock lasts only as long as the transaction it's taken in. Under the RLS request
+   * transaction (`DATABASE_URL`) that's the request. A repository on a bare client, as the
+   * `SYSTEM_DATABASE_URL` factory builds, has no request transaction, so the lock ends with its
+   * own statement and excludes nothing.
    */
   tryLockShared(): Promise<boolean>;
 

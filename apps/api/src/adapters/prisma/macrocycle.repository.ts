@@ -49,10 +49,20 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
   // Raw SQL isn't auto-traced (ADR-024), hence the manual spans. The `_xact_` forms release at
   // the end of the request's transaction (RlsInterceptor), so nothing has to unlock.
 
+  /**
+   * Whether this repository runs inside a transaction, which the lock needs to last past its
+   * own statement. The base client (the system-DB factory) can start transactions, and a
+   * transaction client can't, so the spans record `lock.in_transaction` false there.
+   */
+  private inTransaction(): boolean {
+    return typeof (this.prisma as { $transaction?: unknown }).$transaction !== 'function';
+  }
+
   async tryLockShared(): Promise<boolean> {
     return tracer.startActiveSpan('macrocycle.try_lock', async (span) => {
       try {
         span.setAttribute('lock.mode', 'shared');
+        span.setAttribute('lock.in_transaction', this.inTransaction());
         const rows = await this.prisma.$queryRaw<{ locked: boolean }[]>`
           SELECT pg_try_advisory_xact_lock_shared(hashtextextended(${this.userId}, ${MACROCYCLE_LOCK_NAMESPACE})) AS locked`;
         const locked = rows[0]?.locked === true;
@@ -68,6 +78,7 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     return tracer.startActiveSpan('macrocycle.lock', async (span) => {
       try {
         span.setAttribute('lock.mode', 'exclusive');
+        span.setAttribute('lock.in_transaction', this.inTransaction());
         span.setAttribute('lock.wait_ms', waitMs);
         const settings = await this.prisma.$queryRaw<{ previous: string }[]>`
           SELECT current_setting('lock_timeout') AS previous`;
@@ -82,7 +93,10 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
           span.setAttribute('lock.acquired', false);
           return false;
         }
-        await this.prisma.$queryRaw`SELECT set_config('lock_timeout', ${settings[0]?.previous ?? '0'}, true)`;
+        const previous = settings[0]?.previous;
+        // current_setting always returns a row; restoring a guess could turn the timeout off.
+        if (previous === undefined) throw new Error('current_setting(lock_timeout) returned no row');
+        await this.prisma.$queryRaw`SELECT set_config('lock_timeout', ${previous}, true)`;
         span.setAttribute('lock.acquired', true);
         return true;
       } finally {

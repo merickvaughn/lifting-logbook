@@ -12,12 +12,13 @@ import {
   Post,
 } from '@nestjs/common';
 import { programLengthWeeks } from '@lifting-logbook/core';
+import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { IsOptional, IsString, MaxLength } from 'class-validator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { MACROCYCLE_ID_HEADER, assertMacrocycleWritable, checkMacrocycleId } from './macrocycle-history.util';
+import { assertMacrocycleWritable, checkMacrocycleId } from './macrocycle-history.util';
 import { isValidWorkoutNum, workoutKeyForWorkoutNum } from './mappers';
 
 class SkipWorkoutDto {

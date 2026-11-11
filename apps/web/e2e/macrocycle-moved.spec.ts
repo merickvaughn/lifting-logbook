@@ -30,8 +30,10 @@ for (const suffix of ['', '/detail']) {
     await expect(page).toHaveURL(new RegExp(`${CURRENT}${suffix}$`));
     const expected = [`${OLD}${suffix}`, `${CURRENT}${suffix}`];
     await expect.poll(() => documentLoads).toEqual(expected);
-    await page.waitForLoadState('load');
-    await expect(page).toHaveURL(new RegExp(`${CURRENT}${suffix}$`));
+    // A loop would load another document soon after; none arrives within a second.
+    await expect(
+      page.waitForRequest((request) => request.resourceType() === 'document', { timeout: 1_000 }),
+    ).rejects.toThrow();
     expect(documentLoads).toEqual(expected);
   });
 }

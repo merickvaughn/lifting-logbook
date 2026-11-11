@@ -3,7 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import multipart from '@fastify/multipart';
-import { emptyFocusDayState, WorkoutResponse } from '@lifting-logbook/types';
+import { emptyFocusDayState, MACROCYCLE_ID_HEADER, WorkoutResponse } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { InMemoryMacrocycleRepository } from '../adapters/in-memory/macrocycle.adapter';
 import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
@@ -11,7 +11,6 @@ import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
-import { MACROCYCLE_ID_HEADER } from './macrocycle-history.util';
 
 /**
  * The stable macrocycle id on page writes (proposal decision 3, #1198), in-memory adapters.
@@ -106,7 +105,7 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
     return (res.json() as { id: string }).id;
   };
 
-  it('returns the current macrocycle id on GET workouts, unchanged by a renumbering', async () => {
+  it("returns the current macrocycle's id on GET workouts, and the row keeps that id when renumbered", async () => {
     const user = await as('id-read');
     const macrocycles = (await user.repos()).macrocycle as InMemoryMacrocycleRepository;
     expect(user.id).toBe((await macrocycles.findByNumber(PROGRAM, 1))?.id);
@@ -117,9 +116,14 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
   it("answers every page write with the old number and the macrocycle's id with 409 macrocycle-moved, writing nothing", async () => {
     const user = await as('id-moved');
     const recordId = await logOne(user);
-    ((await user.repos()).macrocycle as InMemoryMacrocycleRepository).renumber(PROGRAM, 1, 2);
+    const before = await user.repos();
+    (before.macrocycle as InMemoryMacrocycleRepository).renumber(PROGRAM, 1, 2);
+    // A renumbering moves the dashboard with its macrocycle, as #1199's will.
+    const dashboard = await before.macrocycleDashboard.getMacrocycleDashboard(PROGRAM);
+    await before.macrocycleDashboard.saveMacrocycleDashboard({ ...dashboard, macrocycleNum: 2 });
 
-    for (const write of pageWrites(recordId)) {
+    // `PUT focus-state` names no number, so a renumbering doesn't make its page stale.
+    for (const write of pageWrites(recordId).filter((w) => w.name !== 'PUT focus-state')) {
       const res = await user.inject(write.method, write.url, write.body, user.id);
       expect({ route: write.name, status: res.statusCode }).toEqual({ route: write.name, status: 409 });
       expect(res.json()).toMatchObject({ code: 'macrocycle-moved', macrocycleNum: 2 });
@@ -133,7 +137,20 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
     expect(await repos.workoutDateOverride.getOverride(PROGRAM, 1, 1)).toBeNull();
     expect(await repos.workoutSkipOverride.getSkipsForMacrocycle(PROGRAM, 1)).toEqual(new Set());
     expect(await repos.focus.getDayState(PROGRAM, 1, 1)).toBeNull();
-    expect((await repos.macrocycleDashboard.getMacrocycleDashboard(PROGRAM)).macrocycleNum).toBe(1);
+    expect((await repos.macrocycleDashboard.getMacrocycleDashboard(PROGRAM)).macrocycleNum).toBe(2);
+    expect(await repos.macrocycle.highestNumber(PROGRAM)).toBe(2);
+  });
+
+  it('accepts a focus write with the id after a renumbering, under the new number', async () => {
+    const user = await as('id-moved-focus');
+    const repos = await user.repos();
+    (repos.macrocycle as InMemoryMacrocycleRepository).renumber(PROGRAM, 1, 2);
+    const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(PROGRAM);
+    await repos.macrocycleDashboard.saveMacrocycleDashboard({ ...dashboard, macrocycleNum: 2 });
+
+    const res = await user.inject('PUT', `${base}/workouts/1/focus-state`, { ...emptyFocusDayState(), dismissed: true }, user.id);
+    expect(res.statusCode).toBe(200);
+    expect((await repos.focus.getDayState(PROGRAM, 2, 1))?.dismissed).toBe(true);
   });
 
   it("answers an id from another program, or one the user doesn't have, with 404", async () => {
@@ -285,5 +302,39 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
     macrocycles.lockHeld = null;
     const read = await user.inject('GET', `${base}/workouts/1`);
     expect((read.json() as WorkoutResponse).macrocycleId).toBe((await macrocycles.findByNumber(PROGRAM, 1))?.id);
+  });
+
+  // An import that commits between reading the current macrocycle and taking the lock would
+  // leave the request working from a number it has since moved, so the lock comes first.
+  it.each([
+    { name: 'GET workouts', method: 'GET', url: `${base}/workouts/1` },
+    { name: 'POST macrocycles', method: 'POST', url: `${base}/macrocycles`, body: {} },
+    { name: 'POST macrocycles from a number', method: 'POST', url: `${base}/macrocycles`, body: { fromMacrocycleNum: 1 } },
+    { name: 'PUT focus-state', method: 'PUT', url: `${base}/workouts/1/focus-state`, body: { ...emptyFocusDayState(), dismissed: true } },
+  ])('$name takes the macrocycle lock before it reads the current macrocycle', async ({ method, url, body }) => {
+    const user = await as(`id-lock-first-${method}-${url.length}-${body && 'fromMacrocycleNum' in body ? 'from' : 'next'}`);
+    await logOne(user);
+    const repos = await user.repos();
+    const lock = jest.spyOn(repos.macrocycle, 'tryLockShared');
+    const read = jest.spyOn(repos.macrocycleDashboard, 'getMacrocycleDashboard');
+
+    const res = await user.inject(method, url, body, user.id);
+    expect(res.statusCode).toBeLessThan(300);
+    expect(lock).toHaveBeenCalled();
+    expect(read).toHaveBeenCalled();
+    expect(lock.mock.invocationCallOrder[0]).toBeLessThan(read.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it('answers a focus write for a macrocycle that is no longer current with 409 macrocycle-not-current, writing nothing', async () => {
+    const user = await as('id-not-current');
+    await logOne(user);
+    expect((await user.inject('POST', `${base}/macrocycles`, {})).statusCode).toBe(201);
+
+    const res = await user.inject('PUT', `${base}/workouts/1/focus-state`, { ...emptyFocusDayState(), dismissed: true }, user.id);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'macrocycle-not-current', macrocycleNum: 1 });
+    const repos = await user.repos();
+    expect(await repos.focus.getDayState(PROGRAM, 1, 1)).toBeNull();
+    expect(await repos.focus.getDayState(PROGRAM, 2, 1)).toBeNull();
   });
 });

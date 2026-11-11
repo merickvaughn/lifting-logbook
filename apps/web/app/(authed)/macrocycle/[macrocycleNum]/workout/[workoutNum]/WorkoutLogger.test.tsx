@@ -461,12 +461,12 @@ describe('WorkoutLogger — a renumbered macrocycle (#1198)', () => {
 
   it('asks for a retry while an import holds the lock, without reloading', async () => {
     const user = userEvent.setup();
-    mockCreateLiftRecord.mockRejectedValue(new ApiClientError('busy', 409, 'import-in-progress'));
+    mockCreateLiftRecord.mockRejectedValue(new ApiClientError('An import is changing your macrocycles. Try again in a moment.', 409, 'import-in-progress'));
     render(<WorkoutLogger {...makeProps({ macrocycleId: 'mc-a' })} />);
 
     await user.click(screen.getByRole('button', { name: 'Log' }));
 
-    await waitFor(() => expect(screen.getByText(/An import is updating your macrocycles/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/An import is changing your macrocycles/)).toBeInTheDocument());
     expect(mockAssign).not.toHaveBeenCalled();
   });
 

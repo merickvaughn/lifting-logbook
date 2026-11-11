@@ -77,8 +77,8 @@ describe('drafts keyed by the macrocycle id (#1198)', () => {
     expect(readDraft(keyed, legacy)).toEqual({ weight: '225', reps: '5', notes: '' });
     expect(window.localStorage.getItem(legacy)).toBeNull();
     expect(readDraft(keyed)).toEqual({ weight: '225', reps: '5', notes: '' });
-    // Another macrocycle, even one renumbered onto the old number, doesn't see it.
-    expect(readDraft(buildDraftKey('5-3-1', 2, 3, 'Back Squat', 1, undefined, 'mc-b'), legacy)).toBeNull();
+    // Another macrocycle's id key doesn't see the moved draft.
+    expect(readDraft(buildDraftKey('5-3-1', 2, 3, 'Back Squat', 1, undefined, 'mc-b'))).toBeNull();
   });
 
   it('prefers a draft already under the id key and leaves the legacy one alone', () => {

@@ -17,6 +17,7 @@ import {
 import {
   ImportLiftRecordsResponse,
   LiftRecordResponse,
+  MACROCYCLE_ID_HEADER,
 } from '@lifting-logbook/types';
 import {
   LiftRecord,
@@ -45,7 +46,6 @@ import { UpdateLiftRecordDto } from './update-lift-record.dto';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
 import {
-  MACROCYCLE_ID_HEADER,
   assertMacrocycleWritable,
   checkMacrocycleId,
   ensureFileNumberRows,

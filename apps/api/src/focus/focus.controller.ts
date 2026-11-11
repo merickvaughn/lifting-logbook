@@ -53,7 +53,8 @@ import {
 } from './focus-block.dto';
 import { FocusDayStateDto } from './focus-day-state.dto';
 import { currentMacrocycleOrFirst } from '../programs/workout-day.util';
-import { MACROCYCLE_ID_HEADER, checkMacrocycleId } from '../programs/macrocycle-history.util';
+import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
+import { checkMacrocycleId, lockForMacrocycleWrite } from '../programs/macrocycle-history.util';
 import {
   loadFocusBlocks,
   loadFocusWorkoutContext,
@@ -247,9 +248,11 @@ export class FocusWorkoutController {
   ): Promise<FocusDayState> {
     const workoutNum = parseWorkoutNum(workoutNumParam);
     const repos = await this.factory.forUser(user);
+    // The lock comes before the current number is read, so an import can't renumber between.
+    await lockForMacrocycleWrite(repos);
     const { macrocycleNum } = await currentMacrocycleOrFirst(repos, program);
     // The route has no number; the page's id must still name the current macrocycle.
-    await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'PUT focus-state');
+    await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'PUT focus-state', { current: true });
     return repos.focus.saveDayState(program, macrocycleNum, workoutNum, {
       modes: { ...dto.modes },
       picks: { ...dto.picks },

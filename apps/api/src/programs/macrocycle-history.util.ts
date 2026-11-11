@@ -97,30 +97,22 @@ function unknownNumber(program: string, macrocycleNum: number): NotFoundExceptio
 }
 
 /**
- * The stable id of the current macrocycle (`dashboard`, already loaded by the caller), for a
- * page to send back with its writes. It gets its row here if the previous API revision started
- * it without one. Creating that row is a macrocycle write, so it takes the shared lock first;
- * while an import holds it the page gets no id, and its writes are still accepted without one
- * until #1200. No dashboard means no macrocycle, and no id.
+ * The stable id of the current macrocycle (`dashboard`), for a page to send back with its
+ * writes. The caller holds the shared macrocycle lock and read `dashboard` under it, so the
+ * number and the id agree. The macrocycle gets its row here if the previous API revision
+ * started it without one.
  */
 export async function macrocycleIdFor(
   repos: Pick<RepositoryBundle, 'macrocycle'>,
-  dashboard: MacrocycleDashboard | null,
+  dashboard: MacrocycleDashboard,
 ): Promise<string | undefined> {
-  if (!dashboard) return undefined;
   const row = await repos.macrocycle.findByNumber(dashboard.program, dashboard.macrocycleNum);
   if (row) return row.id;
-  if (!(await repos.macrocycle.tryLockShared())) return undefined;
   await repos.macrocycle.ensure([currentRow(dashboard)]);
   // `ensure` doesn't return ids, and a concurrent request may have made the row.
   return (await repos.macrocycle.findByNumber(dashboard.program, dashboard.macrocycleNum))?.id;
 }
 
-/**
- * The header a page sends its macrocycle's stable id in (proposal decision 3, #1198). `@Headers`
- * matches it case-insensitively. `main.ts`'s CORS options allow it.
- */
-export { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 
 const writeLogger = new Logger('MacrocycleWrite');
 
@@ -159,6 +151,17 @@ function unknownId(program: string, macrocycleId: string): NotFoundException {
   });
 }
 
+/** A route with no number got the id of a macrocycle that's no longer the current one. */
+function notCurrent(program: string, macrocycleNum: number): ConflictException {
+  return new ConflictException({
+    statusCode: 409,
+    code: 'macrocycle-not-current',
+    message: `This page is for macrocycle ${macrocycleNum} of '${program}', which is no longer the current one. Reload the page to see the current macrocycle.`,
+    error: 'Conflict',
+    macrocycleNum,
+  });
+}
+
 function moved(program: string, macrocycleNum: number): ConflictException {
   return new ConflictException({
     statusCode: 409,
@@ -186,6 +189,10 @@ export async function lockForMacrocycleWrite(repos: Pick<RepositoryBundle, 'macr
  * is a 404. A write with no id is still accepted until #1200, and logged so the remaining ones
  * can be counted. Returns the id's row, for {@link assertMacrocycleWritable} to reuse, or null
  * when the write had no id.
+ *
+ * `current` is for a route with no number, which writes to the current macrocycle: there a
+ * different number means the page is for an older macrocycle, not that its macrocycle moved,
+ * so the 409 is `macrocycle-not-current`. Reloading at the same number wouldn't help it.
  */
 export async function checkMacrocycleId(
   repos: Pick<RepositoryBundle, 'macrocycle'>,
@@ -193,6 +200,7 @@ export async function checkMacrocycleId(
   macrocycleNum: number,
   macrocycleId: string | undefined,
   route: string,
+  { current = false }: { current?: boolean } = {},
 ): Promise<MacrocycleRow | null> {
   await lockForMacrocycleWrite(repos);
   if (!macrocycleId) {
@@ -201,7 +209,9 @@ export async function checkMacrocycleId(
   }
   const row = await repos.macrocycle.findById(macrocycleId);
   if (!row || row.program !== program) throw unknownId(program, macrocycleId);
-  if (row.macrocycleNum !== macrocycleNum) throw moved(program, row.macrocycleNum);
+  if (row.macrocycleNum !== macrocycleNum) {
+    throw current ? notCurrent(program, row.macrocycleNum) : moved(program, row.macrocycleNum);
+  }
   return row;
 }
 

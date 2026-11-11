@@ -52,12 +52,19 @@ describe('movedMacrocycleNum', () => {
 });
 
 describe('writeFailureMessage', () => {
-  it('asks for a retry while an import holds the lock', () => {
-    expect(writeFailureMessage(new ApiClientError('busy', 409, 'import-in-progress'), 'Failed.')).toMatch(/import/i);
+  it("shows the API's message while an import holds the lock", () => {
+    const msg = 'An import is changing your macrocycles. Try again in a moment.';
+    expect(writeFailureMessage(new ApiClientError(msg, 409, 'import-in-progress'), 'Failed.')).toBe(msg);
+  });
+
+  it("shows the API's message for a macrocycle that is no longer current", () => {
+    const msg = 'This page is for macrocycle 1, which is no longer the current one.';
+    expect(writeFailureMessage(new ApiClientError(msg, 409, 'macrocycle-not-current'), 'Failed.')).toBe(msg);
   });
 
   it('falls back for anything else', () => {
     expect(writeFailureMessage(new ApiClientError('dup', 409), 'Failed.')).toBe('Failed.');
+    expect(writeFailureMessage(new ApiClientError('moved', 409, 'macrocycle-moved'), 'Failed.')).toBe('Failed.');
     expect(writeFailureMessage(new Error('x'), 'Failed.')).toBe('Failed.');
   });
 });

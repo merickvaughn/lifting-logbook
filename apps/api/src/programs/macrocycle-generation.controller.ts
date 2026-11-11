@@ -1,5 +1,6 @@
 import { Body, Controller, Headers, HttpCode, HttpStatus, Inject, Param, Post } from '@nestjs/common';
 import {
+  MACROCYCLE_ID_HEADER,
   MacrocycleDashboardResponse,
   RecalculateMaxesResponse,
 } from '@lifting-logbook/types';
@@ -13,7 +14,6 @@ import { ParseProgramPipe } from './program.pipe';
 import { InitializeMacrocycleDto } from './initialize-macrocycle.dto';
 import { StartNewMacrocycleDto } from './start-new-macrocycle.dto';
 import { MacrocycleGenerationService } from './macrocycle-generation.service';
-import { MACROCYCLE_ID_HEADER } from './macrocycle-history.util';
 
 @Controller('programs/:program')
 export class MacrocycleGenerationController {
