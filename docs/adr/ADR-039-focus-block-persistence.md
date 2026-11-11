@@ -120,9 +120,10 @@ migration doesn't depend on that: it turns FORCE off around its one UPDATE, so t
 every row either way, and back on after it [7]. PostgreSQL runs a multi-statement
 query string as one transaction [8], and Prisma Migrate sends a migration file that way, as the
 "cannot run inside a transaction block" error from `CREATE INDEX CONCURRENTLY` in a migration
-shows. So a failure leaves FORCE on. Until the migration has run, a read maps an old value to its
-new name; that mapping is read-side only, and
-[#1220](https://github.com/merickvaughn/lifting-logbook/issues/1220) removes it. The DB e2e suite
+shows. So a failure leaves FORCE on. While the migration was rolling out, a read mapped an old value
+to its new name; once production had run it,
+[#1220](https://github.com/merickvaughn/lifting-logbook/issues/1220) removed that mapping, and the
+repository now throws on any stored value outside the vocabulary. The DB e2e suite
 runs the file as one query, as a table owner that is neither superuser nor `BYPASSRLS`, so it fails
 if the FORCE handling is removed.
 
@@ -153,7 +154,7 @@ raised by the user's `defaultWeightIncrement`. Other successor lifts still come 
 on the first read after its block starts, so a max edited later in the block would otherwise never
 reach it: while the successor is still queued, an edit to a block's training max moves the
 successor's max for the same lift by the same amount, which keeps any edit already made to the
-successor. Amendment 3 covers the block's other settings.
+successor. Amendment 4 covers the block's other settings.
 
 A `double` entry progresses in the prescription instead: once every rep in its `lastReps` reached
 `repsHigh`, it plans its weight plus the increment. Nothing extra is stored for that, so whatever
@@ -166,7 +167,41 @@ default when the day has none, the same increment a `percent_wave` weight in tha
 A successor is created when focus blocks are read, outside any workout and any program, so it
 uses the user's default.
 
-## Amendment 3 — a queued successor follows its block's settings (#1222)
+## Amendment 3 — recording a `double` entry's last session (#1221)
+
+Amendment 2 left `lastReps` with no writer. A workout's focus plan read now writes it
+(`recordFocusSessions` in `focus.util.ts`, over core's `recordLastSessions`), the same way the
+blocks read creates a successor. For each `double` block active on `today`, each pool lift's last
+session is its sets on the latest day inside the block's range and before `today`. The entry takes
+that day's reps in set order as `lastReps`, the lightest of those sets' weights as `weight`, and
+the day as a new `lastDate`. The block is stored only when an entry changed.
+
+- **Before `today`, not including it.** The details page, the logger and the timer all re-read the
+  plan during a session. If today's sets counted, logging the last set at the top of the range
+  would raise the weight of the sets still to do. Two workouts on one day see the same last
+  session.
+- **Once per session.** A session later than the entry's `lastDate` is recorded once. A weight the
+  user edits in setup afterwards stands until the next session, rather than being reset from the
+  same records on the next read. A correction to that session's sets after it was recorded isn't
+  picked up. The setup page sends an entry back whole, so a block update that changes an entry's
+  weight but returns its `lastReps` unchanged drops them (`withoutStaleLastReps`): they were done
+  at the old weight, and would otherwise bump the new one.
+- **The lightest set's weight.** `prescribe` adds the increment to `weight` once every rep in
+  `lastReps` reached `repsHigh`, so `weight` has to be a load every one of those sets was done at
+  or above.
+- **Inside the block's range.** A new block starts from its configured weight, not from the same
+  lift's sets in an earlier block.
+
+The recorded values are capped at the bounds the block DTOs accept (`FOCUS_LIMITS`), which are
+tighter than a lift record's, so the setup page can still send the pool back. `GET /focus/blocks`
+doesn't record sessions: the setup page shows an entry's weight as of the last plan read.
+
+**Rejected: write on each lift-record write.** A lift record doesn't say which block it was logged
+for, and a pool lift can also be a planned lift or sit in two blocks. Writing per set would also
+move the session's own plan mid-session, which a "before `today`" read avoids without a second
+field for the session in progress.
+
+## Amendment 4 — a queued successor follows its block's settings (#1222)
 
 A successor is stored on the first read after its block starts, with a copy of the block's
 settings at that moment. A lifter who sets a block up and then adjusts it in its first days (the

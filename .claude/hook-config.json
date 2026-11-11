@@ -23,5 +23,11 @@
     "v0.4 — Alpha Release"
   ],
   "status_field_id": "PVTSSF_lADOEecHO84BeFl_zhYiZk8",
-  "done_option_id": "0112fb7c"
+  "done_option_id": "0112fb7c",
+  "docker_test_commands": [
+    "^npm(\\.cmd)?\\s+(run\\s+)?test(:db)?(?![\\w:-])(?:(?!.*\\s(-w|--workspace)\\b)|(?=.*\\s(-w|--workspace)[ =]*(@lifting-logbook/|\\.?/?apps/)api(?![\\w-])))",
+    "^npx\\s+turbo\\s+(run\\s+)?(?=(.*\\s)?test(?![\\w:-]))(?:(?!.*\\s(--filter|-F)\\b)|(?=.*\\s(--filter|-F)[ =]*(@lifting-logbook/|\\.?/?apps/)api(?![\\w-])))",
+    "^npx\\s+jest\\b.*(apps/api|db\\.e2e)"
+  ],
+  "docker_test_skip": "LIFTING_SKIP_DB_E2E"
 }

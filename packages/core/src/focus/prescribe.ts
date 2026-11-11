@@ -22,7 +22,7 @@ export type FocusPrescription =
  * Manual progression uses the entry's weight as entered, never rounded. Double progression
  * does too, until every rep in `lastReps` reached `repsHigh`: then the plan is that weight
  * plus `increment`, from the bottom of the range (#1213). Nothing is stored for it, so
- * whatever records `lastReps` records the weight they were done at as `weight`.
+ * `recordLastSessions` records the weight `lastReps` were done at as `weight` (#1221).
  *
  * A percent of training max is a computed per-workout weight, so it rounds to the nearest
  * loadable plate combination at the program's configured `increment`

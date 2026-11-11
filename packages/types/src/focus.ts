@@ -73,25 +73,6 @@ export type FocusOverlap = (typeof FOCUS_OVERLAPS)[number];
 export const FOCUS_PROGRESSION_TYPES = ['double', 'manual', 'percent_wave', 'rpe'] as const satisfies readonly ProgressionType[];
 export type FocusProgression = (typeof FOCUS_PROGRESSION_TYPES)[number];
 
-/**
- * The values focus blocks stored before they shared the progression vocabulary, and what
- * each became (#1213). `double` and `rpe` kept their names. Requests take only the new
- * values; this is read-side only, until #1220 removes it.
- */
-const LEGACY_FOCUS_PROGRESSION_VALUES: ReadonlyMap<string, FocusProgression> = new Map([
-  ['fixed', 'manual'],
-  ['tm', 'percent_wave'],
-]);
-
-/**
- * A stored focus progression in the current vocabulary, reading a value stored before
- * migration `20261111120000_focus_progression_types` as its new name; undefined if unknown.
- */
-export function toFocusProgression(value: string): FocusProgression | undefined {
-  const current = FOCUS_PROGRESSION_TYPES.find((type) => type === value);
-  return current ?? LEGACY_FOCUS_PROGRESSION_VALUES.get(value);
-}
-
 /** What happens when a block ends: prompt the user, or roll into `nextArea` automatically. */
 export const FOCUS_ON_ENDS = ['prompt', 'autoroll'] as const;
 export type FocusOnEnd = (typeof FOCUS_ON_ENDS)[number];
@@ -149,6 +130,11 @@ export interface FocusPoolEntry {
    * `repsHigh` plans the next session at `weight` plus the increment.
    */
   lastReps?: readonly number[];
+  /**
+   * The day (ISO date) of the session `lastReps` came from. A session is recorded once, so
+   * a weight edited after it stands until a later session is logged (#1221).
+   */
+  lastDate?: string;
 }
 
 export interface FocusBlock {

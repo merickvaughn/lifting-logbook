@@ -23,11 +23,16 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
     );
   }
 
-  async getRecordsForLifts(lifts: readonly string[], through: Date): Promise<LiftRecord[]> {
+  async getRecordsForLifts(lifts: readonly string[], through: Date, from?: Date): Promise<LiftRecord[]> {
     const wanted = new Set(lifts.flatMap(liftSpellings));
     return [...this.store.values()]
       .flat()
-      .filter((r) => wanted.has(r.lift) && r.date.getTime() <= through.getTime());
+      .filter(
+        (r) =>
+          wanted.has(r.lift) &&
+          r.date.getTime() <= through.getTime() &&
+          (from === undefined || r.date.getTime() >= from.getTime()),
+      );
   }
 
   async appendLiftRecords(program: string, records: LiftRecord[]): Promise<number> {

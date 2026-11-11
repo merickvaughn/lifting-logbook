@@ -5,3 +5,4 @@ export * from './plan';
 export * from './prescribe';
 export * from './summary';
 export * from './pool';
+export * from './lastSession';

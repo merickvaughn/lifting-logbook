@@ -352,7 +352,7 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       expect(after?.pool.filter((e) => e.lift !== 'Cable Curl')).toEqual(created?.pool.filter((e) => e.lift !== 'Cable Curl'));
     });
 
-    // ADR-039, Amendment 3 (#1222): the successor is stored when the block starts, so its
+    // ADR-039, Amendment 4 (#1222): the successor is stored when the block starts, so its
     // settings follow later edits to the block while it is still queued.
     describe("a queued successor following its block's settings", () => {
       const setUp = async (name: string) => {
@@ -714,6 +714,80 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       ).json() as FocusBlockResponse;
       const summary = (await user.inject('GET', `/focus/blocks/${block.id}/summary`)).json() as FocusBlockSummaryResponse;
       expect(summary).toMatchObject({ sessions: 1, sets: 1, volume: 250 });
+    });
+  });
+
+  describe('double progression from logged sets (#1221)', () => {
+    const user = as('focus-e2e-double');
+    const lift = 'Standing Calf Raise';
+    let blockId = '';
+    let increment = NaN;
+
+    beforeAll(async () => {
+      // Macrocycle 1 has to exist to take sets (ADR-042).
+      expect((await user.inject('POST', `/programs/${PROGRAM}/macrocycles/initialize`, {})).statusCode).toBe(201);
+      // Workout 1's focus plan bumps by its program day's increment.
+      const spec = (await user.inject('GET', `/programs/${PROGRAM}/spec`)).json() as {
+        week: number;
+        offset: number;
+        increment: number;
+      }[];
+      increment = spec.find((row) => row.week === 1 && row.offset === 0)?.increment ?? NaN;
+      expect(increment).toBeGreaterThan(0);
+      blockId = ((await user.create(blockBody({ pool: [entry(lift)] }))).json() as FocusBlockResponse).id;
+    });
+
+    const logSession = async (workoutNum: number, date: string, weight: number, reps: number[]) => {
+      for (const [index, setReps] of reps.entries()) {
+        const res = await user.inject('POST', `/programs/${PROGRAM}/lift-records`, {
+          macrocycleNum: 1,
+          workoutNum,
+          date,
+          lift,
+          setNum: index + 1,
+          weight,
+          reps: setReps,
+        });
+        expect(res.statusCode).toBe(201);
+      }
+    };
+    const prescription = async (today = TODAY) => (await user.plan(1, today)).groups[0]?.items[0]?.prescription;
+
+    it('plans the weight plus the increment once every set hit repsHigh, and stores the session', async () => {
+      await logSession(1, '2026-10-20', 25, [12, 12, 12]);
+      expect(await prescription()).toEqual({
+        progression: 'double',
+        sets: 3,
+        repsLow: 10,
+        repsHigh: 12,
+        weight: 25 + increment,
+        lastReps: [12, 12, 12],
+        progressed: true,
+      });
+      const stored = (await user.list()).find((block) => block.id === blockId);
+      expect(stored?.pool[0]).toMatchObject({ weight: 25, lastReps: [12, 12, 12], lastDate: '2026-10-20' });
+    });
+
+    it('holds the new weight after a session at it below repsHigh', async () => {
+      await logSession(2, '2026-10-22', 25 + increment, [10, 9, 9]);
+      expect(await prescription()).toMatchObject({ weight: 25 + increment, lastReps: [10, 9, 9], progressed: false });
+    });
+
+    it("doesn't move today's plan for sets logged today", async () => {
+      await logSession(3, TODAY, 25 + increment, [12, 12, 12]);
+      expect(await prescription()).toMatchObject({ weight: 25 + increment, lastReps: [10, 9, 9], progressed: false });
+    });
+
+    it("records today's sets the next day, and keeps a weight edited after them without their reps", async () => {
+      const tomorrow = '2026-10-26';
+      expect(await prescription(tomorrow)).toMatchObject({ weight: 25 + 2 * increment, progressed: true });
+      // The setup page sends the entry back whole, recorded reps included.
+      const [stored] = (await user.list(tomorrow)).find((block) => block.id === blockId)?.pool ?? [];
+      const patched = await user.inject('PATCH', `/focus/blocks/${blockId}?today=${tomorrow}`, {
+        pool: [{ ...stored, weight: 40 }],
+      });
+      expect(patched.statusCode).toBe(200);
+      expect(await prescription(tomorrow)).toMatchObject({ weight: 40, lastReps: null, progressed: false });
     });
   });
 });

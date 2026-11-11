@@ -36,9 +36,10 @@ export interface ILiftRecordRepository {
    * a timeline of their own (#1056). Served by `@@index([userId, lift, date])`.
    *
    * Finds a lift under any stored spelling (`liftSpellings`, #1135), and each record keeps
-   * the name it is stored under.
+   * the name it is stored under. With `from`, only records dated on or after it: the focus
+   * plan read needs only the active blocks' ranges (#1221).
    */
-  getRecordsForLifts(lifts: readonly string[], through: Date): Promise<LiftRecord[]>;
+  getRecordsForLifts(lifts: readonly string[], through: Date, from?: Date): Promise<LiftRecord[]>;
 
   /**
    * Appends records for a program, silently skipping any whose natural key already exists.
