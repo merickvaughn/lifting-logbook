@@ -812,6 +812,34 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
         expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'live'], [2, 'legacy']]);
       });
 
+      it('lets every group with sets stored in the current macrocycle add a close session to it', async () => {
+        const user = as('join-two-holders');
+        await user.initialize('2026-01-05');
+        expect((await user.log(1, '2026-01-07')).statusCode).toBe(201);
+        expect((await user.log(1, '2026-01-08', 2)).statusCode).toBe(201);
+        // A legacy macrocycle inside the current one's dates, so new sessions after it join on dates.
+        await committed('join-two-holders', `${PROGRAM},7,1,2026-01-23,Squat,1,200,5,`);
+        expect((await user.log(1, '2026-01-24')).statusCode).toBe(201);
+
+        // Each group repeats one logged set and adds a session within 14 days of the last one.
+        await committed(
+          'join-two-holders',
+          `${PROGRAM},1,1,2026-01-07,Squat,1,225,5,`,
+          `${PROGRAM},1,2,2026-01-26,Squat,1,205,5,`,
+          `${PROGRAM},2,1,2026-01-08,Squat,2,225,5,`,
+          `${PROGRAM},2,2,2026-01-27,Squat,1,210,5,`,
+        );
+
+        expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'live'], [2, 'legacy']]);
+        expect((await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).map((r) => r.date)).toEqual([
+          day('2026-01-07'),
+          day('2026-01-08'),
+          day('2026-01-24'),
+          day('2026-01-26'),
+          day('2026-01-27'),
+        ]);
+      });
+
       it('keeps adding a grown sheet’s cycle in the current macrocycle to it, past a legacy macrocycle formed inside its dates', async () => {
         const user = as('join-grown-past-legacy');
         await user.initialize('2026-01-05');

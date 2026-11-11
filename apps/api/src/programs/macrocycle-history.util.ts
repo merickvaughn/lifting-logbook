@@ -281,9 +281,9 @@ export async function assertMacrocycleWritable(
  *   macrocycles its first upload formed, sessions added before or between them included.
  * - Any other rows, by group, join the current macrocycle while its run is open: they start on
  *   or after its start and no more than {@link STALE_AFTER_DAYS} days after its last session.
- *   One group of a sheet joins this way: the group with rows already stored there, uploaded
- *   before or logged in the app, if there is one, so a sheet's later cycles don't merge into
- *   it, while its cycle in it keeps joining. The owner chose this over joining any
+ *   The groups with rows already stored there, uploaded before or logged in the app, keep
+ *   joining this way, and no other group does; with none, the first group to join takes it. So
+ *   a sheet's later cycles don't merge into it. The owner chose this over joining any
  *   `live` macrocycle on dates alone, which merged sessions logged after a cycle ended into it.
  * - Anything else forms a new `legacy` macrocycle dated by its rows, numbered past every stored
  *   one in date order. An `imported` macrocycle is never joined. Rows on the new numbers with no
@@ -325,7 +325,7 @@ export async function placeFileRows(
   // there, whether uploaded before or logged in the app, is the sheet's cycle in it, so it keeps
   // joining and no other group does. With none, the first group to join on dates takes it.
   const joiners = new Set(
-    current ? [...pairedNums].filter(([, nums]) => nums.has(current.macrocycleNum)).map(([fileNum]) => fileNum) : [],
+    current ? [...pairedNums].filter(([, storedIn]) => storedIn.has(current.macrocycleNum)).map(([fileNum]) => fileNum) : [],
   );
 
   /**
