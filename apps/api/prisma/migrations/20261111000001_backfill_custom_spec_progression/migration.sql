@@ -7,7 +7,7 @@
 -- that. A row created after this may leave it null on purpose, to follow the lift.
 --
 -- Its own migration, separate from the column add, so the db e2e suite can run this file
--- against seeded rows (custom-program-progression-backfill.db.e2e.spec.ts). It touches only
+-- against seeded rows (apps/api/src/lifts/progression.db.e2e.spec.ts). It touches only
 -- null rows, so a second run changes nothing.
 --
 -- RLS: the migrate job connects as the owner, which row-level security doesn't filter

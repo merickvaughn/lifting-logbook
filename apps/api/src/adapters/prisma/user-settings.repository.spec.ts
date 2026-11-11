@@ -9,10 +9,11 @@ type Row = {
   workoutSchedule: unknown;
   defaultWeightIncrement: number | null;
   unit: string | null;
-  defaultProgression: string | null;
-  defaultProgressionIncrement: number | null;
-  defaultProgressionRepsLow: number | null;
-  defaultProgressionRepsHigh: number | null;
+  // Optional so the older fixtures below, seeded without them, read as an unset default.
+  defaultProgression?: string | null;
+  defaultProgressionIncrement?: number | null;
+  defaultProgressionRepsLow?: number | null;
+  defaultProgressionRepsHigh?: number | null;
 };
 
 function makePrismaMock(): { client: PrismaExecutor; store: Map<string, Row> } {
@@ -99,7 +100,9 @@ describe('PrismaUserSettingsRepository', () => {
   it('reads an unknown stored progression type as unset', async () => {
     await repo.upsertSettings({ unit: 'kg' });
     const row = mock.store.get(USER_ID);
-    if (row) Object.assign(row, { defaultProgression: 'rpe', defaultProgressionRepsHigh: 8 });
+    // Without the row there is nothing to corrupt, and the test would pass without testing the guard.
+    if (!row) throw new Error('the upsert stored no row');
+    Object.assign(row, { defaultProgression: 'rpe', defaultProgressionRepsHigh: 8 });
     expect((await repo.getSettings()).defaultProgression).toBeNull();
   });
 

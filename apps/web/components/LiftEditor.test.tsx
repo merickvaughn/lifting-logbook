@@ -78,16 +78,34 @@ describe('LiftEditor progression (#1210)', () => {
     );
   });
 
-  it('clears every progression field when the default option is chosen', async () => {
+  it('clears the type and range when the default option is chosen, and keeps the increment', async () => {
     const user = userEvent.setup();
     mockPatch.mockResolvedValue(metadata());
     renderEditor(metadata({ progression: 'linear', progressionIncrement: 5, repsLow: 5, repsHigh: 5 }));
     await user.selectOptions(screen.getByLabelText('Progression'), '');
+    expect(screen.getByRole('spinbutton', { name: 'Rep range top' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Save Changes' }));
     await waitFor(() =>
       expect(mockPatch).toHaveBeenCalledWith(
         'Cable Curl',
-        expect.objectContaining({ progression: null, progressionIncrement: null, repsLow: null, repsHigh: null }),
+        expect.objectContaining({ progression: null, progressionIncrement: 5, repsLow: null, repsHigh: null }),
+      ),
+    );
+  });
+
+  // A lift's own increment applies whatever type it follows (ADR-043), so it needs no type.
+  it('saves an increment for a lift that follows the default progression', async () => {
+    const user = userEvent.setup();
+    mockPatch.mockResolvedValue(metadata());
+    renderEditor();
+    const increment = screen.getByRole('spinbutton', { name: 'Increment' });
+    expect(increment).toBeEnabled();
+    await user.type(increment, '2.5');
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith(
+        'Cable Curl',
+        expect.objectContaining({ progression: null, progressionIncrement: 2.5 }),
       ),
     );
   });

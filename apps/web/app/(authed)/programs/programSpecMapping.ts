@@ -136,13 +136,17 @@ export function specsFromDays(days: WorkoutDayModel[]): CustomProgramSpecRow[] {
       prevOffset = offset;
       day.instances.forEach((inst, i) => {
         for (const week of WEEKS) {
-          rows.push({
+          const row: CustomProgramSpecRow = {
             week,
             offset,
             order: i + 1,
             lift: inst.lift,
             ...inst.weeks[week],
-          });
+          };
+          // The editor shows `reps` but not the carried `repsLow`. If the lifter lowers reps
+          // below it, drop it rather than send a range the API rejects and the UI can't fix.
+          if (row.repsLow !== undefined && row.repsLow > row.reps) delete row.repsLow;
+          rows.push(row);
         }
       });
     });

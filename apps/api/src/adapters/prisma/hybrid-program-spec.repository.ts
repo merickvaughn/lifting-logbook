@@ -146,10 +146,9 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
               wtDecrementPct: r.wtDecrementPct,
               activation: r.activation,
               weekType: r.weekType ?? null,
-              // A spec import carries no progression (#1210), so an imported row leaves the
-              // stored override alone instead of clearing a backfilled `amrap_gated`.
-              ...(r.progression !== undefined && { progression: r.progression }),
-              ...(r.repsLow !== undefined && { repsLow: r.repsLow }),
+              // No `progression`/`repsLow` (#1210): a spec import never carries them, and the
+              // upsert leaves an omitted column alone on update, so a re-import keeps a stored
+              // override, such as a backfilled `amrap_gated`. A created row gets null.
             };
             return tx.customProgramSpec.upsert({
               where: {

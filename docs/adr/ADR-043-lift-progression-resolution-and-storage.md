@@ -79,6 +79,11 @@ Every existing program must keep progressing exactly as it does today.
 - A custom program the old API revision saves between the migration and the new revision going live
   writes null, so it follows the lift like a row left blank. The window lasts one rollout, and
   nothing reads the column until #1211.
+- Saving a custom program keeps a row's stored `progression` and `repsLow` when the request leaves
+  them out, and clears them only on an explicit null. A web bundle that predates the fields, still
+  open in a tab after the deploy, therefore can't undo the backfill.
+- The new web sends the progression fields, which the old API rejects as unknown. Roll the web back
+  with the API, or before it.
 - Until #1211 lands, the stored values change nothing: no code path moves a max by them.
 - The mobile app doesn't expose either setting yet (out of scope in the proposal).
 - Adding the columns rewrites no table: each is nullable with no default [2].

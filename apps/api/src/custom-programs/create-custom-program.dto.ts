@@ -17,9 +17,8 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { LIFT_PROGRESSION_TYPES } from '@lifting-logbook/types';
 import type { LiftProgressionType } from '@lifting-logbook/types';
-import { IsAtMostSibling } from '../lifts/progression.validation';
+import { IsLiftProgression, IsProgressionReps } from '../lifts/progression.validation';
 
 // Cross-field guard: the work percentage for set i is (1 - i * wtDecrementPct), so the
 // final set is (1 - (sets-1) * wtDecrementPct). When that goes below 0 the prescribed
@@ -58,10 +57,11 @@ export class CustomProgramSpecRowDto {
   @IsNumber() @Min(0) @Max(1) @Validate(WtDecrementWithinSetBound) wtDecrementPct!: number;
   @IsString() activation!: string;
   @IsOptional() @IsString() weekType?: string;
-  // The row's progression override (#1210). Absent follows the lift's own value; `rpe` is
-  // not selectable on a lift. `repsLow` is the bottom of the range whose top is `reps`.
-  @IsOptional() @IsIn(LIFT_PROGRESSION_TYPES) progression?: LiftProgressionType;
-  @IsOptional() @IsInt() @Min(1) @Max(20) @Validate(IsAtMostSibling, ['reps']) repsLow?: number;
+  // The row's progression override (#1210). A row with none follows the lift's own value. On
+  // an update, leaving either field out keeps the stored value and null clears it.
+  // `repsLow` is the bottom of the range whose top is `reps`, so `reps` bounds it.
+  @IsOptional() @IsLiftProgression() progression?: LiftProgressionType;
+  @IsOptional() @IsProgressionReps('reps') repsLow?: number;
 }
 
 export class CreateCustomProgramDto {

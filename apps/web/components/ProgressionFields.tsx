@@ -1,7 +1,7 @@
 'use client';
 
 import { LIFT_PROGRESSION_TYPES, PROGRESSION_REPS_LIMITS } from '@lifting-logbook/types';
-import { PROGRESSION_LABELS, ProgressionDraft } from '@/lib/progression';
+import { PROGRESSION_LABELS, ProgressionDraft, ProgressionNumberField } from '@/lib/progression';
 
 interface Props {
   /** Prefixes every control id, so two instances on one page stay distinct. */
@@ -13,13 +13,15 @@ interface Props {
   value: ProgressionDraft;
   onChange: (next: ProgressionDraft) => void;
   disabled?: boolean;
+  /** Keep the increment editable with no type chosen (a lift's own increment applies to any type). */
+  incrementWithoutType?: boolean;
   classNames?: { field?: string; label?: string; input?: string };
 }
 
 /**
  * A progression type picker with its increment and rep range (#1210): a labelled native
- * select and labelled number fields. The number fields apply to the chosen type, so they're
- * disabled until one is chosen.
+ * select and labelled number fields. The rep range applies to the chosen type, so it's
+ * disabled until one is chosen; so is the increment, unless `incrementWithoutType`.
  */
 export default function ProgressionFields({
   idPrefix,
@@ -28,10 +30,12 @@ export default function ProgressionFields({
   value,
   onChange,
   disabled = false,
+  incrementWithoutType = false,
   classNames = {},
 }: Props) {
   const noType = value.type === '';
-  const field = (key: 'increment' | 'repsLow' | 'repsHigh', text: string, step: string, max?: number) => (
+  const needsType = (key: ProgressionNumberField) => noType && !(key === 'increment' && incrementWithoutType);
+  const field = (key: ProgressionNumberField, text: string, step: string, max?: number) => (
     <div className={classNames.field}>
       <label className={classNames.label} htmlFor={`${idPrefix}-${key}`}>
         {text}
@@ -45,8 +49,11 @@ export default function ProgressionFields({
         max={max}
         step={step}
         value={value[key]}
-        onChange={(e) => onChange({ ...value, [key]: e.target.value })}
-        disabled={disabled || noType}
+        onChange={(e) => {
+          const rest = (value.badInput ?? []).filter((k) => k !== key);
+          onChange({ ...value, [key]: e.target.value, badInput: e.target.validity.badInput ? [...rest, key] : rest });
+        }}
+        disabled={disabled || needsType(key)}
       />
     </div>
   );

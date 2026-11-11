@@ -56,7 +56,14 @@ export class InMemoryLiftingProgramSpecRepository
       (r) => programSpecNaturalKey(r),
       (r) => programSpecRowKind(r, existingByKey),
       (r, _kind, key) => {
-        byKey.set(key, r);
+        // Like the Prisma adapter's upsert, an imported row keeps the stored row's
+        // progression override, which the import never carries (#1210).
+        const stored = existingByKey.get(key);
+        byKey.set(key, {
+          ...(stored?.progression !== undefined && { progression: stored.progression }),
+          ...(stored?.repsLow !== undefined && { repsLow: stored.repsLow }),
+          ...r,
+        });
       },
     );
 

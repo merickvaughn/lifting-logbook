@@ -34,7 +34,7 @@ export default function LiftEditor({ macrocycleNum, workoutNum, initialMetadata 
   const [error, setError] = useState<string | null>(null);
 
   async function handleSave() {
-    const parsed = parseProgressionDraft(progression);
+    const parsed = parseProgressionDraft(progression, { incrementWithoutType: true });
     if ('error' in parsed) {
       setError(parsed.error);
       return;
@@ -122,11 +122,13 @@ export default function LiftEditor({ macrocycleNum, workoutNum, initialMetadata 
         value={progression}
         onChange={setProgression}
         disabled={saving}
+        incrementWithoutType
         classNames={{ field: styles.field, label: styles.label, input: styles.input }}
       />
       <p className={styles.hint}>
         How this lift&apos;s training max moves. A program row that sets its own progression still
-        wins inside that program; every built-in program does.
+        wins inside that program; every built-in program does. The increment applies outside a
+        program, even when the lift follows your default.
       </p>
 
       {error && <p className={styles.error} role="alert">{error}</p>}

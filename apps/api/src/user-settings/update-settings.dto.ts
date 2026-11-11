@@ -6,10 +6,8 @@ import {
   IsArray,
   IsIn,
   IsInt,
-  IsNumber,
   IsObject,
   IsOptional,
-  IsPositive,
   IsString,
   Max,
   MaxLength,
@@ -22,15 +20,13 @@ import {
   ValidationArguments,
 } from 'class-validator';
 import {
-  LIFT_PROGRESSION_TYPES,
-  PROGRESSION_REPS_LIMITS,
   SCHEDULE_LIMITS,
   WEIGHT_INCREMENT_OPTIONS,
   WEIGHT_UNIT_OPTIONS,
   isValidSchedule,
 } from '@lifting-logbook/types';
 import type { LiftProgressionType, UserWorkoutSchedule, WeightUnit } from '@lifting-logbook/types';
-import { IsAtMostSibling } from '../lifts/progression.validation';
+import { IsLiftProgression, IsProgressionIncrement, IsProgressionReps } from '../lifts/progression.validation';
 import type { DefaultProgressionPatch } from '../ports/IUserSettingsRepository';
 
 // Delegates to the shared `isValidSchedule` predicate so the write-side and read-side
@@ -90,25 +86,19 @@ export class WorkoutScheduleDto implements UserWorkoutSchedule {
 // the range's bottom may not exceed its top. The default is replaced whole, so the range is
 // always checked within one request.
 export class DefaultProgressionDto implements DefaultProgressionPatch {
-  @IsIn(LIFT_PROGRESSION_TYPES)
+  @IsLiftProgression()
   type!: LiftProgressionType;
 
   @IsOptional()
-  @IsNumber()
-  @IsPositive()
+  @IsProgressionIncrement()
   increment?: number | null;
 
   @IsOptional()
-  @IsInt()
-  @Min(PROGRESSION_REPS_LIMITS.MIN)
-  @Max(PROGRESSION_REPS_LIMITS.MAX)
-  @Validate(IsAtMostSibling, ['repsHigh'])
+  @IsProgressionReps('repsHigh')
   repsLow?: number | null;
 
   @IsOptional()
-  @IsInt()
-  @Min(PROGRESSION_REPS_LIMITS.MIN)
-  @Max(PROGRESSION_REPS_LIMITS.MAX)
+  @IsProgressionReps()
   repsHigh?: number | null;
 }
 

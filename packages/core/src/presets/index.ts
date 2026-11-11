@@ -79,7 +79,7 @@ const PRESET_ROWS: Record<string, LiftingProgramSpec[]> = {
 export const PRESET_BASE_SPECS: Record<string, LiftingProgramSpec[]> = Object.fromEntries(
   Object.entries(PRESET_ROWS).map(([id, rows]) => [
     id,
-    rows.map((row) => ({ ...row, progression: 'amrap_gated' as const })),
+    rows.map((row) => ({ progression: 'amrap_gated' as const, ...row })),
   ]),
 );
 

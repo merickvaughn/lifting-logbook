@@ -225,6 +225,47 @@ describeOrSkip('Progression storage HTTP (e2e, PrismaRepositoryFactory)', () => 
       ]);
     });
 
+    it('keeps a stored override when a save leaves it out, and clears it on null', async () => {
+      const created = await call('POST', '/programs/custom', {
+        name: 'Kept rows',
+        specs: [
+          { ...SPEC_ROW, lift: 'Cable Curl', order: 1, progression: 'amrap_gated' },
+          { ...SPEC_ROW, lift: 'Squat', order: 2, progression: 'double', repsLow: 8 },
+        ],
+      });
+      expect(created.statusCode).toBe(201);
+      const { id } = created.json() as CustomProgramResponse;
+      const stored = async () =>
+        (await owner.customProgramSpec.findMany({ where: { programId: id }, orderBy: { order: 'asc' } })).map(
+          (r) => [r.lift, r.progression, r.repsLow],
+        );
+
+      // A client that doesn't know the fields (an older web bundle) saves the same rows.
+      const omitted = await call('PUT', `/programs/custom/${id}`, {
+        specs: [
+          { ...SPEC_ROW, lift: 'Cable Curl', order: 1, sets: 4 },
+          { ...SPEC_ROW, lift: 'Squat', order: 2 },
+        ],
+      });
+      expect(omitted.statusCode).toBe(200);
+      expect(await stored()).toEqual([
+        ['Cable Curl', 'amrap_gated', null],
+        ['Squat', 'double', 8],
+      ]);
+
+      const cleared = await call('PUT', `/programs/custom/${id}`, {
+        specs: [
+          { ...SPEC_ROW, lift: 'Cable Curl', order: 1, progression: null },
+          { ...SPEC_ROW, lift: 'Squat', order: 2, repsLow: null },
+        ],
+      });
+      expect(cleared.statusCode).toBe(200);
+      expect(await stored()).toEqual([
+        ['Cable Curl', null, null],
+        ['Squat', 'double', null],
+      ]);
+    });
+
     it.each([
       ['rpe', { progression: 'rpe' }],
       ['repsLow above reps', { repsLow: 13 }],
@@ -257,7 +298,13 @@ describeOrSkip('Progression storage HTTP (e2e, PrismaRepositoryFactory)', () => 
       try {
         await owner.$transaction(
           async (tx) => {
-            for (const statement of statements) await tx.$executeRawUnsafe(statement);
+            // The file's 5s lock timeout suits the migrate job, which has the database to itself.
+            // Here other suites may hold a row the UPDATE needs for a moment, so wait longer.
+            for (const statement of statements) {
+              await tx.$executeRawUnsafe(
+                /^SET LOCAL lock_timeout/i.test(statement) ? "SET LOCAL lock_timeout = '30s'" : statement,
+              );
+            }
             await body(tx as unknown as PrismaClient);
             throw new Rollback();
           },
@@ -299,9 +346,16 @@ describeOrSkip('Progression storage HTTP (e2e, PrismaRepositoryFactory)', () => 
           ['Cable Curl', 'double'],
           ['Squat', 'amrap_gated'],
         ]);
-        // A second run of the same statement finds nothing left to change.
+        // A second run leaves this program's rows as they are. The check reads the rows rather
+        // than the statement's count, which covers the whole table: another suite can commit a
+        // null row between the two runs.
         const update = backfillStatements().find((s) => s.startsWith('UPDATE')) ?? '';
-        expect(await tx.$executeRawUnsafe(update)).toBe(0);
+        await tx.$executeRawUnsafe(update);
+        const again = await tx.customProgramSpec.findMany({
+          where: { programId: program.id },
+          orderBy: [{ week: 'asc' }, { order: 'asc' }],
+        });
+        expect(again).toEqual(rows);
       });
 
       // Rolled back: the seeded rows are as they were.

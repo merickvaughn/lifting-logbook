@@ -14,8 +14,10 @@
 -- Deploy ordering: this runs in the Cloud Run migration job ahead of the new API revision
 -- (ADR-027). The old API neither reads nor writes these columns.
 --
--- Rollback: reverting the API image alone is safe; the old code ignores the columns. Dropping
--- them loses the values lifters have set, so leave them in place unless that is intended.
+-- Rollback: the old API ignores the columns, so the database needs no change. Roll the web back
+-- with the API, or first: the new web sends the progression fields, which the old API rejects
+-- as unknown (forbidNonWhitelisted), so its lift and custom program saves would fail. Dropping
+-- the columns loses the values lifters have set, so leave them in place unless that is intended.
 
 SET LOCAL lock_timeout = '5s';
 

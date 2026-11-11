@@ -80,13 +80,17 @@ export class LiftMetadataController {
       if (dto[field] !== undefined) Object.assign(patch, { [field]: dto[field] });
     }
 
-    // The DTO checks a range sent whole; a patch that sends one end is checked against the
-    // other end as stored, so the row never holds a bottom above its top (#1210).
-    if (patch.repsLow !== undefined || patch.repsHigh !== undefined) {
+    // The DTO checks a range sent whole; a patch that sets one end and leaves the other out is
+    // checked against the other end as stored, so the row never holds a bottom above its top
+    // (#1210). The read and the write are separate, so two overlapping one-end patches could
+    // still cross the range; #1211's reader treats a crossed range as unset.
+    const lowOnly = typeof patch.repsLow === 'number' && patch.repsHigh === undefined;
+    const highOnly = typeof patch.repsHigh === 'number' && patch.repsLow === undefined;
+    if (lowOnly || highOnly) {
       const stored = await liftMetadata.getMetadata(lift);
-      const repsLow = patch.repsLow !== undefined ? patch.repsLow : stored?.repsLow ?? null;
-      const repsHigh = patch.repsHigh !== undefined ? patch.repsHigh : stored?.repsHigh ?? null;
-      if (repsLow !== null && repsHigh !== null && repsLow > repsHigh) {
+      const repsLow = lowOnly ? patch.repsLow : stored?.repsLow;
+      const repsHigh = highOnly ? patch.repsHigh : stored?.repsHigh;
+      if (typeof repsLow === 'number' && typeof repsHigh === 'number' && repsLow > repsHigh) {
         throw new BadRequestException('repsLow must be at most repsHigh');
       }
     }

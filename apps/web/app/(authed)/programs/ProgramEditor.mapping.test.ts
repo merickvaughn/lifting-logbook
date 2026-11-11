@@ -124,6 +124,7 @@ describe('daysFromSpecs', () => {
   it('carries each row progression and repsLow through an edit round-trip', () => {
     const rows: CustomProgramSpecRow[] = [1, 2, 3].map((week) => ({
       ...legacyRow(week, 'Cable Curl', 1),
+      reps: 12,
       progression: week === 1 ? 'amrap_gated' : 'double',
       repsLow: 8,
     }));
@@ -132,6 +133,23 @@ describe('daysFromSpecs', () => {
       [1, 'amrap_gated', 8],
       [2, 'double', 8],
       [3, 'double', 8],
+    ]);
+  });
+
+  it('drops a carried repsLow once reps is lowered below it, and keeps the progression', () => {
+    const rows: CustomProgramSpecRow[] = [1, 2, 3].map((week) => ({
+      ...legacyRow(week, 'Cable Curl', 1),
+      reps: 12,
+      progression: 'double',
+      repsLow: 8,
+    }));
+    const days = daysFromSpecs(rows);
+    days[0].instances[0].weeks[2] = { ...days[0].instances[0].weeks[2], reps: 6 };
+    const saved = specsFromDays(days);
+    expect(saved.map((s) => [s.week, s.reps, s.progression, s.repsLow])).toEqual([
+      [1, 12, 'double', 8],
+      [2, 6, 'double', undefined],
+      [3, 12, 'double', 8],
     ]);
   });
 
