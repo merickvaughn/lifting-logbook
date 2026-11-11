@@ -10,6 +10,7 @@ import {
 } from '@lifting-logbook/core';
 import { DEFAULT_WEIGHT_INCREMENT, FocusBlock, FocusBlockResponse } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
+import { FocusBlockNotFoundError } from '../ports/errors';
 import { FocusBlockPatch, IFocusRepository } from '../ports/IFocusRepository';
 import { isValidWorkoutNum } from '../programs/mappers';
 import { currentMacrocycleOrFirst, resolveWorkoutDay } from '../programs/workout-day.util';
@@ -131,7 +132,14 @@ export async function carryEditsToSuccessor(
     }
   }
 
-  if (Object.keys(patch).length > 0) await focus.updateBlock(successor.id, patch);
+  if (Object.keys(patch).length === 0) return;
+  try {
+    await focus.updateBlock(successor.id, patch);
+  } catch (e) {
+    // Deleted since it was listed (declined in another tab): nothing left to carry into,
+    // and the block's own edit is already saved.
+    if (!(e instanceof FocusBlockNotFoundError)) throw e;
+  }
 }
 
 /** How far each lift's training max moved in the edit, for the lifts whose max did. */

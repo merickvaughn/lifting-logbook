@@ -400,7 +400,7 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
         });
       });
 
-      it("leaves the successor's area, pool and priority alone", async () => {
+      it("leaves the successor's area, next area, on-end and pool alone", async () => {
         const { october, stored, successor, patch } = await setUp('focus-e2e-follow-not');
         await patch(october.id, { area: 'Chest', nextArea: 'Back', onEnd: 'prompt', pool: [entry('Cable Fly')] });
         expect(await successor()).toEqual(stored);
