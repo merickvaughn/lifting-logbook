@@ -1,6 +1,6 @@
 # Proposal: Progression Type per Lift
 
-**Status:** `draft`
+**Status:** `accepted`
 **Date:** 2026-11-10
 **Issue:** [#1206](https://github.com/merickvaughn/lifting-logbook/issues/1206)
 
