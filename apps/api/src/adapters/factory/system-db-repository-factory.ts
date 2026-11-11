@@ -131,18 +131,29 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     const strengthGoal = new InMemoryStrengthGoalRepository();
     const trainingMax = new InMemoryTrainingMaxRepository();
     const userSettings = new InMemoryUserSettingsRepository();
+    // Every store that holds a macrocycle number, so a renumbering rewrites them all (#1199).
+    const liftRecord = new InMemoryLiftRecordRepository(sharedRecords);
+    const focus = new InMemoryFocusRepository();
+    const macrocycleDashboard = new InMemoryMacrocycleDashboardRepository();
+    const macrocycleScheduledWorkout = new InMemoryMacrocycleScheduledWorkoutRepository();
+    const workoutDateOverride = new InMemoryWorkoutDateOverrideRepository();
+    const workoutLiftOverride = new InMemoryWorkoutLiftOverrideRepository();
+    const workoutSkipOverride = new InMemoryWorkoutSkipOverrideRepository();
     return {
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift,
-      focus: new InMemoryFocusRepository(),
-      macrocycle: new InMemoryMacrocycleRepository(),
-      macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(),
-      macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
+      focus,
+      macrocycle: new InMemoryMacrocycleRepository(
+        [],
+        [liftRecord, focus, macrocycleDashboard, macrocycleScheduledWorkout, workoutDateOverride, workoutLiftOverride, workoutSkipOverride],
+      ),
+      macrocycleDashboard,
+      macrocycleScheduledWorkout,
       importBatch: new InMemoryImportBatchRepository(),
       liftMetadata: new InMemoryLiftMetadataRepository(),
       liftingProgramSpec: this.programSpecRepo,
       liftModification: new InMemoryLiftModificationRepository(userId, sharedRecords),
-      liftRecord: new InMemoryLiftRecordRepository(sharedRecords),
+      liftRecord,
       programPhilosophy: this.philosophyRepo,
       strengthGoal,
       trainingMax,
@@ -156,9 +167,9 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
       ),
       userSettings,
       workout: new InMemoryWorkoutRepository(sharedRecords),
-      workoutDateOverride: new InMemoryWorkoutDateOverrideRepository(),
-      workoutLiftOverride: new InMemoryWorkoutLiftOverrideRepository(),
-      workoutSkipOverride: new InMemoryWorkoutSkipOverrideRepository(),
+      workoutDateOverride,
+      workoutLiftOverride,
+      workoutSkipOverride,
     };
   }
 

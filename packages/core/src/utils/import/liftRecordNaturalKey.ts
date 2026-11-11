@@ -1,6 +1,6 @@
 import { liftSpellings } from '../../catalog/builtInLift';
 import { formatDateYYYYMMDD, parseYYYYMMDD } from '../jsUtil';
-import { type ClassifiedRow, classifyImportRows } from './classifyAndCount';
+import type { ClassifiedRow } from './classifyAndCount';
 
 /** The fields that identify one logged set within a (userId, program) scope. */
 export interface LiftRecordKey {
@@ -48,59 +48,97 @@ export function liftRecordNaturalKey(r: LiftRecordKey): string {
 }
 
 /**
- * What two rows share when they are the same set under different spellings of the lift: the
- * natural key with one spelling standing in for all of them, plus weight and reps.
- *
- * Weight and reps are part of it because another spelling isn't always the same set: one day can
- * hold `Pull-up` and `Weighted Pull-ups` as two slots, and both are the catalog's `pull-up`.
+ * The sets a duplicate check counts together (proposal decision 13): one date, one lift under any
+ * of its spellings (#1135), one set number. Macrocycle and workout numbers are left out, because a
+ * file's numbers don't name stored macrocycles.
  */
-function sameSetKey(r: LoggedSet): string {
-  return `${liftRecordNaturalKey({ ...r, lift: liftSpellings(r.lift)[0] ?? r.lift })}|${r.weight}|${r.reps}`;
+function setSlotKey(r: Pick<LiftRecordKey, 'date' | 'lift' | 'setNum'>): string {
+  return `${formatDateYYYYMMDD(r.date)}|${liftSpellings(r.lift)[0] ?? r.lift}|${r.setNum}`;
 }
 
-/**
- * The candidates already logged in `stored`: the same natural key, or the same set under another
- * spelling of the lift ({@link sameSetKey}). Stored rows mix spellings (#1135) and the database's
- * unique key can't see that, so `Calf Raises` and `calf-raise` on one set would otherwise both be
- * written (#947).
- */
-export function findAlreadyLogged<R extends LoggedSet>(
-  candidates: readonly R[],
-  stored: readonly LoggedSet[],
-): R[] {
-  const exact = new Set(stored.map(liftRecordNaturalKey));
-  const sameSet = new Set(stored.map(sameSetKey));
-  return candidates.filter((r) => exact.has(liftRecordNaturalKey(r)) || sameSet.has(sameSetKey(r)));
-}
+/** The dates and lifts {@link classifyLiftRecordRows} needs stored sets for. */
+export type SetSlot = Pick<LiftRecordKey, 'date' | 'lift'>;
+
+/** A lift-record row as one import classifies it: `occurrence` is the one it's stored under. */
+export type ClassifiedLiftRecordRow<T> = ClassifiedRow<T> & { occurrence: number };
 
 /**
- * Classifies lift-record rows for one import: every path that previews or commits one goes through
- * this, so they report the same counts. A row is a skip when its natural key is in `stored` or
- * earlier in the file, or when an earlier row being created is the same set under another spelling
- * (#1191).
+ * Classifies lift-record rows for one import by counting (proposal decision 13): every path that
+ * previews or commits one goes through this, so they report the same counts. `stored` is every set
+ * the user has stored on the file's dates and lifts, under any program and any spelling of the
+ * lift. Rows are compared per date, lift and set number, and only the file's rows beyond the
+ * stored count are created:
  *
- * Each row keeps its own natural key as `key`, including one skipped for another spelling, because
- * that's the key it would be stored under. `stored` should come from `findExistingRecords`, which
- * returns the candidates already logged, so a row stored under another spelling is matched there.
+ * - A row repeating an earlier row of the file, with the same weight, reps and occurrence, is a
+ *   skip, as is today's, unless the file's `Occurrence` column tells them apart.
+ * - The file's rows then pair with stored rows, those with identical weight and reps first, so
+ *   the rows left over are the real extras. A paired row is a skip, even when its weight or reps
+ *   differ from the stored row's, which stays as stored.
+ * - An extra row keeps its occurrence unless a stored row or an earlier extra has it, and then
+ *   takes the highest one + 1, so two same-day workouts stay separate under the unique key.
+ *
+ * `key` is the row's natural key under the occurrence it's stored with.
  */
 export function classifyLiftRecordRows<T>(
   rows: readonly T[],
   recordOf: (row: T) => LoggedSet,
-  stored: readonly LiftRecordKey[],
-): Generator<ClassifiedRow<T>> {
-  const storedKeys = new Set(stored.map(liftRecordNaturalKey));
-  const creating = new Set<string>();
-  return classifyImportRows(
-    rows,
-    (row) => liftRecordNaturalKey(recordOf(row)),
-    (row, key) => {
-      if (storedKeys.has(key)) return 'skip';
-      const set = sameSetKey(recordOf(row));
-      if (creating.has(set)) return 'skip';
-      creating.add(set);
-      return 'create';
-    },
-  );
+  stored: readonly LoggedSet[],
+): ClassifiedLiftRecordRow<T>[] {
+  const storedBySlot = new Map<string, LoggedSet[]>();
+  for (const s of stored) {
+    const slot = setSlotKey(s);
+    storedBySlot.set(slot, [...(storedBySlot.get(slot) ?? []), s]);
+  }
+
+  // Exact repeats within the file go first; the rest are grouped by slot, in file order.
+  const seen = new Set<string>();
+  const kinds = new Map<number, 'skip' | 'create'>();
+  const bySlot = new Map<string, number[]>();
+  rows.forEach((row, i) => {
+    const r = recordOf(row);
+    const slot = setSlotKey(r);
+    const repeat = `${slot}|${r.occurrence ?? 0}|${r.weight}|${r.reps}`;
+    if (seen.has(repeat)) {
+      kinds.set(i, 'skip');
+      return;
+    }
+    seen.add(repeat);
+    bySlot.set(slot, [...(bySlot.get(slot) ?? []), i]);
+  });
+
+  const occurrences = new Map<number, number>();
+  for (const [slot, indexes] of bySlot) {
+    const pool = [...(storedBySlot.get(slot) ?? [])];
+    const taken = new Set(pool.map((s) => s.occurrence ?? 0));
+    const unpaired: number[] = [];
+    for (const i of indexes) {
+      const r = recordOf(rows[i] as T);
+      const match = pool.findIndex((s) => s.weight === r.weight && s.reps === r.reps);
+      if (match === -1) unpaired.push(i);
+      else {
+        pool.splice(match, 1);
+        kinds.set(i, 'skip');
+      }
+    }
+    for (const i of unpaired) {
+      if (pool.length > 0) {
+        pool.shift();
+        kinds.set(i, 'skip');
+        continue;
+      }
+      kinds.set(i, 'create');
+      const own = recordOf(rows[i] as T).occurrence ?? 0;
+      const occurrence = taken.has(own) ? Math.max(...taken) + 1 : own;
+      taken.add(occurrence);
+      occurrences.set(i, occurrence);
+    }
+  }
+
+  return rows.map((row, i) => {
+    const r = recordOf(row);
+    const occurrence = occurrences.get(i) ?? r.occurrence ?? 0;
+    return { row, kind: kinds.get(i) ?? 'skip', key: liftRecordNaturalKey({ ...r, occurrence }), occurrence };
+  });
 }
 
 /**

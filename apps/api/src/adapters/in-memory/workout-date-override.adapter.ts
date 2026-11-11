@@ -1,9 +1,14 @@
 import { IWorkoutDateOverrideRepository } from '../../ports/IWorkoutDateOverrideRepository';
+import { NumberedStore, nulKey, rekeyMap } from './renumber';
 
 export class InMemoryWorkoutDateOverrideRepository
-  implements IWorkoutDateOverrideRepository
+  implements IWorkoutDateOverrideRepository, NumberedStore
 {
   private readonly store = new Map<string, Date>();
+
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
+    return rekeyMap(this.store, program, changes, nulKey.numberOf, nulKey.keyWith);
+  }
 
   private key(program: string, macrocycleNum: number, workoutNum: number): string {
     // Use null byte as delimiter — program slugs cannot contain \0, so this is unambiguous

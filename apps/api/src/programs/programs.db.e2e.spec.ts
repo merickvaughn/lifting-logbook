@@ -988,14 +988,15 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       const res = await postCsv(IMPORT_URL, csvContent);
       expect(res.statusCode).toBe(201);
 
+      // The file's 37 only groups its rows (#1199), so they're found by date, not by that number.
       const rows = await prisma.liftRecord.findMany({
         where: {
           userId: TEST_USER,
           program: SEED_PROGRAM,
-          macrocycleNum: 37,
           workoutNum: 2,
           lift: 'barbell-row',
           setNum: 1,
+          date: { in: [new Date('2024-01-12T00:00:00.000Z'), new Date('2025-12-16T00:00:00.000Z')] },
         },
         orderBy: { date: 'asc' },
       });
@@ -1005,6 +1006,8 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
         ['2024-01-12', 202.5, 8],
         ['2025-12-16', 175, 7],
       ]);
+      // One file group, so one macrocycle.
+      expect(rows[0]?.macrocycleNum).toBe(rows[1]?.macrocycleNum);
     });
 
     it('re-import returns written=0 and skipped=all rows from first import', async () => {
@@ -1060,13 +1063,14 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     // Regression for issue #884's in-batch-duplicate fix: a second row within the
-    // SAME file reusing an earlier row's full key (same date too) must be reported
-    // as skipped rather than vanishing with no trace and no count anywhere.
+    // SAME file repeating an earlier row exactly must be reported as skipped rather
+    // than vanishing with no trace and no count anywhere. (Since #1199 a row with a
+    // different weight or reps on the same slot is a second set and is kept.)
     it('reports an in-batch duplicate row as skipped rather than silently dropping it', async () => {
       const csv = [
         'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
         'RPT,90,1,6/1/2026,Squat,1,225,5,',
-        'RPT,90,1,6/1/2026,Squat,1,999,1,', // exact duplicate key of row above
+        'RPT,90,1,6/1/2026,Squat,1,225,5,', // exact repeat of the row above
       ].join('\n');
 
       const res = await postCsv(IMPORT_URL, csv);
@@ -1078,9 +1082,8 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(body.skipped[0]?.row).toBe(2);
 
       const rows = await prisma.liftRecord.findMany({
-        where: { userId: TEST_USER, program: SEED_PROGRAM, macrocycleNum: 90, workoutNum: 1, lift: 'back-squat', setNum: 1 },
+        where: { userId: TEST_USER, program: SEED_PROGRAM, date: new Date('2026-06-01T00:00:00.000Z'), workoutNum: 1, lift: 'back-squat', setNum: 1 },
       });
-      // The first occurrence's data won, not the duplicate's.
       expect(rows).toHaveLength(1);
       expect(rows[0]?.weight).toBe(225);
     });

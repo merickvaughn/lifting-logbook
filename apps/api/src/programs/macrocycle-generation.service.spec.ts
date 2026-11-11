@@ -130,7 +130,7 @@ describe('MacrocycleGenerationService', () => {
     liftRecordRepo = {
       getLiftRecords: jest.fn(),
       appendLiftRecords: jest.fn().mockResolvedValue(undefined),
-      findExistingRecords: jest.fn(),
+      findStoredSets: jest.fn(),
       updateLiftRecord: jest.fn(),
       deleteLiftRecordsByNaturalKeys: jest.fn(),
       deleteAllLiftRecords: jest.fn().mockResolvedValue(undefined),

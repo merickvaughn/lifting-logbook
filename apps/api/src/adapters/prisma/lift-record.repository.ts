@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import {
   LiftRecord,
-  findAlreadyLogged,
+  SetSlot,
   liftSpellings,
   parseLiftRecordId,
   parseLiftRecordNaturalKey,
@@ -67,38 +67,31 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     return count;
   }
 
-  async findExistingRecords(program: string, candidates: LiftRecord[]): Promise<LiftRecord[]> {
-    if (candidates.length === 0) return [];
-
-    // Chunk the OR array to stay within Postgres parameter limits (~32k).
-    // Each candidate produces 5 bound parameters plus one per spelling of its lift, at most six
-    // today, so a chunk of 500 stays near 5500 params per query.
-    const CHUNK_SIZE = 500;
-    const chunks: LiftRecord[][] = [];
-    for (let i = 0; i < candidates.length; i += CHUNK_SIZE) {
-      chunks.push(candidates.slice(i, i + CHUNK_SIZE));
+  async findStoredSets(slots: readonly SetSlot[]): Promise<LiftRecord[]> {
+    // One condition per date, naming every spelling of every lift on it, so the lookup stays on
+    // the (userId, lift, date) index. A 5,000-row file spans a few hundred dates at most.
+    const liftsByDate = new Map<number, Set<string>>();
+    for (const { date, lift } of slots) {
+      const lifts = liftsByDate.get(date.getTime()) ?? new Set<string>();
+      for (const spelling of liftSpellings(lift)) lifts.add(spelling);
+      liftsByDate.set(date.getTime(), lifts);
     }
-
-    const rowGroups = await Promise.all(
-      chunks.map((chunk) =>
-        this.prisma.liftRecord.findMany({
-          where: {
-            userId: this.userId,
-            program,
-            OR: chunk.map((r) => ({
-              macrocycleNum: r.macrocycleNum,
-              workoutNum: r.workoutNum,
-              date: r.date,
-              lift: { in: [...liftSpellings(r.lift)] },
-              occurrence: r.occurrence ?? 0,
-              setNum: r.setNum,
-            })),
-          },
-        }),
-      ),
-    );
-
-    return findAlreadyLogged(candidates, rowGroups.flat());
+    if (liftsByDate.size === 0) return [];
+    // Chunked to stay within Postgres's bound-parameter limit (~32k).
+    const CHUNK_SIZE = 200;
+    const dates = [...liftsByDate];
+    const records: LiftRecord[] = [];
+    // Sequential: every query shares the request's one transaction connection.
+    for (let i = 0; i < dates.length; i += CHUNK_SIZE) {
+      const rows = await this.prisma.liftRecord.findMany({
+        where: {
+          userId: this.userId,
+          OR: dates.slice(i, i + CHUNK_SIZE).map(([time, lifts]) => ({ date: new Date(time), lift: { in: [...lifts] } })),
+        },
+      });
+      records.push(...rows.map(rowToLiftRecord));
+    }
+    return records;
   }
 
   async updateLiftRecord(

@@ -80,4 +80,15 @@ export interface IMacrocycleRepository {
 
   /** Deletes the program's rows except those numbered in `keep`. */
   deleteAllExcept(program: string, keep: readonly number[]): Promise<void>;
+
+  /**
+   * Renumbers the program's macrocycles (proposal decision 3): rewrites each old number in
+   * `changes` to its new one in every table that holds a number — `lift_record`,
+   * `macrocycle_dashboard`, the three workout override tables, `focus_day_state`,
+   * `macrocycle_scheduled_workout` and `macrocycle` — through a temporary negative number, since
+   * the unique keys are checked per row. Returns how many rows changed. Import batch keys are the
+   * caller's. Throws if a new number is held by a row `changes` doesn't move; the caller's
+   * transaction then rolls every table back.
+   */
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): Promise<number>;
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { MacrocycleStatus } from '@lifting-logbook/types';
 import { MacrocycleNumberConflictError } from '../../ports/errors';
 import { IMacrocycleRepository, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
+import { NumberedStore } from './renumber';
 
 /**
  * A stored row for tests: a `live`, `in-progress` 5-3-1 macrocycle starting on the first of
@@ -33,8 +34,27 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
    */
   lockHeld: 'shared' | 'exclusive' | null = null;
 
-  constructor(seed: readonly MacrocycleRow[] = []) {
+  /**
+   * `numbered` are the bundle's other stores that hold a number, which {@link rewriteNumbers}
+   * rewrites with this one's rows, as the Prisma adapter rewrites every table.
+   */
+  constructor(
+    seed: readonly MacrocycleRow[] = [],
+    private readonly numbered: readonly NumberedStore[] = [],
+  ) {
     this.rows.push(...seed.map((row) => ({ ...row })));
+  }
+
+  async rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): Promise<number> {
+    const moving = this.rows.filter((r) => r.program === program && changes.has(r.macrocycleNum));
+    const staying = new Set(
+      this.rows.filter((r) => r.program === program && !changes.has(r.macrocycleNum)).map((r) => r.macrocycleNum),
+    );
+    for (const to of changes.values()) {
+      if (staying.has(to)) throw new MacrocycleNumberConflictError(program, to);
+    }
+    for (const row of moving) row.macrocycleNum = changes.get(row.macrocycleNum) ?? row.macrocycleNum;
+    return this.numbered.reduce((rows, store) => rows + store.rewriteNumbers(program, changes), moving.length);
   }
 
   async tryLockShared(): Promise<boolean> {
@@ -50,7 +70,7 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
     return row ? { ...row } : null;
   }
 
-  /** Changes a row's number in place, as the renumbering in #1199 will, for tests. */
+  /** Changes one row's number in place and nothing else, for tests that move a number by hand. */
   renumber(program: string, from: number, to: number): void {
     const row = this.rows.find((r) => r.program === program && r.macrocycleNum === from);
     if (row) row.macrocycleNum = to;

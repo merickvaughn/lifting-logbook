@@ -1,7 +1,12 @@
 import { IMacrocycleScheduledWorkoutRepository, ScheduledWorkout } from '../../ports/IMacrocycleScheduledWorkoutRepository';
+import { NumberedStore, colonKey, rekeyMap } from './renumber';
 
-export class InMemoryMacrocycleScheduledWorkoutRepository implements IMacrocycleScheduledWorkoutRepository {
+export class InMemoryMacrocycleScheduledWorkoutRepository implements IMacrocycleScheduledWorkoutRepository, NumberedStore {
   private readonly store = new Map<string, ScheduledWorkout[]>();
+
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
+    return rekeyMap(this.store, program, changes, colonKey.numberOf, colonKey.keyWith);
+  }
 
   private key(program: string, macrocycleNum: number): string {
     return `${program}:${macrocycleNum}`;

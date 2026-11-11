@@ -1,9 +1,10 @@
-import { Macrocycle, PrismaClient } from '@prisma/client';
+import { Macrocycle, Prisma, PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { MacrocycleOrigin, MacrocycleStatus } from '@lifting-logbook/types';
 import { trace } from '@opentelemetry/api';
 import { MacrocycleNumberConflictError } from '../../ports/errors';
 import { IMacrocycleRepository, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
+import { PrismaExecutor, runInteractive } from './prisma-tx.util';
 
 function toRow(row: Macrocycle): MacrocycleRow {
   return {
@@ -29,13 +30,17 @@ function toRow(row: Macrocycle): MacrocycleRow {
  */
 export const MACROCYCLE_LOCK_NAMESPACE = 1171;
 
-/** Postgres's `lock_not_available`, raised when a lock wait reaches `lock_timeout`. */
-const LOCK_NOT_AVAILABLE = '55P03';
+/**
+ * Postgres's `lock_not_available`, raised when a lock wait reaches `lock_timeout`, and
+ * `deadlock_detected`, raised in one of two requests that both hold the lock shared and both
+ * ask for it exclusively, as two renumbering starts or deletes can (#1199).
+ */
+const LOCK_REFUSED = ['55P03', '40P01'];
 
-function isLockTimeout(err: unknown): boolean {
+function isLockRefused(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const meta = (err as { meta?: { code?: unknown } }).meta;
-  return meta?.code === LOCK_NOT_AVAILABLE || err.message.includes(LOCK_NOT_AVAILABLE);
+  return LOCK_REFUSED.some((code) => meta?.code === code || err.message.includes(code));
 }
 
 const tracer = trace.getTracer('prisma-macrocycle-repository');
@@ -89,7 +94,7 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
             SELECT pg_advisory_xact_lock(hashtextextended(${this.userId}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`;
         } catch (err) {
           // The failed statement aborts the transaction, which the caller's 409 rolls back.
-          if (!isLockTimeout(err)) throw err;
+          if (!isLockRefused(err)) throw err;
           span.setAttribute('lock.acquired', false);
           return false;
         }
@@ -191,4 +196,50 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
       where: { userId: this.userId, program, macrocycleNum: { notIn: [...keep] } },
     });
   }
+
+  async rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): Promise<number> {
+    if (changes.size === 0) return 0;
+    const olds = [...changes.keys()];
+    const news = [...changes.values()];
+    // Two passes, since unique keys are checked per row: every moving row first takes -1 - its
+    // new number, which no stored row holds, then flips to the new number.
+    const rewrite = async (db: PrismaExecutor): Promise<number> => {
+      let rows = 0;
+      for (const table of NUMBERED_TABLES) {
+        rows += await db.$executeRaw`
+          UPDATE ${Prisma.raw(`"${table}"`)} AS t SET "macrocycleNum" = -1 - m.new_num
+          FROM unnest(${olds}::int[], ${news}::int[]) AS m(old_num, new_num)
+          WHERE t."userId" = ${this.userId} AND t."program" = ${program} AND t."macrocycleNum" = m.old_num`;
+      }
+      for (const table of NUMBERED_TABLES) {
+        await db.$executeRaw`
+          UPDATE ${Prisma.raw(`"${table}"`)} SET "macrocycleNum" = -1 - "macrocycleNum"
+          WHERE "userId" = ${this.userId} AND "program" = ${program} AND "macrocycleNum" < 0`;
+      }
+      return rows;
+    };
+    try {
+      // The request's transaction makes it all-or-nothing; a bare client needs its own.
+      return await runInteractive(this.prisma, rewrite);
+    } catch (err) {
+      // A row on a new number that `changes` doesn't move: the unique key is the backstop.
+      if (err instanceof Error && err.message.includes(UNIQUE_VIOLATION)) throw new MacrocycleNumberConflictError(program);
+      throw err;
+    }
+  }
 }
+
+/** Postgres's `unique_violation`, which a raw query's error carries in its message. */
+const UNIQUE_VIOLATION = '23505';
+
+/** Every table that holds a macrocycle number (ADR-042). Constants, so safe to splice into SQL. */
+export const NUMBERED_TABLES = [
+  'lift_record',
+  'macrocycle_dashboard',
+  'workout_date_override',
+  'workout_skip_override',
+  'workout_lift_override',
+  'focus_day_state',
+  'macrocycle_scheduled_workout',
+  'macrocycle',
+] as const;

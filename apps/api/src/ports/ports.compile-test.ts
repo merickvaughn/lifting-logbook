@@ -79,7 +79,7 @@ const _liftRecordRepo: ILiftRecordRepository = {
     Promise.resolve([]),
   appendLiftRecords: (): Promise<number> =>
     Promise.resolve(0),
-  findExistingRecords: (): Promise<LiftRecord[]> =>
+  findStoredSets: (): Promise<LiftRecord[]> =>
     Promise.resolve([]),
   updateLiftRecord: (): Promise<LiftRecord | null> =>
     Promise.resolve(null),
@@ -276,12 +276,15 @@ const _macrocycleRepo: IMacrocycleRepository = {
   close: (): Promise<void> => Promise.resolve(),
   delete: (): Promise<void> => Promise.resolve(),
   deleteAllExcept: (): Promise<void> => Promise.resolve(),
+  rewriteNumbers: () => Promise.resolve(0),
 };
 
 const _importBatchRepo: IImportBatchRepository = {
   save: (): Promise<void> => Promise.resolve(),
   findById: () => Promise.resolve(null),
   deleteById: (): Promise<void> => Promise.resolve(),
+  listForProgram: () => Promise.resolve([]),
+  updatePreImage: (): Promise<void> => Promise.resolve(),
 };
 
 const _repositoryBundle: RepositoryBundle = {

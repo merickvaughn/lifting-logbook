@@ -1,7 +1,12 @@
 import { IWorkoutSkipOverrideRepository } from '../../ports/IWorkoutSkipOverrideRepository';
+import { NumberedStore, colonKey, rekeyMap } from './renumber';
 
-export class InMemoryWorkoutSkipOverrideRepository implements IWorkoutSkipOverrideRepository {
+export class InMemoryWorkoutSkipOverrideRepository implements IWorkoutSkipOverrideRepository, NumberedStore {
   private readonly store = new Map<string, Set<number>>();
+
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
+    return rekeyMap(this.store, program, changes, colonKey.numberOf, colonKey.keyWith);
+  }
 
   private key(program: string, macrocycleNum: number): string {
     return `${program}:${macrocycleNum}`;

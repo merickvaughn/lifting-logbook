@@ -248,7 +248,7 @@ logged set, and each level between them is reassembled per request.
 | Level | Represented as | Stored? |
 |---|---|---|
 | **Program** | `string` id, plus `ProgramLengthMeta {lengthWeeks, mesocycleWeeks, phaseStyle}` | Registry for built-ins; `custom_program` row for user programs |
-| **Macrocycle** | `macrocycleNum: number`, denormalized onto seven child tables | One `macrocycle` row per macrocycle, past and current, with its dates, status and origin ([ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md)). `macrocycle_dashboard` is `@@unique([userId, program])` and points at the current one |
+| **Macrocycle** | `macrocycleNum: number`, denormalized onto seven child tables | One `macrocycle` row per macrocycle, past and current, with its dates, status and origin ([ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md)). `macrocycle_dashboard` is `@@unique([userId, program])` and points at the current one. Once renumbering is on ([#1199](https://github.com/merickvaughn/lifting-logbook/issues/1199), switched on by [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200)), the numbers run 1 to N in start-date order, and the row's id is what stays fixed |
 | **Mesocycle** (Block) | `mesocycleWeeks` arithmetic + `phaseStyle: 'repeating' \| 'mesocycle'` | **No entity.** A mesocycle boundary is `ceil(week / mesocycleWeeks)` |
 | **Week** | `week: number` + `WeekType` | **Derived** by tiling (`expandSpecToLength`) |
 | **Workout** | `(program, macrocycleNum, workoutNum)`; `workoutNum` is a **global ordinal** over the macrocycle, from `programWorkoutKeys`, with or without a schedule | **Derived.** Typed exactly once, as `TimerWorkoutKey` |

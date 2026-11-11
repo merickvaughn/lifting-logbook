@@ -28,10 +28,12 @@ import {
   pairWithRowNumber,
   buildSkippedDetail,
   liftRecordLabel,
+  withOccurrence,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
 import { liftNamesFor } from './effective-slot-map.util';
-import { ensureFileNumberRows, legacyRowsPreImage, lockForImport } from './macrocycle-history.util';
+import { legacyRowsPreImage, lockForImport, placeFileRows } from './macrocycle-history.util';
+import { renumberProgram } from './macrocycle-renumbering';
 
 export interface ImportHandler<T> {
   parse(table: SpreadsheetCell[][]): T[];
@@ -46,6 +48,36 @@ export interface ImportHandler<T> {
     program: string,
     repos: RepositoryBundle,
   ): Promise<Omit<ImportCommitResponse, 'destination' | 'batchId' | 'split'> & { preImage: ImportPreImage }>;
+}
+
+/**
+ * Writes the rows of an import path that takes macrocycle numbers from a file
+ * (`POST lift-records/import` and flag-off commits), under the lock the caller holds exclusively.
+ * Rows are classified by counting against what's stored (proposal decision 13) in JS before
+ * writing, so `toCreate` is exactly what should be written and `createMany`'s
+ * `skipDuplicates` is a backstop (#884). The file's numbers then only group the rows
+ * (`placeFileRows`), and the program renumbers by date. `toCreate` and `legacyNums` carry the
+ * numbers as stored after that, for the batch's pre-image.
+ */
+export async function writeFileNumberRows(repos: RepositoryBundle, program: string, records: LiftRecord[]) {
+  const classified = classifyLiftRecordRows(pairWithRowNumber(records), ({ r }) => r, await repos.liftRecord.findStoredSets(records));
+  const creating = classified
+    .filter((c) => c.kind === 'create')
+    .map(({ row: { r }, occurrence }) => {
+      const { occurrence: _fileOccurrence, ...rest } = r;
+      return { ...rest, ...withOccurrence(occurrence) };
+    });
+  const { placed, legacyNums } = await placeFileRows(repos, program, creating);
+  const placedRows = creating.map((r) => ({ ...r, macrocycleNum: placed.get(r.macrocycleNum) ?? r.macrocycleNum }));
+  const created = await repos.liftRecord.appendLiftRecords(program, placedRows);
+  const changes = await renumberProgram(repos, program, { lock: 'exclusive' });
+  const renumbered = (n: number) => changes.get(n) ?? n;
+  return {
+    classified,
+    toCreate: placedRows.map((r) => ({ ...r, macrocycleNum: renumbered(r.macrocycleNum) })),
+    created,
+    legacyNums: legacyNums.map(renumbered),
+  };
 }
 
 const liftRecordsHandler: ImportHandler<LiftRecord> = {
@@ -66,38 +98,26 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
   },
   async preview(valid, program, repos) {
     const records = valid.map((r) => ({ ...r, program }));
-    const existing = await repos.liftRecord.findExistingRecords(program, records);
-    return buildLiftRecordsPreview(records, existing);
+    return buildLiftRecordsPreview(records, await repos.liftRecord.findStoredSets(records));
   },
   async commit(valid, program, repos) {
     // No page write runs while a file's numbers are written (proposal decision 13).
     await lockForImport(repos);
-    const records = valid.map((r) => ({ ...r, program }));
-    const existing = await repos.liftRecord.findExistingRecords(program, records);
     // Row numbers below are batch-relative — 1-based within *this* commit
     // batch, i.e. after any Phase 3 excludeKeys/splitDest filtering the
     // controller already applied. For a plain commit (neither) that matches
     // the original CSV data-row number; positions shift when rows were
     // excluded or split to a second destination ahead of this call. See
     // ImportCommitResponse.skippedDetail (issue #891) for the full contract.
-    const rows = pairWithRowNumber(records);
-    // Classify (and dedupe in-batch duplicates) in JS before writing, rather
-    // than deriving `skipped` by subtracting the DB's insert count from the
-    // unique-key count. That subtraction was sensitive to any drift between
-    // the JS-side key and the DB-side constraint (issue #884); classifying
-    // first means `toCreate` is already exactly what should be written, so
-    // the DB's own `createMany({ skipDuplicates: true })` skip logic is
-    // belt-and-suspenders rather than the source of truth for the count.
-    const classified = [...classifyLiftRecordRows(rows, ({ r }) => r, existing)];
-    const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row.r);
-    // Imported history is read-only, and a new file number gets a `legacy` row (ADR-042),
-    // which the pre-image records so undo can remove it.
-    const legacyNums = await ensureFileNumberRows(repos, program, toCreate);
-    const created = await repos.liftRecord.appendLiftRecords(program, toCreate);
+    const { classified, toCreate, created, legacyNums } = await writeFileNumberRows(
+      repos,
+      program,
+      valid.map((r) => ({ ...r, program })),
+    );
     const liftNames = await liftNamesFor(repos);
     // `skipped` is derived from `created` (the DB's actual insert count), not
     // `toCreate.length` (what JS classification expected to write): a
-    // concurrent import racing between findExistingRecords and
+    // concurrent import racing between findStoredSets and
     // appendLiftRecords can insert a colliding row in between, so the DB
     // writes fewer rows than toCreate — deriving from toCreate.length would
     // silently drop that row from both totals. This keeps

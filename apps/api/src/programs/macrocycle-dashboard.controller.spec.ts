@@ -84,7 +84,7 @@ describe('MacrocycleDashboardController', () => {
       getLiftRecords: jest.fn().mockResolvedValue([]),
       getLoggedWorkoutNums: jest.fn().mockResolvedValue(new Set<number>()),
       appendLiftRecords: jest.fn(),
-      findExistingRecords: jest.fn(),
+      findStoredSets: jest.fn(),
       updateLiftRecord: jest.fn(),
       deleteLiftRecordsByNaturalKeys: jest.fn(),
     };

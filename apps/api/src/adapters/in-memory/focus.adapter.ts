@@ -1,12 +1,29 @@
 import { DEFAULT_FOCUS_BUDGET, FocusBlock, FocusBudget, FocusDayState } from '@lifting-logbook/types';
 import { FocusBlockPatch, IFocusRepository } from '../../ports/IFocusRepository';
 import { FocusBlockConflictError, FocusBlockNotFoundError } from '../../ports/errors';
+import { NumberedStore, rekeyMap } from './renumber';
 
 /** Mirrors PrismaFocusRepository, including its (series, start) uniqueness. */
-export class InMemoryFocusRepository implements IFocusRepository {
+export class InMemoryFocusRepository implements IFocusRepository, NumberedStore {
   private readonly blocks = new Map<string, FocusBlock>();
   private readonly dayStates = new Map<string, FocusDayState>();
   private budget: FocusBudget = { ...DEFAULT_FOCUS_BUDGET };
+
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
+    return rekeyMap(
+      this.dayStates,
+      program,
+      changes,
+      (key) => {
+        const [p, macrocycleNum] = JSON.parse(key) as [string, number, number];
+        return { program: p, macrocycleNum };
+      },
+      (key, macrocycleNum) => {
+        const [p, , workoutNum] = JSON.parse(key) as [string, number, number];
+        return dayKey(p, macrocycleNum, workoutNum);
+      },
+    );
+  }
 
   async listBlocks(): Promise<FocusBlock[]> {
     // Insertion order breaks ties, as createdAt does in the Prisma adapter.

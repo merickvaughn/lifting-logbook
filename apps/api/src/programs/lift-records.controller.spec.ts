@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { FastifyRequest } from 'fastify';
-import { Weekday } from '@lifting-logbook/core';
+import { LiftRecord, Weekday } from '@lifting-logbook/core';
 import { CustomLift, LiftModification, LiftModificationMaxMode, MacrocycleOrigin } from '@lifting-logbook/types';
 import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
@@ -65,7 +65,7 @@ describe('LiftRecordsController', () => {
       getLiftRecords: jest.fn(),
       appendLiftRecords: jest.fn(),
       updateLiftRecord: jest.fn(),
-      findExistingRecords: jest.fn().mockResolvedValue([]),
+      findStoredSets: jest.fn().mockResolvedValue([]),
       deleteLiftRecordsByNaturalKeys: jest.fn().mockResolvedValue(0),
       deleteAllLiftRecords: jest.fn().mockResolvedValue(undefined),
     };
@@ -369,7 +369,8 @@ describe('LiftRecordsController', () => {
       );
     });
 
-    // A file number with no macrocycle gets a `legacy` one dated by its rows (ADR-042).
+    // A file number only groups rows (#1199): one the program doesn't have gets a `legacy`
+    // macrocycle dated by its rows, numbered past every stored one (ADR-042).
     it('gives a new file number a legacy macrocycle, dated by its rows', async () => {
       liftRecordRepo.appendLiftRecords.mockResolvedValue(2);
       const csv = [
@@ -380,22 +381,28 @@ describe('LiftRecordsController', () => {
 
       await controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER);
 
-      expect(await macrocycleRepo.findByNumber('5-3-1', 1)).toMatchObject({
+      expect(await macrocycleRepo.findByNumber('5-3-1', 5)).toMatchObject({
         origin: 'legacy',
         status: 'unknown',
         startDate: new Date('2026-01-01T00:00:00.000Z'),
         endDate: new Date('2026-01-08T00:00:00.000Z'),
       });
+      expect(liftRecordRepo.appendLiftRecords).toHaveBeenCalledWith('5-3-1', [
+        expect.objectContaining({ macrocycleNum: 5, workoutNum: 1 }),
+        expect.objectContaining({ macrocycleNum: 5, workoutNum: 2 }),
+      ]);
     });
 
-    it('rejects rows numbered like an imported macrocycle with 409, writing nothing', async () => {
+    // Rows never join an imported macrocycle; the owner chose a new legacy one over a 409 (#1199).
+    it('puts rows numbered like an imported macrocycle in a new legacy one', async () => {
+      liftRecordRepo.appendLiftRecords.mockResolvedValue(1);
       const csv = [IMPORT_CSV_HEADER, '5-3-1,3,1,2026-01-01,Bench P.,1,180,5,'].join('\n');
 
-      await expect(controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER)).rejects.toMatchObject({
-        status: 409,
-        response: { code: 'macrocycle-read-only' },
-      });
-      expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
+      await controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER);
+
+      expect(liftRecordRepo.appendLiftRecords).toHaveBeenCalledWith('5-3-1', [expect.objectContaining({ macrocycleNum: 5 })]);
+      expect(await macrocycleRepo.findByNumber('5-3-1', 5)).toMatchObject({ origin: 'legacy' });
+      expect(await macrocycleRepo.findByNumber('5-3-1', 3)).toMatchObject({ origin: 'imported' });
     });
 
     it('writes one row for a set the file names under two spellings of a lift (#1191)', async () => {
@@ -428,7 +435,7 @@ describe('LiftRecordsController', () => {
         createdAt: new Date('2026-01-01'),
       };
       customLiftRepo.list.mockResolvedValue([customLift]);
-      liftRecordRepo.findExistingRecords.mockImplementation(async (_program, records) => records);
+      liftRecordRepo.findStoredSets.mockImplementation(async (slots) => slots as LiftRecord[]);
       liftRecordRepo.appendLiftRecords.mockResolvedValue(0);
       const csv = [
         IMPORT_CSV_HEADER,
@@ -448,7 +455,7 @@ describe('LiftRecordsController', () => {
 
     // #1162: the same for a built-in lift, which is stored under its catalog id.
     it('labels a skipped built-in row with its name, not its id', async () => {
-      liftRecordRepo.findExistingRecords.mockImplementation(async (_program, records) => records);
+      liftRecordRepo.findStoredSets.mockImplementation(async (slots) => slots as LiftRecord[]);
       liftRecordRepo.appendLiftRecords.mockResolvedValue(0);
       const csv = [IMPORT_CSV_HEADER, '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,'].join('\n');
 

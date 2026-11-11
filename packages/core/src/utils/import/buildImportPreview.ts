@@ -87,10 +87,9 @@ export function parseProgramSpecNaturalKey(
 }
 
 /**
- * Lift records are append-only: a row either creates (new natural key) or skips
- * (key already present, whether already stored or repeated earlier in this
- * same file — issue #884 — both surface as a 'skip' delta). So does a row that
- * repeats an earlier one under another spelling (issue #1191).
+ * Lift records are append-only: a row either creates or skips, counted against
+ * `existing` (the sets stored on the file's dates and lifts, under any program) and
+ * the file's earlier rows, as {@link classifyLiftRecordRows} describes.
  */
 export function buildLiftRecordsPreview(
   incoming: LiftRecord[],

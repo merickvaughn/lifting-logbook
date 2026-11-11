@@ -8,13 +8,20 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { liftRecordNaturalKey } from '@lifting-logbook/core';
 import { emptyFocusDayState, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { seedTrainingMaxes } from '../adapters/in-memory/fixtures';
 import multipart from '@fastify/multipart';
-import { MACROCYCLE_LOCK_NAMESPACE, PrismaMacrocycleRepository } from '../adapters/prisma/macrocycle.repository';
+import {
+  MACROCYCLE_LOCK_NAMESPACE,
+  NUMBERED_TABLES,
+  PrismaMacrocycleRepository,
+} from '../adapters/prisma/macrocycle.repository';
+import { MacrocycleNumberConflictError } from '../ports/errors';
 import { IMPORT_LOCK_WAIT_MS } from './macrocycle-history.util';
+import { RENUMBERING_SETTING } from './macrocycle-renumbering';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
@@ -37,7 +44,25 @@ const USER_BACKFILL_BARE = 'macrocycle-db-backfill-bare';
 const USER_RACE = 'macrocycle-db-race';
 const USER_ENSURE = 'macrocycle-db-ensure';
 const USER_LOCK = 'macrocycle-db-lock';
-const USERS = [USER_ALICE, USER_BOB, USER_BACKFILL, USER_BACKFILL_BARE, USER_RACE, USER_ENSURE, USER_LOCK];
+const USER_RENUMBER = 'macrocycle-db-renumber';
+const USER_RENUMBER_OTHER = 'macrocycle-db-renumber-other';
+const USER_RENUMBER_ATOMIC = 'macrocycle-db-renumber-atomic';
+const USER_RENUMBER_BATCH = 'macrocycle-db-renumber-batch';
+const USER_RENUMBER_LOCK = 'macrocycle-db-renumber-lock';
+const USERS = [
+  USER_ALICE,
+  USER_BOB,
+  USER_BACKFILL,
+  USER_BACKFILL_BARE,
+  USER_RACE,
+  USER_ENSURE,
+  USER_LOCK,
+  USER_RENUMBER,
+  USER_RENUMBER_OTHER,
+  USER_RENUMBER_ATOMIC,
+  USER_RENUMBER_BATCH,
+  USER_RENUMBER_LOCK,
+];
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const isoDay = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : null);
@@ -403,8 +428,11 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       { method: 'POST', url: `${base}/macrocycles`, body: { fromMacrocycleNum: 1 } },
     ];
 
-    /** A one-set file for macrocycle `cycle`; each test imports its own, so none depends on another. */
-    const upload = (url: string, cycle = 4) => {
+    /**
+     * A one-set file dated `date`; each test imports its own, so none depends on another. The
+     * set lands in a new legacy macrocycle starting that day, at whatever number is next (#1199).
+     */
+    const upload = (url: string, date = '2025-03-03') => {
       const boundary = '----MacrocycleLockBoundary';
       return app.getHttpAdapter().getInstance().inject({
         method: 'POST',
@@ -415,7 +443,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
           'Content-Disposition: form-data; name="file"; filename="upload.csv"',
           'Content-Type: text/csv',
           '',
-          `Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes\n5-3-1,${cycle},1,2025-03-03,Squat,1,200,5,`,
+          `Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes\n5-3-1,4,1,${date},Squat,1,200,5,`,
           `--${boundary}--`,
         ].join('\r\n'),
       });
@@ -486,7 +514,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         if (!released) harness.release();
         await harness.done;
       }
-      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 4 } })).toBe(1);
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, startDate: day('2025-03-03') } })).toBe(1);
     }, LOCKED_TEST_TIMEOUT_MS);
 
     // Postgres queues a no-wait shared request behind a waiting exclusive one, so while an
@@ -495,7 +523,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       const harness = await holdLock('shared');
       let released = false;
       try {
-        const pending = upload(commitImport, 6);
+        const pending = upload(commitImport, '2025-06-02');
         await waitForBlockedBy(harness.pid);
         const write = await injectAs(USER_LOCK, 'POST', `${base}/lift-records`, logBody(3), macrocycleId);
         expect({ status: write.statusCode, code: write.json().code }).toEqual({ status: 409, code: 'import-in-progress' });
@@ -509,25 +537,208 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         if (!released) harness.release();
         await harness.done;
       }
-      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 6 } })).toBe(1);
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, startDate: day('2025-06-02') } })).toBe(1);
     }, LOCKED_TEST_TIMEOUT_MS);
 
     it('answers an import and an import undo with 409 macrocycle-busy when page writes hold it past the wait, writing nothing', async () => {
-      const committed = await upload(commitImport, 5);
+      const date = '2025-05-05';
+      const committed = await upload(commitImport, date);
       expect(committed.statusCode).toBe(200);
       const batchId: string = committed.json().batchId;
       const harness = await holdLock('shared');
       try {
-        expectBusy(commitImport, await upload(commitImport, 5));
+        expectBusy(commitImport, await upload(commitImport, date));
         const undo = `${base}/import/${batchId}/undo`;
         expectBusy(undo, await injectAs(USER_LOCK, 'POST', undo));
-        expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 5 } })).toBe(1);
+        expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, startDate: day(date) } })).toBe(1);
       } finally {
         harness.release();
         await harness.done;
       }
       expect((await injectAs(USER_LOCK, 'POST', `${base}/import/${batchId}/undo`)).statusCode).toBe(200);
-      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 5 } })).toBe(0);
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, startDate: day(date) } })).toBe(0);
     }, LOCKED_TEST_TIMEOUT_MS);
+  });
+
+  /** Renumbering by start date (#1199), with the setting #1200 turns on for everyone. */
+  describe('renumbering', () => {
+    const base = `/programs/${PROGRAM}`;
+    const previous = process.env[RENUMBERING_SETTING];
+    beforeAll(() => {
+      process.env[RENUMBERING_SETTING] = 'on';
+    });
+    afterAll(() => {
+      if (previous === undefined) delete process.env[RENUMBERING_SETTING];
+      else process.env[RENUMBERING_SETTING] = previous;
+    });
+
+    /** A live macrocycle `num` starting on `date`, with a row in every table that holds a number. */
+    async function seedEveryTable(userId: string, num: number, date: string): Promise<void> {
+      const at = { userId, program: PROGRAM, macrocycleNum: num };
+      await owner.macrocycle.create({ data: { ...at, startDate: day(date), status: 'in-progress', origin: 'live' } });
+      await owner.liftRecord.create({
+        data: { ...at, workoutNum: 1, date: day(date), lift: 'Squat', setNum: 1, weight: 200, reps: 5 },
+      });
+      await owner.macrocycleDashboard.create({
+        data: {
+          ...at,
+          macrocycleUnit: 'Week',
+          macrocycleDate: day(date),
+          sheetName: `${PROGRAM}_Cycle_${num}_${date.replace(/-/g, '')}`,
+          macrocycleStartWeekday: 'Monday',
+        },
+      });
+      await owner.macrocycleScheduledWorkout.create({ data: { ...at, workoutNum: 1, weekNum: 1, scheduledDate: day(date) } });
+      await owner.workoutDateOverride.create({ data: { ...at, workoutNum: 1, newDate: day(date) } });
+      await owner.workoutSkipOverride.create({ data: { ...at, workoutNum: 2 } });
+      await owner.workoutLiftOverride.create({ data: { ...at, workoutNum: 1, lift: 'Dips', action: 'add' } });
+      await owner.focusDayState.create({ data: { ...at, workoutNum: 1, state: {} } });
+    }
+
+    /** Each numbered table's distinct numbers for `userId`, read as the owner. */
+    async function numbersByTable(userId: string): Promise<Record<string, number[]>> {
+      const result: Record<string, number[]> = {};
+      for (const table of NUMBERED_TABLES) {
+        const rows = await owner.$queryRaw<Array<{ n: number }>>`
+          SELECT DISTINCT "macrocycleNum" AS n FROM ${Prisma.raw(`"${table}"`)}
+          WHERE "userId" = ${userId} AND "program" = ${PROGRAM} ORDER BY 1`;
+        result[table] = rows.map((row) => row.n);
+      }
+      return result;
+    }
+    /** `nums` for every numbered table, with `overrides` for the tables named. */
+    const everyTable = (nums: number[], overrides: Partial<Record<(typeof NUMBERED_TABLES)[number], number[]>> = {}) =>
+      Object.fromEntries(NUMBERED_TABLES.map((table) => [table, overrides[table] ?? nums]));
+    /** After an older import: the live macrocycle's rows on 2, and the import's set and macrocycle on 1. */
+    const afterOlderImport = everyTable([2], { lift_record: [1, 2], macrocycle: [1, 2] });
+
+    /** Commits a lift-records file of `rows` (after the header) as `userId`. */
+    const commitFile = (userId: string, ...rows: string[]) => {
+      const boundary = '----MacrocycleRenumberBoundary';
+      return app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `${base}/import?mode=commit&destination=lift-records`,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${userId}` },
+        payload: [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+          'Content-Type: text/csv',
+          '',
+          ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes', ...rows].join('\n'),
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+    };
+    const OLDER_SET = `${PROGRAM},9,1,2025-03-03,Bench Press,1,150,5,`;
+
+    it('rewrites the number in every table as the app role, leaving another user alone', async () => {
+      await seedEveryTable(USER_RENUMBER, 1, '2026-01-05');
+      await seedEveryTable(USER_RENUMBER_OTHER, 1, '2026-01-05');
+
+      // An older macrocycle arrives, so the live one becomes 2.
+      expect((await commitFile(USER_RENUMBER, OLDER_SET)).statusCode).toBe(200);
+
+      expect(await numbersByTable(USER_RENUMBER)).toEqual(afterOlderImport);
+      expect(await numbersByTable(USER_RENUMBER_OTHER)).toEqual(everyTable([1]));
+      const rows = await owner.macrocycle.findMany({ where: { userId: USER_RENUMBER }, orderBy: { macrocycleNum: 'asc' } });
+      expect(rows.map((row) => [row.macrocycleNum, row.origin, isoDay(row.startDate)])).toEqual([
+        [1, 'legacy', '2025-03-03'],
+        [2, 'live', '2026-01-05'],
+      ]);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('leaves every number as it was when a rewrite fails partway', async () => {
+      await seedEveryTable(USER_RENUMBER_ATOMIC, 1, '2026-01-05');
+      // Only the macrocycle table, the last one rewritten, holds 2, so every table before it moves first.
+      await owner.macrocycle.create({
+        data: { userId: USER_RENUMBER_ATOMIC, program: PROGRAM, macrocycleNum: 2, startDate: day('2026-03-02'), status: 'unknown', origin: 'legacy' },
+      });
+      const appDb = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+      try {
+        await expect(
+          asUser(appDb, USER_RENUMBER_ATOMIC, (tx) =>
+            new PrismaMacrocycleRepository(tx, USER_RENUMBER_ATOMIC).rewriteNumbers(PROGRAM, new Map([[1, 2]])),
+          ),
+        ).rejects.toBeInstanceOf(MacrocycleNumberConflictError);
+      } finally {
+        await appDb.$disconnect();
+      }
+
+      expect(await numbersByTable(USER_RENUMBER_ATOMIC)).toEqual(everyTable([1], { macrocycle: [1, 2] }));
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('undoes a batch with current keys and one with date-blind keys after a renumbering, each removing only its own sets', async () => {
+      const user = USER_RENUMBER_BATCH;
+      await seedEveryTable(user, 1, '2026-01-05');
+      const set = (workoutNum: number, date: string, lift: string, setNum: number) => ({
+        userId: user, program: PROGRAM, macrocycleNum: 1, workoutNum, date: day(date), lift, setNum, weight: 100, reps: 5,
+      });
+      await owner.liftRecord.createMany({
+        data: [set(1, '2026-01-05', 'Squat', 2), set(2, '2026-01-07', 'Bench Press', 1), set(3, '2026-01-09', 'Deadlift', 1)],
+      });
+      const created = { kind: 'created', wrote: { weight: 100, reps: 5, notes: '' } };
+      const current = await owner.importBatch.create({
+        data: {
+          userId: user,
+          program: PROGRAM,
+          destination: 'lift-records',
+          preImage: {
+            [liftRecordNaturalKey({ macrocycleNum: 1, workoutNum: 1, date: day('2026-01-05'), lift: 'Squat', setNum: 2 })]: created,
+          },
+        },
+      });
+      // A batch from before the date joined the key (#884).
+      const dateBlind = await owner.importBatch.create({
+        data: { userId: user, program: PROGRAM, destination: 'lift-records', preImage: { '1:2:Bench Press:1': created } },
+      });
+
+      expect((await commitFile(user, OLDER_SET)).statusCode).toBe(200);
+      const sets = async () =>
+        (await owner.liftRecord.findMany({ where: { userId: user }, orderBy: [{ date: 'asc' }, { setNum: 'asc' }] })).map(
+          (r) => `${r.macrocycleNum} ${isoDay(r.date)} ${r.lift} ${r.setNum}`,
+        );
+      expect(await sets()).toEqual([
+        '1 2025-03-03 bench-press 1',
+        '2 2026-01-05 Squat 1',
+        '2 2026-01-05 Squat 2',
+        '2 2026-01-07 Bench Press 1',
+        '2 2026-01-09 Deadlift 1',
+      ]);
+
+      const undoCurrent = await injectAs(user, 'POST', `${base}/import/${current.id}/undo`);
+      expect(undoCurrent.json()).toMatchObject({ restored: 1, skipped: 0 });
+      expect(await sets()).toEqual([
+        '1 2025-03-03 bench-press 1',
+        '2 2026-01-05 Squat 1',
+        '2 2026-01-07 Bench Press 1',
+        '2 2026-01-09 Deadlift 1',
+      ]);
+
+      const undoDateBlind = await injectAs(user, 'POST', `${base}/import/${dateBlind.id}/undo`);
+      expect(undoDateBlind.json()).toMatchObject({ restored: 1, skipped: 0 });
+      expect(await sets()).toEqual(['1 2025-03-03 bench-press 1', '2 2026-01-05 Squat 1', '2 2026-01-09 Deadlift 1']);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('holds a rewrite back until a page write holding the lock across its id check has finished', async () => {
+      const user = USER_RENUMBER_LOCK;
+      await seedEveryTable(user, 1, '2026-01-05');
+      // The harness stands in for a page write between its id check and its write.
+      const harness = await holdOpen(owner, null, (tx) =>
+        tx.$queryRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${user}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`,
+      );
+      let released = false;
+      try {
+        const pending = commitFile(user, OLDER_SET);
+        await waitForBlockedBy(harness.pid);
+        expect(await numbersByTable(user)).toEqual(everyTable([1]));
+        harness.release();
+        released = true;
+        expect((await pending).statusCode).toBe(200);
+      } finally {
+        if (!released) harness.release();
+        await harness.done;
+      }
+      expect(await numbersByTable(user)).toEqual(afterOlderImport);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
   });
 });

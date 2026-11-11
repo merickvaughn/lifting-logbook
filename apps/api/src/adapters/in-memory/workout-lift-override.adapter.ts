@@ -3,11 +3,16 @@ import {
   IWorkoutLiftOverrideRepository,
   sameKindActions,
 } from '../../ports/IWorkoutLiftOverrideRepository';
+import { NumberedStore, nulKey, rekeyMap } from './renumber';
 
 export class InMemoryWorkoutLiftOverrideRepository
-  implements IWorkoutLiftOverrideRepository
+  implements IWorkoutLiftOverrideRepository, NumberedStore
 {
   private readonly store = new Map<string, LiftOverride[]>();
+
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
+    return rekeyMap(this.store, program, changes, nulKey.numberOf, nulKey.keyWith);
+  }
 
   private key(program: string, macrocycleNum: number, workoutNum: number): string {
     // Null byte delimiter — program slugs cannot contain \0, unambiguous even for slugs like "5-3-1".

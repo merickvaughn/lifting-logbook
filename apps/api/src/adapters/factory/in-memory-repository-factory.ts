@@ -45,18 +45,34 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       const strengthGoal = new InMemoryStrengthGoalRepository();
       const trainingMax = new InMemoryTrainingMaxRepository(preSeed);
       const userSettings = new InMemoryUserSettingsRepository();
+      // Every store that holds a macrocycle number, so a renumbering rewrites them all (#1199).
+      const liftRecord = new InMemoryLiftRecordRepository(sharedRecords);
+      const focus = new InMemoryFocusRepository();
+      const macrocycleDashboard = new InMemoryMacrocycleDashboardRepository(preSeed);
+      const macrocycleScheduledWorkout = new InMemoryMacrocycleScheduledWorkoutRepository();
+      const workoutDateOverride = new InMemoryWorkoutDateOverrideRepository();
+      const workoutLiftOverride = new InMemoryWorkoutLiftOverrideRepository();
+      const workoutSkipOverride = new InMemoryWorkoutSkipOverrideRepository();
       this.bundles.set(user.id, {
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift,
-        focus: new InMemoryFocusRepository(),
-        macrocycle: new InMemoryMacrocycleRepository(preSeed ? [seedMacrocycleRow()] : []),
-        macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(preSeed),
-        macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
+        focus,
+        macrocycle: new InMemoryMacrocycleRepository(preSeed ? [seedMacrocycleRow()] : [], [
+          liftRecord,
+          focus,
+          macrocycleDashboard,
+          macrocycleScheduledWorkout,
+          workoutDateOverride,
+          workoutLiftOverride,
+          workoutSkipOverride,
+        ]),
+        macrocycleDashboard,
+        macrocycleScheduledWorkout,
         importBatch: new InMemoryImportBatchRepository(),
         liftMetadata: new InMemoryLiftMetadataRepository(),
         liftingProgramSpec: new InMemoryLiftingProgramSpecRepository(preSeed),
         liftModification: new InMemoryLiftModificationRepository(user.id, sharedRecords),
-        liftRecord: new InMemoryLiftRecordRepository(sharedRecords),
+        liftRecord,
         programPhilosophy: new InMemoryProgramPhilosophyRepository(),
         strengthGoal,
         trainingMax,
@@ -70,9 +86,9 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
         ),
         userSettings,
         workout: new InMemoryWorkoutRepository(sharedRecords),
-        workoutDateOverride: new InMemoryWorkoutDateOverrideRepository(),
-        workoutLiftOverride: new InMemoryWorkoutLiftOverrideRepository(),
-        workoutSkipOverride: new InMemoryWorkoutSkipOverrideRepository(),
+        workoutDateOverride,
+        workoutLiftOverride,
+        workoutSkipOverride,
       });
     }
     return this.bundles.get(user.id)!;

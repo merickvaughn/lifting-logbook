@@ -65,6 +65,7 @@ import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
 import { lockForImport, removeEmptyLegacyRows, splitLegacyRowKeys } from './macrocycle-history.util';
+import { renumberProgram } from './macrocycle-renumbering';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
 import {
@@ -317,8 +318,9 @@ export class ImportController {
           flagged.push({ key: '*', reason: `${missing} row(s) not found (already deleted?)` });
         }
       }
-      // A macrocycle the import created goes with its sets (ADR-042).
+      // A macrocycle the import created goes with its sets (ADR-042), and the numbers close up.
       await removeEmptyLegacyRows(repos, program, legacyNums);
+      await renumberProgram(repos, program, { lock: 'exclusive' });
     } else {
       for (const [key, entry] of Object.entries(batch.preImage)) {
         if (batch.destination === 'training-maxes') {
@@ -447,9 +449,9 @@ export class ImportController {
     }
 
     const validWithProgram = softResult.validRows.map(({ record }) => ({ ...record, program }));
-    const existing = await repos.liftRecord.findExistingRecords(program, validWithProgram);
+    const stored = await repos.liftRecord.findStoredSets(validWithProgram);
     const liftNames = await liftNamesFor(repos);
-    const preview = buildLiftRecordsPreviewSoft(softResult, existing, liftNames);
+    const preview = buildLiftRecordsPreviewSoft(softResult, stored, liftNames);
 
     // Check for 1RM rows in the valid set
     const { trainingMaxes: splitMaxes } = splitLiftRecordsByDestination(validWithProgram);

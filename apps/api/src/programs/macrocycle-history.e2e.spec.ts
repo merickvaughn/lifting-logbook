@@ -12,6 +12,7 @@ import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
+import { RENUMBERING_SETTING } from './macrocycle-renumbering';
 
 /**
  * Macrocycle history (ADR-042, #1197), in-memory adapters. Piece 1 writes no `imported`
@@ -302,17 +303,18 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       });
     });
 
-    it('rejects an upload into an imported macrocycle with 409, writing nothing', async () => {
+    it('puts an upload numbered like an imported macrocycle in a new legacy one, leaving the imported sets alone', async () => {
       const user = as('history-guard-upload');
       await user.seedImported(1, '2025-01-06', '2025-02-17');
 
+      // A file's macrocycle number only groups its rows (#1199), and an imported macrocycle is never joined.
       const upload = await csvUpload('history-guard-upload', [HEADER, `${PROGRAM},1,1,2025-01-08,Squat,1,500,5,`].join('\n'));
 
-      expect(upload.statusCode).toBe(409);
-      expect(upload.json()).toMatchObject({ code: 'macrocycle-read-only' });
-      expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).toEqual([
-        expect.objectContaining({ weight: 999 }),
-      ]);
+      expect(upload.statusCode).toBe(201);
+      const bundle = await user.repos();
+      expect(await bundle.liftRecord.getLiftRecords(PROGRAM, 1)).toEqual([expect.objectContaining({ weight: 999 })]);
+      expect(await bundle.liftRecord.getLiftRecords(PROGRAM, 2)).toEqual([expect.objectContaining({ weight: 500 })]);
+      expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'imported'], [2, 'legacy']]);
     });
 
     it('answers the guarded set routes with the macrocycle codes', async () => {
@@ -331,18 +333,18 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
     it('keeps a legacy macrocycle writable', async () => {
       const user = as('history-legacy');
       await user.initialize('2026-01-05');
-      // A file number with no macrocycle gets a legacy one.
+      // Rows dated before the live macrocycle get a legacy one at the next number (#1199).
       const upload = await csvUpload('history-legacy', [HEADER, `${PROGRAM},5,1,2025-03-03,Squat,1,200,5,`].join('\n'));
       expect(upload.statusCode).toBe(201);
-      expect((await user.list()).find((m) => m.macrocycleNum === 5)).toMatchObject({
+      expect((await user.list()).find((m) => m.macrocycleNum === 2)).toMatchObject({
         origin: 'legacy',
         status: 'unknown',
         startDate: '2025-03-03',
         endDate: '2025-03-03',
       });
 
-      expect((await user.log(5, '2025-03-03', 2)).statusCode).toBe(201);
-      const edit = await user.inject('PATCH', `/programs/${PROGRAM}/lift-records/${PROGRAM}-5-1-20250303-Squat-2`, {
+      expect((await user.log(2, '2025-03-03', 2)).statusCode).toBe(201);
+      const edit = await user.inject('PATCH', `/programs/${PROGRAM}/lift-records/${PROGRAM}-2-1-20250303-Squat-2`, {
         weight: 205,
       });
       expect(edit.statusCode).toBe(200);
@@ -363,7 +365,8 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       const upload = await csvUpload('history-file-zero', [HEADER, `${PROGRAM},0,1,2025-03-03,Squat,1,200,5,`].join('\n'));
 
       expect(upload.statusCode).toBe(201);
-      expect(await user.list()).toEqual([expect.objectContaining({ macrocycleNum: 0, origin: 'legacy' })]);
+      // The file's 0 only groups the rows (#1199): they form the program's first macrocycle.
+      expect(await user.list()).toEqual([expect.objectContaining({ macrocycleNum: 1, origin: 'legacy' })]);
     });
   });
 
@@ -397,7 +400,9 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       );
       expect(res.statusCode).toBe(200);
       const { batchId } = res.json() as { batchId: string };
-      expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[5, 'legacy'], [6, 'legacy']]);
+      // The 6 rows fit the stored legacy macrocycle 6 and join it; the 5 rows form a new one at the
+      // next number (#1199). Renumbering is still switched off, so the numbers stay out of date order.
+      expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[7, 'legacy'], [6, 'legacy']]);
 
       const undo = await user.inject('POST', `/programs/${PROGRAM}/import/${batchId}/undo`);
 
@@ -410,11 +415,12 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       const user = as('history-undo-logged');
       const res = await commit('history-undo-logged', [HEADER, `${PROGRAM},5,1,2025-03-03,Squat,1,200,5,`].join('\n'));
       const { batchId } = res.json() as { batchId: string };
-      expect((await user.log(5, '2025-03-04', 2)).statusCode).toBe(201);
+      // The file's 5 only groups the rows (#1199): they form the program's first macrocycle.
+      expect((await user.log(1, '2025-03-04', 2)).statusCode).toBe(201);
 
       await user.inject('POST', `/programs/${PROGRAM}/import/${batchId}/undo`);
 
-      expect((await user.list()).map((m) => m.macrocycleNum)).toEqual([5]);
+      expect((await user.list()).map((m) => m.macrocycleNum)).toEqual([1]);
     });
   });
 
@@ -453,6 +459,127 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
         expect(await bundle.workoutLiftOverride.getOverridesForMacrocycle(PROGRAM, num)).toEqual(new Map());
         expect(await bundle.focus.getDayState(PROGRAM, num, 1)).toBeNull();
       }
+    });
+  });
+
+  /** Renumbering by start date (#1199), with the setting #1200 turns on for everyone. */
+  describe('renumbering', () => {
+    const previous = process.env[RENUMBERING_SETTING];
+    beforeEach(() => {
+      process.env[RENUMBERING_SETTING] = 'on';
+    });
+    afterEach(() => {
+      if (previous === undefined) delete process.env[RENUMBERING_SETTING];
+      else process.env[RENUMBERING_SETTING] = previous;
+    });
+
+    const HEADER = 'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes';
+    const commit = (user: string, ...rows: string[]) => {
+      const boundary = '----MacrocycleRenumberingBoundary';
+      return app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/${PROGRAM}/import?mode=commit&destination=lift-records`,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${user}` },
+        payload: [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+          'Content-Type: text/csv',
+          '',
+          [HEADER, ...rows].join('\n'),
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+    };
+    const committed = async (user: string, ...rows: string[]) => {
+      const res = await commit(user, ...rows);
+      expect(res.statusCode).toBe(200);
+      return res.json() as { batchId: string; created: number; skipped: number };
+    };
+    const undo = async (user: ReturnType<typeof as>, batchId: string) => {
+      const res = await user.inject('POST', `/programs/${PROGRAM}/import/${batchId}/undo`);
+      expect(res.statusCode).toBe(200);
+    };
+    /** Number, origin and start date of each macrocycle, in list order. */
+    const order = async (user: ReturnType<typeof as>) =>
+      (await user.list()).map((m) => [m.macrocycleNum, m.origin, m.startDate]);
+
+    it('numbers an older import ahead of the live macrocycle, keeps its id, and puts the numbers back on undo', async () => {
+      const user = as('renumber-import');
+      await user.initialize('2026-01-05');
+      const [live] = await user.list();
+
+      const { batchId } = await committed('renumber-import', `${PROGRAM},7,1,2025-03-03,Squat,1,200,5,`);
+
+      expect(await order(user)).toEqual([[1, 'legacy', '2025-03-03'], [2, 'live', '2026-01-05']]);
+      expect((await user.list())[1]).toMatchObject({ id: live.id, current: true });
+      expect((await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).map((r) => r.date)).toEqual([day('2025-03-03')]);
+
+      await undo(user, batchId);
+
+      expect(await user.list()).toEqual([expect.objectContaining({ id: live.id, macrocycleNum: 1, origin: 'live' })]);
+    });
+
+    it('keeps the numbers dense after a delete, moving imported history and its sets', async () => {
+      const user = as('renumber-delete');
+      await user.seedImported(1, '2025-01-06', '2025-02-17');
+      await user.seedImported(2, '2025-06-02', '2025-07-14');
+      await user.initialize('2026-01-05');
+      await committed('renumber-delete', `${PROGRAM},9,1,2025-03-03,Squat,1,200,5,`);
+      expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([
+        [1, 'imported'], [2, 'legacy'], [3, 'imported'], [4, 'live'],
+      ]);
+      const juneId = (await user.list())[2].id;
+
+      expect((await user.inject('DELETE', `/programs/${PROGRAM}/macrocycles/current`)).statusCode).toBe(204);
+
+      expect(await order(user)).toEqual([[1, 'imported', '2025-01-06'], [2, 'imported', '2025-06-02']]);
+      expect((await user.list())[1].id).toBe(juneId);
+      expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 2)).toEqual([
+        expect.objectContaining({ weight: 999, date: day('2025-06-02') }),
+      ]);
+    });
+
+    it('keeps two macrocycles that start the same day in their order across a rewrite and an undo', async () => {
+      const user = as('renumber-ties');
+      await user.initialize('2026-01-05');
+      await committed('renumber-ties', `${PROGRAM},8,1,2025-03-03,Squat,1,200,5,`);
+      await committed('renumber-ties', `${PROGRAM},9,1,2025-03-03,Squat,2,200,5,`);
+      const [first, second] = await user.list();
+      expect([first.startDate, second.startDate]).toEqual(['2025-03-03', '2025-03-03']);
+      const tied = async () => (await user.list()).filter((m) => m.startDate === '2025-03-03').map((m) => [m.id, m.macrocycleNum]);
+      expect(await tied()).toEqual([[first.id, 1], [second.id, 2]]);
+
+      // An older import moves both tied macrocycles up one: a rewrite.
+      const { batchId } = await committed('renumber-ties', `${PROGRAM},4,1,2024-12-02,Squat,1,200,5,`);
+      expect(await tied()).toEqual([[first.id, 2], [second.id, 3]]);
+
+      await undo(user, batchId);
+      expect(await tied()).toEqual([[first.id, 1], [second.id, 2]]);
+      expect((await user.list()).map((m) => m.macrocycleNum)).toEqual([1, 2, 3]);
+    });
+
+    it('lands a file numbered only 3 in macrocycle 1, and adds nothing when it is uploaded again', async () => {
+      const user = as('renumber-file-three');
+      const rows = [`${PROGRAM},3,1,2025-03-03,Squat,1,200,5,`, `${PROGRAM},3,1,2025-03-03,Squat,2,200,5,`];
+
+      expect(await committed('renumber-file-three', ...rows)).toMatchObject({ created: 2, skipped: 0 });
+      expect(await order(user)).toEqual([[1, 'legacy', '2025-03-03']]);
+
+      expect(await committed('renumber-file-three', ...rows)).toMatchObject({ created: 0, skipped: 2 });
+      expect(await order(user)).toEqual([[1, 'legacy', '2025-03-03']]);
+      expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).toHaveLength(2);
+    });
+
+    it('gives rows numbered like the live macrocycle but dated before it their own macrocycle', async () => {
+      const user = as('renumber-before-live');
+      await user.initialize('2026-01-05');
+      const [live] = await user.list();
+
+      await committed('renumber-before-live', `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`);
+
+      expect(await order(user)).toEqual([[1, 'legacy', '2025-03-03'], [2, 'live', '2026-01-05']]);
+      expect((await user.list())[1].id).toBe(live.id);
+      expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 2)).toEqual([]);
     });
   });
 });
