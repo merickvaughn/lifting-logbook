@@ -245,6 +245,28 @@ describe('PrismaLiftRecordRepository', () => {
       });
     });
 
+    it('splits the lookup by parameter count, not date count, covering every date once', async () => {
+      const prisma = makePrisma();
+      const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
+      // 300 dates with 60 custom lifts each: 61 parameters a date, so 200 dates would bind 12,200.
+      const slots = Array.from({ length: 300 }, (_, d) =>
+        Array.from({ length: 60 }, (__, l) =>
+          liftRecord({ date: new Date(Date.UTC(2025, 0, 1 + d)), lift: `Custom ${l}` }),
+        ),
+      ).flat();
+
+      await repo.findStoredSets(slots);
+
+      const calls = (prisma.liftRecord.findMany as jest.Mock).mock.calls.map(
+        ([arg]) => (arg as { where: { OR: Array<{ lift: { in: string[] } }> } }).where.OR,
+      );
+      expect(calls.length).toBe(2);
+      for (const or of calls) {
+        expect(or.reduce((n, c) => n + 1 + c.lift.in.length, 0)).toBeLessThanOrEqual(10_000);
+      }
+      expect(calls.flat()).toHaveLength(300);
+    });
+
     it('makes no query for no slots', async () => {
       const prisma = makePrisma();
       const repo = new PrismaLiftRecordRepository(prisma, 'user-1');

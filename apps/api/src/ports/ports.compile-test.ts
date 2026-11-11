@@ -272,6 +272,7 @@ const _macrocycleRepo: IMacrocycleRepository = {
       unmatched: false,
       importedThrough: null,
     }),
+  createMany: (): Promise<void> => Promise.resolve(),
   ensure: (): Promise<void> => Promise.resolve(),
   close: (): Promise<void> => Promise.resolve(),
   delete: (): Promise<void> => Promise.resolve(),

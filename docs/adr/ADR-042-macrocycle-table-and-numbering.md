@@ -151,28 +151,31 @@ Proposal decisions 3 and 13 need stored numbers to follow start date, and a file
 1. **A program's macrocycles are numbered 1 to N by start date.** Every path that adds or removes a macrocycle renumbers the program at the end of its transaction: a lift-record import and its undo, starting the next macrocycle, initializing the first one, and deleting the current one.
    - The order is the one `GET /programs/:program/macrocycles` lists: start date, then the number before the rewrite. A tie keeps its order, and a new macrocycle, which takes the number past every stored one, sorts after those it ties with, so undoing it puts the old numbers back.
    - One map of old to new numbers is applied to all eight tables that hold a number: the seven in Context plus `macrocycle`. Postgres checks a non-deferrable unique key row by row [9], so a swap done in one `UPDATE` would collide with itself. The rewrite first moves each row to `-1 - new` and then flips the sign, in the request's transaction.
-   - A row on a number the map doesn't move can still collide. The unique key is the backstop: the write fails with 409 `macrocycle-number-taken`, and the transaction rolls back.
-   - The keys of the program's lift-record import batches move in the same transaction. These are current keys, date-blind keys from before [#884](https://github.com/merickvaughn/lifting-logbook/issues/884), and `macrocycle-row:<n>`. So an older batch still undoes the rows it wrote.
-   - The rewrite is raw SQL, which isn't auto-traced (ADR-024). A `macrocycle.renumber` span records how many macrocycles moved, rows rewritten, batches rewritten and the duration. It records the error when it fails, and a log line names the program.
+   - Before it moves anything, the rewrite checks all eight tables for a row on a new number that the map doesn't move. Such a row would merge into the macrocycle that moves onto its number, and the unique keys catch that only when the rest of the key matches too. If one exists, the request fails with 409 `macrocycle-number-taken` and the transaction rolls back. The unique keys stay as the backstop.
+   - Removing a macrocycle therefore removes it from all eight tables. This covers the `legacy` macrocycle an undone import emptied. It also covers `live` and `legacy` ones a delete removes. Both drop the keys any lift-record batch holds on the removed numbers, because undoing such a batch would otherwise remove sets from whichever macrocycle takes the number next.
+   - The second pass flips only this rewrite's temporary numbers (`-1 - new`), so a stray negative number stored by some other path is never turned positive.
+   - The keys of the program's lift-record import batches move in the same transaction. These are current keys, date-blind keys from before [#884](https://github.com/merickvaughn/lifting-logbook/issues/884), and `macrocycle-row:<n>`. So an older batch still undoes the rows it wrote. Only the batches with a key on a moving number are loaded. The database filters them by each key's leading number. An undo deletes its own batch before it renumbers.
+   - The rewrite is raw SQL, which isn't auto-traced (ADR-024). A `macrocycle.renumber` span records how many macrocycles moved, rows rewritten, batches rewritten and the duration. A log line names the program after a rewrite that moved something. A failure sets the span's status to error and records the exception. When the check refused the rewrite, the span also names the table and number. A warning is logged with the program, the moves, and the database error.
+   - On a local Postgres 16 in Docker, rewriting 20,010 rows (ten macrocycles of 2,000 sets, each moved up one, as an older import would move them) took 0.95 to 1.05 seconds over three runs. This is the baseline for `renumber.duration_ms`.
 
-2. **The rewrite holds the macrocycle lock exclusively,** so no page write's id check can interleave with it.
-   - An import and its undo hold it that way already.
+2. **The rewrite holds the macrocycle lock exclusively,** so no page write's id check can interleave with it. The renumbering takes it itself whenever a number would move, whichever path called it, so a caller can't skip it.
+   - An import and its undo hold it that way already. The lock is re-entrant, so they get it at once.
    - Starting, initializing and deleting hold it shared. They take it exclusively only when a number would move, with the same 5-second wait as an import, then 409 `macrocycle-busy`. They read the order again once they have it. The owner chose this over always taking it exclusively, which would make every start wait on page writes even though a normal start moves nothing.
-   - Two shared holders upgrading at once deadlock. Postgres aborts one [10] (`40P01`), and that one gets `macrocycle-busy` too.
+   - Two shared holders upgrading at once deadlock, and Postgres aborts one of them [10] (`40P01`). The aborted request gets `macrocycle-busy` only when it is the one waiting for the exclusive lock. Postgres may instead abort a request blocked elsewhere, such as on a row lock in a delete. That request fails with a 500, and its transaction rolls back, so nothing is half-written.
 
-3. **Renumbering is off until #1200.** It runs only when `MACROCYCLE_RENUMBERING=on`, and nothing sets that yet. While it's off, nothing stored is rewritten, and a new macrocycle takes the next free number as before. The owner chose the setting because two kinds of writer would still post to a number a rewrite had moved: the previous API revision, and a page sending no id. #1200 turns it on in the deploy that renumbers existing history and refuses writes with no id, then removes it.
+3. **Renumbering is off until #1200.** It runs only when `MACROCYCLE_RENUMBERING=on`, and nothing sets that yet. The API logs which mode it's in once per value it reads, and warns when the value is something other than `on` or `off`, such as `ON` or `true`, which count as off. While it's off, nothing stored is rewritten, and a new macrocycle takes the next free number as before. The owner chose the setting because two kinds of writer would still post to a number a rewrite had moved: the previous API revision, and a page sending no id. #1200 turns it on in the deploy that renumbers existing history and refuses writes with no id, then removes it.
 
 4. **A file's macrocycle number only groups its rows** (proposal decision 2). This applies to `POST lift-records/import` and to lift-record commits, and it isn't behind the setting, because it moves nothing already stored.
-   - A group joins the stored macrocycle with the same number when that macrocycle isn't `imported` and the group's dates fit. Its first set must be on or after the macrocycle's start, and its last on or before the macrocycle's end, unless the macrocycle is current or has no end.
-   - Any other group forms a new `legacy` macrocycle at the next free number. New ones are allocated in order of their first date.
+   - A group joins the stored macrocycle with the same number when that macrocycle isn't `imported` and the group's dates fit. Its first set must be on or after the macrocycle's start. Its last set must be before the next stored macrocycle starts, if one starts later. The owner chose this over ending at the macrocycle's end date. A spreadsheet uploaded again after it grew past that end would otherwise add a new macrocycle with every upload.
+   - Any other group forms a new `legacy` macrocycle at the next free number. New ones are allocated in order of their first date and inserted in one statement.
    - A group numbered like an `imported` macrocycle forms a new one too. The owner chose that over the 409 `macrocycle-read-only` such an upload got before, because the file's number is only a label.
    - Page writes to an `imported` number still get that 409.
-   - The 0 to 1000 range check stays.
+   - The 0 to 1000 range check stays. Row validation flags it too, so the preview shows the row before a commit is refused.
 
 5. **Duplicates are counted per set slot** (proposal decision 13). A slot is a date, a lift and a set number, with lift names compared through `liftSpellings`. File rows are compared with the user's stored sets under any program.
    - File rows pair with stored rows on the same slot, identical weight and reps first. A paired row is skipped. So re-uploading a file adds nothing, whatever numbers it carries.
    - A row left over is a real extra set. It keeps its own occurrence when that occurrence is free, and otherwise takes the highest stored one + 1, so the unique key holds.
-   - An exact repeat within one file (same slot, occurrence, weight and reps) counts once and is reported as skipped.
+   - An exact repeat within one file counts once and is reported as skipped. That means the same slot, macrocycle and workout number, occurrence, weight and reps. A file's numbers are consistent within the file, so two same-day workouts that repeat a set keep both rows, as before this change.
    - A group whose rows are all skipped creates no macrocycle.
    - Preview doesn't yet say how many skipped rows differ in weight or reps; that is a follow-up.
 
@@ -184,6 +187,8 @@ Proposal decisions 3 and 13 need stored numbers to follow start date, and a file
 - **Always taking the lock exclusively to start, initialize or delete.** Every start would wait for page writes, though a normal start moves nothing.
 - **Refusing a group numbered like an `imported` macrocycle.** One label would reject the whole file.
 - **Matching duplicates by the full natural key.** The key holds the macrocycle number, which the file no longer decides, so a re-upload would write every set again.
+- **Letting the unique keys alone catch a row left on a target number.** A row whose other key columns differ, such as a skip on another workout, would merge silently into the macrocycle that moved onto the number.
+- **Ending a joined group at the macrocycle's end date.** Each upload of a growing sheet would form another macrocycle.
 
 **Consequences:**
 

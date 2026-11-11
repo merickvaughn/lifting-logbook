@@ -63,6 +63,9 @@ export interface IMacrocycleRepository {
    */
   create(macrocycle: NewMacrocycle): Promise<MacrocycleRow>;
 
+  /** Inserts rows in one statement, throwing as {@link create} does when a number is taken. */
+  createMany(macrocycles: readonly NewMacrocycle[]): Promise<void>;
+
   /**
    * Inserts each row whose number the program doesn't have yet, and leaves the rest alone, so
    * two requests ensuring the same row both succeed.

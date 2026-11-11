@@ -160,6 +160,29 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     }
   }
 
+  async createMany(macrocycles: readonly NewMacrocycle[]): Promise<void> {
+    const [first] = macrocycles;
+    if (!first) return;
+    try {
+      await this.prisma.macrocycle.createMany({
+        data: macrocycles.map((m) => ({
+          userId: this.userId,
+          program: m.program,
+          macrocycleNum: m.macrocycleNum,
+          startDate: m.startDate,
+          endDate: m.endDate ?? null,
+          status: m.status,
+          origin: m.origin,
+        })),
+      });
+    } catch (e) {
+      if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new MacrocycleNumberConflictError(first.program, undefined, { cause: e });
+      }
+      throw e;
+    }
+  }
+
   async ensure(macrocycles: readonly NewMacrocycle[]): Promise<void> {
     if (macrocycles.length === 0) return;
     // ON CONFLICT DO NOTHING: a row a concurrent request just inserted is kept, not a 409.

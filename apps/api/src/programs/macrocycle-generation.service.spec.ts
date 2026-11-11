@@ -23,6 +23,7 @@ import { IMacrocycleScheduledWorkoutRepository } from '../ports/IMacrocycleSched
 import { IUserSettingsRepository } from '../ports/IUserSettingsRepository';
 import { ProgramNotFoundError } from '../ports/errors';
 import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
+import { InMemoryImportBatchRepository } from '../adapters/in-memory/import-batch.adapter';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { buildHistoryEntries, MacrocycleGenerationService } from './macrocycle-generation.service';
 
@@ -663,6 +664,7 @@ describe('MacrocycleGenerationService', () => {
     let liftOverrideRepo: jest.Mocked<IWorkoutLiftOverrideRepository>;
     let focusRepo: jest.Mocked<IFocusRepository>;
     let deleteRepos: typeof repos & {
+      importBatch: InMemoryImportBatchRepository;
       workoutDateOverride: jest.Mocked<IWorkoutDateOverrideRepository>;
       workoutSkipOverride: jest.Mocked<IWorkoutSkipOverrideRepository>;
       workoutLiftOverride: jest.Mocked<IWorkoutLiftOverrideRepository>;
@@ -705,6 +707,7 @@ describe('MacrocycleGenerationService', () => {
       };
       deleteRepos = {
         ...repos,
+        importBatch: new InMemoryImportBatchRepository(),
         workoutDateOverride: dateOverrideRepo,
         workoutSkipOverride: skipOverrideRepo,
         workoutLiftOverride: liftOverrideRepo,
@@ -750,6 +753,25 @@ describe('MacrocycleGenerationService', () => {
         expect(deleteAll).toHaveBeenCalledWith(PROGRAM, [2]);
       }
       expect((await macrocycleRepo.list(PROGRAM)).map((m) => m.macrocycleNum)).toEqual([2]);
+    });
+
+    it('drops lift-records batch keys on the numbers it deletes, keeping those on imported history', async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue({ ...stubDashboard(), macrocycleNum: 3 });
+      macrocycleRepo.seed(macrocycleRow(2, { origin: 'imported', status: 'completed' }));
+      macrocycleRepo.seed(macrocycleRow(3));
+      const created = { kind: 'created' as const, wrote: { weight: 1, reps: 1, notes: '' } };
+      await deleteRepos.importBatch.save({
+        id: 'b',
+        userId: 'u',
+        program: PROGRAM,
+        destination: 'lift-records',
+        preImage: { '2:1:Squat:1': created, '3:1:Squat:1': created, 'macrocycle-row:3': { kind: 'created', wrote: { macrocycleNum: 3 } } },
+        createdAt: new Date(),
+      });
+
+      await service.deleteCurrentMacrocycle(deleteRepos, PROGRAM);
+
+      expect(Object.keys((await deleteRepos.importBatch.findById('b', 'u'))?.preImage ?? {})).toEqual(['2:1:Squat:1']);
     });
 
     it('deletes sequentially, in a fixed order, ending with the dashboard', async () => {

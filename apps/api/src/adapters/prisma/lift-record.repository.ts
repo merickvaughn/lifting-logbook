@@ -77,16 +77,27 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
       liftsByDate.set(date.getTime(), lifts);
     }
     if (liftsByDate.size === 0) return [];
-    // Chunked to stay within Postgres's bound-parameter limit (~32k).
-    const CHUNK_SIZE = 200;
-    const dates = [...liftsByDate];
+    // Each date binds one parameter for itself and one per spelling, so chunks are cut by a
+    // running count, well under Postgres's bound-parameter limit (32,767).
+    const MAX_PARAMS = 10_000;
+    const chunks: Array<Array<[number, Set<string>]>> = [[]];
+    let params = 0;
+    for (const entry of liftsByDate) {
+      const cost = 1 + entry[1].size;
+      if (params + cost > MAX_PARAMS && (chunks[chunks.length - 1]?.length ?? 0) > 0) {
+        chunks.push([]);
+        params = 0;
+      }
+      chunks[chunks.length - 1]?.push(entry);
+      params += cost;
+    }
     const records: LiftRecord[] = [];
     // Sequential: every query shares the request's one transaction connection.
-    for (let i = 0; i < dates.length; i += CHUNK_SIZE) {
+    for (const chunk of chunks) {
       const rows = await this.prisma.liftRecord.findMany({
         where: {
           userId: this.userId,
-          OR: dates.slice(i, i + CHUNK_SIZE).map(([time, lifts]) => ({ date: new Date(time), lift: { in: [...lifts] } })),
+          OR: chunk.map(([time, lifts]) => ({ date: new Date(time), lift: { in: [...lifts] } })),
         },
       });
       records.push(...rows.map(rowToLiftRecord));

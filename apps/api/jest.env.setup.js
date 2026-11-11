@@ -45,6 +45,10 @@ for (const key of BLOCK) {
   process.env[key] = '';
 }
 
+// Renumbering (#1199) starts off in every suite, whatever apps/api/.env says. Cleared rather
+// than blocked, since the suites that test it switch it on themselves.
+delete process.env.MACROCYCLE_RENUMBERING;
+
 // Never start the OpenTelemetry SDK during tests. otel.ts autostarts on import
 // unless OTEL_SDK_AUTOSTART === 'false'; importing it from a spec (e.g.
 // otel.spec.ts, #487) would otherwise spin up exporters + a PeriodicExporting-

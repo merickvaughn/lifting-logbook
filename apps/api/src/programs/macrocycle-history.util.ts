@@ -311,9 +311,10 @@ export async function placeFileRows(
   if (dashboard) await ensureCurrentRow(repos, dashboard);
   const stored = await repos.macrocycle.list(program);
   const storedByNumber = new Map(stored.map((row) => [row.macrocycleNum, row]));
-  let next = await nextMacrocycleNumber(repos, program, dashboard);
+  // The current macrocycle has its row by now, so `stored` holds every number.
+  let next = stored.reduce((max, row) => Math.max(max, row.macrocycleNum), 0) + 1;
   const placed = new Map<number, number>();
-  const legacyNums: number[] = [];
+  const created: NewMacrocycle[] = [];
   const byDate = [...ranges].sort(([a, x], [b, y]) => x.first.getTime() - y.first.getTime() || a - b);
   for (const [fileNum, { first, last }] of byDate) {
     const row = storedByNumber.get(fileNum);
@@ -322,7 +323,7 @@ export async function placeFileRows(
       continue;
     }
     const macrocycleNum = next++;
-    await repos.macrocycle.create({
+    created.push({
       program,
       macrocycleNum,
       startDate: toUTCMidnight(first),
@@ -331,9 +332,9 @@ export async function placeFileRows(
       origin: 'legacy',
     });
     placed.set(fileNum, macrocycleNum);
-    legacyNums.push(macrocycleNum);
   }
-  return { placed, legacyNums };
+  await repos.macrocycle.createMany(created);
+  return { placed, legacyNums: created.map((m) => m.macrocycleNum) };
 }
 
 /**

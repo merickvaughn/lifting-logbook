@@ -117,6 +117,15 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
     return { ...row };
   }
 
+  async createMany(macrocycles: readonly NewMacrocycle[]): Promise<void> {
+    for (const macrocycle of macrocycles) {
+      if (await this.findByNumber(macrocycle.program, macrocycle.macrocycleNum)) {
+        throw new MacrocycleNumberConflictError(macrocycle.program, macrocycle.macrocycleNum);
+      }
+    }
+    for (const macrocycle of macrocycles) await this.create(macrocycle);
+  }
+
   async ensure(macrocycles: readonly NewMacrocycle[]): Promise<void> {
     for (const macrocycle of macrocycles) {
       if (!(await this.findByNumber(macrocycle.program, macrocycle.macrocycleNum))) await this.create(macrocycle);
