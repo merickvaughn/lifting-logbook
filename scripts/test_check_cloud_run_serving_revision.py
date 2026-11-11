@@ -8,9 +8,10 @@ revision". The known-good fixture is a scrubbed `gcloud run services describe --
 live staging API (2026-10-22). Each other case starts from it and changes one thing. The first
 known-bad case is the real incident: 100% pinned to `...-00527-krj` while newer revisions sat at 0%.
 
-Known-good includes the concurrent-deploy shapes. staging.yml and deploy.yml both deploy to the
-staging services without a shared lock, so the gate can read the service while another deploy is
-mid-rollout or has already replaced it. Those must pass; only a pin may fail.
+Known-good includes the concurrent-deploy shapes. Until the staging lock (#1208), staging.yml and
+deploy.yml deployed the staging services without a shared lock, so the gate could read the service
+while another deploy was mid-rollout or had already replaced it. Those must still pass; only a pin
+may fail.
 
 Design mirrors scripts/test_inject_otel_sidecar.py: stdlib ``unittest``, with the script run as a
 *subprocess* so the CLI contract the action relies on is exercised end to end: stdin JSON,

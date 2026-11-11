@@ -11,9 +11,9 @@
 #
 # Only point it at a service nothing else deploys to concurrently, with a SHA the image was BUILT
 # with: deploy.yml's production services (GIT_SHA=github.sha, serialized by the deploy-main group).
-# Not staging — staging.yml redeploys it for every PR push with no lock against deploy.yml, and its
-# skip-build runs reuse an earlier image (#671) — where scripts/check-cloud-run-serving-revision.py
-# (run by the deploy action) catches a pin instead.
+# Not staging — staging.yml's skip-build runs reuse an earlier image (#671), so GIT_SHA isn't the
+# run's commit. There scripts/check-cloud-run-serving-revision.py (run by the deploy action) catches
+# a pin, and scripts/check-staging-deployed-image.py checks the run's own images (#1208).
 #
 # Usage: bash scripts/check-served-version.sh <base-url> <expected-sha> [bearer-token]
 # CHECK_SERVED_VERSION_RETRY_DELAY (seconds, default 10) exists for scripts/test_check_served_version.py.

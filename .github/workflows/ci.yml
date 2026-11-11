@@ -158,6 +158,16 @@ jobs:
       - name: Unit test the served-build probe (scripts/check-served-version.sh)
         run: python scripts/test_check_served_version.py -v
 
+      # The staging lock (#1208): a second run waits until the first releases, a completed or
+      # stale holder is taken over, and a release never deletes another run's lock.
+      - name: Unit test the staging environment lock (scripts/staging-env-lock.py)
+        run: python scripts/test_staging_env_lock.py -v
+
+      # staging.yml's pre-test check: passes on this run's image by tag or digest, fails naming both
+      # images when another run's deploy replaced it.
+      - name: Unit test the staging deployed-image check (scripts/check-staging-deployed-image.py)
+        run: python scripts/test_check_staging_deployed_image.py -v
+
   db-integration:
     name: DB Integration Tests
     runs-on: ubuntu-latest
