@@ -270,18 +270,6 @@ export async function assertMacrocycleWritable(
 }
 
 /**
- * The stored macrocycle rows dated `first` to `last` belong in (proposal decision 2, widened by
- * #1199), or null: the last of `rows` (in start-date order) to start by `first`, when the rows end
- * before the next one starts, so a sheet that grew past its end still joins it.
- */
-function containingRow(rows: readonly MacrocycleRow[], first: Date, last: Date): MacrocycleRow | null {
-  const row = rows.filter((r) => r.startDate <= toUTCMidnight(first)).pop();
-  if (!row) return null;
-  const next = rows.find((r) => r.startDate > row.startDate);
-  return !next || toUTCMidnight(last) < next.startDate ? row : null;
-}
-
-/**
  * Places the rows of an import path that takes macrocycle numbers from a file
  * (`POST lift-records/import` and flag-off commits). The file's numbers only group rows, since
  * stored numbers follow dates (decision 2). `rows` are the rows to create, and `pairedNums`
@@ -291,11 +279,11 @@ function containingRow(rows: readonly MacrocycleRow[], first: Date, last: Date):
  *   last of those to start by its date, or the first of them for an earlier session, unless the
  *   next stored macrocycle has started by then. So a re-uploaded sheet that grew joins the
  *   macrocycles its first upload formed, sessions added before or between them included.
- * - Any other row, by group, joins the current
- *   macrocycle when their dates fall in it and its run is open: they start no more than
- *   {@link STALE_AFTER_DAYS} days after its last session. One group per upload joins this way,
- *   so a sheet's later cycles don't merge into it. The owner chose this over joining any `live`
- *   macrocycle on dates alone, which merged sessions logged after a cycle ended into it.
+ * - Any other rows, by group, join the current macrocycle while its run is open: they start on
+ *   or after its start and no more than {@link STALE_AFTER_DAYS} days after its last session.
+ *   One group of a sheet joins this way, counting a group whose rows an earlier upload stored
+ *   there, so a sheet's later cycles don't merge into it. The owner chose this over joining any
+ *   `live` macrocycle on dates alone, which merged sessions logged after a cycle ended into it.
  * - Anything else forms a new `legacy` macrocycle dated by its rows, numbered past every stored
  *   one in date order. An `imported` macrocycle is never joined. Rows on the new numbers with no
  *   `macrocycle` row move past them first (see {@link moveUnstartedRows}).
@@ -331,24 +319,31 @@ export async function placeFileRows(
   let next = Math.max(0, ...storedNums) + 1;
   const nums: number[] = rows.map(() => 0);
   const created: NewMacrocycle[] = [];
-  let joinedOnDates = false;
+  const current = stored.find((row) => row.macrocycleNum === dashboard?.macrocycleNum);
+  // A group whose rows are stored in the current macrocycle is the sheet's cycle that joined it
+  // before, so no other group joins it on dates.
+  let joinedOnDates = current !== undefined && [...pairedNums.values()].some((s) => s.has(current.macrocycleNum));
 
-  /** Whether rows starting `first` continue the current macrocycle's run (decision 4). */
+  /**
+   * Whether rows starting `first` join the current macrocycle on dates (decision 4): on or after
+   * its start, and no more than the break that ends a run after its last session. It's checked
+   * directly, so a `legacy` macrocycle formed inside its dates doesn't shut it.
+   */
   const continuesRun = (row: MacrocycleRow, first: Date): boolean => {
+    const day = toUTCMidnight(first);
     const lastSet = sets.get(row.macrocycleNum)?.last;
     const lastSession = lastSet && lastSet > row.startDate ? toUTCMidnight(lastSet) : row.startDate;
-    return (toUTCMidnight(first).getTime() - lastSession.getTime()) / DAY_MS <= STALE_AFTER_DAYS;
+    return day >= row.startDate && (day.getTime() - lastSession.getTime()) / DAY_MS <= STALE_AFTER_DAYS;
   };
   /** Places `indexes` by date alone: the current macrocycle while its run is open, else a new one. */
   const placeByDate = (indexes: readonly number[]): void => {
     const dates = indexes.map((i) => rows[i]?.date ?? new Date(NaN));
     const first = new Date(Math.min(...dates.map((d) => d.getTime())));
     const last = new Date(Math.max(...dates.map((d) => d.getTime())));
-    const row = containingRow(stored, first, last);
     let macrocycleNum: number;
-    if (!joinedOnDates && row && row.macrocycleNum === dashboard?.macrocycleNum && continuesRun(row, first)) {
+    if (!joinedOnDates && current && continuesRun(current, first)) {
       joinedOnDates = true;
-      macrocycleNum = row.macrocycleNum;
+      macrocycleNum = current.macrocycleNum;
     } else {
       macrocycleNum = next++;
       created.push({

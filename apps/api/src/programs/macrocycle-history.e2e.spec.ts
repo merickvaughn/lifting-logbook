@@ -784,6 +784,40 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
         ]);
         expect((await bundle.liftRecord.getLiftRecords(PROGRAM, 2)).map((r) => r.date)).toEqual([day('2026-01-19')]);
       });
+
+      it('gives a grown sheet’s next cycle its own macrocycle when the cycle that joined is already stored', async () => {
+        const user = as('join-open-run-again');
+        await user.initialize('2026-01-05');
+        expect((await user.log(1, '2026-01-07')).statusCode).toBe(201);
+        const first = `${PROGRAM},1,2,2026-01-12,Squat,1,200,5,`;
+        await committed('join-open-run-again', first);
+
+        // The same sheet with its next cycle added, as one upload of both would have been placed.
+        await committed('join-open-run-again', first, `${PROGRAM},2,1,2026-01-19,Squat,1,205,5,`);
+
+        expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'live'], [2, 'legacy']]);
+        expect((await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 2)).map((r) => r.date)).toEqual([
+          day('2026-01-19'),
+        ]);
+      });
+
+      it('adds a session close to the current macrocycle’s last one to it, past a legacy macrocycle formed inside its dates', async () => {
+        const user = as('join-past-legacy');
+        await user.initialize('2026-01-05');
+        expect((await user.log(1, '2026-01-07')).statusCode).toBe(201);
+        // 15 days after the last session: its own legacy macrocycle, starting inside the current one's dates.
+        await committed('join-past-legacy', `${PROGRAM},1,2,2026-01-22,Squat,1,200,5,`);
+        expect((await user.log(1, '2026-01-23')).statusCode).toBe(201);
+
+        await committed('join-past-legacy', `${PROGRAM},1,2,2026-01-25,Squat,1,205,5,`);
+
+        expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'live'], [2, 'legacy']]);
+        expect((await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).map((r) => r.date)).toEqual([
+          day('2026-01-07'),
+          day('2026-01-23'),
+          day('2026-01-25'),
+        ]);
+      });
     });
 
     it('gives a separate file of later sessions its own macrocycle, not the earlier one it falls after', async () => {
