@@ -138,9 +138,11 @@ export async function recordFocusSessions(
   const poolLifts = new Set(doubles.flatMap((block) => block.pool.map((entry) => entry.lift)));
   const customs = (await repos.customLift.list()).filter((lift) => poolLifts.has(lift.name));
   const nameById = new Map(customs.map((lift) => [lift.id, lift.name] as const));
-  const records = (await repos.liftRecord.getRecordsForLifts([...poolLifts, ...nameById.keys()], parseIsoDate(today))).map(
-    (record) => ({ ...record, lift: nameById.get(record.lift) ?? record.lift }),
-  );
+  // Nothing before the earliest block's start can be recorded, so it isn't read.
+  const from = doubles.map((block) => blockRange(block).start).reduce((a, b) => (a < b ? a : b));
+  const records = (
+    await repos.liftRecord.getRecordsForLifts([...poolLifts, ...nameById.keys()], parseIsoDate(today), parseIsoDate(from))
+  ).map((record) => ({ ...record, lift: nameById.get(record.lift) ?? record.lift }));
 
   const updated = new Map<string, FocusBlock>();
   for (const block of doubles) {

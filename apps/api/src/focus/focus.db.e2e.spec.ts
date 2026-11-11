@@ -311,6 +311,16 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(records).toHaveLength(4);
     });
 
+    it('getRecordsForLifts leaves out records before `from` (#1221)', async () => {
+      const repository = new PrismaLiftRecordRepository(prisma, USER_OWNER);
+      const records = await repository.getRecordsForLifts(
+        ['Bench Press'],
+        new Date('2026-10-31T00:00:00.000Z'),
+        new Date('2026-10-12T00:00:00.000Z'),
+      );
+      expect(records.map((r) => r.weight).sort()).toEqual([220, 230]);
+    });
+
     it('a block summary counts the name and its catalog id under the restricted role, for that user only', async () => {
       const created = await owner(
         'POST',
