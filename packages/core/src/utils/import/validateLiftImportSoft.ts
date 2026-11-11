@@ -1,5 +1,6 @@
 import { ImportError } from '@lifting-logbook/types';
 import { LiftRecord } from '../../models';
+import { fileMacrocycleNumError } from './validateLiftImport';
 
 /**
  * Soft variant of the lift-records validator (Phase 3 — interactive REVIEW step).
@@ -41,6 +42,8 @@ export function validateLiftImportSoft(
 
     if (isNaN(r.macrocycleNum))
       numericErrors.push({ row: rowIndex, field: 'macrocycleNum', code: 'MACROCYCLE_NUM_INVALID', message: 'Macrocycle # is not a number' });
+    const outOfRange = fileMacrocycleNumError(rowIndex, r.macrocycleNum);
+    if (outOfRange) numericErrors.push(outOfRange);
     if (isNaN(r.workoutNum))
       numericErrors.push({ row: rowIndex, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'Workout # is not a number' });
     if (isNaN(r.setNum))

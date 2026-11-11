@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { SpanStatusCode } from '@opentelemetry/api';
@@ -6,9 +7,12 @@ import { ImportBatchRecord } from '../ports/IImportBatchRepository';
 import { InMemoryImportBatchRepository } from '../adapters/in-memory/import-batch.adapter';
 import { InMemoryLiftRecordRepository } from '../adapters/in-memory/lift-record.adapter';
 import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
+import { InMemoryWorkoutSkipOverrideRepository } from '../adapters/in-memory/workout-skip-override.adapter';
+import { MacrocycleNumberConflictError } from '../ports/errors';
 import {
   RENUMBERING_SETTING,
   renumberingChanges,
+  renumberingEnabled,
   renumberPreImageKeys,
   renumberProgram,
 } from './macrocycle-renumbering';
@@ -121,17 +125,42 @@ describe('renumberProgram', () => {
     delete process.env[RENUMBERING_SETTING];
     const repos = await outOfOrder();
 
-    expect(await renumberProgram(repos, PROGRAM, { lock: 'exclusive' })).toEqual(new Map());
+    expect(await renumberProgram(repos, PROGRAM)).toEqual(new Map());
 
     expect(await numbersByStart(repos)).toEqual([['2025-03-03', 2], ['2026-01-05', 1]]);
     expect(exporter.getFinishedSpans()).toEqual([]);
   });
 
+  it('treats a setting other than "on" as off, with a warning', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      process.env[RENUMBERING_SETTING] = 'ON';
+      expect(renumberingEnabled()).toBe(false);
+      expect(renumberingEnabled()).toBe(false);
+      // Once per value, not on every call.
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('"ON"');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('numbers by start date in every store and batch, recording what it moved on a span', async () => {
     process.env[RENUMBERING_SETTING] = 'on';
     const repos = await outOfOrder();
+    // A batch with no key on a moving number is left as it is.
+    await repos.importBatch.save({
+      id: 'batch-other',
+      userId: 'u',
+      program: PROGRAM,
+      destination: 'lift-records',
+      preImage: { '7:1:20240101:Squat:1': { kind: 'created', wrote: { weight: 1, reps: 1, notes: '' } } },
+      createdAt: day('2026-11-01'),
+    });
+    const update = jest.spyOn(repos.importBatch, 'updatePreImage');
 
-    expect(await renumberProgram(repos, PROGRAM, { lock: 'exclusive' })).toEqual(new Map([[2, 1], [1, 2]]));
+    expect(await renumberProgram(repos, PROGRAM)).toEqual(new Map([[2, 1], [1, 2]]));
+    expect(update.mock.calls.map(([id]) => id)).toEqual(['batch-1']);
 
     expect(await numbersByStart(repos)).toEqual([['2025-03-03', 1], ['2026-01-05', 2]]);
     expect((await repos.liftRecord.getLiftRecords(PROGRAM, 1)).map((r) => r.date)).toEqual([day('2025-03-03')]);
@@ -154,9 +183,50 @@ describe('renumberProgram', () => {
     const macrocycle = new InMemoryMacrocycleRepository([macrocycleRowFixture(1)]);
     macrocycle.lockHeld = 'shared';
 
-    expect(await renumberProgram({ macrocycle, importBatch: new InMemoryImportBatchRepository() }, PROGRAM, { lock: 'shared' })).toEqual(
+    expect(await renumberProgram({ macrocycle, importBatch: new InMemoryImportBatchRepository() }, PROGRAM)).toEqual(
       new Map(),
     );
+  });
+
+  it('refuses before moving anything when a row is left on a number it needs, naming the store', async () => {
+    process.env[RENUMBERING_SETTING] = 'on';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const skips = new InMemoryWorkoutSkipOverrideRepository();
+      const liftRecord = new InMemoryLiftRecordRepository(new Map());
+      // Macrocycle 2 starts first, so 2 → 1, 1 → 2 and 4 → 3. A set is left on number 3,
+      // which nothing moves off; the skip on 1 would move if anything did.
+      await skips.skipWorkout(PROGRAM, 1, 4);
+      await liftRecord.appendLiftRecords(PROGRAM, [record(3, '2025-01-06')]);
+      const macrocycle = new InMemoryMacrocycleRepository(
+        [
+          macrocycleRowFixture(1, { startDate: day('2026-01-05') }),
+          macrocycleRowFixture(2, { startDate: day('2025-03-03') }),
+          macrocycleRowFixture(4, { startDate: day('2026-06-01') }),
+        ],
+        [liftRecord, skips],
+      );
+      const repos = { macrocycle, importBatch: new InMemoryImportBatchRepository() };
+
+      await expect(renumberProgram(repos, PROGRAM)).rejects.toBeInstanceOf(MacrocycleNumberConflictError);
+
+      // Nothing moved: not the macrocycles, the set or the skip.
+      expect((await macrocycle.list(PROGRAM)).map((m) => m.macrocycleNum)).toEqual([2, 1, 4]);
+      expect(await liftRecord.getLiftRecords(PROGRAM, 3)).toHaveLength(1);
+      expect(await skips.getSkipsForMacrocycle(PROGRAM, 1)).toEqual(new Set([4]));
+      const [span] = exporter.getFinishedSpans();
+      expect(span.status.code).toBe(SpanStatusCode.ERROR);
+      expect(span.attributes).toMatchObject({
+        'renumber.conflict_table': 'InMemoryLiftRecordRepository',
+        'renumber.conflict_number': 3,
+      });
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ program: PROGRAM, heldNumber: 3, moves: { 2: 1, 1: 2, 4: 3 } }),
+        'Renumbering failed',
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('answers 409 macrocycle-busy, moving nothing, when page writes hold the lock it must upgrade', async () => {
@@ -164,7 +234,7 @@ describe('renumberProgram', () => {
     const repos = await outOfOrder();
     repos.macrocycle.lockHeld = 'shared';
 
-    await expect(renumberProgram(repos, PROGRAM, { lock: 'shared' })).rejects.toMatchObject({
+    await expect(renumberProgram(repos, PROGRAM)).rejects.toMatchObject({
       status: 409,
       response: expect.objectContaining({ code: 'macrocycle-busy' }),
     });

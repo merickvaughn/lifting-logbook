@@ -1,6 +1,26 @@
 import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import { LiftRecord } from '../../models';
 
+/**
+ * The highest macrocycle number a file may carry: the bound `POST lift-records` already
+ * applies. New macrocycles are numbered past the highest stored one, so an unbounded file number
+ * could overflow the column. The lowest is 0, not the 1 a live macrocycle starts at:
+ * spreadsheet exports number a first cycle 0 (`packages/core/tests/fixtures/lift_records.csv`).
+ */
+export const MAX_FILE_MACROCYCLE_NUM = 1000;
+
+/** The row error for a file macrocycle number outside 0 to {@link MAX_FILE_MACROCYCLE_NUM}, or null. */
+export function fileMacrocycleNumError(row: number, macrocycleNum: number): ImportError | null {
+  if (isNaN(macrocycleNum)) return null;
+  if (Number.isInteger(macrocycleNum) && macrocycleNum >= 0 && macrocycleNum <= MAX_FILE_MACROCYCLE_NUM) return null;
+  return {
+    row,
+    field: 'macrocycleNum',
+    code: 'MACROCYCLE_NUM_INVALID',
+    message: `Macrocycle # must be a whole number from 0 to ${MAX_FILE_MACROCYCLE_NUM}`,
+  };
+}
+
 export interface LiftImportValidationResult {
   /** Records that passed all validation checks, with each lift resolved to the value slotMap holds for it. */
   valid: LiftRecord[];
@@ -32,6 +52,8 @@ export function validateLiftImport(
 
     if (isNaN(r.macrocycleNum))
       rowErrors.push({ row, field: 'macrocycleNum', code: 'MACROCYCLE_NUM_INVALID', message: 'Macrocycle # is not a number' });
+    const outOfRange = fileMacrocycleNumError(row, r.macrocycleNum);
+    if (outOfRange) rowErrors.push(outOfRange);
     if (isNaN(r.workoutNum))
       rowErrors.push({ row, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'Workout # is not a number' });
     if (isNaN(r.setNum))

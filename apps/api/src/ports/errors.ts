@@ -96,6 +96,8 @@ export class MacrocycleNumberConflictError extends Error {
   constructor(
     public readonly program: string,
     public readonly macrocycleNum?: number,
+    /** For a renumbering, what blocked it, for logs and spans: the table, its number, the database error. */
+    public readonly detail?: { table?: string; heldNumber?: number; cause?: unknown },
   ) {
     super(
       macrocycleNum === undefined

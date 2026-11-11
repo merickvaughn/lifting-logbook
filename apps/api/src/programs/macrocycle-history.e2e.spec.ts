@@ -356,6 +356,8 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       const upload = await csvUpload(`history-file-range-${num}`, [HEADER, `${PROGRAM},${num},1,2025-03-03,Squat,1,200,5,`].join('\n'));
 
       expect(upload.statusCode).toBe(400);
+      // The row check names the row, before any placement runs.
+      expect(upload.body).toContain('MACROCYCLE_NUM_INVALID');
       expect(await user.list()).toEqual([]);
       expect(await (await user.repos()).liftRecord.getMacrocycleDateRanges(PROGRAM)).toEqual(new Map());
     });
@@ -568,6 +570,23 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       expect(await committed('renumber-file-three', ...rows)).toMatchObject({ created: 0, skipped: 2 });
       expect(await order(user)).toEqual([[1, 'legacy', '2025-03-03']]);
       expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).toHaveLength(2);
+    });
+
+    it('adds a grown sheet to the macrocycle it formed, until the next macrocycle starts', async () => {
+      const user = as('renumber-grown');
+      await user.initialize('2026-01-05');
+      await committed('renumber-grown', `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`);
+
+      const grown = [`${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`, `${PROGRAM},1,2,2025-03-10,Squat,1,205,5,`];
+      expect(await committed('renumber-grown', ...grown)).toMatchObject({ created: 1, skipped: 1 });
+      expect(await order(user)).toEqual([[1, 'legacy', '2025-03-03'], [2, 'live', '2026-01-05']]);
+      expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).toHaveLength(2);
+
+      // Rows that run into the live macrocycle's start don't join the one before it.
+      await committed('renumber-grown', `${PROGRAM},1,3,2025-03-17,Squat,1,210,5,`, `${PROGRAM},1,4,2026-01-05,Squat,2,210,5,`);
+      expect((await order(user)).map(([num, origin]) => [num, origin])).toEqual([
+        [1, 'legacy'], [2, 'legacy'], [3, 'live'],
+      ]);
     });
 
     it('gives rows numbered like the live macrocycle but dated before it their own macrocycle', async () => {

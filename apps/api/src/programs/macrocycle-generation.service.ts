@@ -27,6 +27,7 @@ import {
   lockForMacrocycleWrite,
   closingStatus,
   ensureCurrentRow,
+  forgetBatchKeys,
   nextMacrocycleNumber,
 } from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
@@ -290,7 +291,7 @@ export class MacrocycleGenerationService {
     }
 
     // A start dated before stored history sorts among it, so the program renumbers (#1199).
-    const changes = await renumberProgram(repos, program, { lock: 'shared' });
+    const changes = await renumberProgram(repos, program);
     const macrocycleNum = changes.get(newMacrocycle.macrocycleNum) ?? newMacrocycle.macrocycleNum;
     return { dashboard: { ...newMacrocycle, macrocycleNum }, programSpec, scheduledWorkouts };
   }
@@ -358,7 +359,7 @@ export class MacrocycleGenerationService {
     const scheduledWorkouts = await saveScheduledDates(repos, program, dashboard.macrocycleNum, dashboard.macrocycleDate, programSpec, settings.workoutSchedule, this.logger);
     await repos.macrocycleDashboard.saveMacrocycleDashboard(dashboard);
     // A first macrocycle dated before imported history sorts among it (#1199).
-    const changes = await renumberProgram(repos, program, { lock: 'shared' });
+    const changes = await renumberProgram(repos, program);
     return {
       dashboard: { ...dashboard, macrocycleNum: changes.get(macrocycleNum) ?? macrocycleNum },
       programSpec,
@@ -430,8 +431,10 @@ export class MacrocycleGenerationService {
     await repos.focus.deleteAllDayStates(program, keep);
     await repos.macrocycle.deleteAllExcept(program, keep);
     await repos.macrocycleDashboard.deleteMacrocycleDashboard(program);
+    // Batch keys on a deleted number would undo whichever macrocycle takes that number next.
+    await forgetBatchKeys(repos, await repos.importBatch.listForProgram(program, 'lift-records'), (n) => !keep.includes(n));
     // The imported history left closes up to 1..N (#1199).
-    await renumberProgram(repos, program, { lock: 'shared' });
+    await renumberProgram(repos, program);
   }
 
   async recalculateMaxes(

@@ -46,6 +46,18 @@ describe('validateLiftImportSoft', () => {
     expect(result.incomplete[0]!.errors).toMatchObject([{ field: 'weight', code: 'WEIGHT_INVALID' }]);
   });
 
+  it('puts a row whose macrocycle number is outside 0 to 1000 in the incomplete bucket', () => {
+    const rows = [-1, 0, 1000, 1001, 2.5].map((macrocycleNum) => record({ lift: KNOWN_LIFT, macrocycleNum }));
+    const result = validateLiftImportSoft(rows, SLOT_MAP);
+    expect(result.validRows.map((v) => v.rowIndex)).toEqual([2, 3]);
+    expect(result.incomplete.map((r) => [r.rowIndex, r.errors])).toEqual(
+      [1, 4, 5].map((row) => [
+        row,
+        [{ row, field: 'macrocycleNum', code: 'MACROCYCLE_NUM_INVALID', message: 'Macrocycle # must be a whole number from 0 to 1000' }],
+      ]),
+    );
+  });
+
   it('puts a row with unknown lift in the ambiguous bucket', () => {
     const r = record({ lift: UNKNOWN_LIFT });
     const result = validateLiftImportSoft([r], SLOT_MAP);

@@ -1,9 +1,10 @@
 import { Logger } from '@nestjs/common';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { ImportPreImage } from '@lifting-logbook/core';
+import { MacrocycleNumberConflictError } from '../ports/errors';
 import { RepositoryBundle } from '../ports/factory';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
-import { LEGACY_ROW_KEY, lockForRenumbering } from './macrocycle-history.util';
+import { LEGACY_ROW_KEY, lockForRenumbering, preImageKeyNumber } from './macrocycle-history.util';
 
 /**
  * Renumbering (proposal decision 3, ADR-042): within a user and program, macrocycles are numbered
@@ -18,8 +19,25 @@ import { LEGACY_ROW_KEY, lockForRenumbering } from './macrocycle-history.util';
  */
 export const RENUMBERING_SETTING = 'MACROCYCLE_RENUMBERING';
 
+const tracer = trace.getTracer('macrocycle-renumbering');
+const logger = new Logger('MacrocycleRenumbering');
+
+/** The setting's value when the mode was last logged, so each value is logged once. */
+let loggedSetting: string | undefined | null = null;
+
+/** Whether renumbering is on: exactly `on`. Logs the mode once per value, and warns on a value it doesn't know. */
 export function renumberingEnabled(): boolean {
-  return process.env[RENUMBERING_SETTING] === 'on';
+  const value = process.env[RENUMBERING_SETTING];
+  const on = value === 'on';
+  if (value !== loggedSetting) {
+    loggedSetting = value;
+    if (value === undefined || value === 'on' || value === 'off') {
+      logger.log(`Macrocycle renumbering is ${on ? 'on' : 'off'}`);
+    } else {
+      logger.warn(`${RENUMBERING_SETTING}=${JSON.stringify(value)} isn't "on" or "off"; macrocycle renumbering is off`);
+    }
+  }
+  return on;
 }
 
 /**
@@ -44,45 +62,42 @@ export function renumberingChanges(rows: readonly Pick<MacrocycleRow, 'macrocycl
 export function renumberPreImageKeys(preImage: ImportPreImage, changes: ReadonlyMap<number, number>): ImportPreImage | null {
   let moved = false;
   const entries = Object.entries(preImage).map(([key, entry]): [string, typeof entry] => {
-    const legacy = key.startsWith(LEGACY_ROW_KEY);
-    const head = legacy ? key.slice(LEGACY_ROW_KEY.length) : key.slice(0, key.indexOf(':'));
-    const to = /^\d+$/.test(head) ? changes.get(Number(head)) : undefined;
+    const from = preImageKeyNumber(key);
+    const to = from === null ? undefined : changes.get(from);
     if (to === undefined) return [key, entry];
     moved = true;
-    if (legacy) return [`${LEGACY_ROW_KEY}${to}`, { ...entry, wrote: { macrocycleNum: to } }];
-    return [`${to}${key.slice(head.length)}`, entry];
+    if (key.startsWith(LEGACY_ROW_KEY)) return [`${LEGACY_ROW_KEY}${to}`, { ...entry, wrote: { macrocycleNum: to } }];
+    const colon = key.indexOf(':');
+    return [`${to}${colon === -1 ? '' : key.slice(colon)}`, entry];
   });
   return moved ? Object.fromEntries(entries) : null;
 }
-
-const tracer = trace.getTracer('macrocycle-renumbering');
-const logger = new Logger('MacrocycleRenumbering');
 
 /**
  * Renumbers `program` by start date, in the request's transaction, and returns the numbers it
  * moved (empty when off or when nothing moves). Every path that adds or removes a macrocycle calls
  * it after its writes: lift-record imports and their undo, starting, initializing and deleting.
  *
- * The rewrite runs under the macrocycle lock held exclusively, so no page write's id check can
- * interleave with it (decision 13). An import holds it already (`lock: 'exclusive'`). A start or a
- * delete holds it shared and takes it exclusively only when a number would move, waiting as long as
- * an import does (`lockForRenumbering`), then 409 `macrocycle-busy`; it reads the order again once
- * it has.
+ * When a number would move it takes the macrocycle lock exclusively, so no page write's id check
+ * can interleave with the rewrite (decision 13): at once for an import, which holds it already,
+ * and otherwise waiting as long as an import does (`lockForRenumbering`), then 409
+ * `macrocycle-busy`. It reads the order again once it has the lock.
  *
  * A span records the macrocycles moved, the rows and batches rewritten and how long it took (raw
- * SQL isn't auto-traced, ADR-024).
+ * SQL isn't auto-traced, ADR-024). A failure is recorded on the span, with the table and number
+ * that blocked a rewrite, and logged as a warning.
  */
 export async function renumberProgram(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'importBatch'>,
   program: string,
-  { lock }: { lock: 'exclusive' | 'shared' },
 ): Promise<Map<number, number>> {
   if (!renumberingEnabled()) return new Map();
   return tracer.startActiveSpan('macrocycle.renumber', async (span) => {
     const started = Date.now();
+    let changes = new Map<number, number>();
     try {
-      let changes = renumberingChanges(await repos.macrocycle.list(program));
-      if (changes.size > 0 && lock === 'shared') {
+      changes = renumberingChanges(await repos.macrocycle.list(program));
+      if (changes.size > 0) {
         await lockForRenumbering(repos);
         changes = renumberingChanges(await repos.macrocycle.list(program));
       }
@@ -90,7 +105,7 @@ export async function renumberProgram(
       let batches = 0;
       if (changes.size > 0) {
         rows = await repos.macrocycle.rewriteNumbers(program, changes);
-        for (const batch of await repos.importBatch.listForProgram(program, 'lift-records')) {
+        for (const batch of await repos.importBatch.listWithKeysOn(program, 'lift-records', [...changes.keys()])) {
           const preImage = renumberPreImageKeys(batch.preImage, changes);
           if (!preImage) continue;
           await repos.importBatch.updatePreImage(batch.id, preImage);
@@ -107,8 +122,22 @@ export async function renumberProgram(
       }
       return changes;
     } catch (err) {
-      span.recordException(err as Error);
+      const detail = err instanceof MacrocycleNumberConflictError ? err.detail : undefined;
+      if (detail?.table) span.setAttribute('renumber.conflict_table', detail.table);
+      if (detail?.heldNumber !== undefined) span.setAttribute('renumber.conflict_number', detail.heldNumber);
+      span.recordException(err instanceof Error ? err : String(err));
       span.setStatus({ code: SpanStatusCode.ERROR });
+      logger.warn(
+        {
+          program,
+          moves: Object.fromEntries(changes),
+          table: detail?.table,
+          heldNumber: detail?.heldNumber,
+          cause: detail?.cause instanceof Error ? detail.cause.message : detail?.cause,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'Renumbering failed',
+      );
       throw err;
     } finally {
       span.end();

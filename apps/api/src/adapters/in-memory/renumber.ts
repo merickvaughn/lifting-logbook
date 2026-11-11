@@ -1,9 +1,42 @@
+import { MacrocycleNumberConflictError } from '../../ports/errors';
+
 /**
  * An in-memory store that holds macrocycle numbers, which a renumbering rewrites as the Prisma
  * adapter rewrites its tables (#1199). Returns how many rows moved.
  */
 export interface NumberedStore {
   rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number;
+  /** The numbers the program's rows hold, which a renumbering checks before it moves anything. */
+  numbersHeld(program: string): Set<number>;
+  /** Deletes the program's rows on `macrocycleNums`, as removing a macrocycle does. */
+  dropNumbers(program: string, macrocycleNums: readonly number[]): void;
+}
+
+/** The numbers `program`'s keys in `map` hold. */
+export function numbersInMap<V>(
+  map: Map<string, V>,
+  program: string,
+  numberOf: (key: string) => { program: string; macrocycleNum: number },
+): Set<number> {
+  const held = new Set<number>();
+  for (const key of map.keys()) {
+    const at = numberOf(key);
+    if (at.program === program) held.add(at.macrocycleNum);
+  }
+  return held;
+}
+
+/** Deletes `program`'s entries in `map` on `macrocycleNums`. */
+export function dropFromMap<V>(
+  map: Map<string, V>,
+  program: string,
+  macrocycleNums: readonly number[],
+  numberOf: (key: string) => { program: string; macrocycleNum: number },
+): void {
+  for (const key of [...map.keys()]) {
+    const at = numberOf(key);
+    if (at.program === program && macrocycleNums.includes(at.macrocycleNum)) map.delete(key);
+  }
 }
 
 /**
@@ -26,7 +59,7 @@ export function rekeyMap<V>(
     moved.push([keyWith(key, to), value]);
   }
   for (const [key, value] of moved) {
-    if (map.has(key)) throw new Error(`Renumbering collides on ${JSON.stringify(key)}`);
+    if (map.has(key)) throw new MacrocycleNumberConflictError(program, undefined, { cause: `collides on ${JSON.stringify(key)}` });
     map.set(key, value);
   }
   return moved.length;

@@ -3,7 +3,7 @@ import {
   IWorkoutLiftOverrideRepository,
   sameKindActions,
 } from '../../ports/IWorkoutLiftOverrideRepository';
-import { NumberedStore, nulKey, rekeyMap } from './renumber';
+import { NumberedStore, dropFromMap, nulKey, numbersInMap, rekeyMap } from './renumber';
 
 export class InMemoryWorkoutLiftOverrideRepository
   implements IWorkoutLiftOverrideRepository, NumberedStore
@@ -12,6 +12,14 @@ export class InMemoryWorkoutLiftOverrideRepository
 
   rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
     return rekeyMap(this.store, program, changes, nulKey.numberOf, nulKey.keyWith);
+  }
+
+  numbersHeld(program: string): Set<number> {
+    return numbersInMap(this.store, program, nulKey.numberOf);
+  }
+
+  dropNumbers(program: string, macrocycleNums: readonly number[]): void {
+    dropFromMap(this.store, program, macrocycleNums, nulKey.numberOf);
   }
 
   private key(program: string, macrocycleNum: number, workoutNum: number): string {

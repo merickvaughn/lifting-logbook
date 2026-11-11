@@ -318,9 +318,13 @@ export class ImportController {
           flagged.push({ key: '*', reason: `${missing} row(s) not found (already deleted?)` });
         }
       }
+      // The batch goes first, so the renumbering below doesn't rewrite the keys of a batch about
+      // to be deleted.
+      await repos.importBatch.deleteById(batchId, user.id);
       // A macrocycle the import created goes with its sets (ADR-042), and the numbers close up.
       await removeEmptyLegacyRows(repos, program, legacyNums);
-      await renumberProgram(repos, program, { lock: 'exclusive' });
+      await renumberProgram(repos, program);
+      return { batchId, restored, skipped, flagged };
     } else {
       for (const [key, entry] of Object.entries(batch.preImage)) {
         if (batch.destination === 'training-maxes') {

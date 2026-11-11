@@ -17,6 +17,16 @@ export class InMemoryMacrocycleDashboardRepository
     return 1;
   }
 
+  numbersHeld(program: string): Set<number> {
+    const dashboard = this.dashboards.get(program);
+    return new Set(dashboard ? [dashboard.macrocycleNum] : []);
+  }
+
+  dropNumbers(program: string, macrocycleNums: readonly number[]): void {
+    const dashboard = this.dashboards.get(program);
+    if (dashboard && macrocycleNums.includes(dashboard.macrocycleNum)) this.dashboards.delete(program);
+  }
+
   constructor(preSeed = false) {
     this.dashboards = preSeed
       ? new Map([[SEED_PROGRAM, seedMacrocycleDashboard()]])

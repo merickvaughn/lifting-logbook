@@ -1,7 +1,7 @@
 import { Macrocycle, Prisma, PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { MacrocycleOrigin, MacrocycleStatus } from '@lifting-logbook/types';
-import { trace } from '@opentelemetry/api';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { MacrocycleNumberConflictError } from '../../ports/errors';
 import { IMacrocycleRepository, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
 import { PrismaExecutor, runInteractive } from './prisma-tx.util';
@@ -186,8 +186,27 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
 
   async delete(program: string, macrocycleNums: readonly number[]): Promise<void> {
     if (macrocycleNums.length === 0) return;
-    await this.prisma.macrocycle.deleteMany({
-      where: { userId: this.userId, program, macrocycleNum: { in: [...macrocycleNums] } },
+    const nums = [...macrocycleNums];
+    // Raw SQL isn't auto-traced (ADR-024), so the deletes get a span.
+    await tracer.startActiveSpan('macrocycle.delete_numbers', async (span) => {
+      try {
+        span.setAttribute('macrocycle.count', nums.length);
+        let rows = 0;
+        await runInteractive(this.prisma, async (db) => {
+          for (const table of NUMBERED_TABLES) {
+            rows += await db.$executeRaw`
+              DELETE FROM ${Prisma.raw(`"${table}"`)}
+              WHERE "userId" = ${this.userId} AND "program" = ${program} AND "macrocycleNum" = ANY(${nums}::int[])`;
+          }
+        });
+        span.setAttribute('macrocycle.rows_deleted', rows);
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
     });
   }
 
@@ -201,9 +220,26 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     if (changes.size === 0) return 0;
     const olds = [...changes.keys()];
     const news = [...changes.values()];
+    const temps = news.map((n) => -1 - n);
     // Two passes, since unique keys are checked per row: every moving row first takes -1 - its
     // new number, which no stored row holds, then flips to the new number.
     const rewrite = async (db: PrismaExecutor): Promise<number> => {
+      // First, a row on a new number that `changes` doesn't move, in any table, refuses the whole
+      // rewrite: it would merge into the macrocycle that moves onto that number, which the unique
+      // keys catch only when the rest of the key matches too.
+      const [held] = await db.$queryRaw<Array<{ tbl: string; num: number }>>`
+        ${Prisma.join(
+          NUMBERED_TABLES.map(
+            (table) => Prisma.sql`
+              (SELECT ${table}::text AS tbl, "macrocycleNum" AS num FROM ${Prisma.raw(`"${table}"`)}
+               WHERE "userId" = ${this.userId} AND "program" = ${program}
+                 AND "macrocycleNum" = ANY(${news}::int[]) AND NOT ("macrocycleNum" = ANY(${olds}::int[]))
+               LIMIT 1)`,
+          ),
+          ' UNION ALL ',
+        )}
+        LIMIT 1`;
+      if (held) throw new MacrocycleNumberConflictError(program, undefined, { table: held.tbl, heldNumber: held.num });
       let rows = 0;
       for (const table of NUMBERED_TABLES) {
         rows += await db.$executeRaw`
@@ -214,7 +250,7 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
       for (const table of NUMBERED_TABLES) {
         await db.$executeRaw`
           UPDATE ${Prisma.raw(`"${table}"`)} SET "macrocycleNum" = -1 - "macrocycleNum"
-          WHERE "userId" = ${this.userId} AND "program" = ${program} AND "macrocycleNum" < 0`;
+          WHERE "userId" = ${this.userId} AND "program" = ${program} AND "macrocycleNum" = ANY(${temps}::int[])`;
       }
       return rows;
     };
@@ -222,8 +258,10 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
       // The request's transaction makes it all-or-nothing; a bare client needs its own.
       return await runInteractive(this.prisma, rewrite);
     } catch (err) {
-      // A row on a new number that `changes` doesn't move: the unique key is the backstop.
-      if (err instanceof Error && err.message.includes(UNIQUE_VIOLATION)) throw new MacrocycleNumberConflictError(program);
+      // The unique keys stay the backstop behind the check above.
+      if (err instanceof Error && err.message.includes(UNIQUE_VIOLATION)) {
+        throw new MacrocycleNumberConflictError(program, undefined, { cause: err });
+      }
       throw err;
     }
   }

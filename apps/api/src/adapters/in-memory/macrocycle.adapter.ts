@@ -46,13 +46,18 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
   }
 
   async rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): Promise<number> {
-    const moving = this.rows.filter((r) => r.program === program && changes.has(r.macrocycleNum));
-    const staying = new Set(
-      this.rows.filter((r) => r.program === program && !changes.has(r.macrocycleNum)).map((r) => r.macrocycleNum),
-    );
+    // Checked in every store before any moves, as the Prisma adapter checks every table: a row
+    // left on a new number would otherwise merge into the macrocycle that moves onto it.
+    const stores: Array<{ table: string; held: Set<number> }> = [
+      { table: 'macrocycle', held: new Set(this.rows.filter((r) => r.program === program).map((r) => r.macrocycleNum)) },
+      ...this.numbered.map((store) => ({ table: store.constructor.name, held: store.numbersHeld(program) })),
+    ];
     for (const to of changes.values()) {
-      if (staying.has(to)) throw new MacrocycleNumberConflictError(program, to);
+      if (changes.has(to)) continue;
+      const blocking = stores.find(({ held }) => held.has(to));
+      if (blocking) throw new MacrocycleNumberConflictError(program, undefined, { table: blocking.table, heldNumber: to });
     }
+    const moving = this.rows.filter((r) => r.program === program && changes.has(r.macrocycleNum));
     for (const row of moving) row.macrocycleNum = changes.get(row.macrocycleNum) ?? row.macrocycleNum;
     return this.numbered.reduce((rows, store) => rows + store.rewriteNumbers(program, changes), moving.length);
   }
@@ -128,6 +133,7 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
   async delete(program: string, macrocycleNums: readonly number[]): Promise<void> {
     const kept = this.rows.filter((r) => r.program !== program || !macrocycleNums.includes(r.macrocycleNum));
     this.rows.splice(0, this.rows.length, ...kept);
+    for (const store of this.numbered) store.dropNumbers(program, macrocycleNums);
   }
 
   async deleteAllExcept(program: string, keep: readonly number[]): Promise<void> {

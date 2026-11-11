@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
-import { ImportPreImage, MacrocycleDashboard, toUTCMidnight } from '@lifting-logbook/core';
+import { ImportPreImage, MacrocycleDashboard, MAX_FILE_MACROCYCLE_NUM, toUTCMidnight } from '@lifting-logbook/core';
 import { MacrocycleStatus } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
+import { ImportBatchRecord } from '../ports/IImportBatchRepository';
 import { DateRange, dateRangesByMacrocycle } from '../ports/ILiftRecordRepository';
 import { MacrocycleRow, NewMacrocycle } from '../ports/IMacrocycleRepository';
 import { ProgramNotFoundError } from '../ports/errors';
@@ -15,15 +16,6 @@ type HistoryRepos = Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard'>
 
 /** A break longer than this ends a run (proposal decision 4); an older `in-progress` reads as `abandoned`. */
 export const STALE_AFTER_DAYS = 14;
-
-/**
- * The highest macrocycle number a file may carry: the bound `POST lift-records` already
- * applies. Numbers are allocated past the highest stored one, so an unbounded file number
- * would push every later macrocycle past it, or overflow the column. The lowest is 0, not
- * the 1 a live macrocycle starts at: spreadsheet exports number a first cycle 0
- * (`packages/core/tests/fixtures/lift_records.csv`).
- */
-export const MAX_FILE_MACROCYCLE_NUM = 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -240,10 +232,12 @@ export async function lockForImport(
 }
 
 /**
- * Takes the macrocycle lock exclusively for a start or a delete that already holds it shared and
- * would move a number (#1199), waiting as an import does, then a 409 `macrocycle-busy`. Two
- * such requests waiting on each other is a deadlock Postgres breaks by refusing one, which gets
- * the same 409.
+ * Takes the macrocycle lock exclusively for a renumbering that would move a number (#1199),
+ * waiting as an import does, then a 409 `macrocycle-busy`. The lock is re-entrant, so an import
+ * that holds it already gets it at once. Two starts or deletes that hold it shared and wait on
+ * each other here deadlock; Postgres aborts one, which gets the same 409 when it's the one
+ * waiting here. A deadlock aborted anywhere else in the request is a 500, and that request's
+ * transaction rolls back.
  */
 export async function lockForRenumbering(repos: Pick<RepositoryBundle, 'macrocycle'>): Promise<void> {
   if (!(await repos.macrocycle.lockExclusive(IMPORT_LOCK_WAIT_MS))) throw writesInProgress();
@@ -272,17 +266,27 @@ export async function assertMacrocycleWritable(
   await repos.macrocycle.ensure([currentRow(dashboard)]);
 }
 
-/** Whether rows dated `first` to `last` belong in `row` (proposal decision 2). */
-function fitsDates(row: Pick<MacrocycleRow, 'startDate' | 'endDate'>, first: Date, last: Date, current: boolean): boolean {
+/**
+ * Whether rows dated `first` to `last` belong in `row` (proposal decision 2, widened by #1199):
+ * they start on or after it and end before the next stored macrocycle starts, so a sheet that
+ * grew past the row's end still joins it. `nextStart` is null when no stored row starts later.
+ */
+function fitsDates(row: Pick<MacrocycleRow, 'startDate'>, first: Date, last: Date, nextStart: Date | null): boolean {
   if (toUTCMidnight(first) < row.startDate) return false;
-  return current || row.endDate === null || toUTCMidnight(last) <= row.endDate;
+  return nextStart === null || toUTCMidnight(last) < nextStart;
+}
+
+/** The earliest start among `rows` strictly after `after`, or null. */
+function nextStartAfter(rows: readonly Pick<MacrocycleRow, 'startDate'>[], after: Date): Date | null {
+  const later = rows.map((r) => r.startDate).filter((d) => d > after);
+  return later.length === 0 ? null : new Date(Math.min(...later.map((d) => d.getTime())));
 }
 
 /**
  * Places the rows of an import path that takes macrocycle numbers from a file
  * (`POST lift-records/import` and flag-off commits). The file's numbers only group rows, since
  * stored numbers follow dates (decision 2): a group joins the stored macrocycle with its number
- * when its dates fall inside that one's dates, or after its start if it's the current one. Any
+ * when it starts on or after that one's start and ends before the next stored one starts. Any
  * other group, including one numbered like an `imported` macrocycle, which rows never join, gets
  * a new `legacy` macrocycle dated by its rows, numbered past every stored one in date order. A
  * file number must still be from 0 to {@link MAX_FILE_MACROCYCLE_NUM}.
@@ -305,14 +309,15 @@ export async function placeFileRows(
   const dashboard = await dashboardOrNull(repos, program);
   // The current macrocycle can be joined, so it needs its row.
   if (dashboard) await ensureCurrentRow(repos, dashboard);
-  const storedByNumber = new Map((await repos.macrocycle.list(program)).map((row) => [row.macrocycleNum, row]));
+  const stored = await repos.macrocycle.list(program);
+  const storedByNumber = new Map(stored.map((row) => [row.macrocycleNum, row]));
   let next = await nextMacrocycleNumber(repos, program, dashboard);
   const placed = new Map<number, number>();
   const legacyNums: number[] = [];
   const byDate = [...ranges].sort(([a, x], [b, y]) => x.first.getTime() - y.first.getTime() || a - b);
   for (const [fileNum, { first, last }] of byDate) {
     const row = storedByNumber.get(fileNum);
-    if (row && row.origin !== 'imported' && fitsDates(row, first, last, dashboard?.macrocycleNum === fileNum)) {
+    if (row && row.origin !== 'imported' && fitsDates(row, first, last, nextStartAfter(stored, row.startDate))) {
       placed.set(fileNum, fileNum);
       continue;
     }
@@ -344,6 +349,40 @@ export function legacyRowsPreImage(macrocycleNums: readonly number[]): ImportPre
   );
 }
 
+/**
+ * The macrocycle number a lift-records pre-image key holds: the leading number of a set key
+ * (`<n>:...`, current and date-blind legacy forms alike) or of a `legacy` row's key, else null.
+ * `PrismaImportBatchRepository.listWithKeysOn` reads keys the same way in SQL.
+ */
+export function preImageKeyNumber(key: string): number | null {
+  const num = /^(?:macrocycle-row:)?(\d+)(?::|$)/.exec(key)?.[1];
+  return num === undefined ? null : Number(num);
+}
+
+/**
+ * Drops the keys on deleted macrocycles from `program`'s lift-records batches: a renumbering
+ * may move another macrocycle onto the number, and undoing the batch would then delete that
+ * one's sets (#1199). `deleted` says which numbers are gone; `batches` are the ones that may
+ * hold them. Returns how many batches changed.
+ */
+export async function forgetBatchKeys(
+  repos: Pick<RepositoryBundle, 'importBatch'>,
+  batches: readonly ImportBatchRecord[],
+  deleted: (macrocycleNum: number) => boolean,
+): Promise<number> {
+  let changed = 0;
+  for (const batch of batches) {
+    const kept = Object.entries(batch.preImage).filter(([key]) => {
+      const num = preImageKeyNumber(key);
+      return num === null || !deleted(num);
+    });
+    if (kept.length === Object.keys(batch.preImage).length) continue;
+    await repos.importBatch.updatePreImage(batch.id, Object.fromEntries(kept));
+    changed++;
+  }
+  return changed;
+}
+
 /** Splits a lift-records pre-image's keys into set keys and the `legacy` rows' numbers. */
 export function splitLegacyRowKeys(keys: readonly string[]): { setKeys: string[]; legacyNums: number[] } {
   return {
@@ -354,11 +393,11 @@ export function splitLegacyRowKeys(keys: readonly string[]): { setKeys: string[]
 
 /**
  * Undoes {@link placeFileRows} for an undone import: removes each of `macrocycleNums`
- * that is still `legacy` and has no sets left. A number the lifter logged sets into since
- * keeps its row.
+ * that is still `legacy` and has no sets left, from every table that holds a number, and drops
+ * other batches' keys on it. A number the lifter logged sets into since keeps its row.
  */
 export async function removeEmptyLegacyRows(
-  repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>,
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord' | 'importBatch'>,
   program: string,
   macrocycleNums: readonly number[],
 ): Promise<void> {
@@ -370,7 +409,11 @@ export async function removeEmptyLegacyRows(
   const empty = rows
     .filter((r) => r.origin === 'legacy' && macrocycleNums.includes(r.macrocycleNum) && !ranges.has(r.macrocycleNum))
     .map((r) => r.macrocycleNum);
+  if (empty.length === 0) return;
   await repos.macrocycle.delete(program, empty);
+  await forgetBatchKeys(repos, await repos.importBatch.listWithKeysOn(program, 'lift-records', empty), (n) =>
+    empty.includes(n),
+  );
 }
 
 /**

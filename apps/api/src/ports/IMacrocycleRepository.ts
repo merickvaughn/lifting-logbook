@@ -75,7 +75,11 @@ export interface IMacrocycleRepository {
    */
   close(program: string, macrocycleNum: number, end: { endDate: Date; status: MacrocycleStatus }): Promise<void>;
 
-  /** Deletes the program's rows numbered in `macrocycleNums`. */
+  /**
+   * Deletes the program's macrocycles numbered in `macrocycleNums` from every table that holds a
+   * number (the tables {@link rewriteNumbers} lists), so nothing is left on a number a
+   * renumbering then moves another macrocycle onto (#1199).
+   */
   delete(program: string, macrocycleNums: readonly number[]): Promise<void>;
 
   /** Deletes the program's rows except those numbered in `keep`. */
@@ -87,8 +91,8 @@ export interface IMacrocycleRepository {
    * `macrocycle_dashboard`, the three workout override tables, `focus_day_state`,
    * `macrocycle_scheduled_workout` and `macrocycle` — through a temporary negative number, since
    * the unique keys are checked per row. Returns how many rows changed. Import batch keys are the
-   * caller's. Throws if a new number is held by a row `changes` doesn't move; the caller's
-   * transaction then rolls every table back.
+   * caller's. Throws `MacrocycleNumberConflictError`, naming the table, before it moves anything
+   * if a row in any of those tables holds a new number that `changes` doesn't move.
    */
   rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): Promise<number>;
 }

@@ -25,6 +25,15 @@ export class InMemoryImportBatchRepository implements IImportBatchRepository {
     return [...this.store.values()].filter((b) => b.program === program && b.destination === destination);
   }
 
+  async listWithKeysOn(program: string, destination: ImportKind, macrocycleNums: readonly number[]): Promise<ImportBatchRecord[]> {
+    return (await this.listForProgram(program, destination)).filter((b) =>
+      Object.keys(b.preImage).some((key) => {
+        const num = /^(?:macrocycle-row:)?(\d+)(?::|$)/.exec(key)?.[1];
+        return num !== undefined && macrocycleNums.includes(Number(num));
+      }),
+    );
+  }
+
   async updatePreImage(id: string, preImage: ImportPreImage): Promise<void> {
     const record = this.store.get(id);
     if (record) this.store.set(id, { ...record, preImage });

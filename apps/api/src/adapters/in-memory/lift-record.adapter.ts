@@ -26,6 +26,15 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
     return moved;
   }
 
+  numbersHeld(program: string): Set<number> {
+    return new Set((this.store.get(program) ?? []).map((r) => r.macrocycleNum));
+  }
+
+  dropNumbers(program: string, macrocycleNums: readonly number[]): void {
+    const stored = this.store.get(program);
+    if (stored) this.store.set(program, stored.filter((r) => !macrocycleNums.includes(r.macrocycleNum)));
+  }
+
   async getLiftRecords(program: string, macrocycleNum: number): Promise<LiftRecord[]> {
     return (this.store.get(program) ?? []).filter((r) => r.macrocycleNum === macrocycleNum);
   }

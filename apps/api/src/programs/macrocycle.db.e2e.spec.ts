@@ -49,7 +49,11 @@ const USER_RENUMBER_OTHER = 'macrocycle-db-renumber-other';
 const USER_RENUMBER_ATOMIC = 'macrocycle-db-renumber-atomic';
 const USER_RENUMBER_BATCH = 'macrocycle-db-renumber-batch';
 const USER_RENUMBER_LOCK = 'macrocycle-db-renumber-lock';
+const USER_RENUMBER_ORPHAN = 'macrocycle-db-renumber-orphan';
+const USER_RENUMBER_STALE = 'macrocycle-db-renumber-stale';
 const USERS = [
+  USER_RENUMBER_ORPHAN,
+  USER_RENUMBER_STALE,
   USER_ALICE,
   USER_BOB,
   USER_BACKFILL,
@@ -647,9 +651,9 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       ]);
     }, DB_E2E_HOOK_TIMEOUT_MS);
 
-    it('leaves every number as it was when a rewrite fails partway', async () => {
+    it('refuses a rewrite before moving anything when a table holds a number it needs, naming the table', async () => {
       await seedEveryTable(USER_RENUMBER_ATOMIC, 1, '2026-01-05');
-      // Only the macrocycle table, the last one rewritten, holds 2, so every table before it moves first.
+      // Only the macrocycle table, the last one rewritten, holds 2.
       await owner.macrocycle.create({
         data: { userId: USER_RENUMBER_ATOMIC, program: PROGRAM, macrocycleNum: 2, startDate: day('2026-03-02'), status: 'unknown', origin: 'legacy' },
       });
@@ -659,12 +663,79 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
           asUser(appDb, USER_RENUMBER_ATOMIC, (tx) =>
             new PrismaMacrocycleRepository(tx, USER_RENUMBER_ATOMIC).rewriteNumbers(PROGRAM, new Map([[1, 2]])),
           ),
-        ).rejects.toBeInstanceOf(MacrocycleNumberConflictError);
+        ).rejects.toMatchObject({
+          constructor: MacrocycleNumberConflictError,
+          detail: { table: 'macrocycle', heldNumber: 2 },
+        });
       } finally {
         await appDb.$disconnect();
       }
 
       expect(await numbersByTable(USER_RENUMBER_ATOMIC)).toEqual(everyTable([1], { macrocycle: [1, 2] }));
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('lists every table with a macrocycle number', async () => {
+      const columns = await owner.$queryRaw<Array<{ table_name: string }>>`
+        SELECT table_name FROM information_schema.columns
+        WHERE table_schema = current_schema() AND column_name = 'macrocycleNum' ORDER BY 1`;
+      expect(columns.map((c) => c.table_name)).toEqual([...NUMBERED_TABLES].sort());
+    });
+
+    it('removes an emptied legacy macrocycle from every table on undo, so nothing it held joins the one that moves down', async () => {
+      const user = USER_RENUMBER_ORPHAN;
+      await seedEveryTable(user, 1, '2026-01-05');
+      const commit = await commitFile(user, OLDER_SET);
+      expect(commit.statusCode).toBe(200);
+      // The import's legacy macrocycle is 1 now. The lifter skips one of its workouts, and
+      // another batch has a key on it.
+      await owner.workoutSkipOverride.create({ data: { userId: user, program: PROGRAM, macrocycleNum: 1, workoutNum: 7 } });
+      const other = await owner.importBatch.create({
+        data: {
+          userId: user,
+          program: PROGRAM,
+          destination: 'lift-records',
+          preImage: { '1:4:Squat:1': { kind: 'created', wrote: { weight: 1, reps: 1, notes: '' } } },
+        },
+      });
+
+      const undo = await injectAs(user, 'POST', `${base}/import/${(commit.json() as { batchId: string }).batchId}/undo`);
+      expect(undo.statusCode).toBe(200);
+
+      // The live macrocycle moved down to 1, with only its own skip.
+      expect(await numbersByTable(user)).toEqual(everyTable([1]));
+      const skips = await owner.workoutSkipOverride.findMany({ where: { userId: user } });
+      expect(skips.map((s) => [s.macrocycleNum, s.workoutNum])).toEqual([[1, 2]]);
+      expect((await owner.importBatch.findUnique({ where: { id: other.id } }))?.preImage).toEqual({});
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('drops batch keys on a deleted macrocycle, so undoing the batch leaves the history that moves onto its number', async () => {
+      const user = USER_RENUMBER_STALE;
+      await seedEveryTable(user, 1, '2026-01-05');
+      await owner.macrocycle.create({
+        data: { userId: user, program: PROGRAM, macrocycleNum: 2, startDate: day('2026-06-01'), status: 'completed', origin: 'imported' },
+      });
+      await owner.liftRecord.create({
+        data: { userId: user, program: PROGRAM, macrocycleNum: 2, workoutNum: 1, date: day('2026-06-01'), lift: 'Squat', setNum: 1, weight: 999, reps: 5 },
+      });
+      // A batch from before the date joined the key (#884): it matches its set on any date.
+      const stale = await owner.importBatch.create({
+        data: {
+          userId: user,
+          program: PROGRAM,
+          destination: 'lift-records',
+          preImage: { '1:1:Squat:1': { kind: 'created', wrote: { weight: 200, reps: 5, notes: '' } } },
+        },
+      });
+
+      expect((await injectAs(user, 'DELETE', `${base}/macrocycles/current`)).statusCode).toBe(204);
+      expect((await owner.macrocycle.findMany({ where: { userId: user } })).map((m) => [m.macrocycleNum, m.origin])).toEqual([
+        [1, 'imported'],
+      ]);
+
+      const undo = await injectAs(user, 'POST', `${base}/import/${stale.id}/undo`);
+      expect(undo.json()).toMatchObject({ restored: 0 });
+      const sets = await owner.liftRecord.findMany({ where: { userId: user } });
+      expect(sets.map((s) => [s.macrocycleNum, s.weight])).toEqual([[1, 999]]);
     }, DB_E2E_HOOK_TIMEOUT_MS);
 
     it('undoes a batch with current keys and one with date-blind keys after a renumbering, each removing only its own sets', async () => {

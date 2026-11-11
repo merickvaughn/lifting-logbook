@@ -71,10 +71,15 @@ describe("classifyLiftRecordRows", () => {
     ]);
   });
 
-  it("counts an exact repeat within the file once, unless its occurrence differs", () => {
-    expect(classify([set(), set({ workoutNum: 2 })])).toEqual([
+  it("counts an exact repeat within the file once, unless its workout or occurrence differs", () => {
+    expect(classify([set(), set()])).toEqual([
       { kind: "create", occurrence: 0 },
       { kind: "skip", occurrence: 0 },
+    ]);
+    // Two same-day workouts with an identical set keep both, as before #1199.
+    expect(classify([set(), set({ workoutNum: 2 })])).toEqual([
+      { kind: "create", occurrence: 0 },
+      { kind: "create", occurrence: 1 },
     ]);
     expect(classify([set(), set({ occurrence: 1 })])).toEqual([
       { kind: "create", occurrence: 0 },

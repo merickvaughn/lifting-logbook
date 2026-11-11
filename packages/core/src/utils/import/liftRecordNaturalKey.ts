@@ -69,8 +69,10 @@ export type ClassifiedLiftRecordRow<T> = ClassifiedRow<T> & { occurrence: number
  * lift. Rows are compared per date, lift and set number, and only the file's rows beyond the
  * stored count are created:
  *
- * - A row repeating an earlier row of the file, with the same weight, reps and occurrence, is a
- *   skip, as is today's, unless the file's `Occurrence` column tells them apart.
+ * - A row repeating an earlier row of the file, with the same set (any spelling of the lift),
+ *   macrocycle and workout number, occurrence, weight and reps, is a skip. Within one file its
+ *   numbers are consistent, so two same-day workouts that repeat a set keep both rows, as before
+ *   #1199, and so do two sets the file's `Occurrence` column tells apart.
  * - The file's rows then pair with stored rows, those with identical weight and reps first, so
  *   the rows left over are the real extras. A paired row is a skip, even when its weight or reps
  *   differ from the stored row's, which stays as stored.
@@ -97,7 +99,7 @@ export function classifyLiftRecordRows<T>(
   rows.forEach((row, i) => {
     const r = recordOf(row);
     const slot = setSlotKey(r);
-    const repeat = `${slot}|${r.occurrence ?? 0}|${r.weight}|${r.reps}`;
+    const repeat = `${slot}|${r.macrocycleNum}|${r.workoutNum}|${r.occurrence ?? 0}|${r.weight}|${r.reps}`;
     if (seen.has(repeat)) {
       kinds.set(i, 'skip');
       return;

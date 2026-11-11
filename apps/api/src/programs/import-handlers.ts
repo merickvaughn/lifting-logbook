@@ -70,7 +70,7 @@ export async function writeFileNumberRows(repos: RepositoryBundle, program: stri
   const { placed, legacyNums } = await placeFileRows(repos, program, creating);
   const placedRows = creating.map((r) => ({ ...r, macrocycleNum: placed.get(r.macrocycleNum) ?? r.macrocycleNum }));
   const created = await repos.liftRecord.appendLiftRecords(program, placedRows);
-  const changes = await renumberProgram(repos, program, { lock: 'exclusive' });
+  const changes = await renumberProgram(repos, program);
   const renumbered = (n: number) => changes.get(n) ?? n;
   return {
     classified,

@@ -1,7 +1,12 @@
 import { DEFAULT_FOCUS_BUDGET, FocusBlock, FocusBudget, FocusDayState } from '@lifting-logbook/types';
 import { FocusBlockPatch, IFocusRepository } from '../../ports/IFocusRepository';
 import { FocusBlockConflictError, FocusBlockNotFoundError } from '../../ports/errors';
-import { NumberedStore, rekeyMap } from './renumber';
+import { NumberedStore, dropFromMap, numbersInMap, rekeyMap } from './renumber';
+
+function dayKeyNumber(key: string): { program: string; macrocycleNum: number } {
+  const [program, macrocycleNum] = JSON.parse(key) as [string, number, number];
+  return { program, macrocycleNum };
+}
 
 /** Mirrors PrismaFocusRepository, including its (series, start) uniqueness. */
 export class InMemoryFocusRepository implements IFocusRepository, NumberedStore {
@@ -10,19 +15,18 @@ export class InMemoryFocusRepository implements IFocusRepository, NumberedStore 
   private budget: FocusBudget = { ...DEFAULT_FOCUS_BUDGET };
 
   rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
-    return rekeyMap(
-      this.dayStates,
-      program,
-      changes,
-      (key) => {
-        const [p, macrocycleNum] = JSON.parse(key) as [string, number, number];
-        return { program: p, macrocycleNum };
-      },
-      (key, macrocycleNum) => {
-        const [p, , workoutNum] = JSON.parse(key) as [string, number, number];
-        return dayKey(p, macrocycleNum, workoutNum);
-      },
-    );
+    return rekeyMap(this.dayStates, program, changes, dayKeyNumber, (key, macrocycleNum) => {
+      const [p, , workoutNum] = JSON.parse(key) as [string, number, number];
+      return dayKey(p, macrocycleNum, workoutNum);
+    });
+  }
+
+  numbersHeld(program: string): Set<number> {
+    return numbersInMap(this.dayStates, program, dayKeyNumber);
+  }
+
+  dropNumbers(program: string, macrocycleNums: readonly number[]): void {
+    dropFromMap(this.dayStates, program, macrocycleNums, dayKeyNumber);
   }
 
   async listBlocks(): Promise<FocusBlock[]> {
