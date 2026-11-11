@@ -472,7 +472,7 @@ describe('WorkoutLogger — a renumbered macrocycle (#1198)', () => {
 
   it('asks for a reload, not a retry, when the macrocycle the page shows no longer exists', async () => {
     const user = userEvent.setup();
-    const msg = "This page's macrocycle of '5-3-1' (id 'mc-a') no longer exists. Reload the page to see the current one.";
+    const msg = "This page's macrocycle of '5-3-1' no longer exists. Reload the page to see the current one.";
     mockCreateLiftRecord.mockRejectedValue(new ApiClientError(msg, 404, 'macrocycle-not-found'));
     render(<WorkoutLogger {...makeProps({ macrocycleId: 'mc-a' })} />);
 

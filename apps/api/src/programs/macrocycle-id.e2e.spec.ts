@@ -159,7 +159,12 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
     for (const write of pageWrites(recordId)) {
       const res = await user.inject(write.method, write.url, write.body, 'no-such-id');
       expect({ route: write.name, status: res.statusCode }).toEqual({ route: write.name, status: 404 });
-      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
+      // The lifter sees the message, so the id goes in the body, not the sentence.
+      expect(res.json()).toMatchObject({
+        code: 'macrocycle-not-found',
+        macrocycleId: 'no-such-id',
+        message: `This page's macrocycle of '${PROGRAM}' no longer exists. Reload the page to see the current one.`,
+      });
     }
   });
 

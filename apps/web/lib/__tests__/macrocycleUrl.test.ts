@@ -67,6 +67,11 @@ describe('writeFailureMessage', () => {
     expect(writeFailureMessage(new ApiClientError(msg, 404, 'macrocycle-not-found'), 'Failed.')).toBe(msg);
   });
 
+  it("shows the API's reload message for a macrocycle number the program doesn't have", () => {
+    const msg = "Program '5-3-1' has no macrocycle 7. Reload the page to see the current one.";
+    expect(writeFailureMessage(new ApiClientError(msg, 404, 'macrocycle-not-found', { macrocycleNum: 7 }), 'Failed.')).toBe(msg);
+  });
+
   it('falls back for anything else', () => {
     expect(writeFailureMessage(new ApiClientError('dup', 409), 'Failed.')).toBe('Failed.');
     expect(writeFailureMessage(new ApiClientError('moved', 409, 'macrocycle-moved'), 'Failed.')).toBe('Failed.');

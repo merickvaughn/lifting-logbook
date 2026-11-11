@@ -61,8 +61,9 @@ const LIFTER_MESSAGE_CODES = new Set(['import-in-progress', 'macrocycle-not-curr
  * What to tell the lifter about a failed write: the API's own message for an import holding
  * the lock (409 `import-in-progress`), a write to a macrocycle that is no longer current (409
  * `macrocycle-not-current`), or a page whose macrocycle no longer exists (404
- * `macrocycle-not-found`, as after deleting and starting again). The last two ask for a
- * reload, which a retry can't replace. Anything else is `fallback`.
+ * `macrocycle-not-found`, as after deleting and starting again, or a number the program
+ * doesn't have). The last two ask for a reload, which a retry can't replace, and name no
+ * internal id. Anything else is `fallback`.
  */
 export function writeFailureMessage(err: unknown, fallback: string): string {
   return err instanceof ApiClientError && err.code !== undefined && LIFTER_MESSAGE_CODES.has(err.code) && err.message

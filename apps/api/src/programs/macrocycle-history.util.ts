@@ -91,8 +91,9 @@ function unknownNumber(program: string, macrocycleNum: number): NotFoundExceptio
   return new NotFoundException({
     statusCode: 404,
     code: 'macrocycle-not-found',
-    message: `Program '${program}' has no macrocycle ${macrocycleNum}.`,
+    message: `Program '${program}' has no macrocycle ${macrocycleNum}. Reload the page to see the current one.`,
     error: 'Not Found',
+    macrocycleNum,
   });
 }
 
@@ -147,8 +148,9 @@ function unknownId(program: string, macrocycleId: string): NotFoundException {
   return new NotFoundException({
     statusCode: 404,
     code: 'macrocycle-not-found',
-    message: `This page's macrocycle of '${program}' (id '${macrocycleId}') no longer exists. Reload the page to see the current one.`,
+    message: `This page's macrocycle of '${program}' no longer exists. Reload the page to see the current one.`,
     error: 'Not Found',
+    macrocycleId,
   });
 }
 
