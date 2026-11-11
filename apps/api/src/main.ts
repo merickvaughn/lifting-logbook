@@ -10,7 +10,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import multipart from '@fastify/multipart';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
-import { resolveCorsOrigins } from './cors.config';
+import { corsOptions } from './cors.config';
 import { DomainConflictFilter } from './programs/conflict.filter';
 import { MAX_IMPORT_FILE_BYTES } from './programs/import-file.util';
 import { DomainNotFoundFilter } from './programs/not-found.filter';
@@ -39,12 +39,7 @@ async function bootstrap() {
   // external URL directly from the browser, so without these CORS headers the browser blocks
   // every client-side write. enableCors registers @fastify/cors, which also answers the
   // preflight OPTIONS. See cors.config.ts for the allowlist and its rationale.
-  app.enableCors({
-    origin: resolveCorsOrigins(),
-    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Authorization', 'Content-Type'],
-    maxAge: 3600,
-  });
+  app.enableCors(corsOptions());
   const port = parseInt(process.env.PORT ?? '3004', 10);
   await app.listen(port, '0.0.0.0');
 }

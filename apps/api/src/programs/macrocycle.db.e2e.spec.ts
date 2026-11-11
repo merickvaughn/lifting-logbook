@@ -14,7 +14,7 @@ import { AppModule } from '../app.module';
 import { seedTrainingMaxes } from '../adapters/in-memory/fixtures';
 import multipart from '@fastify/multipart';
 import { MACROCYCLE_LOCK_NAMESPACE, PrismaMacrocycleRepository } from '../adapters/prisma/macrocycle.repository';
-import { MACROCYCLE_ID_HEADER } from './macrocycle-history.util';
+import { IMPORT_LOCK_WAIT_MS, MACROCYCLE_ID_HEADER } from './macrocycle-history.util';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
@@ -64,6 +64,7 @@ async function cleanup(owner: PrismaClient): Promise<void> {
   await owner.focusDayState.deleteMany({ where });
   await owner.trainingMax.deleteMany({ where });
   await owner.trainingMaxHistory.deleteMany({ where });
+  await owner.importBatch.deleteMany({ where });
 }
 
 describeOrSkip('macrocycle table (e2e, lifting_app role)', () => {
@@ -418,23 +419,34 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         ].join('\r\n'),
       });
     };
-    const imports = [`${base}/lift-records/import`, `${base}/import?mode=commit&destination=lift-records`];
+    const commitImport = `${base}/import?mode=commit&destination=lift-records`;
+    const imports = [`${base}/lift-records/import`, commitImport];
+    /** Each import waits out the lock before its 409, so a test running several needs room. */
+    const LOCKED_TEST_TIMEOUT_MS = 4 * IMPORT_LOCK_WAIT_MS + DB_E2E_HOOK_TIMEOUT_MS;
 
     /** Holds the user's lock from another connection, as #1199's renumbering will. */
     const holdLock = (mode: 'shared' | 'exclusive') =>
       holdOpen(owner, null, (tx) =>
         mode === 'shared'
-          ? tx.$queryRaw`SELECT pg_advisory_xact_lock_shared(${MACROCYCLE_LOCK_NAMESPACE}::int, hashtext(${USER_LOCK}))::text`
-          : tx.$queryRaw`SELECT pg_advisory_xact_lock(${MACROCYCLE_LOCK_NAMESPACE}::int, hashtext(${USER_LOCK}))::text`,
+          ? tx.$queryRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${USER_LOCK}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`
+          : tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${USER_LOCK}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`,
       );
 
     const storedSets = () => owner.liftRecord.count({ where: { userId: USER_LOCK } });
+    const expectBusy = (url: string, res: { statusCode: number; json: () => { code?: string } }) =>
+      expect({ url, status: res.statusCode, code: res.json().code }).toEqual({ url, status: 409, code: 'macrocycle-busy' });
+    let batchId = '';
 
-    it('answers every page write and both imports with 409 import-in-progress while a rewrite holds it, writing nothing', async () => {
+    it('answers every macrocycle write with 409 import-in-progress while an import holds it, and imports with 409 macrocycle-busy once their wait runs out, writing nothing', async () => {
       const before = await storedSets();
       const harness = await holdLock('exclusive');
       try {
-        for (const write of pageWrites()) {
+        const macrocycleWrites = [
+          { method: 'POST', url: `${base}/macrocycles`, body: {} },
+          { method: 'POST', url: `${base}/macrocycles/initialize`, body: { macrocycleDate: '2026-01-05' } },
+          { method: 'DELETE', url: `${base}/macrocycles/current` },
+        ];
+        for (const write of [...pageWrites(), ...macrocycleWrites]) {
           const res = await injectAs(USER_LOCK, write.method, write.url, write.body, macrocycleId);
           expect({ url: write.url, status: res.statusCode, code: res.json().code }).toEqual({
             url: write.url,
@@ -443,8 +455,10 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
           });
         }
         for (const url of imports) {
-          const res = await upload(url);
-          expect({ url, status: res.statusCode, code: res.json().code }).toEqual({ url, status: 409, code: 'import-in-progress' });
+          const started = Date.now();
+          expectBusy(url, await upload(url));
+          // It waited for the lock rather than failing at once.
+          expect(Date.now() - started).toBeGreaterThanOrEqual(IMPORT_LOCK_WAIT_MS - 500);
         }
       } finally {
         harness.release();
@@ -452,23 +466,44 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       }
       expect(await storedSets()).toBe(before);
       expect(await owner.workoutSkipOverride.count({ where: { userId: USER_LOCK } })).toBe(0);
-      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: { not: 1 } } })).toBe(0);
-    });
+      expect((await owner.macrocycle.findMany({ where: { userId: USER_LOCK } })).map((row) => row.macrocycleNum)).toEqual([1]);
+      expect((await owner.macrocycleDashboard.findFirstOrThrow({ where: { userId: USER_LOCK } })).macrocycleNum).toBe(1);
+    }, LOCKED_TEST_TIMEOUT_MS);
 
-    it('lets page writes share it, while an import has to wait for them', async () => {
+    it('lets page writes share it, and an import waits for them to finish', async () => {
       const harness = await holdLock('shared');
+      let released = false;
       try {
         const write = await injectAs(USER_LOCK, 'POST', `${base}/macrocycles/1/workouts/1/skip`, {}, macrocycleId);
         expect(write.statusCode).toBe(204);
-        for (const url of imports) {
-          const res = await upload(url);
-          expect({ url, status: res.statusCode, code: res.json().code }).toEqual({ url, status: 409, code: 'import-in-progress' });
-        }
+        const pending = upload(commitImport);
+        await waitForBlockedBy(harness.pid);
+        harness.release();
+        released = true;
+        const res = await pending;
+        expect(res.statusCode).toBe(200);
+        batchId = res.json().batchId;
+      } finally {
+        if (!released) harness.release();
+        await harness.done;
+      }
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 4 } })).toBe(1);
+    }, LOCKED_TEST_TIMEOUT_MS);
+
+    it('answers an import and an import undo with 409 macrocycle-busy when page writes hold it past the wait, writing nothing', async () => {
+      expect(batchId).not.toBe('');
+      const harness = await holdLock('shared');
+      try {
+        expectBusy(commitImport, await upload(commitImport));
+        const undo = `${base}/import/${batchId}/undo`;
+        expectBusy(undo, await injectAs(USER_LOCK, 'POST', undo));
+        expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 4 } })).toBe(1);
       } finally {
         harness.release();
         await harness.done;
       }
+      expect((await injectAs(USER_LOCK, 'POST', `${base}/import/${batchId}/undo`)).statusCode).toBe(200);
       expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 4 } })).toBe(0);
-    });
+    }, LOCKED_TEST_TIMEOUT_MS);
   });
 });

@@ -14,6 +14,8 @@
  * decides which web origins may issue browser calls to the API at all.
  */
 
+import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
+
 /**
  * Deployed web origins, allowed in every environment.
  *
@@ -90,4 +92,19 @@ export function resolveCorsOrigins(
     origins.push(...LOCAL_DEV_ORIGINS);
   }
   return origins;
+}
+
+/**
+ * The options `main.ts` passes to `app.enableCors()`, shared with `cors.preflight.spec.ts` so
+ * the spec tests the real config. A request header the browser sends that isn't in
+ * `allowedHeaders` fails its preflight, and the browser blocks the request outright (#766).
+ */
+export function corsOptions(origin: string[] = resolveCorsOrigins()) {
+  return {
+    origin,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    // Workout pages send their macrocycle's stable id with each write (#1198).
+    allowedHeaders: ['Authorization', 'Content-Type', MACROCYCLE_ID_HEADER],
+    maxAge: 3600,
+  };
 }

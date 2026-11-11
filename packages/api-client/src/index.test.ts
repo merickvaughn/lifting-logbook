@@ -393,6 +393,55 @@ describe('createApiClient', () => {
     });
   });
 
+  describe('imports while workouts are being saved (#1198)', () => {
+    const file = new File(['a,b\n1,2'], 'records.csv', { type: 'text/csv' });
+    const busy = (action: string) =>
+      new Response(
+        JSON.stringify({
+          statusCode: 409,
+          code: 'macrocycle-busy',
+          message: `Your workouts are being saved. Try the ${action} again in a moment.`,
+        }),
+        { status: 409 },
+      );
+    const retry = [
+      { row: 0, code: 'UNEXPECTED_ERROR', message: 'Your workouts are being saved. Try the import again in a moment.' },
+    ];
+
+    it('importLiftRecords shows the retry message of a 409 macrocycle-busy', async () => {
+      mockFetch.mockResolvedValue(busy('import'));
+      await expect(makeClient().importLiftRecords('5-3-1', file)).resolves.toEqual({ ok: false, errors: retry });
+    });
+
+    it('commitImport shows the retry message of a 409 macrocycle-busy', async () => {
+      mockFetch.mockResolvedValue(busy('import'));
+      await expect(makeClient().commitImport('5-3-1', file, 'lift-records')).resolves.toEqual({ ok: false, errors: retry });
+    });
+
+    it('commitImport keeps the generic message for a 409 with another code', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ code: 'other', message: 'no' }), { status: 409 }));
+      await expect(makeClient().commitImport('5-3-1', file, 'lift-records')).resolves.toEqual({
+        ok: false,
+        errors: [{ row: 0, code: 'UNEXPECTED_ERROR', message: 'Unexpected error (HTTP 409)' }],
+      });
+    });
+
+    it('undoImport throws the retry message and code of a 409 macrocycle-busy', async () => {
+      mockFetch.mockResolvedValue(busy('undo'));
+      await expect(makeClient().undoImport('5-3-1', 'b-1')).rejects.toMatchObject({
+        name: 'ApiClientError',
+        status: 409,
+        code: 'macrocycle-busy',
+        message: 'Your workouts are being saved. Try the undo again in a moment.',
+      });
+    });
+
+    it('undoImport keeps its generic message for other failures', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'boom' }), { status: 500 }));
+      await expect(makeClient().undoImport('5-3-1', 'b-1')).rejects.toThrow('Undo import failed (HTTP 500)');
+    });
+  });
+
   describe('smart import (previewImport / commitImport)', () => {
     const file = new File(['a,b\n1,2'], 'records.csv', { type: 'text/csv' });
 

@@ -174,48 +174,116 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
     expect(log.mock.calls.some(([, message]) => message === 'Macrocycle write without an id (#1198)')).toBe(false);
   });
 
-  // The import routes' exclusive lock is covered against Postgres in macrocycle.db.e2e.spec.ts.
-  it('answers every page write with 409 import-in-progress while the lock is held', async () => {
+  /**
+   * The macrocycle writes that carry no id, but still take the lock (decision 13): starting the
+   * next macrocycle, initializing one, and deleting the current one.
+   */
+  const macrocycleWrites = [
+    { name: 'POST macrocycles', method: 'POST', url: `${base}/macrocycles`, body: {} },
+    { name: 'POST macrocycles/initialize', method: 'POST', url: `${base}/macrocycles/initialize`, body: { macrocycleDate: '2026-01-05' } },
+    { name: 'DELETE macrocycles/current', method: 'DELETE', url: `${base}/macrocycles/current` },
+  ];
+
+  const csv = ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes', '5-3-1,4,1,2025-03-03,Squat,1,200,5,'].join('\n');
+  const upload = (user: string, url: string) => {
+    const boundary = '----MacrocycleIdBoundary';
+    return app.getHttpAdapter().getInstance().inject({
+      method: 'POST',
+      url,
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${user}` },
+      payload: [
+        `--${boundary}`,
+        'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+        'Content-Type: text/csv',
+        '',
+        csv,
+        `--${boundary}--`,
+      ].join('\r\n'),
+    });
+  };
+  const commitImport = `${base}/import?mode=commit&destination=lift-records`;
+  const imports = [`${base}/lift-records/import`, commitImport];
+
+  // The same lock against Postgres, including the import's wait, is in macrocycle.db.e2e.spec.ts.
+  it('answers every page write and macrocycle start or delete with 409 import-in-progress while an import holds the lock', async () => {
     const user = await as('id-locked');
     const recordId = await logOne(user);
-    ((await user.repos()).macrocycle as InMemoryMacrocycleRepository).lockHeld = true;
+    ((await user.repos()).macrocycle as InMemoryMacrocycleRepository).lockHeld = 'exclusive';
 
-    for (const write of pageWrites(recordId)) {
+    for (const write of [...pageWrites(recordId), ...macrocycleWrites]) {
       const res = await user.inject(write.method, write.url, write.body, user.id);
       expect({ route: write.name, status: res.statusCode }).toEqual({ route: write.name, status: 409 });
       expect(res.json()).toMatchObject({ code: 'import-in-progress' });
     }
-    expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).toHaveLength(1);
+    const repos = await user.repos();
+    expect(await repos.liftRecord.getLiftRecords(PROGRAM, 1)).toHaveLength(1);
+    expect((await repos.macrocycleDashboard.getMacrocycleDashboard(PROGRAM)).macrocycleNum).toBe(1);
+    expect((await repos.macrocycle.list(PROGRAM)).map((row) => row.macrocycleNum)).toEqual([1]);
   });
 
-  it('answers both import routes with 409 import-in-progress while the lock is held, writing nothing', async () => {
-    const user = await as('id-locked-import');
-    ((await user.repos()).macrocycle as InMemoryMacrocycleRepository).lockHeld = true;
-    const csv = ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes', '5-3-1,4,1,2025-03-03,Squat,1,200,5,'].join('\n');
-    const upload = (url: string) => {
-      const boundary = '----MacrocycleIdBoundary';
-      return app.getHttpAdapter().getInstance().inject({
-        method: 'POST',
-        url,
-        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: 'Bearer id-locked-import' },
-        payload: [
-          `--${boundary}`,
-          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
-          'Content-Type: text/csv',
-          '',
-          csv,
-          `--${boundary}--`,
-        ].join('\r\n'),
-      });
-    };
+  it('lets page writes and macrocycle starts share the lock with other page writes', async () => {
+    const user = await as('id-shared');
+    await logOne(user);
+    ((await user.repos()).macrocycle as InMemoryMacrocycleRepository).lockHeld = 'shared';
 
-    for (const url of [`${base}/lift-records/import`, `${base}/import?mode=commit&destination=lift-records`]) {
-      const res = await upload(url);
+    expect((await user.inject('POST', `${base}/macrocycles/1/workouts/1/skip`, {}, user.id)).statusCode).toBe(204);
+    expect((await user.inject('POST', `${base}/macrocycles`, {})).statusCode).toBe(201);
+  });
+
+  it('answers both import routes with 409 macrocycle-busy when page writes hold the lock past the wait, writing nothing', async () => {
+    const user = await as('id-busy-import');
+    ((await user.repos()).macrocycle as InMemoryMacrocycleRepository).lockHeld = 'shared';
+
+    for (const url of imports) {
+      const res = await upload('id-busy-import', url);
       expect({ url, status: res.statusCode }).toEqual({ url, status: 409 });
-      expect(res.json()).toMatchObject({ code: 'import-in-progress' });
+      expect(res.json()).toMatchObject({
+        code: 'macrocycle-busy',
+        message: 'Your workouts are being saved. Try the import again in a moment.',
+      });
     }
     const repos = await user.repos();
     expect(await repos.liftRecord.getLiftRecords(PROGRAM, 4)).toEqual([]);
     expect(await repos.macrocycle.findByNumber(PROGRAM, 4)).toBeNull();
+  });
+
+  it('answers an import undo with 409 macrocycle-busy while page writes hold the lock, removing nothing', async () => {
+    const user = await as('id-busy-undo');
+    const commit = await upload('id-busy-undo', commitImport);
+    expect(commit.statusCode).toBe(200);
+    const { batchId } = commit.json() as { batchId: string };
+    const macrocycles = (await user.repos()).macrocycle as InMemoryMacrocycleRepository;
+    macrocycles.lockHeld = 'shared';
+
+    const res = await user.inject('POST', `${base}/import/${batchId}/undo`);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({
+      code: 'macrocycle-busy',
+      message: 'Your workouts are being saved. Try the undo again in a moment.',
+    });
+    const repos = await user.repos();
+    expect(await repos.liftRecord.getLiftRecords(PROGRAM, 4)).toHaveLength(1);
+    expect(await repos.macrocycle.findByNumber(PROGRAM, 4)).not.toBeNull();
+
+    macrocycles.lockHeld = null;
+    expect((await user.inject('POST', `${base}/import/${batchId}/undo`)).statusCode).toBe(200);
+    expect(await repos.macrocycle.findByNumber(PROGRAM, 4)).toBeNull();
+  });
+
+  it('gives no id, rather than a 409, when the current macrocycle has no row and an import holds the lock', async () => {
+    const user = await as('id-read-locked');
+    const macrocycles = (await user.repos()).macrocycle as InMemoryMacrocycleRepository;
+    // A macrocycle the previous API revision started without a row.
+    await macrocycles.delete(PROGRAM, [1]);
+    macrocycles.lockHeld = 'exclusive';
+
+    const locked = await user.inject('GET', `${base}/workouts/1`);
+    expect(locked.statusCode).toBe(200);
+    expect((locked.json() as WorkoutResponse).macrocycleId).toBeUndefined();
+    expect(await macrocycles.findByNumber(PROGRAM, 1)).toBeNull();
+
+    macrocycles.lockHeld = null;
+    const read = await user.inject('GET', `${base}/workouts/1`);
+    expect((read.json() as WorkoutResponse).macrocycleId).toBe((await macrocycles.findByNumber(PROGRAM, 1))?.id);
   });
 });

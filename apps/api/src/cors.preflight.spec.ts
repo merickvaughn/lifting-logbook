@@ -4,7 +4,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
-import { resolveCorsOrigins } from './cors.config';
+import { corsOptions, resolveCorsOrigins } from './cors.config';
 
 // Deterministic, network-free proof that `app.enableCors()` on the Fastify adapter
 // actually answers a CORS preflight with the allowlist from cors.config.ts. This
@@ -37,12 +37,8 @@ describe('CORS preflight wiring (enableCors + Fastify adapter)', () => {
       new FastifyAdapter(),
       { logger: false },
     );
-    app.enableCors({
-      origin: resolveCorsOrigins(undefined, 'production'),
-      methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
-      allowedHeaders: ['Authorization', 'Content-Type'],
-      maxAge: 3600,
-    });
+    // The options main.ts uses, with the deployed allowlist.
+    app.enableCors(corsOptions(resolveCorsOrigins(undefined, 'production')));
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
   });
@@ -51,14 +47,14 @@ describe('CORS preflight wiring (enableCors + Fastify adapter)', () => {
     await app.close();
   });
 
-  function preflight(origin: string) {
+  function preflight(origin: string, requestHeaders = 'authorization,content-type') {
     return app.getHttpAdapter().getInstance().inject({
       method: 'OPTIONS',
       url: '/programs/5-3-1/macrocycles/1/workouts/1/reschedule',
       headers: {
         origin,
         'access-control-request-method': 'PATCH',
-        'access-control-request-headers': 'authorization,content-type',
+        'access-control-request-headers': requestHeaders,
       },
     });
   }
@@ -77,6 +73,12 @@ describe('CORS preflight wiring (enableCors + Fastify adapter)', () => {
   it('answers a preflight from the project-number Cloud Run origin (the one the staging suite loads from)', async () => {
     const res = await preflight(ALLOWED_CLOUD_RUN);
     expect(res.headers['access-control-allow-origin']).toBe(ALLOWED_CLOUD_RUN);
+  });
+
+  it('allows the macrocycle id header a workout page sends with its writes (#1198)', async () => {
+    const res = await preflight(ALLOWED, 'authorization,content-type,x-macrocycle-id');
+    expect([200, 204]).toContain(res.statusCode);
+    expect(String(res.headers['access-control-allow-headers']).toLowerCase().split(/,\s*/)).toContain('x-macrocycle-id');
   });
 
   it('does NOT reflect a disallowed origin', async () => {

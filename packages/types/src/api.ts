@@ -110,6 +110,12 @@ export interface WorkoutLiftResponse {
   occurrence?: number;
 }
 
+/**
+ * The request header a page sends its macrocycle's stable id in
+ * ({@link WorkoutResponse.macrocycleId}, #1198). The API's CORS config allows it.
+ */
+export const MACROCYCLE_ID_HEADER = 'X-Macrocycle-Id';
+
 /** Serialized workout as returned by the API. */
 export interface WorkoutResponse {
   program: string;

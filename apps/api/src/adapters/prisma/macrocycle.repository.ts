@@ -3,12 +3,7 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { MacrocycleOrigin, MacrocycleStatus } from '@lifting-logbook/types';
 import { trace } from '@opentelemetry/api';
 import { MacrocycleNumberConflictError } from '../../ports/errors';
-import {
-  IMacrocycleRepository,
-  MacrocycleLockMode,
-  MacrocycleRow,
-  NewMacrocycle,
-} from '../../ports/IMacrocycleRepository';
+import { IMacrocycleRepository, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
 
 function toRow(row: Macrocycle): MacrocycleRow {
   return {
@@ -27,11 +22,21 @@ function toRow(row: Macrocycle): MacrocycleRow {
 }
 
 /**
- * The first key of the two-key advisory lock form, so this lock can't collide with another
- * feature's lock on the same user hash. Arbitrary, but fixed: #1199's renumbering takes the same
- * key.
+ * The seed of the lock key's hash, `hashtextextended(userId, 1171)`, so this lock's keys differ
+ * from another feature's keys on the same user. Arbitrary, but fixed: #1199's renumbering takes
+ * the same key. The 64-bit hash makes two users sharing a key vanishingly unlikely; a 32-bit one
+ * would collide within a few tens of thousands of users.
  */
 export const MACROCYCLE_LOCK_NAMESPACE = 1171;
+
+/** Postgres's `lock_not_available`, raised when a lock wait reaches `lock_timeout`. */
+const LOCK_NOT_AVAILABLE = '55P03';
+
+function isLockTimeout(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const meta = (err as { meta?: { code?: unknown } }).meta;
+  return meta?.code === LOCK_NOT_AVAILABLE || err.message.includes(LOCK_NOT_AVAILABLE);
+}
 
 const tracer = trace.getTracer('prisma-macrocycle-repository');
 
@@ -41,21 +46,45 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     private readonly userId: string,
   ) {}
 
-  async tryLock(mode: MacrocycleLockMode): Promise<boolean> {
-    // Raw SQL isn't auto-traced (ADR-024), hence the manual span. The `_xact_` forms release at
-    // the end of the request's transaction (RlsInterceptor), so nothing has to unlock.
+  // Raw SQL isn't auto-traced (ADR-024), hence the manual spans. The `_xact_` forms release at
+  // the end of the request's transaction (RlsInterceptor), so nothing has to unlock.
+
+  async tryLockShared(): Promise<boolean> {
     return tracer.startActiveSpan('macrocycle.try_lock', async (span) => {
       try {
-        span.setAttribute('lock.mode', mode);
-        const rows =
-          mode === 'shared'
-            ? await this.prisma.$queryRaw<{ locked: boolean }[]>`
-                SELECT pg_try_advisory_xact_lock_shared(${MACROCYCLE_LOCK_NAMESPACE}::int, hashtext(${this.userId})) AS locked`
-            : await this.prisma.$queryRaw<{ locked: boolean }[]>`
-                SELECT pg_try_advisory_xact_lock(${MACROCYCLE_LOCK_NAMESPACE}::int, hashtext(${this.userId})) AS locked`;
+        span.setAttribute('lock.mode', 'shared');
+        const rows = await this.prisma.$queryRaw<{ locked: boolean }[]>`
+          SELECT pg_try_advisory_xact_lock_shared(hashtextextended(${this.userId}, ${MACROCYCLE_LOCK_NAMESPACE})) AS locked`;
         const locked = rows[0]?.locked === true;
         span.setAttribute('lock.acquired', locked);
         return locked;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
+  async lockExclusive(waitMs: number): Promise<boolean> {
+    return tracer.startActiveSpan('macrocycle.lock', async (span) => {
+      try {
+        span.setAttribute('lock.mode', 'exclusive');
+        span.setAttribute('lock.wait_ms', waitMs);
+        const settings = await this.prisma.$queryRaw<{ previous: string }[]>`
+          SELECT current_setting('lock_timeout') AS previous`;
+        await this.prisma.$queryRaw`SELECT set_config('lock_timeout', ${`${waitMs}ms`}, true)`;
+        try {
+          // void doesn't deserialize, hence the cast.
+          await this.prisma.$queryRaw`
+            SELECT pg_advisory_xact_lock(hashtextextended(${this.userId}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`;
+        } catch (err) {
+          // The failed statement aborts the transaction, which the caller's 409 rolls back.
+          if (!isLockTimeout(err)) throw err;
+          span.setAttribute('lock.acquired', false);
+          return false;
+        }
+        await this.prisma.$queryRaw`SELECT set_config('lock_timeout', ${settings[0]?.previous ?? '0'}, true)`;
+        span.setAttribute('lock.acquired', true);
+        return true;
       } finally {
         span.end();
       }

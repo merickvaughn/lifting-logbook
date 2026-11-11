@@ -26,18 +26,20 @@ export interface NewMacrocycle {
   origin: MacrocycleOrigin;
 }
 
-/**
- * The user's macrocycle write lock (proposal decision 13). Page writes take it `shared`, so
- * they run side by side; imports take it `exclusive`, so nothing writes while one runs.
- */
-export type MacrocycleLockMode = 'shared' | 'exclusive';
-
 export interface IMacrocycleRepository {
   /**
-   * Tries to take the user's macrocycle write lock until the request's transaction ends, without
-   * waiting. False when a conflicting holder has it.
+   * Takes the user's macrocycle write lock (proposal decision 13) in shared mode until the
+   * request's transaction ends, without waiting. Page writes share it, so they run side by side.
+   * False when an import holds it exclusively.
    */
-  tryLock(mode: MacrocycleLockMode): Promise<boolean>;
+  tryLockShared(): Promise<boolean>;
+
+  /**
+   * Takes the same lock exclusively until the request's transaction ends, so nothing else writes
+   * to the user's macrocycles while an import runs. Waits up to `waitMs` for the page writes
+   * holding it to finish; false if they haven't by then.
+   */
+  lockExclusive(waitMs: number): Promise<boolean>;
 
   /** Every macrocycle of a program, in start-date order, ties by number. */
   list(program: string): Promise<MacrocycleRow[]>;

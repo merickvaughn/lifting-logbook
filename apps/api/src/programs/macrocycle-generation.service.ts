@@ -23,6 +23,7 @@ import { StartNewMacrocycleDto } from './start-new-macrocycle.dto';
 import {
   assertMacrocycleWritable,
   checkMacrocycleId,
+  lockForMacrocycleWrite,
   closingStatus,
   ensureCurrentRow,
   nextMacrocycleNumber,
@@ -186,10 +187,13 @@ export class MacrocycleGenerationService {
   ): Promise<MacrocycleGenerationResult> {
     const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program);
     const sourceMacrocycleNum = dto.fromMacrocycleNum ?? dashboard.macrocycleNum;
-    // A stale page's source id is a 409 (decision 3). Imported history can't feed the training
-    // maxes, and a number with no macrocycle has no records to feed them (decision 2).
+    // Every start takes the macrocycle lock, so an import can't renumber under it (decision
+    // 13). A stale page's source id is a 409 (decision 3). Imported history can't feed the
+    // training maxes, and a number with no macrocycle has no records to feed them (decision 2).
     if (dto.fromMacrocycleNum !== undefined) {
       await checkMacrocycleId(repos, program, dto.fromMacrocycleNum, macrocycleId, 'POST macrocycles');
+    } else {
+      await lockForMacrocycleWrite(repos);
     }
     const closingRow = await ensureCurrentRow(repos, dashboard);
     if (dto.fromMacrocycleNum !== undefined) {
@@ -288,6 +292,8 @@ export class MacrocycleGenerationService {
     program: string,
     dto: { macrocycleDate?: string } = {},
   ): Promise<MacrocycleGenerationResult> {
+    // It creates the first macrocycle row, so it takes the macrocycle lock (decision 13).
+    await lockForMacrocycleWrite(repos);
     // Guard: fail fast if a macrocycle already exists for this user+program
     try {
       await repos.macrocycleDashboard.getMacrocycleDashboard(program);
@@ -387,6 +393,8 @@ export class MacrocycleGenerationService {
     >,
     program: string,
   ): Promise<void> {
+    // It removes macrocycle rows, so it takes the macrocycle lock (decision 13).
+    await lockForMacrocycleWrite(repos);
     await repos.macrocycleDashboard.getMacrocycleDashboard(program);
     // Imported history survives a delete with its records (proposal decision 2); `live` and
     // `legacy` macrocycles go, from every table that holds a number.

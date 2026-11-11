@@ -26,15 +26,23 @@ export function macrocycleRowFixture(macrocycleNum: number, overrides: Partial<M
 export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
   private readonly rows: MacrocycleRow[] = [];
 
-  /** Set to make every {@link tryLock} fail, as if another writer held the lock. */
-  lockHeld = false;
+  /**
+   * Who else holds the user's macrocycle lock, for tests: `exclusive` (an import) makes every
+   * lock fail, and `shared` (a page write) makes only the exclusive one fail, as if its wait ran
+   * out.
+   */
+  lockHeld: 'shared' | 'exclusive' | null = null;
 
   constructor(seed: readonly MacrocycleRow[] = []) {
     this.rows.push(...seed.map((row) => ({ ...row })));
   }
 
-  async tryLock(): Promise<boolean> {
-    return !this.lockHeld;
+  async tryLockShared(): Promise<boolean> {
+    return this.lockHeld !== 'exclusive';
+  }
+
+  async lockExclusive(): Promise<boolean> {
+    return this.lockHeld === null;
   }
 
   async findById(id: string): Promise<MacrocycleRow | null> {

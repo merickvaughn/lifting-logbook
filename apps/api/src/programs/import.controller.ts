@@ -64,7 +64,7 @@ import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
-import { removeEmptyLegacyRows, splitLegacyRowKeys } from './macrocycle-history.util';
+import { lockForImport, removeEmptyLegacyRows, splitLegacyRowKeys } from './macrocycle-history.util';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
 import {
@@ -300,6 +300,8 @@ export class ImportController {
       : [];
 
     if (batch.destination === 'lift-records') {
+      // The undo removes macrocycle rows, so it holds the lock exclusively, as the import did.
+      await lockForImport(repos, 'undo');
       // Collect all created keys and delete in a single query to avoid N+1 round-trips
       const { setKeys: createdKeys, legacyNums } = splitLegacyRowKeys(
         Object.entries(batch.preImage)

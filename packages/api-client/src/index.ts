@@ -46,6 +46,9 @@ import type {
   UserSettingsResponse,
   WorkoutResponse,
 } from '@lifting-logbook/types';
+import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
+
+export { MACROCYCLE_ID_HEADER };
 
 // ---------------------------------------------------------------------------
 // @lifting-logbook/api-client
@@ -180,9 +183,6 @@ export class ApiClientError extends Error {
   }
 }
 
-/** The header a workout page sends its macrocycle's stable id in (#1198). */
-export const MACROCYCLE_ID_HEADER = 'X-Macrocycle-Id';
-
 // NestJS ValidationPipe returns { statusCode, message: string | string[], error }.
 // Surface that detail so error UIs can show actionable text instead of just
 // "Request failed: 400".
@@ -201,6 +201,17 @@ async function readError(res: Response, path: string): Promise<ApiClientError> {
       ? raw
       : `API ${res.status} ${res.statusText} for ${path}`;
   return new ApiClientError(message, res.status, typeof body?.code === 'string' ? body.code : undefined, body);
+}
+
+/**
+ * The errors a failed import shows. A 409 `macrocycle-busy` (#1198) has no `errors`, but its
+ * message asks the importer to try again, so it's shown rather than a bare HTTP status.
+ */
+function importFailureErrors(status: number, body: { errors?: ImportError[]; code?: unknown; message?: unknown }): ImportError[] {
+  if (body.errors) return body.errors;
+  const message =
+    body.code === 'macrocycle-busy' && typeof body.message === 'string' ? body.message : `Unexpected error (HTTP ${status})`;
+  return [{ row: 0, code: 'UNEXPECTED_ERROR', message }];
 }
 
 async function extractErrorMessage(res: Response, path: string): Promise<string> {
@@ -462,11 +473,8 @@ export function createApiClient(config: ApiClientConfig) {
       if (res.status === 201) {
         return { ok: true, data: (await res.json()) as ImportLiftRecordsResponse };
       }
-      const body = (await res.json()) as { errors?: ImportError[] };
-      return {
-        ok: false,
-        errors: body.errors ?? [{ row: 0, code: 'UNEXPECTED_ERROR', message: `Unexpected error (HTTP ${res.status})` }],
-      };
+      const body = (await res.json()) as { errors?: ImportError[]; code?: unknown; message?: unknown };
+      return { ok: false, errors: importFailureErrors(res.status, body) };
     },
 
     // -- Smart import (classify → preview → commit any CSV) ----------------
@@ -512,11 +520,8 @@ export function createApiClient(config: ApiClientConfig) {
       if (res.ok) {
         return { ok: true, data: (await res.json()) as ImportCommitResponse };
       }
-      const body = (await res.json().catch(() => ({}))) as { errors?: ImportError[] };
-      return {
-        ok: false,
-        errors: body.errors ?? [{ row: 0, code: 'UNEXPECTED_ERROR', message: `Unexpected error (HTTP ${res.status})` }],
-      };
+      const body = (await res.json().catch(() => ({}))) as { errors?: ImportError[]; code?: unknown; message?: unknown };
+      return { ok: false, errors: importFailureErrors(res.status, body) };
     },
     /**
      * Smart Import — reports the counts `commitImport` would return for these same
@@ -548,11 +553,15 @@ export function createApiClient(config: ApiClientConfig) {
      * updated records, deletes newly created rows, and skips rows edited since import.
      */
     async undoImport(program: string, batchId: string): Promise<ImportUndoResponse> {
-      const res = await rawFetch(`/programs/${enc(program)}/import/${enc(batchId)}/undo`, {
+      const path = `/programs/${enc(program)}/import/${enc(batchId)}/undo`;
+      const res = await rawFetch(path, {
         method: 'POST',
         cache: 'no-store',
       });
       if (!res.ok) {
+        // A 409 macrocycle-busy (#1198) carries a message asking to try again.
+        const err = await readError(res, path);
+        if (err.code === 'macrocycle-busy') throw err;
         throw new Error(`Undo import failed (HTTP ${res.status})`);
       }
       return (await res.json()) as ImportUndoResponse;

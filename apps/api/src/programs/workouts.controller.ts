@@ -102,7 +102,7 @@ export class WorkoutsController {
     // dashboard card derives its date from (issue #745).
     const macrocycleStartDate = 'macrocycleDate' in dashboard ? dashboard.macrocycleDate : undefined;
 
-    const macrocycleId = await macrocycleIdFor(repos, program, dashboard.macrocycleNum);
+    const macrocycleId = await macrocycleIdFor(repos, 'macrocycleDate' in dashboard ? dashboard : null);
     const response = toWorkoutResponse(program, dashboard.macrocycleNum, workoutNum, week, adjustedRecords, {
       overrideDate: overrideDate ?? undefined,
       plannedLifts: planned,
