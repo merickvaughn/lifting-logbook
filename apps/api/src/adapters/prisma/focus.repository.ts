@@ -11,7 +11,7 @@ import {
   FocusOnEnd,
   FocusOverlap,
   FocusPeriod,
-  toFocusProgression,
+  FOCUS_PROGRESSION_TYPES,
   FocusSelection,
 } from '@lifting-logbook/types';
 import { FocusBlockPatch, IFocusRepository } from '../../ports/IFocusRepository';
@@ -38,10 +38,9 @@ interface FocusBlockRow {
 
 // The enum columns carry CHECK constraints (migration 20261025000000_add_focus_work), so a
 // row's strings are always members of their unions; the JSON columns are parsed instead.
-// `progression` is the exception until migration 20261111120000_focus_progression_types has
-// run: a row may still hold `fixed` or `tm`, which read as `manual` and `percent_wave`.
+// `progression` is narrowed with a lookup instead of a cast, and a value outside the vocabulary throws.
 function toFocusBlock(row: FocusBlockRow): FocusBlock {
-  const progression = toFocusProgression(row.progression);
+  const progression = FOCUS_PROGRESSION_TYPES.find((type) => type === row.progression);
   if (progression === undefined) {
     throw new Error(`Focus block ${row.id} has an unknown progression: ${row.progression}`);
   }
