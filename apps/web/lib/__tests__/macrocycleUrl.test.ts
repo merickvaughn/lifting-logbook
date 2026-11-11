@@ -62,6 +62,11 @@ describe('writeFailureMessage', () => {
     expect(writeFailureMessage(new ApiClientError(msg, 409, 'macrocycle-not-current'), 'Failed.')).toBe(msg);
   });
 
+  it("shows the API's reload message for a page whose macrocycle no longer exists", () => {
+    const msg = "This page's macrocycle no longer exists. Reload the page to see the current one.";
+    expect(writeFailureMessage(new ApiClientError(msg, 404, 'macrocycle-not-found'), 'Failed.')).toBe(msg);
+  });
+
   it('falls back for anything else', () => {
     expect(writeFailureMessage(new ApiClientError('dup', 409), 'Failed.')).toBe('Failed.');
     expect(writeFailureMessage(new ApiClientError('moved', 409, 'macrocycle-moved'), 'Failed.')).toBe('Failed.');

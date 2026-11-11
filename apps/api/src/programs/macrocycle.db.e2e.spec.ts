@@ -403,7 +403,8 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       { method: 'POST', url: `${base}/macrocycles`, body: { fromMacrocycleNum: 1 } },
     ];
 
-    const upload = (url: string) => {
+    /** A one-set file for macrocycle `cycle`; each test imports its own, so none depends on another. */
+    const upload = (url: string, cycle = 4) => {
       const boundary = '----MacrocycleLockBoundary';
       return app.getHttpAdapter().getInstance().inject({
         method: 'POST',
@@ -414,7 +415,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
           'Content-Disposition: form-data; name="file"; filename="upload.csv"',
           'Content-Type: text/csv',
           '',
-          'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes\n5-3-1,4,1,2025-03-03,Squat,1,200,5,',
+          `Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes\n5-3-1,${cycle},1,2025-03-03,Squat,1,200,5,`,
           `--${boundary}--`,
         ].join('\r\n'),
       });
@@ -435,7 +436,6 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
     const storedSets = () => owner.liftRecord.count({ where: { userId: USER_LOCK } });
     const expectBusy = (url: string, res: { statusCode: number; json: () => { code?: string } }) =>
       expect({ url, status: res.statusCode, code: res.json().code }).toEqual({ url, status: 409, code: 'macrocycle-busy' });
-    let batchId = '';
 
     it('answers every macrocycle write with 409 import-in-progress while an import holds it, and imports with 409 macrocycle-busy once their wait runs out, writing nothing', async () => {
       const before = await storedSets();
@@ -482,7 +482,6 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         released = true;
         const res = await pending;
         expect(res.statusCode).toBe(200);
-        batchId = res.json().batchId;
       } finally {
         if (!released) harness.release();
         await harness.done;
@@ -490,20 +489,45 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 4 } })).toBe(1);
     }, LOCKED_TEST_TIMEOUT_MS);
 
+    // Postgres queues a no-wait shared request behind a waiting exclusive one, so while an
+    // import waits for page writes, a new page write is refused as if the import held the lock.
+    it('answers a page write with 409 import-in-progress, and a workout read with no id, while an import waits for the lock', async () => {
+      const harness = await holdLock('shared');
+      let released = false;
+      try {
+        const pending = upload(commitImport, 6);
+        await waitForBlockedBy(harness.pid);
+        const write = await injectAs(USER_LOCK, 'POST', `${base}/lift-records`, logBody(3), macrocycleId);
+        expect({ status: write.statusCode, code: write.json().code }).toEqual({ status: 409, code: 'import-in-progress' });
+        const read = await injectAs(USER_LOCK, 'GET', `${base}/workouts/1`);
+        expect(read.statusCode).toBe(200);
+        expect(read.json().macrocycleId).toBeUndefined();
+        harness.release();
+        released = true;
+        expect((await pending).statusCode).toBe(200);
+      } finally {
+        if (!released) harness.release();
+        await harness.done;
+      }
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 6 } })).toBe(1);
+    }, LOCKED_TEST_TIMEOUT_MS);
+
     it('answers an import and an import undo with 409 macrocycle-busy when page writes hold it past the wait, writing nothing', async () => {
-      expect(batchId).not.toBe('');
+      const committed = await upload(commitImport, 5);
+      expect(committed.statusCode).toBe(200);
+      const batchId: string = committed.json().batchId;
       const harness = await holdLock('shared');
       try {
-        expectBusy(commitImport, await upload(commitImport));
+        expectBusy(commitImport, await upload(commitImport, 5));
         const undo = `${base}/import/${batchId}/undo`;
         expectBusy(undo, await injectAs(USER_LOCK, 'POST', undo));
-        expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 4 } })).toBe(1);
+        expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 5 } })).toBe(1);
       } finally {
         harness.release();
         await harness.done;
       }
       expect((await injectAs(USER_LOCK, 'POST', `${base}/import/${batchId}/undo`)).statusCode).toBe(200);
-      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 4 } })).toBe(0);
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 5 } })).toBe(0);
     }, LOCKED_TEST_TIMEOUT_MS);
   });
 });

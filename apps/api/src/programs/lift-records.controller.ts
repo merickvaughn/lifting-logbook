@@ -257,12 +257,15 @@ export class LiftRecordsController {
     // custom lift can ever resolve here.
     const repos = await this.factory.forUser(user);
     const { liftRecord } = repos;
-    await lockForImport(repos);
 
     const { valid, errors } = validateLiftImport(parsed, await effectiveSlotMapFor(repos));
     if (errors.length > 0) {
       throw new BadRequestException({ message: 'Validation failed', errors });
     }
+
+    // After validation, so an invalid file gets its errors without waiting for the lock, and a
+    // valid one doesn't hold page writes off while it's checked. Before the reads it guards.
+    await lockForImport(repos);
 
     // Stamp each record with the route program before persisting, and pair each
     // with its 1-based CSV row number (via pairWithRowNumber, shared with the

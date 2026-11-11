@@ -202,7 +202,7 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
   ];
 
   const csv = ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes', '5-3-1,4,1,2025-03-03,Squat,1,200,5,'].join('\n');
-  const upload = (user: string, url: string) => {
+  const upload = (user: string, url: string, file = csv) => {
     const boundary = '----MacrocycleIdBoundary';
     return app.getHttpAdapter().getInstance().inject({
       method: 'POST',
@@ -213,7 +213,7 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
         'Content-Disposition: form-data; name="file"; filename="upload.csv"',
         'Content-Type: text/csv',
         '',
-        csv,
+        file,
         `--${boundary}--`,
       ].join('\r\n'),
     });
@@ -262,6 +262,19 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
     const repos = await user.repos();
     expect(await repos.liftRecord.getLiftRecords(PROGRAM, 4)).toEqual([]);
     expect(await repos.macrocycle.findByNumber(PROGRAM, 4)).toBeNull();
+  });
+
+  it('answers an invalid lift-records file with its validation errors, without waiting for the lock', async () => {
+    const user = await as('id-invalid-import');
+    const macrocycles = (await user.repos()).macrocycle as InMemoryMacrocycleRepository;
+    macrocycles.lockHeld = 'shared';
+    const lock = jest.spyOn(macrocycles, 'lockExclusive');
+    const invalid = csv.replace(',200,5,', ',heavy,5,');
+
+    const res = await upload('id-invalid-import', `${base}/lift-records/import`, invalid);
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ message: 'Validation failed' });
+    expect(lock).not.toHaveBeenCalled();
   });
 
   it('answers an import undo with 409 macrocycle-busy while page writes hold the lock, removing nothing', async () => {
@@ -320,7 +333,8 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
 
     const res = await user.inject(method, url, body, user.id);
     expect(res.statusCode).toBeLessThan(300);
-    expect(lock).toHaveBeenCalled();
+    // Once: a second, nested lock call would be a wasted round trip.
+    expect(lock).toHaveBeenCalledTimes(1);
     expect(read).toHaveBeenCalled();
     expect(lock.mock.invocationCallOrder[0]).toBeLessThan(read.mock.invocationCallOrder[0] ?? 0);
   });
@@ -332,7 +346,8 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
 
     const res = await user.inject('PUT', `${base}/workouts/1/focus-state`, { ...emptyFocusDayState(), dismissed: true }, user.id);
     expect(res.statusCode).toBe(409);
-    expect(res.json()).toMatchObject({ code: 'macrocycle-not-current', macrocycleNum: 1 });
+    // The body names the current macrocycle, the one a reload shows.
+    expect(res.json()).toMatchObject({ code: 'macrocycle-not-current', macrocycleNum: 2 });
     const repos = await user.repos();
     expect(await repos.focus.getDayState(PROGRAM, 1, 1)).toBeNull();
     expect(await repos.focus.getDayState(PROGRAM, 2, 1)).toBeNull();

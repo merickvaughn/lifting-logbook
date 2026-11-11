@@ -470,6 +470,19 @@ describe('WorkoutLogger — a renumbered macrocycle (#1198)', () => {
     expect(mockAssign).not.toHaveBeenCalled();
   });
 
+  it('asks for a reload, not a retry, when the macrocycle the page shows no longer exists', async () => {
+    const user = userEvent.setup();
+    const msg = "This page's macrocycle of '5-3-1' (id 'mc-a') no longer exists. Reload the page to see the current one.";
+    mockCreateLiftRecord.mockRejectedValue(new ApiClientError(msg, 404, 'macrocycle-not-found'));
+    render(<WorkoutLogger {...makeProps({ macrocycleId: 'mc-a' })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() => expect(screen.getByText(msg)).toBeInTheDocument());
+    expect(screen.queryByText('Failed to log set. Try again.')).not.toBeInTheDocument();
+    expect(mockAssign).not.toHaveBeenCalled();
+  });
+
   it('reports a duplicate-set 409 as before, without reloading', async () => {
     const user = userEvent.setup();
     mockCreateLiftRecord.mockRejectedValue(new ApiClientError('duplicate', 409));

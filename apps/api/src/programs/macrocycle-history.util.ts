@@ -142,23 +142,27 @@ function writesInProgress(action: 'import' | 'undo'): ConflictException {
   });
 }
 
+/** The page's id names no macrocycle, as when the one it showed was deleted and started again. */
 function unknownId(program: string, macrocycleId: string): NotFoundException {
   return new NotFoundException({
     statusCode: 404,
     code: 'macrocycle-not-found',
-    message: `Program '${program}' has no macrocycle with id '${macrocycleId}'.`,
+    message: `This page's macrocycle of '${program}' (id '${macrocycleId}') no longer exists. Reload the page to see the current one.`,
     error: 'Not Found',
   });
 }
 
-/** A route with no number got the id of a macrocycle that's no longer the current one. */
-function notCurrent(program: string, macrocycleNum: number): ConflictException {
+/**
+ * A route with no number got the id of a macrocycle that's no longer the current one.
+ * `currentNum` is the current macrocycle's number, which the body carries.
+ */
+function notCurrent(program: string, currentNum: number): ConflictException {
   return new ConflictException({
     statusCode: 409,
     code: 'macrocycle-not-current',
-    message: `This page is for macrocycle ${macrocycleNum} of '${program}', which is no longer the current one. Reload the page to see the current macrocycle.`,
+    message: `This page is for an earlier macrocycle of '${program}'. Macrocycle ${currentNum} is the current one. Reload the page to see it.`,
     error: 'Conflict',
-    macrocycleNum,
+    macrocycleNum: currentNum,
   });
 }
 
@@ -190,9 +194,11 @@ export async function lockForMacrocycleWrite(repos: Pick<RepositoryBundle, 'macr
  * can be counted. Returns the id's row, for {@link assertMacrocycleWritable} to reuse, or null
  * when the write had no id.
  *
- * `current` is for a route with no number, which writes to the current macrocycle: there a
- * different number means the page is for an older macrocycle, not that its macrocycle moved,
- * so the 409 is `macrocycle-not-current`. Reloading at the same number wouldn't help it.
+ * `current` is for a route with no number, which writes to the current macrocycle
+ * (`macrocycleNum`): there a different number means the page is for an older macrocycle, not
+ * that its macrocycle moved, so the 409 is `macrocycle-not-current`, carrying the current
+ * number. `locked` says the caller already took the lock, as a route with no number must
+ * before it reads the current one.
  */
 export async function checkMacrocycleId(
   repos: Pick<RepositoryBundle, 'macrocycle'>,
@@ -200,9 +206,9 @@ export async function checkMacrocycleId(
   macrocycleNum: number,
   macrocycleId: string | undefined,
   route: string,
-  { current = false }: { current?: boolean } = {},
+  { current = false, locked = false }: { current?: boolean; locked?: boolean } = {},
 ): Promise<MacrocycleRow | null> {
-  await lockForMacrocycleWrite(repos);
+  if (!locked) await lockForMacrocycleWrite(repos);
   if (!macrocycleId) {
     writeLogger.log({ route, program }, 'Macrocycle write without an id (#1198)');
     return null;
@@ -210,7 +216,7 @@ export async function checkMacrocycleId(
   const row = await repos.macrocycle.findById(macrocycleId);
   if (!row || row.program !== program) throw unknownId(program, macrocycleId);
   if (row.macrocycleNum !== macrocycleNum) {
-    throw current ? notCurrent(program, row.macrocycleNum) : moved(program, row.macrocycleNum);
+    throw current ? notCurrent(program, macrocycleNum) : moved(program, row.macrocycleNum);
   }
   return row;
 }

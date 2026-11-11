@@ -252,7 +252,10 @@ export class FocusWorkoutController {
     await lockForMacrocycleWrite(repos);
     const { macrocycleNum } = await currentMacrocycleOrFirst(repos, program);
     // The route has no number; the page's id must still name the current macrocycle.
-    await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'PUT focus-state', { current: true });
+    await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'PUT focus-state', {
+      current: true,
+      locked: true,
+    });
     return repos.focus.saveDayState(program, macrocycleNum, workoutNum, {
       modes: { ...dto.modes },
       picks: { ...dto.picks },

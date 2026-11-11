@@ -452,9 +452,14 @@ describe('createApiClient', () => {
       await expect(makeClient().deleteCurrentMacrocycle('5-3-1')).rejects.toMatchObject({ code: 'import-in-progress' });
     });
 
-    it('undoImport keeps its generic message for other failures', async () => {
-      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'boom' }), { status: 500 }));
-      await expect(makeClient().undoImport('5-3-1', 'b-1')).rejects.toThrow('Undo import failed (HTTP 500)');
+    it('undoImport keeps its generic message for other failures, with the status and code', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'boom', code: 'oops' }), { status: 500 }));
+      await expect(makeClient().undoImport('5-3-1', 'b-1')).rejects.toMatchObject({
+        name: 'ApiClientError',
+        status: 500,
+        code: 'oops',
+        message: 'Undo import failed (HTTP 500)',
+      });
     });
   });
 
