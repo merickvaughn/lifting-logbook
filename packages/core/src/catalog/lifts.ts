@@ -1,4 +1,25 @@
-import { Lift, MuscleTargets } from '@lifting-logbook/types';
+import { Lift, MuscleTargets, ProgressionType } from '@lifting-logbook/types';
+
+/**
+ * A built-in lift's default progression: its type and, where the type needs one, its rep
+ * range. It applies to a lift with no value of its own when the lifter hasn't set a default
+ * (see `resolveProgression`). It carries no increment: off-program the increment falls back
+ * to the lifter's `defaultWeightIncrement`, not to the catalog. `rpe` is never a catalog
+ * default, because it isn't selectable on a lift until per-set RPE logging exists.
+ */
+export interface CatalogProgression {
+  type: Exclude<ProgressionType, 'rpe'>;
+  repsLow?: number;
+  repsHigh?: number;
+}
+
+// The catalog defaults are a heuristic, not a citation, chosen by role classification:
+// `compound` lifts on straight sets of 5 (Rippetoe's Starting Strength), `accessory` lifts
+// on a common 8–12 double-progression range, and the loaded carry, which is measured in
+// distance or time rather than reps, on `manual`.
+const LINEAR_5: CatalogProgression = { type: 'linear', repsHigh: 5 };
+const DOUBLE_8_12: CatalogProgression = { type: 'double', repsLow: 8, repsHigh: 12 };
+const MANUAL: CatalogProgression = { type: 'manual' };
 
 /**
  * A built-in catalog entry: a {@link Lift} plus the data only built-ins carry.
@@ -13,10 +34,13 @@ import { Lift, MuscleTargets } from '@lifting-logbook/types';
  *     (issue #1015). Aliasing "Weighted Pull-ups" there, for instance, would flip it to a
  *     bodyweight-component lift. Import alone accepts them, through `buildImportSlotMap`,
  *     so a preset's own rows can be restored (issue #947).
+ *   - progression: the lift's default progression type and rep range (issue #1209); see
+ *     {@link CatalogProgression}.
  */
 export interface CatalogLift extends Lift {
   muscles: MuscleTargets;
   aliases?: readonly string[];
+  progression: CatalogProgression;
 }
 
 /**
@@ -57,16 +81,19 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     id: 'back-squat', name: 'Back Squat', classification: 'compound',
     movementProfile: { patterns: ['squat'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Quads', 'Glutes'], secondary: ['Adductors', 'Lower Back'] },
+    progression: LINEAR_5,
   },
   {
     id: 'front-squat', name: 'Front Squat', classification: 'compound',
     movementProfile: { patterns: ['squat'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Quads'], secondary: ['Glutes', 'Upper Back', 'Core'] },
+    progression: LINEAR_5,
   },
   {
     id: 'goblet-squat', name: 'Goblet Squat', classification: 'accessory',
     movementProfile: { patterns: ['squat'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Quads'], secondary: ['Glutes', 'Core'] },
+    progression: DOUBLE_8_12,
   },
 
   // --- Hip hinge pattern ---
@@ -74,21 +101,25 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     id: 'deadlift', name: 'Deadlift', classification: 'compound',
     movementProfile: { patterns: ['hinge'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Glutes', 'Hamstrings', 'Lower Back'], secondary: ['Quads', 'Traps', 'Upper Back', 'Forearms'] },
+    progression: LINEAR_5,
   },
   {
     id: 'romanian-deadlift', name: 'Romanian Deadlift', classification: 'compound',
     movementProfile: { patterns: ['hinge'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Hamstrings', 'Glutes'], secondary: ['Lower Back'] },
+    progression: LINEAR_5,
   },
   {
     id: 'hip-thrust', name: 'Hip Thrust', classification: 'accessory',
     movementProfile: { patterns: ['hinge'], jointActions: ['extension'], complexity: 'simple' },
     muscles: { primary: ['Glutes'], secondary: ['Hamstrings'] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'kb-swing', name: 'Kettlebell Swing', classification: 'accessory',
     movementProfile: { patterns: ['hinge'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Glutes', 'Hamstrings'], secondary: ['Lower Back', 'Core'] },
+    progression: DOUBLE_8_12,
   },
 
   // --- Vertical push pattern ---
@@ -96,11 +127,13 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     id: 'overhead-press', name: 'Overhead Press', classification: 'compound',
     movementProfile: { patterns: ['push', 'vertical'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Front Delts'], secondary: ['Triceps', 'Side Delts'] },
+    progression: LINEAR_5,
   },
   {
     id: 'push-press', name: 'Push Press', classification: 'compound',
     movementProfile: { patterns: ['push', 'vertical'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Front Delts'], secondary: ['Triceps', 'Side Delts', 'Quads'] },
+    progression: LINEAR_5,
   },
   // A dip drives the hands down along the torso — a vertical push by the torso rule above,
   // even though its chest emphasis gets it filed with bench pressing in some programs.
@@ -110,6 +143,7 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     movementProfile: { patterns: ['push', 'vertical'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     isBodyweightComponent: true,
     muscles: { primary: ['Chest', 'Triceps'], secondary: ['Front Delts'] },
+    progression: LINEAR_5,
   },
 
   // --- Horizontal push pattern ---
@@ -118,16 +152,19 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     aliases: ['Flat Bench Press'],
     movementProfile: { patterns: ['push', 'horizontal'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Chest'], secondary: ['Triceps', 'Front Delts'] },
+    progression: LINEAR_5,
   },
   {
     id: 'incline-bench-press', name: 'Incline Bench Press', classification: 'compound',
     movementProfile: { patterns: ['push', 'horizontal'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Chest'], secondary: ['Front Delts', 'Triceps'] },
+    progression: LINEAR_5,
   },
   {
     id: 'incline-db-press', name: 'Incline Dumbbell Press', classification: 'accessory',
     movementProfile: { patterns: ['push', 'horizontal'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Chest'], secondary: ['Front Delts', 'Triceps'] },
+    progression: DOUBLE_8_12,
     aliases: ['Incline DB Press'], // leangains
   },
 
@@ -137,24 +174,28 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     movementProfile: { patterns: ['pull', 'vertical'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     isBodyweightComponent: true,
     muscles: { primary: ['Lats'], secondary: ['Biceps', 'Upper Back'] },
+    progression: LINEAR_5,
   },
   {
     id: 'pull-up', name: 'Pull-up', classification: 'compound',
     movementProfile: { patterns: ['pull', 'vertical'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     isBodyweightComponent: true,
     muscles: { primary: ['Lats'], secondary: ['Biceps', 'Upper Back'] },
+    progression: LINEAR_5,
     aliases: ['Weighted Pull-ups'], // leangains, rpt
   },
   {
     id: 'lat-pulldown', name: 'Lat Pulldown', classification: 'accessory',
     movementProfile: { patterns: ['pull', 'vertical'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Lats'], secondary: ['Biceps'] },
+    progression: DOUBLE_8_12,
   },
   // The bar travels up along the torso — a vertical pull by the torso rule above.
   {
     id: 'upright-row', name: 'Upright Row', classification: 'accessory',
     movementProfile: { patterns: ['pull', 'vertical'], jointActions: ['abduction'], complexity: 'compound' },
     muscles: { primary: ['Side Delts', 'Traps'], secondary: ['Biceps'] },
+    progression: DOUBLE_8_12,
   },
 
   // --- Horizontal pull pattern ---
@@ -162,21 +203,25 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     id: 'barbell-row', name: 'Barbell Row', classification: 'compound',
     movementProfile: { patterns: ['pull', 'horizontal'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Upper Back', 'Lats'], secondary: ['Biceps', 'Rear Delts', 'Lower Back'] },
+    progression: LINEAR_5,
   },
   {
     id: 'db-row', name: 'Dumbbell Row', classification: 'accessory',
     movementProfile: { patterns: ['pull', 'horizontal'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Lats', 'Upper Back'], secondary: ['Biceps', 'Rear Delts'] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'cable-row', name: 'Cable Row', classification: 'accessory',
     movementProfile: { patterns: ['pull', 'horizontal'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Upper Back', 'Lats'], secondary: ['Biceps', 'Rear Delts'] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'face-pull', name: 'Face Pull', classification: 'accessory',
     movementProfile: { patterns: ['pull', 'horizontal'], jointActions: ['external-rotation'], complexity: 'simple' },
     muscles: { primary: ['Rear Delts'], secondary: ['Upper Back'] },
+    progression: DOUBLE_8_12,
   },
 
   // --- Carry pattern ---
@@ -186,6 +231,7 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     id: 'farmers-carry', name: "Farmer's Carry", classification: 'compound',
     movementProfile: { patterns: ['carry'], jointActions: [], complexity: 'compound' },
     muscles: { primary: ['Forearms', 'Traps'], secondary: ['Core'] },
+    progression: MANUAL,
   },
 
   // --- Common accessories ---
@@ -193,12 +239,14 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     id: 'cable-curl', name: 'Cable Curl', classification: 'accessory',
     movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
     muscles: { primary: ['Biceps'], secondary: ['Forearms'] },
+    progression: DOUBLE_8_12,
   },
   // A lateral raise abducts the arm; it presses nothing and pulls nothing, so it carries no tag.
   {
     id: 'lateral-raise', name: 'Lateral Raise', classification: 'accessory',
     movementProfile: { patterns: [], jointActions: ['abduction'], complexity: 'simple' },
     muscles: { primary: ['Side Delts'], secondary: [] },
+    progression: DOUBLE_8_12,
     aliases: ['Lateral Raises'], // leangains
   },
   // A curl, like Cable Curl above: a lone `pull` (knee flexion toward the body), no direction.
@@ -206,11 +254,13 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     id: 'leg-curl', name: 'Leg Curl', classification: 'accessory',
     movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
     muscles: { primary: ['Hamstrings'], secondary: [] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'calf-raise', name: 'Calf Raise', classification: 'accessory',
     movementProfile: { patterns: [], jointActions: ['extension'], complexity: 'simple' },
     muscles: { primary: ['Calves'], secondary: [] },
+    progression: DOUBLE_8_12,
     aliases: ['Calf Raises'], // leangains, rpt
   },
 
@@ -219,16 +269,19 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     id: 'arnold-press', name: 'Arnold Press', classification: 'accessory',
     movementProfile: { patterns: ['push', 'vertical'], jointActions: ['flexion', 'extension', 'external-rotation', 'internal-rotation'], complexity: 'compound' },
     muscles: { primary: ['Front Delts'], secondary: ['Side Delts', 'Triceps'] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'hammer-curl', name: 'Hammer Curl', classification: 'accessory',
     movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
     muscles: { primary: ['Biceps'], secondary: ['Forearms'] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'incline-db-curl', name: 'Incline Dumbbell Curl', classification: 'accessory',
     movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
     muscles: { primary: ['Biceps'], secondary: [] },
+    progression: DOUBLE_8_12,
   },
   // Triceps extensions mirror the curl rule: a lone `push` (the elbow extends away from the
   // body), no direction row.
@@ -236,52 +289,62 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     id: 'rope-pushdown', name: 'Rope Pushdown', classification: 'accessory',
     movementProfile: { patterns: ['push'], jointActions: ['extension'], complexity: 'simple' },
     muscles: { primary: ['Triceps'], secondary: [] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'overhead-extension', name: 'Overhead Extension', classification: 'accessory',
     movementProfile: { patterns: ['push'], jointActions: ['extension'], complexity: 'simple' },
     muscles: { primary: ['Triceps'], secondary: [] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'skull-crusher', name: 'Skull Crusher', classification: 'accessory',
     movementProfile: { patterns: ['push'], jointActions: ['extension'], complexity: 'simple' },
     muscles: { primary: ['Triceps'], secondary: [] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'chest-supported-row', name: 'Chest-Supported Row', classification: 'accessory',
     movementProfile: { patterns: ['pull', 'horizontal'], jointActions: ['flexion', 'extension'], complexity: 'compound' },
     muscles: { primary: ['Upper Back', 'Lats'], secondary: ['Biceps', 'Rear Delts'] },
+    progression: DOUBLE_8_12,
   },
   // Single-joint shoulder extension: a lone `pull`, like a curl, with no direction row.
   {
     id: 'straight-arm-pulldown', name: 'Straight-Arm Pulldown', classification: 'accessory',
     movementProfile: { patterns: ['pull'], jointActions: ['extension'], complexity: 'simple' },
     muscles: { primary: ['Lats'], secondary: [] },
+    progression: DOUBLE_8_12,
   },
   // A fly adducts the arm across the body; like a raise, it carries no tag.
   {
     id: 'cable-fly', name: 'Cable Fly', classification: 'accessory',
     movementProfile: { patterns: [], jointActions: ['adduction'], complexity: 'simple' },
     muscles: { primary: ['Chest'], secondary: ['Front Delts'] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'seated-calf-raise', name: 'Seated Calf Raise', classification: 'accessory',
     movementProfile: { patterns: [], jointActions: ['extension'], complexity: 'simple' },
     muscles: { primary: ['Calves'], secondary: [] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'cable-pull-through', name: 'Cable Pull-Through', classification: 'accessory',
     movementProfile: { patterns: ['hinge'], jointActions: ['extension'], complexity: 'simple' },
     muscles: { primary: ['Glutes'], secondary: ['Hamstrings'] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'cable-crunch', name: 'Cable Crunch', classification: 'accessory',
     movementProfile: { patterns: [], jointActions: ['flexion'], complexity: 'simple' },
     muscles: { primary: ['Core'], secondary: [] },
+    progression: DOUBLE_8_12,
   },
   {
     id: 'hanging-leg-raise', name: 'Hanging Leg Raise', classification: 'accessory',
     movementProfile: { patterns: [], jointActions: ['flexion'], complexity: 'simple' },
     muscles: { primary: ['Core'], secondary: [] },
+    progression: DOUBLE_8_12,
   },
 ];
