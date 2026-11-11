@@ -13,6 +13,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { PrismaClient } from '@prisma/client';
+import { Client } from 'pg';
 import { defaultFocusPool, defaultPoolEntry } from '@lifting-logbook/core';
 import {
   FocusBlockResponse,
@@ -186,56 +187,45 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
   });
 
   // Migration 20261111120000_focus_progression_types (#1213), run against blocks stored under
-  // the old focus vocabulary. Inside a transaction that is rolled back, so the schema and the
-  // other tests are untouched.
-  it('migrates fixed to manual and tm to percent_wave, keeping double and rpe', async () => {
+  // the old focus vocabulary. It runs as one query string, as Prisma Migrate sends it, by a
+  // table owner that is neither superuser nor BYPASSRLS, so the FORCE ROW LEVEL SECURITY
+  // handling is what lets its UPDATE see the rows. Everything happens inside a transaction
+  // that is rolled back, so the role, the schema and the other tests are untouched.
+  it('migrates fixed to manual and tm to percent_wave, keeping double and rpe, as a non-bypass owner', async () => {
     const migration = readFileSync(
       join(__dirname, '../../prisma/migrations/20261111120000_focus_progression_types/migration.sql'),
       'utf8',
     );
-    const statements = migration
-      .replace(/--.*$/gm, '')
-      .split(';')
-      .map((statement) => statement.trim())
-      .filter((statement) => statement.length > 0);
-    const OLD = ['double', 'fixed', 'tm', 'rpe'];
-    const ROLLBACK = new Error('rollback');
-
+    const client = new Client({ connectionString: OWNER_URL });
+    await client.connect();
     let migrated: Record<string, string> = {};
-    await expect(
-      prisma.$transaction(async (tx) => {
-        // The constraint as migration 20261025000000_add_focus_work created it.
-        await tx.$executeRawUnsafe('ALTER TABLE "focus_block" DROP CONSTRAINT "focus_block_progression_check"');
-        await tx.$executeRawUnsafe(
-          `ALTER TABLE "focus_block" ADD CONSTRAINT "focus_block_progression_check" CHECK ("progression" IN ('double', 'fixed', 'tm', 'rpe'))`,
+    try {
+      await client.query('BEGIN');
+      // The constraint as migration 20261025000000_add_focus_work created it.
+      await client.query('ALTER TABLE "focus_block" DROP CONSTRAINT "focus_block_progression_check"');
+      await client.query(
+        `ALTER TABLE "focus_block" ADD CONSTRAINT "focus_block_progression_check" CHECK ("progression" IN ('double', 'fixed', 'tm', 'rpe'))`,
+      );
+      for (const progression of ['double', 'fixed', 'tm', 'rpe']) {
+        await client.query(
+          `INSERT INTO "focus_block" ("id", "userId", "series", "area", "period", "align", "start", "selection", "overlap", "progression", "priority", "timer", "onEnd", "nextArea", "pool")
+           VALUES ($1, $2, $1, 'Biceps', 'monthly', 'calendar', '2026-10-01', 'rules', 'reduce', $3, 1, '{"prep":10,"set":45,"rest":60}', 'prompt', NULL, '[]')`,
+          [`migrate-${progression}`, USER_OTHER, progression],
         );
-        for (const progression of OLD) {
-          await tx.focusBlock.create({
-            data: {
-              id: `migrate-${progression}`,
-              userId: USER_OTHER,
-              series: `migrate-${progression}`,
-              area: 'Biceps',
-              period: 'monthly',
-              align: 'calendar',
-              start: new Date('2026-10-01'),
-              selection: 'rules',
-              overlap: 'reduce',
-              progression,
-              priority: 1,
-              timer: { prep: 10, set: 45, rest: 60 },
-              onEnd: 'prompt',
-              nextArea: null,
-              pool: [],
-            },
-          });
-        }
-        for (const statement of statements) await tx.$executeRawUnsafe(statement);
-        const rows = await tx.focusBlock.findMany({ where: { userId: USER_OTHER, id: { startsWith: 'migrate-' } } });
-        migrated = Object.fromEntries(rows.map((row) => [row.id.replace('migrate-', ''), row.progression]));
-        throw ROLLBACK;
-      }, { timeout: DB_E2E_HOOK_TIMEOUT_MS }),
-    ).rejects.toBe(ROLLBACK);
+      }
+      await client.query('CREATE ROLE "focus_migration_owner" NOSUPERUSER NOBYPASSRLS');
+      await client.query('ALTER TABLE "focus_block" OWNER TO "focus_migration_owner"');
+      await client.query('SET LOCAL ROLE "focus_migration_owner"');
+      await client.query(migration);
+      await client.query('RESET ROLE');
+      const { rows } = await client.query<{ id: string; progression: string }>(
+        `SELECT "id", "progression" FROM "focus_block" WHERE "id" LIKE 'migrate-%'`,
+      );
+      migrated = Object.fromEntries(rows.map((row) => [row.id.replace('migrate-', ''), row.progression]));
+    } finally {
+      await client.query('ROLLBACK');
+      await client.end();
+    }
 
     expect(migrated).toEqual({ double: 'double', fixed: 'manual', tm: 'percent_wave', rpe: 'rpe' });
     expect(await prisma.focusBlock.count({ where: { id: { startsWith: 'migrate-' } } })).toBe(0);

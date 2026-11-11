@@ -121,16 +121,51 @@ every row either way, and back on after it [7]. PostgreSQL runs a multi-statemen
 query string as one transaction [8], and Prisma Migrate sends a migration file that way, as the
 "cannot run inside a transaction block" error from `CREATE INDEX CONCURRENTLY` in a migration
 shows. So a failure leaves FORCE on. Until the migration has run, a read maps an old value to its
-new name.
+new name; that mapping is read-side only, and
+[#1220](https://github.com/merickvaughn/lifting-logbook/issues/1220) removes it. The DB e2e suite
+runs the file as one query, as a table owner that is neither superuser nor `BYPASSRLS`, so it fails
+if the FORCE handling is removed.
+
+**Deploy window and rollback.** Migrations run before the new API revision serves (ADR-027), so
+for a short window the old API reads rows the migration renamed. The old `prescribe` has no case
+for `manual` or `percent_wave` and throws, so the focus plan for such a block returns 500 until the
+new revision takes traffic. The web treats that like any failed focus plan (`loadFocusPlan`): the
+workout shows its planned lifts and the details page says the focus plan didn't load. The same
+fallback covers the next window, the new API with the old web, whose shape check doesn't know the
+new values. Block reads are unaffected, because the old repository casts the stored value without
+checking it, and only writes are validated. Rolling back the API alone after the migration has run hits the same
+500, so a rollback reverses the data first:
+
+```sql
+ALTER TABLE "focus_block" DROP CONSTRAINT "focus_block_progression_check";
+ALTER TABLE "focus_block" NO FORCE ROW LEVEL SECURITY;
+UPDATE "focus_block" SET "progression" = CASE "progression" WHEN 'manual' THEN 'fixed' WHEN 'percent_wave' THEN 'tm' END
+WHERE "progression" IN ('manual', 'percent_wave');
+ALTER TABLE "focus_block" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "focus_block" ADD CONSTRAINT "focus_block_progression_check"
+  CHECK ("progression" IN ('double', 'fixed', 'tm', 'rpe'));
+```
 
 Decision 4 changes for `percent_wave`. A block is one wave, so its training maxes carry into
 the successor: a successor lift that the block also had keeps the block's entry, with its max
-raised by the user's `defaultWeightIncrement` (a block belongs to no program, so it has no
-program increment). Other successor lifts still come from `defaultFocusPool(area)`, and the other
-progression types are unchanged. A `double` entry progresses in the prescription instead: once
-every rep in its `lastReps` reached `repsHigh`, it plans its weight plus the increment. Nothing
-extra is stored for that, so whatever writes `lastReps` must also write the weight those reps
-were done at.
+raised by the user's `defaultWeightIncrement`. Other successor lifts still come from
+`defaultFocusPool(area)`, and the other progression types are unchanged. The successor is stored
+on the first read after its block starts, so a max edited later in the block would otherwise never
+reach it: while the successor is still queued, an edit to a block's training max moves the
+successor's max for the same lift by the same amount, which keeps any edit already made to the
+successor. Other settings edits still don't follow
+([#1222](https://github.com/merickvaughn/lifting-logbook/issues/1222)).
+
+A `double` entry progresses in the prescription instead: once every rep in its `lastReps` reached
+`repsHigh`, it plans its weight plus the increment. Nothing extra is stored for that, so whatever
+writes `lastReps` must also write the weight those reps were done at
+([#1221](https://github.com/merickvaughn/lifting-logbook/issues/1221)).
+
+The two use different increments on purpose. A `double` bump is planned inside a workout, so it
+uses the increment that workout's weights round to: the program day's increment, or the user's
+default when the day has none, the same increment a `percent_wave` weight in that workout rounds to.
+A successor is created when focus blocks are read, outside any workout and any program, so it
+uses the user's default.
 
 ## References
 

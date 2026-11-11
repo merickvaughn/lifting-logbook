@@ -326,6 +326,31 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
         defaultFocusPool('Biceps').map((fresh) => (fresh.lift === 'Cable Curl' ? { ...curl, trainingMax: nextMax } : fresh)),
       );
     });
+
+    // The successor is stored on the first read after the block starts, so a max edited
+    // mid-block has to follow it there, keeping any edit already made to the successor.
+    it('carries a percent_wave max edited mid-block into the queued successor', async () => {
+      const other = as('focus-e2e-rollover-wave-edit');
+      const curl = entry('Cable Curl', { trainingMax: 40, percent: 80, repsHigh: 10 });
+      const biceps = (
+        await other.create(
+          blockBody({ area: 'Biceps', period: 'monthly', start: '2026-10-01', progression: 'percent_wave', onEnd: 'autoroll', nextArea: 'Biceps', pool: [curl] }),
+        )
+      ).json() as FocusBlockResponse;
+      const queued = () => other.list().then((list) => list.find((block) => block.series === biceps.series && block.id !== biceps.id));
+      const created = await queued();
+      expect(created).toMatchObject({ start: '2026-11-01', status: 'queued' });
+      expect(created?.pool.find((e) => e.lift === 'Cable Curl')?.trainingMax).toBe(41.25);
+
+      // The lifter raises the successor's own max by 5, then sets the running block's to 60.
+      const ownEdit = (created?.pool ?? []).map((e) => (e.lift === 'Cable Curl' ? { ...e, trainingMax: 46.25 } : e));
+      expect((await other.inject('PATCH', `/focus/blocks/${created?.id}?today=${TODAY}`, { pool: ownEdit })).statusCode).toBe(200);
+      expect((await other.inject('PATCH', `/focus/blocks/${biceps.id}?today=${TODAY}`, { pool: [{ ...curl, trainingMax: 60 }] })).statusCode).toBe(200);
+
+      const after = await queued();
+      expect(after?.pool.find((e) => e.lift === 'Cable Curl')?.trainingMax).toBe(66.25);
+      expect(after?.pool.filter((e) => e.lift !== 'Cable Curl')).toEqual(created?.pool.filter((e) => e.lift !== 'Cable Curl'));
+    });
   });
 
   describe('priority among blocks that have not ended', () => {

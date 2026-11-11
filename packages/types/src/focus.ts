@@ -74,19 +74,20 @@ export const FOCUS_PROGRESSION_TYPES = ['double', 'manual', 'percent_wave', 'rpe
 export type FocusProgression = (typeof FOCUS_PROGRESSION_TYPES)[number];
 
 /**
- * The values focus blocks used before they shared the progression vocabulary, and what
- * each became (#1213). `double` and `rpe` kept their names. Read until migration
- * `20261111120000_focus_progression_types` has run everywhere, and from clients built
- * before it.
+ * The values focus blocks stored before they shared the progression vocabulary, and what
+ * each became (#1213). `double` and `rpe` kept their names. Requests take only the new
+ * values; this is read-side only, until #1220 removes it.
  */
-export const LEGACY_FOCUS_PROGRESSION_VALUES: ReadonlyMap<string, FocusProgression> = new Map([
+const LEGACY_FOCUS_PROGRESSION_VALUES: ReadonlyMap<string, FocusProgression> = new Map([
   ['fixed', 'manual'],
   ['tm', 'percent_wave'],
 ]);
 
-/** A stored or requested focus progression in the current vocabulary; undefined if unknown. */
-export function toFocusProgression(value: unknown): FocusProgression | undefined {
-  if (typeof value !== 'string') return undefined;
+/**
+ * A stored focus progression in the current vocabulary, reading a value stored before
+ * migration `20261111120000_focus_progression_types` as its new name; undefined if unknown.
+ */
+export function toFocusProgression(value: string): FocusProgression | undefined {
   const current = FOCUS_PROGRESSION_TYPES.find((type) => type === value);
   return current ?? LEGACY_FOCUS_PROGRESSION_VALUES.get(value);
 }

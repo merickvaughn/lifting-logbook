@@ -5,10 +5,12 @@ import {
   blockStatus,
   defaultFocusPool,
   expandRollovers,
+  nextStart,
   parseIsoDate,
 } from '@lifting-logbook/core';
 import { DEFAULT_WEIGHT_INCREMENT, FocusBlock, FocusBlockResponse } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
+import { IFocusRepository } from '../ports/IFocusRepository';
 import { isValidWorkoutNum } from '../programs/mappers';
 import { currentMacrocycleOrFirst, resolveWorkoutDay } from '../programs/workout-day.util';
 
@@ -58,21 +60,60 @@ export function toFocusBlockResponse(block: FocusBlock, today: string): FocusBlo
  * Creation is idempotent on (series, start), so concurrent reads store each successor once;
  * the list is re-read afterwards so every caller sees the ids that were actually stored.
  *
- * A `percent_wave` successor's maxes go up by the user's default weight increment: a block
- * belongs to no program, so it has no program increment to use.
+ * A `percent_wave` successor's maxes go up by the user's default weight increment: the
+ * successor is created outside any workout, so there is no program increment to use
+ * (ADR-039, Amendment 2). Settings are read only when such a successor is due, which is
+ * once per block, not on every read.
  */
 export async function loadFocusBlocks(
   repos: Pick<RepositoryBundle, 'focus' | 'userSettings'>,
   today: string,
 ): Promise<FocusBlock[]> {
   const { focus } = repos;
-  const [blocks, settings] = await Promise.all([focus.listBlocks(), repos.userSettings.getSettings()]);
-  const increment = settings.defaultWeightIncrement ?? DEFAULT_WEIGHT_INCREMENT;
-  const successors = expandRollovers(blocks, today, defaultFocusPool, increment);
+  const blocks = await focus.listBlocks();
+  let successors = expandRollovers(blocks, today, defaultFocusPool, 0);
   if (successors.length === 0) return blocks;
+  if (successors.some((successor) => successor.progression === 'percent_wave')) {
+    const settings = await repos.userSettings.getSettings();
+    const increment = settings.defaultWeightIncrement ?? DEFAULT_WEIGHT_INCREMENT;
+    successors = expandRollovers(blocks, today, defaultFocusPool, increment);
+  }
   // expandRollovers gives placeholder ids; real ones are assigned here.
   await focus.createBlocksIfAbsent(successors.map((block) => ({ ...block, id: randomUUID() })));
   return focus.listBlocks();
+}
+
+/**
+ * Carries a `percent_wave` block's training-max edits into its successor while the
+ * successor is still queued. A successor is stored on the first read after its block
+ * starts, with the maxes the block had then, so without this an edit made mid-block would
+ * never reach it. Each shared lift's max moves by the same amount the block's did, which
+ * keeps any edit already made to the successor (ADR-039, Amendment 2).
+ */
+export async function carryMaxEdits(
+  focus: IFocusRepository,
+  before: FocusBlock,
+  after: FocusBlock,
+  today: string,
+): Promise<void> {
+  if (after.progression !== 'percent_wave') return;
+  const changes = new Map<string, number>();
+  for (const entry of after.pool) {
+    const prior = before.pool.find((old) => old.lift === entry.lift);
+    if (prior && prior.trainingMax !== entry.trainingMax) changes.set(entry.lift, entry.trainingMax - prior.trainingMax);
+  }
+  if (changes.size === 0) return;
+  const start = nextStart(after);
+  const successor = (await focus.listBlocks()).find(
+    (block) => block.series === after.series && block.start === start && blockStatus(block, today) === 'queued',
+  );
+  if (!successor) return;
+  await focus.updateBlock(successor.id, {
+    pool: successor.pool.map((entry) => {
+      const change = changes.get(entry.lift);
+      return change === undefined ? entry : { ...entry, trainingMax: entry.trainingMax + change };
+    }),
+  });
 }
 
 export interface FocusWorkoutContext {
