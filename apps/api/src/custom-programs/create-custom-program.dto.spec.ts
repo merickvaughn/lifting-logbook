@@ -111,4 +111,17 @@ describe('CreateCustomProgramDto validation', () => {
   it('rejects a negative offset', async () => {
     expect(await flattenConstraintKeys(dtoWith({ offset: -1 }))).toContain('min');
   });
+
+  // #1210: a row's progression override and the bottom of its rep range.
+  it('accepts a row progression and a repsLow at or below reps', async () => {
+    expect(await validate(dtoWith({ progression: 'double', repsLow: 5 }), { whitelist: true })).toHaveLength(0);
+  });
+
+  it.each(['rpe', 'wave'])('rejects the row progression %s', async (progression) => {
+    expect(await flattenConstraintKeys(dtoWith({ progression }))).toContain('isIn');
+  });
+
+  it('rejects a repsLow above the row reps', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ reps: 8, repsLow: 9 }))).toContain('isAtMostSibling');
+  });
 });

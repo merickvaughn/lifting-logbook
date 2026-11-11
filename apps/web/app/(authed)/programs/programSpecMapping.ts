@@ -34,6 +34,12 @@ export type WeekParams = {
   wtDecrementPct: number;
   activation: string;
   weekType?: string;
+  /**
+   * The row's progression override (#1210). Not edited here, but carried through so an edit
+   * keeps a cloned preset's or backfilled row's `amrap_gated`.
+   */
+  progression?: CustomProgramSpecRow['progression'];
+  repsLow?: CustomProgramSpecRow['repsLow'];
 };
 
 export type LiftInstance = {
@@ -100,6 +106,8 @@ function pickWeekParams(row: CustomProgramSpecRow): WeekParams {
     activation: row.activation,
   };
   if (row.weekType !== undefined) params.weekType = row.weekType;
+  if (row.progression !== undefined) params.progression = row.progression;
+  if (row.repsLow !== undefined) params.repsLow = row.repsLow;
   return params;
 }
 
@@ -128,12 +136,19 @@ export function specsFromDays(days: WorkoutDayModel[]): CustomProgramSpecRow[] {
       prevOffset = offset;
       day.instances.forEach((inst, i) => {
         for (const week of WEEKS) {
+          const params = inst.weeks[week];
           rows.push({
             week,
             offset,
             order: i + 1,
             lift: inst.lift,
-            ...inst.weeks[week],
+            ...params,
+            // Sent explicitly, null when unset, so a row with no override is stored without one
+            // rather than keeping whatever a deleted row at the same position held (#1210).
+            progression: params.progression ?? null,
+            // The editor shows `reps` but not the carried `repsLow`. If the lifter lowers reps
+            // below it, clear it rather than send a range the API rejects and the UI can't fix.
+            repsLow: params.repsLow != null && params.repsLow <= params.reps ? params.repsLow : null,
           });
         }
       });

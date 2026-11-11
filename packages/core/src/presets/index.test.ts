@@ -29,6 +29,14 @@ describe('PRESET_BASE_SPECS', () => {
     expect(Object.keys(PRESET_BASE_SPECS)).toContain('rpt');
   });
 
+  // #1210: built-in programs stay on today's rule, whatever the lifter sets on a lift or as
+  // their default, because the spec row wins inside a program.
+  it('tags every built-in preset row amrap_gated', () => {
+    const rows = Object.values(PRESET_BASE_SPECS).flat();
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.progression).toBe('amrap_gated');
+  });
+
   it('5-3-1 covers the four main lifts across 3 weeks', () => {
     const spec = PRESET_BASE_SPECS['5-3-1'];
     expect(spec).toBeDefined();

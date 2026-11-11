@@ -25,7 +25,9 @@ import {
   WEIGHT_UNIT_OPTIONS,
   isValidSchedule,
 } from '@lifting-logbook/types';
-import type { UserWorkoutSchedule, WeightUnit } from '@lifting-logbook/types';
+import type { LiftProgressionType, UserWorkoutSchedule, WeightUnit } from '@lifting-logbook/types';
+import { IsLiftProgression, IsProgressionIncrement, IsProgressionReps } from '../lifts/progression.validation';
+import type { DefaultProgressionPatch } from '../ports/IUserSettingsRepository';
 
 // Delegates to the shared `isValidSchedule` predicate so the write-side and read-side
 // bounds (range, uniqueness, max weeks, max days/week) cannot drift.
@@ -79,6 +81,27 @@ export class WorkoutScheduleDto implements UserWorkoutSchedule {
   weeks?: number[][];
 }
 
+// The lifter's default progression (#1210). Validated like a lift's own value in
+// PatchLiftMetadataDto: `rpe` and unknown types are rejected, the increment is positive, and
+// the range's bottom may not exceed its top. The default is replaced whole, so the range is
+// always checked within one request.
+export class DefaultProgressionDto implements DefaultProgressionPatch {
+  @IsLiftProgression()
+  type!: LiftProgressionType;
+
+  @IsOptional()
+  @IsProgressionIncrement()
+  increment?: number | null;
+
+  @IsOptional()
+  @IsProgressionReps('repsHigh')
+  repsLow?: number | null;
+
+  @IsOptional()
+  @IsProgressionReps()
+  repsHigh?: number | null;
+}
+
 export class UpdateSettingsDto {
   // Unlike the other three fields, activeProgram has no clear-via-null semantics — it's
   // switched by POST /programs/:program/switch, not cleared here. @IsOptional() would let
@@ -114,4 +137,13 @@ export class UpdateSettingsDto {
   @ValidateIf((o: UpdateSettingsDto) => o.unit !== null)
   @IsIn(WEIGHT_UNIT_OPTIONS)
   unit?: WeightUnit | null;
+
+  // null clears the default so each lift's catalog default applies; undefined leaves it
+  // unchanged. The object check rejects a primitive the nested validation would skip.
+  @IsOptional()
+  @ValidateIf((o: UpdateSettingsDto) => o.defaultProgression !== null)
+  @IsObject()
+  @ValidateNested()
+  @Type(() => DefaultProgressionDto)
+  defaultProgression?: DefaultProgressionDto | null;
 }

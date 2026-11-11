@@ -12,6 +12,7 @@ import {
   SaveProgramSpecResult,
 } from '../../ports/ILiftingProgramSpecRepository';
 import { PrismaClient } from '@prisma/client';
+import { isLiftProgressionType } from '@lifting-logbook/types';
 import { InMemoryLiftingProgramSpecRepository } from '../in-memory/lifting-program-spec.adapter';
 import { IMPORT_BATCH_TX_OPTIONS, runInteractive } from './prisma-tx.util';
 
@@ -30,6 +31,8 @@ type SpecRow = {
   wtDecrementPct: number;
   activation: string;
   weekType: string | null;
+  progression: string | null;
+  repsLow: number | null;
 };
 
 function toSpec(s: SpecRow): LiftingProgramSpec {
@@ -46,6 +49,8 @@ function toSpec(s: SpecRow): LiftingProgramSpec {
     wtDecrementPct: s.wtDecrementPct,
     activation: s.activation,
     ...(s.weekType !== null && { weekType: s.weekType as 'training' | 'test' | 'deload' }),
+    ...(isLiftProgressionType(s.progression) && { progression: s.progression }),
+    ...(s.repsLow !== null && { repsLow: s.repsLow }),
   };
 }
 
@@ -126,7 +131,7 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
           rows,
           (r) => programSpecNaturalKey(r),
           (r) => programSpecRowKind(r, existingByKey),
-          (r) => {
+          (r, _kind, key) => {
             const data = {
               programId: program,
               week: r.week,
@@ -141,7 +146,14 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
               wtDecrementPct: r.wtDecrementPct,
               activation: r.activation,
               weekType: r.weekType ?? null,
+              // No `progression`/`repsLow` (#1210): a spec import never carries them, and the
+              // upsert leaves an omitted column alone on update, so a re-import keeps a stored
+              // override, such as a backfilled `amrap_gated`. A created row gets null.
             };
+            // ...except a stored `repsLow` the imported `reps` falls below, which is cleared:
+            // the bottom of a range can't be above its top.
+            const storedRepsLow = existingByKey.get(key)?.repsLow;
+            const update = storedRepsLow !== undefined && storedRepsLow > r.reps ? { ...data, repsLow: null } : data;
             return tx.customProgramSpec.upsert({
               where: {
                 programId_week_offset_lift_order: {
@@ -153,7 +165,7 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
                 },
               },
               create: data,
-              update: data,
+              update,
             });
           },
         );

@@ -174,6 +174,7 @@ monorepo/
 | [ADR-040](adr/ADR-040-google-sheets-link-import.md) | Google Sheets Import Reads a Link-Shared Workbook as XLSX, Without OAuth | Accepted |
 | [ADR-041](adr/ADR-041-lift-modification-storage.md) | Lift Modifications Are Rows Keyed to a Lift, and Each Set Records Their Ids | Accepted |
 | [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | Every Macrocycle Gets a Row, and a New One Takes the Next Free Number | Accepted |
+| [ADR-043](adr/ADR-043-lift-progression-resolution-and-storage.md) | A Lift's Progression Resolves Row, Lift, Default, Catalog, and Is Stored Beside Each | Accepted |
 
 ---
 

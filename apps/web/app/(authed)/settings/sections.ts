@@ -40,6 +40,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       'Set the smallest weight increment used when rounding calculated loads to a loadable weight.',
   },
   {
+    href: '/settings/progression',
+    label: 'Progression',
+    description:
+      "Choose how a lift's max moves when the lift has no progression of its own.",
+  },
+  {
     href: '/settings/units',
     label: 'Units',
     description: 'Choose lbs or kg for how weights are displayed across the app.',

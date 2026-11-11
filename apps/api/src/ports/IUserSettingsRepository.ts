@@ -1,4 +1,17 @@
-import { UserSettingsResponse, UserWorkoutSchedule, WeightUnit } from '@lifting-logbook/types';
+import {
+  LiftProgressionType,
+  UserSettingsResponse,
+  UserWorkoutSchedule,
+  WeightUnit,
+} from '@lifting-logbook/types';
+
+/** The default progression as written: an omitted increment or range end is stored as null. */
+export interface DefaultProgressionPatch {
+  type: LiftProgressionType;
+  increment?: number | null;
+  repsLow?: number | null;
+  repsHigh?: number | null;
+}
 
 export interface UpsertSettingsPatch {
   // No clear-via-null semantics (unlike the three fields below) — it's switched by
@@ -13,6 +26,9 @@ export interface UpsertSettingsPatch {
   // Explicit `null` clears the preference (falls back to 'lbs'); `undefined`
   // leaves it unchanged.
   unit?: WeightUnit | null;
+  // Replaces the whole default progression (#1210); explicit `null` clears it so each lift's
+  // catalog default applies; `undefined` leaves it unchanged.
+  defaultProgression?: DefaultProgressionPatch | null;
 }
 
 export interface IUserSettingsRepository {

@@ -78,6 +78,9 @@ export function templateSeedSpecs(templateId: string): CustomProgramSpecRow[] {
     wtDecrementPct: s.wtDecrementPct,
     activation: s.activation,
     ...(s.weekType !== undefined ? { weekType: s.weekType as string } : {}),
+    // A clone keeps the preset's `amrap_gated`, so it progresses like the original (#1210).
+    ...(s.progression !== undefined ? { progression: s.progression } : {}),
+    ...(s.repsLow !== undefined ? { repsLow: s.repsLow } : {}),
   }));
 }
 

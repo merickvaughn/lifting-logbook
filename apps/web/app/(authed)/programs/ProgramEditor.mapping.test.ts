@@ -119,6 +119,47 @@ describe('daysFromSpecs', () => {
     ]);
   });
 
+  // #1210: the editor doesn't edit a row's progression, but saving replaces every row, so a
+  // dropped value would move a backfilled program off `amrap_gated`.
+  it('carries each row progression and repsLow through an edit round-trip', () => {
+    const rows: CustomProgramSpecRow[] = [1, 2, 3].map((week) => ({
+      ...legacyRow(week, 'Cable Curl', 1),
+      reps: 12,
+      progression: week === 1 ? 'amrap_gated' : 'double',
+      repsLow: 8,
+    }));
+    const saved = specsFromDays(daysFromSpecs(rows));
+    expect(saved.map((s) => [s.week, s.progression, s.repsLow])).toEqual([
+      [1, 'amrap_gated', 8],
+      [2, 'double', 8],
+      [3, 'double', 8],
+    ]);
+  });
+
+  it('clears a carried repsLow once reps is lowered below it, and keeps the progression', () => {
+    const rows: CustomProgramSpecRow[] = [1, 2, 3].map((week) => ({
+      ...legacyRow(week, 'Cable Curl', 1),
+      reps: 12,
+      progression: 'double',
+      repsLow: 8,
+    }));
+    const days = daysFromSpecs(rows);
+    days[0].instances[0].weeks[2] = { ...days[0].instances[0].weeks[2], reps: 6 };
+    const saved = specsFromDays(days);
+    expect(saved.map((s) => [s.week, s.reps, s.progression, s.repsLow])).toEqual([
+      [1, 12, 'double', 8],
+      [2, 6, 'double', null],
+      [3, 12, 'double', 8],
+    ]);
+  });
+
+  // Null, not absent: the API keeps a stored value for a field left out, so a row with no
+  // override would otherwise inherit what a deleted row at the same position held.
+  it('sends progression and repsLow as null on a row that has none', () => {
+    const saved = specsFromDays(daysFromSpecs([legacyRow(1, 'Squat', 1)]));
+    expect(saved[0]).toMatchObject({ progression: null, repsLow: null });
+  });
+
   it('collapses a legacy all-offset-0 program to a single populated day', () => {
     const legacy: CustomProgramSpecRow[] = [1, 2, 3].flatMap((week) => [
       legacyRow(week, 'Squat', 1),
