@@ -15,11 +15,16 @@ import { blockRange, blockStatus, nextStart } from './dates';
  * The successor keeps the block's settings, targets `nextArea`, starts the day after the
  * block ends, and prompts when it ends rather than rolling again. Its pool comes from
  * `poolFor`, since a new area needs new lifts.
+ *
+ * Under `percent_wave` progression a block is one wave, so its training maxes move by
+ * `increment` into the successor (#1213): a successor lift the block also had keeps that
+ * entry, with its max raised.
  */
 export function expandRollovers(
   blocks: readonly FocusBlock[],
   today: string,
   poolFor: (area: FocusArea) => FocusPoolEntry[],
+  increment: number,
 ): FocusBlock[] {
   const successors: FocusBlock[] = [];
   for (const block of blocks) {
@@ -36,8 +41,16 @@ export function expandRollovers(
       start,
       onEnd: 'prompt',
       nextArea: null,
-      pool: poolFor(block.nextArea),
+      pool: successorPool(block, poolFor(block.nextArea), increment),
     });
   }
   return successors;
+}
+
+function successorPool(block: FocusBlock, pool: FocusPoolEntry[], increment: number): FocusPoolEntry[] {
+  if (block.progression !== 'percent_wave') return pool;
+  return pool.map((entry) => {
+    const previous = block.pool.find((prior) => prior.lift === entry.lift);
+    return previous ? { ...previous, trainingMax: previous.trainingMax + increment } : entry;
+  });
 }

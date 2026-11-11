@@ -55,7 +55,7 @@ export function planItem(lift: string, sets = 3, overrides: Partial<FocusPlanIte
     lift,
     sets,
     entry: poolEntry(lift, { sets }),
-    prescription: { progression: 'double', sets, repsLow: 10, repsHigh: 12, weight: 25, lastReps: null },
+    prescription: { progression: 'double', sets, repsLow: 10, repsHigh: 12, weight: 25, lastReps: null, progressed: false },
     ...overrides,
   };
 }

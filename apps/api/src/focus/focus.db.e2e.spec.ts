@@ -7,6 +7,8 @@
 //     assert stored rows across synthetic users.
 // The row-level-security policies themselves are proven in rls.db.e2e.spec.ts.
 import 'reflect-metadata';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -181,6 +183,62 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect(await prisma.focusBlock.count({ where: { userId: USER_OWNER, series: ended.series } })).toBe(1);
     expect((await prisma.focusBlock.findUnique({ where: { id: ended.id } }))?.onEnd).toBe('prompt');
     expect((await owner('DELETE', `/focus/blocks/${ended.id}`)).statusCode).toBe(204);
+  });
+
+  // Migration 20261111000000_focus_progression_types (#1213), run against blocks stored under
+  // the old focus vocabulary. Inside a transaction that is rolled back, so the schema and the
+  // other tests are untouched.
+  it('migrates fixed to manual and tm to percent_wave, keeping double and rpe', async () => {
+    const migration = readFileSync(
+      join(__dirname, '../../prisma/migrations/20261111000000_focus_progression_types/migration.sql'),
+      'utf8',
+    );
+    const statements = migration
+      .replace(/--.*$/gm, '')
+      .split(';')
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.length > 0);
+    const OLD = ['double', 'fixed', 'tm', 'rpe'];
+    const ROLLBACK = new Error('rollback');
+
+    let migrated: Record<string, string> = {};
+    await expect(
+      prisma.$transaction(async (tx) => {
+        // The constraint as migration 20261025000000_add_focus_work created it.
+        await tx.$executeRawUnsafe('ALTER TABLE "focus_block" DROP CONSTRAINT "focus_block_progression_check"');
+        await tx.$executeRawUnsafe(
+          `ALTER TABLE "focus_block" ADD CONSTRAINT "focus_block_progression_check" CHECK ("progression" IN ('double', 'fixed', 'tm', 'rpe'))`,
+        );
+        for (const progression of OLD) {
+          await tx.focusBlock.create({
+            data: {
+              id: `migrate-${progression}`,
+              userId: USER_OTHER,
+              series: `migrate-${progression}`,
+              area: 'Biceps',
+              period: 'monthly',
+              align: 'calendar',
+              start: new Date('2026-10-01'),
+              selection: 'rules',
+              overlap: 'reduce',
+              progression,
+              priority: 1,
+              timer: { prep: 10, set: 45, rest: 60 },
+              onEnd: 'prompt',
+              nextArea: null,
+              pool: [],
+            },
+          });
+        }
+        for (const statement of statements) await tx.$executeRawUnsafe(statement);
+        const rows = await tx.focusBlock.findMany({ where: { userId: USER_OTHER, id: { startsWith: 'migrate-' } } });
+        migrated = Object.fromEntries(rows.map((row) => [row.id.replace('migrate-', ''), row.progression]));
+        throw ROLLBACK;
+      }, { timeout: DB_E2E_HOOK_TIMEOUT_MS }),
+    ).rejects.toBe(ROLLBACK);
+
+    expect(migrated).toEqual({ double: 'double', fixed: 'manual', tm: 'percent_wave', rpe: 'rpe' });
+    expect(await prisma.focusBlock.count({ where: { id: { startsWith: 'migrate-' } } })).toBe(0);
   });
 
   it('PUT /focus/settings stores the guide on user_settings', async () => {

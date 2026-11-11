@@ -9,7 +9,6 @@ import {
 } from '@lifting-logbook/core';
 import { DEFAULT_WEIGHT_INCREMENT, FocusBlock, FocusBlockResponse } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
-import { IFocusRepository } from '../ports/IFocusRepository';
 import { isValidWorkoutNum } from '../programs/mappers';
 import { currentMacrocycleOrFirst, resolveWorkoutDay } from '../programs/workout-day.util';
 
@@ -58,10 +57,18 @@ export function toFocusBlockResponse(block: FocusBlock, today: string): FocusBlo
  *
  * Creation is idempotent on (series, start), so concurrent reads store each successor once;
  * the list is re-read afterwards so every caller sees the ids that were actually stored.
+ *
+ * A `percent_wave` successor's maxes go up by the user's default weight increment: a block
+ * belongs to no program, so it has no program increment to use.
  */
-export async function loadFocusBlocks(focus: IFocusRepository, today: string): Promise<FocusBlock[]> {
-  const blocks = await focus.listBlocks();
-  const successors = expandRollovers(blocks, today, defaultFocusPool);
+export async function loadFocusBlocks(
+  repos: Pick<RepositoryBundle, 'focus' | 'userSettings'>,
+  today: string,
+): Promise<FocusBlock[]> {
+  const { focus } = repos;
+  const [blocks, settings] = await Promise.all([focus.listBlocks(), repos.userSettings.getSettings()]);
+  const increment = settings.defaultWeightIncrement ?? DEFAULT_WEIGHT_INCREMENT;
+  const successors = expandRollovers(blocks, today, defaultFocusPool, increment);
   if (successors.length === 0) return blocks;
   // expandRollovers gives placeholder ids; real ones are assigned here.
   await focus.createBlocksIfAbsent(successors.map((block) => ({ ...block, id: randomUUID() })));

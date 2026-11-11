@@ -107,6 +107,31 @@ UTC when the cookie is missing or holds a zone `Intl` doesn't recognise [5][6]. 
 doesn't change: it still takes `?today=` and still stores no time zone, so alternative 6 stays
 rejected. Client Components keep computing the day from the browser clock (`localToday`).
 
+## Amendment 2 — progression types and the successor pool (#1213)
+
+The `progression` column now holds the shared lift vocabulary
+([proposal](../proposals/2026-11-10-lift-progression-types.md), "Focus blocks"): `double`,
+`manual` (was `fixed`), `percent_wave` (was `tm`) and `rpe`. Migration
+`20261111000000_focus_progression_types` renames the stored values and swaps the CHECK. It is
+the first migration to update `focus_block` rows, and the table has `FORCE ROW LEVEL SECURITY`
+[4], which binds the table owner. For a role that doesn't bypass RLS, an UPDATE with no
+`app.current_user_id` matches nothing. `docs/deploy.md` says the migrator bypasses it, but the
+migration doesn't depend on that: it turns FORCE off around its one UPDATE, so the owner sees
+every row either way, and back on after it [7]. PostgreSQL runs a multi-statement
+query string as one transaction [8], and Prisma Migrate sends a migration file that way, as the
+"cannot run inside a transaction block" error from `CREATE INDEX CONCURRENTLY` in a migration
+shows. So a failure leaves FORCE on. Until the migration has run, a read maps an old value to its
+new name.
+
+Decision 4 changes for `percent_wave`. A block is one wave, so its training maxes carry into
+the successor: a successor lift that the block also had keeps the block's entry, with its max
+raised by the user's `defaultWeightIncrement` (a block belongs to no program, so it has no
+program increment). Other successor lifts still come from `defaultFocusPool(area)`, and the other
+progression types are unchanged. A `double` entry progresses in the prescription instead: once
+every rep in its `lastReps` reached `repsHigh`, it plans its weight plus the increment. Nothing
+extra is stored for that, so whatever writes `lastReps` must also write the weight those reps
+were done at.
+
 ## References
 
 1. E. F. Codd, ["A Relational Model of Data for Large Shared Data Banks"](https://doi.org/10.1145/362384.362685), *Communications of the ACM* 13(6), 1970 — §2, redundancy and derivable data.
@@ -115,3 +140,5 @@ rejected. Client Components keep computing the day from the browser clock (`loca
 4. PostgreSQL 16 documentation, [§5.8 Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) — `ENABLE`/`FORCE ROW LEVEL SECURITY` and policy `USING`/`WITH CHECK`.
 5. ECMA-402, [`Intl.DateTimeFormat` — `timeZone` option](https://tc39.es/ecma402/#sec-createdatetimeformat) — IANA zone names, and the `RangeError` for an unknown one.
 6. IETF [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265), *HTTP State Management Mechanism* — the `Path` and `Max-Age` cookie attributes the `tz` cookie sets.
+7. PostgreSQL 16 documentation, [`ALTER TABLE`](https://www.postgresql.org/docs/16/sql-altertable.html) — `NO FORCE ROW LEVEL SECURITY` / `FORCE ROW LEVEL SECURITY`.
+8. PostgreSQL 16 documentation, [§55.2.2.1 Multiple Statements in a Simple Query](https://www.postgresql.org/docs/16/protocol-flow.html#PROTOCOL-FLOW-MULTI-STATEMENT) — a multi-statement query string runs as one implicit transaction.

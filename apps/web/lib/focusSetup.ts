@@ -49,8 +49,8 @@ export const OVERLAP_LABELS: Readonly<Record<FocusOverlap, string>> = {
 
 export const PROGRESSION_LABELS: Readonly<Record<FocusProgression, string>> = {
   double: 'Double progression',
-  fixed: 'Fixed',
-  tm: '% of TM',
+  manual: 'Fixed',
+  percent_wave: '% of TM',
   rpe: 'RPE',
 };
 

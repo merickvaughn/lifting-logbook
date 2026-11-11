@@ -27,7 +27,7 @@ import {
   FOCUS_ON_ENDS,
   FOCUS_OVERLAPS,
   FOCUS_PERIODS,
-  FOCUS_PROGRESSIONS,
+  FOCUS_PROGRESSION_TYPES,
   FOCUS_SELECTIONS,
 } from '@lifting-logbook/types';
 import type {
@@ -109,7 +109,7 @@ class FocusBlockFieldsDto {
   @IsString() @Matches(ISO_DATE_PATTERN, { message: 'start must be an ISO date (YYYY-MM-DD)' }) start!: string;
   @IsIn(FOCUS_SELECTIONS) selection!: FocusSelection;
   @IsIn(FOCUS_OVERLAPS) overlap!: FocusOverlap;
-  @IsIn(FOCUS_PROGRESSIONS) progression!: FocusProgression;
+  @IsIn(FOCUS_PROGRESSION_TYPES) progression!: FocusProgression;
 
   // Rejects primitives, which @ValidateNested alone silently accepts.
   @IsObject()
@@ -168,7 +168,7 @@ export class UpdateFocusBlockDto implements UpdateFocusBlockRequest {
   @ValidateIf((o: UpdateFocusBlockDto) => o.overlap !== undefined) @IsIn(FOCUS_OVERLAPS) overlap?: FocusOverlap;
 
   @ValidateIf((o: UpdateFocusBlockDto) => o.progression !== undefined)
-  @IsIn(FOCUS_PROGRESSIONS)
+  @IsIn(FOCUS_PROGRESSION_TYPES)
   progression?: FocusProgression;
 
   @ValidateIf((o: UpdateFocusBlockDto) => o.timer !== undefined)

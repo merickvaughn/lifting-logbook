@@ -303,6 +303,29 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       expect(list.find((block) => block.id === rolling.id)?.onEnd).toBe('autoroll');
       expect(list.map((block) => block.id)).toContain(successor?.id);
     });
+
+    // The proposal's example (#1213): Cable Curl, max 60 at 80% for 10. The block plans
+    // 47.5 each session; its successor starts from 60 plus the user's increment.
+    it.each([
+      ['the default increment', null, 61.25],
+      ["the user's increment", 2.5, 62.5],
+    ])('raises a percent_wave max into the successor by %s', async (_label, increment, nextMax) => {
+      const other = as(`focus-e2e-rollover-wave-${String(increment)}`);
+      if (increment !== null) {
+        expect((await other.inject('PATCH', '/users/me/settings', { defaultWeightIncrement: increment })).statusCode).toBe(200);
+      }
+      const curl = entry('Cable Curl', { trainingMax: 60, percent: 80, repsHigh: 10 });
+      const biceps = (
+        await other.create(
+          blockBody({ area: 'Biceps', period: 'monthly', start: '2026-09-01', progression: 'percent_wave', onEnd: 'autoroll', nextArea: 'Biceps', pool: [curl] }),
+        )
+      ).json() as FocusBlockResponse;
+      const successor = (await other.list()).find((block) => block.series === biceps.series && block.id !== biceps.id);
+      expect(successor?.start).toBe('2026-10-01');
+      expect(successor?.pool).toEqual(
+        defaultFocusPool('Biceps').map((fresh) => (fresh.lift === 'Cable Curl' ? { ...curl, trainingMax: nextMax } : fresh)),
+      );
+    });
   });
 
   describe('priority among blocks that have not ended', () => {
@@ -433,6 +456,7 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
         repsHigh: 12,
         weight: 25,
         lastReps: null,
+        progressed: false,
       });
       expect(plan.sets).toBe(7);
       expect(plan.over).toBe(false);
@@ -473,7 +497,7 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
 
     it('rounds a percent-of-training-max weight to the program increment', async () => {
       await user.inject('PATCH', `/focus/blocks/${calvesId}?today=${TODAY}`, {
-        progression: 'tm',
+        progression: 'percent_wave',
         pool: [entry('Standing Calf Raise', { trainingMax: 251, percent: 60 })],
       });
       const spec = (await user.inject('GET', `/programs/${PROGRAM}/spec`)).json() as {
@@ -485,7 +509,7 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       const [group] = (await user.plan()).groups;
       // 251 × 60% = 150.6, rounded to a loadable plate combination.
       expect(group?.items[0]?.prescription).toEqual({
-        progression: 'tm',
+        progression: 'percent_wave',
         sets: 3,
         reps: 12,
         weight: MROUND(150.6, increment),
