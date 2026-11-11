@@ -201,9 +201,10 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
         where: { userId: USER_SUCCESSOR, series: october.series, start: new Date('2026-11-01') },
       });
       expect(stored).toMatchObject({ progression: 'double', selection: 'rules', overlap: 'reduce' });
+      if (!stored) throw new Error('the read stored no successor');
 
-      const patch = (id: string | undefined, body: unknown) => lifter('PATCH', `/focus/blocks/${id}?today=${TODAY}`, body);
-      expect((await patch(stored?.id, { overlap: 'skip' })).statusCode).toBe(200);
+      const patch = (id: string, body: unknown) => lifter('PATCH', `/focus/blocks/${id}?today=${TODAY}`, body);
+      expect((await patch(stored.id, { overlap: 'skip' })).statusCode).toBe(200);
       const res = await patch(october.id, {
         progression: 'percent_wave',
         selection: 'rotate',
@@ -212,14 +213,14 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
       });
       expect(res.statusCode).toBe(200);
 
-      const row = await prisma.focusBlock.findUnique({ where: { id: stored?.id } });
+      const row = await prisma.focusBlock.findUnique({ where: { id: stored.id } });
       expect(row).toMatchObject({
         area: 'Calves',
         progression: 'percent_wave',
         selection: 'rotate',
         overlap: 'skip',
         timer: { prep: 10, set: 40, rest: 90 },
-        pool: stored?.pool,
+        pool: stored.pool,
       });
     } finally {
       // Pass or fail: the migration test below re-adds the old CHECK, which a stored
