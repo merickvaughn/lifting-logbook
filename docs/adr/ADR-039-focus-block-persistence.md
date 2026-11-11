@@ -120,9 +120,10 @@ migration doesn't depend on that: it turns FORCE off around its one UPDATE, so t
 every row either way, and back on after it [7]. PostgreSQL runs a multi-statement
 query string as one transaction [8], and Prisma Migrate sends a migration file that way, as the
 "cannot run inside a transaction block" error from `CREATE INDEX CONCURRENTLY` in a migration
-shows. So a failure leaves FORCE on. Until the migration has run, a read maps an old value to its
-new name; that mapping is read-side only, and
-[#1220](https://github.com/merickvaughn/lifting-logbook/issues/1220) removes it. The DB e2e suite
+shows. So a failure leaves FORCE on. While the migration was rolling out, a read mapped an old value
+to its new name; once production had run it,
+[#1220](https://github.com/merickvaughn/lifting-logbook/issues/1220) removed that mapping, and the
+repository now throws on any stored value outside the vocabulary. The DB e2e suite
 runs the file as one query, as a table owner that is neither superuser nor `BYPASSRLS`, so it fails
 if the FORCE handling is removed.
 

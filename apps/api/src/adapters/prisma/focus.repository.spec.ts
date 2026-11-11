@@ -30,23 +30,16 @@ function repoReading(rows: ReturnType<typeof row>[]): PrismaFocusRepository {
   return new PrismaFocusRepository({ focusBlock } as unknown as PrismaClient, 'u');
 }
 
-// Until migration 20261111120000_focus_progression_types has run, a stored block can hold a
-// focus progression from before the shared vocabulary (#1213).
 describe('PrismaFocusRepository reading a stored progression', () => {
-  it('maps the old fixed and tm to manual and percent_wave', async () => {
-    const repo = repoReading([row('a', 'fixed'), row('b', 'tm')]);
-    expect((await repo.listBlocks()).map((block) => block.progression)).toEqual(['manual', 'percent_wave']);
-    expect((await repo.getBlock('a'))?.progression).toBe('manual');
-  });
-
-  it('keeps values already in the shared vocabulary', async () => {
+  it('reads each value in the shared vocabulary', async () => {
     const repo = repoReading(['double', 'manual', 'percent_wave', 'rpe'].map((value) => row(value, value)));
     expect((await repo.listBlocks()).map((block) => block.progression)).toEqual(['double', 'manual', 'percent_wave', 'rpe']);
+    expect((await repo.getBlock('double'))?.progression).toBe('double');
   });
 
-  it('throws on a value in neither vocabulary', async () => {
-    await expect(repoReading([row('a', 'linear')]).listBlocks()).rejects.toThrow(
-      'Focus block a has an unknown progression: linear',
+  it.each(['linear', 'fixed', 'tm'])('throws on %s, which is not a focus progression', async (value) => {
+    await expect(repoReading([row('a', value)]).listBlocks()).rejects.toThrow(
+      `Focus block a has an unknown progression: ${value}`,
     );
   });
 });
