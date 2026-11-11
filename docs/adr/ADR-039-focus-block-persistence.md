@@ -153,8 +153,7 @@ raised by the user's `defaultWeightIncrement`. Other successor lifts still come 
 on the first read after its block starts, so a max edited later in the block would otherwise never
 reach it: while the successor is still queued, an edit to a block's training max moves the
 successor's max for the same lift by the same amount, which keeps any edit already made to the
-successor. Other settings edits still don't follow
-([#1222](https://github.com/merickvaughn/lifting-logbook/issues/1222)).
+successor. Amendment 3 covers the block's other settings.
 
 A `double` entry progresses in the prescription instead: once every rep in its `lastReps` reached
 `repsHigh`, it plans its weight plus the increment. Nothing extra is stored for that, so whatever
@@ -166,6 +165,49 @@ uses the increment that workout's weights round to: the program day's increment,
 default when the day has none, the same increment a `percent_wave` weight in that workout rounds to.
 A successor is created when focus blocks are read, outside any workout and any program, so it
 uses the user's default.
+
+## Amendment 3 — a queued successor follows its block's settings (#1222)
+
+A successor is stored on the first read after its block starts, with a copy of the block's
+settings at that moment. A lifter who sets a block up and then adjusts it in its first days (the
+setup page creates a block on `double`; the lifter switches it to `percent_wave`) found the
+successor still holding the old settings. Now, while the successor is queued, an edit to the
+block's `selection`, `overlap`, `progression` or one of its `timer` values is copied to the
+successor, field by field, when the successor still holds what the block held before the edit.
+A field the lifter has already changed on the successor keeps the successor's value. Nothing new
+is stored to tell the two apart: a successor field that differs from its block's was edited. A
+successor edited back to its block's value follows again, which is the same thing the lifter
+would see if the successor had never been edited.
+
+The successor is the queued block in the series that starts the day after the block, as before
+the edit, ends. That includes a block the lifter queued in the series by hand, because decision 4
+already treats it as the roll's successor. Like the training-max carry in Amendment 2, this runs
+on `PATCH /focus/blocks/:id` (`carryEditsToSuccessor` in `apps/api/src/focus/focus.util.ts`), and
+the two land in one update to the successor.
+
+What does not follow, and why:
+
+- **`area`, `nextArea`, `onEnd` and the pool's lifts.** The successor's area is the block's
+  `nextArea`, its own `nextArea` is null and it prompts when it ends, so none of these is a copy of
+  the block's value. Its pool is a new area's lifts. The lifter edits these on the successor.
+  Changing the block's `onEnd` doesn't remove a stored successor either: declining one is still
+  deleting it.
+- **`priority`.** A reorder lists every block that has not ended, the successor included, so the
+  successor's position is always set directly. `PATCH` doesn't take a priority.
+- **`start`, `period` and `align`.** They decide where the successor starts, so following them
+  means moving the successor, which the unique `(userId, series, start)` constraint can refuse.
+  That decision is [#1226](https://github.com/merickvaughn/lifting-logbook/issues/1226).
+- **The pool when `progression` follows into `percent_wave`.** The successor keeps its pool, so a
+  lift both pools share keeps the successor's max rather than the block's max plus the increment
+  a successor created under `percent_wave` would get. Later max edits on the block carry as
+  Amendment 2 says. Shared lifts are rare, because a successor's pool is another area's lifts.
+
+**Alternatives considered.** Storing a successor only once its block has ended would leave
+nothing to copy into, but the lifter could then no longer see, edit or decline the successor
+during the block, which is what materializing it on read was for. Overwriting the successor with
+every block edit would discard edits made to the successor. A per-field "edited" flag on the
+successor would separate the two exactly, but it is stored state that the compare above already
+gives for every case except a successor edited back to its block's value.
 
 ## References
 

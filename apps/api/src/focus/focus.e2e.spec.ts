@@ -351,6 +351,75 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       expect(after?.pool.find((e) => e.lift === 'Cable Curl')?.trainingMax).toBe(66.25);
       expect(after?.pool.filter((e) => e.lift !== 'Cable Curl')).toEqual(created?.pool.filter((e) => e.lift !== 'Cable Curl'));
     });
+
+    // ADR-039, Amendment 3 (#1222): the successor is stored when the block starts, so its
+    // settings follow later edits to the block while it is still queued.
+    describe("a queued successor following its block's settings", () => {
+      const setUp = async (name: string) => {
+        const other = as(name);
+        const october = (
+          await other.create(blockBody({ area: 'Biceps', period: 'monthly', onEnd: 'autoroll', nextArea: 'Triceps' }))
+        ).json() as FocusBlockResponse;
+        const successor = () =>
+          other.list().then((list) => list.find((block) => block.series === october.series && block.id !== october.id));
+        const stored = await successor();
+        expect(stored).toMatchObject({ start: '2026-11-01', status: 'queued', progression: 'double' });
+        const patch = async (id: string | undefined, body: unknown) =>
+          expect((await other.inject('PATCH', `/focus/blocks/${id}?today=${TODAY}`, body)).statusCode).toBe(200);
+        return { october, stored, successor, patch };
+      };
+
+      it('copies a progression, selection, overlap and timer edit into the successor', async () => {
+        const { october, stored, successor, patch } = await setUp('focus-e2e-follow');
+        await patch(october.id, {
+          progression: 'percent_wave',
+          selection: 'rotate',
+          overlap: 'swap',
+          timer: { prep: 10, set: 30, rest: 90 },
+        });
+
+        expect(await successor()).toEqual({
+          ...stored,
+          progression: 'percent_wave',
+          selection: 'rotate',
+          overlap: 'swap',
+          timer: { prep: 10, set: 30, rest: 90 },
+        });
+      });
+
+      it('keeps what was already changed on the successor, field by field', async () => {
+        const { october, stored, successor, patch } = await setUp('focus-e2e-follow-own-edits');
+        await patch(stored?.id, { selection: 'fixed', timer: { prep: 10, set: 50, rest: 45 } });
+        await patch(october.id, { progression: 'rpe', selection: 'rotate', timer: { prep: 15, set: 30, rest: 90 } });
+
+        expect(await successor()).toMatchObject({
+          progression: 'rpe',
+          selection: 'fixed',
+          // prep and rest were the block's, so they follow; set was the lifter's own.
+          timer: { prep: 15, set: 50, rest: 90 },
+        });
+      });
+
+      it("leaves the successor's area, pool and priority alone", async () => {
+        const { october, stored, successor, patch } = await setUp('focus-e2e-follow-not');
+        await patch(october.id, { area: 'Chest', nextArea: 'Back', onEnd: 'prompt', pool: [entry('Cable Fly')] });
+        expect(await successor()).toEqual(stored);
+      });
+
+      it('leaves a successor that has already started alone', async () => {
+        const other = as('focus-e2e-follow-started');
+        const july = (
+          await other.create(blockBody({ area: 'Chest', start: '2026-07-01', onEnd: 'autoroll', nextArea: 'Back' }))
+        ).json() as FocusBlockResponse;
+        const active = () => other.list().then((list) => list.find((block) => block.series === july.series && block.id !== july.id));
+        const stored = await active();
+        expect(stored?.status).toBe('active');
+
+        const res = await other.inject('PATCH', `/focus/blocks/${july.id}?today=${TODAY}`, { progression: 'rpe', selection: 'fixed' });
+        expect(res.statusCode).toBe(200);
+        expect(await active()).toEqual(stored);
+      });
+    });
   });
 
   describe('priority among blocks that have not ended', () => {

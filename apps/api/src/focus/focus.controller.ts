@@ -56,7 +56,7 @@ import { currentMacrocycleOrFirst } from '../programs/workout-day.util';
 import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { checkMacrocycleId, lockForMacrocycleWrite } from '../programs/macrocycle-history.util';
 import {
-  carryMaxEdits,
+  carryEditsToSuccessor,
   loadFocusBlocks,
   loadFocusWorkoutContext,
   parseIsoDateParam,
@@ -160,9 +160,9 @@ export class FocusController {
     if (dto.onEnd !== undefined) patch.onEnd = dto.onEnd;
     if (dto.nextArea !== undefined) patch.nextArea = dto.nextArea;
     if (dto.pool !== undefined) patch.pool = dto.pool.map((entry) => ({ ...entry }));
-    const before = patch.pool === undefined ? null : await focus.getBlock(id);
+    const before = await focus.getBlock(id);
     const updated = await focus.updateBlock(id, patch);
-    if (before) await carryMaxEdits(focus, before, updated, today);
+    if (before) await carryEditsToSuccessor(focus, before, updated, today);
     return toFocusBlockResponse(updated, today);
   }
 

@@ -186,6 +186,41 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect((await owner('DELETE', `/focus/blocks/${ended.id}`)).statusCode).toBe(204);
   });
 
+  // ADR-039, Amendment 3 (#1222): a stored, still-queued successor follows its block's
+  // settings edits, except a field the lifter already changed on the successor.
+  it('carries a settings edit into the stored queued successor, keeping its own edits', async () => {
+    const october = (
+      await owner('POST', `/focus/blocks?today=${TODAY}`, blockBody({ area: 'Core', onEnd: 'autoroll', nextArea: 'Calves' }))
+    ).json() as FocusBlockResponse;
+    expect((await owner('GET', `/focus/blocks?today=${TODAY}`)).statusCode).toBe(200);
+    const stored = await prisma.focusBlock.findFirst({
+      where: { userId: USER_OWNER, series: october.series, start: new Date('2026-11-01') },
+    });
+    expect(stored).toMatchObject({ progression: 'double', selection: 'rules', overlap: 'reduce' });
+
+    const patch = (id: string | undefined, body: unknown) => owner('PATCH', `/focus/blocks/${id}?today=${TODAY}`, body);
+    expect((await patch(stored?.id, { overlap: 'skip' })).statusCode).toBe(200);
+    const res = await patch(october.id, {
+      progression: 'percent_wave',
+      selection: 'rotate',
+      overlap: 'swap',
+      timer: { prep: 10, set: 40, rest: 90 },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const row = await prisma.focusBlock.findUnique({ where: { id: stored?.id } });
+    expect(row).toMatchObject({
+      area: 'Calves',
+      progression: 'percent_wave',
+      selection: 'rotate',
+      overlap: 'skip',
+      timer: { prep: 10, set: 40, rest: 90 },
+      pool: stored?.pool,
+    });
+    expect((await owner('DELETE', `/focus/blocks/${stored?.id}`)).statusCode).toBe(204);
+    expect((await owner('DELETE', `/focus/blocks/${october.id}`)).statusCode).toBe(204);
+  });
+
   // Migration 20261111120000_focus_progression_types (#1213), run against blocks stored under
   // the old focus vocabulary. It runs as one query string, as Prisma Migrate sends it, by a
   // table owner that is neither superuser nor BYPASSRLS, so the FORCE ROW LEVEL SECURITY
