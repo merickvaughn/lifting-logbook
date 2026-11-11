@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { LiftMetadataResponse } from '@lifting-logbook/types';
 import LiftEditor from './LiftEditor';
@@ -118,6 +118,38 @@ describe('LiftEditor progression (#1210)', () => {
     await user.click(screen.getByRole('button', { name: 'Save Changes' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('bottom of the rep range');
     expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  // jsdom's number inputs never report badInput, so the browser's half is stubbed: the input
+  // reads '' and says its text can't be parsed, firing only `input` (React skips onChange).
+  const report = (input: HTMLElement, badInput: boolean) => {
+    Object.defineProperty(input, 'validity', { configurable: true, value: { badInput } });
+    fireEvent.input(input);
+  };
+
+  it('refuses unparseable text in a number field rather than clearing the stored value', async () => {
+    const user = userEvent.setup();
+    renderEditor(metadata({ progression: 'double', repsLow: 8, repsHigh: 12 }));
+    const top = screen.getByRole('spinbutton', { name: 'Rep range top' });
+    await user.clear(top);
+    report(top, true);
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('whole numbers');
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
+  it('saves once unparseable text is cleared from the field', async () => {
+    const user = userEvent.setup();
+    mockPatch.mockResolvedValue(metadata());
+    renderEditor(metadata({ progression: 'double', repsLow: 8, repsHigh: 12 }));
+    const top = screen.getByRole('spinbutton', { name: 'Rep range top' });
+    await user.clear(top);
+    report(top, true);
+    report(top, false);
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith('Cable Curl', expect.objectContaining({ repsLow: 8, repsHigh: null })),
+    );
   });
 
   it('reports a failed save through logClientError', async () => {

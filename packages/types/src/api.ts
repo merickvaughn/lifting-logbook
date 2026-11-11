@@ -562,10 +562,14 @@ export interface CustomProgramSpecRow {
   wtDecrementPct: number;
   activation: string;
   weekType?: string;
-  /** The row's progression override (#1210). Absent means the lift's own value applies. */
-  progression?: LiftProgressionType;
-  /** The bottom of the row's rep range; `reps` is the top. */
-  repsLow?: number;
+  /**
+   * The row's progression override (#1210). Unset means the lift's own value applies. A
+   * response leaves it out when unset. In a request, null sets it unset; an update that leaves
+   * it out keeps the stored value, for a client that predates the field.
+   */
+  progression?: LiftProgressionType | null;
+  /** The bottom of the row's rep range; `reps` is the top. Set and left out like `progression`. */
+  repsLow?: number | null;
 }
 
 export interface CustomProgramResponse {

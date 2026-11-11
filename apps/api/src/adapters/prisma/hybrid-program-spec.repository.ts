@@ -150,6 +150,10 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
               // upsert leaves an omitted column alone on update, so a re-import keeps a stored
               // override, such as a backfilled `amrap_gated`. A created row gets null.
             };
+            // ...except a stored `repsLow` the imported `reps` falls below, which is cleared:
+            // the bottom of a range can't be above its top.
+            const storedRepsLow = existingByKey.get(programSpecNaturalKey(r))?.repsLow;
+            const update = storedRepsLow !== undefined && storedRepsLow > r.reps ? { ...data, repsLow: null } : data;
             return tx.customProgramSpec.upsert({
               where: {
                 programId_week_offset_lift_order: {
@@ -161,7 +165,7 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
                 },
               },
               create: data,
-              update: data,
+              update,
             });
           },
         );

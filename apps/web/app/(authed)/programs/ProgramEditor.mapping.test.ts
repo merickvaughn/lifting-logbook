@@ -136,7 +136,7 @@ describe('daysFromSpecs', () => {
     ]);
   });
 
-  it('drops a carried repsLow once reps is lowered below it, and keeps the progression', () => {
+  it('clears a carried repsLow once reps is lowered below it, and keeps the progression', () => {
     const rows: CustomProgramSpecRow[] = [1, 2, 3].map((week) => ({
       ...legacyRow(week, 'Cable Curl', 1),
       reps: 12,
@@ -148,15 +148,16 @@ describe('daysFromSpecs', () => {
     const saved = specsFromDays(days);
     expect(saved.map((s) => [s.week, s.reps, s.progression, s.repsLow])).toEqual([
       [1, 12, 'double', 8],
-      [2, 6, 'double', undefined],
+      [2, 6, 'double', null],
       [3, 12, 'double', 8],
     ]);
   });
 
-  it('leaves progression absent on a row that has none', () => {
+  // Null, not absent: the API keeps a stored value for a field left out, so a row with no
+  // override would otherwise inherit what a deleted row at the same position held.
+  it('sends progression and repsLow as null on a row that has none', () => {
     const saved = specsFromDays(daysFromSpecs([legacyRow(1, 'Squat', 1)]));
-    expect(saved[0]).not.toHaveProperty('progression');
-    expect(saved[0]).not.toHaveProperty('repsLow');
+    expect(saved[0]).toMatchObject({ progression: null, repsLow: null });
   });
 
   it('collapses a legacy all-offset-0 program to a single populated day', () => {

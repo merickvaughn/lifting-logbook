@@ -35,6 +35,10 @@ export default function ProgressionFields({
 }: Props) {
   const noType = value.type === '';
   const needsType = (key: ProgressionNumberField) => noType && !(key === 'increment' && incrementWithoutType);
+  const update = (key: ProgressionNumberField, input: HTMLInputElement) => {
+    const rest = (value.badInput ?? []).filter((k) => k !== key);
+    onChange({ ...value, [key]: input.value, badInput: input.validity.badInput ? [...rest, key] : rest });
+  };
   const field = (key: ProgressionNumberField, text: string, step: string, max?: number) => (
     <div className={classNames.field}>
       <label className={classNames.label} htmlFor={`${idPrefix}-${key}`}>
@@ -49,10 +53,11 @@ export default function ProgressionFields({
         max={max}
         step={step}
         value={value[key]}
-        onChange={(e) => {
-          const rest = (value.badInput ?? []).filter((k) => k !== key);
-          onChange({ ...value, [key]: e.target.value, badInput: e.target.validity.badInput ? [...rest, key] : rest });
-        }}
+        // One handler on both events, each building the whole next draft from the input, so the
+        // two can't overwrite each other. onInput is needed because React skips onChange while
+        // the value stays '', which is what a number input reports for text it can't parse.
+        onChange={(e) => update(key, e.currentTarget)}
+        onInput={(e) => update(key, e.currentTarget)}
         disabled={disabled || needsType(key)}
       />
     </div>

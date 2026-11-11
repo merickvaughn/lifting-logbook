@@ -39,7 +39,7 @@ export type WeekParams = {
    * keeps a cloned preset's or backfilled row's `amrap_gated`.
    */
   progression?: CustomProgramSpecRow['progression'];
-  repsLow?: number;
+  repsLow?: CustomProgramSpecRow['repsLow'];
 };
 
 export type LiftInstance = {
@@ -136,17 +136,20 @@ export function specsFromDays(days: WorkoutDayModel[]): CustomProgramSpecRow[] {
       prevOffset = offset;
       day.instances.forEach((inst, i) => {
         for (const week of WEEKS) {
-          const row: CustomProgramSpecRow = {
+          const params = inst.weeks[week];
+          rows.push({
             week,
             offset,
             order: i + 1,
             lift: inst.lift,
-            ...inst.weeks[week],
-          };
-          // The editor shows `reps` but not the carried `repsLow`. If the lifter lowers reps
-          // below it, drop it rather than send a range the API rejects and the UI can't fix.
-          if (row.repsLow !== undefined && row.repsLow > row.reps) delete row.repsLow;
-          rows.push(row);
+            ...params,
+            // Sent explicitly, null when unset, so a row with no override is stored without one
+            // rather than keeping whatever a deleted row at the same position held (#1210).
+            progression: params.progression ?? null,
+            // The editor shows `reps` but not the carried `repsLow`. If the lifter lowers reps
+            // below it, clear it rather than send a range the API rejects and the UI can't fix.
+            repsLow: params.repsLow != null && params.repsLow <= params.reps ? params.repsLow : null,
+          });
         }
       });
     });

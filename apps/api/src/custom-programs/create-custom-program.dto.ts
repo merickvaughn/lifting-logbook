@@ -60,8 +60,8 @@ export class CustomProgramSpecRowDto {
   // The row's progression override (#1210). A row with none follows the lift's own value. On
   // an update, leaving either field out keeps the stored value and null clears it.
   // `repsLow` is the bottom of the range whose top is `reps`, so `reps` bounds it.
-  @IsOptional() @IsLiftProgression() progression?: LiftProgressionType;
-  @IsOptional() @IsProgressionReps('reps') repsLow?: number;
+  @IsOptional() @IsLiftProgression() progression?: LiftProgressionType | null;
+  @IsOptional() @IsProgressionReps('reps') repsLow?: number | null;
 }
 
 export class CreateCustomProgramDto {

@@ -266,6 +266,23 @@ describeOrSkip('Progression storage HTTP (e2e, PrismaRepositoryFactory)', () => 
       ]);
     });
 
+    it('clears a kept repsLow once the row reps falls below it', async () => {
+      const created = await call('POST', '/programs/custom', {
+        name: 'Lowered reps',
+        specs: [{ ...SPEC_ROW, lift: 'Cable Curl', order: 1, progression: 'double', repsLow: 8 }],
+      });
+      expect(created.statusCode).toBe(201);
+      const { id } = created.json() as CustomProgramResponse;
+
+      // `repsLow` left out, as by a client that predates it, with `reps` now below the stored 8.
+      const res = await call('PUT', `/programs/custom/${id}`, {
+        specs: [{ ...SPEC_ROW, lift: 'Cable Curl', order: 1, reps: 6 }],
+      });
+      expect(res.statusCode).toBe(200);
+      const [row] = await owner.customProgramSpec.findMany({ where: { programId: id } });
+      expect([row?.reps, row?.progression, row?.repsLow]).toEqual([6, 'double', null]);
+    });
+
     it.each([
       ['rpe', { progression: 'rpe' }],
       ['repsLow above reps', { repsLow: 13 }],
@@ -299,10 +316,11 @@ describeOrSkip('Progression storage HTTP (e2e, PrismaRepositoryFactory)', () => 
         await owner.$transaction(
           async (tx) => {
             // The file's 5s lock timeout suits the migrate job, which has the database to itself.
-            // Here other suites may hold a row the UPDATE needs for a moment, so wait longer.
+            // Here other suites may hold a row the UPDATE needs for a moment, so wait longer, but
+            // less than the transaction's own timeout, so a long wait fails as a lock timeout.
             for (const statement of statements) {
               await tx.$executeRawUnsafe(
-                /^SET LOCAL lock_timeout/i.test(statement) ? "SET LOCAL lock_timeout = '30s'" : statement,
+                /^SET LOCAL lock_timeout/i.test(statement) ? "SET LOCAL lock_timeout = '20s'" : statement,
               );
             }
             await body(tx as unknown as PrismaClient);
@@ -360,6 +378,7 @@ describeOrSkip('Progression storage HTTP (e2e, PrismaRepositoryFactory)', () => 
 
       // Rolled back: the seeded rows are as they were.
       expect(await owner.customProgramSpec.count({ where: { programId: program.id, progression: null } })).toBe(3);
-    });
+      // Room for the transaction's full timeout, so Jest doesn't abandon it with its locks held.
+    }, DB_E2E_HOOK_TIMEOUT_MS * 2);
   });
 });

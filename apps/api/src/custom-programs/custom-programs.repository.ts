@@ -15,15 +15,17 @@ const specKey = (s: { week: number; offset: number; lift: string; order: number 
 
 /**
  * The progression columns as written (#1210). A field the row leaves out keeps the stored
- * row's value, and null clears it, so a client that doesn't send `progression` (an older web
- * bundle, during a deploy) can't undo the `amrap_gated` backfill. With no stored row, a field
- * left out is stored as null.
+ * row's value, and null clears it, so a client that predates the fields (an older web bundle,
+ * during a deploy) can't undo the `amrap_gated` backfill. With no stored row, a field left
+ * out is stored as null. A kept `repsLow` the row's new `reps` falls below is cleared, since
+ * the bottom of a range can't be above its top; a sent one the DTO has already checked.
  */
 function progressionColumns(s: CustomProgramSpecRow, stored?: ProgressionColumns): ProgressionColumns {
-  const sent = s as { progression?: string | null; repsLow?: number | null };
+  const keptRepsLow = stored?.repsLow ?? null;
   return {
-    progression: sent.progression === undefined ? stored?.progression ?? null : sent.progression,
-    repsLow: sent.repsLow === undefined ? stored?.repsLow ?? null : sent.repsLow,
+    progression: s.progression === undefined ? stored?.progression ?? null : s.progression,
+    repsLow:
+      s.repsLow !== undefined ? s.repsLow : keptRepsLow !== null && keptRepsLow <= s.reps ? keptRepsLow : null,
   };
 }
 
