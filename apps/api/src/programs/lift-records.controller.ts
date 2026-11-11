@@ -103,8 +103,8 @@ export class LiftRecordsController {
 
     const repos = await this.factory.forUser(user);
     const { liftRecord, macrocycleScheduledWorkout } = repos;
-    await checkMacrocycleId(repos, program, body.macrocycleNum, macrocycleId, 'POST lift-records');
-    await assertMacrocycleWritable(repos, program, body.macrocycleNum);
+    const idRow = await checkMacrocycleId(repos, program, body.macrocycleNum, macrocycleId, 'POST lift-records');
+    await assertMacrocycleWritable(repos, program, body.macrocycleNum, idRow);
 
     const modificationNames = await assertSetModifications(repos, body.lift, body.modifications ?? []);
 
@@ -300,8 +300,8 @@ export class LiftRecordsController {
     const notFound = () => new NotFoundException(`Lift record '${id}' not found for program '${program}'`);
     const key = parseLiftRecordId(program, id);
     if (!key) throw notFound();
-    await checkMacrocycleId(repos, program, key.macrocycleNum, macrocycleId, 'PATCH lift-records/:id');
-    await assertMacrocycleWritable(repos, program, key.macrocycleNum);
+    const idRow = await checkMacrocycleId(repos, program, key.macrocycleNum, macrocycleId, 'PATCH lift-records/:id');
+    await assertMacrocycleWritable(repos, program, key.macrocycleNum, idRow);
 
     let checkedNames: ReadonlyMap<string, string> | undefined;
     if (body.modifications !== undefined) {

@@ -436,6 +436,22 @@ describe('createApiClient', () => {
       });
     });
 
+    it('initializeMacrocycle throws a 409 import-in-progress rather than reading it as already initialized', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ code: 'import-in-progress', message: 'An import is changing your macrocycles.' }), { status: 409 }),
+      );
+      await expect(makeClient().initializeMacrocycle('5-3-1')).rejects.toMatchObject({ status: 409, code: 'import-in-progress' });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'exists' }), { status: 409 }));
+      await expect(makeClient().initializeMacrocycle('5-3-1')).resolves.toBeNull();
+    });
+
+    it('every request helper reports the response code: a failed workout read and delete carry it', async () => {
+      const failure = () => new Response(JSON.stringify({ code: 'import-in-progress', message: 'busy' }), { status: 409 });
+      mockFetch.mockResolvedValueOnce(failure()).mockResolvedValueOnce(failure());
+      await expect(makeClient().fetchWorkout('5-3-1', 1)).rejects.toMatchObject({ code: 'import-in-progress', message: 'busy' });
+      await expect(makeClient().deleteCurrentMacrocycle('5-3-1')).rejects.toMatchObject({ code: 'import-in-progress' });
+    });
+
     it('undoImport keeps its generic message for other failures', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'boom' }), { status: 500 }));
       await expect(makeClient().undoImport('5-3-1', 'b-1')).rejects.toThrow('Undo import failed (HTTP 500)');

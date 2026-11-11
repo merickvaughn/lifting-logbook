@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { liftOccurrenceKey } from '@lifting-logbook/core';
 import { upsertLiftOverride } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
-import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
+import { followMovedMacrocycle, withMacrocycleId, writeFailureMessage } from '@/lib/macrocycleUrl';
 import type { WorkoutLiftResponse } from '@lifting-logbook/types';
 import styles from './ManageLiftsActions.module.css';
 
@@ -41,7 +41,10 @@ export default function ManageLiftsActions({ program, macrocycleNum, macrocycleI
   }
 
   const replaceUrl = (lift: string) =>
-    `/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts/pick?action=replace&replacing=${encodeURIComponent(lift)}`;
+    withMacrocycleId(
+      `/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts/pick?action=replace&replacing=${encodeURIComponent(lift)}`,
+      macrocycleId,
+    );
 
   const editUrl = (lift: string) =>
     `/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts/edit/${encodeURIComponent(lift)}`;

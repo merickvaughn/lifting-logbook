@@ -184,7 +184,8 @@ export async function lockForMacrocycleWrite(repos: Pick<RepositoryBundle, 'macr
  * ({@link lockForMacrocycleWrite}), then checks that the page's stable id still names `macrocycleNum`: a different number is a
  * 409 `macrocycle-moved` carrying the new one, and an id the user doesn't have in this program
  * is a 404. A write with no id is still accepted until #1200, and logged so the remaining ones
- * can be counted.
+ * can be counted. Returns the id's row, for {@link assertMacrocycleWritable} to reuse, or null
+ * when the write had no id.
  */
 export async function checkMacrocycleId(
   repos: Pick<RepositoryBundle, 'macrocycle'>,
@@ -192,15 +193,16 @@ export async function checkMacrocycleId(
   macrocycleNum: number,
   macrocycleId: string | undefined,
   route: string,
-): Promise<void> {
+): Promise<MacrocycleRow | null> {
   await lockForMacrocycleWrite(repos);
   if (!macrocycleId) {
     writeLogger.log({ route, program }, 'Macrocycle write without an id (#1198)');
-    return;
+    return null;
   }
   const row = await repos.macrocycle.findById(macrocycleId);
   if (!row || row.program !== program) throw unknownId(program, macrocycleId);
   if (row.macrocycleNum !== macrocycleNum) throw moved(program, row.macrocycleNum);
+  return row;
 }
 
 /**
@@ -220,14 +222,16 @@ export async function lockForImport(
  * Guards a write scoped to one macrocycle (proposal decision 2): an `imported` macrocycle is
  * read-only (409 `macrocycle-read-only`) and a number the program doesn't have is a 404
  * (`macrocycle-not-found`). `live` and `legacy` macrocycles stay writable. The current
- * macrocycle gets its row here if it has none.
+ * macrocycle gets its row here if it has none. `known` is the row {@link checkMacrocycleId}
+ * already read for this number, which saves reading it again.
  */
 export async function assertMacrocycleWritable(
   repos: HistoryRepos,
   program: string,
   macrocycleNum: number,
+  known: MacrocycleRow | null = null,
 ): Promise<void> {
-  const row = await repos.macrocycle.findByNumber(program, macrocycleNum);
+  const row = known ?? (await repos.macrocycle.findByNumber(program, macrocycleNum));
   if (row) {
     if (row.origin === 'imported') throw readOnly(program, macrocycleNum);
     return;

@@ -260,7 +260,7 @@ export function createApiClient(config: ApiClientConfig) {
   async function requestNullable<T>(path: string, init?: FetchInit): Promise<T | null> {
     const res = await rawFetch(path, init);
     if (res.status === 404 || res.status === 204) return null;
-    if (!res.ok) throw new Error(await extractErrorMessage(res, path));
+    if (!res.ok) throw await readError(res, path);
     return (await res.json()) as T;
   }
 
@@ -271,9 +271,14 @@ export function createApiClient(config: ApiClientConfig) {
   // conflict cause, "a macrocycle already exists").
   async function requestOrConflict<T>(path: string, init?: FetchInit): Promise<T | null> {
     const res = await rawFetch(path, init);
-    if (res.status === 409) return null;
+    if (res.status === 409) {
+      // An import holding the macrocycle lock (#1198) doesn't mean the resource exists.
+      const err = await readError(res, path);
+      if (err.code === 'import-in-progress') throw err;
+      return null;
+    }
     if (res.status === 204) return undefined as T;
-    if (!res.ok) throw new Error(await extractErrorMessage(res, path));
+    if (!res.ok) throw await readError(res, path);
     return (await res.json()) as T;
   }
 
@@ -295,7 +300,7 @@ export function createApiClient(config: ApiClientConfig) {
       return { ok: false, conflictMessage: await extractErrorMessage(res, path) };
     }
     if (res.status === 204) return { ok: true, data: undefined as T };
-    if (!res.ok) throw new Error(await extractErrorMessage(res, path));
+    if (!res.ok) throw await readError(res, path);
     return { ok: true, data: (await res.json()) as T };
   }
 
@@ -304,7 +309,7 @@ export function createApiClient(config: ApiClientConfig) {
   async function requestVoidIdempotent(path: string, init?: FetchInit): Promise<void> {
     const res = await rawFetch(path, init);
     if (!res.ok && res.status !== 404) {
-      throw new ApiClientError(await extractErrorMessage(res, path), res.status);
+      throw await readError(res, path);
     }
   }
 
@@ -545,7 +550,7 @@ export function createApiClient(config: ApiClientConfig) {
       }
       const body = (await res.clone().json().catch(() => ({}))) as { errors?: ImportError[] };
       if (body.errors) return { ok: false, errors: body.errors };
-      throw new ApiClientError(await extractErrorMessage(res, path), res.status);
+      throw await readError(res, path);
     },
 
     /**
@@ -761,7 +766,7 @@ export function createApiClient(config: ApiClientConfig) {
         cache: 'no-store',
         signal: AbortSignal.timeout(DATA_EXPORT_TIMEOUT_MS),
       });
-      if (!res.ok) throw new ApiClientError(await extractErrorMessage(res, path), res.status);
+      if (!res.ok) throw await readError(res, path);
       return res.blob();
     },
     fetchUserSettings(): Promise<UserSettingsResponse> {

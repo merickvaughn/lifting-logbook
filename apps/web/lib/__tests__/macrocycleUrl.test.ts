@@ -2,6 +2,7 @@ import { ApiClientError } from '@lifting-logbook/api-client';
 import {
   movedMacrocycleNum,
   movedWorkoutPath,
+  withMacrocycleId,
   withMacrocycleNum,
   writeFailureMessage,
 } from '../macrocycleUrl';
@@ -13,6 +14,17 @@ describe('withMacrocycleNum', () => {
   it('replaces only the leading macrocycle segment', () => {
     expect(withMacrocycleNum('/macrocycle/2/workout/2/detail', 3)).toBe('/macrocycle/3/workout/2/detail');
     expect(withMacrocycleNum('/history/macrocycle/2', 3)).toBe('/history/macrocycle/2');
+  });
+});
+
+describe('withMacrocycleId', () => {
+  it('adds the id to a link, after any query it already has', () => {
+    expect(withMacrocycleId('/pick?action=add', 'mc a')).toBe('/pick?action=add&macrocycleId=mc%20a');
+    expect(withMacrocycleId('/pick', 'mc-a')).toBe('/pick?macrocycleId=mc-a');
+  });
+
+  it('leaves a link alone when there is no id', () => {
+    expect(withMacrocycleId('/pick?action=add', undefined)).toBe('/pick?action=add');
   });
 });
 

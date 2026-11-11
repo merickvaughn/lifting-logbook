@@ -27,9 +27,31 @@ export function movedMacrocycleNum(err: unknown): number | null {
   return typeof num === 'number' && Number.isInteger(num) ? num : null;
 }
 
-/** Reloads the current page at the macrocycle's new number. */
+/**
+ * The browser navigation a reload goes through. An object, so a test can replace `assign`
+ * (jsdom can't navigate) while the real {@link followMovedMacrocycle} runs.
+ */
+export const browserNavigation = {
+  assign(url: string): void {
+    window.location.assign(url);
+  },
+};
+
+/**
+ * The query parameter a link carries the macrocycle's id in, so the page it opens can send it
+ * without reading the workout again. A stale one is caught by the write (`macrocycle-moved`).
+ */
+export const MACROCYCLE_ID_PARAM = 'macrocycleId';
+
+/** `href` with the macrocycle's id appended as {@link MACROCYCLE_ID_PARAM}, when there is one. */
+export function withMacrocycleId(href: string, macrocycleId: string | undefined): string {
+  if (!macrocycleId) return href;
+  return `${href}${href.includes('?') ? '&' : '?'}${MACROCYCLE_ID_PARAM}=${encodeURIComponent(macrocycleId)}`;
+}
+
+/** Reloads the current page at the macrocycle's new number, keeping its query. */
 export function reloadAtMacrocycle(macrocycleNum: number): void {
-  window.location.assign(withMacrocycleNum(window.location.pathname, macrocycleNum) + window.location.search);
+  browserNavigation.assign(withMacrocycleNum(window.location.pathname, macrocycleNum) + window.location.search);
 }
 
 /**

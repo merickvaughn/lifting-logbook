@@ -34,7 +34,7 @@ const specRow = (week: number, offset: number, lift: string, order: number) => (
 describe('WorkoutsController', () => {
   let controller: WorkoutsController;
   let workoutRepo: jest.Mocked<IWorkoutRepository>;
-  let macrocycleRepo: Pick<jest.Mocked<IMacrocycleRepository>, 'highestNumber' | 'findByNumber' | 'ensure'>;
+  let macrocycleRepo: Pick<jest.Mocked<IMacrocycleRepository>, 'highestNumber' | 'findByNumber' | 'ensure' | 'tryLockShared'>;
   let dashboardRepo: jest.Mocked<IMacrocycleDashboardRepository>;
   let specRepo: jest.Mocked<ILiftingProgramSpecRepository>;
   let overrideRepo: jest.Mocked<IWorkoutDateOverrideRepository>;
@@ -50,6 +50,7 @@ describe('WorkoutsController', () => {
       // No row unless a test seeds one, so responses carry no macrocycleId (#1198).
       findByNumber: jest.fn().mockResolvedValue(null),
       ensure: jest.fn().mockResolvedValue(undefined),
+      tryLockShared: jest.fn().mockResolvedValue(true),
     };
     dashboardRepo = {
       getMacrocycleDashboard: jest.fn(),

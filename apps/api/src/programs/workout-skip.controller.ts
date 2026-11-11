@@ -118,8 +118,8 @@ export class WorkoutSkipController {
       );
     }
 
-    await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, route);
-    await assertMacrocycleWritable(repos, program, macrocycleNum);
+    const idRow = await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, route);
+    await assertMacrocycleWritable(repos, program, macrocycleNum, idRow);
 
     // getMacrocycleDashboard throws ProgramNotFoundError when the program has no
     // macrocycle. Its macrocycleNum is the *active* macrocycle, and the entire read model (GET

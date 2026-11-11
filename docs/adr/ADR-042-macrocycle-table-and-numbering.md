@@ -102,19 +102,24 @@ Once [#1199](https://github.com/merickvaughn/lifting-logbook/issues/1199) can re
    - a header over the URL path, so every route keeps its shape and a client without the id still works;
    - page writes only, over every write.
 
+   Browser writes are cross-origin ([ADR-032](ADR-032-cloud-run-api-public-invoker.md)), so the API's CORS options allow the header. `main.ts` and the preflight test share one options object, so the test checks the real configuration.
+
 3. **The API checks the id against the number in the request.**
    - An id whose row has a different number returns 409 `macrocycle-moved`. The body carries the row's current `macrocycleNum`, and nothing is written.
    - An id with no row in the program returns 404 `macrocycle-not-found`.
    - A write with no id is accepted and logged as `Macrocycle write without an id (#1198)` with its route. That log shows when every client sends one. [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200) turns it into a 400.
 
-4. **Page writes and imports exclude each other through a per-user advisory lock.** Page writes take it shared and imports take it exclusive, both with the `try` form inside the request's transaction, so the lock is released when the transaction ends [6].
-   - A request that can't take it returns 409 `import-in-progress` at once rather than waiting.
-   - The key is (`1171`, `hashtext(userId)`), so two users never contend.
-   - The lock is raw SQL, which OpenTelemetry doesn't trace ([ADR-024](ADR-024-prisma-otel-sdk-override.md)), so it runs inside a manual `macrocycle.try_lock` span.
+4. **Macrocycle writes and imports exclude each other through a per-user advisory lock** [6]. Both take the transaction-scoped form inside the request's transaction, so the lock is released when the transaction ends.
+   - **Every macrocycle write takes it shared:** the page writes above, starting the next macrocycle (with or without `fromMacrocycleNum`), initializing the first one, and deleting the current one. So does a workout read that has to create the current macrocycle's missing row. Shared holders don't block each other.
+   - **A write doesn't wait.** It uses the `try` form, and an import holding the lock gets a 409 `import-in-progress` the lifter can retry. A workout read that can't take it returns no id rather than failing, and the page's writes go without one.
+   - **An import, and an import's undo, take it exclusively and wait** up to 5 seconds for the shared holders to finish, using `lock_timeout` set for the transaction only [7]. Page writes are short, so the wait is usually nothing. If it runs out, the import gets a 409 `macrocycle-busy` with a message written for the importer: "Your workouts are being saved. Try the import again in a moment." The owner chose the wait over failing the import at once, which would have thrown away an upload because one set was being logged. Each import route's transaction budget is 30 seconds, which leaves room for it.
+   - **The key is the single 64-bit value `hashtextextended(userId, 1171)`.** A 32-bit hash would make two users share a lock, and one's import fail the other's writes, within a few tens of thousands of users. `hashtextextended` is Postgres's built-in 64-bit text hash; it isn't in the documented function list, which this decision accepts (observed behaviour, present since PostgreSQL 11).
+   - The lock is raw SQL, which OpenTelemetry doesn't trace ([ADR-024](ADR-024-prisma-otel-sdk-override.md)), so it runs inside manual spans: `macrocycle.try_lock` for the shared form and `macrocycle.lock` for the exclusive one, which records the wait and whether it succeeded.
    - An import holds it for its whole commit. #1199's renumbering runs inside imports, so no page write can land between a renumber and its check.
 
 5. **The web app follows a moved macrocycle.**
    - Workout pages (logger, detail, timer, manage lifts, lift picker, lift editor) redirect to the number the workout was read from when the URL's differs. The read always names the current macrocycle, so the redirect can't loop.
+   - Manage Lifts links to the lift picker with the id in a `macrocycleId` query parameter, so the picker sends it without reading the workout again. A stale one is caught by the write. A link without it, such as a bookmark, makes the picker read the workout as the other pages do.
    - A write that gets `macrocycle-moved` reloads the page at the new number. `import-in-progress` asks the lifter to try again.
    - The logger's unsent-set drafts are keyed by the id. A draft saved under the old number key moves to the id key the first time it's read, which the owner chose over keeping both keys.
    - The timer's saved run matches by the id when both sides have one, and by number otherwise. A matched run takes the current key, so its next save carries the id. The run's storage shape is unchanged.
@@ -123,12 +128,14 @@ Once [#1199](https://github.com/merickvaughn/lifting-logbook/issues/1199) can re
 
 - **The id in the URL path.** Every route and link would change shape at once, and the previous API revision, still serving during the deploy, couldn't answer it.
 - **Blocking a page write while an import runs.** A page write would hold a connection and a transaction for the length of an import. A 409 the lifter can retry costs less.
+- **Failing an import at once when a page write holds the lock.** The first version did this. A set being logged on a phone would fail an import after its file had uploaded, with a message about an import the importer was the one running.
+- **The two-key lock form, (`1171`, `hashtext(userId)`).** Its 32-bit hash lets two users collide.
 - **Checking the id on imports.** An import names macrocycles by the file's numbers, which the importer resolves itself.
 
 **Consequences:**
 
 - A page open across a renumbering can't write to another macrocycle. Before #1200, a client that sends no id still can, and the log names it.
-- A page write during an import fails with a 409 instead of writing into numbers the import is moving.
+- A page write during an import fails with a 409 instead of writing into numbers the import is moving. An import during a page write waits for it.
 - **Rollback:** reverting the API image is safe. The previous revision ignores the header and never takes the lock. Reverting the web image drops the header, and the API accepts writes without it until #1200.
 
 ## References
@@ -138,4 +145,5 @@ Once [#1199](https://github.com/merickvaughn/lifting-logbook/issues/1199) can re
 3. [PostgreSQL 16 — `INSERT`, `ON CONFLICT` clause](https://www.postgresql.org/docs/16/sql-insert.html#SQL-ON-CONFLICT)
 4. [PostgreSQL 16 — PL/pgSQL, obtaining the result status (`GET DIAGNOSTICS`)](https://www.postgresql.org/docs/16/plpgsql-statements.html#PLPGSQL-STATEMENTS-DIAGNOSTICS)
 5. [PostgreSQL 16 — Explicit locking, row-level locks](https://www.postgresql.org/docs/16/explicit-locking.html#LOCKING-ROWS): a second insert of a key held by an uncommitted transaction waits for that transaction, then fails, which the concurrency test relies on.
-6. [PostgreSQL 16 — Advisory lock functions](https://www.postgresql.org/docs/16/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS): `pg_try_advisory_xact_lock` and its `_shared` form return at once and release at transaction end.
+6. [PostgreSQL 16 — Advisory lock functions](https://www.postgresql.org/docs/16/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS): `pg_try_advisory_xact_lock_shared` returns at once, `pg_advisory_xact_lock` waits, and both release at transaction end.
+7. [PostgreSQL 16 — Client connection defaults, `lock_timeout`](https://www.postgresql.org/docs/16/runtime-config-client.html#GUC-LOCK-TIMEOUT), set for one transaction with [`set_config(..., true)`](https://www.postgresql.org/docs/16/functions-admin.html#FUNCTIONS-ADMIN-SET). A wait that runs out fails with `lock_not_available` ([SQLSTATE `55P03`](https://www.postgresql.org/docs/16/errcodes-appendix.html)).

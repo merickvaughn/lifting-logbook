@@ -2,7 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 import { fetchWorkout } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
-import { movedWorkoutPath } from '@/lib/macrocycleUrl';
+import { movedWorkoutPath, withMacrocycleId } from '@/lib/macrocycleUrl';
 import ManageLiftsActions from './ManageLiftsActions';
 import styles from './manage-lifts.module.css';
 
@@ -58,7 +58,10 @@ export default async function ManageLiftsPage({
 
       <div className={styles.addLift}>
         <Link
-          href={`/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts/pick?action=add`}
+          href={withMacrocycleId(
+            `/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts/pick?action=add`,
+            workout.macrocycleId,
+          )}
           className={styles.btnPrimary}
         >
           + Add Lift

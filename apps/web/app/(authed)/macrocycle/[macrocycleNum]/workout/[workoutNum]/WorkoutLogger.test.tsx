@@ -6,7 +6,7 @@ import type { LiftData, WorkoutLoggerProps } from './types';
 import { createLiftRecord, recordBodyWeight } from '@/lib/client-api';
 import { buildDraftKey } from './workoutDraftStorage';
 import { ApiClientError } from '@lifting-logbook/api-client';
-import { reloadAtMacrocycle } from '@/lib/macrocycleUrl';
+import { browserNavigation } from '@/lib/macrocycleUrl';
 
 // jest.mock is hoisted above the imports, so `createLiftRecord`/`recordBodyWeight`
 // resolve to the jest.fn() mocks below.
@@ -21,24 +21,15 @@ jest.mock('@/lib/client-api', () => ({
   rescheduleWorkout: jest.fn(),
 }));
 
-// Only the reload is replaced: jsdom can't navigate, and the test checks where it goes. The
-// module calls its own reload internally, so `followMovedMacrocycle` is rebuilt here on the real
-// `movedMacrocycleNum` to reach the mock.
-jest.mock('@/lib/macrocycleUrl', () => {
-  const actual = jest.requireActual('@/lib/macrocycleUrl');
-  const reloadAtMacrocycle = jest.fn();
-  return {
-    ...actual,
-    reloadAtMacrocycle,
-    followMovedMacrocycle: (err: unknown) => {
-      const num = actual.movedMacrocycleNum(err);
-      if (num === null) return false;
-      reloadAtMacrocycle(num);
-      return true;
-    },
-  };
+// Only the browser navigation is replaced: jsdom can't navigate, and the tests check where the
+// real `followMovedMacrocycle` sends the page.
+let mockAssign: jest.SpyInstance<void, [string]>;
+beforeEach(() => {
+  mockAssign = jest.spyOn(browserNavigation, 'assign').mockImplementation(() => undefined);
 });
-const mockReload = reloadAtMacrocycle as jest.MockedFunction<typeof reloadAtMacrocycle>;
+afterEach(() => {
+  mockAssign.mockRestore();
+});
 
 const mockCreateLiftRecord = createLiftRecord as jest.MockedFunction<typeof createLiftRecord>;
 const mockRecordBodyWeight = recordBodyWeight as jest.MockedFunction<typeof recordBodyWeight>;
@@ -455,13 +446,15 @@ describe('WorkoutLogger — a renumbered macrocycle (#1198)', () => {
     mockCreateLiftRecord.mockRejectedValue(
       new ApiClientError('moved', 409, 'macrocycle-moved', { code: 'macrocycle-moved', macrocycleNum: 2 }),
     );
+    window.history.pushState({}, '', '/macrocycle/1/workout/1?from=history');
     render(<WorkoutLogger {...makeProps({ macrocycleId: 'mc-a' })} />);
 
     await user.clear(screen.getByLabelText('Weight in lbs'));
     await user.type(screen.getByLabelText('Weight in lbs'), '225');
     await user.click(screen.getByRole('button', { name: 'Log' }));
 
-    await waitFor(() => expect(mockReload).toHaveBeenCalledWith(2));
+    await waitFor(() => expect(mockAssign).toHaveBeenCalledWith('/macrocycle/2/workout/1?from=history'));
+    window.history.pushState({}, '', '/');
     expect(screen.queryByText('Failed to log set. Try again.')).not.toBeInTheDocument();
     expect(window.localStorage.getItem(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1, undefined, 'mc-a'))).not.toBeNull();
   });
@@ -474,7 +467,7 @@ describe('WorkoutLogger — a renumbered macrocycle (#1198)', () => {
     await user.click(screen.getByRole('button', { name: 'Log' }));
 
     await waitFor(() => expect(screen.getByText(/An import is updating your macrocycles/)).toBeInTheDocument());
-    expect(mockReload).not.toHaveBeenCalled();
+    expect(mockAssign).not.toHaveBeenCalled();
   });
 
   it('reports a duplicate-set 409 as before, without reloading', async () => {
@@ -485,6 +478,6 @@ describe('WorkoutLogger — a renumbered macrocycle (#1198)', () => {
     await user.click(screen.getByRole('button', { name: 'Log' }));
 
     await waitFor(() => expect(screen.getByText('Failed to log set. Try again.')).toBeInTheDocument());
-    expect(mockReload).not.toHaveBeenCalled();
+    expect(mockAssign).not.toHaveBeenCalled();
   });
 });
