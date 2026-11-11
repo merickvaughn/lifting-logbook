@@ -23,6 +23,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 
 # Cloud Run service name -> its ingress container, which is also the image's name in the registry.
 SERVICES = {
@@ -37,19 +38,23 @@ def applied_image(described, container):
     for c in containers:
         if c.get("name") == container:
             return c.get("image")
-    # A single-container service may leave the ingress container unnamed.
-    if len(containers) == 1:
-        return containers[0].get("image")
     return None
 
 
-def mismatch(service, described, container, expected, expected_digest=None):
+def mismatch(service, described, container, expected, expected_digest=None, digest_unknown=False):
     """Return an error message, or None when the service runs `expected` (by tag or digest)."""
     live = applied_image(described, container)
     if live == expected:
         return None
     if live and expected_digest and expected_digest in live:
         return None
+    if live and "@sha256:" in live and digest_unknown:
+        # A digest-pinned image can't be told apart from ours without our image's digest.
+        return (
+            f"{service} runs '{live}', pinned by digest, and the digest of this run's image "
+            f"'{expected}' couldn't be resolved, so the check can't tell whether it is this run's build. "
+            "Re-run the failed jobs; if it repeats, check Artifact Registry access."
+        )
     by_digest = f" ({expected_digest})" if expected_digest else ""
     return (
         f"{service} runs '{live or '<no ' + container + ' container>'}', but this run deployed "
@@ -59,21 +64,33 @@ def mismatch(service, described, container, expected, expected_digest=None):
     )
 
 
-def gcloud_json(args):
-    out = subprocess.run(["gcloud", *args, "--format=json"], check=True, capture_output=True, text=True).stdout
-    return json.loads(out)
+class GcloudError(Exception):
+    pass
 
 
-def digest_of(image, project):
+def gcloud_json(args, run=subprocess.run, sleep=time.sleep, attempts=3):
+    """Run a gcloud read, retrying transient failures; raise GcloudError with its stderr."""
+    for attempt in range(1, attempts + 1):
+        proc = run(["gcloud", *args, "--format=json"], capture_output=True, text=True)
+        if proc.returncode == 0:
+            return json.loads(proc.stdout)
+        if attempt == attempts:
+            raise GcloudError(f"gcloud {' '.join(args[:3])} failed after {attempts} attempts: {proc.stderr.strip()}")
+        print(f"gcloud {' '.join(args[:3])} attempt {attempt} failed; retrying in {attempt * 5}s.", file=sys.stderr)
+        sleep(attempt * 5)
+
+
+def digest_of(image, project, run=subprocess.run, sleep=time.sleep):
     try:
-        return gcloud_json(["artifacts", "docker", "images", "describe", image, f"--project={project}"]).get(
-            "image_summary", {}
-        ).get("digest")
-    except (subprocess.CalledProcessError, ValueError):
+        described = gcloud_json(
+            ["artifacts", "docker", "images", "describe", image, f"--project={project}"], run=run, sleep=sleep
+        )
+    except (GcloudError, ValueError):
         return None
+    return (described.get("image_summary") or {}).get("digest")
 
 
-def main(argv=None):
+def main(argv=None, run=subprocess.run, sleep=time.sleep):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--project", required=True)
     parser.add_argument("--region", required=True)
@@ -81,19 +98,27 @@ def main(argv=None):
     parser.add_argument("--tag", required=True)
     parser.add_argument("--when", default="")
     args = parser.parse_args(argv)
+    when = f" ({args.when})" if args.when else ""
 
     failed = False
     for service, container in SERVICES.items():
         expected = f"{args.ar_repo}/{container}:{args.tag}"
-        described = gcloud_json(
-            ["run", "services", "describe", service, f"--region={args.region}", f"--project={args.project}"]
-        )
+        try:
+            described = gcloud_json(
+                ["run", "services", "describe", service, f"--region={args.region}", f"--project={args.project}"],
+                run=run, sleep=sleep,
+            )
+        except (GcloudError, ValueError) as err:
+            print(f"::error title=Couldn't read the staging services{when}::{err} This is not evidence of "
+                  "another run's deploy; re-run the failed jobs.")
+            failed = True
+            continue
         problem = mismatch(service, described, container, expected)
         if problem:
             # Only look up the digest when the tag differs, as the deploy job's own check does.
-            problem = mismatch(service, described, container, expected, digest_of(expected, args.project))
+            digest = digest_of(expected, args.project, run=run, sleep=sleep)
+            problem = mismatch(service, described, container, expected, digest, digest_unknown=digest is None)
         if problem:
-            when = f" ({args.when})" if args.when else ""
             print(f"::error title=Staging is not running this run's build{when}::{problem}")
             failed = True
         else:
