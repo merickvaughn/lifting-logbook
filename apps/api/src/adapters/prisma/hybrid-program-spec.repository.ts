@@ -131,7 +131,7 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
           rows,
           (r) => programSpecNaturalKey(r),
           (r) => programSpecRowKind(r, existingByKey),
-          (r) => {
+          (r, _kind, key) => {
             const data = {
               programId: program,
               week: r.week,
@@ -152,7 +152,7 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
             };
             // ...except a stored `repsLow` the imported `reps` falls below, which is cleared:
             // the bottom of a range can't be above its top.
-            const storedRepsLow = existingByKey.get(programSpecNaturalKey(r))?.repsLow;
+            const storedRepsLow = existingByKey.get(key)?.repsLow;
             const update = storedRepsLow !== undefined && storedRepsLow > r.reps ? { ...data, repsLow: null } : data;
             return tx.customProgramSpec.upsert({
               where: {

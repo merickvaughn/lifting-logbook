@@ -58,8 +58,9 @@ export class CustomProgramSpecRowDto {
   @IsString() activation!: string;
   @IsOptional() @IsString() weekType?: string;
   // The row's progression override (#1210). A row with none follows the lift's own value. On
-  // an update, leaving either field out keeps the stored value and null clears it.
-  // `repsLow` is the bottom of the range whose top is `reps`, so `reps` bounds it.
+  // an update, leaving either field out keeps the stored value and null clears it, except that
+  // a kept `repsLow` above the row's `reps` is cleared. `repsLow` is the bottom of the range
+  // whose top is `reps`, so `reps` bounds it.
   @IsOptional() @IsLiftProgression() progression?: LiftProgressionType | null;
   @IsOptional() @IsProgressionReps('reps') repsLow?: number | null;
 }

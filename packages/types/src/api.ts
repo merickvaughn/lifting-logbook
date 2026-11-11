@@ -568,7 +568,10 @@ export interface CustomProgramSpecRow {
    * it out keeps the stored value, for a client that predates the field.
    */
   progression?: LiftProgressionType | null;
-  /** The bottom of the row's rep range; `reps` is the top. Set and left out like `progression`. */
+  /**
+   * The bottom of the row's rep range; `reps` is the top. Set and left out like `progression`,
+   * except that a kept value above the row's `reps` is cleared.
+   */
   repsLow?: number | null;
 }
 
