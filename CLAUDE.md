@@ -803,6 +803,22 @@ This is a known, already-diagnosed CI mechanic, not a new bug — see [#673](htt
 
 Motivating incidents: [PR #703](https://github.com/merickvaughn/lifting-logbook/pull/703), [PR #711](https://github.com/merickvaughn/lifting-logbook/pull/711).
 
+Since [#1208](https://github.com/merickvaughn/lifting-logbook/issues/1208), runs wait for the staging lock (next section) before they reach these mutex groups, so the groups never have a waiter and this cancellation can't fire. A `cancelled` deploy job now points at a cancelled run, such as a newer push to the same PR, not at preemption.
+
+### Staging overwritten mid-test — the staging environment lock
+
+**Pattern:** The mutex groups above serialize each *deploy*, but until [#1208](https://github.com/merickvaughn/lifting-logbook/issues/1208) nothing held staging between a run's deploy and its integration tests. A second run could redeploy staging under the first run's tests. On 2026-11-11 a `pull_request` run redeployed staging 50 seconds into merge-queue run [42945342678](https://github.com/merickvaughn/lifting-logbook/actions/runs/42945342678)'s tests (PR [#1207](https://github.com/merickvaughn/lifting-logbook/pull/1207), docs-only). Those tests hung until the 25-minute job limit, and the queue removed the PR. The merge queue doesn't prevent this: it serializes merge-queue entries, but `pull_request` runs and `deploy.yml`'s post-merge deploy write the same staging.
+
+**Fix (in place):** a staging environment lock, [`scripts/staging-env-lock.py`](scripts/staging-env-lock.py). It's one GCS object, `ci-locks/staging-environment.json` in the Terraform state bucket, created with `ifGenerationMatch=0` so only one run can hold it. In `staging.yml`, `lock-staging` takes it after `build-images`, and `unlock-staging` releases it in an `always()` job after `Staging Integration Tests`, so a run's deploy and tests are one critical section. `deploy-api`, `deploy-web` and the test job each re-take it first. That's instant for the run that holds it, and it covers `gh run rerun --failed`, which re-runs those jobs but not `lock-staging`. `deploy.yml`'s `deploy-staging` takes it as its first step and releases it in an `always()` step. It isn't a `concurrency:` group, for two reasons: a group lives on one job and this section spans four, and a group keeps one pending waiter, so a third run would cancel the second (the starvation pattern above, made likelier by holding the group through the tests). Waiters poll and are never cancelled. A lock whose holder run has completed (a lost runner, a release that never ran), or that is older than 90 minutes, is taken over. Before its tests, the integration job runs [`scripts/check-staging-deployed-image.py`](scripts/check-staging-deployed-image.py), which fails fast, naming both images, if staging doesn't run this run's build. If the tests then fail, it runs again to say whether staging changed under them.
+
+**Symptoms now:**
+- `Lock staging` runs for minutes, logging `Staging is held by run <id> (...)`. That's the expected wait for another run's deploy and tests, not a hang.
+- `lock-staging did not succeed`: the lock wait hit 45 minutes. The log names the holder; re-run failed jobs once that run finishes.
+- `Staging is not running this run's build` on a first attempt: the lock didn't hold. That's a bug, not a flake. Find the run that deployed the named image and why it skipped the lock.
+- The same error on a re-run of only the failed test job is expected if another run deployed staging in between. Re-run all jobs (`gh run rerun <run-id>`) so this run deploys again.
+
+**Releasing a wedged lock by hand** (needs `roles/storage.objectAdmin` on the state bucket): `gcloud storage cat gs://<TF_STATE_BUCKET>/ci-locks/staging-environment.json` shows the holder. Delete it with `gcloud storage rm` only once that run has finished. Waiters already take over a completed run's lock on their own.
+
 ### Merge enqueues instead of landing — GitHub merge queue on main
 
 **What changed:** `main` has required a GitHub merge queue since

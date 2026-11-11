@@ -1,8 +1,8 @@
 name: Staging
 
 # Fires on every PR push targeting main.
-# Pipeline: [preflight] → terraform staging → build images → deploy staging →
-#           staging integration tests → report status (PR comment)
+# Pipeline: [preflight] → terraform staging → build images → lock staging → deploy staging →
+#           staging integration tests → unlock staging → report status (PR comment)
 #
 # Production is NOT touched by this workflow — production deploys only via deploy.yml
 # on push to main. The structural separation (two trigger files) is the primary
@@ -351,22 +351,64 @@ jobs:
             cache-from: type=gha,scope=web-pr-v2
             cache-to: type=gha,scope=web-pr-v2,mode=max
 
-  # ── 3a. Deploy API (staging) ──────────────────────────────────────────────
-  # Split into per-service jobs so they run in parallel within a single PR.
-  # Cross-PR serialization is preserved per-service via separate mutex groups —
-  # two PRs cannot race the same Cloud Run service or Helm release, but PR #1's
-  # API deploy may overlap with PR #2's web deploy (disjoint targets, safe).
-  deploy-api:
-    name: Deploy API (staging)
+  # ── 2b. Take the staging environment lock ───────────────────────────────
+  # Staging is one shared environment. This run holds it from here until `unlock-staging` runs
+  # after the integration tests, so no other run (another PR push, a merge-queue entry, or
+  # deploy.yml after a merge) can redeploy it under this run's tests. On 2026-11-11 a
+  # pull_request run redeployed staging 50s into a merge-queue run's tests, which hung until the
+  # 25m limit (#1208).
+  #
+  # The lock is a GCS object (scripts/staging-env-lock.py), not a `concurrency:` group, for two
+  # reasons. A group lives on one job, and this critical section is four (lock → deploy-api +
+  # deploy-web in parallel → integration tests). And a group keeps only one pending waiter, so a
+  # third run cancels the second: the #673 starvation pattern, which a group held for deploy AND
+  # tests would make more likely, not less. Waiters on this lock poll until it is free and are never
+  # cancelled to make room. Taken after build-images so the long image build stays outside it.
+  lock-staging:
+    name: Lock staging
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: [preflight, terraform-staging, build-images]
+    # Waiting counts toward this limit; the script gives up at 45m with an error naming the holder.
+    timeout-minutes: 50
+    needs: [preflight, build-images]
     if: |
       needs.preflight.outputs.should_run == 'true' &&
       needs.build-images.result == 'success'
     permissions:
       contents: read
       id-token: write
+      actions: read   # ask GitHub whether the lock's holder run has completed
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Authenticate to GCP (staging)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
+
+      - name: Wait for and take the staging lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 45
+
+  # ── 3a. Deploy API (staging) ──────────────────────────────────────────────
+  # Split into per-service jobs so they run in parallel within a single PR.
+  # Cross-run serialization comes from `lock-staging` above. The per-service
+  # mutex groups predate it and stay as a backstop: under the lock they never
+  # have a waiter, so their one-pending-slot cancellation (#673) can't fire.
+  deploy-api:
+    name: Deploy API (staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [preflight, terraform-staging, build-images, lock-staging]
+    if: |
+      needs.preflight.outputs.should_run == 'true' &&
+      needs.build-images.result == 'success' &&
+      needs.lock-staging.result == 'success'
+    permissions:
+      contents: read
+      id-token: write
+      actions: read   # staging-env-lock.py asks whether a lock holder's run has completed
     environment: staging
     concurrency:
       group: staging-deploy-mutex-api
@@ -383,6 +425,14 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
+
+      # Instant on the first attempt: lock-staging already holds the lock for this run id. It
+      # matters on `gh run rerun --failed`, which re-runs this job but not lock-staging, after
+      # unlock-staging has released it (#1208).
+      - name: Hold the staging lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 15
 
       # ── Database migrations (ADR-027) ──────────────────────────────────────
       # Apply pending Prisma migrations to the staging DB via the in-VPC Cloud
@@ -664,13 +714,15 @@ jobs:
     name: Deploy web (staging)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: [preflight, terraform-staging, build-images]
+    needs: [preflight, terraform-staging, build-images, lock-staging]
     if: |
       needs.preflight.outputs.should_run == 'true' &&
-      needs.build-images.result == 'success'
+      needs.build-images.result == 'success' &&
+      needs.lock-staging.result == 'success'
     permissions:
       contents: read
       id-token: write
+      actions: read   # staging-env-lock.py asks whether a lock holder's run has completed
     environment: staging
     concurrency:
       group: staging-deploy-mutex-web
@@ -686,6 +738,12 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
+
+      # See the same step in deploy-api: instant unless this is a re-run after unlock-staging.
+      - name: Hold the staging lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 15
 
       - name: Set up GKE credentials
         if: needs.terraform-staging.outputs.gke_enabled == 'true'
@@ -811,7 +869,7 @@ jobs:
     name: Staging Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: [preflight, terraform-staging, deploy-api, deploy-web]
+    needs: [preflight, terraform-staging, build-images, lock-staging, deploy-api, deploy-web]
     # Only skip when staging is not configured at all (no GCP credentials).
     # When staging IS configured, always() ensures the job runs even when a
     # needs job hard-fails (e.g. GCP auth failure in deploy-api/deploy-web) —
@@ -821,6 +879,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read   # staging-env-lock.py asks whether a lock holder's run has completed
     # environment: staging grants access to environment-level secrets
     # (STAGING_CLERK_TEST_EMAIL, STAGING_CLERK_TEST_PASSWORD).
     environment: staging
@@ -839,7 +898,14 @@ jobs:
           DEPLOY_RESULT='${{ needs.deploy-api.result }}'
           CLERK_OUT='${{ needs.deploy-api.outputs.clerk_configured }}'
           API_DEPLOYED='${{ needs.deploy-api.outputs.cloud_run_api_deployed }}'
+          LOCK_RESULT='${{ needs.lock-staging.result }}'
 
+          # Checked first: when the lock wasn't taken, both deploys are skipped, and the deploy-api
+          # message below would blame build-images.
+          if [[ "$LOCK_RESULT" != "success" && "${{ needs.build-images.result }}" == "success" ]]; then
+            echo "::error::lock-staging did not succeed (result: $LOCK_RESULT), so this run never deployed staging. If it timed out, other runs held staging for 45m — its log names the holder; re-run the failed jobs once that run finishes (#1208)."
+            exit 1
+          fi
           if [[ "$DEPLOY_RESULT" != "success" ]]; then
             echo "::error::deploy-api did not succeed (result: $DEPLOY_RESULT). If 'skipped' or 'cancelled', build-images likely failed — check the 'Build & Push Images' job (e.g., Artifact Registry 504 on layer-blob push) and re-run failed jobs if transient. If 'failure', open the Deploy API (staging) job log for the step that errored (commonly GCP auth or the Cloud Run deploy itself)."
             exit 1
@@ -863,6 +929,31 @@ jobs:
 
       - uses: actions/checkout@v5
 
+      - name: Authenticate to GCP (staging) for Secret Manager access
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
+
+      # Instant on the first attempt (this run already holds the lock). On a re-run of failed jobs
+      # it waits for staging again; the image check below then fails if another run deployed
+      # in between, and the fix is to re-run all jobs (#1208).
+      - name: Hold the staging lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 10
+
+      # Fail fast, naming both images, if staging doesn't run this run's build (#1208). The lock
+      # should make that impossible; this proves it held before ~2m of npm ci and a test run that
+      # would otherwise exercise someone else's code, or hang as it did on 2026-11-11.
+      - name: Verify staging runs this run's images
+        id: image-check
+        run: |
+          python3 scripts/check-staging-deployed-image.py \
+            --project="${{ vars.GCP_STAGING_PROJECT_ID }}" --region="${{ env.REGION }}" \
+            --ar-repo="${{ needs.build-images.outputs.ar_repo }}" --tag="${{ needs.build-images.outputs.image_tag }}" \
+            --when="before the tests"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -874,12 +965,6 @@ jobs:
 
       - name: Install Playwright Chromium
         uses: ./.github/actions/install-playwright-chromium
-
-      - name: Authenticate to GCP (staging) for Secret Manager access
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
 
       - name: Wait for staging to be ready
         id: wait-ready
@@ -943,6 +1028,16 @@ jobs:
           STAGING_CLERK_TEST_PASSWORD: ${{ secrets.STAGING_CLERK_TEST_PASSWORD }}
           # CLERK_SECRET_KEY is set in GITHUB_ENV by the fetch step above
 
+      # If the tests failed after the pre-test check passed, say whether staging was redeployed
+      # under them, which would mean the lock didn't hold (#1208).
+      - name: Check whether staging changed during the tests
+        if: failure() && steps.image-check.outcome == 'success'
+        run: |
+          python3 scripts/check-staging-deployed-image.py \
+            --project="${{ vars.GCP_STAGING_PROJECT_ID }}" --region="${{ env.REGION }}" \
+            --ar-repo="${{ needs.build-images.outputs.ar_repo }}" --tag="${{ needs.build-images.outputs.image_tag }}" \
+            --when="after the tests failed"
+
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
         if: failure()
@@ -950,12 +1045,38 @@ jobs:
           name: staging-playwright-report
           path: apps/web/playwright-report/
 
+  # ── 4b. Release the staging environment lock ────────────────────────────
+  # always(): release after the tests whatever their result, and also when this run is cancelled
+  # (a newer push to the same PR cancels it via the workflow-level group). The script deletes the
+  # lock only if this run holds it. If this job never runs (a lost runner), the next waiter takes
+  # the lock over once GitHub reports this run completed (#1208).
+  unlock-staging:
+    name: Unlock staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [preflight, lock-staging, deploy-api, deploy-web, staging-integration-tests]
+    if: always() && needs.preflight.outputs.should_run == 'true' && needs.lock-staging.result != 'skipped'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Authenticate to GCP (staging)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
+
+      - name: Release the staging lock
+        run: python3 scripts/staging-env-lock.py release --bucket "${{ secrets.TF_STATE_BUCKET }}"
+
   # ── 5. Report status (PR comment) ────────────────────────────────────────
   report-status:
     name: Report Staging Status
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [preflight, terraform-staging, deploy-api, deploy-web, staging-integration-tests]
+    needs: [preflight, terraform-staging, build-images, lock-staging, deploy-api, deploy-web, staging-integration-tests]
     # No PR to comment on under merge_group (context.issue.number is undefined
     # there), and this job isn't a required check — skip it entirely (#694).
     if: always() && github.event_name == 'pull_request'
@@ -970,6 +1091,8 @@ jobs:
             const shouldRun = '${{ needs.preflight.outputs.should_run }}' === 'true';
             const testResult = '${{ needs.staging-integration-tests.result }}';
             const deployApiResult = '${{ needs.deploy-api.result }}';
+            const lockResult = '${{ needs.lock-staging.result }}';
+            const buildResult = '${{ needs.build-images.result }}';
             const webUrl = '${{ needs.deploy-web.outputs.web_url }}';
 
             let body;
@@ -984,6 +1107,8 @@ jobs:
             // see #398 / PR #395.
             if (!shouldRun) {
               body = '⚪ **Staging skipped** — `GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER` is not configured.';
+            } else if (buildResult === 'success' && lockResult !== 'success') {
+              body = `⚠️ **Staging integration tests did not run** — \`lock-staging\` result was \`${lockResult}\`, so this run never deployed staging. If it timed out, other runs held staging for 45 minutes; the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) log names the holder. Re-run failed jobs once it finishes (#1208).`;
             } else if (deployApiResult !== 'success') {
               const upstreamHint = (deployApiResult === 'skipped' || deployApiResult === 'cancelled')
                 ? 'likely because `build-images` failed'

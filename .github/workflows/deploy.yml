@@ -353,12 +353,14 @@ jobs:
   deploy-staging:
     name: Deploy (staging)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 30m of deploy plus up to 25m waiting for the staging lock.
+    timeout-minutes: 60
     needs: [preflight, terraform-staging, build-images]
     if: needs.preflight.outputs.staging_enabled == 'true' && needs.build-images.result == 'success'
     permissions:
       contents: read
       id-token: write
+      actions: read   # ask GitHub whether the staging lock's holder run has completed
     environment: staging
 
     steps:
@@ -369,6 +371,14 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
+
+      # staging.yml holds this lock from a PR's or merge-queue entry's deploy until its
+      # integration tests finish. This job takes it too, so a post-merge deploy can't replace
+      # staging under those tests (#1208). Released by the always() step at the end of this job.
+      - name: Wait for and take the staging lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 25
 
       # ── Database migrations (ADR-027) ──────────────────────────────────────
       # Mirror of the production migration step (see deploy-production). Applies
@@ -622,6 +632,11 @@ jobs:
             --set-string image.digest="${OTEL_COLLECTOR_IMAGE_DIGEST}" \
             --wait --timeout=5m
 
+      # always(): also on failure or cancellation. Deletes the lock only if this run holds it.
+      - name: Release the staging lock
+        if: always()
+        run: python3 scripts/staging-env-lock.py release --bucket "${{ secrets.TF_STATE_BUCKET }}"
+
   # ── 4. Smoke test staging ────────────────────────────────────────────────
   smoke-test:
     name: Smoke Test (staging)
@@ -685,8 +700,8 @@ jobs:
           echo "Staging /sign-in smoke FAILED — runtime healthy but Clerk auth flow not serving 200 (check middleware matcher and Clerk env vars)" && exit 1
 
       # No /version (served-build) probe here, unlike prod (#1042). Staging is shared: staging.yml
-      # redeploys these services for every PR push and merge-queue entry, with no lock against this
-      # workflow, so by now stg-web may legitimately serve another commit — and a failure here would
+      # redeploys these services for every PR push and merge-queue entry, and deploy-staging
+      # releases the staging lock (#1208) before this job starts, so by now stg-web may legitimately serve another commit — and a failure here would
       # block deploy-production. A pin in staging is caught instead by the deploy action's
       # "Verify the newest revision serves 100% of traffic" step.
       - name: Smoke test Cloud Run staging (API auth check)

@@ -10,11 +10,12 @@ staging's API to one July revision for three months: every deploy created a newe
 at 0% traffic, and every check that looked at `spec.template` or probed `/readyz` still passed.
 
 The check deliberately asks nothing else. The staging services are written by two workflows
-(staging.yml per PR and merge-queue entry, deploy.yml after each merge) that do not share a lock,
-so by the time this runs another deploy may have replaced the service, or may still be rolling
-out. Comparing images, generations, or created-vs-ready revisions would fail the slower deploy
-for that, not for a pin. Traffic on the newest ready revision holds through both cases; a pin
-breaks it every time.
+(staging.yml per PR and merge-queue entry, deploy.yml after each merge) that shared no lock until
+#1208, so another deploy could replace the service, or still be rolling out, by the time this
+ran. Comparing images, generations, or created-vs-ready revisions would fail the slower deploy
+for that, not for a pin. Both workflows now take the staging lock (scripts/staging-env-lock.py),
+and staging.yml compares images itself (scripts/check-staging-deployed-image.py); this check
+stays on the one property that holds through both cases and that a pin breaks every time.
 
 A missing or empty `status.traffic`, or no `latestReadyRevisionName`, is a failure, never a pass:
 with nothing to compare there is nothing to prove.
