@@ -4,9 +4,11 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { patchLiftMetadata } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import { EMPTY_PROGRESSION_DRAFT, parseProgressionDraft, progressionDraft } from '@/lib/progression';
 import type { LiftMetadataResponse } from '@lifting-logbook/types';
 import CatalogTagPicker from './CatalogTagPicker';
 import FreeTagPicker from './FreeTagPicker';
+import ProgressionFields from './ProgressionFields';
 import styles from './LiftEditor.module.css';
 
 interface Props {
@@ -20,10 +22,23 @@ export default function LiftEditor({ macrocycleNum, workoutNum, initialMetadata 
   const [muscleGroups, setMuscleGroups] = useState<string[]>(initialMetadata.muscleGroups);
   const [substitutions, setSubstitutions] = useState<string[]>(initialMetadata.substitutions);
   const [foundational, setFoundational] = useState(initialMetadata.foundational);
+  const [progression, setProgression] = useState(() =>
+    progressionDraft({
+      type: initialMetadata.progression,
+      increment: initialMetadata.progressionIncrement,
+      repsLow: initialMetadata.repsLow,
+      repsHigh: initialMetadata.repsHigh,
+    }),
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSave() {
+    const parsed = parseProgressionDraft(progression, { incrementWithoutType: true });
+    if ('error' in parsed) {
+      setError(parsed.error);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -31,6 +46,10 @@ export default function LiftEditor({ macrocycleNum, workoutNum, initialMetadata 
         muscleGroups,
         substitutions,
         foundational,
+        progression: parsed.values.type,
+        progressionIncrement: parsed.values.increment,
+        repsLow: parsed.values.repsLow,
+        repsHigh: parsed.values.repsHigh,
       });
       router.refresh();
       router.push(
@@ -48,6 +67,7 @@ export default function LiftEditor({ macrocycleNum, workoutNum, initialMetadata 
     setMuscleGroups([]);
     setSubstitutions([]);
     setFoundational(false);
+    setProgression(EMPTY_PROGRESSION_DRAFT);
   }
 
   return (
@@ -95,7 +115,23 @@ export default function LiftEditor({ macrocycleNum, workoutNum, initialMetadata 
         </label>
       </div>
 
-      {error && <p className={styles.error}>{error}</p>}
+      <ProgressionFields
+        idPrefix="lift-progression"
+        label="Progression"
+        unsetLabel="Use my default progression"
+        value={progression}
+        onChange={setProgression}
+        disabled={saving}
+        incrementWithoutType
+        classNames={{ field: styles.field, label: styles.label, input: styles.input }}
+      />
+      <p className={styles.hint}>
+        How this lift&apos;s training max moves. A program row that sets its own progression still
+        wins inside that program; every built-in program does. The increment applies outside a
+        program, even when the lift follows your default.
+      </p>
+
+      {error && <p className={styles.error} role="alert">{error}</p>}
 
       <div className={styles.actions}>
         <button

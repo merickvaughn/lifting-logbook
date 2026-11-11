@@ -19,8 +19,11 @@ export type { KnownProgram, ProgramMatch, SetOrder } from './programMatching';
  * that registry is separate, and a missing entry there degrades macrocycle generation
  * for the new program. That coupling is enforced by the guard test
  * apps/api/src/programs/program-defaults.registry-sync.spec.ts (issue #747).
+ *
+ * Every row is tagged `amrap_gated` below, so a lifter's own lift values or default never
+ * change how a built-in program progresses (#1210, ADR-043).
  */
-export const PRESET_BASE_SPECS: Record<string, LiftingProgramSpec[]> = {
+const PRESET_ROWS: Record<string, LiftingProgramSpec[]> = {
   // inferProgramFromLiftRecords picks the smallest program containing a history's lifts, so
   // this order matters only to break a tie between equally small programs.
   leangains: [
@@ -72,6 +75,13 @@ export const PRESET_BASE_SPECS: Record<string, LiftingProgramSpec[]> = {
     { week: 3, offset: 3, lift: 'Overhead Press', increment: 5,  order: 2, sets: 3, reps: 1, amrap: true, warmUpPct: '0.4,0.5,0.6', wtDecrementPct: 0.1, activation: 'compound' },
   ],
 };
+
+export const PRESET_BASE_SPECS: Record<string, LiftingProgramSpec[]> = Object.fromEntries(
+  Object.entries(PRESET_ROWS).map(([id, rows]) => [
+    id,
+    rows.map((row) => ({ progression: 'amrap_gated' as const, ...row })),
+  ]),
+);
 
 function isLiftingProgramSpec(row: unknown): row is LiftingProgramSpec {
   if (!row || typeof row !== 'object') return false;

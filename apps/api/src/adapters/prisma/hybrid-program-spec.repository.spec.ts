@@ -141,6 +141,32 @@ describe('HybridLiftingProgramSpecRepository.saveProgramSpec', () => {
     expect(findMany).not.toHaveBeenCalled();
   });
 
+  // #1210: an import never writes the progression columns, so the upsert keeps a stored
+  // override, except a stored `repsLow` the imported `reps` falls below, which it clears.
+  it('clears a stored repsLow on update only when the imported reps falls below it', async () => {
+    const stored = (lift: string, repsLow: number) => ({
+      ...spec(lift, 5),
+      reps: 10,
+      weekType: null,
+      progression: 'double',
+      repsLow,
+    });
+    const { prisma, upsert } = makeSavePrisma([stored('Squat', 8), stored('Bench', 8)]);
+    const repo = new HybridLiftingProgramSpecRepository(prisma, 'user-1');
+
+    await repo.saveProgramSpec(CUSTOM_PROGRAM_ID, [
+      { ...spec('Squat', 5), reps: 5 }, // below the stored 8 → cleared
+      { ...spec('Bench', 5), reps: 8 }, // at the stored 8 → kept
+    ]);
+
+    const args = (lift: string) =>
+      upsert.mock.calls.map((c) => c[0]).find((a) => a.where.programId_week_offset_lift_order.lift === lift);
+    expect(args('Squat').update).toMatchObject({ reps: 5, repsLow: null });
+    expect(args('Bench').update).not.toHaveProperty('repsLow');
+    expect(args('Squat').update).not.toHaveProperty('progression');
+    expect(args('Squat').create).not.toHaveProperty('repsLow');
+  });
+
   it('classifies create/update/skip from one snapshot read and counts an in-batch duplicate as skipped', async () => {
     const toRow = (s: LiftingProgramSpec) => ({ ...s, weekType: null });
     const { prisma, findFirst, findMany, upsert, $transaction } = makeSavePrisma([

@@ -37,6 +37,7 @@ describe('UnitForm', () => {
       workoutSchedule: null,
       defaultWeightIncrement: null,
       unit: 'kg',
+      defaultProgression: null,
     });
 
     render(<UnitForm initialUnit="lbs" />);

@@ -1,4 +1,4 @@
-import { ILiftMetadataRepository, LiftMetadata } from '../../ports/ILiftMetadataRepository';
+import { ILiftMetadataRepository, LiftMetadata, LiftMetadataPatch } from '../../ports/ILiftMetadataRepository';
 
 export class InMemoryLiftMetadataRepository implements ILiftMetadataRepository {
   private readonly store = new Map<string, LiftMetadata>();
@@ -11,21 +11,29 @@ export class InMemoryLiftMetadataRepository implements ILiftMetadataRepository {
     return [...this.store.values()];
   }
 
-  async upsertMetadata(
-    lift: string,
-    patch: { muscleGroups?: string[]; substitutions?: string[]; foundational?: boolean },
-  ): Promise<LiftMetadata> {
-    const existing = this.store.get(lift) ?? {
+  // Mirrors PrismaLiftMetadataRepository: `undefined` leaves a field unchanged and `null`
+  // clears a progression field.
+  async upsertMetadata(lift: string, patch: LiftMetadataPatch): Promise<LiftMetadata> {
+    const existing: LiftMetadata = this.store.get(lift) ?? {
       lift,
       muscleGroups: [],
       substitutions: [],
       foundational: false,
+      progression: null,
+      progressionIncrement: null,
+      repsLow: null,
+      repsHigh: null,
     };
     const updated: LiftMetadata = {
       lift,
       muscleGroups: patch.muscleGroups ?? existing.muscleGroups,
       substitutions: patch.substitutions ?? existing.substitutions,
       foundational: patch.foundational ?? existing.foundational,
+      progression: patch.progression !== undefined ? patch.progression : existing.progression,
+      progressionIncrement:
+        patch.progressionIncrement !== undefined ? patch.progressionIncrement : existing.progressionIncrement,
+      repsLow: patch.repsLow !== undefined ? patch.repsLow : existing.repsLow,
+      repsHigh: patch.repsHigh !== undefined ? patch.repsHigh : existing.repsHigh,
     };
     this.store.set(lift, updated);
     return updated;

@@ -16,7 +16,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 export class InMemoryLiftingProgramSpecRepository
   implements ILiftingProgramSpecRepository
 {
-  private specByProgram: Map<string, LiftingProgramSpec[]>;
+  // Protected so a test can seed a stored override, which no import can write (#1210).
+  protected specByProgram: Map<string, LiftingProgramSpec[]>;
 
   constructor(_preSeed = false) {
     // Program specs are global (not per-user), so always seed them. Seed every
@@ -56,7 +57,15 @@ export class InMemoryLiftingProgramSpecRepository
       (r) => programSpecNaturalKey(r),
       (r) => programSpecRowKind(r, existingByKey),
       (r, _kind, key) => {
-        byKey.set(key, r);
+        // Stores what the Prisma adapter's upsert stores (#1210): never the imported row's
+        // progression fields, but the stored row's, except a `repsLow` the new `reps` falls below.
+        const { progression: _p, repsLow: _r, ...imported } = r;
+        const stored = existingByKey.get(key);
+        byKey.set(key, {
+          ...imported,
+          ...(stored?.progression !== undefined && { progression: stored.progression }),
+          ...(stored?.repsLow !== undefined && stored.repsLow <= r.reps && { repsLow: stored.repsLow }),
+        });
       },
     );
 
