@@ -17,6 +17,8 @@ export class InMemoryMacrocycleDashboardRepository
     return 1;
   }
 
+  readonly table = 'macrocycle_dashboard';
+
   numbersHeld(program: string): Set<number> {
     const dashboard = this.dashboards.get(program);
     return new Set(dashboard ? [dashboard.macrocycleNum] : []);
@@ -43,9 +45,5 @@ export class InMemoryMacrocycleDashboardRepository
 
   async saveMacrocycleDashboard(dashboard: MacrocycleDashboard): Promise<void> {
     this.dashboards.set(dashboard.program, dashboard);
-  }
-
-  async deleteMacrocycleDashboard(program: string): Promise<void> {
-    this.dashboards.delete(program);
   }
 }

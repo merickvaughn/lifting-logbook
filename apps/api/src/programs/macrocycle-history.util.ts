@@ -1,8 +1,9 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { ImportPreImage, MacrocycleDashboard, MAX_FILE_MACROCYCLE_NUM, toUTCMidnight } from '@lifting-logbook/core';
 import { MacrocycleStatus } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
-import { ImportBatchRecord } from '../ports/IImportBatchRepository';
+import { KeyNumbers, preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { DateRange, dateRangesByMacrocycle } from '../ports/ILiftRecordRepository';
 import { MacrocycleRow, NewMacrocycle } from '../ports/IMacrocycleRepository';
 import { ProgramNotFoundError } from '../ports/errors';
@@ -13,6 +14,8 @@ import { ProgramNotFoundError } from '../ports/errors';
  */
 
 type HistoryRepos = Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard'>;
+
+const tracer = trace.getTracer('macrocycle-history');
 
 /** A break longer than this ends a run (proposal decision 4); an older `in-progress` reads as `abandoned`. */
 export const STALE_AFTER_DAYS = 14;
@@ -288,8 +291,9 @@ function nextStartAfter(rows: readonly Pick<MacrocycleRow, 'startDate'>[], after
  * stored numbers follow dates (decision 2): a group joins the stored macrocycle with its number
  * when it starts on or after that one's start and ends before the next stored one starts. Any
  * other group, including one numbered like an `imported` macrocycle, which rows never join, gets
- * a new `legacy` macrocycle dated by its rows, numbered past every stored one in date order. A
- * file number must still be from 0 to {@link MAX_FILE_MACROCYCLE_NUM}.
+ * a new `legacy` macrocycle dated by its rows, numbered past every stored one in date order.
+ * Rows on those numbers with no `macrocycle` row move past them first (see
+ * {@link moveUnstartedRows}).
  *
  * Returns each file number's stored number, and the new `legacy` numbers, so undoing the import
  * can remove them. Renumbering the program by date is the caller's, after it writes the rows.
@@ -300,6 +304,8 @@ export async function placeFileRows(
   rows: readonly { macrocycleNum: number; date: Date }[],
 ): Promise<{ placed: Map<number, number>; legacyNums: number[] }> {
   const ranges = dateRangesByMacrocycle(rows);
+  // A backstop: row validation already rejects a file number outside 0 to
+  // MAX_FILE_MACROCYCLE_NUM (`MACROCYCLE_NUM_INVALID`) before any import path gets here.
   const outOfRange = [...ranges.keys()].filter((n) => !Number.isInteger(n) || n < 0 || n > MAX_FILE_MACROCYCLE_NUM);
   if (outOfRange.length > 0) {
     throw new BadRequestException(
@@ -311,7 +317,7 @@ export async function placeFileRows(
   if (dashboard) await ensureCurrentRow(repos, dashboard);
   const stored = await repos.macrocycle.list(program);
   const storedByNumber = new Map(stored.map((row) => [row.macrocycleNum, row]));
-  // The current macrocycle has its row by now, so `stored` holds every number.
+  // The current macrocycle has its row by now, so `stored` holds every macrocycle's number.
   let next = stored.reduce((max, row) => Math.max(max, row.macrocycleNum), 0) + 1;
   const placed = new Map<number, number>();
   const created: NewMacrocycle[] = [];
@@ -333,6 +339,7 @@ export async function placeFileRows(
     });
     placed.set(fileNum, macrocycleNum);
   }
+  if (created.length > 0) await moveUnstartedRows(repos, program, next - created.length - 1, next - 1);
   await repos.macrocycle.createMany(created);
   return { placed, legacyNums: created.map((m) => m.macrocycleNum) };
 }
@@ -351,37 +358,43 @@ export function legacyRowsPreImage(macrocycleNums: readonly number[]): ImportPre
 }
 
 /**
- * The macrocycle number a lift-records pre-image key holds: the leading number of a set key
- * (`<n>:...`, current and date-blind legacy forms alike) or of a `legacy` row's key, else null.
- * `PrismaImportBatchRepository.listWithKeysOn` reads keys the same way in SQL.
- */
-export function preImageKeyNumber(key: string): number | null {
-  const num = /^(?:macrocycle-row:)?(\d+)(?::|$)/.exec(key)?.[1];
-  return num === undefined ? null : Number(num);
-}
-
-/**
  * Drops the keys on deleted macrocycles from `program`'s lift-records batches: a renumbering
  * may move another macrocycle onto the number, and undoing the batch would then delete that
- * one's sets (#1199). `deleted` says which numbers are gone; `batches` are the ones that may
- * hold them. Returns how many batches changed.
+ * one's sets (#1199). `deleted` names the numbers that are gone: those `on` it, or all `except`
+ * the ones kept. Returns how many batches changed.
  */
 export async function forgetBatchKeys(
   repos: Pick<RepositoryBundle, 'importBatch'>,
-  batches: readonly ImportBatchRecord[],
-  deleted: (macrocycleNum: number) => boolean,
+  program: string,
+  deleted: KeyNumbers,
 ): Promise<number> {
-  let changed = 0;
-  for (const batch of batches) {
-    const kept = Object.entries(batch.preImage).filter(([key]) => {
-      const num = preImageKeyNumber(key);
-      return num === null || !deleted(num);
-    });
-    if (kept.length === Object.keys(batch.preImage).length) continue;
-    await repos.importBatch.updatePreImage(batch.id, Object.fromEntries(kept));
-    changed++;
-  }
-  return changed;
+  return tracer.startActiveSpan('macrocycle.forget_batch_keys', async (span) => {
+    try {
+      const isDeleted = (n: number) => ('on' in deleted ? deleted.on.includes(n) : !deleted.except.includes(n));
+      let changed = 0;
+      let dropped = 0;
+      for (const batch of await repos.importBatch.listWithKeysOn(program, 'lift-records', deleted)) {
+        const kept = Object.entries(batch.preImage).filter(([key]) => {
+          const num = preImageKeyNumber(key);
+          return num === null || !isDeleted(num);
+        });
+        const gone = Object.keys(batch.preImage).length - kept.length;
+        if (gone === 0) continue;
+        await repos.importBatch.updatePreImage(batch.id, Object.fromEntries(kept));
+        changed++;
+        dropped += gone;
+      }
+      span.setAttribute('import_batch.batches_changed', changed);
+      span.setAttribute('import_batch.keys_dropped', dropped);
+      return changed;
+    } catch (err) {
+      span.recordException(err instanceof Error ? err : String(err));
+      span.setStatus({ code: SpanStatusCode.ERROR });
+      throw err;
+    } finally {
+      span.end();
+    }
+  });
 }
 
 /** Splits a lift-records pre-image's keys into set keys and the `legacy` rows' numbers. */
@@ -412,9 +425,32 @@ export async function removeEmptyLegacyRows(
     .map((r) => r.macrocycleNum);
   if (empty.length === 0) return;
   await repos.macrocycle.delete(program, empty);
-  await forgetBatchKeys(repos, await repos.importBatch.listWithKeysOn(program, 'lift-records', empty), (n) =>
-    empty.includes(n),
+  await forgetBatchKeys(repos, program, { on: empty });
+  // The rows the import moved past its new numbers come back down.
+  const highest = await repos.macrocycle.highestNumber(program);
+  await moveUnstartedRows(repos, program, highest, highest);
+}
+
+/**
+ * Moves the rows on numbers above `above` that have no `macrocycle` row onto the numbers right
+ * after `highest`, in order. Those are rows a page wrote before the program had a macrocycle on
+ * the number, such as a focus state saved before initializing, and they belong to the next
+ * macrocycle to start, which takes the number after the highest stored one. Without this, a new
+ * `legacy` macrocycle numbered there would take them, and undoing its import would delete them.
+ */
+async function moveUnstartedRows(
+  repos: Pick<RepositoryBundle, 'macrocycle'>,
+  program: string,
+  above: number,
+  highest: number,
+): Promise<void> {
+  const [rows, inUse] = await Promise.all([repos.macrocycle.list(program), repos.macrocycle.numbersInUse(program)]);
+  const stored = new Set(rows.map((r) => r.macrocycleNum));
+  const unstarted = inUse.filter((n) => n > above && !stored.has(n));
+  const changes = new Map(
+    unstarted.map((n, i): [number, number] => [n, highest + 1 + i]).filter(([from, to]) => from !== to),
   );
+  if (changes.size > 0) await repos.macrocycle.rewriteNumbers(program, changes);
 }
 
 /**

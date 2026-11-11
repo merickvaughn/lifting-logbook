@@ -424,6 +424,39 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
 
       expect((await user.list()).map((m) => m.macrocycleNum)).toEqual([1]);
     });
+
+    it('keeps a focus state saved before initializing on the next macrocycle, through an import and its undo', async () => {
+      const user = as('history-undo-focus');
+      const saved = await user.inject('PUT', `/programs/${PROGRAM}/workouts/1/focus-state`, {
+        ...emptyFocusDayState(),
+        dismissed: true,
+      });
+      expect(saved.statusCode).toBe(200);
+      const focusOn = async () => {
+        const bundle = await user.repos();
+        const nums = [1, 2, 3];
+        const states = await Promise.all(nums.map((n) => bundle.focus.getDayState(PROGRAM, n, 1)));
+        return nums.filter((_, i) => states[i] !== null);
+      };
+      const shown = async () =>
+        ((await user.inject('GET', `/programs/${PROGRAM}/workouts/1/focus-state`)).json() as { dismissed: boolean }).dismissed;
+      expect(await focusOn()).toEqual([1]);
+
+      const res = await commit('history-undo-focus', [HEADER, `${PROGRAM},5,1,2025-03-03,Squat,1,200,5,`].join('\n'));
+      expect(res.statusCode).toBe(200);
+      const { batchId } = res.json() as { batchId: string };
+
+      // The import's legacy macrocycle takes number 1, so the focus state moves to the next one.
+      expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'legacy']]);
+      expect(await focusOn()).toEqual([2]);
+      expect(await shown()).toBe(true);
+
+      expect((await user.inject('POST', `/programs/${PROGRAM}/import/${batchId}/undo`)).statusCode).toBe(200);
+
+      expect(await user.list()).toEqual([]);
+      expect(await focusOn()).toEqual([1]);
+      expect(await shown()).toBe(true);
+    });
   });
 
   describe('DELETE /programs/:program/macrocycles/current', () => {

@@ -5,11 +5,28 @@ import { MacrocycleNumberConflictError } from '../../ports/errors';
  * adapter rewrites its tables (#1199). Returns how many rows moved.
  */
 export interface NumberedStore {
+  /** The Prisma table the store stands in for, which a refused renumbering names. */
+  readonly table: string;
   rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number;
   /** The numbers the program's rows hold, which a renumbering checks before it moves anything. */
   numbersHeld(program: string): Set<number>;
   /** Deletes the program's rows on `macrocycleNums`, as removing a macrocycle does. */
   dropNumbers(program: string, macrocycleNums: readonly number[]): void;
+}
+
+/**
+ * Every store in a repository bundle that holds a number, so a store added to the bundle is
+ * renumbered and deleted with the rest without being listed by hand.
+ */
+export function numberedStoresIn(bundle: object): NumberedStore[] {
+  return Object.values(bundle).filter(
+    (repo): repo is NumberedStore =>
+      typeof repo === 'object' &&
+      repo !== null &&
+      'table' in repo &&
+      'numbersHeld' in repo &&
+      typeof repo.numbersHeld === 'function',
+  );
 }
 
 /** The numbers `program`'s keys in `map` hold. */

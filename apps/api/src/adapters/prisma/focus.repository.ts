@@ -190,12 +190,6 @@ export class PrismaFocusRepository implements IFocusRepository {
     return parseFocusDayState(row.state);
   }
 
-  async deleteAllDayStates(program: string, keep: readonly number[] = []): Promise<void> {
-    await this.prisma.focusDayState.deleteMany({
-      where: { userId: this.userId, program, macrocycleNum: { notIn: [...keep] } },
-    });
-  }
-
   private createInput(block: FocusBlock): Prisma.FocusBlockUncheckedCreateInput {
     return {
       id: block.id,

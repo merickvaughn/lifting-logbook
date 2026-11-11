@@ -35,22 +35,37 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
   lockHeld: 'shared' | 'exclusive' | null = null;
 
   /**
-   * `numbered` are the bundle's other stores that hold a number, which {@link rewriteNumbers}
-   * rewrites with this one's rows, as the Prisma adapter rewrites every table.
+   * The bundle's other stores that hold a number, which {@link rewriteNumbers} rewrites and the
+   * deletes clear with this one's rows, as the Prisma adapter does every table.
    */
-  constructor(
-    seed: readonly MacrocycleRow[] = [],
-    private readonly numbered: readonly NumberedStore[] = [],
-  ) {
+  private numbered: readonly NumberedStore[] = [];
+
+  constructor(seed: readonly MacrocycleRow[] = []) {
     this.rows.push(...seed.map((row) => ({ ...row })));
+  }
+
+  /** Wires in the bundle's other numbered stores; the factories pass `numberedStoresIn(bundle)`. */
+  attachNumbered(stores: readonly NumberedStore[]): this {
+    this.numbered = stores;
+    return this;
+  }
+
+  private numbersHeld(program: string): Set<number> {
+    return new Set(this.rows.filter((r) => r.program === program).map((r) => r.macrocycleNum));
+  }
+
+  async numbersInUse(program: string): Promise<number[]> {
+    const held = new Set(this.numbersHeld(program));
+    for (const store of this.numbered) for (const n of store.numbersHeld(program)) held.add(n);
+    return [...held].sort((a, b) => a - b);
   }
 
   async rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): Promise<number> {
     // Checked in every store before any moves, as the Prisma adapter checks every table: a row
     // left on a new number would otherwise merge into the macrocycle that moves onto it.
     const stores: Array<{ table: string; held: Set<number> }> = [
-      { table: 'macrocycle', held: new Set(this.rows.filter((r) => r.program === program).map((r) => r.macrocycleNum)) },
-      ...this.numbered.map((store) => ({ table: store.constructor.name, held: store.numbersHeld(program) })),
+      { table: 'macrocycle', held: this.numbersHeld(program) },
+      ...this.numbered.map((store) => ({ table: store.table, held: store.numbersHeld(program) })),
     ];
     for (const to of changes.values()) {
       if (changes.has(to)) continue;
@@ -146,8 +161,8 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
   }
 
   async deleteAllExcept(program: string, keep: readonly number[]): Promise<void> {
-    const kept = this.rows.filter((r) => r.program !== program || keep.includes(r.macrocycleNum));
-    this.rows.splice(0, this.rows.length, ...kept);
+    const dropped = (await this.numbersInUse(program)).filter((n) => !keep.includes(n));
+    await this.delete(program, dropped);
   }
 
   /** Test seam: puts a row in as stored, as the db e2e suites do through the owner client. */

@@ -95,13 +95,10 @@ describe('renumberProgram', () => {
   const outOfOrder = async () => {
     const liftRecord = new InMemoryLiftRecordRepository(new Map());
     await liftRecord.appendLiftRecords(PROGRAM, [record(1, '2026-01-05'), record(2, '2025-03-03')]);
-    const macrocycle = new InMemoryMacrocycleRepository(
-      [
-        macrocycleRowFixture(1, { startDate: day('2026-01-05') }),
-        macrocycleRowFixture(2, { startDate: day('2025-03-03'), origin: 'legacy', status: 'unknown' }),
-      ],
-      [liftRecord],
-    );
+    const macrocycle = new InMemoryMacrocycleRepository([
+      macrocycleRowFixture(1, { startDate: day('2026-01-05') }),
+      macrocycleRowFixture(2, { startDate: day('2025-03-03'), origin: 'legacy', status: 'unknown' }),
+    ]).attachNumbered([liftRecord]);
     const importBatch = new InMemoryImportBatchRepository();
     const batch: ImportBatchRecord = {
       id: 'batch-1',
@@ -198,14 +195,11 @@ describe('renumberProgram', () => {
       // which nothing moves off; the skip on 1 would move if anything did.
       await skips.skipWorkout(PROGRAM, 1, 4);
       await liftRecord.appendLiftRecords(PROGRAM, [record(3, '2025-01-06')]);
-      const macrocycle = new InMemoryMacrocycleRepository(
-        [
-          macrocycleRowFixture(1, { startDate: day('2026-01-05') }),
-          macrocycleRowFixture(2, { startDate: day('2025-03-03') }),
-          macrocycleRowFixture(4, { startDate: day('2026-06-01') }),
-        ],
-        [liftRecord, skips],
-      );
+      const macrocycle = new InMemoryMacrocycleRepository([
+        macrocycleRowFixture(1, { startDate: day('2026-01-05') }),
+        macrocycleRowFixture(2, { startDate: day('2025-03-03') }),
+        macrocycleRowFixture(4, { startDate: day('2026-06-01') }),
+      ]).attachNumbered([liftRecord, skips]);
       const repos = { macrocycle, importBatch: new InMemoryImportBatchRepository() };
 
       await expect(renumberProgram(repos, PROGRAM)).rejects.toBeInstanceOf(MacrocycleNumberConflictError);
@@ -217,7 +211,7 @@ describe('renumberProgram', () => {
       const [span] = exporter.getFinishedSpans();
       expect(span.status.code).toBe(SpanStatusCode.ERROR);
       expect(span.attributes).toMatchObject({
-        'renumber.conflict_table': 'InMemoryLiftRecordRepository',
+        'renumber.conflict_table': 'lift_record',
         'renumber.conflict_number': 3,
       });
       expect(warn).toHaveBeenCalledWith(

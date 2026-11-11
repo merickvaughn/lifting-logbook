@@ -67,12 +67,10 @@ describe('LiftRecordsController', () => {
       updateLiftRecord: jest.fn(),
       findStoredSets: jest.fn().mockResolvedValue([]),
       deleteLiftRecordsByNaturalKeys: jest.fn().mockResolvedValue(0),
-      deleteAllLiftRecords: jest.fn().mockResolvedValue(undefined),
     };
     dashboardRepo = {
       getMacrocycleDashboard: jest.fn().mockRejectedValue(new ProgramNotFoundError('5-3-1')),
       saveMacrocycleDashboard: jest.fn(),
-      deleteMacrocycleDashboard: jest.fn().mockResolvedValue(undefined),
     };
     customLiftRepo = {
       list: jest.fn().mockResolvedValue([]),

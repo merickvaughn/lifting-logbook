@@ -14,6 +14,8 @@ export class InMemoryWorkoutLiftOverrideRepository
     return rekeyMap(this.store, program, changes, nulKey.numberOf, nulKey.keyWith);
   }
 
+  readonly table = 'workout_lift_override';
+
   numbersHeld(program: string): Set<number> {
     return numbersInMap(this.store, program, nulKey.numberOf);
   }
@@ -79,12 +81,5 @@ export class InMemoryWorkoutLiftOverrideRepository
       k,
       existing.filter((o) => o.lift !== lift),
     );
-  }
-
-  async deleteAllOverrides(program: string, keep: readonly number[] = []): Promise<void> {
-    for (const k of this.store.keys()) {
-      const [p, m] = k.split('\0');
-      if (p === program && !keep.includes(Number(m))) this.store.delete(k);
-    }
   }
 }

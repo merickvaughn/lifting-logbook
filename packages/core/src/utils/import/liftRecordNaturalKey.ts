@@ -76,8 +76,11 @@ export type ClassifiedLiftRecordRow<T> = ClassifiedRow<T> & { occurrence: number
  * - The file's rows then pair with stored rows, those with identical weight and reps first, so
  *   the rows left over are the real extras. A paired row is a skip, even when its weight or reps
  *   differ from the stored row's, which stays as stored.
- * - An extra row keeps its occurrence unless a stored row or an earlier extra has it, and then
- *   takes the highest one + 1, so two same-day workouts stay separate under the unique key.
+ * - An extra row keeps its occurrence unless a stored row with its workout number, or an earlier
+ *   extra with its macrocycle and workout numbers, has it, and then takes the highest of those + 1.
+ *   Those are the rows it could collide with under the unique key, which holds the workout
+ *   number; an extra in another workout keeps its occurrence, so the workout page doesn't show
+ *   it as a second time through the lift.
  *
  * `key` is the row's natural key under the occurrence it's stored with.
  */
@@ -111,7 +114,14 @@ export function classifyLiftRecordRows<T>(
   const occurrences = new Map<number, number>();
   for (const [slot, indexes] of bySlot) {
     const pool = [...(storedBySlot.get(slot) ?? [])];
-    const taken = new Set(pool.map((s) => s.occurrence ?? 0));
+    // The occurrences a created row could collide with under the unique key, which holds the
+    // workout number: stored rows' by workout, and earlier created rows' by the file's
+    // macrocycle and workout, since each file macrocycle lands in a macrocycle of its own.
+    const storedTaken = new Map<number, Set<number>>();
+    for (const s of pool) {
+      storedTaken.set(s.workoutNum, (storedTaken.get(s.workoutNum) ?? new Set<number>()).add(s.occurrence ?? 0));
+    }
+    const createdTaken = new Map<string, Set<number>>();
     const unpaired: number[] = [];
     for (const i of indexes) {
       const r = recordOf(rows[i] as T);
@@ -129,9 +139,14 @@ export function classifyLiftRecordRows<T>(
         continue;
       }
       kinds.set(i, 'create');
-      const own = recordOf(rows[i] as T).occurrence ?? 0;
+      const r = recordOf(rows[i] as T);
+      const group = `${r.macrocycleNum}|${r.workoutNum}`;
+      const created = createdTaken.get(group) ?? new Set<number>();
+      createdTaken.set(group, created);
+      const taken = new Set([...(storedTaken.get(r.workoutNum) ?? []), ...created]);
+      const own = r.occurrence ?? 0;
       const occurrence = taken.has(own) ? Math.max(...taken) + 1 : own;
-      taken.add(occurrence);
+      created.add(occurrence);
       occurrences.set(i, occurrence);
     }
   }

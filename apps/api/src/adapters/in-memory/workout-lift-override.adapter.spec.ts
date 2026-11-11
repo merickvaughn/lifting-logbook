@@ -57,19 +57,6 @@ describe('InMemoryWorkoutLiftOverrideRepository', () => {
     expect(await repo.getOverrides(...W)).toEqual([{ lift: 'Face Pulls', action: 'add' }]);
   });
 
-  it('deletes every override of a program across macrocycles, leaving other programs alone (#1084)', async () => {
-    const repo = new InMemoryWorkoutLiftOverrideRepository();
-    await repo.upsertOverride('5-3-1', 1, 1, { lift: 'Dips', action: 'add' });
-    await repo.upsertOverride('5-3-1', 2, 7, { lift: 'Dips', action: 'add' });
-    await repo.upsertOverride('leangains', 1, 1, { lift: 'Dips', action: 'add' });
-
-    await repo.deleteAllOverrides('5-3-1');
-
-    expect(await repo.getOverrides('5-3-1', 1, 1)).toEqual([]);
-    expect(await repo.getOverrides('5-3-1', 2, 7)).toEqual([]);
-    expect(await repo.getOverrides('leangains', 1, 1)).toEqual([{ lift: 'Dips', action: 'add' }]);
-  });
-
   it("reads one macrocycle's overrides by workout, leaving other macrocycles, programs and emptied workouts out (#1028)", async () => {
     const repo = new InMemoryWorkoutLiftOverrideRepository();
     await repo.upsertOverride('5-3-1', 2, 7, { lift: 'Squat', action: 'replace', replacedBy: 'Front Squat' });

@@ -21,6 +21,8 @@ export class InMemoryFocusRepository implements IFocusRepository, NumberedStore 
     });
   }
 
+  readonly table = 'focus_day_state';
+
   numbersHeld(program: string): Set<number> {
     return numbersInMap(this.dayStates, program, dayKeyNumber);
   }
@@ -99,13 +101,6 @@ export class InMemoryFocusRepository implements IFocusRepository, NumberedStore 
   ): Promise<FocusDayState> {
     this.dayStates.set(dayKey(program, macrocycleNum, workoutNum), structuredClone(state));
     return structuredClone(state);
-  }
-
-  async deleteAllDayStates(program: string, keep: readonly number[] = []): Promise<void> {
-    for (const k of this.dayStates.keys()) {
-      const [p, m] = JSON.parse(k) as [string, number, number];
-      if (p === program && !keep.includes(m)) this.dayStates.delete(k);
-    }
   }
 
   private startTaken(series: string, start: string, exceptId?: string): boolean {

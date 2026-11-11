@@ -8,6 +8,8 @@ export class InMemoryWorkoutSkipOverrideRepository implements IWorkoutSkipOverri
     return rekeyMap(this.store, program, changes, colonKey.numberOf, colonKey.keyWith);
   }
 
+  readonly table = 'workout_skip_override';
+
   numbersHeld(program: string): Set<number> {
     return numbersInMap(this.store, program, colonKey.numberOf);
   }
@@ -33,12 +35,5 @@ export class InMemoryWorkoutSkipOverrideRepository implements IWorkoutSkipOverri
 
   async unskipWorkout(program: string, macrocycleNum: number, workoutNum: number): Promise<void> {
     this.store.get(this.key(program, macrocycleNum))?.delete(workoutNum);
-  }
-
-  async deleteAllSkips(program: string, keep: readonly number[] = []): Promise<void> {
-    for (const k of this.store.keys()) {
-      const split = k.lastIndexOf(':');
-      if (k.slice(0, split) === program && !keep.includes(Number(k.slice(split + 1)))) this.store.delete(k);
-    }
   }
 }

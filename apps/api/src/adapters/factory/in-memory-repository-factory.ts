@@ -24,6 +24,7 @@ import { InMemoryWorkoutLiftOverrideRepository } from '../in-memory/workout-lift
 import { InMemoryWorkoutRepository } from '../in-memory/workout.adapter';
 import { InMemoryWorkoutSkipOverrideRepository } from '../in-memory/workout-skip-override.adapter';
 import { SEED_PROGRAM, seedLiftRecords, seedMacrocycleRow } from '../in-memory/fixtures';
+import { numberedStoresIn } from '../in-memory/renumber';
 
 // The dev seed user gets pre-populated training maxes so existing tests that
 // rely on seeded data continue to work without additional setup.
@@ -45,34 +46,19 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       const strengthGoal = new InMemoryStrengthGoalRepository();
       const trainingMax = new InMemoryTrainingMaxRepository(preSeed);
       const userSettings = new InMemoryUserSettingsRepository();
-      // Every store that holds a macrocycle number, so a renumbering rewrites them all (#1199).
-      const liftRecord = new InMemoryLiftRecordRepository(sharedRecords);
-      const focus = new InMemoryFocusRepository();
-      const macrocycleDashboard = new InMemoryMacrocycleDashboardRepository(preSeed);
-      const macrocycleScheduledWorkout = new InMemoryMacrocycleScheduledWorkoutRepository();
-      const workoutDateOverride = new InMemoryWorkoutDateOverrideRepository();
-      const workoutLiftOverride = new InMemoryWorkoutLiftOverrideRepository();
-      const workoutSkipOverride = new InMemoryWorkoutSkipOverrideRepository();
-      this.bundles.set(user.id, {
+      const macrocycle = new InMemoryMacrocycleRepository(preSeed ? [seedMacrocycleRow()] : []);
+      const bundle: RepositoryBundle = {
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift,
-        focus,
-        macrocycle: new InMemoryMacrocycleRepository(preSeed ? [seedMacrocycleRow()] : [], [
-          liftRecord,
-          focus,
-          macrocycleDashboard,
-          macrocycleScheduledWorkout,
-          workoutDateOverride,
-          workoutLiftOverride,
-          workoutSkipOverride,
-        ]),
-        macrocycleDashboard,
-        macrocycleScheduledWorkout,
+        focus: new InMemoryFocusRepository(),
+        macrocycle,
+        macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(preSeed),
+        macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
         importBatch: new InMemoryImportBatchRepository(),
         liftMetadata: new InMemoryLiftMetadataRepository(),
         liftingProgramSpec: new InMemoryLiftingProgramSpecRepository(preSeed),
         liftModification: new InMemoryLiftModificationRepository(user.id, sharedRecords),
-        liftRecord,
+        liftRecord: new InMemoryLiftRecordRepository(sharedRecords),
         programPhilosophy: new InMemoryProgramPhilosophyRepository(),
         strengthGoal,
         trainingMax,
@@ -86,10 +72,13 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
         ),
         userSettings,
         workout: new InMemoryWorkoutRepository(sharedRecords),
-        workoutDateOverride,
-        workoutLiftOverride,
-        workoutSkipOverride,
-      });
+        workoutDateOverride: new InMemoryWorkoutDateOverrideRepository(),
+        workoutLiftOverride: new InMemoryWorkoutLiftOverrideRepository(),
+        workoutSkipOverride: new InMemoryWorkoutSkipOverrideRepository(),
+      };
+      // Every other store that holds a number, so a renumbering or delete reaches them all (#1199).
+      macrocycle.attachNumbered(numberedStoresIn(bundle));
+      this.bundles.set(user.id, bundle);
     }
     return this.bundles.get(user.id)!;
   }

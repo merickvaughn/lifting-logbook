@@ -43,6 +43,7 @@ import { PrismaWorkoutSkipOverrideRepository } from '../prisma/workout-skip-over
 import { InMemoryWorkoutSkipOverrideRepository } from '../in-memory/workout-skip-override.adapter';
 import { PrismaUserDataExportRepository } from '../prisma/user-data-export.repository';
 import { InMemoryUserDataExportRepository } from '../in-memory/user-data-export.adapter';
+import { numberedStoresIn } from '../in-memory/renumber';
 import { PrismaUserSettingsRepository } from '../prisma/user-settings.repository';
 
 interface UserDataSourceRow {
@@ -131,29 +132,19 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     const strengthGoal = new InMemoryStrengthGoalRepository();
     const trainingMax = new InMemoryTrainingMaxRepository();
     const userSettings = new InMemoryUserSettingsRepository();
-    // Every store that holds a macrocycle number, so a renumbering rewrites them all (#1199).
-    const liftRecord = new InMemoryLiftRecordRepository(sharedRecords);
-    const focus = new InMemoryFocusRepository();
-    const macrocycleDashboard = new InMemoryMacrocycleDashboardRepository();
-    const macrocycleScheduledWorkout = new InMemoryMacrocycleScheduledWorkoutRepository();
-    const workoutDateOverride = new InMemoryWorkoutDateOverrideRepository();
-    const workoutLiftOverride = new InMemoryWorkoutLiftOverrideRepository();
-    const workoutSkipOverride = new InMemoryWorkoutSkipOverrideRepository();
-    return {
+    const macrocycle = new InMemoryMacrocycleRepository();
+    const bundle: RepositoryBundle = {
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift,
-      focus,
-      macrocycle: new InMemoryMacrocycleRepository(
-        [],
-        [liftRecord, focus, macrocycleDashboard, macrocycleScheduledWorkout, workoutDateOverride, workoutLiftOverride, workoutSkipOverride],
-      ),
-      macrocycleDashboard,
-      macrocycleScheduledWorkout,
+      focus: new InMemoryFocusRepository(),
+      macrocycle,
+      macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(),
+      macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
       importBatch: new InMemoryImportBatchRepository(),
       liftMetadata: new InMemoryLiftMetadataRepository(),
       liftingProgramSpec: this.programSpecRepo,
       liftModification: new InMemoryLiftModificationRepository(userId, sharedRecords),
-      liftRecord,
+      liftRecord: new InMemoryLiftRecordRepository(sharedRecords),
       programPhilosophy: this.philosophyRepo,
       strengthGoal,
       trainingMax,
@@ -167,10 +158,13 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
       ),
       userSettings,
       workout: new InMemoryWorkoutRepository(sharedRecords),
-      workoutDateOverride,
-      workoutLiftOverride,
-      workoutSkipOverride,
+      workoutDateOverride: new InMemoryWorkoutDateOverrideRepository(),
+      workoutLiftOverride: new InMemoryWorkoutLiftOverrideRepository(),
+      workoutSkipOverride: new InMemoryWorkoutSkipOverrideRepository(),
     };
+    // Every other store that holds a number, so a renumbering or delete reaches them all (#1199).
+    macrocycle.attachNumbered(numberedStoresIn(bundle));
+    return bundle;
   }
 
   private getOrCreatePrisma(): PrismaClient {

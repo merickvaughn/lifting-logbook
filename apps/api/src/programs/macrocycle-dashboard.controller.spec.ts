@@ -73,7 +73,6 @@ describe('MacrocycleDashboardController', () => {
     repo = {
       getMacrocycleDashboard: jest.fn(),
       saveMacrocycleDashboard: jest.fn(),
-      deleteMacrocycleDashboard: jest.fn(),
     };
     specRepo = { getProgramSpec: jest.fn(), saveProgramSpec: jest.fn(), deleteSpecRows: jest.fn() };
     scheduledRepo = {

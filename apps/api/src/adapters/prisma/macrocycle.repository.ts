@@ -207,22 +207,22 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     });
   }
 
-  async delete(program: string, macrocycleNums: readonly number[]): Promise<void> {
-    if (macrocycleNums.length === 0) return;
-    const nums = [...macrocycleNums];
-    // Raw SQL isn't auto-traced (ADR-024), so the deletes get a span.
-    await tracer.startActiveSpan('macrocycle.delete_numbers', async (span) => {
+  async numbersInUse(program: string): Promise<number[]> {
+    // Raw SQL isn't auto-traced (ADR-024), so the read gets a span.
+    return tracer.startActiveSpan('macrocycle.numbers_in_use', async (span) => {
       try {
-        span.setAttribute('macrocycle.count', nums.length);
-        let rows = 0;
-        await runInteractive(this.prisma, async (db) => {
-          for (const table of NUMBERED_TABLES) {
-            rows += await db.$executeRaw`
-              DELETE FROM ${Prisma.raw(`"${table}"`)}
-              WHERE "userId" = ${this.userId} AND "program" = ${program} AND "macrocycleNum" = ANY(${nums}::int[])`;
-          }
-        });
-        span.setAttribute('macrocycle.rows_deleted', rows);
+        const rows = await this.prisma.$queryRaw<Array<{ num: number }>>`
+          ${Prisma.join(
+            NUMBERED_TABLES.map(
+              (table) => Prisma.sql`
+                SELECT "macrocycleNum" AS num FROM ${Prisma.raw(`"${table}"`)}
+                WHERE "userId" = ${this.userId} AND "program" = ${program}`,
+            ),
+            ' UNION ',
+          )}
+          ORDER BY num`;
+        span.setAttribute('macrocycle.count', rows.length);
+        return rows.map((r) => r.num);
       } catch (err) {
         span.recordException(err instanceof Error ? err : String(err));
         span.setStatus({ code: SpanStatusCode.ERROR });
@@ -233,9 +233,39 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     });
   }
 
+  async delete(program: string, macrocycleNums: readonly number[]): Promise<void> {
+    if (macrocycleNums.length === 0) return;
+    const nums = [...macrocycleNums];
+    await this.deleteFromEveryTable(program, Prisma.sql`"macrocycleNum" = ANY(${nums}::int[])`, nums.length);
+  }
+
   async deleteAllExcept(program: string, keep: readonly number[]): Promise<void> {
-    await this.prisma.macrocycle.deleteMany({
-      where: { userId: this.userId, program, macrocycleNum: { notIn: [...keep] } },
+    const kept = [...keep];
+    await this.deleteFromEveryTable(program, Prisma.sql`NOT ("macrocycleNum" = ANY(${kept}::int[]))`);
+  }
+
+  /** Deletes the program's rows matching `which` from every numbered table, in one span. */
+  private async deleteFromEveryTable(program: string, which: Prisma.Sql, count?: number): Promise<void> {
+    // Raw SQL isn't auto-traced (ADR-024), so the deletes get a span.
+    await tracer.startActiveSpan('macrocycle.delete_numbers', async (span) => {
+      try {
+        if (count !== undefined) span.setAttribute('macrocycle.count', count);
+        let rows = 0;
+        await runInteractive(this.prisma, async (db) => {
+          for (const table of NUMBERED_TABLES) {
+            rows += await db.$executeRaw`
+              DELETE FROM ${Prisma.raw(`"${table}"`)}
+              WHERE "userId" = ${this.userId} AND "program" = ${program} AND ${which}`;
+          }
+        });
+        span.setAttribute('macrocycle.rows_deleted', rows);
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
     });
   }
 

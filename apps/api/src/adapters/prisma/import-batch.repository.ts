@@ -1,7 +1,15 @@
 import { ImportBatch, PrismaClient } from '@prisma/client';
 import { ImportPreImage } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
-import { IImportBatchRepository, ImportBatchRecord } from '../../ports/IImportBatchRepository';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
+import {
+  IImportBatchRepository,
+  ImportBatchRecord,
+  KeyNumbers,
+  PRE_IMAGE_KEY_NUMBER,
+} from '../../ports/IImportBatchRepository';
+
+const tracer = trace.getTracer('prisma-import-batch-repository');
 
 export class PrismaImportBatchRepository implements IImportBatchRepository {
   constructor(
@@ -32,27 +40,39 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
     await this.prisma.importBatch.deleteMany({ where: { id, userId } });
   }
 
-  async listForProgram(program: string, destination: ImportKind): Promise<ImportBatchRecord[]> {
-    const rows = await this.prisma.importBatch.findMany({ where: { userId: this.userId, program, destination } });
-    return rows.map(toRecord);
-  }
-
-  async listWithKeysOn(program: string, destination: ImportKind, macrocycleNums: readonly number[]): Promise<ImportBatchRecord[]> {
-    if (macrocycleNums.length === 0) return [];
-    // The key's leading number, as `preImageKeyNumber` reads it; numeric, so a long digit run
-    // can't overflow the cast.
-    const ids = await this.prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT b."id" FROM "import_batch" b
-      WHERE b."userId" = ${this.userId} AND b."program" = ${program} AND b."destination" = ${destination}
-        AND EXISTS (
-          SELECT 1 FROM jsonb_object_keys(b."preImage") AS k
-          WHERE substring(k from '^(?:macrocycle-row:)?([0-9]+)(?::|$)')::numeric = ANY(${[...macrocycleNums]}::numeric[])
-        )`;
-    if (ids.length === 0) return [];
-    const rows = await this.prisma.importBatch.findMany({
-      where: { userId: this.userId, id: { in: ids.map((r) => r.id) } },
+  async listWithKeysOn(program: string, destination: ImportKind, which: KeyNumbers): Promise<ImportBatchRecord[]> {
+    if ('on' in which && which.on.length === 0) return [];
+    const nums = 'on' in which ? [...which.on] : [...which.except];
+    // Raw SQL isn't auto-traced (ADR-024), so the filter gets a span.
+    return tracer.startActiveSpan('import_batch.list_with_keys_on', async (span) => {
+      try {
+        span.setAttribute('import_batch.mode', 'on' in which ? 'on' : 'except');
+        span.setAttribute('import_batch.numbers', nums.length);
+        // The key's number as `preImageKeyNumber` reads it; numeric, so a long digit run can't
+        // overflow the cast. A key with no number matches neither way.
+        const ids = await this.prisma.$queryRaw<Array<{ id: string }>>`
+          SELECT b."id" FROM "import_batch" b
+          WHERE b."userId" = ${this.userId} AND b."program" = ${program} AND b."destination" = ${destination}
+            AND EXISTS (
+              SELECT 1 FROM jsonb_object_keys(b."preImage") AS k,
+                LATERAL (SELECT substring(k from ${PRE_IMAGE_KEY_NUMBER})::numeric AS num) AS key
+              WHERE key.num IS NOT NULL
+                AND (key.num = ANY(${nums}::numeric[])) = ${'on' in which}
+            )`;
+        span.setAttribute('import_batch.count', ids.length);
+        if (ids.length === 0) return [];
+        const rows = await this.prisma.importBatch.findMany({
+          where: { userId: this.userId, id: { in: ids.map((r) => r.id) } },
+        });
+        return rows.map(toRecord);
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
     });
-    return rows.map(toRecord);
   }
 
   async updatePreImage(id: string, preImage: ImportPreImage): Promise<void> {

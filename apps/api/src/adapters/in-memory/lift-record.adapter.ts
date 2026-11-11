@@ -26,6 +26,8 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
     return moved;
   }
 
+  readonly table = 'lift_record';
+
   numbersHeld(program: string): Set<number> {
     return new Set((this.store.get(program) ?? []).map((r) => r.macrocycleNum));
   }
@@ -114,11 +116,5 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
     return dateRangesByMacrocycle(
       macrocycleNum === undefined ? records : records.filter((r) => r.macrocycleNum === macrocycleNum),
     );
-  }
-
-  async deleteAllLiftRecords(program: string, keep: readonly number[] = []): Promise<void> {
-    const kept = (this.store.get(program) ?? []).filter((r) => keep.includes(r.macrocycleNum));
-    if (kept.length > 0) this.store.set(program, kept);
-    else this.store.delete(program);
   }
 }

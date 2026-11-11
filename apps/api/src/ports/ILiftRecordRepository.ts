@@ -73,10 +73,4 @@ export interface ILiftRecordRepository {
    * list of macrocycles reads no sets.
    */
   getMacrocycleDateRanges(program: string, macrocycleNum?: number): Promise<Map<number, DateRange>>;
-
-  /**
-   * Deletes every lift record for a program, across all macrocycles except those numbered in
-   * `keep`. No-op if none exist.
-   */
-  deleteAllLiftRecords(program: string, keep?: readonly number[]): Promise<void>;
 }

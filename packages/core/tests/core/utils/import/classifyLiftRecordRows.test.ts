@@ -76,14 +76,35 @@ describe("classifyLiftRecordRows", () => {
       { kind: "create", occurrence: 0 },
       { kind: "skip", occurrence: 0 },
     ]);
-    // Two same-day workouts with an identical set keep both, as before #1199.
+    // Two same-day workouts with an identical set keep both, as before #1199, each the first
+    // time through the lift in its own workout.
     expect(classify([set(), set({ workoutNum: 2 })])).toEqual([
       { kind: "create", occurrence: 0 },
-      { kind: "create", occurrence: 1 },
+      { kind: "create", occurrence: 0 },
     ]);
     expect(classify([set(), set({ occurrence: 1 })])).toEqual([
       { kind: "create", occurrence: 0 },
       { kind: "create", occurrence: 1 },
+    ]);
+  });
+
+  it("bumps an extra row's occurrence only past rows it could collide with: its own workout's", () => {
+    // A stored second workout that day, and the file adds a set to the first: workout 2 stays
+    // the first time through the lift.
+    const stored = [set({ workoutNum: 1 })];
+    expect(classify([set({ workoutNum: 1 }), set({ workoutNum: 2 })], stored)).toEqual([
+      { kind: "skip", occurrence: 0 },
+      { kind: "create", occurrence: 0 },
+    ]);
+    // A stored row in the extra's own workout still moves it on.
+    expect(classify([set({ workoutNum: 2 }), set({ workoutNum: 2, weight: 90 })], [set({ workoutNum: 2 })])).toEqual([
+      { kind: "skip", occurrence: 0 },
+      { kind: "create", occurrence: 1 },
+    ]);
+    // Two file macrocycles land apart, so the same workout number in each keeps occurrence 0.
+    expect(classify([set({ macrocycleNum: 1, reps: 3 }), set({ macrocycleNum: 2 })])).toEqual([
+      { kind: "create", occurrence: 0 },
+      { kind: "create", occurrence: 0 },
     ]);
   });
 

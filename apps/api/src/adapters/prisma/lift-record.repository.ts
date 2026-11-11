@@ -200,12 +200,6 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     }
     return ranges;
   }
-
-  async deleteAllLiftRecords(program: string, keep: readonly number[] = []): Promise<void> {
-    await this.prisma.liftRecord.deleteMany({
-      where: { userId: this.userId, program, macrocycleNum: { notIn: [...keep] } },
-    });
-  }
 }
 
 // Parses a pre-#884 natural key with no date segment:

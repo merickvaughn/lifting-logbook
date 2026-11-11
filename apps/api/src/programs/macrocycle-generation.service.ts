@@ -396,20 +396,7 @@ export class MacrocycleGenerationService {
    * request transaction, independent of the order below.
    */
   async deleteCurrentMacrocycle(
-    repos: Pick<
-      RepositoryBundle,
-      | 'macrocycle'
-      | 'macrocycleDashboard'
-      | 'macrocycleScheduledWorkout'
-      | 'liftRecord'
-      | 'trainingMax'
-      | 'trainingMaxHistory'
-      | 'workoutDateOverride'
-      | 'workoutSkipOverride'
-      | 'workoutLiftOverride'
-      | 'focus'
-      | 'importBatch'
-    >,
+    repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'trainingMax' | 'trainingMaxHistory' | 'importBatch'>,
     program: string,
   ): Promise<void> {
     // It removes macrocycle rows, so it takes the macrocycle lock (decision 13).
@@ -421,18 +408,12 @@ export class MacrocycleGenerationService {
       .filter((m) => m.origin === 'imported')
       .map((m) => m.macrocycleNum);
 
-    await repos.liftRecord.deleteAllLiftRecords(program, keep);
     await repos.trainingMaxHistory.deleteAllHistory(program);
     await repos.trainingMax.deleteAllTrainingMaxes(program);
-    await repos.macrocycleScheduledWorkout.deleteAllScheduledWorkouts(program, keep);
-    await repos.workoutDateOverride.deleteAllOverrides(program, keep);
-    await repos.workoutSkipOverride.deleteAllSkips(program, keep);
-    await repos.workoutLiftOverride.deleteAllOverrides(program, keep);
-    await repos.focus.deleteAllDayStates(program, keep);
+    // One delete over every table that holds a number, the dashboard's included.
     await repos.macrocycle.deleteAllExcept(program, keep);
-    await repos.macrocycleDashboard.deleteMacrocycleDashboard(program);
     // Batch keys on a deleted number would undo whichever macrocycle takes that number next.
-    await forgetBatchKeys(repos, await repos.importBatch.listForProgram(program, 'lift-records'), (n) => !keep.includes(n));
+    await forgetBatchKeys(repos, program, { except: keep });
     // The imported history left closes up to 1..N (#1199).
     await renumberProgram(repos, program);
   }

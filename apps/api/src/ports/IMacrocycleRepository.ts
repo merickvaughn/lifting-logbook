@@ -58,6 +58,13 @@ export interface IMacrocycleRepository {
   highestNumber(program: string): Promise<number>;
 
   /**
+   * Every number any table that holds one (the tables {@link rewriteNumbers} lists) has for the
+   * program, ascending. A number with no `macrocycle` row is one a page wrote to before the
+   * program had a macrocycle on it, such as a focus state saved before initializing.
+   */
+  numbersInUse(program: string): Promise<number[]>;
+
+  /**
    * Inserts a row. Throws `MacrocycleNumberConflictError` when the program already has a
    * macrocycle with that number, such as one a concurrent request just created.
    */
@@ -85,7 +92,7 @@ export interface IMacrocycleRepository {
    */
   delete(program: string, macrocycleNums: readonly number[]): Promise<void>;
 
-  /** Deletes the program's rows except those numbered in `keep`. */
+  /** Deletes the program's rows on every number but those in `keep`, from every table, as {@link delete} does. */
   deleteAllExcept(program: string, keep: readonly number[]): Promise<void>;
 
   /**

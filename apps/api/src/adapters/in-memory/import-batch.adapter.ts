@@ -1,6 +1,11 @@
 import { ImportPreImage } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
-import { IImportBatchRepository, ImportBatchRecord } from '../../ports/IImportBatchRepository';
+import {
+  IImportBatchRepository,
+  ImportBatchRecord,
+  KeyNumbers,
+  preImageKeyNumber,
+} from '../../ports/IImportBatchRepository';
 
 export class InMemoryImportBatchRepository implements IImportBatchRepository {
   private readonly store = new Map<string, ImportBatchRecord>();
@@ -21,16 +26,16 @@ export class InMemoryImportBatchRepository implements IImportBatchRepository {
   }
 
   // The bundle is one user's, so every stored batch is theirs.
-  async listForProgram(program: string, destination: ImportKind): Promise<ImportBatchRecord[]> {
-    return [...this.store.values()].filter((b) => b.program === program && b.destination === destination);
-  }
-
-  async listWithKeysOn(program: string, destination: ImportKind, macrocycleNums: readonly number[]): Promise<ImportBatchRecord[]> {
-    return (await this.listForProgram(program, destination)).filter((b) =>
-      Object.keys(b.preImage).some((key) => {
-        const num = /^(?:macrocycle-row:)?(\d+)(?::|$)/.exec(key)?.[1];
-        return num !== undefined && macrocycleNums.includes(Number(num));
-      }),
+  async listWithKeysOn(program: string, destination: ImportKind, which: KeyNumbers): Promise<ImportBatchRecord[]> {
+    const matches = (n: number) => ('on' in which ? which.on.includes(n) : !which.except.includes(n));
+    return [...this.store.values()].filter(
+      (b) =>
+        b.program === program &&
+        b.destination === destination &&
+        Object.keys(b.preImage).some((key) => {
+          const num = preImageKeyNumber(key);
+          return num !== null && matches(num);
+        }),
     );
   }
 

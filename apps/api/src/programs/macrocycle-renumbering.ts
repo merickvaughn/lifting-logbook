@@ -4,7 +4,8 @@ import { ImportPreImage } from '@lifting-logbook/core';
 import { MacrocycleNumberConflictError } from '../ports/errors';
 import { RepositoryBundle } from '../ports/factory';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
-import { LEGACY_ROW_KEY, lockForRenumbering, preImageKeyNumber } from './macrocycle-history.util';
+import { preImageKeyNumber } from '../ports/IImportBatchRepository';
+import { LEGACY_ROW_KEY, lockForRenumbering } from './macrocycle-history.util';
 
 /**
  * Renumbering (proposal decision 3, ADR-042): within a user and program, macrocycles are numbered
@@ -105,7 +106,7 @@ export async function renumberProgram(
       let batches = 0;
       if (changes.size > 0) {
         rows = await repos.macrocycle.rewriteNumbers(program, changes);
-        for (const batch of await repos.importBatch.listWithKeysOn(program, 'lift-records', [...changes.keys()])) {
+        for (const batch of await repos.importBatch.listWithKeysOn(program, 'lift-records', { on: [...changes.keys()] })) {
           const preImage = renumberPreImageKeys(batch.preImage, changes);
           if (!preImage) continue;
           await repos.importBatch.updatePreImage(batch.id, preImage);

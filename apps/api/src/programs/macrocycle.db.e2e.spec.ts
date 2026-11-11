@@ -51,7 +51,9 @@ const USER_RENUMBER_BATCH = 'macrocycle-db-renumber-batch';
 const USER_RENUMBER_LOCK = 'macrocycle-db-renumber-lock';
 const USER_RENUMBER_ORPHAN = 'macrocycle-db-renumber-orphan';
 const USER_RENUMBER_STALE = 'macrocycle-db-renumber-stale';
+const USER_RENUMBER_UNSTARTED = 'macrocycle-db-renumber-unstarted';
 const USERS = [
+  USER_RENUMBER_UNSTARTED,
   USER_RENUMBER_ORPHAN,
   USER_RENUMBER_STALE,
   USER_ALICE,
@@ -708,6 +710,23 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       expect((await owner.importBatch.findUnique({ where: { id: other.id } }))?.preImage).toEqual({});
     }, DB_E2E_HOOK_TIMEOUT_MS);
 
+    it('moves rows saved before initializing past an import, and back on undo, so neither takes them', async () => {
+      const user = USER_RENUMBER_UNSTARTED;
+      // The program has no macrocycle, so a page wrote these on the next number, 1.
+      const at = { userId: user, program: PROGRAM, macrocycleNum: 1 };
+      await owner.focusDayState.create({ data: { ...at, workoutNum: 1, state: {} } });
+      await owner.workoutSkipOverride.create({ data: { ...at, workoutNum: 2 } });
+      const unstartedOn = (n: number[]) => everyTable([], { focus_day_state: n, workout_skip_override: n });
+
+      const commit = await commitFile(user, OLDER_SET);
+      expect(commit.statusCode).toBe(200);
+      expect(await numbersByTable(user)).toEqual({ ...unstartedOn([2]), macrocycle: [1], lift_record: [1] });
+
+      const undo = await injectAs(user, 'POST', `${base}/import/${(commit.json() as { batchId: string }).batchId}/undo`);
+      expect(undo.statusCode).toBe(200);
+      expect(await numbersByTable(user)).toEqual(unstartedOn([1]));
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
     it('drops batch keys on a deleted macrocycle, so undoing the batch leaves the history that moves onto its number', async () => {
       const user = USER_RENUMBER_STALE;
       await seedEveryTable(user, 1, '2026-01-05');
@@ -727,10 +746,14 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         },
       });
 
+      // A focus state on a number with no macrocycle goes with the live and legacy ones.
+      await owner.focusDayState.create({ data: { userId: user, program: PROGRAM, macrocycleNum: 3, workoutNum: 1, state: {} } });
+
       expect((await injectAs(user, 'DELETE', `${base}/macrocycles/current`)).statusCode).toBe(204);
       expect((await owner.macrocycle.findMany({ where: { userId: user } })).map((m) => [m.macrocycleNum, m.origin])).toEqual([
         [1, 'imported'],
       ]);
+      expect(await numbersByTable(user)).toEqual(everyTable([], { macrocycle: [1], lift_record: [1] }));
 
       const undo = await injectAs(user, 'POST', `${base}/import/${stale.id}/undo`);
       expect(undo.json()).toMatchObject({ restored: 0 });
