@@ -281,8 +281,9 @@ export async function assertMacrocycleWritable(
  *   macrocycles its first upload formed, sessions added before or between them included.
  * - Any other rows, by group, join the current macrocycle while its run is open: they start on
  *   or after its start and no more than {@link STALE_AFTER_DAYS} days after its last session.
- *   One group of a sheet joins this way, counting a group whose rows an earlier upload stored
- *   there, so a sheet's later cycles don't merge into it. The owner chose this over joining any
+ *   One group of a sheet joins this way: the group with rows already stored there, uploaded
+ *   before or logged in the app, if there is one, so a sheet's later cycles don't merge into
+ *   it, while its cycle in it keeps joining. The owner chose this over joining any
  *   `live` macrocycle on dates alone, which merged sessions logged after a cycle ended into it.
  * - Anything else forms a new `legacy` macrocycle dated by its rows, numbered past every stored
  *   one in date order. An `imported` macrocycle is never joined. Rows on the new numbers with no
@@ -320,9 +321,12 @@ export async function placeFileRows(
   const nums: number[] = rows.map(() => 0);
   const created: NewMacrocycle[] = [];
   const current = stored.find((row) => row.macrocycleNum === dashboard?.macrocycleNum);
-  // A group whose rows are stored in the current macrocycle is the sheet's cycle that joined it
-  // before, so no other group joins it on dates.
-  let joinedOnDates = current !== undefined && [...pairedNums.values()].some((s) => s.has(current.macrocycleNum));
+  // The groups that may join the current macrocycle on dates. A group with rows already stored
+  // there, whether uploaded before or logged in the app, is the sheet's cycle in it, so it keeps
+  // joining and no other group does. With none, the first group to join on dates takes it.
+  const joiners = new Set(
+    current ? [...pairedNums].filter(([, nums]) => nums.has(current.macrocycleNum)).map(([fileNum]) => fileNum) : [],
+  );
 
   /**
    * Whether rows starting `first` join the current macrocycle on dates (decision 4): on or after
@@ -336,13 +340,13 @@ export async function placeFileRows(
     return day >= row.startDate && (day.getTime() - lastSession.getTime()) / DAY_MS <= STALE_AFTER_DAYS;
   };
   /** Places `indexes` by date alone: the current macrocycle while its run is open, else a new one. */
-  const placeByDate = (indexes: readonly number[]): void => {
+  const placeByDate = (fileNum: number, indexes: readonly number[]): void => {
     const dates = indexes.map((i) => rows[i]?.date ?? new Date(NaN));
     const first = new Date(Math.min(...dates.map((d) => d.getTime())));
     const last = new Date(Math.max(...dates.map((d) => d.getTime())));
     let macrocycleNum: number;
-    if (!joinedOnDates && current && continuesRun(current, first)) {
-      joinedOnDates = true;
+    if ((joiners.size === 0 || joiners.has(fileNum)) && current && continuesRun(current, first)) {
+      joiners.add(fileNum);
       macrocycleNum = current.macrocycleNum;
     } else {
       macrocycleNum = next++;
@@ -373,7 +377,7 @@ export async function placeFileRows(
       if (anchor && !(nextStart && date >= nextStart)) nums[i] = anchor.macrocycleNum;
       else unplaced.push(i);
     });
-    if (unplaced.length > 0) placeByDate(unplaced);
+    if (unplaced.length > 0) placeByDate(fileNum, unplaced);
   }
   if (created.length > 0) await moveUnstartedRows(repos, program, storedNums, next - created.length - 1, next - 1);
   await repos.macrocycle.createMany(created);

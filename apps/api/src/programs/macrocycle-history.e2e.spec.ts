@@ -801,6 +801,38 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
         ]);
       });
 
+      it('counts a group repeating a set logged in the app as the one in the current macrocycle', async () => {
+        const user = as('join-app-logged');
+        await user.initialize('2026-01-05');
+        expect((await user.log(1, '2026-01-07')).statusCode).toBe(201);
+
+        // Group 1 repeats the logged set; group 2 is within 14 days of it, but isn't that cycle.
+        await committed('join-app-logged', `${PROGRAM},1,1,2026-01-07,Squat,1,225,5,`, `${PROGRAM},2,1,2026-01-12,Squat,1,205,5,`);
+
+        expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'live'], [2, 'legacy']]);
+      });
+
+      it('keeps adding a grown sheet’s cycle in the current macrocycle to it, past a legacy macrocycle formed inside its dates', async () => {
+        const user = as('join-grown-past-legacy');
+        await user.initialize('2026-01-05');
+        expect((await user.log(1, '2026-01-07')).statusCode).toBe(201);
+        const first = `${PROGRAM},1,2,2026-01-12,Squat,1,200,5,`;
+        await committed('join-grown-past-legacy', first);
+        // A separate file 16 days after the last session forms a legacy macrocycle inside the current one's dates.
+        await committed('join-grown-past-legacy', `${PROGRAM},7,1,2026-01-28,Squat,1,200,5,`);
+        expect((await user.log(1, '2026-01-29')).statusCode).toBe(201);
+
+        await committed('join-grown-past-legacy', first, `${PROGRAM},1,3,2026-01-30,Squat,1,205,5,`);
+
+        expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'live'], [2, 'legacy']]);
+        expect((await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).map((r) => r.date)).toEqual([
+          day('2026-01-07'),
+          day('2026-01-12'),
+          day('2026-01-29'),
+          day('2026-01-30'),
+        ]);
+      });
+
       it('adds a session close to the current macrocycle’s last one to it, past a legacy macrocycle formed inside its dates', async () => {
         const user = as('join-past-legacy');
         await user.initialize('2026-01-05');
