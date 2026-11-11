@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { ImportPreImage, MacrocycleDashboard, toUTCMidnight } from '@lifting-logbook/core';
 import { MacrocycleStatus } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
@@ -91,23 +91,165 @@ function unknownNumber(program: string, macrocycleNum: number): NotFoundExceptio
   return new NotFoundException({
     statusCode: 404,
     code: 'macrocycle-not-found',
-    message: `Program '${program}' has no macrocycle ${macrocycleNum}.`,
+    message: `Program '${program}' has no macrocycle ${macrocycleNum}. Reload the page to see the current one.`,
     error: 'Not Found',
+    macrocycleNum,
   });
+}
+
+/**
+ * The stable id of the current macrocycle (`dashboard`), for a page to send back with its
+ * writes. The caller holds the shared macrocycle lock and read `dashboard` under it, so the
+ * number and the id agree. The macrocycle gets its row here if the previous API revision
+ * started it without one.
+ */
+export async function macrocycleIdFor(
+  repos: Pick<RepositoryBundle, 'macrocycle'>,
+  dashboard: MacrocycleDashboard,
+): Promise<string | undefined> {
+  const row = await repos.macrocycle.findByNumber(dashboard.program, dashboard.macrocycleNum);
+  if (row) return row.id;
+  await repos.macrocycle.ensure([currentRow(dashboard)]);
+  // `ensure` doesn't return ids, and a concurrent request may have made the row.
+  return (await repos.macrocycle.findByNumber(dashboard.program, dashboard.macrocycleNum))?.id;
+}
+
+
+const writeLogger = new Logger('MacrocycleWrite');
+
+/**
+ * How long an import waits for the page writes holding the macrocycle lock to finish. They're
+ * short, so an import rarely waits at all; the request's transaction budget
+ * (`IMPORT_TX_TIMEOUT_MS`) leaves room for it.
+ */
+export const IMPORT_LOCK_WAIT_MS = 5_000;
+
+function importInProgress(): ConflictException {
+  return new ConflictException({
+    statusCode: 409,
+    code: 'import-in-progress',
+    message: 'An import is changing your macrocycles. Try again in a moment.',
+    error: 'Conflict',
+  });
+}
+
+/** An import's lock wait ran out. Written for the person importing, who caused neither. */
+function writesInProgress(action: 'import' | 'undo'): ConflictException {
+  return new ConflictException({
+    statusCode: 409,
+    code: 'macrocycle-busy',
+    message: `Your workouts are being saved. Try the ${action} again in a moment.`,
+    error: 'Conflict',
+  });
+}
+
+/** The page's id names no macrocycle, as when the one it showed was deleted and started again. */
+function unknownId(program: string, macrocycleId: string): NotFoundException {
+  return new NotFoundException({
+    statusCode: 404,
+    code: 'macrocycle-not-found',
+    message: `This page's macrocycle of '${program}' no longer exists. Reload the page to see the current one.`,
+    error: 'Not Found',
+    macrocycleId,
+  });
+}
+
+/**
+ * A route with no number got the id of a macrocycle that's no longer the current one.
+ * `currentNum` is the current macrocycle's number, which the body carries.
+ */
+function notCurrent(program: string, currentNum: number): ConflictException {
+  return new ConflictException({
+    statusCode: 409,
+    code: 'macrocycle-not-current',
+    message: `This page is for an earlier macrocycle of '${program}'. Macrocycle ${currentNum} is the current one. Reload the page to see it.`,
+    error: 'Conflict',
+    macrocycleNum: currentNum,
+  });
+}
+
+function moved(program: string, macrocycleNum: number): ConflictException {
+  return new ConflictException({
+    statusCode: 409,
+    code: 'macrocycle-moved',
+    message: `This macrocycle of '${program}' is now number ${macrocycleNum}. Reload the page.`,
+    error: 'Conflict',
+    macrocycleNum,
+  });
+}
+
+/**
+ * Takes the user's macrocycle lock in shared mode for the rest of the request's transaction, so
+ * an import's renumbering can't commit between a write's checks and the write itself. Every
+ * write to a macrocycle takes it, page writes and macrocycle starts and deletes alike. An import
+ * holding it is a 409 `import-in-progress` at once: a page write doesn't wait.
+ */
+export async function lockForMacrocycleWrite(repos: Pick<RepositoryBundle, 'macrocycle'>): Promise<void> {
+  if (!(await repos.macrocycle.tryLockShared())) throw importInProgress();
+}
+
+/**
+ * Starts a write a page makes to one macrocycle (proposal decision 3). It takes the shared lock
+ * ({@link lockForMacrocycleWrite}), then checks that the page's stable id still names `macrocycleNum`: a different number is a
+ * 409 `macrocycle-moved` carrying the new one, and an id the user doesn't have in this program
+ * is a 404. A write with no id is still accepted until #1200, and logged so the remaining ones
+ * can be counted. Returns the id's row, for {@link assertMacrocycleWritable} to reuse, or null
+ * when the write had no id.
+ *
+ * `current` is for a route with no number, which writes to the current macrocycle
+ * (`macrocycleNum`): there a different number means the page is for an older macrocycle, not
+ * that its macrocycle moved, so the 409 is `macrocycle-not-current`, carrying the current
+ * number. `locked` says the caller already took the lock, as a route with no number must
+ * before it reads the current one.
+ */
+export async function checkMacrocycleId(
+  repos: Pick<RepositoryBundle, 'macrocycle'>,
+  program: string,
+  macrocycleNum: number,
+  macrocycleId: string | undefined,
+  route: string,
+  { current = false, locked = false }: { current?: boolean; locked?: boolean } = {},
+): Promise<MacrocycleRow | null> {
+  if (!locked) await lockForMacrocycleWrite(repos);
+  if (!macrocycleId) {
+    writeLogger.log({ route, program }, 'Macrocycle write without an id (#1198)');
+    return null;
+  }
+  const row = await repos.macrocycle.findById(macrocycleId);
+  if (!row || row.program !== program) throw unknownId(program, macrocycleId);
+  if (row.macrocycleNum !== macrocycleNum) {
+    throw current ? notCurrent(program, macrocycleNum) : moved(program, row.macrocycleNum);
+  }
+  return row;
+}
+
+/**
+ * Takes the user's macrocycle lock exclusively for an import, or an import's undo, that writes
+ * or removes macrocycles (proposal decision 13), so no page write runs alongside it. It waits
+ * up to {@link IMPORT_LOCK_WAIT_MS} for the page writes holding the lock to finish, then gives
+ * a 409 `macrocycle-busy` asking the importer to try again.
+ */
+export async function lockForImport(
+  repos: Pick<RepositoryBundle, 'macrocycle'>,
+  action: 'import' | 'undo' = 'import',
+): Promise<void> {
+  if (!(await repos.macrocycle.lockExclusive(IMPORT_LOCK_WAIT_MS))) throw writesInProgress(action);
 }
 
 /**
  * Guards a write scoped to one macrocycle (proposal decision 2): an `imported` macrocycle is
  * read-only (409 `macrocycle-read-only`) and a number the program doesn't have is a 404
  * (`macrocycle-not-found`). `live` and `legacy` macrocycles stay writable. The current
- * macrocycle gets its row here if it has none.
+ * macrocycle gets its row here if it has none. `known` is the row {@link checkMacrocycleId}
+ * already read for this number, which saves reading it again.
  */
 export async function assertMacrocycleWritable(
   repos: HistoryRepos,
   program: string,
   macrocycleNum: number,
+  known: MacrocycleRow | null = null,
 ): Promise<void> {
-  const row = await repos.macrocycle.findByNumber(program, macrocycleNum);
+  const row = known ?? (await repos.macrocycle.findByNumber(program, macrocycleNum));
   if (row) {
     if (row.origin === 'imported') throw readOnly(program, macrocycleNum);
     return;

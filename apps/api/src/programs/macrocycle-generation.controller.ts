@@ -1,5 +1,6 @@
-import { Body, Controller, HttpCode, HttpStatus, Inject, Param, Post } from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, HttpStatus, Inject, Param, Post } from '@nestjs/common';
 import {
+  MACROCYCLE_ID_HEADER,
   MacrocycleDashboardResponse,
   RecalculateMaxesResponse,
 } from '@lifting-logbook/types';
@@ -45,10 +46,11 @@ export class MacrocycleGenerationController {
     @Param('program', ParseProgramPipe) program: string,
     @Body() dto: StartNewMacrocycleDto,
     @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
   ): Promise<MacrocycleDashboardResponse> {
     const repos = await this.factory.forUser(user);
     const { dashboard: newMacrocycle, programSpec, scheduledWorkouts } =
-      await this.macrocycleGenerationService.startNewMacrocycle(repos, program, dto);
+      await this.macrocycleGenerationService.startNewMacrocycle(repos, program, dto, macrocycleId);
     const currentWeekType = weekTypeForDate(program, newMacrocycle.macrocycleDate, programSpec, {
       scheduled: scheduledWorkouts,
       overrides: new Map(),

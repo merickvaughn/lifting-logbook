@@ -2,7 +2,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { LiftOverrideResponse } from '@lifting-logbook/types';
 import LiftPicker from './LiftPicker';
+import { ApiClientError } from '@lifting-logbook/api-client';
 import { upsertLiftOverride } from '@/lib/client-api';
+import { browserNavigation } from '@/lib/macrocycleUrl';
 
 // Before #783 this picker had no catch at all, so a failed write became a silent unhandled
 // rejection: no log, no message, the user just stranded on the picker. These lock the fix.
@@ -63,6 +65,32 @@ describe('LiftPicker — mutation failure logging (#783)', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Back Squat' })).toBeEnabled(),
     );
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to save Back Squat. Please try again.');
+  });
+
+  it("shows the API's message while an import holds the lock (#1198)", async () => {
+    const user = userEvent.setup();
+    const msg = 'An import is changing your macrocycles. Try again in a moment.';
+    mockUpsert.mockRejectedValue(new ApiClientError(msg, 409, 'import-in-progress'));
+
+    renderPicker();
+    await user.click(screen.getByRole('button', { name: 'Back Squat' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(msg));
+  });
+
+  it('reloads at the new number instead of showing an error when the macrocycle moved (#1198)', async () => {
+    const user = userEvent.setup();
+    const assign = jest.spyOn(browserNavigation, 'assign').mockImplementation(() => {});
+    window.history.pushState({}, '', '/macrocycle/1/workout/2/detail/manage-lifts/pick?action=add');
+    mockUpsert.mockRejectedValue(new ApiClientError('moved', 409, 'macrocycle-moved', { macrocycleNum: 2 }));
+
+    renderPicker();
+    await user.click(screen.getByRole('button', { name: 'Back Squat' }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/macrocycle/2/workout/2/detail/manage-lifts/pick?action=add'));
+    expect(screen.queryByRole('alert')).toBeNull();
+    assign.mockRestore();
   });
 
   it('navigates back on success without logging an error', async () => {

@@ -27,8 +27,30 @@ export interface NewMacrocycle {
 }
 
 export interface IMacrocycleRepository {
+  /**
+   * Takes the user's macrocycle write lock (proposal decision 13) in shared mode until the
+   * request's transaction ends, without waiting. Page writes share it, so they run side by side.
+   * False when an import holds it exclusively.
+   *
+   * The lock lasts only as long as the transaction it's taken in. Under the RLS request
+   * transaction (`DATABASE_URL`) that's the request. A repository on a bare client, as the
+   * `SYSTEM_DATABASE_URL` factory builds, has no request transaction, so the lock ends with its
+   * own statement and excludes nothing.
+   */
+  tryLockShared(): Promise<boolean>;
+
+  /**
+   * Takes the same lock exclusively until the request's transaction ends, so nothing else writes
+   * to the user's macrocycles while an import runs. Waits up to `waitMs` for the page writes
+   * holding it to finish; false if they haven't by then.
+   */
+  lockExclusive(waitMs: number): Promise<boolean>;
+
   /** Every macrocycle of a program, in start-date order, ties by number. */
   list(program: string): Promise<MacrocycleRow[]>;
+
+  /** The user's row with this stable id, in any program. */
+  findById(id: string): Promise<MacrocycleRow | null>;
 
   findByNumber(program: string, macrocycleNum: number): Promise<MacrocycleRow | null>;
 

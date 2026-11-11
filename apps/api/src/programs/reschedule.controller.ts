@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Headers,
   HttpCode,
   HttpStatus,
   Inject,
@@ -10,12 +11,13 @@ import {
   Patch,
 } from '@nestjs/common';
 import { programLengthWeeks } from '@lifting-logbook/core';
+import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { isValidWorkoutNum, workoutKeyForWorkoutNum } from './mappers';
-import { assertMacrocycleWritable } from './macrocycle-history.util';
+import { assertMacrocycleWritable, checkMacrocycleId } from './macrocycle-history.util';
 import { RescheduleDto } from './reschedule.dto';
 
 @Controller('programs/:program')
@@ -32,6 +34,7 @@ export class RescheduleController {
     @Param('workoutNum') workoutNumParam: string,
     @Body() dto: RescheduleDto,
     @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
   ): Promise<void> {
     const macrocycleNum = Number.parseInt(macrocycleNumParam, 10);
     const workoutNum = Number.parseInt(workoutNumParam, 10);
@@ -64,8 +67,10 @@ export class RescheduleController {
       );
     }
 
-    // An imported macrocycle is read-only (409) and an unknown number is a 404 (ADR-042).
-    await assertMacrocycleWritable(repos, program, macrocycleNum);
+    // A stale page's id is a 409, an imported macrocycle is read-only (409) and an unknown
+    // number is a 404 (ADR-042).
+    const idRow = await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'PATCH reschedule');
+    await assertMacrocycleWritable(repos, program, macrocycleNum, idRow);
 
     // getMacrocycleDashboard throws ProgramNotFoundError when the program has no macrocycle.
     // Its macrocycleNum is the *active* macrocycle, and the entire read model (GET workout,

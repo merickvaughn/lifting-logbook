@@ -110,10 +110,22 @@ export interface WorkoutLiftResponse {
   occurrence?: number;
 }
 
+/**
+ * The request header a page sends its macrocycle's stable id in
+ * ({@link WorkoutResponse.macrocycleId}, #1198). The API's CORS config allows it.
+ */
+export const MACROCYCLE_ID_HEADER = 'X-Macrocycle-Id';
+
 /** Serialized workout as returned by the API. */
 export interface WorkoutResponse {
   program: string;
   macrocycleNum: MacrocycleNumber;
+  /**
+   * The macrocycle's stable id, which a renumbering doesn't change. Every write a workout page
+   * makes sends it, so a page left open can't write into another macrocycle (#1198). Absent
+   * when the program has no macrocycle yet.
+   */
+  macrocycleId?: string;
   workoutNum: number;
   /** The *program* week — past the stored block, for a tiled program. */
   week: WeekNumber;

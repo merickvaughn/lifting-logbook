@@ -16,6 +16,7 @@ import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { isValidWorkoutNum, toWorkoutResponse } from './mappers';
 import { currentMacrocycleOrFirst, resolveWorkoutDay } from './workout-day.util';
+import { macrocycleIdFor } from './macrocycle-history.util';
 
 @Controller('programs/:program')
 export class WorkoutsController {
@@ -38,6 +39,10 @@ export class WorkoutsController {
     const repos = await this.factory.forUser(user);
     const { workout, macrocycleScheduledWorkout, liftingProgramSpec, workoutDateOverride, workoutLiftOverride, workoutSkipOverride } =
       repos;
+    // The shared macrocycle lock, before the current number is read, so the number and the id
+    // returned below can't straddle an import's renumbering. While an import holds it, the read
+    // still succeeds but returns no id, and the page's writes go without one (#1198).
+    const locked = await repos.macrocycle.tryLockShared();
     const [dashboard, spec] = await Promise.all([
       currentMacrocycleOrFirst(repos, program),
       liftingProgramSpec.getProgramSpec(program),
@@ -101,7 +106,8 @@ export class WorkoutsController {
     // dashboard card derives its date from (issue #745).
     const macrocycleStartDate = 'macrocycleDate' in dashboard ? dashboard.macrocycleDate : undefined;
 
-    return toWorkoutResponse(program, dashboard.macrocycleNum, workoutNum, week, adjustedRecords, {
+    const macrocycleId = locked && 'macrocycleDate' in dashboard ? await macrocycleIdFor(repos, dashboard) : undefined;
+    const response = toWorkoutResponse(program, dashboard.macrocycleNum, workoutNum, week, adjustedRecords, {
       overrideDate: overrideDate ?? undefined,
       plannedLifts: planned,
       scheduledDate,
@@ -112,5 +118,6 @@ export class WorkoutsController {
       renamedLifts: renamed,
       modificationNames: await modificationNamesFor(repos, adjustedRecords),
     });
+    return macrocycleId ? { ...response, macrocycleId } : response;
   }
 }

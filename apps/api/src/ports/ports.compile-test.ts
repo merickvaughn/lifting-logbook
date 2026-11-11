@@ -257,7 +257,10 @@ const _focusRepo: IFocusRepository = {
 };
 
 const _macrocycleRepo: IMacrocycleRepository = {
+  tryLockShared: () => Promise.resolve(true),
+  lockExclusive: () => Promise.resolve(true),
   list: () => Promise.resolve([]),
+  findById: () => Promise.resolve(null),
   findByNumber: () => Promise.resolve(null),
   highestNumber: () => Promise.resolve(0),
   create: (row) =>

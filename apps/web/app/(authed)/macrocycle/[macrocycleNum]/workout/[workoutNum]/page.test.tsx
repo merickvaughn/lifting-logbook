@@ -31,13 +31,16 @@ jest.mock('next/navigation', () => ({
   notFound: jest.fn(() => {
     throw new Error('NOT_FOUND');
   }),
+  redirect: jest.fn((url: string) => {
+    throw new Error(`REDIRECT:${url}`);
+  }),
 }));
 
 // The logger is the one child whose props this test cares about. Echo them.
 jest.mock('./WorkoutLogger', () => ({
   __esModule: true,
-  default: ({ lifts, isReadOnly }: { lifts: LiftData[]; isReadOnly: boolean }) => (
-    <div data-lifts={JSON.stringify(lifts)} data-readonly={String(isReadOnly)} />
+  default: ({ lifts, isReadOnly, macrocycleId }: { lifts: LiftData[]; isReadOnly: boolean; macrocycleId?: string }) => (
+    <div data-lifts={JSON.stringify(lifts)} data-readonly={String(isReadOnly)} data-macrocycle-id={macrocycleId ?? ''} />
   ),
 }));
 
@@ -464,5 +467,29 @@ describe('WorkoutLoggingPage — focus work (#1060)', () => {
       expect.any(Error),
     );
     errSpy.mockRestore();
+  });
+});
+
+describe('WorkoutLoggingPage — a renumbered macrocycle (#1198)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('redirects an old URL to the number the workout was read from', async () => {
+    seedWorkout([{ lift: 'Squat', planned: true, sets: [] }]);
+    mockedWorkout.mockResolvedValue({ ...(await mockedWorkout()), macrocycleNum: 2, macrocycleId: 'mc-a' });
+
+    await expect(renderPage()).rejects.toThrow('REDIRECT:/macrocycle/2/workout/1');
+  });
+
+  it('renders at the current number, with no redirect, and hands the id to the logger', async () => {
+    seedWorkout([{ lift: 'Squat', planned: true, sets: [] }]);
+    mockedWorkout.mockResolvedValue({ ...(await mockedWorkout()), macrocycleId: 'mc-a' });
+
+    const element = (await WorkoutLoggingPage({
+      params: Promise.resolve({ macrocycleNum: '1', workoutNum: '1' }),
+    })) as ReactElement;
+
+    expect(renderToStaticMarkup(element)).toContain('data-macrocycle-id="mc-a"');
   });
 });

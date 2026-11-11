@@ -1,6 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { getActiveProgram } from '@/lib/active-program';
 import { loadFocusPlan, loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
+import { movedWorkoutPath } from '@/lib/macrocycleUrl';
 import { isTimeable } from '@/lib/workoutStatus';
 import WorkoutTimerView from './WorkoutTimerView';
 
@@ -36,6 +37,10 @@ export default async function WorkoutTimerPage({
     return null;
   }
 
+  // The plan is the current macrocycle's, so an old URL follows it (#1198).
+  const moved = movedWorkoutPath(`/macrocycle/${macrocycleNum}/workout/${workoutNum}/timer`, macrocycleNum, plan.workout.macrocycleNum);
+  if (moved) redirect(moved);
+
   // The detail page declines to mount the timer for a finished or skipped
   // workout; this route has to agree, or it would hand out a fully working timer
   // for a session that is already done — and a run started here would then have
@@ -49,6 +54,7 @@ export default async function WorkoutTimerPage({
       lifts={await plan.timerLifts(focus.then((f) => f.plan))}
       program={program}
       macrocycleNum={macrocycleNum}
+      macrocycleId={plan.workout.macrocycleId}
       workoutNum={workoutNum}
       week={plan.workout.week}
     />

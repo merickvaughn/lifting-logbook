@@ -4,6 +4,7 @@ import {
   ConflictException,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Inject,
@@ -16,6 +17,7 @@ import {
 import {
   ImportLiftRecordsResponse,
   LiftRecordResponse,
+  MACROCYCLE_ID_HEADER,
 } from '@lifting-logbook/types';
 import {
   LiftRecord,
@@ -43,7 +45,12 @@ import { CreateLiftRecordDto } from './create-lift-record.dto';
 import { UpdateLiftRecordDto } from './update-lift-record.dto';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
-import { assertMacrocycleWritable, ensureFileNumberRows } from './macrocycle-history.util';
+import {
+  assertMacrocycleWritable,
+  checkMacrocycleId,
+  ensureFileNumberRows,
+  lockForImport,
+} from './macrocycle-history.util';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { RlsTxTimeout } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
@@ -79,6 +86,7 @@ export class LiftRecordsController {
     @Param('program') program: string,
     @Body() body: CreateLiftRecordDto,
     @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
   ): Promise<LiftRecordResponse> {
     // `body.program` is unused by the write itself (the route param is authoritative
     // below) but is now a declared, validated part of the accepted contract
@@ -95,7 +103,8 @@ export class LiftRecordsController {
 
     const repos = await this.factory.forUser(user);
     const { liftRecord, macrocycleScheduledWorkout } = repos;
-    await assertMacrocycleWritable(repos, program, body.macrocycleNum);
+    const idRow = await checkMacrocycleId(repos, program, body.macrocycleNum, macrocycleId, 'POST lift-records');
+    await assertMacrocycleWritable(repos, program, body.macrocycleNum, idRow);
 
     const modificationNames = await assertSetModifications(repos, body.lift, body.modifications ?? []);
 
@@ -254,6 +263,10 @@ export class LiftRecordsController {
       throw new BadRequestException({ message: 'Validation failed', errors });
     }
 
+    // After validation, so an invalid file gets its errors without waiting for the lock, and a
+    // valid one doesn't hold page writes off while it's checked. Before the reads it guards.
+    await lockForImport(repos);
+
     // Stamp each record with the route program before persisting, and pair each
     // with its 1-based CSV row number (via pairWithRowNumber, shared with the
     // Smart Import wizard's liftRecordsHandler — issues #891/#896) so a skip can
@@ -283,13 +296,15 @@ export class LiftRecordsController {
     @Param('id') id: string,
     @Body() body: UpdateLiftRecordDto,
     @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
   ): Promise<LiftRecordResponse> {
     const repos = await this.factory.forUser(user);
     const { liftRecord } = repos;
     const notFound = () => new NotFoundException(`Lift record '${id}' not found for program '${program}'`);
     const key = parseLiftRecordId(program, id);
     if (!key) throw notFound();
-    await assertMacrocycleWritable(repos, program, key.macrocycleNum);
+    const idRow = await checkMacrocycleId(repos, program, key.macrocycleNum, macrocycleId, 'PATCH lift-records/:id');
+    await assertMacrocycleWritable(repos, program, key.macrocycleNum, idRow);
 
     let checkedNames: ReadonlyMap<string, string> | undefined;
     if (body.modifications !== undefined) {

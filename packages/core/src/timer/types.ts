@@ -273,4 +273,9 @@ export interface TimerWorkoutKey {
   program: string;
   macrocycleNum: number;
   workoutNum: number;
+  /**
+   * The macrocycle's stable id (#1198). When both keys carry one, it decides the match
+   * instead of `macrocycleNum`, so a run follows its macrocycle through a renumbering.
+   */
+  macrocycleId?: string;
 }

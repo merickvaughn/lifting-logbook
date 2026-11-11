@@ -11,6 +11,7 @@ import {
   updateLiftRecord,
 } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
 import styles from './WorkoutLogger.module.css';
 import type { LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
 import { buildDraftKey, clearDraft, readDraft, writeDraft } from './workoutDraftStorage';
@@ -178,6 +179,7 @@ function WorkingSetRow({
   isEditing,
   program,
   macrocycleNum,
+  macrocycleId,
   workoutNum,
   date,
   unit,
@@ -196,6 +198,8 @@ function WorkingSetRow({
   isEditing: boolean;
   program: string;
   macrocycleNum: number;
+  /** The macrocycle's stable id, sent with each write (#1198). */
+  macrocycleId: string | undefined;
   workoutNum: number;
   date: string;
   unit: WeightUnit;
@@ -221,11 +225,15 @@ function WorkingSetRow({
   // this guard an isReadOnly + unlogged row (exercised directly by the isReadOnly test in
   // WorkoutLogger.test.tsx) would still read a stray draft into unused state.
   const shouldDraft = !loggedRecord && !isReadOnly;
-  const draftStorageKey = buildDraftKey(program, macrocycleNum, workoutNum, lift, set.setNum, occurrence);
+  const draftStorageKey = buildDraftKey(program, macrocycleNum, workoutNum, lift, set.setNum, occurrence, macrocycleId);
+  // The number-keyed draft from before the page had an id, moved on first read (#1198).
+  const legacyDraftKey = macrocycleId
+    ? buildDraftKey(program, macrocycleNum, workoutNum, lift, set.setNum, occurrence)
+    : undefined;
 
   const [weightInput, setWeightInput] = useState(() => {
     if (shouldDraft) {
-      const draft = readDraft(draftStorageKey);
+      const draft = readDraft(draftStorageKey, legacyDraftKey);
       if (draft) return draft.weight;
     }
     return loggedRecord
@@ -286,7 +294,7 @@ function WorkingSetRow({
         weight,
         reps,
         notes: notesInput || undefined,
-      });
+      }, macrocycleId);
       clearDraft(draftStorageKey);
       onLogged(record);
     } catch (err) {
@@ -297,7 +305,9 @@ function WorkingSetRow({
         lift,
         setNum: set.setNum,
       });
-      setError('Failed to log set. Try again.');
+      // A renumbered macrocycle reloads at its new number; the draft goes with it (#1198).
+      if (followMovedMacrocycle(err)) return;
+      setError(writeFailureMessage(err, 'Failed to log set. Try again.'));
       setSubmitting(false);
     }
   }
@@ -318,11 +328,12 @@ function WorkingSetRow({
         weight,
         reps,
         notes: notesInput || undefined,
-      });
+      }, macrocycleId);
       onEditSave(record);
     } catch (err) {
       logClientError('updateLiftRecord', err, { program, id: loggedRecord.id });
-      setError('Failed to save changes. Try again.');
+      if (followMovedMacrocycle(err)) return;
+      setError(writeFailureMessage(err, 'Failed to save changes. Try again.'));
       setSubmitting(false);
     }
   }
@@ -445,6 +456,7 @@ function LiftView({
   editingSet,
   program,
   macrocycleNum,
+  macrocycleId,
   workoutNum,
   date,
   unit,
@@ -459,6 +471,7 @@ function LiftView({
   editingSet: string | null;
   program: string;
   macrocycleNum: number;
+  macrocycleId: string | undefined;
   workoutNum: number;
   date: string;
   unit: WeightUnit;
@@ -515,6 +528,7 @@ function LiftView({
                 isEditing={editingSet === key}
                 program={program}
                 macrocycleNum={macrocycleNum}
+                macrocycleId={macrocycleId}
                 workoutNum={workoutNum}
                 date={date}
                 unit={unit}
@@ -584,6 +598,7 @@ function OverviewRow({
 export default function WorkoutLogger({
   program,
   macrocycleNum,
+  macrocycleId,
   workoutNum,
   date,
   lifts,
@@ -661,6 +676,7 @@ export default function WorkoutLogger({
   function handleFinishWorkout() {
     for (const l of lifts) {
       for (const ws of l.workingSets) {
+        clearDraft(buildDraftKey(program, macrocycleNum, workoutNum, l.lift, ws.setNum, l.occurrence, macrocycleId));
         clearDraft(buildDraftKey(program, macrocycleNum, workoutNum, l.lift, ws.setNum, l.occurrence));
       }
     }
@@ -747,8 +763,9 @@ export default function WorkoutLogger({
             const prevDate = effectiveDate;
             setEffectiveDate(newDate);
             if (isReadOnly) {
-              rescheduleWorkout(program, macrocycleNum, workoutNum, newDate).catch((err) => {
+              rescheduleWorkout(program, macrocycleNum, workoutNum, newDate, macrocycleId).catch((err) => {
                 logClientError('rescheduleWorkout', err, { program, macrocycleNum, workoutNum });
+                if (followMovedMacrocycle(err)) return;
                 setEffectiveDate(prevDate);
               });
             }
@@ -785,6 +802,7 @@ export default function WorkoutLogger({
           editingSet={editingSet}
           program={program}
           macrocycleNum={macrocycleNum}
+          macrocycleId={macrocycleId}
           workoutNum={workoutNum}
           date={effectiveDate}
           unit={unit}

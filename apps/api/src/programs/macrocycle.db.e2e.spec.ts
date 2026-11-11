@@ -9,9 +9,12 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { PrismaClient } from '@prisma/client';
+import { emptyFocusDayState, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { seedTrainingMaxes } from '../adapters/in-memory/fixtures';
-import { PrismaMacrocycleRepository } from '../adapters/prisma/macrocycle.repository';
+import multipart from '@fastify/multipart';
+import { MACROCYCLE_LOCK_NAMESPACE, PrismaMacrocycleRepository } from '../adapters/prisma/macrocycle.repository';
+import { IMPORT_LOCK_WAIT_MS } from './macrocycle-history.util';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
@@ -33,7 +36,8 @@ const USER_BACKFILL = 'macrocycle-db-backfill';
 const USER_BACKFILL_BARE = 'macrocycle-db-backfill-bare';
 const USER_RACE = 'macrocycle-db-race';
 const USER_ENSURE = 'macrocycle-db-ensure';
-const USERS = [USER_ALICE, USER_BOB, USER_BACKFILL, USER_BACKFILL_BARE, USER_RACE, USER_ENSURE];
+const USER_LOCK = 'macrocycle-db-lock';
+const USERS = [USER_ALICE, USER_BOB, USER_BACKFILL, USER_BACKFILL_BARE, USER_RACE, USER_ENSURE, USER_LOCK];
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const isoDay = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : null);
@@ -60,6 +64,7 @@ async function cleanup(owner: PrismaClient): Promise<void> {
   await owner.focusDayState.deleteMany({ where });
   await owner.trainingMax.deleteMany({ where });
   await owner.trainingMaxHistory.deleteMany({ where });
+  await owner.importBatch.deleteMany({ where });
 }
 
 describeOrSkip('macrocycle table (e2e, lifting_app role)', () => {
@@ -247,6 +252,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
     await cleanup(owner);
     process.env.DATABASE_URL = APP_DB_URL;
     app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), { logger: false });
+    await app.register(multipart as never, { limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
     app.useGlobalFilters(new DomainNotFoundFilter(), new DomainConflictFilter());
     app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
     await app.init();
@@ -259,13 +265,18 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
     await owner?.$disconnect().catch(() => undefined);
   }, DB_E2E_HOOK_TIMEOUT_MS);
 
-  const inject = (method: 'GET' | 'POST', url: string, body?: unknown) =>
+  const injectAs = (user: string, method: string, url: string, body?: unknown, macrocycleId?: string) =>
     app.getHttpAdapter().getInstance().inject({
-      method,
+      method: method as 'GET',
       url,
-      headers: { authorization: `Bearer ${USER_RACE}`, 'content-type': 'application/json' },
-      payload: JSON.stringify(body ?? {}),
+      headers: {
+        authorization: `Bearer ${user}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(macrocycleId === undefined ? {} : { [MACROCYCLE_ID_HEADER]: macrocycleId }),
+      },
+      ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
     });
+  const inject = (method: 'GET' | 'POST', url: string, body?: unknown) => injectAs(USER_RACE, method, url, body ?? {});
 
   /**
    * Waits until a backend is blocked by `pid`'s locks. Other DB suites share this database,
@@ -358,5 +369,165 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       await appDb.$disconnect();
     }
     expect(await owner.macrocycle.count({ where: { userId: USER_ENSURE, program: PROGRAM } })).toBe(1);
+  });
+
+  describe('the macrocycle write lock (#1198)', () => {
+    const base = `/programs/${PROGRAM}`;
+    let macrocycleId = '';
+    let recordId = '';
+
+    beforeAll(async () => {
+      expect((await injectAs(USER_LOCK, 'POST', `${base}/macrocycles/initialize`, { macrocycleDate: '2026-01-05' })).statusCode).toBe(201);
+      await owner.trainingMax.createMany({
+        data: seedTrainingMaxes().map((max) => ({ userId: USER_LOCK, program: PROGRAM, ...max })),
+      });
+      macrocycleId = (await injectAs(USER_LOCK, 'GET', `${base}/workouts/1`)).json().macrocycleId;
+      const logged = await injectAs(USER_LOCK, 'POST', `${base}/lift-records`, logBody(1), macrocycleId);
+      expect(logged.statusCode).toBe(201);
+      recordId = logged.json().id;
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    function logBody(setNum: number) {
+      return { macrocycleNum: 1, workoutNum: 1, date: '2026-01-05', lift: 'Squat', setNum, weight: 225, reps: 5 };
+    }
+
+    const pageWrites = () => [
+      { method: 'POST', url: `${base}/lift-records`, body: logBody(2) },
+      { method: 'PATCH', url: `${base}/lift-records/${encodeURIComponent(recordId)}`, body: { reps: 6 } },
+      { method: 'POST', url: `${base}/macrocycles/1/workouts/1/lift-overrides`, body: { lift: 'Bench Press', action: 'remove' } },
+      { method: 'DELETE', url: `${base}/macrocycles/1/workouts/1/lift-overrides/Bench%20Press` },
+      { method: 'PATCH', url: `${base}/macrocycles/1/workouts/1/reschedule`, body: { newDate: '2026-01-07' } },
+      { method: 'POST', url: `${base}/macrocycles/1/workouts/1/skip`, body: {} },
+      { method: 'DELETE', url: `${base}/macrocycles/1/workouts/1/skip` },
+      { method: 'PUT', url: `${base}/workouts/1/focus-state`, body: { ...emptyFocusDayState(), dismissed: true } },
+      { method: 'POST', url: `${base}/macrocycles`, body: { fromMacrocycleNum: 1 } },
+    ];
+
+    /** A one-set file for macrocycle `cycle`; each test imports its own, so none depends on another. */
+    const upload = (url: string, cycle = 4) => {
+      const boundary = '----MacrocycleLockBoundary';
+      return app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${USER_LOCK}` },
+        payload: [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+          'Content-Type: text/csv',
+          '',
+          `Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes\n5-3-1,${cycle},1,2025-03-03,Squat,1,200,5,`,
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+    };
+    const commitImport = `${base}/import?mode=commit&destination=lift-records`;
+    const imports = [`${base}/lift-records/import`, commitImport];
+    /** Each import waits out the lock before its 409, so a test running several needs room. */
+    const LOCKED_TEST_TIMEOUT_MS = 4 * IMPORT_LOCK_WAIT_MS + DB_E2E_HOOK_TIMEOUT_MS;
+
+    /** Holds the user's lock from another connection, as #1199's renumbering will. */
+    const holdLock = (mode: 'shared' | 'exclusive') =>
+      holdOpen(owner, null, (tx) =>
+        mode === 'shared'
+          ? tx.$queryRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${USER_LOCK}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`
+          : tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${USER_LOCK}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`,
+      );
+
+    const storedSets = () => owner.liftRecord.count({ where: { userId: USER_LOCK } });
+    const expectBusy = (url: string, res: { statusCode: number; json: () => { code?: string } }) =>
+      expect({ url, status: res.statusCode, code: res.json().code }).toEqual({ url, status: 409, code: 'macrocycle-busy' });
+
+    it('answers every macrocycle write with 409 import-in-progress while an import holds it, and imports with 409 macrocycle-busy once their wait runs out, writing nothing', async () => {
+      const before = await storedSets();
+      const harness = await holdLock('exclusive');
+      try {
+        const macrocycleWrites = [
+          { method: 'POST', url: `${base}/macrocycles`, body: {} },
+          { method: 'POST', url: `${base}/macrocycles/initialize`, body: { macrocycleDate: '2026-01-05' } },
+          { method: 'DELETE', url: `${base}/macrocycles/current` },
+        ];
+        for (const write of [...pageWrites(), ...macrocycleWrites]) {
+          const res = await injectAs(USER_LOCK, write.method, write.url, write.body, macrocycleId);
+          expect({ url: write.url, status: res.statusCode, code: res.json().code }).toEqual({
+            url: write.url,
+            status: 409,
+            code: 'import-in-progress',
+          });
+        }
+        for (const url of imports) {
+          const started = Date.now();
+          expectBusy(url, await upload(url));
+          // It waited for the lock rather than failing at once.
+          expect(Date.now() - started).toBeGreaterThanOrEqual(IMPORT_LOCK_WAIT_MS - 500);
+        }
+      } finally {
+        harness.release();
+        await harness.done;
+      }
+      expect(await storedSets()).toBe(before);
+      expect(await owner.workoutSkipOverride.count({ where: { userId: USER_LOCK } })).toBe(0);
+      expect((await owner.macrocycle.findMany({ where: { userId: USER_LOCK } })).map((row) => row.macrocycleNum)).toEqual([1]);
+      expect((await owner.macrocycleDashboard.findFirstOrThrow({ where: { userId: USER_LOCK } })).macrocycleNum).toBe(1);
+    }, LOCKED_TEST_TIMEOUT_MS);
+
+    it('lets page writes share it, and an import waits for them to finish', async () => {
+      const harness = await holdLock('shared');
+      let released = false;
+      try {
+        const write = await injectAs(USER_LOCK, 'POST', `${base}/macrocycles/1/workouts/1/skip`, {}, macrocycleId);
+        expect(write.statusCode).toBe(204);
+        const pending = upload(commitImport);
+        await waitForBlockedBy(harness.pid);
+        harness.release();
+        released = true;
+        const res = await pending;
+        expect(res.statusCode).toBe(200);
+      } finally {
+        if (!released) harness.release();
+        await harness.done;
+      }
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 4 } })).toBe(1);
+    }, LOCKED_TEST_TIMEOUT_MS);
+
+    // Postgres queues a no-wait shared request behind a waiting exclusive one, so while an
+    // import waits for page writes, a new page write is refused as if the import held the lock.
+    it('answers a page write with 409 import-in-progress, and a workout read with no id, while an import waits for the lock', async () => {
+      const harness = await holdLock('shared');
+      let released = false;
+      try {
+        const pending = upload(commitImport, 6);
+        await waitForBlockedBy(harness.pid);
+        const write = await injectAs(USER_LOCK, 'POST', `${base}/lift-records`, logBody(3), macrocycleId);
+        expect({ status: write.statusCode, code: write.json().code }).toEqual({ status: 409, code: 'import-in-progress' });
+        const read = await injectAs(USER_LOCK, 'GET', `${base}/workouts/1`);
+        expect(read.statusCode).toBe(200);
+        expect(read.json().macrocycleId).toBeUndefined();
+        harness.release();
+        released = true;
+        expect((await pending).statusCode).toBe(200);
+      } finally {
+        if (!released) harness.release();
+        await harness.done;
+      }
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 6 } })).toBe(1);
+    }, LOCKED_TEST_TIMEOUT_MS);
+
+    it('answers an import and an import undo with 409 macrocycle-busy when page writes hold it past the wait, writing nothing', async () => {
+      const committed = await upload(commitImport, 5);
+      expect(committed.statusCode).toBe(200);
+      const batchId: string = committed.json().batchId;
+      const harness = await holdLock('shared');
+      try {
+        expectBusy(commitImport, await upload(commitImport, 5));
+        const undo = `${base}/import/${batchId}/undo`;
+        expectBusy(undo, await injectAs(USER_LOCK, 'POST', undo));
+        expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 5 } })).toBe(1);
+      } finally {
+        harness.release();
+        await harness.done;
+      }
+      expect((await injectAs(USER_LOCK, 'POST', `${base}/import/${batchId}/undo`)).statusCode).toBe(200);
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 5 } })).toBe(0);
+    }, LOCKED_TEST_TIMEOUT_MS);
   });
 });

@@ -289,6 +289,19 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       expect(await bundle.workoutLiftOverride.getOverrides(PROGRAM, num, 1)).toEqual([]);
     });
 
+    it('tells the lifter to reload when a write names a number the program has no macrocycle for', async () => {
+      const user = as('history-guard-message');
+      await user.initialize('2026-01-05');
+      // The page shows this message as it is (#1198), so it is written for the lifter.
+      const res = await user.inject('POST', `/programs/${PROGRAM}/macrocycles/7/workouts/1/skip`, {});
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({
+        code: 'macrocycle-not-found',
+        macrocycleNum: 7,
+        message: `Program '${PROGRAM}' has no macrocycle 7. Reload the page to see the current one.`,
+      });
+    });
+
     it('rejects an upload into an imported macrocycle with 409, writing nothing', async () => {
       const user = as('history-guard-upload');
       await user.seedImported(1, '2025-01-06', '2025-02-17');

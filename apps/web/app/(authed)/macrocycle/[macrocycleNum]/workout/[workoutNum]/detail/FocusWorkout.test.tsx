@@ -75,7 +75,7 @@ function renderFocus(plan: FocusDayPlanResponse = focusPlan()) {
 
 /** Saves run from a queue, so the request goes out a microtask after the click. */
 async function expectSaved(state: FocusDayState) {
-  await waitFor(() => expect(mockedSave).toHaveBeenLastCalledWith('5-3-1', 1, state));
+  await waitFor(() => expect(mockedSave).toHaveBeenLastCalledWith('5-3-1', 1, state, undefined));
 }
 
 /** The module headings, in the order they are on the page. */
@@ -410,7 +410,7 @@ describe('FocusWorkout — over-guide advice', () => {
     await waitFor(() => expect(mockedSave).toHaveBeenCalledTimes(1));
     await act(async () => resolveSave(dayState()));
     expect(mockedSave).toHaveBeenCalledTimes(1);
-    expect(mockedSave).toHaveBeenCalledWith('5-3-1', 1, dayState({ trims: { 'b-shoulders': ['Face Pull'] } }));
+    expect(mockedSave).toHaveBeenCalledWith('5-3-1', 1, dayState({ trims: { 'b-shoulders': ['Face Pull'] } }), undefined);
   });
 
   it('lists only the trims the plan applies, and undoes them', async () => {
@@ -550,7 +550,7 @@ describe('FocusWorkout — a failed save', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Before' }));
 
     await waitFor(() => expect(mockedSave).toHaveBeenCalledTimes(2));
-    expect(mockedSave).toHaveBeenLastCalledWith('5-3-1', 1, dayState({ modes: { 'b-shoulders': 'fixed' }, placement: 'before' }));
+    expect(mockedSave).toHaveBeenLastCalledWith('5-3-1', 1, dayState({ modes: { 'b-shoulders': 'fixed' }, placement: 'before' }), undefined);
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
     expect(moduleOrder()).toEqual(['Workout Summary', 'Focus work', 'Planned']);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();

@@ -300,4 +300,43 @@ describe('sameWorkout', () => {
     expect(sameWorkout(WORKOUT, { ...WORKOUT })).toBe(true);
     expect(sameWorkout(WORKOUT, { ...WORKOUT, workoutNum: 9 })).toBe(false);
   });
+
+  it('matches by the macrocycle id when both keys carry one, whatever the number (#1198)', () => {
+    const withId = { ...WORKOUT, macrocycleId: 'mc-a' };
+    expect(sameWorkout(withId, { ...withId, macrocycleNum: 2 })).toBe(true);
+    expect(sameWorkout(withId, { ...withId, macrocycleId: 'mc-b' })).toBe(false);
+    expect(sameWorkout(withId, { ...withId, macrocycleId: 'mc-a', workoutNum: 9 })).toBe(false);
+  });
+
+  it('falls back to the number when either key has no id (#1198)', () => {
+    const withId = { ...WORKOUT, macrocycleId: 'mc-a' };
+    expect(sameWorkout(WORKOUT, withId)).toBe(true);
+    expect(sameWorkout(withId, { ...WORKOUT, macrocycleNum: 2 })).toBe(false);
+  });
+});
+
+describe('run persistence across a renumbering (#1198)', () => {
+  it('restores a run keyed by id after its macrocycle is renumbered', () => {
+    saveTimerRun(makeRun({ workout: { ...WORKOUT, macrocycleId: 'mc-a' } }));
+    const renumbered = { ...WORKOUT, macrocycleNum: 2, macrocycleId: 'mc-a' };
+    expect(loadTimerRun(renumbered)?.workout).toEqual(renumbered);
+    expect(loadTimerRun({ ...WORKOUT, macrocycleId: 'mc-b' })).toBeNull();
+  });
+
+  it('adopts the caller key for a run saved before ids, so the next save carries the id', () => {
+    saveTimerRun(makeRun());
+    const keyed = { ...WORKOUT, macrocycleId: 'mc-a' };
+    const run = loadTimerRun(keyed);
+    expect(run?.workout).toEqual(keyed);
+    if (run) saveTimerRun(run);
+    expect(loadTimerRun({ ...keyed, macrocycleNum: 2 })?.idx).toBe(2);
+  });
+
+  it('drops a run whose stored id is not a string', () => {
+    window.localStorage.setItem(
+      TIMER_STORAGE_KEY,
+      JSON.stringify({ run: { ...makeRun(), workout: { ...WORKOUT, macrocycleId: 7 } }, runShape: TIMER_RUN_SHAPE }),
+    );
+    expect(loadTimerRun(WORKOUT)).toBeNull();
+  });
 });

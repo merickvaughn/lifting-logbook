@@ -47,3 +47,14 @@ describe('ManageLiftsActions — a lift planned twice in a day (#1027)', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: '…' })).not.toBeInTheDocument());
   });
 });
+
+describe('ManageLiftsActions — the macrocycle id (#1198)', () => {
+  it('links Replace to the picker with the macrocycle id, so the picker needs no workout read', () => {
+    render(<ManageLiftsActions program="my-program" macrocycleNum={1} macrocycleId="mc-a" workoutNum={1} lifts={lifts} />);
+    const [replace] = screen.getAllByRole('link', { name: 'Replace' });
+    expect(replace).toHaveAttribute(
+      'href',
+      '/macrocycle/1/workout/1/detail/manage-lifts/pick?action=replace&replacing=Squat&macrocycleId=mc-a',
+    );
+  });
+});

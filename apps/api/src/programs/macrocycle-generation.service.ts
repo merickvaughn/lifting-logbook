@@ -17,11 +17,14 @@ import {
   Weekday,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports';
+import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { ScheduledWorkout } from '../ports/IMacrocycleScheduledWorkoutRepository';
 import { ProgramNotFoundError } from '../ports/errors';
 import { StartNewMacrocycleDto } from './start-new-macrocycle.dto';
 import {
   assertMacrocycleWritable,
+  checkMacrocycleId,
+  lockForMacrocycleWrite,
   closingStatus,
   ensureCurrentRow,
   nextMacrocycleNumber,
@@ -181,14 +184,23 @@ export class MacrocycleGenerationService {
     repos: MacrocycleRepos,
     program: string,
     dto: StartNewMacrocycleDto = {},
+    macrocycleId?: string,
   ): Promise<MacrocycleGenerationResult> {
+    // Every start takes the macrocycle lock before reading anything, so an import can't
+    // renumber between the reads and the writes (decision 13). A stale page's source id is a
+    // 409 (decision 3). Imported history can't feed the training maxes, and a number with no
+    // macrocycle has no records to feed them (decision 2).
+    let sourceRow: MacrocycleRow | null = null;
+    if (dto.fromMacrocycleNum !== undefined) {
+      sourceRow = await checkMacrocycleId(repos, program, dto.fromMacrocycleNum, macrocycleId, 'POST macrocycles');
+    } else {
+      await lockForMacrocycleWrite(repos);
+    }
     const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program);
     const sourceMacrocycleNum = dto.fromMacrocycleNum ?? dashboard.macrocycleNum;
     const closingRow = await ensureCurrentRow(repos, dashboard);
-    // Imported history can't feed the training maxes, and a number with no macrocycle has no
-    // records to feed them (proposal decision 2).
     if (dto.fromMacrocycleNum !== undefined) {
-      await assertMacrocycleWritable(repos, program, dto.fromMacrocycleNum);
+      await assertMacrocycleWritable(repos, program, dto.fromMacrocycleNum, sourceRow);
     }
     // One past every stored number, not the source + 1, so `fromMacrocycleNum` can't reuse a
     // number and a new macrocycle can't land on imported history (ADR-042).
@@ -283,6 +295,8 @@ export class MacrocycleGenerationService {
     program: string,
     dto: { macrocycleDate?: string } = {},
   ): Promise<MacrocycleGenerationResult> {
+    // It creates the first macrocycle row, so it takes the macrocycle lock (decision 13).
+    await lockForMacrocycleWrite(repos);
     // Guard: fail fast if a macrocycle already exists for this user+program
     try {
       await repos.macrocycleDashboard.getMacrocycleDashboard(program);
@@ -382,6 +396,8 @@ export class MacrocycleGenerationService {
     >,
     program: string,
   ): Promise<void> {
+    // It removes macrocycle rows, so it takes the macrocycle lock (decision 13).
+    await lockForMacrocycleWrite(repos);
     await repos.macrocycleDashboard.getMacrocycleDashboard(program);
     // Imported history survives a delete with its records (proposal decision 2); `live` and
     // `legacy` macrocycles go, from every table that holds a number.

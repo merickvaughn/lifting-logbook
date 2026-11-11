@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Inject,
@@ -11,14 +12,14 @@ import {
   Param,
   Post,
 } from '@nestjs/common';
-import { LIFT_NAMES, LiftOverrideResponse } from '@lifting-logbook/types';
+import { LIFT_NAMES, LiftOverrideResponse, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { toLiftOverrideResponse, isValidWorkoutNum } from './mappers';
 import { LiftOverrideDto } from './lift-override.dto';
-import { assertMacrocycleWritable } from './macrocycle-history.util';
+import { assertMacrocycleWritable, checkMacrocycleId } from './macrocycle-history.util';
 
 @Controller('programs/:program')
 export class ManageLiftsController {
@@ -46,6 +47,7 @@ export class ManageLiftsController {
     @Param('workoutNum') workoutNumParam: string,
     @Body() dto: LiftOverrideDto,
     @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
   ): Promise<LiftOverrideResponse> {
     const macrocycleNum = Number.parseInt(macrocycleNumParam, 10);
     const workoutNum = Number.parseInt(workoutNumParam, 10);
@@ -69,7 +71,8 @@ export class ManageLiftsController {
     }
 
     await macrocycleDashboard.getMacrocycleDashboard(program);
-    await assertMacrocycleWritable(repos, program, macrocycleNum);
+    const idRow = await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'POST lift-overrides');
+    await assertMacrocycleWritable(repos, program, macrocycleNum, idRow);
 
     const override = {
       lift: dto.lift,
@@ -88,6 +91,7 @@ export class ManageLiftsController {
     @Param('workoutNum') workoutNumParam: string,
     @Param('lift') lift: string,
     @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
   ): Promise<void> {
     const macrocycleNum = Number.parseInt(macrocycleNumParam, 10);
     const workoutNum = Number.parseInt(workoutNumParam, 10);
@@ -100,7 +104,8 @@ export class ManageLiftsController {
     }
 
     const repos = await this.factory.forUser(user);
-    await assertMacrocycleWritable(repos, program, macrocycleNum);
+    const idRow = await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'DELETE lift-overrides');
+    await assertMacrocycleWritable(repos, program, macrocycleNum, idRow);
     await repos.workoutLiftOverride.deleteOverride(program, macrocycleNum, workoutNum, decodeURIComponent(lift));
   }
 }

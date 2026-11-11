@@ -70,7 +70,7 @@ describe('RescheduleForm — mutation failure logging (#783)', () => {
     await user.click(screen.getByRole('button', { name: 'Move' }));
 
     await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
-    expect(mockReschedule).toHaveBeenCalledWith('5-3-1', 1, 2, '2026-07-15');
+    expect(mockReschedule).toHaveBeenCalledWith('5-3-1', 1, 2, '2026-07-15', undefined);
     expect(errorSpy).not.toHaveBeenCalled();
   });
 });
