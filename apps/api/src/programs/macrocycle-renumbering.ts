@@ -12,34 +12,8 @@ import { LEGACY_ROW_KEY, lockForRenumbering } from './macrocycle-history.util';
  * 1 to N in start-date order by rewriting the stored number everywhere it's held.
  */
 
-/**
- * The setting that turns renumbering on. Off, nothing stored is rewritten and a new macrocycle
- * keeps the number past every stored one. #1200 turns it on in the deploy that renumbers existing
- * history, records each old number for the reversal script and refuses writes with no stable id
- * (Rollout), then removes this switch.
- */
-export const RENUMBERING_SETTING = 'MACROCYCLE_RENUMBERING';
-
 const tracer = trace.getTracer('macrocycle-renumbering');
 const logger = new Logger('MacrocycleRenumbering');
-
-/** The setting's value when the mode was last logged, so each value is logged once. */
-let loggedSetting: string | undefined | null = null;
-
-/** Whether renumbering is on: exactly `on`. Logs the mode once per value, and warns on a value it doesn't know. */
-export function renumberingEnabled(): boolean {
-  const value = process.env[RENUMBERING_SETTING];
-  const on = value === 'on';
-  if (value !== loggedSetting) {
-    loggedSetting = value;
-    if (value === undefined || value === 'on' || value === 'off') {
-      logger.log(`Macrocycle renumbering is ${on ? 'on' : 'off'}`);
-    } else {
-      logger.warn(`${RENUMBERING_SETTING}=${JSON.stringify(value)} isn't "on" or "off"; macrocycle renumbering is off`);
-    }
-  }
-  return on;
-}
 
 /**
  * Old number → new number for each of `rows` whose number changes. `rows` come in start-date
@@ -95,7 +69,7 @@ export function renumberPreImageKeys(preImage: ImportPreImage, changes: Readonly
 
 /**
  * Renumbers `program` by start date, in the request's transaction, and returns the numbers it
- * moved (empty when off or when nothing moves). Every path that adds or removes a macrocycle calls
+ * moved (empty when nothing moves). Every path that adds or removes a macrocycle calls
  * it after its writes: lift-record imports and their undo, starting, initializing and deleting.
  *
  * When a number would move it takes the macrocycle lock exclusively, so no page write's id check
@@ -112,7 +86,6 @@ export async function renumberProgram(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'importBatch'>,
   program: string,
 ): Promise<Map<number, number>> {
-  if (!renumberingEnabled()) return new Map();
   return tracer.startActiveSpan('macrocycle.renumber', async (span) => {
     let started = Date.now();
     let changes = new Map<number, number>();

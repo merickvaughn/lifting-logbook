@@ -61,8 +61,7 @@ const LIFTER_MESSAGE_CODES = new Set(['import-in-progress', 'macrocycle-not-curr
  * What to tell the lifter about a failed write: the API's own message for an import holding
  * the lock (409 `import-in-progress`), a write to a macrocycle that is no longer current (409
  * `macrocycle-not-current`), or a page whose macrocycle no longer exists (404
- * `macrocycle-not-found`, as after deleting and starting again, or a number the program
- * doesn't have). The last two ask for a reload, which a retry can't replace, and name no
+ * `macrocycle-not-found`, as after deleting and starting again). The last two ask for a reload, which a retry can't replace, and name no
  * internal id. Anything else is `fallback`.
  */
 export function writeFailureMessage(err: unknown, fallback: string): string {
@@ -72,11 +71,17 @@ export function writeFailureMessage(err: unknown, fallback: string): string {
 }
 
 /**
- * Handles a write the API refused because the page is stale: reloads at the new number and
- * returns true for `macrocycle-moved`. Any other error, including the other two 409 codes
+ * Handles a write the API refused because the page is stale, and returns true: reloads at the
+ * new number for `macrocycle-moved`, and reloads the page as it is for a 400
+ * `macrocycle-id-required`, which a page loaded before it read the macrocycle's id gets
+ * (#1200); the reload reads it. Any other error, including the other two 409 codes
  * (`import-in-progress`, a duplicate set), returns false for the caller to report.
  */
 export function followMovedMacrocycle(err: unknown): boolean {
+  if (err instanceof ApiClientError && err.code === 'macrocycle-id-required') {
+    browserNavigation.assign(window.location.pathname + window.location.search);
+    return true;
+  }
   const num = movedMacrocycleNum(err);
   if (num === null) return false;
   reloadAtMacrocycle(num);

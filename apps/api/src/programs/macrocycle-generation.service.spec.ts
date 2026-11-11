@@ -91,6 +91,7 @@ describe('MacrocycleGenerationService', () => {
   let macrocycleRepo: InMemoryMacrocycleRepository;
   let repos: {
     macrocycle: InMemoryMacrocycleRepository;
+    importBatch: InMemoryImportBatchRepository;
     macrocycleDashboard: jest.Mocked<IMacrocycleDashboardRepository>;
     macrocycleScheduledWorkout: jest.Mocked<IMacrocycleScheduledWorkoutRepository>;
     liftingProgramSpec: jest.Mocked<ILiftingProgramSpecRepository>;
@@ -160,6 +161,7 @@ describe('MacrocycleGenerationService', () => {
     };
     repos = {
       macrocycle: macrocycleRepo,
+      importBatch: new InMemoryImportBatchRepository(),
       macrocycleDashboard: macrocycleDashboardRepo,
       macrocycleScheduledWorkout: macrocycleScheduledWorkoutRepo,
       liftingProgramSpec: programSpecRepo,
@@ -225,11 +227,12 @@ describe('MacrocycleGenerationService', () => {
       liftRecordRepo.getLiftRecords.mockResolvedValue(stubLiftRecords());
       macrocycleRepo.seed(macrocycleRow(3));
 
-      const { dashboard: result } = await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 3 });
+      const { dashboard: result } = await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 3 }, 'm-3');
 
       expect(liftRecordRepo.getLiftRecords).toHaveBeenCalledWith(PROGRAM, 3);
-      // The next free number, which here is also the source + 1.
-      expect(result.macrocycleNum).toBe(4);
+      // Written at the next free number, 4, then renumbered to 3 to close the gap at 2 (#1200).
+      expect(result.macrocycleNum).toBe(3);
+      expect(await macrocycleRepo.findByNumber(PROGRAM, 3)).toMatchObject({ origin: 'live', status: 'in-progress' });
     });
 
     // ADR-042: the source + 1 can be taken, so the new macrocycle takes the next free number.
@@ -240,7 +243,7 @@ describe('MacrocycleGenerationService', () => {
       macrocycleRepo.seed(macrocycleRow(2));
       macrocycleRepo.seed(macrocycleRow(3));
 
-      const { dashboard: result } = await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 1 });
+      const { dashboard: result } = await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 1 }, 'm-1');
 
       expect(result.macrocycleNum).toBe(4);
       expect(await macrocycleRepo.findByNumber(PROGRAM, 4)).toMatchObject({ origin: 'live', status: 'in-progress' });
@@ -251,7 +254,7 @@ describe('MacrocycleGenerationService', () => {
       trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
       macrocycleRepo.seed(macrocycleRow(4, { origin: 'imported', status: 'completed' }));
 
-      await expect(service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 4 })).rejects.toMatchObject({
+      await expect(service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 4 }, 'm-4')).rejects.toMatchObject({
         status: 409,
         response: { code: 'macrocycle-read-only' },
       });
@@ -262,7 +265,7 @@ describe('MacrocycleGenerationService', () => {
     it('rejects an unknown fromMacrocycleNum with 404', async () => {
       macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
 
-      await expect(service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 9 })).rejects.toMatchObject({
+      await expect(service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 9 }, 'm-9')).rejects.toMatchObject({
         status: 404,
         response: { code: 'macrocycle-not-found' },
       });
@@ -313,7 +316,7 @@ describe('MacrocycleGenerationService', () => {
       liftRecordRepo.getLiftRecords.mockResolvedValue([]);
 
       await expect(
-        service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 5 }),
+        service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 5 }, 'm-5'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -389,7 +392,7 @@ describe('MacrocycleGenerationService', () => {
 
       macrocycleRepo.seed(macrocycleRow(2));
 
-      const { dashboard } = await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 1 });
+      const { dashboard } = await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 1 }, 'm-1');
 
       expect(dashboard.macrocycleNum).toBe(3);
       expect(workoutLiftOverrideRepo.getOverridesForMacrocycle).toHaveBeenCalledWith(PROGRAM, 1);
@@ -684,11 +687,11 @@ describe('MacrocycleGenerationService', () => {
       await service.deleteCurrentMacrocycle(deleteRepos, PROGRAM);
 
       expect(deleteAllExcept).toHaveBeenCalledWith(PROGRAM, [2]);
-      // Renumbering is off in unit tests, so the imported macrocycle keeps its number.
-      expect((await macrocycleRepo.list(PROGRAM)).map((m) => m.macrocycleNum)).toEqual([2]);
+      // Renumbering then moves the imported macrocycle to 1 (#1200).
+      expect((await macrocycleRepo.list(PROGRAM)).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'imported']]);
     });
 
-    it('drops lift-records batch keys on the numbers it deletes, keeping those on imported history', async () => {
+    it('drops lift-records batch keys on the numbers it deletes, keeping those on imported history, which then moves to 1', async () => {
       macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue({ ...stubDashboard(), macrocycleNum: 3 });
       macrocycleRepo.seed(macrocycleRow(2, { origin: 'imported', status: 'completed' }));
       macrocycleRepo.seed(macrocycleRow(3));
@@ -704,7 +707,7 @@ describe('MacrocycleGenerationService', () => {
 
       await service.deleteCurrentMacrocycle(deleteRepos, PROGRAM);
 
-      expect(Object.keys((await deleteRepos.importBatch.findById('b', 'u'))?.preImage ?? {})).toEqual(['2:1:Squat:1']);
+      expect(Object.keys((await deleteRepos.importBatch.findById('b', 'u'))?.preImage ?? {})).toEqual(['1:1:Squat:1']);
     });
 
     it('deletes sequentially, in a fixed order, ending with the numbered tables', async () => {

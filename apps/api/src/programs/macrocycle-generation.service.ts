@@ -202,9 +202,7 @@ export class MacrocycleGenerationService {
     const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program);
     const sourceMacrocycleNum = dto.fromMacrocycleNum ?? dashboard.macrocycleNum;
     const closingRow = await ensureCurrentRow(repos, dashboard);
-    if (dto.fromMacrocycleNum !== undefined) {
-      await assertMacrocycleWritable(repos, program, dto.fromMacrocycleNum, sourceRow);
-    }
+    if (sourceRow) assertMacrocycleWritable(program, sourceRow);
     // One past every stored number, not the source + 1, so `fromMacrocycleNum` can't reuse a
     // number and a new macrocycle can't land on imported history (ADR-042).
     const newMacrocycleNum = await nextMacrocycleNumber(repos, program, dashboard);

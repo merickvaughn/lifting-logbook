@@ -256,12 +256,16 @@ export class FocusWorkoutController {
     const repos = await this.factory.forUser(user);
     // The lock comes before the current number is read, so an import can't renumber between.
     await lockForMacrocycleWrite(repos);
-    const { macrocycleNum } = await currentMacrocycleOrFirst(repos, program);
-    // The route has no number; the page's id must still name the current macrocycle.
-    await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'PUT focus-state', {
-      current: true,
-      locked: true,
-    });
+    const current = await currentMacrocycleOrFirst(repos, program);
+    const { macrocycleNum } = current;
+    // The route has no number; the page's id must still name the current macrocycle. Before the
+    // program is initialized there's no macrocycle, so the page has no id to send (#1200).
+    if (macrocycleId !== undefined || 'program' in current) {
+      await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'PUT focus-state', {
+        current: true,
+        locked: true,
+      });
+    }
     return repos.focus.saveDayState(program, macrocycleNum, workoutNum, {
       modes: { ...dto.modes },
       picks: { ...dto.picks },

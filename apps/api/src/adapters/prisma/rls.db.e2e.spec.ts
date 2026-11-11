@@ -25,6 +25,7 @@ import { PrismaRepositoryFactory } from './prisma-repository-factory';
 import { RlsInterceptor } from './rls.interceptor';
 import { RLS_TX_CLIENT } from './rls-context';
 import { runBatch } from './prisma-tx.util';
+import { injectPage } from '../../testing/macrocycle-id';
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
 const OWNER_TC_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;
@@ -497,7 +498,7 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
     url: string;
     headers: Record<string, string>;
     payload?: string;
-  }) => app.getHttpAdapter().getInstance().inject(opts);
+  }) => injectPage(app, opts);
 
   it('creates a first-time row for a brand-new user (regression test for #644)', async () => {
     const userId = `rls-e2e-fullapp-init-${Date.now()}`;

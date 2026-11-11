@@ -79,7 +79,7 @@ describe('ManageLiftsController', () => {
       const result = await controller.upsertOverride(
         '5-3-1', '3', '1',
         { action: 'add', lift: 'Chin-up' },
-        MOCK_USER_A,
+        MOCK_USER_A, 'm-3',
       );
 
       expect(liftOverrideRepoA.upsertOverride).toHaveBeenCalledWith(
@@ -93,7 +93,7 @@ describe('ManageLiftsController', () => {
       const result = await controller.upsertOverride(
         '5-3-1', '3', '1',
         { action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' },
-        MOCK_USER_A,
+        MOCK_USER_A, 'm-3',
       );
 
       expect(result).toEqual({ action: 'replace', lift: 'Squat', replacedBy: 'Front Squat' });
@@ -101,7 +101,7 @@ describe('ManageLiftsController', () => {
 
     it('throws 400 when action is replace but replacedBy is missing', async () => {
       await expect(
-        controller.upsertOverride('5-3-1', '3', '1', { action: 'replace', lift: 'Squat' }, MOCK_USER_A),
+        controller.upsertOverride('5-3-1', '3', '1', { action: 'replace', lift: 'Squat' }, MOCK_USER_A, 'm-3'),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -109,7 +109,7 @@ describe('ManageLiftsController', () => {
       specRepoA.getProgramSpec.mockResolvedValue([]);
 
       await expect(
-        controller.upsertOverride('unknown', '3', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A),
+        controller.upsertOverride('unknown', '3', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A, 'm-3'),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -117,19 +117,19 @@ describe('ManageLiftsController', () => {
       dashboardRepoA.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
 
       await expect(
-        controller.upsertOverride('5-3-1', '3', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A),
+        controller.upsertOverride('5-3-1', '3', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A, 'm-3'),
       ).rejects.toBeInstanceOf(ProgramNotFoundError);
       expect(liftOverrideRepoA.upsertOverride).not.toHaveBeenCalled();
     });
 
     it('throws 400 for invalid macrocycleNum', async () => {
       await expect(
-        controller.upsertOverride('5-3-1', '0', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A),
+        controller.upsertOverride('5-3-1', '0', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A, 'm-0'),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('user isolation — user B repo is not touched by user A request', async () => {
-      await controller.upsertOverride('5-3-1', '3', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A);
+      await controller.upsertOverride('5-3-1', '3', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A, 'm-3');
 
       expect(liftOverrideRepoA.upsertOverride).toHaveBeenCalledTimes(1);
       expect(liftOverrideRepoB.upsertOverride).not.toHaveBeenCalled();
@@ -138,7 +138,7 @@ describe('ManageLiftsController', () => {
 
   describe('deleteOverride', () => {
     it('calls deleteOverride on the repo', async () => {
-      await controller.deleteOverride('5-3-1', '3', '1', 'Squat', MOCK_USER_A);
+      await controller.deleteOverride('5-3-1', '3', '1', 'Squat', MOCK_USER_A, 'm-3');
 
       expect(liftOverrideRepoA.deleteOverride).toHaveBeenCalledWith('5-3-1', 3, 1, 'Squat');
     });
@@ -146,28 +146,28 @@ describe('ManageLiftsController', () => {
     it('is idempotent — no error when lift not found', async () => {
       liftOverrideRepoA.deleteOverride.mockResolvedValue(undefined);
       await expect(
-        controller.deleteOverride('5-3-1', '3', '1', 'NonExistent', MOCK_USER_A),
+        controller.deleteOverride('5-3-1', '3', '1', 'NonExistent', MOCK_USER_A, 'm-3'),
       ).resolves.toBeUndefined();
     });
 
     it('decodes URL-encoded lift name', async () => {
-      await controller.deleteOverride('5-3-1', '3', '1', 'Bench%20Press', MOCK_USER_A);
+      await controller.deleteOverride('5-3-1', '3', '1', 'Bench%20Press', MOCK_USER_A, 'm-3');
 
       expect(liftOverrideRepoA.deleteOverride).toHaveBeenCalledWith('5-3-1', 3, 1, 'Bench Press');
     });
 
     it('user isolation — user B repo is not touched by user A request', async () => {
-      await controller.deleteOverride('5-3-1', '3', '1', 'Squat', MOCK_USER_A);
+      await controller.deleteOverride('5-3-1', '3', '1', 'Squat', MOCK_USER_A, 'm-3');
 
       expect(liftOverrideRepoB.deleteOverride).not.toHaveBeenCalled();
     });
   });
 
-  // Imported history is read-only, and a number the program doesn't have is a 404 (ADR-042).
+  // Imported history is read-only, and an id the program doesn't have is a 404 (ADR-042).
   describe('macrocycle guard', () => {
     it.each([
-      ['upsert', () => controller.upsertOverride('5-3-1', '2', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A)],
-      ['delete', () => controller.deleteOverride('5-3-1', '2', '1', 'Squat', MOCK_USER_A)],
+      ['upsert', () => controller.upsertOverride('5-3-1', '2', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A, 'm-2')],
+      ['delete', () => controller.deleteOverride('5-3-1', '2', '1', 'Squat', MOCK_USER_A, 'm-2')],
     ])('rejects an override %s on an imported macrocycle with 409', async (_label, call) => {
       await expect(call()).rejects.toMatchObject({ status: 409, response: { code: 'macrocycle-read-only' } });
       expect(liftOverrideRepoA.upsertOverride).not.toHaveBeenCalled();
@@ -175,8 +175,8 @@ describe('ManageLiftsController', () => {
     });
 
     it.each([
-      ['upsert', () => controller.upsertOverride('5-3-1', '9', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A)],
-      ['delete', () => controller.deleteOverride('5-3-1', '9', '1', 'Squat', MOCK_USER_A)],
+      ['upsert', () => controller.upsertOverride('5-3-1', '9', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A, 'm-9')],
+      ['delete', () => controller.deleteOverride('5-3-1', '9', '1', 'Squat', MOCK_USER_A, 'm-9')],
     ])('rejects an override %s on an unknown macrocycle with 404', async (_label, call) => {
       await expect(call()).rejects.toMatchObject({ status: 404, response: { code: 'macrocycle-not-found' } });
       expect(liftOverrideRepoA.upsertOverride).not.toHaveBeenCalled();
@@ -184,14 +184,14 @@ describe('ManageLiftsController', () => {
     });
 
     it('keeps a legacy macrocycle writable', async () => {
-      await macrocycleRepoA.create({
+      const legacy = await macrocycleRepoA.create({
         program: '5-3-1',
         macrocycleNum: 1,
         startDate: new Date('2026-01-01T00:00:00.000Z'),
         status: 'unknown',
         origin: 'legacy',
       });
-      await controller.upsertOverride('5-3-1', '1', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A);
+      await controller.upsertOverride('5-3-1', '1', '1', { action: 'add', lift: 'Squat' }, MOCK_USER_A, legacy.id);
       expect(liftOverrideRepoA.upsertOverride).toHaveBeenCalledTimes(1);
     });
   });

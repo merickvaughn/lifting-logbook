@@ -82,16 +82,6 @@ function readOnly(program: string, macrocycleNum: number): ConflictException {
   });
 }
 
-function unknownNumber(program: string, macrocycleNum: number): NotFoundException {
-  return new NotFoundException({
-    statusCode: 404,
-    code: 'macrocycle-not-found',
-    message: `Program '${program}' has no macrocycle ${macrocycleNum}. Reload the page to see the current one.`,
-    error: 'Not Found',
-    macrocycleNum,
-  });
-}
-
 /**
  * The stable id of the current macrocycle (`dashboard`), for a page to send back with its
  * writes. The caller holds the shared macrocycle lock and read `dashboard` under it, so the
@@ -166,6 +156,19 @@ function notCurrent(program: string, currentNum: number): ConflictException {
   });
 }
 
+/**
+ * A page write came with no macrocycle id (#1200). A workout read returns none while an import
+ * holds the lock, so a reload, once the import is done, gives the page its id.
+ */
+function idRequired(program: string): BadRequestException {
+  return new BadRequestException({
+    statusCode: 400,
+    code: 'macrocycle-id-required',
+    message: `This page of '${program}' doesn't say which macrocycle it's for. Reload the page and try again.`,
+    error: 'Bad Request',
+  });
+}
+
 function moved(program: string, macrocycleNum: number): ConflictException {
   return new ConflictException({
     statusCode: 409,
@@ -190,9 +193,9 @@ export async function lockForMacrocycleWrite(repos: Pick<RepositoryBundle, 'macr
  * Starts a write a page makes to one macrocycle (proposal decision 3). It takes the shared lock
  * ({@link lockForMacrocycleWrite}), then checks that the page's stable id still names `macrocycleNum`: a different number is a
  * 409 `macrocycle-moved` carrying the new one, and an id the user doesn't have in this program
- * is a 404. A write with no id is still accepted until #1200, and logged so the remaining ones
- * can be counted. Returns the id's row, for {@link assertMacrocycleWritable} to reuse, or null
- * when the write had no id.
+ * is a 404. A write with no id is a 400 `macrocycle-id-required` asking for a reload (#1200),
+ * logged so the refusals can be counted. Returns the id's row, for
+ * {@link assertMacrocycleWritable} to reuse.
  *
  * `current` is for a route with no number, which writes to the current macrocycle
  * (`macrocycleNum`): there a different number means the page is for an older macrocycle, not
@@ -207,11 +210,11 @@ export async function checkMacrocycleId(
   macrocycleId: string | undefined,
   route: string,
   { current = false, locked = false }: { current?: boolean; locked?: boolean } = {},
-): Promise<MacrocycleRow | null> {
+): Promise<MacrocycleRow> {
   if (!locked) await lockForMacrocycleWrite(repos);
   if (!macrocycleId) {
-    writeLogger.log({ route, program }, 'Macrocycle write without an id (#1198)');
-    return null;
+    writeLogger.warn({ route, program }, 'Refused a macrocycle write without an id (#1200)');
+    throw idRequired(program);
   }
   const row = await repos.macrocycle.findById(macrocycleId);
   if (!row || row.program !== program) throw unknownId(program, macrocycleId);
@@ -248,25 +251,11 @@ export async function lockForRenumbering(repos: Pick<RepositoryBundle, 'macrocyc
 
 /**
  * Guards a write scoped to one macrocycle (proposal decision 2): an `imported` macrocycle is
- * read-only (409 `macrocycle-read-only`) and a number the program doesn't have is a 404
- * (`macrocycle-not-found`). `live` and `legacy` macrocycles stay writable. The current
- * macrocycle gets its row here if it has none. `known` is the row {@link checkMacrocycleId}
- * already read for this number, which saves reading it again.
+ * read-only (409 `macrocycle-read-only`). `live` and `legacy` macrocycles stay writable. `row` is
+ * the macrocycle {@link checkMacrocycleId} found for the page's id.
  */
-export async function assertMacrocycleWritable(
-  repos: HistoryRepos,
-  program: string,
-  macrocycleNum: number,
-  known: MacrocycleRow | null = null,
-): Promise<void> {
-  const row = known ?? (await repos.macrocycle.findByNumber(program, macrocycleNum));
-  if (row) {
-    if (row.origin === 'imported') throw readOnly(program, macrocycleNum);
-    return;
-  }
-  const dashboard = await dashboardOrNull(repos, program);
-  if (dashboard?.macrocycleNum !== macrocycleNum) throw unknownNumber(program, macrocycleNum);
-  await repos.macrocycle.ensure([currentRow(dashboard)]);
+export function assertMacrocycleWritable(program: string, row: MacrocycleRow): void {
+  if (row.origin === 'imported') throw readOnly(program, row.macrocycleNum);
 }
 
 /**

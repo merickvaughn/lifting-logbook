@@ -33,7 +33,7 @@ The owner's reason for the split: migrations run while the previous API revision
    - It applies to every path that creates a macrocycle: initialize, starting the next one, and `fromMacrocycleNum`, which used to reuse the source number + 1.
    - So a new live macrocycle can never land on an imported or legacy number.
    - The unique key is the backstop. When two writers race for one number, the second write fails, and Prisma's `P2002` [2] becomes a 409 with code `macrocycle-number-taken`. The request's transaction rolls back, so nothing is written.
-   - Numbers follow start date only after [#1199](https://github.com/merickvaughn/lifting-logbook/issues/1199) adds the renumbering engine. Until then a number is allocated and never rewritten. (The #1199 amendment below adds that engine, behind a setting [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200) turns on.)
+   - Numbers follow start date only after [#1199](https://github.com/merickvaughn/lifting-logbook/issues/1199) adds the renumbering engine. Until then a number is allocated and never rewritten. (The #1199 amendment below adds that engine, behind a setting, and the #1200 amendment turns it on for good and renumbers stored history.)
 
 3. **Live macrocycles keep their rows current.**
    - Creating a macrocycle creates its row as `live` and `in-progress`.
@@ -69,7 +69,7 @@ The owner's reason for the split: migrations run while the previous API revision
      5. Today.
    - It inserts with `ON CONFLICT DO NOTHING` [3], so running it again changes nothing.
    - The migration calls it once.
-   - #1200 calls it again for numbers the old revision created during the deploy window.
+   - #1200's migration calls it again for numbers the old revision created after this one ran (#1200 amendment).
    - `EXECUTE` is revoked from `PUBLIC`, so the app role can't run it.
 
 6. **`GET /programs/:program/macrocycles` lists a program's macrocycles in start-date order.** Each has its id, which stays the same when a number changes, plus its dates, its status as read today, its origin and whether it's current. History shows them on a Macrocycles tab.
@@ -108,7 +108,7 @@ Once [#1199](https://github.com/merickvaughn/lifting-logbook/issues/1199) can re
    - An id whose row has a different number returns 409 `macrocycle-moved`. The body carries the row's current `macrocycleNum`, and nothing is written.
    - An id with no row in the program returns 404 `macrocycle-not-found`, as when the macrocycle a page showed was deleted and started again. Its message asks the lifter to reload.
    - `PUT` focus-state writes to the current macrocycle, whatever number the page holds. When the id names a row that is no longer current, it returns 409 `macrocycle-not-current` with the current `macrocycleNum`. Reloading at the id's number wouldn't help, so the page shows the API's message instead of following it.
-   - A write with no id is accepted and logged as `Macrocycle write without an id (#1198)` with its route. That log shows when every client sends one. [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200) turns it into a 400.
+   - A write with no id is accepted and logged as `Macrocycle write without an id (#1198)` with its route. That log shows when every client sends one. [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200) turns it into a 400 (#1200 amendment).
 
 4. **Macrocycle writes and imports exclude each other through a per-user advisory lock** [6]. Both take the transaction-scoped form inside the request's transaction, so the lock is released when the transaction ends.
    - **Every macrocycle write takes it shared:** the page writes above, starting the next macrocycle (with or without `fromMacrocycleNum`), initializing the first one, and deleting the current one. So does every workout read, before it reads the current number and the id, so the pair it returns agrees. Shared holders don't block each other.
@@ -167,7 +167,7 @@ Proposal decisions 3 and 13 need stored numbers to follow start date, and a file
    - Starting, initializing and deleting hold it shared. They take it exclusively only when a number would move, with the same 5-second wait as an import, then 409 `macrocycle-busy`. They read the order again once they have it. The owner chose this over always taking it exclusively, which would make every start wait on page writes even though a normal start moves nothing.
    - Two shared holders upgrading at once deadlock, and Postgres aborts one of them [10] (`40P01`), as a database test confirms. The aborted request gets `macrocycle-busy` only when it is the one waiting for the exclusive lock. Postgres may instead abort a request blocked elsewhere, such as on a row lock in a delete. That request fails with a 500, and its transaction rolls back, so nothing is half-written.
 
-3. **Renumbering is off until #1200.** It runs only when `MACROCYCLE_RENUMBERING=on`, and nothing sets that yet. The API logs which mode it's in once per value it reads, and warns when the value is something other than `on` or `off`, such as `ON` or `true`, which count as off. While it's off, nothing stored is rewritten, and a new macrocycle takes the next free number as before. The owner chose the setting because two kinds of writer would still post to a number a rewrite had moved: the previous API revision, and a page sending no id. #1200 turns it on in the deploy that renumbers existing history and refuses writes with no id, then removes it.
+3. **Renumbering is off until #1200.** (Superseded by the #1200 amendment below, which removes the setting: renumbering always runs.) It runs only when `MACROCYCLE_RENUMBERING=on`, and nothing sets that yet. The API logs which mode it's in once per value it reads, and warns when the value is something other than `on` or `off`, such as `ON` or `true`, which count as off. While it's off, nothing stored is rewritten, and a new macrocycle takes the next free number as before. The owner chose the setting because two kinds of writer would still post to a number a rewrite had moved: the previous API revision, and a page sending no id. #1200 turns it on in the deploy that renumbers existing history and refuses writes with no id, then removes it.
 
 4. **A file's macrocycle number only groups its rows** (proposal decision 2). This applies to `POST lift-records/import` and to lift-record commits, and it isn't behind the setting, because it moves nothing already stored.
    - When a group's other rows are sets already stored in `live` or `legacy` macrocycles, each new set joins the last of those to start by its date, or the first of them for a session dated before them all. It does so unless the next stored macrocycle has started by the set's date. So a sheet uploaded again joins the macrocycles its first upload formed, sessions added before or between them included, while a separate file of later sessions forms its own. The owner chose ending at the next start over ending at the macrocycle's end date. A spreadsheet uploaded again after it grew past that end would otherwise add a new macrocycle with every upload.
@@ -210,6 +210,42 @@ Proposal decisions 3 and 13 need stored numbers to follow start date, and a file
 - An upload numbered like an `imported` macrocycle succeeds, where it was refused.
 - While the setting is off, numbers are allocated and never rewritten, as before. With it on, numbers are dense and in date order after every change listed in decision 1. Overwrite, clear and a range edit get the same check in [#1181](https://github.com/merickvaughn/lifting-logbook/issues/1181) and [#1182](https://github.com/merickvaughn/lifting-logbook/issues/1182).
 - **Rollback:** while the setting is off, reverting the API image is safe, because nothing has been rewritten. Once #1200 turns it on, a revert needs #1200's reversal script to put the old numbers back.
+
+## Amendment: renumbering stored history, and refusing writes with no id ([#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200))
+
+**Date:** 2026-11-11
+
+The #1199 amendment renumbers on every change, behind a setting that stayed off while two kinds of writer could post to a moved number: the previous API revision, and a page that sends no id. This amendment removes both, turns renumbering on for good, and brings the history stored before it into date order.
+
+1. **A migration renumbers stored history** (`20261112000000_renumber_macrocycles_by_date`). It runs ahead of the new API revision (ADR-027), in three steps, each a SQL function the migration calls:
+   - `macrocycle_backfill_rows()` again, for any number the old revision created after #1197's migration ran.
+   - `macrocycle_close_window_rows()` closes the rows the old revision left open. It started the next macrocycle without closing the previous one's row, so a `live`, `in-progress` row with no end date can sit on a number the dashboard no longer shows. Each gets an end date (its last set, or its start date) and a status, unless the lifter chose one: `completed` when its logged workouts cover every scheduled one, `abandoned` when they don't, and `unknown` when nothing was scheduled. The owner chose SQL with the scheduled count, and `unknown` without one, over computing the status in the API, which would have needed the program spec at migration time.
+   - `macrocycle_renumber_by_date()` records each row's current number in `macrocycle."backfillNumber"` and the time in `"backfilledAt"`, then numbers each user's program 1 to N by start date, ties by number. That's the order the API renumbers in, so the API moves nothing more afterwards.
+   - The rewrite is the API's in SQL: it refuses when a row that doesn't move sits on a target number in any of the eight tables, naming the table; moves through `-1 - new`; and rewrites lift-record batch keys with the API's key pattern, including `macrocycle-row:<n>` and its `wrote.macrocycleNum`.
+   - Every function takes the macrocycle lock for each user, in a fixed order, before it reads, so no page write of the old revision interleaves with it. The migration sets a 5-second `lock_timeout`; a write holding the lock longer fails the migration, which can run again.
+   - Each function takes an optional user id that limits it to that user, which the DB e2e suite uses, since other suites share its database. `EXECUTE` is revoked from `PUBLIC`, so the app role can't run them.
+   - The owner chose functions in a migration over a script run by hand, so the deploy applies it and the DB suite tests the same code.
+
+2. **`macrocycle_renumber_reverse()` puts the recorded numbers back.** It maps each row's number back to its `"backfillNumber"` through the same rewrite. It refuses, moving nothing, when a macrocycle has no `"backfillNumber"` (the new revision created it, so it has no old number), or when an import batch is newer than its program's backfill (its keys hold new numbers the old code's undo would misread). The runbook is [`docs/deploy.md` → Reversing the macrocycle renumbering](../deploy.md#reversing-the-macrocycle-renumbering). The owner chose a SQL function over a script, for the same reason as the backfill.
+
+3. **A page write with no macrocycle id is a 400** `macrocycle-id-required`, logged as `Refused a macrocycle write without an id (#1200)` with its route, and nothing is written. The message asks the lifter to reload, and the web reloads the page for them (`followMovedMacrocycle`), which reads the id. A page can lack one when it loaded while an import held the lock, since a workout read then returns no id (#1198 amendment, decision 4); the reload reads it once the import ends.
+   - `PUT` focus-state with no id is still accepted before the program is initialized, when there's no macrocycle for the page to name.
+   - A write naming a number the program doesn't have used to get 404 `macrocycle-not-found`. No page can hold an id for such a number, so it now gets the 400 instead, and the number-only path that produced the 404 is gone. A write whose id has no row still gets 404.
+
+4. **The `MACROCYCLE_RENUMBERING` setting is removed.** Renumbering runs after every change listed in the #1199 amendment's decision 1.
+
+**Alternatives rejected:**
+
+- **Keeping the setting for one more deploy.** It would leave renumbering off while the stored history is already in date order, and new macrocycles would again take numbers out of order.
+- **Computing the closed rows' status in the API.** The migration runs before the API and has no program spec; the scheduled workouts are already stored.
+- **Accepting writes with no id and logging them, as #1198 did.** After a renumbering, such a write lands on whichever macrocycle now has its number.
+- **Reversing by number rather than by row.** A later renumbering or delete changes the numbers; the recorded `"backfillNumber"` stays with its row.
+
+**Consequences:**
+
+- Stored numbers can change for every user at deploy time: a program whose older macrocycles were imported after its live one gets them numbered first. Links that carry a number follow it, since the id check answers 409 `macrocycle-moved` with the new number (#1198 amendment).
+- A client that sends no id can no longer write. The web has sent one since #1198.
+- **Rollback:** revert the API image, then run the reversal ([runbook](../deploy.md#reversing-the-macrocycle-renumbering)). Once it refuses, fix forward instead. The two columns can stay, since the old code ignores them. Don't roll the web back past #1198 while this API serves: that web sends no id, so every write would get the 400.
 
 ## References
 

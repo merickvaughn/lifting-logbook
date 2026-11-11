@@ -22,8 +22,7 @@ import {
   PrismaMacrocycleRepository,
 } from '../adapters/prisma/macrocycle.repository';
 import { MacrocycleNumberConflictError } from '../ports/errors';
-import { IMPORT_LOCK_WAIT_MS } from './macrocycle-history.util';
-import { RENUMBERING_SETTING } from './macrocycle-renumbering';
+import { IMPORT_LOCK_WAIT_MS, legacyRowsPreImage } from './macrocycle-history.util';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
@@ -59,7 +58,19 @@ const USER_RENUMBER_STALE = 'macrocycle-db-renumber-stale';
 const USER_RENUMBER_UNSTARTED = 'macrocycle-db-renumber-unstarted';
 const USER_RENUMBER_UPGRADE = 'macrocycle-db-renumber-upgrade';
 const USER_RENUMBER_DEADLOCK = 'macrocycle-db-renumber-deadlock';
+const USER_HISTORY_ORDER = 'macrocycle-db-history-order';
+const USER_HISTORY_REVERSE = 'macrocycle-db-history-reverse';
+const USER_HISTORY_LATER_IMPORT = 'macrocycle-db-history-later-import';
+const USER_HISTORY_NEW_ROW = 'macrocycle-db-history-new-row';
+const USER_HISTORY_UNDO = 'macrocycle-db-history-undo';
+const USER_HISTORY_WINDOW = 'macrocycle-db-history-window';
 const USERS = [
+  USER_HISTORY_ORDER,
+  USER_HISTORY_REVERSE,
+  USER_HISTORY_LATER_IMPORT,
+  USER_HISTORY_NEW_ROW,
+  USER_HISTORY_UNDO,
+  USER_HISTORY_WINDOW,
   USER_RENUMBER_UNSTARTED,
   USER_RENUMBER_UPGRADE,
   USER_RENUMBER_DEADLOCK,
@@ -575,17 +586,9 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
     }, LOCKED_TEST_TIMEOUT_MS);
   });
 
-  /** Renumbering by start date (#1199), with the setting #1200 turns on for everyone. */
+  /** Renumbering by start date (#1199), which every write runs since #1200. */
   describe('renumbering', () => {
     const base = `/programs/${PROGRAM}`;
-    const previous = process.env[RENUMBERING_SETTING];
-    beforeAll(() => {
-      process.env[RENUMBERING_SETTING] = 'on';
-    });
-    afterAll(() => {
-      if (previous === undefined) delete process.env[RENUMBERING_SETTING];
-      else process.env[RENUMBERING_SETTING] = previous;
-    });
 
     /** A live macrocycle `num` starting on `date`, with a row in every table that holds a number. */
     async function seedEveryTable(userId: string, num: number, date: string): Promise<void> {
@@ -905,5 +908,192 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         await appDb.$disconnect();
       }
     }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    /**
+     * The migration's renumbering of stored history (#1200). Each test runs the functions for
+     * its own user and commits, since other suites share this database.
+     */
+    describe('numbering stored history by date (#1200)', () => {
+      const renumberByDate = (user: string) => owner.$queryRaw`SELECT "macrocycle_renumber_by_date"(${user})`;
+      const reverse = (user: string) => owner.$queryRaw`SELECT "macrocycle_renumber_reverse"(${user})`;
+      const created = { kind: 'created', wrote: { weight: 100, reps: 5, notes: '' } };
+      const set = (user: string, macrocycleNum: number, workoutNum: number, date: string, lift: string) => ({
+        userId: user, program: PROGRAM, macrocycleNum, workoutNum, date: day(date), lift, setNum: 1, weight: 100, reps: 5,
+      });
+      const legacy = (user: string, macrocycleNum: number, date: string) => ({
+        userId: user, program: PROGRAM, macrocycleNum, startDate: day(date), status: 'unknown', origin: 'legacy',
+      });
+
+      /**
+       * History stored before renumbering, out of date order: legacy 1 starts in March, legacy 2
+       * in January, and the live macrocycle is 3. A batch from before the backfill created
+       * macrocycle 1 and its set.
+       */
+      async function seedOutOfOrder(user: string): Promise<string> {
+        await seedEveryTable(user, 3, '2026-05-04');
+        await owner.macrocycle.createMany({ data: [legacy(user, 1, '2026-03-02'), legacy(user, 2, '2026-01-05')] });
+        await owner.liftRecord.createMany({
+          data: [set(user, 1, 1, '2026-03-02', 'Bench Press'), set(user, 2, 1, '2026-01-05', 'Deadlift')],
+        });
+        const batch = await owner.importBatch.create({
+          data: {
+            userId: user,
+            program: PROGRAM,
+            destination: 'lift-records',
+            createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+            preImage: {
+              [liftRecordNaturalKey({ macrocycleNum: 1, workoutNum: 1, date: day('2026-03-02'), lift: 'Bench Press', setNum: 1 })]: created,
+              ...legacyRowsPreImage([1]),
+            },
+          },
+        });
+        return batch.id;
+      }
+
+      const rowsOf = async (user: string) =>
+        (await owner.macrocycle.findMany({ where: { userId: user }, orderBy: { macrocycleNum: 'asc' } })).map((row) => ({
+          num: row.macrocycleNum,
+          start: isoDay(row.startDate),
+          origin: row.origin,
+          backfillNumber: row.backfillNumber,
+        }));
+      const setsOf = async (user: string) =>
+        (await owner.liftRecord.findMany({ where: { userId: user }, orderBy: [{ date: 'asc' }, { lift: 'asc' }] })).map(
+          (r) => `${r.macrocycleNum} ${isoDay(r.date)} ${r.lift}`,
+        );
+      const preImageOf = async (id: string) => (await owner.importBatch.findUniqueOrThrow({ where: { id } })).preImage;
+
+      it('numbers stored history by start date in every table and batch key, recording each old number', async () => {
+        const user = USER_HISTORY_ORDER;
+        const batchId = await seedOutOfOrder(user);
+
+        await renumberByDate(user);
+
+        expect(await rowsOf(user)).toEqual([
+          { num: 1, start: '2026-01-05', origin: 'legacy', backfillNumber: 2 },
+          { num: 2, start: '2026-03-02', origin: 'legacy', backfillNumber: 1 },
+          { num: 3, start: '2026-05-04', origin: 'live', backfillNumber: 3 },
+        ]);
+        expect(await setsOf(user)).toEqual(['1 2026-01-05 Deadlift', '2 2026-03-02 Bench Press', '3 2026-05-04 Squat']);
+        expect(await numbersByTable(user)).toEqual(everyTable([3], { lift_record: [1, 2, 3], macrocycle: [1, 2, 3] }));
+        expect(await preImageOf(batchId)).toEqual({
+          '2:1:20260302:Bench Press:1': created,
+          'macrocycle-row:2': { kind: 'created', wrote: { macrocycleNum: 2 } },
+        });
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('the reversal puts back every number and batch key the backfill changed', async () => {
+        const user = USER_HISTORY_REVERSE;
+        const batchId = await seedOutOfOrder(user);
+        const before = { rows: await setsOf(user), tables: await numbersByTable(user), preImage: await preImageOf(batchId) };
+
+        await renumberByDate(user);
+        expect(await setsOf(user)).not.toEqual(before.rows);
+        expect(await preImageOf(batchId)).not.toEqual(before.preImage);
+        await reverse(user);
+
+        expect({ rows: await setsOf(user), tables: await numbersByTable(user), preImage: await preImageOf(batchId) }).toEqual(before);
+        expect((await rowsOf(user)).map((row) => [row.num, row.start])).toEqual([
+          [1, '2026-03-02'],
+          [2, '2026-01-05'],
+          [3, '2026-05-04'],
+        ]);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('the reversal refuses, moving nothing, after an import newer than the backfill', async () => {
+        const user = USER_HISTORY_LATER_IMPORT;
+        await seedOutOfOrder(user);
+        await renumberByDate(user);
+        const after = await setsOf(user);
+        // An hour ahead, so a clock difference between Jest and Postgres can't put it first.
+        await owner.importBatch.create({
+          data: { userId: user, program: PROGRAM, destination: 'lift-records', createdAt: new Date(Date.now() + 60 * 60 * 1000), preImage: {} },
+        });
+
+        await expect(reverse(user)).rejects.toThrow(/has an import newer than the backfill; nothing was reversed/);
+        expect(await setsOf(user)).toEqual(after);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('the reversal refuses, moving nothing, when a macrocycle has no recorded number', async () => {
+        const user = USER_HISTORY_NEW_ROW;
+        await seedOutOfOrder(user);
+        await renumberByDate(user);
+        const after = await setsOf(user);
+        // A macrocycle the new revision created after the backfill.
+        await owner.macrocycle.create({ data: legacy(user, 4, '2026-07-06') });
+
+        await expect(reverse(user)).rejects.toThrow(/Macrocycle 4 of program 5-3-1 .* has no backfillNumber/);
+        expect(await setsOf(user)).toEqual(after);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('undoing a batch from before the backfill removes its macrocycle and leaves none without sets but the live one', async () => {
+        const user = USER_HISTORY_UNDO;
+        const batchId = await seedOutOfOrder(user);
+        await renumberByDate(user);
+
+        const res = await injectAs(user, 'POST', `${base}/import/${batchId}/undo`);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toMatchObject({ restored: 1, skipped: 0 });
+        expect(await rowsOf(user)).toEqual([
+          { num: 1, start: '2026-01-05', origin: 'legacy', backfillNumber: 2 },
+          { num: 2, start: '2026-05-04', origin: 'live', backfillNumber: 3 },
+        ]);
+        const empty = await owner.$queryRaw<Array<{ n: number; origin: string }>>`
+          SELECT m."macrocycleNum" AS n, m."origin" FROM "macrocycle" AS m
+          WHERE m."userId" = ${user} AND NOT EXISTS (
+            SELECT 1 FROM "lift_record" AS r
+            WHERE r."userId" = m."userId" AND r."program" = m."program" AND r."macrocycleNum" = m."macrocycleNum")`;
+        expect(empty.filter((row) => row.origin !== 'live')).toEqual([]);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('closes a live row the old revision left open, by the closing rule, and leaves the current one open', async () => {
+        const user = USER_HISTORY_WINDOW;
+        // The current macrocycle, on the dashboard.
+        await seedEveryTable(user, 2, '2026-03-02');
+        const open = (program: string, extra: Partial<{ statusChosen: boolean }> = {}) => ({
+          userId: user, program, macrocycleNum: 1, startDate: day('2026-01-05'), status: 'in-progress', origin: 'live', ...extra,
+        });
+        const schedule = (program: string, workouts: number) =>
+          Array.from({ length: workouts }, (_, i) => ({
+            userId: user, program, macrocycleNum: 1, workoutNum: i + 1, weekNum: 1, scheduledDate: day('2026-01-05'),
+          }));
+        const logged = (program: string, workoutNum: number, date: string) => ({ ...set(user, 1, workoutNum, date, 'Squat'), program });
+        await owner.macrocycle.createMany({
+          data: [open(PROGRAM), open('window-abandoned'), open('window-unknown'), open('window-chosen', { statusChosen: true })],
+        });
+        await owner.macrocycleScheduledWorkout.createMany({
+          data: [...schedule(PROGRAM, 2), ...schedule('window-abandoned', 3), ...schedule('window-chosen', 1)],
+        });
+        await owner.liftRecord.createMany({
+          data: [logged(PROGRAM, 1, '2026-01-05'), logged(PROGRAM, 2, '2026-01-12'), logged('window-abandoned', 1, '2026-01-07')],
+        });
+
+        const closed = await owner.$queryRaw<Array<{ closed: number }>>`SELECT "macrocycle_close_window_rows"(${user}) AS closed`;
+
+        expect(closed[0]?.closed).toBe(4);
+        const rows = await owner.macrocycle.findMany({ where: { userId: user }, orderBy: [{ program: 'asc' }, { macrocycleNum: 'asc' }] });
+        expect(rows.map((row) => [row.program, row.macrocycleNum, row.status, isoDay(row.endDate)])).toEqual([
+          [PROGRAM, 1, 'completed', '2026-01-12'],
+          [PROGRAM, 2, 'in-progress', null],
+          ['window-abandoned', 1, 'abandoned', '2026-01-07'],
+          ['window-chosen', 1, 'in-progress', '2026-01-05'],
+          ['window-unknown', 1, 'unknown', '2026-01-05'],
+        ]);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('the app role cannot run any of them', async () => {
+        const appDb = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+        try {
+          for (const fn of ['macrocycle_close_window_rows', 'macrocycle_renumber_by_date', 'macrocycle_renumber_reverse']) {
+            await expect(
+              asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRawUnsafe(`SELECT "${fn}"($1)`, USER_HISTORY_ORDER)),
+            ).rejects.toThrow(/permission denied/);
+          }
+        } finally {
+          await appDb.$disconnect();
+        }
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+    });
   });
 });

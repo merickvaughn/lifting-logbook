@@ -78,7 +78,7 @@ describe('RescheduleController', () => {
   });
 
   it('upserts an override for valid inputs', async () => {
-    await controller.reschedule('5-3-1', '3', '2', { newDate: '2026-05-15' }, MOCK_USER_A);
+    await controller.reschedule('5-3-1', '3', '2', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-3');
 
     expect(overrideRepoA.upsertOverride).toHaveBeenCalledWith(
       '5-3-1',
@@ -94,7 +94,7 @@ describe('RescheduleController', () => {
       '3',
       '2',
       { newDate: '2026-05-15' },
-      MOCK_USER_A,
+      MOCK_USER_A, 'm-3',
     );
     expect(result).toBeUndefined();
   });
@@ -108,24 +108,24 @@ describe('RescheduleController', () => {
 
   it('rejects zero macrocycleNum', async () => {
     await expect(
-      controller.reschedule('5-3-1', '0', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
+      controller.reschedule('5-3-1', '0', '2', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-0'),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects non-integer workoutNum', async () => {
     await expect(
-      controller.reschedule('5-3-1', '3', 'xyz', { newDate: '2026-05-15' }, MOCK_USER_A),
+      controller.reschedule('5-3-1', '3', 'xyz', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-3'),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects workoutNum less than 1', async () => {
     await expect(
-      controller.reschedule('5-3-1', '3', '0', { newDate: '2026-05-15' }, MOCK_USER_A),
+      controller.reschedule('5-3-1', '3', '0', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-3'),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('user A reschedule does not affect user B repo', async () => {
-    await controller.reschedule('5-3-1', '3', '2', { newDate: '2026-05-15' }, MOCK_USER_A);
+    await controller.reschedule('5-3-1', '3', '2', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-3');
 
     expect(overrideRepoA.upsertOverride).toHaveBeenCalledTimes(1);
     expect(overrideRepoB.upsertOverride).not.toHaveBeenCalled();
@@ -134,7 +134,7 @@ describe('RescheduleController', () => {
   it('rejects unknown program with NotFoundException', async () => {
     specRepoA.getProgramSpec.mockResolvedValue([]);
     await expect(
-      controller.reschedule('no-such-program', '3', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
+      controller.reschedule('no-such-program', '3', '2', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-3'),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(overrideRepoA.upsertOverride).not.toHaveBeenCalled();
   });
@@ -142,7 +142,7 @@ describe('RescheduleController', () => {
   it('propagates ProgramNotFoundError when macrocycle dashboard is missing', async () => {
     dashboardRepoA.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
     await expect(
-      controller.reschedule('5-3-1', '3', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
+      controller.reschedule('5-3-1', '3', '2', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-3'),
     ).rejects.toBeInstanceOf(ProgramNotFoundError);
     expect(overrideRepoA.upsertOverride).not.toHaveBeenCalled();
   });
@@ -151,7 +151,7 @@ describe('RescheduleController', () => {
     // 5-3-1 is 12 weeks × 2 offsets = 24 workout days; 9999 maps to no real day, so
     // the override would be dead data. Reject rather than 204-with-no-effect.
     await expect(
-      controller.reschedule('5-3-1', '3', '9999', { newDate: '2026-05-15' }, MOCK_USER_A),
+      controller.reschedule('5-3-1', '3', '9999', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-3'),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(overrideRepoA.upsertOverride).not.toHaveBeenCalled();
   });
@@ -160,17 +160,17 @@ describe('RescheduleController', () => {
     // Active macrocycle is 3 (dashboard mock); rescheduling macrocycle 7 would write an
     // override the current-macrocycle read model can never surface — reject it.
     await expect(
-      controller.reschedule('5-3-1', '7', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
+      controller.reschedule('5-3-1', '7', '2', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-7'),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(overrideRepoA.upsertOverride).not.toHaveBeenCalled();
   });
 
-  it('rejects an imported macrocycle with 409 and a number the program lacks with 404', async () => {
+  it('rejects an imported macrocycle with 409 and an id the program lacks with 404', async () => {
     await expect(
-      controller.reschedule('5-3-1', '1', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
+      controller.reschedule('5-3-1', '1', '2', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-1'),
     ).rejects.toMatchObject({ status: 409, response: { code: 'macrocycle-read-only' } });
     await expect(
-      controller.reschedule('5-3-1', '5', '2', { newDate: '2026-05-15' }, MOCK_USER_A),
+      controller.reschedule('5-3-1', '5', '2', { newDate: '2026-05-15' }, MOCK_USER_A, 'm-5'),
     ).rejects.toMatchObject({ status: 404, response: { code: 'macrocycle-not-found' } });
     expect(overrideRepoA.upsertOverride).not.toHaveBeenCalled();
   });

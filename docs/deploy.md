@@ -549,6 +549,44 @@ new revision (#1042), so don't approve a production deploy until `main` has the 
 without deploying, run `update-traffic --to-latest`. See
 [Deploy regression rollback → Fast path on Cloud Run](runbooks/deploy-regression-rollback.md#fast-path-on-cloud-run-route-traffic-to-the-previous-revision).
 
+### Reversing the macrocycle renumbering
+
+The `20261112000000_renumber_macrocycles_by_date` migration ([#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200),
+ADR-042) renumbers every user's stored macrocycles by start date when the deploy runs, and the
+API revision it ships with renumbers again after every change. An API revision from before it
+doesn't renumber, so rolling the API back past it also needs the old numbers back. The migration
+recorded each macrocycle's number before the backfill in `macrocycle."backfillNumber"`, and
+`macrocycle_renumber_reverse()` puts those numbers back in every table that holds one and in
+lift-record import batches' keys.
+
+1. **Roll the API back first** ([Rolling back](#rolling-back)), so nothing renumbers behind the
+   reversal. Leave the web revision as it is: the old API still accepts the macrocycle id it sends.
+2. **Run the reversal as the migrator role**, which owns the function; the runtime role
+   (`lifting_app`) can't execute it. Connect the way the break-glass migrate script does
+   ([Running database migrations](#running-database-migrations)): temporary public IP, Cloud SQL
+   Auth Proxy, and the `lifting-logbook-<env>-migrator-database-url` secret. Then:
+
+   ```sql
+   SELECT macrocycle_renumber_reverse();
+   ```
+
+   It takes the macrocycle lock for every user, so an import or page write still running finishes
+   first. It returns how many numbers it moved, or 0 with a notice when nothing needs moving.
+3. **Leave the schema alone.** The old code ignores `"backfillNumber"` and `"backfilledAt"`, and
+   `prisma migrate status` still passes, since the migration stays applied.
+
+**It refuses, moving nothing, once reversing would corrupt data:**
+
+- *Macrocycle N of program P for user U has no backfillNumber*: the new revision created that
+  macrocycle after the backfill, so it has no old number to go back to.
+- *Program P for user U has an import newer than the backfill*: that batch's keys hold the new
+  numbers, and the old code's undo would read them as old ones.
+
+When it refuses, don't force it: keep the new API revision and fix forward. A partial reversal
+would leave some programs in date order and others not, and the old API would then write to the
+wrong macrocycle on the ones that moved. To reverse one user only, as the DB e2e suite does, pass
+their id: `SELECT macrocycle_renumber_reverse('<userId>');`.
+
 ### Running database migrations
 
 **The deploy pipeline applies Prisma migrations automatically (ADR-027).** On every

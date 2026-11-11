@@ -168,32 +168,60 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
     }
   });
 
-  it('accepts every page write with no id and logs each one', async () => {
+  it('refuses every page write with no id with a 400 asking for a reload, writing nothing, and logs each one (#1200)', async () => {
     const user = await as('id-missing');
     const recordId = await logOne(user);
-    const log = jest.spyOn(Logger.prototype, 'log');
+    const warn = jest.spyOn(Logger.prototype, 'warn');
 
     for (const write of pageWrites(recordId)) {
       const res = await user.inject(write.method, write.url, write.body);
-      expect({ route: write.name, status: res.statusCode }).toEqual({ route: write.name, status: write.ok });
+      expect({ route: write.name, status: res.statusCode }).toEqual({ route: write.name, status: 400 });
+      expect(res.json()).toMatchObject({
+        code: 'macrocycle-id-required',
+        message: `This page of '${PROGRAM}' doesn't say which macrocycle it's for. Reload the page and try again.`,
+      });
     }
 
-    const counted = log.mock.calls
-      .filter(([, message]) => message === 'Macrocycle write without an id (#1198)')
+    const repos = await user.repos();
+    const records = await repos.liftRecord.getLiftRecords(PROGRAM, 1);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ setNum: 1, reps: 5 });
+    expect(await repos.workoutLiftOverride.getOverrides(PROGRAM, 1, 1)).toEqual([]);
+    expect(await repos.workoutDateOverride.getOverride(PROGRAM, 1, 1)).toBeNull();
+    expect(await repos.workoutSkipOverride.getSkipsForMacrocycle(PROGRAM, 1)).toEqual(new Set());
+    expect(await repos.focus.getDayState(PROGRAM, 1, 1)).toBeNull();
+    expect(await repos.macrocycle.highestNumber(PROGRAM)).toBe(1);
+    const counted = warn.mock.calls
+      .filter(([, message]) => message === 'Refused a macrocycle write without an id (#1200)')
       .map(([fields]) => (fields as { route: string }).route);
     expect(counted).toEqual(pageWrites(recordId).map((w) => w.name));
+  });
+
+  it('saves a focus state with no id before the program is initialized, when there is no macrocycle to name', async () => {
+    const user = 'id-missing-uninitialized';
+    const res = await app.getHttpAdapter().getInstance().inject({
+      method: 'PUT',
+      url: `${base}/workouts/1/focus-state`,
+      headers: { authorization: `Bearer ${user}`, 'content-type': 'application/json' },
+      payload: JSON.stringify({ ...emptyFocusDayState(), dismissed: true }),
+    });
+    expect(res.statusCode).toBe(200);
+    const repos = await app
+      .get<IRepositoryFactory>(REPOSITORY_FACTORY)
+      .forUser({ id: user, email: `${user}@example.com`, provider: 'dev' });
+    expect((await repos.focus.getDayState(PROGRAM, 1, 1))?.dismissed).toBe(true);
   });
 
   it('accepts every page write with the right id, and logs none as missing', async () => {
     const user = await as('id-ok');
     const recordId = await logOne(user);
-    const log = jest.spyOn(Logger.prototype, 'log');
+    const warn = jest.spyOn(Logger.prototype, 'warn');
 
     for (const write of pageWrites(recordId)) {
       const res = await user.inject(write.method, write.url, write.body, user.id);
       expect({ route: write.name, status: res.statusCode }).toEqual({ route: write.name, status: write.ok });
     }
-    expect(log.mock.calls.some(([, message]) => message === 'Macrocycle write without an id (#1198)')).toBe(false);
+    expect(warn.mock.calls.some(([, message]) => message === 'Refused a macrocycle write without an id (#1200)')).toBe(false);
   });
 
   /**
@@ -296,14 +324,16 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
       code: 'macrocycle-busy',
       message: 'Your workouts are being saved. Try the undo again in a moment.',
     });
-    // The file's macrocycle 4 only groups its rows (#1199): they form legacy macrocycle 2.
+    // The file's macrocycle 4 only groups its rows (#1199): they form a legacy macrocycle, which
+    // starts before the live one and so is numbered 1 (#1200).
     const repos = await user.repos();
-    expect(await repos.liftRecord.getLiftRecords(PROGRAM, 2)).toHaveLength(1);
-    expect(await repos.macrocycle.findByNumber(PROGRAM, 2)).not.toBeNull();
+    expect(await repos.liftRecord.getLiftRecords(PROGRAM, 1)).toHaveLength(1);
+    expect(await repos.macrocycle.findByNumber(PROGRAM, 1)).toMatchObject({ origin: 'legacy' });
 
     macrocycles.lockHeld = null;
     expect((await user.inject('POST', `${base}/import/${batchId}/undo`)).statusCode).toBe(200);
-    expect(await repos.macrocycle.findByNumber(PROGRAM, 2)).toBeNull();
+    // The legacy macrocycle is gone, and the live one moves back to 1.
+    expect((await repos.macrocycle.list(PROGRAM)).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'live']]);
   });
 
   it('gives no id, rather than a 409, when the current macrocycle has no row and an import holds the lock', async () => {

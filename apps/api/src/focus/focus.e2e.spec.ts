@@ -13,6 +13,7 @@ import {
   emptyFocusDayState,
 } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
+import { injectPage } from '../testing/macrocycle-id';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
@@ -61,7 +62,7 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
   const as = (user: string) => {
     const headers = { authorization: `Bearer ${user}` };
     const inject = (method: string, url: string, body?: unknown) =>
-      app.getHttpAdapter().getInstance().inject({
+      injectPage(app, {
         method: method as 'GET',
         url,
         headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },

@@ -459,6 +459,21 @@ describe('WorkoutLogger — a renumbered macrocycle (#1198)', () => {
     expect(window.localStorage.getItem(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1, undefined, 'mc-a'))).not.toBeNull();
   });
 
+  it('reloads the page when the API asks for the macrocycle id, without an error (#1200)', async () => {
+    const user = userEvent.setup();
+    mockCreateLiftRecord.mockRejectedValue(
+      new ApiClientError('Reload the page and try again.', 400, 'macrocycle-id-required', { code: 'macrocycle-id-required' }),
+    );
+    window.history.pushState({}, '', '/macrocycle/1/workout/1?from=history');
+    render(<WorkoutLogger {...makeProps()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() => expect(mockAssign).toHaveBeenCalledWith('/macrocycle/1/workout/1?from=history'));
+    window.history.pushState({}, '', '/');
+    expect(screen.queryByText('Failed to log set. Try again.')).not.toBeInTheDocument();
+  });
+
   it('asks for a retry while an import holds the lock, without reloading', async () => {
     const user = userEvent.setup();
     mockCreateLiftRecord.mockRejectedValue(new ApiClientError('An import is changing your macrocycles. Try again in a moment.', 409, 'import-in-progress'));

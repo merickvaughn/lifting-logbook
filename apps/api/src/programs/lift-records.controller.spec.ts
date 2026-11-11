@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { FastifyRequest } from 'fastify';
 import { LiftRecord, Weekday } from '@lifting-logbook/core';
 import { CustomLift, LiftModification, LiftModificationMaxMode, MacrocycleOrigin } from '@lifting-logbook/types';
+import { InMemoryImportBatchRepository } from '../adapters/in-memory/import-batch.adapter';
 import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { ProgramNotFoundError } from '../ports/errors';
@@ -87,6 +88,7 @@ describe('LiftRecordsController', () => {
         macrocycle: macrocycleRepo,
         macrocycleDashboard: dashboardRepo,
         customLift: customLiftRepo,
+        importBatch: new InMemoryImportBatchRepository(),
       }),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -138,6 +140,7 @@ describe('LiftRecordsController', () => {
         macrocycle: macrocycleRepo,
         macrocycleDashboard: dashboardRepo,
         customLift: customLiftRepo,
+        importBatch: new InMemoryImportBatchRepository(),
         liftModification: {
           list: jest.fn().mockResolvedValue([
             modification('own-1', 'bench-press', 'own'),
@@ -151,20 +154,20 @@ describe('LiftRecordsController', () => {
     });
 
     it('rejects a set with two `own` modifications, writing nothing', async () => {
-      await expect(controller.createLiftRecord('5-3-1', body(['own-1', 'own-2']), MOCK_USER)).rejects.toThrow(
+      await expect(controller.createLiftRecord('5-3-1', body(['own-1', 'own-2']), MOCK_USER, 'm-4')).rejects.toThrow(
         BadRequestException,
       );
       expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
     });
 
     it('rejects an unknown id and a modification of another lift', async () => {
-      await expect(controller.createLiftRecord('5-3-1', body(['nope']), MOCK_USER)).rejects.toThrow(BadRequestException);
-      await expect(controller.createLiftRecord('5-3-1', body(['squat-1']), MOCK_USER)).rejects.toThrow(BadRequestException);
+      await expect(controller.createLiftRecord('5-3-1', body(['nope']), MOCK_USER, 'm-4')).rejects.toThrow(BadRequestException);
+      await expect(controller.createLiftRecord('5-3-1', body(['squat-1']), MOCK_USER, 'm-4')).rejects.toThrow(BadRequestException);
       expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
     });
 
     it('accepts one `own` beside another mode, and writes the ids', async () => {
-      const result = await controller.createLiftRecord('5-3-1', body(['own-1', 'lift-1']), MOCK_USER);
+      const result = await controller.createLiftRecord('5-3-1', body(['own-1', 'lift-1']), MOCK_USER, 'm-4');
       expect(liftRecordRepo.appendLiftRecords).toHaveBeenCalledWith('5-3-1', [
         expect.objectContaining({ modifications: ['own-1', 'lift-1'] }),
       ]);
@@ -188,7 +191,7 @@ describe('LiftRecordsController', () => {
         setNum: 1,
         weight: 180,
         reps: 5,
-      }, MOCK_USER);
+      }, MOCK_USER, 'm-4');
 
       expect(liftRecordRepo.appendLiftRecords).toHaveBeenCalledWith(
         '5-3-1',
@@ -213,7 +216,7 @@ describe('LiftRecordsController', () => {
         weight: 225,
         reps: 5,
         notes: 'felt good',
-      }, MOCK_USER);
+      }, MOCK_USER, 'm-4');
 
       expect(result.notes).toBe('felt good');
     });
@@ -234,7 +237,7 @@ describe('LiftRecordsController', () => {
           setNum: 1,
           weight: 180,
           reps: 5,
-        }, MOCK_USER),
+        }, MOCK_USER, 'm-4'),
       ).rejects.toThrow(BadRequestException);
       expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
     });
@@ -255,7 +258,7 @@ describe('LiftRecordsController', () => {
           setNum: 1,
           weight: 180,
           reps: 5,
-        }, MOCK_USER),
+        }, MOCK_USER, 'm-4'),
       ).rejects.toThrow(BadRequestException);
       expect(liftRecordRepo.appendLiftRecords).not.toHaveBeenCalled();
     });
@@ -280,7 +283,7 @@ describe('LiftRecordsController', () => {
           setNum: 1,
           weight: 180,
           reps: 5,
-        }, MOCK_USER),
+        }, MOCK_USER, 'm-4'),
       ).rejects.toThrow(ConflictException);
     });
 
@@ -301,7 +304,7 @@ describe('LiftRecordsController', () => {
         setNum: 1,
         weight: 180,
         reps: 5,
-      }, MOCK_USER);
+      }, MOCK_USER, 'm-4');
 
       expect(result.weight).toBe(180);
       expect(result.reps).toBe(5);
@@ -369,7 +372,8 @@ describe('LiftRecordsController', () => {
     });
 
     // A file number only groups rows (#1199): one the program doesn't have gets a `legacy`
-    // macrocycle dated by its rows, numbered past every stored one (ADR-042).
+    // macrocycle dated by its rows, written past every stored one (ADR-042). It starts before
+    // them, so renumbering then moves it to 1 (#1200).
     it('gives a new file number a legacy macrocycle, dated by its rows', async () => {
       liftRecordRepo.appendLiftRecords.mockResolvedValue(2);
       const csv = [
@@ -380,7 +384,7 @@ describe('LiftRecordsController', () => {
 
       await controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER);
 
-      expect(await macrocycleRepo.findByNumber('5-3-1', 5)).toMatchObject({
+      expect(await macrocycleRepo.findByNumber('5-3-1', 1)).toMatchObject({
         origin: 'legacy',
         status: 'unknown',
         startDate: new Date('2026-01-01T00:00:00.000Z'),
@@ -400,8 +404,9 @@ describe('LiftRecordsController', () => {
       await controller.importLiftRecords('5-3-1', csvUploadRequest(csv), MOCK_USER);
 
       expect(liftRecordRepo.appendLiftRecords).toHaveBeenCalledWith('5-3-1', [expect.objectContaining({ macrocycleNum: 5 })]);
-      expect(await macrocycleRepo.findByNumber('5-3-1', 5)).toMatchObject({ origin: 'legacy' });
-      expect(await macrocycleRepo.findByNumber('5-3-1', 3)).toMatchObject({ origin: 'imported' });
+      // Dated first, the new legacy macrocycle is renumbered to 1, and the imported one to 2 (#1200).
+      expect(await macrocycleRepo.findByNumber('5-3-1', 1)).toMatchObject({ origin: 'legacy' });
+      expect(await macrocycleRepo.findByNumber('5-3-1', 2)).toMatchObject({ origin: 'imported' });
     });
 
     it('writes one row for a set the file names under two spellings of a lift (#1191)', async () => {
@@ -479,7 +484,7 @@ describe('LiftRecordsController', () => {
         '5-3-1',
         '5-3-1-4-1-20260420-Bench Press-1',
         { weight: 185, reps: 4 },
-        MOCK_USER,
+        MOCK_USER, 'm-4',
       );
 
       expect(liftRecordRepo.updateLiftRecord).toHaveBeenCalledWith(
@@ -500,7 +505,7 @@ describe('LiftRecordsController', () => {
     });
   });
 
-  // Imported history is read-only, and a number the program doesn't have is a 404 (ADR-042).
+  // Imported history is read-only, and an id the program doesn't have is a 404 (ADR-042).
   describe('macrocycle guard', () => {
     const set = (macrocycleNum: number) => ({
       program: '5-3-1',
@@ -517,7 +522,7 @@ describe('LiftRecordsController', () => {
       [3, 409, 'macrocycle-read-only'],
       [9, 404, 'macrocycle-not-found'],
     ])('rejects a set on macrocycle %i with %i', async (macrocycleNum, status, code) => {
-      await expect(controller.createLiftRecord('5-3-1', set(macrocycleNum), MOCK_USER)).rejects.toMatchObject({
+      await expect(controller.createLiftRecord('5-3-1', set(macrocycleNum), MOCK_USER, `m-${macrocycleNum}`)).rejects.toMatchObject({
         status,
         response: { code },
       });
@@ -529,7 +534,7 @@ describe('LiftRecordsController', () => {
       [9, 404, 'macrocycle-not-found'],
     ])('rejects an edit on macrocycle %i with %i', async (macrocycleNum, status, code) => {
       await expect(
-        controller.updateLiftRecord('5-3-1', `5-3-1-${macrocycleNum}-1-20260420-Bench Press-1`, { weight: 185 }, MOCK_USER),
+        controller.updateLiftRecord('5-3-1', `5-3-1-${macrocycleNum}-1-20260420-Bench Press-1`, { weight: 185 }, MOCK_USER, `m-${macrocycleNum}`),
       ).rejects.toMatchObject({ status, response: { code } });
       expect(liftRecordRepo.updateLiftRecord).not.toHaveBeenCalled();
     });
