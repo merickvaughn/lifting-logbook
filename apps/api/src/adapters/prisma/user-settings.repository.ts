@@ -1,5 +1,11 @@
 import { Prisma } from '@prisma/client';
-import { UserSettingsResponse, WeightUnit, isValidSchedule } from '@lifting-logbook/types';
+import {
+  DefaultProgressionSetting,
+  UserSettingsResponse,
+  isLiftProgressionType,
+  WeightUnit,
+  isValidSchedule,
+} from '@lifting-logbook/types';
 import { PrismaExecutor } from './prisma-tx.util';
 import { IUserSettingsRepository, UpsertSettingsPatch } from '../../ports/IUserSettingsRepository';
 
@@ -16,6 +22,25 @@ function parseSchedule(value: unknown): UserSettingsResponse['workoutSchedule'] 
 // above. The column has no DB-level CHECK constraint, only DTO validation on write.
 function parseUnit(value: unknown): WeightUnit | null {
   return value === 'lbs' || value === 'kg' ? value : null;
+}
+
+type DefaultProgressionColumns = {
+  defaultProgression: string | null;
+  defaultProgressionIncrement: number | null;
+  defaultProgressionRepsLow: number | null;
+  defaultProgressionRepsHigh: number | null;
+};
+
+// Same rationale again (#1210): an unknown stored type reads as unset, so the catalog applies.
+function parseDefaultProgression(row: DefaultProgressionColumns | null): DefaultProgressionSetting | null {
+  const type = row?.defaultProgression;
+  if (!row || !isLiftProgressionType(type)) return null;
+  return {
+    type,
+    increment: row.defaultProgressionIncrement,
+    repsLow: row.defaultProgressionRepsLow,
+    repsHigh: row.defaultProgressionRepsHigh,
+  };
 }
 
 export class PrismaUserSettingsRepository implements IUserSettingsRepository {
@@ -36,6 +61,7 @@ export class PrismaUserSettingsRepository implements IUserSettingsRepository {
       workoutSchedule: parseSchedule(row?.workoutSchedule),
       defaultWeightIncrement: row?.defaultWeightIncrement ?? null,
       unit: parseUnit(row?.unit),
+      defaultProgression: parseDefaultProgression(row),
     };
   }
 
@@ -53,6 +79,18 @@ export class PrismaUserSettingsRepository implements IUserSettingsRepository {
       update.defaultWeightIncrement = patch.defaultWeightIncrement;
     }
     if (patch.unit !== undefined) update.unit = patch.unit;
+    // The four columns are written together, so a new default never inherits a stale range
+    // or increment from the one it replaces.
+    const progression =
+      patch.defaultProgression === undefined
+        ? {}
+        : {
+            defaultProgression: patch.defaultProgression?.type ?? null,
+            defaultProgressionIncrement: patch.defaultProgression?.increment ?? null,
+            defaultProgressionRepsLow: patch.defaultProgression?.repsLow ?? null,
+            defaultProgressionRepsHigh: patch.defaultProgression?.repsHigh ?? null,
+          };
+    Object.assign(update, progression);
 
     const create: Prisma.UserSettingsUncheckedCreateInput = { userId: this.userId };
     if (patch.activeProgram !== undefined) create.activeProgram = patch.activeProgram;
@@ -63,6 +101,7 @@ export class PrismaUserSettingsRepository implements IUserSettingsRepository {
       create.defaultWeightIncrement = patch.defaultWeightIncrement;
     }
     if (patch.unit != null) create.unit = patch.unit;
+    Object.assign(create, progression);
 
     const row = await this.prisma.userSettings.upsert({
       where: { userId: this.userId },
@@ -74,6 +113,7 @@ export class PrismaUserSettingsRepository implements IUserSettingsRepository {
       workoutSchedule: parseSchedule(row.workoutSchedule),
       defaultWeightIncrement: row.defaultWeightIncrement ?? null,
       unit: parseUnit(row.unit),
+      defaultProgression: parseDefaultProgression(row),
     };
   }
 }

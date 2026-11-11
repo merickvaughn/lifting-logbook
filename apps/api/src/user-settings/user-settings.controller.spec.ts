@@ -17,6 +17,7 @@ const EMPTY_SETTINGS: UserSettingsResponse = {
   workoutSchedule: null,
   defaultWeightIncrement: null,
   unit: null,
+  defaultProgression: null,
 };
 
 describe('UserSettingsController', () => {
@@ -46,6 +47,7 @@ describe('UserSettingsController', () => {
         workoutSchedule: { type: 'fixed', days: [0, 2, 4] },
         defaultWeightIncrement: 0.625,
         unit: 'kg',
+        defaultProgression: null,
       });
 
       const result = await controller.getSettings(MOCK_USER);
@@ -56,6 +58,7 @@ describe('UserSettingsController', () => {
         workoutSchedule: { type: 'fixed', days: [0, 2, 4] },
         defaultWeightIncrement: 0.625,
         unit: 'kg',
+        defaultProgression: null,
       });
     });
   });
@@ -150,6 +153,24 @@ describe('UpdateSettingsDto validation', () => {
   it.each(['pounds', 'KG', ''])('rejects %s as an invalid unit', async (value) => {
     const errs = await check({ unit: value });
     expect(errs.length).toBeGreaterThan(0);
+  });
+
+  // #1210: the lifter's default progression.
+  it('accepts a default progression, with or without its increment and range', async () => {
+    expect(await check({ defaultProgression: { type: 'linear' } })).toEqual([]);
+    expect(await check({ defaultProgression: { type: 'double', increment: 2.5, repsLow: 8, repsHigh: 12 } })).toEqual([]);
+    expect(await check({ defaultProgression: null })).toEqual([]);
+  });
+
+  it.each([
+    ['rpe', { type: 'rpe' }],
+    ['an unknown type', { type: 'wave' }],
+    ['a missing type', { increment: 5 }],
+    ['a zero increment', { type: 'linear', increment: 0 }],
+    ['repsLow above repsHigh', { type: 'double', repsLow: 12, repsHigh: 8 }],
+    ['a primitive', 'linear'],
+  ])('rejects %s as a default progression', async (_name, defaultProgression) => {
+    expect((await check({ defaultProgression })).length).toBeGreaterThan(0);
   });
 
   it('accepts an empty patch (no-op)', async () => {

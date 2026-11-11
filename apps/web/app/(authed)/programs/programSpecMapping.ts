@@ -34,6 +34,12 @@ export type WeekParams = {
   wtDecrementPct: number;
   activation: string;
   weekType?: string;
+  /**
+   * The row's progression override (#1210). Not edited here, but carried through so an edit
+   * keeps a cloned preset's or backfilled row's `amrap_gated`.
+   */
+  progression?: CustomProgramSpecRow['progression'];
+  repsLow?: number;
 };
 
 export type LiftInstance = {
@@ -100,6 +106,8 @@ function pickWeekParams(row: CustomProgramSpecRow): WeekParams {
     activation: row.activation,
   };
   if (row.weekType !== undefined) params.weekType = row.weekType;
+  if (row.progression !== undefined) params.progression = row.progression;
+  if (row.repsLow !== undefined) params.repsLow = row.repsLow;
   return params;
 }
 

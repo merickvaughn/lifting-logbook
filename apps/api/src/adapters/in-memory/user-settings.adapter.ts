@@ -1,4 +1,9 @@
-import { UserSettingsResponse, UserWorkoutSchedule, WeightUnit } from '@lifting-logbook/types';
+import {
+  DefaultProgressionSetting,
+  UserSettingsResponse,
+  UserWorkoutSchedule,
+  WeightUnit,
+} from '@lifting-logbook/types';
 import { IUserSettingsRepository, UpsertSettingsPatch } from '../../ports/IUserSettingsRepository';
 
 export class InMemoryUserSettingsRepository implements IUserSettingsRepository {
@@ -6,6 +11,7 @@ export class InMemoryUserSettingsRepository implements IUserSettingsRepository {
   private workoutSchedule: UserWorkoutSchedule | null = null;
   private defaultWeightIncrement: number | null = null;
   private unit: WeightUnit | null = null;
+  private defaultProgression: DefaultProgressionSetting | null = null;
 
   async getSettings(): Promise<UserSettingsResponse> {
     return {
@@ -13,6 +19,7 @@ export class InMemoryUserSettingsRepository implements IUserSettingsRepository {
       workoutSchedule: this.workoutSchedule,
       defaultWeightIncrement: this.defaultWeightIncrement,
       unit: this.unit,
+      defaultProgression: this.defaultProgression,
     };
   }
 
@@ -26,6 +33,14 @@ export class InMemoryUserSettingsRepository implements IUserSettingsRepository {
       this.defaultWeightIncrement = patch.defaultWeightIncrement;
     }
     if (patch.unit !== undefined) this.unit = patch.unit;
+    if (patch.defaultProgression !== undefined) {
+      this.defaultProgression = patch.defaultProgression && {
+        type: patch.defaultProgression.type,
+        increment: patch.defaultProgression.increment ?? null,
+        repsLow: patch.defaultProgression.repsLow ?? null,
+        repsHigh: patch.defaultProgression.repsHigh ?? null,
+      };
+    }
     return this.getSettings();
   }
 

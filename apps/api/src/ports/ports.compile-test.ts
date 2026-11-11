@@ -159,7 +159,16 @@ const _liftMetadataRepo: ILiftMetadataRepository = {
   getMetadata: () => Promise.resolve(null),
   listMetadata: () => Promise.resolve([]),
   upsertMetadata: (_lift, _patch) =>
-    Promise.resolve({ lift: '', muscleGroups: [], substitutions: [], foundational: false }),
+    Promise.resolve({
+      lift: '',
+      muscleGroups: [],
+      substitutions: [],
+      foundational: false,
+      progression: null,
+      progressionIncrement: null,
+      repsLow: null,
+      repsHigh: null,
+    }),
 };
 
 const _strengthGoalRepo: IStrengthGoalRepository = {
@@ -192,9 +201,21 @@ const _workoutSkipOverrideRepo: IWorkoutSkipOverrideRepository = {
 
 const _userSettingsRepo: IUserSettingsRepository = {
   getSettings: () =>
-    Promise.resolve({ activeProgram: null, workoutSchedule: null, defaultWeightIncrement: null, unit: null }),
+    Promise.resolve({
+      activeProgram: null,
+      workoutSchedule: null,
+      defaultWeightIncrement: null,
+      unit: null,
+      defaultProgression: null,
+    }),
   upsertSettings: () =>
-    Promise.resolve({ activeProgram: null, workoutSchedule: null, defaultWeightIncrement: null, unit: null }),
+    Promise.resolve({
+      activeProgram: null,
+      workoutSchedule: null,
+      defaultWeightIncrement: null,
+      unit: null,
+      defaultProgression: null,
+    }),
 };
 
 const _customLiftRepo: ICustomLiftRepository = {

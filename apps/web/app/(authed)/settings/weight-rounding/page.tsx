@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS: UserSettingsResponse = {
   workoutSchedule: null,
   defaultWeightIncrement: null,
   unit: null,
+  defaultProgression: null,
 };
 
 export default async function WeightRoundingPage() {

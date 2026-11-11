@@ -61,6 +61,7 @@ describe('User Settings HTTP (e2e, in-memory adapters)', () => {
       workoutSchedule: null,
       defaultWeightIncrement: null,
       unit: null,
+      defaultProgression: null,
     });
   });
 
@@ -72,6 +73,7 @@ describe('User Settings HTTP (e2e, in-memory adapters)', () => {
       unit: 'kg',
       defaultWeightIncrement: 0.625,
       workoutSchedule: { type: 'fixed', days: [0, 2, 4] },
+      defaultProgression: { type: 'double', repsLow: 8, repsHigh: 12 },
     });
     expect(patched.statusCode).toBe(200);
     expect(patched.json()).toEqual({
@@ -79,6 +81,7 @@ describe('User Settings HTTP (e2e, in-memory adapters)', () => {
       workoutSchedule: { type: 'fixed', days: [0, 2, 4] },
       defaultWeightIncrement: 0.625,
       unit: 'kg',
+      defaultProgression: { type: 'double', increment: null, repsLow: 8, repsHigh: 12 },
     });
 
     const fetched = await get('/users/me/settings', token);

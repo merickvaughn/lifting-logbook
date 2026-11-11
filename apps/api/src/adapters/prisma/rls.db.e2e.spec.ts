@@ -72,6 +72,7 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     await owner.focusBlock.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.focusDayState.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.liftModification.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
+    await owner.liftMetadata.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
   };
 
   beforeAll(async () => {
@@ -122,6 +123,14 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     // Seed both users' lift modifications (#1151).
     await owner.liftModification.createMany({
       data: [USER_ALICE, USER_BOB].map((userId) => ({ userId, lift: 'bench-press', name: 'Paused' })),
+    });
+
+    // Seed both users' own progression on one lift (#1210).
+    await owner.liftMetadata.createMany({
+      data: [
+        { userId: USER_ALICE, lift: 'Cable Curl', progression: 'double', progressionIncrement: 2.5, repsLow: 8, repsHigh: 12 },
+        { userId: USER_BOB, lift: 'Cable Curl', progression: 'linear', progressionIncrement: 5, repsLow: 5, repsHigh: 5 },
+      ].map((row) => ({ ...row, muscleGroups: [], substitutions: [] })),
     });
 
     // Seed a custom program + spec for Alice (custom_program_spec has no userId — it is isolated
@@ -234,6 +243,31 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     expect(deleted.count).toBe(1);
     const bobRow = await owner.liftModification.findFirstOrThrow({ where: { userId: USER_BOB } });
     expect(bobRow.description).toBe('');
+  });
+
+  it("cannot read another user's lift_metadata progression, and fails closed (#1210)", async () => {
+    // Deliberately unscoped: only RLS stands between Alice and Bob's row for the same lift.
+    const rows = await asUser(appDb, USER_ALICE, (tx) =>
+      tx.liftMetadata.findMany({
+        where: { lift: 'Cable Curl' },
+        select: { userId: true, progression: true, progressionIncrement: true, repsLow: true, repsHigh: true },
+      }),
+    );
+    expect(rows).toEqual([
+      { userId: USER_ALICE, progression: 'double', progressionIncrement: 2.5, repsLow: 8, repsHigh: 12 },
+    ]);
+    // Asking for Bob's row by name finds nothing, and neither does a caller with no user.
+    expect(await asUser(appDb, USER_ALICE, (tx) => tx.liftMetadata.count({ where: { userId: USER_BOB } }))).toBe(0);
+    expect(await asUser(appDb, null, (tx) => tx.liftMetadata.count({ where: { lift: 'Cable Curl' } }))).toBe(0);
+    // And an unscoped write can't reach it.
+    const updated = await asUser(appDb, USER_ALICE, (tx) =>
+      tx.liftMetadata.updateMany({ where: { lift: 'Cable Curl' }, data: { progression: 'manual' } }),
+    );
+    expect(updated.count).toBe(1);
+    const bob = await owner.liftMetadata.findUniqueOrThrow({
+      where: { userId_lift: { userId: USER_BOB, lift: 'Cable Curl' } },
+    });
+    expect(bob.progression).toBe('linear');
   });
 
   it('isolates custom_program_spec through its parent program FK policy', async () => {

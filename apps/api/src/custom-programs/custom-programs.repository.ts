@@ -3,8 +3,14 @@ import {
   CustomProgramResponse,
   CustomProgramSummaryResponse,
   CustomProgramSpecRow,
+  isLiftProgressionType,
 } from '@lifting-logbook/types';
 import { PrismaExecutor, runInteractive } from '../adapters/prisma/prisma-tx.util';
+
+/** The progression columns as written: an absent override is stored as null (#1210). */
+function progressionColumns(s: CustomProgramSpecRow): { progression: string | null; repsLow: number | null } {
+  return { progression: s.progression ?? null, repsLow: s.repsLow ?? null };
+}
 
 function toSpecRow(s: {
   week: number;
@@ -19,6 +25,8 @@ function toSpecRow(s: {
   wtDecrementPct: number;
   activation: string;
   weekType: string | null;
+  progression: string | null;
+  repsLow: number | null;
 }): CustomProgramSpecRow {
   return {
     week: s.week,
@@ -33,6 +41,8 @@ function toSpecRow(s: {
     wtDecrementPct: s.wtDecrementPct,
     activation: s.activation,
     ...(s.weekType !== null && { weekType: s.weekType }),
+    ...(isLiftProgressionType(s.progression) && { progression: s.progression }),
+    ...(s.repsLow !== null && { repsLow: s.repsLow }),
   };
 }
 
@@ -98,6 +108,7 @@ export class CustomProgramsRepository {
             wtDecrementPct: s.wtDecrementPct,
             activation: s.activation,
             weekType: s.weekType ?? null,
+            ...progressionColumns(s),
           })),
         },
       },
@@ -133,6 +144,7 @@ export class CustomProgramsRepository {
             wtDecrementPct: s.wtDecrementPct,
             activation: s.activation,
             weekType: s.weekType ?? null,
+            ...progressionColumns(s),
           })),
         }
       : undefined;

@@ -6,8 +6,10 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsNumber,
   IsObject,
   IsOptional,
+  IsPositive,
   IsString,
   Max,
   MaxLength,
@@ -20,12 +22,16 @@ import {
   ValidationArguments,
 } from 'class-validator';
 import {
+  LIFT_PROGRESSION_TYPES,
+  PROGRESSION_REPS_LIMITS,
   SCHEDULE_LIMITS,
   WEIGHT_INCREMENT_OPTIONS,
   WEIGHT_UNIT_OPTIONS,
   isValidSchedule,
 } from '@lifting-logbook/types';
-import type { UserWorkoutSchedule, WeightUnit } from '@lifting-logbook/types';
+import type { LiftProgressionType, UserWorkoutSchedule, WeightUnit } from '@lifting-logbook/types';
+import { IsAtMostSibling } from '../lifts/progression.validation';
+import type { DefaultProgressionPatch } from '../ports/IUserSettingsRepository';
 
 // Delegates to the shared `isValidSchedule` predicate so the write-side and read-side
 // bounds (range, uniqueness, max weeks, max days/week) cannot drift.
@@ -79,6 +85,33 @@ export class WorkoutScheduleDto implements UserWorkoutSchedule {
   weeks?: number[][];
 }
 
+// The lifter's default progression (#1210). Validated like a lift's own value in
+// PatchLiftMetadataDto: `rpe` and unknown types are rejected, the increment is positive, and
+// the range's bottom may not exceed its top. The default is replaced whole, so the range is
+// always checked within one request.
+export class DefaultProgressionDto implements DefaultProgressionPatch {
+  @IsIn(LIFT_PROGRESSION_TYPES)
+  type!: LiftProgressionType;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  increment?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(PROGRESSION_REPS_LIMITS.MIN)
+  @Max(PROGRESSION_REPS_LIMITS.MAX)
+  @Validate(IsAtMostSibling, ['repsHigh'])
+  repsLow?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(PROGRESSION_REPS_LIMITS.MIN)
+  @Max(PROGRESSION_REPS_LIMITS.MAX)
+  repsHigh?: number | null;
+}
+
 export class UpdateSettingsDto {
   // Unlike the other three fields, activeProgram has no clear-via-null semantics — it's
   // switched by POST /programs/:program/switch, not cleared here. @IsOptional() would let
@@ -114,4 +147,13 @@ export class UpdateSettingsDto {
   @ValidateIf((o: UpdateSettingsDto) => o.unit !== null)
   @IsIn(WEIGHT_UNIT_OPTIONS)
   unit?: WeightUnit | null;
+
+  // null clears the default so each lift's catalog default applies; undefined leaves it
+  // unchanged. The object check rejects a primitive the nested validation would skip.
+  @IsOptional()
+  @ValidateIf((o: UpdateSettingsDto) => o.defaultProgression !== null)
+  @IsObject()
+  @ValidateNested()
+  @Type(() => DefaultProgressionDto)
+  defaultProgression?: DefaultProgressionDto | null;
 }

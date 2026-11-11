@@ -12,6 +12,7 @@ import {
   SaveProgramSpecResult,
 } from '../../ports/ILiftingProgramSpecRepository';
 import { PrismaClient } from '@prisma/client';
+import { isLiftProgressionType } from '@lifting-logbook/types';
 import { InMemoryLiftingProgramSpecRepository } from '../in-memory/lifting-program-spec.adapter';
 import { IMPORT_BATCH_TX_OPTIONS, runInteractive } from './prisma-tx.util';
 
@@ -30,6 +31,8 @@ type SpecRow = {
   wtDecrementPct: number;
   activation: string;
   weekType: string | null;
+  progression: string | null;
+  repsLow: number | null;
 };
 
 function toSpec(s: SpecRow): LiftingProgramSpec {
@@ -46,6 +49,8 @@ function toSpec(s: SpecRow): LiftingProgramSpec {
     wtDecrementPct: s.wtDecrementPct,
     activation: s.activation,
     ...(s.weekType !== null && { weekType: s.weekType as 'training' | 'test' | 'deload' }),
+    ...(isLiftProgressionType(s.progression) && { progression: s.progression }),
+    ...(s.repsLow !== null && { repsLow: s.repsLow }),
   };
 }
 
@@ -141,6 +146,10 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
               wtDecrementPct: r.wtDecrementPct,
               activation: r.activation,
               weekType: r.weekType ?? null,
+              // A spec import carries no progression (#1210), so an imported row leaves the
+              // stored override alone instead of clearing a backfilled `amrap_gated`.
+              ...(r.progression !== undefined && { progression: r.progression }),
+              ...(r.repsLow !== undefined && { repsLow: r.repsLow }),
             };
             return tx.customProgramSpec.upsert({
               where: {

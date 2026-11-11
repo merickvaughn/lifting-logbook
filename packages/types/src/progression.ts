@@ -16,3 +16,33 @@
  */
 export const PROGRESSION_TYPES = ['linear', 'double', 'amrap_gated', 'percent_wave', 'manual', 'rpe'] as const;
 export type ProgressionType = (typeof PROGRESSION_TYPES)[number];
+
+/**
+ * The types a lifter may set on a lift, as its own value, their default, or a program's spec
+ * row (#1210): every type but `rpe`, which needs per-set RPE logging first.
+ */
+export const LIFT_PROGRESSION_TYPES = ['linear', 'double', 'amrap_gated', 'percent_wave', 'manual'] as const;
+export type LiftProgressionType = (typeof LIFT_PROGRESSION_TYPES)[number];
+
+/**
+ * Read-side guard for a stored type. The columns have no CHECK constraint, only DTO
+ * validation on write, so an adapter reads an unknown value as unset rather than trust it.
+ */
+export function isLiftProgressionType(value: unknown): value is LiftProgressionType {
+  return (LIFT_PROGRESSION_TYPES as readonly unknown[]).includes(value);
+}
+
+/** Bounds on a lift's or the default's rep range (#1210). A spec row's reps stay 1 to 20. */
+export const PROGRESSION_REPS_LIMITS = { MIN: 1, MAX: 50 } as const;
+
+/**
+ * The lifter's default progression from Settings (#1210): the type plus an optional increment
+ * and rep range. Unset (`null` on `UserSettingsResponse`) means each lift's catalog default
+ * applies. Shaped to pass straight to core's `resolveProgression` as its `userDefault`.
+ */
+export interface DefaultProgressionSetting {
+  type: LiftProgressionType;
+  increment: number | null;
+  repsLow: number | null;
+  repsHigh: number | null;
+}

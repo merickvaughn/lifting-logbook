@@ -9,6 +9,10 @@ type Row = {
   workoutSchedule: unknown;
   defaultWeightIncrement: number | null;
   unit: string | null;
+  defaultProgression: string | null;
+  defaultProgressionIncrement: number | null;
+  defaultProgressionRepsLow: number | null;
+  defaultProgressionRepsHigh: number | null;
 };
 
 function makePrismaMock(): { client: PrismaExecutor; store: Map<string, Row> } {
@@ -37,6 +41,10 @@ function makePrismaMock(): { client: PrismaExecutor; store: Map<string, Row> } {
                 workoutSchedule: create.workoutSchedule ?? null,
                 defaultWeightIncrement: create.defaultWeightIncrement ?? null,
                 unit: create.unit ?? null,
+                defaultProgression: create.defaultProgression ?? null,
+                defaultProgressionIncrement: create.defaultProgressionIncrement ?? null,
+                defaultProgressionRepsLow: create.defaultProgressionRepsLow ?? null,
+                defaultProgressionRepsHigh: create.defaultProgressionRepsHigh ?? null,
               };
           store.set(where.userId, next);
           return next;
@@ -63,7 +71,36 @@ describe('PrismaUserSettingsRepository', () => {
       workoutSchedule: null,
       defaultWeightIncrement: null,
       unit: null,
+      defaultProgression: null,
     });
+  });
+
+  // #1210: the lifter's default progression is written as four columns, together.
+  it('persists a default progression, replaces it whole, and clears it', async () => {
+    const set = await repo.upsertSettings({ defaultProgression: { type: 'double', increment: 2.5, repsLow: 8, repsHigh: 12 } });
+    expect(set.defaultProgression).toEqual({ type: 'double', increment: 2.5, repsLow: 8, repsHigh: 12 });
+
+    const replaced = await repo.upsertSettings({ defaultProgression: { type: 'linear' } });
+    expect(replaced.defaultProgression).toEqual({ type: 'linear', increment: null, repsLow: null, repsHigh: null });
+
+    await repo.upsertSettings({ unit: 'kg' });
+    expect((await repo.getSettings()).defaultProgression).toEqual(replaced.defaultProgression);
+
+    const cleared = await repo.upsertSettings({ defaultProgression: null });
+    expect(cleared.defaultProgression).toBeNull();
+    expect(mock.store.get(USER_ID)).toMatchObject({
+      defaultProgression: null,
+      defaultProgressionIncrement: null,
+      defaultProgressionRepsLow: null,
+      defaultProgressionRepsHigh: null,
+    });
+  });
+
+  it('reads an unknown stored progression type as unset', async () => {
+    await repo.upsertSettings({ unit: 'kg' });
+    const row = mock.store.get(USER_ID);
+    if (row) Object.assign(row, { defaultProgression: 'rpe', defaultProgressionRepsHigh: 8 });
+    expect((await repo.getSettings()).defaultProgression).toBeNull();
   });
 
   it('persists a defaultWeightIncrement and reads it back', async () => {
@@ -170,6 +207,7 @@ describe('PrismaUserSettingsRepository', () => {
       workoutSchedule: null,
       defaultWeightIncrement: 2.5,
       unit: 'kg',
+      defaultProgression: null,
     });
   });
 });

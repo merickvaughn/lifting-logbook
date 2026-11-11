@@ -128,6 +128,7 @@ function createInitialState() {
     workoutSchedule: null,
     defaultWeightIncrement: null,
     unit: null,
+    defaultProgression: null,
     // Empty by default so the /programs page test still sees RPT as the only
     // program; the import test opts in via /__reset?withCustomProgram=true.
     customPrograms: [],
@@ -743,7 +744,16 @@ const server = createServer(async (req, res) => {
   // -------------------------------------------------------------------------
   const metadataMatch = /^\/lifts\/([^/]+)\/metadata$/.exec(url.pathname);
   if (method === 'GET' && metadataMatch) {
-    json(res, { lift: decodeURIComponent(metadataMatch[1]), muscleGroups: [], substitutions: [], foundational: false });
+    json(res, {
+      lift: decodeURIComponent(metadataMatch[1]),
+      muscleGroups: [],
+      substitutions: [],
+      foundational: false,
+      progression: null,
+      progressionIncrement: null,
+      repsLow: null,
+      repsHigh: null,
+    });
     return;
   }
 
@@ -824,6 +834,7 @@ const server = createServer(async (req, res) => {
       workoutSchedule: state.workoutSchedule,
       defaultWeightIncrement: state.defaultWeightIncrement,
       unit: state.unit,
+      defaultProgression: state.defaultProgression,
     });
     return;
   }
@@ -837,11 +848,22 @@ const server = createServer(async (req, res) => {
     if ('workoutSchedule' in body) state.workoutSchedule = body.workoutSchedule;
     if ('defaultWeightIncrement' in body) state.defaultWeightIncrement = body.defaultWeightIncrement;
     if ('unit' in body) state.unit = body.unit;
+    // Replaced whole, an omitted increment or range end stored as null, as the real API does (#1210).
+    if ('defaultProgression' in body) {
+      const d = body.defaultProgression;
+      state.defaultProgression = d && {
+        type: d.type,
+        increment: d.increment ?? null,
+        repsLow: d.repsLow ?? null,
+        repsHigh: d.repsHigh ?? null,
+      };
+    }
     json(res, {
       activeProgram: '5-3-1',
       workoutSchedule: state.workoutSchedule,
       defaultWeightIncrement: state.defaultWeightIncrement,
       unit: state.unit,
+      defaultProgression: state.defaultProgression,
     });
     return;
   }

@@ -1,4 +1,5 @@
 import { BodyWeightEntry, LiftClassification, LiftModificationMaxMode, LiftName, MovementProfile, WeightUnit, WeekNumber, MacrocycleNumber, MacrocycleOrigin, MacrocycleStatus, WeekType } from './domain';
+import { DefaultProgressionSetting, LiftProgressionType } from './progression';
 
 // ---------------------------------------------------------------------------
 // Training Maxes
@@ -389,13 +390,29 @@ export interface LiftMetadataResponse {
   muscleGroups: string[];
   substitutions: string[];
   foundational: boolean;
+  /**
+   * The lift's own progression (#1210). Null means the lifter's default, then the catalog's,
+   * applies (docs/adr/ADR-043-lift-progression-resolution-and-storage.md).
+   */
+  progression: LiftProgressionType | null;
+  /** The lift's own increment off-program. Null falls back to the default's, then `defaultWeightIncrement`. */
+  progressionIncrement: number | null;
+  repsLow: number | null;
+  repsHigh: number | null;
 }
 
-/** Request body for PATCH /lifts/:lift/metadata. */
+/**
+ * Request body for PATCH /lifts/:lift/metadata. An omitted field is left unchanged; `null`
+ * clears a progression field.
+ */
 export interface PatchLiftMetadataRequest {
   muscleGroups?: string[];
   substitutions?: string[];
   foundational?: boolean;
+  progression?: LiftProgressionType | null;
+  progressionIncrement?: number | null;
+  repsLow?: number | null;
+  repsHigh?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +432,10 @@ export interface LiftingProgramSpecResponse {
   warmUpPct: string;
   wtDecrementPct: number;
   activation: string;
+  /** The row's progression override (#1210). Absent means the lift's own value applies. */
+  progression?: LiftProgressionType;
+  /** The bottom of the row's rep range; `reps` is the top. */
+  repsLow?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -502,12 +523,16 @@ export interface UserSettingsResponse {
   defaultWeightIncrement: number | null;
   /** Null when unset — callers fall back to 'lbs' (see DEFAULT_WEIGHT_UNIT). Display preference only; stored weights are unaffected. */
   unit: WeightUnit | null;
+  /** Null when unset: each lift's catalog default applies (#1210). */
+  defaultProgression: DefaultProgressionSetting | null;
 }
 
 export interface UpdateUserSettingsRequest {
   workoutSchedule?: UserWorkoutSchedule | null;
   defaultWeightIncrement?: number | null;
   unit?: WeightUnit | null;
+  /** Replaces the whole default; `null` clears it so the catalog applies again. */
+  defaultProgression?: DefaultProgressionSetting | null;
 }
 
 /** The only values `defaultWeightIncrement` may take, matching plate sizes users actually have. */
@@ -537,6 +562,10 @@ export interface CustomProgramSpecRow {
   wtDecrementPct: number;
   activation: string;
   weekType?: string;
+  /** The row's progression override (#1210). Absent means the lift's own value applies. */
+  progression?: LiftProgressionType;
+  /** The bottom of the row's rep range; `reps` is the top. */
+  repsLow?: number;
 }
 
 export interface CustomProgramResponse {

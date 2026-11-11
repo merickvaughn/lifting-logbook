@@ -167,6 +167,12 @@ model LiftMetadata {
   muscleGroups  String[]
   substitutions String[]
   foundational  Boolean  @default(false)
+  // The lift's own progression (#1210, ADR-043). Null falls through to the lifter's default,
+  // then the catalog's. `progression` is one of LIFT_PROGRESSION_TYPES, checked by the DTO.
+  progression          String?
+  progressionIncrement Float?
+  repsLow              Int?
+  repsHigh             Int?
 
   @@unique([userId, lift])
   @@index([userId])
@@ -224,6 +230,12 @@ model UserSettings {
   // The daily focus guide (#1056). Null falls back to DEFAULT_FOCUS_BUDGET.
   focusBudgetSets        Int?
   focusBudgetMinutes     Int?
+  // The lifter's default progression (#1210, ADR-043). Null `defaultProgression` means each
+  // lift's catalog default applies; the other three are meaningful only when it is set.
+  defaultProgression          String?
+  defaultProgressionIncrement Float?
+  defaultProgressionRepsLow   Int?
+  defaultProgressionRepsHigh  Int?
 
   @@map("user_settings")
 }
@@ -346,6 +358,10 @@ model CustomProgramSpec {
   wtDecrementPct Float
   activation     String
   weekType       String?
+  // The row's progression override (#1210, ADR-043). Rows that existed before it were
+  // backfilled to `amrap_gated`; a new row may leave it null and follow the lift's value.
+  progression    String?
+  repsLow        Int?
   program        CustomProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
 
   // Enforces the natural key the import path keys on, so two concurrent imports of

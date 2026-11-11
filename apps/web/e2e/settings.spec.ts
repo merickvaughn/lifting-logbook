@@ -64,6 +64,30 @@ test('units section saves the selected weight unit', async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------
+// Settings → Progression: the lifter's default progression saves and survives a reload (#1210).
+// ---------------------------------------------------------------------------
+
+test('progression section saves a default progression with its rep range', async ({ page }) => {
+  await page.goto('/settings');
+  await page
+    .getByRole('navigation', { name: 'Settings sections' })
+    .getByRole('link', { name: 'Progression' })
+    .click();
+  await expect(page).toHaveURL(/\/settings\/progression$/);
+  await expect(page.getByRole('heading', { name: 'Progression' })).toBeVisible();
+
+  await page.getByLabel('Default progression').selectOption('double');
+  await page.getByLabel('Rep range bottom').fill('8');
+  await page.getByLabel('Rep range top').fill('12');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText(/^Saved at /)).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByLabel('Default progression')).toHaveValue('double');
+  await expect(page.getByLabel('Rep range top')).toHaveValue('12');
+});
+
+// ---------------------------------------------------------------------------
 // Settings → Data: the one action saves a dated archive (#947).
 // ---------------------------------------------------------------------------
 
