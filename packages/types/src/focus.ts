@@ -76,7 +76,7 @@ export type FocusProgression = (typeof FOCUS_PROGRESSION_TYPES)[number];
 /**
  * The values focus blocks used before they shared the progression vocabulary, and what
  * each became (#1213). `double` and `rpe` kept their names. Read until migration
- * `20261111000000_focus_progression_types` has run everywhere, and from clients built
+ * `20261111120000_focus_progression_types` has run everywhere, and from clients built
  * before it.
  */
 export const LEGACY_FOCUS_PROGRESSION_VALUES: ReadonlyMap<string, FocusProgression> = new Map([

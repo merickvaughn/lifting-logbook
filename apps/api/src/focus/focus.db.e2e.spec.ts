@@ -185,12 +185,12 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect((await owner('DELETE', `/focus/blocks/${ended.id}`)).statusCode).toBe(204);
   });
 
-  // Migration 20261111000000_focus_progression_types (#1213), run against blocks stored under
+  // Migration 20261111120000_focus_progression_types (#1213), run against blocks stored under
   // the old focus vocabulary. Inside a transaction that is rolled back, so the schema and the
   // other tests are untouched.
   it('migrates fixed to manual and tm to percent_wave, keeping double and rpe', async () => {
     const migration = readFileSync(
-      join(__dirname, '../../prisma/migrations/20261111000000_focus_progression_types/migration.sql'),
+      join(__dirname, '../../prisma/migrations/20261111120000_focus_progression_types/migration.sql'),
       'utf8',
     );
     const statements = migration

@@ -112,7 +112,7 @@ rejected. Client Components keep computing the day from the browser clock (`loca
 The `progression` column now holds the shared lift vocabulary
 ([proposal](../proposals/2026-11-10-lift-progression-types.md), "Focus blocks"): `double`,
 `manual` (was `fixed`), `percent_wave` (was `tm`) and `rpe`. Migration
-`20261111000000_focus_progression_types` renames the stored values and swaps the CHECK. It is
+`20261111120000_focus_progression_types` renames the stored values and swaps the CHECK. It is
 the first migration to update `focus_block` rows, and the table has `FORCE ROW LEVEL SECURITY`
 [4], which binds the table owner. For a role that doesn't bypass RLS, an UPDATE with no
 `app.current_user_id` matches nothing. `docs/deploy.md` says the migrator bypasses it, but the

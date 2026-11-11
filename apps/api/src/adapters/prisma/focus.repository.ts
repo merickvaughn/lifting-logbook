@@ -38,7 +38,7 @@ interface FocusBlockRow {
 
 // The enum columns carry CHECK constraints (migration 20261025000000_add_focus_work), so a
 // row's strings are always members of their unions; the JSON columns are parsed instead.
-// `progression` is the exception until migration 20261111000000_focus_progression_types has
+// `progression` is the exception until migration 20261111120000_focus_progression_types has
 // run: a row may still hold `fixed` or `tm`, which read as `manual` and `percent_wave`.
 function toFocusBlock(row: FocusBlockRow): FocusBlock {
   const progression = toFocusProgression(row.progression);

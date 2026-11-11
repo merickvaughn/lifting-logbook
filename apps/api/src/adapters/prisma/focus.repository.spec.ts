@@ -30,7 +30,7 @@ function repoReading(rows: ReturnType<typeof row>[]): PrismaFocusRepository {
   return new PrismaFocusRepository({ focusBlock } as unknown as PrismaClient, 'u');
 }
 
-// Until migration 20261111000000_focus_progression_types has run, a stored block can hold a
+// Until migration 20261111120000_focus_progression_types has run, a stored block can hold a
 // focus progression from before the shared vocabulary (#1213).
 describe('PrismaFocusRepository reading a stored progression', () => {
   it('maps the old fixed and tm to manual and percent_wave', async () => {
