@@ -83,8 +83,8 @@ export async function writeFileNumberRows(
     if (paired?.program !== program) continue;
     pairedNums.set(r.macrocycleNum, (pairedNums.get(r.macrocycleNum) ?? new Set<number>()).add(paired.macrocycleNum));
   }
-  const { placed, legacyNums } = await placeFileRows(repos, program, creating, pairedNums);
-  const placedRows = creating.map((r) => ({ ...r, macrocycleNum: placed.get(r.macrocycleNum) ?? r.macrocycleNum }));
+  const { nums, legacyNums } = await placeFileRows(repos, program, creating, pairedNums);
+  const placedRows = creating.map((r, i) => ({ ...r, macrocycleNum: nums[i] ?? r.macrocycleNum }));
   const created = await repos.liftRecord.appendLiftRecords(program, placedRows);
   const changes = await renumberProgram(repos, program);
   const renumbered = (n: number) => changes.get(n) ?? n;

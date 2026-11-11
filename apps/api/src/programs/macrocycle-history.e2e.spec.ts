@@ -670,6 +670,122 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       ]);
     });
 
+    it('adds a grown sheet past the live start to both: its macrocycle, then the live one', async () => {
+      const user = as('renumber-grown-past-live');
+      await user.initialize('2026-01-05');
+      await committed('renumber-grown-past-live', `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`);
+
+      const grown = await committed(
+        'renumber-grown-past-live',
+        `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`,
+        `${PROGRAM},1,2,2025-03-10,Squat,1,205,5,`,
+        `${PROGRAM},1,3,2026-01-07,Squat,1,210,5,`,
+      );
+
+      expect(grown).toMatchObject({ created: 2, skipped: 1 });
+      expect((await order(user)).map(([num, origin]) => [num, origin])).toEqual([[1, 'legacy'], [2, 'live']]);
+      const bundle = await user.repos();
+      expect((await bundle.liftRecord.getLiftRecords(PROGRAM, 1)).map((r) => r.date)).toEqual([
+        day('2025-03-03'),
+        day('2025-03-10'),
+      ]);
+      expect((await bundle.liftRecord.getLiftRecords(PROGRAM, 2)).map((r) => r.date)).toEqual([day('2026-01-07')]);
+    });
+
+    it('adds a session from before a grown sheet’s first upload to the macrocycle that upload formed', async () => {
+      const user = as('renumber-grown-earlier');
+      await committed('renumber-grown-earlier', `${PROGRAM},1,2,2025-03-10,Squat,1,205,5,`);
+
+      const grown = await committed(
+        'renumber-grown-earlier',
+        `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`,
+        `${PROGRAM},1,2,2025-03-10,Squat,1,205,5,`,
+      );
+
+      expect(grown).toMatchObject({ created: 1, skipped: 1 });
+      expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'legacy']]);
+      expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).toHaveLength(2);
+    });
+
+    it('adds each of a grown sheet’s new sessions to the macrocycle of its stored sessions before it', async () => {
+      const user = as('renumber-grown-two');
+      await committed('renumber-grown-two', `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`);
+      await committed('renumber-grown-two', `${PROGRAM},1,1,2025-06-02,Squat,1,210,5,`);
+
+      const grown = await committed(
+        'renumber-grown-two',
+        `${PROGRAM},5,1,2025-03-03,Squat,1,200,5,`,
+        `${PROGRAM},5,2,2025-03-10,Squat,1,205,5,`,
+        `${PROGRAM},5,1,2025-06-02,Squat,1,210,5,`,
+        `${PROGRAM},5,2,2025-06-09,Squat,1,215,5,`,
+      );
+
+      expect(grown).toMatchObject({ created: 2, skipped: 2 });
+      expect((await order(user)).map(([num, , start]) => [num, start])).toEqual([[1, '2025-03-03'], [2, '2025-06-02']]);
+      const bundle = await user.repos();
+      expect((await bundle.liftRecord.getLiftRecords(PROGRAM, 1)).map((r) => r.date)).toEqual([
+        day('2025-03-03'),
+        day('2025-03-10'),
+      ]);
+      expect((await bundle.liftRecord.getLiftRecords(PROGRAM, 2)).map((r) => r.date)).toEqual([
+        day('2025-06-02'),
+        day('2025-06-09'),
+      ]);
+    });
+
+    describe('joining the current macrocycle on dates alone, with renumbering off', () => {
+      beforeEach(() => {
+        process.env[RENUMBERING_SETTING] = 'off';
+      });
+
+      it('gives sessions dated in a closed live macrocycle their own macrocycle', async () => {
+        const user = as('join-closed-live');
+        await user.initialize('2026-01-05');
+        expect((await user.log(1, '2026-01-07')).statusCode).toBe(201);
+        await user.startNext({ macrocycleDate: '2026-03-02' });
+
+        // A week after its last session, but the macrocycle is closed.
+        await committed('join-closed-live', `${PROGRAM},1,2,2026-01-14,Squat,1,200,5,`);
+
+        expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([
+          [1, 'live'], [3, 'legacy'], [2, 'live'],
+        ]);
+        expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).toHaveLength(1);
+      });
+
+      it('gives sessions starting more than 14 days after the current macrocycle’s last one their own macrocycle', async () => {
+        const user = as('join-stale-run');
+        await user.initialize('2026-01-05');
+        expect((await user.log(1, '2026-01-07')).statusCode).toBe(201);
+
+        await committed('join-stale-run', `${PROGRAM},1,2,2026-01-22,Squat,1,200,5,`);
+
+        expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'live'], [2, 'legacy']]);
+        expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).toHaveLength(1);
+      });
+
+      it('adds one file group to the current macrocycle while its run is open, and gives the next its own', async () => {
+        const user = as('join-open-run');
+        await user.initialize('2026-01-05');
+        expect((await user.log(1, '2026-01-07')).statusCode).toBe(201);
+
+        await committed(
+          'join-open-run',
+          `${PROGRAM},1,2,2026-01-12,Squat,1,200,5,`,
+          // Within 14 days of the last session too, but the first group took the run.
+          `${PROGRAM},2,1,2026-01-19,Squat,1,205,5,`,
+        );
+
+        expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'live'], [2, 'legacy']]);
+        const bundle = await user.repos();
+        expect((await bundle.liftRecord.getLiftRecords(PROGRAM, 1)).map((r) => r.date)).toEqual([
+          day('2026-01-07'),
+          day('2026-01-12'),
+        ]);
+        expect((await bundle.liftRecord.getLiftRecords(PROGRAM, 2)).map((r) => r.date)).toEqual([day('2026-01-19')]);
+      });
+    });
+
     it('gives a separate file of later sessions its own macrocycle, not the earlier one it falls after', async () => {
       const user = as('renumber-separate-file');
       await committed('renumber-separate-file', `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`);

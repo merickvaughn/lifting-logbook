@@ -325,6 +325,9 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
         if (error instanceof MacrocycleNumberConflictError && error.detail?.table) {
           span.setAttribute('macrocycle.conflict_table', error.detail.table);
         }
+        if (error instanceof MacrocycleNumberConflictError && error.detail?.heldNumber !== undefined) {
+          span.setAttribute('macrocycle.conflict_number', error.detail.heldNumber);
+        }
         span.recordException(error instanceof Error ? error : String(error));
         span.setStatus({ code: SpanStatusCode.ERROR });
         throw error;

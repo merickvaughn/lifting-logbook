@@ -9,6 +9,8 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { liftRecordNaturalKey } from '@lifting-logbook/core';
 import { emptyFocusDayState, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
@@ -25,6 +27,9 @@ import { RENUMBERING_SETTING } from './macrocycle-renumbering';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
+
+const spans = new InMemorySpanExporter();
+new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(spans)] }).register();
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
 const OWNER_TC_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;
@@ -664,6 +669,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         data: { userId: USER_RENUMBER_ATOMIC, program: PROGRAM, macrocycleNum: 2, startDate: day('2026-03-02'), status: 'unknown', origin: 'legacy' },
       });
       const appDb = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+      spans.reset();
       try {
         await expect(
           asUser(appDb, USER_RENUMBER_ATOMIC, (tx) =>
@@ -676,6 +682,11 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       } finally {
         await appDb.$disconnect();
       }
+      const rewrite = spans.getFinishedSpans().find((s) => s.name === 'macrocycle.rewrite_numbers');
+      expect(rewrite?.attributes).toMatchObject({
+        'macrocycle.conflict_table': 'macrocycle',
+        'macrocycle.conflict_number': 2,
+      });
 
       expect(await numbersByTable(USER_RENUMBER_ATOMIC)).toEqual(everyTable([1], { macrocycle: [1, 2] }));
     }, DB_E2E_HOOK_TIMEOUT_MS);

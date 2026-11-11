@@ -67,6 +67,7 @@ describe('LiftRecordsController', () => {
       updateLiftRecord: jest.fn(),
       findStoredSets: jest.fn().mockResolvedValue([]),
       deleteLiftRecordsByNaturalKeys: jest.fn().mockResolvedValue(0),
+      getMacrocycleDateRanges: jest.fn().mockResolvedValue(new Map()),
     };
     dashboardRepo = {
       getMacrocycleDashboard: jest.fn().mockRejectedValue(new ProgramNotFoundError('5-3-1')),
