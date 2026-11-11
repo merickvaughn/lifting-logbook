@@ -32,8 +32,9 @@ export function calendarDayIn(timeZone: string | undefined, now: Date = new Date
 }
 
 /**
- * The user's calendar day as an ISO date, from the browser's clock and time zone. Every
- * focus endpoint takes it as `?today=`, since the server cannot know the user's zone.
+ * The user's calendar day as an ISO date, from the browser's own clock and time zone: the
+ * client-side counterpart of `calendarDayIn`. Callers such as the focus endpoints pass it
+ * as `?today=`, since the server cannot know the user's zone.
  */
 export function localToday(now: Date = new Date()): string {
   const month = String(now.getMonth() + 1).padStart(2, '0');
