@@ -96,13 +96,18 @@ export class MacrocycleNumberConflictError extends Error {
   constructor(
     public readonly program: string,
     public readonly macrocycleNum?: number,
-    /** For a renumbering, what blocked it, for logs and spans: the table, its number, the database error. */
-    public readonly detail?: { table?: string; heldNumber?: number; cause?: unknown },
+    /**
+     * What blocked it, for logs and spans: the table, its number, the database error. `inserting`
+     * marks new macrocycles that collided, rather than a renumbering.
+     */
+    public readonly detail?: { table?: string; heldNumber?: number; cause?: unknown; inserting?: boolean },
   ) {
     super(
-      macrocycleNum === undefined
-        ? `Program '${program}' couldn't be renumbered: a stored row already has a number it needs. Reload and try again.`
-        : `Program '${program}' already has a macrocycle ${macrocycleNum}. Reload and try again.`,
+      macrocycleNum !== undefined
+        ? `Program '${program}' already has a macrocycle ${macrocycleNum}. Reload and try again.`
+        : detail?.inserting
+          ? `Program '${program}' already has a macrocycle on a number the new ones need. Reload and try again.`
+          : `Program '${program}' couldn't be renumbered: a stored row already has a number it needs. Reload and try again.`,
     );
     this.name = 'MacrocycleNumberConflictError';
   }

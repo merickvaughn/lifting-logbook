@@ -177,7 +177,7 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
       });
     } catch (e) {
       if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new MacrocycleNumberConflictError(first.program, undefined, { cause: e });
+        throw new MacrocycleNumberConflictError(first.program, undefined, { cause: e, inserting: true });
       }
       throw e;
     }
@@ -207,7 +207,8 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     });
   }
 
-  async numbersInUse(program: string): Promise<number[]> {
+  async numbersInUse(program: string, above?: number): Promise<number[]> {
+    const bound = above === undefined ? Prisma.empty : Prisma.sql`AND "macrocycleNum" > ${above}`;
     // Raw SQL isn't auto-traced (ADR-024), so the read gets a span.
     return tracer.startActiveSpan('macrocycle.numbers_in_use', async (span) => {
       try {
@@ -216,7 +217,7 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
             NUMBERED_TABLES.map(
               (table) => Prisma.sql`
                 SELECT "macrocycleNum" AS num FROM ${Prisma.raw(`"${table}"`)}
-                WHERE "userId" = ${this.userId} AND "program" = ${program}`,
+                WHERE "userId" = ${this.userId} AND "program" = ${program} ${bound}`,
             ),
             ' UNION ',
           )}
@@ -307,16 +308,30 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
       }
       return rows;
     };
-    try {
-      // The request's transaction makes it all-or-nothing; a bare client needs its own.
-      return await runInteractive(this.prisma, rewrite);
-    } catch (err) {
-      // The unique keys stay the backstop behind the check above.
-      if (err instanceof Error && err.message.includes(UNIQUE_VIOLATION)) {
-        throw new MacrocycleNumberConflictError(program, undefined, { cause: err });
+    // Raw SQL isn't auto-traced (ADR-024), so the rewrite gets a span, whichever caller runs it.
+    return tracer.startActiveSpan('macrocycle.rewrite_numbers', async (span) => {
+      span.setAttribute('macrocycle.count', changes.size);
+      try {
+        // The request's transaction makes it all-or-nothing; a bare client needs its own.
+        const rows = await runInteractive(this.prisma, rewrite);
+        span.setAttribute('macrocycle.rows_rewritten', rows);
+        return rows;
+      } catch (err) {
+        // The unique keys stay the backstop behind the check above.
+        const error =
+          err instanceof Error && err.message.includes(UNIQUE_VIOLATION)
+            ? new MacrocycleNumberConflictError(program, undefined, { cause: err })
+            : err;
+        if (error instanceof MacrocycleNumberConflictError && error.detail?.table) {
+          span.setAttribute('macrocycle.conflict_table', error.detail.table);
+        }
+        span.recordException(error instanceof Error ? error : String(error));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw error;
+      } finally {
+        span.end();
       }
-      throw err;
-    }
+    });
   }
 }
 

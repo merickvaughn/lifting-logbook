@@ -45,19 +45,18 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
   }
 
   /** Wires in the bundle's other numbered stores; the factories pass `numberedStoresIn(bundle)`. */
-  attachNumbered(stores: readonly NumberedStore[]): this {
+  attachNumbered(stores: readonly NumberedStore[]): void {
     this.numbered = stores;
-    return this;
   }
 
   private numbersHeld(program: string): Set<number> {
     return new Set(this.rows.filter((r) => r.program === program).map((r) => r.macrocycleNum));
   }
 
-  async numbersInUse(program: string): Promise<number[]> {
+  async numbersInUse(program: string, above = -Infinity): Promise<number[]> {
     const held = new Set(this.numbersHeld(program));
     for (const store of this.numbered) for (const n of store.numbersHeld(program)) held.add(n);
-    return [...held].sort((a, b) => a - b);
+    return [...held].filter((n) => n > above).sort((a, b) => a - b);
   }
 
   async rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): Promise<number> {

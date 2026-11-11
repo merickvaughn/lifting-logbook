@@ -393,17 +393,25 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
 
     it('removes the legacy macrocycle the import created, and keeps one it found', async () => {
       const user = as('history-undo');
-      await (await user.repos()).macrocycle.ensure([
+      const bundle = await user.repos();
+      await bundle.macrocycle.ensure([
         { program: PROGRAM, macrocycleNum: 6, startDate: day('2025-05-05'), status: 'unknown', origin: 'legacy' },
       ]);
+      await bundle.liftRecord.appendLiftRecords(PROGRAM, [user.set(6, '2025-05-05')]);
       const res = await commit(
         'history-undo',
-        [HEADER, `${PROGRAM},5,1,2025-03-03,Squat,1,200,5,`, `${PROGRAM},6,1,2025-05-05,Squat,1,210,5,`].join('\n'),
+        [
+          HEADER,
+          `${PROGRAM},5,1,2025-03-03,Squat,1,200,5,`,
+          `${PROGRAM},6,1,2025-05-05,Squat,1,200,5,`,
+          `${PROGRAM},6,2,2025-05-12,Squat,1,210,5,`,
+        ].join('\n'),
       );
       expect(res.statusCode).toBe(200);
       const { batchId } = res.json() as { batchId: string };
-      // The 6 rows fit the stored legacy macrocycle 6 and join it; the 5 rows form a new one at the
-      // next number (#1199). Renumbering is still switched off, so the numbers stay out of date order.
+      // The 6 rows hold a set stored in legacy macrocycle 6, and the new one fits its dates, so they
+      // join it; the 5 rows form a new one at the next number (#1199). Renumbering is still
+      // switched off, so the numbers stay out of date order.
       expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[7, 'legacy'], [6, 'legacy']]);
 
       const undo = await user.inject('POST', `/programs/${PROGRAM}/import/${batchId}/undo`);
@@ -632,6 +640,82 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       expect(await order(user)).toEqual([[1, 'legacy', '2025-03-03'], [2, 'live', '2026-01-05']]);
       expect((await user.list())[1].id).toBe(live.id);
       expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 2)).toEqual([]);
+    });
+
+    it('adds a grown sheet to the macrocycle it formed when its number differs, with renumbering off', async () => {
+      process.env[RENUMBERING_SETTING] = 'off';
+      const user = as('renumber-grown-off');
+      await user.initialize('2026-01-05');
+      // The file's 3 forms a legacy macrocycle at the next number, 2.
+      await committed('renumber-grown-off', `${PROGRAM},3,1,2025-03-03,Squat,1,200,5,`);
+      expect((await order(user)).map(([num, origin]) => [num, origin])).toEqual([[2, 'legacy'], [1, 'live']]);
+
+      const grown = [`${PROGRAM},3,1,2025-03-03,Squat,1,200,5,`, `${PROGRAM},3,2,2025-03-10,Squat,1,205,5,`];
+      expect(await committed('renumber-grown-off', ...grown)).toMatchObject({ created: 1, skipped: 1 });
+
+      expect((await order(user)).map(([num, origin]) => [num, origin])).toEqual([[2, 'legacy'], [1, 'live']]);
+      expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 2)).toHaveLength(2);
+    });
+
+    it('adds rows dated in the live macrocycle to it, whatever the file numbers them', async () => {
+      const user = as('renumber-into-live');
+      await user.initialize('2026-01-05');
+      const [live] = await user.list();
+
+      await committed('renumber-into-live', `${PROGRAM},4,1,2026-01-07,Squat,1,200,5,`);
+
+      expect(await user.list()).toEqual([expect.objectContaining({ id: live.id, macrocycleNum: 1, origin: 'live' })]);
+      expect(await (await user.repos()).liftRecord.getLiftRecords(PROGRAM, 1)).toEqual([
+        expect.objectContaining({ date: day('2026-01-07') }),
+      ]);
+    });
+
+    it('gives a separate file of later sessions its own macrocycle, not the earlier one it falls after', async () => {
+      const user = as('renumber-separate-file');
+      await committed('renumber-separate-file', `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`);
+      // Nothing in this file is stored yet, so it isn't the first file grown.
+      await committed('renumber-separate-file', `${PROGRAM},1,1,2025-06-02,Squat,1,210,5,`);
+      expect((await order(user)).map(([num, , start]) => [num, start])).toEqual([[1, '2025-03-03'], [2, '2025-06-02']]);
+    });
+
+    it('removes a legacy macrocycle once the import that formed it and one that joined it are both undone', async () => {
+      const user = as('renumber-undo-joined');
+      const formed = await committed('renumber-undo-joined', `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`);
+      const joined = await committed(
+        'renumber-undo-joined',
+        `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`,
+        `${PROGRAM},1,2,2025-03-10,Squat,1,205,5,`,
+      );
+      expect(joined).toMatchObject({ created: 1, skipped: 1 });
+
+      // The joining import's set keeps the macrocycle when the one that formed it is undone.
+      await undo(user, formed.batchId);
+      expect((await user.list()).map((m) => [m.macrocycleNum, m.origin])).toEqual([[1, 'legacy']]);
+
+      await undo(user, joined.batchId);
+      expect(await user.list()).toEqual([]);
+    });
+
+    it('keeps a focus state saved before initializing on the next number when an undo closes a gap', async () => {
+      const user = as('renumber-undo-focus');
+      const focus = { ...emptyFocusDayState(), dismissed: true };
+      expect((await user.inject('PUT', `/programs/${PROGRAM}/workouts/1/focus-state`, focus)).statusCode).toBe(200);
+      const focusOn = async () => {
+        const bundle = await user.repos();
+        const nums = [1, 2, 3, 4];
+        const states = await Promise.all(nums.map((n) => bundle.focus.getDayState(PROGRAM, n, 1)));
+        return nums.filter((_, i) => states[i] !== null);
+      };
+      await committed('renumber-undo-focus', `${PROGRAM},1,1,2025-03-03,Squat,1,200,5,`);
+      const older = await committed('renumber-undo-focus', `${PROGRAM},1,1,2024-12-02,Squat,1,200,5,`);
+      expect((await order(user)).map(([num, , start]) => [num, start])).toEqual([[1, '2024-12-02'], [2, '2025-03-03']]);
+      expect(await focusOn()).toEqual([3]);
+
+      // Undoing the older import leaves one macrocycle, so the next number is 2.
+      await undo(user, older.batchId);
+
+      expect((await order(user)).map(([num, , start]) => [num, start])).toEqual([[1, '2025-03-03']]);
+      expect(await focusOn()).toEqual([2]);
     });
   });
 });

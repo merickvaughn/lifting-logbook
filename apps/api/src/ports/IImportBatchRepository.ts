@@ -39,6 +39,9 @@ export interface IImportBatchRepository {
    * delete loads only the batches it changes.
    */
   listWithKeysOn(program: string, destination: ImportKind, which: KeyNumbers): Promise<ImportBatchRecord[]>;
-  /** Replaces a batch's pre-image, as a renumbering does to the keys that hold a number. */
-  updatePreImage(id: string, preImage: ImportPreImage): Promise<void>;
+  /**
+   * Replaces the pre-image of each of the user's batches named, in one statement, as a renumbering
+   * or a delete does to the keys that hold a number.
+   */
+  updatePreImages(updates: ReadonlyArray<{ id: string; preImage: ImportPreImage }>): Promise<void>;
 }

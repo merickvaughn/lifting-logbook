@@ -52,8 +52,12 @@ const USER_RENUMBER_LOCK = 'macrocycle-db-renumber-lock';
 const USER_RENUMBER_ORPHAN = 'macrocycle-db-renumber-orphan';
 const USER_RENUMBER_STALE = 'macrocycle-db-renumber-stale';
 const USER_RENUMBER_UNSTARTED = 'macrocycle-db-renumber-unstarted';
+const USER_RENUMBER_UPGRADE = 'macrocycle-db-renumber-upgrade';
+const USER_RENUMBER_DEADLOCK = 'macrocycle-db-renumber-deadlock';
 const USERS = [
   USER_RENUMBER_UNSTARTED,
+  USER_RENUMBER_UPGRADE,
+  USER_RENUMBER_DEADLOCK,
   USER_RENUMBER_ORPHAN,
   USER_RENUMBER_STALE,
   USER_ALICE,
@@ -833,6 +837,62 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         await harness.done;
       }
       expect(await numbersByTable(user)).toEqual(afterOlderImport);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('upgrades a delete holding the lock shared to exclusive once the page write holding it has finished', async () => {
+      const user = USER_RENUMBER_UPGRADE;
+      await seedEveryTable(user, 2, '2026-01-05');
+      for (const [num, date] of [[1, '2025-01-06'], [3, '2026-03-02']] as const) {
+        await owner.macrocycle.create({
+          data: { userId: user, program: PROGRAM, macrocycleNum: num, startDate: day(date), status: 'completed', origin: 'imported' },
+        });
+      }
+      const numbers = async () =>
+        (await owner.macrocycle.findMany({ where: { userId: user }, orderBy: { macrocycleNum: 'asc' } })).map((row) => row.macrocycleNum);
+      const harness = await holdOpen(owner, null, (tx) =>
+        tx.$queryRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${user}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`,
+      );
+      let released = false;
+      try {
+        // Deleting the live 2 moves imported 3 down, which needs the lock exclusively.
+        const pending = injectAs(user, 'DELETE', `${base}/macrocycles/current`);
+        await waitForBlockedBy(harness.pid);
+        expect(await numbers()).toEqual([1, 2, 3]);
+        harness.release();
+        released = true;
+        expect((await pending).statusCode).toBe(204);
+      } finally {
+        if (!released) harness.release();
+        await harness.done;
+      }
+      expect(await numbers()).toEqual([1, 2]);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('refuses one of two requests holding the lock shared that both ask for it exclusively, and lets the other through', async () => {
+      const user = USER_RENUMBER_DEADLOCK;
+      const appDb = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+      let bothShared = () => undefined as void;
+      const shared = new Promise<void>((resolve) => {
+        let count = 0;
+        bothShared = () => {
+          if (++count === 2) resolve();
+        };
+      });
+      // As two starts or deletes do: shared for the id check, then exclusive to renumber.
+      const request = () =>
+        asUser(appDb, user, async (tx) => {
+          const repo = new PrismaMacrocycleRepository(tx, user);
+          expect(await repo.tryLockShared()).toBe(true);
+          bothShared();
+          await shared;
+          return repo.lockExclusive(IMPORT_LOCK_WAIT_MS);
+        });
+      try {
+        // Postgres finds the deadlock after `deadlock_timeout` (1s), well inside the 5s wait.
+        expect((await Promise.all([request(), request()])).sort()).toEqual([false, true]);
+      } finally {
+        await appDb.$disconnect();
+      }
     }, DB_E2E_HOOK_TIMEOUT_MS);
   });
 });

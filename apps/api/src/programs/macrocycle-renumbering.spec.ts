@@ -98,7 +98,8 @@ describe('renumberProgram', () => {
     const macrocycle = new InMemoryMacrocycleRepository([
       macrocycleRowFixture(1, { startDate: day('2026-01-05') }),
       macrocycleRowFixture(2, { startDate: day('2025-03-03'), origin: 'legacy', status: 'unknown' }),
-    ]).attachNumbered([liftRecord]);
+    ]);
+    macrocycle.attachNumbered([liftRecord]);
     const importBatch = new InMemoryImportBatchRepository();
     const batch: ImportBatchRecord = {
       id: 'batch-1',
@@ -154,10 +155,10 @@ describe('renumberProgram', () => {
       preImage: { '7:1:20240101:Squat:1': { kind: 'created', wrote: { weight: 1, reps: 1, notes: '' } } },
       createdAt: day('2026-11-01'),
     });
-    const update = jest.spyOn(repos.importBatch, 'updatePreImage');
+    const update = jest.spyOn(repos.importBatch, 'updatePreImages');
 
     expect(await renumberProgram(repos, PROGRAM)).toEqual(new Map([[2, 1], [1, 2]]));
-    expect(update.mock.calls.map(([id]) => id)).toEqual(['batch-1']);
+    expect(update.mock.calls.map(([updates]) => updates.map((u) => u.id))).toEqual([['batch-1']]);
 
     expect(await numbersByStart(repos)).toEqual([['2025-03-03', 1], ['2026-01-05', 2]]);
     expect((await repos.liftRecord.getLiftRecords(PROGRAM, 1)).map((r) => r.date)).toEqual([day('2025-03-03')]);
@@ -173,6 +174,7 @@ describe('renumberProgram', () => {
       'renumber.batches_rewritten': 1,
     });
     expect(span.attributes['renumber.duration_ms']).toEqual(expect.any(Number));
+    expect(span.attributes['renumber.lock_wait_ms']).toEqual(expect.any(Number));
   });
 
   it('needs no exclusive lock when nothing moves', async () => {
@@ -199,7 +201,8 @@ describe('renumberProgram', () => {
         macrocycleRowFixture(1, { startDate: day('2026-01-05') }),
         macrocycleRowFixture(2, { startDate: day('2025-03-03') }),
         macrocycleRowFixture(4, { startDate: day('2026-06-01') }),
-      ]).attachNumbered([liftRecord, skips]);
+      ]);
+      macrocycle.attachNumbered([liftRecord, skips]);
       const repos = { macrocycle, importBatch: new InMemoryImportBatchRepository() };
 
       await expect(renumberProgram(repos, PROGRAM)).rejects.toBeInstanceOf(MacrocycleNumberConflictError);

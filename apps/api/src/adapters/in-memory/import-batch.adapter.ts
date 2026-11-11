@@ -39,8 +39,10 @@ export class InMemoryImportBatchRepository implements IImportBatchRepository {
     );
   }
 
-  async updatePreImage(id: string, preImage: ImportPreImage): Promise<void> {
-    const record = this.store.get(id);
-    if (record) this.store.set(id, { ...record, preImage });
+  async updatePreImages(updates: ReadonlyArray<{ id: string; preImage: ImportPreImage }>): Promise<void> {
+    for (const { id, preImage } of updates) {
+      const record = this.store.get(id);
+      if (record) this.store.set(id, { ...record, preImage });
+    }
   }
 }

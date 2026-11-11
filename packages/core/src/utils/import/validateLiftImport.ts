@@ -3,9 +3,12 @@ import { LiftRecord } from '../../models';
 
 /**
  * The highest macrocycle number a file may carry: the bound `POST lift-records` already
- * applies. New macrocycles are numbered past the highest stored one, so an unbounded file number
- * could overflow the column. The lowest is 0, not the 1 a live macrocycle starts at:
- * spreadsheet exports number a first cycle 0 (`packages/core/tests/fixtures/lift_records.csv`).
+ * applies. A file's number only groups its rows and is never stored (#1199): each group joins a
+ * stored macrocycle or forms one numbered past them. The bound stays so a number far out of range
+ * (a date or a weight in the wrong column) gets a row error naming it, the same one either path
+ * gives. The lowest is 0, not the 1 a live
+ * macrocycle starts at: spreadsheet exports number a first cycle 0
+ * (`packages/core/tests/fixtures/lift_records.csv`).
  */
 export const MAX_FILE_MACROCYCLE_NUM = 1000;
 

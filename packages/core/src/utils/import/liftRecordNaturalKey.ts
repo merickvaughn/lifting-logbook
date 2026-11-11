@@ -59,8 +59,18 @@ function setSlotKey(r: Pick<LiftRecordKey, 'date' | 'lift' | 'setNum'>): string 
 /** The dates and lifts {@link classifyLiftRecordRows} needs stored sets for. */
 export type SetSlot = Pick<LiftRecordKey, 'date' | 'lift'>;
 
-/** A lift-record row as one import classifies it: `occurrence` is the one it's stored under. */
-export type ClassifiedLiftRecordRow<T> = ClassifiedRow<T> & { occurrence: number };
+/**
+ * A lift-record row as one import classifies it: `occurrence` is the one it's stored under, and
+ * `paired` the stored set a skipped row paired with, if any.
+ */
+export type ClassifiedLiftRecordRow<T, S extends LoggedSet = LoggedSet> = ClassifiedRow<T> & { occurrence: number; paired?: S };
+
+type Pairs = (stored: LoggedSet, row: LoggedSet) => boolean;
+const sameWorkout: Pairs = (s, r) => s.workoutNum === r.workoutNum;
+const sameSet: Pairs = (s, r) => s.weight === r.weight && s.reps === r.reps;
+
+/** How file rows pair with stored rows in one slot, closest match first. */
+const PAIRING_PASSES: readonly Pairs[] = [(s, r) => sameWorkout(s, r) && sameSet(s, r), sameSet, sameWorkout, () => true];
 
 /**
  * Classifies lift-record rows for one import by counting (proposal decision 13): every path that
@@ -73,9 +83,11 @@ export type ClassifiedLiftRecordRow<T> = ClassifiedRow<T> & { occurrence: number
  *   macrocycle and workout number, occurrence, weight and reps, is a skip. Within one file its
  *   numbers are consistent, so two same-day workouts that repeat a set keep both rows, as before
  *   #1199, and so do two sets the file's `Occurrence` column tells apart.
- * - The file's rows then pair with stored rows, those with identical weight and reps first, so
- *   the rows left over are the real extras. A paired row is a skip, even when its weight or reps
- *   differ from the stored row's, which stays as stored.
+ * - The file's rows then pair with stored rows, closest match first: the same workout number with
+ *   identical weight and reps, then identical weight and reps, then the same workout number. The
+ *   rows left over are the real extras, so a workout logged in the app pairs with its own row in
+ *   a sheet that also holds the day's other workout. A paired row is a skip, even when its weight
+ *   or reps differ from the stored row's, which stays as stored.
  * - An extra row keeps its occurrence unless a stored row with its workout number, or an earlier
  *   extra with its macrocycle and workout numbers, has it, and then takes the highest of those + 1.
  *   Those are the rows it could collide with under the unique key, which holds the workout
@@ -84,12 +96,12 @@ export type ClassifiedLiftRecordRow<T> = ClassifiedRow<T> & { occurrence: number
  *
  * `key` is the row's natural key under the occurrence it's stored with.
  */
-export function classifyLiftRecordRows<T>(
+export function classifyLiftRecordRows<T, S extends LoggedSet = LoggedSet>(
   rows: readonly T[],
   recordOf: (row: T) => LoggedSet,
-  stored: readonly LoggedSet[],
-): ClassifiedLiftRecordRow<T>[] {
-  const storedBySlot = new Map<string, LoggedSet[]>();
+  stored: readonly S[],
+): ClassifiedLiftRecordRow<T, S>[] {
+  const storedBySlot = new Map<string, S[]>();
   for (const s of stored) {
     const slot = setSlotKey(s);
     storedBySlot.set(slot, [...(storedBySlot.get(slot) ?? []), s]);
@@ -112,6 +124,7 @@ export function classifyLiftRecordRows<T>(
   });
 
   const occurrences = new Map<number, number>();
+  const pairedWith = new Map<number, S>();
   for (const [slot, indexes] of bySlot) {
     const pool = [...(storedBySlot.get(slot) ?? [])];
     // The occurrences a created row could collide with under the unique key, which holds the
@@ -122,22 +135,21 @@ export function classifyLiftRecordRows<T>(
       storedTaken.set(s.workoutNum, (storedTaken.get(s.workoutNum) ?? new Set<number>()).add(s.occurrence ?? 0));
     }
     const createdTaken = new Map<string, Set<number>>();
-    const unpaired: number[] = [];
-    for (const i of indexes) {
-      const r = recordOf(rows[i] as T);
-      const match = pool.findIndex((s) => s.weight === r.weight && s.reps === r.reps);
-      if (match === -1) unpaired.push(i);
-      else {
-        pool.splice(match, 1);
+    // Each pass pairs the rows left with the stored rows left, closest match first: same workout
+    // and identical weight and reps, then identical weight and reps, then same workout, then any.
+    let unpaired = indexes;
+    for (const pairs of PAIRING_PASSES) {
+      unpaired = unpaired.filter((i) => {
+        const r = recordOf(rows[i] as T);
+        const match = pool.findIndex((s) => pairs(s, r));
+        if (match === -1) return true;
+        const [paired] = pool.splice(match, 1);
+        if (paired) pairedWith.set(i, paired);
         kinds.set(i, 'skip');
-      }
+        return false;
+      });
     }
     for (const i of unpaired) {
-      if (pool.length > 0) {
-        pool.shift();
-        kinds.set(i, 'skip');
-        continue;
-      }
       kinds.set(i, 'create');
       const r = recordOf(rows[i] as T);
       const group = `${r.macrocycleNum}|${r.workoutNum}`;
@@ -154,7 +166,14 @@ export function classifyLiftRecordRows<T>(
   return rows.map((row, i) => {
     const r = recordOf(row);
     const occurrence = occurrences.get(i) ?? r.occurrence ?? 0;
-    return { row, kind: kinds.get(i) ?? 'skip', key: liftRecordNaturalKey({ ...r, occurrence }), occurrence };
+    const paired = pairedWith.get(i);
+    return {
+      row,
+      kind: kinds.get(i) ?? 'skip',
+      key: liftRecordNaturalKey({ ...r, occurrence }),
+      occurrence,
+      ...(paired ? { paired } : {}),
+    };
   });
 }
 

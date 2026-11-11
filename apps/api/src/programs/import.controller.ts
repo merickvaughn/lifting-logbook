@@ -60,6 +60,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
@@ -321,10 +322,11 @@ export class ImportController {
       // The batch goes first, so the renumbering below doesn't rewrite the keys of a batch about
       // to be deleted.
       await repos.importBatch.deleteById(batchId, user.id);
-      // A macrocycle the import created goes with its sets (ADR-042), and the numbers close up.
-      await removeEmptyLegacyRows(repos, program, legacyNums);
+      // A `legacy` macrocycle left with no sets goes (ADR-042): one the import created, or one
+      // its sets joined, and the numbers close up.
+      const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
+      await removeEmptyLegacyRows(repos, program, [...new Set([...legacyNums, ...setNums])]);
       await renumberProgram(repos, program);
-      return { batchId, restored, skipped, flagged };
     } else {
       for (const [key, entry] of Object.entries(batch.preImage)) {
         if (batch.destination === 'training-maxes') {
@@ -404,10 +406,9 @@ export class ImportController {
           }
         }
       }
+      // Delete the batch record now that undo has been applied (best-effort; ignore failures)
+      await repos.importBatch.deleteById(batchId, user.id);
     }
-
-    // Delete the batch record now that undo has been applied (best-effort; ignore failures)
-    await repos.importBatch.deleteById(batchId, user.id);
 
     return { batchId, restored, skipped, flagged };
   }

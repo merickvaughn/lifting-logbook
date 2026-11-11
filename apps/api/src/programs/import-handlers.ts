@@ -25,6 +25,7 @@ import {
   buildStrengthGoalPreImage,
   buildProgramSpecPreImage,
   classifyLiftRecordRows,
+  ClassifiedLiftRecordRow,
   pairWithRowNumber,
   buildSkippedDetail,
   liftRecordLabel,
@@ -59,7 +60,16 @@ export interface ImportHandler<T> {
  * (`placeFileRows`), and the program renumbers by date. `toCreate` and `legacyNums` carry the
  * numbers as stored after that, for the batch's pre-image.
  */
-export async function writeFileNumberRows(repos: RepositoryBundle, program: string, records: LiftRecord[]) {
+export async function writeFileNumberRows(
+  repos: Pick<RepositoryBundle, 'liftRecord' | 'macrocycle' | 'macrocycleDashboard' | 'importBatch'>,
+  program: string,
+  records: LiftRecord[],
+): Promise<{
+  classified: ClassifiedLiftRecordRow<{ r: LiftRecord; row: number }, LiftRecord>[];
+  toCreate: LiftRecord[];
+  created: number;
+  legacyNums: number[];
+}> {
   const classified = classifyLiftRecordRows(pairWithRowNumber(records), ({ r }) => r, await repos.liftRecord.findStoredSets(records));
   const creating = classified
     .filter((c) => c.kind === 'create')
@@ -67,7 +77,13 @@ export async function writeFileNumberRows(repos: RepositoryBundle, program: stri
       const { occurrence: _fileOccurrence, ...rest } = r;
       return { ...rest, ...withOccurrence(occurrence) };
     });
-  const { placed, legacyNums } = await placeFileRows(repos, program, creating);
+  // The program's macrocycles each file number's skipped rows were found in.
+  const pairedNums = new Map<number, Set<number>>();
+  for (const { row: { r }, paired } of classified) {
+    if (paired?.program !== program) continue;
+    pairedNums.set(r.macrocycleNum, (pairedNums.get(r.macrocycleNum) ?? new Set<number>()).add(paired.macrocycleNum));
+  }
+  const { placed, legacyNums } = await placeFileRows(repos, program, creating, pairedNums);
   const placedRows = creating.map((r) => ({ ...r, macrocycleNum: placed.get(r.macrocycleNum) ?? r.macrocycleNum }));
   const created = await repos.liftRecord.appendLiftRecords(program, placedRows);
   const changes = await renumberProgram(repos, program);

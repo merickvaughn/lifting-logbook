@@ -108,6 +108,34 @@ describe("classifyLiftRecordRows", () => {
     ]);
   });
 
+  it("pairs a stored row with the file's row in its own workout first", () => {
+    // Workout 2 logged in the app, then a sheet holding both of the day's workouts: the sheet's
+    // workout 2 is the stored set and workout 1 is new, at occurrence 0 in each.
+    expect(classify([set({ workoutNum: 1 }), set({ workoutNum: 2 })], [set({ workoutNum: 2 })])).toEqual([
+      { kind: "create", occurrence: 0 },
+      { kind: "skip", occurrence: 0 },
+    ]);
+    // Same when the stored set's weight was edited after it was logged.
+    expect(classify([set({ workoutNum: 1 }), set({ workoutNum: 2 })], [set({ workoutNum: 2, weight: 105 })])).toEqual([
+      { kind: "create", occurrence: 0 },
+      { kind: "skip", occurrence: 0 },
+    ]);
+    // Identical weight and reps still outrank the workout number.
+    expect(classify([set({ workoutNum: 1 }), set({ workoutNum: 2, weight: 90 })], [set({ workoutNum: 2 })])).toEqual([
+      { kind: "skip", occurrence: 0 },
+      { kind: "create", occurrence: 1 },
+    ]);
+  });
+
+  it("reports the stored set a skipped row paired with", () => {
+    const stored = set({ program: "other", macrocycleNum: 4, workoutNum: 2 });
+    const [skipped, created] = classifyLiftRecordRows([set({ workoutNum: 2 }), set({ workoutNum: 3 })], (r) => r, [stored]);
+    expect(skipped).toMatchObject({ kind: "skip" });
+    expect(skipped?.paired).toBe(stored);
+    expect(created).toMatchObject({ kind: "create" });
+    expect(created).not.toHaveProperty("paired");
+  });
+
   it("keeps an extra row's occurrence when no stored row has it", () => {
     const stored = [set({ occurrence: 0, weight: 50 })];
     expect(classify([set({ weight: 50 }), set({ occurrence: 3, weight: 70 })], stored)).toEqual([

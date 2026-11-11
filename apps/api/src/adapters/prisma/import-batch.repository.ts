@@ -50,8 +50,8 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
         span.setAttribute('import_batch.numbers', nums.length);
         // The key's number as `preImageKeyNumber` reads it; numeric, so a long digit run can't
         // overflow the cast. A key with no number matches neither way.
-        const ids = await this.prisma.$queryRaw<Array<{ id: string }>>`
-          SELECT b."id" FROM "import_batch" b
+        const rows = await this.prisma.$queryRaw<ImportBatch[]>`
+          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt" FROM "import_batch" b
           WHERE b."userId" = ${this.userId} AND b."program" = ${program} AND b."destination" = ${destination}
             AND EXISTS (
               SELECT 1 FROM jsonb_object_keys(b."preImage") AS k,
@@ -59,11 +59,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
               WHERE key.num IS NOT NULL
                 AND (key.num = ANY(${nums}::numeric[])) = ${'on' in which}
             )`;
-        span.setAttribute('import_batch.count', ids.length);
-        if (ids.length === 0) return [];
-        const rows = await this.prisma.importBatch.findMany({
-          where: { userId: this.userId, id: { in: ids.map((r) => r.id) } },
-        });
+        span.setAttribute('import_batch.count', rows.length);
         return rows.map(toRecord);
       } catch (err) {
         span.recordException(err instanceof Error ? err : String(err));
@@ -75,8 +71,27 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
     });
   }
 
-  async updatePreImage(id: string, preImage: ImportPreImage): Promise<void> {
-    await this.prisma.importBatch.updateMany({ where: { id, userId: this.userId }, data: { preImage: preImage as object } });
+  async updatePreImages(updates: ReadonlyArray<{ id: string; preImage: ImportPreImage }>): Promise<void> {
+    if (updates.length === 0) return;
+    const ids = updates.map((u) => u.id);
+    const preImages = updates.map((u) => JSON.stringify(u.preImage));
+    // One statement rather than one per batch: 50 batches of 400 keys took about 2.4 s one at a
+    // time and about 0.1 s together (ADR-042). Raw SQL isn't auto-traced (ADR-024), hence the span.
+    await tracer.startActiveSpan('import_batch.update_pre_images', async (span) => {
+      try {
+        span.setAttribute('import_batch.count', updates.length);
+        await this.prisma.$executeRaw`
+          UPDATE "import_batch" AS b SET "preImage" = u.pre::jsonb
+          FROM unnest(${ids}::text[], ${preImages}::text[]) AS u(id, pre)
+          WHERE b."id" = u.id AND b."userId" = ${this.userId}`;
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
   }
 }
 

@@ -59,10 +59,11 @@ export interface IMacrocycleRepository {
 
   /**
    * Every number any table that holds one (the tables {@link rewriteNumbers} lists) has for the
-   * program, ascending. A number with no `macrocycle` row is one a page wrote to before the
-   * program had a macrocycle on it, such as a focus state saved before initializing.
+   * program, ascending, only those above `above` when it's given. A number with no `macrocycle`
+   * row is one a page wrote to before the program had a macrocycle on it, such as a focus state
+   * saved before initializing.
    */
-  numbersInUse(program: string): Promise<number[]>;
+  numbersInUse(program: string, above?: number): Promise<number[]>;
 
   /**
    * Inserts a row. Throws `MacrocycleNumberConflictError` when the program already has a

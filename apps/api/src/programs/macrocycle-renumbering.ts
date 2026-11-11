@@ -56,6 +56,25 @@ export function renumberingChanges(rows: readonly Pick<MacrocycleRow, 'macrocycl
 }
 
 /**
+ * The renumbering of `program` as stored now: {@link renumberingChanges} for its macrocycles, plus
+ * the rows on numbers past every macrocycle that have no `macrocycle` row, such as a focus state
+ * saved before initializing. Those belong to the next macrocycle to start, which takes the number
+ * after the last one, so they move there with the rest; left behind, they'd sit past a gap.
+ * Numbered 1 to N already, nothing moves, and such rows are on N + 1.
+ */
+async function plannedChanges(repos: Pick<RepositoryBundle, 'macrocycle'>, program: string): Promise<Map<number, number>> {
+  const rows = await repos.macrocycle.list(program);
+  const changes = renumberingChanges(rows);
+  if (changes.size === 0) return changes;
+  const highest = Math.max(...rows.map((r) => r.macrocycleNum));
+  (await repos.macrocycle.numbersInUse(program, highest)).forEach((n, i) => {
+    const to = rows.length + 1 + i;
+    if (n !== to) changes.set(n, to);
+  });
+  return changes;
+}
+
+/**
  * A lift-records batch's pre-image with each key's number moved by `changes`, or null when no key
  * moves. Set keys start with the number (`<n>:...`, current and date-blind legacy forms alike),
  * and a `legacy` row the import created is keyed `macrocycle-row:<n>`.
@@ -84,8 +103,9 @@ export function renumberPreImageKeys(preImage: ImportPreImage, changes: Readonly
  * and otherwise waiting as long as an import does (`lockForRenumbering`), then 409
  * `macrocycle-busy`. It reads the order again once it has the lock.
  *
- * A span records the macrocycles moved, the rows and batches rewritten and how long it took (raw
- * SQL isn't auto-traced, ADR-024). A failure is recorded on the span, with the table and number
+ * A span records the numbers moved, the rows and batches rewritten, how long it waited for the
+ * lock and how long it took once it had the lock (raw SQL isn't auto-traced, ADR-024). A failure
+ * is recorded on the span, with the table and number
  * that blocked a rewrite, and logged as a warning.
  */
 export async function renumberProgram(
@@ -94,24 +114,27 @@ export async function renumberProgram(
 ): Promise<Map<number, number>> {
   if (!renumberingEnabled()) return new Map();
   return tracer.startActiveSpan('macrocycle.renumber', async (span) => {
-    const started = Date.now();
+    let started = Date.now();
     let changes = new Map<number, number>();
     try {
-      changes = renumberingChanges(await repos.macrocycle.list(program));
+      changes = await plannedChanges(repos, program);
       if (changes.size > 0) {
         await lockForRenumbering(repos);
-        changes = renumberingChanges(await repos.macrocycle.list(program));
+        span.setAttribute('renumber.lock_wait_ms', Date.now() - started);
+        started = Date.now();
+        changes = await plannedChanges(repos, program);
       }
       let rows = 0;
       let batches = 0;
       if (changes.size > 0) {
         rows = await repos.macrocycle.rewriteNumbers(program, changes);
+        const updates = [];
         for (const batch of await repos.importBatch.listWithKeysOn(program, 'lift-records', { on: [...changes.keys()] })) {
           const preImage = renumberPreImageKeys(batch.preImage, changes);
-          if (!preImage) continue;
-          await repos.importBatch.updatePreImage(batch.id, preImage);
-          batches++;
+          if (preImage) updates.push({ id: batch.id, preImage });
         }
+        await repos.importBatch.updatePreImages(updates);
+        batches = updates.length;
       }
       const durationMs = Date.now() - started;
       span.setAttribute('renumber.macrocycles', changes.size);

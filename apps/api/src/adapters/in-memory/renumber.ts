@@ -1,5 +1,3 @@
-import { MacrocycleNumberConflictError } from '../../ports/errors';
-
 /**
  * An in-memory store that holds macrocycle numbers, which a renumbering rewrites as the Prisma
  * adapter rewrites its tables (#1199). Returns how many rows moved.
@@ -58,7 +56,8 @@ export function dropFromMap<V>(
 
 /**
  * Moves each of `map`'s entries for `program` whose number is in `changes` to the key for its new
- * number. A new key that's already taken throws, as the database's unique key would.
+ * number. Every new key is free: the macrocycle adapter's `rewriteNumbers` refuses a renumbering
+ * before any store moves when a row that isn't moving holds a new number.
  */
 export function rekeyMap<V>(
   map: Map<string, V>,
@@ -75,10 +74,7 @@ export function rekeyMap<V>(
     map.delete(key);
     moved.push([keyWith(key, to), value]);
   }
-  for (const [key, value] of moved) {
-    if (map.has(key)) throw new MacrocycleNumberConflictError(program, undefined, { cause: `collides on ${JSON.stringify(key)}` });
-    map.set(key, value);
-  }
+  for (const [key, value] of moved) map.set(key, value);
   return moved.length;
 }
 
