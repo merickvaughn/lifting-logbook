@@ -1,5 +1,5 @@
 import { DEFAULT_SLOT_MAP, ALL_SLOT_MAP_ALIASES, IMPORT_LIFT_ALIASES, LIFT_CATALOG, resolveLift, buildEffectiveSlotMap, buildImportSlotMap, builtInLiftFor, canonicalAliasFor, isCanonicalAlias } from "@src/core";
-import { FOCUS_AREAS, FOCUS_AREA_MUSCLES, type Lift, type CustomLift } from "@lifting-logbook/types";
+import { FOCUS_AREAS, FOCUS_AREA_MUSCLES, PROGRESSION_TYPES, type Lift, type CustomLift } from "@lifting-logbook/types";
 
 describe("LIFT_CATALOG", () => {
   it("contains at least 20 lifts", () => {
@@ -38,6 +38,25 @@ describe("LIFT_CATALOG", () => {
   it("all lift ids are unique", () => {
     const ids = LIFT_CATALOG.map((l) => l.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  // Issue #1209: every built-in has a catalog default progression a lift can carry.
+  it("every lift has a selectable progression with a usable rep range", () => {
+    for (const lift of LIFT_CATALOG) {
+      const { type, repsLow, repsHigh } = lift.progression;
+      expect(PROGRESSION_TYPES).toContain(type);
+      expect(type).not.toBe("rpe");
+      if (type === "linear" || type === "double") expect(repsHigh).toBeGreaterThan(0);
+      // NaN compares false, so a missing bound fails here too.
+      if (type === "double") expect((repsLow ?? NaN) <= (repsHigh ?? NaN)).toBe(true);
+    }
+  });
+
+  it("defaults main lifts to linear, accessories to double, and the carry to manual", () => {
+    const byId = new Map(LIFT_CATALOG.map((l) => [l.id, l.progression]));
+    expect(byId.get("back-squat")).toEqual({ type: "linear", repsHigh: 5 });
+    expect(byId.get("cable-curl")).toEqual({ type: "double", repsLow: 8, repsHigh: 12 });
+    expect(byId.get("farmers-carry")).toEqual({ type: "manual" });
   });
 
   describe("classification and patterns — spot checks", () => {

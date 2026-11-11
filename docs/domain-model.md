@@ -118,6 +118,22 @@ That is a **separate per-user table keyed by lift *name***, while `CustomLift` i
 - Per-user lift attributes still live in two unrelated stores under two different keys. That is why
   a custom-lift rename orphans its overrides (D3).
 
+### A default progression per built-in lift
+
+Each `CatalogLift` also carries a `progression: CatalogProgression`, its default progression type
+from the shared `PROGRESSION_TYPES` vocabulary in `packages/types`, with a rep range where the type
+needs one. It is chosen by role classification: `compound` lifts default to `linear` at 5 reps,
+`accessory` lifts to `double` at 8–12, and Farmer's Carry to `manual`. It never names `rpe` and
+carries no increment.
+
+`resolveProgression` (`packages/core/src/services/maxes/resolveProgression.ts`) uses it as the
+fourth source for a lift's type and rep range, after the program's spec row, the lift's own value
+and the lifter's default, and before the `amrap_gated` fallback. Nothing calls the resolver yet,
+so every lift still progresses by the one `updateMaxes` rule. The per-lift and per-user values
+and the dispatch arrive in later phases of
+[#1206](https://github.com/merickvaughn/lifting-logbook/issues/1206) (see the
+[proposal](proposals/2026-11-10-lift-progression-types.md)).
+
 ### Modifications change how a lift is performed
 
 A **modification** is a user-defined change to how a lift is performed, such as Wide grip on Cable
@@ -523,6 +539,7 @@ classDiagram
         <<registry>>
         +MuscleTargets muscles
         +string[] aliases
+        +CatalogProgression progression
     }
     class MuscleTargets {
         +MuscleGroup[] primary
