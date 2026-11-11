@@ -34,7 +34,9 @@ const DB_E2E_HOOK_TIMEOUT_MS = 30_000;
 
 const USER_OWNER = 'db-e2e-focus';
 const USER_OTHER = 'db-e2e-focus-other';
-const USERS = [USER_OWNER, USER_OTHER];
+// Its own user, so a failure there leaves no blocks behind for the owner's tests.
+const USER_SUCCESSOR = 'db-e2e-focus-successor';
+const USERS = [USER_OWNER, USER_OTHER, USER_SUCCESSOR];
 const PROGRAM = '5-3-1';
 const TODAY = '2026-10-25';
 
@@ -184,6 +186,47 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect(await prisma.focusBlock.count({ where: { userId: USER_OWNER, series: ended.series } })).toBe(1);
     expect((await prisma.focusBlock.findUnique({ where: { id: ended.id } }))?.onEnd).toBe('prompt');
     expect((await owner('DELETE', `/focus/blocks/${ended.id}`)).statusCode).toBe(204);
+  });
+
+  // ADR-039, Amendment 4 (#1222): a stored, still-queued successor follows its block's
+  // settings edits, except a field the lifter already changed on the successor.
+  it('carries a settings edit into the stored queued successor, keeping its own edits', async () => {
+    const lifter = as(USER_SUCCESSOR);
+    try {
+      const october = (
+        await lifter('POST', `/focus/blocks?today=${TODAY}`, blockBody({ area: 'Core', onEnd: 'autoroll', nextArea: 'Calves' }))
+      ).json() as FocusBlockResponse;
+      expect((await lifter('GET', `/focus/blocks?today=${TODAY}`)).statusCode).toBe(200);
+      const stored = await prisma.focusBlock.findFirst({
+        where: { userId: USER_SUCCESSOR, series: october.series, start: new Date('2026-11-01') },
+      });
+      expect(stored).toMatchObject({ progression: 'double', selection: 'rules', overlap: 'reduce' });
+      if (!stored) throw new Error('the read stored no successor');
+
+      const patch = (id: string, body: unknown) => lifter('PATCH', `/focus/blocks/${id}?today=${TODAY}`, body);
+      expect((await patch(stored.id, { overlap: 'skip' })).statusCode).toBe(200);
+      const res = await patch(october.id, {
+        progression: 'percent_wave',
+        selection: 'rotate',
+        overlap: 'swap',
+        timer: { prep: 10, set: 40, rest: 90 },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const row = await prisma.focusBlock.findUnique({ where: { id: stored.id } });
+      expect(row).toMatchObject({
+        area: 'Calves',
+        progression: 'percent_wave',
+        selection: 'rotate',
+        overlap: 'skip',
+        timer: { prep: 10, set: 40, rest: 90 },
+        pool: stored.pool,
+      });
+    } finally {
+      // Pass or fail: the migration test below re-adds the old CHECK, which a stored
+      // percent_wave row would violate.
+      await prisma.focusBlock.deleteMany({ where: { userId: USER_SUCCESSOR } });
+    }
   });
 
   // Migration 20261111120000_focus_progression_types (#1213), run against blocks stored under

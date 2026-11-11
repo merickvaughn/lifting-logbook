@@ -360,7 +360,9 @@ A `double` entry's next weight is **derived** in `prescribe` from the `lastReps`
 ([ADR-039](adr/ADR-039-focus-block-persistence.md), Amendment 2). Those `lastReps` are **stored**:
 a workout's focus plan read writes each `double` entry's last session before that day into the
 pool, as `lastReps`, `weight` and `lastDate` (ADR-039, Amendment 3), so that read is not
-side-effect free.
+side-effect free. While the successor is queued, an edit to the block's selection, overlap,
+progression or timer follows into it unless the successor's own value was already changed
+(Amendment 4).
 
 ---
 

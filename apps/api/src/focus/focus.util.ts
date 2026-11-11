@@ -11,7 +11,8 @@ import {
 } from '@lifting-logbook/core';
 import { DEFAULT_WEIGHT_INCREMENT, FocusBlock, FocusBlockResponse } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
-import { IFocusRepository } from '../ports/IFocusRepository';
+import { FocusBlockNotFoundError } from '../ports/errors';
+import { FocusBlockPatch, IFocusRepository } from '../ports/IFocusRepository';
 import { isValidWorkoutNum } from '../programs/mappers';
 import { currentMacrocycleOrFirst, resolveWorkoutDay } from '../programs/workout-day.util';
 
@@ -84,37 +85,72 @@ export async function loadFocusBlocks(
   return focus.listBlocks();
 }
 
+const TIMER_FIELDS = ['prep', 'set', 'rest'] as const;
+
 /**
- * Carries a `percent_wave` block's training-max edits into its successor while the
- * successor is still queued. A successor is stored on the first read after its block
- * starts, with the maxes the block had then, so without this an edit made mid-block would
- * never reach it. Each shared lift's max moves by the same amount the block's did, which
- * keeps any edit already made to the successor (ADR-039, Amendment 2).
+ * Carries an edit to a block into its successor while the successor is still queued. A
+ * successor is stored on the first read after its block starts, with a copy of the block
+ * as it was then, so without this an edit made mid-block would never reach it.
+ *
+ * Selection, overlap, progression and each timer value follow when the successor still
+ * holds the block's value from before the edit; one the lifter changed on the successor
+ * stays. Under `percent_wave`, each shared lift's max moves by the same amount the block's
+ * did, which keeps an edit already made to the successor's max (ADR-039, Amendments 2 and 4).
  */
-export async function carryMaxEdits(
+export async function carryEditsToSuccessor(
   focus: IFocusRepository,
   before: FocusBlock,
   after: FocusBlock,
   today: string,
 ): Promise<void> {
-  if (after.progression !== 'percent_wave') return;
+  const start = nextStart(before);
+  const successor = (await focus.listBlocks()).find(
+    (block) =>
+      block.id !== after.id && block.series === after.series && block.start === start && blockStatus(block, today) === 'queued',
+  );
+  if (!successor) return;
+
+  const patch: FocusBlockPatch = {};
+  const follows = (field: 'selection' | 'overlap' | 'progression') =>
+    before[field] !== after[field] && successor[field] === before[field];
+  if (follows('selection')) patch.selection = after.selection;
+  if (follows('overlap')) patch.overlap = after.overlap;
+  if (follows('progression')) patch.progression = after.progression;
+
+  const timer = { ...successor.timer };
+  for (const key of TIMER_FIELDS) {
+    if (before.timer[key] !== after.timer[key] && successor.timer[key] === before.timer[key]) timer[key] = after.timer[key];
+  }
+  if (TIMER_FIELDS.some((key) => timer[key] !== successor.timer[key])) patch.timer = timer;
+
+  if (after.progression === 'percent_wave') {
+    const changes = trainingMaxChanges(before, after);
+    if (changes.size > 0) {
+      patch.pool = successor.pool.map((entry) => {
+        const change = changes.get(entry.lift);
+        return change === undefined ? entry : { ...entry, trainingMax: entry.trainingMax + change };
+      });
+    }
+  }
+
+  if (Object.keys(patch).length === 0) return;
+  try {
+    await focus.updateBlock(successor.id, patch);
+  } catch (e) {
+    // Deleted since it was listed (declined in another tab): nothing left to carry into,
+    // and the block's own edit is already saved.
+    if (!(e instanceof FocusBlockNotFoundError)) throw e;
+  }
+}
+
+/** How far each lift's training max moved in the edit, for the lifts whose max did. */
+function trainingMaxChanges(before: FocusBlock, after: FocusBlock): Map<string, number> {
   const changes = new Map<string, number>();
   for (const entry of after.pool) {
     const prior = before.pool.find((old) => old.lift === entry.lift);
     if (prior && prior.trainingMax !== entry.trainingMax) changes.set(entry.lift, entry.trainingMax - prior.trainingMax);
   }
-  if (changes.size === 0) return;
-  const start = nextStart(after);
-  const successor = (await focus.listBlocks()).find(
-    (block) => block.series === after.series && block.start === start && blockStatus(block, today) === 'queued',
-  );
-  if (!successor) return;
-  await focus.updateBlock(successor.id, {
-    pool: successor.pool.map((entry) => {
-      const change = changes.get(entry.lift);
-      return change === undefined ? entry : { ...entry, trainingMax: entry.trainingMax + change };
-    }),
-  });
+  return changes;
 }
 
 /**
