@@ -25,6 +25,7 @@ import {
   planFocusDay,
   prescribe,
   summarizeBlock,
+  withoutStaleLastReps,
   type FocusGroup,
   type MuscleOverride,
 } from '@lifting-logbook/core';
@@ -62,6 +63,7 @@ import {
   parseIsoDateParam,
   parseToday,
   parseWorkoutNum,
+  recordFocusSessions,
   toFocusBlockResponse,
 } from './focus.util';
 
@@ -161,6 +163,7 @@ export class FocusController {
     if (dto.nextArea !== undefined) patch.nextArea = dto.nextArea;
     if (dto.pool !== undefined) patch.pool = dto.pool.map((entry) => ({ ...entry }));
     const before = patch.pool === undefined ? null : await focus.getBlock(id);
+    if (before && patch.pool) patch.pool = withoutStaleLastReps(before.pool, patch.pool);
     const updated = await focus.updateBlock(id, patch);
     if (before) await carryMaxEdits(focus, before, updated, today);
     return toFocusBlockResponse(updated, today);
@@ -286,7 +289,7 @@ export class FocusWorkoutController {
     const repos = await this.factory.forUser(user);
     const context = await loadFocusWorkoutContext(repos, program, workoutNum);
     const [blocks, budget, savedState, metadata] = await Promise.all([
-      loadFocusBlocks(repos, today),
+      loadFocusBlocks(repos, today).then((loaded) => recordFocusSessions(repos, loaded, today)),
       repos.focus.getBudget(),
       repos.focus.getDayState(program, context.macrocycleNum, workoutNum),
       // All of the user's rows, as buildMuscleTargetResolver requires: it maps legacy

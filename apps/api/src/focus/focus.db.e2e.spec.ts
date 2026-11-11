@@ -362,4 +362,45 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
       prs: [{ lift: 'Rope Pushdown', weight: 45, reps: 12, previousWeight: 40, previousReps: 12 }],
     });
   });
+
+  it("GET /focus records a double block's last session under the restricted role, and progresses from it (#1221)", async () => {
+    const set = (date: string, weight: number, reps: number, setNum: number, userId = USER_OWNER) => ({
+      userId,
+      program: PROGRAM,
+      macrocycleNum: 1,
+      workoutNum: 1,
+      date: new Date(`${date}T00:00:00.000Z`),
+      lift: 'Cable Curl',
+      setNum,
+      weight,
+      reps,
+    });
+    await prisma.liftRecord.createMany({
+      data: [
+        set('2026-10-20', 25, 12, 1),
+        set('2026-10-20', 25, 12, 2),
+        set('2026-10-20', 25, 13, 3),
+        // Another user's later session must not reach this user's block.
+        set('2026-10-22', 25, 5, 1, USER_OTHER),
+      ],
+    });
+    const created = await owner(
+      'POST',
+      `/focus/blocks?today=${TODAY}`,
+      blockBody({ area: 'Biceps', series: 'cable-curl', pool: [entry('Cable Curl')] }),
+    );
+    expect(created.statusCode).toBe(201);
+    const { id } = created.json() as FocusBlockResponse;
+    const spec = (await owner('GET', `/programs/${PROGRAM}/spec`)).json() as { week: number; offset: number; increment: number }[];
+    const increment = spec.find((row) => row.week === 1 && row.offset === 0)?.increment ?? NaN;
+    expect(increment).toBeGreaterThan(0);
+
+    const res = await owner('GET', `/programs/${PROGRAM}/workouts/1/focus?today=${TODAY}`);
+    expect(res.statusCode).toBe(200);
+    const group = (res.json() as FocusDayPlanResponse).groups.find((g) => g.block.id === id);
+    expect(group?.items[0]?.prescription).toMatchObject({ weight: 25 + increment, lastReps: [12, 12, 13], progressed: true });
+
+    const row = await prisma.focusBlock.findUnique({ where: { id } });
+    expect(row?.pool).toEqual([entry('Cable Curl', { weight: 25, lastReps: [12, 12, 13], lastDate: '2026-10-20' })]);
+  });
 });

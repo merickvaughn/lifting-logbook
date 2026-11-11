@@ -1,6 +1,20 @@
 import { DEFAULT_FOCUS_TIMER, emptyFocusDayState } from '@lifting-logbook/types';
 import { parseFocusDayState, parseFocusPool, parseFocusTimer } from './focus-json';
 
+const poolEntry = () => ({
+  lift: 'Hammer Curl',
+  include: 'auto',
+  ruleLift: '',
+  swapTo: '',
+  sets: 3,
+  repsLow: 10,
+  repsHigh: 12,
+  weight: 25,
+  trainingMax: 40,
+  percent: 65,
+  rpe: 8,
+});
+
 describe('focus JSON read guards', () => {
   it('keeps the rest of a day state when only its placement is unreadable', () => {
     const state = parseFocusDayState({
@@ -44,6 +58,12 @@ describe('focus JSON read guards', () => {
     };
     expect(parseFocusPool([good, { ...good, include: 'never' }, 'x'])).toEqual([good]);
     expect(parseFocusPool({ not: 'an array' })).toEqual([]);
+  });
+
+  it("keeps a recorded session's lastReps and lastDate, dropping an unreadable lastDate (#1221)", () => {
+    const recorded = { ...poolEntry(), lastReps: [12, 12, 12], lastDate: '2026-10-20' };
+    expect(parseFocusPool([recorded])).toEqual([recorded]);
+    expect(parseFocusPool([{ ...recorded, lastDate: 'yesterday' }])).toEqual([{ ...poolEntry(), lastReps: [12, 12, 12] }]);
   });
 
   it('falls back to the default timer when the stored one is unreadable', () => {
