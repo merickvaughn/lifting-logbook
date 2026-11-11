@@ -7,7 +7,7 @@ import {
   fetchFocusBlocks,
   fetchFocusBlockSummary,
 } from '@/lib/client-api';
-import { localToday } from '@/lib/focusSetup';
+import { localToday } from '@/lib/calendarDay';
 import { logClientError } from '@/lib/log-client-error';
 import { makeBlock } from '@/lib/__tests__/focusBlockFixture';
 
@@ -18,7 +18,7 @@ jest.mock('@/lib/client-api', () => ({
   fetchFocusBlockSummary: jest.fn(),
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
-jest.mock('@/lib/focusSetup', () => ({ ...jest.requireActual('@/lib/focusSetup'), localToday: jest.fn() }));
+jest.mock('@/lib/calendarDay', () => ({ ...jest.requireActual('@/lib/calendarDay'), localToday: jest.fn() }));
 const mockToday = localToday as jest.MockedFunction<typeof localToday>;
 
 const mockFetchBlocks = fetchFocusBlocks as jest.MockedFunction<typeof fetchFocusBlocks>;

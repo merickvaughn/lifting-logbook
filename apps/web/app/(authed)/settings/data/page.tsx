@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { downloadDataExport } from '@/lib/client-api';
-import { localToday } from '@/lib/focusSetup';
+import { localToday } from '@/lib/calendarDay';
 import { logClientError } from '@/lib/log-client-error';
 
 // A browser may start the download after the click returns, and iOS Safari fails if the URL is
