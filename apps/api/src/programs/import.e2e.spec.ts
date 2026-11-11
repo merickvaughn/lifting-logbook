@@ -51,7 +51,15 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     await app.close();
   });
 
-  const AUTH = { authorization: 'Bearer dev-token' };
+  // A user per test: duplicates are counted across every program of a user (#1199), so tests that
+  // import the same rows into different programs would otherwise skip each other's.
+  let userId = 'dev-token';
+  let AUTH = { authorization: `Bearer ${userId}` };
+  let nextUser = 0;
+  beforeEach(() => {
+    userId = `import-e2e-${++nextUser}`;
+    AUTH = { authorization: `Bearer ${userId}` };
+  });
   const UUID_PROGRAM = '11111111-1111-1111-1111-111111111111';
 
   const importCsv = (
@@ -295,7 +303,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       const storedRecords = async (program: string) => {
         const repos = await app
           .get<IRepositoryFactory>(REPOSITORY_FACTORY)
-          .forUser({ id: process.env.DEV_USER_ID || 'dev-token', email: 'dev@example.com', provider: 'dev' });
+          .forUser({ id: userId, email: 'dev@example.com', provider: 'dev' });
         return repos.liftRecord.getLiftRecords(program, 1);
       };
 
@@ -1612,7 +1620,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     const storedRecords = async (program: string) => {
       const repos = await app
         .get<IRepositoryFactory>(REPOSITORY_FACTORY)
-        .forUser({ id: process.env.DEV_USER_ID || 'dev-token', email: 'dev@example.com', provider: 'dev' });
+        .forUser({ id: userId, email: 'dev@example.com', provider: 'dev' });
       return repos.liftRecord.getLiftRecords(program, 1);
     };
 

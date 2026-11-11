@@ -1,14 +1,49 @@
+import { Logger } from '@nestjs/common';
+import { InMemoryLiftRecordRepository } from '../adapters/in-memory/lift-record.adapter';
+import { InMemoryMacrocycleDashboardRepository } from '../adapters/in-memory/macrocycle-dashboard.adapter';
+import { InMemoryMacrocycleRepository } from '../adapters/in-memory/macrocycle.adapter';
+import { MacrocycleNumberConflictError } from '../ports/errors';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import {
   closingStatus,
   datesAsRead,
   legacyRowsPreImage,
+  placeFileRows,
   splitLegacyRowKeys,
   STALE_AFTER_DAYS,
   statusAsRead,
 } from './macrocycle-history.util';
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+
+describe('placeFileRows', () => {
+  it('logs a refused move of rows saved before initializing, as the renumbering logs its refusals', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const liftRecord = new InMemoryLiftRecordRepository(new Map());
+      // A set on number 1 with no macrocycle row, which the new legacy macrocycle 1 must move past.
+      await liftRecord.appendLiftRecords('5-3-1', [
+        { program: '5-3-1', macrocycleNum: 1, workoutNum: 1, date: day('2026-01-05'), lift: 'Squat', setNum: 1, weight: 200, reps: 5, notes: '' },
+      ]);
+      const macrocycle = new InMemoryMacrocycleRepository();
+      macrocycle.attachNumbered([liftRecord]);
+      const refused = new MacrocycleNumberConflictError('5-3-1', undefined, { table: 'lift_record', heldNumber: 2 });
+      jest.spyOn(macrocycle, 'rewriteNumbers').mockRejectedValue(refused);
+      const repos = { macrocycle, liftRecord, macrocycleDashboard: new InMemoryMacrocycleDashboardRepository() };
+
+      await expect(
+        placeFileRows(repos, '5-3-1', [{ macrocycleNum: 4, date: day('2025-03-03') }], new Map()),
+      ).rejects.toBe(refused);
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ program: '5-3-1', moves: { 1: 2 }, table: 'lift_record', heldNumber: 2 }),
+        'Moving unstarted rows failed',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
 
 const row = (overrides: Partial<MacrocycleRow> = {}): Pick<MacrocycleRow, 'status' | 'statusChosen' | 'startDate'> => ({
   status: 'in-progress',

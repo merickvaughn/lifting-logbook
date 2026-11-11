@@ -30,46 +30,24 @@ describe('a query by lift, across stored spellings', () => {
     expect(records.map((r) => r.lift).sort()).toEqual(['Bench P.', 'Bench Press', 'bench-press']);
   });
 
-  it('findExistingRecords treats a set logged under another spelling as already logged', async () => {
+  it('findStoredSets finds every set on the dates and lifts asked for, under any spelling and program', async () => {
     const repository = new InMemoryLiftRecordRepository(new Map());
-    const record = (lift: string, setNum = 1) => ({
-      program: 'p',
+    const record = (program: string, lift: string, date = JAN) => ({
+      program,
       macrocycleNum: 1,
       workoutNum: 1,
-      date: JAN,
+      date,
       lift,
-      setNum,
+      setNum: 1,
       weight: 100,
       reps: 5,
       notes: '',
     });
-    await repository.appendLiftRecords('p', [record('calf-raise')]);
+    await repository.appendLiftRecords('p', [record('p', 'calf-raise'), record('p', 'Back Squat')]);
+    await repository.appendLiftRecords('q', [record('q', 'Calf Raises'), record('q', 'calf-raise', new Date('2026-01-11'))]);
 
-    const candidates = [record('Calf Raises'), record('Calf Raises', 2), record('Back Squat')];
-    expect(await repository.findExistingRecords('p', candidates)).toEqual([candidates[0]]);
-  });
-
-  it('findExistingRecords keeps a second slot that spells the same catalog lift differently', async () => {
-    const repository = new InMemoryLiftRecordRepository(new Map());
-    const set = (lift: string, weight: number) => ({
-      program: 'p',
-      macrocycleNum: 1,
-      workoutNum: 1,
-      date: JAN,
-      lift,
-      setNum: 1,
-      weight,
-      reps: 5,
-      notes: '',
-    });
-    await repository.appendLiftRecords('p', [set('Pull-up', 0)]);
-
-    const weighted = set('Weighted Pull-ups', 45);
-    expect(await repository.findExistingRecords('p', [weighted])).toEqual([]);
-
-    // The same spelling is the same set whatever it weighed: a correction, not a second set.
-    const corrected = set('Pull-up', 10);
-    expect(await repository.findExistingRecords('p', [corrected])).toEqual([corrected]);
+    const found = await repository.findStoredSets([{ date: JAN, lift: 'Calf Raises' }]);
+    expect(found.map((r) => `${r.program}:${r.lift}`).sort()).toEqual(['p:calf-raise', 'q:Calf Raises']);
   });
 
   it('getHistory filters to every spelling of the lift', async () => {

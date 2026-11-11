@@ -3,11 +3,26 @@ import {
   IWorkoutLiftOverrideRepository,
   sameKindActions,
 } from '../../ports/IWorkoutLiftOverrideRepository';
+import { NumberedStore, dropFromMap, nulKey, numbersInMap, rekeyMap } from './renumber';
 
 export class InMemoryWorkoutLiftOverrideRepository
-  implements IWorkoutLiftOverrideRepository
+  implements IWorkoutLiftOverrideRepository, NumberedStore
 {
   private readonly store = new Map<string, LiftOverride[]>();
+
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
+    return rekeyMap(this.store, program, changes, nulKey.numberOf, nulKey.keyWith);
+  }
+
+  readonly table = 'workout_lift_override';
+
+  numbersHeld(program: string): Set<number> {
+    return numbersInMap(this.store, program, nulKey.numberOf);
+  }
+
+  dropNumbers(program: string, macrocycleNums: readonly number[]): void {
+    dropFromMap(this.store, program, macrocycleNums, nulKey.numberOf);
+  }
 
   private key(program: string, macrocycleNum: number, workoutNum: number): string {
     // Null byte delimiter — program slugs cannot contain \0, unambiguous even for slugs like "5-3-1".
@@ -66,12 +81,5 @@ export class InMemoryWorkoutLiftOverrideRepository
       k,
       existing.filter((o) => o.lift !== lift),
     );
-  }
-
-  async deleteAllOverrides(program: string, keep: readonly number[] = []): Promise<void> {
-    for (const k of this.store.keys()) {
-      const [p, m] = k.split('\0');
-      if (p === program && !keep.includes(Number(m))) this.store.delete(k);
-    }
   }
 }

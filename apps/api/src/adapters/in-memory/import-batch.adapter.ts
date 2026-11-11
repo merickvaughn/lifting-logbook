@@ -1,4 +1,11 @@
-import { IImportBatchRepository, ImportBatchRecord } from '../../ports/IImportBatchRepository';
+import { ImportPreImage } from '@lifting-logbook/core';
+import { ImportKind } from '@lifting-logbook/types';
+import {
+  IImportBatchRepository,
+  ImportBatchRecord,
+  KeyNumbers,
+  preImageKeyNumber,
+} from '../../ports/IImportBatchRepository';
 
 export class InMemoryImportBatchRepository implements IImportBatchRepository {
   private readonly store = new Map<string, ImportBatchRecord>();
@@ -16,5 +23,26 @@ export class InMemoryImportBatchRepository implements IImportBatchRepository {
   async deleteById(id: string, userId: string): Promise<void> {
     const record = this.store.get(id);
     if (record && record.userId === userId) this.store.delete(id);
+  }
+
+  // The bundle is one user's, so every stored batch is theirs.
+  async listWithKeysOn(program: string, destination: ImportKind, which: KeyNumbers): Promise<ImportBatchRecord[]> {
+    const matches = (n: number) => ('on' in which ? which.on.includes(n) : !which.except.includes(n));
+    return [...this.store.values()].filter(
+      (b) =>
+        b.program === program &&
+        b.destination === destination &&
+        Object.keys(b.preImage).some((key) => {
+          const num = preImageKeyNumber(key);
+          return num !== null && matches(num);
+        }),
+    );
+  }
+
+  async updatePreImages(updates: ReadonlyArray<{ id: string; preImage: ImportPreImage }>): Promise<void> {
+    for (const { id, preImage } of updates) {
+      const record = this.store.get(id);
+      if (record) this.store.set(id, { ...record, preImage });
+    }
   }
 }

@@ -1,9 +1,24 @@
 import { IWorkoutDateOverrideRepository } from '../../ports/IWorkoutDateOverrideRepository';
+import { NumberedStore, dropFromMap, nulKey, numbersInMap, rekeyMap } from './renumber';
 
 export class InMemoryWorkoutDateOverrideRepository
-  implements IWorkoutDateOverrideRepository
+  implements IWorkoutDateOverrideRepository, NumberedStore
 {
   private readonly store = new Map<string, Date>();
+
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
+    return rekeyMap(this.store, program, changes, nulKey.numberOf, nulKey.keyWith);
+  }
+
+  readonly table = 'workout_date_override';
+
+  numbersHeld(program: string): Set<number> {
+    return numbersInMap(this.store, program, nulKey.numberOf);
+  }
+
+  dropNumbers(program: string, macrocycleNums: readonly number[]): void {
+    dropFromMap(this.store, program, macrocycleNums, nulKey.numberOf);
+  }
 
   private key(program: string, macrocycleNum: number, workoutNum: number): string {
     // Use null byte as delimiter — program slugs cannot contain \0, so this is unambiguous
@@ -37,12 +52,5 @@ export class InMemoryWorkoutDateOverrideRepository
     newDate: Date,
   ): Promise<void> {
     this.store.set(this.key(program, macrocycleNum, workoutNum), newDate);
-  }
-
-  async deleteAllOverrides(program: string, keep: readonly number[] = []): Promise<void> {
-    for (const k of this.store.keys()) {
-      const [p, m] = k.split('\0');
-      if (p === program && !keep.includes(Number(m))) this.store.delete(k);
-    }
   }
 }

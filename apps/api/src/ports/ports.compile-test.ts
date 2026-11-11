@@ -48,8 +48,6 @@ const _macrocycleDashboardRepo: IMacrocycleDashboardRepository = {
     Promise.resolve({} as MacrocycleDashboard),
   saveMacrocycleDashboard: (): Promise<void> =>
     Promise.resolve(),
-  deleteMacrocycleDashboard: (): Promise<void> =>
-    Promise.resolve(),
 };
 
 // ---------------------------------------------------------------------------
@@ -79,14 +77,12 @@ const _liftRecordRepo: ILiftRecordRepository = {
     Promise.resolve([]),
   appendLiftRecords: (): Promise<number> =>
     Promise.resolve(0),
-  findExistingRecords: (): Promise<LiftRecord[]> =>
+  findStoredSets: (): Promise<LiftRecord[]> =>
     Promise.resolve([]),
   updateLiftRecord: (): Promise<LiftRecord | null> =>
     Promise.resolve(null),
   deleteLiftRecordsByNaturalKeys: (): Promise<number> =>
     Promise.resolve(0),
-  deleteAllLiftRecords: (): Promise<void> =>
-    Promise.resolve(),
 };
 
 // ---------------------------------------------------------------------------
@@ -152,7 +148,6 @@ const _workoutDateOverrideRepo: IWorkoutDateOverrideRepository = {
   getOverride: () => Promise.resolve(null),
   getOverridesForMacrocycle: () => Promise.resolve(new Map()),
   upsertOverride: () => Promise.resolve(),
-  deleteAllOverrides: () => Promise.resolve(),
 };
 
 const _liftMetadataRepo: ILiftMetadataRepository = {
@@ -183,20 +178,17 @@ const _workoutLiftOverrideRepo: IWorkoutLiftOverrideRepository = {
   getOverridesForMacrocycle: () => Promise.resolve(new Map()),
   upsertOverride: () => Promise.resolve(),
   deleteOverride: () => Promise.resolve(),
-  deleteAllOverrides: () => Promise.resolve(),
 };
 
 const _macrocycleScheduledWorkoutRepo: IMacrocycleScheduledWorkoutRepository = {
   getScheduledWorkouts: () => Promise.resolve([]),
   saveScheduledWorkouts: () => Promise.resolve(),
-  deleteAllScheduledWorkouts: (): Promise<void> => Promise.resolve(),
 };
 
 const _workoutSkipOverrideRepo: IWorkoutSkipOverrideRepository = {
   getSkipsForMacrocycle: () => Promise.resolve(new Set<number>()),
   skipWorkout: () => Promise.resolve(),
   unskipWorkout: () => Promise.resolve(),
-  deleteAllSkips: () => Promise.resolve(),
 };
 
 const _userSettingsRepo: IUserSettingsRepository = {
@@ -274,7 +266,6 @@ const _focusRepo: IFocusRepository = {
   setBudget: (budget) => Promise.resolve(budget),
   getDayState: () => Promise.resolve(null),
   saveDayState: (_program, _macrocycleNum, _workoutNum, state) => Promise.resolve(state),
-  deleteAllDayStates: (): Promise<void> => Promise.resolve(),
 };
 
 const _macrocycleRepo: IMacrocycleRepository = {
@@ -293,16 +284,21 @@ const _macrocycleRepo: IMacrocycleRepository = {
       unmatched: false,
       importedThrough: null,
     }),
+  createMany: (): Promise<void> => Promise.resolve(),
   ensure: (): Promise<void> => Promise.resolve(),
   close: (): Promise<void> => Promise.resolve(),
   delete: (): Promise<void> => Promise.resolve(),
   deleteAllExcept: (): Promise<void> => Promise.resolve(),
+  numbersInUse: () => Promise.resolve([]),
+  rewriteNumbers: () => Promise.resolve(0),
 };
 
 const _importBatchRepo: IImportBatchRepository = {
   save: (): Promise<void> => Promise.resolve(),
   findById: () => Promise.resolve(null),
   deleteById: (): Promise<void> => Promise.resolve(),
+  listWithKeysOn: () => Promise.resolve([]),
+  updatePreImages: (): Promise<void> => Promise.resolve(),
 };
 
 const _repositoryBundle: RepositoryBundle = {

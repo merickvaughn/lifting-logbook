@@ -65,8 +65,8 @@ describe("buildLiftRecordsPreview", () => {
     expect(buildLiftRecordsPreview(incoming, [])).toMatchObject({ creates: 2, skips: 0 });
   });
 
-  it("keeps two spellings apart when the matching row was itself skipped (#1191)", () => {
-    // The second row repeats the first's key, so it is never written and can't make the third a repeat.
+  it("counts a repeat under another spelling once, beside a different set on the same slot (#1191, #1199)", () => {
+    // The first two differ in weight, so both are written; the third repeats the second.
     const incoming = [
       liftRecord({ lift: "calf-raise", weight: 100 }),
       liftRecord({ lift: "calf-raise", weight: 120 }),

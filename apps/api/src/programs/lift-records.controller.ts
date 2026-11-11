@@ -23,10 +23,8 @@ import {
   LiftRecord,
   buildLiftRecordId,
   buildSkippedDetail,
-  classifyLiftRecordRows,
   liftRecordLabel,
   liftRecordNaturalKey,
-  pairWithRowNumber,
   parseCsvText,
   parseLiftRecordId,
   parseLiftRecords,
@@ -48,10 +46,10 @@ import { toLiftRecordResponse } from './mappers';
 import {
   assertMacrocycleWritable,
   checkMacrocycleId,
-  ensureFileNumberRows,
   lockForImport,
 } from './macrocycle-history.util';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
+import { writeFileNumberRows } from './import-handlers';
 import { RlsTxTimeout } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 
@@ -256,7 +254,6 @@ export class LiftRecordsController {
     // own, so an exact-name match against an existing custom lift is the only way a
     // custom lift can ever resolve here.
     const repos = await this.factory.forUser(user);
-    const { liftRecord } = repos;
 
     const { valid, errors } = validateLiftImport(parsed, await effectiveSlotMapFor(repos));
     if (errors.length > 0) {
@@ -267,22 +264,15 @@ export class LiftRecordsController {
     // valid one doesn't hold page writes off while it's checked. Before the reads it guards.
     await lockForImport(repos);
 
-    // Stamp each record with the route program before persisting, and pair each
-    // with its 1-based CSV row number (via pairWithRowNumber, shared with the
-    // Smart Import wizard's liftRecordsHandler — issues #891/#896) so a skip can
-    // be reported against the original file position after classification
-    // (which may reorder nothing but does filter).
-    const rows = pairWithRowNumber(valid.map((r) => ({ ...r, program })));
-
-    const existing = await liftRecord.findExistingRecords(program, rows.map(({ r }) => r));
-    const classified = [...classifyLiftRecordRows(rows, ({ r }) => r, existing)];
-    const toCreate = classified.filter((c) => c.kind === 'create').map((c) => c.row.r);
-    // Imported history is read-only, and a new file number gets a `legacy` row (ADR-042).
-    await ensureFileNumberRows(repos, program, toCreate);
-
-    // `written` comes directly from the database's createMany count so it is
-    // accurate even if a concurrent import caused additional rows to be skipped.
-    const written = await liftRecord.appendLiftRecords(program, toCreate);
+    // Stamp each record with the route program before persisting. The shared writer pairs each
+    // with its 1-based CSV row number (shared with the Smart Import wizard's liftRecordsHandler —
+    // issues #891/#896) so a skip can be reported against the original file position. `written`
+    // comes directly from the database's createMany count.
+    const { classified, created: written } = await writeFileNumberRows(
+      repos,
+      program,
+      valid.map((r) => ({ ...r, program })),
+    );
 
     const liftNames = await liftNamesFor(repos);
     const skipped = buildSkippedDetail(classified, (r) => liftRecordLabel(r, liftNames));

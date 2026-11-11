@@ -24,6 +24,7 @@ import { InMemoryWorkoutLiftOverrideRepository } from '../in-memory/workout-lift
 import { InMemoryWorkoutRepository } from '../in-memory/workout.adapter';
 import { InMemoryWorkoutSkipOverrideRepository } from '../in-memory/workout-skip-override.adapter';
 import { SEED_PROGRAM, seedLiftRecords, seedMacrocycleRow } from '../in-memory/fixtures';
+import { numberedStoresIn } from '../in-memory/renumber';
 
 // The dev seed user gets pre-populated training maxes so existing tests that
 // rely on seeded data continue to work without additional setup.
@@ -45,11 +46,12 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       const strengthGoal = new InMemoryStrengthGoalRepository();
       const trainingMax = new InMemoryTrainingMaxRepository(preSeed);
       const userSettings = new InMemoryUserSettingsRepository();
-      this.bundles.set(user.id, {
+      const macrocycle = new InMemoryMacrocycleRepository(preSeed ? [seedMacrocycleRow()] : []);
+      const bundle: RepositoryBundle = {
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift,
         focus: new InMemoryFocusRepository(),
-        macrocycle: new InMemoryMacrocycleRepository(preSeed ? [seedMacrocycleRow()] : []),
+        macrocycle,
         macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(preSeed),
         macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
         importBatch: new InMemoryImportBatchRepository(),
@@ -73,7 +75,10 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
         workoutDateOverride: new InMemoryWorkoutDateOverrideRepository(),
         workoutLiftOverride: new InMemoryWorkoutLiftOverrideRepository(),
         workoutSkipOverride: new InMemoryWorkoutSkipOverrideRepository(),
-      });
+      };
+      // Every other store that holds a number, so a renumbering or delete reaches them all (#1199).
+      macrocycle.attachNumbered(numberedStoresIn(bundle));
+      this.bundles.set(user.id, bundle);
     }
     return this.bundles.get(user.id)!;
   }

@@ -2,8 +2,8 @@ import { BadRequestException, HttpException, PayloadTooLargeException } from '@n
 import { FastifyRequest } from 'fastify';
 
 /**
- * Maximum rows accepted per import. Guards against unbounded OR queries in
- * findExistingRecords and excessive memory usage during parsing.
+ * Maximum rows accepted per import. Bounds the stored-set lookup (`findStoredSets`, which
+ * queries in chunks of dates) and memory use during parsing.
  */
 export const MAX_IMPORT_ROWS = 5_000;
 

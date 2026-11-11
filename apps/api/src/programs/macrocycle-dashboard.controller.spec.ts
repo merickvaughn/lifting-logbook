@@ -73,7 +73,6 @@ describe('MacrocycleDashboardController', () => {
     repo = {
       getMacrocycleDashboard: jest.fn(),
       saveMacrocycleDashboard: jest.fn(),
-      deleteMacrocycleDashboard: jest.fn(),
     };
     specRepo = { getProgramSpec: jest.fn(), saveProgramSpec: jest.fn(), deleteSpecRows: jest.fn() };
     scheduledRepo = {
@@ -84,7 +83,7 @@ describe('MacrocycleDashboardController', () => {
       getLiftRecords: jest.fn().mockResolvedValue([]),
       getLoggedWorkoutNums: jest.fn().mockResolvedValue(new Set<number>()),
       appendLiftRecords: jest.fn(),
-      findExistingRecords: jest.fn(),
+      findStoredSets: jest.fn(),
       updateLiftRecord: jest.fn(),
       deleteLiftRecordsByNaturalKeys: jest.fn(),
     };

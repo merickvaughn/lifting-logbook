@@ -41,10 +41,4 @@ export class PrismaMacrocycleScheduledWorkoutRepository implements IMacrocycleSc
       }),
     ]);
   }
-
-  async deleteAllScheduledWorkouts(program: string, keep: readonly number[] = []): Promise<void> {
-    await this.prisma.macrocycleScheduledWorkout.deleteMany({
-      where: { userId: this.userId, program, macrocycleNum: { notIn: [...keep] } },
-    });
-  }
 }

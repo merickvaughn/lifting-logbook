@@ -48,10 +48,4 @@ export class PrismaMacrocycleDashboardRepository implements IMacrocycleDashboard
       },
     });
   }
-
-  async deleteMacrocycleDashboard(program: string): Promise<void> {
-    await this.prisma.macrocycleDashboard.deleteMany({
-      where: { userId: this.userId, program },
-    });
-  }
 }

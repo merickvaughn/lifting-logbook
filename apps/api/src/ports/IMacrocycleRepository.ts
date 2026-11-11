@@ -58,10 +58,21 @@ export interface IMacrocycleRepository {
   highestNumber(program: string): Promise<number>;
 
   /**
+   * Every number any table that holds one (the tables {@link rewriteNumbers} lists) has for the
+   * program, ascending, only those above `above` when it's given. A number with no `macrocycle`
+   * row is one a page wrote to before the program had a macrocycle on it, such as a focus state
+   * saved before initializing.
+   */
+  numbersInUse(program: string, above?: number): Promise<number[]>;
+
+  /**
    * Inserts a row. Throws `MacrocycleNumberConflictError` when the program already has a
    * macrocycle with that number, such as one a concurrent request just created.
    */
   create(macrocycle: NewMacrocycle): Promise<MacrocycleRow>;
+
+  /** Inserts rows in one statement, throwing as {@link create} does when a number is taken. */
+  createMany(macrocycles: readonly NewMacrocycle[]): Promise<void>;
 
   /**
    * Inserts each row whose number the program doesn't have yet, and leaves the rest alone, so
@@ -75,9 +86,24 @@ export interface IMacrocycleRepository {
    */
   close(program: string, macrocycleNum: number, end: { endDate: Date; status: MacrocycleStatus }): Promise<void>;
 
-  /** Deletes the program's rows numbered in `macrocycleNums`. */
+  /**
+   * Deletes the program's macrocycles numbered in `macrocycleNums` from every table that holds a
+   * number (the tables {@link rewriteNumbers} lists), so nothing is left on a number a
+   * renumbering then moves another macrocycle onto (#1199).
+   */
   delete(program: string, macrocycleNums: readonly number[]): Promise<void>;
 
-  /** Deletes the program's rows except those numbered in `keep`. */
+  /** Deletes the program's rows on every number but those in `keep`, from every table, as {@link delete} does. */
   deleteAllExcept(program: string, keep: readonly number[]): Promise<void>;
+
+  /**
+   * Renumbers the program's macrocycles (proposal decision 3): rewrites each old number in
+   * `changes` to its new one in every table that holds a number — `lift_record`,
+   * `macrocycle_dashboard`, the three workout override tables, `focus_day_state`,
+   * `macrocycle_scheduled_workout` and `macrocycle` — through a temporary negative number, since
+   * the unique keys are checked per row. Returns how many rows changed. Import batch keys are the
+   * caller's. Throws `MacrocycleNumberConflictError`, naming the table, before it moves anything
+   * if a row in any of those tables holds a new number that `changes` doesn't move.
+   */
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): Promise<number>;
 }

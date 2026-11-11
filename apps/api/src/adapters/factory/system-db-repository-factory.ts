@@ -43,6 +43,7 @@ import { PrismaWorkoutSkipOverrideRepository } from '../prisma/workout-skip-over
 import { InMemoryWorkoutSkipOverrideRepository } from '../in-memory/workout-skip-override.adapter';
 import { PrismaUserDataExportRepository } from '../prisma/user-data-export.repository';
 import { InMemoryUserDataExportRepository } from '../in-memory/user-data-export.adapter';
+import { numberedStoresIn } from '../in-memory/renumber';
 import { PrismaUserSettingsRepository } from '../prisma/user-settings.repository';
 
 interface UserDataSourceRow {
@@ -131,11 +132,12 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     const strengthGoal = new InMemoryStrengthGoalRepository();
     const trainingMax = new InMemoryTrainingMaxRepository();
     const userSettings = new InMemoryUserSettingsRepository();
-    return {
+    const macrocycle = new InMemoryMacrocycleRepository();
+    const bundle: RepositoryBundle = {
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift,
       focus: new InMemoryFocusRepository(),
-      macrocycle: new InMemoryMacrocycleRepository(),
+      macrocycle,
       macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(),
       macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
       importBatch: new InMemoryImportBatchRepository(),
@@ -160,6 +162,9 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
       workoutLiftOverride: new InMemoryWorkoutLiftOverrideRepository(),
       workoutSkipOverride: new InMemoryWorkoutSkipOverrideRepository(),
     };
+    // Every other store that holds a number, so a renumbering or delete reaches them all (#1199).
+    macrocycle.attachNumbered(numberedStoresIn(bundle));
+    return bundle;
   }
 
   private getOrCreatePrisma(): PrismaClient {

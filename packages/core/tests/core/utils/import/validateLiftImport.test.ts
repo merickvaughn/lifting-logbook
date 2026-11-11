@@ -86,6 +86,26 @@ describe("validateLiftImport", () => {
     expect(errors[0]).toMatchObject({ row: 1, field: "date", code: "DATE_INVALID" });
   });
 
+  it("flags a macrocycle number outside 0 to 1000 on its row, and accepts both ends", () => {
+    const records = [
+      makeRecord({ macrocycleNum: -1 }),
+      makeRecord({ macrocycleNum: 0 }),
+      makeRecord({ macrocycleNum: 1000 }),
+      makeRecord({ macrocycleNum: 1001 }),
+      makeRecord({ macrocycleNum: 2.5 }),
+    ];
+    const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);
+    expect(valid.map((r) => r.macrocycleNum)).toEqual([0, 1000]);
+    expect(errors).toEqual(
+      [1, 4, 5].map((row) => ({
+        row,
+        field: "macrocycleNum",
+        code: "MACROCYCLE_NUM_INVALID",
+        message: "Macrocycle # must be a whole number from 0 to 1000",
+      })),
+    );
+  });
+
   it("assigns a distinct code per invalid numeric field (macrocycleNum, workoutNum, setNum)", () => {
     const records = [
       makeRecord({ macrocycleNum: NaN }),

@@ -1,4 +1,4 @@
-import { LiftRecord } from '@lifting-logbook/core';
+import { LiftRecord, SetSlot } from '@lifting-logbook/core';
 
 export interface DateRange {
   first: Date;
@@ -48,17 +48,12 @@ export interface ILiftRecordRepository {
   appendLiftRecords(program: string, records: LiftRecord[]): Promise<number>;
 
   /**
-   * Returns the subset of `candidates` whose natural key
-   * (macrocycleNum, workoutNum, date, lift, setNum) already exists for the given program.
-   * `date` is part of the key (issue #884): two sets can otherwise legitimately
-   * share the same (macrocycleNum, workoutNum, lift, setNum) tuple on different real
-   * calendar dates and must not be treated as duplicates of each other.
-   * A set under another spelling of a built-in lift counts too, when weight and reps also match
-   * (`findAlreadyLogged`, #947). That goes by the built-in spellings alone, so a row stored as the
-   * text of a custom lift named like one can match it.
-   * Used by the CSV import endpoint to identify which rows will be skipped as duplicates.
+   * Every set the user has stored on one of `slots`' dates under one of its lift's spellings
+   * (#1135), in any program: what an import's count-based duplicate check
+   * (`classifyLiftRecordRows`, proposal decision 13) compares a file with. Goes by the built-in
+   * spellings alone, so a row stored as the text of a custom lift named like one can match it.
    */
-  findExistingRecords(program: string, candidates: LiftRecord[]): Promise<LiftRecord[]>;
+  findStoredSets(slots: readonly SetSlot[]): Promise<LiftRecord[]>;
 
   updateLiftRecord(
     program: string,
@@ -79,10 +74,4 @@ export interface ILiftRecordRepository {
    * list of macrocycles reads no sets.
    */
   getMacrocycleDateRanges(program: string, macrocycleNum?: number): Promise<Map<number, DateRange>>;
-
-  /**
-   * Deletes every lift record for a program, across all macrocycles except those numbered in
-   * `keep`. No-op if none exist.
-   */
-  deleteAllLiftRecords(program: string, keep?: readonly number[]): Promise<void>;
 }

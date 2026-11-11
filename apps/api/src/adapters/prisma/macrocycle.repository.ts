@@ -1,9 +1,10 @@
-import { Macrocycle, PrismaClient } from '@prisma/client';
+import { Macrocycle, Prisma, PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { MacrocycleOrigin, MacrocycleStatus } from '@lifting-logbook/types';
-import { trace } from '@opentelemetry/api';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { MacrocycleNumberConflictError } from '../../ports/errors';
 import { IMacrocycleRepository, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
+import { PrismaExecutor, runInteractive } from './prisma-tx.util';
 
 function toRow(row: Macrocycle): MacrocycleRow {
   return {
@@ -29,13 +30,17 @@ function toRow(row: Macrocycle): MacrocycleRow {
  */
 export const MACROCYCLE_LOCK_NAMESPACE = 1171;
 
-/** Postgres's `lock_not_available`, raised when a lock wait reaches `lock_timeout`. */
-const LOCK_NOT_AVAILABLE = '55P03';
+/**
+ * Postgres's `lock_not_available`, raised when a lock wait reaches `lock_timeout`, and
+ * `deadlock_detected`, raised in one of two requests that both hold the lock shared and both
+ * ask for it exclusively, as two renumbering starts or deletes can (#1199).
+ */
+const LOCK_REFUSED = ['55P03', '40P01'];
 
-function isLockTimeout(err: unknown): boolean {
+function isLockRefused(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const meta = (err as { meta?: { code?: unknown } }).meta;
-  return meta?.code === LOCK_NOT_AVAILABLE || err.message.includes(LOCK_NOT_AVAILABLE);
+  return LOCK_REFUSED.some((code) => meta?.code === code || err.message.includes(code));
 }
 
 const tracer = trace.getTracer('prisma-macrocycle-repository');
@@ -89,7 +94,7 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
             SELECT pg_advisory_xact_lock(hashtextextended(${this.userId}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`;
         } catch (err) {
           // The failed statement aborts the transaction, which the caller's 409 rolls back.
-          if (!isLockTimeout(err)) throw err;
+          if (!isLockRefused(err)) throw err;
           span.setAttribute('lock.acquired', false);
           return false;
         }
@@ -155,6 +160,29 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     }
   }
 
+  async createMany(macrocycles: readonly NewMacrocycle[]): Promise<void> {
+    const [first] = macrocycles;
+    if (!first) return;
+    try {
+      await this.prisma.macrocycle.createMany({
+        data: macrocycles.map((m) => ({
+          userId: this.userId,
+          program: m.program,
+          macrocycleNum: m.macrocycleNum,
+          startDate: m.startDate,
+          endDate: m.endDate ?? null,
+          status: m.status,
+          origin: m.origin,
+        })),
+      });
+    } catch (e) {
+      if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new MacrocycleNumberConflictError(first.program, undefined, { cause: e, inserting: true });
+      }
+      throw e;
+    }
+  }
+
   async ensure(macrocycles: readonly NewMacrocycle[]): Promise<void> {
     if (macrocycles.length === 0) return;
     // ON CONFLICT DO NOTHING: a row a concurrent request just inserted is kept, not a 409.
@@ -179,16 +207,148 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     });
   }
 
-  async delete(program: string, macrocycleNums: readonly number[]): Promise<void> {
-    if (macrocycleNums.length === 0) return;
-    await this.prisma.macrocycle.deleteMany({
-      where: { userId: this.userId, program, macrocycleNum: { in: [...macrocycleNums] } },
+  async numbersInUse(program: string, above?: number): Promise<number[]> {
+    const bound = above === undefined ? Prisma.empty : Prisma.sql`AND "macrocycleNum" > ${above}`;
+    // Raw SQL isn't auto-traced (ADR-024), so the read gets a span.
+    return tracer.startActiveSpan('macrocycle.numbers_in_use', async (span) => {
+      try {
+        const rows = await this.prisma.$queryRaw<Array<{ num: number }>>`
+          ${Prisma.join(
+            NUMBERED_TABLES.map(
+              (table) => Prisma.sql`
+                SELECT "macrocycleNum" AS num FROM ${Prisma.raw(`"${table}"`)}
+                WHERE "userId" = ${this.userId} AND "program" = ${program} ${bound}`,
+            ),
+            ' UNION ',
+          )}
+          ORDER BY num`;
+        span.setAttribute('macrocycle.count', rows.length);
+        return rows.map((r) => r.num);
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
     });
   }
 
+  async delete(program: string, macrocycleNums: readonly number[]): Promise<void> {
+    if (macrocycleNums.length === 0) return;
+    const nums = [...macrocycleNums];
+    await this.deleteFromEveryTable(program, Prisma.sql`"macrocycleNum" = ANY(${nums}::int[])`, nums.length);
+  }
+
   async deleteAllExcept(program: string, keep: readonly number[]): Promise<void> {
-    await this.prisma.macrocycle.deleteMany({
-      where: { userId: this.userId, program, macrocycleNum: { notIn: [...keep] } },
+    const kept = [...keep];
+    await this.deleteFromEveryTable(program, Prisma.sql`NOT ("macrocycleNum" = ANY(${kept}::int[]))`);
+  }
+
+  /** Deletes the program's rows matching `which` from every numbered table, in one span. */
+  private async deleteFromEveryTable(program: string, which: Prisma.Sql, count?: number): Promise<void> {
+    // Raw SQL isn't auto-traced (ADR-024), so the deletes get a span.
+    await tracer.startActiveSpan('macrocycle.delete_numbers', async (span) => {
+      try {
+        if (count !== undefined) span.setAttribute('macrocycle.count', count);
+        let rows = 0;
+        await runInteractive(this.prisma, async (db) => {
+          for (const table of NUMBERED_TABLES) {
+            rows += await db.$executeRaw`
+              DELETE FROM ${Prisma.raw(`"${table}"`)}
+              WHERE "userId" = ${this.userId} AND "program" = ${program} AND ${which}`;
+          }
+        });
+        span.setAttribute('macrocycle.rows_deleted', rows);
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
+  async rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): Promise<number> {
+    if (changes.size === 0) return 0;
+    const olds = [...changes.keys()];
+    const news = [...changes.values()];
+    const temps = news.map((n) => -1 - n);
+    // Two passes, since unique keys are checked per row: every moving row first takes -1 - its
+    // new number, which no stored row holds, then flips to the new number.
+    const rewrite = async (db: PrismaExecutor): Promise<number> => {
+      // First, a row on a new number that `changes` doesn't move, in any table, refuses the whole
+      // rewrite: it would merge into the macrocycle that moves onto that number, which the unique
+      // keys catch only when the rest of the key matches too.
+      const [held] = await db.$queryRaw<Array<{ tbl: string; num: number }>>`
+        ${Prisma.join(
+          NUMBERED_TABLES.map(
+            (table) => Prisma.sql`
+              (SELECT ${table}::text AS tbl, "macrocycleNum" AS num FROM ${Prisma.raw(`"${table}"`)}
+               WHERE "userId" = ${this.userId} AND "program" = ${program}
+                 AND "macrocycleNum" = ANY(${news}::int[]) AND NOT ("macrocycleNum" = ANY(${olds}::int[]))
+               LIMIT 1)`,
+          ),
+          ' UNION ALL ',
+        )}
+        LIMIT 1`;
+      if (held) throw new MacrocycleNumberConflictError(program, undefined, { table: held.tbl, heldNumber: held.num });
+      let rows = 0;
+      for (const table of NUMBERED_TABLES) {
+        rows += await db.$executeRaw`
+          UPDATE ${Prisma.raw(`"${table}"`)} AS t SET "macrocycleNum" = -1 - m.new_num
+          FROM unnest(${olds}::int[], ${news}::int[]) AS m(old_num, new_num)
+          WHERE t."userId" = ${this.userId} AND t."program" = ${program} AND t."macrocycleNum" = m.old_num`;
+      }
+      for (const table of NUMBERED_TABLES) {
+        await db.$executeRaw`
+          UPDATE ${Prisma.raw(`"${table}"`)} SET "macrocycleNum" = -1 - "macrocycleNum"
+          WHERE "userId" = ${this.userId} AND "program" = ${program} AND "macrocycleNum" = ANY(${temps}::int[])`;
+      }
+      return rows;
+    };
+    // Raw SQL isn't auto-traced (ADR-024), so the rewrite gets a span, whichever caller runs it.
+    return tracer.startActiveSpan('macrocycle.rewrite_numbers', async (span) => {
+      span.setAttribute('macrocycle.count', changes.size);
+      try {
+        // The request's transaction makes it all-or-nothing; a bare client needs its own.
+        const rows = await runInteractive(this.prisma, rewrite);
+        span.setAttribute('macrocycle.rows_rewritten', rows);
+        return rows;
+      } catch (err) {
+        // The unique keys stay the backstop behind the check above.
+        const error =
+          err instanceof Error && err.message.includes(UNIQUE_VIOLATION)
+            ? new MacrocycleNumberConflictError(program, undefined, { cause: err })
+            : err;
+        if (error instanceof MacrocycleNumberConflictError && error.detail?.table) {
+          span.setAttribute('macrocycle.conflict_table', error.detail.table);
+        }
+        if (error instanceof MacrocycleNumberConflictError && error.detail?.heldNumber !== undefined) {
+          span.setAttribute('macrocycle.conflict_number', error.detail.heldNumber);
+        }
+        span.recordException(error instanceof Error ? error : String(error));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw error;
+      } finally {
+        span.end();
+      }
     });
   }
 }
+
+/** Postgres's `unique_violation`, which a raw query's error carries in its message. */
+const UNIQUE_VIOLATION = '23505';
+
+/** Every table that holds a macrocycle number (ADR-042). Constants, so safe to splice into SQL. */
+export const NUMBERED_TABLES = [
+  'lift_record',
+  'macrocycle_dashboard',
+  'workout_date_override',
+  'workout_skip_override',
+  'workout_lift_override',
+  'focus_day_state',
+  'macrocycle_scheduled_workout',
+  'macrocycle',
+] as const;

@@ -1,15 +1,41 @@
 import {
   LiftRecord,
+  SetSlot,
   buildLiftRecordId,
-  findAlreadyLogged,
   liftRecordNaturalKey,
   liftSpellings,
   withModifications,
 } from '@lifting-logbook/core';
 import { DateRange, dateRangesByMacrocycle, ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
+import { NumberedStore } from './renumber';
 
-export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
+export class InMemoryLiftRecordRepository implements ILiftRecordRepository, NumberedStore {
   constructor(private readonly store: Map<string, LiftRecord[]>) {}
+
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
+    const stored = this.store.get(program);
+    if (!stored) return 0;
+    let moved = 0;
+    const records = stored.map((r) => {
+      const to = changes.get(r.macrocycleNum);
+      if (to === undefined) return r;
+      moved++;
+      return { ...r, macrocycleNum: to };
+    });
+    this.store.set(program, records);
+    return moved;
+  }
+
+  readonly table = 'lift_record';
+
+  numbersHeld(program: string): Set<number> {
+    return new Set((this.store.get(program) ?? []).map((r) => r.macrocycleNum));
+  }
+
+  dropNumbers(program: string, macrocycleNums: readonly number[]): void {
+    const stored = this.store.get(program);
+    if (stored) this.store.set(program, stored.filter((r) => !macrocycleNums.includes(r.macrocycleNum)));
+  }
 
   async getLiftRecords(program: string, macrocycleNum: number): Promise<LiftRecord[]> {
     return (this.store.get(program) ?? []).filter((r) => r.macrocycleNum === macrocycleNum);
@@ -52,8 +78,11 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
     return toInsert.length;
   }
 
-  async findExistingRecords(program: string, candidates: LiftRecord[]): Promise<LiftRecord[]> {
-    return findAlreadyLogged(candidates, this.store.get(program) ?? []);
+  async findStoredSets(slots: readonly SetSlot[]): Promise<LiftRecord[]> {
+    const wanted = new Set(
+      slots.flatMap(({ date, lift }) => liftSpellings(lift).map((spelling) => `${date.getTime()}|${spelling}`)),
+    );
+    return [...this.store.values()].flat().filter((r) => wanted.has(`${r.date.getTime()}|${r.lift}`));
   }
 
   async updateLiftRecord(
@@ -92,11 +121,5 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository {
     return dateRangesByMacrocycle(
       macrocycleNum === undefined ? records : records.filter((r) => r.macrocycleNum === macrocycleNum),
     );
-  }
-
-  async deleteAllLiftRecords(program: string, keep: readonly number[] = []): Promise<void> {
-    const kept = (this.store.get(program) ?? []).filter((r) => keep.includes(r.macrocycleNum));
-    if (kept.length > 0) this.store.set(program, kept);
-    else this.store.delete(program);
   }
 }

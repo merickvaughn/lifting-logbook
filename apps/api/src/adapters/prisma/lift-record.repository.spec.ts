@@ -225,50 +225,53 @@ describe('PrismaLiftRecordRepository', () => {
     });
   });
 
-  describe('findExistingRecords', () => {
-    it('includes date in the OR-filter clause', async () => {
+  describe('findStoredSets', () => {
+    it('asks for the user’s sets on each date under every spelling, in any program', async () => {
       const prisma = makePrisma();
       const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
 
-      await repo.findExistingRecords('5-3-1', [liftRecord()]);
+      await repo.findStoredSets([liftRecord(), liftRecord({ lift: 'Back Squat' })]);
 
-      expect(prisma.liftRecord.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            OR: [
-              expect.objectContaining({
-                macrocycleNum: 2,
-                workoutNum: 3,
-                date: new Date('2026-04-01T00:00:00.000Z'),
-                lift: { in: expect.arrayContaining(['Bench Press', 'bench-press']) },
-                setNum: 1,
-              }),
-            ],
-          }),
-        }),
-      );
+      const { where } = (prisma.liftRecord.findMany as jest.Mock).mock.calls[0][0];
+      expect(where).not.toHaveProperty('program');
+      expect(where).toEqual({
+        userId: 'user-1',
+        OR: [
+          {
+            date: new Date('2026-04-01T00:00:00.000Z'),
+            lift: { in: expect.arrayContaining(['Bench Press', 'bench-press', 'Back Squat', 'back-squat']) },
+          },
+        ],
+      });
     });
 
-    // Core regression for issue #884: a row already stored on one date must not
-    // be reported as "existing" for a candidate sharing every other field but a
-    // different date — findMany returning the stored (different-date) row is not
-    // enough by itself; the natural-key filter must also disambiguate on read.
-    it('does not treat a same-key-different-date candidate as already existing', async () => {
-      const stored = { ...BASE_ROW, date: new Date('2025-12-16T00:00:00.000Z') };
-      const prisma = makePrisma({
-        liftRecord: {
-          findMany: jest.fn().mockResolvedValue([stored]),
-          createMany: jest.fn(),
-          update: jest.fn(),
-          deleteMany: jest.fn(),
-        },
-      } as unknown as Partial<PrismaClient>);
+    it('splits the lookup by parameter count, not date count, covering every date once', async () => {
+      const prisma = makePrisma();
       const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
+      // 300 dates with 60 custom lifts each: 61 parameters a date, so 200 dates would bind 12,200.
+      const slots = Array.from({ length: 300 }, (_, d) =>
+        Array.from({ length: 60 }, (__, l) =>
+          liftRecord({ date: new Date(Date.UTC(2025, 0, 1 + d)), lift: `Custom ${l}` }),
+        ),
+      ).flat();
 
-      const candidate = liftRecord({ date: new Date('2024-01-12') });
-      const existing = await repo.findExistingRecords('5-3-1', [candidate]);
+      await repo.findStoredSets(slots);
 
-      expect(existing).toEqual([]);
+      const calls = (prisma.liftRecord.findMany as jest.Mock).mock.calls.map(
+        ([arg]) => (arg as { where: { OR: Array<{ lift: { in: string[] } }> } }).where.OR,
+      );
+      expect(calls.length).toBe(2);
+      for (const or of calls) {
+        expect(or.reduce((n, c) => n + 1 + c.lift.in.length, 0)).toBeLessThanOrEqual(10_000);
+      }
+      expect(calls.flat()).toHaveLength(300);
+    });
+
+    it('makes no query for no slots', async () => {
+      const prisma = makePrisma();
+      const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
+      expect(await repo.findStoredSets([])).toEqual([]);
+      expect(prisma.liftRecord.findMany).not.toHaveBeenCalled();
     });
   });
 

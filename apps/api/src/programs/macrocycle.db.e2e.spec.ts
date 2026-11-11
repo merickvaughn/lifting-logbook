@@ -8,16 +8,28 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { liftRecordNaturalKey } from '@lifting-logbook/core';
 import { emptyFocusDayState, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { seedTrainingMaxes } from '../adapters/in-memory/fixtures';
 import multipart from '@fastify/multipart';
-import { MACROCYCLE_LOCK_NAMESPACE, PrismaMacrocycleRepository } from '../adapters/prisma/macrocycle.repository';
+import {
+  MACROCYCLE_LOCK_NAMESPACE,
+  NUMBERED_TABLES,
+  PrismaMacrocycleRepository,
+} from '../adapters/prisma/macrocycle.repository';
+import { MacrocycleNumberConflictError } from '../ports/errors';
 import { IMPORT_LOCK_WAIT_MS } from './macrocycle-history.util';
+import { RENUMBERING_SETTING } from './macrocycle-renumbering';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
+
+const spans = new InMemorySpanExporter();
+new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(spans)] }).register();
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
 const OWNER_TC_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;
@@ -37,7 +49,35 @@ const USER_BACKFILL_BARE = 'macrocycle-db-backfill-bare';
 const USER_RACE = 'macrocycle-db-race';
 const USER_ENSURE = 'macrocycle-db-ensure';
 const USER_LOCK = 'macrocycle-db-lock';
-const USERS = [USER_ALICE, USER_BOB, USER_BACKFILL, USER_BACKFILL_BARE, USER_RACE, USER_ENSURE, USER_LOCK];
+const USER_RENUMBER = 'macrocycle-db-renumber';
+const USER_RENUMBER_OTHER = 'macrocycle-db-renumber-other';
+const USER_RENUMBER_ATOMIC = 'macrocycle-db-renumber-atomic';
+const USER_RENUMBER_BATCH = 'macrocycle-db-renumber-batch';
+const USER_RENUMBER_LOCK = 'macrocycle-db-renumber-lock';
+const USER_RENUMBER_ORPHAN = 'macrocycle-db-renumber-orphan';
+const USER_RENUMBER_STALE = 'macrocycle-db-renumber-stale';
+const USER_RENUMBER_UNSTARTED = 'macrocycle-db-renumber-unstarted';
+const USER_RENUMBER_UPGRADE = 'macrocycle-db-renumber-upgrade';
+const USER_RENUMBER_DEADLOCK = 'macrocycle-db-renumber-deadlock';
+const USERS = [
+  USER_RENUMBER_UNSTARTED,
+  USER_RENUMBER_UPGRADE,
+  USER_RENUMBER_DEADLOCK,
+  USER_RENUMBER_ORPHAN,
+  USER_RENUMBER_STALE,
+  USER_ALICE,
+  USER_BOB,
+  USER_BACKFILL,
+  USER_BACKFILL_BARE,
+  USER_RACE,
+  USER_ENSURE,
+  USER_LOCK,
+  USER_RENUMBER,
+  USER_RENUMBER_OTHER,
+  USER_RENUMBER_ATOMIC,
+  USER_RENUMBER_BATCH,
+  USER_RENUMBER_LOCK,
+];
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const isoDay = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : null);
@@ -403,8 +443,11 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       { method: 'POST', url: `${base}/macrocycles`, body: { fromMacrocycleNum: 1 } },
     ];
 
-    /** A one-set file for macrocycle `cycle`; each test imports its own, so none depends on another. */
-    const upload = (url: string, cycle = 4) => {
+    /**
+     * A one-set file dated `date`; each test imports its own, so none depends on another. The
+     * set lands in a new legacy macrocycle starting that day, at whatever number is next (#1199).
+     */
+    const upload = (url: string, date = '2025-03-03') => {
       const boundary = '----MacrocycleLockBoundary';
       return app.getHttpAdapter().getInstance().inject({
         method: 'POST',
@@ -415,7 +458,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
           'Content-Disposition: form-data; name="file"; filename="upload.csv"',
           'Content-Type: text/csv',
           '',
-          `Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes\n5-3-1,${cycle},1,2025-03-03,Squat,1,200,5,`,
+          `Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes\n5-3-1,4,1,${date},Squat,1,200,5,`,
           `--${boundary}--`,
         ].join('\r\n'),
       });
@@ -486,7 +529,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         if (!released) harness.release();
         await harness.done;
       }
-      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 4 } })).toBe(1);
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, startDate: day('2025-03-03') } })).toBe(1);
     }, LOCKED_TEST_TIMEOUT_MS);
 
     // Postgres queues a no-wait shared request behind a waiting exclusive one, so while an
@@ -495,7 +538,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       const harness = await holdLock('shared');
       let released = false;
       try {
-        const pending = upload(commitImport, 6);
+        const pending = upload(commitImport, '2025-06-02');
         await waitForBlockedBy(harness.pid);
         const write = await injectAs(USER_LOCK, 'POST', `${base}/lift-records`, logBody(3), macrocycleId);
         expect({ status: write.statusCode, code: write.json().code }).toEqual({ status: 409, code: 'import-in-progress' });
@@ -509,25 +552,358 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         if (!released) harness.release();
         await harness.done;
       }
-      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 6 } })).toBe(1);
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, startDate: day('2025-06-02') } })).toBe(1);
     }, LOCKED_TEST_TIMEOUT_MS);
 
     it('answers an import and an import undo with 409 macrocycle-busy when page writes hold it past the wait, writing nothing', async () => {
-      const committed = await upload(commitImport, 5);
+      const date = '2025-05-05';
+      const committed = await upload(commitImport, date);
       expect(committed.statusCode).toBe(200);
       const batchId: string = committed.json().batchId;
       const harness = await holdLock('shared');
       try {
-        expectBusy(commitImport, await upload(commitImport, 5));
+        expectBusy(commitImport, await upload(commitImport, date));
         const undo = `${base}/import/${batchId}/undo`;
         expectBusy(undo, await injectAs(USER_LOCK, 'POST', undo));
-        expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 5 } })).toBe(1);
+        expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, startDate: day(date) } })).toBe(1);
       } finally {
         harness.release();
         await harness.done;
       }
       expect((await injectAs(USER_LOCK, 'POST', `${base}/import/${batchId}/undo`)).statusCode).toBe(200);
-      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, macrocycleNum: 5 } })).toBe(0);
+      expect(await owner.macrocycle.count({ where: { userId: USER_LOCK, startDate: day(date) } })).toBe(0);
     }, LOCKED_TEST_TIMEOUT_MS);
+  });
+
+  /** Renumbering by start date (#1199), with the setting #1200 turns on for everyone. */
+  describe('renumbering', () => {
+    const base = `/programs/${PROGRAM}`;
+    const previous = process.env[RENUMBERING_SETTING];
+    beforeAll(() => {
+      process.env[RENUMBERING_SETTING] = 'on';
+    });
+    afterAll(() => {
+      if (previous === undefined) delete process.env[RENUMBERING_SETTING];
+      else process.env[RENUMBERING_SETTING] = previous;
+    });
+
+    /** A live macrocycle `num` starting on `date`, with a row in every table that holds a number. */
+    async function seedEveryTable(userId: string, num: number, date: string): Promise<void> {
+      const at = { userId, program: PROGRAM, macrocycleNum: num };
+      await owner.macrocycle.create({ data: { ...at, startDate: day(date), status: 'in-progress', origin: 'live' } });
+      await owner.liftRecord.create({
+        data: { ...at, workoutNum: 1, date: day(date), lift: 'Squat', setNum: 1, weight: 200, reps: 5 },
+      });
+      await owner.macrocycleDashboard.create({
+        data: {
+          ...at,
+          macrocycleUnit: 'Week',
+          macrocycleDate: day(date),
+          sheetName: `${PROGRAM}_Cycle_${num}_${date.replace(/-/g, '')}`,
+          macrocycleStartWeekday: 'Monday',
+        },
+      });
+      await owner.macrocycleScheduledWorkout.create({ data: { ...at, workoutNum: 1, weekNum: 1, scheduledDate: day(date) } });
+      await owner.workoutDateOverride.create({ data: { ...at, workoutNum: 1, newDate: day(date) } });
+      await owner.workoutSkipOverride.create({ data: { ...at, workoutNum: 2 } });
+      await owner.workoutLiftOverride.create({ data: { ...at, workoutNum: 1, lift: 'Dips', action: 'add' } });
+      await owner.focusDayState.create({ data: { ...at, workoutNum: 1, state: {} } });
+    }
+
+    /** Each numbered table's distinct numbers for `userId`, read as the owner. */
+    async function numbersByTable(userId: string): Promise<Record<string, number[]>> {
+      const result: Record<string, number[]> = {};
+      for (const table of NUMBERED_TABLES) {
+        const rows = await owner.$queryRaw<Array<{ n: number }>>`
+          SELECT DISTINCT "macrocycleNum" AS n FROM ${Prisma.raw(`"${table}"`)}
+          WHERE "userId" = ${userId} AND "program" = ${PROGRAM} ORDER BY 1`;
+        result[table] = rows.map((row) => row.n);
+      }
+      return result;
+    }
+    /** `nums` for every numbered table, with `overrides` for the tables named. */
+    const everyTable = (nums: number[], overrides: Partial<Record<(typeof NUMBERED_TABLES)[number], number[]>> = {}) =>
+      Object.fromEntries(NUMBERED_TABLES.map((table) => [table, overrides[table] ?? nums]));
+    /** After an older import: the live macrocycle's rows on 2, and the import's set and macrocycle on 1. */
+    const afterOlderImport = everyTable([2], { lift_record: [1, 2], macrocycle: [1, 2] });
+
+    /** Commits a lift-records file of `rows` (after the header) as `userId`. */
+    const commitFile = (userId: string, ...rows: string[]) => {
+      const boundary = '----MacrocycleRenumberBoundary';
+      return app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `${base}/import?mode=commit&destination=lift-records`,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${userId}` },
+        payload: [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+          'Content-Type: text/csv',
+          '',
+          ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes', ...rows].join('\n'),
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+    };
+    const OLDER_SET = `${PROGRAM},9,1,2025-03-03,Bench Press,1,150,5,`;
+
+    it('rewrites the number in every table as the app role, leaving another user alone', async () => {
+      await seedEveryTable(USER_RENUMBER, 1, '2026-01-05');
+      await seedEveryTable(USER_RENUMBER_OTHER, 1, '2026-01-05');
+
+      // An older macrocycle arrives, so the live one becomes 2.
+      expect((await commitFile(USER_RENUMBER, OLDER_SET)).statusCode).toBe(200);
+
+      expect(await numbersByTable(USER_RENUMBER)).toEqual(afterOlderImport);
+      expect(await numbersByTable(USER_RENUMBER_OTHER)).toEqual(everyTable([1]));
+      const rows = await owner.macrocycle.findMany({ where: { userId: USER_RENUMBER }, orderBy: { macrocycleNum: 'asc' } });
+      expect(rows.map((row) => [row.macrocycleNum, row.origin, isoDay(row.startDate)])).toEqual([
+        [1, 'legacy', '2025-03-03'],
+        [2, 'live', '2026-01-05'],
+      ]);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('refuses a rewrite before moving anything when a table holds a number it needs, naming the table', async () => {
+      await seedEveryTable(USER_RENUMBER_ATOMIC, 1, '2026-01-05');
+      // Only the macrocycle table, the last one rewritten, holds 2.
+      await owner.macrocycle.create({
+        data: { userId: USER_RENUMBER_ATOMIC, program: PROGRAM, macrocycleNum: 2, startDate: day('2026-03-02'), status: 'unknown', origin: 'legacy' },
+      });
+      const appDb = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+      spans.reset();
+      try {
+        await expect(
+          asUser(appDb, USER_RENUMBER_ATOMIC, (tx) =>
+            new PrismaMacrocycleRepository(tx, USER_RENUMBER_ATOMIC).rewriteNumbers(PROGRAM, new Map([[1, 2]])),
+          ),
+        ).rejects.toMatchObject({
+          constructor: MacrocycleNumberConflictError,
+          detail: { table: 'macrocycle', heldNumber: 2 },
+        });
+      } finally {
+        await appDb.$disconnect();
+      }
+      const rewrite = spans.getFinishedSpans().find((s) => s.name === 'macrocycle.rewrite_numbers');
+      expect(rewrite?.attributes).toMatchObject({
+        'macrocycle.conflict_table': 'macrocycle',
+        'macrocycle.conflict_number': 2,
+      });
+
+      expect(await numbersByTable(USER_RENUMBER_ATOMIC)).toEqual(everyTable([1], { macrocycle: [1, 2] }));
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('lists every table with a macrocycle number', async () => {
+      const columns = await owner.$queryRaw<Array<{ table_name: string }>>`
+        SELECT table_name FROM information_schema.columns
+        WHERE table_schema = current_schema() AND column_name = 'macrocycleNum' ORDER BY 1`;
+      expect(columns.map((c) => c.table_name)).toEqual([...NUMBERED_TABLES].sort());
+    });
+
+    it('removes an emptied legacy macrocycle from every table on undo, so nothing it held joins the one that moves down', async () => {
+      const user = USER_RENUMBER_ORPHAN;
+      await seedEveryTable(user, 1, '2026-01-05');
+      const commit = await commitFile(user, OLDER_SET);
+      expect(commit.statusCode).toBe(200);
+      // The import's legacy macrocycle is 1 now. The lifter skips one of its workouts, and
+      // another batch has a key on it.
+      await owner.workoutSkipOverride.create({ data: { userId: user, program: PROGRAM, macrocycleNum: 1, workoutNum: 7 } });
+      const other = await owner.importBatch.create({
+        data: {
+          userId: user,
+          program: PROGRAM,
+          destination: 'lift-records',
+          preImage: { '1:4:Squat:1': { kind: 'created', wrote: { weight: 1, reps: 1, notes: '' } } },
+        },
+      });
+
+      const undo = await injectAs(user, 'POST', `${base}/import/${(commit.json() as { batchId: string }).batchId}/undo`);
+      expect(undo.statusCode).toBe(200);
+
+      // The live macrocycle moved down to 1, with only its own skip.
+      expect(await numbersByTable(user)).toEqual(everyTable([1]));
+      const skips = await owner.workoutSkipOverride.findMany({ where: { userId: user } });
+      expect(skips.map((s) => [s.macrocycleNum, s.workoutNum])).toEqual([[1, 2]]);
+      expect((await owner.importBatch.findUnique({ where: { id: other.id } }))?.preImage).toEqual({});
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('moves rows saved before initializing past an import, and back on undo, so neither takes them', async () => {
+      const user = USER_RENUMBER_UNSTARTED;
+      // The program has no macrocycle, so a page wrote these on the next number, 1.
+      const at = { userId: user, program: PROGRAM, macrocycleNum: 1 };
+      await owner.focusDayState.create({ data: { ...at, workoutNum: 1, state: {} } });
+      await owner.workoutSkipOverride.create({ data: { ...at, workoutNum: 2 } });
+      const unstartedOn = (n: number[]) => everyTable([], { focus_day_state: n, workout_skip_override: n });
+
+      const commit = await commitFile(user, OLDER_SET);
+      expect(commit.statusCode).toBe(200);
+      expect(await numbersByTable(user)).toEqual({ ...unstartedOn([2]), macrocycle: [1], lift_record: [1] });
+
+      const undo = await injectAs(user, 'POST', `${base}/import/${(commit.json() as { batchId: string }).batchId}/undo`);
+      expect(undo.statusCode).toBe(200);
+      expect(await numbersByTable(user)).toEqual(unstartedOn([1]));
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('drops batch keys on a deleted macrocycle, so undoing the batch leaves the history that moves onto its number', async () => {
+      const user = USER_RENUMBER_STALE;
+      await seedEveryTable(user, 1, '2026-01-05');
+      await owner.macrocycle.create({
+        data: { userId: user, program: PROGRAM, macrocycleNum: 2, startDate: day('2026-06-01'), status: 'completed', origin: 'imported' },
+      });
+      await owner.liftRecord.create({
+        data: { userId: user, program: PROGRAM, macrocycleNum: 2, workoutNum: 1, date: day('2026-06-01'), lift: 'Squat', setNum: 1, weight: 999, reps: 5 },
+      });
+      // A batch from before the date joined the key (#884): it matches its set on any date.
+      const stale = await owner.importBatch.create({
+        data: {
+          userId: user,
+          program: PROGRAM,
+          destination: 'lift-records',
+          preImage: { '1:1:Squat:1': { kind: 'created', wrote: { weight: 200, reps: 5, notes: '' } } },
+        },
+      });
+
+      // A focus state on a number with no macrocycle goes with the live and legacy ones.
+      await owner.focusDayState.create({ data: { userId: user, program: PROGRAM, macrocycleNum: 3, workoutNum: 1, state: {} } });
+
+      expect((await injectAs(user, 'DELETE', `${base}/macrocycles/current`)).statusCode).toBe(204);
+      expect((await owner.macrocycle.findMany({ where: { userId: user } })).map((m) => [m.macrocycleNum, m.origin])).toEqual([
+        [1, 'imported'],
+      ]);
+      expect(await numbersByTable(user)).toEqual(everyTable([], { macrocycle: [1], lift_record: [1] }));
+
+      const undo = await injectAs(user, 'POST', `${base}/import/${stale.id}/undo`);
+      expect(undo.json()).toMatchObject({ restored: 0 });
+      const sets = await owner.liftRecord.findMany({ where: { userId: user } });
+      expect(sets.map((s) => [s.macrocycleNum, s.weight])).toEqual([[1, 999]]);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('undoes a batch with current keys and one with date-blind keys after a renumbering, each removing only its own sets', async () => {
+      const user = USER_RENUMBER_BATCH;
+      await seedEveryTable(user, 1, '2026-01-05');
+      const set = (workoutNum: number, date: string, lift: string, setNum: number) => ({
+        userId: user, program: PROGRAM, macrocycleNum: 1, workoutNum, date: day(date), lift, setNum, weight: 100, reps: 5,
+      });
+      await owner.liftRecord.createMany({
+        data: [set(1, '2026-01-05', 'Squat', 2), set(2, '2026-01-07', 'Bench Press', 1), set(3, '2026-01-09', 'Deadlift', 1)],
+      });
+      const created = { kind: 'created', wrote: { weight: 100, reps: 5, notes: '' } };
+      const current = await owner.importBatch.create({
+        data: {
+          userId: user,
+          program: PROGRAM,
+          destination: 'lift-records',
+          preImage: {
+            [liftRecordNaturalKey({ macrocycleNum: 1, workoutNum: 1, date: day('2026-01-05'), lift: 'Squat', setNum: 2 })]: created,
+          },
+        },
+      });
+      // A batch from before the date joined the key (#884).
+      const dateBlind = await owner.importBatch.create({
+        data: { userId: user, program: PROGRAM, destination: 'lift-records', preImage: { '1:2:Bench Press:1': created } },
+      });
+
+      expect((await commitFile(user, OLDER_SET)).statusCode).toBe(200);
+      const sets = async () =>
+        (await owner.liftRecord.findMany({ where: { userId: user }, orderBy: [{ date: 'asc' }, { setNum: 'asc' }] })).map(
+          (r) => `${r.macrocycleNum} ${isoDay(r.date)} ${r.lift} ${r.setNum}`,
+        );
+      expect(await sets()).toEqual([
+        '1 2025-03-03 bench-press 1',
+        '2 2026-01-05 Squat 1',
+        '2 2026-01-05 Squat 2',
+        '2 2026-01-07 Bench Press 1',
+        '2 2026-01-09 Deadlift 1',
+      ]);
+
+      const undoCurrent = await injectAs(user, 'POST', `${base}/import/${current.id}/undo`);
+      expect(undoCurrent.json()).toMatchObject({ restored: 1, skipped: 0 });
+      expect(await sets()).toEqual([
+        '1 2025-03-03 bench-press 1',
+        '2 2026-01-05 Squat 1',
+        '2 2026-01-07 Bench Press 1',
+        '2 2026-01-09 Deadlift 1',
+      ]);
+
+      const undoDateBlind = await injectAs(user, 'POST', `${base}/import/${dateBlind.id}/undo`);
+      expect(undoDateBlind.json()).toMatchObject({ restored: 1, skipped: 0 });
+      expect(await sets()).toEqual(['1 2025-03-03 bench-press 1', '2 2026-01-05 Squat 1', '2 2026-01-09 Deadlift 1']);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('holds a rewrite back until a page write holding the lock across its id check has finished', async () => {
+      const user = USER_RENUMBER_LOCK;
+      await seedEveryTable(user, 1, '2026-01-05');
+      // The harness stands in for a page write between its id check and its write.
+      const harness = await holdOpen(owner, null, (tx) =>
+        tx.$queryRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${user}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`,
+      );
+      let released = false;
+      try {
+        const pending = commitFile(user, OLDER_SET);
+        await waitForBlockedBy(harness.pid);
+        expect(await numbersByTable(user)).toEqual(everyTable([1]));
+        harness.release();
+        released = true;
+        expect((await pending).statusCode).toBe(200);
+      } finally {
+        if (!released) harness.release();
+        await harness.done;
+      }
+      expect(await numbersByTable(user)).toEqual(afterOlderImport);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('upgrades a delete holding the lock shared to exclusive once the page write holding it has finished', async () => {
+      const user = USER_RENUMBER_UPGRADE;
+      await seedEveryTable(user, 2, '2026-01-05');
+      for (const [num, date] of [[1, '2025-01-06'], [3, '2026-03-02']] as const) {
+        await owner.macrocycle.create({
+          data: { userId: user, program: PROGRAM, macrocycleNum: num, startDate: day(date), status: 'completed', origin: 'imported' },
+        });
+      }
+      const numbers = async () =>
+        (await owner.macrocycle.findMany({ where: { userId: user }, orderBy: { macrocycleNum: 'asc' } })).map((row) => row.macrocycleNum);
+      const harness = await holdOpen(owner, null, (tx) =>
+        tx.$queryRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${user}, ${MACROCYCLE_LOCK_NAMESPACE}))::text`,
+      );
+      let released = false;
+      try {
+        // Deleting the live 2 moves imported 3 down, which needs the lock exclusively.
+        const pending = injectAs(user, 'DELETE', `${base}/macrocycles/current`);
+        await waitForBlockedBy(harness.pid);
+        expect(await numbers()).toEqual([1, 2, 3]);
+        harness.release();
+        released = true;
+        expect((await pending).statusCode).toBe(204);
+      } finally {
+        if (!released) harness.release();
+        await harness.done;
+      }
+      expect(await numbers()).toEqual([1, 2]);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    it('refuses one of two requests holding the lock shared that both ask for it exclusively, and lets the other through', async () => {
+      const user = USER_RENUMBER_DEADLOCK;
+      const appDb = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+      let bothShared = () => undefined as void;
+      const shared = new Promise<void>((resolve) => {
+        let count = 0;
+        bothShared = () => {
+          if (++count === 2) resolve();
+        };
+      });
+      // As two starts or deletes do: shared for the id check, then exclusive to renumber.
+      const request = () =>
+        asUser(appDb, user, async (tx) => {
+          const repo = new PrismaMacrocycleRepository(tx, user);
+          expect(await repo.tryLockShared()).toBe(true);
+          bothShared();
+          await shared;
+          return repo.lockExclusive(IMPORT_LOCK_WAIT_MS);
+        });
+      try {
+        // Postgres finds the deadlock after `deadlock_timeout` (1s), well inside the 5s wait.
+        expect((await Promise.all([request(), request()])).sort()).toEqual([false, true]);
+      } finally {
+        await appDb.$disconnect();
+      }
+    }, DB_E2E_HOOK_TIMEOUT_MS);
   });
 });

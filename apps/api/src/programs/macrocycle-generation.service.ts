@@ -27,8 +27,10 @@ import {
   lockForMacrocycleWrite,
   closingStatus,
   ensureCurrentRow,
+  forgetBatchKeys,
   nextMacrocycleNumber,
 } from './macrocycle-history.util';
+import { renumberProgram } from './macrocycle-renumbering';
 
 type MacrocycleRepos = Pick<
   RepositoryBundle,
@@ -42,6 +44,7 @@ type MacrocycleRepos = Pick<
   | 'userSettings'
   | 'workoutLiftOverride'
   | 'workoutDateOverride'
+  | 'importBatch'
 >;
 
 /**
@@ -287,11 +290,17 @@ export class MacrocycleGenerationService {
       await repos.trainingMaxHistory.appendHistoryEntries(program, historyEntries);
     }
 
-    return { dashboard: newMacrocycle, programSpec, scheduledWorkouts };
+    // A start dated before stored history sorts among it, so the program renumbers (#1199).
+    const changes = await renumberProgram(repos, program);
+    const macrocycleNum = changes.get(newMacrocycle.macrocycleNum) ?? newMacrocycle.macrocycleNum;
+    return { dashboard: { ...newMacrocycle, macrocycleNum }, programSpec, scheduledWorkouts };
   }
 
   async initializeFirstMacrocycle(
-    repos: Pick<MacrocycleRepos, 'macrocycle' | 'macrocycleDashboard' | 'macrocycleScheduledWorkout' | 'liftingProgramSpec' | 'userSettings'>,
+    repos: Pick<
+      MacrocycleRepos,
+      'macrocycle' | 'macrocycleDashboard' | 'macrocycleScheduledWorkout' | 'liftingProgramSpec' | 'userSettings' | 'importBatch'
+    >,
     program: string,
     dto: { macrocycleDate?: string } = {},
   ): Promise<MacrocycleGenerationResult> {
@@ -349,7 +358,13 @@ export class MacrocycleGenerationService {
     // Without a schedule, or a seeded spec, this clears any rows a deleted macrocycle left.
     const scheduledWorkouts = await saveScheduledDates(repos, program, dashboard.macrocycleNum, dashboard.macrocycleDate, programSpec, settings.workoutSchedule, this.logger);
     await repos.macrocycleDashboard.saveMacrocycleDashboard(dashboard);
-    return { dashboard, programSpec, scheduledWorkouts };
+    // A first macrocycle dated before imported history sorts among it (#1199).
+    const changes = await renumberProgram(repos, program);
+    return {
+      dashboard: { ...dashboard, macrocycleNum: changes.get(macrocycleNum) ?? macrocycleNum },
+      programSpec,
+      scheduledWorkouts,
+    };
   }
 
   /**
@@ -381,19 +396,7 @@ export class MacrocycleGenerationService {
    * request transaction, independent of the order below.
    */
   async deleteCurrentMacrocycle(
-    repos: Pick<
-      RepositoryBundle,
-      | 'macrocycle'
-      | 'macrocycleDashboard'
-      | 'macrocycleScheduledWorkout'
-      | 'liftRecord'
-      | 'trainingMax'
-      | 'trainingMaxHistory'
-      | 'workoutDateOverride'
-      | 'workoutSkipOverride'
-      | 'workoutLiftOverride'
-      | 'focus'
-    >,
+    repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'trainingMax' | 'trainingMaxHistory' | 'importBatch'>,
     program: string,
   ): Promise<void> {
     // It removes macrocycle rows, so it takes the macrocycle lock (decision 13).
@@ -405,16 +408,14 @@ export class MacrocycleGenerationService {
       .filter((m) => m.origin === 'imported')
       .map((m) => m.macrocycleNum);
 
-    await repos.liftRecord.deleteAllLiftRecords(program, keep);
     await repos.trainingMaxHistory.deleteAllHistory(program);
     await repos.trainingMax.deleteAllTrainingMaxes(program);
-    await repos.macrocycleScheduledWorkout.deleteAllScheduledWorkouts(program, keep);
-    await repos.workoutDateOverride.deleteAllOverrides(program, keep);
-    await repos.workoutSkipOverride.deleteAllSkips(program, keep);
-    await repos.workoutLiftOverride.deleteAllOverrides(program, keep);
-    await repos.focus.deleteAllDayStates(program, keep);
+    // One delete over every table that holds a number, the dashboard's included.
     await repos.macrocycle.deleteAllExcept(program, keep);
-    await repos.macrocycleDashboard.deleteMacrocycleDashboard(program);
+    // Batch keys on a deleted number would undo whichever macrocycle takes that number next.
+    await forgetBatchKeys(repos, program, { except: keep });
+    // The imported history left closes up to 1..N (#1199).
+    await renumberProgram(repos, program);
   }
 
   async recalculateMaxes(

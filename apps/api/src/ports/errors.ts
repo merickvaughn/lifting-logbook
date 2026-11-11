@@ -86,7 +86,8 @@ export class FocusBlockConflictError extends Error {
 
 /**
  * A program already has a macrocycle with this number, usually one a concurrent request
- * created between this request's read and its insert (ADR-042). The request transaction rolls
+ * created between this request's read and its insert (ADR-042), or a renumbering found a stored
+ * row on a number it needed (#1199; `macrocycleNum` unknown). The request transaction rolls
  * back, so nothing is written.
  */
 export class MacrocycleNumberConflictError extends Error {
@@ -94,9 +95,20 @@ export class MacrocycleNumberConflictError extends Error {
 
   constructor(
     public readonly program: string,
-    public readonly macrocycleNum: number,
+    public readonly macrocycleNum?: number,
+    /**
+     * What blocked it, for logs and spans: the table, its number, the database error. `inserting`
+     * marks new macrocycles that collided, rather than a renumbering.
+     */
+    public readonly detail?: { table?: string; heldNumber?: number; cause?: unknown; inserting?: boolean },
   ) {
-    super(`Program '${program}' already has a macrocycle ${macrocycleNum}. Reload and try again.`);
+    super(
+      macrocycleNum !== undefined
+        ? `Program '${program}' already has a macrocycle ${macrocycleNum}. Reload and try again.`
+        : detail?.inserting
+          ? `Program '${program}' already has a macrocycle on a number the new ones need. Reload and try again.`
+          : `Program '${program}' couldn't be renumbered: a stored row already has a number it needs. Reload and try again.`,
+    );
     this.name = 'MacrocycleNumberConflictError';
   }
 }

@@ -1,12 +1,35 @@
 import { DEFAULT_FOCUS_BUDGET, FocusBlock, FocusBudget, FocusDayState } from '@lifting-logbook/types';
 import { FocusBlockPatch, IFocusRepository } from '../../ports/IFocusRepository';
 import { FocusBlockConflictError, FocusBlockNotFoundError } from '../../ports/errors';
+import { NumberedStore, dropFromMap, numbersInMap, rekeyMap } from './renumber';
+
+function dayKeyNumber(key: string): { program: string; macrocycleNum: number } {
+  const [program, macrocycleNum] = JSON.parse(key) as [string, number, number];
+  return { program, macrocycleNum };
+}
 
 /** Mirrors PrismaFocusRepository, including its (series, start) uniqueness. */
-export class InMemoryFocusRepository implements IFocusRepository {
+export class InMemoryFocusRepository implements IFocusRepository, NumberedStore {
   private readonly blocks = new Map<string, FocusBlock>();
   private readonly dayStates = new Map<string, FocusDayState>();
   private budget: FocusBudget = { ...DEFAULT_FOCUS_BUDGET };
+
+  rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
+    return rekeyMap(this.dayStates, program, changes, dayKeyNumber, (key, macrocycleNum) => {
+      const [p, , workoutNum] = JSON.parse(key) as [string, number, number];
+      return dayKey(p, macrocycleNum, workoutNum);
+    });
+  }
+
+  readonly table = 'focus_day_state';
+
+  numbersHeld(program: string): Set<number> {
+    return numbersInMap(this.dayStates, program, dayKeyNumber);
+  }
+
+  dropNumbers(program: string, macrocycleNums: readonly number[]): void {
+    dropFromMap(this.dayStates, program, macrocycleNums, dayKeyNumber);
+  }
 
   async listBlocks(): Promise<FocusBlock[]> {
     // Insertion order breaks ties, as createdAt does in the Prisma adapter.
@@ -78,13 +101,6 @@ export class InMemoryFocusRepository implements IFocusRepository {
   ): Promise<FocusDayState> {
     this.dayStates.set(dayKey(program, macrocycleNum, workoutNum), structuredClone(state));
     return structuredClone(state);
-  }
-
-  async deleteAllDayStates(program: string, keep: readonly number[] = []): Promise<void> {
-    for (const k of this.dayStates.keys()) {
-      const [p, m] = JSON.parse(k) as [string, number, number];
-      if (p === program && !keep.includes(m)) this.dayStates.delete(k);
-    }
   }
 
   private startTaken(series: string, start: string, exceptId?: string): boolean {

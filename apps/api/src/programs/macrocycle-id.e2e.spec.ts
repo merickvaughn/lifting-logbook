@@ -265,8 +265,8 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
       });
     }
     const repos = await user.repos();
-    expect(await repos.liftRecord.getLiftRecords(PROGRAM, 4)).toEqual([]);
-    expect(await repos.macrocycle.findByNumber(PROGRAM, 4)).toBeNull();
+    expect(await repos.macrocycle.list(PROGRAM)).toHaveLength(1);
+    expect(await repos.liftRecord.getMacrocycleDateRanges(PROGRAM)).toEqual(new Map());
   });
 
   it('answers an invalid lift-records file with its validation errors, without waiting for the lock', async () => {
@@ -296,13 +296,14 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
       code: 'macrocycle-busy',
       message: 'Your workouts are being saved. Try the undo again in a moment.',
     });
+    // The file's macrocycle 4 only groups its rows (#1199): they form legacy macrocycle 2.
     const repos = await user.repos();
-    expect(await repos.liftRecord.getLiftRecords(PROGRAM, 4)).toHaveLength(1);
-    expect(await repos.macrocycle.findByNumber(PROGRAM, 4)).not.toBeNull();
+    expect(await repos.liftRecord.getLiftRecords(PROGRAM, 2)).toHaveLength(1);
+    expect(await repos.macrocycle.findByNumber(PROGRAM, 2)).not.toBeNull();
 
     macrocycles.lockHeld = null;
     expect((await user.inject('POST', `${base}/import/${batchId}/undo`)).statusCode).toBe(200);
-    expect(await repos.macrocycle.findByNumber(PROGRAM, 4)).toBeNull();
+    expect(await repos.macrocycle.findByNumber(PROGRAM, 2)).toBeNull();
   });
 
   it('gives no id, rather than a 409, when the current macrocycle has no row and an import holds the lock', async () => {

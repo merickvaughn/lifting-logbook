@@ -60,11 +60,13 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
 import { lockForImport, removeEmptyLegacyRows, splitLegacyRowKeys } from './macrocycle-history.util';
+import { renumberProgram } from './macrocycle-renumbering';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
 import {
@@ -317,8 +319,14 @@ export class ImportController {
           flagged.push({ key: '*', reason: `${missing} row(s) not found (already deleted?)` });
         }
       }
-      // A macrocycle the import created goes with its sets (ADR-042).
-      await removeEmptyLegacyRows(repos, program, legacyNums);
+      // The batch goes first, so the renumbering below doesn't rewrite the keys of a batch about
+      // to be deleted.
+      await repos.importBatch.deleteById(batchId, user.id);
+      // A `legacy` macrocycle left with no sets goes (ADR-042): one the import created, or one
+      // its sets joined, and the numbers close up.
+      const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
+      await removeEmptyLegacyRows(repos, program, [...new Set([...legacyNums, ...setNums])]);
+      await renumberProgram(repos, program);
     } else {
       for (const [key, entry] of Object.entries(batch.preImage)) {
         if (batch.destination === 'training-maxes') {
@@ -398,10 +406,9 @@ export class ImportController {
           }
         }
       }
+      // Delete the batch record now that undo has been applied (best-effort; ignore failures)
+      await repos.importBatch.deleteById(batchId, user.id);
     }
-
-    // Delete the batch record now that undo has been applied (best-effort; ignore failures)
-    await repos.importBatch.deleteById(batchId, user.id);
 
     return { batchId, restored, skipped, flagged };
   }
@@ -447,9 +454,9 @@ export class ImportController {
     }
 
     const validWithProgram = softResult.validRows.map(({ record }) => ({ ...record, program }));
-    const existing = await repos.liftRecord.findExistingRecords(program, validWithProgram);
+    const stored = await repos.liftRecord.findStoredSets(validWithProgram);
     const liftNames = await liftNamesFor(repos);
-    const preview = buildLiftRecordsPreviewSoft(softResult, existing, liftNames);
+    const preview = buildLiftRecordsPreviewSoft(softResult, stored, liftNames);
 
     // Check for 1RM rows in the valid set
     const { trainingMaxes: splitMaxes } = splitLiftRecordsByDestination(validWithProgram);
