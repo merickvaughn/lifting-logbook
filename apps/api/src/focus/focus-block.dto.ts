@@ -99,6 +99,12 @@ export class FocusPoolEntryDto implements FocusPoolEntry {
   @Min(0, { each: true })
   @Max(FOCUS_LIMITS.MAX_REPS, { each: true })
   lastReps?: number[];
+
+  // Recorded by the focus plan read (#1221); the setup page sends it back unchanged.
+  @IsOptional()
+  @IsString()
+  @Matches(ISO_DATE_PATTERN, { message: 'lastDate must be an ISO date (YYYY-MM-DD)' })
+  lastDate?: string;
 }
 
 /** The fields a focus block's create and update share. */

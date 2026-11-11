@@ -38,10 +38,14 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     return new Set(rows.map((r) => r.workoutNum));
   }
 
-  async getRecordsForLifts(lifts: readonly string[], through: Date): Promise<LiftRecord[]> {
+  async getRecordsForLifts(lifts: readonly string[], through: Date, from?: Date): Promise<LiftRecord[]> {
     if (lifts.length === 0) return [];
     const rows = await this.prisma.liftRecord.findMany({
-      where: { userId: this.userId, lift: { in: [...new Set(lifts.flatMap(liftSpellings))] }, date: { lte: through } },
+      where: {
+        userId: this.userId,
+        lift: { in: [...new Set(lifts.flatMap(liftSpellings))] },
+        date: { lte: through, ...(from ? { gte: from } : {}) },
+      },
     });
     return rows.map(rowToLiftRecord);
   }

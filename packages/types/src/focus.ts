@@ -130,6 +130,11 @@ export interface FocusPoolEntry {
    * `repsHigh` plans the next session at `weight` plus the increment.
    */
   lastReps?: readonly number[];
+  /**
+   * The day (ISO date) of the session `lastReps` came from. A session is recorded once, so
+   * a weight edited after it stands until a later session is logged (#1221).
+   */
+  lastDate?: string;
 }
 
 export interface FocusBlock {

@@ -7,6 +7,7 @@ import {
   expandRollovers,
   nextStart,
   parseIsoDate,
+  recordLastSessions,
 } from '@lifting-logbook/core';
 import { DEFAULT_WEIGHT_INCREMENT, FocusBlock, FocusBlockResponse } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
@@ -114,6 +115,41 @@ export async function carryMaxEdits(
       return change === undefined ? entry : { ...entry, trainingMax: entry.trainingMax + change };
     }),
   });
+}
+
+/**
+ * Records each active `double` block's last session per pool lift (`recordLastSessions`)
+ * and stores the blocks that changed, so their prescriptions progress from what was
+ * logged (#1221). Written on the focus plan read, like a successor, rather than on each
+ * lift-record write: a record doesn't say which block it was for, and a set logged
+ * mid-session must not move that session's own plan (ADR-039, Amendment 3).
+ *
+ * Returns `blocks` with the stored changes applied.
+ */
+export async function recordFocusSessions(
+  repos: Pick<RepositoryBundle, 'focus' | 'liftRecord' | 'customLift'>,
+  blocks: FocusBlock[],
+  today: string,
+): Promise<FocusBlock[]> {
+  const doubles = blocks.filter((block) => block.progression === 'double' && blockStatus(block, today) === 'active');
+  if (doubles.length === 0) return blocks;
+
+  // Records can store a custom lift by its uuid; recordLastSessions matches by name.
+  const poolLifts = new Set(doubles.flatMap((block) => block.pool.map((entry) => entry.lift)));
+  const customs = (await repos.customLift.list()).filter((lift) => poolLifts.has(lift.name));
+  const nameById = new Map(customs.map((lift) => [lift.id, lift.name] as const));
+  // Nothing before the earliest block's start can be recorded, so it isn't read.
+  const from = doubles.map((block) => blockRange(block).start).reduce((a, b) => (a < b ? a : b));
+  const records = (
+    await repos.liftRecord.getRecordsForLifts([...poolLifts, ...nameById.keys()], parseIsoDate(today), parseIsoDate(from))
+  ).map((record) => ({ ...record, lift: nameById.get(record.lift) ?? record.lift }));
+
+  const updated = new Map<string, FocusBlock>();
+  for (const block of doubles) {
+    const pool = recordLastSessions(block, records, today);
+    if (pool) updated.set(block.id, await repos.focus.updateBlock(block.id, { pool }));
+  }
+  return blocks.map((block) => updated.get(block.id) ?? block);
 }
 
 export interface FocusWorkoutContext {

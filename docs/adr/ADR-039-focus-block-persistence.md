@@ -168,6 +168,40 @@ default when the day has none, the same increment a `percent_wave` weight in tha
 A successor is created when focus blocks are read, outside any workout and any program, so it
 uses the user's default.
 
+## Amendment 3 — recording a `double` entry's last session (#1221)
+
+Amendment 2 left `lastReps` with no writer. A workout's focus plan read now writes it
+(`recordFocusSessions` in `focus.util.ts`, over core's `recordLastSessions`), the same way the
+blocks read creates a successor. For each `double` block active on `today`, each pool lift's last
+session is its sets on the latest day inside the block's range and before `today`. The entry takes
+that day's reps in set order as `lastReps`, the lightest of those sets' weights as `weight`, and
+the day as a new `lastDate`. The block is stored only when an entry changed.
+
+- **Before `today`, not including it.** The details page, the logger and the timer all re-read the
+  plan during a session. If today's sets counted, logging the last set at the top of the range
+  would raise the weight of the sets still to do. Two workouts on one day see the same last
+  session.
+- **Once per session.** A session later than the entry's `lastDate` is recorded once. A weight the
+  user edits in setup afterwards stands until the next session, rather than being reset from the
+  same records on the next read. A correction to that session's sets after it was recorded isn't
+  picked up. The setup page sends an entry back whole, so a block update that changes an entry's
+  weight but returns its `lastReps` unchanged drops them (`withoutStaleLastReps`): they were done
+  at the old weight, and would otherwise bump the new one.
+- **The lightest set's weight.** `prescribe` adds the increment to `weight` once every rep in
+  `lastReps` reached `repsHigh`, so `weight` has to be a load every one of those sets was done at
+  or above.
+- **Inside the block's range.** A new block starts from its configured weight, not from the same
+  lift's sets in an earlier block.
+
+The recorded values are capped at the bounds the block DTOs accept (`FOCUS_LIMITS`), which are
+tighter than a lift record's, so the setup page can still send the pool back. `GET /focus/blocks`
+doesn't record sessions: the setup page shows an entry's weight as of the last plan read.
+
+**Rejected: write on each lift-record write.** A lift record doesn't say which block it was logged
+for, and a pool lift can also be a planned lift or sit in two blocks. Writing per set would also
+move the session's own plan mid-session, which a "before `today`" read avoids without a second
+field for the session in progress.
+
 ## References
 
 1. E. F. Codd, ["A Relational Model of Data for Large Shared Data Banks"](https://doi.org/10.1145/362384.362685), *Communications of the ACM* 13(6), 1970 — §2, redundancy and derivable data.

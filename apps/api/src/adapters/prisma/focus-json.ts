@@ -42,7 +42,7 @@ export function parseFocusTimer(value: unknown): FocusTimer {
 
 function parsePoolEntry(value: unknown): FocusPoolEntry | null {
   if (!isObject(value)) return null;
-  const { lift, include, ruleLift, swapTo, sets, repsLow, repsHigh, weight, trainingMax, percent, rpe, lastReps } =
+  const { lift, include, ruleLift, swapTo, sets, repsLow, repsHigh, weight, trainingMax, percent, rpe, lastReps, lastDate } =
     value;
   if (typeof lift !== 'string' || !isOneOf(FOCUS_INCLUDES, include)) return null;
   if (typeof ruleLift !== 'string' || typeof swapTo !== 'string') return null;
@@ -62,6 +62,7 @@ function parsePoolEntry(value: unknown): FocusPoolEntry | null {
     rpe: rpe as number,
   };
   if (Array.isArray(lastReps) && lastReps.every(isCount)) entry.lastReps = lastReps;
+  if (typeof lastDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(lastDate)) entry.lastDate = lastDate;
   return entry;
 }
 
