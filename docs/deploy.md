@@ -596,7 +596,9 @@ which could otherwise set `AUTOCOMMIT off` and roll a real run back when psql ex
 Each command that turns FORCE off sets a `lock_timeout`. It bounds the wait for each table, not
 the whole step: the step takes the tables one at a time, holding the ones it has, and page queries
 queue behind it while it waits. So a step that switches all nine tables can hold pages up for as
-much as nine times its timeout. Run these steps when no import is running, since the switch waits
+much as nine times its timeout, plus the time the step itself takes, since it holds every table
+until it ends ([`lock_timeout`](https://www.postgresql.org/docs/16/runtime-config-client.html#GUC-LOCK-TIMEOUT)
+applies to each lock wait separately). Run these steps when no import is running, since the switch waits
 for every transaction using the tables and an import's can run for 30 seconds. The reversal and
 the renumber use 10 seconds; if one gives up, it has changed nothing, so run it again.
 
@@ -604,8 +606,8 @@ the renumber use 10 seconds; if one gives up, it has changed nothing, so run it 
 public IP this needs), check that the shared lock table can hold one advisory lock per user, since
 the migration holds them all until it commits. The `macrocycle_runbook_*` functions don't exist
 before the deploy, so this turns FORCE off by hand, in a transaction that ends in `ROLLBACK`, which
-puts it back. Its one-second `lock_timeout` makes it give up rather than stall pages; if it does,
-run it again:
+puts it back. Its one-second `lock_timeout` bounds the wait for each of the eight tables, as above,
+so it can hold pages up for about eight seconds at most; if it gives up, run it again:
 
 ```bash
 psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
@@ -752,8 +754,11 @@ psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
 #### If the renumbering migration fails
 
 It runs in one transaction, so a failure changes nothing: the deploy halts and the previous API
-revision keeps serving. The likeliest cause is its `lock_timeout` (40 seconds) running out while
-an import or a stuck transaction holds a user's lock; the job's log names the error. "out of
+revision keeps serving. The likeliest cause is its `lock_timeout` (40 seconds, for each table)
+running out while it waits for an import or a stuck transaction that is using one of the tables:
+the migrator sees no users with FORCE on, so `20261112000001` takes no user's lock, and
+`20261112000003` turns FORCE off first and then takes users' locks without waiting. The job's log
+names the error. "out of
 shared memory" with a hint to raise `max_locks_per_transaction` means the users outgrew the lock
 table: run the check in [Reversing the macrocycle renumbering](#reversing-the-macrocycle-renumbering)
 and raise the flag through Terraform, as it describes, before retrying. Prisma

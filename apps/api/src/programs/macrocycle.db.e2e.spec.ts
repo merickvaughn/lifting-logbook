@@ -730,6 +730,14 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       expect(columns.map((c) => c.table_name)).toEqual([...NUMBERED_TABLES].sort());
     });
 
+    // 20261112000006: the tables the renumbering turns FORCE off for and its guard checks must
+    // be every numbered table plus import_batch, whose keys carry numbers. A numbered table the
+    // list missed would stay hidden while the steps renumber the rest.
+    it('lists every numbered table, and import_batch, in macrocycle_forced_tables()', async () => {
+      const [{ tables }] = await owner.$queryRaw<{ tables: string[] }[]>`SELECT "macrocycle_forced_tables"() AS tables`;
+      expect([...tables].sort()).toEqual([...NUMBERED_TABLES, 'import_batch'].sort());
+    });
+
     it('removes an emptied legacy macrocycle from every table on undo, so nothing it held joins the one that moves down', async () => {
       const user = USER_RENUMBER_ORPHAN;
       await seedEveryTable(user, 1, '2026-01-05');
