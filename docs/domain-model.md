@@ -156,8 +156,8 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
 - The routes are under `/lifts/modifications`. The logger reads one lift's list at a time and shows
   them as toggles under the lift name, with an inline **Add**
   ([#1152](https://github.com/merickvaughn/lifting-logbook/issues/1152)). A toggle applies to the
-  occurrence's sets not yet logged. It starts from a toggle changed since the occurrence's last
-  log, then from its last logged set. A failed read hides the toggles and says so, and sets still
+  occurrence's sets not yet logged. It starts from a toggle changed on this device since the
+  occurrence's last log there, then from its last logged set. A failed read hides the toggles and says so, and sets still
   log without modifications.
 
 ### Two name registries, one bridge

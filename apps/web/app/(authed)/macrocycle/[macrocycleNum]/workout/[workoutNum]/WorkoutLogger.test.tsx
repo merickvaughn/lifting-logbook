@@ -788,7 +788,8 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     const OLD = modification('m-old', 'Old grip');
     const WIDE = modification('m-wide', 'Wide stance');
     let resolveAdd: (value: { ok: true; data: LiftModificationResponse }) => void = () => {};
-    mockFetchLiftModifications.mockResolvedValueOnce([PAUSED, OLD]).mockResolvedValueOnce([PAUSED]);
+    // The refresh already lists the modification the Add is creating.
+    mockFetchLiftModifications.mockResolvedValueOnce([PAUSED, OLD]).mockResolvedValueOnce([PAUSED, WIDE]);
     mockCreateLiftRecord.mockRejectedValue(
       new ApiClientError("'m-old' is not one of your modifications of Back Squat", 400),
     );
@@ -805,7 +806,41 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     resolveAdd({ ok: true, data: WIDE });
 
     expect(await screen.findByRole('button', { name: 'Wide stance', pressed: true })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Wide stance' })).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Old grip' })).not.toBeInTheDocument();
+  });
+
+  it('keeps a toggle changed while a set was logging saved for the next set', async () => {
+    const user = userEvent.setup();
+    const draftKey = buildModificationsDraftKey('5-3-1', 1, 1, 'Back Squat');
+    let resolveLog: (record: LiftRecordResponse) => void = () => {};
+    mockFetchLiftModifications.mockResolvedValue([PAUSED]);
+    mockCreateLiftRecord.mockReturnValue(new Promise((resolve) => { resolveLog = resolve; }));
+    render(<WorkoutLogger {...makeProps({ lifts: [twoSets()] })} />);
+
+    await screen.findByRole('button', { name: 'Paused', pressed: false });
+    const [logSet1] = screen.getAllByRole('button', { name: 'Log' });
+    if (!logSet1) throw new Error('expected a Log button for set 1');
+    await user.click(logSet1);
+    await user.click(screen.getByRole('button', { name: 'Paused', pressed: false }));
+    resolveLog(LOGGED);
+
+    expect(await screen.findByText('225 lbs × 5')).toBeInTheDocument();
+    expect(window.localStorage.getItem(draftKey)).toBe('["m-paused"]');
+  });
+
+  it("shows the API's reason for a coded 400 rather than the removed message", async () => {
+    const user = userEvent.setup();
+    const reason = 'A set can have only one modification with its own max';
+    mockFetchLiftModifications.mockResolvedValue([modification('m-wide', 'Wide grip', { maxMode: 'own' })]);
+    mockCreateLiftRecord.mockRejectedValue(new ApiClientError(reason, 400, 'one-own-modification'));
+    render(<WorkoutLogger {...makeProps()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Wide grip', pressed: false }));
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    expect(await screen.findByText(reason)).toBeInTheDocument();
+    expect(mockFetchLiftModifications).toHaveBeenCalledTimes(1);
   });
 
   it('closes a half-typed Add when the lifter moves to another lift', async () => {

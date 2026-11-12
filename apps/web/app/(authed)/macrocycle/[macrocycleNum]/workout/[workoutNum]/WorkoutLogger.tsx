@@ -110,7 +110,11 @@ async function staleModificationMessage(
   known: readonly string[] = [],
 ): Promise<string | null> {
   const added = sent.filter((id) => !known.includes(id));
-  if (added.length === 0 || !(err instanceof ApiClientError) || err.status !== 400) return null;
+  // A coded 400 (`macrocycle-id-required`, `one-own-modification`) has its own message, and is
+  // never about a modification removed elsewhere.
+  if (added.length === 0 || !(err instanceof ApiClientError) || err.status !== 400 || err.code !== undefined) {
+    return null;
+  }
   const live = await refresh();
   if (!live || added.every((id) => live.some((m) => m.id === id))) return null;
   return 'A modification on this set was removed. Check the toggles and log again.';
@@ -734,7 +738,9 @@ function LiftView({
         </ModificationToggles>
       )}
       {!isReadOnly && modifications === null && (
-        <p className={styles.modDescription}>Modifications didn&apos;t load, so sets log without them.</p>
+        <p className={styles.modDescription} role="status">
+          Modifications didn&apos;t load, so sets log without them.
+        </p>
       )}
 
       {lift.warmUpSets.length > 0 && (
@@ -909,8 +915,9 @@ export default function WorkoutLogger({
   const [modificationsByLift, setModificationsByLift] = useState<
     ReadonlyMap<string, LiftModificationResponse[] | null>
   >(new Map());
-  // The toggles the lifter changed, by lift occurrence. One not changed starts from its last
-  // logged set, then a toggle saved before its first set, then off (`startingModifications`).
+  // The toggles the lifter changed, by lift occurrence. One not changed starts from a toggle saved
+  // on this device since the occurrence's last log, then its last logged set, then off
+  // (`startingModifications`).
   const [toggled, setToggled] = useState<ReadonlyMap<string, string[]>>(new Map());
 
   // One read per lift in the workout. A read-only workout shows no toggles, so it reads nothing.
@@ -951,7 +958,8 @@ export default function WorkoutLogger({
   }
 
   // The saved toggle comes first: logging a set clears it (`handleLogged`), so one that's left was
-  // changed after the occurrence's last log here.
+  // changed after the occurrence's last log on this device. The draft is local, so a set logged
+  // since on another device doesn't clear it, and this device's toggle still wins.
   function startingModifications(lift: LiftData): string[] {
     const saved = readModificationsDraft(modificationsDraftKey(lift));
     if (saved) return saved;
@@ -965,7 +973,9 @@ export default function WorkoutLogger({
   /**
    * The ids on for a lift occurrence's next set, limited to the modifications still listed. Until
    * the list loads the toggles are hidden and can't have changed, so a set logged then takes the
-   * ids it starts from as they are, and the API checks them. A failed fetch sends none, and says so.
+   * ids it starts from as they are, and the API checks them. That can carry an archived one the
+   * loaded list would drop (the API accepts it, as it does on an edit); the next set, once the list
+   * is in, drops it. A failed fetch sends none, and says so.
    */
   function activeModifications(lift: LiftData): string[] {
     const listed = modificationsByLift.get(lift.lift);
@@ -989,7 +999,10 @@ export default function WorkoutLogger({
   // twice, and the second run reads the draft the first one wrote, so it turns the new one on
   // rather than flipping it: both runs end with it on.
   function handleModificationAdded(lift: LiftData, modification: LiftModificationResponse) {
-    setModificationsByLift((prev) => new Map(prev).set(lift.lift, [...(prev.get(lift.lift) ?? []), modification]));
+    // A refresh that landed first may already list it, so it replaces any copy rather than doubling.
+    setModificationsByLift((prev) =>
+      new Map(prev).set(lift.lift, [...(prev.get(lift.lift) ?? []).filter((m) => m.id !== modification.id), modification]),
+    );
     const key = liftKey(lift);
     const listed = [...(modificationsByLift.get(lift.lift) ?? []), modification];
     setToggled((prev) => {
@@ -1002,7 +1015,11 @@ export default function WorkoutLogger({
 
   function handleLogged(lift: LiftData, key: string, record: LoggedSet) {
     // The logged set now holds the toggles, so a reload starts from it (`startingModifications`).
-    clearDraft(modificationsDraftKey(lift));
+    // A toggle changed while the log was in flight differs from the set, and stays saved.
+    const draftKey = modificationsDraftKey(lift);
+    const saved = readModificationsDraft(draftKey);
+    const logged = modificationIds(record);
+    if (saved && saved.length === logged.length && saved.every((id) => logged.includes(id))) clearDraft(draftKey);
     setLoggedSets((prev) => new Map(prev).set(key, record));
     setEditingSet(null);
   }
