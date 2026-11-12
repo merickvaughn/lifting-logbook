@@ -1258,32 +1258,32 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
               tx.$queryRaw`SELECT "macrocycle_rewrite_numbers"(ARRAY['x'], ARRAY['p'], ARRAY[1], ARRAY[2])`,
             ),
           ).rejects.toThrow(/permission denied/);
-          await expect(
-            asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRaw`SELECT "macrocycle_set_forced_rls"(false)`),
-          ).rejects.toThrow(/permission denied for function/);
+          // The FORCE switch, and the runbook functions that use it (20261112000003, 20261112000004).
+          for (const call of [
+            Prisma.sql`SELECT "macrocycle_set_forced_rls"(false)`,
+            Prisma.sql`SELECT "macrocycle_runbook_reverse"(NULL)`,
+            Prisma.sql`SELECT "macrocycle_runbook_renumber"(NULL)`,
+            Prisma.sql`SELECT * FROM "macrocycle_runbook_report"()`,
+          ]) {
+            await expect(asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRaw(call))).rejects.toThrow(
+              /permission denied for function/,
+            );
+          }
         } finally {
           await appDb.$disconnect();
         }
       }, DB_E2E_HOOK_TIMEOUT_MS);
 
-      // 20261112000003 turns FORCE off to see every user's rows, since the migrator isn't
-      // BYPASSRLS, and must turn it back on before it commits.
-      it('leaves FORCE ROW LEVEL SECURITY on for every table the migrations turned it off for', async () => {
-        const forced = await owner.$queryRaw<{ relname: string; relforcerowsecurity: boolean }[]>`
+      // 20261112000003 and the runbook functions turn FORCE off to see every user's rows, since
+      // the migrator isn't BYPASSRLS, and must turn it back on. Checked across the schema, so a
+      // later migration that does the same (#1236) is covered without a list to keep in step.
+      it('leaves FORCE ROW LEVEL SECURITY on for every table with row-level security', async () => {
+        const tables = await owner.$queryRaw<{ relname: string; relforcerowsecurity: boolean }[]>`
           SELECT relname, relforcerowsecurity FROM pg_class
-          WHERE relnamespace = current_schema()::regnamespace AND relname = ANY(${[
-            'macrocycle',
-            'lift_record',
-            'macrocycle_dashboard',
-            'workout_date_override',
-            'workout_skip_override',
-            'workout_lift_override',
-            'focus_day_state',
-            'macrocycle_scheduled_workout',
-            'import_batch',
-          ]}::text[]) ORDER BY relname`;
-        expect(forced).toHaveLength(9);
-        expect(forced.filter((t) => !t.relforcerowsecurity)).toEqual([]);
+          WHERE relnamespace = current_schema()::regnamespace AND relkind = 'r' AND relrowsecurity
+          ORDER BY relname`;
+        expect(tables.map((t) => t.relname)).toEqual(expect.arrayContaining(['macrocycle', 'lift_record', 'import_batch']));
+        expect(tables.filter((t) => !t.relforcerowsecurity).map((t) => t.relname)).toEqual([]);
       });
     });
   });
