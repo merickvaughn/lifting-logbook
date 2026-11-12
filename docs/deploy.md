@@ -577,7 +577,11 @@ SELECT (SELECT count(DISTINCT "userId") FROM (
 ```
 
 `users` should be well under `lock_slots`, which every other session shares. If it isn't, raise
-`max_locks_per_transaction` on the instance first (a Cloud SQL database flag, which restarts it).
+`max_locks_per_transaction` first, through Terraform: add a second `database_flags` block for it
+next to `cloudsql.iam_authentication` in `infra/terraform/main.tf` and ship that change through
+the pipeline before this release. The flag restarts the instance. Don't set it with
+`gcloud sql instances patch --database-flags`: that replaces the whole flag list, dropping
+`cloudsql.iam_authentication`, and the next `plan-production` would show the drift.
 
 **During the deploy.** The migration holds every user's macrocycle lock and the `macrocycle`
 table until it commits: 1.6 to 1.8 seconds on local Postgres for 20,000 sets in 100 macrocycles
@@ -657,7 +661,7 @@ revision keeps serving. The likeliest cause is its `lock_timeout` (40 seconds) r
 an import or a stuck transaction holds a user's lock; the job's log names the error. "out of
 shared memory" with a hint to raise `max_locks_per_transaction` means the users outgrew the lock
 table: run the check in [Reversing the macrocycle renumbering](#reversing-the-macrocycle-renumbering)
-and raise the flag before retrying. Prisma
+and raise the flag through Terraform, as it describes, before retrying. Prisma
 records the migration as failed, and every later `prisma migrate deploy` refuses (P3009) until
 it's marked rolled back. As the migrator, from `apps/api`, name the migration the P3009 error
 names (usually `20261112000001_renumber_macrocycles_by_date`; it can be
@@ -688,8 +692,13 @@ proxy and removes the IP however the shell exits. From the repo root, for produc
   PROXY_PID=""
   trap '[ -n "$PROXY_PID" ] && kill "$PROXY_PID"; gcloud sql instances patch "$INSTANCE" --no-assign-ip --project="$PROJECT" --quiet' EXIT
   gcloud sql instances patch "$INSTANCE" --assign-ip --authorized-networks="$(curl -fsSL ifconfig.me)/32" --project="$PROJECT" --quiet
+  until gcloud sql instances describe "$INSTANCE" --project="$PROJECT" --format="value(state)" | grep -q RUNNABLE; do sleep 5; done
+  sleep 15  # the new public IP takes a moment to become routable
   cloud-sql-proxy "$PROJECT:us-central1:$INSTANCE?port=$PORT" & PROXY_PID=$!
-  sleep 5
+  for _ in $(seq 30); do
+    node -e "require('net').createConnection($PORT,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))" && break
+    sleep 1
+  done
   MIGRATOR_URL=$(gcloud secrets versions access latest --secret="$PREFIX-migrator-database-url" --project="$PROJECT" \
     | sed -E "s|@[^/]+/|@127.0.0.1:$PORT/|")
   psql "$MIGRATOR_URL"

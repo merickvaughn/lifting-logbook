@@ -262,7 +262,7 @@ describe('MacrocycleGenerationService', () => {
       expect(macrocycleDashboardRepo.saveMacrocycleDashboard).not.toHaveBeenCalled();
     });
 
-    it('rejects an unknown fromMacrocycleNum with 404', async () => {
+    it('rejects a source macrocycle id the program does not list with 404', async () => {
       macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
 
       await expect(service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 9 }, 'm-9')).rejects.toMatchObject({

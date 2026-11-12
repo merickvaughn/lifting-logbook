@@ -77,6 +77,8 @@ beforeEach(() => {
   // Several tests below share the default program/macrocycle/workout/lift/set identity
   // from makeProps()/makeLift() and would otherwise leak drafts across tests.
   window.localStorage.clear();
+  // The missing-id reload records its page here, which would stop a later test's reload.
+  window.sessionStorage.clear();
 });
 
 describe('WorkoutLogger — weight-unit display preference', () => {

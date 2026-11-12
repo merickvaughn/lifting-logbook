@@ -191,8 +191,8 @@ export class MacrocycleGenerationService {
   ): Promise<MacrocycleGenerationResult> {
     // Every start takes the macrocycle lock before reading anything, so an import can't
     // renumber between the reads and the writes (decision 13). A stale page's source id is a
-    // 409 (decision 3). Imported history can't feed the training maxes, and a number with no
-    // macrocycle has no records to feed them (decision 2).
+    // 409, and an id the program doesn't list is a 404 (decision 3). Imported history can't feed
+    // the training maxes (decision 2).
     let sourceRow: MacrocycleRow | null = null;
     if (dto.fromMacrocycleNum !== undefined) {
       sourceRow = await checkMacrocycleId(repos, program, dto.fromMacrocycleNum, macrocycleId, 'POST macrocycles');

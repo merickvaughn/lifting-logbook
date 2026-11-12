@@ -36,5 +36,7 @@
       "@src/core/*": ["../../packages/core/src/*"]
     }
   },
-  "include": ["scripts/**/*.ts"]
+  // src/testing/ holds helpers only spec files import; tsconfig.build.json excludes it from
+  // nest build, so this is the only place it's type-checked (#1200).
+  "include": ["scripts/**/*.ts", "src/testing/**/*.ts"]
 }
