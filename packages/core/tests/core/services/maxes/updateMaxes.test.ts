@@ -408,7 +408,7 @@ describe("updateMaxes — lookup semantics (issue #983)", () => {
 });
 
 // A modification decides which max its set moves (#1152). `none` moves nothing and `lift` moves
-// the lift's. `own` will move a max of its own (#1153); until that exists it moves nothing.
+// the lift's. `own` moves a max of its own and never the lift's (#1153, below).
 describe("updateMaxes — a set's modifications (issue #1152)", () => {
   const row: LiftingProgramSpec = {
     week: 1,
@@ -483,6 +483,156 @@ describe("updateMaxes — a set's modifications (issue #1152)", () => {
     const { maxes } = updateMaxes([testRow], [{ ...startMax }], sets, { ...RPT, modificationModes: modes });
     // Set 3 is abnormal and set 2 is modified, so set 1 decides.
     expect(maxes).toEqual([{ lift: "Deadlift", weight: 320, dateUpdated: new Date("2026-01-05") }]);
+  });
+});
+
+// An `own` modification moves a max of its own and leaves the lift's alone (#1153). Its gates are
+// the lift's: set 1 of a first occurrence, reps met, newer than the max, and a reduction is flagged.
+describe("updateMaxes — a modification's own max (issue #1153)", () => {
+  const row: LiftingProgramSpec = {
+    week: 1,
+    offset: 0,
+    lift: "Cable Curl",
+    increment: 2.5,
+    order: 1,
+    sets: 3,
+    reps: 10,
+    amrap: false,
+    warmUpPct: "0.6",
+    wtDecrementPct: 0,
+    activation: "",
+  };
+  const liftMax: TrainingMax = { lift: "Cable Curl", weight: 68.75, dateUpdated: new Date("2025-12-29") };
+  const set = (setNum: number, weight: number, modifications?: string[], reps = 10) =>
+    ({
+      program: "RPT",
+      macrocycleNum: 1,
+      workoutNum: 1,
+      date: new Date("2026-01-05"),
+      lift: "Cable Curl",
+      setNum,
+      weight,
+      reps,
+      notes: "",
+      ...(modifications && { modifications }),
+    }) as Parameters<typeof updateMaxes>[2][number];
+  const modes = new Map([
+    ["no-chalk", "none"],
+    ["mixed-grip", "lift"],
+    ["wide-grip", "own"],
+  ] as const);
+  const wideMax = (weight: number, dateUpdated = "2025-12-29") => ({
+    modificationId: "wide-grip",
+    weight,
+    dateUpdated: new Date(dateUpdated),
+  });
+  const run = (records: Parameters<typeof updateMaxes>[2], modificationMaxes = [wideMax(65)], spec = row) =>
+    updateMaxes([spec], [{ ...liftMax }], records, { ...RPT, modificationModes: modes, modificationMaxes });
+
+  it("moves only the modification's own max for a set with an `own` modification", () => {
+    const result = run([set(1, 65, ["wide-grip"])]);
+    expect(result.modificationMaxes).toEqual([
+      { modificationId: "wide-grip", weight: 67.5, dateUpdated: new Date("2026-01-05") },
+    ]);
+    expect(result.maxes).toEqual([liftMax]);
+  });
+
+  it("moves the own max beside a `lift` modification too", () => {
+    const result = run([set(1, 65, ["mixed-grip", "wide-grip"])]);
+    expect(result.modificationMaxes).toEqual([
+      { modificationId: "wide-grip", weight: 67.5, dateUpdated: new Date("2026-01-05") },
+    ]);
+    expect(result.maxes).toEqual([liftMax]);
+  });
+
+  it("creates the own max at weight plus increment when it has none yet", () => {
+    const result = run([set(1, 65, ["wide-grip"])], []);
+    expect(result.modificationMaxes).toEqual([
+      { modificationId: "wide-grip", weight: 67.5, dateUpdated: new Date("2026-01-05") },
+    ]);
+    expect(result.maxes).toEqual([liftMax]);
+    expect(result.flagged).toEqual([]);
+  });
+
+  it("moves nothing for an `own` set beside a `none` one", () => {
+    const result = run([set(1, 65, ["no-chalk", "wide-grip"])]);
+    expect(result.modificationMaxes).toEqual([wideMax(65)]);
+    expect(result.maxes).toEqual([liftMax]);
+  });
+
+  it("moves the lift's max, not the own one, for a set with no modifications or only `lift` ones", () => {
+    for (const modifications of [undefined, ["mixed-grip"]]) {
+      const result = run([set(1, 70, modifications)]);
+      expect(result.maxes).toEqual([{ lift: "Cable Curl", weight: 72.5, dateUpdated: new Date("2026-01-05") }]);
+      expect(result.modificationMaxes).toEqual([wideMax(65)]);
+    }
+  });
+
+  it("keeps the gates: only set 1, reps met, and newer than the own max", () => {
+    expect(run([set(2, 65, ["wide-grip"])]).modificationMaxes).toEqual([wideMax(65)]);
+    expect(run([set(1, 65, ["wide-grip"], 9)]).modificationMaxes).toEqual([wideMax(65)]);
+    expect(run([set(1, 65, ["wide-grip"])], [wideMax(65, "2026-01-05")]).modificationMaxes).toEqual([
+      wideMax(65, "2026-01-05"),
+    ]);
+    // With no max yet, a set that doesn't qualify creates none.
+    expect(run([set(1, 65, ["wide-grip"], 9)], []).modificationMaxes).toEqual([]);
+  });
+
+  it("flags a reduction of the own max, naming the modification, rather than applying it", () => {
+    const result = run([set(1, 60, ["wide-grip"])]);
+    expect(result.modificationMaxes).toEqual([wideMax(65)]);
+    expect(result.flagged).toEqual([
+      { lift: "Cable Curl", currentWeight: 65, proposedWeight: 62.5, modificationId: "wide-grip" },
+    ]);
+  });
+
+  it("needs no lift max for an `own` set, and reports none missing", () => {
+    const result = updateMaxes([row], [], [set(1, 65, ["wide-grip"])], {
+      ...RPT,
+      modificationModes: modes,
+      modificationMaxes: [wideMax(65)],
+    });
+    expect(result.skipped).toEqual([]);
+    expect(result.modificationMaxes).toEqual([
+      { modificationId: "wide-grip", weight: 67.5, dateUpdated: new Date("2026-01-05") },
+    ]);
+  });
+
+  it("reports an `own` set with no spec row, and moves nothing", () => {
+    const result = run([{ ...set(1, 65, ["wide-grip"]), lift: "Hammer Curl" }]);
+    expect(result.skipped).toEqual([{ lift: "Hammer Curl", reason: "no-program-spec" }]);
+    expect(result.modificationMaxes).toEqual([wideMax(65)]);
+  });
+
+  it("leaves a later occurrence's `own` set out, like the lift's", () => {
+    const result = run([{ ...set(1, 65, ["wide-grip"]), occurrence: 1 }]);
+    expect(result.modificationMaxes).toEqual([wideMax(65)]);
+  });
+
+  it("takes a test week's best own set, and keeps the own and lift sets apart", () => {
+    const testRow: LiftingProgramSpec = { ...row, weekType: "test" };
+    const records = [
+      set(1, 70, ["wide-grip"]),
+      set(2, 72.5, ["wide-grip"]),
+      { ...set(3, 75, ["wide-grip"]), notes: "injury" },
+      // An unmodified set beats every own set, but it is the lift's attempt, not the modification's.
+      set(3, 80),
+    ];
+    const result = run(records, [wideMax(65)], testRow);
+    expect(result.modificationMaxes).toEqual([
+      { modificationId: "wide-grip", weight: 72.5, dateUpdated: new Date("2026-01-05") },
+    ]);
+    expect(result.maxes).toEqual([{ lift: "Cable Curl", weight: 80, dateUpdated: new Date("2026-01-05") }]);
+  });
+
+  it("returns the own maxes it was given, as copies, when no set moves them", () => {
+    const given = [wideMax(65), { modificationId: "other", weight: 40, dateUpdated: new Date("2025-12-01") }];
+    const result = run([set(1, 65, ["wide-grip"])], given);
+    expect(result.modificationMaxes).toEqual([
+      { modificationId: "wide-grip", weight: 67.5, dateUpdated: new Date("2026-01-05") },
+      given[1],
+    ]);
+    expect(given[0]).toEqual(wideMax(65));
   });
 });
 

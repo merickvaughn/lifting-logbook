@@ -3,6 +3,7 @@ export * from "./StrengthGoalEntry";
 export * from "./LiftingProgramSpec";
 export * from "./LiftOverride";
 export * from "./LiftRecord";
+export * from "./ModificationMax";
 export * from "./SpreadsheetCell";
 export * from "./TrainingMax";
 export * from "./TrainingMaxHistoryEntry";

@@ -1,5 +1,5 @@
 import type { LiftModificationMaxMode } from "@lifting-logbook/types";
-import { LiftingProgramSpec, LiftOverride, LiftRecord, TrainingMax } from "@src/core/models";
+import { LiftingProgramSpec, LiftOverride, LiftRecord, ModificationMax, TrainingMax } from "@src/core/models";
 import { currentMaxLookup, liftIdFor, lookupByLift } from "../../catalog/liftIdentity";
 import { programWorkoutKeys, specRowsForWorkoutDay } from "../../presets/programLengths";
 import { resolveDayPrescriptions } from "../workout/dayPrescriptions";
@@ -16,6 +16,8 @@ export interface MaxReductionFlag {
   lift: string;
   currentWeight: number;
   proposedWeight: number;
+  /** Set when the max is a modification's own (#1153); `lift` is then the set's lift. */
+  modificationId?: string;
 }
 
 /**
@@ -33,6 +35,8 @@ export interface UpdateMaxesResult {
   flagged: MaxReductionFlag[];
   /** One entry per lift (however its records spell it) and reason, in the order its first record appears. */
   skipped: SkippedLift[];
+  /** Every own max given in `modificationMaxes`, moved where a set moved it, plus any it created (#1153). */
+  modificationMaxes: ModificationMax[];
 }
 
 export interface UpdateMaxesOptions {
@@ -45,15 +49,24 @@ export interface UpdateMaxesOptions {
    * reads as `none`, the default, so a set whose modifications are unknown moves no max.
    */
   modificationModes?: ReadonlyMap<string, LiftModificationMaxMode>;
+  /** The program's own maxes, which sets with an `own` modification move (#1153). */
+  modificationMaxes?: readonly ModificationMax[];
 }
 
 /**
- * Whether a set moves its lift's max: it has no modifications, or only `lift` ones. A `none` one
- * moves no max. An `own` one moves a max of its own, which doesn't exist until #1153, so for now it
- * moves nothing either.
+ * Which max a set moves (#1153): none if any of its modifications is `none`; otherwise an `own`
+ * one's max; otherwise, with no modifications or only `lift` ones, the lift's. A set carries at most
+ * one `own`, which the API enforces on write.
  */
-function movesLiftMax(record: LiftRecord, modes: ReadonlyMap<string, LiftModificationMaxMode> | undefined): boolean {
-  return (record.modifications ?? []).every((id) => modes?.get(id) === 'lift');
+function targetOf(
+  record: LiftRecord,
+  modes: ReadonlyMap<string, LiftModificationMaxMode> | undefined,
+): 'none' | 'lift' | { own: string } {
+  const ids = record.modifications ?? [];
+  const modeOf = (id: string) => modes?.get(id) ?? 'none';
+  if (ids.some((id) => modeOf(id) === 'none')) return 'none';
+  const own = ids.find((id) => modeOf(id) === 'own');
+  return own === undefined ? 'lift' : { own };
 }
 
 /**
@@ -103,8 +116,8 @@ export function updateMaxes(
   // volume) has its own prescription and its own set numbers, and would otherwise be
   // read as a second set 1 under the first occurrence's rules (#1027).
   // A set whose modifications send it elsewhere is left out here, so it neither moves the lift's
-  // max nor counts as a test week's attempt at it (#1152).
-  const progressed = liftRecords.filter((r) => !r.occurrence && movesLiftMax(r, options.modificationModes));
+  // max nor counts as a test week's attempt at it (#1152). Its own max is moved below.
+  const progressed = liftRecords.filter((r) => !r.occurrence && targetOf(r, options.modificationModes) === 'lift');
 
   // Lookups built once rather than scanned once per record (issue #983). A record, its
   // max and its spec row can each spell the lift differently (#1118), so they join on
@@ -169,52 +182,84 @@ export function updateMaxes(
     const spec = specFor(record);
     if (!spec) return skip(liftName, 'no-program-spec');
 
-    const weekType = spec.weekType ?? 'training';
-
-    if (weekType === 'deload') return;
-
-    if (weekType === 'test') {
-      // Only process when we see the final set, then walk backwards to find the best
-      // unaffected set (in case the final set was flagged as abnormal).
-      if (record.setNum !== spec.sets) return;
-
-      // Every set of this lift in the same workout, descending: best attempt first.
-      const liftSetRecords = setsFor(currentMax, record.workoutNum);
-
-      const candidate = liftSetRecords.find((r) => r.reps > 0 && !isAbnormal(r.notes));
-      if (
-        candidate &&
-        new Date(candidate.date).getTime() > new Date(currentMax.dateUpdated).getTime()
-      ) {
-        if (candidate.weight < currentMax.weight) {
-          flagged.push({ lift: currentMax.lift, currentWeight: currentMax.weight, proposedWeight: candidate.weight });
-        } else {
-          currentMax.weight = candidate.weight;
-          currentMax.dateUpdated = candidate.date;
-        }
-      }
-      return;
-    }
-
-    // training week: process set 1 only
-    if (record.setNum !== 1) return;
-
-    if (
-      record.reps >= spec.reps &&
-      new Date(record.date).getTime() > new Date(currentMax.dateUpdated).getTime()
-    ) {
-      const updatedWeight = record.weight + spec.increment;
-      if (typeof updatedWeight !== "number" || isNaN(updatedWeight)) {
-        throw new Error(`Updated weight for ${liftName} is not a valid number: ${updatedWeight}`);
-      }
-      if (updatedWeight < currentMax.weight) {
-        flagged.push({ lift: currentMax.lift, currentWeight: currentMax.weight, proposedWeight: updatedWeight });
-      } else {
-        currentMax.weight = updatedWeight;
-        currentMax.dateUpdated = record.date;
-      }
+    const next = proposedMax(record, spec, currentMax, () => setsFor(currentMax, record.workoutNum));
+    if (!next) return;
+    if (next.weight < currentMax.weight) {
+      flagged.push({ lift: currentMax.lift, currentWeight: currentMax.weight, proposedWeight: next.weight });
+    } else {
+      currentMax.weight = next.weight;
+      currentMax.dateUpdated = next.date;
     }
   });
 
-  return { maxes: newMaxes, flagged, skipped };
+  // A set with an `own` modification moves that modification's max under the same gates, and needs
+  // no lift max (#1153). With no own max yet, its first qualifying set creates one.
+  const ownMaxes = new Map<string, ModificationMax>(
+    (options.modificationMaxes ?? []).map((m) => [m.modificationId, { ...m }]),
+  );
+  const ownSets = liftRecords.flatMap((r) => {
+    const target = r.occurrence ? undefined : targetOf(r, options.modificationModes);
+    return typeof target === 'object' ? [{ record: r, id: target.own }] : [];
+  });
+  // A test week's sets of one own max in one workout, best attempt first. Few sets carry an own
+  // modification, so this filters per final set rather than grouping up front.
+  const ownSetsFor = (id: string, workoutNum: number): LiftRecord[] =>
+    ownSets
+      .filter((s) => s.id === id && s.record.workoutNum === workoutNum)
+      .map((s) => s.record)
+      .sort((a, b) => b.setNum - a.setNum);
+
+  ownSets.forEach(({ record, id }) => {
+    const spec = specFor(record);
+    if (!spec) return skip(record.lift, 'no-program-spec');
+
+    const current = ownMaxes.get(id);
+    const next = proposedMax(record, spec, current, () => ownSetsFor(id, record.workoutNum));
+    if (!next) return;
+    if (!current) {
+      ownMaxes.set(id, { modificationId: id, weight: next.weight, dateUpdated: next.date });
+    } else if (next.weight < current.weight) {
+      flagged.push({ lift: record.lift, currentWeight: current.weight, proposedWeight: next.weight, modificationId: id });
+    } else {
+      current.weight = next.weight;
+      current.dateUpdated = next.date;
+    }
+  });
+
+  return { maxes: newMaxes, flagged, skipped, modificationMaxes: [...ownMaxes.values()] };
+}
+
+/**
+ * The max `record` would set, under its spec row's week type, or undefined when it sets none.
+ * `current` is the max it moves: undefined for an own max not created yet, which any qualifying set
+ * is newer than. `weekSets` gives a test week's sets of that max in the workout, best attempt first.
+ */
+function proposedMax(
+  record: LiftRecord,
+  spec: LiftingProgramSpec,
+  current: { dateUpdated: Date } | undefined,
+  weekSets: () => LiftRecord[],
+): { weight: number; date: Date } | undefined {
+  const newer = (date: Date) =>
+    !current || new Date(date).getTime() > new Date(current.dateUpdated).getTime();
+  const weekType = spec.weekType ?? 'training';
+
+  if (weekType === 'deload') return undefined;
+
+  if (weekType === 'test') {
+    // Only process when we see the final set, then walk backwards to find the best
+    // unaffected set (in case the final set was flagged as abnormal).
+    if (record.setNum !== spec.sets) return undefined;
+    const candidate = weekSets().find((r) => r.reps > 0 && !isAbnormal(r.notes));
+    return candidate && newer(candidate.date) ? { weight: candidate.weight, date: candidate.date } : undefined;
+  }
+
+  // training week: process set 1 only
+  if (record.setNum !== 1) return undefined;
+  if (record.reps < spec.reps || !newer(record.date)) return undefined;
+  const updatedWeight = record.weight + spec.increment;
+  if (typeof updatedWeight !== "number" || isNaN(updatedWeight)) {
+    throw new Error(`Updated weight for ${record.lift} is not a valid number: ${updatedWeight}`);
+  }
+  return { weight: updatedWeight, date: record.date };
 }
