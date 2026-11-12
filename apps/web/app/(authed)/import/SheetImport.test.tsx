@@ -110,9 +110,18 @@ beforeEach(() => {
   mockPreview.mockImplementation(async (_program, _file, destination) => PREVIEWS[destination ?? 'lift-records']);
 });
 
+// Paste the link rather than `user.type` it. Typing sends a burst of key events and a
+// timer yield per character, and each character's `input` re-renders the whole wizard:
+// the 84-character link took 3.6 s of a 9 s test run alone, and under a parallel Windows
+// run that pushed a test past its 15 s timeout (#1232). Pasting is one `input` event.
+async function enterSheetLink(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByLabelText('Google Sheets link'));
+  await user.paste(SHEET_URL);
+}
+
 async function fetchWorkbook(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByLabelText('Google Sheets'));
-  await user.type(screen.getByLabelText('Google Sheets link'), SHEET_URL);
+  await enterSheetLink(user);
   await user.click(screen.getByRole('button', { name: 'Fetch workbook' }));
   await screen.findByText('Choose tabs to import');
 }
@@ -194,7 +203,7 @@ describe('Google Sheets import (#1111)', () => {
     render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
 
     await user.click(screen.getByLabelText('Google Sheets'));
-    await user.type(screen.getByLabelText('Google Sheets link'), SHEET_URL);
+    await enterSheetLink(user);
     await user.click(screen.getByRole('button', { name: 'Fetch workbook' }));
 
     expect(await screen.findByText('This sheet is not shared.')).toBeInTheDocument();
@@ -396,7 +405,7 @@ describe('Google Sheets import (#1111)', () => {
 
     // Fetching the link again starts over: both tabs are offered.
     await user.clear(screen.getByLabelText('Google Sheets link'));
-    await user.type(screen.getByLabelText('Google Sheets link'), SHEET_URL);
+    await enterSheetLink(user);
     await user.click(screen.getByRole('button', { name: 'Fetch workbook' }));
     expect(await screen.findByRole('button', { name: 'Import 2 tabs' })).toBeInTheDocument();
 
@@ -418,7 +427,7 @@ describe('Google Sheets import (#1111)', () => {
     render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
 
     await user.click(screen.getByLabelText('Google Sheets'));
-    await user.type(screen.getByLabelText('Google Sheets link'), SHEET_URL);
+    await enterSheetLink(user);
     await user.click(screen.getByRole('button', { name: 'Fetch workbook' }));
 
     expect(screen.getByLabelText('Google Sheets link')).toBeDisabled();
