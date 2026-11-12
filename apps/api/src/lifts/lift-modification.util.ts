@@ -1,5 +1,6 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import { LiftRecord, NamedLift, lookupLift } from '@lifting-logbook/core';
+import { LiftModificationMaxMode } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
 
 const logger = new Logger('LiftModification');
@@ -56,6 +57,18 @@ export async function assertSetModifications(
     throw new BadRequestException('A set can have only one modification with its own max');
   }
   return new Map(modifications.map((m) => [m.id, m.name]));
+}
+
+/**
+ * The `maxMode` of each of the user's modifications, for `updateMaxes` (#1152). Costs no query when
+ * no record has any, like {@link modificationNamesFor}.
+ */
+export async function modificationModesFor(
+  repos: Pick<RepositoryBundle, 'liftModification'>,
+  records: readonly Pick<LiftRecord, 'modifications'>[],
+): Promise<ReadonlyMap<string, LiftModificationMaxMode>> {
+  if (!records.some((r) => (r.modifications ?? []).length > 0)) return new Map();
+  return new Map((await repos.liftModification.list()).map((m) => [m.id, m.maxMode]));
 }
 
 /**

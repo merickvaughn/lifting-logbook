@@ -150,6 +150,8 @@ function createInitialState() {
     privateSheet: false,
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
+    // GET/POST /lifts/modifications (#1152) — the user's lift modifications, for every lift.
+    liftModifications: [],
     // /focus/* (#1057) — the user's focus blocks and daily focus guide. Empty by default;
     // /__reset?withFocusBlocks=true seeds the setup page's set (#1057), and
     // withFocusBlocks=<YYYY-MM-DD> seeds the calendar's set around that day (#1059).
@@ -791,6 +793,38 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
+  // GET /lifts/modifications?lift= — a lift's modifications, which the logger reads (#1152).
+  // The mock doesn't resolve lifts, so every lift lists every modification.
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && url.pathname === '/lifts/modifications') {
+    json(res, state.liftModifications);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // POST /lifts/modifications — the logger's inline Add; 409 on a duplicate name (#1152)
+  // -------------------------------------------------------------------------
+  if (method === 'POST' && url.pathname === '/lifts/modifications') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    if (state.liftModifications.some((m) => m.name === body.name)) {
+      json(res, { statusCode: 409, message: `${body.lift} already has a modification named '${body.name}'` }, 409);
+      return;
+    }
+    const created = {
+      id: `mod-${state.liftModifications.length + 1}`,
+      lift: body.lift,
+      name: body.name,
+      description: body.description ?? '',
+      maxMode: body.maxMode ?? 'none',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    state.liftModifications.push(created);
+    json(res, created, 201);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
   // GET /focus/blocks/:id/summary — an ended focus block's totals (#1059)
   // -------------------------------------------------------------------------
   if (method === 'GET' && parts[0] === 'focus' && parts[1] === 'blocks' && parts.length === 4 && parts[3] === 'summary') {
@@ -1074,7 +1108,13 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && rest[0] === 'lift-records' && rest.length === 1) {
       const body = await readBody(req);
       if (rejectIfInvalidBody(res, body)) return;
-      const record = { id: `r-${Date.now()}`, ...body };
+      // A set names its modifications as { id, name }, as the API's response does (#1152).
+      const { modifications, ...fields } = body;
+      const named = (modifications ?? []).map((id) => ({
+        id,
+        name: state.liftModifications.find((m) => m.id === id)?.name ?? id,
+      }));
+      const record = { id: `r-${Date.now()}`, ...fields, ...(named.length > 0 && { modifications: named }) };
       json(res, record, 201);
       return;
     }

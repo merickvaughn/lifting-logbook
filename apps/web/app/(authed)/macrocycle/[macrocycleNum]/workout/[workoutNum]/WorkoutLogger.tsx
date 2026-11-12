@@ -2,19 +2,31 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import type { WeightUnit } from '@lifting-logbook/types';
+import { ApiClientError } from '@lifting-logbook/api-client';
+import type { LiftModificationResponse, WeightUnit } from '@lifting-logbook/types';
 import { convertWeight, formatWeight, liftOccurrenceKey, roundToDisplay, withOccurrence } from '@lifting-logbook/core';
 import {
+  createLiftModification,
   createLiftRecord,
+  fetchLiftModifications,
   recordBodyWeight,
   rescheduleWorkout,
   updateLiftRecord,
 } from '@/lib/client-api';
+import { modificationSuffix } from '@/lib/liftModifications';
 import { logClientError } from '@/lib/log-client-error';
 import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
 import styles from './WorkoutLogger.module.css';
 import type { LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
-import { buildDraftKey, clearDraft, readDraft, writeDraft } from './workoutDraftStorage';
+import {
+  buildDraftKey,
+  buildModificationsDraftKey,
+  clearDraft,
+  readDraft,
+  readModificationsDraft,
+  writeDraft,
+  writeModificationsDraft,
+} from './workoutDraftStorage';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -67,6 +79,36 @@ function formatWorkingWeight(
   // weight.
   const added = roundToDisplay(Math.max(0, totalLoad - bodyWeight));
   return { display: `+${formatWeight(added, 'lbs', unit)}`, value: added };
+}
+
+function modificationIds(record: LoggedSet | undefined): string[] {
+  return (record?.modifications ?? []).map((m) => m.id);
+}
+
+/** `ids` with `id` toggled. Turning on one with its own max turns off any other: a set can have one. */
+function toggleModification(
+  ids: readonly string[],
+  id: string,
+  modifications: readonly Pick<LiftModificationResponse, 'id' | 'maxMode'>[],
+): string[] {
+  if (ids.includes(id)) return ids.filter((x) => x !== id);
+  const ownMax = (x: string) => modifications.find((m) => m.id === x)?.maxMode === 'own';
+  return [...ids.filter((x) => !(ownMax(id) && ownMax(x))), id];
+}
+
+/**
+ * The message for a write that sent modifications and got a 400, when the refreshed list shows one
+ * of them was removed elsewhere (#1152); `null` for any other failure.
+ */
+async function staleModificationMessage(
+  err: unknown,
+  sent: readonly string[],
+  refresh: () => Promise<LiftModificationResponse[] | null>,
+): Promise<string | null> {
+  if (sent.length === 0 || !(err instanceof ApiClientError) || err.status !== 400) return null;
+  const live = await refresh();
+  if (!live || sent.every((id) => live.some((m) => m.id === id))) return null;
+  return 'A modification on this set was removed. Check the toggles and log again.';
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +184,124 @@ function BodyWeightGate({
   );
 }
 
+/**
+ * A row of toggle buttons, one per modification, each `aria-pressed`. The description of each one
+ * that is on shows under the row (#1152).
+ */
+function ModificationToggles({
+  label,
+  modifications,
+  active,
+  disabled,
+  onToggle,
+  children,
+}: {
+  label: string;
+  modifications: readonly Pick<LiftModificationResponse, 'id' | 'name' | 'description'>[];
+  active: readonly string[];
+  disabled?: boolean;
+  onToggle: (id: string) => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className={styles.modRow} role="group" aria-label={label}>
+      {modifications.map((m) => (
+        <button
+          key={m.id}
+          className={styles.modToggle}
+          type="button"
+          aria-pressed={active.includes(m.id)}
+          disabled={disabled}
+          onClick={() => onToggle(m.id)}
+        >
+          {m.name}
+        </button>
+      ))}
+      {children}
+      {modifications
+        .filter((m) => m.description && active.includes(m.id))
+        .map((m) => (
+          <p key={m.id} className={styles.modDescription}>
+            {m.description}
+          </p>
+        ))}
+    </div>
+  );
+}
+
+/** The inline **Add**: a name, created as a modification of `lift` that moves no max (#1152). */
+function AddModification({
+  program,
+  lift,
+  onAdded,
+}: {
+  program: string;
+  lift: string;
+  onAdded: (modification: LiftModificationResponse) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) {
+    return (
+      <button className={styles.modAdd} type="button" aria-label="Add modification" onClick={() => setOpen(true)}>
+        + Add
+      </button>
+    );
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError('Enter a name.');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      const result = await createLiftModification({ lift, name: trimmed });
+      setSubmitting(false);
+      if (!result.ok) {
+        setError(result.conflictMessage);
+        return;
+      }
+      setName('');
+      setOpen(false);
+      onAdded(result.data);
+    } catch (err) {
+      logClientError('createLiftModification', err, { program, lift });
+      setError(writeFailureMessage(err, 'Failed to add the modification. Try again.'));
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form className={styles.modForm} onSubmit={handleSubmit}>
+      <input
+        className={styles.modInput}
+        type="text"
+        aria-label="Modification name"
+        placeholder="e.g. Paused"
+        maxLength={100}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        disabled={submitting}
+        autoFocus
+      />
+      <button className={styles.modAdd} type="submit" aria-label="Save modification" disabled={submitting}>
+        {submitting ? '…' : 'Save'}
+      </button>
+      <button className={styles.modAdd} type="button" onClick={() => setOpen(false)} disabled={submitting}>
+        Cancel
+      </button>
+      {error && <p className={styles.setError}>{error}</p>}
+    </form>
+  );
+}
+
 function WarmUpRow({
   label,
   totalLoad,
@@ -183,6 +343,9 @@ function WorkingSetRow({
   workoutNum,
   date,
   unit,
+  modifications,
+  activeModifications,
+  onRefreshModifications,
   onLogged,
   onEditStart,
   onEditSave,
@@ -191,6 +354,12 @@ function WorkingSetRow({
   /** Which occurrence of `lift` in the workout (`LiftData.occurrence`); absent means 0. */
   occurrence: number | undefined;
   set: WorkingSetData;
+  /** The lift's modifications, or `null`/absent when the fetch failed or hasn't returned (#1152). */
+  modifications: readonly LiftModificationResponse[] | null | undefined;
+  /** The ids toggled on, sent with a new set. */
+  activeModifications: readonly string[];
+  /** Fetches the lift's modifications again; `null` if that fails. */
+  onRefreshModifications: () => Promise<LiftModificationResponse[] | null>;
   bodyWeight: number | null;
   isBodyweightComponent: boolean;
   isReadOnly: boolean;
@@ -256,8 +425,15 @@ function WorkingSetRow({
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The modifications chosen while editing a logged set, reset from the set on each Edit.
+  const [editModifications, setEditModifications] = useState<string[]>(() => modificationIds(loggedRecord));
 
   const isLogged = !!loggedRecord && !isEditing;
+
+  function handleEditStart() {
+    setEditModifications(modificationIds(loggedRecord));
+    onEditStart();
+  }
 
   function handleWeightInputChange(value: string) {
     setWeightInput(value);
@@ -282,6 +458,8 @@ function WorkingSetRow({
     }
     setError(null);
     setSubmitting(true);
+    // Left out when empty, so a set with no modifications sends what it always did.
+    const sent = [...activeModifications];
     try {
       const record = await createLiftRecord(program, {
         program,
@@ -294,6 +472,7 @@ function WorkingSetRow({
         weight,
         reps,
         notes: notesInput || undefined,
+        ...(sent.length > 0 && { modifications: sent }),
       }, macrocycleId);
       clearDraft(draftStorageKey);
       onLogged(record);
@@ -307,7 +486,9 @@ function WorkingSetRow({
       });
       // A renumbered macrocycle reloads at its new number; the draft goes with it (#1198).
       if (followMovedMacrocycle(err)) return;
-      setError(writeFailureMessage(err, 'Failed to log set. Try again.'));
+      // The draft stays, so the lifter logs the same set again once the toggles are fresh.
+      const stale = await staleModificationMessage(err, sent, onRefreshModifications);
+      setError(stale ?? writeFailureMessage(err, 'Failed to log set. Try again.'));
       setSubmitting(false);
     }
   }
@@ -323,20 +504,39 @@ function WorkingSetRow({
     }
     setError(null);
     setSubmitting(true);
+    // Sent only when changed, so an edit that leaves them alone sends what it always did. An
+    // empty list clears them.
+    const before = modificationIds(loggedRecord);
+    const changed =
+      editModifications.length !== before.length || editModifications.some((id) => !before.includes(id));
+    const sent = changed ? [...editModifications] : [];
     try {
       const record = await updateLiftRecord(program, loggedRecord.id, {
         weight,
         reps,
         notes: notesInput || undefined,
+        ...(changed && { modifications: sent }),
       }, macrocycleId);
       onEditSave(record);
     } catch (err) {
       logClientError('updateLiftRecord', err, { program, id: loggedRecord.id });
       if (followMovedMacrocycle(err)) return;
-      setError(writeFailureMessage(err, 'Failed to save changes. Try again.'));
+      const stale = await staleModificationMessage(err, sent, onRefreshModifications);
+      setError(stale ?? writeFailureMessage(err, 'Failed to save changes. Try again.'));
       setSubmitting(false);
     }
   }
+
+  // Editing shows the lift's toggles, plus any the set names that are no longer listed (archived),
+  // so the lifter can take them off. None when the lift's list didn't load.
+  const editChoices = modifications
+    ? [
+        ...modifications,
+        ...(loggedRecord?.modifications ?? [])
+          .filter((r) => !modifications.some((m) => m.id === r.id))
+          .map((r) => ({ id: r.id, name: r.name, description: '', maxMode: 'none' as const })),
+      ]
+    : [];
 
   if (isReadOnly || isLogged) {
     const displayWeight = loggedRecord
@@ -350,6 +550,7 @@ function WorkingSetRow({
           {loggedRecord
             ? `${formatWeight(loggedRecord.weight, 'lbs', unit)} × ${loggedRecord.reps}`
             : `${displayWeight} × ${set.reps}`}
+          {modificationSuffix(loggedRecord)}
           {set.amrap ? ' (AMRAP)' : ''}
         </span>
         {loggedRecord?.notes && (
@@ -359,7 +560,7 @@ function WorkingSetRow({
           <button
             className={styles.editBtn}
             type="button"
-            onClick={onEditStart}
+            onClick={handleEditStart}
             aria-label={`Edit set ${set.setNum}`}
           >
             Edit
@@ -419,6 +620,15 @@ function WorkingSetRow({
           onChange={(e) => handleNotesInputChange(e.target.value)}
           disabled={submitting}
         />
+        {isEdit && editChoices.length > 0 && (
+          <ModificationToggles
+            label={`Set ${set.setNum} modifications`}
+            modifications={editChoices}
+            active={editModifications}
+            disabled={submitting}
+            onToggle={(id) => setEditModifications((ids) => toggleModification(ids, id, editChoices))}
+          />
+        )}
         {error && <p className={styles.setError}>{error}</p>}
         <button
           className={styles.logBtn}
@@ -460,6 +670,11 @@ function LiftView({
   workoutNum,
   date,
   unit,
+  modifications,
+  activeModifications,
+  onToggleModification,
+  onModificationAdded,
+  onRefreshModifications,
   onLogged,
   onEditStart,
   onEditSave,
@@ -475,6 +690,12 @@ function LiftView({
   workoutNum: number;
   date: string;
   unit: WeightUnit;
+  /** The lift's modifications; `null` when the fetch failed and absent while it runs, both hiding the toggles. */
+  modifications: readonly LiftModificationResponse[] | null | undefined;
+  activeModifications: readonly string[];
+  onToggleModification: (id: string) => void;
+  onModificationAdded: (modification: LiftModificationResponse) => void;
+  onRefreshModifications: () => Promise<LiftModificationResponse[] | null>;
   onLogged: (key: string, record: LoggedSet) => void;
   onEditStart: (key: string) => void;
   onEditSave: (key: string, record: LoggedSet) => void;
@@ -486,6 +707,18 @@ function LiftView({
         <p className={styles.focusTag}>
           Focus work · {lift.focus.area} · {lift.focus.summary}
         </p>
+      )}
+
+      {/* The toggles apply to this occurrence's sets not yet logged (#1152). */}
+      {!isReadOnly && modifications && (
+        <ModificationToggles
+          label={`${lift.lift} modifications`}
+          modifications={modifications}
+          active={activeModifications}
+          onToggle={onToggleModification}
+        >
+          <AddModification program={program} lift={lift.lift} onAdded={onModificationAdded} />
+        </ModificationToggles>
       )}
 
       {lift.warmUpSets.length > 0 && (
@@ -532,6 +765,9 @@ function LiftView({
                 workoutNum={workoutNum}
                 date={date}
                 unit={unit}
+                modifications={modifications}
+                activeModifications={activeModifications}
+                onRefreshModifications={onRefreshModifications}
                 onLogged={(record) => onLogged(key, record)}
                 onEditStart={() => onEditStart(key)}
                 onEditSave={(record) => onEditSave(key, record)}
@@ -651,6 +887,85 @@ export default function WorkoutLogger({
     setBodyWeightDone(true);
   }
 
+  // Each lift's modifications by lift name, read client-side so a stale toggle can refresh
+  // without a reload (#1152). `null` means the fetch failed: the toggles hide and sets still log.
+  // A lift is absent until its fetch returns.
+  const [modificationsByLift, setModificationsByLift] = useState<
+    ReadonlyMap<string, LiftModificationResponse[] | null>
+  >(new Map());
+  // The toggles the lifter changed, by lift occurrence. One not changed starts from its last
+  // logged set, then a toggle saved before its first set, then off (`startingModifications`).
+  const [toggled, setToggled] = useState<ReadonlyMap<string, string[]>>(new Map());
+
+  // One read per lift in the workout. A read-only workout shows no toggles, so it reads nothing.
+  const liftNames = [...new Set(lifts.map((l) => l.lift))].join('\n');
+  useEffect(() => {
+    if (isReadOnly) return;
+    let cancelled = false;
+    for (const lift of liftNames.split('\n')) {
+      fetchLiftModifications(lift).then(
+        (list) => {
+          if (!cancelled) setModificationsByLift((prev) => new Map(prev).set(lift, list));
+        },
+        (err: unknown) => {
+          logClientError('fetchLiftModifications', err, { program, lift });
+          if (!cancelled) setModificationsByLift((prev) => new Map(prev).set(lift, null));
+        },
+      );
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [isReadOnly, liftNames, program]);
+
+  async function refreshModifications(lift: string): Promise<LiftModificationResponse[] | null> {
+    try {
+      const list = await fetchLiftModifications(lift);
+      setModificationsByLift((prev) => new Map(prev).set(lift, list));
+      return list;
+    } catch (err) {
+      // The toggles already showing stay; the set's own error says it didn't log.
+      logClientError('fetchLiftModifications', err, { program, lift });
+      return null;
+    }
+  }
+
+  function modificationsDraftKey(lift: LiftData): string {
+    return buildModificationsDraftKey(program, macrocycleNum, workoutNum, lift.lift, lift.occurrence, macrocycleId);
+  }
+
+  function startingModifications(lift: LiftData): string[] {
+    const lastLogged = [...lift.workingSets]
+      .reverse()
+      .map((ws) => loggedSets.get(setKey(lift, ws.setNum)))
+      .find((record) => record !== undefined);
+    return lastLogged ? modificationIds(lastLogged) : (readModificationsDraft(modificationsDraftKey(lift)) ?? []);
+  }
+
+  /** The ids on for a lift occurrence's next set, limited to the modifications still listed. */
+  function activeModifications(lift: LiftData): string[] {
+    const listed = modificationsByLift.get(lift.lift);
+    if (!listed) return [];
+    const chosen = toggled.get(liftKey(lift)) ?? startingModifications(lift);
+    return chosen.filter((id) => listed.some((m) => m.id === id));
+  }
+
+  function setActiveModifications(lift: LiftData, ids: string[]) {
+    setToggled((prev) => new Map(prev).set(liftKey(lift), ids));
+    writeModificationsDraft(modificationsDraftKey(lift), ids);
+  }
+
+  function handleToggleModification(lift: LiftData, id: string) {
+    setActiveModifications(lift, toggleModification(activeModifications(lift), id, modificationsByLift.get(lift.lift) ?? []));
+  }
+
+  // A modification added mid-workout joins the lift's list and is turned on for this occurrence.
+  function handleModificationAdded(lift: LiftData, modification: LiftModificationResponse) {
+    const listed = [...(modificationsByLift.get(lift.lift) ?? []), modification];
+    setModificationsByLift((prev) => new Map(prev).set(lift.lift, listed));
+    setActiveModifications(lift, toggleModification(activeModifications(lift), modification.id, listed));
+  }
+
   function handleLogged(key: string, record: LoggedSet) {
     setLoggedSets((prev) => new Map(prev).set(key, record));
     setEditingSet(null);
@@ -677,6 +992,7 @@ export default function WorkoutLogger({
   // drafts here as a backstop before leaving the page.
   function handleFinishWorkout() {
     for (const l of lifts) {
+      clearDraft(modificationsDraftKey(l));
       for (const ws of l.workingSets) {
         clearDraft(buildDraftKey(program, macrocycleNum, workoutNum, l.lift, ws.setNum, l.occurrence, macrocycleId));
         clearDraft(buildDraftKey(program, macrocycleNum, workoutNum, l.lift, ws.setNum, l.occurrence));
@@ -811,6 +1127,11 @@ export default function WorkoutLogger({
           workoutNum={workoutNum}
           date={effectiveDate}
           unit={unit}
+          modifications={modificationsByLift.get(currentLift.lift)}
+          activeModifications={activeModifications(currentLift)}
+          onToggleModification={(id) => handleToggleModification(currentLift, id)}
+          onModificationAdded={(modification) => handleModificationAdded(currentLift, modification)}
+          onRefreshModifications={() => refreshModifications(currentLift.lift)}
           onLogged={handleLogged}
           onEditStart={handleEditStart}
           onEditSave={handleEditSave}

@@ -143,6 +143,79 @@
 }
 
 /* ---------------------------------------------------------------------------
+   Lift modifications (#1152): toggles under the lift name, touch-sized
+   --------------------------------------------------------------------------- */
+
+.modRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin-bottom: var(--space-4);
+}
+
+.modToggle,
+.modAdd {
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.modToggle[aria-pressed='true'] {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.modAdd {
+  border-style: dashed;
+  color: var(--color-text-muted);
+}
+
+.modToggle:disabled,
+.modAdd:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modDescription {
+  width: 100%;
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.modForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.modInput {
+  min-height: 44px;
+  min-width: 140px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.modInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-glow);
+}
+
+/* ---------------------------------------------------------------------------
    Warm-up section
    --------------------------------------------------------------------------- */
 

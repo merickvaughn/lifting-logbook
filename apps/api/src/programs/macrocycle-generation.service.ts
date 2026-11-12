@@ -32,6 +32,7 @@ import {
   nextMacrocycleNumber,
 } from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
+import { modificationModesFor } from '../lifts/lift-modification.util';
 
 type MacrocycleRepos = Pick<
   RepositoryBundle,
@@ -46,6 +47,7 @@ type MacrocycleRepos = Pick<
   | 'workoutLiftOverride'
   | 'workoutDateOverride'
   | 'importBatch'
+  | 'liftModification'
 >;
 
 /**
@@ -248,7 +250,12 @@ export class MacrocycleGenerationService {
     });
     // Deliberate: flagged reductions are silently blocked here — they are not surfaced
     // to the caller when advancing a macrocycle. Use recalculateMaxes to review flagged reductions.
-    const { maxes: newMaxes, skipped } = updateMaxes(programSpec, trainingMaxes, liftRecords, { program, liftOverrides });
+    const modificationModes = await modificationModesFor(repos, liftRecords);
+    const { maxes: newMaxes, skipped } = updateMaxes(programSpec, trainingMaxes, liftRecords, {
+      program,
+      liftOverrides,
+      modificationModes,
+    });
     this.warnSkipped(program, sourceMacrocycleNum, skipped);
 
     // The new row goes first: a concurrent request that took this number makes it throw a 409
@@ -430,7 +437,8 @@ export class MacrocycleGenerationService {
       repos.workoutLiftOverride.getOverridesForMacrocycle(program, dashboard.macrocycleNum),
     ]);
 
-    const result = updateMaxes(programSpec, trainingMaxes, liftRecords, { program, liftOverrides });
+    const modificationModes = await modificationModesFor(repos, liftRecords);
+    const result = updateMaxes(programSpec, trainingMaxes, liftRecords, { program, liftOverrides, modificationModes });
     this.warnSkipped(program, dashboard.macrocycleNum, result.skipped);
     await repos.trainingMax.saveTrainingMaxes(program, result.maxes);
 

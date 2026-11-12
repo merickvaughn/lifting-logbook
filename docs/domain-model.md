@@ -145,16 +145,19 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
 
 - `lift_modification` holds them per user, unique on `(userId, lift, name)`. `lift` is a catalog id or
   a custom lift's uuid, written through `lookupLift`, with no foreign key because catalog lifts aren't
-  rows. `maxMode` is `none`, `lift` or `own`: what it does to training maxes. Nothing reads `maxMode`
-  yet except the rule below, because progression changes in
-  [#1152](https://github.com/merickvaughn/lifting-logbook/issues/1152) and
-  [#1153](https://github.com/merickvaughn/lifting-logbook/issues/1153).
+  rows. `maxMode` is `none`, `lift` or `own`: what it does to training maxes. `updateMaxes` reads it
+  (see [Progression](#progression)). An `own` modification has no max of its own until
+  [#1153](https://github.com/merickvaughn/lifting-logbook/issues/1153), so for now it moves no max.
 - `lift_record.modifications` holds the ids on for a set, and isn't part of its natural key or id.
   Writes check that each id belongs to the user and the set's lift, with at most one `own`
   (`assertSetModifications`). `LiftRecordResponse` and `SetResponse` name each as `{ id, name }`.
 - Delete removes a modification no set names, and otherwise archives it: gone from the list, still
   named on those sets. Creating its name again brings the same row back.
-- The routes are under `/lifts/modifications`. The logger doesn't use them yet.
+- The routes are under `/lifts/modifications`. The logger reads one lift's list at a time and shows
+  them as toggles under the lift name, with an inline **Add**
+  ([#1152](https://github.com/merickvaughn/lifting-logbook/issues/1152)). A toggle applies to the
+  occurrence's sets not yet logged, and starts from its last logged set. A failed read hides the
+  toggles, and sets still log.
 
 ### Two name registries, one bridge
 
@@ -400,7 +403,11 @@ branches on `WeekType`:
 | `deload` | No progression |
 
 A computed *reduction* is never auto-applied — it is returned as a `MaxReductionFlag`
-for explicit review. Note that no shipped preset ever sets `weekType`, so in practice
+for explicit review.
+
+A set with a `none` or `own` modification on moves no max and isn't a test week's attempt; one with
+no modifications, or only `lift` ones, moves the lift's max as above. A modification id `updateMaxes`
+has no mode for reads as `none`. Note that no shipped preset ever sets `weekType`, so in practice
 only the `training` branch runs (divergence D5).
 
 ---

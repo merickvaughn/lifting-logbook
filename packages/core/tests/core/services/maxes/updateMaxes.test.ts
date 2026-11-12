@@ -407,6 +407,85 @@ describe("updateMaxes — lookup semantics (issue #983)", () => {
   });
 });
 
+// A modification decides which max its set moves (#1152). `none` moves nothing and `lift` moves
+// the lift's. `own` will move a max of its own (#1153); until that exists it moves nothing.
+describe("updateMaxes — a set's modifications (issue #1152)", () => {
+  const row: LiftingProgramSpec = {
+    week: 1,
+    offset: 0,
+    lift: "Deadlift",
+    increment: 5,
+    order: 1,
+    sets: 3,
+    reps: 5,
+    amrap: false,
+    warmUpPct: "0.6",
+    wtDecrementPct: 0,
+    activation: "",
+  };
+  const startMax: TrainingMax = { lift: "Deadlift", weight: 300, dateUpdated: new Date("2025-12-29") };
+  const set1 = (modifications?: string[]) =>
+    ({
+      program: "RPT",
+      macrocycleNum: 1,
+      workoutNum: 1,
+      date: new Date("2026-01-05"),
+      lift: "Deadlift",
+      setNum: 1,
+      weight: 310,
+      reps: 5,
+      notes: "",
+      ...(modifications && { modifications }),
+    }) as Parameters<typeof updateMaxes>[2][number];
+  const modes = new Map([
+    ["no-chalk", "none"],
+    ["mixed-grip", "lift"],
+    ["wide-grip", "own"],
+  ] as const);
+  const run = (modifications?: string[]) =>
+    updateMaxes([row], [{ ...startMax }], [set1(modifications)], { ...RPT, modificationModes: modes });
+  const progressed: TrainingMax = { lift: "Deadlift", weight: 315, dateUpdated: new Date("2026-01-05") };
+
+  it("moves the lift's max for a set with no modifications, or only `lift` ones", () => {
+    expect(run().maxes).toEqual([progressed]);
+    expect(run([]).maxes).toEqual([progressed]);
+    expect(run(["mixed-grip"]).maxes).toEqual([progressed]);
+  });
+
+  it("moves no max for a set with a `none` modification, even beside a `lift` one", () => {
+    expect(run(["no-chalk"]).maxes).toEqual([startMax]);
+    expect(run(["mixed-grip", "no-chalk"]).maxes).toEqual([startMax]);
+  });
+
+  it("moves no max for an `own` modification, which has no max of its own yet", () => {
+    expect(run(["wide-grip"]).maxes).toEqual([startMax]);
+    expect(run(["mixed-grip", "wide-grip"]).maxes).toEqual([startMax]);
+  });
+
+  it("moves no max for a modification it has no mode for, since `none` is the default", () => {
+    expect(run(["deleted-row"]).maxes).toEqual([startMax]);
+    const { maxes } = updateMaxes([row], [{ ...startMax }], [set1(["mixed-grip"])], RPT);
+    expect(maxes).toEqual([startMax]);
+  });
+
+  it("doesn't report a lift with no max when its only sets move no max", () => {
+    const result = updateMaxes([row], [], [set1(["no-chalk"])], { ...RPT, modificationModes: modes });
+    expect(result.skipped).toEqual([]);
+  });
+
+  it("leaves a `none` set out of a test week's candidates", () => {
+    const testRow: LiftingProgramSpec = { ...row, weekType: "test" };
+    const sets = [
+      { ...set1(), setNum: 1, weight: 320 },
+      { ...set1(["no-chalk"]), setNum: 2, weight: 340 },
+      { ...set1(), setNum: 3, weight: 330, notes: "injury" },
+    ];
+    const { maxes } = updateMaxes([testRow], [{ ...startMax }], sets, { ...RPT, modificationModes: modes });
+    // Set 3 is abnormal and set 2 is modified, so set 1 decides.
+    expect(maxes).toEqual([{ lift: "Deadlift", weight: 320, dateUpdated: new Date("2026-01-05") }]);
+  });
+});
+
 // Imported history often names lifts the current program doesn't plan, and such a
 // record used to throw, failing recalculation and the next macrocycle's start (#1150).
 describe("updateMaxes — a record for a lift with no max or no spec row (issue #1150)", () => {

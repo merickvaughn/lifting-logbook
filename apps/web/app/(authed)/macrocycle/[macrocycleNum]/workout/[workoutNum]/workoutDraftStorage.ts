@@ -92,6 +92,43 @@ export function writeDraft(key: string, draft: WorkoutSetDraft): void {
   }
 }
 
+/**
+ * The key of a lift occurrence's toggled modifications, kept beside its set drafts so a toggle
+ * changed before a set is logged survives a reload (#1152).
+ */
+export function buildModificationsDraftKey(
+  program: string,
+  macrocycleNum: number,
+  workoutNum: number,
+  lift: string,
+  occurrence?: number,
+  macrocycleId?: string,
+): string {
+  return `${buildDraftKey(program, macrocycleNum, workoutNum, lift, 0, occurrence, macrocycleId)}:modifications`;
+}
+
+/** The modification ids saved at `key`, or `null` when there are none or they can't be read. */
+export function readModificationsDraft(key: string): string[] | null {
+  if (!isBrowser()) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.every((id) => typeof id === 'string') ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeModificationsDraft(key: string, ids: readonly string[]): void {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(ids));
+  } catch {
+    // Same rationale as writeDraft.
+  }
+}
+
 export function clearDraft(key: string): void {
   if (!isBrowser()) return;
   try {
