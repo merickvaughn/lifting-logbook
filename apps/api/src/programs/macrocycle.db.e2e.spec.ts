@@ -1246,7 +1246,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
             ).rejects.toThrow(/permission denied/);
           }
           await expect(
-            asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRaw`SELECT "macrocycle_backfill_window_rows"(false)`),
+            asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRaw`SELECT "macrocycle_backfill_window_rows"()`),
           ).rejects.toThrow(/permission denied/);
           await expect(
             asUser(appDb, USER_HISTORY_ORDER, (tx) =>

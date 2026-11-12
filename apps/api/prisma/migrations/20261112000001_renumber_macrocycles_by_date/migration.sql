@@ -26,9 +26,9 @@
 -- writes get 409 `import-in-progress`; the ALTER TABLE then holds "macrocycle" until the migration
 -- commits, so every read of it waits that long: 1.6 to 1.8 seconds over three runs on local
 -- Postgres 16 for 20,000 sets in 100 macrocycles and 50 batches of 400 keys, growing with the
--- rows it moves (ADR-042). The three steps take the
--- lock again without waiting, for any user whose first row committed meanwhile
--- (`macrocycle_lock_every_user`). Every user's lock stays held until the migration commits, one
+-- rows it moves (ADR-042). The last two steps take the lock again without waiting, for any user
+-- whose first row committed meanwhile (`macrocycle_lock_every_user`); the first runs only here,
+-- under the opening lock and the ALTER TABLE's. Every user's lock stays held until the migration commits, one
 -- entry each in the shared lock table, so a user count past its size fails the migration with
 -- "out of shared memory" (docs/deploy.md has the check).
 -- An import holds a user's lock for up to its 30-second transaction, so lock_timeout allows 40
@@ -217,8 +217,11 @@ $$;
 -- program's highest macrocycle or dashboard number before the call, or that hold sets. The rows
 -- past those are saved ahead of the next macrocycle, which `numbersInUse` in the API finds and
 -- renumbering moves along (macrocycle-renumbering.ts, `plannedChanges`). Returns the rows kept.
--- It covers every user, as `macrocycle_backfill_rows()` does, so it takes no user id.
-CREATE FUNCTION "macrocycle_backfill_window_rows"(wait_for_locks BOOLEAN DEFAULT true) RETURNS INTEGER
+-- It covers every user, as `macrocycle_backfill_rows()` does, so it takes no user id, and no lock
+-- of its own: it runs only in this migration, after the opening lock and the ALTER TABLE, and the
+-- runbook never calls it. (Locking every user here would also stall the other DB suites while
+-- macrocycle.db.e2e.spec.ts calls it in a transaction.)
+CREATE FUNCTION "macrocycle_backfill_window_rows"() RETURNS INTEGER
 LANGUAGE plpgsql AS $$
 DECLARE
   users TEXT[];
@@ -227,7 +230,6 @@ DECLARE
   inserted INTEGER;
   removed INTEGER;
 BEGIN
-  PERFORM "macrocycle_lock_every_user"(NULL, wait_for_locks);
   SELECT array_agg(c."userId"), array_agg(c."program"), array_agg(c.top) INTO users, programs, tops
   FROM (
     SELECT "userId", "program", MAX("macrocycleNum") AS top FROM (
@@ -411,12 +413,12 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION "macrocycle_lock_every_user"(TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION "macrocycle_rewrite_numbers"(TEXT[], TEXT[], INTEGER[], INTEGER[]) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION "macrocycle_backfill_window_rows"(BOOLEAN) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION "macrocycle_backfill_window_rows"() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION "macrocycle_unstarted_numbers"(TEXT) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION "macrocycle_close_window_rows"(TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION "macrocycle_renumber_by_date"(TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION "macrocycle_renumber_reverse"(TEXT) FROM PUBLIC;
 
-SELECT "macrocycle_backfill_window_rows"(false);
+SELECT "macrocycle_backfill_window_rows"();
 SELECT "macrocycle_close_window_rows"(NULL, false);
 SELECT "macrocycle_renumber_by_date"(NULL, false);
