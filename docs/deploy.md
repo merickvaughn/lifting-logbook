@@ -561,7 +561,12 @@ order:
 - `20261112000000_renumber_macrocycles_by_date` does nothing: staging applied an early draft under
   that name.
 - `20261112000001_renumber_macrocycles_by_date` adds the columns and functions and runs them, but
-  reads nothing: the migrator can't bypass row-level security (below).
+  reads nothing: the migrator can't bypass row-level security (below). On a database with history
+  migrated as a superuser, such as the local `docker-compose.yml` one, it does read the rows, and runs the
+  backfill without the fix in `20261112000002_keep_rows_below_highest_set`; `20261112000003` then
+  skips, since the rows are already renumbered. There a gap like the one that migration describes
+  fails `20261112000001` with *would merge*, or leaves that number without a macrocycle row. To
+  recover a local database, run `npx prisma migrate reset` from `apps/api`, which empties it.
 - `20261112000002_backfill_window_rows_without_lock` only replaces one function, so it holds no
   lock worth waiting on and is safe to retry.
 - `20261112000002_keep_rows_below_highest_set` also only replaces that function, so the backfill
@@ -607,8 +612,8 @@ applies to each lock wait separately). Run these steps when no import is running
 waits for every transaction using the tables and an import's can run for 30 seconds. The reversal
 and the renumber use 10 seconds; if one gives up, it has changed nothing, so run it again.
 
-An import holds its user's macrocycle lock exclusively, and most page writes hold it shared, so
-this reads 0 when no import is running in this database:
+An import, and an import's undo, hold the user's macrocycle lock exclusively, and most page writes
+hold it shared, so this reads above 0 while an import or an undo is running in this database:
 
 ```bash
 psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
@@ -619,8 +624,11 @@ psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
 Other holders count too, and each should end before a step starts: a page write that starts or
 deletes a macrocycle holds the lock exclusively while it renumbers, until its transaction ends; a
 running `prisma migrate deploy` holds an exclusive advisory lock; and so does a runbook step in
-another session. The count is only a snapshot: an import that starts after it is what the step's
-`lock_timeout` covers.
+another session. A 0 doesn't rule everything out: Download My Data reads the numbered tables in a
+transaction of up to 30 seconds without the lock, so the count can't see it, and a step started
+then waits up to its timeout per table and gives up. The count is also only a snapshot: an import
+that starts after it is what the step's `lock_timeout` covers. Either way, a step that gives up has
+changed nothing.
 
 **Before merging the PR** (the merge starts the Deploy run, whose `plan-production` would show the
 public IP this needs), check that the shared lock table can hold one advisory lock per user, since
