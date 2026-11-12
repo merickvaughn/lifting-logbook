@@ -145,6 +145,20 @@ export function computePlannedSets(
   return [...warmupSets, ...workSets];
 }
 
+/**
+ * The sets one lift occurrence plans (#1153): its spec row's, from an `own` modification's max
+ * when one is on and has a max, otherwise from the lift's. The logger, the detail page and the
+ * timer all plan through this, so they can't disagree the way #966 did. With no spec row (an
+ * added lift, or a focus lift) it plans nothing.
+ */
+export function planLift(
+  spec: LiftingProgramSpecResponse | undefined,
+  liftMax: number,
+  ownMax?: number,
+): PlannedSet[] {
+  return spec ? computePlannedSets(spec, ownMax ?? liftMax) : [];
+}
+
 export interface MacrocycleProgress {
   completedWorkouts: number;
   totalWorkouts: number;
@@ -258,7 +272,9 @@ export function buildLiftDetails(
   return workout.lifts.map((wl, i) => {
     const tm = maxFor(wl.lift)?.weight ?? 0;
     const spec = liftSpecs[i];
-    const plannedSets = spec ? computePlannedSets(spec, tm) : [];
+    // A slot has no start-on modifications yet, so the timer and this page plan from the lift's
+    // max, as the logger does before a toggle.
+    const plannedSets = planLift(spec, tm);
     return {
       lift: wl.lift,
       tm,

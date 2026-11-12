@@ -8,16 +8,19 @@ import { EMPTY_PROGRESSION_DRAFT, parseProgressionDraft, progressionDraft } from
 import type { LiftMetadataResponse } from '@lifting-logbook/types';
 import CatalogTagPicker from './CatalogTagPicker';
 import FreeTagPicker from './FreeTagPicker';
+import LiftModificationsEditor from './LiftModificationsEditor';
 import ProgressionFields from './ProgressionFields';
 import styles from './LiftEditor.module.css';
 
 interface Props {
+  /** The active program, whose own maxes the modifications section edits (#1153). */
+  program: string;
   macrocycleNum: number;
   workoutNum: number;
   initialMetadata: LiftMetadataResponse;
 }
 
-export default function LiftEditor({ macrocycleNum, workoutNum, initialMetadata }: Props) {
+export default function LiftEditor({ program, macrocycleNum, workoutNum, initialMetadata }: Props) {
   const router = useRouter();
   const [muscleGroups, setMuscleGroups] = useState<string[]>(initialMetadata.muscleGroups);
   const [substitutions, setSubstitutions] = useState<string[]>(initialMetadata.substitutions);
@@ -151,6 +154,9 @@ export default function LiftEditor({ macrocycleNum, workoutNum, initialMetadata 
           Reset
         </button>
       </div>
+
+      {/* Each modification saves on its own, apart from Save Changes above. */}
+      <LiftModificationsEditor program={program} lift={initialMetadata.lift} />
     </div>
   );
 }

@@ -152,6 +152,8 @@ function createInitialState() {
     customLifts: [],
     // GET/POST /lifts/modifications (#1152) — the user's lift modifications, for every lift.
     liftModifications: [],
+    // /programs/:p/modification-maxes (#1153) — own maxes. One list serves every program.
+    modificationMaxes: [],
     // /focus/* (#1057) — the user's focus blocks and daily focus guide. Empty by default;
     // /__reset?withFocusBlocks=true seeds the setup page's set (#1057), and
     // withFocusBlocks=<YYYY-MM-DD> seeds the calendar's set around that day (#1059).
@@ -825,6 +827,26 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
+  // PATCH /lifts/modifications/:id — the lift editor's edit; 409 on a taken name (#1153)
+  // -------------------------------------------------------------------------
+  if (method === 'PATCH' && parts[0] === 'lifts' && parts[1] === 'modifications' && parts.length === 3) {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const found = state.liftModifications.find((m) => m.id === parts[2]);
+    if (!found) {
+      json(res, { statusCode: 404, message: 'Lift modification not found' }, 404);
+      return;
+    }
+    if (body.name !== undefined && state.liftModifications.some((m) => m.id !== found.id && m.name === body.name)) {
+      json(res, { statusCode: 409, message: `${found.lift} already has a modification named '${body.name}'` }, 409);
+      return;
+    }
+    Object.assign(found, body);
+    json(res, found);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
   // GET /focus/blocks/:id/summary — an ended focus block's totals (#1059)
   // -------------------------------------------------------------------------
   if (method === 'GET' && parts[0] === 'focus' && parts[1] === 'blocks' && parts.length === 4 && parts[3] === 'summary') {
@@ -1062,6 +1084,22 @@ const server = createServer(async (req, res) => {
     // GET /programs/:p/spec
     if (method === 'GET' && rest[0] === 'spec') {
       json(res, PROGRAM_SPEC);
+      return;
+    }
+
+    // GET /programs/:p/modification-maxes — own maxes, which the logger re-plans from (#1153)
+    if (method === 'GET' && rest[0] === 'modification-maxes' && rest.length === 1) {
+      json(res, state.modificationMaxes);
+      return;
+    }
+
+    // PUT /programs/:p/modification-maxes/:id — the lift editor sets an own max (#1153)
+    if (method === 'PUT' && rest[0] === 'modification-maxes' && rest.length === 2) {
+      const body = await readBody(req);
+      if (rejectIfInvalidBody(res, body)) return;
+      const max = { modificationId: rest[1], weight: body.weight, unit: 'lbs', dateUpdated: '2026-01-01T00:00:00.000Z' };
+      state.modificationMaxes = [...state.modificationMaxes.filter((m) => m.modificationId !== rest[1]), max];
+      json(res, max);
       return;
     }
 

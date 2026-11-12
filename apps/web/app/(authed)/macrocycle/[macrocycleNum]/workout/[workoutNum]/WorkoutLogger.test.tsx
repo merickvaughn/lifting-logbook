@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
-import type { LiftModificationResponse, LiftRecordResponse } from '@lifting-logbook/types';
+import type { LiftingProgramSpecResponse, LiftModificationResponse, LiftRecordResponse } from '@lifting-logbook/types';
 import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WorkingSetData, WorkoutLoggerProps } from './types';
 import {
@@ -76,6 +76,7 @@ function makeProps(overrides: Partial<WorkoutLoggerProps> = {}): WorkoutLoggerPr
     isReadOnly: false,
     initialBodyWeight: null,
     unit: 'lbs',
+    ownMaxes: {},
     ...overrides,
   };
 }
@@ -955,6 +956,136 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
       'Close grip',
       'Paused',
     ]);
+  });
+
+  describe('own max re-planning (#1153)', () => {
+    // One warm-up at 50% and two work sets at 100%, so each plan reads straight off its max.
+    const SPEC: LiftingProgramSpecResponse = {
+      week: 1,
+      lift: 'Back Squat',
+      order: 1,
+      offset: 0,
+      increment: 5,
+      sets: 2,
+      reps: 5,
+      amrap: false,
+      warmUpPct: '0.5',
+      wtDecrementPct: 0,
+      activation: '',
+    };
+    const planned = (liftMax: number) =>
+      makeLift({
+        warmUpSets: [{ reps: 5, totalLoad: liftMax / 2 }],
+        workingSets: [
+          { setNum: 1, totalLoad: liftMax, reps: 5, amrap: false },
+          { setNum: 2, totalLoad: liftMax, reps: 5, amrap: false },
+        ],
+        plan: { spec: SPEC, liftMax },
+      });
+    const WIDE = modification('m-wide', 'Wide grip', { maxMode: 'own' });
+    const CLOSE = modification('m-close', 'Close grip', { maxMode: 'own' });
+    const weights = () => screen.getAllByLabelText('Weight in lbs').map((i) => (i as HTMLInputElement).value);
+    const warmUp = () => within(screen.getByRole('region', { name: 'Warm-up sets' })).getByText(/×/).textContent;
+
+    it("re-plans from the modification's own max, with one own toggle on, and keeps a typed weight", async () => {
+      const user = userEvent.setup();
+      mockFetchLiftModifications.mockResolvedValue([WIDE, CLOSE, PAUSED]);
+      render(<WorkoutLogger {...makeProps({ lifts: [planned(200)], ownMaxes: { 'm-wide': 150, 'm-close': 180 } })} />);
+
+      await user.click(await screen.findByRole('button', { name: 'Paused', pressed: false }));
+      expect(weights()).toEqual(['200', '200']);
+      expect(warmUp()).toBe('100 lbs × 5');
+
+      await user.click(screen.getByRole('button', { name: 'Wide grip', pressed: false }));
+      expect(weights()).toEqual(['150', '150']);
+      expect(warmUp()).toBe('75 lbs × 5');
+      expect(screen.getByText("Planned from Wide grip's own max.")).toBeInTheDocument();
+
+      // A weight the lifter typed is theirs: a re-plan leaves it.
+      const [, set2] = screen.getAllByLabelText('Weight in lbs');
+      if (!set2) throw new Error('expected a weight input for set 2');
+      await user.clear(set2);
+      await user.type(set2, '160');
+
+      await user.click(screen.getByRole('button', { name: 'Close grip', pressed: false }));
+      expect(weights()).toEqual(['180', '160']);
+      expect(warmUp()).toBe('90 lbs × 5');
+      expect(screen.getAllByRole('button', { pressed: true }).map((b) => b.textContent)).toEqual([
+        'Close grip',
+        'Paused',
+      ]);
+
+      // Off again, the lift's own max plans it; a modification with no own max (Paused) doesn't.
+      await user.click(screen.getByRole('button', { name: 'Close grip', pressed: true }));
+      expect(weights()).toEqual(['200', '160']);
+      expect(warmUp()).toBe('100 lbs × 5');
+    });
+
+    it('logs the re-planned weight', async () => {
+      const user = userEvent.setup();
+      mockFetchLiftModifications.mockResolvedValue([WIDE]);
+      mockCreateLiftRecord.mockResolvedValue({ ...LOGGED, weight: 150, modifications: [{ id: 'm-wide', name: 'Wide grip' }] });
+      render(<WorkoutLogger {...makeProps({ lifts: [planned(200)], ownMaxes: { 'm-wide': 150 } })} />);
+
+      await user.click(await screen.findByRole('button', { name: 'Wide grip', pressed: false }));
+      const [logSet1] = screen.getAllByRole('button', { name: 'Log' });
+      if (!logSet1) throw new Error('expected a Log button for set 1');
+      await user.click(logSet1);
+
+      await waitFor(() => expect(mockCreateLiftRecord).toHaveBeenCalledTimes(1));
+      expect(createdBody(0)).toEqual(expect.objectContaining({ weight: 150, modifications: ['m-wide'] }));
+    });
+
+    it('plans from the lift max, and says so, when the modification has no max yet', async () => {
+      const user = userEvent.setup();
+      mockFetchLiftModifications.mockResolvedValue([WIDE]);
+      render(<WorkoutLogger {...makeProps({ lifts: [planned(200)], ownMaxes: {} })} />);
+
+      await user.click(await screen.findByRole('button', { name: 'Wide grip', pressed: false }));
+
+      expect(weights()).toEqual(['200', '200']);
+      expect(
+        screen.getByText("Wide grip has no max of its own yet, so this plans from Back Squat's. Sets logged with it start one when maxes next move."),
+      ).toBeInTheDocument();
+    });
+
+    it("plans from the lift max, and says so, when the own maxes didn't load", async () => {
+      const user = userEvent.setup();
+      mockFetchLiftModifications.mockResolvedValue([WIDE]);
+      render(<WorkoutLogger {...makeProps({ lifts: [planned(200)], ownMaxes: null })} />);
+
+      await user.click(await screen.findByRole('button', { name: 'Wide grip', pressed: false }));
+
+      expect(weights()).toEqual(['200', '200']);
+      expect(screen.getByText("Wide grip's own max didn't load, so this plans from Back Squat's.")).toBeInTheDocument();
+    });
+
+    it('re-plans a lift it starts on with an own modification from its last logged set', async () => {
+      mockFetchLiftModifications.mockResolvedValue([WIDE]);
+      const lift = planned(200);
+      const [set1, set2] = lift.workingSets;
+      if (!set1 || !set2) throw new Error('expected two working sets');
+      render(
+        <WorkoutLogger
+          {...makeProps({
+            lifts: [
+              {
+                ...lift,
+                workingSets: [
+                  { ...set1, existing: { ...LOGGED, weight: 150, modifications: [{ id: 'm-wide', name: 'Wide grip' }] } },
+                  set2,
+                ],
+              },
+            ],
+            ownMaxes: { 'm-wide': 150 },
+          })}
+        />,
+      );
+
+      expect(await screen.findByRole('button', { name: 'Wide grip', pressed: true })).toBeInTheDocument();
+      expect(weights()).toEqual(['150']);
+      expect(warmUp()).toBe('75 lbs × 5');
+    });
   });
 
   it('shows no toggles on a read-only workout', () => {

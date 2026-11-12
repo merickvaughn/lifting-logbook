@@ -6,6 +6,8 @@ jest.mock('@/lib/api', () => ({
   fetchWorkout: jest.fn(),
   fetchProgramSpec: jest.fn(),
   fetchTrainingMaxes: jest.fn(),
+  // No modification has a max of its own unless a test says otherwise (#1153).
+  fetchModificationMaxes: jest.fn().mockResolvedValue([]),
   fetchLatestBodyWeight: jest.fn().mockResolvedValue(null),
   // Not imported by the page any more (issue #978); kept on the mock so the
   // assertion below can prove the whole-macrocycle refetch is gone rather than
@@ -39,8 +41,23 @@ jest.mock('next/navigation', () => ({
 // The logger is the one child whose props this test cares about. Echo them.
 jest.mock('./WorkoutLogger', () => ({
   __esModule: true,
-  default: ({ lifts, isReadOnly, macrocycleId }: { lifts: LiftData[]; isReadOnly: boolean; macrocycleId?: string }) => (
-    <div data-lifts={JSON.stringify(lifts)} data-readonly={String(isReadOnly)} data-macrocycle-id={macrocycleId ?? ''} />
+  default: ({
+    lifts,
+    isReadOnly,
+    macrocycleId,
+    ownMaxes,
+  }: {
+    lifts: LiftData[];
+    isReadOnly: boolean;
+    macrocycleId?: string;
+    ownMaxes: Record<string, number> | null;
+  }) => (
+    <div
+      data-lifts={JSON.stringify(lifts)}
+      data-readonly={String(isReadOnly)}
+      data-macrocycle-id={macrocycleId ?? ''}
+      data-own-maxes={JSON.stringify(ownMaxes)}
+    />
   ),
 }));
 
@@ -52,6 +69,7 @@ import {
   fetchTrainingMaxes,
   fetchLiftRecords,
   fetchFocusPlan,
+  fetchModificationMaxes,
 } from '@/lib/api';
 import { focusPlan, planGroup, planItem } from '@/lib/__tests__/focusPlanFixture';
 import WorkoutLoggingPage from './page';
@@ -61,6 +79,7 @@ const mockedSpec = fetchProgramSpec as unknown as jest.Mock;
 const mockedMaxes = fetchTrainingMaxes as unknown as jest.Mock;
 const mockedLiftRecords = fetchLiftRecords as unknown as jest.Mock;
 const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
+const mockedModificationMaxes = fetchModificationMaxes as unknown as jest.Mock;
 
 function spec(lift: string) {
   return {
@@ -99,15 +118,22 @@ function seedWorkout(
   mockedMaxes.mockResolvedValue(lifts.map((l) => ({ lift: l.lift, weight: 200 })));
 }
 
-async function renderPage(): Promise<{ lifts: LiftData[]; readOnly: boolean }> {
+async function renderPage(): Promise<{
+  lifts: LiftData[];
+  readOnly: boolean;
+  ownMaxes: Record<string, number> | null;
+}> {
   const element = (await WorkoutLoggingPage({
     params: Promise.resolve({ macrocycleNum: '1', workoutNum: '1' }),
   })) as ReactElement;
   const html = renderToStaticMarkup(element);
-  const encoded = html.match(/data-lifts="([^"]*)"/)?.[1];
-  if (encoded === undefined) throw new Error('data-lifts attribute not found in rendered output');
+  const attr = (name: string) => {
+    const encoded = html.match(new RegExp(`${name}="([^"]*)"`))?.[1];
+    if (encoded === undefined) throw new Error(`${name} attribute not found in rendered output`);
+    return JSON.parse(encoded.replace(/&quot;/g, '"'));
+  };
   const readOnly = html.match(/data-readonly="([^"]*)"/)?.[1] === 'true';
-  return { lifts: JSON.parse(encoded.replace(/&quot;/g, '"')), readOnly };
+  return { lifts: attr('data-lifts'), readOnly, ownMaxes: attr('data-own-maxes') };
 }
 
 describe('WorkoutLoggingPage — two records with one set number (#1135)', () => {
@@ -500,5 +526,49 @@ describe('WorkoutLoggingPage — a renumbered macrocycle (#1198)', () => {
     })) as ReactElement;
 
     expect(renderToStaticMarkup(element)).toContain('data-macrocycle-id="mc-a"');
+  });
+});
+
+describe('WorkoutLoggingPage — what an own-max toggle re-plans from (#1153)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("hands the logger each modification's own max, and each planned lift's spec row and max", async () => {
+    seedWorkout([{ lift: 'Squat', planned: true, sets: [] }]);
+    mockedModificationMaxes.mockResolvedValueOnce([
+      { modificationId: 'm-wide', weight: 150, unit: 'lbs', dateUpdated: '2026-11-01T00:00:00.000Z' },
+    ]);
+
+    const { lifts, ownMaxes } = await renderPage();
+
+    expect(mockedModificationMaxes).toHaveBeenCalledWith('5-3-1');
+    expect(ownMaxes).toEqual({ 'm-wide': 150 });
+    expect(lifts[0]?.plan).toEqual({ spec: spec('Squat'), liftMax: 200 });
+  });
+
+  it('gives a lift with no spec row nothing to re-plan from', async () => {
+    seedWorkout([{ lift: 'Squat', planned: false, sets: [LOGGED_SET] }]);
+    mockedSpec.mockResolvedValue([]);
+
+    const { lifts } = await renderPage();
+
+    expect(lifts[0]).not.toHaveProperty('plan');
+  });
+
+  it('still renders, planning from the lifts’ maxes, when the own maxes fail to load', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    seedWorkout([{ lift: 'Squat', planned: true, sets: [] }]);
+    mockedModificationMaxes.mockRejectedValueOnce(new Error('boom'));
+
+    const { lifts, ownMaxes } = await renderPage();
+
+    expect(ownMaxes).toBeNull();
+    expect(lifts[0]?.workingSets.map((s) => s.totalLoad)).toEqual([200]);
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutLoggingPage] own max fetch failed, planning from the lifts’ maxes',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
   });
 });

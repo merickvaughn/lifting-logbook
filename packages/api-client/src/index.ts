@@ -31,7 +31,9 @@ import type {
   LiftingProgramSpecResponse,
   LiftRecordResponse,
   MacrocycleSummaryResponse,
+  ModificationMaxResponse,
   PatchLiftMetadataRequest,
+  PutModificationMaxRequest,
   RecordBodyWeightRequest,
   RescheduleRequest,
   StrengthGoalResponse,
@@ -41,6 +43,7 @@ import type {
   UpdateCustomProgramRequest,
   UpdateFocusBlockRequest,
   UpdateFocusSettingsRequest,
+  UpdateLiftModificationRequest,
   UpdateLiftRecordRequest,
   UpdateTrainingMaxesRequest,
   UpdateUserSettingsRequest,
@@ -695,6 +698,34 @@ export function createApiClient(config: ApiClientConfig) {
     ): Promise<{ ok: true; data: LiftModificationResponse } | { ok: false; conflictMessage: string }> {
       return requestOrConflictWithReason('/lifts/modifications', {
         method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    // A 409 means the new name is taken on this lift (#1153).
+    updateLiftModification(
+      id: string,
+      body: UpdateLiftModificationRequest,
+    ): Promise<{ ok: true; data: LiftModificationResponse } | { ok: false; conflictMessage: string }> {
+      return requestOrConflictWithReason(`/lifts/modifications/${enc(id)}`, {
+        method: 'PATCH',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    // A modification's own max is per program, like a lift's (#1153).
+    fetchModificationMaxes(program: string): Promise<ModificationMaxResponse[]> {
+      return request(`/programs/${enc(program)}/modification-maxes`, { cache: 'no-store' });
+    },
+    putModificationMax(
+      program: string,
+      modificationId: string,
+      body: PutModificationMaxRequest,
+    ): Promise<ModificationMaxResponse> {
+      return request(`/programs/${enc(program)}/modification-maxes/${enc(modificationId)}`, {
+        method: 'PUT',
         headers: JSON_HEADERS,
         body: JSON.stringify(body),
         cache: 'no-store',

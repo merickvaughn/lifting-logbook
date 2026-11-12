@@ -96,6 +96,11 @@ export const {
   // without a reload (#1152).
   fetchLiftModifications,
   createLiftModification,
+  // The lift editor edits a lift's modifications and their own maxes (#1153), reading them
+  // client-side the way the logger does.
+  updateLiftModification,
+  fetchModificationMaxes,
+  putModificationMax,
   // Reads too: focus block status depends on the user's calendar day (`?today=`), which
   // only the browser knows (ADR-039 §5), so the focus setup page (#1057) and the calendar
   // page (#1059) load them client-side.

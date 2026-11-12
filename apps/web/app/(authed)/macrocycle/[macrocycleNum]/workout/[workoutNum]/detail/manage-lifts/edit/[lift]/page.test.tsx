@@ -21,9 +21,15 @@ jest.mock('next/navigation', () => ({
 
 jest.mock('@/components/LiftEditor', () => ({
   __esModule: true,
-  default: ({ initialMetadata }: { initialMetadata: { lift: string; muscleGroups: string[] } }) => (
+  default: ({
+    program,
+    initialMetadata,
+  }: {
+    program: string;
+    initialMetadata: { lift: string; muscleGroups: string[] };
+  }) => (
     <div>
-      lift-editor:{initialMetadata.lift}:{initialMetadata.muscleGroups.join(',')}
+      lift-editor:{program}:{initialMetadata.lift}:{initialMetadata.muscleGroups.join(',')}
     </div>
   ),
 }));
@@ -67,7 +73,8 @@ describe('EditLiftPage (#1190)', () => {
     const html = await renderEdit('squat');
 
     expect(html).toContain('Edit Lift: squat');
-    expect(html).toContain('lift-editor:squat:quads');
+    // The program too, whose own maxes the editor's modifications section edits (#1153).
+    expect(html).toContain('lift-editor:5-3-1:squat:quads');
     expect(mockedWorkout).toHaveBeenCalledWith('5-3-1', 1);
     expect(mockedMetadata).toHaveBeenCalledWith('squat');
   });
@@ -75,14 +82,14 @@ describe('EditLiftPage (#1190)', () => {
   it('decodes the lift segment before looking it up', async () => {
     mockedWorkout.mockResolvedValue(workout('Front Squat'));
 
-    expect(await renderEdit('Front Squat')).toContain('lift-editor:Front Squat:quads');
+    expect(await renderEdit('Front Squat')).toContain('lift-editor:5-3-1:Front Squat:quads');
     expect(mockedMetadata).toHaveBeenCalledWith('Front Squat');
   });
 
   it('matches a lift the workout stores under another spelling', async () => {
     mockedWorkout.mockResolvedValue(workout('Bench Press'));
 
-    expect(await renderEdit('bench-press')).toContain('lift-editor:bench-press:quads');
+    expect(await renderEdit('bench-press')).toContain('lift-editor:5-3-1:bench-press:quads');
   });
 
   it('404s a lift that is not in the workout, without fetching its metadata', async () => {

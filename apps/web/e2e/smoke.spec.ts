@@ -167,6 +167,23 @@ test('workout logger adds a modification, toggles it on, and logs it with the se
   await expect(page.getByText(/× \d+ · Paused/)).toBeVisible();
 });
 
+test("workout logger re-plans the sets from a modification's own max (#1153)", async ({ page, request }) => {
+  const created = await request.post(`${MOCK_API}/lifts/modifications`, {
+    data: { lift: 'squat', name: 'Wide stance', maxMode: 'own' },
+  });
+  const { id } = (await created.json()) as { id: string };
+  await request.put(`${MOCK_API}/programs/5-3-1/modification-maxes/${id}`, { data: { weight: 200 } });
+  await page.goto('/macrocycle/1/workout/1');
+
+  const weight = page.getByLabel('Weight in lbs').first();
+  await expect(weight).toBeVisible();
+  await expect(weight).not.toHaveValue('200');
+  await page.getByRole('button', { name: 'Wide stance', pressed: false }).click();
+
+  await expect(weight).toHaveValue('200');
+  await expect(page.getByText("Planned from Wide stance's own max.")).toBeVisible();
+});
+
 // ---------------------------------------------------------------------------
 // 6. Training maxes settings: values load, update reflected in history
 // ---------------------------------------------------------------------------

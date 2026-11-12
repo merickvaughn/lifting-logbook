@@ -16,6 +16,7 @@ import {
 import { modificationSuffix } from '@/lib/liftModifications';
 import { logClientError } from '@/lib/log-client-error';
 import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
+import { planLift } from '@/lib/workoutPlan';
 import styles from './WorkoutLogger.module.css';
 import type { LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
 import {
@@ -432,6 +433,15 @@ function WorkingSetRow({
     }
     return loggedRecord?.notes ?? '';
   });
+  // A toggle with its own max re-plans the set (#1153). A weight still at its plan follows the
+  // new plan; one the lifter typed stays theirs. Adjusted during render, React's pattern for state
+  // derived from a changed prop, so the input never shows the old plan for a frame.
+  const [plannedWeight, setPlannedWeight] = useState(defaultWeight);
+  const [weightTyped, setWeightTyped] = useState(() => weightInput !== String(defaultWeight));
+  if (plannedWeight !== defaultWeight) {
+    setPlannedWeight(defaultWeight);
+    if (!weightTyped && !loggedRecord) setWeightInput(String(defaultWeight));
+  }
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The modifications chosen while editing a logged set, reset from the set on each Edit.
@@ -446,6 +456,7 @@ function WorkingSetRow({
 
   function handleWeightInputChange(value: string) {
     setWeightInput(value);
+    setWeightTyped(true);
     if (shouldDraft) writeDraft(draftStorageKey, { weight: value, reps: repsInput, notes: notesInput });
   }
   function handleRepsInputChange(value: string) {
@@ -688,6 +699,7 @@ function LiftView({
   unit,
   modifications,
   activeModifications,
+  ownMaxNote,
   onToggleModification,
   onModificationAdded,
   onRefreshModifications,
@@ -696,6 +708,8 @@ function LiftView({
   onEditSave,
 }: {
   lift: LiftData;
+  /** Which max an `own` toggle planned the lift from, when one is on (#1153). */
+  ownMaxNote: string | null;
   bodyWeight: number | null;
   isReadOnly: boolean;
   loggedSets: Map<string, LoggedSet>;
@@ -740,6 +754,11 @@ function LiftView({
       {!isReadOnly && modifications === null && (
         <p className={styles.modDescription} role="status">
           Modifications didn&apos;t load, so sets log without them.
+        </p>
+      )}
+      {!isReadOnly && ownMaxNote && (
+        <p className={styles.modDescription} role="status">
+          {ownMaxNote}
         </p>
       )}
 
@@ -864,6 +883,7 @@ export default function WorkoutLogger({
   isReadOnly,
   initialBodyWeight,
   unit,
+  ownMaxes,
 }: WorkoutLoggerProps) {
   const router = useRouter();
 
@@ -984,6 +1004,45 @@ export default function WorkoutLogger({
     return listed === undefined ? chosen : chosen.filter((id) => listed.some((m) => m.id === id));
   }
 
+  /** The modification with its own max that's on for a lift occurrence, if any (at most one is). */
+  function ownModification(lift: LiftData): LiftModificationResponse | undefined {
+    const active = activeModifications(lift);
+    return modificationsByLift.get(lift.lift)?.find((m) => m.maxMode === 'own' && active.includes(m.id));
+  }
+
+  /**
+   * The lift as it plans now (#1153): from an `own` modification's max when one is on and has a
+   * max, otherwise as the page planned it, from the lift's. Only the sets not yet logged change;
+   * a logged one shows what it recorded. A lift with no spec row (focus work, an added lift) keeps
+   * its sets.
+   */
+  function planned(lift: LiftData): LiftData {
+    const own = ownModification(lift);
+    const ownMax = own ? ownMaxes?.[own.id] : undefined;
+    if (!lift.plan || ownMax === undefined) return lift;
+    const sets = planLift(lift.plan.spec, lift.plan.liftMax, ownMax);
+    const work = sets.filter((s) => s.type === 'work');
+    return {
+      ...lift,
+      warmUpSets: sets.filter((s) => s.type === 'warmup').map((s) => ({ reps: s.reps, totalLoad: s.weight })),
+      workingSets: lift.workingSets.map((ws) => {
+        const p = work[ws.setNum - 1];
+        return p ? { ...ws, totalLoad: p.weight } : ws;
+      }),
+    };
+  }
+
+  /** Says which max the lift planned from while an `own` toggle is on, and why when it's the lift's. */
+  function ownMaxNote(lift: LiftData): string | null {
+    const own = ownModification(lift);
+    if (!own || !lift.plan) return null;
+    if (ownMaxes === null) return `${own.name}'s own max didn't load, so this plans from ${lift.lift}'s.`;
+    if (ownMaxes[own.id] === undefined) {
+      return `${own.name} has no max of its own yet, so this plans from ${lift.lift}'s. Sets logged with it start one when maxes next move.`;
+    }
+    return `Planned from ${own.name}'s own max.`;
+  }
+
   function setActiveModifications(lift: LiftData, ids: string[]) {
     setToggled((prev) => new Map(prev).set(liftKey(lift), ids));
     writeModificationsDraft(modificationsDraftKey(lift), ids);
@@ -1060,7 +1119,8 @@ export default function WorkoutLogger({
   }
 
   const currentLift = lifts[currentLiftIdx];
-  const nextLift = lifts[currentLiftIdx + 1];
+  const next = lifts[currentLiftIdx + 1];
+  const nextLift = next && planned(next);
 
   // Overview mode
   if (viewMode === 'overview') {
@@ -1081,7 +1141,7 @@ export default function WorkoutLogger({
           {lifts.map((lift, i) => (
             <OverviewRow
               key={liftKey(lift)}
-              lift={lift}
+              lift={planned(lift)}
               bodyWeight={bodyWeight}
               loggedSets={loggedSets}
               unit={unit}
@@ -1169,7 +1229,7 @@ export default function WorkoutLogger({
       {/* Current lift */}
       {currentLift && (
         <LiftView
-          lift={currentLift}
+          lift={planned(currentLift)}
           bodyWeight={bodyWeight}
           isReadOnly={isReadOnly}
           loggedSets={loggedSets}
@@ -1182,6 +1242,7 @@ export default function WorkoutLogger({
           unit={unit}
           modifications={modificationsByLift.get(currentLift.lift)}
           activeModifications={activeModifications(currentLift)}
+          ownMaxNote={ownMaxNote(currentLift)}
           onToggleModification={(id) => handleToggleModification(currentLift, id)}
           onModificationAdded={(modification) => handleModificationAdded(currentLift, modification)}
           onRefreshModifications={() => refreshModifications(currentLift.lift)}

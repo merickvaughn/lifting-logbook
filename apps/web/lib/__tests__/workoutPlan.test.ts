@@ -4,6 +4,7 @@ import {
   buildWorkoutDays,
   computeMacrocycleProgress,
   computePlannedSets,
+  planLift,
   workoutDateResolver,
 } from '../workoutPlan';
 import type { WeekRow, WorkoutCell, WorkoutLiftDetail } from '../workoutPlan';
@@ -241,6 +242,22 @@ describe('computePlannedSets', () => {
     const warmups = sets.filter((s) => s.setLabel.startsWith('Warm-up'));
     expect(warmups).toHaveLength(6);
     expect(warmups[5]?.reps).toBe(1);
+  });
+});
+
+describe('planLift — the one plan the logger, the detail page and the timer share (#1153)', () => {
+  const spec = makeSpec({ warmUpPct: '0.5', sets: 1, wtDecrementPct: 0, increment: 5 });
+
+  it("plans from the lift's max", () => {
+    expect(planLift(spec, 200).map((s) => s.weight)).toEqual([100, 200]);
+  });
+
+  it("plans from an own modification's max when there is one", () => {
+    expect(planLift(spec, 200, 150).map((s) => s.weight)).toEqual([75, 150]);
+  });
+
+  it('plans nothing for a lift with no spec row', () => {
+    expect(planLift(undefined, 200, 150)).toEqual([]);
   });
 });
 

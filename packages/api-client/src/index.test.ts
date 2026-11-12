@@ -296,6 +296,34 @@ describe('createApiClient', () => {
         conflictMessage: "'Paused' already exists",
       });
     });
+
+    it('PATCHes a modification by its encoded id, and returns the message on a 409 (#1153)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: "'Wide' already exists" }), { status: 409 }));
+      const client = makeClient();
+      await expect(client.updateLiftModification('m 1', { name: 'Wide', maxMode: 'own' })).resolves.toEqual({
+        ok: false,
+        conflictMessage: "'Wide' already exists",
+      });
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/lifts/modifications/m%201');
+      expect(init.method).toBe('PATCH');
+      expect(init.body).toBe(JSON.stringify({ name: 'Wide', maxMode: 'own' }));
+    });
+
+    it("reads a program's own maxes, and PUTs one by modification (#1153)", async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+      const client = makeClient();
+      await expect(client.fetchModificationMaxes('rpt')).resolves.toEqual([]);
+      expect(lastCall()[0]).toBe('http://api.test/programs/rpt/modification-maxes');
+
+      const max = { modificationId: 'm1', weight: 65, unit: 'lbs', dateUpdated: '2026-04-20' };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(max), { status: 200 }));
+      await expect(client.putModificationMax('rpt', 'm1', { weight: 65 })).resolves.toEqual(max);
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/programs/rpt/modification-maxes/m1');
+      expect(init.method).toBe('PUT');
+      expect(init.body).toBe(JSON.stringify({ weight: 65 }));
+    });
   });
 
   describe('fetchGoogleSheetWorkbook (#1111)', () => {

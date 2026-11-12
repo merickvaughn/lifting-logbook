@@ -146,8 +146,16 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
 - `lift_modification` holds them per user, unique on `(userId, lift, name)`. `lift` is a catalog id or
   a custom lift's uuid, written through `lookupLift`, with no foreign key because catalog lifts aren't
   rows. `maxMode` is `none`, `lift` or `own`: what it does to training maxes. `updateMaxes` reads it
-  (see [Progression](#progression)). An `own` modification has no max of its own until
-  [#1153](https://github.com/merickvaughn/lifting-logbook/issues/1153), so for now it moves no max.
+  (see [Progression](#progression)).
+- `lift_modification_max` holds an `own` modification's max, per user, program and modification,
+  beside `training_max` rather than in it, so the readers that look a max up by lift stay as they
+  are ([#1153](https://github.com/merickvaughn/lifting-logbook/issues/1153)). Its foreign key
+  cascades from `lift_modification`. Changes to it go to `training_max_history` with
+  `modificationId` set; every history read filters those rows out, so a lift's chart is unchanged.
+  Deleting a macrocycle clears a program's own maxes with its training maxes; the modifications stay.
+  The routes are `GET /programs/:program/modification-maxes` and
+  `PUT /programs/:program/modification-maxes/:id`, which takes a max only for an `own` modification.
+  The Edit Lift page edits a lift's modifications and their own maxes.
 - `lift_record.modifications` holds the ids on for a set, and isn't part of its natural key or id.
   Writes check that each id belongs to the user and the set's lift, with at most one `own`
   (`assertSetModifications`). `LiftRecordResponse` and `SetResponse` name each as `{ id, name }`.
@@ -159,6 +167,10 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
   occurrence's sets not yet logged. It starts from a toggle changed on this device since the
   occurrence's last log there, then from its last logged set. A failed read hides the toggles and says so, and sets still
   log without modifications.
+- Turning on an `own` modification turns off any other `own` one and re-plans the occurrence's
+  warm-ups and unlogged sets from its max, through `planLift`, the function the detail page and the
+  timer plan with. A weight the lifter typed stays. With no own max yet, or when the maxes didn't
+  load, it plans from the lift's max and says why. Focus lifts and lifts with no spec row don't re-plan.
 
 ### Two name registries, one bridge
 
@@ -406,9 +418,16 @@ branches on `WeekType`:
 A computed *reduction* is never auto-applied — it is returned as a `MaxReductionFlag`
 for explicit review.
 
-A set with a `none` or `own` modification on moves no max and isn't a test week's attempt; one with
-no modifications, or only `lift` ones, moves the lift's max as above. A modification id `updateMaxes`
-has no mode for reads as `none`. Note that no shipped preset ever sets `weekType`, so in practice
+Modifications decide which max a set moves, through the same gates:
+
+1. Any `none` modification on: no max moves, and the set isn't a test week's attempt. A
+   modification id `updateMaxes` has no mode for reads as `none`.
+2. Otherwise, an `own` modification on: that modification's max moves
+   ([#1153](https://github.com/merickvaughn/lifting-logbook/issues/1153)). With no max yet, the set
+   starts one at its weight plus the increment, or at the attempt in a test week. It needs no lift
+   max. `updateMaxes` returns these as `modificationMaxes`, and a reduction is flagged with the
+   `modificationId`.
+3. Otherwise, with no modifications or only `lift` ones: the lift's max moves as above. Note that no shipped preset ever sets `weekType`, so in practice
 only the `training` branch runs (divergence D5).
 
 ---
@@ -510,6 +529,12 @@ classDiagram
         +string maxMode
         +datetime archivedAt
     }
+    class LiftModificationMax {
+        <<persisted>>
+        +string program
+        +float weight
+        +date dateUpdated
+    }
     class TrainingMax {
         <<persisted>>
         +string lift
@@ -521,6 +546,7 @@ classDiagram
         +date date
         +bool isPR
         +string source
+        +string modificationId
     }
 
     class WorkoutDateOverride {
@@ -591,6 +617,7 @@ classDiagram
     LiftMetadata ..> Lift : overrides muscles by exact NAME - no FK
     LiftModification ..> Lift : by lift id - no FK
     LiftRecord ..> LiftModification : ids on each set - no FK
+    LiftModification *-- LiftModificationMax : own max per program - FK cascade
     TrainingMax ..> TrainingMaxHistory : appended on change
 ```
 

@@ -18,6 +18,15 @@ jest.mock('@/lib/log-client-error', () => ({
 // The tag pickers aren't under test here.
 jest.mock('./CatalogTagPicker', () => ({ __esModule: true, default: () => null }));
 jest.mock('./FreeTagPicker', () => ({ __esModule: true, default: () => null }));
+// Tested on its own; here it only has to receive the program and lift (#1153).
+jest.mock('./LiftModificationsEditor', () => ({
+  __esModule: true,
+  default: ({ program, lift }: { program: string; lift: string }) => (
+    <p>
+      modifications:{program}:{lift}
+    </p>
+  ),
+}));
 
 const mockPatch = patchLiftMetadata as jest.MockedFunction<typeof patchLiftMetadata>;
 const mockLog = logClientError as jest.MockedFunction<typeof logClientError>;
@@ -35,7 +44,14 @@ const metadata = (overrides: Partial<LiftMetadataResponse> = {}): LiftMetadataRe
 });
 
 const renderEditor = (meta = metadata()) =>
-  render(<LiftEditor macrocycleNum={1} workoutNum={2} initialMetadata={meta} />);
+  render(<LiftEditor program="5-3-1" macrocycleNum={1} workoutNum={2} initialMetadata={meta} />);
+
+describe("LiftEditor — the lift's modifications (#1153)", () => {
+  it('edits them for the program and lift', () => {
+    renderEditor();
+    expect(screen.getByText('modifications:5-3-1:Cable Curl')).toBeInTheDocument();
+  });
+});
 
 describe('LiftEditor progression (#1210)', () => {
   beforeEach(() => jest.clearAllMocks());

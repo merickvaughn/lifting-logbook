@@ -85,6 +85,7 @@ export const {
   deleteCurrentMacrocycle,
   fetchProgramSpec,
   fetchTrainingMaxes,
+  fetchModificationMaxes,
   fetchTrainingMaxHistory,
   fetchMacrocycles,
   updateTrainingMaxHistoryEntry,

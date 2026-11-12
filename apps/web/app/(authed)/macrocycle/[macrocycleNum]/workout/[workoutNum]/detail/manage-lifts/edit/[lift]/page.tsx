@@ -53,6 +53,7 @@ export default async function EditLiftPage({
       </h1>
 
       <LiftEditor
+        program={program}
         macrocycleNum={macrocycleNum}
         workoutNum={workoutNum}
         initialMetadata={metadata}
