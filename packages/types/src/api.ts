@@ -23,7 +23,7 @@ export interface MaxReductionFlagResponse {
 /** A lift recalculation left alone (mirrors core's SkippedLift, #1150). */
 export interface SkippedLiftResponse {
   /** The lift as its records name it. */
-  lift: string;
+  lift: LiftName;
   /** It has no training max, or the program has no spec row for it. */
   reason: 'no-training-max' | 'no-program-spec';
 }

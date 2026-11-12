@@ -430,6 +430,27 @@ describe('MacrocycleGenerationService', () => {
         warnSpy.mockRestore();
       }
     });
+
+    it('names the source macrocycle in that warning when advancing from fromMacrocycleNum', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      liftRecordRepo.getLiftRecords.mockResolvedValue(
+        stubLiftRecords().map((r) => ({ ...r, macrocycleNum: 3, lift: 'Zercher Squat' })),
+      );
+      macrocycleRepo.seed(macrocycleRow(3));
+
+      try {
+        await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 3 });
+
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ macrocycleNum: 3, lift: 'Zercher Squat' }),
+          expect.any(String),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
   });
 
   describe('initializeFirstMacrocycle', () => {

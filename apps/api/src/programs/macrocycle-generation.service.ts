@@ -251,7 +251,7 @@ export class MacrocycleGenerationService {
     // Deliberate: flagged reductions are silently blocked here — they are not surfaced
     // to the caller when advancing a macrocycle. Use recalculateMaxes to review flagged reductions.
     const { maxes: newMaxes, skipped } = updateMaxes(programSpec, trainingMaxes, liftRecords, { program, liftOverrides });
-    this.warnSkipped(program, dashboard.macrocycleNum, skipped);
+    this.warnSkipped(program, sourceMacrocycleNum, skipped);
 
     // The new row goes first: a concurrent request that took this number makes it throw a 409
     // before anything else is written (the request transaction rolls back the rest anyway).
