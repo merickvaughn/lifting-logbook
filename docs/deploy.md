@@ -607,16 +607,20 @@ applies to each lock wait separately). Run these steps when no import is running
 waits for every transaction using the tables and an import's can run for 30 seconds. The reversal
 and the renumber use 10 seconds; if one gives up, it has changed nothing, so run it again.
 
-An import holds its user's macrocycle lock exclusively, and page writes hold it shared, so this
-reads 0 when no import is running:
+An import holds its user's macrocycle lock exclusively, and most page writes hold it shared, so
+this reads 0 when no import is running in this database:
 
 ```bash
 psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
-  -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND mode = 'ExclusiveLock' AND granted"
+  -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND mode = 'ExclusiveLock' AND granted
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
 ```
 
-A running `prisma migrate deploy` holds an exclusive advisory lock too, so it counts, and so does
-a runbook step in another session. Neither should overlap a step either.
+Other holders count too, and each should end before a step starts: a page write that starts or
+deletes a macrocycle holds the lock exclusively while it renumbers, until its transaction ends; a
+running `prisma migrate deploy` holds an exclusive advisory lock; and so does a runbook step in
+another session. The count is only a snapshot: an import that starts after it is what the step's
+`lock_timeout` covers.
 
 **Before merging the PR** (the merge starts the Deploy run, whose `plan-production` would show the
 public IP this needs), check that the shared lock table can hold one advisory lock per user, since
