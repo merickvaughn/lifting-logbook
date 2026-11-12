@@ -555,7 +555,7 @@ The [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200) migrati
 renumber every user's stored macrocycles by start date when the deploy runs, and the API revision
 they ship with renumbers again after every change. They record each macrocycle's number before
 the backfill in `macrocycle."backfillNumber"`, and `macrocycle_renumber_reverse()` puts those
-numbers back in every table that holds one and in lift-record import batches' keys. Six run in
+numbers back in every table that holds one and in lift-record import batches' keys. Seven run in
 order:
 
 - `20261112000000_renumber_macrocycles_by_date` does nothing: staging applied an early draft under
@@ -571,6 +571,8 @@ order:
   call, and a `wait_for_locks` argument to `macrocycle_renumber_reverse()`. It reads no rows.
 - `20261112000005_renumbering_force_guard` makes a direct call to a renumbering step fail while
   FORCE is on, and narrows what the report holds to the two tables it reads. It reads no rows.
+- `20261112000006_renumbering_forced_table_list` keeps the nine tables in one list, which the
+  FORCE switch and that check both read. It reads no rows.
 
 **The migrator sees no rows with FORCE on.** It owns the tables but isn't a superuser or
 `BYPASSRLS` (`rolsuper` and `rolbypassrls` are false), and FORCE ROW LEVEL SECURITY binds the
@@ -588,8 +590,15 @@ commits each line typed there on its own, and a transaction left open holds the 
 statement is its own `-c` option: psql runs them in order in one session and prints each result,
 and with `ON_ERROR_STOP` an error ends the session, which rolls back an open transaction
 ([psql](https://www.postgresql.org/docs/current/app-psql.html)). Several statements in one `-c`
-string would show only the last result before psql 15. Each sets a `lock_timeout`, so it gives up
-rather than stall pages while it waits for the tables.
+string would show only the last result before psql 15. `-X` skips the operator's `.psqlrc`,
+which could otherwise set `AUTOCOMMIT off` and roll a real run back when psql exits.
+
+Each command that turns FORCE off sets a `lock_timeout`. It bounds the wait for each table, not
+the whole step: the step takes the tables one at a time, holding the ones it has, and page queries
+queue behind it while it waits. So a step that switches all nine tables can hold pages up for as
+much as nine times its timeout. Run these steps when no import is running, since the switch waits
+for every transaction using the tables and an import's can run for 30 seconds. The reversal and
+the renumber use 10 seconds; if one gives up, it has changed nothing, so run it again.
 
 **Before merging the PR** (the merge starts the Deploy run, whose `plan-production` would show the
 public IP this needs), check that the shared lock table can hold one advisory lock per user, since
@@ -599,7 +608,7 @@ puts it back. Its one-second `lock_timeout` makes it give up rather than stall p
 run it again:
 
 ```bash
-psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
   -c "BEGIN" \
   -c "SET LOCAL lock_timeout = '1s'" \
   -c "ALTER TABLE macrocycle NO FORCE ROW LEVEL SECURITY" \
@@ -650,7 +659,7 @@ id (#1198)"`). Each names its route and program; check that user's sets on that 
 Then, as the migrator, this says what the migrations changed:
 
 ```bash
-psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 -x \
+psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 -x \
   -c "SET lock_timeout = '5s'" \
   -c "SELECT * FROM macrocycle_runbook_report()"
 ```
@@ -681,9 +690,9 @@ someone's history wrongly. Do it after the API is rolled back, or the next chang
 1. **Test it without committing**, as the migrator:
 
    ```bash
-   psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+   psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
      -c "BEGIN" \
-     -c "SET LOCAL lock_timeout = '40s'" \
+     -c "SET LOCAL lock_timeout = '10s'" \
      -c "SELECT macrocycle_runbook_reverse()" \
      -c "ROLLBACK"
    ```
@@ -695,8 +704,8 @@ someone's history wrongly. Do it after the API is rolled back, or the next chang
 2. **Run it**, the same command without `BEGIN` and `ROLLBACK`:
 
    ```bash
-   psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
-     -c "SET lock_timeout = '40s'" \
+   psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+     -c "SET lock_timeout = '10s'" \
      -c "SELECT macrocycle_runbook_reverse()"
    ```
 
@@ -715,8 +724,8 @@ To go forward again after a reversal, this keeps the recorded numbers and record
 macrocycle created since:
 
 ```bash
-psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
-  -c "SET lock_timeout = '40s'" \
+psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+  -c "SET lock_timeout = '10s'" \
   -c "SELECT macrocycle_runbook_renumber()"
 ```
 
@@ -736,7 +745,7 @@ Each call turns FORCE back on before it returns. To confirm it's on for every ta
 list nothing:
 
 ```bash
-psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
   -c "SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relrowsecurity AND NOT relforcerowsecurity"
 ```
 
@@ -751,7 +760,7 @@ and raise the flag through Terraform, as it describes, before retrying. Prisma
 records the migration as failed, and every later `prisma migrate deploy` refuses (P3009) until
 it's marked rolled back. As the migrator, from `apps/api`, name the migration the P3009 error
 names (usually `20261112000003_renumber_without_forced_rls`, which does the work; it can be any
-of `20261112000001` to `20261112000005`). A deadlock (*deadlock detected*) is the same:
+of `20261112000001` to `20261112000006`). A deadlock (*deadlock detected*) is the same:
 `20261112000003` locks nine tables, and a request that used one and waits on another can deadlock
 with it:
 
@@ -793,7 +802,7 @@ proxy and removes the IP however the shell exits. From the repo root, for produc
   done
   MIGRATOR_URL=$(gcloud secrets versions access latest --secret="$PREFIX-migrator-database-url" --project="$PROJECT" \
     | sed -E "s|@[^/]+/|@127.0.0.1:$PORT/|")
-  psql "$MIGRATOR_URL"
+  psql -X "$MIGRATOR_URL"
 )
 ```
 
