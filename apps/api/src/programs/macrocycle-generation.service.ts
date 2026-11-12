@@ -32,7 +32,7 @@ import {
   nextMacrocycleNumber,
 } from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
-import { modificationModesFor } from '../lifts/lift-modification.util';
+import { modificationModesFor, ownMaxesFor, saveOwnMaxes } from '../lifts/lift-modification.util';
 
 type MacrocycleRepos = Pick<
   RepositoryBundle,
@@ -251,11 +251,13 @@ export class MacrocycleGenerationService {
     // Deliberate: flagged reductions are silently blocked here — they are not surfaced
     // to the caller when advancing a macrocycle. Use recalculateMaxes to review flagged reductions.
     const modificationModes = await modificationModesFor(repos, liftRecords);
-    const { maxes: newMaxes, skipped } = updateMaxes(programSpec, trainingMaxes, liftRecords, {
-      program,
-      liftOverrides,
-      modificationModes,
-    });
+    const modificationMaxes = await ownMaxesFor(repos, program, liftRecords, modificationModes);
+    const { maxes: newMaxes, skipped, modificationMaxes: newModificationMaxes } = updateMaxes(
+      programSpec,
+      trainingMaxes,
+      liftRecords,
+      { program, liftOverrides, modificationModes, modificationMaxes },
+    );
     this.warnSkipped(program, sourceMacrocycleNum, skipped);
 
     // The new row goes first: a concurrent request that took this number makes it throw a 409
@@ -296,6 +298,7 @@ export class MacrocycleGenerationService {
     if (historyEntries.length > 0) {
       await repos.trainingMaxHistory.appendHistoryEntries(program, historyEntries);
     }
+    await saveOwnMaxes(repos, program, modificationMaxes, newModificationMaxes, newMacrocycle.macrocycleDate, source);
 
     // A start dated before stored history sorts among it, so the program renumbers (#1199).
     const changes = await renumberProgram(repos, program);
@@ -376,7 +379,8 @@ export class MacrocycleGenerationService {
 
   /**
    * Deletes the current macrocycle for a program and every row scoped to it: the
-   * MacrocycleDashboard, all TrainingMax rows, all TrainingMaxHistory entries, and for every
+   * MacrocycleDashboard, all TrainingMax rows, all TrainingMaxHistory entries, every own max of a
+   * lift modification (the modifications themselves stay), and for every
    * macrocycle number except imported ones, its LiftRecord, MacrocycleScheduledWorkout,
    * workout date, skip and lift override, saved focus choice (FocusDayState) and Macrocycle
    * rows. Imported macrocycles are history and stay with their records (ADR-042). Deliberately leaves
@@ -403,7 +407,10 @@ export class MacrocycleGenerationService {
    * request transaction, independent of the order below.
    */
   async deleteCurrentMacrocycle(
-    repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'trainingMax' | 'trainingMaxHistory' | 'importBatch'>,
+    repos: Pick<
+      RepositoryBundle,
+      'macrocycle' | 'macrocycleDashboard' | 'trainingMax' | 'trainingMaxHistory' | 'importBatch' | 'liftModification'
+    >,
     program: string,
   ): Promise<void> {
     // It removes macrocycle rows, so it takes the macrocycle lock (decision 13).
@@ -415,8 +422,12 @@ export class MacrocycleGenerationService {
       .filter((m) => m.origin === 'imported')
       .map((m) => m.macrocycleNum);
 
+    // History goes whole, own-max entries included (#1153).
     await repos.trainingMaxHistory.deleteAllHistory(program);
     await repos.trainingMax.deleteAllTrainingMaxes(program);
+    // Own maxes go with the lift's, or they would come back on the next macrocycle 1. The
+    // modifications stay, since they belong to the user, like custom lifts (#1153).
+    await repos.liftModification.deleteAllMaxes(program);
     // One delete over every table that holds a number, the dashboard's included.
     await repos.macrocycle.deleteAllExcept(program, keep);
     // Batch keys on a deleted number would undo whichever macrocycle takes that number next.
@@ -438,7 +449,13 @@ export class MacrocycleGenerationService {
     ]);
 
     const modificationModes = await modificationModesFor(repos, liftRecords);
-    const result = updateMaxes(programSpec, trainingMaxes, liftRecords, { program, liftOverrides, modificationModes });
+    const modificationMaxes = await ownMaxesFor(repos, program, liftRecords, modificationModes);
+    const result = updateMaxes(programSpec, trainingMaxes, liftRecords, {
+      program,
+      liftOverrides,
+      modificationModes,
+      modificationMaxes,
+    });
     this.warnSkipped(program, dashboard.macrocycleNum, result.skipped);
     await repos.trainingMax.saveTrainingMaxes(program, result.maxes);
 
@@ -446,6 +463,7 @@ export class MacrocycleGenerationService {
     if (historyEntries.length > 0) {
       await repos.trainingMaxHistory.appendHistoryEntries(program, historyEntries);
     }
+    await saveOwnMaxes(repos, program, modificationMaxes, result.modificationMaxes, dashboard.macrocycleDate, 'program');
 
     return result;
   }

@@ -19,7 +19,8 @@ import {
 import { IWorkoutLiftOverrideRepository } from '../ports/IWorkoutLiftOverrideRepository';
 import { IMacrocycleScheduledWorkoutRepository } from '../ports/IMacrocycleScheduledWorkoutRepository';
 import { IUserSettingsRepository } from '../ports/IUserSettingsRepository';
-import { ProgramNotFoundError } from '../ports/errors';
+import { HistoryEntryNotFoundError, ProgramNotFoundError } from '../ports/errors';
+import { InMemoryTrainingMaxHistoryRepository } from '../adapters/in-memory/training-max-history.adapter';
 import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { InMemoryImportBatchRepository } from '../adapters/in-memory/import-batch.adapter';
 import { InMemoryLiftModificationRepository } from '../adapters/in-memory/lift-modification.adapter';
@@ -215,6 +216,32 @@ describe('MacrocycleGenerationService', () => {
 
       expect(trainingMaxRepo.saveTrainingMaxes).toHaveBeenCalledWith(PROGRAM, [
         expect.objectContaining({ lift: 'Squat', weight: 250 }),
+      ]);
+    });
+
+    it("saves a moved own max with its history, and leaves the lift's max (#1153)", async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      const wide = await repos.liftModification.create({ lift: 'squat', name: 'Wide', maxMode: 'own' });
+      await repos.liftModification.saveMaxes(PROGRAM, [
+        { modificationId: wide.id, weight: 200, dateUpdated: new Date('2026-04-18T00:00:00.000Z') },
+      ]);
+      liftRecordRepo.getLiftRecords.mockResolvedValue(
+        stubLiftRecords().map((r) => ({ ...r, weight: 210, modifications: [wide.id] })),
+      );
+
+      await service.startNewMacrocycle(repos, PROGRAM);
+
+      expect(trainingMaxRepo.saveTrainingMaxes).toHaveBeenCalledWith(PROGRAM, [
+        expect.objectContaining({ lift: 'Squat', weight: 250 }),
+      ]);
+      expect(await repos.liftModification.getMaxes(PROGRAM)).toEqual([
+        { modificationId: wide.id, weight: 215, dateUpdated: new Date('2026-04-20T00:00:00.000Z') },
+      ]);
+      // The macrocycle's new start date, like the lift's history.
+      expect(trainingMaxHistoryRepo.appendHistoryEntries).toHaveBeenCalledWith(PROGRAM, [
+        expect.objectContaining({ lift: 'squat', weight: 215, modificationId: wide.id }),
       ]);
     });
 
@@ -800,6 +827,27 @@ describe('MacrocycleGenerationService', () => {
       expect(order).toEqual(['trainingMaxHistory', 'trainingMax', 'numbered tables']);
     });
 
+    it("clears the program's own maxes and their history, and keeps the modifications (#1153)", async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      const history = new InMemoryTrainingMaxHistoryRepository();
+      const withHistory = { ...deleteRepos, trainingMaxHistory: history };
+      const wide = await repos.liftModification.create({ lift: 'squat', name: 'Wide', maxMode: 'own' });
+      const ownMax = { modificationId: wide.id, weight: 200, dateUpdated: new Date('2026-04-18') };
+      await repos.liftModification.saveMaxes(PROGRAM, [ownMax]);
+      await repos.liftModification.saveMaxes('other-program', [ownMax]);
+      await history.appendHistoryEntries(PROGRAM, [
+        { lift: 'squat', weight: 200, reps: 1, date: new Date('2026-04-18'), isPR: false, source: 'program', goalMet: false, modificationId: wide.id },
+      ]);
+
+      await service.deleteCurrentMacrocycle(withHistory, PROGRAM);
+
+      expect(await repos.liftModification.getMaxes(PROGRAM)).toEqual([]);
+      // The history read leaves own-max entries out, so look the entry up by id: gone, not hidden.
+      await expect(history.updateHistoryEntry(PROGRAM, '1', { isPR: true })).rejects.toThrow(HistoryEntryNotFoundError);
+      expect(await repos.liftModification.list()).toEqual([expect.objectContaining({ id: wide.id })]);
+      expect(await repos.liftModification.getMaxes('other-program')).toEqual([ownMax]);
+    });
+
     it('propagates ProgramNotFoundError when no macrocycle exists (404 path)', async () => {
       macrocycleDashboardRepo.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError(PROGRAM));
       const deleteAllExcept = jest.spyOn(macrocycleRepo, 'deleteAllExcept');
@@ -866,6 +914,48 @@ describe('MacrocycleGenerationService', () => {
 
       expect(await recalculate([noChalk.id])).toEqual([expect.objectContaining({ lift: 'Squat', weight: 250 })]);
       expect(await recalculate([paused.id])).toEqual([expect.objectContaining({ lift: 'Squat', weight: 270 })]);
+    });
+
+    it("saves a modification's own max and its history, leaving the lift's max (#1153)", async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      const wide = await repos.liftModification.create({ lift: 'squat', name: 'Wide', maxMode: 'own' });
+      const other = await repos.liftModification.create({ lift: 'squat', name: 'Narrow', maxMode: 'own' });
+      const otherMax = { modificationId: other.id, weight: 150, dateUpdated: new Date('2026-04-18T00:00:00.000Z') };
+      await repos.liftModification.saveMaxes(PROGRAM, [otherMax]);
+      liftRecordRepo.getLiftRecords.mockResolvedValue(
+        stubLiftRecords().map((r) => ({ ...r, weight: 225, modifications: [wide.id] })),
+      );
+
+      const result = await service.recalculateMaxes(repos, PROGRAM);
+
+      expect(result.maxes).toEqual([expect.objectContaining({ lift: 'Squat', weight: 250 })]);
+      // Created at weight plus increment, since it had none.
+      expect(await repos.liftModification.getMaxes(PROGRAM)).toEqual(
+        expect.arrayContaining([
+          { modificationId: wide.id, weight: 230, dateUpdated: new Date('2026-04-20T00:00:00.000Z') },
+          otherMax,
+        ]),
+      );
+      expect(trainingMaxHistoryRepo.appendHistoryEntries).toHaveBeenCalledTimes(1);
+      expect(trainingMaxHistoryRepo.appendHistoryEntries).toHaveBeenCalledWith(PROGRAM, [
+        expect.objectContaining({ lift: 'squat', weight: 230, source: 'program', modificationId: wide.id }),
+      ]);
+    });
+
+    it('reads no own maxes when no set has an `own` modification', async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      liftRecordRepo.getLiftRecords.mockResolvedValue(stubLiftRecords());
+      const getMaxes = jest.spyOn(repos.liftModification, 'getMaxes');
+      const saveMaxes = jest.spyOn(repos.liftModification, 'saveMaxes');
+
+      await service.recalculateMaxes(repos, PROGRAM);
+
+      expect(getMaxes).not.toHaveBeenCalled();
+      expect(saveMaxes).not.toHaveBeenCalled();
     });
 
     it('does not call saveMacrocycleDashboard', async () => {

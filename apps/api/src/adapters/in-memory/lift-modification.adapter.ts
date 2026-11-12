@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { LiftRecord } from '@lifting-logbook/core';
+import { LiftRecord, ModificationMax } from '@lifting-logbook/core';
 import { LiftModification } from '@lifting-logbook/types';
 import {
   CreateLiftModificationInput,
@@ -10,6 +10,7 @@ import { LiftModificationConflictError, LiftModificationNotFoundError } from '..
 
 export class InMemoryLiftModificationRepository implements ILiftModificationRepository {
   private readonly store = new Map<string, LiftModification>();
+  private readonly maxesByProgram = new Map<string, Map<string, ModificationMax>>();
 
   /** `records` is the store the user's lift record repository writes, for the delete rule. */
   constructor(
@@ -63,9 +64,27 @@ export class InMemoryLiftModificationRepository implements ILiftModificationRepo
     const namedBySet = [...this.records.values()].flat().some((r) => r.modifications?.includes(id));
     if (!namedBySet) {
       this.store.delete(id);
+      // The Prisma foreign key cascades.
+      for (const maxes of this.maxesByProgram.values()) maxes.delete(id);
     } else if (!existing.archivedAt) {
       this.store.set(id, { ...existing, archivedAt: new Date() });
     }
+  }
+
+  async getMaxes(program: string): Promise<ModificationMax[]> {
+    return [...(this.maxesByProgram.get(program)?.values() ?? [])]
+      .sort((a, b) => a.modificationId.localeCompare(b.modificationId))
+      .map((m) => ({ ...m }));
+  }
+
+  async saveMaxes(program: string, maxes: readonly ModificationMax[]): Promise<void> {
+    const byId = this.maxesByProgram.get(program) ?? new Map<string, ModificationMax>();
+    for (const m of maxes) byId.set(m.modificationId, { ...m });
+    this.maxesByProgram.set(program, byId);
+  }
+
+  async deleteAllMaxes(program: string): Promise<void> {
+    this.maxesByProgram.delete(program);
   }
 
   private findByName(lift: string, name: string): LiftModification | undefined {

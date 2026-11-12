@@ -7,7 +7,8 @@ export class InMemoryTrainingMaxHistoryRepository implements ITrainingMaxHistory
   private nextId = 1;
 
   async getHistory(program: string, filters?: TrainingMaxHistoryFilters): Promise<TrainingMaxHistoryEntry[]> {
-    let entries = [...(this.entriesByProgram.get(program) ?? [])];
+    // A modification's own-max entries aren't the lift's history (#1153).
+    let entries = (this.entriesByProgram.get(program) ?? []).filter((e) => e.modificationId === undefined);
     if (filters?.lift !== undefined) {
       const wanted = liftSpellings(filters.lift);
       entries = entries.filter((e) => wanted.includes(e.lift));

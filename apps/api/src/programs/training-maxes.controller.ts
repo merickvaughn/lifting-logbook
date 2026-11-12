@@ -1,11 +1,13 @@
-import { Body, Controller, Get, Inject, Param, Patch } from '@nestjs/common';
-import { TrainingMaxResponse } from '@lifting-logbook/types';
+import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Put } from '@nestjs/common';
+import { ModificationMaxResponse, TrainingMaxResponse } from '@lifting-logbook/types';
 import type { TrainingMax } from '@lifting-logbook/core';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
+import { LiftModificationNotFoundError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { toTrainingMaxResponse } from './mappers';
+import { toModificationMaxResponse, toTrainingMaxResponse } from './mappers';
+import { PutModificationMaxDto } from './put-modification-max.dto';
 import { UpdateTrainingMaxesDto } from './update-training-maxes.dto';
 
 @Controller('programs/:program')
@@ -51,5 +53,38 @@ export class TrainingMaxesController {
     }
     await trainingMax.saveTrainingMaxes(program, merged);
     return merged.map(toTrainingMaxResponse);
+  }
+
+  /** The program's own maxes of modifications (#1153), archived modifications' included. */
+  @Get('modification-maxes')
+  async getModificationMaxes(
+    @Param('program') program: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ModificationMaxResponse[]> {
+    const { liftModification } = await this.factory.forUser(user);
+    return (await liftModification.getMaxes(program)).map(toModificationMaxResponse);
+  }
+
+  /**
+   * Sets a modification's own max in this program, the way the training-max form sets a lift's.
+   * A 404 for a modification that isn't the user's, or is archived; a 400 unless its `maxMode` is
+   * `own`, since no other kind plans from or moves one.
+   */
+  @Put('modification-maxes/:modificationId')
+  async putModificationMax(
+    @Param('program') program: string,
+    @Param('modificationId') modificationId: string,
+    @Body() body: PutModificationMaxDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ModificationMaxResponse> {
+    const { liftModification } = await this.factory.forUser(user);
+    const modification = (await liftModification.list()).find((m) => m.id === modificationId && !m.archivedAt);
+    if (!modification) throw new LiftModificationNotFoundError(modificationId);
+    if (modification.maxMode !== 'own') {
+      throw new BadRequestException(`'${modification.name}' doesn't keep its own max`);
+    }
+    const max = { modificationId, weight: body.weight, dateUpdated: new Date() };
+    await liftModification.saveMaxes(program, [max]);
+    return toModificationMaxResponse(max);
   }
 }

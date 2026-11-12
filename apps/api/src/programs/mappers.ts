@@ -2,6 +2,7 @@ import {
   MacrocycleDashboard,
   LiftRecord,
   LiftingProgramSpec,
+  ModificationMax,
   PlannedLift,
   StrengthGoalEntry,
   TrainingMax,
@@ -26,6 +27,7 @@ import {
   LiftOverrideResponse,
   LiftRecordResponse,
   LiftingProgramSpecResponse,
+  ModificationMaxResponse,
   SetResponse,
   StrengthGoalResponse,
   TrainingMaxHistoryEntryResponse,
@@ -73,6 +75,13 @@ export const toStrengthGoalResponse = (g: StrengthGoalEntry): StrengthGoalRespon
 
 export const toTrainingMaxResponse = (m: TrainingMax): TrainingMaxResponse => ({
   lift: m.lift,
+  weight: m.weight,
+  unit: 'lbs',
+  dateUpdated: isoDate(m.dateUpdated),
+});
+
+export const toModificationMaxResponse = (m: ModificationMax): ModificationMaxResponse => ({
+  modificationId: m.modificationId,
   weight: m.weight,
   unit: 'lbs',
   dateUpdated: isoDate(m.dateUpdated),

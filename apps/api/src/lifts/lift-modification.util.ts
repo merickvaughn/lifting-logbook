@@ -1,5 +1,5 @@
 import { BadRequestException, Logger } from '@nestjs/common';
-import { LiftRecord, NamedLift, lookupLift } from '@lifting-logbook/core';
+import { LiftRecord, ModificationMax, NamedLift, lookupLift } from '@lifting-logbook/core';
 import { LiftModificationMaxMode } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
 
@@ -83,6 +83,59 @@ export async function modificationModesFor(
   const missing = [...new Set(ids)].filter((id) => !modes.has(id));
   if (missing.length > 0) logger.warn({ missing }, 'A logged set names a lift modification with no row, so it moves no max');
   return modes;
+}
+
+/**
+ * The program's own maxes, for `updateMaxes` (#1153). Read only when a record carries an `own`
+ * modification, so a macrocycle with none costs no query.
+ */
+export async function ownMaxesFor(
+  repos: Pick<RepositoryBundle, 'liftModification'>,
+  program: string,
+  records: readonly Pick<LiftRecord, 'modifications'>[],
+  modes: ReadonlyMap<string, LiftModificationMaxMode>,
+): Promise<ModificationMax[]> {
+  const anyOwn = records.some((r) => (r.modifications ?? []).some((id) => modes.get(id) === 'own'));
+  return anyOwn ? repos.liftModification.getMaxes(program) : [];
+}
+
+/**
+ * Saves the own maxes `updateMaxes` moved or created, and a history entry for each whose weight
+ * changed, marked with its modification so the lift's history reads leave it out (#1153).
+ */
+export async function saveOwnMaxes(
+  repos: Pick<RepositoryBundle, 'liftModification' | 'trainingMaxHistory'>,
+  program: string,
+  before: readonly ModificationMax[],
+  after: readonly ModificationMax[],
+  date: Date,
+  source: 'test' | 'program',
+): Promise<void> {
+  const previous = new Map(before.map((m) => [m.modificationId, m]));
+  const changed = after.filter((m) => {
+    const was = previous.get(m.modificationId);
+    return !was || was.weight !== m.weight || was.dateUpdated.getTime() !== m.dateUpdated.getTime();
+  });
+  if (changed.length === 0) return;
+  await repos.liftModification.saveMaxes(program, changed);
+
+  const moved = changed.filter((m) => previous.get(m.modificationId)?.weight !== m.weight);
+  if (moved.length === 0) return;
+  const liftOf = new Map((await repos.liftModification.list()).map((m) => [m.id, m.lift]));
+  await repos.trainingMaxHistory.appendHistoryEntries(
+    program,
+    moved.map((m) => ({
+      // The modification's lift id. Every id here came from the list, through its mode.
+      lift: liftOf.get(m.modificationId) ?? '',
+      weight: m.weight,
+      reps: 1,
+      date,
+      isPR: false,
+      source,
+      goalMet: false,
+      modificationId: m.modificationId,
+    })),
+  );
 }
 
 /**

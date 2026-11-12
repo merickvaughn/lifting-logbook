@@ -252,6 +252,9 @@ const _liftModificationRepo: ILiftModificationRepository = {
     }),
   update: (id) => Promise.reject(new Error(id)),
   delete: () => Promise.resolve(),
+  getMaxes: () => Promise.resolve([]),
+  saveMaxes: () => Promise.resolve(),
+  deleteAllMaxes: () => Promise.resolve(),
 };
 
 const _focusRepo: IFocusRepository = {

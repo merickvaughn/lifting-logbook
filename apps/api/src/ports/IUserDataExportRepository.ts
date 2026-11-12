@@ -31,6 +31,8 @@ export interface UserDataRows {
   workoutLiftOverrides: StoredRow[];
   liftMetadata: StoredRow[];
   liftModifications: StoredRow[];
+  /** Own maxes of modifications (#1153), across programs. */
+  liftModificationMaxes: StoredRow[];
   focusBlocks: StoredRow[];
   focusDayStates: StoredRow[];
 }
