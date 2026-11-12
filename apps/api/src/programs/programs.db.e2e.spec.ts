@@ -36,7 +36,8 @@ import {
   seedTrainingMaxes,
 } from '../adapters/in-memory/fixtures';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
-import { injectPage } from '../testing/macrocycle-id';
+import { currentMacrocycleId, injectPage } from '../testing/macrocycle-id';
+import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import type { InjectOptions } from 'fastify';
 import { DomainNotFoundFilter } from './not-found.filter';
 import { DomainConflictFilter } from './conflict.filter';
@@ -408,11 +409,20 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(res.json().macrocycleStartDate).toBe('2026-06-01');
     });
 
-    it('POST /programs/:program/macrocycles with a fromMacrocycleNum the program lacks returns 400', async () => {
-      // No page has an id for a macrocycle the program lacks (#1200).
-      const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, { fromMacrocycleNum: 99 });
-      expect(res.statusCode).toBe(400);
-      expect(res.json().code).toBe('macrocycle-id-required');
+    it('POST /programs/:program/macrocycles with a fromMacrocycleNum the program lacks returns 409 macrocycle-moved', async () => {
+      // No page has an id for a macrocycle the program lacks, so a page's id names another (#1200).
+      const res = await injectPage(app, {
+        method: 'POST',
+        url: `/programs/${SEED_PROGRAM}/macrocycles`,
+        headers: {
+          'content-type': 'application/json',
+          ...AUTH,
+          [MACROCYCLE_ID_HEADER]: await currentMacrocycleId(app, SEED_PROGRAM, AUTH.authorization),
+        },
+        payload: JSON.stringify({ fromMacrocycleNum: 99 }),
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('macrocycle-moved');
     });
 
     it('POST /programs/unknown/macrocycles returns 404', async () => {

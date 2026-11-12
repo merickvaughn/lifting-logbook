@@ -4,12 +4,12 @@ import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import multipart from '@fastify/multipart';
 import { LiftRecord } from '@lifting-logbook/core';
-import { emptyFocusDayState, MacrocycleSummaryResponse } from '@lifting-logbook/types';
+import { emptyFocusDayState, MACROCYCLE_ID_HEADER, MacrocycleSummaryResponse } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { InMemoryMacrocycleRepository } from '../adapters/in-memory/macrocycle.adapter';
 import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { injectPage } from '../testing/macrocycle-id';
+import { currentMacrocycleId, injectPage } from '../testing/macrocycle-id';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
@@ -39,14 +39,14 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
 
   /** Each test acts as its own user, so the in-memory store starts empty. */
   const as = (user: string) => {
-    const inject = (method: string, url: string, body?: unknown) =>
+    const inject = (method: string, url: string, body?: unknown, extra: Record<string, string> = {}) =>
       injectPage(app, {
         method: method as 'GET',
         url,
         headers:
           body === undefined
-            ? { authorization: `Bearer ${user}` }
-            : { 'content-type': 'application/json', authorization: `Bearer ${user}` },
+            ? { authorization: `Bearer ${user}`, ...extra }
+            : { 'content-type': 'application/json', authorization: `Bearer ${user}`, ...extra },
         ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
       });
     const repos = (): Promise<RepositoryBundle> =>
@@ -65,6 +65,8 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
     });
     return {
       inject,
+      /** The id header of a page open on the current macrocycle. */
+      currentPage: async () => ({ [MACROCYCLE_ID_HEADER]: await currentMacrocycleId(app, PROGRAM, `Bearer ${user}`) }),
       set,
       /** An `imported` macrocycle with one set, as piece 2's Assign step will store it. */
       seedImported: async (macrocycleNum: number, start: string, end: string) => {
@@ -268,8 +270,9 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
 
     it.each([
       ['an imported macrocycle', 1, 409, 'macrocycle-read-only'],
-      // No page has an id for a macrocycle the program lacks (#1200).
-      ['an unknown number', 7, 400, 'macrocycle-id-required'],
+      // No page has an id for a macrocycle the program lacks, so a page open on the current
+      // one is told it moved (#1200).
+      ['an unknown number', 7, 409, 'macrocycle-moved'],
     ])('rejects every write on %s with its code, and leaves the training maxes alone', async (label, num, status, code) => {
       const user = as(`history-guard-${num}`);
       await user.seedImported(1, '2025-01-06', '2025-02-17');
@@ -277,10 +280,11 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       const maxesBefore = (await user.inject('GET', `/programs/${PROGRAM}/training-maxes`)).json();
       const bundle = await user.repos();
       const recordsBefore = await bundle.liftRecord.getLiftRecords(PROGRAM, num);
+      const page = num === 7 ? await user.currentPage() : {};
 
       const results: [string, number, unknown][] = [];
       for (const [route, method, url, body] of routes(num)) {
-        const res = await user.inject(method, url, body);
+        const res = await user.inject(method, url, body, page);
         results.push([route, res.statusCode, (res.json() as { code?: unknown }).code]);
       }
       // Each row names its route, so a failure says which one let the write through.
@@ -295,12 +299,13 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       const user = as('history-guard-message');
       await user.initialize('2026-01-05');
       // The page shows this message as it is (#1198), so it is written for the lifter. No page
-      // has an id for a macrocycle the program lacks (#1200).
-      const res = await user.inject('POST', `/programs/${PROGRAM}/macrocycles/7/workouts/1/skip`, {});
-      expect(res.statusCode).toBe(400);
+      // has an id for a macrocycle the program lacks, so the page's id names another (#1200).
+      const res = await user.inject('POST', `/programs/${PROGRAM}/macrocycles/7/workouts/1/skip`, {}, await user.currentPage());
+      expect(res.statusCode).toBe(409);
       expect(res.json()).toMatchObject({
-        code: 'macrocycle-id-required',
-        message: `This page of '${PROGRAM}' doesn't say which macrocycle it's for. Reload the page and try again.`,
+        code: 'macrocycle-moved',
+        message: `This macrocycle of '${PROGRAM}' is now number 1. Reload the page.`,
+        macrocycleNum: 1,
       });
     });
 
@@ -326,9 +331,15 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       const readOnly = await user.log(1, '2025-01-08', 2);
       expect(readOnly.statusCode).toBe(409);
       expect(readOnly.json()).toMatchObject({ code: 'macrocycle-read-only' });
-      const unknown = await user.log(7, '2025-01-08', 2);
-      expect(unknown.statusCode).toBe(400);
-      expect(unknown.json()).toMatchObject({ code: 'macrocycle-id-required' });
+      const unknown = await user.inject(
+        'POST',
+        `/programs/${PROGRAM}/lift-records`,
+        { macrocycleNum: 7, workoutNum: 1, date: '2025-01-08', lift: 'Squat', setNum: 2, weight: 225, reps: 5 },
+        await user.currentPage(),
+      );
+      expect(unknown.statusCode).toBe(409);
+      // The live macrocycle is 2, after the imported one.
+      expect(unknown.json()).toMatchObject({ code: 'macrocycle-moved', macrocycleNum: 2 });
     });
 
     it('keeps a legacy macrocycle writable', async () => {

@@ -62,6 +62,8 @@ describe('followMovedMacrocycle', () => {
   afterEach(() => {
     assign.mockRestore();
     window.history.pushState({}, '', '/');
+    window.sessionStorage.clear();
+    jest.useRealTimers();
   });
 
   it('reloads at the new number for macrocycle-moved', () => {
@@ -73,6 +75,36 @@ describe('followMovedMacrocycle', () => {
     const err = new ApiClientError('Reload the page and try again.', 400, 'macrocycle-id-required');
     expect(followMovedMacrocycle(err)).toBe(true);
     expect(assign).toHaveBeenCalledWith('/macrocycle/1/workout/2/detail?from=history');
+  });
+
+  it('leaves a second missing id on the same page within a minute to the caller, which shows the message (#1200)', () => {
+    jest.useFakeTimers({ now: new Date('2026-11-12T10:00:00Z') });
+    const err = new ApiClientError('Reload the page and try again.', 400, 'macrocycle-id-required');
+    expect(followMovedMacrocycle(err)).toBe(true);
+
+    jest.setSystemTime(new Date('2026-11-12T10:00:30Z'));
+    expect(followMovedMacrocycle(err)).toBe(false);
+    expect(writeFailureMessage(err, 'Failed.')).toBe('Reload the page and try again.');
+    expect(assign).toHaveBeenCalledTimes(1);
+
+    // Past the minute, or on another page, it reloads again.
+    jest.setSystemTime(new Date('2026-11-12T10:01:01Z'));
+    expect(followMovedMacrocycle(err)).toBe(true);
+    window.history.pushState({}, '', '/macrocycle/1/workout/3/detail');
+    expect(followMovedMacrocycle(err)).toBe(true);
+    expect(assign).toHaveBeenCalledTimes(3);
+  });
+
+  it('shows the message rather than reloading when session storage is unavailable', () => {
+    const getItem = jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    try {
+      expect(followMovedMacrocycle(new ApiClientError('Reload.', 400, 'macrocycle-id-required'))).toBe(false);
+      expect(assign).not.toHaveBeenCalled();
+    } finally {
+      getItem.mockRestore();
+    }
   });
 
   it('leaves any other error to the caller, without reloading', () => {

@@ -25,8 +25,11 @@ function writtenNumber(program: string, path: string, body: unknown): number | u
  *
  * It reads `workouts/1` first, as a page loads its workout, which gives the current macrocycle a
  * row if it has none, then sends the listed id of the macrocycle the write names (the current
- * one for a route with no number). There's no header when `url` names no program or the program
- * has no such macrocycle. `macrocycle-id.e2e.spec.ts` tests the header itself.
+ * one for a route with no number). There's no header when `url` names no program, the program
+ * can't be listed or has none, or a write with no number finds no current macrocycle, as before
+ * initializing. A write naming a number the program's list lacks throws, since no page could
+ * send an id for it: a test of that case sends its own header, as {@link macrocycleIdFor} gives.
+ * `macrocycle-id.e2e.spec.ts` tests the header itself.
  */
 async function pageWriteHeaders(
   app: NestFastifyApplication,
@@ -37,13 +40,33 @@ async function pageWriteHeaders(
   const [path = ''] = url.split('?');
   const program = /^\/programs\/([^/]+)\//.exec(path)?.[1];
   if (!program) return {};
+  const listed = await listMacrocycles(app, program, authorization);
+  if (!listed) return {};
+  const num = writtenNumber(decodeURIComponent(program), path, body);
+  const row = listed.find((m) => (num === undefined ? m.current : m.macrocycleNum === num));
+  if (!row && num !== undefined && listed.length > 0) {
+    throw new Error(`injectPage: ${program} has no macrocycle ${num} for a page to hold an id for; send the header yourself`);
+  }
+  return row ? { [MACROCYCLE_ID_HEADER]: row.id } : {};
+}
+
+/** Reads `workouts/1` as a page does, then `program`'s macrocycles, or null when it can't list them. */
+async function listMacrocycles(
+  app: NestFastifyApplication,
+  program: string,
+  authorization: string,
+): Promise<MacrocycleSummaryResponse[] | null> {
   const server = app.getHttpAdapter().getInstance();
   await server.inject({ method: 'GET', url: `/programs/${program}/workouts/1`, headers: { authorization } });
   const list = await server.inject({ method: 'GET', url: `/programs/${program}/macrocycles`, headers: { authorization } });
-  if (list.statusCode !== 200) return {};
-  const num = writtenNumber(decodeURIComponent(program), path, body);
-  const row = (list.json() as MacrocycleSummaryResponse[]).find((m) => (num === undefined ? m.current : m.macrocycleNum === num));
-  return row ? { [MACROCYCLE_ID_HEADER]: row.id } : {};
+  return list.statusCode === 200 ? (list.json() as MacrocycleSummaryResponse[]) : null;
+}
+
+/** The id a page holds for `program`'s current macrocycle (`program` URL-encoded). Throws when it has none. */
+export async function currentMacrocycleId(app: NestFastifyApplication, program: string, authorization: string): Promise<string> {
+  const row = (await listMacrocycles(app, program, authorization))?.find((m) => m.current);
+  if (!row) throw new Error(`currentMacrocycleId: ${program} has no current macrocycle`);
+  return row.id;
 }
 
 /**

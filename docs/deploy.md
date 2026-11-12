@@ -553,39 +553,112 @@ without deploying, run `update-traffic --to-latest`. See
 
 The `20261112000000_renumber_macrocycles_by_date` migration ([#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200),
 ADR-042) renumbers every user's stored macrocycles by start date when the deploy runs, and the
-API revision it ships with renumbers again after every change. An API revision from before it
-doesn't renumber, so rolling the API back past it also needs the old numbers back. The migration
-recorded each macrocycle's number before the backfill in `macrocycle."backfillNumber"`, and
+API revision it ships with renumbers again after every change. The migration records each
+macrocycle's number before the backfill in `macrocycle."backfillNumber"`, and
 `macrocycle_renumber_reverse()` puts those numbers back in every table that holds one and in
 lift-record import batches' keys.
 
-1. **Roll the API back first** ([Rolling back](#rolling-back)), so nothing renumbers behind the
-   reversal. Leave the web revision as it is: the old API still accepts the macrocycle id it sends.
-2. **Run the reversal as the migrator role**, which owns the function; the runtime role
-   (`lifting_app`) can't execute it. Connect the way the break-glass migrate script does
-   ([Running database migrations](#running-database-migrations)): temporary public IP, Cloud SQL
-   Auth Proxy, and the `lifting-logbook-<env>-migrator-database-url` secret. Then:
+**During the deploy.** The migration holds every user's macrocycle lock and the `macrocycle`
+table until it commits: about a second per 20,000 rows, and longer if it waits on an import.
+Pages loaded in that time get no macrocycle id. Once the new API serves, a write from such a
+page gets a 400 `macrocycle-id-required`, which the old web shows as a generic error ("Failed to
+log set. Try again.") until the new web is live, and which reloads the page after that. Expect a
+short burst of `Refused a macrocycle write without an id (#1200)` warnings; it isn't a
+regression unless it continues after the new web is serving.
+
+**After the deploy**, as the migrator ([Connecting as the migrator](#connecting-as-the-migrator)),
+these say what the migration changed:
+
+```sql
+-- Macrocycles the backfill gave a new number.
+SELECT count(*) FROM macrocycle WHERE "backfillNumber" IS NOT NULL AND "macrocycleNum" <> "backfillNumber";
+-- Open live macrocycles: one per program with a dashboard, and none left open by the old revision.
+SELECT count(*) FROM macrocycle m WHERE origin = 'live' AND status = 'in-progress' AND "endDate" IS NULL
+  AND NOT EXISTS (SELECT 1 FROM macrocycle_dashboard d
+                  WHERE d."userId" = m."userId" AND d.program = m.program AND d."macrocycleNum" = m."macrocycleNum");
+```
+
+The second should be 0. The migrate job's log may not carry the functions' notices, which is why
+these are here.
+
+#### Rolling back over it
+
+**Rolling the API back doesn't need the reversal.** The revision before it (#1199) checks each
+page write's macrocycle id, and starts a new macrocycle on the number past every stored one, so
+it runs on date-ordered numbers as they are. Roll back as usual ([Rolling back](#rolling-back));
+leave the web revision as it is, since the old API accepts the id it sends.
+
+**Reverse the numbering only to undo the renumbering itself**, for instance if it ordered
+someone's history wrongly. Do it after the API is rolled back, or the next change renumbers again:
+
+1. **Test it without committing**, as the migrator:
 
    ```sql
+   BEGIN;
+   SET LOCAL lock_timeout = '40s';
    SELECT macrocycle_renumber_reverse();
+   ROLLBACK;
    ```
 
-   It takes the macrocycle lock for every user, so an import or page write still running finishes
-   first. It returns how many numbers it moved, or 0 with a notice when nothing needs moving.
+   It refuses, moving nothing, when a macrocycle has no `backfillNumber` (*Macrocycle N of
+   program P for user U has no backfillNumber*): the new revision created it after the
+   backfill, so it has no old number to go back to. Then stop here. The API you rolled back to
+   keeps running on the new numbers, so nothing is stranded; fix forward instead.
+2. **Run it**, the same way with `COMMIT;` in place of `ROLLBACK;`. It takes the macrocycle lock for
+   every user first, so an import or page write still running finishes first, and it returns how
+   many numbers it moved, or 0 with a notice when nothing needs moving. Import batches made after
+   the backfill reverse too: their keys move with the numbers.
 3. **Leave the schema alone.** The old code ignores `"backfillNumber"` and `"backfilledAt"`, and
    `prisma migrate status` still passes, since the migration stays applied.
 
-**It refuses, moving nothing, once reversing would corrupt data:**
+To go forward again after a reversal, run `SELECT macrocycle_renumber_by_date();` as the migrator,
+which keeps the recorded numbers and records one for any macrocycle created since, then route
+traffic back to the new revision:
 
-- *Macrocycle N of program P for user U has no backfillNumber*: the new revision created that
-  macrocycle after the backfill, so it has no old number to go back to.
-- *Program P for user U has an import newer than the backfill*: that batch's keys hold the new
-  numbers, and the old code's undo would read them as old ones.
+```bash
+gcloud run services update-traffic lifting-logbook-prod-api --to-latest \
+  --region=us-central1 --project=lifting-logbook-prod
+```
 
-When it refuses, don't force it: keep the new API revision and fix forward. A partial reversal
-would leave some programs in date order and others not, and the old API would then write to the
-wrong macrocycle on the ones that moved. To reverse one user only, as the DB e2e suite does, pass
-their id: `SELECT macrocycle_renumber_reverse('<userId>');`.
+To reverse one user only, as the DB e2e suite does, pass their id:
+`SELECT macrocycle_renumber_reverse('<userId>');`.
+
+#### If the renumbering migration fails
+
+It runs in one transaction, so a failure changes nothing: the deploy halts and the previous API
+revision keeps serving. The likeliest cause is its `lock_timeout` (40 seconds) running out while
+an import or a stuck transaction holds a user's lock; the job's log names the error. Prisma
+records the migration as failed, and every later `prisma migrate deploy` refuses (P3009) until
+it's marked rolled back. As the migrator, from `apps/api`:
+
+```bash
+DATABASE_URL="$MIGRATOR_URL" npx prisma migrate resolve --rolled-back 20261112000000_renumber_macrocycles_by_date
+```
+
+Then re-run the failed deploy jobs (`gh run rerun <run-id> --failed`) when no import is running.
+
+#### Connecting as the migrator
+
+The functions belong to the migrator role, which owns the schema; the runtime role
+(`lifting_app`) can't execute them. The Cloud SQL instance has only a private IP, so connect the
+way the break-glass script does ([Running database migrations](#running-database-migrations)), by
+hand, for production (staging: `lifting-logbook-staging`, `lifting-logbook-stg-…`, port 5434):
+
+```bash
+PROJECT=lifting-logbook-prod
+INSTANCE=$(gcloud sql instances list --project=$PROJECT --format='value(name)' --limit=1)
+gcloud sql instances patch "$INSTANCE" --assign-ip --authorized-networks="$(curl -fsSL ifconfig.me)/32" --project=$PROJECT
+cloud-sql-proxy "$PROJECT:us-central1:$INSTANCE?port=5433" &
+MIGRATOR_URL=$(gcloud secrets versions access latest --secret=$PROJECT-migrator-database-url --project=$PROJECT \
+  | sed -E 's|@[^/]+/|@127.0.0.1:5433/|')
+psql "$MIGRATOR_URL"
+# When done:
+kill %1
+gcloud sql instances patch "$INSTANCE" --no-assign-ip --project=$PROJECT
+```
+
+The proxy encrypts the connection, so if `psql` reports an SSL error, set `sslmode=disable` in the
+URL, as the staging validation gate below does.
 
 ### Running database migrations
 

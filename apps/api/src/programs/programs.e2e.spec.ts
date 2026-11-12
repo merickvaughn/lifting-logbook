@@ -5,14 +5,14 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
-import type { UserWorkoutSchedule } from '@lifting-logbook/types';
+import { MACROCYCLE_ID_HEADER, type UserWorkoutSchedule } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { InMemoryRepositoryFactory } from '../adapters/factory/in-memory-repository-factory';
 import { InMemoryUserSettingsRepository } from '../adapters/in-memory/user-settings.adapter';
 import { SEED_PROGRAM } from '../adapters/in-memory/fixtures';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import type { InjectOptions } from 'fastify';
-import { injectPage } from '../testing/macrocycle-id';
+import { currentMacrocycleId, injectPage } from '../testing/macrocycle-id';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainNotFoundFilter } from './not-found.filter';
 
@@ -41,6 +41,10 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   });
 
   const AUTH = { authorization: 'Bearer dev-token' };
+  /** The id header of a page open on the seed program's current macrocycle. */
+  const currentPage = async (authorization: string) => ({
+    [MACROCYCLE_ID_HEADER]: await currentMacrocycleId(app, SEED_PROGRAM, authorization),
+  });
 
   const get = (url: string) =>
     injectPage(app, { method: 'GET', url, headers: AUTH });
@@ -234,16 +238,19 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('PATCH reschedule with a macrocycleNum the program lacks returns 400', async () => {
+    it('PATCH reschedule with a macrocycleNum the program lacks returns 409 macrocycle-moved', async () => {
       // Seed's active macrocycle is 1 (these tests run before any new-macrocycle writes), and
-      // the program has no macrocycle 2 (ADR-042), so no page has an id for it (#1200). The
-      // 400 for a stored, non-active macrocycle is covered in reschedule.controller.spec.ts.
-      const res = await patchJson(
-        `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/reschedule`,
-        { newDate: '2026-06-01' },
-      );
-      expect(res.statusCode).toBe(400);
-      expect(res.json()).toMatchObject({ code: 'macrocycle-id-required' });
+      // the program has no macrocycle 2 (ADR-042), so no page has an id for it: a page open on
+      // 1 is told where its macrocycle is (#1200). The 400 for a stored, non-active macrocycle
+      // is covered in reschedule.controller.spec.ts.
+      const res = await injectPage(app, {
+        method: 'PATCH',
+        url: `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/reschedule`,
+        headers: { 'content-type': 'application/json', ...AUTH, ...(await currentPage(AUTH.authorization)) },
+        payload: JSON.stringify({ newDate: '2026-06-01' }),
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-moved', macrocycleNum: 1 });
     });
 
     it('PATCH reschedule requires auth', async () => {
@@ -372,11 +379,16 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
     // A number the program doesn't have is a 404 since ADR-042; it was a 400 for having no records.
-    it('POST /programs/:program/macrocycles with an unknown fromMacrocycleNum returns 400', async () => {
-      // No page has an id for a macrocycle the program lacks (#1200).
-      const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, { fromMacrocycleNum: 99 });
-      expect(res.statusCode).toBe(400);
-      expect(res.json()).toMatchObject({ code: 'macrocycle-id-required' });
+    it('POST /programs/:program/macrocycles with an unknown fromMacrocycleNum returns 409 macrocycle-moved', async () => {
+      // No page has an id for a macrocycle the program lacks, so a page's id names another (#1200).
+      const res = await injectPage(app, {
+        method: 'POST',
+        url: `/programs/${SEED_PROGRAM}/macrocycles`,
+        headers: { 'content-type': 'application/json', ...AUTH, ...(await currentPage(AUTH.authorization)) },
+        payload: JSON.stringify({ fromMacrocycleNum: 99 }),
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-moved' });
     });
 
     it('POST /programs/unknown/macrocycles returns 404', async () => {
@@ -1535,19 +1547,19 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('POST skip with a macrocycleNum the program lacks returns 400', async () => {
+    it('POST skip with a macrocycleNum the program lacks returns 409 macrocycle-moved', async () => {
       const token = await setupSkipUser('skip-e2e-nac-post');
       // The fresh user's active macrocycle is 1 and there's no macrocycle 2 (ADR-042), so no
-      // page has an id for it (#1200). The 400 for a stored, non-active macrocycle is covered
-      // in workout-skip.controller.spec.ts.
+      // page has an id for it: a page open on 1 is told where its macrocycle is (#1200). The 400
+      // for a stored, non-active macrocycle is covered in workout-skip.controller.spec.ts.
       const res = await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/skip`,
-        headers: { 'content-type': 'application/json', authorization: token },
+        headers: { 'content-type': 'application/json', authorization: token, ...(await currentPage(token)) },
         payload: JSON.stringify({}),
       });
-      expect(res.statusCode).toBe(400);
-      expect(res.json()).toMatchObject({ code: 'macrocycle-id-required' });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-moved', macrocycleNum: 1 });
     });
 
     it('DELETE unskip with unknown program returns 404', async () => {
@@ -1570,15 +1582,15 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('DELETE unskip with a macrocycleNum the program lacks returns 400', async () => {
+    it('DELETE unskip with a macrocycleNum the program lacks returns 409 macrocycle-moved', async () => {
       const token = await setupSkipUser('skip-e2e-nac-delete');
       const res = await injectPage(app, {
         method: 'DELETE',
         url: `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/skip`,
-        headers: { authorization: token },
+        headers: { authorization: token, ...(await currentPage(token)) },
       });
-      expect(res.statusCode).toBe(400);
-      expect(res.json()).toMatchObject({ code: 'macrocycle-id-required' });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-moved', macrocycleNum: 1 });
     });
   });
 

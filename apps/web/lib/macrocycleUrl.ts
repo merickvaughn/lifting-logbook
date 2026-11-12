@@ -55,14 +55,20 @@ export function reloadAtMacrocycle(macrocycleNum: number): void {
 }
 
 /** The codes whose API message is written for the lifter, so the page shows it as is. */
-const LIFTER_MESSAGE_CODES = new Set(['import-in-progress', 'macrocycle-not-current', 'macrocycle-not-found']);
+const LIFTER_MESSAGE_CODES = new Set([
+  'import-in-progress',
+  'macrocycle-id-required',
+  'macrocycle-not-current',
+  'macrocycle-not-found',
+]);
 
 /**
  * What to tell the lifter about a failed write: the API's own message for an import holding
- * the lock (409 `import-in-progress`), a write to a macrocycle that is no longer current (409
+ * the lock (409 `import-in-progress`), a page that still has no macrocycle id after a reload
+ * (400 `macrocycle-id-required`), a write to a macrocycle that is no longer current (409
  * `macrocycle-not-current`), or a page whose macrocycle no longer exists (404
- * `macrocycle-not-found`, as after deleting and starting again). The last two ask for a reload, which a retry can't replace, and name no
- * internal id. Anything else is `fallback`.
+ * `macrocycle-not-found`, as after deleting and starting again). The last three ask for a
+ * reload, which a retry can't replace, and name no internal id. Anything else is `fallback`.
  */
 export function writeFailureMessage(err: unknown, fallback: string): string {
   return err instanceof ApiClientError && err.code !== undefined && LIFTER_MESSAGE_CODES.has(err.code) && err.message
@@ -70,16 +76,42 @@ export function writeFailureMessage(err: unknown, fallback: string): string {
     : fallback;
 }
 
+/** Where the last reload for a missing macrocycle id is recorded, as `{ page, at }`. */
+const ID_RELOAD_KEY = 'macrocycle-id-reload';
+/** How long after that reload the same page gets the API's message instead of another one. */
+export const ID_RELOAD_WINDOW_MS = 60_000;
+
+/**
+ * Records a reload of `page` for a missing id, and returns false when the page had one within
+ * {@link ID_RELOAD_WINDOW_MS}, or when session storage can't record it: reloading again could
+ * then repeat with nothing said.
+ */
+function claimIdReload(page: string): boolean {
+  try {
+    const last = JSON.parse(window.sessionStorage.getItem(ID_RELOAD_KEY) ?? 'null') as { page?: unknown; at?: unknown } | null;
+    if (last?.page === page && typeof last.at === 'number' && Date.now() - last.at < ID_RELOAD_WINDOW_MS) return false;
+    window.sessionStorage.setItem(ID_RELOAD_KEY, JSON.stringify({ page, at: Date.now() }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Handles a write the API refused because the page is stale, and returns true: reloads at the
  * new number for `macrocycle-moved`, and reloads the page as it is for a 400
  * `macrocycle-id-required`, which a page loaded before it read the macrocycle's id gets
- * (#1200); the reload reads it. Any other error, including the other two 409 codes
- * (`import-in-progress`, a duplicate set), returns false for the caller to report.
+ * (#1200); the reload reads it. A page loaded while an import held the lock has no id either,
+ * so a page reloaded for it within the last minute isn't reloaded again: the call returns false
+ * and the caller shows the API's message ({@link writeFailureMessage}). Any other error,
+ * including the other two 409 codes (`import-in-progress`, a duplicate set), returns false for
+ * the caller to report.
  */
 export function followMovedMacrocycle(err: unknown): boolean {
   if (err instanceof ApiClientError && err.code === 'macrocycle-id-required') {
-    browserNavigation.assign(window.location.pathname + window.location.search);
+    const page = window.location.pathname + window.location.search;
+    if (!claimIdReload(page)) return false;
+    browserNavigation.assign(page);
     return true;
   }
   const num = movedMacrocycleNum(err);
