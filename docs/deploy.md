@@ -555,7 +555,7 @@ The [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200) migrati
 renumber every user's stored macrocycles by start date when the deploy runs, and the API revision
 they ship with renumbers again after every change. They record each macrocycle's number before
 the backfill in `macrocycle."backfillNumber"`, and `macrocycle_renumber_reverse()` puts those
-numbers back in every table that holds one and in lift-record import batches' keys. Seven run in
+numbers back in every table that holds one and in lift-record import batches' keys. Eight run in
 order:
 
 - `20261112000000_renumber_macrocycles_by_date` does nothing: staging applied an early draft under
@@ -564,6 +564,10 @@ order:
   reads nothing: the migrator can't bypass row-level security (below).
 - `20261112000002_backfill_window_rows_without_lock` only replaces one function, so it holds no
   lock worth waiting on and is safe to retry.
+- `20261112000002_keep_rows_below_highest_set` also only replaces that function, so the backfill
+  keeps a row for a number with no sets below a number with sets. Without the row, renumbering
+  could move a macrocycle onto that number and fail. Its name sorts before `20261112000003` so that
+  production runs it first; staging, which had already run the others, ran it last.
 - `20261112000003_renumber_without_forced_rls` does the work: it turns FORCE ROW LEVEL SECURITY
   off on the nine tables involved, repeats the #1197 backfill, closes and renumbers, and turns
   FORCE back on.
@@ -602,6 +606,17 @@ until it ends
 applies to each lock wait separately). Run these steps when no import is running, since the switch
 waits for every transaction using the tables and an import's can run for 30 seconds. The reversal
 and the renumber use 10 seconds; if one gives up, it has changed nothing, so run it again.
+
+An import holds its user's macrocycle lock exclusively, and page writes hold it shared, so this
+reads 0 when no import is running:
+
+```bash
+psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+  -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND mode = 'ExclusiveLock' AND granted"
+```
+
+A running `prisma migrate deploy` holds an exclusive advisory lock too, so it counts, and so does
+a runbook step in another session. Neither should overlap a step either.
 
 **Before merging the PR** (the merge starts the Deploy run, whose `plan-production` would show the
 public IP this needs), check that the shared lock table can hold one advisory lock per user, since
@@ -762,12 +777,15 @@ the migrator sees no users with FORCE on, so `20261112000001` takes no user's lo
 names the error. "out of shared memory" with a hint to raise `max_locks_per_transaction` means the
 users outgrew the lock table: run the check in
 [Reversing the macrocycle renumbering](#reversing-the-macrocycle-renumbering) and raise the flag
-through Terraform, as it describes, before retrying. Prisma records the migration as failed, and
-every later `prisma migrate deploy` refuses (P3009) until it's marked rolled back. As the migrator, from `apps/api`, name the migration the P3009 error
-names (usually `20261112000003_renumber_without_forced_rls`, which does the work; it can be any
-of `20261112000001` to `20261112000006`). A deadlock (*deadlock detected*) is the same:
-`20261112000003` locks nine tables, and a request that used one and waits on another can deadlock
-with it:
+through Terraform, as it describes, before retrying. A deadlock (*deadlock detected*) is handled
+the same way: `20261112000003` locks nine tables, and a request that used one and waits on
+another can deadlock with it.
+
+Prisma records the migration as failed, and every later `prisma migrate deploy` refuses (P3009)
+until it's marked rolled back. Run this as the migrator, from `apps/api`, in place of the `psql`
+line in [Connecting as the migrator](#connecting-as-the-migrator). Name the migration the P3009
+error names: usually `20261112000003_renumber_without_forced_rls`, which does the work, though it
+can be any of the eight.
 
 ```bash
 DATABASE_URL="$MIGRATOR_URL" npx prisma migrate resolve --rolled-back <migration named in the P3009 error>
@@ -812,10 +830,11 @@ proxy and removes the IP however the shell exits. From the repo root, for produc
 ```
 
 For staging, set `PROJECT=lifting-logbook-staging PREFIX=lifting-logbook-stg PORT=5434 IP_WAIT=30`
-(the wait `scripts/migrate-staging-db.sh` uses), initialize
-with `-backend-config="bucket=lifting-logbook-tfstate" -backend-config="prefix=terraform/state"`
-and select the `staging` workspace, as `scripts/migrate-staging-db.sh` does. To run a command such
-as `prisma migrate resolve` instead of `psql`, put it in place of the `psql` line, after `cd ../../apps/api`.
+(the wait `scripts/migrate-staging-db.sh` uses), initialize with
+`-backend-config="bucket=lifting-logbook-tfstate" -backend-config="prefix=terraform/state"` and
+select the `staging` workspace, as `scripts/migrate-staging-db.sh` does. To run a command such as
+`prisma migrate resolve` instead of `psql`, put it in place of the `psql` line, after
+`cd ../../apps/api`.
 
 The proxy encrypts the connection, so if `psql` reports an SSL error, set `sslmode=disable` in the
 URL, as the staging validation gate below does.

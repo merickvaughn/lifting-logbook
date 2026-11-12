@@ -47,6 +47,7 @@ const USER_ALICE = 'macrocycle-db-alice';
 const USER_BOB = 'macrocycle-db-bob';
 const USER_BACKFILL = 'macrocycle-db-backfill';
 const USER_BACKFILL_BARE = 'macrocycle-db-backfill-bare';
+const USER_BACKFILL_GAP = 'macrocycle-db-backfill-gap';
 const USER_RACE = 'macrocycle-db-race';
 const USER_ENSURE = 'macrocycle-db-ensure';
 const USER_LOCK = 'macrocycle-db-lock';
@@ -92,6 +93,7 @@ const USERS = [
   USER_BOB,
   USER_BACKFILL,
   USER_BACKFILL_BARE,
+  USER_BACKFILL_GAP,
   USER_RACE,
   USER_ENSURE,
   USER_LOCK,
@@ -230,6 +232,34 @@ describeOrSkip('macrocycle table (e2e, lifting_app role)', () => {
       await owner.workoutDateOverride.create({
         data: { userId: USER_BACKFILL_BARE, program: PROGRAM, macrocycleNum: 2, workoutNum: 1, newDate: day('2026-04-01') },
       });
+      // Sets on 1, 2 and 4 (4 from a file imported before #1224), the dashboard on 2, and a focus
+      // state with no sets on 3, between them.
+      const gap = USER_BACKFILL_GAP;
+      await owner.liftRecord.createMany({
+        data: [1, 2, 4].map((macrocycleNum) => ({
+          userId: gap,
+          program: PROGRAM,
+          macrocycleNum,
+          workoutNum: 1,
+          date: day(`2026-0${macrocycleNum}-06`),
+          lift: 'Squat',
+          setNum: 1,
+          weight: 200,
+          reps: 5,
+        })),
+      });
+      await owner.macrocycleDashboard.create({
+        data: {
+          userId: gap,
+          program: PROGRAM,
+          macrocycleUnit: 'Week',
+          macrocycleNum: 2,
+          macrocycleDate: day('2026-02-02'),
+          sheetName: `${PROGRAM}_Cycle_2_20260202`,
+          macrocycleStartWeekday: 'Monday',
+        },
+      });
+      await owner.focusDayState.create({ data: { userId: gap, program: PROGRAM, macrocycleNum: 3, workoutNum: 1, state: {} } });
     }, DB_E2E_HOOK_TIMEOUT_MS);
 
     /**
@@ -318,6 +348,24 @@ describeOrSkip('macrocycle table (e2e, lifting_app role)', () => {
           [4, 'live'],
         ]);
         expect(await rowsFor(tx, USER_BACKFILL_BARE)).toEqual([]);
+      }, 'macrocycle_backfill_window_rows');
+    });
+
+    it("the migration's rerun keeps a no-set number below a number with sets, so renumbering can't merge it (#1200)", async () => {
+      // Without a row, 3 would be neither a macrocycle nor past the highest one, and renumbering
+      // would move 4 onto it, where the focus state sits: 20261112000003 would fail.
+      await withBackfill(async (tx) => {
+        expect((await rowsFor(tx, USER_BACKFILL_GAP)).map((row) => [row.macrocycleNum, row.origin])).toEqual([
+          [1, 'legacy'],
+          [2, 'live'],
+          [3, 'legacy'],
+          [4, 'legacy'],
+        ]);
+        await tx.$queryRaw`SELECT "macrocycle_close_window_rows"(${USER_BACKFILL_GAP})`;
+        await tx.$queryRaw`SELECT "macrocycle_renumber_by_date"(${USER_BACKFILL_GAP})`;
+        expect((await rowsFor(tx, USER_BACKFILL_GAP)).map((row) => row.macrocycleNum)).toEqual([1, 2, 3, 4]);
+        const focus = await tx.focusDayState.findMany({ where: { userId: USER_BACKFILL_GAP, program: PROGRAM } });
+        expect(focus.map((row) => row.macrocycleNum)).toEqual([3]);
       }, 'macrocycle_backfill_window_rows');
     });
   });
