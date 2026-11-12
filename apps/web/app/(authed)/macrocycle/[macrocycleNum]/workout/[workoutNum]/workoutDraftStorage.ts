@@ -6,6 +6,11 @@
 // draft degrades to "no draft" (falls back to plan defaults) — never a data-loss or
 // correctness bug, since the source of truth is always the server record.
 //
+// The one other thing kept here is a lift occurrence's modification toggles (#1152), under
+// `buildModificationsDraftKey`. They decide what the occurrence's next set sends, so the logger
+// treats them with more care: logging a set clears them (the logged set then holds them), Finish
+// workout sweeps them, and a lost one falls back to the last logged set, then to none.
+//
 // Storage failures (quota exceeded, disabled storage, corrupted JSON) are handled by
 // failing open silently rather than through logClientError — that helper is scoped to
 // API mutation failures (see apps/web/lib/log-client-error.ts) and beacons every call;
@@ -89,6 +94,43 @@ export function writeDraft(key: string, draft: WorkoutSetDraft): void {
   } catch {
     // QuotaExceededError or a SecurityError when storage is disabled. Best-effort:
     // proceed without persisting rather than disrupt typing.
+  }
+}
+
+/**
+ * The key of a lift occurrence's toggled modifications, kept beside its set drafts so a toggle
+ * changed before a set is logged survives a reload (#1152).
+ */
+export function buildModificationsDraftKey(
+  program: string,
+  macrocycleNum: number,
+  workoutNum: number,
+  lift: string,
+  occurrence?: number,
+  macrocycleId?: string,
+): string {
+  return `${buildDraftKey(program, macrocycleNum, workoutNum, lift, 0, occurrence, macrocycleId)}:modifications`;
+}
+
+/** The modification ids saved at `key`, or `null` when there are none or they can't be read. */
+export function readModificationsDraft(key: string): string[] | null {
+  if (!isBrowser()) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.every((id) => typeof id === 'string') ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeModificationsDraft(key: string, ids: readonly string[]): void {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(ids));
+  } catch {
+    // Same rationale as writeDraft.
   }
 }
 

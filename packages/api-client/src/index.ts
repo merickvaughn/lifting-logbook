@@ -3,6 +3,7 @@ import type {
   CreateCustomLiftRequest,
   CreateFocusBlockRequest,
   CreateCustomProgramRequest,
+  CreateLiftModificationRequest,
   CreateLiftOverrideRequest,
   CreateLiftRecordRequest,
   CustomLiftResponse,
@@ -25,6 +26,7 @@ import type {
   ImportPreviewResponse,
   ImportUndoResponse,
   LiftMetadataResponse,
+  LiftModificationResponse,
   LiftOverrideResponse,
   LiftingProgramSpecResponse,
   LiftRecordResponse,
@@ -675,6 +677,23 @@ export function createApiClient(config: ApiClientConfig) {
       body: CreateCustomLiftRequest,
     ): Promise<{ ok: true; data: CustomLiftResponse } | { ok: false; conflictMessage: string }> {
       return requestOrConflictWithReason('/lifts/custom', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+
+    // -- Lift modifications (#1151) ----------------------------------------
+    // `lift` may be any name the lift resolves by; archived modifications are left out.
+    fetchLiftModifications(lift: string): Promise<LiftModificationResponse[]> {
+      return request(`/lifts/modifications?lift=${enc(lift)}`, { cache: 'no-store' });
+    },
+    // A 409 means this lift already has a modification of that name.
+    createLiftModification(
+      body: CreateLiftModificationRequest,
+    ): Promise<{ ok: true; data: LiftModificationResponse } | { ok: false; conflictMessage: string }> {
+      return requestOrConflictWithReason('/lifts/modifications', {
         method: 'POST',
         headers: JSON_HEADERS,
         body: JSON.stringify(body),

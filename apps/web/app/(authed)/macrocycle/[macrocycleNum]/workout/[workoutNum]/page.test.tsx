@@ -189,6 +189,15 @@ describe('WorkoutLoggingPage — logged sets come from the workout itself (issue
     expect(readOnly).toBe(true);
   });
 
+  it('passes a logged set’s modifications to the logger (#1152)', async () => {
+    const modifications = [{ id: 'm-paused', name: 'Paused' }];
+    seedWorkout([{ lift: 'Squat', planned: false, sets: [{ ...LOGGED_SET, modifications }] }]);
+
+    const { lifts } = await renderPage();
+
+    expect(lifts[0]?.workingSets[0]?.existing).toEqual(expect.objectContaining({ modifications }));
+  });
+
   it('leaves a planned lift’s sets unlogged, even when the response carries spec-shaped sets', async () => {
     // The real API sends `planned: true` lifts with no sets; a planned lift is
     // never logged, whatever the response carries.

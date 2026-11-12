@@ -13,12 +13,12 @@ export interface WarmUpSetData {
 
 /**
  * What the logger needs from an already-logged set: the id to PATCH, and the
- * three values it displays and pre-fills. Sourced from `SetResponse` on the
+ * values it displays and pre-fills, with the modifications that were on (#1152). Sourced from `SetResponse` on the
  * workout itself (issue #978), so the page no longer fetches the whole macrocycle's
  * lift records to recover them; a freshly logged `LiftRecordResponse` is a
  * structural superset and flows into the same slot.
  */
-export type LoggedSet = Pick<LiftRecordResponse, 'id' | 'weight' | 'reps' | 'notes'>;
+export type LoggedSet = Pick<LiftRecordResponse, 'id' | 'weight' | 'reps' | 'notes' | 'modifications'>;
 
 export interface WorkingSetData {
   setNum: number;

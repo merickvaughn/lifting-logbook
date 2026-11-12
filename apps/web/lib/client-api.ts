@@ -92,6 +92,10 @@ export const {
   // live custom-lift list client-side (a stale/absent local copy otherwise
   // dead-ends the user with no way to recover short of a page reload; #911).
   fetchCustomLifts,
+  // The logger reads a lift's modifications client-side, so a stale toggle can refresh
+  // without a reload (#1152).
+  fetchLiftModifications,
+  createLiftModification,
   // Reads too: focus block status depends on the user's calendar day (`?today=`), which
   // only the browser knows (ADR-039 §5), so the focus setup page (#1057) and the calendar
   // page (#1059) load them client-side.

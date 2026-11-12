@@ -278,6 +278,26 @@ describe('createApiClient', () => {
     });
   });
 
+  describe('lift modifications (#1152)', () => {
+    it("lists one lift's modifications by its encoded name", async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+      const client = makeClient();
+      await expect(client.fetchLiftModifications('Bench P.')).resolves.toEqual([]);
+      expect(mockFetch.mock.calls[0]?.[0]).toBe('http://api.test/lifts/modifications?lift=Bench%20P.');
+    });
+
+    it('returns the server message on a 409 create', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ message: "'Paused' already exists" }), { status: 409 }),
+      );
+      const client = makeClient();
+      await expect(client.createLiftModification({ lift: 'Squat', name: 'Paused' })).resolves.toEqual({
+        ok: false,
+        conflictMessage: "'Paused' already exists",
+      });
+    });
+  });
+
   describe('fetchGoogleSheetWorkbook (#1111)', () => {
     it('POSTs the pasted link as JSON and returns the tabs', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ tabs: [] }), { status: 200 }));

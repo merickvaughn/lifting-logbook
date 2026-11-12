@@ -106,7 +106,13 @@ export default async function WorkoutLoggingPage({
     // fixes a `replace`-override edge: the old name-based `.find` missed a
     // renamed lift's records, showing its logged sets as unlogged.
     const logged = new Map((wl.planned ? [] : wl.sets).map((s) => [s.setNum, s]));
-    const toExisting = (s: SetResponse): LoggedSet => ({ id: s.id, weight: s.weight, reps: s.reps, notes: s.notes });
+    const toExisting = (s: SetResponse): LoggedSet => ({
+      id: s.id,
+      weight: s.weight,
+      reps: s.reps,
+      notes: s.notes,
+      ...(s.modifications && { modifications: s.modifications }),
+    });
 
     const workingSets: WorkingSetData[] = workSets.map((p, i) => {
       const setNum = i + 1;

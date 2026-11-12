@@ -22,6 +22,7 @@ import { IUserSettingsRepository } from '../ports/IUserSettingsRepository';
 import { ProgramNotFoundError } from '../ports/errors';
 import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { InMemoryImportBatchRepository } from '../adapters/in-memory/import-batch.adapter';
+import { InMemoryLiftModificationRepository } from '../adapters/in-memory/lift-modification.adapter';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { buildHistoryEntries, MacrocycleGenerationService } from './macrocycle-generation.service';
 
@@ -101,6 +102,7 @@ describe('MacrocycleGenerationService', () => {
     userSettings: jest.Mocked<IUserSettingsRepository>;
     workoutLiftOverride: jest.Mocked<IWorkoutLiftOverrideRepository>;
     workoutDateOverride: jest.Mocked<IWorkoutDateOverrideRepository>;
+    liftModification: InMemoryLiftModificationRepository;
   };
 
   beforeEach(() => {
@@ -171,6 +173,7 @@ describe('MacrocycleGenerationService', () => {
       userSettings: userSettingsRepo,
       workoutLiftOverride: workoutLiftOverrideRepo,
       workoutDateOverride: workoutDateOverrideRepo,
+      liftModification: new InMemoryLiftModificationRepository('user-1', new Map()),
     };
     service = new MacrocycleGenerationService();
   });
@@ -197,6 +200,22 @@ describe('MacrocycleGenerationService', () => {
           expect.objectContaining({ lift: 'Squat', weight: 270 }),
         ]),
       );
+    });
+
+    it("doesn't move the lift's max for a set with a `none` modification (#1152)", async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      const noChalk = await repos.liftModification.create({ lift: 'squat', name: 'No chalk' });
+      liftRecordRepo.getLiftRecords.mockResolvedValue(
+        stubLiftRecords().map((r) => ({ ...r, modifications: [noChalk.id] })),
+      );
+
+      await service.startNewMacrocycle(repos, PROGRAM);
+
+      expect(trainingMaxRepo.saveTrainingMaxes).toHaveBeenCalledWith(PROGRAM, [
+        expect.objectContaining({ lift: 'Squat', weight: 250 }),
+      ]);
     });
 
     it('fetches lift records for the current macrocycle number', async () => {
@@ -832,6 +851,21 @@ describe('MacrocycleGenerationService', () => {
         expect.objectContaining({ lift: 'Squat', weight: 250 }),
         expect.objectContaining({ lift: 'Box Squat', weight: 245 }),
       ]);
+    });
+
+    it("moves the lift's max by each set's modifications (#1152)", async () => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
+      const noChalk = await repos.liftModification.create({ lift: 'squat', name: 'No chalk' });
+      const paused = await repos.liftModification.create({ lift: 'squat', name: 'Paused', maxMode: 'lift' });
+      const recalculate = async (modifications: string[]) => {
+        trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+        liftRecordRepo.getLiftRecords.mockResolvedValue(stubLiftRecords().map((r) => ({ ...r, modifications })));
+        return (await service.recalculateMaxes(repos, PROGRAM)).maxes;
+      };
+
+      expect(await recalculate([noChalk.id])).toEqual([expect.objectContaining({ lift: 'Squat', weight: 250 })]);
+      expect(await recalculate([paused.id])).toEqual([expect.objectContaining({ lift: 'Squat', weight: 270 })]);
     });
 
     it('does not call saveMacrocycleDashboard', async () => {

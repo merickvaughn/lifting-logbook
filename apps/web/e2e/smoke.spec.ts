@@ -152,6 +152,21 @@ test('workout logger renders planned sets and accepts a submission', async ({ pa
   await expect(page.getByRole('region', { name: 'Working sets' })).toBeVisible();
 });
 
+test('workout logger adds a modification, toggles it on, and logs it with the set (#1152)', async ({ page }) => {
+  await page.goto('/macrocycle/1/workout/1');
+
+  await page.getByRole('button', { name: 'Add modification' }).click();
+  await page.getByLabel('Modification name').fill('Paused');
+  await page.getByRole('button', { name: 'Save modification' }).click();
+  await expect(page.getByRole('button', { name: 'Paused', pressed: true })).toBeVisible();
+
+  const logged = page.waitForRequest((req) => req.method() === 'POST' && req.url().endsWith('/lift-records'));
+  await page.getByRole('button', { name: 'Log' }).first().click();
+
+  expect((await logged).postDataJSON()).toEqual(expect.objectContaining({ modifications: ['mod-1'] }));
+  await expect(page.getByText(/× \d+ · Paused/)).toBeVisible();
+});
+
 // ---------------------------------------------------------------------------
 // 6. Training maxes settings: values load, update reflected in history
 // ---------------------------------------------------------------------------

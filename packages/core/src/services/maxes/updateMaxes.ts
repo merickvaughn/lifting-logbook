@@ -1,3 +1,4 @@
+import type { LiftModificationMaxMode } from "@lifting-logbook/types";
 import { LiftingProgramSpec, LiftOverride, LiftRecord, TrainingMax } from "@src/core/models";
 import { currentMaxLookup, liftIdFor, lookupByLift } from "../../catalog/liftIdentity";
 import { programWorkoutKeys, specRowsForWorkoutDay } from "../../presets/programLengths";
@@ -39,6 +40,20 @@ export interface UpdateMaxesOptions {
   program: string;
   /** Each workout's Manage Lifts overrides by `workoutNum`, in the order the repositories return them. */
   liftOverrides: ReadonlyMap<number, readonly LiftOverride[]>;
+  /**
+   * The `maxMode` of each modification the records name, by id (#1152). An id it doesn't have
+   * reads as `none`, the default, so a set whose modifications are unknown moves no max.
+   */
+  modificationModes?: ReadonlyMap<string, LiftModificationMaxMode>;
+}
+
+/**
+ * Whether a set moves its lift's max: it has no modifications, or only `lift` ones. A `none` one
+ * moves no max. An `own` one moves a max of its own, which doesn't exist until #1153, so for now it
+ * moves nothing either.
+ */
+function movesLiftMax(record: LiftRecord, modes: ReadonlyMap<string, LiftModificationMaxMode> | undefined): boolean {
+  return (record.modifications ?? []).every((id) => modes?.get(id) === 'lift');
 }
 
 /**
@@ -87,7 +102,9 @@ export function updateMaxes(
   // `resolveDayPrescriptions` gives the lift. A later occurrence (a superset, or extra
   // volume) has its own prescription and its own set numbers, and would otherwise be
   // read as a second set 1 under the first occurrence's rules (#1027).
-  const progressed = liftRecords.filter((r) => !r.occurrence);
+  // A set whose modifications send it elsewhere is left out here, so it neither moves the lift's
+  // max nor counts as a test week's attempt at it (#1152).
+  const progressed = liftRecords.filter((r) => !r.occurrence && movesLiftMax(r, options.modificationModes));
 
   // Lookups built once rather than scanned once per record (issue #983). A record, its
   // max and its spec row can each spell the lift differently (#1118), so they join on

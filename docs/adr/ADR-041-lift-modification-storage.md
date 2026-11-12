@@ -5,6 +5,8 @@
 **Issue:** [#1151](https://github.com/merickvaughn/lifting-logbook/issues/1151) (top-level [#1140](https://github.com/merickvaughn/lifting-logbook/issues/1140))
 **Related:** [Lift Modifications proposal](../proposals/2026-11-05-lift-modifications.md), [`docs/domain-model.md` §2](../domain-model.md#modifications-change-how-a-lift-is-performed), [ADR-039](ADR-039-focus-block-persistence.md) (the pattern for a new user-scoped table)
 
+> **Amendment (2026-11-12, [#1152](https://github.com/merickvaughn/lifting-logbook/issues/1152)) — how `updateMaxes` reads a set's ids.** The proposal's three rules hold: a `none` modification moves no max, an `own` one moves its own, and otherwise the lift's max moves. Two details the proposal leaves open are settled here. **An id with no mode reads as `none`**, the column default: a set can name an id with no row when a delete races a log (decision 4), and moving the lift's max for a modification nobody can classify is the one outcome that can't be undone by the next set. **A set that moves no lift max is left out of the lift's run entirely**, so it isn't a test week's attempt either: the test week then reads the best unmodified set, and a final set performed with a `none` modification doesn't progress the lift that week. Until [#1153](https://github.com/merickvaughn/lifting-logbook/issues/1153) gives `own` a max, an `own` set moves nothing. **Rejected:** ignoring unknown ids, which would let a raced delete move the lift's max.
+
 ---
 
 ## Context

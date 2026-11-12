@@ -1,7 +1,12 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import { LiftModification, LiftModificationMaxMode } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
-import { assertSetModifications, modificationLiftIds, modificationNamesFor } from './lift-modification.util';
+import {
+  assertSetModifications,
+  modificationLiftIds,
+  modificationModesFor,
+  modificationNamesFor,
+} from './lift-modification.util';
 
 const CUSTOM_CURL = { id: 'custom-curl', name: 'Cable Curl' };
 
@@ -68,6 +73,26 @@ describe('assertSetModifications', () => {
 
   it('rejects an id with no row even if the set already has it', async () => {
     await expect(assertSetModifications(repos([]), 'Squat', ['gone'], ['gone'])).rejects.toThrow(BadRequestException);
+  });
+});
+
+describe('modificationModesFor', () => {
+  it('reads nothing when no record has any', async () => {
+    const bundle = repos([]);
+    await expect(modificationModesFor(bundle, [{}, { modifications: [] }])).resolves.toEqual(new Map());
+    expect(bundle.liftModification.list).not.toHaveBeenCalled();
+  });
+
+  it('maps each id to its mode, archived ones included, and logs an id with no row', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    const archived = { ...modification('b', 'squat', 'lift'), archivedAt: new Date() };
+    const modes = await modificationModesFor(repos([modification('a', 'squat', 'own'), archived]), [
+      { modifications: ['a', 'gone'] },
+      { modifications: ['b'] },
+    ]);
+    expect(modes).toEqual(new Map([['a', 'own'], ['b', 'lift']]));
+    expect(warn).toHaveBeenCalledWith({ missing: ['gone'] }, expect.any(String));
+    warn.mockRestore();
   });
 });
 

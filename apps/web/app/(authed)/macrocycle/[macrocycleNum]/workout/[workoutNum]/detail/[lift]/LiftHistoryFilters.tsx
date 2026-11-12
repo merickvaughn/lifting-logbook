@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { convertWeight, formatWeight } from '@lifting-logbook/core';
 import type { LiftRecordResponse, WeightUnit } from '@lifting-logbook/types';
+import { modificationSuffix } from '@/lib/liftModifications';
 import styles from './lift.module.css';
 
 interface Props {
@@ -68,7 +69,10 @@ export default function LiftHistoryFilters({ records, unit }: Props) {
                 <td>{r.workoutNum}</td>
                 <td>{r.setNum}</td>
                 <td>{formatWeight(r.weight, 'lbs', unit)}</td>
-                <td>{r.reps}</td>
+                <td>
+                  {r.reps}
+                  {modificationSuffix(r)}
+                </td>
               </tr>
             ))}
           </tbody>
