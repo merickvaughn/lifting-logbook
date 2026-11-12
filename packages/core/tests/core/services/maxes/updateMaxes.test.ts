@@ -394,32 +394,73 @@ describe("updateMaxes — lookup semantics (issue #983)", () => {
       expect(flagged).toEqual([]);
     });
 
-    it("still reports a lift the program and the maxes don't know", () => {
-      expect(() => updateMaxes([row("Bench Press")], [max("Bench Press", 200)], [record("deadlift")], RPT)).toThrow(
-        "Training max for lift deadlift not found.",
-      );
-      expect(() =>
-        updateMaxes([row("Bench Press")], [max("deadlift", 200)], [record("Deadlift")], RPT),
-      ).toThrow("Program spec for lift Deadlift not found.");
+    it("skips, and reports, a lift the program and the maxes don't know", () => {
+      const noMax = updateMaxes([row("Bench Press")], [max("Bench Press", 200)], [record("deadlift")], RPT);
+      expect(noMax.maxes).toEqual([max("Bench Press", 200)]);
+      expect(noMax.skipped).toEqual([{ lift: "deadlift", reason: "no-training-max" }]);
+
+      const noSpec = updateMaxes([row("Bench Press")], [max("deadlift", 200)], [record("Deadlift")], RPT);
+      expect(noSpec.maxes).toEqual([max("deadlift", 200)]);
+      expect(noSpec.skipped).toEqual([{ lift: "Deadlift", reason: "no-program-spec" }]);
     });
 
+  });
+});
+
+// Imported history often names lifts the current program doesn't plan, and such a
+// record used to throw, failing recalculation and the next macrocycle's start (#1150).
+describe("updateMaxes — a record for a lift with no max or no spec row (issue #1150)", () => {
+  function baseline() {
+    const trainingMaxes = parseTrainingMaxes(loadCsvFixture("training_maxes.csv"));
+    const programSpec = parseLiftingProgramSpec(loadCsvFixture("rpt_program_spec.csv"));
+    const liftRecords = parseLiftRecords(loadCsvFixture("lift_records_week_1_20260105.csv"));
+    return { trainingMaxes, programSpec, liftRecords };
+  }
+  const withoutDeadlift = (maxes: TrainingMax[]) => maxes.filter((m) => m.lift !== "Deadlift");
+
+  it("progresses every other lift when one record's lift has no training max", () => {
+    const { trainingMaxes, programSpec, liftRecords } = baseline();
+    const full = updateMaxes(programSpec, trainingMaxes, liftRecords, RPT);
+    // The fixture's run changes some maxes, so this compares more than an untouched array.
+    expect(full.maxes).not.toEqual(trainingMaxes);
+    expect(full.skipped).toEqual([]);
+
+    const result = updateMaxes(programSpec, withoutDeadlift(trainingMaxes), liftRecords, RPT);
+
+    expect(result.maxes).toEqual(withoutDeadlift(full.maxes));
+    expect(result.flagged).toEqual(full.flagged.filter((f) => f.lift !== "Deadlift"));
+    // One entry per lift, not per set.
+    expect(result.skipped).toEqual([{ lift: "Deadlift", reason: "no-training-max" }]);
+  });
+
+  it("progresses every other lift when one record's lift has no spec row", () => {
+    const { trainingMaxes, programSpec, liftRecords } = baseline();
+    const full = updateMaxes(programSpec, trainingMaxes, liftRecords, RPT);
+
+    const result = updateMaxes(
+      programSpec.filter((ps) => ps.lift !== "Deadlift"),
+      trainingMaxes,
+      liftRecords,
+      RPT,
+    );
+
+    // Deadlift keeps its max; every other lift progresses as before.
+    const deadlift = trainingMaxes.find((m) => m.lift === "Deadlift");
+    expect(result.maxes).toEqual(full.maxes.map((m) => (m.lift === "Deadlift" ? deadlift : m)));
+    expect(result.flagged).toEqual(full.flagged.filter((f) => f.lift !== "Deadlift"));
+    expect(result.skipped).toEqual([{ lift: "Deadlift", reason: "no-program-spec" }]);
   });
 
   it("reports a missing training max before a missing spec, and a missing max even on a deload spec", () => {
     const { trainingMaxes, programSpec, liftRecords } = baseline();
-    const withoutDeadliftMax = trainingMaxes.filter((tm) => tm.lift !== "Deadlift");
-    expect(() => updateMaxes(programSpec, withoutDeadliftMax, liftRecords, RPT)).toThrow(
-      "Training max for lift Deadlift not found.",
-    );
-
-    const withoutDeadliftSpec = programSpec.filter((ps) => ps.lift !== "Deadlift");
-    expect(() => updateMaxes(withoutDeadliftSpec, trainingMaxes, liftRecords, RPT)).toThrow(
-      "Program spec for lift Deadlift not found.",
-    );
+    const withoutSpec = programSpec.filter((ps) => ps.lift !== "Deadlift");
+    expect(updateMaxes(withoutSpec, withoutDeadlift(trainingMaxes), liftRecords, RPT).skipped).toEqual([
+      { lift: "Deadlift", reason: "no-training-max" },
+    ]);
 
     const deloadSpec = programSpec.map((ps) => ({ ...ps, weekType: "deload" as const }));
-    expect(() => updateMaxes(deloadSpec, withoutDeadliftMax, liftRecords, RPT)).toThrow(
-      "Training max for lift Deadlift not found.",
-    );
+    expect(updateMaxes(deloadSpec, withoutDeadlift(trainingMaxes), liftRecords, RPT).skipped).toEqual([
+      { lift: "Deadlift", reason: "no-training-max" },
+    ]);
   });
 });

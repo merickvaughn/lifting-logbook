@@ -405,6 +405,55 @@ describe('MacrocycleGenerationService', () => {
         expect.objectContaining({ lift: 'Squat', weight: 270, source: 'test' }),
       ]);
     });
+
+    // Imported history often names a lift the program doesn't plan (#1150).
+    it('starts with a logged lift the program has no max or spec row for, and warns naming it', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      liftRecordRepo.getLiftRecords.mockResolvedValue([
+        ...stubLiftRecords(),
+        ...stubLiftRecords().map((r) => ({ ...r, lift: 'Zercher Squat', weight: 185 })),
+      ]);
+
+      try {
+        const { dashboard } = await service.startNewMacrocycle(repos, PROGRAM);
+
+        expect(dashboard.macrocycleNum).toBe(2);
+        expect(trainingMaxRepo.saveTrainingMaxes).toHaveBeenCalledWith(PROGRAM, [
+          expect.objectContaining({ lift: 'Squat', weight: 270 }),
+        ]);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(
+          { program: PROGRAM, macrocycleNum: 1, lift: 'Zercher Squat', reason: 'no-training-max' },
+          expect.stringContaining('#1150'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('names the source macrocycle in that warning when advancing from fromMacrocycleNum', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
+      liftRecordRepo.getLiftRecords.mockResolvedValue(
+        stubLiftRecords().map((r) => ({ ...r, macrocycleNum: 3, lift: 'Zercher Squat' })),
+      );
+      macrocycleRepo.seed(macrocycleRow(3));
+
+      try {
+        await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 3 });
+
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ macrocycleNum: 3, lift: 'Zercher Squat' }),
+          expect.any(String),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
   });
 
   describe('initializeFirstMacrocycle', () => {
@@ -758,6 +807,7 @@ describe('MacrocycleGenerationService', () => {
         ]),
       );
       expect(result.flagged).toEqual([]);
+      expect(result.skipped).toEqual([]);
       expect(trainingMaxRepo.saveTrainingMaxes).toHaveBeenCalledWith(PROGRAM, result.maxes);
     });
 

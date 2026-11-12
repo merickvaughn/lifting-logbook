@@ -1,5 +1,5 @@
 import { LiftingProgramSpec, LiftOverride, LiftRecord, TrainingMax } from "@src/core/models";
-import { currentMaxLookup, lookupByLift } from "../../catalog/liftIdentity";
+import { currentMaxLookup, liftIdFor, lookupByLift } from "../../catalog/liftIdentity";
 import { programWorkoutKeys, specRowsForWorkoutDay } from "../../presets/programLengths";
 import { resolveDayPrescriptions } from "../workout/dayPrescriptions";
 
@@ -17,9 +17,21 @@ export interface MaxReductionFlag {
   proposedWeight: number;
 }
 
+/**
+ * A lift whose records `updateMaxes` left out: it has no training max, or no spec row to
+ * progress it by. Imported history often names lifts the program doesn't plan (#1150).
+ */
+export interface SkippedLift {
+  /** The lift as its first skipped record names it. */
+  lift: string;
+  reason: 'no-training-max' | 'no-program-spec';
+}
+
 export interface UpdateMaxesResult {
   maxes: TrainingMax[];
   flagged: MaxReductionFlag[];
+  /** One entry per lift (however its records spell it) and reason, in the order its first record appears. */
+  skipped: SkippedLift[];
 }
 
 export interface UpdateMaxesOptions {
@@ -50,6 +62,9 @@ export interface UpdateMaxesOptions {
  * still progress their own lift's max. A record the day doesn't prescribe (an added
  * lift, or a workout past the program's last day) falls back to the lift's first spec
  * row, as before.
+ *
+ * A record whose lift has no training max, or no spec row at all, is skipped and listed in
+ * `skipped`, so one unplanned lift doesn't stop the rest from progressing (#1150).
  */
 export function updateMaxes(
   programSpec: LiftingProgramSpec[],
@@ -59,6 +74,14 @@ export function updateMaxes(
 ): UpdateMaxesResult {
   const newMaxes: TrainingMax[] = trainingMaxes.map((tm) => ({ ...tm }));
   const flagged: MaxReductionFlag[] = [];
+  const skipped: SkippedLift[] = [];
+  const skippedKeys = new Set<string>();
+  const skip = (lift: string, reason: SkippedLift['reason']) => {
+    const key = `${reason}:${liftIdFor(lift)}`;
+    if (skippedKeys.has(key)) return;
+    skippedKeys.add(key);
+    skipped.push({ lift, reason });
+  };
 
   // Where a day plans a lift twice, its first occurrence progresses it, under the row
   // `resolveDayPrescriptions` gives the lift. A later occurrence (a superset, or extra
@@ -124,10 +147,10 @@ export function updateMaxes(
   progressed.forEach((record) => {
     const liftName = record.lift;
     const currentMax = maxFor(liftName);
-    if (!currentMax) throw new Error(`Training max for lift ${liftName} not found.`);
+    if (!currentMax) return skip(liftName, 'no-training-max');
 
     const spec = specFor(record);
-    if (!spec) throw new Error(`Program spec for lift ${liftName} not found.`);
+    if (!spec) return skip(liftName, 'no-program-spec');
 
     const weekType = spec.weekType ?? 'training';
 
@@ -176,5 +199,5 @@ export function updateMaxes(
     }
   });
 
-  return { maxes: newMaxes, flagged };
+  return { maxes: newMaxes, flagged, skipped };
 }

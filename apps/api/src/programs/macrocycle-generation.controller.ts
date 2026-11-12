@@ -65,7 +65,7 @@ export class MacrocycleGenerationController {
     @CurrentUser() user: AuthUser,
   ): Promise<RecalculateMaxesResponse> {
     const repos = await this.factory.forUser(user);
-    const { maxes, flagged } = await this.macrocycleGenerationService.recalculateMaxes(repos, program);
-    return { maxes: maxes.map(toTrainingMaxResponse), flagged };
+    const { maxes, flagged, skipped } = await this.macrocycleGenerationService.recalculateMaxes(repos, program);
+    return { maxes: maxes.map(toTrainingMaxResponse), flagged, skipped };
   }
 }

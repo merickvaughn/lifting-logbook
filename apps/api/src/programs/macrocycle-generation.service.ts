@@ -7,6 +7,7 @@ import {
   formatDateYYYYMMDD,
   MaxReductionFlag,
   programWorkoutKeys,
+  SkippedLift,
   TrainingMax,
   TrainingMaxHistoryEntry,
   updateMacrocycle,
@@ -247,7 +248,8 @@ export class MacrocycleGenerationService {
     });
     // Deliberate: flagged reductions are silently blocked here — they are not surfaced
     // to the caller when advancing a macrocycle. Use recalculateMaxes to review flagged reductions.
-    const { maxes: newMaxes } = updateMaxes(programSpec, trainingMaxes, liftRecords, { program, liftOverrides });
+    const { maxes: newMaxes, skipped } = updateMaxes(programSpec, trainingMaxes, liftRecords, { program, liftOverrides });
+    this.warnSkipped(program, sourceMacrocycleNum, skipped);
 
     // The new row goes first: a concurrent request that took this number makes it throw a 409
     // before anything else is written (the request transaction rolls back the rest anyway).
@@ -419,7 +421,7 @@ export class MacrocycleGenerationService {
   async recalculateMaxes(
     repos: MacrocycleRepos,
     program: string,
-  ): Promise<{ maxes: TrainingMax[]; flagged: MaxReductionFlag[] }> {
+  ): Promise<{ maxes: TrainingMax[]; flagged: MaxReductionFlag[]; skipped: SkippedLift[] }> {
     const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program);
     const [programSpec, trainingMaxes, liftRecords, liftOverrides] = await Promise.all([
       repos.liftingProgramSpec.getProgramSpec(program),
@@ -429,6 +431,7 @@ export class MacrocycleGenerationService {
     ]);
 
     const result = updateMaxes(programSpec, trainingMaxes, liftRecords, { program, liftOverrides });
+    this.warnSkipped(program, dashboard.macrocycleNum, result.skipped);
     await repos.trainingMax.saveTrainingMaxes(program, result.maxes);
 
     const historyEntries = buildHistoryEntries(trainingMaxes, result.maxes, dashboard.macrocycleDate, 'program');
@@ -437,5 +440,15 @@ export class MacrocycleGenerationService {
     }
 
     return result;
+  }
+
+  /** One warning per lift whose logged sets progressed nothing: no training max or no spec row (#1150). */
+  private warnSkipped(program: string, macrocycleNum: number, skipped: SkippedLift[]): void {
+    for (const { lift, reason } of skipped) {
+      this.logger.warn(
+        { program, macrocycleNum, lift, reason },
+        'updateMaxes skipped a lift with logged sets: it has no training max or no spec row (#1150)',
+      );
+    }
   }
 }
