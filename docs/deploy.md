@@ -629,9 +629,8 @@ running `prisma migrate deploy` holds an exclusive advisory lock; and so does a 
 another session. A 0 doesn't rule everything out: Download My Data reads the numbered tables in a
 transaction of up to 30 seconds without the lock, so the count can't see it, and a step started
 then waits for it, up to its timeout per table, and gives up if the export outlasts that. The
-count is also only a snapshot: an import
-that starts after it is what the step's `lock_timeout` covers. Either way, a step that gives up has
-changed nothing.
+count is also only a snapshot: an import that starts after it is what the step's `lock_timeout`
+covers. Either way, a step that gives up has changed nothing.
 
 **Before merging the PR** (the merge starts the Deploy run, whose `plan-production` would show the
 public IP this needs), check that the shared lock table can hold one advisory lock per user, since
@@ -798,9 +797,8 @@ revision keeps serving. The job's log names the error. Two causes are likely:
 - *canceling statement due to lock timeout*: its `lock_timeout` (40 seconds, for each table) ran
   out while it waited for a transaction using one of the tables. App transactions, imports
   included, end within 30 seconds, so this means one from outside the app, such as a psql session
-  left open. The migrator sees no users with FORCE
-  on, so `20261112000001` takes no user's lock, and `20261112000003` turns FORCE off first and then
-  takes users' locks without waiting.
+  left open. The migrator sees no users with FORCE on, so `20261112000001` takes no user's lock,
+  and `20261112000003` turns FORCE off first and then takes users' locks without waiting.
 
 For either, retry while nobody is using the app. "out of shared memory" with a hint to raise
 `max_locks_per_transaction` means the users outgrew the lock table: run the check in

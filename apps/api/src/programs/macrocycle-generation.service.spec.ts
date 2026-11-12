@@ -444,7 +444,7 @@ describe('MacrocycleGenerationService', () => {
       macrocycleRepo.seed(macrocycleRow(3));
 
       try {
-        await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 3 });
+        await service.startNewMacrocycle(repos, PROGRAM, { fromMacrocycleNum: 3 }, 'm-3');
 
         expect(warnSpy).toHaveBeenCalledWith(
           expect.objectContaining({ macrocycleNum: 3, lift: 'Zercher Squat' }),
