@@ -58,7 +58,10 @@ async function analyzeFile(user: ReturnType<typeof userEvent.setup>) {
 
 async function fetchWorkbook(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByLabelText('Google Sheets'));
-  await user.type(screen.getByLabelText('Google Sheets link'), SHEET_URL);
+  // Pasted, not typed: `user.type` re-renders the wizard once per character of the link,
+  // which is most of the test's time and times out under a parallel Windows run (#1232).
+  await user.click(screen.getByLabelText('Google Sheets link'));
+  await user.paste(SHEET_URL);
   await user.click(screen.getByRole('button', { name: 'Fetch workbook' }));
   await screen.findByText('Choose tabs to import');
 }
