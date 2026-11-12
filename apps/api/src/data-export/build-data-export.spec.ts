@@ -23,6 +23,7 @@ const emptyRows = (): UserDataRows => ({
   workoutLiftOverrides: [],
   liftMetadata: [],
   liftModifications: [],
+  liftModificationMaxes: [],
   focusBlocks: [],
   focusDayStates: [],
 });

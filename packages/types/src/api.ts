@@ -18,6 +18,8 @@ export interface MaxReductionFlagResponse {
   lift: LiftName;
   currentWeight: number;
   proposedWeight: number;
+  /** Set when the max is a modification's own (#1153); `lift` is then the set's lift. */
+  modificationId?: string;
 }
 
 /** A lift recalculation left alone (mirrors core's SkippedLift, #1150). */
@@ -1074,4 +1076,20 @@ export interface UpdateLiftModificationRequest {
   name?: string;
   description?: string;
   maxMode?: LiftModificationMaxMode;
+}
+
+/**
+ * A modification's own training max in one program (#1153), from
+ * GET /programs/:program/modification-maxes. Only a modification whose `maxMode` is `own` has one.
+ */
+export interface ModificationMaxResponse {
+  modificationId: string;
+  weight: number;
+  unit: WeightUnit;
+  dateUpdated: string; // ISO 8601 date string
+}
+
+/** Request body for PUT /programs/:program/modification-maxes/:modificationId. */
+export interface PutModificationMaxRequest {
+  weight: number;
 }

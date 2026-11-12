@@ -77,6 +77,9 @@ model TrainingMaxHistory {
   source    String
   goalMet   Boolean  @default(false)
   createdAt DateTime @default(now())
+  // Set on a modification's own-max entry (#1153). Null is the lift's own history, and the
+  // history reads filter to it.
+  modificationId String?
 
   @@index([userId, program])
   @@index([userId, program, lift])
@@ -216,9 +219,26 @@ model LiftModification {
   // those sets.
   archivedAt       DateTime?
   createdAt        DateTime  @default(now())
+  maxes            LiftModificationMax[]
 
   @@unique([userId, lift, name])
   @@map("lift_modification")
+}
+
+// A modification's own training max (#1153), scoped to a program the way training_max is. A side
+// table rather than a row in training_max, so readers that look a max up by lift are unaffected.
+model LiftModificationMax {
+  id             String           @id @default(cuid())
+  userId         String
+  program        String
+  modificationId String
+  weight         Float
+  dateUpdated    DateTime
+  modification   LiftModification @relation(fields: [modificationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, program, modificationId])
+  @@index([modificationId])
+  @@map("lift_modification_max")
 }
 
 model UserSettings {

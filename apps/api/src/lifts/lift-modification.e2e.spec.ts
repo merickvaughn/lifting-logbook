@@ -412,4 +412,65 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
       expect((await user('DELETE', `/lifts/modifications/${paused.id}`)).statusCode).toBe(404);
     });
   });
+
+  describe('own maxes (#1153)', () => {
+    const url = '/programs/rpt/modification-maxes';
+
+    it('sets, replaces and lists an own max, and keeps it per program', async () => {
+      const user = as('mods-own-max');
+      const wide = await createOn(user, 'Cable Curl', 'Wide grip', 'own');
+
+      const res = await user('PUT', `${url}/${wide.id}`, { weight: 65 });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ modificationId: wide.id, weight: 65, unit: 'lbs' });
+      await user('PUT', `${url}/${wide.id}`, { weight: 67.5 });
+
+      expect((await user('GET', url)).json()).toEqual([
+        expect.objectContaining({ modificationId: wide.id, weight: 67.5 }),
+      ]);
+      expect((await user('GET', '/programs/5-3-1/modification-maxes')).json()).toEqual([]);
+    });
+
+    it("answers 400 for a modification that doesn't keep its own max, and 404 for one that isn't yours", async () => {
+      const user = as('mods-own-max-refused');
+      const noChalk = await createOn(user, 'Cable Curl', 'No chalk');
+      expect((await user('PUT', `${url}/${noChalk.id}`, { weight: 65 })).statusCode).toBe(400);
+
+      const wide = await createOn(user, 'Cable Curl', 'Wide grip', 'own');
+      const stranger = as('mods-own-max-stranger');
+      expect((await stranger('PUT', `${url}/${wide.id}`, { weight: 65 })).statusCode).toBe(404);
+      expect((await stranger('GET', url)).json()).toEqual([]);
+      expect((await user('GET', url)).json()).toEqual([]);
+    });
+
+    it('validates the weight like a training max', async () => {
+      const user = as('mods-own-max-weight');
+      const wide = await createOn(user, 'Cable Curl', 'Wide grip', 'own');
+      for (const weight of [0, -5, '65', undefined]) {
+        expect((await user('PUT', `${url}/${wide.id}`, { weight })).statusCode).toBe(400);
+      }
+    });
+
+    it("lists an own max only while its modification's mode is own, and keeps it across a change", async () => {
+      const user = as('mods-own-max-mode');
+      const wide = await createOn(user, 'Cable Curl', 'Wide grip', 'own');
+      await user('PUT', `${url}/${wide.id}`, { weight: 65 });
+
+      await user('PATCH', `/lifts/modifications/${wide.id}`, { maxMode: 'lift' });
+      expect((await user('GET', url)).json()).toEqual([]);
+
+      await user('PATCH', `/lifts/modifications/${wide.id}`, { maxMode: 'own' });
+      expect((await user('GET', url)).json()).toEqual([expect.objectContaining({ modificationId: wide.id, weight: 65 })]);
+    });
+
+    it('drops the own max of a modification that is removed', async () => {
+      const user = as('mods-own-max-removed');
+      const wide = await createOn(user, 'Cable Curl', 'Wide grip', 'own');
+      await user('PUT', `${url}/${wide.id}`, { weight: 65 });
+
+      await user('DELETE', `/lifts/modifications/${wide.id}`);
+
+      expect((await user('GET', url)).json()).toEqual([]);
+    });
+  });
 });

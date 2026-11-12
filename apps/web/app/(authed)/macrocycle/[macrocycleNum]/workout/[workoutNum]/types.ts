@@ -1,4 +1,4 @@
-import type { LiftRecordResponse, WeightUnit } from '@lifting-logbook/types';
+import type { LiftingProgramSpecResponse, LiftRecordResponse, WeightUnit } from '@lifting-logbook/types';
 
 export interface WarmUpSetData {
   /** Number of reps for this warm-up set. */
@@ -51,6 +51,12 @@ export interface LiftData {
    * e.g. "3 × 10–12". Absent on a planned lift.
    */
   focus?: { area: string; summary: string };
+  /**
+   * The lift's spec row and its own max, so turning on an `own` modification can re-plan it
+   * without a fetch (#1153). Absent where nothing plans the lift: a focus lift, or one with no spec
+   * row, which toggles label but don't re-plan.
+   */
+  plan?: { spec: LiftingProgramSpecResponse; liftMax: number };
 }
 
 export interface WorkoutLoggerProps {
@@ -83,4 +89,9 @@ export interface WorkoutLoggerProps {
    * docs/standards/training-max-precision.md.
    */
   unit: WeightUnit;
+  /**
+   * Each modification's own max in this program, in lbs, by modification id (#1153). `null` when
+   * the read failed: an `own` toggle then plans from the lift's max and says why.
+   */
+  ownMaxes: Readonly<Record<string, number>> | null;
 }

@@ -34,8 +34,10 @@ const OWNER_URL = OWNER_DATABASE_URL ?? '';
 const APP_DB_URL = APP_ROLE_URL ?? '';
 
 async function cleanUsers(prisma: PrismaClient): Promise<void> {
+  // Takes the own maxes with it, through the foreign key.
   await prisma.liftModification.deleteMany({ where: { userId: { in: USERS } } });
   await prisma.liftRecord.deleteMany({ where: { userId: { in: USERS } } });
+  await prisma.trainingMaxHistory.deleteMany({ where: { userId: { in: USERS } } });
 }
 
 describeOrSkip('Lift modifications HTTP (e2e, PrismaRepositoryFactory)', () => {
@@ -247,5 +249,56 @@ describeOrSkip('Lift modifications HTTP (e2e, PrismaRepositoryFactory)', () => {
         data: { userId: USER_OWNER, lift: 'bench-press', name: 'Bad', maxMode: 'other' },
       }),
     ).rejects.toThrow();
+  });
+
+  it("sets and reads a modification's own max, which another user can neither read nor set (#1153)", async () => {
+    const wide = await create('Cable Curl', 'Wide grip', 'own');
+    const url = `/programs/${PROGRAM}/modification-maxes`;
+
+    const put = await owner('PUT', `${url}/${wide.id}`, { weight: 65 });
+    expect(put.statusCode).toBe(200);
+    expect(put.json()).toMatchObject({ modificationId: wide.id, weight: 65, unit: 'lbs' });
+    // An upsert: a second PUT replaces the weight, leaving one row.
+    await owner('PUT', `${url}/${wide.id}`, { weight: 67.5 });
+    expect((await owner('GET', url)).json()).toEqual([expect.objectContaining({ modificationId: wide.id, weight: 67.5 })]);
+
+    expect((await other('GET', url)).json()).toEqual([]);
+    expect((await other('PUT', `${url}/${wide.id}`, { weight: 1 })).statusCode).toBe(404);
+    expect(await prisma.liftModificationMax.findMany({ where: { userId: USER_OTHER } })).toEqual([]);
+  });
+
+  it("refuses an own max for a modification that doesn't keep one (#1153)", async () => {
+    const noChalk = await create('Cable Curl', 'No chalk');
+    const res = await owner('PUT', `/programs/${PROGRAM}/modification-maxes/${noChalk.id}`, { weight: 65 });
+    expect(res.statusCode).toBe(400);
+    expect(await prisma.liftModificationMax.count({ where: { userId: USER_OWNER } })).toBe(0);
+  });
+
+  it("leaves own-max entries out of the lift's history read, under the restricted role (#1153)", async () => {
+    const wide = await create('Cable Curl', 'Wide grip', 'own');
+    const entry = { userId: USER_OWNER, program: PROGRAM, lift: 'cable-curl', date: new Date('2026-04-20'), source: 'program' };
+    await prisma.trainingMaxHistory.createMany({
+      data: [
+        { ...entry, weight: 68.75 },
+        { ...entry, weight: 65, modificationId: wide.id },
+      ],
+    });
+
+    const res = await owner('GET', `/programs/${PROGRAM}/training-maxes/history?lift=cable-curl`);
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { entries: { weight: number }[] };
+    expect(body.entries.map((e) => e.weight)).toEqual([68.75]);
+    // Unfiltered by lift, too.
+    const all = (await owner('GET', `/programs/${PROGRAM}/training-maxes/history`)).json() as typeof body;
+    expect(all.entries.map((e) => e.weight)).toEqual([68.75]);
+  });
+
+  it("deleting a modification takes its own maxes with it (#1153)", async () => {
+    const wide = await create('Cable Curl', 'Wide grip', 'own');
+    await owner('PUT', `/programs/${PROGRAM}/modification-maxes/${wide.id}`, { weight: 65 });
+
+    expect((await owner('DELETE', `/lifts/modifications/${wide.id}`)).statusCode).toBe(204);
+
+    expect(await prisma.liftModificationMax.count({ where: { userId: USER_OWNER } })).toBe(0);
   });
 });

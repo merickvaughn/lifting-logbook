@@ -1,3 +1,4 @@
+import { ModificationMax } from '@lifting-logbook/core';
 import { LiftModification, LiftModificationMaxMode } from '@lifting-logbook/types';
 
 export interface CreateLiftModificationInput {
@@ -37,7 +38,20 @@ export interface ILiftModificationRepository {
 
   /**
    * Removes a modification no logged set names, and archives one a set does, so the set still
-   * names it. Throws `LiftModificationNotFoundError` for an unknown id.
+   * names it. Removing it removes its own maxes too. Throws `LiftModificationNotFoundError` for an
+   * unknown id.
    */
   delete(id: string): Promise<void>;
+
+  /** The program's own maxes (#1153): one per modification that has one, archived ones included. */
+  getMaxes(program: string): Promise<ModificationMax[]>;
+
+  /**
+   * Upserts own maxes by modification, leaving the program's others alone, like
+   * `saveTrainingMaxes`. Callers pass ids already checked as this user's.
+   */
+  saveMaxes(program: string, maxes: readonly ModificationMax[]): Promise<void>;
+
+  /** Deletes every own max of a program. The modifications stay, since they belong to the user. */
+  deleteAllMaxes(program: string): Promise<void>;
 }

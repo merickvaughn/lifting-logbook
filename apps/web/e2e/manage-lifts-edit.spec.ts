@@ -35,3 +35,19 @@ test('a lift in the workout opens its edit form', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Edit Lift: squat' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible();
 });
+
+test("gives a lift's modification its own max (#1153)", async ({ page, request }) => {
+  await request.post(`${MOCK_API}/lifts/modifications`, { data: { lift: 'squat', name: 'Paused' } });
+  await page.goto(`${EDIT}/squat`);
+
+  const row = page.getByRole('group', { name: 'Paused' });
+  await row.getByLabel('Max', { exact: true }).selectOption('own');
+  await row.getByLabel('Own max (lbs)').fill('200');
+  const patched = page.waitForRequest((req) => req.method() === 'PATCH' && req.url().includes('/lifts/modifications/'));
+  const put = page.waitForRequest((req) => req.method() === 'PUT' && req.url().includes('/modification-maxes/'));
+  await row.getByRole('button', { name: 'Save' }).click();
+
+  expect((await patched).postDataJSON()).toEqual({ maxMode: 'own' });
+  expect((await put).postDataJSON()).toEqual({ weight: 200 });
+  await expect(row.getByText('Saved.')).toBeVisible();
+});

@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { ModificationMax } from '@lifting-logbook/core';
 import { LiftModification, LiftModificationMaxMode } from '@lifting-logbook/types';
+import { runBatch } from './prisma-tx.util';
 import {
   CreateLiftModificationInput,
   ILiftModificationRepository,
@@ -89,6 +91,38 @@ export class PrismaLiftModificationRepository implements ILiftModificationReposi
       const { count } = await this.prisma.liftModification.updateMany({ where, data: { archivedAt: new Date() } });
       if (count === 0) throw new LiftModificationNotFoundError(id);
     }
+  }
+
+  async getMaxes(program: string): Promise<ModificationMax[]> {
+    const rows = await this.prisma.liftModificationMax.findMany({
+      where: { userId: this.userId, program },
+      orderBy: { modificationId: 'asc' },
+    });
+    return rows.map((r) => ({ modificationId: r.modificationId, weight: r.weight, dateUpdated: r.dateUpdated }));
+  }
+
+  async saveMaxes(program: string, maxes: readonly ModificationMax[]): Promise<void> {
+    await runBatch(this.prisma, (db) =>
+      maxes.map((m) =>
+        db.liftModificationMax.upsert({
+          where: {
+            userId_program_modificationId: { userId: this.userId, program, modificationId: m.modificationId },
+          },
+          create: {
+            userId: this.userId,
+            program,
+            modificationId: m.modificationId,
+            weight: m.weight,
+            dateUpdated: m.dateUpdated,
+          },
+          update: { weight: m.weight, dateUpdated: m.dateUpdated },
+        }),
+      ),
+    );
+  }
+
+  async deleteAllMaxes(program: string): Promise<void> {
+    await this.prisma.liftModificationMax.deleteMany({ where: { userId: this.userId, program } });
   }
 }
 

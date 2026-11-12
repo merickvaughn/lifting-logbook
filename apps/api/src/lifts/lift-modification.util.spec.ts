@@ -79,18 +79,22 @@ describe('assertSetModifications', () => {
 describe('modificationModesFor', () => {
   it('reads nothing when no record has any', async () => {
     const bundle = repos([]);
-    await expect(modificationModesFor(bundle, [{}, { modifications: [] }])).resolves.toEqual(new Map());
+    await expect(modificationModesFor(bundle, [{}, { modifications: [] }])).resolves.toEqual({
+      modes: new Map(),
+      lifts: new Map(),
+    });
     expect(bundle.liftModification.list).not.toHaveBeenCalled();
   });
 
-  it('maps each id to its mode, archived ones included, and logs an id with no row', async () => {
+  it('maps each id to its mode and lift, archived ones included, and logs an id with no row', async () => {
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
-    const archived = { ...modification('b', 'squat', 'lift'), archivedAt: new Date() };
-    const modes = await modificationModesFor(repos([modification('a', 'squat', 'own'), archived]), [
+    const archived = { ...modification('b', 'bench-press', 'lift'), archivedAt: new Date() };
+    const { modes, lifts } = await modificationModesFor(repos([modification('a', 'squat', 'own'), archived]), [
       { modifications: ['a', 'gone'] },
       { modifications: ['b'] },
     ]);
     expect(modes).toEqual(new Map([['a', 'own'], ['b', 'lift']]));
+    expect(lifts).toEqual(new Map([['a', 'squat'], ['b', 'bench-press']]));
     expect(warn).toHaveBeenCalledWith({ missing: ['gone'] }, expect.any(String));
     warn.mockRestore();
   });

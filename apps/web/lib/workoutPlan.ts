@@ -145,6 +145,37 @@ export function computePlannedSets(
   return [...warmupSets, ...workSets];
 }
 
+/**
+ * The sets one lift occurrence plans (#1153): its spec row's, from an `own` modification's max
+ * when one is given, otherwise from the lift's. The logger, the detail page and the timer share
+ * this formula; only the logger passes an own max, when a toggle with one is on, since a slot has
+ * no start-on modifications yet. With no spec row (an added lift, or a focus lift) it plans nothing.
+ */
+export function planLift(
+  spec: LiftingProgramSpecResponse | undefined,
+  liftMax: number,
+  ownMax?: number,
+): PlannedSet[] {
+  return spec ? computePlannedSets(spec, ownMax ?? liftMax) : [];
+}
+
+/**
+ * A plan as the logger lays it out: the warm-ups, then the working sets numbered from 1. The page
+ * builds a lift's sets with it and the logger re-plans with it, so a re-planned set lines up with
+ * the slot it replaces (#1153).
+ */
+export function liftSets(planned: readonly PlannedSet[]): {
+  warmUpSets: { reps: number; totalLoad: number }[];
+  workSets: { setNum: number; reps: number; totalLoad: number }[];
+} {
+  return {
+    warmUpSets: planned.filter((s) => s.type === 'warmup').map((s) => ({ reps: s.reps, totalLoad: s.weight })),
+    workSets: planned
+      .filter((s) => s.type === 'work')
+      .map((s, i) => ({ setNum: i + 1, reps: s.reps, totalLoad: s.weight })),
+  };
+}
+
 export interface MacrocycleProgress {
   completedWorkouts: number;
   totalWorkouts: number;
@@ -258,7 +289,9 @@ export function buildLiftDetails(
   return workout.lifts.map((wl, i) => {
     const tm = maxFor(wl.lift)?.weight ?? 0;
     const spec = liftSpecs[i];
-    const plannedSets = spec ? computePlannedSets(spec, tm) : [];
+    // A slot has no start-on modifications yet, so the timer and this page plan from the lift's
+    // max, as the logger does before a toggle.
+    const plannedSets = planLift(spec, tm);
     return {
       lift: wl.lift,
       tm,

@@ -105,4 +105,33 @@ describe('TrainingMaxesController', () => {
       ]);
     });
   });
+
+  describe('putModificationMax (#1153)', () => {
+    const unchanged = new Date('2025-01-01');
+    let modifications: { list: jest.Mock; getMaxes: jest.Mock; saveMaxes: jest.Mock };
+
+    beforeEach(() => {
+      modifications = {
+        list: jest.fn().mockResolvedValue([{ id: 'wide', name: 'Wide grip', lift: 'cable-curl', maxMode: 'own' }]),
+        getMaxes: jest.fn().mockResolvedValue([{ modificationId: 'wide', weight: 65, dateUpdated: unchanged }]),
+        saveMaxes: jest.fn().mockResolvedValue(undefined),
+      };
+      factory.forUser = jest.fn().mockResolvedValue({ trainingMax: repo, liftModification: modifications });
+    });
+
+    it('keeps the date of an own max saved again at the same weight', async () => {
+      const result = await controller.putModificationMax('5-3-1', 'wide', { weight: 65 }, MOCK_USER);
+
+      expect(modifications.saveMaxes).not.toHaveBeenCalled();
+      expect(result.dateUpdated).toBe('2025-01-01');
+    });
+
+    it('stamps a changed weight', async () => {
+      await controller.putModificationMax('5-3-1', 'wide', { weight: 67.5 }, MOCK_USER);
+
+      const saved = modifications.saveMaxes.mock.calls[0]?.[1] as { weight: number; dateUpdated: Date }[];
+      expect(saved).toEqual([expect.objectContaining({ modificationId: 'wide', weight: 67.5 })]);
+      expect(saved[0]?.dateUpdated).not.toBe(unchanged);
+    });
+  });
 });

@@ -52,6 +52,7 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
   LiftMetadata: 'liftMetadata',
   CustomLift: 'customLifts',
   LiftModification: 'liftModifications',
+  LiftModificationMax: 'liftModificationMaxes',
   UserSettings: 'userSettings',
   FocusBlock: 'focusBlocks',
   FocusDayState: 'focusDayStates',
@@ -159,7 +160,10 @@ async function seedUser(
   await prisma.customLift.create({
     data: { userId, name: `${mark} press`, classification: 'accessory', patterns: [], jointActions: [] },
   });
-  await prisma.liftModification.create({ data: { userId, lift: 'bench-press', name: mark } });
+  const modification = await prisma.liftModification.create({ data: { userId, lift: 'bench-press', name: mark } });
+  await prisma.liftModificationMax.create({
+    data: { userId, program: mark, modificationId: modification.id, weight: 185, dateUpdated: DAY },
+  });
   await prisma.userSettings.create({ data: { userId, activeProgram: program } });
   await prisma.focusBlock.create({
     data: {

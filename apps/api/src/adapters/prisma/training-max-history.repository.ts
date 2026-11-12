@@ -15,6 +15,8 @@ export class PrismaTrainingMaxHistoryRepository implements ITrainingMaxHistoryRe
       where: {
         userId: this.userId,
         program,
+        // A modification's own-max entries aren't the lift's history (#1153).
+        modificationId: null,
         ...(filters?.lift !== undefined && { lift: { in: [...liftSpellings(filters.lift)] } }),
         ...(filters?.source !== undefined && { source: filters.source }),
         ...(filters?.isPR !== undefined && { isPR: filters.isPR }),
@@ -50,6 +52,7 @@ export class PrismaTrainingMaxHistoryRepository implements ITrainingMaxHistoryRe
         isPR: e.isPR,
         source: e.source,
         goalMet: e.goalMet,
+        modificationId: e.modificationId ?? null,
       })),
     });
   }

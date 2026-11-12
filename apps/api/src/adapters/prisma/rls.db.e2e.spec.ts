@@ -246,6 +246,39 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     expect(bobRow.description).toBe('');
   });
 
+  it("cannot read or write another user's lift_modification_max rows, and fails closed (#1153)", async () => {
+    const wideGrip = (userId: string) =>
+      owner.liftModification.create({ data: { userId, lift: 'cable-curl', name: 'Wide grip', maxMode: 'own' } });
+    const alice = await wideGrip(USER_ALICE);
+    const bob = await wideGrip(USER_BOB);
+    await owner.liftModificationMax.createMany({
+      data: [alice, bob].map((m) => ({
+        userId: m.userId,
+        program: PROGRAM,
+        modificationId: m.id,
+        weight: 65,
+        dateUpdated: new Date(),
+      })),
+    });
+
+    // Deliberately unscoped: only RLS keeps Bob's own max from Alice.
+    const rows = await asUser(appDb, USER_ALICE, (tx) => tx.liftModificationMax.findMany());
+    expect(rows.map((row) => [row.userId, row.modificationId])).toEqual([[USER_ALICE, alice.id]]);
+    expect(await asUser(appDb, null, (tx) => tx.liftModificationMax.count())).toBe(0);
+
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) =>
+        tx.liftModificationMax.create({
+          data: { userId: USER_BOB, program: 'elsewhere', modificationId: bob.id, weight: 1, dateUpdated: new Date() },
+        }),
+      ),
+    ).rejects.toThrow();
+    const updated = await asUser(appDb, USER_ALICE, (tx) => tx.liftModificationMax.updateMany({ data: { weight: 70 } }));
+    expect(updated.count).toBe(1);
+    const bobMax = await owner.liftModificationMax.findFirstOrThrow({ where: { userId: USER_BOB } });
+    expect(bobMax.weight).toBe(65);
+  });
+
   it("cannot read another user's lift_metadata progression, and fails closed (#1210)", async () => {
     // Deliberately unscoped: only RLS stands between Alice and Bob's row for the same lift.
     const rows = await asUser(appDb, USER_ALICE, (tx) =>
@@ -575,9 +608,9 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
   // filtered by an application-level WHERE clause that happens to look correct —
   // exactly the risk class that let #644 ship silently.
   it('deletes a macrocycle scoped to the requesting user only, under real RLS (regression coverage for #647)', async () => {
-    // deleteCurrentMacrocycle issues nine scoped deletes (MacrocycleDashboard, LiftRecord,
+    // deleteCurrentMacrocycle issues ten scoped deletes (MacrocycleDashboard, LiftRecord,
     // TrainingMax, TrainingMaxHistory, MacrocycleScheduledWorkout, the three workout
-    // override tables and FocusDayState, #1084). Seeding all nine
+    // override tables, FocusDayState (#1084) and LiftModificationMax (#1153)). Seeding all ten
     // for both users — not just the dashboard — matters because #644 was a
     // per-repository DI-wiring failure, not a missing-policy failure: a future
     // regression where one specific repository fails to route through the
@@ -644,6 +677,25 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
       await owner.focusDayState.create({
         data: { userId: uid, program: PROGRAM, macrocycleNum: 1, workoutNum: 1, state: {} },
       });
+      // A modification's own max and its history go with the program's maxes; the modification
+      // stays, since it belongs to the user (#1153).
+      const modification = await owner.liftModification.create({
+        data: { userId: uid, lift: 'squat', name: 'Wide stance', maxMode: 'own' },
+      });
+      await owner.liftModificationMax.create({
+        data: { userId: uid, program: PROGRAM, modificationId: modification.id, weight: 185, dateUpdated: new Date() },
+      });
+      await owner.trainingMaxHistory.create({
+        data: {
+          userId: uid,
+          program: PROGRAM,
+          lift: 'squat',
+          weight: 185,
+          date: new Date(),
+          source: 'program',
+          modificationId: modification.id,
+        },
+      });
     };
     await seedAllTables(userId);
     await seedAllTables(otherUserId);
@@ -666,14 +718,20 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
         owner.workoutSkipOverride.findFirst({ where: { userId: uid, program: PROGRAM } }),
         owner.workoutLiftOverride.findFirst({ where: { userId: uid, program: PROGRAM } }),
         owner.focusDayState.findFirst({ where: { userId: uid, program: PROGRAM } }),
+        owner.liftModificationMax.findFirst({ where: { userId: uid, program: PROGRAM } }),
+        owner.trainingMaxHistory.findFirst({ where: { userId: uid, program: PROGRAM, modificationId: { not: null } } }),
       ]);
 
     // The requesting user's rows are gone from every affected table...
     const mine = await findAllFor(userId);
-    expect(mine).toEqual([null, null, null, null, null, null, null, null, null]);
+    expect(mine).toEqual([null, null, null, null, null, null, null, null, null, null, null]);
+    // ...and the modification itself stays, own max mode and all.
+    expect(await owner.liftModification.findMany({ where: { userId }, select: { name: true, maxMode: true } })).toEqual([
+      { name: 'Wide stance', maxMode: 'own' },
+    ]);
 
     // ...but the other user's rows in every table survive — proves each of the
-    // nine deletes was RLS-scoped to the requesting user, not a bug that deleted
+    // ten deletes was RLS-scoped to the requesting user, not a bug that deleted
     // every row matching the program regardless of owner.
     const others = await findAllFor(otherUserId);
     for (const row of others) expect(row).not.toBeNull();
@@ -689,6 +747,8 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
       owner.workoutSkipOverride.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.workoutLiftOverride.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
       owner.focusDayState.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
+      // Takes the own maxes with it, through the foreign key.
+      owner.liftModification.deleteMany({ where: { userId: { in: [userId, otherUserId] } } }),
     ]);
   });
 

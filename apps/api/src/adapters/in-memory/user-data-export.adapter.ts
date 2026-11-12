@@ -49,6 +49,7 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
       workoutLiftOverrides: [],
       liftMetadata: [],
       liftModifications: [],
+      liftModificationMaxes: [],
       focusBlocks: [],
       focusDayStates: [],
     };
