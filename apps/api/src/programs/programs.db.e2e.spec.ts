@@ -36,6 +36,9 @@ import {
   seedTrainingMaxes,
 } from '../adapters/in-memory/fixtures';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
+import { currentMacrocycleId, injectPage } from '../testing/macrocycle-id';
+import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
+import type { InjectOptions } from 'fastify';
 import { DomainNotFoundFilter } from './not-found.filter';
 import { DomainConflictFilter } from './conflict.filter';
 
@@ -98,13 +101,13 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
   const AUTH = { authorization: `Bearer ${TEST_USER}` };
 
   const get = (url: string) =>
-    app.getHttpAdapter().getInstance().inject({ method: 'GET', url, headers: AUTH });
+    injectPage(app, { method: 'GET', url, headers: AUTH });
 
   const post = (url: string) =>
-    app.getHttpAdapter().getInstance().inject({ method: 'POST', url, headers: AUTH });
+    injectPage(app, { method: 'POST', url, headers: AUTH });
 
   const postJson = (url: string, body: unknown) =>
-    app.getHttpAdapter().getInstance().inject({
+    injectPage(app, {
       method: 'POST',
       url,
       headers: { 'content-type': 'application/json', ...AUTH },
@@ -112,7 +115,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
   const patchJson = (url: string, body: unknown) =>
-    app.getHttpAdapter().getInstance().inject({
+    injectPage(app, {
       method: 'PATCH',
       url,
       headers: { 'content-type': 'application/json', ...AUTH },
@@ -120,7 +123,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
   const putJson = (url: string, body: unknown) =>
-    app.getHttpAdapter().getInstance().inject({
+    injectPage(app, {
       method: 'PUT',
       url,
       headers: { 'content-type': 'application/json', ...AUTH },
@@ -128,7 +131,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
   const deleteReq = (url: string) =>
-    app.getHttpAdapter().getInstance().inject({ method: 'DELETE', url, headers: AUTH });
+    injectPage(app, { method: 'DELETE', url, headers: AUTH });
 
   const postCsv = (url: string, csvContent: string) => {
     const boundary = '----LiftRecordImportBoundary';
@@ -140,7 +143,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       csvContent,
       `--${boundary}--`,
     ].join('\r\n');
-    return app.getHttpAdapter().getInstance().inject({
+    return injectPage(app, {
       method: 'POST',
       url,
       headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, ...AUTH },
@@ -406,10 +409,20 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(res.json().macrocycleStartDate).toBe('2026-06-01');
     });
 
-    it('POST /programs/:program/macrocycles with a fromMacrocycleNum the program lacks returns 404', async () => {
-      const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, { fromMacrocycleNum: 99 });
-      expect(res.statusCode).toBe(404);
-      expect(res.json().code).toBe('macrocycle-not-found');
+    it('POST /programs/:program/macrocycles with a fromMacrocycleNum the program lacks returns 409 macrocycle-moved', async () => {
+      // No page has an id for a macrocycle the program lacks, so a page's id names another (#1200).
+      const res = await injectPage(app, {
+        method: 'POST',
+        url: `/programs/${SEED_PROGRAM}/macrocycles`,
+        headers: {
+          'content-type': 'application/json',
+          ...AUTH,
+          [MACROCYCLE_ID_HEADER]: await currentMacrocycleId(app, SEED_PROGRAM, AUTH.authorization),
+        },
+        payload: JSON.stringify({ fromMacrocycleNum: 99 }),
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('macrocycle-moved');
     });
 
     it('POST /programs/unknown/macrocycles returns 404', async () => {
@@ -500,7 +513,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     const AS_INIT = { authorization: `Bearer ${USER_INIT}` };
 
     it('happy path — creates a MacrocycleDashboard row and returns 201 with expected shape', async () => {
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'POST',
         url: '/programs/5-3-1/macrocycles/initialize',
         headers: { 'content-type': 'application/json', ...AS_INIT },
@@ -523,7 +536,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     it('409 Conflict — second call for the same user+program', async () => {
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'POST',
         url: '/programs/5-3-1/macrocycles/initialize',
         headers: { 'content-type': 'application/json', ...AS_INIT },
@@ -533,7 +546,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     it('400 Bad Request — unrecognized program ID', async () => {
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'POST',
         url: '/programs/not-a-real-program/macrocycles/initialize',
         headers: { 'content-type': 'application/json', ...AS_INIT },
@@ -592,7 +605,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
 
   describe('workout lift overrides (DB)', () => {
     const deleteReq = (url: string) =>
-      app.getHttpAdapter().getInstance().inject({ method: 'DELETE', url, headers: AUTH });
+      injectPage(app, { method: 'DELETE', url, headers: AUTH });
 
     it('POST override persists to the database', async () => {
       const dashRes = await get(`/programs/${SEED_PROGRAM}/macrocycles/current`);
@@ -712,9 +725,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     it('user isolation — lift overrides are scoped to userId', async () => {
-      const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
-        app.getHttpAdapter().getInstance(),
-      );
+      const injectRaw = (opts: InjectOptions) => injectPage(app, opts);
       const AS_ALICE = { authorization: `Bearer ${USER_ALICE}` };
       const AS_BOB = { authorization: `Bearer ${USER_BOB}` };
 
@@ -770,9 +781,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     it('user isolation — reschedule override is scoped to userId', async () => {
-      const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
-        app.getHttpAdapter().getInstance(),
-      );
+      const injectRaw = (opts: InjectOptions) => injectPage(app, opts);
       const AS_ALICE = { authorization: `Bearer ${USER_ALICE}` };
       const AS_BOB = { authorization: `Bearer ${USER_BOB}` };
 
@@ -843,9 +852,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     it('user isolation — strength goals are scoped to userId', async () => {
-      const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
-        app.getHttpAdapter().getInstance(),
-      );
+      const injectRaw = (opts: InjectOptions) => injectPage(app, opts);
       const AS_ALICE = { authorization: `Bearer ${USER_ALICE}` };
       const AS_BOB = { authorization: `Bearer ${USER_BOB}` };
 
@@ -907,9 +914,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     it('user isolation — lift metadata is scoped to userId', async () => {
-      const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
-        app.getHttpAdapter().getInstance(),
-      );
+      const injectRaw = (opts: InjectOptions) => injectPage(app, opts);
       const AS_ALICE = { authorization: `Bearer ${USER_ALICE}` };
       const AS_BOB = { authorization: `Bearer ${USER_BOB}` };
 

@@ -9,13 +9,7 @@ import { InMemoryLiftRecordRepository } from '../adapters/in-memory/lift-record.
 import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { InMemoryWorkoutSkipOverrideRepository } from '../adapters/in-memory/workout-skip-override.adapter';
 import { MacrocycleNumberConflictError } from '../ports/errors';
-import {
-  RENUMBERING_SETTING,
-  renumberingChanges,
-  renumberingEnabled,
-  renumberPreImageKeys,
-  renumberProgram,
-} from './macrocycle-renumbering';
+import { renumberingChanges, renumberPreImageKeys, renumberProgram } from './macrocycle-renumbering';
 
 const exporter = new InMemorySpanExporter();
 new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] }).register();
@@ -72,10 +66,7 @@ describe('renumberPreImageKeys', () => {
 });
 
 describe('renumberProgram', () => {
-  const previous = process.env[RENUMBERING_SETTING];
   afterEach(() => {
-    if (previous === undefined) delete process.env[RENUMBERING_SETTING];
-    else process.env[RENUMBERING_SETTING] = previous;
     exporter.reset();
   });
 
@@ -119,32 +110,7 @@ describe('renumberProgram', () => {
   const numbersByStart = async (repos: Awaited<ReturnType<typeof outOfOrder>>) =>
     (await repos.macrocycle.list(PROGRAM)).map((m) => [m.startDate.toISOString().slice(0, 10), m.macrocycleNum]);
 
-  it('rewrites nothing while the setting is off', async () => {
-    delete process.env[RENUMBERING_SETTING];
-    const repos = await outOfOrder();
-
-    expect(await renumberProgram(repos, PROGRAM)).toEqual(new Map());
-
-    expect(await numbersByStart(repos)).toEqual([['2025-03-03', 2], ['2026-01-05', 1]]);
-    expect(exporter.getFinishedSpans()).toEqual([]);
-  });
-
-  it('treats a setting other than "on" as off, with a warning', async () => {
-    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    try {
-      process.env[RENUMBERING_SETTING] = 'ON';
-      expect(renumberingEnabled()).toBe(false);
-      expect(renumberingEnabled()).toBe(false);
-      // Once per value, not on every call.
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0]?.[0]).toContain('"ON"');
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
   it('numbers by start date in every store and batch, recording what it moved on a span', async () => {
-    process.env[RENUMBERING_SETTING] = 'on';
     const repos = await outOfOrder();
     // A batch with no key on a moving number is left as it is.
     await repos.importBatch.save({
@@ -178,7 +144,6 @@ describe('renumberProgram', () => {
   });
 
   it('needs no exclusive lock when nothing moves', async () => {
-    process.env[RENUMBERING_SETTING] = 'on';
     const macrocycle = new InMemoryMacrocycleRepository([macrocycleRowFixture(1)]);
     macrocycle.lockHeld = 'shared';
 
@@ -188,7 +153,6 @@ describe('renumberProgram', () => {
   });
 
   it('refuses before moving anything when a row is left on a number it needs, naming the store', async () => {
-    process.env[RENUMBERING_SETTING] = 'on';
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     try {
       const skips = new InMemoryWorkoutSkipOverrideRepository();
@@ -227,7 +191,6 @@ describe('renumberProgram', () => {
   });
 
   it('answers 409 macrocycle-busy, moving nothing, when page writes hold the lock it must upgrade', async () => {
-    process.env[RENUMBERING_SETTING] = 'on';
     const repos = await outOfOrder();
     repos.macrocycle.lockHeld = 'shared';
 

@@ -1,9 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { LiftRecordResponse } from '@lifting-logbook/types';
 import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WorkoutLoggerProps } from './types';
-import { createLiftRecord, recordBodyWeight } from '@/lib/client-api';
+import { createLiftRecord, recordBodyWeight, rescheduleWorkout } from '@/lib/client-api';
 import { buildDraftKey } from './workoutDraftStorage';
 import { ApiClientError } from '@lifting-logbook/api-client';
 import { browserNavigation } from '@/lib/macrocycleUrl';
@@ -77,6 +77,8 @@ beforeEach(() => {
   // Several tests below share the default program/macrocycle/workout/lift/set identity
   // from makeProps()/makeLift() and would otherwise leak drafts across tests.
   window.localStorage.clear();
+  // The missing-id reload records its page here, which would stop a later test's reload.
+  window.sessionStorage.clear();
 });
 
 describe('WorkoutLogger — weight-unit display preference', () => {
@@ -457,6 +459,41 @@ describe('WorkoutLogger — a renumbered macrocycle (#1198)', () => {
     window.history.pushState({}, '', '/');
     expect(screen.queryByText('Failed to log set. Try again.')).not.toBeInTheDocument();
     expect(window.localStorage.getItem(buildDraftKey('5-3-1', 1, 1, 'Back Squat', 1, undefined, 'mc-a'))).not.toBeNull();
+  });
+
+  it('reloads the page when the API asks for the macrocycle id, without an error (#1200)', async () => {
+    const user = userEvent.setup();
+    mockCreateLiftRecord.mockRejectedValue(
+      new ApiClientError('Reload the page and try again.', 400, 'macrocycle-id-required', { code: 'macrocycle-id-required' }),
+    );
+    window.history.pushState({}, '', '/macrocycle/1/workout/1?from=history');
+    render(<WorkoutLogger {...makeProps()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() => expect(mockAssign).toHaveBeenCalledWith('/macrocycle/1/workout/1?from=history'));
+    window.history.pushState({}, '', '/');
+    expect(screen.queryByText('Failed to log set. Try again.')).not.toBeInTheDocument();
+  });
+
+  it('puts a logged workout’s date back and says why when the change is refused, after its one reload (#1200)', async () => {
+    const reload = new ApiClientError("This page of '5-3-1' doesn't say which macrocycle it's for. Reload the page and try again.", 400, 'macrocycle-id-required');
+    jest.mocked(rescheduleWorkout).mockRejectedValue(reload);
+    window.history.pushState({}, '', '/macrocycle/1/workout/1');
+    // The page was already reloaded for a missing id a moment ago.
+    window.sessionStorage.setItem('macrocycle-id-reload', JSON.stringify({ page: '/macrocycle/1/workout/1', at: Date.now() }));
+    try {
+      render(<WorkoutLogger {...makeProps({ isReadOnly: true })} />);
+
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-07-10' } });
+
+      await waitFor(() => expect(screen.getByText(/doesn't say which macrocycle it's for/)).toBeInTheDocument());
+      expect(screen.getByLabelText('Date')).toHaveValue('2026-07-08');
+      expect(mockAssign).not.toHaveBeenCalled();
+    } finally {
+      window.sessionStorage.clear();
+      window.history.pushState({}, '', '/');
+    }
   });
 
   it('asks for a retry while an import holds the lock, without reloading', async () => {

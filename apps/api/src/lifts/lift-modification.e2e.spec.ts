@@ -7,6 +7,7 @@ import { AppModule } from '../app.module';
 import { SEED_PROGRAM } from '../adapters/in-memory/fixtures';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
+import { injectPage } from '../testing/macrocycle-id';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 
 describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
@@ -25,7 +26,7 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
   });
 
   const inject = (user: string, method: string, url: string, body?: unknown) =>
-    app.getHttpAdapter().getInstance().inject({
+    injectPage(app, {
       method: method as 'GET',
       url,
       headers:

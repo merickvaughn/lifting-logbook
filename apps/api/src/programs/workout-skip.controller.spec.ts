@@ -79,26 +79,26 @@ describe('WorkoutSkipController', () => {
 
     it('throws 400 for macrocycleNum < 1', async () => {
       await expect(
-        controller.skipWorkout('5-3-1', '0', '1', {}, MOCK_USER),
+        controller.skipWorkout('5-3-1', '0', '1', {}, MOCK_USER, 'm-0'),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('throws 400 for non-numeric workoutNum', async () => {
       await expect(
-        controller.skipWorkout('5-3-1', '1', 'abc', {}, MOCK_USER),
+        controller.skipWorkout('5-3-1', '1', 'abc', {}, MOCK_USER, 'm-1'),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('throws 400 for workoutNum < 1', async () => {
       await expect(
-        controller.skipWorkout('5-3-1', '1', '0', {}, MOCK_USER),
+        controller.skipWorkout('5-3-1', '1', '0', {}, MOCK_USER, 'm-1'),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('throws 404 for an unknown program', async () => {
       specRepo.getProgramSpec.mockResolvedValue([]);
       await expect(
-        controller.skipWorkout('no-such-program', '2', '3', {}, MOCK_USER),
+        controller.skipWorkout('no-such-program', '2', '3', {}, MOCK_USER, 'm-2'),
       ).rejects.toThrow(NotFoundException);
       expect(skipRepo.skipWorkout).not.toHaveBeenCalled();
     });
@@ -106,7 +106,7 @@ describe('WorkoutSkipController', () => {
     it('throws 400 for a workoutNum beyond the program length', async () => {
       // 5-3-1 is 12 weeks x 2 offsets = 24 workout days; 9999 maps to no real day.
       await expect(
-        controller.skipWorkout('5-3-1', '2', '9999', {}, MOCK_USER),
+        controller.skipWorkout('5-3-1', '2', '9999', {}, MOCK_USER, 'm-2'),
       ).rejects.toThrow(BadRequestException);
       expect(skipRepo.skipWorkout).not.toHaveBeenCalled();
     });
@@ -114,7 +114,7 @@ describe('WorkoutSkipController', () => {
     it('throws 400 for a macrocycleNum that is not the active macrocycle', async () => {
       // Active macrocycle is 2 (dashboard mock); a skip on macrocycle 7 could never be read.
       await expect(
-        controller.skipWorkout('5-3-1', '7', '3', {}, MOCK_USER),
+        controller.skipWorkout('5-3-1', '7', '3', {}, MOCK_USER, 'm-7'),
       ).rejects.toThrow(BadRequestException);
       expect(skipRepo.skipWorkout).not.toHaveBeenCalled();
     });
@@ -122,18 +122,18 @@ describe('WorkoutSkipController', () => {
     it('propagates ProgramNotFoundError when the macrocycle dashboard is missing', async () => {
       dashboardRepo.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
       await expect(
-        controller.skipWorkout('5-3-1', '2', '3', {}, MOCK_USER),
+        controller.skipWorkout('5-3-1', '2', '3', {}, MOCK_USER, 'm-2'),
       ).rejects.toThrow(ProgramNotFoundError);
       expect(skipRepo.skipWorkout).not.toHaveBeenCalled();
     });
 
     it('calls skipWorkout with parsed params and optional reason', async () => {
-      await controller.skipWorkout('5-3-1', '2', '3', { reason: 'sick' }, MOCK_USER);
+      await controller.skipWorkout('5-3-1', '2', '3', { reason: 'sick' }, MOCK_USER, 'm-2');
       expect(skipRepo.skipWorkout).toHaveBeenCalledWith('5-3-1', 2, 3, 'sick');
     });
 
     it('calls skipWorkout without reason when dto has none', async () => {
-      await controller.skipWorkout('5-3-1', '2', '3', {}, MOCK_USER);
+      await controller.skipWorkout('5-3-1', '2', '3', {}, MOCK_USER, 'm-2');
       expect(skipRepo.skipWorkout).toHaveBeenCalledWith('5-3-1', 2, 3, undefined);
     });
   });
@@ -147,40 +147,40 @@ describe('WorkoutSkipController', () => {
 
     it('throws 400 for macrocycleNum < 1', async () => {
       await expect(
-        controller.unskipWorkout('5-3-1', '0', '1', MOCK_USER),
+        controller.unskipWorkout('5-3-1', '0', '1', MOCK_USER, 'm-0'),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('throws 400 for non-numeric workoutNum', async () => {
       await expect(
-        controller.unskipWorkout('5-3-1', '1', 'abc', MOCK_USER),
+        controller.unskipWorkout('5-3-1', '1', 'abc', MOCK_USER, 'm-1'),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('throws 400 for workoutNum < 1', async () => {
       await expect(
-        controller.unskipWorkout('5-3-1', '1', '0', MOCK_USER),
+        controller.unskipWorkout('5-3-1', '1', '0', MOCK_USER, 'm-1'),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('throws 404 for an unknown program', async () => {
       specRepo.getProgramSpec.mockResolvedValue([]);
       await expect(
-        controller.unskipWorkout('no-such-program', '2', '3', MOCK_USER),
+        controller.unskipWorkout('no-such-program', '2', '3', MOCK_USER, 'm-2'),
       ).rejects.toThrow(NotFoundException);
       expect(skipRepo.unskipWorkout).not.toHaveBeenCalled();
     });
 
     it('throws 400 for a workoutNum beyond the program length', async () => {
       await expect(
-        controller.unskipWorkout('5-3-1', '2', '9999', MOCK_USER),
+        controller.unskipWorkout('5-3-1', '2', '9999', MOCK_USER, 'm-2'),
       ).rejects.toThrow(BadRequestException);
       expect(skipRepo.unskipWorkout).not.toHaveBeenCalled();
     });
 
     it('throws 400 for a macrocycleNum that is not the active macrocycle', async () => {
       await expect(
-        controller.unskipWorkout('5-3-1', '7', '3', MOCK_USER),
+        controller.unskipWorkout('5-3-1', '7', '3', MOCK_USER, 'm-7'),
       ).rejects.toThrow(BadRequestException);
       expect(skipRepo.unskipWorkout).not.toHaveBeenCalled();
     });
@@ -188,13 +188,13 @@ describe('WorkoutSkipController', () => {
     it('propagates ProgramNotFoundError when the macrocycle dashboard is missing', async () => {
       dashboardRepo.getMacrocycleDashboard.mockRejectedValue(new ProgramNotFoundError('5-3-1'));
       await expect(
-        controller.unskipWorkout('5-3-1', '2', '3', MOCK_USER),
+        controller.unskipWorkout('5-3-1', '2', '3', MOCK_USER, 'm-2'),
       ).rejects.toThrow(ProgramNotFoundError);
       expect(skipRepo.unskipWorkout).not.toHaveBeenCalled();
     });
 
     it('calls unskipWorkout with parsed params', async () => {
-      await controller.unskipWorkout('5-3-1', '2', '3', MOCK_USER);
+      await controller.unskipWorkout('5-3-1', '2', '3', MOCK_USER, 'm-2');
       expect(skipRepo.unskipWorkout).toHaveBeenCalledWith('5-3-1', 2, 3);
     });
   });

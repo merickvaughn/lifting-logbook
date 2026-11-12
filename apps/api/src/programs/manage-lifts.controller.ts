@@ -72,7 +72,7 @@ export class ManageLiftsController {
 
     await macrocycleDashboard.getMacrocycleDashboard(program);
     const idRow = await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'POST lift-overrides');
-    await assertMacrocycleWritable(repos, program, macrocycleNum, idRow);
+    assertMacrocycleWritable(program, idRow);
 
     const override = {
       lift: dto.lift,
@@ -105,7 +105,7 @@ export class ManageLiftsController {
 
     const repos = await this.factory.forUser(user);
     const idRow = await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'DELETE lift-overrides');
-    await assertMacrocycleWritable(repos, program, macrocycleNum, idRow);
+    assertMacrocycleWritable(program, idRow);
     await repos.workoutLiftOverride.deleteOverride(program, macrocycleNum, workoutNum, decodeURIComponent(lift));
   }
 }

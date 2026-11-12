@@ -67,10 +67,10 @@ export class RescheduleController {
       );
     }
 
-    // A stale page's id is a 409, an imported macrocycle is read-only (409) and an unknown
-    // number is a 404 (ADR-042).
+    // No id is a 400, an id for another number is a 409 `macrocycle-moved`, and an imported
+    // macrocycle is read-only (409) (ADR-042).
     const idRow = await checkMacrocycleId(repos, program, macrocycleNum, macrocycleId, 'PATCH reschedule');
-    await assertMacrocycleWritable(repos, program, macrocycleNum, idRow);
+    assertMacrocycleWritable(program, idRow);
 
     // getMacrocycleDashboard throws ProgramNotFoundError when the program has no macrocycle.
     // Its macrocycleNum is the *active* macrocycle, and the entire read model (GET workout,

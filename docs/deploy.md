@@ -549,6 +549,320 @@ new revision (#1042), so don't approve a production deploy until `main` has the 
 without deploying, run `update-traffic --to-latest`. See
 [Deploy regression rollback → Fast path on Cloud Run](runbooks/deploy-regression-rollback.md#fast-path-on-cloud-run-route-traffic-to-the-previous-revision).
 
+### Reversing the macrocycle renumbering
+
+The [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200) migrations (ADR-042)
+renumber every user's stored macrocycles by start date when the deploy runs, and the API revision
+they ship with renumbers again after every change. They record each macrocycle's number before
+the backfill in `macrocycle."backfillNumber"`, and `macrocycle_renumber_reverse()` puts those
+numbers back in every table that holds one and in lift-record import batches' keys. Eight run in
+order:
+
+- `20261112000000_renumber_macrocycles_by_date` does nothing: staging applied an early draft under
+  that name.
+- `20261112000001_renumber_macrocycles_by_date` adds the columns and functions and runs them, but
+  reads nothing: the migrator can't bypass row-level security (below). On a database migrated as a
+  superuser, such as the local `docker-compose.yml` one, it does read the rows, and runs the
+  backfill without the fix in `20261112000002_keep_rows_below_highest_set`. That matters only for
+  a number first stored after `20261110000000` (whose backfill gave every number then stored a
+  row), with no sets, below a number with sets. Then `20261112000001` fails with *would merge*, or
+  leaves that number without a macrocycle row, and `20261112000003` skips, since the rows are
+  already renumbered. To recover a local database, run `npx prisma migrate reset` from `apps/api`,
+  which empties it.
+- `20261112000002_backfill_window_rows_without_lock` only replaces one function, so it holds no
+  lock worth waiting on and is safe to retry.
+- `20261112000002_keep_rows_below_highest_set` also only replaces that function, so the backfill
+  keeps a row for a number with no sets below a number with sets. Without the row, renumbering
+  could move a macrocycle onto that number and fail. Its name sorts before `20261112000003` so that
+  production runs it first; staging, which had already run the others, ran it last.
+- `20261112000003_renumber_without_forced_rls` does the work: it turns FORCE ROW LEVEL SECURITY
+  off on the nine tables involved, repeats the #1197 backfill, closes and renumbers, and turns
+  FORCE back on.
+- `20261112000004_renumbering_runbook_functions` adds the one-statement functions the steps below
+  call, and a `wait_for_locks` argument to `macrocycle_renumber_reverse()`. It reads no rows.
+- `20261112000005_renumbering_force_guard` makes a direct call to a renumbering step fail while
+  FORCE is on, and narrows what the report holds to the two tables it reads. It reads no rows.
+- `20261112000006_renumbering_forced_table_list` keeps the nine tables in one list, which the
+  FORCE switch and that check both read. It reads no rows.
+
+**The migrator sees no rows with FORCE on.** It owns the tables but isn't a superuser or
+`BYPASSRLS` (`rolsuper` and `rolbypassrls` are false), and FORCE ROW LEVEL SECURITY binds the
+owner, so with `app.current_user_id` unset every policy matches nothing. So each step below that
+reads or changes users' rows calls a `macrocycle_runbook_*` function, which turns FORCE off, does
+the step, and turns FORCE back on, all in the one statement: the tables are held exclusively only
+while it runs, and an error rolls everything back, FORCE included. Calling
+`macrocycle_renumber_reverse()` or `macrocycle_renumber_by_date()` directly fails with *FORCE ROW
+LEVEL SECURITY is on*, since it would see no rows. The app role, `lifting_app`, isn't the owner,
+so RLS filters it either way.
+
+Run each step as the `psql` command shown, in place of the `psql` line in
+[Connecting as the migrator](#connecting-as-the-migrator), not at an interactive prompt: psql
+commits each line typed there on its own, and a transaction left open holds the tables. Each
+statement is its own `-c` option: psql runs them in order in one session and prints each result,
+and with `ON_ERROR_STOP` an error ends the session, which rolls back an open transaction
+([psql](https://www.postgresql.org/docs/current/app-psql.html)). Several statements in one `-c`
+string would show only the last result before psql 15. `-X` skips the operator's `.psqlrc`,
+which could otherwise set `AUTOCOMMIT off` and roll a real run back when psql exits.
+
+Each command that turns FORCE off sets a `lock_timeout`. It bounds the wait for each table, not
+the whole step: the step takes the tables one at a time, holding the ones it has, and page queries
+queue behind it while it waits. So a step that switches all nine tables can hold pages up for as
+much as nine times its timeout, plus the time the step itself takes, since it holds every table
+until it ends
+([`lock_timeout`](https://www.postgresql.org/docs/16/runtime-config-client.html#GUC-LOCK-TIMEOUT)
+applies to each lock wait separately). Run these steps when no import is running, since the switch
+waits for every transaction using the tables and an import's can run for 30 seconds. The reversal
+and the renumber use 10 seconds; if one gives up, it has changed nothing, so run it again.
+
+An import, and an import's undo, hold the user's macrocycle lock exclusively, and most page writes
+hold it shared, so this reads above 0 while an import or an undo is running in this database:
+
+```bash
+psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+  -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND mode = 'ExclusiveLock' AND granted
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+```
+
+Other holders count too, and each should end before a step starts: a page write that starts or
+deletes a macrocycle holds the lock exclusively while it renumbers, until its transaction ends; a
+running `prisma migrate deploy` holds an exclusive advisory lock; and so does a runbook step in
+another session. A 0 doesn't rule everything out: Download My Data reads the numbered tables in a
+transaction of up to 30 seconds without the lock, so the count can't see it, and a step started
+then waits for it, up to its timeout per table, and gives up if the export outlasts that. The
+count is also only a snapshot: an import that starts after it is what the step's `lock_timeout`
+covers. Either way, a step that gives up has changed nothing.
+
+**Before merging the PR** (the merge starts the Deploy run, whose `plan-production` would show the
+public IP this needs), check that the shared lock table can hold one advisory lock per user, since
+the migration holds them all until it commits. The `macrocycle_runbook_*` functions don't exist
+before the deploy, so this turns FORCE off by hand, in a transaction that ends in `ROLLBACK`, which
+puts it back. Its one-second `lock_timeout` bounds the wait for each of the eight tables, as above,
+so it can hold pages up for about eight seconds plus the count; if it gives up, run it again:
+
+```bash
+psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+  -c "BEGIN" \
+  -c "SET LOCAL lock_timeout = '1s'" \
+  -c "ALTER TABLE macrocycle NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE lift_record NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE macrocycle_dashboard NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE focus_day_state NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE workout_date_override NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE workout_skip_override NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE workout_lift_override NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE macrocycle_scheduled_workout NO FORCE ROW LEVEL SECURITY" \
+  -c "SELECT (SELECT count(DISTINCT u) FROM (
+          SELECT \"userId\" AS u FROM macrocycle UNION SELECT \"userId\" FROM lift_record
+          UNION SELECT \"userId\" FROM macrocycle_dashboard UNION SELECT \"userId\" FROM focus_day_state
+          UNION SELECT \"userId\" FROM workout_date_override UNION SELECT \"userId\" FROM workout_skip_override
+          UNION SELECT \"userId\" FROM workout_lift_override UNION SELECT \"userId\" FROM macrocycle_scheduled_workout
+        ) AS owners) AS users,
+       current_setting('max_locks_per_transaction')::int
+         * (current_setting('max_connections')::int + current_setting('max_prepared_transactions')::int) AS lock_slots" \
+  -c "ROLLBACK"
+```
+
+`users` should be well under `lock_slots`, which every other session shares. If it isn't, raise
+`max_locks_per_transaction` first, through Terraform: add a second `database_flags` block for it
+next to `cloudsql.iam_authentication` in `infra/terraform/main.tf` and ship that change through
+the pipeline in a PR merged ahead of this one. The flag restarts the instance. Don't set it with
+`gcloud sql instances patch --database-flags`: that replaces the whole flag list, dropping
+`cloudsql.iam_authentication`, and the next `plan-production` would show the drift.
+
+**During the deploy.** `20261112000003` holds the nine tables, and every user's macrocycle lock,
+until it commits: 1.7 to 1.8 seconds on local Postgres, run as an owner that isn't superuser or
+`BYPASSRLS`, for 20,000 sets in 100 macrocycles for ten users with no import batches, making all
+100 rows and moving every number. It takes longer with more rows or import batches, and longer if
+it waits on an import. Pages loaded in that time get no macrocycle id. Until the new API serves,
+the old revision still accepts a write without an id by its number, as it has since #1198, and
+the number such a page holds may now name a different macrocycle, so the set can land on the wrong
+one with no error. Once the new API serves, a write without an id gets a 400
+`macrocycle-id-required` instead, which the old web shows as a generic error ("Failed to log set.
+Try again.") until the new web is live, and which reloads the page after that. Expect a short
+burst of `Refused a macrocycle write without an id (#1200)` warnings; it isn't a regression unless
+it continues after the new web is serving.
+
+**Approve the production deploy while nobody is using the app.** `20261112000003` switches
+`macrocycle` first and the other tables after it, while the old revision's workout page reads the
+dashboard, sets and overrides first and `macrocycle` last. A page load caught between the two
+deadlocks with the migration, and since the migration started waiting first, PostgreSQL is likely
+to abort it, which fails the deploy (below).
+
+**After the deploy**, look for writes that may have landed on a renumbered macrocycle: the API's
+`Macrocycle write without an id (#1198)` log lines between the migration and the new API serving,
+in Logs Explorer (`resource.type="cloud_run_revision"
+resource.labels.service_name="lifting-logbook-prod-api" jsonPayload.msg="Macrocycle write without an
+id (#1198)"`). Each names its route and program; check that user's sets on that page.
+
+Then, as the migrator, this says what the migrations changed:
+
+```bash
+psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 -x \
+  -c "SET lock_timeout = '5s'" \
+  -c "SELECT * FROM macrocycle_runbook_report()"
+```
+
+It holds `macrocycle` and `macrocycle_dashboard` exclusively while it reads them; if the
+`lock_timeout` runs out, run it again.
+
+- `renumbered`: macrocycles the renumbering gave a new number.
+- `open_live_off_dashboard`: open live macrocycles no dashboard points at, which the old revision
+  left open. It should be 0.
+- `recorded`: macrocycles with a recorded old number. 0 means the migrations read no rows.
+- `closed`: the rows the migration closed, each `in-progress` with no end date before, with the
+  status and end date it gave them. The reversal leaves them closed: reopening one would put back a
+  live row on a number the dashboard doesn't show.
+
+The migrate job's log may not carry the functions' notices, which is why this is here.
+
+#### Rolling back over it
+
+**Rolling the API back doesn't need the reversal.** The revision before it (#1199) checks each
+page write's macrocycle id, and starts a new macrocycle on the number past every stored one, so
+it runs on date-ordered numbers as they are. Roll back as usual ([Rolling back](#rolling-back));
+leave the web revision as it is, since the old API accepts the id it sends.
+
+**Reverse the numbering only to undo the renumbering itself**, for instance if it ordered
+someone's history wrongly. Do it after the API is rolled back, or the next change renumbers again:
+
+1. **Test it without committing**, as the migrator:
+
+   ```bash
+   psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+     -c "BEGIN" \
+     -c "SET LOCAL lock_timeout = '10s'" \
+     -c "SELECT macrocycle_runbook_reverse()" \
+     -c "ROLLBACK"
+   ```
+
+   It refuses, moving nothing, when a macrocycle has no `backfillNumber` (*Macrocycle N of
+   program P for user U has no backfillNumber*): the new revision created it after the backfill,
+   so it has no old number to go back to. Then stop here. The API you rolled back to keeps running
+   on the new numbers, so nothing is stranded; fix forward instead.
+2. **Run it**, the same command without `BEGIN` and `ROLLBACK`:
+
+   ```bash
+   psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+     -c "SET lock_timeout = '10s'" \
+     -c "SELECT macrocycle_runbook_reverse()"
+   ```
+
+   It returns how many numbers it moved, or 0 with a notice when nothing needs moving. Import
+   batches made after the backfill reverse too: their keys move with the numbers. It takes each
+   user's macrocycle lock without waiting, as the migration does: turning FORCE off has already
+   waited for every transaction using the tables, so a request still holding a lock hasn't used
+   them, and waiting on it would deadlock. A request that used one table and waits on another the
+   function already holds can still deadlock with it; PostgreSQL then aborts one of the two, and
+   if that's the reversal, nothing changed: run it again.
+3. **Leave the schema alone.** The old code ignores `"backfillNumber"`, `"backfilledAt"` and
+   `"backfillClosedAt"`, and `prisma migrate status` still passes, since the migrations stay
+   applied.
+
+To go forward again after a reversal, this keeps the recorded numbers and records one for any
+macrocycle created since:
+
+```bash
+psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+  -c "SET lock_timeout = '10s'" \
+  -c "SELECT macrocycle_runbook_renumber()"
+```
+
+Then route traffic back to the new revision:
+
+```bash
+gcloud run services update-traffic lifting-logbook-prod-api --to-latest \
+  --region=us-central1 --project=lifting-logbook-prod
+```
+
+To reverse or renumber one user only, pass their id to either function, in the same commands:
+`-c "SELECT macrocycle_runbook_reverse('<userId>')"` or
+`-c "SELECT macrocycle_runbook_renumber('<userId>')"`. The one-user dry run is the step 1 command
+with the id.
+
+Each call turns FORCE back on before it returns. To confirm it's on for every table, this should
+list nothing:
+
+```bash
+psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+  -c "SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relrowsecurity AND NOT relforcerowsecurity"
+```
+
+#### If the renumbering migration fails
+
+It runs in one transaction, so a failure changes nothing: the deploy halts and the previous API
+revision keeps serving. The job's log names the error. Two causes are likely:
+
+- *deadlock detected*: a request that used one of the nine tables waited on another the migration
+  already held (see "During the deploy" above).
+- *canceling statement due to lock timeout*: its `lock_timeout` (40 seconds, for each table) ran
+  out while it waited for a transaction using one of the tables. App transactions, imports
+  included, end within 30 seconds, so this means one from outside the app, such as a psql session
+  left open. The migrator sees no users with FORCE on, so `20261112000001` takes no user's lock,
+  and `20261112000003` turns FORCE off first and then takes users' locks without waiting.
+
+For either, retry while nobody is using the app. "out of shared memory" with a hint to raise
+`max_locks_per_transaction` means the users outgrew the lock table: run the check in
+[Reversing the macrocycle renumbering](#reversing-the-macrocycle-renumbering) and raise the flag
+through Terraform, as it describes, before retrying.
+
+Prisma records the migration as failed, and every later `prisma migrate deploy` refuses (P3009)
+until it's marked rolled back. Run this as the migrator, from `apps/api`, in place of the `psql`
+line in [Connecting as the migrator](#connecting-as-the-migrator). Name the migration the P3009
+error names: usually `20261112000003_renumber_without_forced_rls`, which does the work, though it
+can be any of the eight.
+
+```bash
+DATABASE_URL="$MIGRATOR_URL" npx prisma migrate resolve --rolled-back <migration named in the P3009 error>
+```
+
+Then re-run the failed deploy jobs (`gh run rerun <run-id> --failed`) when no import is running.
+
+#### Connecting as the migrator
+
+The functions belong to the migrator role, which owns the schema; the runtime role
+(`lifting_app`) can't execute them. The Cloud SQL instance has only a private IP, so connect the
+way the break-glass script does ([Running database migrations](#running-database-migrations)):
+the instance name from Terraform, a public IP scoped to your address, and a trap that stops the
+proxy and removes the IP however the shell exits. From the repo root, for production:
+
+```bash
+(
+  set -euo pipefail
+  PROJECT=lifting-logbook-prod PREFIX=lifting-logbook-prod PORT=5433 IP_WAIT=15
+  cd infra/terraform
+  terraform init -backend-config="bucket=${PROJECT}-tfstate" -reconfigure -input=false >/dev/null
+  terraform workspace select production >/dev/null
+  INSTANCE=$(terraform output -raw database_instance_name)
+  PROXY_PID=""
+  # set +e: a proxy that already exited must not stop the trap before it removes the public IP.
+  trap 'set +e; [ -n "$PROXY_PID" ] && kill "$PROXY_PID" 2>/dev/null
+        gcloud sql instances patch "$INSTANCE" --no-assign-ip --project="$PROJECT" --quiet \
+          || echo "WARNING: the public IP is still on; remove it: gcloud sql instances patch $INSTANCE --no-assign-ip --project=$PROJECT" >&2' EXIT
+  gcloud sql instances patch "$INSTANCE" --assign-ip --authorized-networks="$(curl -fsSL ifconfig.me)/32" --project="$PROJECT" --quiet
+  until gcloud sql instances describe "$INSTANCE" --project="$PROJECT" --format="value(state)" | grep -q RUNNABLE; do sleep 5; done
+  sleep "$IP_WAIT"  # the new public IP takes a moment to become routable
+  cloud-sql-proxy "$PROJECT:us-central1:$INSTANCE?port=$PORT" & PROXY_PID=$!
+  for i in $(seq 30); do
+    node -e "require('net').createConnection($PORT,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))" && break
+    [ "$i" -lt 30 ] || { echo "Proxy not ready after 30s, giving up." >&2; exit 1; }
+    sleep 1
+  done
+  MIGRATOR_URL=$(gcloud secrets versions access latest --secret="$PREFIX-migrator-database-url" --project="$PROJECT" \
+    | sed -E "s|@[^/]+/|@127.0.0.1:$PORT/|")
+  psql -X "$MIGRATOR_URL"
+)
+```
+
+For staging, set `PROJECT=lifting-logbook-staging PREFIX=lifting-logbook-stg PORT=5434 IP_WAIT=30`
+(the wait `scripts/migrate-staging-db.sh` uses), initialize with
+`-backend-config="bucket=lifting-logbook-tfstate" -backend-config="prefix=terraform/state"` and
+select the `staging` workspace, as `scripts/migrate-staging-db.sh` does. To run a command such as
+`prisma migrate resolve` instead of `psql`, put it in place of the `psql` line, after
+`cd ../../apps/api`.
+
+The proxy encrypts the connection, so if `psql` reports an SSL error, set `sslmode=disable` in the
+URL, as the staging validation gate below does.
+
 ### Running database migrations
 
 **The deploy pipeline applies Prisma migrations automatically (ADR-027).** On every
@@ -592,15 +906,23 @@ after the Prisma migrations.
 ### Row-Level Security cutover — two-role split (#517)
 
 The app database enforces per-tenant isolation with Postgres Row-Level Security (migration
-`20260611000000_enable_rls`, ADR-010). RLS is **bypassed by `cloudsqlsuperuser` members**, so the
-runtime and the migrator connect as **different roles**:
+`20260611000000_enable_rls`, ADR-010). The runtime and the migrator connect as **different
+roles**:
 
 - **Runtime** (`google_sql_user.app_rls`, `lifting_app`) — `NOSUPERUSER NOBYPASSRLS`. The Cloud
   Run services and the GKE API pods read `lifting-logbook-<env>-database-url`, which connects as
   this role (so the policies enforce) and carries `?connection_limit=N` to cap the Prisma pool.
-- **Migrator** (`google_sql_user.app`, `lifting-logbook-app`) — the owner/superuser. The migrate
-  Cloud Run Job reads the separate `lifting-logbook-<env>-migrator-database-url` so it can run DDL
-  and data migrations (which `FORCE ROW LEVEL SECURITY` would otherwise filter to zero rows).
+- **Migrator** (`google_sql_user.app`, `lifting-logbook-app`) — the tables' owner, a
+  `cloudsqlsuperuser` member. The migrate Cloud Run Job reads the separate
+  `lifting-logbook-<env>-migrator-database-url` so it can run DDL. **It does not bypass RLS**:
+  it's neither a superuser nor `BYPASSRLS`, and its `cloudsqlsuperuser` membership doesn't pass
+  either on (checked on staging, 2026-11-12: as the migrator, `lift_record` counted 0 rows).
+  Every table has `FORCE ROW LEVEL SECURITY`, which binds the owner, so a data migration's reads
+  and writes match no rows unless it turns FORCE off for the tables it uses and back on after,
+  in the same migration, as `20261111120000_focus_progression_types` and
+  `20261112000003_renumber_without_forced_rls` do. Postgres:
+  [row security policies](https://www.postgresql.org/docs/current/ddl-rowsecurity.html),
+  [role attributes](https://www.postgresql.org/docs/current/role-attributes.html).
 
 `connection_limit` is derived in `infra/terraform/main.tf` (`local.db_connection_limit`) from the
 tier's `max_connections` and the Cloud Run maxScale; staging divides by an extra factor because the

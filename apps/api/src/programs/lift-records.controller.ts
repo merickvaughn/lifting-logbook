@@ -102,7 +102,7 @@ export class LiftRecordsController {
     const repos = await this.factory.forUser(user);
     const { liftRecord, macrocycleScheduledWorkout } = repos;
     const idRow = await checkMacrocycleId(repos, program, body.macrocycleNum, macrocycleId, 'POST lift-records');
-    await assertMacrocycleWritable(repos, program, body.macrocycleNum, idRow);
+    assertMacrocycleWritable(program, idRow);
 
     const modificationNames = await assertSetModifications(repos, body.lift, body.modifications ?? []);
 
@@ -294,7 +294,7 @@ export class LiftRecordsController {
     const key = parseLiftRecordId(program, id);
     if (!key) throw notFound();
     const idRow = await checkMacrocycleId(repos, program, key.macrocycleNum, macrocycleId, 'PATCH lift-records/:id');
-    await assertMacrocycleWritable(repos, program, key.macrocycleNum, idRow);
+    assertMacrocycleWritable(program, idRow);
 
     let checkedNames: ReadonlyMap<string, string> | undefined;
     if (body.modifications !== undefined) {

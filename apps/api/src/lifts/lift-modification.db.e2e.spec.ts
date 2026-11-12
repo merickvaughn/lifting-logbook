@@ -16,6 +16,7 @@ import { PrismaWorkoutRepository } from '../adapters/prisma/workout.repository';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
+import { injectPage } from '../testing/macrocycle-id';
 
 // See programs.db.e2e.spec.ts (#567): headroom for a contended full-suite Windows run.
 const DB_E2E_HOOK_TIMEOUT_MS = 30_000;
@@ -42,7 +43,7 @@ describeOrSkip('Lift modifications HTTP (e2e, PrismaRepositoryFactory)', () => {
   let prisma: PrismaClient;
 
   const as = (user: string) => (method: string, url: string, body?: unknown) =>
-    app.getHttpAdapter().getInstance().inject({
+    injectPage(app, {
       method: method as 'GET',
       url,
       headers:

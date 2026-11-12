@@ -5,12 +5,14 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
-import type { UserWorkoutSchedule } from '@lifting-logbook/types';
+import { MACROCYCLE_ID_HEADER, type UserWorkoutSchedule } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { InMemoryRepositoryFactory } from '../adapters/factory/in-memory-repository-factory';
 import { InMemoryUserSettingsRepository } from '../adapters/in-memory/user-settings.adapter';
 import { SEED_PROGRAM } from '../adapters/in-memory/fixtures';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import type { InjectOptions } from 'fastify';
+import { currentMacrocycleId, injectPage } from '../testing/macrocycle-id';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainNotFoundFilter } from './not-found.filter';
 
@@ -39,15 +41,19 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   });
 
   const AUTH = { authorization: 'Bearer dev-token' };
+  /** The id header of a page open on the seed program's current macrocycle. */
+  const currentPage = async (authorization: string) => ({
+    [MACROCYCLE_ID_HEADER]: await currentMacrocycleId(app, SEED_PROGRAM, authorization),
+  });
 
   const get = (url: string) =>
-    app.getHttpAdapter().getInstance().inject({ method: 'GET', url, headers: AUTH });
+    injectPage(app, { method: 'GET', url, headers: AUTH });
 
   const post = (url: string) =>
-    app.getHttpAdapter().getInstance().inject({ method: 'POST', url, headers: AUTH });
+    injectPage(app, { method: 'POST', url, headers: AUTH });
 
   const postJson = (url: string, body: unknown) =>
-    app.getHttpAdapter().getInstance().inject({
+    injectPage(app, {
       method: 'POST',
       url,
       headers: { 'content-type': 'application/json', ...AUTH },
@@ -55,7 +61,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
   const patchJson = (url: string, body: unknown) =>
-    app.getHttpAdapter().getInstance().inject({
+    injectPage(app, {
       method: 'PATCH',
       url,
       headers: { 'content-type': 'application/json', ...AUTH },
@@ -63,7 +69,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
   const putJson = (url: string, body: unknown) =>
-    app.getHttpAdapter().getInstance().inject({
+    injectPage(app, {
       method: 'PUT',
       url,
       headers: { 'content-type': 'application/json', ...AUTH },
@@ -71,7 +77,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
   const deleteReq = (url: string) =>
-    app.getHttpAdapter().getInstance().inject({ method: 'DELETE', url, headers: AUTH });
+    injectPage(app, { method: 'DELETE', url, headers: AUTH });
 
   it('GET /health returns ok without auth', async () => {
     const res = await app
@@ -150,7 +156,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   it('POST /programs/:program/lift-records logs a lift’s second occurrence apart from its first', async () => {
     const headers = { 'content-type': 'application/json', authorization: 'Bearer user-occurrence' };
     const postAs = (url: string, body: unknown) =>
-      app.getHttpAdapter().getInstance().inject({ method: 'POST', url, headers, payload: JSON.stringify(body) });
+      injectPage(app, { method: 'POST', url, headers, payload: JSON.stringify(body) });
     expect((await postAs(`/programs/${SEED_PROGRAM}/macrocycles/initialize`, {})).statusCode).toBe(201);
     const base = { macrocycleNum: 1, workoutNum: 1, date: '2026-07-01', lift: 'Squat', setNum: 1, reps: 5 };
     const first = await postAs(`/programs/${SEED_PROGRAM}/lift-records`, { ...base, weight: 200 });
@@ -232,22 +238,23 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('PATCH reschedule with a macrocycleNum the program lacks returns 404', async () => {
+    it('PATCH reschedule with a macrocycleNum the program lacks returns 409 macrocycle-moved', async () => {
       // Seed's active macrocycle is 1 (these tests run before any new-macrocycle writes), and
-      // the program has no macrocycle 2 (ADR-042). The 400 for a stored, non-active
-      // macrocycle is covered in reschedule.controller.spec.ts.
-      const res = await patchJson(
-        `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/reschedule`,
-        { newDate: '2026-06-01' },
-      );
-      expect(res.statusCode).toBe(404);
-      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
+      // the program has no macrocycle 2 (ADR-042), so no page has an id for it: a page open on
+      // 1 is told where its macrocycle is (#1200). The 400 for a stored, non-active macrocycle
+      // is covered in reschedule.controller.spec.ts.
+      const res = await injectPage(app, {
+        method: 'PATCH',
+        url: `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/reschedule`,
+        headers: { 'content-type': 'application/json', ...AUTH, ...(await currentPage(AUTH.authorization)) },
+        payload: JSON.stringify({ newDate: '2026-06-01' }),
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-moved', macrocycleNum: 1 });
     });
 
     it('PATCH reschedule requires auth', async () => {
-      const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
-        app.getHttpAdapter().getInstance(),
-      );
+      const injectRaw = (opts: InjectOptions) => injectPage(app, opts);
       const res = await injectRaw({ method: 'PATCH', url: RESCHEDULE_URL });
       expect(res.statusCode).toBe(401);
     });
@@ -266,9 +273,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
     it('isolates reschedule overrides between users', async () => {
-      const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
-        app.getHttpAdapter().getInstance(),
-      );
+      const injectRaw = (opts: InjectOptions) => injectPage(app, opts);
       // Alice is the pre-seeded dev user (has a macrocycle dashboard); Bob is a fresh user.
       const AS_ALICE = AUTH;
       const AS_BOB   = { authorization: 'Bearer user-bob-reschedule' };
@@ -361,20 +366,30 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
     it('POST /programs/:program/macrocycles with macrocycleDate pins the new macrocycle\'s start date', async () => {
-      // Pre-condition: the previous test moved the macrocycle to 3; advancing normally moves it to 4.
+      // Pre-condition: the previous test moved the macrocycle to 3.
       expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(3);
       const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, {
         macrocycleDate: '2026-06-01',
       });
       expect(res.statusCode).toBe(201);
       expect(res.json().macrocycleStartDate).toBe('2026-06-01');
+      // It starts before macrocycles 2 and 3, which started today, so it is renumbered to 2 (#1200).
+      expect(res.json().macrocycleNum).toBe(2);
+      expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(2);
     });
 
-    // A number the program doesn't have is a 404 since ADR-042; it was a 400 for having no records.
-    it('POST /programs/:program/macrocycles with an unknown fromMacrocycleNum returns 404', async () => {
-      const res = await postJson(`/programs/${SEED_PROGRAM}/macrocycles`, { fromMacrocycleNum: 99 });
-      expect(res.statusCode).toBe(404);
-      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
+    // A number the program doesn't have: no id is a 400, and a page's id, which names another
+    // number, is a 409 (#1200). It was a 404 under ADR-042, and before that a 400 for having no records.
+    it('POST /programs/:program/macrocycles with an unknown fromMacrocycleNum returns 409 macrocycle-moved', async () => {
+      // No page has an id for a macrocycle the program lacks, so a page's id names another (#1200).
+      const res = await injectPage(app, {
+        method: 'POST',
+        url: `/programs/${SEED_PROGRAM}/macrocycles`,
+        headers: { 'content-type': 'application/json', ...AUTH, ...(await currentPage(AUTH.authorization)) },
+        payload: JSON.stringify({ fromMacrocycleNum: 99 }),
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-moved' });
     });
 
     it('POST /programs/unknown/macrocycles returns 404', async () => {
@@ -385,7 +400,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
   // -------------------------------------------------------------------------
   // Multi-workout progression scenario — order-sensitive, continues from the
-  // state left by 'write operations' above: macrocycleNum=4, dev-token user.
+  // state left by 'write operations' above: macrocycleNum=2 (the macrocycle pinned to 2026-06-01, renumbered by start date), dev-token user.
   //
   // TMs after write operations (deterministic trace):
   //   Squat:          315 lbs  (macrocycle-1 set-1 was 205 lbs → proposed 210 < 315 → flagged, not applied)
@@ -393,7 +408,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   //   Deadlift:       405 lbs  (no macrocycle-1 DL records; unchanged from seed)
   //   Overhead Press: 145 lbs  (no macrocycle-1 OHP records; unchanged from seed)
   //
-  // Macrocycle 4 records logged below use dates newer than the seed dateUpdated (2026-04-13),
+  // Macrocycle 2 records logged below use dates newer than the seed dateUpdated (2026-04-13),
   // so the progression gate (record.date > max.dateUpdated) passes for hits.
   // Both Squat (200+5=205 < 315) and Deadlift (300+10=310 < 405) would be reductions
   // → both flagged, not applied.
@@ -412,7 +427,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     it('logs workout 1 — Squat hits target, Bench Press misses', async () => {
       // Squat set 1: reps=5 >= spec.reps=5 → progression gate passes
       const squatRes = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 4,
+        macrocycleNum: 2,
         workoutNum: 1,
         date: '2026-07-01',
         lift: 'Squat',
@@ -425,7 +440,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
       // Bench Press set 1: reps=3 < spec.reps=5 → progression gate fails
       const benchRes = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 4,
+        macrocycleNum: 2,
         workoutNum: 1,
         date: '2026-07-01',
         lift: 'Bench Press',
@@ -440,7 +455,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     it('logs workout 2 — Deadlift hits target, Overhead Press misses', async () => {
       // Deadlift set 1: reps=5 >= spec.reps=5 → progression gate passes
       const dlRes = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 4,
+        macrocycleNum: 2,
         workoutNum: 2,
         date: '2026-07-08',
         lift: 'Deadlift',
@@ -453,7 +468,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
       // Overhead Press set 1: reps=2 < spec.reps=5 → progression gate fails
       const ohpRes = await postJson(`/programs/${SEED_PROGRAM}/lift-records`, {
-        macrocycleNum: 4,
+        macrocycleNum: 2,
         workoutNum: 2,
         date: '2026-07-08',
         lift: 'Overhead Press',
@@ -469,7 +484,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const res = await get(`/programs/${SEED_PROGRAM}/workouts/1`);
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.macrocycleNum).toBe(4);
+      expect(body.macrocycleNum).toBe(2);
       expect(body.workoutNum).toBe(1);
       const liftNames = body.lifts.map((l: { lift: string }) => l.lift);
       expect(liftNames).toContain('Squat');
@@ -501,7 +516,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const res = await get(`/programs/${SEED_PROGRAM}/workouts/2`);
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.macrocycleNum).toBe(4);
+      expect(body.macrocycleNum).toBe(2);
       expect(body.workoutNum).toBe(2);
       const liftNames = body.lifts.map((l: { lift: string }) => l.lift);
       expect(liftNames).toContain('Deadlift');
@@ -548,10 +563,10 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   //
   // Order-sensitive, continues from the state left by the multi-workout
   // scenario above:
-  //   macrocycleNum:   4
+  //   macrocycleNum:   2
   //   TMs:        Squat 315, Bench 225, Deadlift 405, Overhead Press 145
   //               (all dateUpdated 2026-04-13 — none updated by prior recalc)
-  //   records:    macrocycle-4 set-1 entries for all 4 lifts (none updated TMs)
+  //   records:    macrocycle-2 set-1 entries for all 4 lifts (none updated TMs)
   //
   // Goal: drive at least one lift through a genuine TM increase across two
   // macrocycle-advance boundaries and assert the updated maxes persist into the
@@ -568,9 +583,9 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     // mutates adapter state (macrocycleNum, training maxes, dateUpdated) that the
     // next one reads. Reordering will silently break expected-weight assertions
     // because the TM/dateUpdated gates in updateMaxes depend on prior state.
-    it('advances macrocycle 4 → 5 to clear prior-scenario state; TMs unchanged', async () => {
-      // Existing macrocycle-4 records were all flagged → updateMaxes leaves TMs at
-      // 315/225/405/145. Advancing now just bumps macrocycleNum.
+    it('advances from macrocycle 2 to a new macrocycle 5 to clear prior-scenario state; TMs unchanged', async () => {
+      // Existing macrocycle-2 records were all flagged → updateMaxes leaves TMs at
+      // 315/225/405/145. The new macrocycle starts today, after the four stored ones, so it is 5.
       const advanceRes = await post(`/programs/${SEED_PROGRAM}/macrocycles`);
       expect(advanceRes.statusCode).toBe(201);
       expect(advanceRes.json().macrocycleNum).toBe(5);
@@ -759,7 +774,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const listRes = await get(`/programs/${SEED_PROGRAM}/training-maxes/history`);
       const firstId = listRes.json().entries[0].id as string;
 
-      const patchRes = await app.getHttpAdapter().getInstance().inject({
+      const patchRes = await injectPage(app, {
         method: 'PATCH',
         url: `/programs/${SEED_PROGRAM}/training-maxes/history/${firstId}`,
         headers: { 'content-type': 'application/json', authorization: 'Bearer dev-token' },
@@ -774,7 +789,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
     it('PATCH /training-maxes/history/:id with unknown id returns 404', async () => {
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'PATCH',
         url: `/programs/${SEED_PROGRAM}/training-maxes/history/nonexistent-id`,
         headers: { 'content-type': 'application/json', authorization: 'Bearer dev-token' },
@@ -785,9 +800,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   });
 
   it('isolates adapter state between users', async () => {
-    const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
-      app.getHttpAdapter().getInstance(),
-    );
+    const injectRaw = (opts: InjectOptions) => injectPage(app, opts);
 
     const AS_ALICE = { authorization: 'Bearer user-alice' };
     const AS_BOB   = { authorization: 'Bearer user-bob'  };
@@ -877,9 +890,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
     it('isolates strength goals between users', async () => {
-      const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
-        app.getHttpAdapter().getInstance(),
-      );
+      const injectRaw = (opts: InjectOptions) => injectPage(app, opts);
 
       const AS_ALICE = { authorization: 'Bearer user-alice-goals' };
       const AS_BOB   = { authorization: 'Bearer user-bob-goals' };
@@ -992,7 +1003,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       // A user of its own: the set logged below stays out of the other tests' workouts.
       const headers = { authorization: 'Bearer user-replace-added-lift' };
       const send = (method: 'GET' | 'POST', url: string, body?: unknown) =>
-        app.getHttpAdapter().getInstance().inject({
+        injectPage(app, {
           method,
           url,
           headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
@@ -1073,9 +1084,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
     it('isolates lift overrides between users', async () => {
-      const injectRaw = app.getHttpAdapter().getInstance().inject.bind(
-        app.getHttpAdapter().getInstance(),
-      );
+      const injectRaw = (opts: InjectOptions) => injectPage(app, opts);
       // Alice is the pre-seeded dev user (has a macrocycle dashboard); Bob is a fresh user.
       const AS_ALICE = AUTH;
       const AS_BOB   = { authorization: 'Bearer user-bob-lifts' };
@@ -1177,10 +1186,10 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     const AS_SCHEDULE_USER = { authorization: `Bearer ${SCHEDULE_USER_TOKEN}` };
 
     const scheduleGet = (url: string) =>
-      app.getHttpAdapter().getInstance().inject({ method: 'GET', url, headers: AS_SCHEDULE_USER });
+      injectPage(app, { method: 'GET', url, headers: AS_SCHEDULE_USER });
 
     const schedulePost = (url: string, body?: unknown) =>
-      app.getHttpAdapter().getInstance().inject({
+      injectPage(app, {
         method: 'POST',
         url,
         headers: body
@@ -1210,7 +1219,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const token = `Bearer ${userId}`;
       await setScheduleForUser(userId);
 
-      const initRes = await app.getHttpAdapter().getInstance().inject({
+      const initRes = await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/initialize`,
         headers: { 'content-type': 'application/json', authorization: token },
@@ -1218,7 +1227,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       });
       expect(initRes.statusCode).toBe(201);
 
-      const dashRes = await app.getHttpAdapter().getInstance().inject({
+      const dashRes = await injectPage(app, {
         method: 'GET',
         url: `/programs/${SEED_PROGRAM}/macrocycles/current`,
         headers: { authorization: token },
@@ -1245,7 +1254,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const token = `Bearer ${userId}`;
       await setScheduleForUser(userId);
 
-      await app.getHttpAdapter().getInstance().inject({
+      await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/initialize`,
         headers: { 'content-type': 'application/json', authorization: token },
@@ -1253,7 +1262,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       });
 
       // Get the scheduled date for workout 1 from the dashboard
-      const dashRes = await app.getHttpAdapter().getInstance().inject({
+      const dashRes = await injectPage(app, {
         method: 'GET',
         url: `/programs/${SEED_PROGRAM}/macrocycles/current`,
         headers: { authorization: token },
@@ -1264,7 +1273,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(scheduled).toBeDefined();
 
       // GET workout 1 — should return the scheduled date as `date`
-      const workoutRes = await app.getHttpAdapter().getInstance().inject({
+      const workoutRes = await injectPage(app, {
         method: 'GET',
         url: `/programs/${SEED_PROGRAM}/workouts/1`,
         headers: { authorization: token },
@@ -1278,7 +1287,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const token = `Bearer ${userId}`;
       await setScheduleForUser(userId);
 
-      await app.getHttpAdapter().getInstance().inject({
+      await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/initialize`,
         headers: { 'content-type': 'application/json', authorization: token },
@@ -1286,7 +1295,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       });
 
       // Get the scheduled date for workout 1
-      const dashRes = await app.getHttpAdapter().getInstance().inject({
+      const dashRes = await injectPage(app, {
         method: 'GET',
         url: `/programs/${SEED_PROGRAM}/macrocycles/current`,
         headers: { authorization: token },
@@ -1295,7 +1304,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const scheduledDate = allWorkouts.find((ws: { workoutNum: number }) => ws.workoutNum === 1)!.date;
 
       // POST lift record without date
-      const recordRes = await app.getHttpAdapter().getInstance().inject({
+      const recordRes = await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/lift-records`,
         headers: { 'content-type': 'application/json', authorization: token },
@@ -1328,7 +1337,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       async (_label, schedule, userId) => {
         const token = `Bearer ${userId}`;
         const inject = (method: 'GET' | 'POST', url: string, body?: unknown) =>
-          app.getHttpAdapter().getInstance().inject({
+          injectPage(app, {
             method,
             url,
             headers: body
@@ -1381,14 +1390,14 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const userId = 'schedule-e2e-no-schedule';
       const token = `Bearer ${userId}`;
 
-      await app.getHttpAdapter().getInstance().inject({
+      await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/initialize`,
         headers: { 'content-type': 'application/json', authorization: token },
         payload: JSON.stringify({ macrocycleDate: '2026-05-19' }),
       });
 
-      const dashRes = await app.getHttpAdapter().getInstance().inject({
+      const dashRes = await injectPage(app, {
         method: 'GET',
         url: `/programs/${SEED_PROGRAM}/macrocycles/current`,
         headers: { authorization: token },
@@ -1405,7 +1414,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const factory = app.get<InMemoryRepositoryFactory>(REPOSITORY_FACTORY);
       const bundle = await factory.forUser({ id: userId, email: '', provider: 'dev' });
       (bundle.userSettings as InMemoryUserSettingsRepository).setSchedule({ type: 'fixed', days: [0, 2, 4] });
-      await app.getHttpAdapter().getInstance().inject({
+      await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/initialize`,
         headers: { 'content-type': 'application/json', authorization: token },
@@ -1417,7 +1426,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     it('POST skip marks workout as skipped:true in dashboard', async () => {
       const token = await setupSkipUser('skip-e2e-skip-marks');
 
-      const skipRes = await app.getHttpAdapter().getInstance().inject({
+      const skipRes = await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/1/workouts/1/skip`,
         headers: { 'content-type': 'application/json', authorization: token },
@@ -1425,7 +1434,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       });
       expect(skipRes.statusCode).toBe(204);
 
-      const dashRes = await app.getHttpAdapter().getInstance().inject({
+      const dashRes = await injectPage(app, {
         method: 'GET',
         url: `/programs/${SEED_PROGRAM}/macrocycles/current`,
         headers: { authorization: token },
@@ -1440,21 +1449,21 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     it('DELETE skip clears the skip mark (skipped:false)', async () => {
       const token = await setupSkipUser('skip-e2e-unskip');
 
-      await app.getHttpAdapter().getInstance().inject({
+      await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/1/workouts/1/skip`,
         headers: { 'content-type': 'application/json', authorization: token },
         payload: JSON.stringify({}),
       });
 
-      const unskipRes = await app.getHttpAdapter().getInstance().inject({
+      const unskipRes = await injectPage(app, {
         method: 'DELETE',
         url: `/programs/${SEED_PROGRAM}/macrocycles/1/workouts/1/skip`,
         headers: { authorization: token },
       });
       expect(unskipRes.statusCode).toBe(204);
 
-      const dashRes = await app.getHttpAdapter().getInstance().inject({
+      const dashRes = await injectPage(app, {
         method: 'GET',
         url: `/programs/${SEED_PROGRAM}/macrocycles/current`,
         headers: { authorization: token },
@@ -1468,7 +1477,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const token = await setupSkipUser('skip-e2e-completion');
 
       // Get week 1 workouts
-      const dashRes = await app.getHttpAdapter().getInstance().inject({
+      const dashRes = await injectPage(app, {
         method: 'GET',
         url: `/programs/${SEED_PROGRAM}/macrocycles/current`,
         headers: { authorization: token },
@@ -1478,7 +1487,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
       // Log all but the last; skip the last
       for (let i = 0; i < workoutNums.length - 1; i++) {
-        await app.getHttpAdapter().getInstance().inject({
+        await injectPage(app, {
           method: 'POST',
           url: `/programs/${SEED_PROGRAM}/lift-records`,
           headers: { 'content-type': 'application/json', authorization: token },
@@ -1494,14 +1503,14 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
         });
       }
       const lastWorkoutNum = workoutNums[workoutNums.length - 1];
-      await app.getHttpAdapter().getInstance().inject({
+      await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/1/workouts/${lastWorkoutNum}/skip`,
         headers: { 'content-type': 'application/json', authorization: token },
         payload: JSON.stringify({}),
       });
 
-      const finalDash = await app.getHttpAdapter().getInstance().inject({
+      const finalDash = await injectPage(app, {
         method: 'GET',
         url: `/programs/${SEED_PROGRAM}/macrocycles/current`,
         headers: { authorization: token },
@@ -1517,7 +1526,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
     it('POST skip with unknown program returns 404', async () => {
       const token = await setupSkipUser('skip-e2e-404-post');
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'POST',
         url: `/programs/no-such-program/macrocycles/1/workouts/1/skip`,
         headers: { 'content-type': 'application/json', authorization: token },
@@ -1530,7 +1539,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       const token = await setupSkipUser('skip-e2e-oob-post');
       // 9999 is a positive integer (passes the old check) but far past the
       // program's canonical length — a skip there is dead data.
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/1/workouts/9999/skip`,
         headers: { 'content-type': 'application/json', authorization: token },
@@ -1539,23 +1548,24 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('POST skip with a macrocycleNum the program lacks returns 404', async () => {
+    it('POST skip with a macrocycleNum the program lacks returns 409 macrocycle-moved', async () => {
       const token = await setupSkipUser('skip-e2e-nac-post');
-      // The fresh user's active macrocycle is 1 and there's no macrocycle 2 (ADR-042). The
-      // 400 for a stored, non-active macrocycle is covered in workout-skip.controller.spec.ts.
-      const res = await app.getHttpAdapter().getInstance().inject({
+      // The fresh user's active macrocycle is 1 and there's no macrocycle 2 (ADR-042), so no
+      // page has an id for it: a page open on 1 is told where its macrocycle is (#1200). The 400
+      // for a stored, non-active macrocycle is covered in workout-skip.controller.spec.ts.
+      const res = await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/skip`,
-        headers: { 'content-type': 'application/json', authorization: token },
+        headers: { 'content-type': 'application/json', authorization: token, ...(await currentPage(token)) },
         payload: JSON.stringify({}),
       });
-      expect(res.statusCode).toBe(404);
-      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-moved', macrocycleNum: 1 });
     });
 
     it('DELETE unskip with unknown program returns 404', async () => {
       const token = await setupSkipUser('skip-e2e-404-delete');
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'DELETE',
         url: `/programs/no-such-program/macrocycles/1/workouts/1/skip`,
         headers: { authorization: token },
@@ -1565,7 +1575,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
     it('DELETE unskip with out-of-range workoutNum returns 400', async () => {
       const token = await setupSkipUser('skip-e2e-oob-delete');
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'DELETE',
         url: `/programs/${SEED_PROGRAM}/macrocycles/1/workouts/9999/skip`,
         headers: { authorization: token },
@@ -1573,15 +1583,15 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('DELETE unskip with a macrocycleNum the program lacks returns 404', async () => {
+    it('DELETE unskip with a macrocycleNum the program lacks returns 409 macrocycle-moved', async () => {
       const token = await setupSkipUser('skip-e2e-nac-delete');
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'DELETE',
         url: `/programs/${SEED_PROGRAM}/macrocycles/2/workouts/1/skip`,
-        headers: { authorization: token },
+        headers: { authorization: token, ...(await currentPage(token)) },
       });
-      expect(res.statusCode).toBe(404);
-      expect(res.json()).toMatchObject({ code: 'macrocycle-not-found' });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'macrocycle-moved', macrocycleNum: 1 });
     });
   });
 
@@ -1594,7 +1604,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   describe('DELETE /programs/:program/macrocycles/current', () => {
     const FRESH_PROGRAM = 'leangains';
     const injectRaw = () =>
-      app.getHttpAdapter().getInstance().inject.bind(app.getHttpAdapter().getInstance());
+      (opts: InjectOptions) => injectPage(app, opts);
 
     it('DELETE then re-initialize succeeds (full lifecycle)', async () => {
       const AS_FRESH = { authorization: 'Bearer user-macrocycle-delete-fresh' };
@@ -1739,7 +1749,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     const AS_SWITCH = { authorization: 'Bearer switch-regression-user' };
 
     it('rejects an empty application/json body with 400 (not a swallowed 200)', async () => {
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/switch`,
         headers: { 'content-type': 'application/json', ...AS_SWITCH },
@@ -1749,7 +1759,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
     it('rejects a malformed JSON body with 400', async () => {
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/switch`,
         headers: { 'content-type': 'application/json', ...AS_SWITCH },
@@ -1768,7 +1778,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
   describe('POST /programs/:program/switch — built-in program, no database (regression for #1029)', () => {
     it('switches the active program and initializes the first macrocycle without a database', async () => {
       const token = 'switch-inmemory-user';
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/switch`,
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
@@ -1781,7 +1791,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       // by GET) would return — activeProgram just echoes the path param and macrocycleNum is the
       // handler's own default. Confirm the write actually landed in the bundle GET reads
       // from, which is the part #1029 broke (the settings write 500'd before it could).
-      const settings = await app.getHttpAdapter().getInstance().inject({
+      const settings = await injectPage(app, {
         method: 'GET',
         url: '/users/me/settings',
         headers: { authorization: `Bearer ${token}` },
@@ -1789,7 +1799,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(settings.statusCode).toBe(200);
       expect(settings.json().activeProgram).toBe(SEED_PROGRAM);
 
-      const macrocycle = await app.getHttpAdapter().getInstance().inject({
+      const macrocycle = await injectPage(app, {
         method: 'GET',
         url: `/programs/${SEED_PROGRAM}/macrocycles/current`,
         headers: { authorization: `Bearer ${token}` },
@@ -1816,7 +1826,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
     // Macrocycle 1 has to exist to take sets (ADR-042).
     beforeAll(async () => {
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await injectPage(app, {
         method: 'POST',
         url: `/programs/${SEED_PROGRAM}/macrocycles/initialize`,
         headers: { 'content-type': 'application/json', ...AS_VALIDATION },
@@ -1839,7 +1849,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     });
 
     const postValidation = (body: unknown) =>
-      app.getHttpAdapter().getInstance().inject({
+      injectPage(app, {
         method: 'POST',
         url: LIFT_RECORDS_URL,
         headers: { 'content-type': 'application/json', ...AS_VALIDATION },
@@ -1847,7 +1857,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       });
 
     const patchValidation = (id: string, body: unknown) =>
-      app.getHttpAdapter().getInstance().inject({
+      injectPage(app, {
         method: 'PATCH',
         url: `${LIFT_RECORDS_URL}/${id}`,
         headers: { 'content-type': 'application/json', ...AS_VALIDATION },
@@ -2012,7 +2022,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
     const TRAINING_MAXES_URL = `/programs/${SEED_PROGRAM}/training-maxes`;
 
     const postBodyWeight = (body: unknown) =>
-      app.getHttpAdapter().getInstance().inject({
+      injectPage(app, {
         method: 'POST',
         url: BODY_WEIGHT_URL,
         headers: { 'content-type': 'application/json', ...AS_VALIDATION_897 },
@@ -2020,14 +2030,14 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       });
 
     const getLatestBodyWeight = () =>
-      app.getHttpAdapter().getInstance().inject({
+      injectPage(app, {
         method: 'GET',
         url: `${BODY_WEIGHT_URL}/latest`,
         headers: AS_VALIDATION_897,
       });
 
     const patchTrainingMaxes = (body: unknown) =>
-      app.getHttpAdapter().getInstance().inject({
+      injectPage(app, {
         method: 'PATCH',
         url: TRAINING_MAXES_URL,
         headers: { 'content-type': 'application/json', ...AS_VALIDATION_897 },

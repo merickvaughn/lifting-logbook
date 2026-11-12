@@ -323,6 +323,13 @@ model Macrocycle {
   // A continued imported run's sets dated up to here came from the file (#1180).
   importedThrough DateTime? @db.Date
   createdAt       DateTime  @default(now())
+  // Its number before #1200's migration numbered history by start date, and when that ran, for
+  // `macrocycle_renumber_reverse()`. Null on a macrocycle created after it.
+  backfillNumber  Int?
+  backfilledAt    DateTime?
+  // When that migration closed it: the old revision had left it open on a number the dashboard
+  // no longer showed. The reversal leaves it closed.
+  backfillClosedAt DateTime?
 
   @@unique([userId, program, macrocycleNum])
   @@index([userId, program, startDate])

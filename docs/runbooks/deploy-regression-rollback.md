@@ -166,6 +166,13 @@ Do not roll back the deployment until the impact of the migration is understood:
 4. If the migration altered or dropped columns, do not roll back without first writing a
    compensating migration. Rolling back the code without rolling back the schema will
    cause the old code to fail against the new schema.
+5. A migration can rewrite data while adding only nullable columns, or none, which step 3
+   doesn't cover. The #1200 renumbering is one: `20261112000001_renumber_macrocycles_by_date`
+   adds only nullable columns (and read nothing, since row-level security hid the rows from the
+   migrator), and `20261112000003_renumber_without_forced_rls`, which adds none, renumbers every
+   stored macrocycle. Rolling the API back over them is safe, and putting the old numbers back is
+   a separate step: see
+   [Reversing the macrocycle renumbering](../deploy.md#reversing-the-macrocycle-renumbering).
 
 ### If the rollback resolves the issue
 

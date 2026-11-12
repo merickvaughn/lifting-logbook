@@ -1,5 +1,7 @@
 import { ApiClientError } from '@lifting-logbook/api-client';
 import {
+  browserNavigation,
+  followMovedMacrocycle,
   movedMacrocycleNum,
   movedWorkoutPath,
   withMacrocycleId,
@@ -51,6 +53,68 @@ describe('movedMacrocycleNum', () => {
   });
 });
 
+describe('followMovedMacrocycle', () => {
+  let assign: jest.SpyInstance<void, [string]>;
+  beforeEach(() => {
+    assign = jest.spyOn(browserNavigation, 'assign').mockImplementation(() => undefined);
+    window.history.pushState({}, '', '/macrocycle/1/workout/2/detail?from=history');
+  });
+  afterEach(() => {
+    assign.mockRestore();
+    window.history.pushState({}, '', '/');
+    window.sessionStorage.clear();
+    jest.useRealTimers();
+  });
+
+  it('reloads at the new number for macrocycle-moved', () => {
+    expect(followMovedMacrocycle(moved(3))).toBe(true);
+    expect(assign).toHaveBeenCalledWith('/macrocycle/3/workout/2/detail?from=history');
+  });
+
+  it('reloads the page as it is when the API asks for the macrocycle id (#1200)', () => {
+    const err = new ApiClientError('Reload the page and try again.', 400, 'macrocycle-id-required');
+    expect(followMovedMacrocycle(err)).toBe(true);
+    expect(assign).toHaveBeenCalledWith('/macrocycle/1/workout/2/detail?from=history');
+  });
+
+  it('leaves a second missing id on the same page within a minute to the caller, which shows the message (#1200)', () => {
+    jest.useFakeTimers({ now: new Date('2026-11-12T10:00:00Z') });
+    const err = new ApiClientError('Reload the page and try again.', 400, 'macrocycle-id-required');
+    expect(followMovedMacrocycle(err)).toBe(true);
+
+    jest.setSystemTime(new Date('2026-11-12T10:00:30Z'));
+    expect(followMovedMacrocycle(err)).toBe(false);
+    expect(writeFailureMessage(err, 'Failed.')).toBe('Reload the page and try again.');
+    expect(assign).toHaveBeenCalledTimes(1);
+
+    // Past the minute, or on another page, it reloads again.
+    jest.setSystemTime(new Date('2026-11-12T10:01:01Z'));
+    expect(followMovedMacrocycle(err)).toBe(true);
+    window.history.pushState({}, '', '/macrocycle/1/workout/3/detail');
+    expect(followMovedMacrocycle(err)).toBe(true);
+    expect(assign).toHaveBeenCalledTimes(3);
+  });
+
+  it('shows the message rather than reloading when session storage is unavailable', () => {
+    const getItem = jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    try {
+      expect(followMovedMacrocycle(new ApiClientError('Reload.', 400, 'macrocycle-id-required'))).toBe(false);
+      expect(assign).not.toHaveBeenCalled();
+    } finally {
+      getItem.mockRestore();
+    }
+  });
+
+  it('leaves any other error to the caller, without reloading', () => {
+    expect(followMovedMacrocycle(new ApiClientError('bad', 400, 'validation'))).toBe(false);
+    expect(followMovedMacrocycle(new ApiClientError('busy', 409, 'import-in-progress'))).toBe(false);
+    expect(followMovedMacrocycle(new Error('network'))).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
+  });
+});
+
 describe('writeFailureMessage', () => {
   it("shows the API's message while an import holds the lock", () => {
     const msg = 'An import is changing your macrocycles. Try again in a moment.';
@@ -65,11 +129,6 @@ describe('writeFailureMessage', () => {
   it("shows the API's reload message for a page whose macrocycle no longer exists", () => {
     const msg = "This page's macrocycle no longer exists. Reload the page to see the current one.";
     expect(writeFailureMessage(new ApiClientError(msg, 404, 'macrocycle-not-found'), 'Failed.')).toBe(msg);
-  });
-
-  it("shows the API's reload message for a macrocycle number the program doesn't have", () => {
-    const msg = "Program '5-3-1' has no macrocycle 7. Reload the page to see the current one.";
-    expect(writeFailureMessage(new ApiClientError(msg, 404, 'macrocycle-not-found', { macrocycleNum: 7 }), 'Failed.')).toBe(msg);
   });
 
   it('falls back for anything else', () => {

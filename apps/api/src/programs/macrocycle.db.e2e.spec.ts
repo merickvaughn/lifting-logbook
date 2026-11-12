@@ -2,8 +2,10 @@
 //
 // Postgres comes from jest.global-setup.js, which exposes LIFTING_TC_DATABASE_URL (the
 // restricted lifting_app role) and LIFTING_TC_OWNER_DATABASE_URL (the owner). Seeding,
-// cleanup and the backfill call use the owner, as the migrate job does in production; every
-// isolation assertion and every HTTP request runs as lifting_app.
+// cleanup and the backfill call use the owner; every isolation assertion and every HTTP request
+// runs as lifting_app. Here the owner is a superuser, so row-level security never filters it,
+// unlike the production migrator (#1200): the forced-RLS path was replayed with a non-bypass
+// owner instead (PR #1231).
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
@@ -22,8 +24,7 @@ import {
   PrismaMacrocycleRepository,
 } from '../adapters/prisma/macrocycle.repository';
 import { MacrocycleNumberConflictError } from '../ports/errors';
-import { IMPORT_LOCK_WAIT_MS } from './macrocycle-history.util';
-import { RENUMBERING_SETTING } from './macrocycle-renumbering';
+import { IMPORT_LOCK_WAIT_MS, legacyRowsPreImage } from './macrocycle-history.util';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
@@ -46,6 +47,7 @@ const USER_ALICE = 'macrocycle-db-alice';
 const USER_BOB = 'macrocycle-db-bob';
 const USER_BACKFILL = 'macrocycle-db-backfill';
 const USER_BACKFILL_BARE = 'macrocycle-db-backfill-bare';
+const USER_BACKFILL_GAP = 'macrocycle-db-backfill-gap';
 const USER_RACE = 'macrocycle-db-race';
 const USER_ENSURE = 'macrocycle-db-ensure';
 const USER_LOCK = 'macrocycle-db-lock';
@@ -60,8 +62,28 @@ const USER_RENUMBER_UNSTARTED = 'macrocycle-db-renumber-unstarted';
 const USER_RENUMBER_UPGRADE = 'macrocycle-db-renumber-upgrade';
 const USER_RENUMBER_DEADLOCK = 'macrocycle-db-renumber-deadlock';
 const USER_SPLIT_UNDO = 'macrocycle-db-split-undo';
+const USER_HISTORY_ORDER = 'macrocycle-db-history-order';
+const USER_HISTORY_REVERSE = 'macrocycle-db-history-reverse';
+const USER_HISTORY_LATER_IMPORT = 'macrocycle-db-history-later-import';
+const USER_HISTORY_NEW_ROW = 'macrocycle-db-history-new-row';
+const USER_HISTORY_UNDO = 'macrocycle-db-history-undo';
+const USER_HISTORY_WINDOW = 'macrocycle-db-history-window';
+const USER_HISTORY_NEGATIVE = 'macrocycle-db-history-negative';
+const USER_HISTORY_UNSTARTED = 'macrocycle-db-history-unstarted';
+const USER_HISTORY_LOCK = 'macrocycle-db-history-lock';
+const USER_HISTORY_NO_WAIT = 'macrocycle-db-history-no-wait';
 const USERS = [
   USER_SPLIT_UNDO,
+  USER_HISTORY_NO_WAIT,
+  USER_HISTORY_NEGATIVE,
+  USER_HISTORY_UNSTARTED,
+  USER_HISTORY_LOCK,
+  USER_HISTORY_ORDER,
+  USER_HISTORY_REVERSE,
+  USER_HISTORY_LATER_IMPORT,
+  USER_HISTORY_NEW_ROW,
+  USER_HISTORY_UNDO,
+  USER_HISTORY_WINDOW,
   USER_RENUMBER_UNSTARTED,
   USER_RENUMBER_UPGRADE,
   USER_RENUMBER_DEADLOCK,
@@ -71,6 +93,7 @@ const USERS = [
   USER_BOB,
   USER_BACKFILL,
   USER_BACKFILL_BARE,
+  USER_BACKFILL_GAP,
   USER_RACE,
   USER_ENSURE,
   USER_LOCK,
@@ -209,19 +232,50 @@ describeOrSkip('macrocycle table (e2e, lifting_app role)', () => {
       await owner.workoutDateOverride.create({
         data: { userId: USER_BACKFILL_BARE, program: PROGRAM, macrocycleNum: 2, workoutNum: 1, newDate: day('2026-04-01') },
       });
+      // Sets on 1, 2 and 4 (4 from a file imported before #1224), the dashboard on 2, and a focus
+      // state with no sets on 3, between them.
+      const gap = USER_BACKFILL_GAP;
+      await owner.liftRecord.createMany({
+        data: [1, 2, 4].map((macrocycleNum) => ({
+          userId: gap,
+          program: PROGRAM,
+          macrocycleNum,
+          workoutNum: 1,
+          date: day(`2026-0${macrocycleNum}-06`),
+          lift: 'Squat',
+          setNum: 1,
+          weight: 200,
+          reps: 5,
+        })),
+      });
+      await owner.macrocycleDashboard.create({
+        data: {
+          userId: gap,
+          program: PROGRAM,
+          macrocycleUnit: 'Week',
+          macrocycleNum: 2,
+          macrocycleDate: day('2026-02-02'),
+          sheetName: `${PROGRAM}_Cycle_2_20260202`,
+          macrocycleStartWeekday: 'Monday',
+        },
+      });
+      await owner.focusDayState.create({ data: { userId: gap, program: PROGRAM, macrocycleNum: 3, workoutNum: 1, state: {} } });
     }, DB_E2E_HOOK_TIMEOUT_MS);
 
     /**
      * The function reads every user's rows, and other DB suites share this database, so it
      * runs in an owner transaction that's rolled back once `body` has read what it needs.
      */
-    async function withBackfill(body: (tx: PrismaClient) => Promise<void>): Promise<void> {
+    async function withBackfill(
+      body: (tx: PrismaClient) => Promise<void>,
+      fn: 'macrocycle_backfill_rows' | 'macrocycle_backfill_window_rows' = 'macrocycle_backfill_rows',
+    ): Promise<void> {
       try {
         await owner.$transaction(
           async (tx) => {
             // Another suite's uncommitted row fails this fast instead of stalling both.
             await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
-            await tx.$queryRaw`SELECT "macrocycle_backfill_rows"()`;
+            await tx.$queryRawUnsafe(`SELECT "${fn}"()`);
             await body(tx as unknown as PrismaClient);
             throw new Rollback();
           },
@@ -281,6 +335,38 @@ describeOrSkip('macrocycle table (e2e, lifting_app role)', () => {
       await expect(asUser(appDb, USER_BACKFILL, (tx) => tx.$queryRaw`SELECT "macrocycle_backfill_rows"()`)).rejects.toThrow(
         /permission denied/,
       );
+    });
+
+    it("the migration's rerun adds no row for numbers past every macrocycle that hold no sets (#1200)", async () => {
+      // 5 to 7 sit past the dashboard's 4 with no sets: saved ahead of the next macrocycle, as a
+      // focus state saved before initializing is. The bare user's program has no macrocycle at all.
+      await withBackfill(async (tx) => {
+        expect((await rowsFor(tx, USER_BACKFILL)).map((row) => [row.macrocycleNum, row.origin])).toEqual([
+          [1, 'imported'],
+          [2, 'legacy'],
+          [3, 'legacy'],
+          [4, 'live'],
+        ]);
+        expect(await rowsFor(tx, USER_BACKFILL_BARE)).toEqual([]);
+      }, 'macrocycle_backfill_window_rows');
+    });
+
+    it("the migration's rerun keeps a no-set number below a number with sets, so renumbering can't merge it (#1200)", async () => {
+      // Without a row, 3 would be neither a macrocycle nor past the highest one, and renumbering
+      // would move 4 onto it, where the focus state sits: 20261112000003 would fail.
+      await withBackfill(async (tx) => {
+        expect((await rowsFor(tx, USER_BACKFILL_GAP)).map((row) => [row.macrocycleNum, row.origin])).toEqual([
+          [1, 'legacy'],
+          [2, 'live'],
+          [3, 'legacy'],
+          [4, 'legacy'],
+        ]);
+        await tx.$queryRaw`SELECT "macrocycle_close_window_rows"(${USER_BACKFILL_GAP})`;
+        await tx.$queryRaw`SELECT "macrocycle_renumber_by_date"(${USER_BACKFILL_GAP})`;
+        expect((await rowsFor(tx, USER_BACKFILL_GAP)).map((row) => row.macrocycleNum)).toEqual([1, 2, 3, 4]);
+        const focus = await tx.focusDayState.findMany({ where: { userId: USER_BACKFILL_GAP, program: PROGRAM } });
+        expect(focus.map((row) => row.macrocycleNum)).toEqual([3]);
+      }, 'macrocycle_backfill_window_rows');
     });
   });
 });
@@ -577,17 +663,9 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
     }, LOCKED_TEST_TIMEOUT_MS);
   });
 
-  /** Renumbering by start date (#1199), with the setting #1200 turns on for everyone. */
+  /** Renumbering by start date (#1199), which every write runs since #1200. */
   describe('renumbering', () => {
     const base = `/programs/${PROGRAM}`;
-    const previous = process.env[RENUMBERING_SETTING];
-    beforeAll(() => {
-      process.env[RENUMBERING_SETTING] = 'on';
-    });
-    afterAll(() => {
-      if (previous === undefined) delete process.env[RENUMBERING_SETTING];
-      else process.env[RENUMBERING_SETTING] = previous;
-    });
 
     /** A live macrocycle `num` starting on `date`, with a row in every table that holds a number. */
     async function seedEveryTable(userId: string, num: number, date: string): Promise<void> {
@@ -698,6 +776,14 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         SELECT table_name FROM information_schema.columns
         WHERE table_schema = current_schema() AND column_name = 'macrocycleNum' ORDER BY 1`;
       expect(columns.map((c) => c.table_name)).toEqual([...NUMBERED_TABLES].sort());
+    });
+
+    // 20261112000006: the tables the renumbering turns FORCE off for and its guard checks must
+    // be every numbered table plus import_batch, whose keys carry numbers. A numbered table the
+    // list missed would stay hidden while the steps renumber the rest.
+    it('lists every numbered table, and import_batch, in macrocycle_forced_tables()', async () => {
+      const [{ tables }] = await owner.$queryRaw<{ tables: string[] }[]>`SELECT "macrocycle_forced_tables"() AS tables`;
+      expect([...tables].sort()).toEqual([...NUMBERED_TABLES, 'import_batch'].sort());
     });
 
     it('removes an emptied legacy macrocycle from every table on undo, so nothing it held joins the one that moves down', async () => {
@@ -907,6 +993,377 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         await appDb.$disconnect();
       }
     }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    /**
+     * The migration's renumbering of stored history (#1200). Each test runs the functions for
+     * its own user and commits, since other suites share this database.
+     */
+    describe('numbering stored history by date (#1200)', () => {
+      const renumberByDate = (user: string) => owner.$queryRaw`SELECT "macrocycle_renumber_by_date"(${user})`;
+      const reverse = (user: string) => owner.$queryRaw`SELECT "macrocycle_renumber_reverse"(${user})`;
+      const created = { kind: 'created', wrote: { weight: 100, reps: 5, notes: '' } };
+      const set = (user: string, macrocycleNum: number, workoutNum: number, date: string, lift: string) => ({
+        userId: user, program: PROGRAM, macrocycleNum, workoutNum, date: day(date), lift, setNum: 1, weight: 100, reps: 5,
+      });
+      const legacy = (user: string, macrocycleNum: number, date: string) => ({
+        userId: user, program: PROGRAM, macrocycleNum, startDate: day(date), status: 'unknown', origin: 'legacy',
+      });
+
+      /**
+       * History stored before renumbering, out of date order: legacy 1 starts in March, legacy 2
+       * in January, and the live macrocycle is 3. A batch from before the backfill created
+       * macrocycle 1 and its set.
+       */
+      async function seedOutOfOrder(user: string): Promise<string> {
+        await seedEveryTable(user, 3, '2026-05-04');
+        await owner.macrocycle.createMany({ data: [legacy(user, 1, '2026-03-02'), legacy(user, 2, '2026-01-05')] });
+        await owner.liftRecord.createMany({
+          data: [set(user, 1, 1, '2026-03-02', 'Bench Press'), set(user, 2, 1, '2026-01-05', 'Deadlift')],
+        });
+        const batch = await owner.importBatch.create({
+          data: {
+            userId: user,
+            program: PROGRAM,
+            destination: 'lift-records',
+            createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+            preImage: {
+              [liftRecordNaturalKey({ macrocycleNum: 1, workoutNum: 1, date: day('2026-03-02'), lift: 'Bench Press', setNum: 1 })]: created,
+              ...legacyRowsPreImage([1]),
+              // As import-batch.repository.ts writes it: PreImageEntry has no index signature.
+            } as object,
+          },
+        });
+        return batch.id;
+      }
+
+      const rowsOf = async (user: string) =>
+        (await owner.macrocycle.findMany({ where: { userId: user }, orderBy: { macrocycleNum: 'asc' } })).map((row) => ({
+          num: row.macrocycleNum,
+          start: isoDay(row.startDate),
+          origin: row.origin,
+          backfillNumber: row.backfillNumber,
+        }));
+      const setsOf = async (user: string) =>
+        (await owner.liftRecord.findMany({ where: { userId: user }, orderBy: [{ date: 'asc' }, { lift: 'asc' }] })).map(
+          (r) => `${r.macrocycleNum} ${isoDay(r.date)} ${r.lift}`,
+        );
+      const preImageOf = async (id: string) => (await owner.importBatch.findUniqueOrThrow({ where: { id } })).preImage;
+
+      it('numbers stored history by start date in every table and batch key, recording each old number', async () => {
+        const user = USER_HISTORY_ORDER;
+        const batchId = await seedOutOfOrder(user);
+
+        await renumberByDate(user);
+
+        expect(await rowsOf(user)).toEqual([
+          { num: 1, start: '2026-01-05', origin: 'legacy', backfillNumber: 2 },
+          { num: 2, start: '2026-03-02', origin: 'legacy', backfillNumber: 1 },
+          { num: 3, start: '2026-05-04', origin: 'live', backfillNumber: 3 },
+        ]);
+        expect(await setsOf(user)).toEqual(['1 2026-01-05 Deadlift', '2 2026-03-02 Bench Press', '3 2026-05-04 Squat']);
+        expect(await numbersByTable(user)).toEqual(everyTable([3], { lift_record: [1, 2, 3], macrocycle: [1, 2, 3] }));
+        expect(await preImageOf(batchId)).toEqual({
+          '2:1:20260302:Bench Press:1': created,
+          'macrocycle-row:2': { kind: 'created', wrote: { macrocycleNum: 2 } },
+        });
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('the reversal puts back every number and batch key the backfill changed', async () => {
+        const user = USER_HISTORY_REVERSE;
+        const batchId = await seedOutOfOrder(user);
+        const before = { rows: await setsOf(user), tables: await numbersByTable(user), preImage: await preImageOf(batchId) };
+
+        await renumberByDate(user);
+        expect(await setsOf(user)).not.toEqual(before.rows);
+        expect(await preImageOf(batchId)).not.toEqual(before.preImage);
+        await reverse(user);
+
+        expect({ rows: await setsOf(user), tables: await numbersByTable(user), preImage: await preImageOf(batchId) }).toEqual(before);
+        expect((await rowsOf(user)).map((row) => [row.num, row.start])).toEqual([
+          [1, '2026-03-02'],
+          [2, '2026-01-05'],
+          [3, '2026-05-04'],
+        ]);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('the reversal moves the keys of an import made after the backfill to the old numbers', async () => {
+        const user = USER_HISTORY_LATER_IMPORT;
+        await seedOutOfOrder(user);
+        await renumberByDate(user);
+        // The January Deadlift is on 1 now, and was on 2.
+        const later = await owner.importBatch.create({
+          data: {
+            userId: user,
+            program: PROGRAM,
+            destination: 'lift-records',
+            preImage: {
+              [liftRecordNaturalKey({ macrocycleNum: 1, workoutNum: 1, date: day('2026-01-05'), lift: 'Deadlift', setNum: 1 })]: created,
+            },
+          },
+        });
+
+        await reverse(user);
+
+        expect(await setsOf(user)).toEqual(['2 2026-01-05 Deadlift', '1 2026-03-02 Bench Press', '3 2026-05-04 Squat']);
+        expect(await preImageOf(later.id)).toEqual({ '2:1:20260105:Deadlift:1': created });
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('moves negative stored numbers there and back, in rows and batch keys', async () => {
+        // A file's number was stored as is before #1224 checked its range.
+        const user = USER_HISTORY_NEGATIVE;
+        await owner.macrocycle.createMany({ data: [legacy(user, 5, '2026-01-05'), legacy(user, -2, '2026-03-02'), legacy(user, -1, '2026-05-04')] });
+        await owner.liftRecord.createMany({
+          data: [set(user, 5, 1, '2026-01-05', 'Squat'), set(user, -2, 1, '2026-03-02', 'Bench Press'), set(user, -1, 1, '2026-05-04', 'Deadlift')],
+        });
+        const batch = await owner.importBatch.create({
+          data: {
+            userId: user,
+            program: PROGRAM,
+            destination: 'lift-records',
+            preImage: {
+              [liftRecordNaturalKey({ macrocycleNum: -2, workoutNum: 1, date: day('2026-03-02'), lift: 'Bench Press', setNum: 1 })]: created,
+              ...legacyRowsPreImage([-2]),
+            } as object,
+          },
+        });
+        const before = { sets: await setsOf(user), preImage: await preImageOf(batch.id) };
+
+        await renumberByDate(user);
+
+        expect(await setsOf(user)).toEqual(['1 2026-01-05 Squat', '2 2026-03-02 Bench Press', '3 2026-05-04 Deadlift']);
+        expect(await preImageOf(batch.id)).toEqual({
+          '2:1:20260302:Bench Press:1': created,
+          'macrocycle-row:2': { kind: 'created', wrote: { macrocycleNum: 2 } },
+        });
+
+        await reverse(user);
+
+        expect({ sets: await setsOf(user), preImage: await preImageOf(batch.id) }).toEqual(before);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('moves rows saved ahead of the next macrocycle past the last one, there and back', async () => {
+        const user = USER_HISTORY_UNSTARTED;
+        await seedEveryTable(user, 3, '2026-05-04');
+        await owner.macrocycle.create({ data: legacy(user, 1, '2026-01-05') });
+        await owner.liftRecord.create({ data: set(user, 1, 1, '2026-01-05', 'Bench Press') });
+        // A focus state saved for the macrocycle after 3, which has no row yet.
+        await owner.focusDayState.create({ data: { userId: user, program: PROGRAM, macrocycleNum: 4, workoutNum: 1, state: {} } });
+        const before = await numbersByTable(user);
+
+        await renumberByDate(user);
+
+        expect(await numbersByTable(user)).toEqual(everyTable([2], { lift_record: [1, 2], macrocycle: [1, 2], focus_day_state: [2, 3] }));
+
+        await reverse(user);
+
+        expect(await numbersByTable(user)).toEqual(before);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('locks a user whose numbers are only in tables other than macrocycle', async () => {
+        const user = USER_HISTORY_LOCK;
+        await owner.focusDayState.create({ data: { userId: user, program: PROGRAM, macrocycleNum: 1, workoutNum: 1, state: {} } });
+        const other = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+        try {
+          await owner.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT "macrocycle_lock_every_user"(${user})`;
+            const got = await other.$queryRaw<Array<{ got: boolean }>>`
+              SELECT pg_try_advisory_xact_lock_shared(hashtextextended(${user}, 1171)) AS got`;
+            expect(got[0]?.got).toBe(false);
+          });
+        } finally {
+          await other.$disconnect();
+        }
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('the migration steps skip a lock another request holds, and a later call waits for it', async () => {
+        const user = USER_HISTORY_NO_WAIT;
+        await seedOutOfOrder(user);
+        const other = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+        let release = () => undefined as void;
+        const released = new Promise<void>((resolve) => (release = resolve));
+        let held = () => undefined as void;
+        const holding = new Promise<void>((resolve) => (held = resolve));
+        // A request that holds the user's lock shared, as a page write does before reading "macrocycle".
+        const holder = other.$transaction(
+          async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${user}, 1171))`;
+            held();
+            await released;
+          },
+          { timeout: DB_E2E_HOOK_TIMEOUT_MS },
+        );
+        const withTimeout = (wait: boolean) =>
+          owner.$transaction(async (tx) => {
+            await tx.$executeRaw`SET LOCAL lock_timeout = '1s'`;
+            return tx.$queryRaw`SELECT "macrocycle_renumber_by_date"(${user}, ${wait}) AS moved`;
+          });
+        try {
+          await holding;
+          await expect(withTimeout(true)).rejects.toThrow(/lock timeout/);
+          await withTimeout(false);
+        } finally {
+          release();
+          await holder;
+          await other.$disconnect();
+        }
+        expect((await owner.macrocycle.findMany({ where: { userId: user }, orderBy: { startDate: 'asc' } })).map((m) => m.macrocycleNum)).toEqual([1, 2, 3]);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('the reversal refuses, moving nothing, when a macrocycle has no recorded number', async () => {
+        const user = USER_HISTORY_NEW_ROW;
+        await seedOutOfOrder(user);
+        await renumberByDate(user);
+        const after = await setsOf(user);
+        // A macrocycle the new revision created after the backfill.
+        await owner.macrocycle.create({ data: legacy(user, 4, '2026-07-06') });
+
+        await expect(reverse(user)).rejects.toThrow(/Macrocycle 4 of program 5-3-1 .* has no backfillNumber/);
+        expect(await setsOf(user)).toEqual(after);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('undoing a batch from before the backfill removes its macrocycle and leaves none without sets but the live one', async () => {
+        const user = USER_HISTORY_UNDO;
+        const batchId = await seedOutOfOrder(user);
+        await renumberByDate(user);
+
+        const res = await injectAs(user, 'POST', `${base}/import/${batchId}/undo`);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toMatchObject({ restored: 1, skipped: 0 });
+        expect(await rowsOf(user)).toEqual([
+          { num: 1, start: '2026-01-05', origin: 'legacy', backfillNumber: 2 },
+          { num: 2, start: '2026-05-04', origin: 'live', backfillNumber: 3 },
+        ]);
+        const empty = await owner.$queryRaw<Array<{ n: number; origin: string }>>`
+          SELECT m."macrocycleNum" AS n, m."origin" FROM "macrocycle" AS m
+          WHERE m."userId" = ${user} AND NOT EXISTS (
+            SELECT 1 FROM "lift_record" AS r
+            WHERE r."userId" = m."userId" AND r."program" = m."program" AND r."macrocycleNum" = m."macrocycleNum")`;
+        expect(empty.filter((row) => row.origin !== 'live')).toEqual([]);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('closes a live row the old revision left open, by the closing rule, and leaves the current one open', async () => {
+        const user = USER_HISTORY_WINDOW;
+        // The current macrocycle, on the dashboard.
+        await seedEveryTable(user, 2, '2026-03-02');
+        const open = (program: string, extra: Partial<{ statusChosen: boolean }> = {}) => ({
+          userId: user, program, macrocycleNum: 1, startDate: day('2026-01-05'), status: 'in-progress', origin: 'live', ...extra,
+        });
+        const schedule = (program: string, workouts: number, first = 1) =>
+          Array.from({ length: workouts }, (_, i) => ({
+            userId: user, program, macrocycleNum: 1, workoutNum: first + i, weekNum: 1, scheduledDate: day('2026-01-05'),
+          }));
+        const logged = (program: string, workoutNum: number, date: string) => ({ ...set(user, 1, workoutNum, date, 'Squat'), program });
+        await owner.macrocycle.createMany({
+          data: [
+            open(PROGRAM),
+            open('window-abandoned'),
+            open('window-unknown'),
+            open('window-chosen', { statusChosen: true }),
+            open('window-from-3'),
+          ],
+        });
+        await owner.macrocycleScheduledWorkout.createMany({
+          data: [...schedule(PROGRAM, 2), ...schedule('window-abandoned', 3), ...schedule('window-chosen', 1), ...schedule('window-from-3', 2, 3)],
+        });
+        await owner.liftRecord.createMany({
+          data: [
+            logged(PROGRAM, 1, '2026-01-05'),
+            logged(PROGRAM, 2, '2026-01-12'),
+            logged('window-abandoned', 1, '2026-01-07'),
+            // Its schedule is workouts 3 and 4, both logged.
+            logged('window-from-3', 3, '2026-01-08'),
+            logged('window-from-3', 4, '2026-01-09'),
+          ],
+        });
+
+        const closed = await owner.$queryRaw<Array<{ closed: number }>>`SELECT "macrocycle_close_window_rows"(${user}) AS closed`;
+
+        expect(closed[0]?.closed).toBe(5);
+        const rows = await owner.macrocycle.findMany({ where: { userId: user }, orderBy: [{ program: 'asc' }, { macrocycleNum: 'asc' }] });
+        // The last column: whether the row records that the migration closed it.
+        expect(rows.map((row) => [row.program, row.macrocycleNum, row.status, isoDay(row.endDate), row.backfillClosedAt !== null])).toEqual([
+          [PROGRAM, 1, 'completed', '2026-01-12', true],
+          [PROGRAM, 2, 'in-progress', null, false],
+          ['window-abandoned', 1, 'abandoned', '2026-01-07', true],
+          ['window-chosen', 1, 'in-progress', '2026-01-05', true],
+          ['window-from-3', 1, 'completed', '2026-01-09', true],
+          ['window-unknown', 1, 'unknown', '2026-01-05', true],
+        ]);
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('the app role cannot run any of them', async () => {
+        const appDb = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+        // Each error must name the function called: most of them call another revoked function
+        // first, so a bare "permission denied" would pass with the outer REVOKE gone.
+        const calls: [string, Prisma.Sql][] = [
+          ['macrocycle_lock_every_user', Prisma.sql`SELECT "macrocycle_lock_every_user"(${USER_HISTORY_ORDER})`],
+          ['macrocycle_unstarted_numbers', Prisma.sql`SELECT "macrocycle_unstarted_numbers"(${USER_HISTORY_ORDER})`],
+          ['macrocycle_close_window_rows', Prisma.sql`SELECT "macrocycle_close_window_rows"(${USER_HISTORY_ORDER})`],
+          ['macrocycle_renumber_by_date', Prisma.sql`SELECT "macrocycle_renumber_by_date"(${USER_HISTORY_ORDER})`],
+          ['macrocycle_renumber_reverse', Prisma.sql`SELECT "macrocycle_renumber_reverse"(${USER_HISTORY_ORDER})`],
+          ['macrocycle_backfill_window_rows', Prisma.sql`SELECT "macrocycle_backfill_window_rows"()`],
+          [
+            'macrocycle_rewrite_numbers',
+            Prisma.sql`SELECT "macrocycle_rewrite_numbers"(ARRAY['x'], ARRAY['p'], ARRAY[1], ARRAY[2])`,
+          ],
+          // The FORCE switch, its table list, and the runbook functions that use it
+          // (20261112000003, 20261112000004, 20261112000006).
+          ['macrocycle_set_forced_rls', Prisma.sql`SELECT "macrocycle_set_forced_rls"(false)`],
+          ['macrocycle_forced_tables', Prisma.sql`SELECT "macrocycle_forced_tables"()`],
+          ['macrocycle_runbook_reverse', Prisma.sql`SELECT "macrocycle_runbook_reverse"(NULL)`],
+          ['macrocycle_runbook_renumber', Prisma.sql`SELECT "macrocycle_runbook_renumber"(NULL)`],
+          ['macrocycle_runbook_report', Prisma.sql`SELECT * FROM "macrocycle_runbook_report"()`],
+        ];
+        try {
+          for (const [fn, call] of calls) {
+            await expect(asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRaw(call))).rejects.toThrow(
+              new RegExp(`permission denied for function ${fn}\\b`),
+            );
+          }
+        } finally {
+          await appDb.$disconnect();
+        }
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      // 20261112000003 and the runbook functions turn FORCE off to see every user's rows, since
+      // the migrator isn't BYPASSRLS, and must turn it back on. Checked across the schema, so a
+      // later migration that does the same (#1236) is covered without a list to keep in step.
+      it('leaves FORCE ROW LEVEL SECURITY on for every table with row-level security', async () => {
+        const tables = await owner.$queryRaw<{ relname: string; relforcerowsecurity: boolean }[]>`
+          SELECT relname, relforcerowsecurity FROM pg_class
+          WHERE relnamespace = current_schema()::regnamespace AND relkind = 'r' AND relrowsecurity
+          ORDER BY relname`;
+        expect(tables.map((t) => t.relname)).toEqual(expect.arrayContaining(['macrocycle', 'lift_record', 'import_batch']));
+        expect(tables.filter((t) => !t.relforcerowsecurity).map((t) => t.relname)).toEqual([]);
+      });
+
+      // 20261112000005 and 20261112000006: a step called directly by a role FORCE binds, like the
+      // migrator, raises an error instead of returning 0 having read nothing. The suite's owner
+      // is a superuser, so the call runs as a role without superuser or BYPASSRLS that is a
+      // member of the tables' owner, created in a transaction that rolls back. The check reads
+      // no table, so it takes no table lock other suites would wait on (#1237 covers the switch
+      // itself). If the call returned, the throw after it still rolls the role back.
+      it('refuses a direct renumbering call by an owner that FORCE ROW LEVEL SECURITY binds', async () => {
+        const [{ tableowner }] = await owner.$queryRaw<{ tableowner: string }[]>`
+          SELECT tableowner FROM pg_tables WHERE schemaname = current_schema() AND tablename = 'macrocycle'`;
+        for (const call of [
+          Prisma.sql`SELECT "macrocycle_renumber_by_date"(${USER_HISTORY_ORDER}, false)`,
+          Prisma.sql`SELECT "macrocycle_renumber_reverse"(${USER_HISTORY_ORDER}, false)`,
+          Prisma.sql`SELECT "macrocycle_close_window_rows"(${USER_HISTORY_ORDER}, false)`,
+        ]) {
+          await expect(
+            owner.$transaction(async (tx) => {
+              await tx.$executeRawUnsafe(`CREATE ROLE "macrocycle_force_probe" NOSUPERUSER NOBYPASSRLS NOLOGIN`);
+              await tx.$executeRawUnsafe(`GRANT "${tableowner}" TO "macrocycle_force_probe"`);
+              await tx.$executeRawUnsafe(`SET LOCAL ROLE "macrocycle_force_probe"`);
+              await tx.$queryRaw(call);
+              throw new Error('The guard did not fire');
+            }),
+          ).rejects.toThrow(/FORCE ROW LEVEL SECURITY is on for \w+, so macrocycle_force_probe sees no rows/);
+        }
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+    });
   });
 
   // #1148: the split's training maxes are undone inside the lift-records undo's locked transaction.
