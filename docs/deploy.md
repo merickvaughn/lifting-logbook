@@ -557,7 +557,9 @@ API revision it ships with renumbers again after every change. The migration rec
 macrocycle's number before the backfill in `macrocycle."backfillNumber"`, and
 `macrocycle_renumber_reverse()` puts those numbers back in every table that holds one and in
 lift-record import batches' keys. (`20261112000000_renumber_macrocycles_by_date`, just before it,
-does nothing: staging applied an early draft under that name, and the real one runs over it.)
+does nothing: staging applied an early draft under that name, and the real one runs over it.
+`20261112000002_backfill_window_rows_without_lock`, just after it, only replaces one function, so
+it holds no lock worth waiting on and is safe to retry.)
 
 **Before the deploy**, as the migrator ([Connecting as the migrator](#connecting-as-the-migrator)),
 check that the shared lock table can hold one advisory lock per user, since the migration holds
@@ -657,10 +659,12 @@ shared memory" with a hint to raise `max_locks_per_transaction` means the users 
 table: run the check in [Reversing the macrocycle renumbering](#reversing-the-macrocycle-renumbering)
 and raise the flag before retrying. Prisma
 records the migration as failed, and every later `prisma migrate deploy` refuses (P3009) until
-it's marked rolled back. As the migrator, from `apps/api`:
+it's marked rolled back. As the migrator, from `apps/api`, name the migration the P3009 error
+names (usually `20261112000001_renumber_macrocycles_by_date`; it can be
+`20261112000002_backfill_window_rows_without_lock`):
 
 ```bash
-DATABASE_URL="$MIGRATOR_URL" npx prisma migrate resolve --rolled-back 20261112000001_renumber_macrocycles_by_date
+DATABASE_URL="$MIGRATOR_URL" npx prisma migrate resolve --rolled-back <migration named in the P3009 error>
 ```
 
 Then re-run the failed deploy jobs (`gh run rerun <run-id> --failed`) when no import is running.

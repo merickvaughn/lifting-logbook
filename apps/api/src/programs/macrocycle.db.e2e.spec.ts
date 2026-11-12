@@ -58,6 +58,7 @@ const USER_RENUMBER_STALE = 'macrocycle-db-renumber-stale';
 const USER_RENUMBER_UNSTARTED = 'macrocycle-db-renumber-unstarted';
 const USER_RENUMBER_UPGRADE = 'macrocycle-db-renumber-upgrade';
 const USER_RENUMBER_DEADLOCK = 'macrocycle-db-renumber-deadlock';
+const USER_SPLIT_UNDO = 'macrocycle-db-split-undo';
 const USER_HISTORY_ORDER = 'macrocycle-db-history-order';
 const USER_HISTORY_REVERSE = 'macrocycle-db-history-reverse';
 const USER_HISTORY_LATER_IMPORT = 'macrocycle-db-history-later-import';
@@ -69,6 +70,7 @@ const USER_HISTORY_UNSTARTED = 'macrocycle-db-history-unstarted';
 const USER_HISTORY_LOCK = 'macrocycle-db-history-lock';
 const USER_HISTORY_NO_WAIT = 'macrocycle-db-history-no-wait';
 const USERS = [
+  USER_SPLIT_UNDO,
   USER_HISTORY_NO_WAIT,
   USER_HISTORY_NEGATIVE,
   USER_HISTORY_UNSTARTED,
@@ -969,7 +971,8 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
             preImage: {
               [liftRecordNaturalKey({ macrocycleNum: 1, workoutNum: 1, date: day('2026-03-02'), lift: 'Bench Press', setNum: 1 })]: created,
               ...legacyRowsPreImage([1]),
-            },
+              // As import-batch.repository.ts writes it: PreImageEntry has no index signature.
+            } as object,
           },
         });
         return batch.id;
@@ -1062,7 +1065,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
             preImage: {
               [liftRecordNaturalKey({ macrocycleNum: -2, workoutNum: 1, date: day('2026-03-02'), lift: 'Bench Press', setNum: 1 })]: created,
               ...legacyRowsPreImage([-2]),
-            },
+            } as object,
           },
         });
         const before = { sets: await setsOf(user), preImage: await preImageOf(batch.id) };
@@ -1259,4 +1262,45 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       }, DB_E2E_HOOK_TIMEOUT_MS);
     });
   });
+
+  // #1148: the split's training maxes are undone inside the lift-records undo's locked transaction.
+  it("undoes a lift-history import's 1RM split, removing the max it created and restoring the one it updated", async () => {
+    const user = USER_SPLIT_UNDO;
+    const priorDate = day('2025-12-29');
+    await owner.trainingMax.create({
+      data: { userId: user, program: PROGRAM, lift: 'bench-press', weight: 182.5, dateUpdated: priorDate },
+    });
+    const boundary = '----SplitUndoBoundary';
+    const commit = await app.getHttpAdapter().getInstance().inject({
+      method: 'POST',
+      url: `/programs/${PROGRAM}/import?mode=commit&destination=lift-records&splitDest=1`,
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${user}` },
+      payload: [
+        `--${boundary}`,
+        'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+        'Content-Type: text/csv',
+        '',
+        [
+          'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+          `${PROGRAM},1,1,2026-01-01,Bench P.,1,200,1,1RM Test`,
+          `${PROGRAM},1,1,2026-01-01,Squat,1,250,1,1RM Test`,
+          `${PROGRAM},1,1,2026-01-01,Bench P.,2,150,5,`,
+        ].join('\n'),
+        `--${boundary}--`,
+      ].join('\r\n'),
+    });
+    expect(commit.json()).toMatchObject({ created: 1, split: { created: 1, updated: 1 } });
+    const maxes = async () =>
+      (await owner.trainingMax.findMany({ where: { userId: user }, orderBy: { lift: 'asc' } })).map((m) => ({
+        lift: m.lift,
+        weight: m.weight,
+        dateUpdated: m.dateUpdated.toISOString(),
+      }));
+    expect((await maxes()).map((m) => [m.lift, m.weight])).toEqual([['back-squat', 250], ['bench-press', 200]]);
+
+    const undo = await injectAs(user, 'POST', `/programs/${PROGRAM}/import/${(commit.json() as { batchId: string }).batchId}/undo`);
+    expect(undo.json()).toMatchObject({ restored: 3, skipped: 0, flagged: [] });
+    expect(await maxes()).toEqual([{ lift: 'bench-press', weight: 182.5, dateUpdated: priorDate.toISOString() }]);
+    expect(await owner.liftRecord.count({ where: { userId: user } })).toBe(0);
+  }, DB_E2E_HOOK_TIMEOUT_MS);
 });
