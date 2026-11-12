@@ -1393,6 +1393,48 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(undoRes.flagged[0].key).toBe('bench-press');
       expect(undoRes.flagged[0].reason).toContain('modified after import');
     });
+
+    // #1148: the 1RM split writes training maxes under a lift-records batch, and undo used to
+    // treat their keys as set keys, leaving the maxes in place.
+    it('undoes the training maxes a 1RM split created or updated', async () => {
+      const program = 'p1148-undo-split';
+      await importCsv(program, TM_CSV, '?mode=commit&destination=training-maxes');
+      const readMaxes = async () =>
+        Object.fromEntries(
+          (
+            (
+              await app.getHttpAdapter().getInstance().inject({
+                method: 'GET',
+                url: `/programs/${program}/training-maxes`,
+                headers: AUTH,
+              })
+            ).json() as Array<{ lift: string; weight: number }>
+          ).map((m) => [m.lift, m.weight]),
+        );
+
+      const commitRes = (
+        await importCsv(
+          program,
+          [
+            'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+            // Remapped on Review, so it reaches the split as a deadlift (#1159).
+            '5-3-1,1,1,2026-01-01,NOT_IN_SLOT_MAP,1,300,1,1RM Test',
+            '5-3-1,1,1,2026-01-01,Bench P.,1,200,1,1RM Test',
+            '5-3-1,1,1,2026-01-01,Squat,1,250,1,1RM Test',
+            '5-3-1,1,1,2026-01-01,Bench P.,2,150,5,',
+          ].join('\n'),
+          '?mode=commit&destination=lift-records&splitDest=1',
+          { liftOverrides: JSON.stringify({ '1': 'Deadlift' }) },
+        )
+      ).json();
+      expect(commitRes).toMatchObject({ created: 1, split: { created: 2, updated: 1 } });
+      expect(await readMaxes()).toEqual({ 'bench-press': 200, 'back-squat': 250, deadlift: 300 });
+
+      // Three training maxes and the one set.
+      const undoRes = (await undoImport(program, commitRes.batchId)).json();
+      expect(undoRes).toMatchObject({ restored: 4, skipped: 0, flagged: [] });
+      expect(await readMaxes()).toEqual({ 'bench-press': 182.5 });
+    });
   });
 
   // A commit must work however many rows were remapped or excluded (#1121). In the
