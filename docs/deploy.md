@@ -562,9 +562,9 @@ order:
   that name.
 - `20261112000001_renumber_macrocycles_by_date` adds the columns and functions and runs them, but
   reads nothing: the migrator can't bypass row-level security (below). On a database with history
-  migrated as a superuser, such as the local `docker-compose.yml` one, it does read the rows, and runs the
-  backfill without the fix in `20261112000002_keep_rows_below_highest_set`; `20261112000003` then
-  skips, since the rows are already renumbered. There a gap like the one that migration describes
+  migrated as a superuser, such as the local `docker-compose.yml` one, it does read the rows, and
+  runs the backfill without the fix in `20261112000002_keep_rows_below_highest_set`;
+  `20261112000003` then skips, since the rows are already renumbered. There a gap like the one that migration describes
   fails `20261112000001` with *would merge*, or leaves that number without a macrocycle row. To
   recover a local database, run `npx prisma migrate reset` from `apps/api`, which empties it.
 - `20261112000002_backfill_window_rows_without_lock` only replaces one function, so it holds no
