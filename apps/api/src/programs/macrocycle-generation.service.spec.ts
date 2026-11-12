@@ -411,7 +411,7 @@ describe('MacrocycleGenerationService', () => {
       trainingMaxRepo.getTrainingMaxes.mockResolvedValue(stubTrainingMaxes());
       liftRecordRepo.getLiftRecords.mockResolvedValue([
         ...stubLiftRecords(),
-        { ...stubLiftRecords()[0]!, lift: 'Zercher Squat', weight: 185 },
+        ...stubLiftRecords().map((r) => ({ ...r, lift: 'Zercher Squat', weight: 185 })),
       ]);
 
       try {
