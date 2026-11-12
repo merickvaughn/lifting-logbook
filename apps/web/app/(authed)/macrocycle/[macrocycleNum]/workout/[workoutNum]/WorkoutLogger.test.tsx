@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import type { LiftModificationResponse, LiftRecordResponse } from '@lifting-logbook/types';
 import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WorkingSetData, WorkoutLoggerProps } from './types';
@@ -755,7 +756,12 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
   it('adds a modification inline and turns it on', async () => {
     const user = userEvent.setup();
     mockCreateLiftModification.mockResolvedValue({ ok: true, data: PAUSED });
-    render(<WorkoutLogger {...makeProps()} />);
+    // Strict Mode, as `next dev` runs it: the toggles' updater runs twice and must still end on.
+    render(
+      <StrictMode>
+        <WorkoutLogger {...makeProps()} />
+      </StrictMode>,
+    );
 
     await user.click(await screen.findByRole('button', { name: 'Add modification' }));
     await user.type(screen.getByLabelText('Modification name'), 'Paused');

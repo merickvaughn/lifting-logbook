@@ -985,14 +985,16 @@ export default function WorkoutLogger({
 
   // A modification added mid-workout joins the lift's list and is turned on for this occurrence.
   // Both updates are functional: the create ran while the toggles stayed usable, so a toggle or a
-  // refresh that landed meanwhile is built on, not undone. The draft write inside the updater is
-  // idempotent, so a second call under Strict Mode writes the same thing.
+  // refresh that landed meanwhile is built on, not undone. Strict Mode runs the toggles' updater
+  // twice, and the second run reads the draft the first one wrote, so it turns the new one on
+  // rather than flipping it: both runs end with it on.
   function handleModificationAdded(lift: LiftData, modification: LiftModificationResponse) {
     setModificationsByLift((prev) => new Map(prev).set(lift.lift, [...(prev.get(lift.lift) ?? []), modification]));
     const key = liftKey(lift);
     const listed = [...(modificationsByLift.get(lift.lift) ?? []), modification];
     setToggled((prev) => {
-      const ids = toggleModification(prev.get(key) ?? startingModifications(lift), modification.id, listed);
+      const without = (prev.get(key) ?? startingModifications(lift)).filter((id) => id !== modification.id);
+      const ids = toggleModification(without, modification.id, listed);
       writeModificationsDraft(modificationsDraftKey(lift), ids);
       return new Map(prev).set(key, ids);
     });
