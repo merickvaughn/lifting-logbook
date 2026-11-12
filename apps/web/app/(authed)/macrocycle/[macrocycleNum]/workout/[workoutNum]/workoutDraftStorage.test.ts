@@ -1,4 +1,12 @@
-import { buildDraftKey, clearDraft, readDraft, writeDraft } from './workoutDraftStorage';
+import {
+  buildDraftKey,
+  buildModificationsDraftKey,
+  clearDraft,
+  readDraft,
+  readModificationsDraft,
+  writeDraft,
+  writeModificationsDraft,
+} from './workoutDraftStorage';
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -86,5 +94,26 @@ describe('drafts keyed by the macrocycle id (#1198)', () => {
     writeDraft('keyed', { weight: '2', reps: '2', notes: '' });
     expect(readDraft('keyed', 'legacy')?.weight).toBe('2');
     expect(window.localStorage.getItem('legacy')).not.toBeNull();
+  });
+});
+
+describe('modification toggles (#1152)', () => {
+  it('round-trips the ids under a key apart from any set draft', () => {
+    const key = buildModificationsDraftKey('5-3-1', 2, 3, 'Back Squat', 2, 'mc-a');
+    writeModificationsDraft(key, ['m-paused']);
+    expect(readModificationsDraft(key)).toEqual(['m-paused']);
+    expect(key).not.toBe(buildDraftKey('5-3-1', 2, 3, 'Back Squat', 0, 2, 'mc-a'));
+  });
+
+  it('readModificationsDraft returns null for corrupted JSON instead of throwing', () => {
+    window.localStorage.setItem('bad-mods', 'not-json{{{');
+    expect(readModificationsDraft('bad-mods')).toBeNull();
+  });
+
+  it('readModificationsDraft returns null for well-formed JSON with the wrong shape', () => {
+    window.localStorage.setItem('obj-mods', JSON.stringify({ ids: ['m-paused'] }));
+    window.localStorage.setItem('num-mods', JSON.stringify(['m-paused', 7]));
+    expect(readModificationsDraft('obj-mods')).toBeNull();
+    expect(readModificationsDraft('num-mods')).toBeNull();
   });
 });

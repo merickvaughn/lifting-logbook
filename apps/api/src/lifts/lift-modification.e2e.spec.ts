@@ -264,6 +264,13 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
 
       const twoOwn = await user('POST', '/programs/rpt/lift-records', set({ lift, modifications: [wide.id, narrow.id] }));
       expect(twoOwn.statusCode).toBe(400);
+      // Coded, so the logger shows the reason as is (#1152).
+      expect(twoOwn.json()).toEqual(
+        expect.objectContaining({
+          code: 'one-own-modification',
+          message: 'A set can have only one modification with its own max',
+        }),
+      );
       const oneOwn = await user(
         'POST',
         '/programs/rpt/lift-records',

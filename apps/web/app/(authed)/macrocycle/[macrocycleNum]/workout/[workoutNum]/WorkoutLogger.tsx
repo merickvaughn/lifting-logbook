@@ -99,15 +99,20 @@ function toggleModification(
 /**
  * The message for a write that sent modifications and got a 400, when the refreshed list shows one
  * of them was removed elsewhere (#1152); `null` for any other failure.
+ *
+ * `known` are the ids the stored set already carries, on an edit. The API accepts those even when
+ * archived, and an archived one is never in the list, so they can't be what was removed.
  */
 async function staleModificationMessage(
   err: unknown,
   sent: readonly string[],
   refresh: () => Promise<LiftModificationResponse[] | null>,
+  known: readonly string[] = [],
 ): Promise<string | null> {
-  if (sent.length === 0 || !(err instanceof ApiClientError) || err.status !== 400) return null;
+  const added = sent.filter((id) => !known.includes(id));
+  if (added.length === 0 || !(err instanceof ApiClientError) || err.status !== 400) return null;
   const live = await refresh();
-  if (!live || sent.every((id) => live.some((m) => m.id === id))) return null;
+  if (!live || added.every((id) => live.some((m) => m.id === id))) return null;
   return 'A modification on this set was removed. Check the toggles and log again.';
 }
 
@@ -507,9 +512,14 @@ function WorkingSetRow({
     // Sent only when changed, so an edit that leaves them alone sends what it always did. An
     // empty list clears them.
     const before = modificationIds(loggedRecord);
-    const changed =
-      editModifications.length !== before.length || editModifications.some((id) => !before.includes(id));
-    const sent = changed ? [...editModifications] : [];
+    // Limited to the toggles showing, so one removed elsewhere since Edit was clicked (and gone
+    // from the refreshed list) isn't sent again with no button left to turn it off. With no list
+    // there are no edit toggles, and the set's own ids stand.
+    const chosen = modifications
+      ? editModifications.filter((id) => editChoices.some((m) => m.id === id))
+      : editModifications;
+    const changed = chosen.length !== before.length || chosen.some((id) => !before.includes(id));
+    const sent = changed ? chosen : [];
     try {
       const record = await updateLiftRecord(program, loggedRecord.id, {
         weight,
@@ -521,14 +531,16 @@ function WorkingSetRow({
     } catch (err) {
       logClientError('updateLiftRecord', err, { program, id: loggedRecord.id });
       if (followMovedMacrocycle(err)) return;
-      const stale = await staleModificationMessage(err, sent, onRefreshModifications);
+      const stale = await staleModificationMessage(err, sent, onRefreshModifications, before);
       setError(stale ?? writeFailureMessage(err, 'Failed to save changes. Try again.'));
       setSubmitting(false);
     }
   }
 
   // Editing shows the lift's toggles, plus any the set names that are no longer listed (archived),
-  // so the lifter can take them off. None when the lift's list didn't load.
+  // so the lifter can take them off. None when the lift's list didn't load. A ref doesn't carry
+  // its mode, so an archived one reads as `none` here; if it had its own max and the lifter turns
+  // on another, the API's `one-own-modification` message says why the save failed.
   const editChoices = modifications
     ? [
         ...modifications,
@@ -717,8 +729,12 @@ function LiftView({
           active={activeModifications}
           onToggle={onToggleModification}
         >
-          <AddModification program={program} lift={lift.lift} onAdded={onModificationAdded} />
+          {/* Keyed, so a half-typed name or an error doesn't carry over to the next lift. */}
+          <AddModification key={liftKey(lift)} program={program} lift={lift.lift} onAdded={onModificationAdded} />
         </ModificationToggles>
+      )}
+      {!isReadOnly && modifications === null && (
+        <p className={styles.modDescription}>Modifications didn&apos;t load, so sets log without them.</p>
       )}
 
       {lift.warmUpSets.length > 0 && (
@@ -902,7 +918,7 @@ export default function WorkoutLogger({
   useEffect(() => {
     if (isReadOnly) return;
     let cancelled = false;
-    for (const lift of liftNames.split('\n')) {
+    for (const lift of liftNames.split('\n').filter(Boolean)) {
       fetchLiftModifications(lift).then(
         (list) => {
           if (!cancelled) setModificationsByLift((prev) => new Map(prev).set(lift, list));
@@ -934,20 +950,28 @@ export default function WorkoutLogger({
     return buildModificationsDraftKey(program, macrocycleNum, workoutNum, lift.lift, lift.occurrence, macrocycleId);
   }
 
+  // The saved toggle comes first: logging a set clears it (`handleLogged`), so one that's left was
+  // changed after the occurrence's last log here.
   function startingModifications(lift: LiftData): string[] {
+    const saved = readModificationsDraft(modificationsDraftKey(lift));
+    if (saved) return saved;
     const lastLogged = [...lift.workingSets]
       .reverse()
       .map((ws) => loggedSets.get(setKey(lift, ws.setNum)))
       .find((record) => record !== undefined);
-    return lastLogged ? modificationIds(lastLogged) : (readModificationsDraft(modificationsDraftKey(lift)) ?? []);
+    return lastLogged ? modificationIds(lastLogged) : [];
   }
 
-  /** The ids on for a lift occurrence's next set, limited to the modifications still listed. */
+  /**
+   * The ids on for a lift occurrence's next set, limited to the modifications still listed. Until
+   * the list loads the toggles are hidden and can't have changed, so a set logged then takes the
+   * ids it starts from as they are, and the API checks them. A failed fetch sends none, and says so.
+   */
   function activeModifications(lift: LiftData): string[] {
     const listed = modificationsByLift.get(lift.lift);
-    if (!listed) return [];
+    if (listed === null) return [];
     const chosen = toggled.get(liftKey(lift)) ?? startingModifications(lift);
-    return chosen.filter((id) => listed.some((m) => m.id === id));
+    return listed === undefined ? chosen : chosen.filter((id) => listed.some((m) => m.id === id));
   }
 
   function setActiveModifications(lift: LiftData, ids: string[]) {
@@ -960,13 +984,23 @@ export default function WorkoutLogger({
   }
 
   // A modification added mid-workout joins the lift's list and is turned on for this occurrence.
+  // Both updates are functional: the create ran while the toggles stayed usable, so a toggle or a
+  // refresh that landed meanwhile is built on, not undone. The draft write inside the updater is
+  // idempotent, so a second call under Strict Mode writes the same thing.
   function handleModificationAdded(lift: LiftData, modification: LiftModificationResponse) {
+    setModificationsByLift((prev) => new Map(prev).set(lift.lift, [...(prev.get(lift.lift) ?? []), modification]));
+    const key = liftKey(lift);
     const listed = [...(modificationsByLift.get(lift.lift) ?? []), modification];
-    setModificationsByLift((prev) => new Map(prev).set(lift.lift, listed));
-    setActiveModifications(lift, toggleModification(activeModifications(lift), modification.id, listed));
+    setToggled((prev) => {
+      const ids = toggleModification(prev.get(key) ?? startingModifications(lift), modification.id, listed);
+      writeModificationsDraft(modificationsDraftKey(lift), ids);
+      return new Map(prev).set(key, ids);
+    });
   }
 
-  function handleLogged(key: string, record: LoggedSet) {
+  function handleLogged(lift: LiftData, key: string, record: LoggedSet) {
+    // The logged set now holds the toggles, so a reload starts from it (`startingModifications`).
+    clearDraft(modificationsDraftKey(lift));
     setLoggedSets((prev) => new Map(prev).set(key, record));
     setEditingSet(null);
   }
@@ -1132,7 +1166,7 @@ export default function WorkoutLogger({
           onToggleModification={(id) => handleToggleModification(currentLift, id)}
           onModificationAdded={(modification) => handleModificationAdded(currentLift, modification)}
           onRefreshModifications={() => refreshModifications(currentLift.lift)}
-          onLogged={handleLogged}
+          onLogged={(key, record) => handleLogged(currentLift, key, record)}
           onEditStart={handleEditStart}
           onEditSave={handleEditSave}
         />

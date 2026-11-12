@@ -58,6 +58,7 @@ export function reloadAtMacrocycle(macrocycleNum: number): void {
 const LIFTER_MESSAGE_CODES = new Set([
   'import-in-progress',
   'macrocycle-id-required',
+  'one-own-modification',
   'macrocycle-not-current',
   'macrocycle-not-found',
 ]);
@@ -68,7 +69,9 @@ const LIFTER_MESSAGE_CODES = new Set([
  * (400 `macrocycle-id-required`), a write to a macrocycle that is no longer current (409
  * `macrocycle-not-current`), or a page whose macrocycle no longer exists (404
  * `macrocycle-not-found`, as after deleting and starting again). The last three ask for a
- * reload, which a retry can't replace, and name no internal id. Anything else is `fallback`.
+ * reload, which a retry can't replace, and name no internal id. A set given two modifications
+ * with their own max (400 `one-own-modification`) also gets the API's message. Anything else is
+ * `fallback`.
  */
 export function writeFailureMessage(err: unknown, fallback: string): string {
   return err instanceof ApiClientError && err.code !== undefined && LIFTER_MESSAGE_CODES.has(err.code) && err.message

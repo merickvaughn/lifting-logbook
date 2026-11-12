@@ -54,7 +54,14 @@ export async function assertSetModifications(
     if (modification.maxMode === 'own') ownMaxes += 1;
   }
   if (ownMaxes > 1) {
-    throw new BadRequestException('A set can have only one modification with its own max');
+    // Coded, so the logger shows it as is: it names no id, and it's the reason a lifter can hit
+    // by turning on a second one beside an archived one the toggles can't classify (#1152).
+    throw new BadRequestException({
+      statusCode: 400,
+      code: 'one-own-modification',
+      message: 'A set can have only one modification with its own max',
+      error: 'Bad Request',
+    });
   }
   return new Map(modifications.map((m) => [m.id, m.name]));
 }
@@ -62,13 +69,20 @@ export async function assertSetModifications(
 /**
  * The `maxMode` of each of the user's modifications, for `updateMaxes` (#1152). Costs no query when
  * no record has any, like {@link modificationNamesFor}.
+ *
+ * An id with no row reads as `none` there, so its set moves no max. That's logged by id, since a
+ * max that didn't move otherwise leaves nothing to explain it.
  */
 export async function modificationModesFor(
   repos: Pick<RepositoryBundle, 'liftModification'>,
   records: readonly Pick<LiftRecord, 'modifications'>[],
 ): Promise<ReadonlyMap<string, LiftModificationMaxMode>> {
-  if (!records.some((r) => (r.modifications ?? []).length > 0)) return new Map();
-  return new Map((await repos.liftModification.list()).map((m) => [m.id, m.maxMode]));
+  const ids = records.flatMap((r) => r.modifications ?? []);
+  if (ids.length === 0) return new Map();
+  const modes = new Map((await repos.liftModification.list()).map((m) => [m.id, m.maxMode]));
+  const missing = [...new Set(ids)].filter((id) => !modes.has(id));
+  if (missing.length > 0) logger.warn({ missing }, 'A logged set names a lift modification with no row, so it moves no max');
+  return modes;
 }
 
 /**

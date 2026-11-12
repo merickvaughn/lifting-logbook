@@ -6,6 +6,11 @@
 // draft degrades to "no draft" (falls back to plan defaults) — never a data-loss or
 // correctness bug, since the source of truth is always the server record.
 //
+// The one other thing kept here is a lift occurrence's modification toggles (#1152), under
+// `buildModificationsDraftKey`. They decide what the occurrence's next set sends, so the logger
+// treats them with more care: logging a set clears them (the logged set then holds them), Finish
+// workout sweeps them, and a lost one falls back to the last logged set, then to none.
+//
 // Storage failures (quota exceeded, disabled storage, corrupted JSON) are handled by
 // failing open silently rather than through logClientError — that helper is scoped to
 // API mutation failures (see apps/web/lib/log-client-error.ts) and beacons every call;

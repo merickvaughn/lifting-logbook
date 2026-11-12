@@ -635,6 +635,7 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     );
     expect(screen.queryByRole('button', { name: 'Add modification' })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Back Squat modifications' })).not.toBeInTheDocument();
+    expect(await screen.findByText("Modifications didn't load, so sets log without them.")).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Log' }));
 
     await waitFor(() => expect(mockCreateLiftRecord).toHaveBeenCalledTimes(1));
@@ -646,12 +647,44 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     const user = userEvent.setup();
     mockFetchLiftModifications.mockResolvedValue([PAUSED]);
     mockCreateLiftRecord.mockResolvedValue({ ...LOGGED, id: 'rec-2', setNum: 2 });
-    // A toggle saved before the set was logged loses to the logged set.
-    window.localStorage.setItem(buildModificationsDraftKey('5-3-1', 1, 1, 'Back Squat'), '[]');
     render(<WorkoutLogger {...makeProps({ lifts: [twoSets({ ...LOGGED, modifications: PAUSED_REF })] })} />);
 
     expect(screen.getByText('225 lbs × 5 · Paused')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Paused', pressed: true })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() =>
+      expect(createdBody(0)).toEqual(expect.objectContaining({ setNum: 2, modifications: ['m-paused'] })),
+    );
+  });
+
+  it('keeps a toggle changed after a logged set across a reload, and clears it when the next set logs', async () => {
+    const user = userEvent.setup();
+    const draftKey = buildModificationsDraftKey('5-3-1', 1, 1, 'Back Squat');
+    mockFetchLiftModifications.mockResolvedValue([PAUSED]);
+    mockCreateLiftRecord.mockResolvedValue({ ...LOGGED, id: 'rec-2', setNum: 2 });
+    const lifts = [twoSets({ ...LOGGED, modifications: PAUSED_REF })];
+    const { unmount } = render(<WorkoutLogger {...makeProps({ lifts })} />);
+    await user.click(await screen.findByRole('button', { name: 'Paused', pressed: true }));
+    unmount();
+
+    // The page reloads: set 1 still names Paused, but the lifter turned it off for set 2.
+    render(<WorkoutLogger {...makeProps({ lifts })} />);
+    expect(await screen.findByRole('button', { name: 'Paused', pressed: false })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    await waitFor(() => expect(mockCreateLiftRecord).toHaveBeenCalledTimes(1));
+    expect(createdBody(0)).not.toHaveProperty('modifications');
+    expect(window.localStorage.getItem(draftKey)).toBeNull();
+  });
+
+  it('sends the starting toggles for a set logged before the list loads', async () => {
+    const user = userEvent.setup();
+    mockFetchLiftModifications.mockReturnValue(new Promise(() => {}));
+    mockCreateLiftRecord.mockResolvedValue({ ...LOGGED, id: 'rec-2', setNum: 2, modifications: PAUSED_REF });
+    render(<WorkoutLogger {...makeProps({ lifts: [twoSets({ ...LOGGED, modifications: PAUSED_REF })] })} />);
+
+    expect(screen.queryByRole('group', { name: 'Back Squat modifications' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Log' }));
 
     await waitFor(() =>
@@ -695,6 +728,30 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     expect(screen.getByLabelText('Weight in lbs')).toHaveValue(230);
   });
 
+  it('keeps the typed set and says the log failed when the refresh after a 400 fails too', async () => {
+    const user = userEvent.setup();
+    const refreshFailure = new Error('API 503 Service Unavailable for /lifts/modifications');
+    mockFetchLiftModifications.mockResolvedValueOnce([PAUSED]).mockRejectedValueOnce(refreshFailure);
+    mockCreateLiftRecord.mockRejectedValue(
+      new ApiClientError("'m-paused' is not one of your modifications of Back Squat", 400),
+    );
+    render(<WorkoutLogger {...makeProps()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Paused', pressed: false }));
+    await user.clear(screen.getByLabelText('Weight in lbs'));
+    await user.type(screen.getByLabelText('Weight in lbs'), '230');
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+
+    expect(await screen.findByText('Failed to log set. Try again.')).toBeInTheDocument();
+    expect(mockLogClientError).toHaveBeenCalledWith('fetchLiftModifications', refreshFailure, {
+      program: '5-3-1',
+      lift: 'Back Squat',
+    });
+    // The toggles already showing stay, and so does the typed set.
+    expect(screen.getByRole('button', { name: 'Paused', pressed: true })).toBeInTheDocument();
+    expect(screen.getByLabelText('Weight in lbs')).toHaveValue(230);
+  });
+
   it('adds a modification inline and turns it on', async () => {
     const user = userEvent.setup();
     mockCreateLiftModification.mockResolvedValue({ ok: true, data: PAUSED });
@@ -720,6 +777,47 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     expect(await screen.findByText("Back Squat already has 'Paused'")).toBeInTheDocument();
   });
 
+  it('keeps a refresh that landed while an inline Add was saving', async () => {
+    const user = userEvent.setup();
+    const OLD = modification('m-old', 'Old grip');
+    const WIDE = modification('m-wide', 'Wide stance');
+    let resolveAdd: (value: { ok: true; data: LiftModificationResponse }) => void = () => {};
+    mockFetchLiftModifications.mockResolvedValueOnce([PAUSED, OLD]).mockResolvedValueOnce([PAUSED]);
+    mockCreateLiftRecord.mockRejectedValue(
+      new ApiClientError("'m-old' is not one of your modifications of Back Squat", 400),
+    );
+    mockCreateLiftModification.mockReturnValue(new Promise((resolve) => { resolveAdd = resolve; }));
+    render(<WorkoutLogger {...makeProps()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Old grip', pressed: false }));
+    await user.click(screen.getByRole('button', { name: 'Add modification' }));
+    await user.type(screen.getByLabelText('Modification name'), 'Wide stance');
+    await user.click(screen.getByRole('button', { name: 'Save modification' }));
+    // While the Add saves, a log finds Old grip removed elsewhere and refreshes the list.
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    expect(await screen.findByText(/A modification on this set was removed/)).toBeInTheDocument();
+    resolveAdd({ ok: true, data: WIDE });
+
+    expect(await screen.findByRole('button', { name: 'Wide stance', pressed: true })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Old grip' })).not.toBeInTheDocument();
+  });
+
+  it('closes a half-typed Add when the lifter moves to another lift', async () => {
+    const user = userEvent.setup();
+    render(
+      <WorkoutLogger
+        {...makeProps({ lifts: [makeLift(), makeLift({ lift: 'Bench Press' })] })}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Add modification' }));
+    await user.type(screen.getByLabelText('Modification name'), 'Paused');
+    await user.click(screen.getByRole('button', { name: 'Go to Bench Press' }));
+
+    expect(await screen.findByRole('heading', { name: 'Bench Press' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Modification name')).not.toBeInTheDocument();
+  });
+
   it("edits a logged set's modifications", async () => {
     const user = userEvent.setup();
     mockFetchLiftModifications.mockResolvedValue([PAUSED]);
@@ -741,6 +839,49 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
       ),
     );
     expect(screen.getByText('225 lbs × 5')).toBeInTheDocument();
+  });
+
+  it('drops a toggle removed elsewhere from the next save of an edit', async () => {
+    const user = userEvent.setup();
+    const WIDE = modification('m-wide', 'Wide stance');
+    mockFetchLiftModifications.mockResolvedValueOnce([WIDE]).mockResolvedValue([]);
+    mockUpdateLiftRecord
+      .mockRejectedValueOnce(new ApiClientError("'m-wide' is not one of your modifications of Back Squat", 400))
+      .mockResolvedValueOnce(LOGGED);
+    render(<WorkoutLogger {...makeProps({ lifts: [twoSets(LOGGED)] })} />);
+
+    await screen.findByRole('button', { name: 'Wide stance', pressed: false });
+    await user.click(screen.getByRole('button', { name: 'Edit set 1' }));
+    const editToggles = within(screen.getByRole('group', { name: 'Set 1 modifications' }));
+    await user.click(editToggles.getByRole('button', { name: 'Wide stance', pressed: false }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(/A modification on this set was removed/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mockUpdateLiftRecord).toHaveBeenCalledTimes(2));
+    expect(mockUpdateLiftRecord.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ modifications: ['m-wide'] }));
+    expect(mockUpdateLiftRecord.mock.calls[1]?.[2]).not.toHaveProperty('modifications');
+  });
+
+  it("shows the API's reason when an edit adds a second modification with its own max", async () => {
+    const user = userEvent.setup();
+    const WIDE = modification('m-wide', 'Wide grip', { maxMode: 'own' });
+    const reason = 'A set can have only one modification with its own max';
+    mockFetchLiftModifications.mockResolvedValue([WIDE]);
+    mockUpdateLiftRecord.mockRejectedValue(new ApiClientError(reason, 400, 'one-own-modification'));
+    // The set names an archived modification with its own max, which the list leaves out.
+    const archived = [{ id: 'm-close', name: 'Close grip' }];
+    render(<WorkoutLogger {...makeProps({ lifts: [twoSets({ ...LOGGED, modifications: archived })] })} />);
+
+    await screen.findByRole('button', { name: 'Wide grip', pressed: false });
+    await user.click(screen.getByRole('button', { name: 'Edit set 1' }));
+    const editToggles = within(screen.getByRole('group', { name: 'Set 1 modifications' }));
+    expect(editToggles.getByRole('button', { name: 'Close grip', pressed: true })).toBeInTheDocument();
+    await user.click(editToggles.getByRole('button', { name: 'Wide grip', pressed: false }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText(reason)).toBeInTheDocument();
+    expect(screen.queryByText(/A modification on this set was removed/)).not.toBeInTheDocument();
   });
 
   it('sends no modifications on an edit that leaves them alone', async () => {
