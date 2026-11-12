@@ -612,6 +612,8 @@ export default function WorkoutLogger({
   // Editable date — initialized from the server-provided scheduled date, user can override.
   const [effectiveDate, setEffectiveDate] = useState(date);
   useEffect(() => { setEffectiveDate(date); }, [date]);
+  // A failed date change on a logged workout: it's put back, and this says why.
+  const [dateError, setDateError] = useState<string | null>(null);
 
   // Initialize loggedSets from any pre-existing records passed via server props
   const [loggedSets, setLoggedSets] = useState<Map<string, LoggedSet>>(
@@ -762,15 +764,18 @@ export default function WorkoutLogger({
             const newDate = e.target.value;
             const prevDate = effectiveDate;
             setEffectiveDate(newDate);
+            setDateError(null);
             if (isReadOnly) {
               rescheduleWorkout(program, macrocycleNum, workoutNum, newDate, macrocycleId).catch((err) => {
                 logClientError('rescheduleWorkout', err, { program, macrocycleNum, workoutNum });
                 if (followMovedMacrocycle(err)) return;
                 setEffectiveDate(prevDate);
+                setDateError(writeFailureMessage(err, 'Failed to change the date. Try again.'));
               });
             }
           }}
         />
+        {dateError && <p className={styles.setError}>{dateError}</p>}
       </div>
 
       {/* Navigation dots */}

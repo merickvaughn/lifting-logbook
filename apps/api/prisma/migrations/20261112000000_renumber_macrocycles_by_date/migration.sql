@@ -23,7 +23,8 @@
 -- first and reads "macrocycle" second, so taking them in the same order means neither can wait on
 -- the other in a cycle. Once it holds a user's lock, that user's page reads carry no id and their
 -- writes get 409 `import-in-progress`; the ALTER TABLE then holds "macrocycle" until the migration
--- commits, so every read of it waits that long. The whole run is one statement per table per
+-- commits, so every read of it waits that long. The three steps take the lock again without
+-- waiting, for any user whose first row committed meanwhile (`macrocycle_lock_every_user`). The whole run is one statement per table per
 -- step, about a second for 20,000 rows on local Postgres (ADR-042).
 -- An import holds a user's lock for up to its 30-second transaction, so lock_timeout allows 40
 -- seconds. If it still runs out, the migration fails and Prisma records it as failed, which stops
@@ -50,7 +51,15 @@ SET LOCAL lock_timeout = '40s';
 
 -- Takes the macrocycle lock for every user with a numbered row in any of the eight tables (or
 -- only `only_user`), in a fixed order so two callers can't deadlock each other.
-CREATE FUNCTION "macrocycle_lock_every_user"(only_user TEXT) RETURNS VOID
+--
+-- With `wait_for_locks` false it waits for none: it takes each lock it can at once and skips the
+-- rest, with a notice. The migration's steps run that way, after its ALTER TABLE. By then a user
+-- whose lock it couldn't take earlier, such as one whose first row committed while the opening
+-- loop waited, can be held only by a request that hasn't read "macrocycle" yet: the ALTER TABLE
+-- waited for every transaction that had. That request now waits on the table, so waiting on its
+-- lock would deadlock, and skipping it is safe, since every writer reads "macrocycle" first and
+-- will see the committed numbers. A call outside the migration holds no table lock and waits.
+CREATE FUNCTION "macrocycle_lock_every_user"(only_user TEXT, wait_for_locks BOOLEAN DEFAULT true) RETURNS VOID
 LANGUAGE plpgsql AS $$
 DECLARE
   owner_id TEXT;
@@ -69,7 +78,11 @@ BEGIN
     WHERE only_user IS NULL OR u = only_user
     ORDER BY 1
   LOOP
-    PERFORM pg_advisory_xact_lock(hashtextextended(owner_id, 1171));
+    IF wait_for_locks THEN
+      PERFORM pg_advisory_xact_lock(hashtextextended(owner_id, 1171));
+    ELSIF NOT pg_try_advisory_xact_lock(hashtextextended(owner_id, 1171)) THEN
+      RAISE NOTICE 'Skipped the macrocycle lock of user %, held by a request waiting on the table', owner_id;
+    END IF;
   END LOOP;
 END;
 $$;
@@ -248,12 +261,12 @@ $$;
 -- `closingStatus` decides, with the program's workouts read from the number's scheduled workouts,
 -- since SQL can't expand a program spec: `completed` when every scheduled workout has a set,
 -- `abandoned` when one doesn't, and `unknown` with no schedule. Returns the rows closed.
-CREATE FUNCTION "macrocycle_close_window_rows"(only_user TEXT DEFAULT NULL) RETURNS INTEGER
+CREATE FUNCTION "macrocycle_close_window_rows"(only_user TEXT DEFAULT NULL, wait_for_locks BOOLEAN DEFAULT true) RETURNS INTEGER
 LANGUAGE plpgsql AS $$
 DECLARE
   closed INTEGER;
 BEGIN
-  PERFORM "macrocycle_lock_every_user"(only_user);
+  PERFORM "macrocycle_lock_every_user"(only_user, wait_for_locks);
   WITH closing AS (
     SELECT m."id", sets.last, sched.planned,
            (SELECT COUNT(DISTINCT s."workoutNum") FROM "macrocycle_scheduled_workout" AS s
@@ -292,7 +305,7 @@ $$;
 -- Records each row's number in "backfillNumber" (once: a later call keeps the first), then
 -- numbers each user's program 1 to N by start date, ties by number, and moves the numbers past
 -- its highest macrocycle to N + 1 onward. Returns the numbers moved.
-CREATE FUNCTION "macrocycle_renumber_by_date"(only_user TEXT DEFAULT NULL) RETURNS INTEGER
+CREATE FUNCTION "macrocycle_renumber_by_date"(only_user TEXT DEFAULT NULL, wait_for_locks BOOLEAN DEFAULT true) RETURNS INTEGER
 LANGUAGE plpgsql AS $$
 DECLARE
   users TEXT[];
@@ -300,7 +313,7 @@ DECLARE
   olds INTEGER[];
   news INTEGER[];
 BEGIN
-  PERFORM "macrocycle_lock_every_user"(only_user);
+  PERFORM "macrocycle_lock_every_user"(only_user, wait_for_locks);
   UPDATE "macrocycle" SET "backfillNumber" = "macrocycleNum", "backfilledAt" = timezone('UTC', now())
   WHERE "backfillNumber" IS NULL AND (only_user IS NULL OR "userId" = only_user);
   SELECT array_agg(r."userId"), array_agg(r."program"), array_agg(r.old_num), array_agg(r.new_num)
@@ -331,7 +344,7 @@ $$;
 -- nothing, when a macrocycle has no "backfillNumber": the new revision created it after the
 -- backfill, and there's no old number to give it. Import batches need no check, since every
 -- lift-records batch's keys move with the numbers. Returns the numbers moved.
-CREATE FUNCTION "macrocycle_renumber_reverse"(only_user TEXT DEFAULT NULL) RETURNS INTEGER
+CREATE FUNCTION "macrocycle_renumber_reverse"(only_user TEXT DEFAULT NULL, wait_for_locks BOOLEAN DEFAULT true) RETURNS INTEGER
 LANGUAGE plpgsql AS $$
 DECLARE
   bad_user TEXT;
@@ -342,7 +355,7 @@ DECLARE
   olds INTEGER[];
   news INTEGER[];
 BEGIN
-  PERFORM "macrocycle_lock_every_user"(only_user);
+  PERFORM "macrocycle_lock_every_user"(only_user, wait_for_locks);
   SELECT "userId", "program", "macrocycleNum" INTO bad_user, bad_program, bad_num
   FROM "macrocycle" WHERE "backfillNumber" IS NULL AND (only_user IS NULL OR "userId" = only_user) LIMIT 1;
   IF bad_num IS NOT NULL THEN
@@ -371,14 +384,14 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION "macrocycle_lock_every_user"(TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION "macrocycle_lock_every_user"(TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION "macrocycle_rewrite_numbers"(TEXT[], TEXT[], INTEGER[], INTEGER[]) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION "macrocycle_backfill_window_rows"() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION "macrocycle_unstarted_numbers"(TEXT) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION "macrocycle_close_window_rows"(TEXT) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION "macrocycle_renumber_by_date"(TEXT) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION "macrocycle_renumber_reverse"(TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION "macrocycle_close_window_rows"(TEXT, BOOLEAN) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION "macrocycle_renumber_by_date"(TEXT, BOOLEAN) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION "macrocycle_renumber_reverse"(TEXT, BOOLEAN) FROM PUBLIC;
 
 SELECT "macrocycle_backfill_window_rows"();
-SELECT "macrocycle_close_window_rows"();
-SELECT "macrocycle_renumber_by_date"();
+SELECT "macrocycle_close_window_rows"(NULL, false);
+SELECT "macrocycle_renumber_by_date"(NULL, false);

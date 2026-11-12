@@ -378,7 +378,8 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect((await get(`/programs/${SEED_PROGRAM}/macrocycles/current`)).json().macrocycleNum).toBe(2);
     });
 
-    // A number the program doesn't have is a 404 since ADR-042; it was a 400 for having no records.
+    // A number the program doesn't have: no id is a 400, and a page's id, which names another
+    // number, is a 409 (#1200). It was a 404 under ADR-042, and before that a 400 for having no records.
     it('POST /programs/:program/macrocycles with an unknown fromMacrocycleNum returns 409 macrocycle-moved', async () => {
       // No page has an id for a macrocycle the program lacks, so a page's id names another (#1200).
       const res = await injectPage(app, {

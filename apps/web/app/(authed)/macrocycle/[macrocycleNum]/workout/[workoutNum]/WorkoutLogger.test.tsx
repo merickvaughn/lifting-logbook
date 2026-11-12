@@ -1,9 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { LiftRecordResponse } from '@lifting-logbook/types';
 import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WorkoutLoggerProps } from './types';
-import { createLiftRecord, recordBodyWeight } from '@/lib/client-api';
+import { createLiftRecord, recordBodyWeight, rescheduleWorkout } from '@/lib/client-api';
 import { buildDraftKey } from './workoutDraftStorage';
 import { ApiClientError } from '@lifting-logbook/api-client';
 import { browserNavigation } from '@/lib/macrocycleUrl';
@@ -472,6 +472,26 @@ describe('WorkoutLogger — a renumbered macrocycle (#1198)', () => {
     await waitFor(() => expect(mockAssign).toHaveBeenCalledWith('/macrocycle/1/workout/1?from=history'));
     window.history.pushState({}, '', '/');
     expect(screen.queryByText('Failed to log set. Try again.')).not.toBeInTheDocument();
+  });
+
+  it('puts a logged workout’s date back and says why when the change is refused, after its one reload (#1200)', async () => {
+    const reload = new ApiClientError("This page of '5-3-1' doesn't say which macrocycle it's for. Reload the page and try again.", 400, 'macrocycle-id-required');
+    jest.mocked(rescheduleWorkout).mockRejectedValue(reload);
+    window.history.pushState({}, '', '/macrocycle/1/workout/1');
+    // The page was already reloaded for a missing id a moment ago.
+    window.sessionStorage.setItem('macrocycle-id-reload', JSON.stringify({ page: '/macrocycle/1/workout/1', at: Date.now() }));
+    try {
+      render(<WorkoutLogger {...makeProps({ isReadOnly: true })} />);
+
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-07-10' } });
+
+      await waitFor(() => expect(screen.getByText(/doesn't say which macrocycle it's for/)).toBeInTheDocument());
+      expect(screen.getByLabelText('Date')).toHaveValue('2026-07-08');
+      expect(mockAssign).not.toHaveBeenCalled();
+    } finally {
+      window.sessionStorage.clear();
+      window.history.pushState({}, '', '/');
+    }
   });
 
   it('asks for a retry while an import holds the lock, without reloading', async () => {

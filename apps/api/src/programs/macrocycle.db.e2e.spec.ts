@@ -67,7 +67,9 @@ const USER_HISTORY_WINDOW = 'macrocycle-db-history-window';
 const USER_HISTORY_NEGATIVE = 'macrocycle-db-history-negative';
 const USER_HISTORY_UNSTARTED = 'macrocycle-db-history-unstarted';
 const USER_HISTORY_LOCK = 'macrocycle-db-history-lock';
+const USER_HISTORY_NO_WAIT = 'macrocycle-db-history-no-wait';
 const USERS = [
+  USER_HISTORY_NO_WAIT,
   USER_HISTORY_NEGATIVE,
   USER_HISTORY_UNSTARTED,
   USER_HISTORY_LOCK,
@@ -1110,6 +1112,40 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         } finally {
           await other.$disconnect();
         }
+      }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      it('the migration steps skip a lock another request holds, and a later call waits for it', async () => {
+        const user = USER_HISTORY_NO_WAIT;
+        await seedOutOfOrder(user);
+        const other = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
+        let release = () => undefined as void;
+        const released = new Promise<void>((resolve) => (release = resolve));
+        let held = () => undefined as void;
+        const holding = new Promise<void>((resolve) => (held = resolve));
+        // A request that holds the user's lock shared, as a page write does before reading "macrocycle".
+        const holder = other.$transaction(
+          async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${user}, 1171))`;
+            held();
+            await released;
+          },
+          { timeout: DB_E2E_HOOK_TIMEOUT_MS },
+        );
+        const withTimeout = (wait: boolean) =>
+          owner.$transaction(async (tx) => {
+            await tx.$executeRaw`SET LOCAL lock_timeout = '1s'`;
+            return tx.$queryRaw`SELECT "macrocycle_renumber_by_date"(${user}, ${wait}) AS moved`;
+          });
+        try {
+          await holding;
+          await expect(withTimeout(true)).rejects.toThrow(/lock timeout/);
+          await withTimeout(false);
+        } finally {
+          release();
+          await holder;
+          await other.$disconnect();
+        }
+        expect((await owner.macrocycle.findMany({ where: { userId: user }, orderBy: { startDate: 'asc' } })).map((m) => m.macrocycleNum)).toEqual([1, 2, 3]);
       }, DB_E2E_HOOK_TIMEOUT_MS);
 
       it('the reversal refuses, moving nothing, when a macrocycle has no recorded number', async () => {

@@ -28,7 +28,7 @@ function writtenNumber(program: string, path: string, body: unknown): number | u
  * one for a route with no number). There's no header when `url` names no program, the program
  * can't be listed or has none, or a write with no number finds no current macrocycle, as before
  * initializing. A write naming a number the program's list lacks throws, since no page could
- * send an id for it: a test of that case sends its own header, as {@link macrocycleIdFor} gives.
+ * send an id for it: a test of that case sends its own header, such as {@link currentMacrocycleId}.
  * `macrocycle-id.e2e.spec.ts` tests the header itself.
  */
 async function pageWriteHeaders(
