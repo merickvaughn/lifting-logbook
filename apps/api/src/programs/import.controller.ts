@@ -48,6 +48,7 @@ import {
   buildLiftRecordsPreviewSoft,
   buildTrainingMaxPreview,
   buildTrainingMaxPreImage,
+  type PreImageEntry,
   type StrengthGoalSpellingCollision,
   type TrainingMaxSpellingCollision,
   liftRecordNaturalKey,
@@ -293,10 +294,22 @@ export class ImportController {
     let skipped = 0;
     const flagged: Array<{ key: string; reason: string }> = [];
 
+    const undoTrainingMaxes = async (entries: Array<[string, PreImageEntry]>) => {
+      if (entries.length === 0) return;
+      // One read for every entry, rather than one per key.
+      const allMaxes = await repos.trainingMax.getTrainingMaxes(program);
+      for (const [lift, entry] of entries) {
+        const reason = await this.undoTrainingMax(repos, program, allMaxes, lift, entry);
+        if (reason === null) {
+          restored++;
+        } else {
+          skipped++;
+          flagged.push({ key: lift, reason });
+        }
+      }
+    };
+
     // Hoist destination-specific reads before the loop to avoid N+1 per-key round-trips
-    const allMaxes = batch.destination === 'training-maxes'
-      ? await repos.trainingMax.getTrainingMaxes(program)
-      : [];
     const allGoals = batch.destination === 'strength-goals'
       ? await repos.strengthGoal.getGoals(program)
       : [];
@@ -304,10 +317,15 @@ export class ImportController {
     if (batch.destination === 'lift-records') {
       // The undo removes macrocycle rows, so it holds the lock exclusively, as the import did.
       await lockForImport(repos, 'undo');
+      // A 1RM split's training maxes share this batch, keyed by lift id (#1148). Every set and
+      // `legacy` row key starts with a macrocycle number, and a lift id (a kebab-case name or a
+      // custom lift's UUID) never does.
+      const entries = Object.entries(batch.preImage);
+      await undoTrainingMaxes(entries.filter(([k]) => preImageKeyNumber(k) === null));
       // Collect all created keys and delete in a single query to avoid N+1 round-trips
       const { setKeys: createdKeys, legacyNums } = splitLegacyRowKeys(
-        Object.entries(batch.preImage)
-          .filter(([, e]) => e.kind === 'created')
+        entries
+          .filter(([k, e]) => preImageKeyNumber(k) !== null && e.kind === 'created')
           .map(([k]) => k),
       );
       if (createdKeys.length > 0) {
@@ -327,35 +345,12 @@ export class ImportController {
       const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
       await removeEmptyLegacyRows(repos, program, [...new Set([...legacyNums, ...setNums])]);
       await renumberProgram(repos, program);
+    } else if (batch.destination === 'training-maxes') {
+      await undoTrainingMaxes(Object.entries(batch.preImage));
+      await repos.importBatch.deleteById(batchId, user.id);
     } else {
       for (const [key, entry] of Object.entries(batch.preImage)) {
-        if (batch.destination === 'training-maxes') {
-          const lift = key;
-          const current = allMaxes.find((m) => m.lift === lift);
-          const wrote = entry.wrote as { weight: number };
-
-          if (!current) {
-            skipped++;
-            flagged.push({ key, reason: 'training max no longer exists' });
-            continue;
-          }
-          if (current.weight !== wrote.weight) {
-            skipped++;
-            flagged.push({ key, reason: `weight modified after import (expected ${wrote.weight}, found ${current.weight})` });
-            continue;
-          }
-
-          if (entry.kind === 'created') {
-            await repos.trainingMax.deleteTrainingMaxes(program, [lift]);
-            restored++;
-          } else if (entry.kind === 'updated') {
-            const before = entry.before as { weight: number; dateUpdated: string };
-            await repos.trainingMax.saveTrainingMaxes(program, [
-              { lift: current.lift, weight: before.weight, dateUpdated: new Date(before.dateUpdated) },
-            ]);
-            restored++;
-          }
-        } else if (batch.destination === 'strength-goals') {
+        if (batch.destination === 'strength-goals') {
           const lift = key;
           const current = allGoals.find((g) => g.lift === lift);
           const wrote = entry.wrote as Record<string, unknown>;
@@ -411,6 +406,34 @@ export class ImportController {
     }
 
     return { batchId, restored, skipped, flagged };
+  }
+
+  /**
+   * Reverses one training max an import wrote: deletes a created one, or restores an updated
+   * one's prior weight. Returns why it was skipped, or null once undone.
+   */
+  private async undoTrainingMax(
+    repos: RepositoryBundle,
+    program: string,
+    allMaxes: TrainingMax[],
+    lift: string,
+    entry: PreImageEntry,
+  ): Promise<string | null> {
+    const current = allMaxes.find((m) => m.lift === lift);
+    const wrote = entry.wrote as { weight: number };
+    if (!current) return 'training max no longer exists';
+    if (current.weight !== wrote.weight) {
+      return `weight modified after import (expected ${wrote.weight}, found ${current.weight})`;
+    }
+    if (entry.kind === 'created') {
+      await repos.trainingMax.deleteTrainingMaxes(program, [lift]);
+    } else {
+      const before = entry.before as { weight: number; dateUpdated: string };
+      await repos.trainingMax.saveTrainingMaxes(program, [
+        { lift: current.lift, weight: before.weight, dateUpdated: new Date(before.dateUpdated) },
+      ]);
+    }
+    return null;
   }
 
   /** Preview for lift-records using soft validation (includes incomplete/ambiguous rows). */
