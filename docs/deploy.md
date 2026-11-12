@@ -551,15 +551,35 @@ without deploying, run `update-traffic --to-latest`. See
 
 ### Reversing the macrocycle renumbering
 
-The `20261112000000_renumber_macrocycles_by_date` migration ([#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200),
+The `20261112000001_renumber_macrocycles_by_date` migration ([#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200),
 ADR-042) renumbers every user's stored macrocycles by start date when the deploy runs, and the
 API revision it ships with renumbers again after every change. The migration records each
 macrocycle's number before the backfill in `macrocycle."backfillNumber"`, and
 `macrocycle_renumber_reverse()` puts those numbers back in every table that holds one and in
-lift-record import batches' keys.
+lift-record import batches' keys. (`20261112000000_renumber_macrocycles_by_date`, just before it,
+does nothing: staging applied an early draft under that name, and the real one runs over it.)
+
+**Before the deploy**, as the migrator ([Connecting as the migrator](#connecting-as-the-migrator)),
+check that the shared lock table can hold one advisory lock per user, since the migration holds
+them all until it commits:
+
+```sql
+SELECT (SELECT count(DISTINCT "userId") FROM (
+          SELECT "userId" FROM macrocycle UNION SELECT "userId" FROM lift_record
+          UNION SELECT "userId" FROM macrocycle_dashboard UNION SELECT "userId" FROM focus_day_state
+          UNION SELECT "userId" FROM workout_date_override UNION SELECT "userId" FROM workout_skip_override
+          UNION SELECT "userId" FROM workout_lift_override UNION SELECT "userId" FROM macrocycle_scheduled_workout
+        ) AS u) AS users,
+       current_setting('max_locks_per_transaction')::int
+         * (current_setting('max_connections')::int + current_setting('max_prepared_transactions')::int) AS lock_slots;
+```
+
+`users` should be well under `lock_slots`, which every other session shares. If it isn't, raise
+`max_locks_per_transaction` on the instance first (a Cloud SQL database flag, which restarts it).
 
 **During the deploy.** The migration holds every user's macrocycle lock and the `macrocycle`
-table until it commits: about a second per 20,000 rows, and longer if it waits on an import.
+table until it commits: 1.6 to 1.8 seconds on local Postgres for 20,000 sets in 100 macrocycles
+and 50 import batches, longer with more rows, and longer if it waits on an import.
 Pages loaded in that time get no macrocycle id. Once the new API serves, a write from such a
 page gets a 400 `macrocycle-id-required`, which the old web shows as a generic error ("Failed to
 log set. Try again.") until the new web is live, and which reloads the page after that. Expect a
@@ -576,9 +596,13 @@ SELECT count(*) FROM macrocycle WHERE "backfillNumber" IS NOT NULL AND "macrocyc
 SELECT count(*) FROM macrocycle m WHERE origin = 'live' AND status = 'in-progress' AND "endDate" IS NULL
   AND NOT EXISTS (SELECT 1 FROM macrocycle_dashboard d
                   WHERE d."userId" = m."userId" AND d.program = m.program AND d."macrocycleNum" = m."macrocycleNum");
+-- The rows the migration closed. Each was `in-progress` with no end date before.
+SELECT "userId", program, "macrocycleNum", status, "endDate" FROM macrocycle
+WHERE "backfillClosedAt" IS NOT NULL ORDER BY 1, 2, 3;
 ```
 
-The second should be 0. The migrate job's log may not carry the functions' notices, which is why
+The second should be 0. The reversal leaves the closed rows closed: reopening one would put back
+a live row on a number the dashboard doesn't show. The migrate job's log may not carry the functions' notices, which is why
 these are here.
 
 #### Rolling back over it
@@ -608,7 +632,8 @@ someone's history wrongly. Do it after the API is rolled back, or the next chang
    every user first, so an import or page write still running finishes first, and it returns how
    many numbers it moved, or 0 with a notice when nothing needs moving. Import batches made after
    the backfill reverse too: their keys move with the numbers.
-3. **Leave the schema alone.** The old code ignores `"backfillNumber"` and `"backfilledAt"`, and
+3. **Leave the schema alone.** The old code ignores `"backfillNumber"`, `"backfilledAt"` and
+   `"backfillClosedAt"`, and
    `prisma migrate status` still passes, since the migration stays applied.
 
 To go forward again after a reversal, run `SELECT macrocycle_renumber_by_date();` as the migrator,
@@ -627,12 +652,15 @@ To reverse one user only, as the DB e2e suite does, pass their id:
 
 It runs in one transaction, so a failure changes nothing: the deploy halts and the previous API
 revision keeps serving. The likeliest cause is its `lock_timeout` (40 seconds) running out while
-an import or a stuck transaction holds a user's lock; the job's log names the error. Prisma
+an import or a stuck transaction holds a user's lock; the job's log names the error. "out of
+shared memory" with a hint to raise `max_locks_per_transaction` means the users outgrew the lock
+table: run the check in [Reversing the macrocycle renumbering](#reversing-the-macrocycle-renumbering)
+and raise the flag before retrying. Prisma
 records the migration as failed, and every later `prisma migrate deploy` refuses (P3009) until
 it's marked rolled back. As the migrator, from `apps/api`:
 
 ```bash
-DATABASE_URL="$MIGRATOR_URL" npx prisma migrate resolve --rolled-back 20261112000000_renumber_macrocycles_by_date
+DATABASE_URL="$MIGRATOR_URL" npx prisma migrate resolve --rolled-back 20261112000001_renumber_macrocycles_by_date
 ```
 
 Then re-run the failed deploy jobs (`gh run rerun <run-id> --failed`) when no import is running.
@@ -641,21 +669,33 @@ Then re-run the failed deploy jobs (`gh run rerun <run-id> --failed`) when no im
 
 The functions belong to the migrator role, which owns the schema; the runtime role
 (`lifting_app`) can't execute them. The Cloud SQL instance has only a private IP, so connect the
-way the break-glass script does ([Running database migrations](#running-database-migrations)), by
-hand, for production (staging: `lifting-logbook-staging`, `lifting-logbook-stg-…`, port 5434):
+way the break-glass script does ([Running database migrations](#running-database-migrations)):
+the instance name from Terraform, a public IP scoped to your address, and a trap that stops the
+proxy and removes the IP however the shell exits. From the repo root, for production:
 
 ```bash
-PROJECT=lifting-logbook-prod
-INSTANCE=$(gcloud sql instances list --project=$PROJECT --format='value(name)' --limit=1)
-gcloud sql instances patch "$INSTANCE" --assign-ip --authorized-networks="$(curl -fsSL ifconfig.me)/32" --project=$PROJECT
-cloud-sql-proxy "$PROJECT:us-central1:$INSTANCE?port=5433" &
-MIGRATOR_URL=$(gcloud secrets versions access latest --secret=$PROJECT-migrator-database-url --project=$PROJECT \
-  | sed -E 's|@[^/]+/|@127.0.0.1:5433/|')
-psql "$MIGRATOR_URL"
-# When done:
-kill %1
-gcloud sql instances patch "$INSTANCE" --no-assign-ip --project=$PROJECT
+(
+  set -euo pipefail
+  PROJECT=lifting-logbook-prod PREFIX=lifting-logbook-prod PORT=5433
+  cd infra/terraform
+  terraform init -backend-config="bucket=${PROJECT}-tfstate" -reconfigure -input=false >/dev/null
+  terraform workspace select production >/dev/null
+  INSTANCE=$(terraform output -raw database_instance_name)
+  PROXY_PID=""
+  trap '[ -n "$PROXY_PID" ] && kill "$PROXY_PID"; gcloud sql instances patch "$INSTANCE" --no-assign-ip --project="$PROJECT" --quiet' EXIT
+  gcloud sql instances patch "$INSTANCE" --assign-ip --authorized-networks="$(curl -fsSL ifconfig.me)/32" --project="$PROJECT" --quiet
+  cloud-sql-proxy "$PROJECT:us-central1:$INSTANCE?port=$PORT" & PROXY_PID=$!
+  sleep 5
+  MIGRATOR_URL=$(gcloud secrets versions access latest --secret="$PREFIX-migrator-database-url" --project="$PROJECT" \
+    | sed -E "s|@[^/]+/|@127.0.0.1:$PORT/|")
+  psql "$MIGRATOR_URL"
+)
 ```
+
+For staging, set `PROJECT=lifting-logbook-staging PREFIX=lifting-logbook-stg PORT=5434`, initialize
+with `-backend-config="bucket=lifting-logbook-tfstate" -backend-config="prefix=terraform/state"`
+and select the `staging` workspace, as `scripts/migrate-staging-db.sh` does. To run a command such
+as `prisma migrate resolve` instead of `psql`, put it in place of the `psql` line, after `cd ../../apps/api`.
 
 The proxy encrypts the connection, so if `psql` reports an SSL error, set `sslmode=disable` in the
 URL, as the staging validation gate below does.

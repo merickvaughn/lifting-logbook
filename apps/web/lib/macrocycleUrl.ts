@@ -79,7 +79,7 @@ export function writeFailureMessage(err: unknown, fallback: string): string {
 /** Where the last reload for a missing macrocycle id is recorded, as `{ page, at }`. */
 const ID_RELOAD_KEY = 'macrocycle-id-reload';
 /** How long after that reload the same page gets the API's message instead of another one. */
-export const ID_RELOAD_WINDOW_MS = 60_000;
+const ID_RELOAD_WINDOW_MS = 60_000;
 
 /**
  * Records a reload of `page` for a missing id, and returns false when the page had one within

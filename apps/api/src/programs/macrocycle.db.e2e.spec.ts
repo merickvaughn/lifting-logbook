@@ -1220,13 +1220,14 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
 
         expect(closed[0]?.closed).toBe(5);
         const rows = await owner.macrocycle.findMany({ where: { userId: user }, orderBy: [{ program: 'asc' }, { macrocycleNum: 'asc' }] });
-        expect(rows.map((row) => [row.program, row.macrocycleNum, row.status, isoDay(row.endDate)])).toEqual([
-          [PROGRAM, 1, 'completed', '2026-01-12'],
-          [PROGRAM, 2, 'in-progress', null],
-          ['window-abandoned', 1, 'abandoned', '2026-01-07'],
-          ['window-chosen', 1, 'in-progress', '2026-01-05'],
-          ['window-from-3', 1, 'completed', '2026-01-09'],
-          ['window-unknown', 1, 'unknown', '2026-01-05'],
+        // The last column: whether the row records that the migration closed it.
+        expect(rows.map((row) => [row.program, row.macrocycleNum, row.status, isoDay(row.endDate), row.backfillClosedAt !== null])).toEqual([
+          [PROGRAM, 1, 'completed', '2026-01-12', true],
+          [PROGRAM, 2, 'in-progress', null, false],
+          ['window-abandoned', 1, 'abandoned', '2026-01-07', true],
+          ['window-chosen', 1, 'in-progress', '2026-01-05', true],
+          ['window-from-3', 1, 'completed', '2026-01-09', true],
+          ['window-unknown', 1, 'unknown', '2026-01-05', true],
         ]);
       }, DB_E2E_HOOK_TIMEOUT_MS);
 
@@ -1245,7 +1246,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
             ).rejects.toThrow(/permission denied/);
           }
           await expect(
-            asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRaw`SELECT "macrocycle_backfill_window_rows"()`),
+            asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRaw`SELECT "macrocycle_backfill_window_rows"(false)`),
           ).rejects.toThrow(/permission denied/);
           await expect(
             asUser(appDb, USER_HISTORY_ORDER, (tx) =>

@@ -327,6 +327,9 @@ model Macrocycle {
   // `macrocycle_renumber_reverse()`. Null on a macrocycle created after it.
   backfillNumber  Int?
   backfilledAt    DateTime?
+  // When that migration closed it: the old revision had left it open on a number the dashboard
+  // no longer showed. The reversal leaves it closed.
+  backfillClosedAt DateTime?
 
   @@unique([userId, program, macrocycleNum])
   @@index([userId, program, startDate])
