@@ -157,6 +157,8 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
   Deleting a macrocycle clears a program's own maxes with its training maxes; the modifications stay.
   The routes are `GET /programs/:program/modification-maxes` and
   `PUT /programs/:program/modification-maxes/:id`, which takes a max only for an `own` modification.
+  A mode change keeps the max stored, but the `GET` returns only maxes of modifications whose mode
+  is `own`, so the logger never plans from one left behind.
   The Edit Lift page edits a lift's modifications and their own maxes.
 - `lift_record.modifications` holds the ids on for a set, and isn't part of its natural key or id.
   Writes check that each id belongs to the user and the set's lift, with at most one `own`

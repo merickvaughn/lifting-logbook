@@ -216,6 +216,39 @@ describe('LiftModificationsEditor (#1153)', () => {
     await waitFor(() => expect(paused.getByRole('status')).toHaveTextContent('Saved.'));
   });
 
+  it("doesn't say Saved. when a field changed while it saved", async () => {
+    const user = userEvent.setup();
+    let finish: (value: Awaited<ReturnType<typeof updateLiftModification>>) => void = () => {};
+    mockUpdate.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    renderEditor();
+
+    const paused = await row('Paused');
+    await user.type(paused.getByLabelText('Name'), '!');
+    await user.click(paused.getByRole('button', { name: 'Save' }));
+    await user.type(paused.getByLabelText('Description'), '.');
+    finish({ ok: true, data: { ...PAUSED, name: 'Paused!' } });
+
+    await waitFor(() => expect(paused.getByRole('button', { name: 'Save' })).toBeInTheDocument());
+    expect(paused.getByRole('status')).toHaveTextContent('');
+  });
+
+  it('shows the max a modification kept when its mode changes back to own', async () => {
+    const user = userEvent.setup();
+    // The page's read leaves Paused's max out while its mode isn't own; the reread after has it.
+    mockMaxes.mockResolvedValueOnce([maxOf('m-wide', 65)]).mockResolvedValueOnce([maxOf('m-paused', 55)]);
+    mockUpdate.mockResolvedValue({ ok: true, data: { ...PAUSED, maxMode: 'own' } });
+    renderEditor();
+
+    const paused = await row('Paused');
+    await user.selectOptions(paused.getByLabelText('Max'), 'own');
+    await user.click(paused.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(paused.getByRole('status')).toHaveTextContent('Saved.'));
+    expect(paused.getByLabelText('Own max (lbs)')).toHaveValue(55);
+    expect(paused.queryByText(/No max yet/)).not.toBeInTheDocument();
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
   it('says where to add one when the lift has none', async () => {
     mockList.mockResolvedValue([]);
     renderEditor();

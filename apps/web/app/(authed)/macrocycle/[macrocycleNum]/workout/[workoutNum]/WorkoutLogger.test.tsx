@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
+import { renderToString } from 'react-dom/server';
 import type { LiftingProgramSpecResponse, LiftModificationResponse, LiftRecordResponse } from '@lifting-logbook/types';
 import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WorkingSetData, WorkoutLoggerProps } from './types';
@@ -1116,6 +1117,23 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
       await user.click(screen.getByRole('button', { name: 'Log' }));
       await waitFor(() => expect(mockCreateLiftRecord).toHaveBeenCalledTimes(1));
       expect(createdBody(0)).toEqual(expect.objectContaining({ weight: 150, modifications: ['m-wide'] }));
+    });
+
+    it("plans the server render from the lift's max, whatever this device's saved toggle, so hydration matches", () => {
+      const lift = planned(200);
+      window.localStorage.setItem(
+        buildModificationsDraftKey('5-3-1', 1, 1, lift.lift),
+        JSON.stringify(['m-wide']),
+      );
+      const container = document.createElement('div');
+      container.innerHTML = renderToString(
+        <WorkoutLogger {...makeProps({ lifts: [lift], ownMaxes: { 'm-wide': 150 } })} />,
+      );
+
+      const serverWeights = within(container)
+        .getAllByLabelText('Weight in lbs')
+        .map((i) => (i as HTMLInputElement).value);
+      expect(serverWeights).toEqual(['200', '200']);
     });
 
     it('restores an untyped weight at the current plan after a reload, whatever the toggle was when it was saved', async () => {

@@ -451,6 +451,18 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
       }
     });
 
+    it("lists an own max only while its modification's mode is own, and keeps it across a change", async () => {
+      const user = as('mods-own-max-mode');
+      const wide = await createOn(user, 'Cable Curl', 'Wide grip', 'own');
+      await user('PUT', `${url}/${wide.id}`, { weight: 65 });
+
+      await user('PATCH', `/lifts/modifications/${wide.id}`, { maxMode: 'lift' });
+      expect((await user('GET', url)).json()).toEqual([]);
+
+      await user('PATCH', `/lifts/modifications/${wide.id}`, { maxMode: 'own' });
+      expect((await user('GET', url)).json()).toEqual([expect.objectContaining({ modificationId: wide.id, weight: 65 })]);
+    });
+
     it('drops the own max of a modification that is removed', async () => {
       const user = as('mods-own-max-removed');
       const wide = await createOn(user, 'Cable Curl', 'Wide grip', 'own');

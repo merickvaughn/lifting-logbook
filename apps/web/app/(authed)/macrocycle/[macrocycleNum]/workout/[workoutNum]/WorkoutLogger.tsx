@@ -413,9 +413,9 @@ function WorkingSetRow({
   // Read once, on mount.
   const [draft] = useState(() => (shouldDraft ? readDraft(draftStorageKey, legacyDraftKey) : null));
   // A toggle with its own max re-plans the set (#1153). A weight still at its plan follows the
-  // new plan; one the lifter typed stays theirs. The draft says which it is, since the first render
-  // always plans from the lift's max (the toggles load after it); a draft from before the flag
-  // counts as typed when it differs from the plan.
+  // new plan; one the lifter typed stays theirs. The draft says which it is, since the plan it was
+  // saved under may not be the plan now; a draft from before the flag counts as typed when it
+  // differs from the plan.
   const [weightTyped, setWeightTyped] = useState(
     () => !!draft && (draft.weightTyped ?? draft.weight !== String(defaultWeight)),
   );
@@ -932,6 +932,9 @@ export default function WorkoutLogger({
   // on this device since the occurrence's last log, then its last logged set, then off
   // (`startingModifications`).
   const [toggled, setToggled] = useState<ReadonlyMap<string, string[]>>(new Map());
+  // False for the server render and the first client one, which must match it (`ownMaxFor`).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   // One read per lift in the workout. A read-only workout shows no toggles, so it reads nothing.
   const liftNames = [...new Set(lifts.map((l) => l.lift))].join('\n');
@@ -1025,12 +1028,14 @@ export default function WorkoutLogger({
 
   /**
    * The own max the lift plans from, if any. Before the lift's list loads, the ids it starts from
-   * are already what a set logs, so one of them with a max plans the set: only an `own`
-   * modification is ever given a max. Without this, a set logged in that window would send the
-   * modification with the lift's weight, and start its max from it.
+   * are already what a set logs, so one of them with a max plans the set: the page reads maxes
+   * only for modifications whose mode is `own`. Without this, a set logged in that window would
+   * send the modification with the lift's weight, and start its max from it. Not before mount,
+   * since those ids can come from this device's storage, which the server render can't read.
    */
   function ownMaxFor(lift: LiftData): number | undefined {
     if (modificationsByLift.get(lift.lift) === undefined) {
+      if (!mounted) return undefined;
       const id = activeModifications(lift).find((m) => ownMaxes?.[m] !== undefined);
       return id === undefined ? undefined : ownMaxes?.[id];
     }

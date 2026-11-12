@@ -1088,8 +1088,10 @@ const server = createServer(async (req, res) => {
     }
 
     // GET /programs/:p/modification-maxes — own maxes, which the logger re-plans from (#1153)
+    // Like the API, only for modifications whose mode is own now.
     if (method === 'GET' && rest[0] === 'modification-maxes' && rest.length === 1) {
-      json(res, state.modificationMaxes);
+      const own = new Set(state.liftModifications.filter((m) => m.maxMode === 'own').map((m) => m.id));
+      json(res, state.modificationMaxes.filter((m) => own.has(m.modificationId)));
       return;
     }
 

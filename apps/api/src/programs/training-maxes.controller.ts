@@ -55,14 +55,21 @@ export class TrainingMaxesController {
     return merged.map(toTrainingMaxResponse);
   }
 
-  /** The program's own maxes of modifications (#1153), archived modifications' included. */
+  /**
+   * The program's own maxes of modifications (#1153), archived modifications' included. Only those
+   * whose mode is `own` now: a mode change keeps the max stored, so changing back restores it, but
+   * until then nothing should plan from it. The logger plans from every max this returns.
+   */
   @Get('modification-maxes')
   async getModificationMaxes(
     @Param('program') program: string,
     @CurrentUser() user: AuthUser,
   ): Promise<ModificationMaxResponse[]> {
     const { liftModification } = await this.factory.forUser(user);
-    return (await liftModification.getMaxes(program)).map(toModificationMaxResponse);
+    const own = new Set((await liftModification.list()).filter((m) => m.maxMode === 'own').map((m) => m.id));
+    return (await liftModification.getMaxes(program))
+      .filter((m) => own.has(m.modificationId))
+      .map(toModificationMaxResponse);
   }
 
   /**

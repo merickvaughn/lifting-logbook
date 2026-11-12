@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiClientError } from '@lifting-logbook/api-client';
 import type {
   LiftModificationMaxMode,
@@ -108,6 +108,7 @@ function ModificationRow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const editedSinceSave = useRef(false);
   const id = `modification-${initial.id}`;
 
   async function handleSave() {
@@ -132,6 +133,7 @@ function ModificationRow({
     setSaving(true);
     setError(null);
     setDone(false);
+    editedSinceSave.current = false;
     // The mode goes first: the API takes a max only for a modification that has its own.
     let op = 'updateLiftModification';
     try {
@@ -146,13 +148,23 @@ function ModificationRow({
       if (weight !== undefined && weight !== savedMax) {
         op = 'putModificationMax';
         setSavedMax((await putModificationMax(program, saved.id, { weight })).weight);
+      } else if (weight === undefined && changes.maxMode === 'own') {
+        // The maxes this page read leave out a modification that wasn't `own`, but a max it had
+        // before its mode changed is still stored, and plans again now.
+        op = 'fetchModificationMaxes';
+        const restored = (await fetchModificationMaxes(program)).find((m) => m.modificationId === saved.id);
+        if (restored) {
+          setSavedMax(restored.weight);
+          setMaxInput(String(restored.weight));
+        }
       }
-      setDone(true);
+      // A field changed while this saved still differs from what was sent.
+      if (!editedSinceSave.current) setDone(true);
     } catch (err) {
       logClientError(
         op,
         err,
-        op === 'putModificationMax' ? { program, modificationId: saved.id } : { modificationId: saved.id },
+        op === 'updateLiftModification' ? { modificationId: saved.id } : { program, modificationId: saved.id },
       );
       setError(
         err instanceof ApiClientError && err.status === 400 ? err.message : 'Failed to save. Please try again.',
@@ -163,7 +175,15 @@ function ModificationRow({
   }
 
   return (
-    <fieldset className={styles.container} aria-busy={saving}>
+    // Any edit (each field's change bubbles here) means what's showing is no longer what was saved.
+    <fieldset
+      className={styles.container}
+      aria-busy={saving}
+      onChange={() => {
+        editedSinceSave.current = true;
+        setDone(false);
+      }}
+    >
       <legend className={styles.readOnly}>{saved.name}</legend>
       <div className={styles.field}>
         <label className={styles.label} htmlFor={`${id}-name`}>
