@@ -561,12 +561,14 @@ order:
 - `20261112000000_renumber_macrocycles_by_date` does nothing: staging applied an early draft under
   that name.
 - `20261112000001_renumber_macrocycles_by_date` adds the columns and functions and runs them, but
-  reads nothing: the migrator can't bypass row-level security (below). On a database with history
-  migrated as a superuser, such as the local `docker-compose.yml` one, it does read the rows, and
-  runs the backfill without the fix in `20261112000002_keep_rows_below_highest_set`;
-  `20261112000003` then skips, since the rows are already renumbered. There a gap like the one that migration describes
-  fails `20261112000001` with *would merge*, or leaves that number without a macrocycle row. To
-  recover a local database, run `npx prisma migrate reset` from `apps/api`, which empties it.
+  reads nothing: the migrator can't bypass row-level security (below). On a database migrated as a
+  superuser, such as the local `docker-compose.yml` one, it does read the rows, and runs the
+  backfill without the fix in `20261112000002_keep_rows_below_highest_set`. That matters only for
+  a number first stored after `20261110000000` (whose backfill gave every number then stored a
+  row), with no sets, below a number with sets. Then `20261112000001` fails with *would merge*, or
+  leaves that number without a macrocycle row, and `20261112000003` skips, since the rows are
+  already renumbered. To recover a local database, run `npx prisma migrate reset` from `apps/api`,
+  which empties it.
 - `20261112000002_backfill_window_rows_without_lock` only replaces one function, so it holds no
   lock worth waiting on and is safe to retry.
 - `20261112000002_keep_rows_below_highest_set` also only replaces that function, so the backfill
@@ -626,7 +628,8 @@ deletes a macrocycle holds the lock exclusively while it renumbers, until its tr
 running `prisma migrate deploy` holds an exclusive advisory lock; and so does a runbook step in
 another session. A 0 doesn't rule everything out: Download My Data reads the numbered tables in a
 transaction of up to 30 seconds without the lock, so the count can't see it, and a step started
-then waits up to its timeout per table and gives up. The count is also only a snapshot: an import
+then waits for it, up to its timeout per table, and gives up if the export outlasts that. The
+count is also only a snapshot: an import
 that starts after it is what the step's `lock_timeout` covers. Either way, a step that gives up has
 changed nothing.
 
@@ -679,6 +682,12 @@ one with no error. Once the new API serves, a write without an id gets a 400
 Try again.") until the new web is live, and which reloads the page after that. Expect a short
 burst of `Refused a macrocycle write without an id (#1200)` warnings; it isn't a regression unless
 it continues after the new web is serving.
+
+**Approve the production deploy while nobody is using the app.** `20261112000003` switches
+`macrocycle` first and the other tables after it, while the old revision's workout page reads the
+dashboard, sets and overrides first and `macrocycle` last. A page load caught between the two
+deadlocks with the migration, and since the migration started waiting first, PostgreSQL is likely
+to abort it, which fails the deploy (below).
 
 **After the deploy**, look for writes that may have landed on a renumbered macrocycle: the API's
 `Macrocycle write without an id (#1198)` log lines between the migration and the new API serving,
@@ -782,16 +791,21 @@ psql -X "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
 #### If the renumbering migration fails
 
 It runs in one transaction, so a failure changes nothing: the deploy halts and the previous API
-revision keeps serving. The likeliest cause is its `lock_timeout` (40 seconds, for each table)
-running out while it waits for an import or a stuck transaction that is using one of the tables:
-the migrator sees no users with FORCE on, so `20261112000001` takes no user's lock, and
-`20261112000003` turns FORCE off first and then takes users' locks without waiting. The job's log
-names the error. "out of shared memory" with a hint to raise `max_locks_per_transaction` means the
-users outgrew the lock table: run the check in
+revision keeps serving. The job's log names the error. Two causes are likely:
+
+- *deadlock detected*: a request that used one of the nine tables waited on another the migration
+  already held (see "During the deploy" above).
+- *canceling statement due to lock timeout*: its `lock_timeout` (40 seconds, for each table) ran
+  out while it waited for a transaction using one of the tables. App transactions, imports
+  included, end within 30 seconds, so this means one from outside the app, such as a psql session
+  left open. The migrator sees no users with FORCE
+  on, so `20261112000001` takes no user's lock, and `20261112000003` turns FORCE off first and then
+  takes users' locks without waiting.
+
+For either, retry while nobody is using the app. "out of shared memory" with a hint to raise
+`max_locks_per_transaction` means the users outgrew the lock table: run the check in
 [Reversing the macrocycle renumbering](#reversing-the-macrocycle-renumbering) and raise the flag
-through Terraform, as it describes, before retrying. A deadlock (*deadlock detected*) is handled
-the same way: `20261112000003` locks nine tables, and a request that used one and waits on
-another can deadlock with it.
+through Terraform, as it describes, before retrying.
 
 Prisma records the migration as failed, and every later `prisma migrate deploy` refuses (P3009)
 until it's marked rolled back. Run this as the migrator, from `apps/api`, in place of the `psql`
