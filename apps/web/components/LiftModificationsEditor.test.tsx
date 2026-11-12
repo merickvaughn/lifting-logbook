@@ -183,14 +183,37 @@ describe('LiftModificationsEditor (#1153)', () => {
     expect(mockLog).toHaveBeenCalledWith('updateLiftModification', err, { modificationId: 'm-paused' });
   });
 
-  it("says so, and logs it, when the modifications don't load", async () => {
+  it.each([
+    ['fetchLiftModifications', (err: Error) => mockList.mockRejectedValue(err)],
+    ['fetchModificationMaxes', (err: Error) => mockMaxes.mockRejectedValue(err)],
+  ])("says so, and logs it under %s, when that read fails", async (op, fail) => {
     const err = new Error('boom');
-    mockMaxes.mockRejectedValue(err);
+    fail(err);
     renderEditor();
 
     expect(await screen.findByRole('status')).toHaveTextContent("Modifications didn't load. Reload to try again.");
     expect(screen.queryByRole('group')).not.toBeInTheDocument();
-    await waitFor(() => expect(mockLog).toHaveBeenCalledWith('fetchLiftModifications', err, { program: '5-3-1', lift: 'Cable Curl' }));
+    await waitFor(() => expect(mockLog).toHaveBeenCalledWith(op, err, { program: '5-3-1', lift: 'Cable Curl' }));
+    expect(mockLog).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps focus on Save while saving, and sends a second click nowhere', async () => {
+    const user = userEvent.setup();
+    let finish: (value: Awaited<ReturnType<typeof updateLiftModification>>) => void = () => {};
+    mockUpdate.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    renderEditor();
+
+    const paused = await row('Paused');
+    await user.type(paused.getByLabelText('Name'), '!');
+    await user.click(paused.getByRole('button', { name: 'Save' }));
+    const saving = paused.getByRole('button', { name: 'Saving…' });
+    expect(saving).toBeEnabled();
+    expect(saving).toHaveFocus();
+    await user.click(saving);
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+
+    finish({ ok: true, data: { ...PAUSED, name: 'Paused!' } });
+    await waitFor(() => expect(paused.getByRole('status')).toHaveTextContent('Saved.'));
   });
 
   it('says where to add one when the lift has none', async () => {

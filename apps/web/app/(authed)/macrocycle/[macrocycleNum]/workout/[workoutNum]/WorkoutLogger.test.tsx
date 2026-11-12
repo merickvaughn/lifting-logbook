@@ -281,7 +281,8 @@ describe('WorkoutLogger — in-progress set draft persistence (#878)', () => {
 
     const raw = window.localStorage.getItem(DRAFT_KEY);
     if (raw === null) throw new Error('expected a draft to be persisted');
-    expect(JSON.parse(raw)).toEqual({ weight: '225', reps: '5', notes: '' });
+    // The weight was typed, which the draft records so a re-plan leaves it (#1153).
+    expect(JSON.parse(raw)).toEqual({ weight: '225', reps: '5', notes: '', weightTyped: true });
   });
 
   it('restores an in-progress set after a full remount (simulating a reload)', async () => {
@@ -1085,6 +1086,77 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
       expect(await screen.findByRole('button', { name: 'Wide grip', pressed: true })).toBeInTheDocument();
       expect(weights()).toEqual(['150']);
       expect(warmUp()).toBe('75 lbs × 5');
+    });
+
+    it('plans from the own max a lift starts on before its list loads, so a set logged then sends a matching weight', async () => {
+      const user = userEvent.setup();
+      mockFetchLiftModifications.mockReturnValue(new Promise(() => undefined));
+      mockCreateLiftRecord.mockResolvedValue({ ...LOGGED, setNum: 2, weight: 150 });
+      const lift = planned(200);
+      const [set1, set2] = lift.workingSets;
+      if (!set1 || !set2) throw new Error('expected two working sets');
+      render(
+        <WorkoutLogger
+          {...makeProps({
+            lifts: [
+              {
+                ...lift,
+                workingSets: [
+                  { ...set1, existing: { ...LOGGED, weight: 150, modifications: [{ id: 'm-wide', name: 'Wide grip' }] } },
+                  set2,
+                ],
+              },
+            ],
+            ownMaxes: { 'm-wide': 150 },
+          })}
+        />,
+      );
+
+      expect(weights()).toEqual(['150']);
+      await user.click(screen.getByRole('button', { name: 'Log' }));
+      await waitFor(() => expect(mockCreateLiftRecord).toHaveBeenCalledTimes(1));
+      expect(createdBody(0)).toEqual(expect.objectContaining({ weight: 150, modifications: ['m-wide'] }));
+    });
+
+    it('restores an untyped weight at the current plan after a reload, whatever the toggle was when it was saved', async () => {
+      const user = userEvent.setup();
+      mockFetchLiftModifications.mockResolvedValue([WIDE]);
+      const props = makeProps({ lifts: [planned(200)], ownMaxes: { 'm-wide': 150 } });
+      const first = render(<WorkoutLogger {...props} />);
+
+      // Notes typed while the own toggle is on save the set's draft with the own plan's weight.
+      await user.click(await screen.findByRole('button', { name: 'Wide grip', pressed: false }));
+      const notes = screen.getAllByLabelText('Notes (optional)')[1];
+      if (!notes) throw new Error('expected a notes input for set 2');
+      await user.type(notes, 'x');
+      await user.click(screen.getByRole('button', { name: 'Wide grip', pressed: true }));
+      expect(weights()).toEqual(['200', '200']);
+      first.unmount();
+
+      // Reloaded with the toggle off, the set plans from the lift's max and still follows the plan.
+      render(<WorkoutLogger {...props} />);
+      await user.click(await screen.findByRole('button', { name: 'Wide grip', pressed: false }));
+      expect(weights()).toEqual(['150', '150']);
+      await user.click(screen.getByRole('button', { name: 'Wide grip', pressed: true }));
+      expect(weights()).toEqual(['200', '200']);
+    });
+
+    it('keeps a weight typed before a reload', async () => {
+      const user = userEvent.setup();
+      mockFetchLiftModifications.mockResolvedValue([WIDE]);
+      const props = makeProps({ lifts: [planned(200)], ownMaxes: { 'm-wide': 150 } });
+      const first = render(<WorkoutLogger {...props} />);
+
+      await screen.findByRole('button', { name: 'Wide grip', pressed: false });
+      const [, set2] = screen.getAllByLabelText('Weight in lbs');
+      if (!set2) throw new Error('expected a weight input for set 2');
+      await user.clear(set2);
+      await user.type(set2, '200');
+      first.unmount();
+
+      render(<WorkoutLogger {...props} />);
+      await user.click(await screen.findByRole('button', { name: 'Wide grip', pressed: false }));
+      expect(weights()).toEqual(['150', '200']);
     });
   });
 

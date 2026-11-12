@@ -150,8 +150,10 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
 - `lift_modification_max` holds an `own` modification's max, per user, program and modification,
   beside `training_max` rather than in it, so the readers that look a max up by lift stay as they
   are ([#1153](https://github.com/merickvaughn/lifting-logbook/issues/1153)). Its foreign key
-  cascades from `lift_modification`. Changes to it go to `training_max_history` with
-  `modificationId` set; every history read filters those rows out, so a lift's chart is unchanged.
+  cascades from `lift_modification`. When progression moves one, the change goes to
+  `training_max_history` with `modificationId` set; a manual set through the `PUT` writes no
+  history. Every history read filters those rows out, so a lift's chart is unchanged, but the data
+  export includes them and the history `PATCH` reaches one by id.
   Deleting a macrocycle clears a program's own maxes with its training maxes; the modifications stay.
   The routes are `GET /programs/:program/modification-maxes` and
   `PUT /programs/:program/modification-maxes/:id`, which takes a max only for an `own` modification.

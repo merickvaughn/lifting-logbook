@@ -42,15 +42,22 @@ export default function LiftModificationsEditor({ program, lift }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchLiftModifications(lift), fetchModificationMaxes(program)]).then(
+    // Each read logs under its own name, so a failure says which one failed.
+    const logged = (op: string) => (err: unknown) => {
+      logClientError(op, err, { program, lift });
+      throw err;
+    };
+    Promise.all([
+      fetchLiftModifications(lift).catch(logged('fetchLiftModifications')),
+      fetchModificationMaxes(program).catch(logged('fetchModificationMaxes')),
+    ]).then(
       ([modifications, maxes]) => {
         if (!cancelled) {
           setLoaded({ modifications, maxes: Object.fromEntries(maxes.map((m) => [m.modificationId, m.weight])) });
         }
       },
       // fallback-covered-by: apps/web/components/LiftModificationsEditor.test.tsx
-      (err: unknown) => {
-        logClientError('fetchLiftModifications', err, { program, lift });
+      () => {
         if (!cancelled) setLoaded('failed');
       },
     );
@@ -104,6 +111,8 @@ function ModificationRow({
   const id = `modification-${initial.id}`;
 
   async function handleSave() {
+    // The fields stay enabled while saving, so focus stays on Save; a second click waits.
+    if (saving) return;
     const trimmed = name.trim();
     if (!trimmed) {
       setError('Enter a name.');
@@ -154,7 +163,7 @@ function ModificationRow({
   }
 
   return (
-    <fieldset className={styles.container} disabled={saving}>
+    <fieldset className={styles.container} aria-busy={saving}>
       <legend className={styles.readOnly}>{saved.name}</legend>
       <div className={styles.field}>
         <label className={styles.label} htmlFor={`${id}-name`}>
@@ -219,7 +228,10 @@ function ModificationRow({
           {error}
         </p>
       )}
-      {done && <p className={styles.hint}>Saved.</p>}
+      {/* Rendered empty until there's news, so a screen reader announces "Saved." when it comes. */}
+      <p className={styles.hint} role="status">
+        {done ? 'Saved.' : ''}
+      </p>
       <div className={styles.actions}>
         <button type="button" className={styles.btnSecondary} onClick={() => void handleSave()}>
           {saving ? 'Saving…' : 'Save'}

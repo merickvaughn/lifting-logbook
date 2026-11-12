@@ -250,7 +250,7 @@ export class MacrocycleGenerationService {
     });
     // Deliberate: flagged reductions are silently blocked here — they are not surfaced
     // to the caller when advancing a macrocycle. Use recalculateMaxes to review flagged reductions.
-    const modificationModes = await modificationModesFor(repos, liftRecords);
+    const { modes: modificationModes, lifts: modificationLifts } = await modificationModesFor(repos, liftRecords);
     const modificationMaxes = await ownMaxesFor(repos, program, liftRecords, modificationModes);
     const { maxes: newMaxes, skipped, modificationMaxes: newModificationMaxes } = updateMaxes(
       programSpec,
@@ -298,7 +298,7 @@ export class MacrocycleGenerationService {
     if (historyEntries.length > 0) {
       await repos.trainingMaxHistory.appendHistoryEntries(program, historyEntries);
     }
-    await saveOwnMaxes(repos, program, modificationMaxes, newModificationMaxes, newMacrocycle.macrocycleDate, source);
+    await saveOwnMaxes(repos, program, modificationLifts, modificationMaxes, newModificationMaxes, newMacrocycle.macrocycleDate, source);
 
     // A start dated before stored history sorts among it, so the program renumbers (#1199).
     const changes = await renumberProgram(repos, program);
@@ -448,7 +448,7 @@ export class MacrocycleGenerationService {
       repos.workoutLiftOverride.getOverridesForMacrocycle(program, dashboard.macrocycleNum),
     ]);
 
-    const modificationModes = await modificationModesFor(repos, liftRecords);
+    const { modes: modificationModes, lifts: modificationLifts } = await modificationModesFor(repos, liftRecords);
     const modificationMaxes = await ownMaxesFor(repos, program, liftRecords, modificationModes);
     const result = updateMaxes(programSpec, trainingMaxes, liftRecords, {
       program,
@@ -463,7 +463,7 @@ export class MacrocycleGenerationService {
     if (historyEntries.length > 0) {
       await repos.trainingMaxHistory.appendHistoryEntries(program, historyEntries);
     }
-    await saveOwnMaxes(repos, program, modificationMaxes, result.modificationMaxes, dashboard.macrocycleDate, 'program');
+    await saveOwnMaxes(repos, program, modificationLifts, modificationMaxes, result.modificationMaxes, dashboard.macrocycleDate, 'program');
 
     return result;
   }

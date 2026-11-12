@@ -608,9 +608,9 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
   // filtered by an application-level WHERE clause that happens to look correct —
   // exactly the risk class that let #644 ship silently.
   it('deletes a macrocycle scoped to the requesting user only, under real RLS (regression coverage for #647)', async () => {
-    // deleteCurrentMacrocycle issues nine scoped deletes (MacrocycleDashboard, LiftRecord,
+    // deleteCurrentMacrocycle issues ten scoped deletes (MacrocycleDashboard, LiftRecord,
     // TrainingMax, TrainingMaxHistory, MacrocycleScheduledWorkout, the three workout
-    // override tables and FocusDayState, #1084). Seeding all nine
+    // override tables, FocusDayState (#1084) and LiftModificationMax (#1153)). Seeding all ten
     // for both users — not just the dashboard — matters because #644 was a
     // per-repository DI-wiring failure, not a missing-policy failure: a future
     // regression where one specific repository fails to route through the
@@ -731,7 +731,7 @@ describeOrSkip('RLS request wiring (interceptor + factory, full app boot)', () =
     ]);
 
     // ...but the other user's rows in every table survive — proves each of the
-    // nine deletes was RLS-scoped to the requesting user, not a bug that deleted
+    // ten deletes was RLS-scoped to the requesting user, not a bug that deleted
     // every row matching the program regardless of owner.
     const others = await findAllFor(otherUserId);
     for (const row of others) expect(row).not.toBeNull();

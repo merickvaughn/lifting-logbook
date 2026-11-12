@@ -237,6 +237,7 @@ model LiftModificationMax {
   modification   LiftModification @relation(fields: [modificationId], references: [id], onDelete: Cascade)
 
   @@unique([userId, program, modificationId])
+  @@index([modificationId])
   @@map("lift_modification_max")
 }
 

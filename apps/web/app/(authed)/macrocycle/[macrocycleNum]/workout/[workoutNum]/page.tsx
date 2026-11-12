@@ -18,11 +18,11 @@ import { getActiveProgram } from '@/lib/active-program';
 import { loadFocusPlan } from '@/lib/loadWorkoutPlan';
 import { movedWorkoutPath } from '@/lib/macrocycleUrl';
 import { getPreferredUnit } from '@/lib/preferences';
-import { liftSpecsForWorkout, planLift } from '@/lib/workoutPlan';
+import { liftSets, liftSpecsForWorkout, planLift } from '@/lib/workoutPlan';
 import { effectiveDateOf } from '@/lib/workoutStatus';
 import { hasLoggedFocusWork, withFocusLifts } from './focusLifts';
 import WorkoutLogger from './WorkoutLogger';
-import type { LiftData, LoggedSet, WarmUpSetData, WorkingSetData, WorkoutLoggerProps } from './types';
+import type { LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
 
 /**
  * Hard-coded warm-up implement names for bodyweight-component exercises.
@@ -67,7 +67,7 @@ export default async function WorkoutLoggingPage({
     fetchProgramSpec(program),
     fetchTrainingMaxes(program),
     // Modifications' own maxes, which a toggle re-plans from without a fetch (#1153). A failed
-    // read plans every lift from its own max, and the logger says so when an own toggle is on.
+    // read plans every lift from the lift's max, and the logger says so when an own toggle is on.
     // fallback-covered-by: apps/web/app/(authed)/macrocycle/[macrocycleNum]/workout/[workoutNum]/page.test.tsx
     fetchModificationMaxes(program).then(
       (list): Record<string, number> => Object.fromEntries(list.map((m) => [m.modificationId, m.weight])),
@@ -105,11 +105,7 @@ export default async function WorkoutLoggingPage({
     // The plan comes from the spec, the same as on the details page: the API sends
     // an unlogged planned lift with no sets, and a partly logged lift with only the
     // sets logged so far (#1080). An `own` toggle re-plans it in the logger (#1153).
-    const plannedSets = planLift(spec, tm);
-    const warmUpSets: WarmUpSetData[] = plannedSets
-      .filter((s) => s.type === 'warmup')
-      .map((s) => ({ reps: s.reps, totalLoad: s.weight }));
-    const workSets = plannedSets.filter((s) => s.type === 'work');
+    const { warmUpSets, workSets } = liftSets(planLift(spec, tm));
 
     // `planned: false` is the API's contract for "these sets are logged records".
     // Each brings its own record id and notes (issue #978), so the page no longer
@@ -126,12 +122,12 @@ export default async function WorkoutLoggingPage({
     });
 
     const workingSets: WorkingSetData[] = workSets.map((p, i) => {
-      const setNum = i + 1;
+      const { setNum } = p;
       const record = logged.get(setNum);
       logged.delete(setNum);
       return {
         setNum,
-        totalLoad: p.weight,
+        totalLoad: p.totalLoad,
         reps: p.reps,
         // The spec's AMRAP flag marks the lift's last working set.
         amrap: Boolean(spec?.amrap) && i === workSets.length - 1,

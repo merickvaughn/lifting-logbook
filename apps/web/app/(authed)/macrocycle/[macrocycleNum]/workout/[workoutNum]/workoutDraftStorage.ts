@@ -23,6 +23,12 @@ export interface WorkoutSetDraft {
   weight: string;
   reps: string;
   notes: string;
+  /**
+   * Whether the lifter typed `weight` (#1153). An untyped weight is the plan's, which an `own`
+   * toggle can change, so it restores at the current plan. Absent on a draft saved before this
+   * existed, which then counts as typed when it differs from the plan.
+   */
+  weightTyped?: boolean;
 }
 
 const KEY_PREFIX = 'workout-draft';
@@ -58,7 +64,12 @@ function isBrowser(): boolean {
 function isDraftShape(value: unknown): value is WorkoutSetDraft {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
-  return typeof v.weight === 'string' && typeof v.reps === 'string' && typeof v.notes === 'string';
+  return (
+    typeof v.weight === 'string' &&
+    typeof v.reps === 'string' &&
+    typeof v.notes === 'string' &&
+    (v.weightTyped === undefined || typeof v.weightTyped === 'boolean')
+  );
 }
 
 /**

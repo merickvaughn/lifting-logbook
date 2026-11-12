@@ -16,7 +16,7 @@ import {
 import { modificationSuffix } from '@/lib/liftModifications';
 import { logClientError } from '@/lib/log-client-error';
 import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
-import { planLift } from '@/lib/workoutPlan';
+import { liftSets, planLift } from '@/lib/workoutPlan';
 import styles from './WorkoutLogger.module.css';
 import type { LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
 import {
@@ -410,34 +410,26 @@ function WorkingSetRow({
     ? buildDraftKey(program, macrocycleNum, workoutNum, lift, set.setNum, occurrence)
     : undefined;
 
+  // Read once, on mount.
+  const [draft] = useState(() => (shouldDraft ? readDraft(draftStorageKey, legacyDraftKey) : null));
+  // A toggle with its own max re-plans the set (#1153). A weight still at its plan follows the
+  // new plan; one the lifter typed stays theirs. The draft says which it is, since the first render
+  // always plans from the lift's max (the toggles load after it); a draft from before the flag
+  // counts as typed when it differs from the plan.
+  const [weightTyped, setWeightTyped] = useState(
+    () => !!draft && (draft.weightTyped ?? draft.weight !== String(defaultWeight)),
+  );
   const [weightInput, setWeightInput] = useState(() => {
-    if (shouldDraft) {
-      const draft = readDraft(draftStorageKey, legacyDraftKey);
-      if (draft) return draft.weight;
-    }
+    if (draft && weightTyped) return draft.weight;
     return loggedRecord
       ? String(formatWorkingWeight(loggedRecord.weight, null, false, unit).value)
       : String(defaultWeight);
   });
-  const [repsInput, setRepsInput] = useState(() => {
-    if (shouldDraft) {
-      const draft = readDraft(draftStorageKey);
-      if (draft) return draft.reps;
-    }
-    return String(loggedRecord?.reps ?? set.reps);
-  });
-  const [notesInput, setNotesInput] = useState(() => {
-    if (shouldDraft) {
-      const draft = readDraft(draftStorageKey);
-      if (draft) return draft.notes;
-    }
-    return loggedRecord?.notes ?? '';
-  });
-  // A toggle with its own max re-plans the set (#1153). A weight still at its plan follows the
-  // new plan; one the lifter typed stays theirs. Adjusted during render, React's pattern for state
-  // derived from a changed prop, so the input never shows the old plan for a frame.
+  const [repsInput, setRepsInput] = useState(() => draft?.reps ?? String(loggedRecord?.reps ?? set.reps));
+  const [notesInput, setNotesInput] = useState(() => draft?.notes ?? loggedRecord?.notes ?? '');
+  // Adjusted during render, React's pattern for state derived from a changed prop, so the input
+  // never shows the old plan for a frame.
   const [plannedWeight, setPlannedWeight] = useState(defaultWeight);
-  const [weightTyped, setWeightTyped] = useState(() => weightInput !== String(defaultWeight));
   if (plannedWeight !== defaultWeight) {
     setPlannedWeight(defaultWeight);
     if (!weightTyped && !loggedRecord) setWeightInput(String(defaultWeight));
@@ -457,15 +449,15 @@ function WorkingSetRow({
   function handleWeightInputChange(value: string) {
     setWeightInput(value);
     setWeightTyped(true);
-    if (shouldDraft) writeDraft(draftStorageKey, { weight: value, reps: repsInput, notes: notesInput });
+    if (shouldDraft) writeDraft(draftStorageKey, { weight: value, reps: repsInput, notes: notesInput, weightTyped: true });
   }
   function handleRepsInputChange(value: string) {
     setRepsInput(value);
-    if (shouldDraft) writeDraft(draftStorageKey, { weight: weightInput, reps: value, notes: notesInput });
+    if (shouldDraft) writeDraft(draftStorageKey, { weight: weightInput, reps: value, notes: notesInput, weightTyped });
   }
   function handleNotesInputChange(value: string) {
     setNotesInput(value);
-    if (shouldDraft) writeDraft(draftStorageKey, { weight: weightInput, reps: repsInput, notes: value });
+    if (shouldDraft) writeDraft(draftStorageKey, { weight: weightInput, reps: repsInput, notes: value, weightTyped });
   }
 
   async function handleLog(e: React.FormEvent) {
@@ -756,8 +748,9 @@ function LiftView({
           Modifications didn&apos;t load, so sets log without them.
         </p>
       )}
-      {!isReadOnly && ownMaxNote && (
-        <p className={styles.modDescription} role="status">
+      {/* Always rendered, so a screen reader announces the text when a toggle changes it. */}
+      {!isReadOnly && (
+        <p className={ownMaxNote ? styles.modDescription : styles.srOnly} role="status">
           {ownMaxNote}
         </p>
       )}
@@ -1017,19 +1010,32 @@ export default function WorkoutLogger({
    * its sets.
    */
   function planned(lift: LiftData): LiftData {
-    const own = ownModification(lift);
-    const ownMax = own ? ownMaxes?.[own.id] : undefined;
+    const ownMax = ownMaxFor(lift);
     if (!lift.plan || ownMax === undefined) return lift;
-    const sets = planLift(lift.plan.spec, lift.plan.liftMax, ownMax);
-    const work = sets.filter((s) => s.type === 'work');
+    const { warmUpSets, workSets } = liftSets(planLift(lift.plan.spec, lift.plan.liftMax, ownMax));
     return {
       ...lift,
-      warmUpSets: sets.filter((s) => s.type === 'warmup').map((s) => ({ reps: s.reps, totalLoad: s.weight })),
+      warmUpSets,
       workingSets: lift.workingSets.map((ws) => {
-        const p = work[ws.setNum - 1];
-        return p ? { ...ws, totalLoad: p.weight } : ws;
+        const p = workSets.find((w) => w.setNum === ws.setNum);
+        return p ? { ...ws, totalLoad: p.totalLoad } : ws;
       }),
     };
+  }
+
+  /**
+   * The own max the lift plans from, if any. Before the lift's list loads, the ids it starts from
+   * are already what a set logs, so one of them with a max plans the set: only an `own`
+   * modification is ever given a max. Without this, a set logged in that window would send the
+   * modification with the lift's weight, and start its max from it.
+   */
+  function ownMaxFor(lift: LiftData): number | undefined {
+    if (modificationsByLift.get(lift.lift) === undefined) {
+      const id = activeModifications(lift).find((m) => ownMaxes?.[m] !== undefined);
+      return id === undefined ? undefined : ownMaxes?.[id];
+    }
+    const own = ownModification(lift);
+    return own ? ownMaxes?.[own.id] : undefined;
   }
 
   /** Says which max the lift planned from while an `own` toggle is on, and why when it's the lift's. */

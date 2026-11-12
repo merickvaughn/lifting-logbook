@@ -83,6 +83,10 @@ export class TrainingMaxesController {
     if (modification.maxMode !== 'own') {
       throw new BadRequestException(`'${modification.name}' doesn't keep its own max`);
     }
+    // Only a changed weight is an update, as for a lift's max (#1118): the editor saves every
+    // own max at once, and stamping unchanged ones would make an old max look newer.
+    const stored = (await liftModification.getMaxes(program)).find((m) => m.modificationId === modificationId);
+    if (stored?.weight === body.weight) return toModificationMaxResponse(stored);
     const max = { modificationId, weight: body.weight, dateUpdated: new Date() };
     await liftModification.saveMaxes(program, [max]);
     return toModificationMaxResponse(max);
