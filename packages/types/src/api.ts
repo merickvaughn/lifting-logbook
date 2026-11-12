@@ -20,11 +20,21 @@ export interface MaxReductionFlagResponse {
   proposedWeight: number;
 }
 
+/** A lift recalculation left alone (mirrors core's SkippedLift, #1150). */
+export interface SkippedLiftResponse {
+  /** The lift as its records name it. */
+  lift: LiftName;
+  /** It has no training max, or the program has no spec row for it. */
+  reason: 'no-training-max' | 'no-program-spec';
+}
+
 /** Response from POST /training-maxes/recalculate. */
 export interface RecalculateMaxesResponse {
   maxes: TrainingMaxResponse[];
   /** Lifts whose computed new TM would be lower than the current TM — not auto-applied. */
   flagged: MaxReductionFlagResponse[];
+  /** Lifts with logged sets but no training max or spec row, so nothing progressed them. */
+  skipped: SkippedLiftResponse[];
 }
 
 /** Request body for updating one or more training maxes. */
