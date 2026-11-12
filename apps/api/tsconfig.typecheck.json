@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  // Type-check gate for apps/api/scripts/, run by the `typecheck` task as
-  // `tsc --noEmit -p tsconfig.typecheck.json`. Deliberately scripts-only, not
+  // Type-check gate for apps/api/scripts/ and src/testing/ (see "include" below), run by the
+  // `typecheck` task as `tsc --noEmit -p tsconfig.typecheck.json`. Deliberately not
   // whole-workspace (unlike the web/core/api-client typecheck precedents this
   // otherwise mirrors): a whole-workspace include drags in 31 pre-existing, unrelated
   // type errors across 12 files in src/**/*.spec.ts (mock shapes trailing behind their

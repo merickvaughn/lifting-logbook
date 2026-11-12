@@ -551,21 +551,49 @@ without deploying, run `update-traffic --to-latest`. See
 
 ### Reversing the macrocycle renumbering
 
-The `20261112000001_renumber_macrocycles_by_date` migration ([#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200),
-ADR-042) renumbers every user's stored macrocycles by start date when the deploy runs, and the
-API revision it ships with renumbers again after every change. The migration records each
-macrocycle's number before the backfill in `macrocycle."backfillNumber"`, and
-`macrocycle_renumber_reverse()` puts those numbers back in every table that holds one and in
-lift-record import batches' keys. (`20261112000000_renumber_macrocycles_by_date`, just before it,
-does nothing: staging applied an early draft under that name, and the real one runs over it.
-`20261112000002_backfill_window_rows_without_lock`, just after it, only replaces one function, so
-it holds no lock worth waiting on and is safe to retry.)
+The [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200) migrations (ADR-042)
+renumber every user's stored macrocycles by start date when the deploy runs, and the API revision
+they ship with renumbers again after every change. They record each macrocycle's number before
+the backfill in `macrocycle."backfillNumber"`, and `macrocycle_renumber_reverse()` puts those
+numbers back in every table that holds one and in lift-record import batches' keys. Four run in
+order:
 
-**Before the deploy**, as the migrator ([Connecting as the migrator](#connecting-as-the-migrator)),
+- `20261112000000_renumber_macrocycles_by_date` does nothing: staging applied an early draft under
+  that name.
+- `20261112000001_renumber_macrocycles_by_date` adds the columns and functions and runs them, but
+  reads nothing: the migrator can't bypass row-level security (below).
+- `20261112000002_backfill_window_rows_without_lock` only replaces one function, so it holds no
+  lock worth waiting on and is safe to retry.
+- `20261112000003_renumber_without_forced_rls` does the work: it turns FORCE ROW LEVEL SECURITY
+  off on the nine tables involved, repeats the #1197 backfill, closes and renumbers, and turns
+  FORCE back on.
+
+**The migrator sees no rows with FORCE on.** It owns the tables but isn't a superuser or
+`BYPASSRLS` (`rolsuper` and `rolbypassrls` are false), and FORCE ROW LEVEL SECURITY binds the
+owner, so with `app.current_user_id` unset every policy matches nothing. Every query below that
+reads or changes users' rows therefore runs inside a transaction that turns FORCE off first:
+`macrocycle_set_forced_rls(false)` after the deploy, and the explicit `ALTER TABLE`s before it,
+when that function doesn't exist yet. Turning FORCE off locks each table exclusively until the
+transaction ends, so every page waits on it: keep these transactions short, and end each one with
+`ROLLBACK` (which puts FORCE back) unless it says otherwise. The app role, `lifting_app`, isn't the
+owner, so RLS filters it either way.
+
+**Before merging the PR** (the merge starts the Deploy run, whose `plan-production` would show the
+public IP this needs), as the migrator ([Connecting as the migrator](#connecting-as-the-migrator)),
 check that the shared lock table can hold one advisory lock per user, since the migration holds
 them all until it commits:
 
 ```sql
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE macrocycle NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE lift_record NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE macrocycle_dashboard NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE focus_day_state NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE workout_date_override NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE workout_skip_override NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE workout_lift_override NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE macrocycle_scheduled_workout NO FORCE ROW LEVEL SECURITY;
 SELECT (SELECT count(DISTINCT "userId") FROM (
           SELECT "userId" FROM macrocycle UNION SELECT "userId" FROM lift_record
           UNION SELECT "userId" FROM macrocycle_dashboard UNION SELECT "userId" FROM focus_day_state
@@ -574,28 +602,40 @@ SELECT (SELECT count(DISTINCT "userId") FROM (
         ) AS u) AS users,
        current_setting('max_locks_per_transaction')::int
          * (current_setting('max_connections')::int + current_setting('max_prepared_transactions')::int) AS lock_slots;
+ROLLBACK;
 ```
 
 `users` should be well under `lock_slots`, which every other session shares. If it isn't, raise
 `max_locks_per_transaction` first, through Terraform: add a second `database_flags` block for it
 next to `cloudsql.iam_authentication` in `infra/terraform/main.tf` and ship that change through
-the pipeline before this release. The flag restarts the instance. Don't set it with
+the pipeline in a PR merged ahead of this one. The flag restarts the instance. Don't set it with
 `gcloud sql instances patch --database-flags`: that replaces the whole flag list, dropping
 `cloudsql.iam_authentication`, and the next `plan-production` would show the drift.
 
-**During the deploy.** The migration holds every user's macrocycle lock and the `macrocycle`
-table until it commits: 1.6 to 1.8 seconds on local Postgres for 20,000 sets in 100 macrocycles
-and 50 import batches, longer with more rows, and longer if it waits on an import.
-Pages loaded in that time get no macrocycle id. Once the new API serves, a write from such a
-page gets a 400 `macrocycle-id-required`, which the old web shows as a generic error ("Failed to
-log set. Try again.") until the new web is live, and which reloads the page after that. Expect a
-short burst of `Refused a macrocycle write without an id (#1200)` warnings; it isn't a
-regression unless it continues after the new web is serving.
+**During the deploy.** `20261112000003` holds the nine tables, and every user's macrocycle lock,
+until it commits: 1.6 to 1.8 seconds on local Postgres for 20,000 sets in 100 macrocycles and 50
+import batches, longer with more rows, and longer if it waits on an import. Pages loaded in that
+time get no macrocycle id. Until the new API serves, the old revision still accepts a write
+without an id by its number, as it has since #1198, and the number such a page holds may now name
+a different macrocycle, so the set can land on the wrong one with no error. Once the new API
+serves, a write without an id gets a 400 `macrocycle-id-required` instead, which the old web shows
+as a generic error ("Failed to log set. Try again.") until the new web is live, and which reloads
+the page after that. Expect a short burst of `Refused a macrocycle write without an id (#1200)`
+warnings; it isn't a regression unless it continues after the new web is serving.
 
-**After the deploy**, as the migrator ([Connecting as the migrator](#connecting-as-the-migrator)),
-these say what the migration changed:
+**After the deploy**, look for writes that may have landed on a renumbered macrocycle: the API's
+`Macrocycle write without an id (#1198)` log lines between the migration and the new API serving,
+in Logs Explorer (`resource.type="cloud_run_revision"
+resource.labels.service_name="lifting-logbook-prod-api" jsonPayload.msg="Macrocycle write without an
+id (#1198)"`). Each names its route and program; check that user's sets on that page.
+
+Then, as the migrator ([Connecting as the migrator](#connecting-as-the-migrator)), these say what
+the migrations changed:
 
 ```sql
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SELECT macrocycle_set_forced_rls(false);
 -- Macrocycles the backfill gave a new number.
 SELECT count(*) FROM macrocycle WHERE "backfillNumber" IS NOT NULL AND "macrocycleNum" <> "backfillNumber";
 -- Open live macrocycles: one per program with a dashboard, and none left open by the old revision.
@@ -605,9 +645,11 @@ SELECT count(*) FROM macrocycle m WHERE origin = 'live' AND status = 'in-progres
 -- The rows the migration closed. Each was `in-progress` with no end date before.
 SELECT "userId", program, "macrocycleNum", status, "endDate" FROM macrocycle
 WHERE "backfillClosedAt" IS NOT NULL ORDER BY 1, 2, 3;
+ROLLBACK;
 ```
 
-The second should be 0. The reversal leaves the closed rows closed: reopening one would put back
+The second should be 0. If the first is 0 too and `SELECT count(*) FROM macrocycle WHERE
+"backfilledAt" IS NOT NULL` (in the same transaction) is 0, the migrations read no rows. The reversal leaves the closed rows closed: reopening one would put back
 a live row on a number the dashboard doesn't show. The migrate job's log may not carry the functions' notices, which is why
 these are here.
 
@@ -626,25 +668,30 @@ someone's history wrongly. Do it after the API is rolled back, or the next chang
    ```sql
    BEGIN;
    SET LOCAL lock_timeout = '40s';
+   SELECT macrocycle_set_forced_rls(false);
    SELECT macrocycle_renumber_reverse();
    ROLLBACK;
    ```
 
-   It refuses, moving nothing, when a macrocycle has no `backfillNumber` (*Macrocycle N of
+   Without the `macrocycle_set_forced_rls(false)` line it sees no rows and returns 0 with *Every
+   macrocycle already has its recorded number*, which is wrong. It refuses, moving nothing, when a macrocycle has no `backfillNumber` (*Macrocycle N of
    program P for user U has no backfillNumber*): the new revision created it after the
    backfill, so it has no old number to go back to. Then stop here. The API you rolled back to
    keeps running on the new numbers, so nothing is stranded; fix forward instead.
-2. **Run it**, the same way with `COMMIT;` in place of `ROLLBACK;`. It takes the macrocycle lock for
-   every user first, so an import or page write still running finishes first, and it returns how
-   many numbers it moved, or 0 with a notice when nothing needs moving. Import batches made after
+2. **Run it**, the same way, with `SELECT macrocycle_set_forced_rls(true);` and then `COMMIT;` in
+   place of `ROLLBACK;`, so FORCE is back on when it commits. It returns how many numbers it
+   moved, or 0 with a notice when nothing needs moving. Turning FORCE off waits for every
+   transaction using the tables, and the reversal then waits for each user's macrocycle lock; a
+   page write holding one of those and waiting on a table is a deadlock, which PostgreSQL ends by
+   aborting one of the two. If that's the reversal, nothing changed: run it again. Import batches made after
    the backfill reverse too: their keys move with the numbers.
 3. **Leave the schema alone.** The old code ignores `"backfillNumber"`, `"backfilledAt"` and
    `"backfillClosedAt"`, and
    `prisma migrate status` still passes, since the migration stays applied.
 
 To go forward again after a reversal, run `SELECT macrocycle_renumber_by_date();` as the migrator,
-which keeps the recorded numbers and records one for any macrocycle created since, then route
-traffic back to the new revision:
+between the same two `macrocycle_set_forced_rls` calls, which keeps the recorded numbers and
+records one for any macrocycle created since, then route traffic back to the new revision:
 
 ```bash
 gcloud run services update-traffic lifting-logbook-prod-api --to-latest \
@@ -652,7 +699,7 @@ gcloud run services update-traffic lifting-logbook-prod-api --to-latest \
 ```
 
 To reverse one user only, as the DB e2e suite does, pass their id:
-`SELECT macrocycle_renumber_reverse('<userId>');`.
+`SELECT macrocycle_renumber_reverse('<userId>');`, again between the two switch calls.
 
 #### If the renumbering migration fails
 
@@ -664,8 +711,10 @@ table: run the check in [Reversing the macrocycle renumbering](#reversing-the-ma
 and raise the flag through Terraform, as it describes, before retrying. Prisma
 records the migration as failed, and every later `prisma migrate deploy` refuses (P3009) until
 it's marked rolled back. As the migrator, from `apps/api`, name the migration the P3009 error
-names (usually `20261112000001_renumber_macrocycles_by_date`; it can be
-`20261112000002_backfill_window_rows_without_lock`):
+names (usually `20261112000003_renumber_without_forced_rls`, which does the work; it can be
+`20261112000001_renumber_macrocycles_by_date` or `20261112000002_backfill_window_rows_without_lock`).
+A deadlock (*deadlock detected*) is the same: `20261112000003` locks nine tables, and a request
+that used one and waits on another can deadlock with it:
 
 ```bash
 DATABASE_URL="$MIGRATOR_URL" npx prisma migrate resolve --rolled-back <migration named in the P3009 error>
@@ -684,19 +733,23 @@ proxy and removes the IP however the shell exits. From the repo root, for produc
 ```bash
 (
   set -euo pipefail
-  PROJECT=lifting-logbook-prod PREFIX=lifting-logbook-prod PORT=5433
+  PROJECT=lifting-logbook-prod PREFIX=lifting-logbook-prod PORT=5433 IP_WAIT=15
   cd infra/terraform
   terraform init -backend-config="bucket=${PROJECT}-tfstate" -reconfigure -input=false >/dev/null
   terraform workspace select production >/dev/null
   INSTANCE=$(terraform output -raw database_instance_name)
   PROXY_PID=""
-  trap '[ -n "$PROXY_PID" ] && kill "$PROXY_PID"; gcloud sql instances patch "$INSTANCE" --no-assign-ip --project="$PROJECT" --quiet' EXIT
+  # set +e: a proxy that already exited must not stop the trap before it removes the public IP.
+  trap 'set +e; [ -n "$PROXY_PID" ] && kill "$PROXY_PID" 2>/dev/null
+        gcloud sql instances patch "$INSTANCE" --no-assign-ip --project="$PROJECT" --quiet \
+          || echo "WARNING: the public IP is still on; remove it: gcloud sql instances patch $INSTANCE --no-assign-ip --project=$PROJECT" >&2' EXIT
   gcloud sql instances patch "$INSTANCE" --assign-ip --authorized-networks="$(curl -fsSL ifconfig.me)/32" --project="$PROJECT" --quiet
   until gcloud sql instances describe "$INSTANCE" --project="$PROJECT" --format="value(state)" | grep -q RUNNABLE; do sleep 5; done
-  sleep 15  # the new public IP takes a moment to become routable
+  sleep "$IP_WAIT"  # the new public IP takes a moment to become routable
   cloud-sql-proxy "$PROJECT:us-central1:$INSTANCE?port=$PORT" & PROXY_PID=$!
-  for _ in $(seq 30); do
+  for i in $(seq 30); do
     node -e "require('net').createConnection($PORT,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))" && break
+    [ "$i" -lt 30 ] || { echo "Proxy not ready after 30s, giving up." >&2; exit 1; }
     sleep 1
   done
   MIGRATOR_URL=$(gcloud secrets versions access latest --secret="$PREFIX-migrator-database-url" --project="$PROJECT" \
@@ -705,7 +758,8 @@ proxy and removes the IP however the shell exits. From the repo root, for produc
 )
 ```
 
-For staging, set `PROJECT=lifting-logbook-staging PREFIX=lifting-logbook-stg PORT=5434`, initialize
+For staging, set `PROJECT=lifting-logbook-staging PREFIX=lifting-logbook-stg PORT=5434 IP_WAIT=30`
+(the wait `scripts/migrate-staging-db.sh` uses), initialize
 with `-backend-config="bucket=lifting-logbook-tfstate" -backend-config="prefix=terraform/state"`
 and select the `staging` workspace, as `scripts/migrate-staging-db.sh` does. To run a command such
 as `prisma migrate resolve` instead of `psql`, put it in place of the `psql` line, after `cd ../../apps/api`.
@@ -756,15 +810,23 @@ after the Prisma migrations.
 ### Row-Level Security cutover — two-role split (#517)
 
 The app database enforces per-tenant isolation with Postgres Row-Level Security (migration
-`20260611000000_enable_rls`, ADR-010). RLS is **bypassed by `cloudsqlsuperuser` members**, so the
-runtime and the migrator connect as **different roles**:
+`20260611000000_enable_rls`, ADR-010). The runtime and the migrator connect as **different
+roles**:
 
 - **Runtime** (`google_sql_user.app_rls`, `lifting_app`) — `NOSUPERUSER NOBYPASSRLS`. The Cloud
   Run services and the GKE API pods read `lifting-logbook-<env>-database-url`, which connects as
   this role (so the policies enforce) and carries `?connection_limit=N` to cap the Prisma pool.
-- **Migrator** (`google_sql_user.app`, `lifting-logbook-app`) — the owner/superuser. The migrate
-  Cloud Run Job reads the separate `lifting-logbook-<env>-migrator-database-url` so it can run DDL
-  and data migrations (which `FORCE ROW LEVEL SECURITY` would otherwise filter to zero rows).
+- **Migrator** (`google_sql_user.app`, `lifting-logbook-app`) — the tables' owner, a
+  `cloudsqlsuperuser` member. The migrate Cloud Run Job reads the separate
+  `lifting-logbook-<env>-migrator-database-url` so it can run DDL. **It does not bypass RLS**:
+  it's neither a superuser nor `BYPASSRLS`, and its `cloudsqlsuperuser` membership doesn't pass
+  either on (checked on staging, 2026-11-12: as the migrator, `lift_record` counted 0 rows).
+  Every table has `FORCE ROW LEVEL SECURITY`, which binds the owner, so a data migration's reads
+  and writes match no rows unless it turns FORCE off for the tables it uses and back on after,
+  in the same migration, as `20261111120000_focus_progression_types` and
+  `20261112000003_renumber_without_forced_rls` do. Postgres:
+  [row security policies](https://www.postgresql.org/docs/current/ddl-rowsecurity.html),
+  [role attributes](https://www.postgresql.org/docs/current/role-attributes.html).
 
 `connection_limit` is derived in `infra/terraform/main.tf` (`local.db_connection_limit`) from the
 tier's `max_connections` and the Cloud Run maxScale; staging divides by an extra factor because the

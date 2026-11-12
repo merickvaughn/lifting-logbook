@@ -2,8 +2,10 @@
 //
 // Postgres comes from jest.global-setup.js, which exposes LIFTING_TC_DATABASE_URL (the
 // restricted lifting_app role) and LIFTING_TC_OWNER_DATABASE_URL (the owner). Seeding,
-// cleanup and the backfill call use the owner, as the migrate job does in production; every
-// isolation assertion and every HTTP request runs as lifting_app.
+// cleanup and the backfill call use the owner; every isolation assertion and every HTTP request
+// runs as lifting_app. Here the owner is a superuser, so row-level security never filters it,
+// unlike the production migrator (#1200): the forced-RLS path was replayed with a non-bypass
+// owner instead (PR #1231).
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
@@ -1256,10 +1258,33 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
               tx.$queryRaw`SELECT "macrocycle_rewrite_numbers"(ARRAY['x'], ARRAY['p'], ARRAY[1], ARRAY[2])`,
             ),
           ).rejects.toThrow(/permission denied/);
+          await expect(
+            asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRaw`SELECT "macrocycle_set_forced_rls"(false)`),
+          ).rejects.toThrow(/permission denied for function/);
         } finally {
           await appDb.$disconnect();
         }
       }, DB_E2E_HOOK_TIMEOUT_MS);
+
+      // 20261112000003 turns FORCE off to see every user's rows, since the migrator isn't
+      // BYPASSRLS, and must turn it back on before it commits.
+      it('leaves FORCE ROW LEVEL SECURITY on for every table the migrations turned it off for', async () => {
+        const forced = await owner.$queryRaw<{ relname: string; relforcerowsecurity: boolean }[]>`
+          SELECT relname, relforcerowsecurity FROM pg_class
+          WHERE relnamespace = current_schema()::regnamespace AND relname = ANY(${[
+            'macrocycle',
+            'lift_record',
+            'macrocycle_dashboard',
+            'workout_date_override',
+            'workout_skip_override',
+            'workout_lift_override',
+            'focus_day_state',
+            'macrocycle_scheduled_workout',
+            'import_batch',
+          ]}::text[]) ORDER BY relname`;
+        expect(forced).toHaveLength(9);
+        expect(forced.filter((t) => !t.relforcerowsecurity)).toEqual([]);
+      });
     });
   });
 
