@@ -555,7 +555,7 @@ The [#1200](https://github.com/merickvaughn/lifting-logbook/issues/1200) migrati
 renumber every user's stored macrocycles by start date when the deploy runs, and the API revision
 they ship with renumbers again after every change. They record each macrocycle's number before
 the backfill in `macrocycle."backfillNumber"`, and `macrocycle_renumber_reverse()` puts those
-numbers back in every table that holds one and in lift-record import batches' keys. Five run in
+numbers back in every table that holds one and in lift-record import batches' keys. Six run in
 order:
 
 - `20261112000000_renumber_macrocycles_by_date` does nothing: staging applied an early draft under
@@ -569,6 +569,8 @@ order:
   FORCE back on.
 - `20261112000004_renumbering_runbook_functions` adds the one-statement functions the steps below
   call, and a `wait_for_locks` argument to `macrocycle_renumber_reverse()`. It reads no rows.
+- `20261112000005_renumbering_force_guard` makes a direct call to a renumbering step fail while
+  FORCE is on, and narrows what the report holds to the two tables it reads. It reads no rows.
 
 **The migrator sees no rows with FORCE on.** It owns the tables but isn't a superuser or
 `BYPASSRLS` (`rolsuper` and `rolbypassrls` are false), and FORCE ROW LEVEL SECURITY binds the
@@ -576,13 +578,18 @@ owner, so with `app.current_user_id` unset every policy matches nothing. So each
 reads or changes users' rows calls a `macrocycle_runbook_*` function, which turns FORCE off, does
 the step, and turns FORCE back on, all in the one statement: the tables are held exclusively only
 while it runs, and an error rolls everything back, FORCE included. Calling
-`macrocycle_renumber_reverse()` or `macrocycle_renumber_by_date()` directly sees no rows, and
-returns 0 with a notice. The app role, `lifting_app`, isn't the owner, so RLS filters it either
-way.
+`macrocycle_renumber_reverse()` or `macrocycle_renumber_by_date()` directly fails with *FORCE ROW
+LEVEL SECURITY is on*, since it would see no rows. The app role, `lifting_app`, isn't the owner,
+so RLS filters it either way.
 
-Run each step as one `psql -c` command, in place of the `psql` line in
+Run each step as the `psql` command shown, in place of the `psql` line in
 [Connecting as the migrator](#connecting-as-the-migrator), not at an interactive prompt: psql
-commits each line typed there on its own, and a transaction left open holds the tables.
+commits each line typed there on its own, and a transaction left open holds the tables. Each
+statement is its own `-c` option: psql runs them in order in one session and prints each result,
+and with `ON_ERROR_STOP` an error ends the session, which rolls back an open transaction
+([psql](https://www.postgresql.org/docs/current/app-psql.html)). Several statements in one `-c`
+string would show only the last result before psql 15. Each sets a `lock_timeout`, so it gives up
+rather than stall pages while it waits for the tables.
 
 **Before merging the PR** (the merge starts the Deploy run, whose `plan-production` would show the
 public IP this needs), check that the shared lock table can hold one advisory lock per user, since
@@ -592,26 +599,26 @@ puts it back. Its one-second `lock_timeout` makes it give up rather than stall p
 run it again:
 
 ```bash
-psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 -c "
-BEGIN;
-SET LOCAL lock_timeout = '1s';
-ALTER TABLE macrocycle NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE lift_record NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE macrocycle_dashboard NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE focus_day_state NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE workout_date_override NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE workout_skip_override NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE workout_lift_override NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE macrocycle_scheduled_workout NO FORCE ROW LEVEL SECURITY;
-SELECT (SELECT count(DISTINCT u) FROM (
+psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+  -c "BEGIN" \
+  -c "SET LOCAL lock_timeout = '1s'" \
+  -c "ALTER TABLE macrocycle NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE lift_record NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE macrocycle_dashboard NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE focus_day_state NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE workout_date_override NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE workout_skip_override NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE workout_lift_override NO FORCE ROW LEVEL SECURITY" \
+  -c "ALTER TABLE macrocycle_scheduled_workout NO FORCE ROW LEVEL SECURITY" \
+  -c "SELECT (SELECT count(DISTINCT u) FROM (
           SELECT \"userId\" AS u FROM macrocycle UNION SELECT \"userId\" FROM lift_record
           UNION SELECT \"userId\" FROM macrocycle_dashboard UNION SELECT \"userId\" FROM focus_day_state
           UNION SELECT \"userId\" FROM workout_date_override UNION SELECT \"userId\" FROM workout_skip_override
           UNION SELECT \"userId\" FROM workout_lift_override UNION SELECT \"userId\" FROM macrocycle_scheduled_workout
         ) AS owners) AS users,
        current_setting('max_locks_per_transaction')::int
-         * (current_setting('max_connections')::int + current_setting('max_prepared_transactions')::int) AS lock_slots;
-ROLLBACK;"
+         * (current_setting('max_connections')::int + current_setting('max_prepared_transactions')::int) AS lock_slots" \
+  -c "ROLLBACK"
 ```
 
 `users` should be well under `lock_slots`, which every other session shares. If it isn't, raise
@@ -625,14 +632,14 @@ the pipeline in a PR merged ahead of this one. The flag restarts the instance. D
 until it commits: 1.7 to 1.8 seconds on local Postgres, run as an owner that isn't superuser or
 `BYPASSRLS`, for 20,000 sets in 100 macrocycles for ten users with no import batches, making all
 100 rows and moving every number. It takes longer with more rows or import batches, and longer if
-it waits on an import. Pages loaded in that
-time get no macrocycle id. Until the new API serves, the old revision still accepts a write
-without an id by its number, as it has since #1198, and the number such a page holds may now name
-a different macrocycle, so the set can land on the wrong one with no error. Once the new API
-serves, a write without an id gets a 400 `macrocycle-id-required` instead, which the old web shows
-as a generic error ("Failed to log set. Try again.") until the new web is live, and which reloads
-the page after that. Expect a short burst of `Refused a macrocycle write without an id (#1200)`
-warnings; it isn't a regression unless it continues after the new web is serving.
+it waits on an import. Pages loaded in that time get no macrocycle id. Until the new API serves,
+the old revision still accepts a write without an id by its number, as it has since #1198, and
+the number such a page holds may now name a different macrocycle, so the set can land on the wrong
+one with no error. Once the new API serves, a write without an id gets a 400
+`macrocycle-id-required` instead, which the old web shows as a generic error ("Failed to log set.
+Try again.") until the new web is live, and which reloads the page after that. Expect a short
+burst of `Refused a macrocycle write without an id (#1200)` warnings; it isn't a regression unless
+it continues after the new web is serving.
 
 **After the deploy**, look for writes that may have landed on a renumbered macrocycle: the API's
 `Macrocycle write without an id (#1198)` log lines between the migration and the new API serving,
@@ -643,8 +650,13 @@ id (#1198)"`). Each names its route and program; check that user's sets on that 
 Then, as the migrator, this says what the migrations changed:
 
 ```bash
-psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 -x -c "SELECT * FROM macrocycle_runbook_report();"
+psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 -x \
+  -c "SET lock_timeout = '5s'" \
+  -c "SELECT * FROM macrocycle_runbook_report()"
 ```
+
+It holds `macrocycle` and `macrocycle_dashboard` exclusively while it reads them; if the
+`lock_timeout` runs out, run it again.
 
 - `renumbered`: macrocycles the renumbering gave a new number.
 - `open_live_off_dashboard`: open live macrocycles no dashboard points at, which the old revision
@@ -669,17 +681,23 @@ someone's history wrongly. Do it after the API is rolled back, or the next chang
 1. **Test it without committing**, as the migrator:
 
    ```bash
-   psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 -c "BEGIN; SET LOCAL lock_timeout = '40s'; SELECT macrocycle_runbook_reverse(); ROLLBACK;"
+   psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+     -c "BEGIN" \
+     -c "SET LOCAL lock_timeout = '40s'" \
+     -c "SELECT macrocycle_runbook_reverse()" \
+     -c "ROLLBACK"
    ```
 
    It refuses, moving nothing, when a macrocycle has no `backfillNumber` (*Macrocycle N of
    program P for user U has no backfillNumber*): the new revision created it after the backfill,
    so it has no old number to go back to. Then stop here. The API you rolled back to keeps running
    on the new numbers, so nothing is stranded; fix forward instead.
-2. **Run it**, the same command without `BEGIN;` and `ROLLBACK;`:
+2. **Run it**, the same command without `BEGIN` and `ROLLBACK`:
 
    ```bash
-   psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 -c "SET lock_timeout = '40s'; SELECT macrocycle_runbook_reverse();"
+   psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+     -c "SET lock_timeout = '40s'" \
+     -c "SELECT macrocycle_runbook_reverse()"
    ```
 
    It returns how many numbers it moved, or 0 with a notice when nothing needs moving. Import
@@ -693,22 +711,34 @@ someone's history wrongly. Do it after the API is rolled back, or the next chang
    `"backfillClosedAt"`, and `prisma migrate status` still passes, since the migrations stay
    applied.
 
-To go forward again after a reversal, run
-`psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 -c "SELECT macrocycle_runbook_renumber();"`, which keeps
-the recorded numbers and records one for any macrocycle created since, then route traffic back to
-the new revision:
+To go forward again after a reversal, this keeps the recorded numbers and records one for any
+macrocycle created since:
+
+```bash
+psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+  -c "SET lock_timeout = '40s'" \
+  -c "SELECT macrocycle_runbook_renumber()"
+```
+
+Then route traffic back to the new revision:
 
 ```bash
 gcloud run services update-traffic lifting-logbook-prod-api --to-latest \
   --region=us-central1 --project=lifting-logbook-prod
 ```
 
-To reverse or renumber one user only, as the DB e2e suite does, pass their id:
-`SELECT macrocycle_runbook_reverse('<userId>');`.
+To reverse or renumber one user only, pass their id to either function, in the same commands:
+`-c "SELECT macrocycle_runbook_reverse('<userId>')"` or
+`-c "SELECT macrocycle_runbook_renumber('<userId>')"`. The one-user dry run is the step 1 command
+with the id.
 
-Each call turns FORCE back on before it returns. To confirm it's on for every table:
-`psql "$MIGRATOR_URL" -c "SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relrowsecurity AND NOT relforcerowsecurity;"`
-should list nothing.
+Each call turns FORCE back on before it returns. To confirm it's on for every table, this should
+list nothing:
+
+```bash
+psql "$MIGRATOR_URL" -v ON_ERROR_STOP=1 \
+  -c "SELECT relname FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relrowsecurity AND NOT relforcerowsecurity"
+```
 
 #### If the renumbering migration fails
 
@@ -721,7 +751,7 @@ and raise the flag through Terraform, as it describes, before retrying. Prisma
 records the migration as failed, and every later `prisma migrate deploy` refuses (P3009) until
 it's marked rolled back. As the migrator, from `apps/api`, name the migration the P3009 error
 names (usually `20261112000003_renumber_without_forced_rls`, which does the work; it can be any
-of `20261112000001` to `20261112000004`). A deadlock (*deadlock detected*) is the same:
+of `20261112000001` to `20261112000005`). A deadlock (*deadlock detected*) is the same:
 `20261112000003` locks nine tables, and a request that used one and waits on another can deadlock
 with it:
 

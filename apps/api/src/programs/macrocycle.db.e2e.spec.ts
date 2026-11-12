@@ -1238,35 +1238,31 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
 
       it('the app role cannot run any of them', async () => {
         const appDb = new PrismaClient({ datasources: { db: { url: APP_DB_URL } } });
-        try {
-          for (const fn of [
+        // Each error must name the function called: most of them call another revoked function
+        // first, so a bare "permission denied" would pass with the outer REVOKE gone.
+        const calls: [string, Prisma.Sql][] = [
+          ...[
             'macrocycle_lock_every_user',
             'macrocycle_unstarted_numbers',
             'macrocycle_close_window_rows',
             'macrocycle_renumber_by_date',
             'macrocycle_renumber_reverse',
-          ]) {
-            await expect(
-              asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRawUnsafe(`SELECT "${fn}"($1)`, USER_HISTORY_ORDER)),
-            ).rejects.toThrow(/permission denied/);
-          }
-          await expect(
-            asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRaw`SELECT "macrocycle_backfill_window_rows"()`),
-          ).rejects.toThrow(/permission denied/);
-          await expect(
-            asUser(appDb, USER_HISTORY_ORDER, (tx) =>
-              tx.$queryRaw`SELECT "macrocycle_rewrite_numbers"(ARRAY['x'], ARRAY['p'], ARRAY[1], ARRAY[2])`,
-            ),
-          ).rejects.toThrow(/permission denied/);
+          ].map((fn): [string, Prisma.Sql] => [fn, Prisma.sql`SELECT ${Prisma.raw(`"${fn}"`)}(${USER_HISTORY_ORDER})`]),
+          ['macrocycle_backfill_window_rows', Prisma.sql`SELECT "macrocycle_backfill_window_rows"()`],
+          [
+            'macrocycle_rewrite_numbers',
+            Prisma.sql`SELECT "macrocycle_rewrite_numbers"(ARRAY['x'], ARRAY['p'], ARRAY[1], ARRAY[2])`,
+          ],
           // The FORCE switch, and the runbook functions that use it (20261112000003, 20261112000004).
-          for (const call of [
-            Prisma.sql`SELECT "macrocycle_set_forced_rls"(false)`,
-            Prisma.sql`SELECT "macrocycle_runbook_reverse"(NULL)`,
-            Prisma.sql`SELECT "macrocycle_runbook_renumber"(NULL)`,
-            Prisma.sql`SELECT * FROM "macrocycle_runbook_report"()`,
-          ]) {
+          ['macrocycle_set_forced_rls', Prisma.sql`SELECT "macrocycle_set_forced_rls"(false)`],
+          ['macrocycle_runbook_reverse', Prisma.sql`SELECT "macrocycle_runbook_reverse"(NULL)`],
+          ['macrocycle_runbook_renumber', Prisma.sql`SELECT "macrocycle_runbook_renumber"(NULL)`],
+          ['macrocycle_runbook_report', Prisma.sql`SELECT * FROM "macrocycle_runbook_report"()`],
+        ];
+        try {
+          for (const [fn, call] of calls) {
             await expect(asUser(appDb, USER_HISTORY_ORDER, (tx) => tx.$queryRaw(call))).rejects.toThrow(
-              /permission denied for function/,
+              new RegExp(`permission denied for function ${fn}\\b`),
             );
           }
         } finally {
@@ -1285,6 +1281,30 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
         expect(tables.map((t) => t.relname)).toEqual(expect.arrayContaining(['macrocycle', 'lift_record', 'import_batch']));
         expect(tables.filter((t) => !t.relforcerowsecurity).map((t) => t.relname)).toEqual([]);
       });
+
+      // 20261112000005: a step called directly by a role FORCE binds, like the migrator, raises
+      // an error instead of returning 0 having read nothing. The suite's owner is a superuser, so
+      // the call runs as a role without superuser or BYPASSRLS that is a member of the tables'
+      // owner, created in a transaction that rolls back. The check reads no table, so it takes no
+      // table lock other suites would wait on (#1237 covers the switch itself).
+      it('refuses a direct renumbering call by an owner that FORCE ROW LEVEL SECURITY binds', async () => {
+        const [{ tableowner }] = await owner.$queryRaw<{ tableowner: string }[]>`
+          SELECT tableowner FROM pg_tables WHERE schemaname = current_schema() AND tablename = 'macrocycle'`;
+        for (const call of [
+          Prisma.sql`SELECT "macrocycle_renumber_by_date"(${USER_HISTORY_ORDER}, false)`,
+          Prisma.sql`SELECT "macrocycle_renumber_reverse"(${USER_HISTORY_ORDER}, false)`,
+          Prisma.sql`SELECT "macrocycle_close_window_rows"(${USER_HISTORY_ORDER}, false)`,
+        ]) {
+          await expect(
+            owner.$transaction(async (tx) => {
+              await tx.$executeRawUnsafe(`CREATE ROLE "macrocycle_force_probe" NOSUPERUSER NOBYPASSRLS NOLOGIN`);
+              await tx.$executeRawUnsafe(`GRANT "${tableowner}" TO "macrocycle_force_probe"`);
+              await tx.$executeRawUnsafe(`SET LOCAL ROLE "macrocycle_force_probe"`);
+              await tx.$queryRaw(call);
+            }),
+          ).rejects.toThrow(/FORCE ROW LEVEL SECURITY is on, so macrocycle_force_probe sees no rows/);
+        }
+      }, DB_E2E_HOOK_TIMEOUT_MS);
     });
   });
 
