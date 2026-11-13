@@ -60,15 +60,17 @@ export type BreakdownMismatchReason =
   | 'stretches-overlap';
 
 /** The breakdown doesn't match the file: the wizard goes back to Assign for a fresh result. */
-function mismatch(reason: BreakdownMismatchReason, message: string): BadRequestException {
-  return new BadRequestException({ statusCode: 400, code: 'breakdown-mismatch', reason, message, error: 'Bad Request' });
+export class BreakdownMismatchException extends BadRequestException {
+  constructor(
+    readonly reason: BreakdownMismatchReason,
+    message: string,
+  ) {
+    super({ statusCode: 400, code: 'breakdown-mismatch', reason, message, error: 'Bad Request' });
+  }
 }
 
-/** The reason of a `breakdown-mismatch` error, else null. */
-export function mismatchReason(err: unknown): BreakdownMismatchReason | null {
-  if (!(err instanceof BadRequestException)) return null;
-  const body = err.getResponse();
-  return isRecord(body) && body.code === 'breakdown-mismatch' ? (body.reason as BreakdownMismatchReason) : null;
+function mismatch(reason: BreakdownMismatchReason, message: string): BreakdownMismatchException {
+  return new BreakdownMismatchException(reason, message);
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;

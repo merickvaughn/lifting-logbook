@@ -91,8 +91,8 @@ import {
   splitMaxCounts,
 } from './import-assign';
 import {
+  BreakdownMismatchException,
   PlacedBreakdown,
-  mismatchReason,
   parseBreakdown,
   placeBreakdown,
   planBreakdown,
@@ -905,9 +905,11 @@ export class ImportController {
       });
     } catch (err) {
       // The reason only: the message names the lifter's dates and programs.
-      const reason = mismatchReason(err);
-      if (reason) {
-        this.logger.warn({ mode, reason, stretches: choices.breakdown.stretches.length }, 'Import breakdown mismatch (#1254)');
+      if (err instanceof BreakdownMismatchException) {
+        this.logger.warn(
+          { mode, reason: err.reason, stretches: choices.breakdown.stretches.length },
+          'Import breakdown mismatch (#1254)',
+        );
       }
       throw err;
     }
