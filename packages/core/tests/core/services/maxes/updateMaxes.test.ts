@@ -10,7 +10,7 @@ import { loadCsvFixture } from "../../../testUtils";
 
 // The fixtures' program, which isn't a registered preset, so its workouts number the
 // stored one-week block's days; none of these records has a lift override.
-const RPT = { program: "RPT", liftOverrides: new Map() };
+const RPT = { program: "RPT", liftOverrides: new Map(), modificationModes: new Map(), modificationMaxes: [] };
 
 describe("updateMaxes", () => {
   it("updates only the correct training maxes and leaves others unchanged", () => {
@@ -197,6 +197,8 @@ describe("updateMaxes — a record's prescription is its workout day's (issue #1
   const fiveThreeOne = (liftOverrides = new Map<number, ReturnType<typeof replace>[]>()) => ({
     program: "5-3-1",
     liftOverrides,
+    modificationModes: new Map(),
+    modificationMaxes: [],
   });
 
   it("progresses a Manage Lifts replacement's own training max by its slot's rules", () => {
