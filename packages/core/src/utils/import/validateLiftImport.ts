@@ -1,5 +1,6 @@
 import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import { LiftRecord } from '../../models';
+import type { AssignBlankField, ParsedLiftRecord } from '../parser/parseLiftRecords';
 
 /**
  * The highest macrocycle number a file may carry: the bound `POST lift-records` already
@@ -29,6 +30,26 @@ export interface LiftImportValidationResult {
   valid: LiftRecord[];
   /** All errors encountered across all rows. */
   errors: ImportError[];
+  /** With {@link LiftImportOptions.assign}, the rows with no date, left out unchecked. Otherwise empty. */
+  undated: LiftRecord[];
+}
+
+/** How a lift-records file is validated. */
+export interface LiftImportOptions {
+  /**
+   * The file goes through the Assign step (#1253), which groups rows into macrocycles from their
+   * dates (proposal decisions 9 and 16). A missing macrocycle or workout number isn't an error,
+   * and a row with no date is left out and counted rather than failing the file.
+   */
+  assign?: boolean;
+}
+
+/**
+ * With {@link LiftImportOptions.assign}, whether the file left this field blank: the Assign
+ * step reads it as "not given". A cell that isn't blank but can't be read is still an error.
+ */
+export function assignBlank(r: ParsedLiftRecord, field: AssignBlankField, options: LiftImportOptions): boolean {
+  return options.assign === true && (r.blankFields?.includes(field) ?? false);
 }
 
 /**
@@ -43,21 +64,27 @@ export interface LiftImportValidationResult {
  * its display name instead (issue #1116), and an alias stays as written (issue #947).
  */
 export function validateLiftImport(
-  records: LiftRecord[],
+  records: ParsedLiftRecord[],
   slotMap: Readonly<Record<string, string>>,
+  options: LiftImportOptions = {},
 ): LiftImportValidationResult {
   const valid: LiftRecord[] = [];
   const errors: ImportError[] = [];
+  const undated: LiftRecord[] = [];
 
   records.forEach((r, i) => {
     const row = i + 1;
     const rowErrors: ImportError[] = [];
 
-    if (isNaN(r.macrocycleNum))
+    if (assignBlank(r, 'date', options)) {
+      undated.push(r);
+      return;
+    }
+    if (isNaN(r.macrocycleNum) && !assignBlank(r, 'macrocycleNum', options))
       rowErrors.push({ row, field: 'macrocycleNum', code: 'MACROCYCLE_NUM_INVALID', message: 'Macrocycle # is not a number' });
     const outOfRange = fileMacrocycleNumError(row, r.macrocycleNum);
     if (outOfRange) rowErrors.push(outOfRange);
-    if (isNaN(r.workoutNum))
+    if (isNaN(r.workoutNum) && !assignBlank(r, 'workoutNum', options))
       rowErrors.push({ row, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'Workout # is not a number' });
     if (isNaN(r.setNum))
       rowErrors.push({ row, field: 'setNum', code: 'SET_NUM_INVALID', message: 'Set # is not a number' });
@@ -125,5 +152,5 @@ export function validateLiftImport(
     }
   });
 
-  return { valid, errors };
+  return { valid, errors, undated };
 }

@@ -5,6 +5,7 @@ import {
   CustomProgramSpecRow,
   isLiftProgressionType,
 } from '@lifting-logbook/types';
+import { knownProgramFromSpec, type KnownProgram } from '@lifting-logbook/core';
 import { PrismaExecutor, runInteractive } from '../adapters/prisma/prisma-tx.util';
 
 type ProgressionColumns = { progression: string | null; repsLow: number | null };
@@ -81,6 +82,29 @@ export class CustomProgramsRepository {
       baseTemplate: r.baseTemplate,
       createdAt: r.createdAt.toISOString(),
     }));
+  }
+
+  /**
+   * Every custom program as `segmentLiftHistory` matches a file against it, named so a
+   * `Program` cell can name it (#1172, #1253). In the order {@link list} gives, with each
+   * program's specs in one total order (week, day, slot, then id, since `order` repeats
+   * across days): the first spec for a lift sets its set order, so a read that left ties to
+   * the database could match differently from one request to the next.
+   */
+  async listKnownPrograms(): Promise<KnownProgram[]> {
+    const rows = await this.prisma.customProgram.findMany({
+      where: { userId: this.userId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        specs: {
+          select: { week: true, offset: true, lift: true, wtDecrementPct: true },
+          orderBy: [{ week: 'asc' }, { offset: 'asc' }, { order: 'asc' }, { id: 'asc' }],
+        },
+      },
+    });
+    return rows.map((r) => ({ ...knownProgramFromSpec(r.id, r.specs), name: r.name }));
   }
 
   async get(id: string): Promise<CustomProgramResponse> {

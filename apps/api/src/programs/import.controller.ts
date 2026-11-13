@@ -19,6 +19,7 @@ import {
   GoogleSheetTab,
   GoogleSheetWorkbookResponse,
   IMPORT_ERROR_FIELD_LIFT,
+  ImportAssignResponse,
   ImportClassification,
   ImportCommitResponse,
   ImportDryRunResponse,
@@ -55,8 +56,12 @@ import {
   liftRecordNaturalKey,
   programSpecNaturalKey,
   withImportProgram,
+  parseLiftRecords,
+  segmentLiftHistory,
+  toLiftHistoryRecord,
+  isLiftRecordExport,
 } from '@lifting-logbook/core';
-import type { SpreadsheetCell } from '@lifting-logbook/core';
+import type { LiftImportOptions, SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
 import { randomUUID } from 'crypto';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -65,9 +70,18 @@ import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
+import { PrismaService } from '../adapters/prisma/prisma.service';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
+import { CustomProgramsRepository } from '../custom-programs/custom-programs.repository';
 import { IMPORT_HANDLERS } from './import-handlers';
+import {
+  assignImportDate,
+  assignProgramOptions,
+  assignResponse,
+  importAssignEnabled,
+  splitMaxCounts,
+} from './import-assign';
 import {
   lockForImport,
   removeEmptyLegacyRows,
@@ -103,6 +117,8 @@ export class ImportController {
 
   constructor(
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
+    // Custom programs are Prisma-only, so with no database there are none (see SwitchProgramController).
+    @Inject(PrismaService) private readonly prisma: PrismaService | null,
   ) {}
 
   @Post('import')
@@ -118,8 +134,9 @@ export class ImportController {
     @Query('excludeKeys') legacyExcludeKeys?: string,
     @Query('liftOverrides') legacyLiftOverrides?: string,
     @Query('splitDest') splitDestParam?: string,
-  ): Promise<ImportPreviewResponse | ImportCommitResponse | ImportDryRunResponse> {
+  ): Promise<ImportPreviewResponse | ImportCommitResponse | ImportDryRunResponse | ImportAssignResponse> {
     const { csvText, fields } = await readImportForm(req);
+    const assignEnabled = importAssignEnabled();
     let table = parseCsvText(csvText);
 
     const override = destinationParam && (Object.keys(IMPORT_HANDLERS) as ImportKind[]).includes(
@@ -127,6 +144,22 @@ export class ImportController {
     ) ? (destinationParam as ImportKind) : null;
 
     const columnOverrides = parseJsonParam<Record<string, string>>(overridesParam);
+
+    if (mode === 'assign') {
+      // With the flag off the Assign step doesn't exist (proposal Rollout step 2).
+      if (!assignEnabled) throw new NotFoundException();
+      if (override !== 'lift-records') {
+        throw new BadRequestException('mode=assign groups lift records: send destination=lift-records');
+      }
+      if (columnOverrides) table = applyColumnOverrides(table, columnOverrides, override);
+      const repos = await this.factory.forUser(user);
+      return this.assign(program, table, repos, user.id, {
+        excludeKeys: parseExcludeKeys(fields.get('excludeKeys')),
+        liftOverrides: parseLiftOverrides(fields.get('liftOverrides')),
+        splitDest: splitDestParam === '1',
+        today: fields.get('today'),
+      });
+    }
 
     if (mode === 'commit' || mode === 'dry-run') {
       if (!override) {
@@ -153,7 +186,11 @@ export class ImportController {
       const liftOverrides = parseLiftOverrides(fields.get('liftOverrides'));
       const splitDest = splitDestParam === '1';
       const repos = await this.factory.forUser(user);
-      const rows = await this.resolveCommitRows(override, table, repos, excludeKeys, liftOverrides, splitDest);
+      // With the flag on, read blank numbers as the preview does, so the strict validator
+      // rejects them rather than storing `Number('')`'s 0 that Review never showed (#1253).
+      const rows = await this.resolveCommitRows(override, table, repos, excludeKeys, liftOverrides, splitDest, {
+        readBlanks: assignEnabled,
+      });
       return mode === 'commit'
         ? this.commit(program, override, rows, repos, user.id)
         : this.dryRun(program, override, rows, repos);
@@ -163,21 +200,25 @@ export class ImportController {
     const classification = classifyImport(table);
     const destination = override ?? classification.type;
     if (!destination) {
-      return { classification, destination: null, columnMappings: null, preview: null, errors: [] };
+      return { classification, destination: null, columnMappings: null, preview: null, errors: [], assignEnabled };
     }
 
     if (columnOverrides) {
       table = applyColumnOverrides(table, columnOverrides, destination);
     }
 
-    const columnMappings = fuzzyColumnMapper(table[0] ?? [], destination);
+    const assign = assignEnabled && destination === 'lift-records';
+    const columnMappings = fuzzyColumnMapper(table[0] ?? [], destination, { assign });
     const repos = await this.factory.forUser(user);
     // Only a strength-goal preview applies these (#1169).
     const liftOverrides = parseLiftOverrides(fields.get('liftOverrides'));
 
     // For lift-records, use soft validation so incomplete/ambiguous rows appear in REVIEW
     if (destination === 'lift-records') {
-      return this.previewLiftRecords(program, classification, destination, table, columnMappings, repos);
+      return {
+        ...(await this.previewLiftRecords(program, classification, destination, table, columnMappings, repos, assign)),
+        assignEnabled,
+      };
     }
 
     const { errors, preview } = await this.preview(program, destination, table, repos, liftOverrides);
@@ -187,6 +228,7 @@ export class ImportController {
       columnMappings,
       preview: errors.length ? null : preview,
       errors,
+      assignEnabled,
     };
   }
 
@@ -459,11 +501,11 @@ export class ImportController {
     table: SpreadsheetCell[][],
     columnMappings: ReturnType<typeof fuzzyColumnMapper>,
     repos: RepositoryBundle,
+    assign: boolean,
   ): Promise<ImportPreviewResponse> {
-    const handler = IMPORT_HANDLERS['lift-records'];
     let parsed: LiftRecord[];
     try {
-      parsed = handler.parse(table) as LiftRecord[];
+      parsed = parseLiftRecords(table, { assign });
     } catch (err) {
       return {
         classification,
@@ -486,7 +528,7 @@ export class ImportController {
     // Custom lifts are folded into the slot map fresh per request (#911) so a row whose
     // raw text already matches an existing custom lift's name resolves immediately
     // instead of being flagged ambiguous.
-    const softResult = validateLiftImportSoft(parsed, await effectiveSlotMapFor(repos));
+    const softResult = validateLiftImportSoft(parsed, await effectiveSlotMapFor(repos), { assign });
     if (softResult.hardErrors.length) {
       return { classification, destination, columnMappings, preview: null, errors: softResult.hardErrors };
     }
@@ -555,7 +597,10 @@ export class ImportController {
   /**
    * Re-parses the file and applies the user's choices, giving the rows a commit writes
    * (400 on validation errors). The commit and the dry run both start here, so the dry
-   * run's counts describe the same rows (#1123).
+   * run's counts describe the same rows (#1123). So does `mode=assign` (#1253), with
+   * `assign`: a lift-records file needn't number its macrocycles or workouts, and its rows
+   * with a blank date are left out and counted in `undated`. `readBlanks` parses blank
+   * numbers as `assign` does but still validates strictly, so a blank is an error, not 0.
    */
   private async resolveCommitRows(
     destination: ImportKind,
@@ -564,13 +609,16 @@ export class ImportController {
     excludeKeys: Set<string>,
     liftOverrides: Record<string, string>,
     splitDest: boolean,
+    options: LiftImportOptions & { readBlanks?: boolean } = {},
   ): Promise<CommitRows> {
     // Parse before any transforms: liftOverrides must remap before strict validation
     // because the strict validator rejects unknown-lift rows outright.
     const handler = IMPORT_HANDLERS[destination]!;
+    const assign = options.assign === true && destination === 'lift-records';
+    const readBlanks = (assign || options.readBlanks === true) && destination === 'lift-records';
     let parsed: unknown[];
     try {
-      parsed = handler.parse(table);
+      parsed = readBlanks ? parseLiftRecords(table, { assign: true }) : handler.parse(table);
     } catch (err) {
       throw new BadRequestException({ message: `Could not parse file: ${(err as Error).message}` });
     }
@@ -647,8 +695,11 @@ export class ImportController {
     // unconditionally) to satisfy the ImportHandler<T> interface program-spec still uses.
     let rawValid: unknown[];
     let errors: ImportError[];
+    let undated = 0;
     if (destination === 'lift-records') {
-      ({ valid: rawValid, errors } = validateLiftImport(parsed as LiftRecord[], await effectiveSlotMapFor(repos)));
+      const result = validateLiftImport(parsed as LiftRecord[], await effectiveSlotMapFor(repos), { assign });
+      ({ valid: rawValid, errors } = result);
+      undated = result.undated.length;
     } else if (destination === 'training-maxes') {
       ({ valid: rawValid, errors } = validateTrainingMaxImport(parsed as TrainingMax[], await effectiveSlotMapFor(repos)));
     } else if (destination === 'strength-goals') {
@@ -683,9 +734,80 @@ export class ImportController {
     // For splitDest, partition before committing to avoid double-writing 1RM rows as lift-records
     if (destination === 'lift-records' && splitDest) {
       const { liftRecords, trainingMaxes } = splitLiftRecordsByDestination(valid as LiftRecord[]);
-      return { rows: liftRecords, splitMaxes: trainingMaxes };
+      return { rows: liftRecords, splitMaxes: trainingMaxes, undated };
     }
-    return { rows: valid, splitMaxes: [] };
+    return { rows: valid, splitMaxes: [], undated };
+  }
+
+  /**
+   * `mode=assign` (#1253): the rules' grouping of the file into suggested macrocycles, after
+   * Review's lift overrides and exclusions (proposal decision 16). Its rows are the commit's
+   * (`resolveCommitRows` with `assign`). Nothing is written.
+   */
+  private async assign(
+    program: string,
+    table: SpreadsheetCell[][],
+    repos: RepositoryBundle,
+    userId: string,
+    choices: { excludeKeys: Set<string>; liftOverrides: Record<string, string>; splitDest: boolean; today: string | undefined },
+  ): Promise<ImportAssignResponse> {
+    const started = Date.now();
+    const importDate = assignImportDate(choices.today);
+    // An export isn't split: its sets are sets, whatever their notes say (decision 22).
+    const exported = isLiftRecordExport(table[0] ?? []);
+    const split = choices.splitDest && !exported;
+    const { rows, splitMaxes, undated } = await this.resolveCommitRows(
+      'lift-records',
+      table,
+      repos,
+      choices.excludeKeys,
+      choices.liftOverrides,
+      split,
+      { assign: true },
+    );
+    const liftRecords = rows as LiftRecord[];
+
+    // Custom programs are Prisma-only, so with no database there are none.
+    const customPrograms = this.prisma
+      ? await new CustomProgramsRepository(this.prisma.clientForRequest(), userId).listKnownPrograms()
+      : [];
+    const segmented = segmentLiftHistory(liftRecords.map(toLiftHistoryRecord), {
+      importDate,
+      sourceProgram: program,
+      customPrograms,
+    });
+    const response = assignResponse(
+      segmented,
+      {
+        importDate,
+        undatedRows: undated,
+        exported,
+        programs: assignProgramOptions(customPrograms),
+        ...(split ? { split: await splitMaxCounts(splitMaxes, segmented.stretches, program, repos) } : {}),
+      },
+      await liftNamesFor(repos),
+    );
+
+    // Counts only: rows, lift names and notes are the lifter's data (proposal Observability).
+    this.logger.log(
+      {
+        keptRows: liftRecords.length + splitMaxes.length + undated,
+        sessions: response.sessions,
+        stretches: response.stretches.length,
+        unmatchedStretches: response.stretches.filter((s) => !s.matched).length,
+        loneSessions: response.lone.length,
+        nonCycleSessions: response.nonCycle.length,
+        unnumberedSessions: response.unnumbered.length,
+        conflicts: response.conflicts.length,
+        undatedRows: response.undatedRows,
+        exported,
+        splitChanges: response.split?.changes ?? 0,
+        splitOlderThanCurrent: response.split?.olderThanCurrent ?? 0,
+        durationMs: Date.now() - started,
+      },
+      'Import assign (#1253)',
+    );
+    return response;
   }
 
   /** The counts {@link commit} would return for these rows, without writing them (#1123). */
@@ -840,8 +962,11 @@ async function unrecognizedGoalOverrides(
     }));
 }
 
-/** The rows a commit writes: to its destination, and 1RM rows split off to training maxes. */
-type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[] };
+/**
+ * The rows a commit writes: to its destination, and 1RM rows split off to training maxes.
+ * `undated`: with `assign`, how many rows were left out for a blank date (#1253).
+ */
+type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[]; undated: number };
 
 function previewCounts(preview: ImportPreview): ImportWriteResult {
   return { created: preview.creates, updated: preview.updates, skipped: preview.skips };

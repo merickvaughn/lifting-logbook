@@ -100,11 +100,19 @@ function calculateSimilarity(sourceHeader: string, canonicalField: string): numb
 }
 
 /**
- * Get the list of required fields for a given import kind.
+ * Get the list of required fields for a given import kind. With `assign`, the Assign step
+ * groups lift records into macrocycles, so the file needn't say program, macrocycle or
+ * workout (proposal decision 9, #1253).
  */
-function getRequiredFields(kind: ImportKind): Set<string> {
+function getRequiredFields(kind: ImportKind, assign: boolean): Set<string> {
   const required = new Map<ImportKind, Set<string>>([
-    ['lift-records', new Set(['program', 'macrocycleNum', 'workoutNum', 'date', 'lift', 'setNum', 'weight', 'reps'])],
+    [
+      'lift-records',
+      new Set([
+        ...(assign ? [] : ['program', 'macrocycleNum', 'workoutNum']),
+        'date', 'lift', 'setNum', 'weight', 'reps',
+      ]),
+    ],
     ['training-maxes', new Set(['lift', 'weight', 'dateUpdated'])],
     ['program-spec', new Set(['week', 'offset', 'lift', 'increment', 'order', 'sets', 'reps', 'wtDecrementPct'])],
     // Strength goals requires lift, goalType, unit, and either target or ratio
@@ -152,13 +160,18 @@ function getAlternateHeadersForKind(kind: ImportKind): Readonly<Record<string, r
  *
  * @param sourceHeaders - First row of the CSV (column headers)
  * @param kind - Import destination type (lift-records, training-maxes, etc.)
+ * @param options.assign - The file goes through the Assign step, so fewer lift-record columns are required
  * @returns Array of column mappings with confidence scores, or [] when mapping is N/A
  */
-export function fuzzyColumnMapper(sourceHeaders: SpreadsheetCell[], kind: ImportKind): ColumnMapping[] {
+export function fuzzyColumnMapper(
+  sourceHeaders: SpreadsheetCell[],
+  kind: ImportKind,
+  options: { assign?: boolean } = {},
+): ColumnMapping[] {
   if (kind === 'strength-goals') return [];
   const headerMap = getHeaderMapForKind(kind);
   const alternateHeaders = getAlternateHeadersForKind(kind);
-  const requiredFields = getRequiredFields(kind);
+  const requiredFields = getRequiredFields(kind, options.assign === true);
   const mappings: ColumnMapping[] = [];
 
   // Normalize source headers

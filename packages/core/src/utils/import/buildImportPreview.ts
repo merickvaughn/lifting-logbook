@@ -28,7 +28,16 @@ type LiftNames = ReadonlyMap<string, string>;
 
 /** A lift-records row as a person reads it, on the Review and Done steps. */
 export function liftRecordLabel(r: LiftRecord, liftNames: LiftNames): string {
-  return `${liftNames.get(r.lift) ?? r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+  return rowLabel(liftNames.get(r.lift) ?? r.lift, r);
+}
+
+/**
+ * `<lift> · macrocycle M workout W set S (date)`. A number the file doesn't give, which only
+ * the Assign step allows (#1253), is left out rather than shown as `NaN`.
+ */
+function rowLabel(lift: string, r: LiftRecord): string {
+  const numbered = (name: string, n: number) => (Number.isFinite(n) ? `${name} ${n} ` : '');
+  return `${lift} · ${numbered('macrocycle', r.macrocycleNum)}${numbered('workout', r.workoutNum)}set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
 }
 
 function tally(deltas: ImportDelta[]): ImportPreview {
@@ -38,7 +47,8 @@ function tally(deltas: ImportDelta[]): ImportPreview {
   return {
     creates: deltas.filter((d) => d.kind === 'create' && !isUnresolved(d)).length,
     updates: deltas.filter((d) => d.kind === 'update').length,
-    skips: deltas.filter((d) => d.kind === 'skip').length,
+    // A row with no date (#1253) is left out, not skipped as already stored.
+    skips: deltas.filter((d) => d.kind === 'skip' && d.status !== 'undated').length,
     unresolved: deltas.filter(isUnresolved).length,
     deltas,
   };
@@ -100,7 +110,7 @@ export function buildLiftRecordsPreview(
 
   for (const { row: r, kind, key } of classifyLiftRecordRows(incoming, (r) => r, existing)) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
-    const label = `${r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+    const label = rowLabel(r.lift, r);
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
@@ -148,11 +158,17 @@ export function buildLiftRecordsPreviewSoft(
     deltas.push({ key, label, kind: 'create', status: 'incomplete', rowIndex });
   }
 
+  // Rows with no date, under the Assign step (#1253): left out of the import, so they write
+  // nothing. Listed so Review can show them, and so the lifter can exclude them.
+  for (const { rowIndex } of softResult.undated) {
+    deltas.push({ key: `__undated_${rowIndex}`, label: `Row ${rowIndex} (no date)`, kind: 'skip', status: 'undated', rowIndex });
+  }
+
   // Ambiguous rows — tag with status and original lift name for autocomplete
   for (const { record: r, rowIndex, originalLift } of softResult.ambiguous) {
     const key = `__ambiguous_${rowIndex}`;
     const value = `${r.weight} × ${r.reps}`;
-    const label = `${originalLift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+    const label = rowLabel(originalLift, r);
     deltas.push({
       key,
       label,
