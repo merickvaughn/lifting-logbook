@@ -289,17 +289,24 @@ Re-importing a file that has grown since its last import should add its new sess
 
 1. **New rows join a stored `imported` macrocycle of their program in two cases.** A stretch with no row to create is `already-imported` and writes nothing.
    - **The stretch's dates overlap that macrocycle and no other stored one.** This is the grown file.
-   - **They overlap nothing, and that macrocycle is the last thing before them.** "The last thing" counts stored macrocycles of any program and the file's other stretches, and a file stretch wins a tie, since its boundary is the lifter's (decision 7). Three more conditions apply:
+   - **They overlap nothing, and that macrocycle is the last thing before them.** "The last thing" is the latest to end, counting stored macrocycles of any program and the file's other stretches. A file stretch wins a tie, since its boundary is the lifter's (decision 7). Between stored macrocycles ending the same day, one of the stretch's program wins, then the later start, then the greater id, so every adapter places alike. Three more conditions apply:
      - it ended at most 14 days before (decision 4);
      - it has workouts left: it isn't `completed`, and unless its program is open-ended, it has fewer distinct workout numbers than the program has workouts (decision 6);
      - the file's workout numbers don't fall back below its highest, which would be a restart (decision 7).
 
    Each stored macrocycle takes at most one stretch. A stretch overlapping anything else forms its own macrocycle. The non-cycle macrocycle is never part of this rule.
 
+   A stored macrocycle's span is its stored dates widened by its sets' dates, since a `legacy` macrocycle can hold sets outside its stored dates. One with no end date, such as a program's `live` current macrocycle, ends at its last set, or at its start with none. Counting it as never ending would make a program set up once and abandoned overlap every later stretch.
+
    One function, `placeOnStored`, decides it for `mode=assign`, which reports each suggested stretch's `stored` placement, and for the commit, which acts on the confirmed breakdown. So the two can't disagree, though an edited boundary can change the placement.
-2. **Joining rows take the macrocycle's number and continue its workouts.** A row with no file workout number takes the macrocycle's highest plus its session's place among the new sessions (decision 9). The macrocycle then reads its dates, and unless its status was chosen, its suggested status, again from all its rows (`suggestStretchStatus`, now exported from core), as of the import date. A status the lifter chose for the stretch replaces the stored one.
-3. **A batch keeps its macrocycles apart from its lift-record keys.** The new nullable `import_batch.macrocycles` column holds `{ created, extended }` by macrocycle id, and an Assign import no longer writes `macrocycle-row:<n>` keys. Ids don't change when the renumbering moves a number, so nothing rewrites the column.
-4. **Undo recomputes rather than restores.** After removing a batch's rows, each macrocycle in its `macrocycles` that still has rows takes its dates from them, and its suggested status unless the status was chosen, judged against the server's day. One with no rows left goes, through the existing `removeEmptyLegacyRows`, which never removes a `live` or non-cycle macrocycle. A pre-image of the macrocycle row would be wrong once a later batch had added rows to it. Batches from before this revision have no `macrocycles` and undo as #1254 described.
+2. **Joining rows take the macrocycle's number and continue its workouts.** A row with no file workout number, on a date the macrocycle already holds, takes that date's workout, as when an accessory was added to a session after the last export. On a new date it takes the macrocycle's highest plus the date's place among the new dates (decision 9). A status the lifter chose for the stretch replaces the stored one, and a lift outside the program sets `unmatched`. Once every program's rows and macrocycles are written, each joined macrocycle reads its dates, and unless its status was chosen, its suggested status, again from all its rows (`suggestStretchStatus`, now exported from core), as of the import date. So the macrocycle that follows it can be one this import created under another program. Every date is written before any status is read.
+3. **A batch keeps its macrocycles apart from its lift-record keys.** The new nullable `import_batch.macrocycles` column holds `{ created, extended }` by macrocycle id, and an Assign import no longer writes `macrocycle-row:<n>` keys. Each `extended` entry also holds the fields the join changed (`status`, `statusChosen`, `unmatched`), as they were and as it set them. Ids don't change when the renumbering moves a number, so nothing rewrites the column.
+4. **Undo recomputes rather than restores.** It works in three passes over the group's batches:
+   1. For each batch, it puts back each field a join wrote that still holds what the join wrote. A status and its chosen flag go back together, and only while the status is the one the join wrote, so a status the lifter chose since stays. Then it deletes the batch's rows.
+   2. It removes each macrocycle the batches touched that has no rows left, through the existing `removeEmptyLegacyRows`, which never removes a `live` or non-cycle macrocycle.
+   3. Each `imported` macrocycle left takes its dates from its rows, and its suggested status unless the status was chosen. That's judged against the lifter's day, from the undo's optional `today`, read as the commit reads it, else the server's.
+
+   A batch touched the macrocycles in its `macrocycles` and those its set and `legacy` row keys are on. The second set is all a batch from before this revision records, so those are recomputed too. Recomputing after every removal means the macrocycle that follows one is read from what stays, whichever program it's under. A pre-image of the macrocycle row would be wrong once a later batch had added rows to it.
 
 **Alternatives rejected:**
 
@@ -309,7 +316,7 @@ Re-importing a file that has grown since its last import should add its new sess
 
 **Consequences:**
 
-- The migration `20261113000002_import_batch_macrocycles` adds one nullable column, so the old revision runs on it unchanged. **Rollback:** revert the API image. Under the old revision, undoing an Assign import saved by this one removes its rows but leaves the macrocycles it created, since their ids aren't keys that revision reads, so undo those imports before reverting.
+- The migration `20261113000002_import_batch_macrocycles` adds one nullable column, so the old revision runs on it unchanged. **Rollback:** revert the API image. The old revision still removes an emptied `imported` macrocycle through the numbers of the batch's set keys. It doesn't recompute a macrocycle that keeps rows, or put back what a join wrote, so after undoing an Assign import a joined macrocycle keeps dates and a status that still cover the deleted rows. Undo grown-file imports before reverting, or accept that.
 
 ## References
 

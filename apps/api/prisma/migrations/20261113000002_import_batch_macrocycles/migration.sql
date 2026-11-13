@@ -5,8 +5,9 @@
 -- don't change when a renumbering moves a macrocycle, so nothing rewrites this column.
 --
 -- Additive only: a nullable column with no default, so existing rows aren't rewritten.
--- Rollback: drop the column; the previous revision ignores it, and an Assign import saved with
--- it then undoes its sets but leaves its macrocycle rows, so undo those imports first.
+-- Rollback: drop the column; the previous revision ignores it. It still removes an emptied
+-- macrocycle through the batch's set keys, but doesn't recompute one that keeps rows, so a
+-- joined macrocycle keeps dates and a status covering rows its undo deleted.
 
 SET LOCAL lock_timeout = '5s';
 

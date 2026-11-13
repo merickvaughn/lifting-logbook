@@ -89,7 +89,7 @@ import {
   planSplitMaxes,
   splitMaxCounts,
 } from './import-assign';
-import { placeSuggestedStretches, recomputeMacrocycles } from './import-stored';
+import { placeSuggestedStretches, recomputeMacrocycles, unwrittenFields } from './import-stored';
 import {
   BreakdownBatch,
   BreakdownMismatchException,
@@ -369,7 +369,10 @@ export class ImportController {
     @Param('program') program: string,
     @Param('batchId') batchId: string,
     @CurrentUser() user: AuthUser,
+    // The lifter's day, as the commit takes it, for the statuses undo reads again (#1255).
+    @Query('today') today?: string,
   ): Promise<ImportUndoResponse> {
+    const started = Date.now();
     const repos = await this.factory.forUser(user);
     const batch = await repos.importBatch.findById(batchId, user.id);
     if (!batch || batch.program !== program) {
@@ -406,6 +409,7 @@ export class ImportController {
       : [];
 
     if (batch.destination === 'lift-records') {
+      const asOf = assignImportDate(today);
       // The undo removes macrocycle rows, so it holds the lock exclusively, as the import did.
       await lockForImport(repos, 'undo');
       const deleteCreated = async (from: string, keys: string[]) => {
@@ -421,10 +425,9 @@ export class ImportController {
       // An import through the Assign step saved one batch per program it wrote to, grouped under
       // this one (#1254). Each one's keys are read under its own program.
       const parts = [batch, ...(await repos.importBatch.listGroup(batch.id))];
-      // Read once, only for a batch that recomputes its macrocycles (#1255).
-      const programs = parts.some((p) => p.macrocycles)
-        ? [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(user.id))]
-        : [];
+      // Every part's rows go, and its emptied macrocycles with them, before any macrocycle left is
+      // read again: what follows a macrocycle can be one another part is about to remove (#1255).
+      const touched: Array<{ program: string; nums: number[]; ids: string[] }> = [];
       for (const part of parts) {
         // A 1RM split's training maxes share this batch, keyed by lift id (#1148). Every set and
         // `legacy` row key starts with a macrocycle number, and a lift id (a kebab-case name or a
@@ -444,29 +447,52 @@ export class ImportController {
             .filter(([k, e]) => preImageKeyNumber(k) !== null && e.kind === 'created')
             .map(([k]) => k),
         );
+        // The macrocycles the batch touched: those it created or extended, and those its sets and
+        // `legacy` rows are on, which is all a batch from before #1255 records. Read by number
+        // before anything is renumbered.
+        const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
+        const nums = new Set([...legacyNums, ...setNums]);
+        const ids = new Set([...(part.macrocycles?.created ?? []), ...(part.macrocycles?.extended ?? []).map((e) => e.id)]);
+        for (const m of await repos.macrocycle.list(part.program)) {
+          if (nums.has(m.macrocycleNum)) ids.add(m.id);
+          if (ids.has(m.id)) nums.add(m.macrocycleNum);
+        }
+        // What a join wrote goes back where nothing has changed it since.
+        for (const { id, before, wrote } of part.macrocycles?.extended ?? []) {
+          const current = await repos.macrocycle.findById(id);
+          const back = current ? unwrittenFields(current, before, wrote) : {};
+          if (Object.keys(back).length > 0) await repos.macrocycle.update(id, back);
+        }
         await deleteCreated(part.program, createdKeys);
         // The non-cycle macrocycle's row stays, as it does when its workouts are deleted.
         await deleteCreated(NON_CYCLE_PROGRAM, nonCycleKeys);
         // The batch goes first, so the renumbering below doesn't rewrite the keys of a batch about
         // to be deleted.
         await repos.importBatch.deleteById(part.id, user.id);
-        // An Assign import's macrocycles are recomputed from the sets left on them, which a later
-        // import may have added to, rather than restored (#1255, decision 14).
-        const emptied = part.macrocycles
-          ? await recomputeMacrocycles(
-              repos,
-              part.program,
-              [...part.macrocycles.created, ...part.macrocycles.extended],
-              programs,
-              assignImportDate(undefined),
-            )
-          : [];
-        // A `legacy` or `imported` macrocycle left with no sets goes (ADR-042): one the import
-        // created, or one its sets joined, and the numbers close up.
-        const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
-        await removeEmptyLegacyRows(repos, part.program, [...new Set([...legacyNums, ...setNums, ...emptied])]);
-        await renumberProgram(repos, part.program);
+        touched.push({ program: part.program, nums: [...nums], ids: [...ids] });
       }
+      // A `legacy` or `imported` macrocycle left with no sets goes (ADR-042): one the import
+      // created, or one its sets joined.
+      let removed = 0;
+      for (const { program: p, nums } of touched) removed += await removeEmptyLegacyRows(repos, p, nums);
+      // The `imported` macrocycles left are recomputed from the sets on them, which a later import
+      // may have added to, rather than restored (#1255, decision 14).
+      const ids = touched.flatMap((t) => t.ids);
+      const recomputed = ids.length > 0
+        ? await recomputeMacrocycles(
+            repos,
+            ids,
+            [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(user.id))],
+            asOf,
+          )
+        : 0;
+      // And the numbers close up.
+      for (const { program: p } of touched) await renumberProgram(repos, p);
+      // Counts only: dates and statuses are the lifter's data.
+      this.logger.log(
+        { parts: parts.length, macrocyclesRecomputed: recomputed, macrocyclesRemoved: removed, durationMs: Date.now() - started },
+        'Import undo recomputed its macrocycles (#1255)',
+      );
     } else if (batch.destination === 'training-maxes') {
       await undoTrainingMaxes(Object.entries(batch.preImage));
       await repos.importBatch.deleteById(batchId, user.id);
@@ -1210,8 +1236,9 @@ async function saveBatchGroup(
 ): Promise<string> {
   const groupId = randomUUID();
   const createdAt = new Date();
-  // `writeBreakdown` always gives the Source program a batch; an empty one writes the same row.
-  const source = batches.get(sourceProgram) ?? { preImage: {}, macrocycles: { created: [], extended: [] } };
+  const source = batches.get(sourceProgram);
+  // `writeBreakdown` always gives the Source program a batch.
+  if (!source) throw new Error(`No import batch for the Source program ${sourceProgram}`);
   await repos.importBatch.save({
     id: groupId,
     userId,

@@ -322,33 +322,39 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     ROW_LIMIT_TEST_TIMEOUT_MS,
   );
 
-  it('extends a stored macrocycle from a grown file, keeps its id in the batch, and undoes either batch first (#1255)', async () => {
+  it('extends a stored macrocycle from a grown file, keeps what the join changed in the batch, and undoes it (#1255)', async () => {
     const chosen = (dates: string[]): ImportBreakdown => ({
       stretches: [{ program: 'rpt', dates, status: 'overran', statusChosen: true }],
       excludedDates: [],
       nonCycleDates: [],
     });
-    const first = historyCsv('2024-03-01', 3, 1);
-    const grown = historyCsv('2024-03-01', 6, 1);
-    const firstRes = await commit(USER_GROWN, first.csv, chosen(first.dates));
-    const grownRes = await commit(USER_GROWN, grown.csv, oneStretch(grown.dates));
+    // Recent dates, so a status read again from the rows turns on them, not on their age.
+    const start = ymd(new Date(Date.now() - 10 * DAY_MS));
+    const at = (n: number) => new Date(`${dayFrom(start, n)}T00:00:00Z`);
+    const first = historyCsv(start, 3, 1);
+    const grown = historyCsv(start, 6, 1);
+    const firstRes = await commit(USER_GROWN, first.csv, oneStretch(first.dates));
+    const grownRes = await commit(USER_GROWN, grown.csv, chosen(grown.dates));
     expect([firstRes.statusCode, grownRes.statusCode]).toEqual([200, 200]);
     expect(grownRes.json()).toMatchObject({ created: 12, assigned: { macrocycles: 0, extended: 1 } });
 
     const [macrocycle, ...others] = await owner.macrocycle.findMany({ where: { userId: USER_GROWN } });
     expect(others).toEqual([]);
-    expect(macrocycle).toMatchObject({
-      origin: 'imported',
-      status: 'overran',
-      statusChosen: true,
-      startDate: new Date('2024-03-01T00:00:00Z'),
-      endDate: new Date('2024-03-06T00:00:00Z'),
-    });
+    expect(macrocycle).toMatchObject({ origin: 'imported', status: 'overran', statusChosen: true, startDate: at(0), endDate: at(5) });
     const batchMacrocycles = async (id: string) =>
       (await owner.importBatch.findUnique({ where: { id } }))?.macrocycles;
     const ids = (res: typeof firstRes) => res.json<{ batchId: string }>().batchId;
     expect(await batchMacrocycles(ids(firstRes))).toEqual({ created: [macrocycle?.id], extended: [] });
-    expect(await batchMacrocycles(ids(grownRes))).toEqual({ created: [], extended: [macrocycle?.id] });
+    expect(await batchMacrocycles(ids(grownRes))).toEqual({
+      created: [],
+      extended: [
+        {
+          id: macrocycle?.id,
+          before: { status: 'completed', statusChosen: false },
+          wrote: { status: 'overran', statusChosen: true },
+        },
+      ],
+    });
 
     const undo = (batchId: string) =>
       app.getHttpAdapter().getInstance().inject({
@@ -356,17 +362,13 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
         url: `/programs/rpt/import/${batchId}/undo`,
         headers: { authorization: `Bearer ${USER_GROWN}` },
       });
-    // The first batch goes first: the macrocycle keeps the grown file's rows and its chosen status.
-    expect((await undo(ids(firstRes))).statusCode).toBe(200);
-    expect(await owner.macrocycle.findMany({ where: { userId: USER_GROWN } })).toEqual([
-      expect.objectContaining({
-        id: macrocycle?.id,
-        status: 'overran',
-        startDate: new Date('2024-03-04T00:00:00Z'),
-        endDate: new Date('2024-03-06T00:00:00Z'),
-      }),
-    ]);
+    // The grown file's batch goes first: the chosen status it wrote goes with it, and the status is
+    // read again from the first file's rows, 8 days old with workouts left: in progress.
     expect((await undo(ids(grownRes))).statusCode).toBe(200);
+    expect(await owner.macrocycle.findMany({ where: { userId: USER_GROWN } })).toEqual([
+      expect.objectContaining({ id: macrocycle?.id, status: 'in-progress', statusChosen: false, startDate: at(0), endDate: at(2) }),
+    ]);
+    expect((await undo(ids(firstRes))).statusCode).toBe(200);
     expect(await written(USER_GROWN)).toEqual({ sets: 0, macrocycles: 0, batches: 0 });
   });
 });

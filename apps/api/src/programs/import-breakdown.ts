@@ -21,13 +21,13 @@ import {
   withOccurrence,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
-import { BatchMacrocycles } from '../ports/IImportBatchRepository';
-import { NewMacrocycle } from '../ports/IMacrocycleRepository';
+import { BatchMacrocycles, JoinedFields } from '../ports/IImportBatchRepository';
+import { MacrocycleRow, NewMacrocycle } from '../ports/IMacrocycleRepository';
 import { dashboardOrNull, ensureCurrentRow, moveUnstartedRows, nonCycleRowsPreImage } from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
 import { placeNonCycleRows } from './import-handlers';
 import { programCoveringDate } from './import-assign';
-import { StoredPlacement, continuedWorkoutNums, placeOnStored, recomputeMacrocycles } from './import-stored';
+import { StoredPlacement, continuedWorkoutNum, placeOnStored, recomputeMacrocycles } from './import-stored';
 
 /**
  * An import through the Assign step (#1254, proposal decisions 3, 5, 13, 15 and 17): the lifter's
@@ -338,34 +338,24 @@ export async function planBreakdown(
   }
 
   // A stretch with a row to create has rows, so it has a span; the others aren't placed.
-  const withRows = placed.stretches.flatMap(({ spec, span }, index) => (span ? [{ spec, span, index }] : []));
-  const placements = await placeOnStored(
-    repos,
-    withRows.map(({ spec, span, index }) => ({
-      program: spec.program,
-      span,
-      creating: (creatingIn.get(index) ?? []).map((r) => ({ date: r.date, workoutNum: fileWorkoutNum(r) })),
-    })),
-    programs,
-  );
+  const withRows = placed.stretches.flatMap(({ spec, span, rows }, index) => {
+    const raw = creatingIn.get(index) ?? [];
+    const creating = raw.map((r) => ({ date: r.date, workoutNum: fileWorkoutNum(r) }));
+    return span ? [{ spec, span, rows, raw, program: spec.program, creating }] : [];
+  });
 
   const stretches: PlannedStretch[] = [];
-  withRows.forEach(({ spec, span, index }, n) => {
-    const stored = placements[n];
-    const raw = creatingIn.get(index) ?? [];
-    if (raw.length === 0 || !stored) return;
-    const rows = placed.stretches[index]?.rows ?? [];
+  for (const { stretch, placement: stored } of await placeOnStored(repos, withRows, programs)) {
+    const { spec, span, rows, raw } = stretch;
+    if (raw.length === 0) continue;
     const sessionOf = new Map([...new Set(rows.map((r) => r.date.getTime()))].sort((a, b) => a - b).map((t, i) => [t, i + 1]));
-    const continued =
-      stored.kind === 'joins'
-        ? continuedWorkoutNums(raw.map((r) => ({ date: r.date, workoutNum: fileWorkoutNum(r) })), stored.highestWorkout)
-        : null;
-    const creating = raw.map((r, k) => ({
+    const continued = stored.kind === 'joins' ? continuedWorkoutNum(stretch.creating, stored.held) : null;
+    const creating = raw.map((r) => ({
       ...r,
       program: spec.program,
       // A new macrocycle's number is given at write time.
       macrocycleNum: stored.kind === 'joins' ? stored.macrocycle.macrocycleNum : 0,
-      workoutNum: continued?.[k] ?? fileWorkoutNum(r) ?? sessionOf.get(r.date.getTime()) ?? 1,
+      workoutNum: continued ? continued(r) : (fileWorkoutNum(r) ?? sessionOf.get(r.date.getTime()) ?? 1),
     }));
     const lifts = programs.find((p) => p.id === spec.program)?.lifts;
     stretches.push({
@@ -375,7 +365,7 @@ export async function planBreakdown(
       unmatched: lifts === undefined || rows.some((r) => !lifts.has(liftKey(r.lift))),
       stored,
     });
-  });
+  }
   return { classified, stretches, nonCycle: creatingIn.get(null) ?? [], changed };
 }
 
@@ -419,12 +409,14 @@ export interface BreakdownWrite {
 
 /**
  * Writes a plan under the import lock, which the caller holds. A joining stretch's rows go onto
- * its stored macrocycle, which takes the stretch's status if the lifter chose it, then reads its
+ * its stored macrocycle, which takes the stretch's status if the lifter chose it. Each program's
+ * other stretches become `imported` macrocycles numbered past every stored one in start-date
+ * order. Once every program's rows and macrocycles are written, each joined macrocycle reads its
  * dates and, unless its status was chosen, its suggested status again from all its rows as of
- * `importDate` (decision 14). Each program's other stretches become `imported` macrocycles
- * numbered past every stored one in start-date order, then the program renumbers by date
- * (decision 3), so a stretch's file number never names a stored macrocycle. The pre-image keys
- * carry the numbers as stored after that; the macrocycles are kept by id, which doesn't change.
+ * `importDate` (decision 14), so the macrocycle that follows it can be one this import created
+ * under any program. Then each program renumbers by date (decision 3), so a stretch's file number
+ * never names a stored macrocycle. The pre-image keys carry the numbers as stored after that; the
+ * macrocycles are kept by id, which doesn't change.
  */
 export async function writeBreakdown(
   repos: Pick<RepositoryBundle, 'liftRecord' | 'macrocycle' | 'macrocycleDashboard' | 'importBatch'>,
@@ -443,17 +435,18 @@ export async function writeBreakdown(
 
   const byProgram = new Map<string, PlannedStretch[]>();
   for (const s of plan.stretches) {
-    let list = byProgram.get(s.spec.program);
-    if (!list) byProgram.set(s.spec.program, (list = []));
-    list.push(s);
+    const list = byProgram.get(s.spec.program);
+    if (list) list.push(s);
+    else byProgram.set(s.spec.program, [s]);
   }
+  const written: Array<{ program: string; batch: BreakdownBatch; records: LiftRecord[] }> = [];
   for (const [program, planned] of byProgram) {
     const batch = batchOf(program);
     const dashboard = await dashboardOrNull(repos, program);
     if (dashboard) await ensureCurrentRow(repos, dashboard);
     const storedNums = new Set((await repos.macrocycle.list(program)).map((m) => m.macrocycleNum));
     const first = Math.max(0, ...storedNums) + 1;
-    const joining = planned.filter((s) => s.stored.kind === 'joins');
+    const joining = planned.flatMap((s) => (s.stored.kind === 'joins' ? [{ s, macrocycle: s.stored.macrocycle }] : []));
     const ordered = planned.filter((s) => s.stored.kind !== 'joins').sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
     const rows: NewMacrocycle[] = ordered.map((s, i) => ({
       program,
@@ -465,28 +458,37 @@ export async function writeBreakdown(
       origin: 'imported',
       unmatched: s.unmatched,
     }));
-    // Rows a page wrote on these numbers before they had a macrocycle move past them first.
-    if (rows.length > 0) await moveUnstartedRows(repos, program, storedNums, first - 1, first + rows.length - 1);
-    await repos.macrocycle.createMany(rows);
-    for (const row of rows) {
-      const stored = await repos.macrocycle.findByNumber(program, row.macrocycleNum);
-      if (stored) batch.macrocycles.created.push(stored.id);
+    if (rows.length > 0) {
+      // Rows a page wrote on these numbers before they had a macrocycle move past them first.
+      await moveUnstartedRows(repos, program, storedNums, first - 1, first + rows.length - 1);
+      await repos.macrocycle.createMany(rows);
+      const ids = new Map((await repos.macrocycle.list(program)).map((m) => [m.macrocycleNum, m.id]));
+      for (const row of rows) {
+        const id = ids.get(row.macrocycleNum);
+        if (id === undefined) throw new Error(`Macrocycle ${row.macrocycleNum} of ${program} was not created`);
+        batch.macrocycles.created.push(id);
+      }
     }
     const records = [
       ...ordered.flatMap((s, i) => s.creating.map((r) => ({ ...r, macrocycleNum: first + i }))),
-      ...joining.flatMap((s) => s.creating),
+      ...joining.flatMap(({ s }) => s.creating),
     ];
     created += await repos.liftRecord.appendLiftRecords(program, records);
-    for (const s of joining) {
-      if (s.stored.kind !== 'joins') continue;
-      const { macrocycle } = s.stored;
-      await repos.macrocycle.update(macrocycle.id, {
-        unmatched: macrocycle.unmatched || s.unmatched,
-        ...(s.spec.statusChosen ? { status: s.spec.status, statusChosen: true } : {}),
-      });
-      batch.macrocycles.extended.push(macrocycle.id);
+    for (const { s, macrocycle } of joining) {
+      const { before, wrote } = joinChanges(macrocycle, s);
+      if (Object.keys(wrote).length > 0) await repos.macrocycle.update(macrocycle.id, wrote);
+      batch.macrocycles.extended.push({ id: macrocycle.id, before, wrote });
     }
-    await recomputeMacrocycles(repos, program, batch.macrocycles.extended, context.programs, context.importDate);
+    written.push({ program, batch, records });
+  }
+
+  await recomputeMacrocycles(
+    repos,
+    written.flatMap(({ batch }) => batch.macrocycles.extended.map((e) => e.id)),
+    context.programs,
+    context.importDate,
+  );
+  for (const { program, batch, records } of written) {
     const changes = await renumberProgram(repos, program);
     const renumbered = (n: number) => changes.get(n) ?? n;
     Object.assign(
@@ -504,4 +506,29 @@ export async function writeBreakdown(
   }
 
   return { created, batches };
+}
+
+/**
+ * What a joining stretch writes onto its stored macrocycle: `unmatched` once one of its lifts
+ * isn't in the program, and the status the lifter chose for it. Only the fields it changes, as they
+ * were and as it sets them, so undo can put back each one nothing has changed since.
+ */
+function joinChanges(m: MacrocycleRow, s: PlannedStretch): { before: JoinedFields; wrote: JoinedFields } {
+  const before: JoinedFields = {};
+  const wrote: JoinedFields = {};
+  if (s.unmatched && !m.unmatched) {
+    before.unmatched = false;
+    wrote.unmatched = true;
+  }
+  if (s.spec.statusChosen) {
+    if (m.status !== s.spec.status) {
+      before.status = m.status;
+      wrote.status = s.spec.status;
+    }
+    if (!m.statusChosen) {
+      before.statusChosen = false;
+      wrote.statusChosen = true;
+    }
+  }
+  return { before, wrote };
 }

@@ -1,5 +1,6 @@
 import { ImportPreImage } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
+import { MacrocycleRow } from './IMacrocycleRepository';
 
 export interface ImportBatchRecord {
   id: string;
@@ -15,16 +16,20 @@ export interface ImportBatchRecord {
   groupId?: string | null;
   /**
    * The macrocycles an import through the Assign step created or extended, by stable id
-   * (#1255, decision 14), kept apart from `preImage`'s lift-record keys. Undo recomputes each
-   * from the sets left on it. Absent on every other import.
+   * (#1255, decision 14), kept apart from `preImage`'s lift-record keys. Undo puts back what a
+   * join wrote, then recomputes each from the sets left on it. Absent on every other import.
    */
   macrocycles?: BatchMacrocycles | null;
 }
 
+/** The fields a join writes onto the stored macrocycle it extends (#1255). */
+export type JoinedFields = Partial<Pick<MacrocycleRow, 'status' | 'statusChosen' | 'unmatched'>>;
+
 /** See {@link ImportBatchRecord.macrocycles}. */
 export interface BatchMacrocycles {
   created: string[];
-  extended: string[];
+  /** Each macrocycle a join extended, with the fields the join changed: as they were, and as it set them. */
+  extended: Array<{ id: string; before: JoinedFields; wrote: JoinedFields }>;
 }
 
 /**

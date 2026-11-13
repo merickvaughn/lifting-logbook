@@ -232,9 +232,11 @@ export function assignResponse(
 ): ImportAssignResponse {
   const nonCycle = sessionsOf(segmented.nonCycle).map((s) => rowSession(s, liftNames));
   const unnumbered = sessionsOf(segmented.unnumbered).map((s) => rowSession(s, liftNames));
-  const stretches = segmented.stretches.map((s, i) =>
-    assignStretch(s, extra.stored[i] ?? { kind: 'new' }, liftNames),
-  );
+  const stretches = segmented.stretches.map((s, i) => {
+    const stored = extra.stored[i];
+    if (!stored) throw new Error(`mode=assign placed ${extra.stored.length} of ${segmented.stretches.length} stretches`);
+    return assignStretch(s, stored, liftNames);
+  });
   return {
     importDate: ymd(extra.importDate),
     sessions:

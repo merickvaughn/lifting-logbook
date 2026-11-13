@@ -504,14 +504,14 @@ export function splitLegacyRowKeys(keys: readonly string[]): { setKeys: string[]
  * the macrocycles the import created and the numbers its sets were on, so a `legacy` macrocycle
  * another import created, which this one's sets joined, goes once both imports are undone. A
  * number the lifter logged sets into since keeps its row, and `live` and `non-cycle` rows always
- * stay.
+ * stay. Returns how many it removed.
  */
 export async function removeEmptyLegacyRows(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord' | 'importBatch'>,
   program: string,
   macrocycleNums: readonly number[],
-): Promise<void> {
-  if (macrocycleNums.length === 0) return;
+): Promise<number> {
+  if (macrocycleNums.length === 0) return 0;
   const [rows, ranges] = await Promise.all([
     repos.macrocycle.list(program),
     repos.liftRecord.getMacrocycleDateRanges(program),
@@ -521,13 +521,14 @@ export async function removeEmptyLegacyRows(
     macrocycleNums.includes(r.macrocycleNum) &&
     !ranges.has(r.macrocycleNum);
   const empty = rows.filter(isEmpty).map((r) => r.macrocycleNum);
-  if (empty.length === 0) return;
+  if (empty.length === 0) return 0;
   await repos.macrocycle.delete(program, empty);
   await forgetBatchKeys(repos, program, { on: empty });
   // The rows the import moved past its new numbers come back down.
   const kept = new Set(rows.filter((r) => !isEmpty(r)).map((r) => r.macrocycleNum));
   const highest = Math.max(0, ...kept);
   await moveUnstartedRows(repos, program, kept, highest, highest);
+  return empty.length;
 }
 
 /**

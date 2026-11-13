@@ -1,14 +1,14 @@
-import { ImportBatch, Prisma, PrismaClient } from '@prisma/client';
+import { ImportBatch, PrismaClient } from '@prisma/client';
 import { ImportPreImage } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import {
-  BatchMacrocycles,
   IImportBatchRepository,
   ImportBatchRecord,
   KeyNumbers,
   PRE_IMAGE_KEY_NUMBER,
 } from '../../ports/IImportBatchRepository';
+import { parseBatchMacrocycles } from './import-batch-json';
 
 const tracer = trace.getTracer('prisma-import-batch-repository');
 
@@ -137,14 +137,6 @@ function toRecord(row: ImportBatch): ImportBatchRecord {
     preImage: row.preImage as unknown as ImportPreImage,
     createdAt: row.createdAt,
     groupId: row.groupId,
-    macrocycles: batchMacrocycles(row.macrocycles),
+    macrocycles: parseBatchMacrocycles(row.macrocycles),
   };
-}
-
-/** The `macrocycles` column as written by {@link PrismaImportBatchRepository.save}: two lists of ids, or none. */
-function batchMacrocycles(value: Prisma.JsonValue): BatchMacrocycles | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const ids = (list: Prisma.JsonValue | undefined) =>
-    Array.isArray(list) ? list.filter((id): id is string => typeof id === 'string') : [];
-  return { created: ids(value['created']), extended: ids(value['extended']) };
 }
