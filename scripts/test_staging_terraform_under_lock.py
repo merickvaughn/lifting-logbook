@@ -7,12 +7,14 @@ Cloud Run services, IAM and networking, so it has to run inside that lock too. U
 didn't: both staging.yml and deploy.yml applied in a `terraform-staging` job that ran before the
 lock was taken.
 
-This reads .github/workflows/staging.yml and deploy.yml and checks, for every step that applies
-Terraform with terraform.tfvars.staging:
+This reads .github/workflows/staging.yml and deploy.yml. A staging job is one that runs tf-init
+with `workspace: staging` or passes terraform.tfvars.staging. For every step in one that runs
+`terraform apply` (in its `run`, or in a local composite action it uses), it checks:
 
 1. An earlier step in the same job runs `staging-env-lock.py acquire`, unconditionally and without
    `continue-on-error`. acquire fails unless this run ends up holding the lock, so the apply can't
-   run without it, including on a re-run of failed jobs.
+   run without it, including on a re-run of failed jobs. No step between them releases the lock,
+   and the apply step has no `if:` with a status function that would run it after a failed acquire.
 2. That job, or a job it needs (directly or through other jobs), runs an acquire that waits
    (`--timeout-min` above 0), so the first attempt waits for the lock instead of failing at once.
 
@@ -22,6 +24,7 @@ CI:           ``.github/workflows/ci.yml`` -> ``lint-and-test`` job.
 import os
 import re
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -36,9 +39,36 @@ def load(name):
         return yaml.safe_load(f)
 
 
-def is_staging_apply(step):
-    run = step.get("run") or ""
-    return "terraform apply" in run and "terraform.tfvars.staging" in run
+def step_commands(step):
+    """The shell a step runs: its `run`, or for a local composite action, its steps' `run`s.
+
+    Reading a local action's commands (not its whole file, whose comments may mention
+    `terraform apply`) means an apply moved into an action is still seen.
+    """
+    uses = step.get("uses") or ""
+    if uses.startswith("./"):
+        path = os.path.join(ROOT, uses[2:], "action.yml")
+        with open(path, encoding="utf-8") as f:
+            action = yaml.safe_load(f)
+        script = "\n".join(s.get("run") or "" for s in action.get("runs", {}).get("steps") or [])
+    else:
+        script = step.get("run") or ""
+    # Shell comment lines describe commands; they don't run them.
+    return "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+
+
+def is_staging_job(job):
+    """A job that initializes or targets the staging Terraform workspace."""
+    for step in job.get("steps") or []:
+        if "tf-init" in (step.get("uses") or "") and (step.get("with") or {}).get("workspace") == "staging":
+            return True
+        if "terraform.tfvars.staging" in step_commands(step):
+            return True
+    return False
+
+
+def is_apply(step):
+    return "terraform apply" in step_commands(step)
 
 
 def acquire_timeout(step):
@@ -50,7 +80,7 @@ def acquire_timeout(step):
     run = step.get("run") or ""
     if "staging-env-lock.py acquire" not in run:
         return None
-    m = re.search(r'--timeout-min\s+"?([0-9.]+)"?', run)
+    m = re.search(r'--timeout-min[=\s]+"?([0-9.]+)"?', run)
     return float(m.group(1)) if m else float("inf")
 
 
@@ -61,6 +91,14 @@ def holds_lock(step):
         and "if" not in step
         and not step.get("continue-on-error", False)
     )
+
+
+def releases_lock(step):
+    return "staging-env-lock.py release" in (step.get("run") or "")
+
+
+# A step `if:` with one of these still runs after an earlier step failed, so after a failed acquire.
+STATUS_FUNCTIONS = ("always()", "failure()", "cancelled()")
 
 
 def needs_of(job):
@@ -84,13 +122,20 @@ def violations(workflow):
     jobs = workflow["jobs"]
     found, problems = [], []
     for name, job in jobs.items():
+        if not is_staging_job(job):
+            continue
         steps = job.get("steps") or []
         for i, step in enumerate(steps):
-            if not is_staging_apply(step):
+            if not is_apply(step):
                 continue
             found.append(name)
-            if not any(holds_lock(s) for s in steps[:i]):
+            holds = [k for k, s in enumerate(steps[:i]) if holds_lock(s)]
+            if not holds:
                 problems.append((name, f"step '{step.get('name')}' runs before this job holds the staging lock"))
+            elif any(releases_lock(s) for s in steps[holds[0] + 1:i]):
+                problems.append((name, f"step '{step.get('name')}' runs after a step that releases the staging lock"))
+            if any(fn in str(step.get("if", "")) for fn in STATUS_FUNCTIONS):
+                problems.append((name, f"step '{step.get('name')}' has a status-function if: and runs after a failed acquire"))
             waits = any(
                 (acquire_timeout(s) or 0) > 0
                 for n in upstream(jobs, name)
@@ -100,6 +145,9 @@ def violations(workflow):
             if not waits:
                 problems.append((name, "neither this job nor a job it needs waits for the staging lock"))
     return found, problems
+
+
+real_step_commands = step_commands
 
 
 class StagingApplyUnderLockTests(unittest.TestCase):
@@ -134,7 +182,7 @@ class StagingApplyUnderLockTests(unittest.TestCase):
     def test_apply_moved_above_the_acquire_is_a_violation(self):
         wf = load("deploy.yml")
         steps = wf["jobs"]["deploy-staging"]["steps"]
-        apply = next(s for s in steps if is_staging_apply(s))
+        apply = next(s for s in steps if is_apply(s))
         steps.remove(apply)
         steps.insert(0, apply)
         _, problems = violations(wf)
@@ -155,8 +203,54 @@ class StagingApplyUnderLockTests(unittest.TestCase):
         _, problems = violations(wf)
         self.assertEqual(problems, [("terraform-staging", "neither this job nor a job it needs waits for the staging lock")])
 
+    def test_apply_that_runs_after_a_failed_acquire_is_a_violation(self):
+        for cond in ("always()", "failure()", "!cancelled()"):
+            wf = load("deploy.yml")
+            apply = next(s for s in wf["jobs"]["deploy-staging"]["steps"] if is_apply(s))
+            apply["if"] = cond
+            _, problems = violations(wf)
+            self.assertTrue(any("status-function" in p for _, p in problems), (cond, problems))
+
+    def test_release_between_acquire_and_apply_is_a_violation(self):
+        wf = load("staging.yml")
+        steps = wf["jobs"]["terraform-staging"]["steps"]
+        i = next(k for k, s in enumerate(steps) if is_apply(s))
+        steps.insert(i, {"name": "Release", "run": 'python3 scripts/staging-env-lock.py release --bucket "b"'})
+        _, problems = violations(wf)
+        self.assertTrue(any("releases the staging lock" in p for _, p in problems), problems)
+
+    def test_plan_then_apply_before_the_lock_is_seen(self):
+        """`plan -out` with the staging tfvars, then `apply <planfile>` without them, in build-images."""
+        wf = load("staging.yml")
+        wf["jobs"]["build-images"]["steps"][1:1] = [
+            {"name": "Plan", "run": "terraform plan -var-file=terraform.tfvars.staging -out=p"},
+            {"name": "Apply plan", "run": "terraform apply p"},
+        ]
+        found, problems = violations(wf)
+        self.assertIn("build-images", found)
+        self.assertIn(("build-images", "step 'Apply plan' runs before this job holds the staging lock"), problems)
+
+    def test_apply_inside_a_local_action_is_seen(self):
+        with mock.patch(f"{__name__}.step_commands", side_effect=lambda s: (
+                "terraform apply -auto-approve" if s.get("uses") == "./.github/actions/tf-apply"
+                else real_step_commands(s))):
+            wf = load("staging.yml")
+            wf["jobs"]["preflight"]["steps"].append(
+                {"uses": "./.github/actions/tf-init", "with": {"workspace": "staging"}})
+            wf["jobs"]["preflight"]["steps"].append({"name": "Apply", "uses": "./.github/actions/tf-apply"})
+            found, problems = violations(wf)
+        self.assertIn("preflight", found)
+        self.assertTrue(any(job == "preflight" for job, _ in problems), problems)
+
+    def test_every_terraform_apply_in_staging_yml_is_checked(self):
+        """staging.yml only targets staging, so every apply in it must be one this test checks."""
+        jobs = load("staging.yml")["jobs"]
+        applies = [n for n, j in jobs.items() for s in j.get("steps") or [] if is_apply(s)]
+        self.assertEqual(applies, ["terraform-staging"])
+
     def test_timeout_parsing(self):
         step = lambda run: {"run": run}
+        self.assertEqual(acquire_timeout(step('staging-env-lock.py acquire --bucket b --timeout-min=0')), 0)
         self.assertEqual(acquire_timeout(step('staging-env-lock.py acquire --bucket b --timeout-min 0')), 0)
         self.assertEqual(acquire_timeout(step('staging-env-lock.py acquire --bucket b --timeout-min 80 --holder-job "x"')), 80)
         self.assertEqual(acquire_timeout(step('staging-env-lock.py acquire --timeout-min "$STAGING_LOCK_TIMEOUT_MIN"')), float("inf"))

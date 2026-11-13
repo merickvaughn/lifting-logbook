@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hold the shared staging environment from a run's deploy to the end of its tests (#1208).
+"""Hold the shared staging environment from a run's Terraform apply to the end of its tests (#1208, #1216).
 
 Two workflows write the one staging environment: staging.yml (every PR push and merge-queue entry)
 and deploy.yml (after each merge). Job-level `concurrency:` groups serialized each deploy, but
@@ -8,7 +8,8 @@ redeploy staging under the first run's tests. On 2026-11-11 a `pull_request` run
 50 seconds into a merge-queue run's tests, which then hung until the 25-minute job limit.
 
 A `concurrency:` group cannot be the lock. It lives on one job, and the critical section spans
-several (deploy-api and deploy-web in parallel, then the integration tests). It also keeps at most
+several (terraform-staging, then deploy-api and deploy-web in parallel, then the integration tests).
+It also keeps at most
 one pending waiter: a third run cancels the second, which is the #673 starvation pattern. This lock
 is a single GCS object instead, created with `ifGenerationMatch=0` so only one run can create it.
 Waiters poll until it is free; none is ever cancelled to make room for another.

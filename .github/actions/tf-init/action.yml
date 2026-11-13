@@ -2,8 +2,9 @@ name: Terraform setup + init
 description: >-
   Set up Terraform and run a bounded-retry `terraform init` + workspace
   select/new against the shared GCS backend. Factored out of deploy.yml and
-  staging.yml so the terraform-staging, plan-production, and deploy-production
-  jobs initialize Terraform identically (issue #546) — drift between hand-copied
+  staging.yml so the terraform-staging (staging.yml), deploy-staging,
+  plan-production, and deploy-production (deploy.yml) jobs initialize
+  Terraform identically (issue #546) — drift between hand-copied
   init blocks would break the plan↔apply init parity the production
   plan-visibility gate relies on (#542 / #544).
 

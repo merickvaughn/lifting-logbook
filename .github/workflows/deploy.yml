@@ -307,6 +307,14 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
 
+      # Before the lock: init only reads state and downloads providers, so it needn't lengthen the
+      # hold that other runs wait on.
+      - name: Terraform setup + init (staging)
+        uses: ./.github/actions/tf-init
+        with:
+          workspace: staging
+          state-bucket: ${{ secrets.TF_STATE_BUCKET }}
+
       # staging.yml holds this lock from a PR's or merge-queue entry's Terraform apply until its
       # integration tests finish. This job takes it too, so a post-merge apply or deploy can't
       # change staging under those tests (#1208, #1216). Released by the always() step at the end
@@ -316,12 +324,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 80 --holder-job "Deploy (staging)"
-
-      - name: Terraform setup + init (staging)
-        uses: ./.github/actions/tf-init
-        with:
-          workspace: staging
-          state-bucket: ${{ secrets.TF_STATE_BUCKET }}
 
       - name: Terraform apply (staging)
         working-directory: ${{ env.TF_DIR }}
@@ -366,6 +368,15 @@ jobs:
             echo "::error title=Artifact Registry path mismatch::Terraform's artifact_registry_repo is '$TF_AR_REPO', but preflight computed '${{ needs.preflight.outputs.ar_repo }}' and build-images pushed there. Update preflight's ar_repo to match."
             exit 1
           fi
+
+      # Refresh the lock's age. When GitHub can't say whether a holder is done, a waiter takes over
+      # a lock older than 40 minutes (staging-env-lock.py --stale-min), and this job's apply (up to
+      # 20m) plus deploy (up to 30m) can outlast that. Re-taking it here restarts the clock, so
+      # neither stretch reaches 40 minutes. It never waits: this job already holds the lock.
+      - name: Refresh the staging lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 0 --holder-job "Deploy (staging)"
 
       # ── Database migrations (ADR-027) ──────────────────────────────────────
       # Mirror of the production migration step (see deploy-production). Applies
@@ -853,12 +864,13 @@ jobs:
     # timeout-minutes bounds only execution time after the job starts running;
     # time spent waiting at the `environment: production` approval gate is
     # "waiting" status and does NOT count against it (#566).
-    # Higher than deploy-staging's 30 minutes of deploy work (its timeout-minutes also allows for
-    # waiting on the staging lock, #1208): this job does strictly more (secret
-    # validation + `terraform apply` on top of the same migrate + 3× Helm
-    # upgrade + Cloud Run) and, being human-gated and infrequent, has no
-    # measured runtime to back a tighter bound — so it gets build-images-level
-    # headroom to avoid a false-trip mid-prod-deploy, the costliest failure mode.
+    # This job does what deploy-staging does after taking the staging lock (`terraform apply`,
+    # then migrate + 3× Helm upgrade + Cloud Run) plus secret validation. deploy-staging budgets
+    # that work as 20m of apply plus 30m of deploy, but both are ceilings carried over from
+    # when they were separate jobs (#1216), not measurements; staging applies take about a
+    # minute. Being human-gated and infrequent, this job has no measured runtime to back a
+    # tighter bound either, so it keeps build-images-level headroom to avoid a false-trip
+    # mid-prod-deploy, the costliest failure mode.
     timeout-minutes: 45
     # plan-production is a needs (not just an upstream job) so the production
     # approval gate does not prompt until the read-only prod plan summary exists
