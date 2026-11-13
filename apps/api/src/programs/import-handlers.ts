@@ -3,6 +3,7 @@ import {
   ImportKind,
   ImportPreview,
   ImportCommitResponse,
+  NON_CYCLE_PROGRAM,
 } from '@lifting-logbook/types';
 import {
   SpreadsheetCell,
@@ -29,11 +30,17 @@ import {
   pairWithRowNumber,
   buildSkippedDetail,
   liftRecordLabel,
+  withImportProgram,
   withOccurrence,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
 import { liftNamesFor } from './effective-slot-map.util';
-import { legacyRowsPreImage, lockForImport, placeFileRows } from './macrocycle-history.util';
+import { legacyRowsPreImage, lockForImport, nonCycleRowsPreImage, placeFileRows } from './macrocycle-history.util';
+import {
+  NON_CYCLE_MACROCYCLE_NUM,
+  ensureNonCycleRow,
+  nextNonCycleWorkoutNum,
+} from './non-cycle.util';
 import { renumberProgram } from './macrocycle-renumbering';
 
 export interface ImportHandler<T> {
@@ -67,33 +74,69 @@ export async function writeFileNumberRows(
 ): Promise<{
   classified: ClassifiedLiftRecordRow<{ r: LiftRecord; row: number }, LiftRecord>[];
   toCreate: LiftRecord[];
+  /** The non-cycle rows created, as stored. */
+  nonCycle: LiftRecord[];
   created: number;
   legacyNums: number[];
 }> {
   const classified = classifyLiftRecordRows(pairWithRowNumber(records), ({ r }) => r, await repos.liftRecord.findStoredSets(records));
-  const creating = classified
+  const allCreating = classified
     .filter((c) => c.kind === 'create')
     .map(({ row: { r }, occurrence }) => {
       const { occurrence: _fileOccurrence, ...rest } = r;
       return { ...rest, ...withOccurrence(occurrence) };
     });
+  // A row whose `Program` is `non-cycle` is stored as a non-cycle workout (decision 23, #1184).
+  const creating = allCreating.filter((r) => r.program !== NON_CYCLE_PROGRAM);
+  const nonCycle = await placeNonCycleRows(
+    repos,
+    allCreating.filter((r) => r.program === NON_CYCLE_PROGRAM),
+  );
   // The program's macrocycles each file number's skipped rows were found in.
   const pairedNums = new Map<number, Set<number>>();
   for (const { row: { r }, paired } of classified) {
-    if (paired?.program !== program) continue;
+    if (paired?.program !== program || r.program === NON_CYCLE_PROGRAM) continue;
     pairedNums.set(r.macrocycleNum, (pairedNums.get(r.macrocycleNum) ?? new Set<number>()).add(paired.macrocycleNum));
   }
   const { nums, legacyNums } = await placeFileRows(repos, program, creating, pairedNums);
   const placedRows = creating.map((r, i) => ({ ...r, macrocycleNum: nums[i] ?? r.macrocycleNum }));
-  const created = await repos.liftRecord.appendLiftRecords(program, placedRows);
+  const created =
+    (await repos.liftRecord.appendLiftRecords(program, placedRows)) +
+    (nonCycle.length > 0 ? await repos.liftRecord.appendLiftRecords(NON_CYCLE_PROGRAM, nonCycle) : 0);
   const changes = await renumberProgram(repos, program);
   const renumbered = (n: number) => changes.get(n) ?? n;
   return {
     classified,
     toCreate: placedRows.map((r) => ({ ...r, macrocycleNum: renumbered(r.macrocycleNum) })),
+    nonCycle,
     created,
     legacyNums: legacyNums.map(renumbered),
   };
+}
+
+/**
+ * Numbers a file's non-cycle rows as workouts after every stored one, one workout per date and
+ * file workout number in date order, so two on one date stay separate and nothing joins a
+ * stored workout. The non-cycle macrocycle gets its row on first use. The caller holds the lock
+ * exclusively, as starting a non-cycle workout does.
+ */
+async function placeNonCycleRows(
+  repos: Pick<RepositoryBundle, 'liftRecord' | 'macrocycle'>,
+  rows: LiftRecord[],
+): Promise<LiftRecord[]> {
+  if (rows.length === 0) return [];
+  const groupOf = (r: LiftRecord) => `${r.date.getTime()}|${r.workoutNum}`;
+  const ordered = [...rows].sort((a, b) => a.date.getTime() - b.date.getTime() || a.workoutNum - b.workoutNum);
+  const groups = [...new Set(ordered.map(groupOf))];
+  await ensureNonCycleRow(repos, ordered[0]?.date ?? new Date());
+  const next = await nextNonCycleWorkoutNum(repos);
+  const numbers = new Map(groups.map((g, i) => [g, next + i]));
+  return rows.map((r) => ({
+    ...r,
+    program: NON_CYCLE_PROGRAM,
+    macrocycleNum: NON_CYCLE_MACROCYCLE_NUM,
+    workoutNum: numbers.get(groupOf(r)) ?? next,
+  }));
 }
 
 const liftRecordsHandler: ImportHandler<LiftRecord> = {
@@ -113,7 +156,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     );
   },
   async preview(valid, program, repos) {
-    const records = valid.map((r) => ({ ...r, program }));
+    const records = valid.map((r) => withImportProgram(r, program));
     return buildLiftRecordsPreview(records, await repos.liftRecord.findStoredSets(records));
   },
   async commit(valid, program, repos) {
@@ -125,10 +168,10 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
     // the original CSV data-row number; positions shift when rows were
     // excluded or split to a second destination ahead of this call. See
     // ImportCommitResponse.skippedDetail (issue #891) for the full contract.
-    const { classified, toCreate, created, legacyNums } = await writeFileNumberRows(
+    const { classified, toCreate, nonCycle, created, legacyNums } = await writeFileNumberRows(
       repos,
       program,
-      valid.map((r) => ({ ...r, program })),
+      valid.map((r) => withImportProgram(r, program)),
     );
     const liftNames = await liftNamesFor(repos);
     // `skipped` is derived from `created` (the DB's actual insert count), not
@@ -148,7 +191,11 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
       updated: 0,
       skipped: classified.length - created,
       skippedDetail: buildSkippedDetail(classified, (r) => liftRecordLabel(r, liftNames)),
-      preImage: { ...buildLiftRecordsPreImage(toCreate), ...legacyRowsPreImage(legacyNums) },
+      preImage: {
+        ...buildLiftRecordsPreImage(toCreate),
+        ...legacyRowsPreImage(legacyNums),
+        ...nonCycleRowsPreImage(nonCycle),
+      },
     };
   },
 };

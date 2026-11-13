@@ -50,3 +50,10 @@ export const MAX_NOTES_LENGTH = 500;
 
 // A bug catcher, like `occurrence`'s bound: no set has 20 modifications on.
 export const MAX_SET_MODIFICATIONS = 20;
+
+// A program's workout number: far past any program's length, so a larger one is a client bug.
+export const MAX_WORKOUT_NUM = 1000;
+
+// A non-cycle workout's number (#1184): its one macrocycle never ends, so only the Postgres
+// `Int` column (32-bit) bounds it.
+export const MAX_NON_CYCLE_WORKOUT_NUM = 2_147_483_647;

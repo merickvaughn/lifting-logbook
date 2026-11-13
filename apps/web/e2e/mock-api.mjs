@@ -168,6 +168,32 @@ function createInitialState() {
     focusError: false,
     // Saved focus day state, by workout number.
     focusDayStates: new Map(),
+    // Non-cycle workouts (#1184): their sets, as the API's lift records under 'non-cycle'.
+    nonCycleRecords: [],
+  };
+}
+
+const NON_CYCLE_MACROCYCLE_ID = 'mock-non-cycle-macrocycle';
+
+function nonCycleWorkout(workoutNum) {
+  const records = state.nonCycleRecords.filter((r) => r.workoutNum === workoutNum);
+  if (records.length === 0) return null;
+  return { workoutNum, date: records[0].date, macrocycleId: NON_CYCLE_MACROCYCLE_ID, records };
+}
+
+function nonCycleRecord(fields) {
+  const { lift, date, workoutNum, setNum } = fields;
+  return {
+    id: `non-cycle-1-${workoutNum}-${date}-${lift}-${setNum}`,
+    program: 'non-cycle',
+    macrocycleNum: 1,
+    workoutNum,
+    date,
+    lift,
+    setNum,
+    weight: fields.weight,
+    reps: fields.reps,
+    notes: fields.notes ?? '',
   };
 }
 
@@ -633,6 +659,11 @@ const server = createServer(async (req, res) => {
     if (url.searchParams.get('withFocusError') === 'true') {
       state.focusError = true;
     }
+    if (url.searchParams.get('withNonCycleWorkout') === 'true') {
+      state.nonCycleRecords = [1, 2, 3].map((setNum) =>
+        nonCycleRecord({ workoutNum: 1, date: '2026-11-10', lift: 'squat', setNum, weight: 225, reps: 5 }),
+      );
+    }
     json(res, { ok: true });
     return;
   }
@@ -990,8 +1021,68 @@ const server = createServer(async (req, res) => {
   // -------------------------------------------------------------------------
   // Program-scoped routes: /programs/:program/...
   // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // /non-cycle-workouts — training outside any program (#1184)
+  // -------------------------------------------------------------------------
+  if (parts[0] === 'non-cycle-workouts') {
+    if (method === 'GET' && parts.length === 1) {
+      json(res, state.nonCycleRecords.slice().sort((a, b) => b.date.localeCompare(a.date) || b.workoutNum - a.workoutNum));
+      return;
+    }
+    if (method === 'POST' && parts.length === 1) {
+      const body = await readBody(req);
+      if (rejectIfInvalidBody(res, body)) return;
+      const workoutNum = Math.max(0, ...state.nonCycleRecords.map((r) => r.workoutNum)) + 1;
+      const record = nonCycleRecord({ ...body, workoutNum });
+      state.nonCycleRecords.push(record);
+      json(res, nonCycleWorkout(workoutNum), 201);
+      return;
+    }
+    const workout = parts.length === 2 ? nonCycleWorkout(Number(parts[1])) : null;
+    if (!workout) {
+      json(res, { statusCode: 404, message: 'Not found' }, 404);
+      return;
+    }
+    if (method === 'GET') {
+      json(res, workout);
+      return;
+    }
+    if (method === 'DELETE') {
+      state.nonCycleRecords = state.nonCycleRecords.filter((r) => r.workoutNum !== workout.workoutNum);
+      noContent(res);
+      return;
+    }
+  }
+
+  if (parts[0] === 'programs' && parts[1] === 'non-cycle' && parts[2] === 'lift-records') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    if (method === 'POST' && parts.length === 3) {
+      const record = nonCycleRecord(body);
+      state.nonCycleRecords.push(record);
+      json(res, record, 201);
+      return;
+    }
+    const record = state.nonCycleRecords.find((r) => r.id === decodeURIComponent(parts[3] ?? ''));
+    if (method === 'PATCH' && record) {
+      Object.assign(record, body);
+      json(res, record);
+      return;
+    }
+    json(res, { statusCode: 404, message: 'Not found' }, 404);
+    return;
+  }
+
   if (parts[0] === 'programs' && parts.length >= 3) {
     const rest = parts.slice(2);
+
+    // GET /programs/:p/non-cycle-reference?lift= (#1184): the lift's max, with no previous one.
+    if (method === 'GET' && rest[0] === 'non-cycle-reference') {
+      const lift = url.searchParams.get('lift') ?? '';
+      const max = state.trainingMaxes.find((m) => m.lift.toLowerCase() === lift.toLowerCase());
+      json(res, { lift, reference: max ? { trainingMax: max.weight, previous: null } : null });
+      return;
+    }
 
     // GET /programs/:p/macrocycles
     if (method === 'GET' && rest[0] === 'macrocycles' && rest.length === 1) {

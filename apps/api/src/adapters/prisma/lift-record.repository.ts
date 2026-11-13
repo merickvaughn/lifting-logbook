@@ -18,9 +18,9 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     private readonly userId: string,
   ) {}
 
-  async getLiftRecords(program: string, macrocycleNum: number): Promise<LiftRecord[]> {
+  async getLiftRecords(program: string, macrocycleNum: number, workoutNum?: number): Promise<LiftRecord[]> {
     const rows = await this.prisma.liftRecord.findMany({
-      where: { userId: this.userId, program, macrocycleNum },
+      where: { userId: this.userId, program, macrocycleNum, ...(workoutNum === undefined ? {} : { workoutNum }) },
     });
     return rows.map(rowToLiftRecord);
   }

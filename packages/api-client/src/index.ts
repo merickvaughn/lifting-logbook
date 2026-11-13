@@ -6,6 +6,7 @@ import type {
   CreateLiftModificationRequest,
   CreateLiftOverrideRequest,
   CreateLiftRecordRequest,
+  CreateNonCycleWorkoutRequest,
   CustomLiftResponse,
   CustomProgramResponse,
   CustomProgramSummaryResponse,
@@ -33,6 +34,8 @@ import type {
   LiftRecordResponse,
   MacrocycleSummaryResponse,
   ModificationMaxResponse,
+  NonCycleReferenceResponse,
+  NonCycleWorkoutResponse,
   PatchLiftMetadataRequest,
   PutModificationMaxRequest,
   RecordBodyWeightRequest,
@@ -460,6 +463,38 @@ export function createApiClient(config: ApiClientConfig) {
         cache: 'no-store',
       });
     },
+
+    // -- Non-cycle workouts (proposal 2026-11-06, decision 23, #1184) --------
+    // Later sets and edits go through createLiftRecord/updateLiftRecord under NON_CYCLE_PROGRAM,
+    // with the workout's macrocycleId.
+    /** Every non-cycle set, newest workout first, whichever program is active. */
+    fetchNonCycleRecords(): Promise<LiftRecordResponse[]> {
+      return request('/non-cycle-workouts', { cache: 'no-store' });
+    },
+    fetchNonCycleWorkout(workoutNum: number): Promise<NonCycleWorkoutResponse | null> {
+      return requestNullable(`/non-cycle-workouts/${workoutNum}`, { cache: 'no-store' });
+    },
+    /** Starts a non-cycle workout with its first set. */
+    createNonCycleWorkout(body: CreateNonCycleWorkoutRequest): Promise<NonCycleWorkoutResponse> {
+      return request('/non-cycle-workouts', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    deleteNonCycleWorkout(workoutNum: number, macrocycleId: string): Promise<void> {
+      return request(`/non-cycle-workouts/${workoutNum}`, {
+        method: 'DELETE',
+        headers: macrocycleHeaders(macrocycleId, false),
+        cache: 'no-store',
+      });
+    },
+    /** The active program's training max for a lift, and the reps last done at the previous one. */
+    fetchNonCycleReference(program: string, lift: string): Promise<NonCycleReferenceResponse> {
+      return request(`/programs/${enc(program)}/non-cycle-reference?lift=${enc(lift)}`, { cache: 'no-store' });
+    },
+
     /**
      * Uploads a CSV file to the lift-records import endpoint. Returns a
      * discriminated union so callers can handle validation errors without

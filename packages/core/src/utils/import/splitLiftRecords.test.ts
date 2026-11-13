@@ -32,6 +32,13 @@ describe('splitLiftRecordsByDestination', () => {
     expect(trainingMaxes).toHaveLength(1);
   });
 
+  it('keeps a non-cycle row a set even when its note mentions a 1RM (#1184)', () => {
+    const row = record({ program: ' Non-Cycle ', notes: '1RM Test' });
+    const { liftRecords, trainingMaxes } = splitLiftRecordsByDestination([row]);
+    expect(liftRecords).toEqual([row]);
+    expect(trainingMaxes).toHaveLength(0);
+  });
+
   it('keeps non-1RM rows in liftRecords', () => {
     const row = record({ notes: 'felt good' });
     const { liftRecords, trainingMaxes } = splitLiftRecordsByDestination([row]);

@@ -111,4 +111,6 @@ export const {
   updateCustomProgram,
   deleteCustomProgram,
   fetchFocusPlan,
+  fetchNonCycleRecords,
+  fetchNonCycleWorkout,
 } = createApiClient({ baseUrl: API_URL, getAuthHeaders });

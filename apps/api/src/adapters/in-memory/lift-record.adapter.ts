@@ -37,8 +37,10 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
     if (stored) this.store.set(program, stored.filter((r) => !macrocycleNums.includes(r.macrocycleNum)));
   }
 
-  async getLiftRecords(program: string, macrocycleNum: number): Promise<LiftRecord[]> {
-    return (this.store.get(program) ?? []).filter((r) => r.macrocycleNum === macrocycleNum);
+  async getLiftRecords(program: string, macrocycleNum: number, workoutNum?: number): Promise<LiftRecord[]> {
+    return (this.store.get(program) ?? []).filter(
+      (r) => r.macrocycleNum === macrocycleNum && (workoutNum === undefined || r.workoutNum === workoutNum),
+    );
   }
 
   async getLoggedWorkoutNums(program: string, macrocycleNum: number): Promise<Set<number>> {

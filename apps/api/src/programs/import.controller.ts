@@ -28,6 +28,7 @@ import {
   ImportPreviewResponse,
   ImportUndoResponse,
   ImportWriteResult,
+  NON_CYCLE_PROGRAM,
 } from '@lifting-logbook/types';
 import {
   LiftRecord,
@@ -53,6 +54,7 @@ import {
   type TrainingMaxSpellingCollision,
   liftRecordNaturalKey,
   programSpecNaturalKey,
+  withImportProgram,
 } from '@lifting-logbook/core';
 import type { SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
@@ -66,7 +68,12 @@ import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
-import { lockForImport, removeEmptyLegacyRows, splitLegacyRowKeys } from './macrocycle-history.util';
+import {
+  lockForImport,
+  removeEmptyLegacyRows,
+  splitLegacyRowKeys,
+  splitNonCycleKeys,
+} from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
@@ -320,7 +327,11 @@ export class ImportController {
       // A 1RM split's training maxes share this batch, keyed by lift id (#1148). Every set and
       // `legacy` row key starts with a macrocycle number, and a lift id (a kebab-case name or a
       // custom lift's UUID) never does.
-      const entries = Object.entries(batch.preImage);
+      // A non-cycle set's key, `non-cycle:<natural key>`, holds no number either, so it's
+      // split off first: it's neither a training max nor a set of `program` (#1184).
+      const { nonCycleKeys, otherKeys } = splitNonCycleKeys(Object.keys(batch.preImage));
+      const kept = new Set(otherKeys);
+      const entries = Object.entries(batch.preImage).filter(([k]) => kept.has(k));
       await undoTrainingMaxes(entries.filter(([k]) => preImageKeyNumber(k) === null));
       // Collect all created keys and delete in a single query to avoid N+1 round-trips
       const { setKeys: createdKeys, legacyNums } = splitLegacyRowKeys(
@@ -328,15 +339,19 @@ export class ImportController {
           .filter(([k, e]) => preImageKeyNumber(k) !== null && e.kind === 'created')
           .map(([k]) => k),
       );
-      if (createdKeys.length > 0) {
-        const deleted = await repos.liftRecord.deleteLiftRecordsByNaturalKeys(program, createdKeys);
+      const deleteCreated = async (from: string, keys: string[]) => {
+        if (keys.length === 0) return;
+        const deleted = await repos.liftRecord.deleteLiftRecordsByNaturalKeys(from, keys);
         restored += deleted;
-        if (deleted < createdKeys.length) {
-          const missing = createdKeys.length - deleted;
+        if (deleted < keys.length) {
+          const missing = keys.length - deleted;
           skipped += missing;
           flagged.push({ key: '*', reason: `${missing} row(s) not found (already deleted?)` });
         }
-      }
+      };
+      await deleteCreated(program, createdKeys);
+      // The non-cycle macrocycle's row stays, as it does when its workouts are deleted.
+      await deleteCreated(NON_CYCLE_PROGRAM, nonCycleKeys);
       // The batch goes first, so the renumbering below doesn't rewrite the keys of a batch about
       // to be deleted.
       await repos.importBatch.deleteById(batchId, user.id);
@@ -476,7 +491,7 @@ export class ImportController {
       return { classification, destination, columnMappings, preview: null, errors: softResult.hardErrors };
     }
 
-    const validWithProgram = softResult.validRows.map(({ record }) => ({ ...record, program }));
+    const validWithProgram = softResult.validRows.map(({ record }) => withImportProgram(record, program));
     const stored = await repos.liftRecord.findStoredSets(validWithProgram);
     const liftNames = await liftNamesFor(repos);
     const preview = buildLiftRecordsPreviewSoft(softResult, stored, liftNames);

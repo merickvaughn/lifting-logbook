@@ -190,6 +190,7 @@ export default function MacrocycleDashboardGrid({
         <Link href="/settings/training-maxes">💪 Training Maxes</Link>
         <Link href="/settings/strength-goals">🎯 Strength Goals</Link>
         <Link href="/history">📚 Lift History</Link>
+        <Link href="/non-cycle/new">🏋 Non-cycle Workout</Link>
         <Link href="/programs">🗂 Program Catalog</Link>
       </nav>
       <div className={styles.grid}>

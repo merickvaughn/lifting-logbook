@@ -13,11 +13,9 @@ import { DEFAULT_WEIGHT_INCREMENT, FocusBlock, FocusBlockResponse } from '@lifti
 import { RepositoryBundle } from '../ports/factory';
 import { FocusBlockNotFoundError } from '../ports/errors';
 import { FocusBlockPatch, IFocusRepository } from '../ports/IFocusRepository';
+import { MAX_WORKOUT_NUM } from '../programs/lift-record.limits';
 import { isValidWorkoutNum } from '../programs/mappers';
 import { currentMacrocycleOrFirst, resolveWorkoutDay } from '../programs/workout-day.util';
-
-/** Matches `CreateLiftRecordDto.workoutNum`'s bound, and keeps the value inside INT4. */
-const MAX_WORKOUT_NUM = 1000;
 
 /**
  * Validates the `today` query parameter: the user's calendar day as an ISO date. The server

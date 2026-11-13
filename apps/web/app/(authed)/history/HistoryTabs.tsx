@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import Link from 'next/link';
 import { formatWeight, liftIdFor, storedIdListing } from '@lifting-logbook/core';
+import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
   MacrocycleOrigin,
   MacrocycleStatus,
@@ -206,7 +208,13 @@ function LiftHistoryTab({ records, unit }: { records: EnrichedRecord[]; unit: We
                   </td>
                   <td>{r.tmPercent !== null ? `${r.tmPercent}%` : '—'}</td>
                   <td>
-                    Macrocycle {r.macrocycleNum}, Workout {r.workoutNum}
+                    {r.program === NON_CYCLE_PROGRAM ? (
+                      <Link href={`/non-cycle/${r.workoutNum}`}>Non-cycle workout {r.workoutNum}</Link>
+                    ) : (
+                      <>
+                        Macrocycle {r.macrocycleNum}, Workout {r.workoutNum}
+                      </>
+                    )}
                   </td>
                   <td>{r.notes || '—'}</td>
                   <td>

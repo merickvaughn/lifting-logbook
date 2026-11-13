@@ -6,6 +6,7 @@ export * from './classifyImport';
 export * from './googleSheetUrl';
 export * from './importThresholds';
 export * from './liftRecordNaturalKey';
+export * from './nonCycle';
 export * from './normalize-amrap';
 export { BREAK_DAYS, segmentLiftHistory } from './segmentLiftHistory';
 export type {

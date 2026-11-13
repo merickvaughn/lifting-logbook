@@ -646,6 +646,32 @@ describe('segmentLiftHistory', () => {
     });
   });
 
+  describe('non-cycle rows (decision 23, #1184)', () => {
+    it('are returned on their own and never count as a session', () => {
+      const before = run(RPT_DAYS, 0, 3);
+      const after = run(RPT_DAYS, 50, 3);
+      // Alone in the gap, with more than 14 days on each side, it would be a lone session.
+      const nonCycle = session(25, ['Squat', 'Bench Press'], { program: 'non-cycle' });
+      // Inside the first run, on a day of its own, it would be a session of that run.
+      const inside = session(1, ['Deadlift'], { program: ' Non-Cycle ' });
+      const result = segment([...before.slice(0, 3), ...inside, ...before.slice(3), ...nonCycle, ...after]);
+      expect(result.nonCycle.map((r) => r.id)).toEqual([...inside, ...nonCycle].map((r) => r.id));
+      expect(result.lone).toEqual([]);
+      expect(result.stretches.map((s) => s.sessions.map((x) => x.date))).toEqual([
+        [day(0), day(2), day(4)],
+        [day(50), day(52), day(54)],
+      ]);
+    });
+
+    it('are left out of a file numbered by macrocycle too', () => {
+      const numbered = run(RPT_DAYS, 0, 3, { extra: (i) => ({ macrocycleNum: 1, workoutNum: i + 1 }) });
+      const nonCycle = session(1, ['Squat'], { program: 'non-cycle', macrocycleNum: 1, workoutNum: 7 });
+      const result = segment([...numbered, ...nonCycle]);
+      expect(result.nonCycle.map((r) => r.id)).toEqual(nonCycle.map((r) => r.id));
+      expect(result.stretches.flatMap((s) => s.sessions.map((x) => x.date))).toEqual([day(0), day(2), day(4)]);
+    });
+  });
+
   describe('an unmatched program (decision 9)', () => {
     it('numbers workouts in session order and suggests no status', () => {
       const rows = run([['Zercher Squat', 'Sled Push'], ['Landmine Press']], 0, 4);

@@ -387,6 +387,28 @@ side-effect free. While the successor is queued, an edit to the block's selectio
 progression or timer follows into it unless the successor's own value was already changed
 (Amendment 4).
 
+### Non-cycle workouts sit outside every program
+
+A **non-cycle workout** ([#1184](https://github.com/merickvaughn/lifting-logbook/issues/1184)) is
+training done outside any program, such as a session on vacation, with lifts picked as it goes.
+It has no plan, so nothing is prescribed and no training max reads it: its sets count toward
+personal records in History, and nowhere else. Decision 23 of the
+[import macrocycle assignment proposal](proposals/2026-11-06-import-macrocycle-assignment.md) sets
+how it is stored.
+
+| Concept | Represented as | Stored? |
+|---|---|---|
+| **Non-cycle set** | `LiftRecord` with `program: 'non-cycle'` (`NON_CYCLE_PROGRAM`), `macrocycleNum: 1` | An ordinary `lift_record` row. History lists them whichever program is active (`GET /non-cycle-workouts`), with no TM or % of TM |
+| **Non-cycle workout** | The sets sharing one `workoutNum`, on one date | **No row of its own.** Starting one (`POST /non-cycle-workouts`) takes the next number under the macrocycle lock held exclusively, so two on one date stay apart. `workoutNum` isn't capped at 1000 here, as it is in a program |
+| **Non-cycle macrocycle** | One `macrocycle` row: number 1, origin `non-cycle`, status `unknown` | Created on first use. Its id is what later sets, edits and the delete send, as on any page |
+| **Reference line** | `nonCycleReference` (`packages/core/src/services/maxes/nonCycleReference.ts`): the active program's training max for the lift, and the reps last done at the previous max | **Derived** per request (`GET /programs/:program/non-cycle-reference`) |
+
+`non-cycle` is a reserved program id, so no catalog slug may take it
+(`apps/api/src/programs/reserved-program.registry.spec.ts`), and `ReservedProgramGuard` refuses it
+with a 400 on every `:program` route except the two lift-record writes. An import keeps a row whose
+`Program` column says `non-cycle` as a non-cycle set: `segmentLiftHistory` leaves it out of the
+program's sessions, and the 1RM split never sends it to training maxes.
+
 ---
 
 ## 4. Prescribed vs. logged

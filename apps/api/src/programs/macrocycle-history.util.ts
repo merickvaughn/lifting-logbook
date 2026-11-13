@@ -1,7 +1,14 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
-import { ImportPreImage, MacrocycleDashboard, MAX_FILE_MACROCYCLE_NUM, toUTCMidnight } from '@lifting-logbook/core';
-import { MacrocycleStatus } from '@lifting-logbook/types';
+import {
+  ImportPreImage,
+  LiftRecord,
+  liftRecordNaturalKey,
+  MacrocycleDashboard,
+  MAX_FILE_MACROCYCLE_NUM,
+  toUTCMidnight,
+} from '@lifting-logbook/core';
+import { MacrocycleStatus, NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
 import { KeyNumbers, preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { DateRange, dateRangesByMacrocycle } from '../ports/ILiftRecordRepository';
@@ -238,8 +245,9 @@ export async function lockForImport(
 }
 
 /**
- * Takes the macrocycle lock exclusively for a renumbering that would move a number (#1199),
- * waiting as an import does, then a 409 `macrocycle-busy`. The lock is re-entrant, so an import
+ * Takes the macrocycle lock exclusively for a renumbering that would move a number (#1199), or
+ * for starting a non-cycle workout, which takes the next workout number (#1184), waiting as an
+ * import does, then a 409 `macrocycle-busy`. The lock is re-entrant, so an import
  * that holds it already gets it at once. Two starts or deletes that hold it shared and wait on
  * each other here deadlock; Postgres aborts one, which gets the same 409 when it's the one
  * waiting here. A deadlock aborted anywhere else in the request is a 500, and that request's
@@ -387,6 +395,32 @@ export function legacyRowsPreImage(macrocycleNums: readonly number[]): ImportPre
 }
 
 /**
+ * A non-cycle set an import created is stored under the reserved program, not the batch's, so
+ * its key carries this prefix (#1184). The prefix keeps it from reading as a macrocycle number of
+ * the batch's program, so a renumbering never rewrites it, and undo deletes it from the
+ * non-cycle workouts.
+ */
+export const NON_CYCLE_ROW_KEY = `${NON_CYCLE_PROGRAM}:`;
+
+/** Pre-image entries for the non-cycle sets an import created. */
+export function nonCycleRowsPreImage(rows: readonly LiftRecord[]): ImportPreImage {
+  return Object.fromEntries(
+    rows.map((r) => [
+      `${NON_CYCLE_ROW_KEY}${liftRecordNaturalKey(r)}`,
+      { kind: 'created', wrote: { weight: r.weight, reps: r.reps, notes: r.notes } },
+    ]),
+  );
+}
+
+/** Splits a lift-records pre-image's keys into the non-cycle sets' natural keys and the rest. */
+export function splitNonCycleKeys(keys: readonly string[]): { nonCycleKeys: string[]; otherKeys: string[] } {
+  return {
+    nonCycleKeys: keys.filter((k) => k.startsWith(NON_CYCLE_ROW_KEY)).map((k) => k.slice(NON_CYCLE_ROW_KEY.length)),
+    otherKeys: keys.filter((k) => !k.startsWith(NON_CYCLE_ROW_KEY)),
+  };
+}
+
+/**
  * Drops the keys on deleted macrocycles from `program`'s lift-records batches: a renumbering
  * may move another macrocycle onto the number, and undoing the batch would then delete that
  * one's sets (#1199). `deleted` names the numbers that are gone: those `on` it, or all `except`
@@ -424,6 +458,25 @@ export async function forgetBatchKeys(
       span.end();
     }
   });
+}
+
+/**
+ * Drops deleted non-cycle sets' keys from the lift-records batches of any program. A new
+ * workout takes the number one past the highest stored, so a deleted workout's number comes
+ * back, and undoing an import would then delete the sets recorded under it (#1184).
+ * `naturalKeys` are the deleted sets' natural keys, without the {@link NON_CYCLE_ROW_KEY} prefix.
+ */
+export async function forgetNonCycleBatchKeys(
+  repos: Pick<RepositoryBundle, 'importBatch'>,
+  naturalKeys: readonly string[],
+): Promise<number> {
+  const gone = new Set(naturalKeys.map((k) => `${NON_CYCLE_ROW_KEY}${k}`));
+  const updates = (await repos.importBatch.listWithKeys('lift-records', [...gone])).map((batch) => ({
+    id: batch.id,
+    preImage: Object.fromEntries(Object.entries(batch.preImage).filter(([key]) => !gone.has(key))),
+  }));
+  await repos.importBatch.updatePreImages(updates);
+  return updates.length;
 }
 
 /** Splits a lift-records pre-image's keys into set keys and the `legacy` rows' numbers. */

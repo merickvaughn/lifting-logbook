@@ -115,4 +115,8 @@ export const {
   reorderFocusBlocks,
   updateFocusSettings,
   saveFocusDayState,
+  // Non-cycle workouts (#1184): the reference read follows the lift picked on the page.
+  createNonCycleWorkout,
+  deleteNonCycleWorkout,
+  fetchNonCycleReference,
 } = createApiClient({ baseUrl: getApiUrl, getAuthHeaders: getClientAuthHeaders });

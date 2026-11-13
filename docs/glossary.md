@@ -42,6 +42,22 @@ Program → Macrocycle → Mesocycle → Week (microcycle) → Workout → Lift 
 
 ---
 
+## Non-cycle workout
+
+**Non-cycle workout** — a workout done outside any program, such as a session on vacation. You pick
+the lifts as you go. Its sets stay in your history whichever program you switch to and count toward
+personal records, but they never change a training max.
+
+This definition is worded identically in the in-app glossary. In code it is a set of ordinary
+`lift_record` rows under the reserved program id `non-cycle` (`NON_CYCLE_PROGRAM`,
+`packages/types/src/domain.ts`), all in that program's one macrocycle row (number 1, origin
+`non-cycle`). Each workout takes the next `workoutNum`, with no cap of 1000. The reserved id is
+refused on every `:program` route except the lift-record writes (`ReservedProgramGuard`). Decision
+23 of the [import macrocycle assignment proposal](proposals/2026-11-06-import-macrocycle-assignment.md)
+and [domain-model §3](domain-model.md#non-cycle-workouts-sit-outside-every-program) have the rest.
+
+---
+
 ## Lift
 
 **Lift** — a named movement you train and log, such as Back Squat, Bench Press or Face Pull, either
