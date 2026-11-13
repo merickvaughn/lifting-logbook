@@ -19,6 +19,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import threading
 import time
 import unittest
@@ -381,6 +382,30 @@ class GcsStoreTests(unittest.TestCase):
         self.assertEqual(spec["softDeletePolicy"], {"retentionDurationSeconds": "0"})
         self.assertIn("ifGenerationMatch=0", opener.requests[2].full_url)
         self.assertIn("::warning title=Staging lock bucket recreated::", out.getvalue())
+
+    def test_recreated_bucket_matches_the_terraform_definition(self):
+        # The next staging apply imports a recreated bucket. A setting that differs from ci-locks.tf
+        # would show up there as a change (or a replacement, for location), so keep the two in step.
+        store, opener = gcs(http_error(404), FakeResponse(body=b"{}"), FakeResponse(body=b'{"generation": "1"}'))
+        store.recreate_in_project = "p"
+        with contextlib.redirect_stdout(io.StringIO()):
+            store.write({}, if_generation=0)
+        spec = json.loads(opener.requests[1].data)
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "infra", "terraform")
+        with open(os.path.join(root, "ci-locks.tf"), encoding="utf-8") as f:
+            tf = f.read()
+        with open(os.path.join(root, "variables.tf"), encoding="utf-8") as f:
+            region = re.search(r'variable "region" \{.*?default\s*=\s*"([^"]+)"', f.read(), re.S).group(1)
+        self.assertRegex(tf, r"location\s*=\s*var\.region")
+        self.assertEqual(spec["location"].lower(), region)
+        self.assertFalse(spec["versioning"]["enabled"])
+        self.assertRegex(tf, r"versioning\s*\{\s*enabled\s*=\s*false\s*\}")
+        self.assertRegex(
+            tf, r"retention_duration_seconds\s*=\s*%s\b" % spec["softDeletePolicy"]["retentionDurationSeconds"]
+        )
+        self.assertEqual(spec["iamConfiguration"]["uniformBucketLevelAccess"], {"enabled": True})
+        self.assertRegex(tf, r"uniform_bucket_level_access\s*=\s*true")
+        self.assertRegex(tf, r'public_access_prevention\s*=\s*"%s"' % spec["iamConfiguration"]["publicAccessPrevention"])
 
     def test_bucket_created_by_another_run_meanwhile_is_fine(self):
         store, opener = gcs(http_error(404), http_error(409), FakeResponse(body=b'{"generation": "47"}'))
