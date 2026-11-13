@@ -170,7 +170,7 @@ Push a trivial commit to `main` (or merge a PR) and watch the workflow in **Acti
 With the staging secrets in place, the pipeline runs:
 
 ```
-preflight → terraform-staging → build → deploy-staging → smoke-test
+preflight → build → deploy-staging (terraform apply + deploy, under the staging lock) → smoke-test
          → [manual approval] → terraform-production → deploy-production
 ```
 

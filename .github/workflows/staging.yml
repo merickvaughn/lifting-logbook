@@ -1,7 +1,7 @@
 name: Staging
 
 # Fires on every PR push targeting main.
-# Pipeline: [preflight] → terraform staging → build images → lock staging → deploy staging →
+# Pipeline: [preflight] → build images → lock staging → terraform staging → deploy staging →
 #           staging integration tests → unlock staging → report status (PR comment)
 #
 # Production is NOT touched by this workflow — production deploys only via deploy.yml
@@ -49,7 +49,9 @@ env:
   TF_DIR: infra/terraform
   # How long lock-staging waits for the staging environment lock (#1208). A merge-queue entry must
   # finish inside the queue's 60-minute check timeout; merge-queue waiters have priority over
-  # pull_request waiters, so they wait only for the current holder.
+  # pull_request waiters, so they wait only for the current holder. That holder's job timeouts
+  # allow a hold of up to 75m (terraform-staging 20 + deploy-api 30 + integration tests 25), so a
+  # hung holder can outlast this wait; real holds are a few minutes (#1216).
   STAGING_LOCK_TIMEOUT_MIN: '45'
 
 jobs:
@@ -66,9 +68,14 @@ jobs:
       - id: check
         env:
           STAGING_WIF: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+          STAGING_PROJECT: ${{ vars.GCP_STAGING_PROJECT_ID }}
         run: |
           if [[ -n "$STAGING_WIF" ]]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
+            # Terraform's artifact_registry_repo output, computed here because build-images runs
+            # before terraform-staging, which applies under the staging lock (#1216).
+            # terraform-staging checks that the two agree.
+            echo "ar_repo=${{ env.REGISTRY }}/${STAGING_PROJECT}/${{ env.ARTIFACT_REPO }}" >> "$GITHUB_OUTPUT"
             echo "Staging credentials found — full pipeline will run."
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
@@ -111,91 +118,19 @@ jobs:
               - '!infra/terraform/**'
               - '!infra/kubernetes/**'
 
-  # ── 1. Terraform: staging ─────────────────────────────────────────────────
-  terraform-staging:
-    name: Terraform (staging)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [preflight]
-    if: needs.preflight.outputs.should_run == 'true'
-    permissions:
-      contents: read
-      id-token: write
-    outputs:
-      gke_enabled: ${{ steps.tf-outputs.outputs.gke_enabled }}
-      gke_cluster_name: ${{ steps.tf-outputs.outputs.gke_cluster_name }}
-      cloud_run_api_url: ${{ steps.tf-outputs.outputs.cloud_run_api_url }}
-      cloud_run_web_url: ${{ steps.tf-outputs.outputs.cloud_run_web_url }}
-      ar_repo: ${{ steps.tf-outputs.outputs.ar_repo }}
-      kms_key_name: ${{ steps.tf-outputs.outputs.kms_key_name }}
-      api_wi_sa: ${{ steps.tf-outputs.outputs.api_wi_sa }}
-      web_workload_sa: ${{ steps.tf-outputs.outputs.web_workload_sa }}
-      otel_mirror_repo: ${{ steps.tf-outputs.outputs.otel_mirror_repo }}
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Authenticate to GCP (staging)
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
-
-      - name: Terraform setup + init (staging)
-        uses: ./.github/actions/tf-init
-        with:
-          workspace: staging
-          state-bucket: ${{ secrets.TF_STATE_BUCKET }}
-
-      - name: Terraform apply (staging)
-        working-directory: ${{ env.TF_DIR }}
-        # Bounded retry absorbs transient GCP API 5xx / eventual-consistency
-        # during apply (a real staging red-run driver per the #498 diagnosis —
-        # see docs/runbooks/staging-ci-flakiness.md). terraform apply is
-        # re-runnable; a genuine config error fails both attempts and hard-fails.
-        run: |
-          for attempt in 1 2; do
-            if terraform apply -auto-approve \
-                 -var-file=terraform.tfvars.staging \
-                 -var="billing_account=${{ secrets.GCP_BILLING_ACCOUNT }}"; then
-              exit 0
-            fi
-            if [ "${attempt}" -lt 2 ]; then
-              echo "Terraform apply attempt ${attempt} failed; retrying in 20s..."
-              sleep 20
-            fi
-          done
-          echo "::error title=Terraform apply failed::terraform apply (staging) failed on both attempts."
-          exit 1
-
-      - name: Capture Terraform outputs
-        id: tf-outputs
-        working-directory: ${{ env.TF_DIR }}
-        run: |
-          echo "gke_enabled=$(terraform output -raw gke_enabled)" >> "$GITHUB_OUTPUT"
-          echo "gke_cluster_name=$(terraform output -raw gke_cluster_name)" >> "$GITHUB_OUTPUT"
-          echo "cloud_run_api_url=$(terraform output -raw cloud_run_api_url)" >> "$GITHUB_OUTPUT"
-          echo "cloud_run_web_url=$(terraform output -raw cloud_run_web_url)" >> "$GITHUB_OUTPUT"
-          echo "ar_repo=$(terraform output -raw artifact_registry_repo)" >> "$GITHUB_OUTPUT"
-          echo "kms_key_name=$(terraform output -raw kms_key_name)" >> "$GITHUB_OUTPUT"
-          echo "api_wi_sa=$(terraform output -raw cicd_service_account_email)" >> "$GITHUB_OUTPUT"
-          echo "web_workload_sa=$(terraform output -raw web_workload_sa)" >> "$GITHUB_OUTPUT"
-          echo "otel_mirror_repo=$(terraform output -raw otel_collector_mirror_repo)" >> "$GITHUB_OUTPUT"
-
   # ── 2. Build and push Docker images ──────────────────────────────────────
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    needs: [preflight, terraform-staging]
+    needs: [preflight]
     # merge_group has no pull_request context, so the fork-repo check is
     # skipped for it — merge-queue entries are always same-repo branches per
     # GitHub's merge-queue design, and this repo has no fork-PR contribution
     # pattern in practice (#694).
     if: |
       needs.preflight.outputs.should_run == 'true' &&
-      (github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      (needs.terraform-staging.result == 'success' || needs.terraform-staging.result == 'skipped')
+      (github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
       id-token: write
@@ -292,7 +227,7 @@ jobs:
 
       - name: Resolve Artifact Registry repo
         id: ar
-        run: echo "repo=${{ needs.terraform-staging.outputs.ar_repo }}" >> "$GITHUB_OUTPUT"
+        run: echo "repo=${{ needs.preflight.outputs.ar_repo }}" >> "$GITHUB_OUTPUT"
 
       # No web-image API-URL / Clerk-key resolution: public config is injected at
       # RUNTIME by the Cloud Run web deploy below, not baked into the bundle at build
@@ -358,13 +293,13 @@ jobs:
   # ── 2b. Take the staging environment lock ───────────────────────────────
   # Staging is one shared environment. This run holds it from here until `unlock-staging` runs
   # after the integration tests, so no other run (another PR push, a merge-queue entry, or
-  # deploy.yml after a merge) can redeploy it under this run's tests. On 2026-11-11 a
-  # pull_request run redeployed staging 50s into a merge-queue run's tests, which hung until the
-  # 25m limit (#1208).
+  # deploy.yml after a merge) can apply Terraform to it or redeploy it under this run's tests. On
+  # 2026-11-11 a pull_request run redeployed staging 50s into a merge-queue run's tests, which hung
+  # until the 25m limit (#1208).
   #
   # The lock is a GCS object (scripts/staging-env-lock.py), not a `concurrency:` group, for two
-  # reasons. A group lives on one job, and this critical section is four (lock → deploy-api +
-  # deploy-web in parallel → integration tests). And a group keeps only one pending waiter, so a
+  # reasons. A group lives on one job, and this critical section is five (lock → terraform apply →
+  # deploy-api + deploy-web in parallel → integration tests). And a group keeps only one pending waiter, so a
   # third run cancels the second: the #673 starvation pattern, which a group held for deploy AND
   # tests would make more likely, not less. Waiters on this lock poll until it is free and are never
   # cancelled to make room; merge-queue and post-merge waiters go before pull_request waiters.
@@ -401,6 +336,98 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min "$STAGING_LOCK_TIMEOUT_MIN"
+
+  # ── 2c. Terraform: staging ──────────────────────────────────────────────
+  # Runs under the staging lock, after lock-staging, so this run's apply can't change staging's
+  # Cloud Run services, IAM or networking under another run's tests, and this run's tests run
+  # against the infrastructure this run applied (#1216). Terraform's own state lock only
+  # serializes applies against each other.
+  terraform-staging:
+    name: Terraform (staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [preflight, lock-staging]
+    if: |
+      needs.preflight.outputs.should_run == 'true' &&
+      needs.lock-staging.result == 'success'
+    permissions:
+      contents: read
+      id-token: write
+      actions: read   # staging-env-lock.py asks whether a lock holder's run has completed
+    environment: staging
+    outputs:
+      gke_enabled: ${{ steps.tf-outputs.outputs.gke_enabled }}
+      gke_cluster_name: ${{ steps.tf-outputs.outputs.gke_cluster_name }}
+      cloud_run_api_url: ${{ steps.tf-outputs.outputs.cloud_run_api_url }}
+      cloud_run_web_url: ${{ steps.tf-outputs.outputs.cloud_run_web_url }}
+      kms_key_name: ${{ steps.tf-outputs.outputs.kms_key_name }}
+      api_wi_sa: ${{ steps.tf-outputs.outputs.api_wi_sa }}
+      web_workload_sa: ${{ steps.tf-outputs.outputs.web_workload_sa }}
+      otel_mirror_repo: ${{ steps.tf-outputs.outputs.otel_mirror_repo }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Authenticate to GCP (staging)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
+
+      # Instant on the first attempt: lock-staging already holds the lock for this run id. On
+      # `gh run rerun --failed` it takes a free lock, or fails at once when another run holds
+      # staging, so this apply never runs without the lock (#1216).
+      - name: Hold the staging lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 0
+
+      - name: Terraform setup + init (staging)
+        uses: ./.github/actions/tf-init
+        with:
+          workspace: staging
+          state-bucket: ${{ secrets.TF_STATE_BUCKET }}
+
+      - name: Terraform apply (staging)
+        working-directory: ${{ env.TF_DIR }}
+        # Bounded retry absorbs transient GCP API 5xx / eventual-consistency
+        # during apply (a real staging red-run driver per the #498 diagnosis —
+        # see docs/runbooks/staging-ci-flakiness.md). terraform apply is
+        # re-runnable; a genuine config error fails both attempts and hard-fails.
+        run: |
+          for attempt in 1 2; do
+            if terraform apply -auto-approve \
+                 -var-file=terraform.tfvars.staging \
+                 -var="billing_account=${{ secrets.GCP_BILLING_ACCOUNT }}"; then
+              exit 0
+            fi
+            if [ "${attempt}" -lt 2 ]; then
+              echo "Terraform apply attempt ${attempt} failed; retrying in 20s..."
+              sleep 20
+            fi
+          done
+          echo "::error title=Terraform apply failed::terraform apply (staging) failed on both attempts."
+          exit 1
+
+      - name: Capture Terraform outputs
+        id: tf-outputs
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "gke_enabled=$(terraform output -raw gke_enabled)" >> "$GITHUB_OUTPUT"
+          echo "gke_cluster_name=$(terraform output -raw gke_cluster_name)" >> "$GITHUB_OUTPUT"
+          echo "cloud_run_api_url=$(terraform output -raw cloud_run_api_url)" >> "$GITHUB_OUTPUT"
+          echo "cloud_run_web_url=$(terraform output -raw cloud_run_web_url)" >> "$GITHUB_OUTPUT"
+          echo "kms_key_name=$(terraform output -raw kms_key_name)" >> "$GITHUB_OUTPUT"
+          echo "api_wi_sa=$(terraform output -raw cicd_service_account_email)" >> "$GITHUB_OUTPUT"
+          echo "web_workload_sa=$(terraform output -raw web_workload_sa)" >> "$GITHUB_OUTPUT"
+          echo "otel_mirror_repo=$(terraform output -raw otel_collector_mirror_repo)" >> "$GITHUB_OUTPUT"
+          # build-images pushed to preflight's computed path. Stop before deploying if Terraform
+          # manages a different repository.
+          TF_AR_REPO="$(terraform output -raw artifact_registry_repo)"
+          if [[ "$TF_AR_REPO" != "${{ needs.preflight.outputs.ar_repo }}" ]]; then
+            echo "::error title=Artifact Registry path mismatch::Terraform's artifact_registry_repo is '$TF_AR_REPO', but preflight computed '${{ needs.preflight.outputs.ar_repo }}' and build-images pushed there. Update preflight's ar_repo to match."
+            exit 1
+          fi
 
   # ── 3a. Deploy API (staging) ──────────────────────────────────────────────
   # Split into per-service jobs so they run in parallel within a single PR.
@@ -913,6 +940,11 @@ jobs:
             echo "::error::lock-staging did not succeed (result: $LOCK_RESULT), so this run never deployed staging. Its 'Wait for and take the staging lock' step says why: a 'Staging lock timeout' annotation names the run that held staging past ${STAGING_LOCK_TIMEOUT_MIN}m (re-run the failed jobs once it finishes), and a 'Staging lock error' annotation is a GCS or GitHub API failure (#1208)."
             exit 1
           fi
+          TF_RESULT='${{ needs.terraform-staging.result }}'
+          if [[ "$LOCK_RESULT" == "success" && "$TF_RESULT" != "success" ]]; then
+            echo "::error::terraform-staging did not succeed (result: $TF_RESULT), so this run never deployed staging. Open the Terraform (staging) job: a failed 'Hold the staging lock' step on a re-run of failed jobs means another run held staging, so re-run all jobs (#1216); a failed 'Terraform apply (staging)' step shows the Terraform error."
+            exit 1
+          fi
           if [[ "$DEPLOY_RESULT" != "success" ]]; then
             echo "::error::deploy-api did not succeed (result: $DEPLOY_RESULT). If 'skipped' or 'cancelled', build-images likely failed — check the 'Build & Push Images' job (e.g., Artifact Registry 504 on layer-blob push) and re-run failed jobs if transient. If 'failure', open the Deploy API (staging) job log for the step that errored (commonly GCP auth or the Cloud Run deploy itself)."
             exit 1
@@ -1074,7 +1106,7 @@ jobs:
     name: Unlock staging
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [preflight, lock-staging, deploy-api, deploy-web, staging-integration-tests]
+    needs: [preflight, lock-staging, terraform-staging, deploy-api, deploy-web, staging-integration-tests]
     if: always() && needs.preflight.outputs.should_run == 'true' && needs.lock-staging.result != 'skipped'
     permissions:
       contents: read
@@ -1116,6 +1148,7 @@ jobs:
             const deployApiResult = '${{ needs.deploy-api.result }}';
             const lockResult = '${{ needs.lock-staging.result }}';
             const buildResult = '${{ needs.build-images.result }}';
+            const terraformResult = '${{ needs.terraform-staging.result }}';
             const webUrl = '${{ needs.deploy-web.outputs.web_url }}';
 
             let body;
@@ -1132,6 +1165,8 @@ jobs:
               body = '⚪ **Staging skipped** — `GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER` is not configured.';
             } else if (buildResult === 'success' && lockResult !== 'success') {
               body = `⚠️ **Staging integration tests did not run** — \`lock-staging\` result was \`${lockResult}\`, so this run never deployed staging. In the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}), a "Staging lock timeout" annotation names the run that held staging past ${{ env.STAGING_LOCK_TIMEOUT_MIN }} minutes (re-run failed jobs once it finishes); a "Staging lock error" annotation is a GCS or GitHub API failure (#1208).`;
+            } else if (lockResult === 'success' && terraformResult !== 'success') {
+              body = `⚠️ **Staging integration tests did not run** — \`terraform-staging\` result was \`${terraformResult}\`, so this run never deployed staging. Open the Terraform (staging) job in the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}): a failed "Hold the staging lock" step on a re-run of failed jobs means another run held staging, so re-run all jobs (#1216); otherwise the "Terraform apply (staging)" step shows the error.`;
             } else if (deployApiResult !== 'success') {
               const upstreamHint = (deployApiResult === 'skipped' || deployApiResult === 'cancelled')
                 ? 'likely because `build-images` failed'
