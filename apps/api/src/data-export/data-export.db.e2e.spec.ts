@@ -53,6 +53,7 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
   CustomLift: 'customLifts',
   LiftModification: 'liftModifications',
   LiftModificationMax: 'liftModificationMaxes',
+  MissingMaxDismissal: 'missingMaxDismissals',
   UserSettings: 'userSettings',
   FocusBlock: 'focusBlocks',
   FocusDayState: 'focusDayStates',
@@ -86,6 +87,7 @@ async function cleanUsers(prisma: PrismaClient): Promise<void> {
   await prisma.liftMetadata.deleteMany({ where });
   await prisma.customLift.deleteMany({ where });
   await prisma.liftModification.deleteMany({ where });
+  await prisma.missingMaxDismissal.deleteMany({ where });
   await prisma.userSettings.deleteMany({ where });
   await prisma.focusBlock.deleteMany({ where });
   await prisma.focusDayState.deleteMany({ where });
@@ -164,6 +166,7 @@ async function seedUser(
   await prisma.liftModificationMax.create({
     data: { userId, program: mark, modificationId: modification.id, weight: 185, dateUpdated: DAY },
   });
+  await prisma.missingMaxDismissal.create({ data: { userId, program: mark, liftId: 'romanian-deadlift' } });
   await prisma.userSettings.create({ data: { userId, activeProgram: program } });
   await prisma.focusBlock.create({
     data: {

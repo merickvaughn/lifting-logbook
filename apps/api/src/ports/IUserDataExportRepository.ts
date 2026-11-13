@@ -33,6 +33,8 @@ export interface UserDataRows {
   liftModifications: StoredRow[];
   /** Own maxes of modifications (#1153), across programs. */
   liftModificationMaxes: StoredRow[];
+  /** "Don't ask again" answers on the missing-training-max prompts (#1270), across programs. */
+  missingMaxDismissals: StoredRow[];
   focusBlocks: StoredRow[];
   focusDayStates: StoredRow[];
 }

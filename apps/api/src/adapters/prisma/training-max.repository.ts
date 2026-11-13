@@ -101,4 +101,25 @@ export class PrismaTrainingMaxRepository implements ITrainingMaxRepository {
       where: { userId: this.userId, program },
     });
   }
+
+  async getMissingMaxDismissals(program: string): Promise<string[]> {
+    const rows = await this.prisma.missingMaxDismissal.findMany({
+      where: { userId: this.userId, program },
+      select: { liftId: true },
+    });
+    return rows.map((r) => r.liftId);
+  }
+
+  async dismissMissingMax(program: string, liftId: string): Promise<void> {
+    // `createMany` with `skipDuplicates` is an INSERT … ON CONFLICT DO NOTHING: idempotent, and it
+    // can't abort the request's RLS transaction on a duplicate the way a failed `create` would.
+    await this.prisma.missingMaxDismissal.createMany({
+      data: [{ userId: this.userId, program, liftId }],
+      skipDuplicates: true,
+    });
+  }
+
+  async undismissMissingMax(program: string, liftId: string): Promise<void> {
+    await this.prisma.missingMaxDismissal.deleteMany({ where: { userId: this.userId, program, liftId } });
+  }
 }

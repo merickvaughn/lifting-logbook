@@ -50,6 +50,7 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
       liftMetadata: [],
       liftModifications: [],
       liftModificationMaxes: [],
+      missingMaxDismissals: this.trainingMax.allDismissals(),
       focusBlocks: [],
       focusDayStates: [],
     };

@@ -11,7 +11,7 @@ import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
 
-/** Lifts with logged sets and no training max (#1246, #1269), in-memory adapters. */
+/** Lifts with logged sets and no training max (#1246, #1269) and their dismissals (#1270), in-memory adapters. */
 describe('GET /programs/:program/training-maxes/missing (e2e, in-memory adapters)', () => {
   const PROGRAM = '5-3-1';
   let app: NestFastifyApplication;
@@ -64,7 +64,15 @@ describe('GET /programs/:program/training-maxes/missing (e2e, in-memory adapters
       expect(res.statusCode).toBe(200);
       return res.json<MissingTrainingMaxResponse[]>();
     };
-    return { repos, get };
+    const dismissal = async (method: 'PUT' | 'DELETE', liftId: string, program = PROGRAM) => {
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method,
+        url: `/programs/${program}/training-maxes/missing/${liftId}/dismissal`,
+        headers: { authorization: `Bearer ${user}` },
+      });
+      return res.statusCode;
+    };
+    return { repos, get, dismissal };
   };
 
   it('lists only the lift with no max, with an estimate from its best set', async () => {
@@ -108,5 +116,54 @@ describe('GET /programs/:program/training-maxes/missing (e2e, in-memory adapters
 
     expect(await get('', 'leangains')).toEqual([]);
     expect(await get()).toHaveLength(1);
+  });
+
+  describe('PUT and DELETE /programs/:program/training-maxes/missing/:liftId/dismissal (#1270)', () => {
+    it('marks the lift dismissed, and clears it again', async () => {
+      const { get, dismissal } = await seededUser();
+
+      expect(await dismissal('PUT', 'romanian-deadlift')).toBe(204);
+      expect((await get()).map((m) => m.dismissed)).toEqual([true]);
+
+      expect(await dismissal('DELETE', 'romanian-deadlift')).toBe(204);
+      expect((await get()).map((m) => m.dismissed)).toEqual([false]);
+    });
+
+    it('keys the dismissal by lift id, whatever spelling the path uses', async () => {
+      const { get, dismissal } = await seededUser();
+
+      expect(await dismissal('PUT', 'Romanian%20Deadlift')).toBe(204);
+      expect((await get()).map((m) => m.dismissed)).toEqual([true]);
+      expect(await dismissal('DELETE', 'romanian-deadlift')).toBe(204);
+      expect((await get()).map((m) => m.dismissed)).toEqual([false]);
+    });
+
+    it('answers 204 when repeated', async () => {
+      const { get, dismissal } = await seededUser();
+
+      expect(await dismissal('PUT', 'romanian-deadlift')).toBe(204);
+      expect(await dismissal('PUT', 'romanian-deadlift')).toBe(204);
+      expect((await get()).map((m) => m.dismissed)).toEqual([true]);
+      expect(await dismissal('DELETE', 'romanian-deadlift')).toBe(204);
+      expect(await dismissal('DELETE', 'romanian-deadlift')).toBe(204);
+      expect((await get()).map((m) => m.dismissed)).toEqual([false]);
+    });
+
+    it('leaves the other programs alone', async () => {
+      const { repos, get, dismissal } = await seededUser();
+      await repos.liftRecord.appendLiftRecords('leangains', [record({ program: 'leangains' })]);
+
+      expect(await dismissal('PUT', 'romanian-deadlift', 'leangains')).toBe(204);
+      expect((await get()).map((m) => m.dismissed)).toEqual([false]);
+      expect((await get('', 'leangains')).map((m) => m.dismissed)).toEqual([true]);
+    });
+
+    it('rejects a lift id that is blank or too long', async () => {
+      const { dismissal } = await seededUser();
+
+      expect(await dismissal('PUT', '%20')).toBe(400);
+      // Fastify's default maxParamLength (100) turns this away before the controller sees it.
+      expect(await dismissal('DELETE', 'x'.repeat(101))).toBe(404);
+    });
   });
 });

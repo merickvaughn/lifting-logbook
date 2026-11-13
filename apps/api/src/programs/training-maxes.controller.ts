@@ -1,6 +1,19 @@
-import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Put, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Inject,
+  Param,
+  Patch,
+  Put,
+  Query,
+} from '@nestjs/common';
 import { MissingTrainingMaxResponse, ModificationMaxResponse, TrainingMaxResponse } from '@lifting-logbook/types';
-import { missingMaxCandidate, missingTrainingMaxes, type TrainingMax } from '@lifting-logbook/core';
+import { liftIdFor, missingMaxCandidate, missingTrainingMaxes, type TrainingMax } from '@lifting-logbook/core';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { modificationModesFor } from '../lifts/lift-modification.util';
 import { AuthUser } from '../ports/auth';
@@ -10,6 +23,16 @@ import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { toMissingTrainingMaxResponse, toModificationMaxResponse, toTrainingMaxResponse } from './mappers';
 import { PutModificationMaxDto } from './put-modification-max.dto';
 import { UpdateTrainingMaxesDto } from './update-training-maxes.dto';
+
+/**
+ * The stable id a dismissal is stored under; a 400 for a blank one. Fastify's default
+ * `maxParamLength` (100, the longest lift name `CreateLiftRecordDto` allows) bounds its length.
+ */
+function dismissalLiftId(param: string): string {
+  const trimmed = param.trim();
+  if (trimmed.length === 0) throw new BadRequestException('A lift id must not be blank');
+  return liftIdFor(trimmed);
+}
 
 @Controller('programs/:program')
 export class TrainingMaxesController {
@@ -46,9 +69,38 @@ export class TrainingMaxesController {
     if (candidates.length === 0) return [];
     const records = await repos.liftRecord.getProgramRecordsForLifts(program, candidates);
     const { modes } = await modificationModesFor(repos, records);
+    const dismissed = new Set(await repos.trainingMax.getMissingMaxDismissals(program));
     return missingTrainingMaxes({ trainingMaxes: maxes, records, modificationModes: modes, lifts: wanted }).map((m) =>
-      toMissingTrainingMaxResponse(m, false),
+      toMissingTrainingMaxResponse(m, dismissed.has(m.liftId)),
     );
+  }
+
+  /**
+   * "Don't ask again" for a lift on the missing-max prompts (#1246, #1270): the prompts leave it
+   * out, and settings lists it apart. Keyed by stable id (#1139); a display name is read as the
+   * lift it names. Idempotent.
+   */
+  @Put('training-maxes/missing/:liftId/dismissal')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async dismissMissingMax(
+    @Param('program') program: string,
+    @Param('liftId') liftId: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<void> {
+    const { trainingMax } = await this.factory.forUser(user);
+    await trainingMax.dismissMissingMax(program, dismissalLiftId(liftId));
+  }
+
+  /** "Ask again": clears a lift's dismissal. Idempotent. */
+  @Delete('training-maxes/missing/:liftId/dismissal')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async undismissMissingMax(
+    @Param('program') program: string,
+    @Param('liftId') liftId: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<void> {
+    const { trainingMax } = await this.factory.forUser(user);
+    await trainingMax.undismissMissingMax(program, dismissalLiftId(liftId));
   }
 
   @Patch('training-maxes')
