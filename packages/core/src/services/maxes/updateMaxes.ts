@@ -47,10 +47,14 @@ export interface UpdateMaxesOptions {
   /**
    * The `maxMode` of each modification the records name, by id (#1152). An id it doesn't have
    * reads as `none`, the default, so a set whose modifications are unknown moves no max.
+   * Required, so a caller can't leave it out and read every modified set as `none` (#1243).
    */
-  modificationModes?: ReadonlyMap<string, LiftModificationMaxMode>;
-  /** The program's own maxes, which sets with an `own` modification move (#1153). */
-  modificationMaxes?: readonly ModificationMax[];
+  modificationModes: ReadonlyMap<string, LiftModificationMaxMode>;
+  /**
+   * The program's own maxes, which sets with an `own` modification move (#1153). Required, so a
+   * caller can't leave it out and have an `own` set start that max over, unflagged (#1243).
+   */
+  modificationMaxes: readonly ModificationMax[];
 }
 
 /**
@@ -60,10 +64,10 @@ export interface UpdateMaxesOptions {
  */
 function targetOf(
   record: LiftRecord,
-  modes: ReadonlyMap<string, LiftModificationMaxMode> | undefined,
+  modes: ReadonlyMap<string, LiftModificationMaxMode>,
 ): 'none' | 'lift' | { own: string } {
   const ids = record.modifications ?? [];
-  const modeOf = (id: string) => modes?.get(id) ?? 'none';
+  const modeOf = (id: string) => modes.get(id) ?? 'none';
   if (ids.some((id) => modeOf(id) === 'none')) return 'none';
   const own = ids.find((id) => modeOf(id) === 'own');
   return own === undefined ? 'lift' : { own };
@@ -195,7 +199,7 @@ export function updateMaxes(
   // A set with an `own` modification moves that modification's max under the same gates, and needs
   // no lift max (#1153). With no own max yet, its first qualifying set creates one.
   const ownMaxes = new Map<string, ModificationMax>(
-    (options.modificationMaxes ?? []).map((m) => [m.modificationId, { ...m }]),
+    options.modificationMaxes.map((m) => [m.modificationId, { ...m }]),
   );
   const ownSets = liftRecords.flatMap((r) => {
     const target = r.occurrence ? undefined : targetOf(r, options.modificationModes);
