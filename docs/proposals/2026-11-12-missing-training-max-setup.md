@@ -45,9 +45,11 @@ progresses by its resolved type once it has a max.
 - **Source.** The lift's sets logged in the 8 weeks up to its most recent logged set.
 - **Calculation.** The set with the highest estimated 1RM, using `estimateOneRepMax` (Brzycki, the
   formula onboarding uses). The training max is 90% of that estimate.
-- **Rounding.** Floored to the plate increment, per
+- **Rounding.** The same calculation as onboarding's "Estimate from a recent lift"
+  (`OnboardingFlow.tsx`): `floorToIncrement(estimateOneRepMax(weight, reps) * 0.9)`, with the
+  default increment `ESTIMATE_FLOOR_INCREMENT`. It floors, per
   [`docs/standards/training-max-precision.md`](../standards/training-max-precision.md) (a
-  formula-derived estimate floors).
+  formula-derived estimate floors), so 100 × 5 gives 100.
 - **Exclusions.** Sets with zero weight or more than `MAX_ESTIMATE_REPS` reps don't count.
 - **No usable set.** The input starts empty, and the lifter types a value.
 
@@ -68,7 +70,9 @@ progress it normally.
   - An optional `lifts` query parameter narrows the list to the lifts a finished workout logged.
 - **A dismissal table**, one row per user, program and lift, with forced row-level security like
   the other per-user tables:
-  - `PUT /programs/:program/training-maxes/missing/:lift/dismissal` sets "Don't ask again";
+  - `PUT /programs/:program/training-maxes/missing/:liftId/dismissal` sets "Don't ask again". The
+    path and the stored row use the lift's stable id
+    ([#1139](https://github.com/merickvaughn/lifting-logbook/issues/1139)), not its display name;
   - `DELETE` on the same path clears it ("Ask again").
 
 ### Screens
@@ -80,7 +84,7 @@ is non-empty.
 Lifts without a training max
 These lifts have logged sets but no training max, so progression skips them.
 
-  Romanian Deadlift   12 sets, last on 3 Nov   [ 92.5 ] kg   [Set up]  [Don't ask again]
+  Romanian Deadlift   12 sets, last on 3 Nov   [ 100  ] kg   [Set up]  [Don't ask again]
                       Estimated from 100 kg × 5 on 3 Nov
   Farmer's Carry      4 sets, last on 28 Oct   [      ] kg   [Set up]  [Don't ask again]
                       No set to estimate from: enter a training max
@@ -100,7 +104,7 @@ to every row left unanswered. Closing the dialog does the same.
 │ don't have one yet. Until they do, they plan at 0 and don't │
 │ progress.                                                   │
 │                                                             │
-│ Romanian Deadlift  [ 92.5 ] kg   [Set up] [Don't ask again] │
+│ Romanian Deadlift  [ 100  ] kg   [Set up] [Don't ask again] │
 │                    Estimated from 100 kg × 5 today          │
 │                                                             │
 │                                  [Not now]   [Set up all]   │
@@ -126,8 +130,9 @@ plain explanation with no Set up action.
 
 ### Accessibility
 
-- The dialog is a native `<dialog>` opened modally. Focus starts on the first weight input and
-  returns to **Finish workout**'s position after it closes.
+- The dialog is a native `<dialog>` opened modally. Focus starts on the first weight input. Every
+  way of closing it (**Set up all**, **Not now**, Esc) navigates to the dashboard, so focus moves
+  with the navigation.
 - Each weight input is labelled with its lift, and each estimate line is tied to its input with
   `aria-describedby`.
 - Buttons carry visible text, with no icon-only controls.
