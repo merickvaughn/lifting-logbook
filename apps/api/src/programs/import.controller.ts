@@ -61,7 +61,7 @@ import {
   toLiftHistoryRecord,
   isLiftRecordExport,
 } from '@lifting-logbook/core';
-import type { SpreadsheetCell } from '@lifting-logbook/core';
+import type { LiftImportOptions, SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
 import { randomUUID } from 'crypto';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -73,12 +73,12 @@ import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context
 import { PrismaService } from '../adapters/prisma/prisma.service';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
+import { CustomProgramsRepository } from '../custom-programs/custom-programs.repository';
 import { IMPORT_HANDLERS } from './import-handlers';
 import {
   assignImportDate,
   assignProgramOptions,
   assignResponse,
-  customKnownPrograms,
   importAssignEnabled,
   splitMaxCounts,
 } from './import-assign';
@@ -593,7 +593,9 @@ export class ImportController {
   /**
    * Re-parses the file and applies the user's choices, giving the rows a commit writes
    * (400 on validation errors). The commit and the dry run both start here, so the dry
-   * run's counts describe the same rows (#1123).
+   * run's counts describe the same rows (#1123). So does `mode=assign` (#1253), with
+   * `assign`: a lift-records file needn't number its macrocycles or workouts, and its rows
+   * with a blank date are left out and counted in `undated`.
    */
   private async resolveCommitRows(
     destination: ImportKind,
@@ -602,13 +604,15 @@ export class ImportController {
     excludeKeys: Set<string>,
     liftOverrides: Record<string, string>,
     splitDest: boolean,
+    options: LiftImportOptions = {},
   ): Promise<CommitRows> {
     // Parse before any transforms: liftOverrides must remap before strict validation
     // because the strict validator rejects unknown-lift rows outright.
     const handler = IMPORT_HANDLERS[destination]!;
+    const assign = options.assign === true && destination === 'lift-records';
     let parsed: unknown[];
     try {
-      parsed = handler.parse(table);
+      parsed = assign ? parseLiftRecords(table, { assign }) : handler.parse(table);
     } catch (err) {
       throw new BadRequestException({ message: `Could not parse file: ${(err as Error).message}` });
     }
@@ -652,8 +656,27 @@ export class ImportController {
     // records each kept row's original 1-based position before filtering;
     // errors are remapped back to it after validation runs, so a failed
     // commit still points at the right CSV line.
-    const { kept, originalIndexes: survivingRowOriginalIndexes } = excludeRowsByIndex(parsed, excludeKeys);
-    parsed = kept;
+    let survivingRowOriginalIndexes: number[] | null = null;
+    if (excludeKeys.size > 0) {
+      const excludedRowIndexes = new Set(
+        [...excludeKeys]
+          .map((k) => /^__(?:ambiguous|incomplete|row)_(\d+)$/.exec(k)?.[1])
+          .filter((s): s is string => s !== undefined)
+          .map(Number),
+      );
+      if (excludedRowIndexes.size > 0) {
+        const kept: unknown[] = [];
+        const originalIndexes: number[] = [];
+        parsed.forEach((r, i) => {
+          const originalRowIndex = i + 1;
+          if (excludedRowIndexes.has(originalRowIndex)) return;
+          kept.push(r);
+          originalIndexes.push(originalRowIndex);
+        });
+        parsed = kept;
+        survivingRowOriginalIndexes = originalIndexes;
+      }
+    }
 
     // Strict validation (with overrides applied). Lift-records, training-maxes, and
     // strength-goals each get a custom-lift-aware slot map built fresh per request
@@ -666,8 +689,11 @@ export class ImportController {
     // unconditionally) to satisfy the ImportHandler<T> interface program-spec still uses.
     let rawValid: unknown[];
     let errors: ImportError[];
+    let undated = 0;
     if (destination === 'lift-records') {
-      ({ valid: rawValid, errors } = validateLiftImport(parsed as LiftRecord[], await effectiveSlotMapFor(repos)));
+      const result = validateLiftImport(parsed as LiftRecord[], await effectiveSlotMapFor(repos), { assign });
+      ({ valid: rawValid, errors } = result);
+      undated = result.undated.length;
     } else if (destination === 'training-maxes') {
       ({ valid: rawValid, errors } = validateTrainingMaxImport(parsed as TrainingMax[], await effectiveSlotMapFor(repos)));
     } else if (destination === 'strength-goals') {
@@ -676,7 +702,15 @@ export class ImportController {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
       ({ valid: rawValid, errors } = handler.validate(parsed as any));
     }
-    if (errors.length > 0) throw validationFailed(errors, survivingRowOriginalIndexes);
+    if (errors.length > 0) {
+      const originalIndexes = survivingRowOriginalIndexes;
+      throw new BadRequestException({
+        message: 'Validation failed',
+        errors: originalIndexes
+          ? errors.map((e) => ({ ...e, row: originalIndexes[e.row - 1] ?? e.row }))
+          : errors,
+      });
+    }
     let valid: unknown[] = rawValid;
 
     // Filter excluded keys. Only a tab opened before #1123 still sends these.
@@ -694,16 +728,15 @@ export class ImportController {
     // For splitDest, partition before committing to avoid double-writing 1RM rows as lift-records
     if (destination === 'lift-records' && splitDest) {
       const { liftRecords, trainingMaxes } = splitLiftRecordsByDestination(valid as LiftRecord[]);
-      return { rows: liftRecords, splitMaxes: trainingMaxes };
+      return { rows: liftRecords, splitMaxes: trainingMaxes, undated };
     }
-    return { rows: valid, splitMaxes: [] };
+    return { rows: valid, splitMaxes: [], undated };
   }
 
   /**
    * `mode=assign` (#1253): the rules' grouping of the file into suggested macrocycles, after
-   * Review's lift overrides and exclusions (proposal decision 16). It validates as the commit
-   * does, except that the file needn't number its macrocycles or workouts and a row with no
-   * date is left out and counted. Nothing is written.
+   * Review's lift overrides and exclusions (proposal decision 16). Its rows are the commit's
+   * (`resolveCommitRows` with `assign`). Nothing is written.
    */
   private async assign(
     program: string,
@@ -714,33 +747,24 @@ export class ImportController {
   ): Promise<ImportAssignResponse> {
     const started = Date.now();
     const importDate = assignImportDate(choices.today);
-    let parsed: LiftRecord[];
-    try {
-      parsed = parseLiftRecords(table, { assign: true });
-    } catch (err) {
-      throw new BadRequestException({ message: `Could not parse file: ${(err as Error).message}` });
-    }
-    if (parsed.length > MAX_IMPORT_ROWS) {
-      throw new BadRequestException({
-        message: `Import exceeds the ${MAX_IMPORT_ROWS.toLocaleString()}-row limit. Split the file into smaller batches.`,
-      });
-    }
-    // Overrides key off positions before exclusion, as in resolveCommitRows.
-    const { kept, originalIndexes } = excludeRowsByIndex(
-      withLiftOverrides(parsed, choices.liftOverrides),
-      choices.excludeKeys,
-    );
-    const { valid, errors, undated } = validateLiftImport(kept, await effectiveSlotMapFor(repos), { assign: true });
-    if (errors.length > 0) throw validationFailed(errors, originalIndexes);
-
     // An export isn't split: its sets are sets, whatever their notes say (decision 22).
     const exported = isLiftRecordExport(table[0] ?? []);
     const split = choices.splitDest && !exported;
-    const { liftRecords, trainingMaxes } = split
-      ? splitLiftRecordsByDestination(valid)
-      : { liftRecords: valid, trainingMaxes: [] };
+    const { rows, splitMaxes, undated } = await this.resolveCommitRows(
+      'lift-records',
+      table,
+      repos,
+      choices.excludeKeys,
+      choices.liftOverrides,
+      split,
+      { assign: true },
+    );
+    const liftRecords = rows as LiftRecord[];
 
-    const customPrograms = await customKnownPrograms(this.prisma?.clientForRequest(), userId);
+    // Custom programs are Prisma-only, so with no database there are none.
+    const customPrograms = this.prisma
+      ? await new CustomProgramsRepository(this.prisma.clientForRequest(), userId).listKnownPrograms()
+      : [];
     const segmented = segmentLiftHistory(liftRecords.map(toLiftHistoryRecord), {
       importDate,
       sourceProgram: program,
@@ -750,10 +774,10 @@ export class ImportController {
       segmented,
       {
         importDate,
-        undatedRows: undated.length,
+        undatedRows: undated,
         exported,
         programs: assignProgramOptions(customPrograms),
-        ...(split ? { split: await splitMaxCounts(trainingMaxes, segmented.stretches, program, repos) } : {}),
+        ...(split ? { split: await splitMaxCounts(splitMaxes, segmented.stretches, program, repos) } : {}),
       },
       await liftNamesFor(repos),
     );
@@ -761,7 +785,7 @@ export class ImportController {
     // Counts only: rows, lift names and notes are the lifter's data (proposal Observability).
     this.logger.log(
       {
-        rows: kept.length,
+        rows: liftRecords.length + splitMaxes.length + undated,
         sessions: response.sessions,
         stretches: response.stretches.length,
         unmatchedStretches: response.stretches.filter((s) => !s.matched).length,
@@ -911,38 +935,6 @@ function withLiftOverrides<R extends { lift: unknown }>(rows: R[], liftOverrides
 }
 
 /**
- * Drops the rows Review excluded by position: `__row_<n>`, and the legacy `__ambiguous_<n>` and
- * `__incomplete_<n>` a tab opened before #1123 sends. `originalIndexes` holds each kept row's
- * 1-based position before filtering, so validation errors can name the right CSV line; it's
- * null when nothing was dropped.
- */
-function excludeRowsByIndex<R>(rows: R[], excludeKeys: Set<string>): { kept: R[]; originalIndexes: number[] | null } {
-  const excludedRowIndexes = new Set(
-    [...excludeKeys]
-      .map((k) => /^__(?:ambiguous|incomplete|row)_(\d+)$/.exec(k)?.[1])
-      .filter((s): s is string => s !== undefined)
-      .map(Number),
-  );
-  if (excludedRowIndexes.size === 0) return { kept: rows, originalIndexes: null };
-  const kept: R[] = [];
-  const originalIndexes: number[] = [];
-  rows.forEach((r, i) => {
-    if (excludedRowIndexes.has(i + 1)) return;
-    kept.push(r);
-    originalIndexes.push(i + 1);
-  });
-  return { kept, originalIndexes };
-}
-
-/** A 400 for validation errors, each `row` mapped back to its position before exclusion. */
-function validationFailed(errors: ImportError[], originalIndexes: number[] | null): BadRequestException {
-  return new BadRequestException({
-    message: 'Validation failed',
-    errors: originalIndexes ? errors.map((e) => ({ ...e, row: originalIndexes[e.row - 1] ?? e.row })) : errors,
-  });
-}
-
-/**
  * Overrides naming no known lift. A goal row's own lift may be free text, but an override is a
  * lift the user picked, so one that's gone was deleted after the Keep. Stored, its goal would sit
  * under an id nothing resolves (#1169). `row` is the row's position before any exclusions.
@@ -965,7 +957,8 @@ async function unrecognizedGoalOverrides(
 }
 
 /** The rows a commit writes: to its destination, and 1RM rows split off to training maxes. */
-type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[] };
+/** `undated`: with `assign`, how many rows were left out for a blank date (#1253). */
+type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[]; undated: number };
 
 function previewCounts(preview: ImportPreview): ImportWriteResult {
   return { created: preview.creates, updated: preview.updates, skipped: preview.skips };

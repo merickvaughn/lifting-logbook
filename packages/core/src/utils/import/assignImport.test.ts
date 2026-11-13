@@ -1,8 +1,8 @@
 import { DEFAULT_SLOT_MAP } from '../../catalog/slotMaps';
 import type { LiftRecord } from '../../models';
 import { fuzzyColumnMapper } from '../mapper/fuzzyColumnMapper';
-import { parseLiftRecords } from '../parser/parseLiftRecords';
-import { buildLiftRecordsPreviewSoft } from './buildImportPreview';
+import { parseLiftRecords, type ParsedLiftRecord } from '../parser/parseLiftRecords';
+import { buildLiftRecordsPreviewSoft, liftRecordLabel } from './buildImportPreview';
 import { isLiftRecordExport, toLiftHistoryRecord } from './liftHistoryRows';
 import { validateLiftImport } from './validateLiftImport';
 import { validateLiftImportSoft } from './validateLiftImportSoft';
@@ -12,7 +12,7 @@ import { validateLiftImportSoft } from './validateLiftImportSoft';
 // A slot the default map resolves.
 const KNOWN_LIFT = 'Squat';
 
-function record(overrides: Partial<LiftRecord> = {}): LiftRecord {
+function record(overrides: Partial<ParsedLiftRecord> = {}): ParsedLiftRecord {
   return {
     program: 'rpt',
     macrocycleNum: 1,
@@ -27,8 +27,13 @@ function record(overrides: Partial<LiftRecord> = {}): LiftRecord {
   };
 }
 
-const noNumbers = { macrocycleNum: NaN, workoutNum: NaN };
-const noDate = { date: new Date(NaN) };
+// Blank cells, as `parseLiftRecords(table, { assign: true })` gives them.
+const noNumbers: Partial<ParsedLiftRecord> = {
+  macrocycleNum: NaN,
+  workoutNum: NaN,
+  blankFields: ['macrocycleNum', 'workoutNum'],
+};
+const noDate: Partial<ParsedLiftRecord> = { date: new Date(NaN), blankFields: ['date'] };
 
 describe('parseLiftRecords with assign', () => {
   const table = [
@@ -38,10 +43,28 @@ describe('parseLiftRecords with assign', () => {
   ];
 
   it('reads a blank macrocycle or workout number as NaN, and a real 0 as 0', () => {
-    expect(parseLiftRecords(table, { assign: true })).toEqual([
-      expect.objectContaining({ macrocycleNum: NaN, workoutNum: NaN }),
-      expect.objectContaining({ macrocycleNum: 0, workoutNum: 3 }),
-    ]);
+    const [blank, numbered] = parseLiftRecords(table, { assign: true });
+    expect(blank).toMatchObject({ macrocycleNum: NaN, workoutNum: NaN, blankFields: ['macrocycleNum', 'workoutNum'] });
+    expect(numbered).toMatchObject({ macrocycleNum: 0, workoutNum: 3 });
+    expect(numbered).not.toHaveProperty('blankFields');
+  });
+
+  it('names a blank or missing date, but not one it could not read', () => {
+    const dates = [
+      ['Date', 'Lift', 'Weight', 'Reps'],
+      ['', 'Squat', '100', '5'],
+      ['n/a', 'Squat', '100', '5'],
+    ];
+    const [blank, unreadable] = parseLiftRecords(dates, { assign: true });
+    // No number columns at all: missing, so blank too.
+    expect(blank?.blankFields).toEqual(['macrocycleNum', 'workoutNum', 'date']);
+    expect(unreadable?.blankFields).toEqual(['macrocycleNum', 'workoutNum']);
+  });
+
+  it('does not count an unreadable number as blank', () => {
+    const [row] = parseLiftRecords([['Cycle #', 'Workout #', 'Date'], ['abc', '3a', '2026-01-05']], { assign: true });
+    expect(row).toMatchObject({ macrocycleNum: NaN, workoutNum: NaN });
+    expect(row).not.toHaveProperty('blankFields');
   });
 
   it('leaves other blank numbers as they were', () => {
@@ -88,6 +111,13 @@ describe('validateLiftImport with assign', () => {
     expect(errors.map((e) => [e.row, e.code])).toEqual([[2, 'WEIGHT_INVALID']]);
   });
 
+  it('still rejects a number or date it could not read', () => {
+    const unreadable = record({ macrocycleNum: NaN, workoutNum: NaN, date: new Date(NaN) });
+    const { errors, undated } = validateLiftImport([unreadable], DEFAULT_SLOT_MAP, { assign: true });
+    expect(errors.map((e) => e.code).sort()).toEqual(['DATE_INVALID', 'MACROCYCLE_NUM_INVALID', 'WORKOUT_NUM_INVALID']);
+    expect(undated).toEqual([]);
+  });
+
   it('still rejects a macrocycle number out of range', () => {
     const { errors } = validateLiftImport([record({ macrocycleNum: 5000 })], DEFAULT_SLOT_MAP, { assign: true });
     expect(errors.map((e) => e.code)).toEqual(['MACROCYCLE_NUM_INVALID']);
@@ -104,7 +134,7 @@ describe('validateLiftImportSoft and the preview with assign', () => {
   it('accepts a row with no numbers, and lists a row with no date as undated rather than incomplete', () => {
     const result = validateLiftImportSoft([record(noNumbers), record(noDate)], DEFAULT_SLOT_MAP, { assign: true });
     expect(result.validRows.map((r) => r.rowIndex)).toEqual([1]);
-    expect(result.undated?.map((r) => r.rowIndex)).toEqual([2]);
+    expect(result.undated.map((r) => r.rowIndex)).toEqual([2]);
     expect(result.incomplete).toEqual([]);
 
     const preview = buildLiftRecordsPreviewSoft(result, [], new Map());
@@ -115,10 +145,23 @@ describe('validateLiftImportSoft and the preview with assign', () => {
     expect([preview.creates, preview.skips, preview.unresolved]).toEqual([1, 0, 0]);
   });
 
-  it('without it, both rows are incomplete and there is no undated bucket', () => {
+  it('holds an unreadable number or date at the incomplete-row gate', () => {
+    const unreadable = record({ workoutNum: NaN, date: new Date(NaN) });
+    const result = validateLiftImportSoft([unreadable], DEFAULT_SLOT_MAP, { assign: true });
+    expect(result.incomplete.map((r) => r.errors.map((e) => e.code).sort())).toEqual([['DATE_INVALID', 'WORKOUT_NUM_INVALID']]);
+    expect(result.undated).toEqual([]);
+  });
+
+  it('without it, both rows are incomplete and none is undated', () => {
     const result = validateLiftImportSoft([record(noNumbers), record(noDate)], DEFAULT_SLOT_MAP);
     expect(result.incomplete.map((r) => r.rowIndex)).toEqual([1, 2]);
-    expect(result.undated).toBeUndefined();
+    expect(result.undated).toEqual([]);
+  });
+
+  it('labels a row with no numbers without them', () => {
+    expect(liftRecordLabel(record(noNumbers), new Map())).toBe(`${KNOWN_LIFT} · set 1 (20260105)`);
+    expect(liftRecordLabel(record({ workoutNum: NaN }), new Map())).toBe(`${KNOWN_LIFT} · macrocycle 1 set 1 (20260105)`);
+    expect(liftRecordLabel(record(), new Map())).toBe(`${KNOWN_LIFT} · macrocycle 1 workout 1 set 1 (20260105)`);
   });
 });
 

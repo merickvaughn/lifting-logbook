@@ -183,6 +183,11 @@ describe('Import Assign step (#1253, e2e, in-memory adapters)', () => {
         ['rpt', day(0), day(22), 12, 'abandoned'],
         ['rpt', day(lastDay - 4), day(lastDay), 3, 'in-progress'],
       ]);
+      const every2 = (from: number, count: number) => Array.from({ length: count }, (_, i) => day(from + i * 2));
+      expect(body.stretches.map((s) => s.sessions.map((x) => x.date))).toEqual([
+        every2(0, 12),
+        every2(lastDay - 4, 3),
+      ]);
       const [first, second] = body.stretches;
       expect(first?.matched).toBe(true);
       expect(first?.expectedWorkouts).toBe(24);

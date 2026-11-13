@@ -28,7 +28,16 @@ type LiftNames = ReadonlyMap<string, string>;
 
 /** A lift-records row as a person reads it, on the Review and Done steps. */
 export function liftRecordLabel(r: LiftRecord, liftNames: LiftNames): string {
-  return `${liftNames.get(r.lift) ?? r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+  return rowLabel(liftNames.get(r.lift) ?? r.lift, r);
+}
+
+/**
+ * `<lift> · macrocycle M workout W set S (date)`. A number the file doesn't give, which only
+ * the Assign step allows (#1253), is left out rather than shown as `NaN`.
+ */
+function rowLabel(lift: string, r: LiftRecord): string {
+  const numbered = (name: string, n: number) => (Number.isFinite(n) ? `${name} ${n} ` : '');
+  return `${lift} · ${numbered('macrocycle', r.macrocycleNum)}${numbered('workout', r.workoutNum)}set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
 }
 
 function tally(deltas: ImportDelta[]): ImportPreview {
@@ -151,7 +160,7 @@ export function buildLiftRecordsPreviewSoft(
 
   // Rows with no date, under the Assign step (#1253): left out of the import, so they write
   // nothing. Listed so Review can show them, and so the lifter can exclude them.
-  for (const { rowIndex } of softResult.undated ?? []) {
+  for (const { rowIndex } of softResult.undated) {
     deltas.push({ key: `__undated_${rowIndex}`, label: `Row ${rowIndex} (no date)`, kind: 'skip', status: 'undated', rowIndex });
   }
 
@@ -159,7 +168,7 @@ export function buildLiftRecordsPreviewSoft(
   for (const { record: r, rowIndex, originalLift } of softResult.ambiguous) {
     const key = `__ambiguous_${rowIndex}`;
     const value = `${r.weight} × ${r.reps}`;
-    const label = `${originalLift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+    const label = rowLabel(originalLift, r);
     deltas.push({
       key,
       label,

@@ -1,5 +1,6 @@
 import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import { LiftRecord } from '../../models';
+import type { AssignBlankField, ParsedLiftRecord } from '../parser/parseLiftRecords';
 
 /**
  * The highest macrocycle number a file may carry: the bound `POST lift-records` already
@@ -49,6 +50,14 @@ export function hasNoDate(r: Pick<LiftRecord, 'date'>): boolean {
 }
 
 /**
+ * With {@link LiftImportOptions.assign}, whether the file left this field blank: the Assign
+ * step reads it as "not given". A cell that isn't blank but can't be read is still an error.
+ */
+export function assignBlank(r: ParsedLiftRecord, field: AssignBlankField, options: LiftImportOptions): boolean {
+  return options.assign === true && (r.blankFields?.includes(field) ?? false);
+}
+
+/**
  * Validates an array of parsed LiftRecord rows against the provided slot map and
  * collects all errors before returning (all-or-nothing semantics).
  *
@@ -60,7 +69,7 @@ export function hasNoDate(r: Pick<LiftRecord, 'date'>): boolean {
  * its display name instead (issue #1116), and an alias stays as written (issue #947).
  */
 export function validateLiftImport(
-  records: LiftRecord[],
+  records: ParsedLiftRecord[],
   slotMap: Readonly<Record<string, string>>,
   options: LiftImportOptions = {},
 ): LiftImportValidationResult {
@@ -72,15 +81,15 @@ export function validateLiftImport(
     const row = i + 1;
     const rowErrors: ImportError[] = [];
 
-    if (options.assign && hasNoDate(r)) {
+    if (assignBlank(r, 'date', options)) {
       undated.push(r);
       return;
     }
-    if (isNaN(r.macrocycleNum) && !options.assign)
+    if (isNaN(r.macrocycleNum) && !assignBlank(r, 'macrocycleNum', options))
       rowErrors.push({ row, field: 'macrocycleNum', code: 'MACROCYCLE_NUM_INVALID', message: 'Macrocycle # is not a number' });
     const outOfRange = fileMacrocycleNumError(row, r.macrocycleNum);
     if (outOfRange) rowErrors.push(outOfRange);
-    if (isNaN(r.workoutNum) && !options.assign)
+    if (isNaN(r.workoutNum) && !assignBlank(r, 'workoutNum', options))
       rowErrors.push({ row, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'Workout # is not a number' });
     if (isNaN(r.setNum))
       rowErrors.push({ row, field: 'setNum', code: 'SET_NUM_INVALID', message: 'Set # is not a number' });

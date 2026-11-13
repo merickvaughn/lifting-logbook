@@ -7,8 +7,6 @@ import {
 } from '@lifting-logbook/types';
 import {
   BUILT_IN_KNOWN_PROGRAMS,
-  knownProgramFromSpec,
-  latestTrainingMaxFirst,
   toUTCMidnight,
   type HistorySession,
   type HistoryStretch,
@@ -17,12 +15,15 @@ import {
   type SegmentedLiftHistory,
   type TrainingMax,
 } from '@lifting-logbook/core';
-import type { PrismaExecutor } from '../adapters/prisma/prisma-tx.util';
 import type { RepositoryBundle } from '../ports/factory';
 
 /**
  * Whether the import wizard's Assign step is on (#1253, proposal Rollout step 2). Off unless
  * `IMPORT_ASSIGN_ENABLED` is `true`, and read per request so a test can set it.
+ *
+ * Leave it off until all of #1173 has merged. It already relaxes the preview (no number
+ * columns needed, rows with no date counted), but until #1254 the commit still requires
+ * them, so today's wizard would pass a file at Review that it can't import.
  */
 export function importAssignEnabled(): boolean {
   return process.env.IMPORT_ASSIGN_ENABLED === 'true';
@@ -44,24 +45,6 @@ export function assignImportDate(today: string | undefined, now: Date = new Date
     throw new BadRequestException(`today ${today} is more than a day from the server's date. Check your device's clock.`);
   }
   return day;
-}
-
-/**
- * The lifter's custom programs, named, for `segmentLiftHistory` (#1172: a custom program
- * needs its name so a `Program` cell can name it). Custom programs exist only with a
- * database, so with none there are none.
- */
-export async function customKnownPrograms(db: PrismaExecutor | undefined, userId: string): Promise<KnownProgram[]> {
-  if (!db) return [];
-  const rows = await db.customProgram.findMany({
-    where: { userId },
-    select: {
-      id: true,
-      name: true,
-      specs: { select: { week: true, offset: true, lift: true, wtDecrementPct: true } },
-    },
-  });
-  return rows.map((r) => ({ ...knownProgramFromSpec(r.id, r.specs), name: r.name }));
 }
 
 /** The programs a stretch can be given, built-ins first. */
@@ -88,11 +71,14 @@ export async function splitMaxCounts(
   const programOf = (date: Date) =>
     stretches.find((s) => s.startDate.getTime() <= date.getTime() && date.getTime() <= s.endDate.getTime())?.program ??
     sourceProgram;
+  // The newest row for each program and lift. Rows dated the same day keep the first in the
+  // file, as `latestTrainingMaxFirst` does for the commit.
   const newest = new Map<string, { program: string; max: TrainingMax }>();
-  for (const max of latestTrainingMaxFirst(splitMaxes)) {
+  for (const max of splitMaxes) {
     const program = programOf(max.dateUpdated);
     const key = `${program}|${max.lift}`;
-    if (!newest.has(key)) newest.set(key, { program, max });
+    const kept = newest.get(key);
+    if (!kept || max.dateUpdated.getTime() > kept.max.dateUpdated.getTime()) newest.set(key, { program, max });
   }
 
   const current = new Map<string, Map<string, TrainingMax>>();
