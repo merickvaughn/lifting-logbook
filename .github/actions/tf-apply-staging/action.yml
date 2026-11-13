@@ -1,0 +1,92 @@
+name: Terraform apply (staging)
+description: >-
+  Run the bounded-retry staging `terraform apply`, capture the outputs the staging deploys use,
+  and stop if Terraform's Artifact Registry repository isn't the one build-images pushed to.
+  Shared by staging.yml's terraform-staging job and deploy.yml's deploy-staging job (#1266), so a
+  fix to the apply or the mismatch check can't land in one workflow and not the other.
+
+  Run it after tf-init (workspace: staging) and after the calling job holds the staging lock:
+  a staging apply changes Cloud Run services, IAM and networking under any run's tests (#1216).
+  scripts/test_staging_terraform_under_lock.py checks that order, reading this file's steps.
+  GCP authentication stays in the calling job, as with tf-init.
+
+inputs:
+  billing-account:
+    description: The GCP billing account Terraform needs. Pass the GCP_BILLING_ACCOUNT secret value.
+    required: true
+  expected-ar-repo:
+    description: >-
+      The Artifact Registry path build-images pushed to (preflight's ar_repo). The action fails
+      when Terraform's artifact_registry_repo output differs from it.
+    required: true
+  tf-dir:
+    description: Directory containing the Terraform root module, already initialized by tf-init.
+    required: false
+    default: infra/terraform
+
+outputs:
+  gke_enabled:
+    value: ${{ steps.tf-outputs.outputs.gke_enabled }}
+  gke_cluster_name:
+    value: ${{ steps.tf-outputs.outputs.gke_cluster_name }}
+  cloud_run_api_url:
+    value: ${{ steps.tf-outputs.outputs.cloud_run_api_url }}
+  cloud_run_web_url:
+    value: ${{ steps.tf-outputs.outputs.cloud_run_web_url }}
+  kms_key_name:
+    value: ${{ steps.tf-outputs.outputs.kms_key_name }}
+  api_wi_sa:
+    value: ${{ steps.tf-outputs.outputs.api_wi_sa }}
+  web_workload_sa:
+    value: ${{ steps.tf-outputs.outputs.web_workload_sa }}
+  otel_mirror_repo:
+    value: ${{ steps.tf-outputs.outputs.otel_mirror_repo }}
+
+runs:
+  using: composite
+  steps:
+    - name: Terraform apply (staging)
+      shell: bash
+      working-directory: ${{ inputs.tf-dir }}
+      env:
+        BILLING_ACCOUNT: ${{ inputs.billing-account }}
+      # Bounded retry absorbs transient GCP API 5xx / eventual-consistency during apply (a real
+      # staging red-run driver per the #498 diagnosis, docs/runbooks/staging-ci-flakiness.md).
+      # terraform apply is re-runnable; a genuine config error fails both attempts and hard-fails.
+      run: |
+        for attempt in 1 2; do
+          if terraform apply -auto-approve \
+               -var-file=terraform.tfvars.staging \
+               -var="billing_account=${BILLING_ACCOUNT}"; then
+            exit 0
+          fi
+          if [ "${attempt}" -lt 2 ]; then
+            echo "Terraform apply attempt ${attempt} failed; retrying in 20s..."
+            sleep 20
+          fi
+        done
+        echo "::error title=Terraform apply failed::terraform apply (staging) failed on both attempts."
+        exit 1
+
+    - name: Capture Terraform outputs
+      id: tf-outputs
+      shell: bash
+      working-directory: ${{ inputs.tf-dir }}
+      env:
+        EXPECTED_AR_REPO: ${{ inputs.expected-ar-repo }}
+      run: |
+        echo "gke_enabled=$(terraform output -raw gke_enabled)" >> "$GITHUB_OUTPUT"
+        echo "gke_cluster_name=$(terraform output -raw gke_cluster_name)" >> "$GITHUB_OUTPUT"
+        echo "cloud_run_api_url=$(terraform output -raw cloud_run_api_url)" >> "$GITHUB_OUTPUT"
+        echo "cloud_run_web_url=$(terraform output -raw cloud_run_web_url)" >> "$GITHUB_OUTPUT"
+        echo "kms_key_name=$(terraform output -raw kms_key_name)" >> "$GITHUB_OUTPUT"
+        echo "api_wi_sa=$(terraform output -raw cicd_service_account_email)" >> "$GITHUB_OUTPUT"
+        echo "web_workload_sa=$(terraform output -raw web_workload_sa)" >> "$GITHUB_OUTPUT"
+        echo "otel_mirror_repo=$(terraform output -raw otel_collector_mirror_repo)" >> "$GITHUB_OUTPUT"
+        # build-images pushed to preflight's computed path. Stop before deploying if Terraform
+        # manages a different repository.
+        TF_AR_REPO="$(terraform output -raw artifact_registry_repo)"
+        if [[ "$TF_AR_REPO" != "$EXPECTED_AR_REPO" ]]; then
+          echo "::error title=Artifact Registry path mismatch::Terraform's artifact_registry_repo is '$TF_AR_REPO', but preflight computed '$EXPECTED_AR_REPO' and build-images pushed there. Update preflight's ar_repo to match."
+          exit 1
+        fi

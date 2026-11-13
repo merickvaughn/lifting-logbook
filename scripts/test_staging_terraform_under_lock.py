@@ -148,6 +148,7 @@ def violations(workflow):
 
 
 real_step_commands = step_commands
+SHARED_APPLY = "./.github/actions/tf-apply-staging"
 
 
 class StagingApplyUnderLockTests(unittest.TestCase):
@@ -241,6 +242,15 @@ class StagingApplyUnderLockTests(unittest.TestCase):
             found, problems = violations(wf)
         self.assertIn("preflight", found)
         self.assertTrue(any(job == "preflight" for job, _ in problems), problems)
+
+    def test_both_workflows_apply_staging_through_the_shared_action(self):
+        """#1266: one copy of the staging apply, so a fix can't reach one workflow and miss the other."""
+        for name, job in (("staging.yml", "terraform-staging"), ("deploy.yml", "deploy-staging")):
+            applies = [s for s in load(name)["jobs"][job]["steps"] if is_apply(s)]
+            self.assertEqual([s.get("uses") for s in applies], [SHARED_APPLY], name)
+            self.assertEqual(applies[0].get("id"), "tf-outputs", f"{name}: the job reads steps.tf-outputs")
+        # The action captures the outputs and runs the Artifact Registry check, not the callers.
+        self.assertIn("artifact_registry_repo", real_step_commands({"uses": SHARED_APPLY}))
 
     def test_every_terraform_apply_in_staging_yml_is_checked(self):
         """staging.yml only targets staging, so every apply in it must be one this test checks."""
