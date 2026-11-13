@@ -175,6 +175,18 @@ describe('NonCycleWorkout (#1184)', () => {
     await waitFor(() => expect(fetchNonCycleReference).toHaveBeenCalledWith('5-3-1', 'Zercher squat'));
   });
 
+  it('hides the reference line once the lift field names another lift', async () => {
+    const user = userEvent.setup();
+    (fetchNonCycleReference as jest.Mock).mockResolvedValue({ lift: 'Squat', reference: { trainingMax: 205, previous: null } });
+    renderWorkout(null);
+    const lift = screen.getByLabelText('Lift');
+
+    await user.type(lift, 'Squat');
+    expect(await screen.findByText('Training max 205 lbs.')).toBeInTheDocument();
+    await user.type(lift, ' jumps');
+    expect(screen.queryByText('Training max 205 lbs.')).not.toBeInTheDocument();
+  });
+
   it('shows the reference line for the lift in the preferred unit', async () => {
     (fetchNonCycleReference as jest.Mock).mockResolvedValue({
       lift: 'Squat',

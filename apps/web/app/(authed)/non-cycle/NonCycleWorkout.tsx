@@ -201,7 +201,10 @@ export default function NonCycleWorkout({ program, catalog, unit, workout: initi
             ))}
           </datalist>
         </label>
-        <p className={styles.reference} aria-live="polite">{reference}</p>
+        <p className={styles.reference} aria-live="polite">
+          {/* Only while the field still names the lift it was looked up for. */}
+          {lift.trim() === referenceLift.trim() ? reference : ''}
+        </p>
         <div className={styles.row}>
           <label className={styles.field}>
             <span>Weight (lbs)</span>
