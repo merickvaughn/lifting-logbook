@@ -15,6 +15,14 @@ export interface IFocusRepository {
   listBlocks(): Promise<FocusBlock[]>;
   getBlock(id: string): Promise<FocusBlock | null>;
   /**
+   * Locks the user's listed blocks until the request's transaction ends, waiting for any
+   * write in progress on them, and returns them as stored once locked, in id order. A block
+   * the user doesn't have, or that was deleted meanwhile, is left out. A caller that writes a
+   * block's pool computed from its current pool reads it here, so no other request's write
+   * lands between that read and the write (ADR-039, Amendment 5).
+   */
+  lockBlocks(ids: readonly string[]): Promise<FocusBlock[]>;
+  /**
    * Stores a block under the caller-assigned `id`. Throws `FocusBlockConflictError` when the
    * series already has a block starting on the same date.
    */

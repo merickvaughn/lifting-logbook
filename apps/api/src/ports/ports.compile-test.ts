@@ -267,6 +267,7 @@ const _liftModificationRepo: ILiftModificationRepository = {
 const _focusRepo: IFocusRepository = {
   listBlocks: () => Promise.resolve([]),
   getBlock: () => Promise.resolve(null),
+  lockBlocks: () => Promise.resolve([]),
   createBlock: (block) => Promise.resolve(block),
   createBlocksIfAbsent: (): Promise<void> => Promise.resolve(),
   updateBlock: (id) => Promise.reject(new Error(id)),

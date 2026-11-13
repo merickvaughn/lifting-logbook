@@ -13,7 +13,7 @@ export type PrismaExecutor = PrismaClient | Prisma.TransactionClient;
  * The base client can start transactions; Prisma's interactive transaction client cannot
  * (it exposes no `$transaction`). This is the runtime discriminator between the two.
  */
-function canStartTransaction(client: PrismaExecutor): client is PrismaClient {
+export function canStartTransaction(client: PrismaExecutor): client is PrismaClient {
   return typeof (client as PrismaClient).$transaction === 'function';
 }
 

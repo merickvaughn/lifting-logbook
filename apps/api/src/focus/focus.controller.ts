@@ -162,7 +162,10 @@ export class FocusController {
     if (dto.onEnd !== undefined) patch.onEnd = dto.onEnd;
     if (dto.nextArea !== undefined) patch.nextArea = dto.nextArea;
     if (dto.pool !== undefined) patch.pool = dto.pool.map((entry) => ({ ...entry }));
-    const before = await focus.getBlock(id);
+    // Locked, so a pool written from it on a workout's plan read can't land between this read
+    // and the update, which `withoutStaleLastReps` and the successor carry both compare
+    // against (ADR-039, Amendment 5). Not the user's: updateBlock gives the 404.
+    const [before] = await focus.lockBlocks([id]);
     if (before && patch.pool) patch.pool = withoutStaleLastReps(before.pool, patch.pool);
     const updated = await focus.updateBlock(id, patch);
     if (before) await carryEditsToSuccessor(focus, before, updated, today);

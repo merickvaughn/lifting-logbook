@@ -102,10 +102,14 @@ export async function carryEditsToSuccessor(
   today: string,
 ): Promise<void> {
   const start = nextStart(before);
-  const successor = (await focus.listBlocks()).find(
-    (block) =>
-      block.id !== after.id && block.series === after.series && block.start === start && blockStatus(block, today) === 'queued',
-  );
+  const isSuccessor = (block: FocusBlock) =>
+    block.id !== after.id && block.series === after.series && block.start === start && blockStatus(block, today) === 'queued';
+  const listed = (await focus.listBlocks()).find(isSuccessor);
+  if (!listed) return;
+  // Read again under its row lock: the patch below is computed from the successor's current
+  // values, so an edit to it saved in another request must land first, not be overwritten
+  // (ADR-039, Amendment 5). Gone by now (declined in another tab): nothing to carry into.
+  const [successor] = (await focus.lockBlocks([listed.id])).filter(isSuccessor);
   if (!successor) return;
 
   const patch: FocusBlockPatch = {};
@@ -135,8 +139,9 @@ export async function carryEditsToSuccessor(
   try {
     await focus.updateBlock(successor.id, patch);
   } catch (e) {
-    // Deleted since it was listed (declined in another tab): nothing left to carry into,
-    // and the block's own edit is already saved.
+    // The lock lasts only as long as a transaction, and a repository on the base client has
+    // none: deleted since it was read (declined in another tab), there is nothing left to
+    // carry into, and the block's own edit is already saved.
     if (!(e instanceof FocusBlockNotFoundError)) throw e;
   }
 }
@@ -178,12 +183,24 @@ export async function recordFocusSessions(
     await repos.liftRecord.getRecordsForLifts([...poolLifts, ...nameById.keys()], parseIsoDate(today), parseIsoDate(from))
   ).map((record) => ({ ...record, lift: nameById.get(record.lift) ?? record.lift }));
 
-  const updated = new Map<string, FocusBlock>();
-  for (const block of doubles) {
-    const pool = recordLastSessions(block, records, today);
-    if (pool) updated.set(block.id, await repos.focus.updateBlock(block.id, { pool }));
+  // Only blocks with a session to record are written, and only those are locked, so a plan
+  // read with nothing new doesn't wait on other requests.
+  const due = doubles.filter((block) => recordLastSessions(block, records, today) !== null);
+  if (due.length === 0) return blocks;
+
+  // The pool written is computed from the block's current pool, so it's read again under the
+  // row lock: a setup edit saved since `blocks` was read lands first and is kept (ADR-039,
+  // Amendment 5). A lift that edit added has no records read here, and is recorded on the
+  // next plan read. Each block read again replaces its older copy in what's returned.
+  const current = new Map<string, FocusBlock>();
+  for (const block of await repos.focus.lockBlocks(due.map((block) => block.id))) {
+    const pool =
+      block.progression === 'double' && blockStatus(block, today) === 'active'
+        ? recordLastSessions(block, records, today)
+        : null;
+    current.set(block.id, pool ? await repos.focus.updateBlock(block.id, { pool }) : block);
   }
-  return blocks.map((block) => updated.get(block.id) ?? block);
+  return blocks.map((block) => current.get(block.id) ?? block);
 }
 
 export interface FocusWorkoutContext {

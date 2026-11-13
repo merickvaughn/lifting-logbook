@@ -16,8 +16,11 @@ import {
 } from '@lifting-logbook/types';
 import { FocusBlockPatch, IFocusRepository } from '../../ports/IFocusRepository';
 import { FocusBlockConflictError, FocusBlockNotFoundError } from '../../ports/errors';
-import { PrismaExecutor, runBatch } from './prisma-tx.util';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
+import { PrismaExecutor, canStartTransaction, runBatch } from './prisma-tx.util';
 import { parseFocusDayState, parseFocusPool, parseFocusTimer } from './focus-json';
+
+const tracer = trace.getTracer('prisma-focus-repository');
 
 interface FocusBlockRow {
   id: string;
@@ -93,6 +96,39 @@ export class PrismaFocusRepository implements IFocusRepository {
     // user's block wherever RLS is not in force.
     const row = await this.prisma.focusBlock.findFirst({ where: { id, userId: this.userId } });
     return row ? toFocusBlock(row) : null;
+  }
+
+  async lockBlocks(ids: readonly string[]): Promise<FocusBlock[]> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return [];
+    // Raw SQL isn't auto-traced (ADR-024), hence the manual span. Row locks taken in id order,
+    // so two requests locking overlapping sets can't deadlock on each other. They last until
+    // the request's transaction (RlsInterceptor) ends; on the base client there is none, and
+    // the lock ends with its statement, which `lock.in_transaction` records.
+    return tracer.startActiveSpan('focus.lock_blocks', async (span) => {
+      try {
+        span.setAttribute('lock.in_transaction', !canStartTransaction(this.prisma));
+        span.setAttribute('lock.requested', unique.length);
+        const locked = await this.prisma.$queryRaw<{ id: string }[]>`
+          SELECT "id" FROM "focus_block"
+          WHERE "userId" = ${this.userId} AND "id" IN (${Prisma.join(unique)})
+          ORDER BY "id"
+          FOR UPDATE`;
+        span.setAttribute('lock.acquired', locked.length);
+        if (locked.length === 0) return [];
+        // A new statement, so under READ COMMITTED it reads what the lock waited for.
+        const rows = await this.prisma.focusBlock.findMany({
+          where: { userId: this.userId, id: { in: locked.map((row) => row.id) } },
+          orderBy: { id: 'asc' },
+        });
+        return rows.map(toFocusBlock);
+      } catch (e) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: e instanceof Error ? e.message : String(e) });
+        throw e;
+      } finally {
+        span.end();
+      }
+    });
   }
 
   async createBlock(block: FocusBlock): Promise<FocusBlock> {
