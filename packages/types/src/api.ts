@@ -1054,6 +1054,12 @@ export interface LiftModificationResponse {
 }
 
 /**
+ * Response of GET /lifts/modifications/by-lift: each lift's modifications, keyed by the name it was
+ * asked under, so two spellings of one lift each get the same entries (#1242).
+ */
+export type LiftModificationsByLiftResponse = Record<string, LiftModificationResponse[]>;
+
+/**
  * A modification as a logged set names it. It carries the name so an archived modification is
  * still named on the sets that used it, though the list no longer shows it.
  */

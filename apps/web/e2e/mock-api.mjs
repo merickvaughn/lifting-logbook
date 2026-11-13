@@ -803,6 +803,13 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // GET /lifts/modifications/by-lift?lift=&lift= — every lift's at once, keyed by the name asked
+  // (#1242), which is how the logger loads them. Like the single form, each lift lists every one.
+  if (method === 'GET' && url.pathname === '/lifts/modifications/by-lift') {
+    json(res, Object.fromEntries(url.searchParams.getAll('lift').map((lift) => [lift, state.liftModifications])));
+    return;
+  }
+
   // -------------------------------------------------------------------------
   // POST /lifts/modifications — the logger's inline Add; 409 on a duplicate name (#1152)
   // -------------------------------------------------------------------------
