@@ -3,6 +3,7 @@ import 'server-only';
 import {
   currentMaxLookup,
   isSameLift,
+  lookupByLift,
   lookupLift,
   resolveProgression,
   storedLiftProgression,
@@ -13,16 +14,19 @@ import type {
   TrainingMaxResponse,
   WorkoutResponse,
 } from '@lifting-logbook/types';
-import { fetchCustomLifts, fetchLiftMetadata, fetchLiftRecords, fetchUserSettings } from '@/lib/api';
+import { getUserSettings } from '@/lib/active-program';
+import { fetchAllLiftMetadata, fetchCustomLifts, fetchLiftRecords } from '@/lib/api';
 import type { ProgressionPlan } from '@/lib/workoutPlan';
 import { effectiveDateOf } from '@/lib/workoutStatus';
+
+const PAGE = '[WorkoutLoggingPage]';
 
 /**
  * The lift's latest session in `records` before `workout`: another workout dated on or before it.
  * Its date and each set's reps, by set number. Only a lift's first occurrence in a workout counts,
  * as in `updateMaxes`.
  */
-export function lastSessionOf(
+function lastSessionOf(
   lift: string,
   workout: { workoutNum: number; date: string },
   records: readonly LiftRecordResponse[],
@@ -42,11 +46,16 @@ export function lastSessionOf(
 /**
  * Each of a workout's lifts' progression plan for the logger (#1211), index-aligned with
  * `workout.lifts`. A lift's type, range and increment resolve from its spec row, then its own
- * value, the lifter's default and the catalog's (`resolveProgression`). The lifter's settings
- * are read only when some lift's row names no type, and the macrocycle's records only when some
- * lift is on `double`, which plans from its last session.
+ * value, the lifter's default and the catalog's (`resolveProgression`), finding its own value with
+ * `lookupByLift` as `updateMaxes` does. The lifter's settings are read only when some lift's row
+ * names no type, and the macrocycle's records only when some lift is on `double`, which plans from
+ * its last session.
  *
- * A failed read plans every lift by its row, as before #1211, and says so in the console.
+ * A lift with no spec row that the workout already logged keeps its logged sets as they are, with
+ * no plan, so a finished workout stays read-only.
+ *
+ * Each read fails on its own and says which in the console: without settings a lift resolves from
+ * its row and the catalog, and without records a `double` lift plans as right after a bump.
  */
 export async function loadProgressionPlans(
   program: string,
@@ -54,42 +63,52 @@ export async function loadProgressionPlans(
   liftSpecs: readonly (LiftingProgramSpecResponse | undefined)[],
   maxes: readonly Pick<TrainingMaxResponse, 'lift' | 'weight' | 'dateUpdated'>[],
 ): Promise<(ProgressionPlan | undefined)[]> {
-  try {
-    const unnamed = workout.lifts.filter((_, i) => !liftSpecs[i]?.progression).map((wl) => wl.lift);
-    const lifts = [...new Set(unnamed)];
-    const [settings, customLifts, metas] =
-      lifts.length > 0
-        ? await Promise.all([fetchUserSettings(), fetchCustomLifts(), Promise.all(lifts.map((l) => fetchLiftMetadata(l)))])
-        : [null, [], []];
-    const metaFor = new Map(lifts.map((l, i) => [l, metas[i]]));
+  const needsSettings = workout.lifts.some((_, i) => !liftSpecs[i]?.progression);
+  const settings = needsSettings
+    ? await Promise.all([getUserSettings(), fetchCustomLifts(), fetchAllLiftMetadata()]).then(
+        ([user, customLifts, metas]) => ({ user, customLifts, metaFor: lookupByLift(metas.map((m) => [m.lift, m] as const)) }),
+        // fallback-covered-by: apps/web/app/(authed)/macrocycle/[macrocycleNum]/workout/[workoutNum]/page.test.tsx
+        (err: unknown) => {
+          console.error(`${PAGE} progression settings read failed, planning each lift by its row and the catalog`, err);
+          return null;
+        },
+      )
+    : null;
 
-    const resolved = workout.lifts.map((wl, i) => {
-      const meta = metaFor.get(wl.lift);
-      // A custom lift named like a catalog one means the custom lift, which has no catalog default.
-      const { builtIn, custom } = lookupLift(wl.lift, customLifts);
-      const progression = resolveProgression(
-        liftSpecs[i],
-        meta && storedLiftProgression(meta),
-        settings?.defaultProgression,
-        custom ? undefined : builtIn,
-        settings?.defaultWeightIncrement,
-      );
-      return { lift: wl.lift, progression };
-    });
+  const lifts = workout.lifts.map((wl, i) => {
+    const spec = liftSpecs[i];
+    // A custom lift named like a catalog one means the custom lift, which has no catalog default.
+    const { builtIn, custom } = lookupLift(wl.lift, settings?.customLifts ?? []);
+    const meta = settings?.metaFor(wl.lift);
+    const { type, repsLow, repsHigh, increment } = resolveProgression(
+      spec,
+      meta && storedLiftProgression(meta),
+      settings?.user.defaultProgression,
+      custom ? undefined : builtIn,
+      settings?.user.defaultWeightIncrement,
+    );
+    return { wl, spec, rule: { type, repsLow, repsHigh, increment } };
+  });
 
-    const records = resolved.some((r) => r.progression.type === 'double') ? await fetchLiftRecords(program) : [];
-    const maxFor = currentMaxLookup(maxes);
-    return resolved.map(({ lift, progression }) => {
-      const lastSession = lastSessionOf(lift, { workoutNum: workout.workoutNum, date: effectiveDateOf(workout) }, records);
-      const maxDate = maxFor(lift)?.dateUpdated;
-      return {
-        progression,
-        ...(maxDate !== undefined && { maxDate }),
-        ...(lastSession && { lastSession }),
-      };
-    });
-  } catch (err) {
-    console.error('[WorkoutLoggingPage] progression read failed, planning every lift by its spec row', err);
-    return workout.lifts.map(() => undefined);
-  }
+  // fallback-covered-by: apps/web/app/(authed)/macrocycle/[macrocycleNum]/workout/[workoutNum]/page.test.tsx
+  const records = lifts.some(({ rule }) => rule.type === 'double')
+    ? await fetchLiftRecords(program).catch(
+        (err: unknown) => {
+          console.error(`${PAGE} lift records read failed, planning double lifts without their last session`, err);
+          return [];
+        },
+      )
+    : [];
+  const maxFor = currentMaxLookup(maxes);
+  const date = effectiveDateOf(workout);
+  return lifts.map(({ wl, spec, rule }) => {
+    if (!spec && !wl.planned && wl.sets.length > 0) return undefined;
+    const lastSession = rule.type === 'double' ? lastSessionOf(wl.lift, { workoutNum: workout.workoutNum, date }, records) : undefined;
+    const maxDate = maxFor(wl.lift)?.dateUpdated;
+    return {
+      rule,
+      ...(maxDate !== undefined && { maxDate }),
+      ...(lastSession && { lastSession }),
+    };
+  });
 }

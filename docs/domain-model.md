@@ -428,7 +428,7 @@ In a training week the type comes from `resolveProgression`
 | `amrap_gated` | If set 1 met the target, `weight + increment`. Every built-in row's type |
 | `linear` | If every set of the session met the target (at least the row's `sets` of them), set 1's `weight + increment` |
 | `double` | As `linear`, with the target the top of the range |
-| `percent_wave` | No set moves it. Once per wave, `TM + increment`: on the lift's last set in the spec's last week of each pass through the spec's weeks. Off-program, once when `startNewMacrocycle` runs |
+| `percent_wave` | No set moves it. Once per wave, `TM + increment`: in the last spec week that plans the lift, once per pass through the spec's weeks, when the max is older than that week's first set. A test week ending the wave sets the max by its attempt instead. Off-program, once when `startNewMacrocycle` runs |
 | `manual` | Never |
 
 The target is the row's `reps` inside a program and the resolved `repsHigh` off it; the increment

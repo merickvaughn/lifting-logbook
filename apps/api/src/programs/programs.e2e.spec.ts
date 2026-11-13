@@ -1163,6 +1163,27 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(body.foundational).toBe(true);
     });
 
+    it('GET /lifts/metadata lists every stored lift, and only the caller\'s (#1211)', async () => {
+      await patchJson('/lifts/Cable%20Curl/metadata', { progression: 'double', repsLow: 8, repsHigh: 12 });
+      const res = await get('/lifts/metadata');
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as { lift: string; progression: string | null; repsLow: number | null }[];
+      expect(body.map((m) => m.lift).sort()).toEqual(['Cable Curl', 'Deadlift', 'Squat']);
+      expect(body.find((m) => m.lift === 'Cable Curl')).toMatchObject({ progression: 'double', repsLow: 8 });
+
+      const bob = await app
+        .getHttpAdapter()
+        .getInstance()
+        .inject({ method: 'GET', url: '/lifts/metadata', headers: AS_BOB });
+      expect(bob.statusCode).toBe(200);
+      expect(bob.json()).toEqual([]);
+    });
+
+    it('GET /lifts/metadata requires auth', async () => {
+      const res = await app.getHttpAdapter().getInstance().inject({ method: 'GET', url: '/lifts/metadata' });
+      expect(res.statusCode).toBe(401);
+    });
+
     it('user isolation: User B gets empty defaults when User A has metadata', async () => {
       const res = await app
         .getHttpAdapter()

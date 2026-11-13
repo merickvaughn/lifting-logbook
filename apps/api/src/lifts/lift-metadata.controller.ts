@@ -46,6 +46,16 @@ export class LiftMetadataController {
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
   ) {}
 
+  /**
+   * Every lift the lifter has stored metadata for (#1211). The workout logger reads it once and
+   * finds a lift's row with `lookupByLift`, as `updateMaxes` does, so both cross spellings alike.
+   */
+  @Get('metadata')
+  async listMetadata(@CurrentUser() user: AuthUser): Promise<LiftMetadataResponse[]> {
+    const { liftMetadata } = await this.factory.forUser(user);
+    return (await liftMetadata.listMetadata()).map(toResponse);
+  }
+
   @Get(':lift/metadata')
   async getMetadata(
     @Param('lift') lift: string,

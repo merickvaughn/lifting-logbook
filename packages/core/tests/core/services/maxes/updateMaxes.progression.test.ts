@@ -209,6 +209,37 @@ describe("updateMaxes — progression type per lift (#1211)", () => {
         const firstPass = updateMaxes(spec, [max("Overhead Press", 100)], records.slice(0, 9), { ...BASE, program: "5-3-1" });
         expect(firstPass.maxes).toEqual([max("Overhead Press", 102.5, "2026-02-09")]);
       });
+
+      it("moves once when recalculated midway through the last week and again after it", () => {
+        // Two days a week, so the last week is workouts 5 and 6.
+        const spec = [1, 2, 3].flatMap((week) => [0, 1].map((offset) => ({ ...wave(week), offset })));
+        const monday = session("Overhead Press", 5, "2026-01-19", 90, [5, 3, 1]);
+        const wednesday = session("Overhead Press", 6, "2026-01-21", 90, [5, 3, 1]);
+        const midweek = updateMaxes(spec, [max("Overhead Press", 100)], monday, BASE);
+        expect(midweek.maxes).toEqual([max("Overhead Press", 102.5, "2026-01-19")]);
+
+        expect(updateMaxes(spec, midweek.maxes, [...monday, ...wednesday], BASE).maxes).toEqual(midweek.maxes);
+        expect(updateMaxes(spec, [max("Overhead Press", 100)], [...monday, ...wednesday], BASE).maxes).toEqual([
+          max("Overhead Press", 102.5, "2026-01-21"),
+        ]);
+      });
+
+      it("ends the wave on the last week that plans the lift", () => {
+        // Week 4 is a deload that leaves Overhead Press out.
+        const spec = [wave(1), wave(2), wave(3), row("Squat", { week: 4, weekType: "deload" })];
+        const records = session("Overhead Press", 3, "2026-01-19", 90, [5, 3, 1]);
+        expect(updateMaxes(spec, [max("Overhead Press", 100)], records, BASE).maxes).toEqual([
+          max("Overhead Press", 102.5, "2026-01-19"),
+        ]);
+      });
+
+      it("sets the max by a test week that ends the wave, without adding the increment", () => {
+        const spec = [wave(1), wave(2), { ...wave(3), weekType: "test" as const }];
+        const records = session("Overhead Press", 3, "2026-01-19", 105, [3, 2, 1]);
+        expect(updateMaxes(spec, [max("Overhead Press", 100)], records, BASE).maxes).toEqual([
+          max("Overhead Press", 105, "2026-01-19"),
+        ]);
+      });
     });
   });
 

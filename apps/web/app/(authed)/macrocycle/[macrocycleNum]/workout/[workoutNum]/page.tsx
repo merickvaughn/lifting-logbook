@@ -94,9 +94,7 @@ export default async function WorkoutLoggingPage({
 
   const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
-  // What each lift plans by besides its row: its progression type and last session (#1211). A
-  // failed read plans every lift by its row.
-  // fallback-covered-by: apps/web/app/(authed)/macrocycle/[macrocycleNum]/workout/[workoutNum]/page.test.tsx
+  // What each lift plans by besides its row: its progression type and last session (#1211).
   const progressions = await loadProgressionPlans(program, workout, liftSpecs, maxes);
 
   const workoutLifts: LiftData[] = workout.lifts.map((wl, liftIndex) => {
@@ -113,7 +111,7 @@ export default async function WorkoutLoggingPage({
     // Its progression type shapes it here too: a `double` lift plans its range, and a lift
     // with no row on `linear` or `amrap_gated` plans its `repsHigh` (#1211).
     const progression = progressions[liftIndex];
-    const { warmUpSets, workSets } = liftSets(planLift(spec, tm, undefined, progression));
+    const { warmUpSets, workSets } = liftSets(planLift(spec, tm, { progression }));
 
     // `planned: false` is the API's contract for "these sets are logged records".
     // Each brings its own record id and notes (issue #978), so the page no longer

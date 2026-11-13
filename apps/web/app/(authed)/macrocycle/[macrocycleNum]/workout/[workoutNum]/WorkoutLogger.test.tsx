@@ -1023,6 +1023,35 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
       expect(warmUp()).toBe('100 lbs × 5');
     });
 
+    it("re-plans a double lift's reps to the bottom of its range from an own max (#1211)", async () => {
+      const user = userEvent.setup();
+      mockFetchLiftModifications.mockResolvedValue([WIDE]);
+      // Before the lift's bump it repeats last session's 12, 11; the own max has no session to beat.
+      const doubleLift = makeLift({
+        warmUpSets: [{ reps: 5, totalLoad: 100 }],
+        workingSets: [
+          { setNum: 1, totalLoad: 200, reps: 12, amrap: false },
+          { setNum: 2, totalLoad: 200, reps: 11, amrap: false },
+        ],
+        plan: {
+          spec: { ...SPEC, reps: 12, repsLow: 8, progression: 'double' },
+          liftMax: 200,
+          progression: {
+            rule: { type: 'double', repsLow: 8, repsHigh: 12, increment: 5 },
+            maxDate: '2026-01-01T00:00:00.000Z',
+            lastSession: { date: '2026-01-05', reps: [12, 11] },
+          },
+        },
+      });
+      render(<WorkoutLogger {...makeProps({ lifts: [doubleLift], ownMaxes: { 'm-wide': 150 } })} />);
+      const reps = () => screen.getAllByLabelText('Reps').map((i) => (i as HTMLInputElement).value);
+      expect(reps()).toEqual(['12', '11']);
+
+      await user.click(await screen.findByRole('button', { name: 'Wide grip', pressed: false }));
+      expect(weights()).toEqual(['150', '150']);
+      expect(reps()).toEqual(['8', '8']);
+    });
+
     it('logs the re-planned weight', async () => {
       const user = userEvent.setup();
       mockFetchLiftModifications.mockResolvedValue([WIDE]);

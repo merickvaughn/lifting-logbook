@@ -151,15 +151,16 @@ export function computePlannedSets(
  * its max last moved, and its last session. Without it a lift plans by its row, as before.
  */
 export interface ProgressionPlan {
-  progression: Pick<ResolvedProgression, 'type' | 'repsLow' | 'repsHigh' | 'increment'>;
+  /** The lift's resolved type, rep range and increment (`resolveProgression`). */
+  rule: Pick<ResolvedProgression, 'type' | 'repsLow' | 'repsHigh' | 'increment'>;
   /** When the lift's max last moved: `TrainingMaxResponse.dateUpdated`. */
   maxDate?: string;
-  /** The lift's latest session before this workout: its date and each set's reps, by set number. */
+  /** A `double` lift's latest session before this workout: its date and each set's reps, by set number. */
   lastSession?: { date: string; reps: number[] };
 }
 
-/** How many sets a lift with no spec row plans when it has no last session to copy the count from. */
-export const OFF_PROGRAM_SETS = 3;
+/** How many sets a lift with no spec row plans, unless a `double` lift copies its last session's count. */
+const OFF_PROGRAM_SETS = 3;
 
 /** `count` working sets at one weight, numbered from 1, after `warmUps`. */
 function flatSets(warmUps: PlannedSet[], count: number, weight: number, repsFor: (i: number) => number): PlannedSet[] {
@@ -175,20 +176,27 @@ function flatSets(warmUps: PlannedSet[], count: number, weight: number, repsFor:
 /**
  * A `double` lift's plan (#1211): every set at the max, which is the working weight. Right after a
  * bump (the max moved on or after the last session, or there is no last session) it plans the
- * bottom of the range; otherwise each set repeats last session's reps, to beat them.
+ * bottom of the range; otherwise each set repeats last session's reps, to beat them. From an own
+ * max it plans the bottom: the lift's last session and max date don't say when that max moved.
  */
-function planDouble(spec: LiftingProgramSpecResponse | undefined, max: number, plan: ProgressionPlan): PlannedSet[] {
-  const { repsLow, repsHigh, increment } = plan.progression;
-  const top = spec?.reps ?? repsHigh;
-  const bottom = repsLow ?? top;
-  if (bottom === null || (!spec && max <= 0)) return spec ? computePlannedSets(spec, max) : [];
+function planDouble(
+  spec: LiftingProgramSpecResponse | undefined,
+  max: number,
+  plan: ProgressionPlan,
+  fromOwnMax: boolean,
+): PlannedSet[] {
+  const { repsLow, repsHigh, increment } = plan.rule;
+  // In a program the row's reps are the top; off it, the lift's `repsHigh`.
+  const bottom = repsLow ?? spec?.reps ?? repsHigh;
+  if (bottom === null || (!spec && max <= 0)) return [];
   const last = plan.lastSession;
   const day = (date: string) => date.slice(0, 10);
-  const lastReps = last && !(plan.maxDate !== undefined && day(plan.maxDate) >= day(last.date)) ? last.reps : [];
+  const bumped = plan.maxDate !== undefined && last !== undefined && day(plan.maxDate) >= day(last.date);
+  const lastReps = last && !bumped && !fromOwnMax ? last.reps : [];
   const warmUps = spec ? computePlannedSets(spec, max).filter((s) => s.type === 'warmup') : [];
   const count = spec?.sets ?? (last?.reps.length || OFF_PROGRAM_SETS);
-  const weight = MROUND(max, spec?.increment ?? increment);
-  return flatSets(warmUps, count, weight, (i) => lastReps[i] ?? bottom);
+  // The resolved increment is the row's inside a program.
+  return flatSets(warmUps, count, MROUND(max, increment), (i) => lastReps[i] ?? bottom);
 }
 
 /**
@@ -199,24 +207,22 @@ function planDouble(spec: LiftingProgramSpecResponse | undefined, max: number, p
  *
  * Only the logger passes a `progression` (#1211), which plans by the lift's type: a `double` lift
  * plans its range ({@link planDouble}), and a lift with no spec row on `linear` or `amrap_gated`
- * plans its `repsHigh` at its max, as many sets as its last session or {@link OFF_PROGRAM_SETS}.
- * Every other lift with a row plans the row. With no spec row and nothing else to go by (an added
- * lift, or a focus lift) it plans nothing.
+ * plans {@link OFF_PROGRAM_SETS} sets of its `repsHigh` at its max. Every other lift with a row
+ * plans the row. With no spec row and nothing else to go by (an added lift, or a focus lift) it
+ * plans nothing.
  */
 export function planLift(
   spec: LiftingProgramSpecResponse | undefined,
   liftMax: number,
-  ownMax?: number,
-  progression?: ProgressionPlan,
+  { ownMax, progression }: { ownMax?: number; progression?: ProgressionPlan } = {},
 ): PlannedSet[] {
   const max = ownMax ?? liftMax;
-  const type = progression?.progression.type;
-  if (progression && type === 'double') return planDouble(spec, max, progression);
+  const rule = progression?.rule;
+  if (progression && rule?.type === 'double') return planDouble(spec, max, progression, ownMax !== undefined);
   if (spec) return computePlannedSets(spec, max);
-  const repsHigh = progression?.progression.repsHigh;
-  if (progression && (type === 'linear' || type === 'amrap_gated') && repsHigh != null && max > 0) {
-    const count = progression.lastSession?.reps.length || OFF_PROGRAM_SETS;
-    return flatSets([], count, MROUND(max, progression.progression.increment), () => repsHigh);
+  const repsHigh = rule?.repsHigh;
+  if (rule && (rule.type === 'linear' || rule.type === 'amrap_gated') && repsHigh != null && max > 0) {
+    return flatSets([], OFF_PROGRAM_SETS, MROUND(max, rule.increment), () => repsHigh);
   }
   return [];
 }

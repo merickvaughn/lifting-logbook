@@ -101,6 +101,7 @@ export const {
   deleteStrengthGoal,
   fetchLiftCatalog,
   fetchLiftMetadata,
+  fetchAllLiftMetadata,
   fetchCustomLifts,
   fetchUserSettings,
   updateUserSettings,

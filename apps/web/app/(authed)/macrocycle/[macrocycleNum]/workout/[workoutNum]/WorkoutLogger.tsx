@@ -434,6 +434,12 @@ function WorkingSetRow({
     setPlannedWeight(defaultWeight);
     if (!weightTyped && !loggedRecord) setWeightInput(String(defaultWeight));
   }
+  // A `double` lift re-plans its reps too (#1211): reps still at the old plan follow the new one.
+  const [plannedReps, setPlannedReps] = useState(set.reps);
+  if (plannedReps !== set.reps) {
+    setPlannedReps(set.reps);
+    if (!loggedRecord && repsInput === String(plannedReps)) setRepsInput(String(set.reps));
+  }
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The modifications chosen while editing a logged set, reset from the set on each Edit.
@@ -1015,13 +1021,16 @@ export default function WorkoutLogger({
   function planned(lift: LiftData): LiftData {
     const ownMax = ownMaxFor(lift);
     if (!lift.plan || ownMax === undefined) return lift;
-    const { warmUpSets, workSets } = liftSets(planLift(lift.plan.spec, lift.plan.liftMax, ownMax, lift.plan.progression));
+    const { warmUpSets, workSets } = liftSets(
+      planLift(lift.plan.spec, lift.plan.liftMax, { ownMax, progression: lift.plan.progression }),
+    );
     return {
       ...lift,
       warmUpSets,
+      // A `double` lift re-plans its reps as well as its load (#1211).
       workingSets: lift.workingSets.map((ws) => {
         const p = workSets.find((w) => w.setNum === ws.setNum);
-        return p ? { ...ws, totalLoad: p.totalLoad } : ws;
+        return p ? { ...ws, totalLoad: p.totalLoad, reps: p.reps } : ws;
       }),
     };
   }

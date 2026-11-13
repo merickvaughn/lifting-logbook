@@ -11,20 +11,18 @@ jest.mock('@/lib/api', () => ({
   fetchLatestBodyWeight: jest.fn().mockResolvedValue(null),
   // Read only to find a `double` lift's last session (#1211), never to recover set ids (issue
   // #978); the assertion below proves the latter.
-  fetchLiftRecords: jest.fn(),
+  fetchLiftRecords: jest.fn().mockResolvedValue([]),
   // No active focus block unless a test says otherwise.
   fetchFocusPlan: jest.fn().mockResolvedValue({ groups: [] }),
   // No progression settings of the lifter's own unless a test says otherwise, so a lift
   // follows its row, then the catalog's default (#1211).
-  fetchUserSettings: jest.fn().mockResolvedValue({ defaultProgression: null, defaultWeightIncrement: null }),
   fetchCustomLifts: jest.fn().mockResolvedValue([]),
-  fetchLiftMetadata: jest.fn((lift: string) =>
-    Promise.resolve({ lift, progression: null, progressionIncrement: null, repsLow: null, repsHigh: null }),
-  ),
+  fetchAllLiftMetadata: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock('@/lib/active-program', () => ({
   getActiveProgram: jest.fn().mockResolvedValue('5-3-1'),
+  getUserSettings: jest.fn().mockResolvedValue({ defaultProgression: null, defaultWeightIncrement: null }),
 }));
 
 jest.mock('@/lib/preferences', () => ({
@@ -77,9 +75,9 @@ import {
   fetchLiftRecords,
   fetchFocusPlan,
   fetchModificationMaxes,
-  fetchLiftMetadata,
-  fetchUserSettings,
+  fetchAllLiftMetadata,
 } from '@/lib/api';
+import { getUserSettings } from '@/lib/active-program';
 import { focusPlan, planGroup, planItem } from '@/lib/__tests__/focusPlanFixture';
 import WorkoutLoggingPage from './page';
 
@@ -89,8 +87,8 @@ const mockedMaxes = fetchTrainingMaxes as unknown as jest.Mock;
 const mockedLiftRecords = fetchLiftRecords as unknown as jest.Mock;
 const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
 const mockedModificationMaxes = fetchModificationMaxes as unknown as jest.Mock;
-const mockedLiftMetadata = fetchLiftMetadata as unknown as jest.Mock;
-const mockedUserSettings = fetchUserSettings as unknown as jest.Mock;
+const mockedLiftMetadata = fetchAllLiftMetadata as unknown as jest.Mock;
+const mockedUserSettings = getUserSettings as unknown as jest.Mock;
 
 function spec(lift: string) {
   return {
@@ -559,7 +557,7 @@ describe('WorkoutLoggingPage — what an own-max toggle re-plans from (#1153)', 
     expect(lifts[0]?.plan).toEqual({
       spec: spec('Squat'),
       liftMax: 200,
-      progression: { progression: { type: 'linear', repsLow: null, repsHigh: 5, increment: 5, source: 'catalog' } },
+      progression: { rule: { type: 'linear', repsLow: null, repsHigh: 5, increment: 5 } },
     });
   });
 
@@ -628,16 +626,12 @@ describe('WorkoutLoggingPage — the plan follows the lift’s progression type 
     expect(planned(before.lifts[0])).toEqual(['12@30', '11@30', '10@30']);
   });
 
+  const hammerCurl = { progression: 'linear', progressionIncrement: 2.5, repsLow: null, repsHigh: 10 };
+
   it('plans an off-program linear lift at its repsHigh', async () => {
     seedWorkout([{ lift: 'Hammer Curl', planned: true, sets: [] }]);
     mockedSpec.mockResolvedValue([]);
-    mockedLiftMetadata.mockResolvedValueOnce({
-      lift: 'Hammer Curl',
-      progression: 'linear',
-      progressionIncrement: 2.5,
-      repsLow: null,
-      repsHigh: 10,
-    });
+    mockedLiftMetadata.mockResolvedValueOnce([{ lift: 'Hammer Curl', ...hammerCurl }]);
 
     const { lifts } = await renderPage();
 
@@ -647,18 +641,55 @@ describe('WorkoutLoggingPage — the plan follows the lift’s progression type 
     expect(lifts[0]).not.toHaveProperty('plan');
   });
 
-  it('plans every lift by its row, and says why, when the progression read fails', async () => {
+  it("finds a lift's settings under another spelling, as updateMaxes does", async () => {
+    seedWorkout([{ lift: 'Bench P.', planned: true, sets: [] }]);
+    mockedSpec.mockResolvedValue([]);
+    mockedLiftMetadata.mockResolvedValueOnce([{ lift: 'Bench Press', ...hammerCurl, repsHigh: 8 }]);
+
+    const { lifts } = await renderPage();
+
+    expect(planned(lifts[0])).toEqual(['8@200', '8@200', '8@200']);
+  });
+
+  it('keeps a finished workout read-only when it logged an off-program lift', async () => {
+    const set = (setNum: number) => ({ ...LOGGED_SET, id: `hammer-${setNum}`, setNum, reps: 10 });
+    seedWorkout([{ lift: 'Hammer Curl', planned: false, sets: [set(1), set(2)] }]);
+    mockedSpec.mockResolvedValue([]);
+    mockedLiftMetadata.mockResolvedValueOnce([{ lift: 'Hammer Curl', ...hammerCurl }]);
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts[0]?.workingSets.map((s) => s.setNum)).toEqual([1, 2]);
+    expect(readOnly).toBe(true);
+  });
+
+  it('plans by each row and the catalog, and says why, when the settings read fails', async () => {
     const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], { specOverrides: { ...curl, progression: undefined } });
     mockedUserSettings.mockRejectedValueOnce(new Error('boom'));
 
     const { lifts } = await renderPage();
 
-    // The row's 3×12 from a max of 200, not the catalog's double.
-    expect(planned(lifts[0])).toEqual(['12@200', '12@200', '12@200']);
-    expect(lifts[0]?.plan).not.toHaveProperty('progression');
+    // The row names no type, so Cable Curl follows the catalog's double: the bottom of its range.
+    expect(planned(lifts[0])).toEqual(['8@200', '8@200', '8@200']);
     expect(errSpy).toHaveBeenCalledWith(
-      '[WorkoutLoggingPage] progression read failed, planning every lift by its spec row',
+      '[WorkoutLoggingPage] progression settings read failed, planning each lift by its row and the catalog',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
+  });
+
+  it('plans a double lift as right after a bump, and says why, when the records read fails', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], { specOverrides: curl });
+    mockedMaxes.mockResolvedValueOnce([{ lift: 'Cable Curl', weight: 30, dateUpdated: '2026-01-01T00:00:00.000Z' }]);
+    mockedLiftRecords.mockRejectedValueOnce(new Error('boom'));
+
+    const { lifts } = await renderPage();
+
+    expect(planned(lifts[0])).toEqual(['8@30', '8@30', '8@30']);
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutLoggingPage] lift records read failed, planning double lifts without their last session',
       expect.any(Error),
     );
     errSpy.mockRestore();

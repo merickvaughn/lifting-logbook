@@ -661,6 +661,10 @@ export function createApiClient(config: ApiClientConfig) {
     fetchLiftMetadata(lift: string): Promise<LiftMetadataResponse> {
       return request(`/lifts/${enc(lift)}/metadata`, { cache: 'no-store' });
     },
+    /** Every lift the caller has stored metadata for (#1211). */
+    fetchAllLiftMetadata(): Promise<LiftMetadataResponse[]> {
+      return request('/lifts/metadata', { cache: 'no-store' });
+    },
     patchLiftMetadata(lift: string, body: PatchLiftMetadataRequest): Promise<LiftMetadataResponse> {
       return request(`/lifts/${enc(lift)}/metadata`, {
         method: 'PATCH',

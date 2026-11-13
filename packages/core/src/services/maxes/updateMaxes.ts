@@ -227,16 +227,10 @@ export function updateMaxes(
     const { builtIn, custom } = lookupLift(lift, settings?.customLifts ?? []);
     return custom ? undefined : builtIn;
   };
-  const ruleFor = (record: LiftRecord, spec: LiftingProgramSpec | undefined): Rule | SkippedLift['reason'] => {
+  const resolveRule = (lift: string, spec: LiftingProgramSpec | undefined): Rule | SkippedLift['reason'] => {
     if (!spec && !settings) return 'no-program-spec';
     const resolved: ResolvedProgression = settings
-      ? resolveProgression(
-          spec,
-          liftMetaFor(record.lift),
-          settings.userDefault,
-          catalogFor(record.lift),
-          settings.defaultWeightIncrement,
-        )
+      ? resolveProgression(spec, liftMetaFor(lift), settings.userDefault, catalogFor(lift), settings.defaultWeightIncrement)
       : resolveProgression(spec, null, null, null);
     const target = spec ? spec.reps : resolved.repsHigh;
     if (target === null && NEEDS_TARGET.has(resolved.type)) return 'no-target-reps';
@@ -248,34 +242,57 @@ export function updateMaxes(
       increment: resolved.increment,
     };
   };
+  // Resolved once per spec row and lift name, not once per record (as #983 did for the lookups).
+  const rules = new Map<LiftingProgramSpec | undefined, Map<string, Rule | SkippedLift['reason']>>();
+  const ruleFor = (record: LiftRecord, spec: LiftingProgramSpec | undefined): Rule | SkippedLift['reason'] => {
+    let byLift = rules.get(spec);
+    if (!byLift) rules.set(spec, (byLift = new Map()));
+    let rule = byLift.get(record.lift);
+    if (rule === undefined) byLift.set(record.lift, (rule = resolveRule(record.lift, spec)));
+    return rule;
+  };
 
-  // A wave ends with the spec's last week, once per pass through the spec's weeks (#1211). A
-  // percent_wave set in that week marks its pass; the latest one in the pass moves the max.
+  // A wave ends with the last spec week that plans the lift, once per pass through the spec's weeks
+  // (#1211), so a lift the final week leaves out still moves. A percent_wave set in that week marks
+  // its pass.
   const specWeeks = baseSpecMesocycleWeeks(programSpec);
-  const waveOf = (record: LiftRecord): number | undefined => {
+  const lastSpecWeek = new Map<string, number>();
+  for (const row of programSpec) {
+    const id = liftIdFor(row.lift);
+    lastSpecWeek.set(id, Math.max(lastSpecWeek.get(id) ?? 0, row.week));
+  }
+  const waveOf = (record: LiftRecord, spec: LiftingProgramSpec): number | undefined => {
     const day = days[record.workoutNum - 1];
-    if (!day || specWeeks === 0 || mesocycleWeekForProgramWeek(day.week, specWeeks) !== specWeeks) return undefined;
+    const last = lastSpecWeek.get(liftIdFor(record.lift)) ?? lastSpecWeek.get(liftIdFor(spec.lift));
+    if (!day || specWeeks === 0 || mesocycleWeekForProgramWeek(day.week, specWeeks) !== last) return undefined;
     return Math.ceil(day.week / specWeeks);
   };
-  // Each max's wave bumps, keyed by pass (or `off` for the macrocycle's end off-program).
-  type WaveBumps = Map<number | 'off', { date: Date; increment: number }>;
+  // Each max's wave bumps, keyed by pass (or `off` for the macrocycle's end off-program), with the
+  // first and last set that ends the wave.
+  type WaveBumps = Map<number | 'off', { first: Date; last: Date; increment: number }>;
+  const time = (date: Date) => new Date(date).getTime();
   const noteWave = (bumps: WaveBumps, record: LiftRecord, spec: LiftingProgramSpec | undefined, rule: Rule) => {
     if (rule.type !== 'percent_wave' || rule.weekType === 'test') return;
-    const key = spec ? waveOf(record) : options.endOfMacrocycle ? 'off' : undefined;
+    const key = spec ? waveOf(record, spec) : options.endOfMacrocycle ? 'off' : undefined;
     if (key === undefined) return;
     const seen = bumps.get(key);
-    if (!seen || new Date(record.date).getTime() > new Date(seen.date).getTime()) {
-      bumps.set(key, { date: record.date, increment: rule.increment });
+    if (!seen) {
+      bumps.set(key, { first: record.date, last: record.date, increment: rule.increment });
+      return;
     }
+    if (time(record.date) < time(seen.first)) seen.first = record.date;
+    if (time(record.date) > time(seen.last)) Object.assign(seen, { last: record.date, increment: rule.increment });
   };
-  // The bumps in date order, each applied once when it is newer than the max (so a re-run is a no-op).
+  // The bumps in date order, each applied once. A pass bumps a max older than the first set that
+  // ends it, so recalculating midway through the wave's last week and again after it moves the max
+  // once. The macrocycle's end bumps a max older than its last set, so a re-run is a no-op.
   const applyWaves = (bumps: WaveBumps | undefined, max: { weight: number; dateUpdated: Date } | undefined) => {
     if (!bumps || !max) return;
-    const ordered = [...bumps.values()].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    for (const { date, increment } of ordered) {
-      if (new Date(date).getTime() <= new Date(max.dateUpdated).getTime()) continue;
+    const ordered = [...bumps.entries()].sort(([, a], [, b]) => time(a.last) - time(b.last));
+    for (const [key, { first, last, increment }] of ordered) {
+      if (time(key === 'off' ? last : first) <= time(max.dateUpdated)) continue;
       max.weight += increment;
-      max.dateUpdated = date;
+      max.dateUpdated = last;
     }
   };
 
