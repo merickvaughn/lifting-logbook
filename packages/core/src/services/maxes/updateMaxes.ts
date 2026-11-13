@@ -102,7 +102,7 @@ export interface UpdateMaxesOptions {
  * one `own`, which the API enforces on write.
  */
 function targetOf(
-  record: LiftRecord,
+  record: Pick<LiftRecord, 'modifications'>,
   modes: ReadonlyMap<string, LiftModificationMaxMode>,
 ): 'none' | 'lift' | { own: string } {
   const ids = record.modifications ?? [];
@@ -110,6 +110,14 @@ function targetOf(
   if (ids.some((id) => modeOf(id) === 'none')) return 'none';
   const own = ids.find((id) => modeOf(id) === 'own');
   return own === undefined ? 'lift' : { own };
+}
+
+/** Whether a set moves its lift's own training max, under the rules of {@link targetOf}. */
+export function movesLiftMax(
+  record: Pick<LiftRecord, 'modifications'>,
+  modes: ReadonlyMap<string, LiftModificationMaxMode>,
+): boolean {
+  return targetOf(record, modes) === 'lift';
 }
 
 /** What moves a max for one record: its resolved type and increment, read against its row or its own target. */

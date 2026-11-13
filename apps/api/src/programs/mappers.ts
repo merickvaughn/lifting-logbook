@@ -2,6 +2,7 @@ import {
   MacrocycleDashboard,
   LiftRecord,
   LiftingProgramSpec,
+  MissingTrainingMax,
   ModificationMax,
   PlannedLift,
   StrengthGoalEntry,
@@ -27,6 +28,7 @@ import {
   LiftOverrideResponse,
   LiftRecordResponse,
   LiftingProgramSpecResponse,
+  MissingTrainingMaxResponse,
   ModificationMaxResponse,
   SetResponse,
   StrengthGoalResponse,
@@ -78,6 +80,20 @@ export const toTrainingMaxResponse = (m: TrainingMax): TrainingMaxResponse => ({
   weight: m.weight,
   unit: 'lbs',
   dateUpdated: isoDate(m.dateUpdated),
+});
+
+/** `dismissed` comes from the lifter's dismissals, which the core list knows nothing of (#1246). */
+export const toMissingTrainingMaxResponse = (m: MissingTrainingMax, dismissed: boolean): MissingTrainingMaxResponse => ({
+  lift: m.lift,
+  liftId: m.liftId,
+  lastLoggedDate: isoDate(m.lastLoggedDate),
+  setCount: m.setCount,
+  estimate: m.estimate && {
+    weight: m.estimate.weight,
+    unit: 'lbs',
+    from: { date: isoDate(m.estimate.from.date), weight: m.estimate.from.weight, reps: m.estimate.from.reps },
+  },
+  dismissed,
 });
 
 export const toModificationMaxResponse = (m: ModificationMax): ModificationMaxResponse => ({

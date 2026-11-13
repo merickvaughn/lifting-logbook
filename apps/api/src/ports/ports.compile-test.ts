@@ -75,6 +75,10 @@ const _liftRecordRepo: ILiftRecordRepository = {
   getMacrocycleDateRanges: () => Promise.resolve(new Map()),
   getRecordsForLifts: (): Promise<LiftRecord[]> =>
     Promise.resolve([]),
+  getLoggedLifts: (): Promise<string[]> =>
+    Promise.resolve([]),
+  getProgramRecordsForLifts: (): Promise<LiftRecord[]> =>
+    Promise.resolve([]),
   appendLiftRecords: (): Promise<number> =>
     Promise.resolve(0),
   findStoredSets: (): Promise<LiftRecord[]> =>

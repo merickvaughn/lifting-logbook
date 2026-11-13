@@ -33,6 +33,24 @@ export interface SkippedLiftResponse {
   reason: 'no-training-max' | 'no-program-spec' | 'no-target-reps';
 }
 
+/**
+ * A lift with logged sets in the program and no training max (#1246), from
+ * `GET /programs/:program/training-maxes/missing`. Weights are in pounds, the stored unit.
+ */
+export interface MissingTrainingMaxResponse {
+  /** The lift as its latest set names it: the name to save its max under. */
+  lift: LiftName;
+  /** Its stable id (#1139), which a dismissal is keyed by. */
+  liftId: string;
+  /** ISO 8601 date ("YYYY-MM-DD") of its latest set. */
+  lastLoggedDate: string;
+  setCount: number;
+  /** A starting max from its sets in the 8 weeks up to its latest, or null with no usable set. */
+  estimate: { weight: number; unit: WeightUnit; from: { date: string; weight: number; reps: number } } | null;
+  /** The lifter answered "Don't ask again": prompts leave it out, and settings lists it apart. */
+  dismissed: boolean;
+}
+
 /** Response from POST /training-maxes/recalculate. */
 export interface RecalculateMaxesResponse {
   maxes: TrainingMaxResponse[];

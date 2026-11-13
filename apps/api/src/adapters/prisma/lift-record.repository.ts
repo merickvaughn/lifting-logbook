@@ -50,6 +50,20 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     return rows.map(rowToLiftRecord);
   }
 
+  async getLoggedLifts(program: string): Promise<string[]> {
+    // Grouped in SQL over the unique index's `(userId, program)` prefix, so it reads no sets.
+    const rows = await this.prisma.liftRecord.groupBy({ by: ['lift'], where: { userId: this.userId, program } });
+    return rows.map((r) => r.lift);
+  }
+
+  async getProgramRecordsForLifts(program: string, lifts: readonly string[]): Promise<LiftRecord[]> {
+    if (lifts.length === 0) return [];
+    const rows = await this.prisma.liftRecord.findMany({
+      where: { userId: this.userId, program, lift: { in: [...new Set(lifts)] } },
+    });
+    return rows.map(rowToLiftRecord);
+  }
+
   async appendLiftRecords(program: string, records: LiftRecord[]): Promise<number> {
     const { count } = await this.prisma.liftRecord.createMany({
       data: records.map((r) => ({
