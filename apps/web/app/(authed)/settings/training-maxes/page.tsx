@@ -8,6 +8,7 @@ import { getActiveProgram, getUserSettings } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
 import RepMaxCalculator from '@/components/RepMaxCalculator';
 import TrainingMaxesForm from './TrainingMaxesForm';
+import MissingTrainingMaxes from './MissingTrainingMaxes';
 import { resolveStepIncrements } from './increments';
 import MaxHistory from './MaxHistory';
 
@@ -27,7 +28,10 @@ export default async function TrainingMaxesPage() {
 
   return (
     <>
+      <MissingTrainingMaxes program={program} />
+      {/* Keyed by the lifts, so a max set up above (#1246) remounts the form with its row. */}
       <TrainingMaxesForm
+        key={lifts.join('|')}
         program={program}
         lifts={lifts}
         maxes={maxes}

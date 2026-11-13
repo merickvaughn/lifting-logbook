@@ -42,6 +42,7 @@ import type {
   RescheduleRequest,
   StrengthGoalResponse,
   SwitchProgramResponse,
+  MissingTrainingMaxResponse,
   TrainingMaxHistoryResponse,
   TrainingMaxResponse,
   UpdateCustomProgramRequest,
@@ -389,6 +390,31 @@ export function createApiClient(config: ApiClientConfig) {
         method: 'PATCH',
         headers: JSON_HEADERS,
         body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    /**
+     * Lifts with logged sets and no training max, each with an estimate (#1246). `lifts` narrows
+     * the list to those lifts, by any spelling.
+     */
+    fetchMissingTrainingMaxes(
+      program: string,
+      lifts?: readonly string[],
+    ): Promise<MissingTrainingMaxResponse[]> {
+      const query = lifts ? `?${lifts.map((lift) => `lifts=${enc(lift)}`).join('&')}` : '';
+      return request(`/programs/${enc(program)}/training-maxes/missing${query}`, { cache: 'no-store' });
+    },
+    /** "Don't ask again" for a lift, by the `liftId` the missing list reports. Idempotent. */
+    dismissMissingTrainingMax(program: string, liftId: string): Promise<void> {
+      return request(`/programs/${enc(program)}/training-maxes/missing/${enc(liftId)}/dismissal`, {
+        method: 'PUT',
+        cache: 'no-store',
+      });
+    },
+    /** "Ask again": clears a lift's dismissal. Idempotent. */
+    undismissMissingTrainingMax(program: string, liftId: string): Promise<void> {
+      return request(`/programs/${enc(program)}/training-maxes/missing/${enc(liftId)}/dismissal`, {
+        method: 'DELETE',
         cache: 'no-store',
       });
     },

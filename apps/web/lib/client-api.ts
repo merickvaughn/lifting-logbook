@@ -119,4 +119,10 @@ export const {
   createNonCycleWorkout,
   deleteNonCycleWorkout,
   fetchNonCycleReference,
+  // The offer to set up a missing training max (#1246) reads its list and writes maxes and
+  // "Don't ask again" from the settings page, the workout logger and the import result.
+  fetchMissingTrainingMaxes,
+  updateTrainingMaxes,
+  dismissMissingTrainingMax,
+  undismissMissingTrainingMax,
 } = createApiClient({ baseUrl: getApiUrl, getAuthHeaders: getClientAuthHeaders });

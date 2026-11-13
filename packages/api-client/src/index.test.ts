@@ -346,6 +346,38 @@ describe('createApiClient', () => {
     });
   });
 
+  describe('missing training maxes (#1246)', () => {
+    it('reads the list, narrowed by one encoded `lifts` per name', async () => {
+      mockFetch.mockImplementation(async () => new Response(JSON.stringify([]), { status: 200 }));
+      const client = makeClient();
+      await expect(client.fetchMissingTrainingMaxes('5-3-1')).resolves.toEqual([]);
+      expect(lastCall()[0]).toBe('http://api.test/programs/5-3-1/training-maxes/missing');
+
+      await client.fetchMissingTrainingMaxes('5-3-1', ['Romanian Deadlift', 'Squat & Co']);
+      expect(lastCall()[0]).toBe(
+        'http://api.test/programs/5-3-1/training-maxes/missing?lifts=Romanian%20Deadlift&lifts=Squat%20%26%20Co',
+      );
+    });
+
+    it('PUTs and DELETEs a dismissal by the encoded lift id', async () => {
+      mockFetch.mockImplementation(async () => new Response(null, { status: 204 }));
+      const client = makeClient();
+      await expect(client.dismissMissingTrainingMax('5-3-1', 'Cable Curl ')).resolves.toBeUndefined();
+      expect(lastCall()[0]).toBe('http://api.test/programs/5-3-1/training-maxes/missing/Cable%20Curl%20/dismissal');
+      expect(lastCall()[1].method).toBe('PUT');
+
+      await expect(client.undismissMissingTrainingMax('5-3-1', 'romanian-deadlift')).resolves.toBeUndefined();
+      expect(lastCall()[0]).toBe('http://api.test/programs/5-3-1/training-maxes/missing/romanian-deadlift/dismissal');
+      expect(lastCall()[1].method).toBe('DELETE');
+    });
+
+    it('throws on a failed dismissal', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'nope' }), { status: 500 }));
+      const client = makeClient();
+      await expect(client.dismissMissingTrainingMax('5-3-1', 'squat')).rejects.toThrow('nope');
+    });
+  });
+
   describe('fetchGoogleSheetWorkbook (#1111)', () => {
     it('POSTs the pasted link as JSON and returns the tabs', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ tabs: [] }), { status: 200 }));
