@@ -16,6 +16,7 @@ import type {
 } from '@lifting-logbook/types';
 import { getUserSettings } from '@/lib/active-program';
 import { fetchAllLiftMetadata, fetchCustomLifts, fetchLiftRecords } from '@/lib/api';
+import { getUserToday } from '@/lib/userToday';
 import type { ProgressionPlan } from '@/lib/workoutPlan';
 import { effectiveDateOf } from '@/lib/workoutStatus';
 
@@ -51,8 +52,9 @@ function lastSessionOf(
  * names no type, and the macrocycle's records only when some lift is on `double`, which plans from
  * its last session.
  *
- * A lift with no spec row that the workout already logged keeps its logged sets as they are, with
- * no plan, so a finished workout stays read-only.
+ * In a workout dated before today, a lift with no spec row that it logged keeps its logged sets as
+ * they are, with no plan and no reads for it, so a finished workout stays read-only. Today's, or a
+ * later one, still plans the sets the lift has left.
  *
  * Each read fails on its own and says which in the console: without settings a lift resolves from
  * its row and the catalog, and without records a `double` lift plans as right after a bump.
@@ -63,7 +65,12 @@ export async function loadProgressionPlans(
   liftSpecs: readonly (LiftingProgramSpecResponse | undefined)[],
   maxes: readonly Pick<TrainingMaxResponse, 'lift' | 'weight' | 'dateUpdated'>[],
 ): Promise<(ProgressionPlan | undefined)[]> {
-  const needsSettings = workout.lifts.some((_, i) => !liftSpecs[i]?.progression);
+  const date = effectiveDateOf(workout);
+  const loggedOffProgram = workout.lifts.map((wl, i) => !liftSpecs[i] && !wl.planned && wl.sets.length > 0);
+  const past = loggedOffProgram.some(Boolean) && date.slice(0, 10) < (await getUserToday());
+  const plans = workout.lifts.flatMap((wl, i) => (past && loggedOffProgram[i] ? [] : [{ wl, spec: liftSpecs[i] }]));
+
+  const needsSettings = plans.some(({ spec }) => !spec?.progression);
   const settings = needsSettings
     ? await Promise.all([getUserSettings(), fetchCustomLifts(), fetchAllLiftMetadata()]).then(
         ([user, customLifts, metas]) => ({ user, customLifts, metaFor: lookupByLift(metas.map((m) => [m.lift, m] as const)) }),
@@ -75,8 +82,7 @@ export async function loadProgressionPlans(
       )
     : null;
 
-  const lifts = workout.lifts.map((wl, i) => {
-    const spec = liftSpecs[i];
+  const lifts = plans.map(({ wl, spec }) => {
     // A custom lift named like a catalog one means the custom lift, which has no catalog default.
     const { builtIn, custom } = lookupLift(wl.lift, settings?.customLifts ?? []);
     const meta = settings?.metaFor(wl.lift);
@@ -100,15 +106,13 @@ export async function loadProgressionPlans(
       )
     : [];
   const maxFor = currentMaxLookup(maxes);
-  const date = effectiveDateOf(workout);
-  return lifts.map(({ wl, spec, rule }) => {
-    if (!spec && !wl.planned && wl.sets.length > 0) return undefined;
-    const lastSession = rule.type === 'double' ? lastSessionOf(wl.lift, { workoutNum: workout.workoutNum, date }, records) : undefined;
-    const maxDate = maxFor(wl.lift)?.dateUpdated;
-    return {
-      rule,
-      ...(maxDate !== undefined && { maxDate }),
-      ...(lastSession && { lastSession }),
-    };
-  });
+  const byLift = new Map(
+    lifts.map(({ wl, rule }) => {
+      const lastSession = rule.type === 'double' ? lastSessionOf(wl.lift, { workoutNum: workout.workoutNum, date }, records) : undefined;
+      const maxDate = maxFor(wl.lift)?.dateUpdated;
+      const plan: ProgressionPlan = { rule, ...(maxDate !== undefined && { maxDate }), ...(lastSession && { lastSession }) };
+      return [wl, plan] as const;
+    }),
+  );
+  return workout.lifts.map((wl) => byLift.get(wl));
 }

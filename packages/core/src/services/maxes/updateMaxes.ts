@@ -137,9 +137,11 @@ const NEEDS_TARGET: ReadonlySet<ProgressionType> = new Set(['linear', 'double', 
  *      - `linear` and `double`: every set of the session reaches the target (inside a program, at
  *        least the row's `sets` of them); new TM = set 1's weight + increment. For `double` the
  *        target is the top of the range.
- *      - `percent_wave`: no set moves it. The max moves by the increment once per wave, on the
- *        lift's last set in the spec's last week of each pass through the spec's weeks; a program
- *        that tiles its spec twice has two waves. Off-program, once at `endOfMacrocycle`.
+ *      - `percent_wave`: no set moves it. The max moves by the increment once per wave: in the
+ *        last spec week that plans the lift, once per pass through the spec's weeks, when the max
+ *        is older than that week's first set; a program that tiles its spec twice has two waves.
+ *        A test week ending a wave sets the max by its attempt instead. Off-program, once at
+ *        `endOfMacrocycle`.
  *      - `manual`: never.
  *  - 'test': uses final set (setNum === spec.sets); any non-zero reps without abnormal notes → new TM = weight (no increment).
  *            Abnormal-notes fallback: walk backwards through sets until an unaffected set is found.

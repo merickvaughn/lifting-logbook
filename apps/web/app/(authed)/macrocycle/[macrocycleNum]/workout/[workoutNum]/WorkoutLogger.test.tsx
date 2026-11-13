@@ -282,8 +282,9 @@ describe('WorkoutLogger — in-progress set draft persistence (#878)', () => {
 
     const raw = window.localStorage.getItem(DRAFT_KEY);
     if (raw === null) throw new Error('expected a draft to be persisted');
-    // The weight was typed, which the draft records so a re-plan leaves it (#1153).
-    expect(JSON.parse(raw)).toEqual({ weight: '225', reps: '5', notes: '', weightTyped: true });
+    // The weight was typed, which the draft records so a re-plan leaves it (#1153); the reps
+    // weren't, so a re-plan may change them (#1211).
+    expect(JSON.parse(raw)).toEqual({ weight: '225', reps: '5', notes: '', weightTyped: true, repsTyped: false });
   });
 
   it('restores an in-progress set after a full remount (simulating a reload)', async () => {
@@ -1047,9 +1048,15 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
       const reps = () => screen.getAllByLabelText('Reps').map((i) => (i as HTMLInputElement).value);
       expect(reps()).toEqual(['12', '11']);
 
+      // Reps the lifter typed stay theirs, even when they match the old plan.
+      const [, set2] = screen.getAllByLabelText('Reps');
+      if (!set2) throw new Error('expected a reps input for set 2');
+      await user.clear(set2);
+      await user.type(set2, '11');
+
       await user.click(await screen.findByRole('button', { name: 'Wide grip', pressed: false }));
       expect(weights()).toEqual(['150', '150']);
-      expect(reps()).toEqual(['8', '8']);
+      expect(reps()).toEqual(['8', '11']);
     });
 
     it('logs the re-planned weight', async () => {

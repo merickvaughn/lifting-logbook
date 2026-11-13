@@ -425,7 +425,11 @@ function WorkingSetRow({
       ? String(formatWorkingWeight(loggedRecord.weight, null, false, unit).value)
       : String(defaultWeight);
   });
-  const [repsInput, setRepsInput] = useState(() => draft?.reps ?? String(loggedRecord?.reps ?? set.reps));
+  // Reps work the same way, since a `double` lift's re-plan changes them (#1211).
+  const [repsTyped, setRepsTyped] = useState(() => !!draft && (draft.repsTyped ?? draft.reps !== String(set.reps)));
+  const [repsInput, setRepsInput] = useState(() =>
+    draft && repsTyped ? draft.reps : String(loggedRecord?.reps ?? set.reps),
+  );
   const [notesInput, setNotesInput] = useState(() => draft?.notes ?? loggedRecord?.notes ?? '');
   // Adjusted during render, React's pattern for state derived from a changed prop, so the input
   // never shows the old plan for a frame.
@@ -434,11 +438,10 @@ function WorkingSetRow({
     setPlannedWeight(defaultWeight);
     if (!weightTyped && !loggedRecord) setWeightInput(String(defaultWeight));
   }
-  // A `double` lift re-plans its reps too (#1211): reps still at the old plan follow the new one.
   const [plannedReps, setPlannedReps] = useState(set.reps);
   if (plannedReps !== set.reps) {
     setPlannedReps(set.reps);
-    if (!loggedRecord && repsInput === String(plannedReps)) setRepsInput(String(set.reps));
+    if (!repsTyped && !loggedRecord) setRepsInput(String(set.reps));
   }
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -455,15 +458,19 @@ function WorkingSetRow({
   function handleWeightInputChange(value: string) {
     setWeightInput(value);
     setWeightTyped(true);
-    if (shouldDraft) writeDraft(draftStorageKey, { weight: value, reps: repsInput, notes: notesInput, weightTyped: true });
+    if (shouldDraft)
+      writeDraft(draftStorageKey, { weight: value, reps: repsInput, notes: notesInput, weightTyped: true, repsTyped });
   }
   function handleRepsInputChange(value: string) {
     setRepsInput(value);
-    if (shouldDraft) writeDraft(draftStorageKey, { weight: weightInput, reps: value, notes: notesInput, weightTyped });
+    setRepsTyped(true);
+    if (shouldDraft)
+      writeDraft(draftStorageKey, { weight: weightInput, reps: value, notes: notesInput, weightTyped, repsTyped: true });
   }
   function handleNotesInputChange(value: string) {
     setNotesInput(value);
-    if (shouldDraft) writeDraft(draftStorageKey, { weight: weightInput, reps: repsInput, notes: value, weightTyped });
+    if (shouldDraft)
+      writeDraft(draftStorageKey, { weight: weightInput, reps: repsInput, notes: value, weightTyped, repsTyped });
   }
 
   async function handleLog(e: React.FormEvent) {

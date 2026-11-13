@@ -78,6 +78,7 @@ import {
   fetchAllLiftMetadata,
 } from '@/lib/api';
 import { getUserSettings } from '@/lib/active-program';
+import { getUserToday } from '@/lib/userToday';
 import { focusPlan, planGroup, planItem } from '@/lib/__tests__/focusPlanFixture';
 import WorkoutLoggingPage from './page';
 
@@ -89,6 +90,7 @@ const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
 const mockedModificationMaxes = fetchModificationMaxes as unknown as jest.Mock;
 const mockedLiftMetadata = fetchAllLiftMetadata as unknown as jest.Mock;
 const mockedUserSettings = getUserSettings as unknown as jest.Mock;
+const mockedUserToday = getUserToday as unknown as jest.Mock;
 
 function spec(lift: string) {
   return {
@@ -661,6 +663,22 @@ describe('WorkoutLoggingPage — the plan follows the lift’s progression type 
 
     expect(lifts[0]?.workingSets.map((s) => s.setNum)).toEqual([1, 2]);
     expect(readOnly).toBe(true);
+  });
+
+  it("still plans the sets left of an off-program lift logged partway through today's workout", async () => {
+    seedWorkout([{ lift: 'Hammer Curl', planned: false, sets: [{ ...LOGGED_SET, id: 'hammer-1', reps: 10 }] }]);
+    mockedSpec.mockResolvedValue([]);
+    mockedLiftMetadata.mockResolvedValueOnce([{ lift: 'Hammer Curl', ...hammerCurl }]);
+    // The workout is dated today.
+    mockedUserToday.mockResolvedValue('2026-01-06');
+    const { lifts, readOnly } = await renderPage().finally(() => mockedUserToday.mockResolvedValue('2026-10-30'));
+
+    expect(lifts[0]?.workingSets.map((s) => [s.setNum, Boolean(s.existing)])).toEqual([
+      [1, true],
+      [2, false],
+      [3, false],
+    ]);
+    expect(readOnly).toBe(false);
   });
 
   it('plans by each row and the catalog, and says why, when the settings read fails', async () => {

@@ -122,8 +122,8 @@ the proposal's. These details weren't settled there:
    after the lift's last session, otherwise at last session's reps. The last session comes from the
    current macrocycle's records, so a macrocycle's first session plans the bottom. From an own max it
    plans the bottom, since the lift's last session doesn't date that max. A lift with no spec row on
-   `linear` or `amrap_gated` plans three sets of its `repsHigh` at its max, unless the workout has
-   already logged it, so a finished workout stays read-only. A failed settings read resolves each
+   `linear` or `amrap_gated` plans three sets of its `repsHigh` at its max. In a workout dated before
+   today that logged it, it keeps only its logged sets, so a finished workout stays read-only. A failed settings read resolves each
    lift from its row and the catalog, and a failed records read plans `double` without a last
    session. The detail page and the timer still plan by the row until
    [#1249](https://github.com/merickvaughn/lifting-logbook/issues/1249).
