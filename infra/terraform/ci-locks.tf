@@ -10,7 +10,7 @@
 #
 # This lands on main before any workflow uses it (#1260, then #1261). Every PR's staging run
 # applies Terraform from its own branch, so a resource that exists on only one branch is destroyed
-# by the next branch's apply, and a lock in it would vanish mid-run.
+# by the next branch's apply.
 resource "google_storage_bucket" "ci_locks" {
   count = var.environment == "staging" ? 1 : 0
 
@@ -30,8 +30,10 @@ resource "google_storage_bucket" "ci_locks" {
     retention_duration_seconds = 0
   }
 
-  # Lock objects are scratch. A teardown shouldn't fail on a lock a run left behind.
-  force_destroy = true
+  # Don't delete a held lock. An apply from a config without this file (a re-run of an old run,
+  # whose merge commit predates it) plans to destroy this bucket. With objects in it, that apply
+  # fails and the lock survives. A deliberate teardown deletes any leftover lock object first.
+  force_destroy = false
 }
 
 # The staging CI/CD SA is project owner, but grant the object role explicitly so the lock doesn't
