@@ -1,6 +1,7 @@
 import { ImportPreImage } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
 import {
+  BatchMacrocycles,
   IImportBatchRepository,
   ImportBatchRecord,
   KeyNumbers,
@@ -54,5 +55,14 @@ export class InMemoryImportBatchRepository implements IImportBatchRepository {
       const record = this.store.get(id);
       if (record) this.store.set(id, { ...record, preImage });
     }
+  }
+
+  async listChoosing(macrocycleId: string): Promise<ImportBatchRecord[]> {
+    return [...this.store.values()].filter((b) => b.macrocycles?.chosen.some((c) => c.id === macrocycleId));
+  }
+
+  async updateMacrocycles(id: string, macrocycles: BatchMacrocycles): Promise<void> {
+    const record = this.store.get(id);
+    if (record) this.store.set(id, { ...record, macrocycles });
   }
 }

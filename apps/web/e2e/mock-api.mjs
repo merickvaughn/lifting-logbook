@@ -123,6 +123,9 @@ function createInitialState() {
   return {
     noCurrentMacrocycle: false,
     trainingMaxes: structuredClone(INITIAL_TRAINING_MAXES),
+    // Lifts with logged sets and no training max (#1246); /__reset?withMissingMax=true seeds one.
+    missingMaxes: [],
+    missingMaxDismissals: new Set(),
     strengthGoals: [],
     skippedWorkouts: new Set(),
     workoutSchedule: null,
@@ -658,6 +661,17 @@ const server = createServer(async (req, res) => {
     }
     if (url.searchParams.get('withFocusError') === 'true') {
       state.focusError = true;
+    }
+    if (url.searchParams.get('withMissingMax') === 'true') {
+      state.missingMaxes = [
+        {
+          lift: 'Romanian Deadlift',
+          liftId: 'romanian-deadlift',
+          lastLoggedDate: '2025-01-06',
+          setCount: 3,
+          estimate: { weight: 100, unit: 'lbs', from: { date: '2025-01-06', weight: 100, reps: 5 } },
+        },
+      ];
     }
     if (url.searchParams.get('withNonCycleWorkout') === 'true') {
       state.nonCycleRecords = [1, 2, 3].map((setNum) =>
@@ -1227,6 +1241,33 @@ const server = createServer(async (req, res) => {
         }
       }
       json(res, state.trainingMaxes);
+      return;
+    }
+
+    // GET /programs/:p/training-maxes/missing — lifts with sets and no max (#1246). `lifts`
+    // narrows it by display name or id; a max set since drops the lift.
+    if (method === 'GET' && rest[0] === 'training-maxes' && rest[1] === 'missing' && rest.length === 2) {
+      const wanted = url.searchParams.getAll('lifts');
+      const missing = state.missingMaxes
+        .filter((m) => !state.trainingMaxes.some((t) => t.lift === m.lift || t.lift === m.liftId))
+        .filter((m) => wanted.length === 0 || wanted.includes(m.lift) || wanted.includes(m.liftId))
+        .map((m) => ({ ...m, dismissed: state.missingMaxDismissals.has(m.liftId) }));
+      json(res, missing);
+      return;
+    }
+
+    // PUT / DELETE /programs/:p/training-maxes/missing/:liftId/dismissal (#1246)
+    if (
+      (method === 'PUT' || method === 'DELETE') &&
+      rest[0] === 'training-maxes' &&
+      rest[1] === 'missing' &&
+      rest[3] === 'dismissal' &&
+      rest.length === 4
+    ) {
+      const liftId = decodeURIComponent(rest[2]);
+      if (method === 'PUT') state.missingMaxDismissals.add(liftId);
+      else state.missingMaxDismissals.delete(liftId);
+      noContent(res);
       return;
     }
 

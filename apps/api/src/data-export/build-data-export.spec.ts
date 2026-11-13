@@ -24,6 +24,7 @@ const emptyRows = (): UserDataRows => ({
   liftMetadata: [],
   liftModifications: [],
   liftModificationMaxes: [],
+  missingMaxDismissals: [],
   focusBlocks: [],
   focusDayStates: [],
 });

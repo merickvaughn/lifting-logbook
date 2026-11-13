@@ -64,6 +64,14 @@ export default function TrainingMaxesForm({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // A max set up in "Lifts without a training max" (#1246) adds its lift on the next refresh.
+  // Give it a row, and keep any unsaved edits in the others.
+  const newLifts = lifts.filter((lift) => !Object.hasOwn(rows, lift));
+  if (newLifts.length > 0) {
+    setRows((prev) => ({ ...buildInitialState(newLifts, maxes), ...prev }));
+    return null;
+  }
+
   function handleChange(lift: string, value: string) {
     setRows((prev) => ({
       ...prev,

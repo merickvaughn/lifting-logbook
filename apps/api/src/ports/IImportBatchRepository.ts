@@ -1,5 +1,6 @@
 import { ImportPreImage } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
+import { MacrocycleStatus } from '@lifting-logbook/types';
 
 export interface ImportBatchRecord {
   id: string;
@@ -13,6 +14,32 @@ export interface ImportBatchRecord {
    * (#1254). Absent on that batch and on every import that stores under one program.
    */
   groupId?: string | null;
+  /**
+   * The macrocycles an import through the Assign step created or extended, by stable id
+   * (#1255, decision 14), kept apart from `preImage`'s lift-record keys, with the statuses it
+   * chose for them. Undo releases those choices, then recomputes each macrocycle from the sets
+   * left on it. Absent on every other import.
+   */
+  macrocycles?: BatchMacrocycles | null;
+}
+
+/**
+ * A status the lifter chose for a stretch, which a batch set on the macrocycle the stretch created
+ * or joined (#1255): the status chosen, and the macrocycle's status as the batch found it. A
+ * created macrocycle had none, so it was found unchosen.
+ */
+export interface StatusChoice {
+  id: string;
+  chose: MacrocycleStatus;
+  before: { status?: MacrocycleStatus; statusChosen: boolean };
+}
+
+/** See {@link ImportBatchRecord.macrocycles}. */
+export interface BatchMacrocycles {
+  created: string[];
+  extended: string[];
+  /** The statuses this batch chose, one per macrocycle. Undo orders choices across batches by `createdAt`, then `id`. */
+  chosen: StatusChoice[];
 }
 
 /**
@@ -59,4 +86,8 @@ export interface IImportBatchRepository {
    * or a delete does to the keys that hold a number.
    */
   updatePreImages(updates: ReadonlyArray<{ id: string; preImage: ImportPreImage }>): Promise<void>;
+  /** The user's batches holding a status choice for the macrocycle with this id (#1255), filtered in the database. */
+  listChoosing(macrocycleId: string): Promise<ImportBatchRecord[]>;
+  /** Replaces one of the user's batches' `macrocycles`, as undo does to hand a choice's `before` on. */
+  updateMacrocycles(id: string, macrocycles: BatchMacrocycles): Promise<void>;
 }

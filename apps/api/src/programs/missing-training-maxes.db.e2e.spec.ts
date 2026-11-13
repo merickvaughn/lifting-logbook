@@ -1,4 +1,4 @@
-// Real-Postgres E2E suite for the missing-training-max list (#1246, #1269).
+// Real-Postgres E2E suite for the missing-training-max list (#1246, #1269) and its dismissals (#1270).
 //
 // Postgres comes from jest.global-setup.js, which exposes LIFTING_TC_DATABASE_URL (the
 // restricted lifting_app role) and LIFTING_TC_OWNER_DATABASE_URL (the owner). Seeding and cleanup
@@ -34,6 +34,7 @@ async function cleanup(owner: PrismaClient): Promise<void> {
   const where = { userId: { in: USERS } };
   await owner.liftRecord.deleteMany({ where });
   await owner.trainingMax.deleteMany({ where });
+  await owner.missingMaxDismissal.deleteMany({ where });
 }
 
 describeOrSkip('missing training maxes (full app, lifting_app role)', () => {
@@ -62,6 +63,15 @@ describeOrSkip('missing training maxes (full app, lifting_app role)', () => {
     });
     expect(res.statusCode).toBe(200);
     return res.json<MissingTrainingMaxResponse[]>();
+  };
+
+  const dismissalAs = async (user: string, method: 'PUT' | 'DELETE', liftId: string) => {
+    const res = await app.getHttpAdapter().getInstance().inject({
+      method,
+      url: `/programs/${PROGRAM}/training-maxes/missing/${liftId}/dismissal`,
+      headers: { authorization: `Bearer ${user}` },
+    });
+    expect(res.statusCode).toBe(204);
   };
 
   beforeAll(async () => {
@@ -111,5 +121,22 @@ describeOrSkip('missing training maxes (full app, lifting_app role)', () => {
   it("never shows another user's lift", async () => {
     expect((await getAs(USER_BOB)).map((m) => m.lift)).toEqual(['Cable Curl']);
     expect((await getAs(USER_ALICE, '?lifts=Cable%20Curl'))).toEqual([]);
+  });
+
+  it("stores a dismissal as the user's own row, and clears it again", async () => {
+    await dismissalAs(USER_ALICE, 'PUT', 'romanian-deadlift');
+    await dismissalAs(USER_ALICE, 'PUT', 'romanian-deadlift');
+
+    expect((await getAs(USER_ALICE)).map((m) => m.dismissed)).toEqual([true]);
+    expect(await owner.missingMaxDismissal.findMany({ select: { userId: true, liftId: true }, where: { userId: { in: USERS } } }))
+      .toEqual([{ userId: USER_ALICE, liftId: 'romanian-deadlift' }]);
+
+    // Bob's request is scoped to Bob's rows, so it neither sees nor clears Alice's.
+    await dismissalAs(USER_BOB, 'DELETE', 'romanian-deadlift');
+    expect((await getAs(USER_ALICE)).map((m) => m.dismissed)).toEqual([true]);
+
+    await dismissalAs(USER_ALICE, 'DELETE', 'romanian-deadlift');
+    expect((await getAs(USER_ALICE)).map((m) => m.dismissed)).toEqual([false]);
+    expect(await owner.missingMaxDismissal.count({ where: { userId: { in: USERS } } })).toBe(0);
   });
 });

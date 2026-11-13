@@ -37,7 +37,8 @@ const USER_MACROCYCLE_FAILS = 'import-breakdown-db-macrocycle-fails';
 const USER_BATCH_FAILS = 'import-breakdown-db-batch-fails';
 const USER_GROUP_FAILS = 'import-breakdown-db-group-fails';
 const USER_ROW_LIMIT = 'import-breakdown-db-row-limit';
-const USERS = [USER_RACE, USER_MACROCYCLE_FAILS, USER_BATCH_FAILS, USER_GROUP_FAILS, USER_ROW_LIMIT];
+const USER_GROWN = 'import-breakdown-db-grown';
+const USERS = [USER_RACE, USER_MACROCYCLE_FAILS, USER_BATCH_FAILS, USER_GROUP_FAILS, USER_ROW_LIMIT, USER_GROWN];
 // The import transaction allows 30 s (IMPORT_TX_TIMEOUT_MS); the row-limit commit and its undo
 // must each finish well inside it. CI measured the commit at 1.7 s.
 const ROW_LIMIT_BUDGET_MS = 15_000;
@@ -320,4 +321,65 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     },
     ROW_LIMIT_TEST_TIMEOUT_MS,
   );
+
+  it('extends a stored macrocycle from a grown file, records the statuses chosen for it, and undoes them in any order (#1255)', async () => {
+    const chosen = (dates: string[], status: 'overran' | 'abandoned'): ImportBreakdown => ({
+      stretches: [{ program: 'rpt', dates, status, statusChosen: true }],
+      excludedDates: [],
+      nonCycleDates: [],
+    });
+    // Recent dates, so a status read again from the rows turns on them, not on their age.
+    const start = ymd(new Date(Date.now() - 10 * DAY_MS));
+    const at = (n: number) => new Date(`${dayFrom(start, n)}T00:00:00Z`);
+    const first = historyCsv(start, 3, 1);
+    const grown = historyCsv(start, 6, 1);
+    const grownAgain = historyCsv(start, 8, 1);
+    const firstRes = await commit(USER_GROWN, first.csv, oneStretch(first.dates));
+    const [found] = await owner.macrocycle.findMany({ where: { userId: USER_GROWN } });
+    const grownRes = await commit(USER_GROWN, grown.csv, chosen(grown.dates, 'overran'));
+    const againRes = await commit(USER_GROWN, grownAgain.csv, chosen(grownAgain.dates, 'abandoned'));
+    expect([firstRes.statusCode, grownRes.statusCode, againRes.statusCode]).toEqual([200, 200, 200]);
+    expect(grownRes.json()).toMatchObject({ created: 12, assigned: { macrocycles: 0, extended: 1 } });
+    expect(againRes.json()).toMatchObject({ created: 8, assigned: { macrocycles: 0, extended: 1 } });
+
+    const [macrocycle, ...others] = await owner.macrocycle.findMany({ where: { userId: USER_GROWN } });
+    expect(others).toEqual([]);
+    expect(macrocycle).toMatchObject({ id: found?.id, origin: 'imported', status: 'abandoned', statusChosen: true, startDate: at(0), endDate: at(7) });
+    const batchMacrocycles = async (id: string) =>
+      (await owner.importBatch.findUnique({ where: { id } }))?.macrocycles;
+    const ids = (res: typeof firstRes) => res.json<{ batchId: string }>().batchId;
+    const id = macrocycle?.id;
+    expect(await batchMacrocycles(ids(firstRes))).toEqual({ created: [id], extended: [], chosen: [] });
+    expect(await batchMacrocycles(ids(grownRes))).toEqual({
+      created: [],
+      extended: [id],
+      chosen: [{ id, chose: 'overran', before: { status: found?.status, statusChosen: false } }],
+    });
+
+    const undo = (batchId: string) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/rpt/import/${batchId}/undo`,
+        headers: { authorization: `Bearer ${USER_GROWN}` },
+      });
+    // The middle batch goes first. Its choice was made over, so the later batch, found through the
+    // column's `chosen` list, takes what the middle one found as its own.
+    expect((await undo(ids(grownRes))).statusCode).toBe(200);
+    expect(await owner.macrocycle.findMany({ where: { userId: USER_GROWN } })).toEqual([
+      expect.objectContaining({ id, status: 'abandoned', statusChosen: true }),
+    ]);
+    expect(await batchMacrocycles(ids(againRes))).toEqual({
+      created: [],
+      extended: [id],
+      chosen: [{ id, chose: 'abandoned', before: { status: found?.status, statusChosen: false } }],
+    });
+    // Then the last: its choice goes, and the status is read again from the first file's rows,
+    // 8 days old with workouts left: in progress.
+    expect((await undo(ids(againRes))).statusCode).toBe(200);
+    expect(await owner.macrocycle.findMany({ where: { userId: USER_GROWN } })).toEqual([
+      expect.objectContaining({ id, status: 'in-progress', statusChosen: false, startDate: at(0), endDate: at(2) }),
+    ]);
+    expect((await undo(ids(firstRes))).statusCode).toBe(200);
+    expect(await written(USER_GROWN)).toEqual({ sets: 0, macrocycles: 0, batches: 0 });
+  });
 });

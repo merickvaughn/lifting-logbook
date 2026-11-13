@@ -65,4 +65,21 @@ export class InMemoryTrainingMaxRepository implements ITrainingMaxRepository {
   async deleteAllTrainingMaxes(program: string): Promise<void> {
     this.maxesByProgram.delete(program);
   }
+
+  /** Each program's dismissed lift ids, in the order they were dismissed. */
+  private readonly dismissals = new Map<string, Set<string>>();
+
+  async getMissingMaxDismissals(program: string): Promise<string[]> {
+    return [...(this.dismissals.get(program) ?? [])];
+  }
+
+  async dismissMissingMax(program: string, liftId: string): Promise<void> {
+    const ids = this.dismissals.get(program) ?? new Set<string>();
+    ids.add(liftId);
+    this.dismissals.set(program, ids);
+  }
+
+  async undismissMissingMax(program: string, liftId: string): Promise<void> {
+    this.dismissals.get(program)?.delete(liftId);
+  }
 }

@@ -158,6 +158,12 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
   Deleting a macrocycle clears a program's own maxes with its training maxes; the modifications stay.
   The routes are `GET /programs/:program/modification-maxes` and
   `PUT /programs/:program/modification-maxes/:id`, which takes a max only for an `own` modification.
+- `missing_max_dismissal` holds a lifter's "Don't ask again" answer to the offer to set up a training
+  max for a lift with logged sets and none, per user, program and lift id (`liftIdFor`), with no
+  foreign key ([#1246](https://github.com/merickvaughn/lifting-logbook/issues/1246)). It survives a
+  macrocycle delete, since it is the lifter's answer about the lift. The routes are
+  `PUT` and `DELETE /programs/:program/training-maxes/missing/:liftId/dismissal`, and
+  `GET /programs/:program/training-maxes/missing` reports it as `dismissed`.
   A mode change keeps the max stored, but the `GET` returns only maxes of modifications whose mode
   is `own`, so the logger never plans from one left behind.
   The Edit Lift page edits a lift's modifications and their own maxes.
@@ -587,6 +593,11 @@ classDiagram
         +string lift
         +float weight
     }
+    class MissingMaxDismissal {
+        <<persisted>>
+        +string program
+        +string liftId
+    }
     class TrainingMaxHistory {
         <<persisted>>
         +float weight
@@ -663,6 +674,7 @@ classDiagram
     CatalogLift *-- MuscleTargets : default muscles
     LiftMetadata ..> Lift : overrides muscles by exact NAME - no FK
     LiftModification ..> Lift : by lift id - no FK
+    MissingMaxDismissal ..> Lift : by lift id - no FK
     LiftRecord ..> LiftModification : ids on each set - no FK
     LiftModification *-- LiftModificationMax : own max per program - FK cascade
     TrainingMax ..> TrainingMaxHistory : appended on change
@@ -679,8 +691,9 @@ The four edges worth reading twice:
 
 ### What the database looks like
 
-**19 models, 1 relation, 0 enums.** The sole relation is
-`CustomProgram → CustomProgramSpec` (`onDelete: Cascade`). Every other model is a flat
+**22 models, 2 relations, 0 enums.** The relations are
+`CustomProgram → CustomProgramSpec` and `LiftModification → LiftModificationMax`, both
+`onDelete: Cascade`. Every other model is a flat
 table scoped by a bare `userId String`; there is no `User` model (Clerk owns identity)
 and therefore almost nothing cascades.
 

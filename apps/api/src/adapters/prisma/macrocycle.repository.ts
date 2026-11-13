@@ -3,7 +3,7 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { MacrocycleOrigin, MacrocycleStatus } from '@lifting-logbook/types';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { MacrocycleNumberConflictError } from '../../ports/errors';
-import { IMacrocycleRepository, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
+import { IMacrocycleRepository, MacrocycleChanges, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
 import { PrismaExecutor, runInteractive } from './prisma-tx.util';
 
 function toRow(row: Macrocycle): MacrocycleRow {
@@ -139,6 +139,18 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
       orderBy: [{ startDate: 'asc' }, { macrocycleNum: 'asc' }],
     });
     return rows.map(toRow);
+  }
+
+  async listAll(): Promise<MacrocycleRow[]> {
+    const rows = await this.prisma.macrocycle.findMany({
+      where: { userId: this.userId },
+      orderBy: [{ startDate: 'asc' }, { program: 'asc' }, { macrocycleNum: 'asc' }],
+    });
+    return rows.map(toRow);
+  }
+
+  async update(id: string, changes: MacrocycleChanges): Promise<void> {
+    await this.prisma.macrocycle.updateMany({ where: { id, userId: this.userId }, data: changes });
   }
 
   async findByNumber(program: string, macrocycleNum: number): Promise<MacrocycleRow | null> {
