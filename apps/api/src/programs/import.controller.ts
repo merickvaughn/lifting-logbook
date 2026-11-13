@@ -90,7 +90,9 @@ import {
   planSplitMaxes,
   splitMaxCounts,
 } from './import-assign';
+import { placeSuggestedStretches, recomputeMacrocycles } from './import-stored';
 import {
+  BreakdownBatch,
   BreakdownMismatchException,
   PlacedBreakdown,
   parseBreakdown,
@@ -219,6 +221,7 @@ export class ImportController {
           liftOverrides,
           splitDest,
           exported,
+          importDate: assignImportDate(fields.get('today')),
         });
       }
       // With the flag on, read blank numbers as the preview does, so the strict validator
@@ -418,7 +421,12 @@ export class ImportController {
       };
       // An import through the Assign step saved one batch per program it wrote to, grouped under
       // this one (#1254). Each one's keys are read under its own program.
-      for (const part of [batch, ...(await repos.importBatch.listGroup(batch.id))]) {
+      const parts = [batch, ...(await repos.importBatch.listGroup(batch.id))];
+      // Read once, only for a batch that recomputes its macrocycles (#1255).
+      const programs = parts.some((p) => p.macrocycles)
+        ? [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(user.id))]
+        : [];
+      for (const part of parts) {
         // A 1RM split's training maxes share this batch, keyed by lift id (#1148). Every set and
         // `legacy` row key starts with a macrocycle number, and a lift id (a kebab-case name or a
         // custom lift's UUID) never does.
@@ -443,10 +451,21 @@ export class ImportController {
         // The batch goes first, so the renumbering below doesn't rewrite the keys of a batch about
         // to be deleted.
         await repos.importBatch.deleteById(part.id, user.id);
+        // An Assign import's macrocycles are recomputed from the sets left on them, which a later
+        // import may have added to, rather than restored (#1255, decision 14).
+        const emptied = part.macrocycles
+          ? await recomputeMacrocycles(
+              repos,
+              part.program,
+              [...part.macrocycles.created, ...part.macrocycles.extended],
+              programs,
+              assignImportDate(undefined),
+            )
+          : [];
         // A `legacy` or `imported` macrocycle left with no sets goes (ADR-042): one the import
         // created, or one its sets joined, and the numbers close up.
         const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
-        await removeEmptyLegacyRows(repos, part.program, [...new Set([...legacyNums, ...setNums])]);
+        await removeEmptyLegacyRows(repos, part.program, [...new Set([...legacyNums, ...setNums, ...emptied])]);
         await renumberProgram(repos, part.program);
       }
     } else if (batch.destination === 'training-maxes') {
@@ -823,6 +842,10 @@ export class ImportController {
       sourceProgram: program,
       customPrograms,
     });
+    const stored = await placeSuggestedStretches(repos, segmented.stretches, [
+      ...BUILT_IN_KNOWN_PROGRAMS,
+      ...customPrograms,
+    ]);
     const response = assignResponse(
       segmented,
       {
@@ -830,6 +853,7 @@ export class ImportController {
         undatedRows: undated,
         exported,
         programs: assignProgramOptions(customPrograms),
+        stored,
         ...(split ? { split: await splitMaxCounts(splitMaxes, segmented.stretches, program, repos) } : {}),
       },
       await liftNamesFor(repos),
@@ -846,6 +870,9 @@ export class ImportController {
         nonCycleSessions: response.nonCycle.length,
         unnumberedSessions: response.unnumbered.length,
         conflicts: response.conflicts.length,
+        joiningStretches: stored.filter((s) => s.kind === 'joins').length,
+        alreadyImportedStretches: stored.filter((s) => s.kind === 'already-imported').length,
+        overlappingStretches: stored.filter((s) => s.kind === 'overlaps').length,
         undatedRows: response.undatedRows,
         exported,
         splitChanges: response.split?.changes ?? 0,
@@ -884,6 +911,8 @@ export class ImportController {
       liftOverrides: Record<string, string>;
       splitDest: boolean;
       exported: boolean;
+      /** What a joined macrocycle's suggested status is judged against (#1255). */
+      importDate: Date;
     },
   ): Promise<ImportCommitResponse | ImportDryRunResponse> {
     const started = Date.now();
@@ -927,8 +956,10 @@ export class ImportController {
     const split = await planSplitMaxes(splitMaxes, programCovering(placed.stretches, program), repos);
     const splitRows = [...split.byProgram.values()];
     const splitWrites = splitRows.reduce((n, s) => n + s.writes.length, 0);
+    const extended = plan.stretches.filter((s) => s.stored.kind === 'joins').length;
     const assigned = {
-      macrocycles: plan.stretches.length,
+      macrocycles: plan.stretches.length - extended,
+      extended,
       nonCycleSessions: placed.nonCycleSessions,
       excludedSessions: placed.excludedSessions,
       undatedRows: undated,
@@ -947,19 +978,21 @@ export class ImportController {
         );
       }
     } else {
-      const written = await writeBreakdown(repos, program, plan);
+      const written = await writeBreakdown(repos, program, plan, { programs, importDate: choices.importDate });
       created = written.created;
-      const preImages = written.preImages;
+      const batches = written.batches;
       if (splitMaxes.length > 0) {
         const results: ImportWriteResult[] = [];
         for (const [splitProgram, { existing, writes }] of split.byProgram) {
           if (writes.length === 0) continue;
           results.push(await repos.trainingMax.importTrainingMaxes(splitProgram, writes));
-          preImages.set(splitProgram, { ...(preImages.get(splitProgram) ?? {}), ...buildTrainingMaxPreImage(writes, existing) });
+          const batch = batches.get(splitProgram) ?? { preImage: {}, macrocycles: { created: [], extended: [] } };
+          Object.assign(batch.preImage, buildTrainingMaxPreImage(writes, existing));
+          batches.set(splitProgram, batch);
         }
         splitCounts = sumCounts(results);
       }
-      batchId = await saveBatchGroup(repos, userId, program, preImages);
+      batchId = await saveBatchGroup(repos, userId, program, batches);
     }
     // A split row not written is older than its program's max or than a newer row of its lift.
     const splitResult = splitCounts && {
@@ -1174,21 +1207,32 @@ async function saveBatchGroup(
   repos: Pick<RepositoryBundle, 'importBatch'>,
   userId: string,
   sourceProgram: string,
-  preImages: ReadonlyMap<string, ImportPreImage>,
+  batches: ReadonlyMap<string, BreakdownBatch>,
 ): Promise<string> {
   const groupId = randomUUID();
   const createdAt = new Date();
+  const source = batches.get(sourceProgram);
   await repos.importBatch.save({
     id: groupId,
     userId,
     program: sourceProgram,
     destination: 'lift-records',
-    preImage: preImages.get(sourceProgram) ?? {},
+    preImage: source?.preImage ?? {},
     createdAt,
+    macrocycles: source?.macrocycles ?? null,
   });
-  for (const [program, preImage] of preImages) {
+  for (const [program, { preImage, macrocycles }] of batches) {
     if (program === sourceProgram) continue;
-    await repos.importBatch.save({ id: randomUUID(), userId, program, destination: 'lift-records', preImage, createdAt, groupId });
+    await repos.importBatch.save({
+      id: randomUUID(),
+      userId,
+      program,
+      destination: 'lift-records',
+      preImage,
+      createdAt,
+      groupId,
+      macrocycles,
+    });
   }
   return groupId;
 }

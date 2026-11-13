@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import {
   AssignProgramOption,
   AssignSession,
+  AssignStoredPlacement,
   AssignStretch,
   ImportAssignResponse,
   MACROCYCLE_STATUSES,
@@ -183,6 +184,7 @@ function fileStatusOf(rows: ReadonlyArray<{ status?: string }>): MacrocycleStatu
 
 function assignStretch(
   stretch: HistoryStretch<AssignRecord>,
+  stored: AssignStoredPlacement,
   liftNames: ReadonlyMap<string, string>,
 ): AssignStretch {
   const named = (lifts: readonly string[]) => lifts.map((lift) => liftNames.get(lift) ?? lift);
@@ -210,6 +212,7 @@ function assignStretch(
       program: stretch.reasons.program,
       status: stretch.reasons.status,
     },
+    stored,
   };
 }
 
@@ -222,12 +225,16 @@ export function assignResponse(
     exported: boolean;
     programs: AssignProgramOption[];
     split?: { changes: number; olderThanCurrent: number };
+    /** Each stretch's placement among the stored macrocycles, in `segmented.stretches` order (#1255). */
+    stored: readonly AssignStoredPlacement[];
   },
   liftNames: ReadonlyMap<string, string>,
 ): ImportAssignResponse {
   const nonCycle = sessionsOf(segmented.nonCycle).map((s) => rowSession(s, liftNames));
   const unnumbered = sessionsOf(segmented.unnumbered).map((s) => rowSession(s, liftNames));
-  const stretches = segmented.stretches.map((s) => assignStretch(s, liftNames));
+  const stretches = segmented.stretches.map((s, i) =>
+    assignStretch(s, extra.stored[i] ?? { kind: 'new' }, liftNames),
+  );
   return {
     importDate: ymd(extra.importDate),
     sessions:

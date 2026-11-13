@@ -281,6 +281,36 @@ With `IMPORT_ASSIGN_ENABLED` on, `mode=dry-run` and commit take the lifter's con
 
 - The migration `20261113000001_import_batch_group` adds a nullable column and an index, so the old revision runs on it unchanged. **Rollback:** revert the API image. A grouped batch then undoes only its Source part under the old revision, so undo grouped imports before reverting, or leave the other programs' rows in place. Once this revision is back, each of those other programs' batches can be undone on its own.
 
+## Amendment: a grown file extends what's stored, and undo recomputes ([#1255](https://github.com/merickvaughn/lifting-logbook/issues/1255))
+
+**Date:** 2026-11-13
+
+Re-importing a file that has grown since its last import should add its new sessions to the macrocycle that import stored, not start a second one (proposal decision 14).
+
+1. **New rows join a stored `imported` macrocycle of their program in two cases.** A stretch with no row to create is `already-imported` and writes nothing.
+   - **The stretch's dates overlap that macrocycle and no other stored one.** This is the grown file.
+   - **They overlap nothing, and that macrocycle is the last thing before them.** "The last thing" counts stored macrocycles of any program and the file's other stretches, and a file stretch wins a tie, since its boundary is the lifter's (decision 7). Three more conditions apply:
+     - it ended at most 14 days before (decision 4);
+     - it has workouts left: it isn't `completed`, and unless its program is open-ended, it has fewer distinct workout numbers than the program has workouts (decision 6);
+     - the file's workout numbers don't fall back below its highest, which would be a restart (decision 7).
+
+   Each stored macrocycle takes at most one stretch. A stretch overlapping anything else forms its own macrocycle. The non-cycle macrocycle is never part of this rule.
+
+   One function, `placeOnStored`, decides it for `mode=assign`, which reports each suggested stretch's `stored` placement, and for the commit, which acts on the confirmed breakdown. So the two can't disagree, though an edited boundary can change the placement.
+2. **Joining rows take the macrocycle's number and continue its workouts.** A row with no file workout number takes the macrocycle's highest plus its session's place among the new sessions (decision 9). The macrocycle then reads its dates, and unless its status was chosen, its suggested status, again from all its rows (`suggestStretchStatus`, now exported from core), as of the import date. A status the lifter chose for the stretch replaces the stored one.
+3. **A batch keeps its macrocycles apart from its lift-record keys.** The new nullable `import_batch.macrocycles` column holds `{ created, extended }` by macrocycle id, and an Assign import no longer writes `macrocycle-row:<n>` keys. Ids don't change when the renumbering moves a number, so nothing rewrites the column.
+4. **Undo recomputes rather than restores.** After removing a batch's rows, each macrocycle in its `macrocycles` that still has rows takes its dates from them, and its suggested status unless the status was chosen, judged against the server's day. One with no rows left goes, through the existing `removeEmptyLegacyRows`, which never removes a `live` or non-cycle macrocycle. A pre-image of the macrocycle row would be wrong once a later batch had added rows to it. Batches from before this revision have no `macrocycles` and undo as #1254 described.
+
+**Alternatives rejected:**
+
+- **Always forming a second macrocycle**, which splits one real run in two whenever a file grows.
+- **Restoring a stored pre-image of the macrocycle row on undo**, which undoes a later batch's dates as well.
+- **Keeping the macrocycles as `macrocycle-row:<n>` keys**, which the renumbering would have to keep rewriting, and which can't say whether the batch created the macrocycle or extended it.
+
+**Consequences:**
+
+- The migration `20261113000002_import_batch_macrocycles` adds one nullable column, so the old revision runs on it unchanged. **Rollback:** revert the API image. Under the old revision, undoing an Assign import saved by this one removes its rows but leaves the macrocycles it created, since their ids aren't keys that revision reads, so undo those imports before reverting.
+
 ## References
 
 1. [PostgreSQL 16 — Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html)

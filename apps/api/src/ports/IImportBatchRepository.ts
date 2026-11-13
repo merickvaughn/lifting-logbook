@@ -13,6 +13,18 @@ export interface ImportBatchRecord {
    * (#1254). Absent on that batch and on every import that stores under one program.
    */
   groupId?: string | null;
+  /**
+   * The macrocycles an import through the Assign step created or extended, by stable id
+   * (#1255, decision 14), kept apart from `preImage`'s lift-record keys. Undo recomputes each
+   * from the sets left on it. Absent on every other import.
+   */
+  macrocycles?: BatchMacrocycles | null;
+}
+
+/** See {@link ImportBatchRecord.macrocycles}. */
+export interface BatchMacrocycles {
+  created: string[];
+  extended: string[];
 }
 
 /**

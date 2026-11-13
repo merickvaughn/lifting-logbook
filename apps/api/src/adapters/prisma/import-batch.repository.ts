@@ -3,6 +3,7 @@ import { ImportPreImage } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import {
+  BatchMacrocycles,
   IImportBatchRepository,
   ImportBatchRecord,
   KeyNumbers,
@@ -26,6 +27,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
         destination: batch.destination,
         preImage: batch.preImage as object,
         groupId: batch.groupId ?? null,
+        ...(batch.macrocycles ? { macrocycles: { ...batch.macrocycles } } : {}),
       },
     });
   }
@@ -60,7 +62,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
         // The key's number as `preImageKeyNumber` reads it; numeric, so a long digit run can't
         // overflow the cast. A key with no number matches neither way.
         const rows = await this.prisma.$queryRaw<ImportBatch[]>`
-          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId" FROM "import_batch" b
+          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId", b."macrocycles" FROM "import_batch" b
           WHERE b."userId" = ${this.userId} AND b."program" = ${program} AND b."destination" = ${destination}
             AND EXISTS (
               SELECT 1 FROM jsonb_object_keys(b."preImage") AS k,
@@ -87,7 +89,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
       try {
         span.setAttribute('import_batch.keys', keys.length);
         const rows = await this.prisma.$queryRaw<ImportBatch[]>`
-          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId" FROM "import_batch" b
+          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId", b."macrocycles" FROM "import_batch" b
           WHERE b."userId" = ${this.userId} AND b."destination" = ${destination}
             AND EXISTS (SELECT 1 FROM jsonb_object_keys(b."preImage") AS k WHERE k = ANY(${[...keys]}::text[]))`;
         span.setAttribute('import_batch.count', rows.length);
@@ -135,5 +137,6 @@ function toRecord(row: ImportBatch): ImportBatchRecord {
     preImage: row.preImage as unknown as ImportPreImage,
     createdAt: row.createdAt,
     groupId: row.groupId,
+    macrocycles: (row.macrocycles as unknown as BatchMacrocycles | null) ?? null,
   };
 }

@@ -21,17 +21,13 @@ import {
   withOccurrence,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
+import { BatchMacrocycles } from '../ports/IImportBatchRepository';
 import { NewMacrocycle } from '../ports/IMacrocycleRepository';
-import {
-  dashboardOrNull,
-  ensureCurrentRow,
-  legacyRowsPreImage,
-  moveUnstartedRows,
-  nonCycleRowsPreImage,
-} from './macrocycle-history.util';
+import { dashboardOrNull, ensureCurrentRow, moveUnstartedRows, nonCycleRowsPreImage } from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
 import { placeNonCycleRows } from './import-handlers';
 import { programCoveringDate } from './import-assign';
+import { StoredPlacement, continuedWorkoutNums, placeOnStored, recomputeMacrocycles } from './import-stored';
 
 /**
  * An import through the Assign step (#1254, proposal decisions 3, 5, 13, 15 and 17): the lifter's
@@ -286,11 +282,16 @@ type Classified = ClassifiedLiftRecordRow<{ r: PlacedBreakdown['rows'][number]; 
 /** A stretch's rows to create, as the plan places them. */
 interface PlannedStretch {
   spec: ImportBreakdownStretch;
-  /** Rows to create, with their workout number and occurrence; macrocycle numbers come at write time. */
+  /**
+   * Rows to create, with their workout number and occurrence. A joining stretch's carry its
+   * macrocycle's number; the others' numbers come at write time.
+   */
   creating: LiftRecord[];
   startDate: Date;
   endDate: Date;
   unmatched: boolean;
+  /** Where its rows go among the stored macrocycles (#1255): never `already-imported` here. */
+  stored: StoredPlacement;
 }
 
 /** What a breakdown would write, read under the import lock for a commit. */
@@ -306,11 +307,13 @@ export interface BreakdownPlan {
 
 /**
  * Classifies the breakdown's rows against what's stored, under any program (decision 13), and
- * gives each row to create its stretch's workout number: the file's, else the session's position
- * in the stretch (decision 9). A stretch with nothing new creates no macrocycle.
+ * places each stretch's new rows among the stored macrocycles (decision 14, {@link placeOnStored}).
+ * Each row to create gets its workout number: the file's, else the session's position in the
+ * stretch, or for a stretch joining a stored macrocycle, continuing from its highest (decision 9).
+ * A stretch with nothing new writes nothing.
  */
 export async function planBreakdown(
-  repos: Pick<RepositoryBundle, 'liftRecord'>,
+  repos: Pick<RepositoryBundle, 'liftRecord' | 'macrocycle'>,
   placed: PlacedBreakdown,
   programs: readonly KnownProgram[],
 ): Promise<BreakdownPlan> {
@@ -334,28 +337,50 @@ export async function planBreakdown(
     list.push({ ...rest, ...withOccurrence(c.occurrence) });
   }
 
+  // A stretch with a row to create has rows, so it has a span; the others aren't placed.
+  const withRows = placed.stretches.flatMap(({ spec, span }, index) => (span ? [{ spec, span, index }] : []));
+  const placements = await placeOnStored(
+    repos,
+    withRows.map(({ spec, span, index }) => ({
+      program: spec.program,
+      span,
+      creating: (creatingIn.get(index) ?? []).map((r) => ({ date: r.date, workoutNum: fileWorkoutNum(r) })),
+    })),
+    programs,
+  );
+
   const stretches: PlannedStretch[] = [];
-  placed.stretches.forEach(({ spec, rows, span }, index) => {
+  withRows.forEach(({ spec, span, index }, n) => {
+    const stored = placements[n];
+    const raw = creatingIn.get(index) ?? [];
+    if (raw.length === 0 || !stored) return;
+    const rows = placed.stretches[index]?.rows ?? [];
     const sessionOf = new Map([...new Set(rows.map((r) => r.date.getTime()))].sort((a, b) => a - b).map((t, i) => [t, i + 1]));
-    const creating = (creatingIn.get(index) ?? []).map((r) => ({
-        ...r,
-        program: spec.program,
-        // One stored macrocycle per stretch: the number is given at write time.
-        macrocycleNum: 0,
-        workoutNum: Number.isFinite(r.workoutNum) ? r.workoutNum : (sessionOf.get(r.date.getTime()) ?? 1),
-      }));
-    // A stretch with a row to create has rows, so it has a span.
-    if (creating.length === 0 || !span) return;
+    const continued =
+      stored.kind === 'joins'
+        ? continuedWorkoutNums(raw.map((r) => ({ date: r.date, workoutNum: fileWorkoutNum(r) })), stored.highestWorkout)
+        : null;
+    const creating = raw.map((r, k) => ({
+      ...r,
+      program: spec.program,
+      // A new macrocycle's number is given at write time.
+      macrocycleNum: stored.kind === 'joins' ? stored.macrocycle.macrocycleNum : 0,
+      workoutNum: continued?.[k] ?? fileWorkoutNum(r) ?? sessionOf.get(r.date.getTime()) ?? 1,
+    }));
     const lifts = programs.find((p) => p.id === spec.program)?.lifts;
     stretches.push({
       spec,
       creating: distinctKeys(creating),
       ...span,
       unmatched: lifts === undefined || rows.some((r) => !lifts.has(liftKey(r.lift))),
+      stored,
     });
   });
   return { classified, stretches, nonCycle: creatingIn.get(null) ?? [], changed };
 }
+
+/** A row's workout number from the file, else null. */
+const fileWorkoutNum = (r: LiftRecord): number | null => (Number.isFinite(r.workoutNum) ? r.workoutNum : null);
 
 /**
  * Gives a row whose natural key repeats an earlier one's the next free occurrence. The classifier
@@ -377,41 +402,59 @@ function distinctKeys(rows: readonly LiftRecord[]): LiftRecord[] {
   });
 }
 
+/** One program's batch of an Assign import: its pre-image and the macrocycles it changed. */
+export interface BreakdownBatch {
+  /** Its sets' keys and, for the Source program, the non-cycle sets'. */
+  preImage: ImportPreImage;
+  /** The macrocycles it created and the stored ones it extended, by id (#1255, decision 14). */
+  macrocycles: BatchMacrocycles;
+}
+
 /** What {@link writeBreakdown} wrote. */
 export interface BreakdownWrite {
   created: number;
-  /** Each program's pre-image: its sets, the macrocycles created and, for the Source program, the non-cycle sets. */
-  preImages: Map<string, ImportPreImage>;
+  /** Each program's batch, the Source program's always among them. */
+  batches: Map<string, BreakdownBatch>;
 }
 
 /**
- * Writes a plan under the import lock, which the caller holds. Each program's new macrocycles are
- * `imported` rows numbered past every stored one in start-date order, then the program renumbers
- * by date (decision 3), so a stretch's file number never names a stored macrocycle. The pre-image
- * keys carry the numbers as stored after that.
+ * Writes a plan under the import lock, which the caller holds. A joining stretch's rows go onto
+ * its stored macrocycle, which takes the stretch's status if the lifter chose it, then reads its
+ * dates and, unless its status was chosen, its suggested status again from all its rows as of
+ * `importDate` (decision 14). Each program's other stretches become `imported` macrocycles
+ * numbered past every stored one in start-date order, then the program renumbers by date
+ * (decision 3), so a stretch's file number never names a stored macrocycle. The pre-image keys
+ * carry the numbers as stored after that; the macrocycles are kept by id, which doesn't change.
  */
 export async function writeBreakdown(
   repos: Pick<RepositoryBundle, 'liftRecord' | 'macrocycle' | 'macrocycleDashboard' | 'importBatch'>,
   sourceProgram: string,
   plan: BreakdownPlan,
+  context: { programs: readonly KnownProgram[]; importDate: Date },
 ): Promise<BreakdownWrite> {
-  const preImages = new Map<string, ImportPreImage>([[sourceProgram, {}]]);
-  const addTo = (program: string, image: ImportPreImage) =>
-    preImages.set(program, { ...(preImages.get(program) ?? {}), ...image });
+  const batches = new Map<string, BreakdownBatch>();
+  const batchOf = (program: string): BreakdownBatch => {
+    let batch = batches.get(program);
+    if (!batch) batches.set(program, (batch = { preImage: {}, macrocycles: { created: [], extended: [] } }));
+    return batch;
+  };
+  batchOf(sourceProgram);
   let created = 0;
 
   const byProgram = new Map<string, PlannedStretch[]>();
   for (const s of plan.stretches) {
-    const list = byProgram.get(s.spec.program);
-    if (list) list.push(s);
-    else byProgram.set(s.spec.program, [s]);
+    let list = byProgram.get(s.spec.program);
+    if (!list) byProgram.set(s.spec.program, (list = []));
+    list.push(s);
   }
   for (const [program, planned] of byProgram) {
+    const batch = batchOf(program);
     const dashboard = await dashboardOrNull(repos, program);
     if (dashboard) await ensureCurrentRow(repos, dashboard);
     const storedNums = new Set((await repos.macrocycle.list(program)).map((m) => m.macrocycleNum));
     const first = Math.max(0, ...storedNums) + 1;
-    const ordered = [...planned].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+    const joining = planned.filter((s) => s.stored.kind === 'joins');
+    const ordered = planned.filter((s) => s.stored.kind !== 'joins').sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
     const rows: NewMacrocycle[] = ordered.map((s, i) => ({
       program,
       macrocycleNum: first + i,
@@ -423,16 +466,33 @@ export async function writeBreakdown(
       unmatched: s.unmatched,
     }));
     // Rows a page wrote on these numbers before they had a macrocycle move past them first.
-    await moveUnstartedRows(repos, program, storedNums, first - 1, first + rows.length - 1);
+    if (rows.length > 0) await moveUnstartedRows(repos, program, storedNums, first - 1, first + rows.length - 1);
     await repos.macrocycle.createMany(rows);
-    const records = ordered.flatMap((s, i) => s.creating.map((r) => ({ ...r, macrocycleNum: first + i })));
+    for (const row of rows) {
+      const stored = await repos.macrocycle.findByNumber(program, row.macrocycleNum);
+      if (stored) batch.macrocycles.created.push(stored.id);
+    }
+    const records = [
+      ...ordered.flatMap((s, i) => s.creating.map((r) => ({ ...r, macrocycleNum: first + i }))),
+      ...joining.flatMap((s) => s.creating),
+    ];
     created += await repos.liftRecord.appendLiftRecords(program, records);
+    for (const s of joining) {
+      if (s.stored.kind !== 'joins') continue;
+      const { macrocycle } = s.stored;
+      await repos.macrocycle.update(macrocycle.id, {
+        unmatched: macrocycle.unmatched || s.unmatched,
+        ...(s.spec.statusChosen ? { status: s.spec.status, statusChosen: true } : {}),
+      });
+      batch.macrocycles.extended.push(macrocycle.id);
+    }
+    await recomputeMacrocycles(repos, program, batch.macrocycles.extended, context.programs, context.importDate);
     const changes = await renumberProgram(repos, program);
     const renumbered = (n: number) => changes.get(n) ?? n;
-    addTo(program, {
-      ...buildLiftRecordsPreImage(records.map((r) => ({ ...r, macrocycleNum: renumbered(r.macrocycleNum) }))),
-      ...legacyRowsPreImage(rows.map((m) => renumbered(m.macrocycleNum))),
-    });
+    Object.assign(
+      batch.preImage,
+      buildLiftRecordsPreImage(records.map((r) => ({ ...r, macrocycleNum: renumbered(r.macrocycleNum) }))),
+    );
   }
 
   if (plan.nonCycle.length > 0) {
@@ -440,8 +500,8 @@ export async function writeBreakdown(
     const nonCycle = distinctKeys(await placeNonCycleRows(repos, plan.nonCycle));
     created += await repos.liftRecord.appendLiftRecords(NON_CYCLE_PROGRAM, nonCycle);
     // A non-cycle set's key holds no program, so the Source program's batch carries them.
-    addTo(sourceProgram, nonCycleRowsPreImage(nonCycle));
+    Object.assign(batchOf(sourceProgram).preImage, nonCycleRowsPreImage(nonCycle));
   }
 
-  return { created, preImages };
+  return { created, batches };
 }

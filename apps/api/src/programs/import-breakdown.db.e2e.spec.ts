@@ -37,7 +37,8 @@ const USER_MACROCYCLE_FAILS = 'import-breakdown-db-macrocycle-fails';
 const USER_BATCH_FAILS = 'import-breakdown-db-batch-fails';
 const USER_GROUP_FAILS = 'import-breakdown-db-group-fails';
 const USER_ROW_LIMIT = 'import-breakdown-db-row-limit';
-const USERS = [USER_RACE, USER_MACROCYCLE_FAILS, USER_BATCH_FAILS, USER_GROUP_FAILS, USER_ROW_LIMIT];
+const USER_GROWN = 'import-breakdown-db-grown';
+const USERS = [USER_RACE, USER_MACROCYCLE_FAILS, USER_BATCH_FAILS, USER_GROUP_FAILS, USER_ROW_LIMIT, USER_GROWN];
 // The import transaction allows 30 s (IMPORT_TX_TIMEOUT_MS); the row-limit commit and its undo
 // must each finish well inside it. CI measured the commit at 1.7 s.
 const ROW_LIMIT_BUDGET_MS = 15_000;
@@ -320,4 +321,52 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     },
     ROW_LIMIT_TEST_TIMEOUT_MS,
   );
+
+  it('extends a stored macrocycle from a grown file, keeps its id in the batch, and undoes either batch first (#1255)', async () => {
+    const chosen = (dates: string[]): ImportBreakdown => ({
+      stretches: [{ program: 'rpt', dates, status: 'overran', statusChosen: true }],
+      excludedDates: [],
+      nonCycleDates: [],
+    });
+    const first = historyCsv('2024-03-01', 3, 1);
+    const grown = historyCsv('2024-03-01', 6, 1);
+    const firstRes = await commit(USER_GROWN, first.csv, chosen(first.dates));
+    const grownRes = await commit(USER_GROWN, grown.csv, oneStretch(grown.dates));
+    expect([firstRes.statusCode, grownRes.statusCode]).toEqual([200, 200]);
+    expect(grownRes.json()).toMatchObject({ created: 12, assigned: { macrocycles: 0, extended: 1 } });
+
+    const [macrocycle, ...others] = await owner.macrocycle.findMany({ where: { userId: USER_GROWN } });
+    expect(others).toEqual([]);
+    expect(macrocycle).toMatchObject({
+      origin: 'imported',
+      status: 'overran',
+      statusChosen: true,
+      startDate: new Date('2024-03-01T00:00:00Z'),
+      endDate: new Date('2024-03-06T00:00:00Z'),
+    });
+    const batchMacrocycles = async (id: string) =>
+      (await owner.importBatch.findUnique({ where: { id } }))?.macrocycles;
+    const ids = (res: typeof firstRes) => res.json<{ batchId: string }>().batchId;
+    expect(await batchMacrocycles(ids(firstRes))).toEqual({ created: [macrocycle?.id], extended: [] });
+    expect(await batchMacrocycles(ids(grownRes))).toEqual({ created: [], extended: [macrocycle?.id] });
+
+    const undo = (batchId: string) =>
+      app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/rpt/import/${batchId}/undo`,
+        headers: { authorization: `Bearer ${USER_GROWN}` },
+      });
+    // The first batch goes first: the macrocycle keeps the grown file's rows and its chosen status.
+    expect((await undo(ids(firstRes))).statusCode).toBe(200);
+    expect(await owner.macrocycle.findMany({ where: { userId: USER_GROWN } })).toEqual([
+      expect.objectContaining({
+        id: macrocycle?.id,
+        status: 'overran',
+        startDate: new Date('2024-03-04T00:00:00Z'),
+        endDate: new Date('2024-03-06T00:00:00Z'),
+      }),
+    ]);
+    expect((await undo(ids(grownRes))).statusCode).toBe(200);
+    expect(await written(USER_GROWN)).toEqual({ sets: 0, macrocycles: 0, batches: 0 });
+  });
 });
