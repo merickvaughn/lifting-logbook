@@ -1,7 +1,7 @@
 name: Deploy
 
 # Runs on every push to main.
-# Pipeline: [preflight] → terraform staging → build images → deploy staging →
+# Pipeline: [preflight] → build images → terraform + deploy staging (under the staging lock) →
 #           smoke test → [manual approval] → terraform production → deploy production
 #
 # Staging is optional. When GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER is not set,
@@ -66,11 +66,15 @@ jobs:
       - id: check
         env:
           STAGING_WIF: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+          STAGING_PROJECT: ${{ vars.GCP_STAGING_PROJECT_ID }}
           PROD_PROJECT: ${{ vars.GCP_PROD_PROJECT_ID }}
         run: |
           if [[ -n "$STAGING_WIF" ]]; then
             echo "staging_enabled=true" >> "$GITHUB_OUTPUT"
-            echo "ar_repo=" >> "$GITHUB_OUTPUT"   # filled by terraform-staging
+            # Terraform's artifact_registry_repo output, computed here because build-images runs
+            # before deploy-staging applies Terraform under the staging lock (#1216).
+            # deploy-staging checks that the two agree.
+            echo "ar_repo=${{ env.REGISTRY }}/${STAGING_PROJECT}/${{ env.ARTIFACT_REPO }}" >> "$GITHUB_OUTPUT"
             echo "Staging credentials found — full pipeline will run."
           else
             echo "staging_enabled=false" >> "$GITHUB_OUTPUT"
@@ -78,89 +82,12 @@ jobs:
             echo "Staging not configured — production-only mode."
           fi
 
-  # ── 1. Terraform: staging ────────────────────────────────────────────────
-  terraform-staging:
-    name: Terraform (staging)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [preflight]
-    if: needs.preflight.outputs.staging_enabled == 'true'
-    permissions:
-      contents: read
-      id-token: write
-    outputs:
-      gke_enabled: ${{ steps.tf-outputs.outputs.gke_enabled }}
-      gke_cluster_name: ${{ steps.tf-outputs.outputs.gke_cluster_name }}
-      cloud_run_api_url: ${{ steps.tf-outputs.outputs.cloud_run_api_url }}
-      cloud_run_web_url: ${{ steps.tf-outputs.outputs.cloud_run_web_url }}
-      ar_repo: ${{ steps.tf-outputs.outputs.ar_repo }}
-      otel_mirror_repo: ${{ steps.tf-outputs.outputs.otel_mirror_repo }}
-      kms_key_name: ${{ steps.tf-outputs.outputs.kms_key_name }}
-      api_wi_sa: ${{ steps.tf-outputs.outputs.api_wi_sa }}
-      web_workload_sa: ${{ steps.tf-outputs.outputs.web_workload_sa }}
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Authenticate to GCP (staging)
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
-
-      - name: Terraform setup + init (staging)
-        uses: ./.github/actions/tf-init
-        with:
-          workspace: staging
-          state-bucket: ${{ secrets.TF_STATE_BUCKET }}
-
-      - name: Terraform apply (staging)
-        working-directory: ${{ env.TF_DIR }}
-        # Bounded retry absorbs transient GCP API 5xx / eventual-consistency
-        # during apply (a real CI red-run driver per the #498 diagnosis —
-        # docs/runbooks/staging-ci-flakiness.md; #504 applies it here for prod
-        # parity). terraform apply is re-runnable; a genuine config error fails
-        # both attempts and hard-fails.
-        run: |
-          for attempt in 1 2; do
-            if terraform apply -auto-approve \
-                 -var-file=terraform.tfvars.staging \
-                 -var="billing_account=${{ secrets.GCP_BILLING_ACCOUNT }}"; then
-              exit 0
-            fi
-            if [ "${attempt}" -lt 2 ]; then
-              echo "Terraform apply attempt ${attempt} failed; retrying in 20s..."
-              sleep 20
-            fi
-          done
-          echo "::error title=Terraform apply failed::terraform apply (staging) failed on both attempts."
-          exit 1
-
-      - name: Capture Terraform outputs
-        id: tf-outputs
-        working-directory: ${{ env.TF_DIR }}
-        run: |
-          echo "gke_enabled=$(terraform output -raw gke_enabled)" >> "$GITHUB_OUTPUT"
-          echo "gke_cluster_name=$(terraform output -raw gke_cluster_name)" >> "$GITHUB_OUTPUT"
-          echo "cloud_run_api_url=$(terraform output -raw cloud_run_api_url)" >> "$GITHUB_OUTPUT"
-          echo "cloud_run_web_url=$(terraform output -raw cloud_run_web_url)" >> "$GITHUB_OUTPUT"
-          echo "ar_repo=$(terraform output -raw artifact_registry_repo)" >> "$GITHUB_OUTPUT"
-          echo "otel_mirror_repo=$(terraform output -raw otel_collector_mirror_repo)" >> "$GITHUB_OUTPUT"
-          echo "kms_key_name=$(terraform output -raw kms_key_name)" >> "$GITHUB_OUTPUT"
-          echo "api_wi_sa=$(terraform output -raw cicd_service_account_email)" >> "$GITHUB_OUTPUT"
-          echo "web_workload_sa=$(terraform output -raw web_workload_sa)" >> "$GITHUB_OUTPUT"
-
   # ── 2. Build and push Docker images ─────────────────────────────────────
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [preflight, terraform-staging]
-    # Run when preflight succeeds and terraform-staging either succeeded or was skipped.
-    if: |
-      always() &&
-      needs.preflight.result == 'success' &&
-      (needs.terraform-staging.result == 'success' || needs.terraform-staging.result == 'skipped')
+    needs: [preflight]
     permissions:
       contents: read
       id-token: write
@@ -188,10 +115,7 @@ jobs:
 
       - name: Resolve Artifact Registry repo
         id: ar
-        run: |
-          STAGING_REPO="${{ needs.terraform-staging.outputs.ar_repo }}"
-          PREFLIGHT_REPO="${{ needs.preflight.outputs.ar_repo }}"
-          echo "repo=${STAGING_REPO:-$PREFLIGHT_REPO}" >> "$GITHUB_OUTPUT"
+        run: echo "repo=${{ needs.preflight.outputs.ar_repo }}" >> "$GITHUB_OUTPUT"
 
       # No per-env value resolution for the web image (#396 / ADR-028, superseding
       # ADR-025). Public config (API URL, Clerk publishable key, default program) is
@@ -349,22 +273,30 @@ jobs:
       # the job header active, so a forgotten re-auth will silently flip behavior
       # between the two modes.
 
-  # ── 3. Deploy to staging ─────────────────────────────────────────────────
+  # ── 3. Terraform + deploy to staging ───────────────────────────────────
+  # The staging Terraform apply runs in this job, after it takes the staging lock, so it can't
+  # change staging's Cloud Run services, IAM or networking under a staging.yml run's tests, and
+  # this merge's deploy and smoke test run against the infrastructure this run applied (#1216).
+  # It is a step here, not its own job, because the lock is job-scoped (--holder-job below): a
+  # separate job would release it, or look done to waiters, before this job deployed.
   deploy-staging:
     name: Deploy (staging)
     runs-on: ubuntu-latest
-    # 30m of deploy plus up to 60m waiting for the staging lock. The wait covers the longest hold
-    # a staging.yml run can have (deploy-api's 30m, then the integration tests' 25m), so a lost
-    # race can't skip this merge's production deploy; this run's waiter also has priority over
-    # pull_request waiters.
-    timeout-minutes: 95
-    needs: [preflight, terraform-staging, build-images]
+    # Up to 80m waiting for the staging lock, then 20m of Terraform apply and 30m of deploy, plus
+    # 5m spare. The wait covers the longest hold a staging.yml run can have (terraform-staging's
+    # 20m, deploy-api's 30m, then the integration tests' 25m), so a lost race can't skip this
+    # merge's production deploy; this run's waiter also has priority over pull_request waiters.
+    timeout-minutes: 135
+    needs: [preflight, build-images]
     if: needs.preflight.outputs.staging_enabled == 'true' && needs.build-images.result == 'success'
     permissions:
       contents: read
       id-token: write
       actions: read   # ask GitHub whether the staging lock's holder run has completed
     environment: staging
+    outputs:
+      cloud_run_api_url: ${{ steps.tf-outputs.outputs.cloud_run_api_url }}
+      cloud_run_web_url: ${{ steps.tf-outputs.outputs.cloud_run_web_url }}
 
     steps:
       - uses: actions/checkout@v5
@@ -375,15 +307,76 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
 
-      # staging.yml holds this lock from a PR's or merge-queue entry's deploy until its
-      # integration tests finish. This job takes it too, so a post-merge deploy can't replace
-      # staging under those tests (#1208). Released by the always() step at the end of this job.
-      # --holder-job: this run stays open for hours at the production approval gate, so a waiter
-      # must judge this hold by this job's completion, not the run's.
+      # Before the lock: init only reads state and downloads providers, so it needn't lengthen the
+      # hold that other runs wait on.
+      - name: Terraform setup + init (staging)
+        uses: ./.github/actions/tf-init
+        with:
+          workspace: staging
+          state-bucket: ${{ secrets.TF_STATE_BUCKET }}
+
+      # staging.yml holds this lock from a PR's or merge-queue entry's Terraform apply until its
+      # integration tests finish. This job takes it too, so a post-merge apply or deploy can't
+      # change staging under those tests (#1208, #1216). Released by the always() step at the end
+      # of this job. --holder-job: this run stays open for hours at the production approval gate,
+      # so a waiter must judge this hold by this job's completion, not the run's.
       - name: Wait for and take the staging lock
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 60 --holder-job "Deploy (staging)"
+        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 80 --holder-job "Deploy (staging)"
+
+      - name: Terraform apply (staging)
+        working-directory: ${{ env.TF_DIR }}
+        # The 20m the terraform-staging job allowed before this step moved into this job.
+        timeout-minutes: 20
+        # Bounded retry absorbs transient GCP API 5xx / eventual-consistency
+        # during apply (a real CI red-run driver per the #498 diagnosis —
+        # docs/runbooks/staging-ci-flakiness.md; #504 applies it here for prod
+        # parity). terraform apply is re-runnable; a genuine config error fails
+        # both attempts and hard-fails.
+        run: |
+          for attempt in 1 2; do
+            if terraform apply -auto-approve \
+                 -var-file=terraform.tfvars.staging \
+                 -var="billing_account=${{ secrets.GCP_BILLING_ACCOUNT }}"; then
+              exit 0
+            fi
+            if [ "${attempt}" -lt 2 ]; then
+              echo "Terraform apply attempt ${attempt} failed; retrying in 20s..."
+              sleep 20
+            fi
+          done
+          echo "::error title=Terraform apply failed::terraform apply (staging) failed on both attempts."
+          exit 1
+
+      - name: Capture Terraform outputs
+        id: tf-outputs
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "gke_enabled=$(terraform output -raw gke_enabled)" >> "$GITHUB_OUTPUT"
+          echo "gke_cluster_name=$(terraform output -raw gke_cluster_name)" >> "$GITHUB_OUTPUT"
+          echo "cloud_run_api_url=$(terraform output -raw cloud_run_api_url)" >> "$GITHUB_OUTPUT"
+          echo "cloud_run_web_url=$(terraform output -raw cloud_run_web_url)" >> "$GITHUB_OUTPUT"
+          echo "otel_mirror_repo=$(terraform output -raw otel_collector_mirror_repo)" >> "$GITHUB_OUTPUT"
+          echo "kms_key_name=$(terraform output -raw kms_key_name)" >> "$GITHUB_OUTPUT"
+          echo "api_wi_sa=$(terraform output -raw cicd_service_account_email)" >> "$GITHUB_OUTPUT"
+          echo "web_workload_sa=$(terraform output -raw web_workload_sa)" >> "$GITHUB_OUTPUT"
+          # build-images pushed to preflight's computed path. Stop before deploying if Terraform
+          # manages a different repository.
+          TF_AR_REPO="$(terraform output -raw artifact_registry_repo)"
+          if [[ "$TF_AR_REPO" != "${{ needs.preflight.outputs.ar_repo }}" ]]; then
+            echo "::error title=Artifact Registry path mismatch::Terraform's artifact_registry_repo is '$TF_AR_REPO', but preflight computed '${{ needs.preflight.outputs.ar_repo }}' and build-images pushed there. Update preflight's ar_repo to match."
+            exit 1
+          fi
+
+      # Refresh the lock's age. When GitHub can't say whether a holder is done, a waiter takes over
+      # a lock older than 40 minutes (staging-env-lock.py --stale-min), and this job's apply (up to
+      # 20m) plus deploy (up to 30m) can outlast that. Re-taking it here restarts the clock, so
+      # neither stretch reaches 40 minutes. It never waits: this job already holds the lock.
+      - name: Refresh the staging lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 0 --holder-job "Deploy (staging)"
 
       # ── Database migrations (ADR-027) ──────────────────────────────────────
       # Mirror of the production migration step (see deploy-production). Applies
@@ -405,24 +398,24 @@ jobs:
       # GKE-only steps below are skipped when terraform var enable_gke = false
       # (single-user / Cloud-Run-only deployments).
       - name: Set up GKE credentials
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         uses: google-github-actions/get-gke-credentials@v2
         with:
-          cluster_name: ${{ needs.terraform-staging.outputs.gke_cluster_name }}
+          cluster_name: ${{ steps.tf-outputs.outputs.gke_cluster_name }}
           location: ${{ env.REGION }}
           project_id: ${{ vars.GCP_STAGING_PROJECT_ID }}
 
       - name: Set up Helm
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         uses: azure/setup-helm@v4
 
       - name: Ensure staging namespace
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         run: kubectl create namespace staging --dry-run=client -o yaml | kubectl apply -f -
 
       # Sync secrets from Secret Manager → Kubernetes Secrets
       - name: Sync API secrets to Kubernetes
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         run: |
           DB_URL=$(gcloud secrets versions access latest \
             --secret="lifting-logbook-stg-database-url" \
@@ -440,7 +433,7 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Sync web secrets to Kubernetes
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         run: |
           CLERK_PUB=$(gcloud secrets versions access latest \
             --secret="lifting-logbook-stg-clerk-publishable-key" \
@@ -458,7 +451,7 @@ jobs:
 
       # Same stuck-release self-heal as the web release below (#539), for the api release.
       - name: Rollback stuck Helm API release (GKE staging)
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         run: |
           STATUS=$(helm status api --namespace=staging --output=json 2>/dev/null \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['status'])" 2>/dev/null || echo "not-found")
@@ -474,7 +467,7 @@ jobs:
 
       - name: Helm deploy API (GKE staging)
         id: helm-deploy-api
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         # GKE is the optional 10%-traffic A/B target (ADR-009); Cloud Run below is the
         # real serving path. A GKE rollout problem must never fail this job — that would
         # skip smoke-test and the (Cloud-Run-only) production gate. Matches staging.yml.
@@ -486,8 +479,8 @@ jobs:
             --set image.repository="${{ needs.build-images.outputs.ar_repo }}/api" \
             --set image.tag="${{ github.sha }}" \
             --set gcp.projectId="${{ vars.GCP_STAGING_PROJECT_ID }}" \
-            --set gcp.kmsKeyName="${{ needs.terraform-staging.outputs.kms_key_name }}" \
-            --set gcp.serviceAccountEmail="${{ needs.terraform-staging.outputs.api_wi_sa }}" \
+            --set gcp.kmsKeyName="${{ steps.tf-outputs.outputs.kms_key_name }}" \
+            --set gcp.serviceAccountEmail="${{ steps.tf-outputs.outputs.api_wi_sa }}" \
             --set env.NODE_ENV=staging \
             --set env.OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318" \
             --wait --timeout=10m --force
@@ -514,7 +507,7 @@ jobs:
       # deadline out (#539). Roll back a stuck release and force-delete any
       # terminating pods first so the deploy below can proceed. Ported from staging.yml.
       - name: Rollback stuck Helm web release (GKE staging)
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         run: |
           STATUS=$(helm status web --namespace=staging --output=json 2>/dev/null \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['status'])" 2>/dev/null || echo "not-found")
@@ -529,7 +522,7 @@ jobs:
             | xargs -r kubectl delete pod --force --grace-period=0 -n staging || true
 
       - name: Helm deploy web (GKE staging)
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         # Optional A/B target (see "Helm deploy API" above) — never gate the job on it.
         continue-on-error: true
         run: |
@@ -547,7 +540,7 @@ jobs:
             --set gcp.projectId="${{ vars.GCP_STAGING_PROJECT_ID }}" \
             --set env.NODE_ENV=staging \
             --set env.API_URL="$API_CLUSTER_URL" \
-            --set env.PUBLIC_API_URL="${{ needs.terraform-staging.outputs.cloud_run_api_url }}" \
+            --set env.PUBLIC_API_URL="${{ steps.tf-outputs.outputs.cloud_run_api_url }}" \
             --set env.OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318" \
             --wait --timeout=10m
 
@@ -568,7 +561,7 @@ jobs:
           config_secret: lifting-logbook-stg-otel-collector-config
           otlp_secret: lifting-logbook-stg-otel-otlp-auth-header
           loki_secret: lifting-logbook-stg-otel-loki-auth-header
-          otel_mirror_repo: ${{ needs.terraform-staging.outputs.otel_mirror_repo }}
+          otel_mirror_repo: ${{ steps.tf-outputs.outputs.otel_mirror_repo }}
 
       # web sidecar via the shared composite action (see the api step above). web_sa
       # triggers the least-privilege grant of the three otel secrets to the web workload
@@ -585,8 +578,8 @@ jobs:
           config_secret: lifting-logbook-stg-otel-collector-config
           otlp_secret: lifting-logbook-stg-otel-otlp-auth-header
           loki_secret: lifting-logbook-stg-otel-loki-auth-header
-          otel_mirror_repo: ${{ needs.terraform-staging.outputs.otel_mirror_repo }}
-          web_sa: ${{ needs.terraform-staging.outputs.web_workload_sa }}
+          otel_mirror_repo: ${{ steps.tf-outputs.outputs.otel_mirror_repo }}
+          web_sa: ${{ steps.tf-outputs.outputs.web_workload_sa }}
           # Same-origin guard (#809): allowlist = this web service's own Cloud Run URL, derived at
           # deploy. drop=true = ENFORCING — cross-origin client-error beacons are dropped. Enabled
           # after staging Tempo validation confirmed legit beacons tag same-origin (#809 PR2).
@@ -605,7 +598,7 @@ jobs:
       # guards fail the deploy loudly if either secret is absent or empty, and never
       # echo the value, so no token reaches CI logs.
       - name: Sync otel-collector secrets to Kubernetes
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         run: |
           OTLP_H=$(gcloud secrets versions access latest \
             --secret="lifting-logbook-stg-otel-otlp-auth-header" \
@@ -622,7 +615,7 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Helm deploy otel-collector (GKE staging)
-        if: needs.terraform-staging.outputs.gke_enabled == 'true'
+        if: steps.tf-outputs.outputs.gke_enabled == 'true'
         # Telemetry must never gate serving traffic (see the OTel section header above).
         continue-on-error: true
         run: |
@@ -633,7 +626,7 @@ jobs:
             --values=infra/kubernetes/values/staging-otel-collector.yaml \
             --set-string env.OTEL_COLLECTOR_OTLP_ENDPOINT="$OTEL_OTLP_ENDPOINT" \
             --set-string env.OTEL_COLLECTOR_LOKI_ENDPOINT="$OTEL_LOKI_ENDPOINT" \
-            --set-string image.repository="${{ needs.terraform-staging.outputs.otel_mirror_repo }}/${OTEL_COLLECTOR_IMAGE_REPO_PATH}" \
+            --set-string image.repository="${{ steps.tf-outputs.outputs.otel_mirror_repo }}/${OTEL_COLLECTOR_IMAGE_REPO_PATH}" \
             --set-string image.digest="${OTEL_COLLECTOR_IMAGE_DIGEST}" \
             --wait --timeout=5m
 
@@ -647,7 +640,7 @@ jobs:
     name: Smoke Test (staging)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [preflight, deploy-staging, terraform-staging]
+    needs: [preflight, deploy-staging]
     if: needs.preflight.outputs.staging_enabled == 'true' && needs.deploy-staging.result == 'success'
 
     steps:
@@ -671,7 +664,7 @@ jobs:
         run: |
           # %/ strips a trailing slash so $BASE_URL/livez never becomes
           # https://.../livez double-slashed (#405 review finding).
-          BASE_URL="${{ needs.terraform-staging.outputs.cloud_run_web_url }}"
+          BASE_URL="${{ needs.deploy-staging.outputs.cloud_run_web_url }}"
           BASE_URL="${BASE_URL%/}"
           # Allow up to 3 minutes for Cloud Run to become healthy
           for i in $(seq 1 18); do
@@ -687,7 +680,7 @@ jobs:
 
       - name: Smoke test Cloud Run staging — /sign-in (Clerk auth flow)
         run: |
-          BASE_URL="${{ needs.terraform-staging.outputs.cloud_run_web_url }}"
+          BASE_URL="${{ needs.deploy-staging.outputs.cloud_run_web_url }}"
           BASE_URL="${BASE_URL%/}"
           # The runtime is already up (/livez succeeded immediately before this
           # step). /sign-in should respond within seconds, not minutes — if Clerk
@@ -715,7 +708,7 @@ jobs:
           # unauthenticated requests correctly. A 200 is also acceptable (e.g., if
           # service-to-service auth is later wired up via a service account).
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "${{ needs.terraform-staging.outputs.cloud_run_api_url }}/health")
+            "${{ needs.deploy-staging.outputs.cloud_run_api_url }}/health")
           if [ "$STATUS" = "403" ] || [ "$STATUS" = "200" ]; then
             echo "API smoke test passed (status=$STATUS)"
           else
@@ -871,12 +864,13 @@ jobs:
     # timeout-minutes bounds only execution time after the job starts running;
     # time spent waiting at the `environment: production` approval gate is
     # "waiting" status and does NOT count against it (#566).
-    # Higher than deploy-staging's 30 minutes of deploy work (its timeout-minutes also allows for
-    # waiting on the staging lock, #1208): this job does strictly more (secret
-    # validation + `terraform apply` on top of the same migrate + 3× Helm
-    # upgrade + Cloud Run) and, being human-gated and infrequent, has no
-    # measured runtime to back a tighter bound — so it gets build-images-level
-    # headroom to avoid a false-trip mid-prod-deploy, the costliest failure mode.
+    # This job does what deploy-staging does after taking the staging lock (`terraform apply`,
+    # then migrate + 3× Helm upgrade + Cloud Run) plus secret validation. deploy-staging budgets
+    # that work as 20m of apply plus 30m of deploy, but both are ceilings carried over from
+    # when they were separate jobs (#1216), not measurements; staging applies take about a
+    # minute. Being human-gated and infrequent, this job has no measured runtime to back a
+    # tighter bound either, so it keeps build-images-level headroom to avoid a false-trip
+    # mid-prod-deploy, the costliest failure mode.
     timeout-minutes: 45
     # plan-production is a needs (not just an upstream job) so the production
     # approval gate does not prompt until the read-only prod plan summary exists
