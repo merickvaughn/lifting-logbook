@@ -25,13 +25,14 @@ import { PutModificationMaxDto } from './put-modification-max.dto';
 import { UpdateTrainingMaxesDto } from './update-training-maxes.dto';
 
 /**
- * The stable id a dismissal is stored under; a 400 for a blank one. Fastify's default
- * `maxParamLength` (100, the longest lift name `CreateLiftRecordDto` allows) bounds its length.
+ * The stable id a dismissal is stored under; a 400 for a blank one. It isn't trimmed: the list
+ * reports `liftIdFor` of the stored name as it is, and a set saved before #898 can still carry a
+ * stray space. Fastify's default `maxParamLength` (100, the longest lift name
+ * `CreateLiftRecordDto` allows) bounds its length.
  */
 function dismissalLiftId(param: string): string {
-  const trimmed = param.trim();
-  if (trimmed.length === 0) throw new BadRequestException('A lift id must not be blank');
-  return liftIdFor(trimmed);
+  if (param.trim().length === 0) throw new BadRequestException('A lift id must not be blank');
+  return liftIdFor(param);
 }
 
 @Controller('programs/:program')

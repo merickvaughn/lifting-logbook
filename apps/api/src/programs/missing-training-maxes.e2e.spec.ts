@@ -138,6 +138,17 @@ describe('GET /programs/:program/training-maxes/missing (e2e, in-memory adapters
       expect((await get()).map((m) => m.dismissed)).toEqual([false]);
     });
 
+    it('takes back the exact id the list reports, stray spaces and all', async () => {
+      const { repos, get, dismissal } = await seededUser();
+      // A set saved before #898 trimmed lift names can still carry a trailing space.
+      await repos.liftRecord.appendLiftRecords(PROGRAM, [record({ lift: 'Cable Curl ', date: day('2026-11-04') })]);
+      const curl = (await get()).find((m) => m.lift === 'Cable Curl ');
+      expect(curl?.liftId).toBe('Cable Curl ');
+
+      expect(await dismissal('PUT', encodeURIComponent('Cable Curl '))).toBe(204);
+      expect((await get()).find((m) => m.lift === 'Cable Curl ')?.dismissed).toBe(true);
+    });
+
     it('answers 204 when repeated', async () => {
       const { get, dismissal } = await seededUser();
 

@@ -69,11 +69,6 @@ export class InMemoryTrainingMaxRepository implements ITrainingMaxRepository {
   /** Each program's dismissed lift ids, in the order they were dismissed. */
   private readonly dismissals = new Map<string, Set<string>>();
 
-  /** Every dismissal, for Download My Data. */
-  allDismissals(): { program: string; liftId: string }[] {
-    return [...this.dismissals].flatMap(([program, ids]) => [...ids].map((liftId) => ({ program, liftId })));
-  }
-
   async getMissingMaxDismissals(program: string): Promise<string[]> {
     return [...(this.dismissals.get(program) ?? [])];
   }
