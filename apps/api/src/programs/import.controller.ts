@@ -992,6 +992,7 @@ export class ImportController {
       batchId,
       skippedDetail: buildSkippedDetail(plan.classified, ({ r }) => liftRecordLabel(r, liftNames)),
       // Only this program's sets: another program's list wouldn't count the rest (#1273).
+      // Created rows in this program only, by design, as in liftRecordsHandler.commit (#1273).
       lifts: liftsOf(plan.stretches.filter((s) => s.spec.program === program).flatMap((s) => s.creating)),
       ...(splitResult ? { split: splitResult } : {}),
     };
