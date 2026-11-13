@@ -237,7 +237,9 @@ export function continuedWorkoutNum(
   for (const r of creating) {
     if (r.workoutNum !== null && !fileByDate.has(dayOf(r))) fileByDate.set(dayOf(r), r.workoutNum);
   }
-  const highest = Math.max(held.highest, ...fileByDate.values());
+  // Every file number counts, including a second one on a date (a double session).
+  const fileNums = creating.flatMap((r) => (r.workoutNum === null ? [] : [r.workoutNum]));
+  const highest = Math.max(held.highest, ...fileNums);
   const newDates = [
     ...new Set(creating.map(dayOf).filter((t) => !held.byDate.has(t) && !fileByDate.has(t))),
   ].sort((a, b) => a - b);
@@ -312,11 +314,13 @@ export async function recomputeMacrocycles(
  * - If no later surviving batch chose a status for the macrocycle, this one's is in force: while
  *   the macrocycle still holds it, the status and its chosen flag go back to what the batch found.
  *   A status the lifter set since stays.
- * - Otherwise the next later batch's choice was made over this one, so it takes this one's
- *   `before` as its own, and undoing it later puts back what was there before either.
+ * - Otherwise, if the next later batch found this one's choice, its choice was made over this one,
+ *   so it takes this one's `before` as its own, and undoing it later puts back what was there
+ *   before either. If it found something else, a status set between the two, this choice was no
+ *   longer in force and is dropped.
  *
- * Either way undoing two batches' choices in any order ends where neither had run. `rows` holds
- * the macrocycles as they are now, by id.
+ * Either way undoing the batches' choices in any order ends where none had run, keeping any status
+ * set outside them. `rows` holds the macrocycles as they are now, by id.
  */
 export async function releaseStatusChoices(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'importBatch'>,
@@ -333,8 +337,11 @@ export async function releaseStatusChoices(
       .filter(isLater)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
     if (next?.macrocycles) {
-      const chosen = next.macrocycles.chosen.map((c) => (c.id === choice.id ? { ...c, before: choice.before } : c));
-      await repos.importBatch.updateMacrocycles(next.id, { ...next.macrocycles, chosen });
+      const found = next.macrocycles.chosen.find((c) => c.id === choice.id)?.before;
+      if (found?.statusChosen && found.status === choice.chose) {
+        const chosen = next.macrocycles.chosen.map((c) => (c.id === choice.id ? { ...c, before: choice.before } : c));
+        await repos.importBatch.updateMacrocycles(next.id, { ...next.macrocycles, chosen });
+      }
     } else if (current.statusChosen && current.status === choice.chose) {
       await repos.macrocycle.update(choice.id, {
         statusChosen: choice.before.statusChosen,

@@ -38,7 +38,7 @@ export interface StatusChoice {
 export interface BatchMacrocycles {
   created: string[];
   extended: string[];
-  /** The statuses the batch chose, oldest choice of each macrocycle first among all batches by `createdAt`. */
+  /** The statuses this batch chose, one per macrocycle. Undo orders choices across batches by `createdAt`, then `id`. */
   chosen: StatusChoice[];
 }
 

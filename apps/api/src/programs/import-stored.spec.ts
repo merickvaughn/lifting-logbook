@@ -178,6 +178,18 @@ describe('continuedWorkoutNum (#1255, decision 9)', () => {
     ).toEqual([4, 3, 3]);
   });
 
+  it('counts both file numbers on a date with two sessions, whichever comes first', () => {
+    for (const [a, b] of [[4, 5], [5, 4]]) {
+      expect(
+        numbered([
+          { date: at(6), workoutNum: a as number },
+          { date: at(6), workoutNum: b as number },
+          { date: at(8), workoutNum: NaN },
+        ]),
+      ).toEqual([a, b, 6]);
+    }
+  });
+
   it('refuses a row that is not one of the new rows', () => {
     expect(() => continuedWorkoutNum([], held)({ date: at(20), workoutNum: NaN })).toThrow();
   });
@@ -273,6 +285,62 @@ describe('releaseStatusChoices (#1255)', () => {
     await repos.macrocycle.update(row.id, { status: 'completed' });
     await undo(second);
     expect(await repos.macrocycle.findById(row.id)).toMatchObject({ status: 'completed', statusChosen: true });
+  });
+
+  /** A stored macrocycle and batches that each choose a status, written in turn as a commit writes them. */
+  async function choosers(...steps: Array<StatusChoice['chose'] | { lifterSets: 'completed' }>) {
+    const repos = { ...setup(), importBatch: new InMemoryImportBatchRepository() };
+    const row = await seed(repos, { program: 'rpt', num: 1, from: 0, sessions: 3 });
+    const batches: ImportBatchRecord[] = [];
+    for (const [n, step] of steps.entries()) {
+      const now = (await repos.macrocycle.findById(row.id)) ?? row;
+      if (typeof step === 'object') {
+        await repos.macrocycle.update(row.id, { status: step.lifterSets, statusChosen: true });
+        continue;
+      }
+      const batch: ImportBatchRecord = {
+        id: `b-${n}`,
+        userId: 'u',
+        program: 'rpt',
+        destination: 'lift-records',
+        preImage: {},
+        createdAt: at(10 + n),
+        macrocycles: {
+          created: [],
+          extended: [row.id],
+          chosen: [{ id: row.id, chose: step, before: { status: now.status, statusChosen: now.statusChosen } }],
+        },
+      };
+      await repos.importBatch.save(batch);
+      await repos.macrocycle.update(row.id, { status: step, statusChosen: true });
+      batches.push(batch);
+    }
+    const undo = async (b: ImportBatchRecord) => {
+      const stored = (await repos.importBatch.findById(b.id, 'u'))?.macrocycles?.chosen ?? [];
+      const rows = new Map((await repos.macrocycle.list('rpt')).map((m) => [m.id, m]));
+      await releaseStatusChoices(repos, b, stored, rows);
+      await repos.importBatch.deleteById(b.id, 'u');
+    };
+    return { repos, row, batches, undo };
+  }
+
+  const orders = <T>(items: T[]): T[][] =>
+    items.length <= 1 ? [items] : items.flatMap((x, i) => orders([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [x, ...rest]));
+
+  it('ends where none had run for three batches choosing for one macrocycle, in every undo order', async () => {
+    for (const order of orders([0, 1, 2])) {
+      const { repos, row, batches, undo } = await choosers('overran', 'abandoned', 'completed');
+      for (const i of order) await undo(batches[i] as ImportBatchRecord);
+      expect(await repos.macrocycle.findById(row.id)).toMatchObject(FOUND);
+    }
+  });
+
+  it('keeps a status set between two choices, whichever is undone first', async () => {
+    for (const order of orders([0, 1])) {
+      const { repos, row, batches, undo } = await choosers('overran', { lifterSets: 'completed' }, 'abandoned');
+      for (const i of order) await undo(batches[i] as ImportBatchRecord);
+      expect(await repos.macrocycle.findById(row.id)).toMatchObject({ status: 'completed', statusChosen: true });
+    }
   });
 
   it('leaves a created macrocycle unchosen', async () => {

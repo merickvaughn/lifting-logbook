@@ -28,6 +28,8 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
         destination: batch.destination,
         preImage: batch.preImage as object,
         groupId: batch.groupId ?? null,
+        // The import's own time, taken under its lock, so undo orders batches as they were written.
+        createdAt: batch.createdAt,
         ...(batch.macrocycles ? { macrocycles: batchMacrocyclesJson(batch.macrocycles) } : {}),
       },
     });
