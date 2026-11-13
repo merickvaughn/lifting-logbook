@@ -72,6 +72,8 @@ const _liftRecordRepo: ILiftRecordRepository = {
     Promise.resolve([]),
   getLoggedWorkoutNums: (): Promise<Set<number>> =>
     Promise.resolve(new Set()),
+  getLastSessions: (): Promise<LiftRecord[]> =>
+    Promise.resolve([]),
   getMacrocycleDateRanges: () => Promise.resolve(new Map()),
   getRecordsForLifts: (): Promise<LiftRecord[]> =>
     Promise.resolve([]),

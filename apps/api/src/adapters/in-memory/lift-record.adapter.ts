@@ -2,11 +2,18 @@ import {
   LiftRecord,
   SetSlot,
   buildLiftRecordId,
+  liftIdFor,
   liftRecordNaturalKey,
   liftSpellings,
   withModifications,
 } from '@lifting-logbook/core';
-import { DateRange, dateRangesByMacrocycle, ILiftRecordRepository } from '../../ports/ILiftRecordRepository';
+import {
+  DateRange,
+  dateRangesByMacrocycle,
+  ILiftRecordRepository,
+  LastSessionsBefore,
+  latestWorkoutByLift,
+} from '../../ports/ILiftRecordRepository';
 import { NumberedStore } from './renumber';
 
 export class InMemoryLiftRecordRepository implements ILiftRecordRepository, NumberedStore {
@@ -49,6 +56,25 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
         .filter((r) => r.macrocycleNum === macrocycleNum)
         .map((r) => r.workoutNum),
     );
+  }
+
+  async getLastSessions(
+    program: string,
+    macrocycleNum: number,
+    lifts: readonly string[],
+    { workoutNum, through }: LastSessionsBefore,
+  ): Promise<LiftRecord[]> {
+    const wanted = new Set(lifts.flatMap(liftSpellings));
+    const sets = (this.store.get(program) ?? []).filter(
+      (r) =>
+        r.macrocycleNum === macrocycleNum &&
+        r.workoutNum !== workoutNum &&
+        !r.occurrence &&
+        wanted.has(r.lift) &&
+        r.date.getTime() <= through.getTime(),
+    );
+    const latest = latestWorkoutByLift(sets);
+    return sets.filter((r) => latest.get(liftIdFor(r.lift)) === r.workoutNum);
   }
 
   async getRecordsForLifts(lifts: readonly string[], through: Date, from?: Date): Promise<LiftRecord[]> {

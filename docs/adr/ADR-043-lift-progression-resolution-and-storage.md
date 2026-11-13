@@ -132,6 +132,29 @@ the proposal's. These details weren't settled there:
    there resolves every lift as a built-in instead of failing the settings read, so during such an
    outage a custom lift named like a catalog one plans by the catalog's default on those pages.
 
+## Amendment: the last session comes with the workout (#1252, 2026-11-13)
+
+Point 6's last session was found by the web from `GET /lift-records`, the whole current
+macrocycle's records, fetched after the settings read whenever a lift resolved to `double`. That
+added a serial round trip, a row-level-security transaction and hundreds of rows of JSON to the
+logger, the detail page and the timer, the fetch [#978](https://github.com/merickvaughn/lifting-logbook/issues/978)
+had removed from the logger.
+
+`GET /programs/:program/workouts/:n` now returns each lift's `lastSession` (its date and each
+set's reps, by set number), read in the workout's own transaction by
+`ILiftRecordRepository.getLastSessions`: one grouped query finds each lift's latest earlier session,
+and a second reads that session's sets. The rule is point 6's: another workout in the current
+macrocycle dated on or before this one (its rescheduled date when it has one), under any spelling
+of the lift, counting only the lift's first occurrence. Two workouts on the same date resolve to the
+higher-numbered one, where the web's read left it to record order. `loadProgressionPlans` reads the
+field for a `double` lift and makes no request of its own. When the API's read fails, it logs the
+error and the lifts carry no `lastSession`, so a `double` lift plans as right after a bump, as a
+failed records read did before.
+
+The API reads it for every lift on every workout read, since it doesn't resolve progression types.
+Rejected: a dedicated endpoint the web calls only for `double` lifts, which would keep a serial
+round trip and a transaction on those renders.
+
 ## References
 
 1. PostgreSQL 16 documentation, [§5.8 Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) — policies apply per row, so new columns on `lift_metadata`, `user_settings` and `custom_program_spec` inherit them.
@@ -139,3 +162,4 @@ the proposal's. These details weren't settled there:
 3. PostgreSQL 16 documentation, [`UPDATE`](https://www.postgresql.org/docs/16/sql-update.html) — the backfill touches only rows whose `progression` is null, so a second run changes nothing.
 4. Prisma documentation, [Customizing migrations](https://www.prisma.io/docs/orm/prisma-migrate/workflows/customizing-migrations) — a hand-written data migration alongside the generated schema change.
 5. class-validator, [Validation decorators](https://github.com/typestack/class-validator#validation-decorators) and [Custom validation classes](https://github.com/typestack/class-validator#custom-validation-classes) — `@IsIn`, `@IsOptional` (which skips `null` as well as `undefined`), and the `IsAtMostSibling` cross-field constraint.
+6. Prisma documentation, [Aggregation, grouping, and summarizing → Group by](https://www.prisma.io/docs/orm/prisma-client/queries/aggregation-grouping-summarizing#group-by) — `groupBy` runs as SQL `GROUP BY`, so the amendment's first query returns one row per session, not per set.

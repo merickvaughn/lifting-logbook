@@ -6,13 +6,14 @@ import {
   Logger,
   Param,
 } from '@nestjs/common';
-import { LiftRecord, liftIdFor } from '@lifting-logbook/core';
+import { LiftRecord, isSameLift, liftIdFor } from '@lifting-logbook/core';
 import { WorkoutResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { modificationNamesFor } from '../lifts/lift-modification.util';
 import { AuthUser } from '../ports/auth';
 import { WorkoutNotFoundError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
+import { ILiftRecordRepository } from '../ports/ILiftRecordRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { isValidWorkoutNum, toWorkoutResponse } from './mappers';
 import { currentMacrocycleOrFirst, resolveWorkoutDay } from './workout-day.util';
@@ -107,7 +108,7 @@ export class WorkoutsController {
     const macrocycleStartDate = 'macrocycleDate' in dashboard ? dashboard.macrocycleDate : undefined;
 
     const macrocycleId = locked && 'macrocycleDate' in dashboard ? await macrocycleIdFor(repos, dashboard) : undefined;
-    const response = toWorkoutResponse(program, dashboard.macrocycleNum, workoutNum, week, adjustedRecords, {
+    const grouped = toWorkoutResponse(program, dashboard.macrocycleNum, workoutNum, week, adjustedRecords, {
       overrideDate: overrideDate ?? undefined,
       plannedLifts: planned,
       scheduledDate,
@@ -118,6 +119,46 @@ export class WorkoutsController {
       renamedLifts: renamed,
       modificationNames: await modificationNamesFor(repos, adjustedRecords),
     });
+    const response = await this.withLastSessions(repos.liftRecord, program, dashboard.macrocycleNum, grouped);
     return macrocycleId ? { ...response, macrocycleId } : response;
+  }
+
+  /**
+   * The workout with each lift's `lastSession`, which a `double` lift plans from (#1252): read
+   * here, in the workout's own transaction, so the web doesn't fetch the macrocycle's records for
+   * it. When the read fails the lifts carry none and the workout still loads; the web then plans
+   * a `double` lift as right after a bump.
+   */
+  private async withLastSessions(
+    liftRecord: ILiftRecordRepository,
+    program: string,
+    macrocycleNum: number,
+    workout: WorkoutResponse,
+  ): Promise<WorkoutResponse> {
+    if (workout.lifts.length === 0) return workout;
+    // The rescheduled date when there is one, as the web's `effectiveDateOf`: not a fallback.
+    // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
+    const day = workout.overrideDate ?? workout.date;
+    // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
+    const sets = await liftRecord
+      .getLastSessions(
+        program,
+        macrocycleNum,
+        workout.lifts.map((l) => l.lift),
+        { workoutNum: workout.workoutNum, through: new Date(`${day}T00:00:00.000Z`) },
+      )
+      .catch((err: unknown) => {
+        // Through the class logger (Pino), so the line keeps its trace_id.
+        this.logger.error(err, 'getLastSessions failed; the lifts carry no lastSession');
+        return [] as LiftRecord[];
+      });
+    if (sets.length === 0) return workout;
+    const lifts = workout.lifts.map((wl) => {
+      const own = sets.filter((r) => isSameLift(r.lift, wl.lift)).sort((a, b) => a.setNum - b.setNum);
+      if (own.length === 0) return wl;
+      const latest = own.reduce((a, b) => (b.date > a.date ? b : a));
+      return { ...wl, lastSession: { date: latest.date.toISOString().slice(0, 10), reps: own.map((r) => r.reps) } };
+    });
+    return { ...workout, lifts };
   }
 }
