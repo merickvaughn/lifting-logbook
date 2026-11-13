@@ -186,7 +186,11 @@ export class ImportController {
       const liftOverrides = parseLiftOverrides(fields.get('liftOverrides'));
       const splitDest = splitDestParam === '1';
       const repos = await this.factory.forUser(user);
-      const rows = await this.resolveCommitRows(override, table, repos, excludeKeys, liftOverrides, splitDest);
+      // With the flag on, read blank numbers as the preview does, so the strict validator
+      // rejects them rather than storing `Number('')`'s 0 that Review never showed (#1253).
+      const rows = await this.resolveCommitRows(override, table, repos, excludeKeys, liftOverrides, splitDest, {
+        readBlanks: assignEnabled,
+      });
       return mode === 'commit'
         ? this.commit(program, override, rows, repos, user.id)
         : this.dryRun(program, override, rows, repos);
@@ -595,7 +599,8 @@ export class ImportController {
    * (400 on validation errors). The commit and the dry run both start here, so the dry
    * run's counts describe the same rows (#1123). So does `mode=assign` (#1253), with
    * `assign`: a lift-records file needn't number its macrocycles or workouts, and its rows
-   * with a blank date are left out and counted in `undated`.
+   * with a blank date are left out and counted in `undated`. `readBlanks` parses blank
+   * numbers as `assign` does but still validates strictly, so a blank is an error, not 0.
    */
   private async resolveCommitRows(
     destination: ImportKind,
@@ -604,15 +609,16 @@ export class ImportController {
     excludeKeys: Set<string>,
     liftOverrides: Record<string, string>,
     splitDest: boolean,
-    options: LiftImportOptions = {},
+    options: LiftImportOptions & { readBlanks?: boolean } = {},
   ): Promise<CommitRows> {
     // Parse before any transforms: liftOverrides must remap before strict validation
     // because the strict validator rejects unknown-lift rows outright.
     const handler = IMPORT_HANDLERS[destination]!;
     const assign = options.assign === true && destination === 'lift-records';
+    const readBlanks = (assign || options.readBlanks === true) && destination === 'lift-records';
     let parsed: unknown[];
     try {
-      parsed = assign ? parseLiftRecords(table, { assign }) : handler.parse(table);
+      parsed = readBlanks ? parseLiftRecords(table, { assign: true }) : handler.parse(table);
     } catch (err) {
       throw new BadRequestException({ message: `Could not parse file: ${(err as Error).message}` });
     }
@@ -785,7 +791,7 @@ export class ImportController {
     // Counts only: rows, lift names and notes are the lifter's data (proposal Observability).
     this.logger.log(
       {
-        rows: liftRecords.length + splitMaxes.length + undated,
+        keptRows: liftRecords.length + splitMaxes.length + undated,
         sessions: response.sessions,
         stretches: response.stretches.length,
         unmatchedStretches: response.stretches.filter((s) => !s.matched).length,
@@ -956,8 +962,10 @@ async function unrecognizedGoalOverrides(
     }));
 }
 
-/** The rows a commit writes: to its destination, and 1RM rows split off to training maxes. */
-/** `undated`: with `assign`, how many rows were left out for a blank date (#1253). */
+/**
+ * The rows a commit writes: to its destination, and 1RM rows split off to training maxes.
+ * `undated`: with `assign`, how many rows were left out for a blank date (#1253).
+ */
 type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[]; undated: number };
 
 function previewCounts(preview: ImportPreview): ImportWriteResult {

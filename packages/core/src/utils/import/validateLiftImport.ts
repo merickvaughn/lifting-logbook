@@ -44,11 +44,6 @@ export interface LiftImportOptions {
   assign?: boolean;
 }
 
-/** True when a row has no usable date. */
-export function hasNoDate(r: Pick<LiftRecord, 'date'>): boolean {
-  return !r.date || isNaN(r.date.getTime());
-}
-
 /**
  * With {@link LiftImportOptions.assign}, whether the file left this field blank: the Assign
  * step reads it as "not given". A cell that isn't blank but can't be read is still an error.
@@ -97,7 +92,7 @@ export function validateLiftImport(
       rowErrors.push({ row, field: 'weight', code: 'WEIGHT_INVALID', message: 'Weight is not a number' });
     if (isNaN(r.reps))
       rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
-    if (hasNoDate(r))
+    if (!r.date || isNaN(r.date.getTime()))
       rowErrors.push({ row, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
 
     // String(r.lift ?? ''), not a bare `as unknown as string` cast: r.lift is

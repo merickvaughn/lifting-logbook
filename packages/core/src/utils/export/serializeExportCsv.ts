@@ -57,13 +57,19 @@ export interface ProgramSpecExportRow {
 }
 
 /**
+ * The column only this app's lift-record export writes. Import reads a file that has it as an
+ * export (the classifier's `exportToken`, `isLiftRecordExport`), so they all key on this name.
+ */
+export const LIFT_RECORD_EXPORT_TOKEN = 'Occurrence';
+
+/**
  * Decision 22 of docs/proposals/2026-11-06-import-macrocycle-assignment.md: the lift-record
  * headers plus three optional columns. A file with `Occurrence` is treated as an export, so
  * this column is always written, 0 included.
  */
 export const LIFT_RECORD_EXPORT_HEADERS: readonly string[] = [
   ...Object.keys(LIFT_RECORD_HEADER_MAP),
-  'Occurrence',
+  LIFT_RECORD_EXPORT_TOKEN,
   'Modifications',
   'Status',
 ];

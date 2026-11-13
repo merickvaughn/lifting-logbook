@@ -87,8 +87,9 @@ export class CustomProgramsRepository {
   /**
    * Every custom program as `segmentLiftHistory` matches a file against it, named so a
    * `Program` cell can name it (#1172, #1253). In the order {@link list} gives, with each
-   * program's specs in the order {@link get} gives: the first spec for a lift sets its set
-   * order, so an unordered read could match differently from one request to the next.
+   * program's specs in one total order (week, day, slot, then id, since `order` repeats
+   * across days): the first spec for a lift sets its set order, so a read that left ties to
+   * the database could match differently from one request to the next.
    */
   async listKnownPrograms(): Promise<KnownProgram[]> {
     const rows = await this.prisma.customProgram.findMany({
@@ -99,7 +100,7 @@ export class CustomProgramsRepository {
         name: true,
         specs: {
           select: { week: true, offset: true, lift: true, wtDecrementPct: true },
-          orderBy: [{ week: 'asc' }, { order: 'asc' }],
+          orderBy: [{ week: 'asc' }, { offset: 'asc' }, { order: 'asc' }, { id: 'asc' }],
         },
       },
     });

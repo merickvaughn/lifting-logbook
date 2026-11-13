@@ -1,7 +1,7 @@
 import { ImportError } from '@lifting-logbook/types';
 import { LiftRecord } from '../../models';
 import type { ParsedLiftRecord } from '../parser/parseLiftRecords';
-import { assignBlank, fileMacrocycleNumError, hasNoDate, LiftImportOptions } from './validateLiftImport';
+import { assignBlank, fileMacrocycleNumError, LiftImportOptions } from './validateLiftImport';
 
 /**
  * Soft variant of the lift-records validator (Phase 3 — interactive REVIEW step).
@@ -65,7 +65,7 @@ export function validateLiftImportSoft(
       numericErrors.push({ row: rowIndex, field: 'weight', code: 'WEIGHT_INVALID', message: 'Weight is not a number' });
     if (isNaN(r.reps))
       numericErrors.push({ row: rowIndex, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
-    if (hasNoDate(r))
+    if (!r.date || isNaN(r.date.getTime()))
       numericErrors.push({ row: rowIndex, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
 
     if (numericErrors.length > 0) {

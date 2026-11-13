@@ -22,8 +22,9 @@ import type { RepositoryBundle } from '../ports/factory';
  * `IMPORT_ASSIGN_ENABLED` is `true`, and read per request so a test can set it.
  *
  * Leave it off until all of #1173 has merged. It already relaxes the preview (no number
- * columns needed, rows with no date counted), but until #1254 the commit still requires
- * them, so today's wizard would pass a file at Review that it can't import.
+ * columns or blank number cells needed, rows with no date counted), but until #1254 the
+ * commit still rejects them, so today's wizard would pass a file at Review that it can't
+ * import.
  */
 export function importAssignEnabled(): boolean {
   return process.env.IMPORT_ASSIGN_ENABLED === 'true';
@@ -40,7 +41,10 @@ export function assignImportDate(today: string | undefined, now: Date = new Date
   const serverDay = toUTCMidnight(now);
   if (today === undefined || today === '') return serverDay;
   const day = /^\d{4}-\d{2}-\d{2}$/.test(today) ? new Date(`${today}T00:00:00Z`) : new Date(NaN);
-  if (Number.isNaN(day.getTime())) throw new BadRequestException('today must be a calendar date, YYYY-MM-DD');
+  // A day past the month's end (`2026-02-30`) rolls into the next month rather than failing.
+  if (Number.isNaN(day.getTime()) || day.toISOString().slice(0, 10) !== today) {
+    throw new BadRequestException('today must be a calendar date, YYYY-MM-DD');
+  }
   if (Math.abs(day.getTime() - serverDay.getTime()) > DAY_MS) {
     throw new BadRequestException(`today ${today} is more than a day from the server's date. Check your device's clock.`);
   }

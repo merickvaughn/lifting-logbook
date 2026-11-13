@@ -40,6 +40,8 @@ describe('import-assign helpers (#1253)', () => {
       expect(() => assignImportDate('2026-03-12', now)).toThrow(BadRequestException);
       expect(() => assignImportDate('2026-03-08', now)).toThrow(BadRequestException);
       expect(() => assignImportDate('03/10/2026', now)).toThrow(BadRequestException);
+      // February 30 would otherwise roll into March 2, within a day of a March 1 server.
+      expect(() => assignImportDate('2026-02-30', new Date('2026-03-01T12:00:00Z'))).toThrow(BadRequestException);
     });
   });
 
@@ -55,7 +57,7 @@ describe('import-assign helpers (#1253)', () => {
       const query = findMany.mock.calls[0]?.[0];
       expect(query.where).toEqual({ userId: 'user-1' });
       expect(query.orderBy).toEqual({ createdAt: 'desc' });
-      expect(query.select.specs.orderBy).toEqual([{ week: 'asc' }, { order: 'asc' }]);
+      expect(query.select.specs.orderBy).toEqual([{ week: 'asc' }, { offset: 'asc' }, { order: 'asc' }, { id: 'asc' }]);
       expect(programs).toEqual([expect.objectContaining({ id: 'c1', name: 'My Split' })]);
       const options = assignProgramOptions(programs);
       expect(options[options.length - 1]).toEqual({ id: 'c1', name: 'My Split', workouts: null, weeks: 1 });

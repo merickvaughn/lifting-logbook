@@ -235,6 +235,18 @@ describe('Import Assign step (#1253, e2e, in-memory adapters)', () => {
       expect(exported.exported).toBe(true);
     });
 
+    it('rejects a commit with blank number cells rather than storing them as 0', async () => {
+      // Row 1 is numbered; rows 2 and 3 leave Cycle # and Workout # blank.
+      const rows = [{ day: 0, lift: 'Bench Press', macrocycle: 1, workout: 1 }, ...run(RPT_DAYS, 2, 1)];
+      for (const mode of ['dry-run', 'commit']) {
+        const res = await importCsv('rpt', csvOf(rows), `?mode=${mode}&destination=lift-records`);
+        expect(res.statusCode).toBe(400);
+        const codes = (res.json<{ errors: Array<{ row: number; code: string }> }>().errors ?? []).map((e) => [e.row, e.code]);
+        expect(codes).toEqual(expect.arrayContaining([[2, 'MACROCYCLE_NUM_INVALID'], [3, 'WORKOUT_NUM_INVALID']]));
+        expect(codes.some(([row]) => row === 1)).toBe(false);
+      }
+    });
+
     it('counts rows with no date, and groups the rest', async () => {
       const rows = [...run(RPT_DAYS, 0, 3), { day: null, lift: 'Squat' }, { day: null, lift: 'Dips' }];
       const previewed = await preview(csvOf(rows));

@@ -819,8 +819,9 @@ export interface ImportClassification {
   alternatives: ImportAlternative[];
 }
 
-/** Row-level status for the interactive REVIEW step (Phase 3). */
 /**
+ * Row-level status for the interactive REVIEW step (Phase 3).
+ *
  * `undated`: a lift-record row with no date, under the Assign step (#1253). It can't be placed
  * in a macrocycle, so it's left out of the import and counted, rather than held at the
  * incomplete-row gate. Excluding it at Review changes nothing it would write.

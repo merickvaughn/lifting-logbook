@@ -5,6 +5,7 @@ import {
 } from '@lifting-logbook/types';
 import { IMPORT_LIFT_ALIASES } from '../../catalog/slotMaps';
 import { SpreadsheetCell } from '../../models';
+import { LIFT_RECORD_EXPORT_TOKEN } from '../export/serializeExportCsv';
 import { bucketConfidence, clearsAutoAccept } from './importThresholds';
 
 /**
@@ -72,7 +73,7 @@ const PROFILES: readonly KindProfile[] = [
     usesLiftColumn: true,
     transposed: false,
     scanAllCells: false,
-    exportToken: 'occurrence',
+    exportToken: LIFT_RECORD_EXPORT_TOKEN.toLowerCase(),
   },
   {
     kind: 'training-maxes',

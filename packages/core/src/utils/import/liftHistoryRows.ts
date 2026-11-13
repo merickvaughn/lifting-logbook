@@ -1,4 +1,5 @@
 import { LiftRecord, SpreadsheetCell } from '../../models';
+import { LIFT_RECORD_EXPORT_TOKEN } from '../export/serializeExportCsv';
 
 /**
  * A lift record as `segmentLiftHistory` reads it (#1253): a `Program`, `Macrocycle #` or
@@ -28,9 +29,10 @@ export function toLiftHistoryRecord(record: LiftRecord): LiftHistoryRecord {
 
 /**
  * True when a lift-records file is this app's own export: only the export writes an
- * `Occurrence` column (proposal decision 22, the classifier's `exportToken`). Its macrocycles
- * may overlap (decision 8), and it isn't split into training maxes.
+ * `Occurrence` column ({@link LIFT_RECORD_EXPORT_TOKEN}, proposal decision 22). Its
+ * macrocycles may overlap (decision 8), and it isn't split into training maxes.
  */
 export function isLiftRecordExport(headers: readonly SpreadsheetCell[]): boolean {
-  return headers.some((h) => String(h ?? '').trim().toLowerCase() === 'occurrence');
+  const token = LIFT_RECORD_EXPORT_TOKEN.toLowerCase();
+  return headers.some((h) => String(h ?? '').trim().toLowerCase() === token);
 }

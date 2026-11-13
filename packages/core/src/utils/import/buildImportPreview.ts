@@ -110,7 +110,7 @@ export function buildLiftRecordsPreview(
 
   for (const { row: r, kind, key } of classifyLiftRecordRows(incoming, (r) => r, existing)) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
-    const label = `${r.lift} · macrocycle ${r.macrocycleNum} workout ${r.workoutNum} set ${r.setNum} (${formatDateYYYYMMDD(r.date)})`;
+    const label = rowLabel(r.lift, r);
     const value = `${r.weight} × ${r.reps}`;
     deltas.push(
       kind === 'skip'
