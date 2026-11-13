@@ -7,7 +7,7 @@ import {
   updateTrainingMaxes,
 } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
-import { MissingMaxRow, SkippedLiftRows } from './MissingMaxRow';
+import { MissingMaxRow, shortDate, SkippedLiftRows } from './MissingMaxRow';
 
 jest.mock('@/lib/client-api', () => ({
   dismissMissingTrainingMax: jest.fn(),
@@ -21,21 +21,30 @@ const mockDismiss = dismissMissingTrainingMax as jest.MockedFunction<typeof dism
 const mockUndismiss = undismissMissingTrainingMax as jest.MockedFunction<typeof undismissMissingTrainingMax>;
 const mockLog = logClientError as jest.MockedFunction<typeof logClientError>;
 
+// This year's date, so it reads without a year whenever the suite runs.
+const DAY = `${new Date().getFullYear()}-11-03`;
 const RDL: MissingTrainingMaxResponse = {
   lift: 'Romanian Deadlift',
   liftId: 'romanian-deadlift',
-  lastLoggedDate: '2026-11-03',
+  lastLoggedDate: DAY,
   setCount: 12,
-  estimate: { weight: 100, unit: 'lbs', from: { date: '2026-11-03', weight: 100, reps: 5 } },
+  estimate: { weight: 100, unit: 'lbs', from: { date: DAY, weight: 100, reps: 5 } },
   dismissed: false,
 };
 
-const renderRow = (entry: MissingTrainingMaxResponse = RDL) => {
+const renderRow = (entry: MissingTrainingMaxResponse = RDL, options: { preferredUnit?: 'lbs' | 'kg'; step?: number } = {}) => {
   const onSetUp = jest.fn();
   const onDismissedChange = jest.fn();
   render(
     <ul>
-      <MissingMaxRow program="5-3-1" entry={entry} onSetUp={onSetUp} onDismissedChange={onDismissedChange} />
+      <MissingMaxRow
+        program="5-3-1"
+        source="test"
+        entry={entry}
+        onSetUp={onSetUp}
+        onDismissedChange={onDismissedChange}
+        {...options}
+      />
     </ul>,
   );
   return { onSetUp, onDismissedChange };
@@ -88,7 +97,11 @@ describe('MissingMaxRow (#1246)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't save the training max. Try again.");
     expect(screen.getByRole('spinbutton', { name: 'Romanian Deadlift training max' })).toHaveValue(100);
     expect(onSetUp).not.toHaveBeenCalled();
-    expect(mockLog).toHaveBeenCalledWith('updateTrainingMaxes', failure, expect.objectContaining({ liftId: 'romanian-deadlift' }));
+    expect(mockLog).toHaveBeenCalledWith('updateTrainingMaxes', failure, {
+      program: '5-3-1',
+      liftId: 'romanian-deadlift',
+      source: 'test',
+    });
   });
 
   it('refuses an empty weight without saving', async () => {
@@ -98,7 +111,23 @@ describe('MissingMaxRow (#1246)', () => {
     await user.click(screen.getByRole('button', { name: 'Set up' }));
 
     expect(screen.getByRole('alert')).toHaveTextContent('Enter a positive number');
+    expect(screen.getByRole('spinbutton', { name: 'Romanian Deadlift training max' })).toHaveAccessibleDescription(
+      'No set to estimate from: enter a training max Enter a positive number',
+    );
     expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("steps by the lifter's increment, and hints at the preferred unit", async () => {
+    renderRow(RDL, { preferredUnit: 'kg', step: 5 });
+
+    expect(screen.getByRole('spinbutton', { name: 'Romanian Deadlift training max' })).toHaveAttribute('step', '5');
+    expect(screen.getByText('≈ 45.36 kg')).toBeInTheDocument();
+  });
+
+  it('gives no hint when the preferred unit is the stored one', () => {
+    renderRow(RDL, { preferredUnit: 'lbs' });
+
+    expect(screen.queryByText(/≈/)).not.toBeInTheDocument();
   });
 
   it("stores Don't ask again by lift id", async () => {
@@ -133,7 +162,7 @@ describe('MissingMaxRow (#1246)', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't save that. Try again.");
     expect(onDismissedChange).not.toHaveBeenCalled();
-    expect(mockLog).toHaveBeenCalledWith('dismissMissingTrainingMax', failure, expect.anything());
+    expect(mockLog).toHaveBeenCalledWith('dismissMissingTrainingMax', failure, expect.objectContaining({ source: 'test' }));
   });
 });
 
@@ -142,6 +171,7 @@ describe('SkippedLiftRows (#1246)', () => {
     render(
       <SkippedLiftRows
         program="5-3-1"
+        source="test"
         skipped={[
           { lift: 'Romanian Deadlift', reason: 'no-training-max' },
           { lift: 'Cable Curl', reason: 'no-target-reps' },
@@ -157,10 +187,22 @@ describe('SkippedLiftRows (#1246)', () => {
   });
 
   it('offers setup with no estimate when the missing list has no entry for the lift', () => {
-    render(<SkippedLiftRows program="5-3-1" skipped={[{ lift: 'Romanian Deadlift', reason: 'no-training-max' }]} />);
+    render(<SkippedLiftRows program="5-3-1" source="test" skipped={[{ lift: 'Romanian Deadlift', reason: 'no-training-max' }]} />);
 
     expect(screen.getByRole('spinbutton', { name: 'Romanian Deadlift training max' })).toHaveAccessibleDescription(
       'No set to estimate from: enter a training max',
     );
+  });
+});
+
+describe('shortDate (#1246)', () => {
+  const now = new Date(2026, 10, 13);
+
+  it("leaves out this year's year", () => {
+    expect(shortDate('2026-01-06', now)).toBe('6 Jan');
+  });
+
+  it('shows the year of an older date, so it reads as old', () => {
+    expect(shortDate('2025-01-06', now)).toBe('6 Jan 2025');
   });
 });

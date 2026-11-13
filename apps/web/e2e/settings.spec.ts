@@ -63,7 +63,7 @@ test('training maxes offers setup for a lift with logged sets and no max', async
   const section = page.getByRole('region', { name: 'Lifts without a training max' });
   const input = section.getByLabel('Romanian Deadlift training max');
   await expect(input).toHaveValue('100');
-  await expect(section.getByText('Estimated from 100 lbs × 5 on 6 Jan')).toBeVisible();
+  await expect(section.getByText('Estimated from 100 lbs × 5 on 6 Jan 2025')).toBeVisible();
 
   await section.getByRole('button', { name: "Don't ask again" }).click();
   const hidden = section.getByText('Hidden from prompts (1)');
@@ -73,6 +73,7 @@ test('training maxes offers setup for a lift with logged sets and no max', async
   await expect(section.getByText(/Hidden from prompts/)).toHaveCount(0);
 
   await section.getByRole('button', { name: 'Set up' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Training max set up for Romanian Deadlift.' })).toBeFocused();
   await expect(page.getByRole('heading', { name: 'Lifts without a training max' })).toHaveCount(0);
   // The table below now lists the lift with its new max.
   await expect(page.getByLabel('Romanian Deadlift training max')).toHaveValue('100');

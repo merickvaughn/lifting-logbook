@@ -395,12 +395,14 @@ export function createApiClient(config: ApiClientConfig) {
     },
     /**
      * Lifts with logged sets and no training max, each with an estimate (#1246). `lifts` narrows
-     * the list to those lifts, by any spelling.
+     * the list to those lifts, by any spelling; an empty `lifts` asks about none, so it sends no
+     * request (the server reads a missing `lifts` as every lift).
      */
-    fetchMissingTrainingMaxes(
+    async fetchMissingTrainingMaxes(
       program: string,
       lifts?: readonly string[],
     ): Promise<MissingTrainingMaxResponse[]> {
+      if (lifts?.length === 0) return [];
       const query = lifts ? `?${lifts.map((lift) => `lifts=${enc(lift)}`).join('&')}` : '';
       return request(`/programs/${enc(program)}/training-maxes/missing${query}`, { cache: 'no-store' });
     },

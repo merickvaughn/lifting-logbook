@@ -359,6 +359,12 @@ describe('createApiClient', () => {
       );
     });
 
+    it('asks about no lift, with no request, for an empty `lifts`', async () => {
+      const client = makeClient();
+      await expect(client.fetchMissingTrainingMaxes('5-3-1', [])).resolves.toEqual([]);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('PUTs and DELETEs a dismissal by the encoded lift id', async () => {
       mockFetch.mockImplementation(async () => new Response(null, { status: 204 }));
       const client = makeClient();

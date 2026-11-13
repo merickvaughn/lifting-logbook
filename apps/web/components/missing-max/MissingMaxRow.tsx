@@ -1,11 +1,12 @@
 'use client';
 
 import { useId, useState } from 'react';
-import { liftIdFor } from '@lifting-logbook/core';
+import { formatWeight, liftIdFor } from '@lifting-logbook/core';
 import {
   DEFAULT_WEIGHT_INCREMENT,
   type MissingTrainingMaxResponse,
   type SkippedLiftResponse,
+  type WeightUnit,
 } from '@lifting-logbook/types';
 import {
   dismissMissingTrainingMax,
@@ -19,11 +20,31 @@ import styles from './MissingMaxRow.module.css';
 export type MissingMaxEntry = Pick<MissingTrainingMaxResponse, 'lift' | 'liftId' | 'estimate' | 'dismissed'> &
   Partial<Pick<MissingTrainingMaxResponse, 'setCount' | 'lastLoggedDate'>>;
 
-/** `2026-11-03` → `3 Nov`. The date is a calendar day, so it is read as UTC. */
-export function shortDate(iso: string): string {
+/** What every place that asks passes to the row, besides the entry itself. */
+export interface MissingMaxRowOptions {
+  program: string;
+  /** Which screen asked, for the error logs: `settings`, `workout`, `import`, … */
+  source: string;
+  /** The lifter's preferred unit. The max is saved in the stored unit; this adds a conversion hint. */
+  preferredUnit?: WeightUnit;
+  /** The weight input's step: the lifter's weight increment. */
+  step?: number;
+  /** After a saved max, with the weight saved. */
+  onSetUp?: (lift: string, weight: number) => void;
+  /** After a saved dismissal or its undo. */
+  onDismissedChange?: (liftId: string, dismissed: boolean) => void;
+}
+
+/**
+ * `2026-11-03` → `3 Nov`, with the year when it isn't this year's (`6 Jan 2025`), so an old
+ * estimate doesn't read as a recent one. The date is a calendar day, so it is read as UTC.
+ */
+export function shortDate(iso: string, now: Date = new Date()): string {
+  const sameYear = Number(iso.slice(0, 4)) === now.getFullYear();
   return new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
     timeZone: 'UTC',
   });
 }
@@ -47,24 +68,22 @@ function loggedLine(entry: MissingMaxEntry): string | null {
  * that asks uses it. A failed write keeps the value and shows the error inline.
  */
 export function MissingMaxRow({
-  program,
   entry,
+  program,
+  source,
+  preferredUnit,
+  step = DEFAULT_WEIGHT_INCREMENT,
   onSetUp,
   onDismissedChange,
-}: {
-  program: string;
-  entry: MissingMaxEntry;
-  /** After a saved max, with the weight saved. */
-  onSetUp?: (lift: string, weight: number) => void;
-  /** After a saved dismissal or its undo. */
-  onDismissedChange?: (liftId: string, dismissed: boolean) => void;
-}) {
+}: MissingMaxRowOptions & { entry: MissingMaxEntry }) {
   const estimateId = useId();
+  const errorId = useId();
   const unit = entry.estimate?.unit ?? 'lbs';
   const [value, setValue] = useState(entry.estimate ? String(entry.estimate.weight) : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const logged = loggedLine(entry);
+  const context = { program, liftId: entry.liftId, source };
 
   async function setUp() {
     const weight = Number(value);
@@ -78,7 +97,7 @@ export function MissingMaxRow({
       await updateTrainingMaxes(program, { maxes: [{ lift: entry.lift, weight, unit }] });
       onSetUp?.(entry.lift, weight);
     } catch (err) {
-      logClientError('updateTrainingMaxes', err, { program, liftId: entry.liftId, source: 'missing-max' });
+      logClientError('updateTrainingMaxes', err, context);
       setError("Couldn't save the training max. Try again.");
     } finally {
       setBusy(false);
@@ -94,14 +113,14 @@ export function MissingMaxRow({
       else await undismissMissingTrainingMax(program, entry.liftId);
       onDismissedChange?.(entry.liftId, dismissed);
     } catch (err) {
-      const operation = dismissed ? 'dismissMissingTrainingMax' : 'undismissMissingTrainingMax';
-      logClientError(operation, err, { program, liftId: entry.liftId });
+      logClientError(dismissed ? 'dismissMissingTrainingMax' : 'undismissMissingTrainingMax', err, context);
       setError("Couldn't save that. Try again.");
     } finally {
       setBusy(false);
     }
   }
 
+  const showHint = preferredUnit && preferredUnit !== unit && value !== '' && Number.isFinite(Number(value));
   return (
     <li className={styles.row}>
       <div className={styles.lift}>
@@ -111,10 +130,10 @@ export function MissingMaxRow({
       <div className={styles.weight}>
         <input
           type="number"
-          step={DEFAULT_WEIGHT_INCREMENT}
+          step={step}
           value={value}
           aria-label={`${entry.lift} training max`}
-          aria-describedby={estimateId}
+          aria-describedby={error ? `${estimateId} ${errorId}` : estimateId}
           aria-invalid={error ? true : undefined}
           autoComplete="off"
           className={styles.input}
@@ -124,6 +143,7 @@ export function MissingMaxRow({
           }}
         />
         <span className={styles.muted}>{unit}</span>
+        {showHint && <span className={styles.muted}>≈ {formatWeight(Number(value), unit, preferredUnit)}</span>}
       </div>
       <div className={styles.actions}>
         <button type="button" className={styles.primary} onClick={setUp} disabled={busy}>
@@ -137,7 +157,7 @@ export function MissingMaxRow({
         {estimateLine(entry)}
       </p>
       {error && (
-        <p role="alert" className={styles.error}>
+        <p id={errorId} role="alert" className={styles.error}>
           {error}
         </p>
       )}
@@ -156,17 +176,12 @@ const SKIP_EXPLANATION: Record<Exclude<SkippedLiftResponse['reason'], 'no-traini
  * explanation and nothing to set up.
  */
 export function SkippedLiftRows({
-  program,
   skipped,
   missing = [],
-  onSetUp,
-  onDismissedChange,
-}: {
-  program: string;
+  ...options
+}: MissingMaxRowOptions & {
   skipped: readonly SkippedLiftResponse[];
   missing?: readonly MissingTrainingMaxResponse[];
-  onSetUp?: (lift: string, weight: number) => void;
-  onDismissedChange?: (liftId: string, dismissed: boolean) => void;
 }) {
   const byId = new Map(missing.map((m) => [m.liftId, m]));
   return (
@@ -182,15 +197,7 @@ export function SkippedLiftRows({
         }
         const liftId = liftIdFor(s.lift);
         const entry = byId.get(liftId) ?? { lift: s.lift, liftId, estimate: null, dismissed: false };
-        return (
-          <MissingMaxRow
-            key={liftId}
-            program={program}
-            entry={entry}
-            onSetUp={onSetUp}
-            onDismissedChange={onDismissedChange}
-          />
-        );
+        return <MissingMaxRow key={liftId} entry={entry} {...options} />;
       })}
     </ul>
   );

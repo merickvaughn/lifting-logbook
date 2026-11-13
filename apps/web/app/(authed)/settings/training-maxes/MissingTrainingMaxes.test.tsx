@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { MissingTrainingMaxResponse } from '@lifting-logbook/types';
 import {
@@ -49,7 +49,7 @@ describe('Settings → Training Maxes: lifts without a training max (#1246, #127
     mockFetch.mockResolvedValue([RDL]);
     mockUpdate.mockResolvedValue([]);
     const user = userEvent.setup();
-    render(<MissingTrainingMaxes program="5-3-1" />);
+    render(<MissingTrainingMaxes program="5-3-1" preferredUnit="lbs" step={5} />);
 
     expect(await screen.findByRole('heading', { name: HEADING })).toBeInTheDocument();
     expect(mockFetch).toHaveBeenCalledWith('5-3-1');
@@ -60,8 +60,12 @@ describe('Settings → Training Maxes: lifts without a training max (#1246, #127
     expect(mockUpdate).toHaveBeenCalledWith('5-3-1', {
       maxes: [{ lift: 'Romanian Deadlift', weight: 100, unit: 'lbs' }],
     });
-    // The only lift now has a max, so the section goes, and the table refreshes to show it.
-    await waitFor(() => expect(screen.queryByRole('heading', { name: HEADING })).not.toBeInTheDocument());
+    // The only lift now has a max, so the section goes, and the table refreshes to show it. Focus
+    // moves to the status line, since the button it was on is gone.
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent('Training max set up for Romanian Deadlift.');
+    expect(status).toHaveFocus();
+    expect(screen.queryByRole('heading', { name: HEADING })).not.toBeInTheDocument();
     expect(mockRefresh).toHaveBeenCalled();
   });
 
@@ -69,7 +73,7 @@ describe('Settings → Training Maxes: lifts without a training max (#1246, #127
     mockFetch.mockResolvedValue([RDL, CURL]);
     mockUndismiss.mockResolvedValue(undefined);
     const user = userEvent.setup();
-    render(<MissingTrainingMaxes program="5-3-1" />);
+    render(<MissingTrainingMaxes program="5-3-1" preferredUnit="lbs" step={5} />);
 
     const summary = await screen.findByText('Hidden from prompts (1)');
     const hidden = summary.closest('details');
@@ -81,15 +85,20 @@ describe('Settings → Training Maxes: lifts without a training max (#1246, #127
     await user.click(within(hidden).getByRole('button', { name: 'Ask again' }));
 
     expect(mockUndismiss).toHaveBeenCalledWith('5-3-1', 'cable-curl');
-    await waitFor(() => expect(screen.queryByText(/Hidden from prompts/)).not.toBeInTheDocument());
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent('Cable Curl will be asked about again.');
+    expect(status).toHaveFocus();
+    expect(screen.queryByText(/Hidden from prompts/)).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: "Don't ask again" })).toHaveLength(2);
   });
 
   it('shows nothing when no lift is missing a max', async () => {
-    mockFetch.mockResolvedValue([]);
-    const { container } = render(<MissingTrainingMaxes program="5-3-1" />);
+    const empty = Promise.resolve([]);
+    mockFetch.mockReturnValue(empty);
+    const { container } = render(<MissingTrainingMaxes program="5-3-1" preferredUnit="lbs" step={5} />);
 
-    await waitFor(() => expect(mockFetch).toHaveBeenCalled());
+    // Let the list arrive and render before asserting.
+    await act(() => empty);
     expect(screen.queryByRole('heading', { name: HEADING })).not.toBeInTheDocument();
     expect(container).toBeEmptyDOMElement();
   });
@@ -97,7 +106,7 @@ describe('Settings → Training Maxes: lifts without a training max (#1246, #127
   it('leaves the section out and logs the error when the list fails to load', async () => {
     const failure = new Error('API 500');
     mockFetch.mockRejectedValue(failure);
-    render(<MissingTrainingMaxes program="5-3-1" />);
+    render(<MissingTrainingMaxes program="5-3-1" preferredUnit="lbs" step={5} />);
 
     await waitFor(() =>
       expect(mockLog).toHaveBeenCalledWith('fetchMissingTrainingMaxes', failure, expect.objectContaining({ program: '5-3-1' })),

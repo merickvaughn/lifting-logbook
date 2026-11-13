@@ -28,10 +28,8 @@ export default async function TrainingMaxesPage() {
 
   return (
     <>
-      <MissingTrainingMaxes program={program} />
-      {/* Keyed by the lifts, so a max set up above (#1246) remounts the form with its row. */}
+      <MissingTrainingMaxes program={program} preferredUnit={unit} step={defaultIncrement} />
       <TrainingMaxesForm
-        key={lifts.join('|')}
         program={program}
         lifts={lifts}
         maxes={maxes}
