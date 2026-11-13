@@ -51,7 +51,8 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
   }
 
   async getLoggedLifts(program: string): Promise<string[]> {
-    // Grouped in SQL over the unique index's `(userId, program)` prefix, so it reads no sets.
+    // Grouped in SQL over the unique index's `(userId, program)` prefix: it returns no sets, but
+    // scans one index entry per stored set in the program.
     const rows = await this.prisma.liftRecord.groupBy({ by: ['lift'], where: { userId: this.userId, program } });
     return rows.map((r) => r.lift);
   }
@@ -60,8 +61,21 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     if (lifts.length === 0) return [];
     const rows = await this.prisma.liftRecord.findMany({
       where: { userId: this.userId, program, lift: { in: [...new Set(lifts)] } },
+      // Only what the missing-training-max list reads; a lift with no max can hold years of sets.
+      select: {
+        program: true,
+        macrocycleNum: true,
+        workoutNum: true,
+        date: true,
+        lift: true,
+        occurrence: true,
+        setNum: true,
+        weight: true,
+        reps: true,
+        modifications: true,
+      },
     });
-    return rows.map(rowToLiftRecord);
+    return rows.map((r) => rowToLiftRecord({ ...r, notes: '' }));
   }
 
   async appendLiftRecords(program: string, records: LiftRecord[]): Promise<number> {

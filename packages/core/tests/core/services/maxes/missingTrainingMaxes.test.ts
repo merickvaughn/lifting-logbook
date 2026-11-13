@@ -2,7 +2,9 @@ import {
   estimateOneRepMax,
   estimateTrainingMax,
   floorToIncrement,
+  missingMaxCandidate,
   missingTrainingMaxes,
+  trainingMaxFromOneRepMax,
   type MissingTrainingMaxesInput,
 } from '@src/core';
 
@@ -83,6 +85,31 @@ describe('estimateTrainingMax (#1246)', () => {
   });
 });
 
+describe('trainingMaxFromOneRepMax', () => {
+  it('is 90% of the one-rep max, floored to the estimate increment', () => {
+    expect(trainingMaxFromOneRepMax(112.5)).toBe(100);
+    expect(trainingMaxFromOneRepMax(300)).toBe(270);
+  });
+});
+
+describe('missingMaxCandidate (#1246)', () => {
+  const maxes = [{ lift: 'Squat', dateUpdated: day('2026-10-01') }];
+
+  it('holds for a lift with no max under any spelling', () => {
+    const isCandidate = missingMaxCandidate(maxes);
+    expect(isCandidate('Romanian Deadlift')).toBe(true);
+    expect(isCandidate('Squat')).toBe(false);
+    expect(isCandidate('back-squat')).toBe(false);
+  });
+
+  it('given lifts, holds only for those, matched by stable id', () => {
+    const isCandidate = missingMaxCandidate(maxes, ['romanian-deadlift']);
+    expect(isCandidate('Romanian Deadlift')).toBe(true);
+    expect(isCandidate('Cable Curl')).toBe(false);
+    expect(missingMaxCandidate(maxes, [])('Romanian Deadlift')).toBe(false);
+  });
+});
+
 describe('missingTrainingMaxes (#1246)', () => {
   const squatMax = { lift: 'Squat', dateUpdated: day('2026-10-01') };
 
@@ -140,6 +167,39 @@ describe('missingTrainingMaxes (#1246)', () => {
     });
     expect(missing).toHaveLength(1);
     expect(missing[0]).toMatchObject({ lift: 'Romanian Deadlift', setCount: 1, estimate: { from: { weight: 100 } } });
+  });
+
+  it("leaves out a later occurrence's sets, which never move the max (#1027)", () => {
+    const missing = missingTrainingMaxes({
+      trainingMaxes: [],
+      records: [
+        // A heavier back-off occurrence that would otherwise win the estimate.
+        set({ weight: 300, occurrence: 1 }),
+        set({ weight: 100 }),
+        // A lift logged only at its second occurrence isn't one progression skips.
+        set({ lift: 'Cable Curl', occurrence: 1 }),
+      ],
+      modificationModes: noModes,
+    });
+    expect(missing).toHaveLength(1);
+    expect(missing[0]).toMatchObject({ lift: 'Romanian Deadlift', setCount: 1, estimate: { from: { weight: 100 } } });
+  });
+
+  it('names a lift the same way whatever order two spellings on its latest day arrive in', () => {
+    const a = set({ lift: 'romanian-deadlift' });
+    const b = set({ lift: 'Romanian Deadlift' });
+    const named = (records: Record[]) =>
+      missingTrainingMaxes({ trainingMaxes: [], records, modificationModes: noModes })[0]?.lift;
+    expect(named([a, b])).toBe('Romanian Deadlift');
+    expect(named([b, a])).toBe('Romanian Deadlift');
+  });
+
+  it('narrows to the lifts asked for, by any spelling', () => {
+    const records = [set({}), set({ lift: 'Cable Curl' })];
+    const listed = (lifts: string[]) =>
+      missingTrainingMaxes({ trainingMaxes: [], records, modificationModes: noModes, lifts }).map((m) => m.lift);
+    expect(listed(['romanian-deadlift'])).toEqual(['Romanian Deadlift']);
+    expect(listed(['Squat'])).toEqual([]);
   });
 
   it('lists a lift with no usable set, with no estimate', () => {

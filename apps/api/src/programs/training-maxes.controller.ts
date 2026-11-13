@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Put, Query } from '@nestjs/common';
 import { MissingTrainingMaxResponse, ModificationMaxResponse, TrainingMaxResponse } from '@lifting-logbook/types';
-import { currentMaxLookup, liftIdFor, missingTrainingMaxes, type TrainingMax } from '@lifting-logbook/core';
+import { missingMaxCandidate, missingTrainingMaxes, type TrainingMax } from '@lifting-logbook/core';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { modificationModesFor } from '../lifts/lift-modification.util';
 import { AuthUser } from '../ports/auth';
@@ -39,17 +39,14 @@ export class TrainingMaxesController {
     @Query('lifts') lifts?: string | string[],
   ): Promise<MissingTrainingMaxResponse[]> {
     const repos = await this.factory.forUser(user);
-    const wanted = lifts === undefined ? null : new Set([lifts].flat().map(liftIdFor));
+    const wanted = lifts === undefined ? undefined : [lifts].flat();
     const maxes = await repos.trainingMax.getTrainingMaxes(program);
-    const maxFor = currentMaxLookup(maxes);
-    // Only the lifts with no max are read set by set; the rest cost one grouped query.
-    const candidates = (await repos.liftRecord.getLoggedLifts(program)).filter(
-      (lift) => !maxFor(lift) && (!wanted || wanted.has(liftIdFor(lift))),
-    );
+    // Only the lifts that could be missing a max are read set by set; the rest cost one grouped query.
+    const candidates = (await repos.liftRecord.getLoggedLifts(program)).filter(missingMaxCandidate(maxes, wanted));
     if (candidates.length === 0) return [];
     const records = await repos.liftRecord.getProgramRecordsForLifts(program, candidates);
     const { modes } = await modificationModesFor(repos, records);
-    return missingTrainingMaxes({ trainingMaxes: maxes, records, modificationModes: modes }).map((m) =>
+    return missingTrainingMaxes({ trainingMaxes: maxes, records, modificationModes: modes, lifts: wanted }).map((m) =>
       toMissingTrainingMaxResponse(m, false),
     );
   }

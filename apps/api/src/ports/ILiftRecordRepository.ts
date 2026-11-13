@@ -44,11 +44,16 @@ export interface ILiftRecordRepository {
 
   /**
    * The distinct lift names the program's records are stored under, in any macrocycle: where
-   * the missing-training-max list starts (#1246). A grouped query, so it reads no sets.
+   * the missing-training-max list starts (#1246). A grouped query: it returns no sets, but scans
+   * one index entry per stored set in the program.
    */
   getLoggedLifts(program: string): Promise<string[]>;
 
-  /** Every record in the program, in any macrocycle, stored under exactly one of `lifts`. */
+  /**
+   * Every record in the program, in any macrocycle, stored under exactly one of `lifts`. Unlike
+   * {@link getRecordsForLifts} it doesn't expand spellings: pass names from {@link getLoggedLifts}.
+   * Each record carries only the fields the missing-training-max list reads (`notes` is empty).
+   */
   getProgramRecordsForLifts(program: string, lifts: readonly string[]): Promise<LiftRecord[]>;
 
   /**

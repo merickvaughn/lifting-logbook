@@ -9,7 +9,7 @@ import {
   type DiscoveryMethod,
   type LiftRow,
 } from './lib';
-import { estimateOneRepMax, floorToIncrement } from '@lifting-logbook/core';
+import { estimateOneRepMax, floorToIncrement, trainingMaxFromOneRepMax } from '@lifting-logbook/core';
 import type { Experience } from '@/lib/programs';
 import { StepMethod } from './steps/StepMethod';
 import { StepLifts } from './steps/StepLifts';
@@ -61,7 +61,7 @@ export function OnboardingFlow({ catalog }: { catalog: string[] }) {
         return { lift: row.lift, oneRm: null, trainingMax: w };
       }
       const oneRm = method === 'manual' ? floorToIncrement(w) : estimateOneRepMax(w, r);
-      return { lift: row.lift, oneRm, trainingMax: floorToIncrement(oneRm * 0.9) };
+      return { lift: row.lift, oneRm, trainingMax: trainingMaxFromOneRepMax(oneRm) };
     });
   }, [lifts, method]);
 

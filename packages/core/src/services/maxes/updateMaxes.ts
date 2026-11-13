@@ -112,12 +112,15 @@ function targetOf(
   return own === undefined ? 'lift' : { own };
 }
 
-/** Whether a set moves its lift's own training max, under the rules of {@link targetOf}. */
+/**
+ * Whether a set moves its lift's own training max: it belongs to the lift's first occurrence in
+ * its workout (#1027) and {@link targetOf} sends it to the lift's max.
+ */
 export function movesLiftMax(
-  record: Pick<LiftRecord, 'modifications'>,
+  record: Pick<LiftRecord, 'modifications' | 'occurrence'>,
   modes: ReadonlyMap<string, LiftModificationMaxMode>,
 ): boolean {
-  return targetOf(record, modes) === 'lift';
+  return !record.occurrence && targetOf(record, modes) === 'lift';
 }
 
 /** What moves a max for one record: its resolved type and increment, read against its row or its own target. */
@@ -201,7 +204,7 @@ export function updateMaxes(
   // read as a second set 1 under the first occurrence's rules (#1027).
   // A set whose modifications send it elsewhere is left out here, so it neither moves the lift's
   // max nor counts as a test week's attempt at it (#1152). Its own max is moved below.
-  const progressed = liftRecords.filter((r) => !r.occurrence && targetOf(r, options.modificationModes) === 'lift');
+  const progressed = liftRecords.filter((r) => movesLiftMax(r, options.modificationModes));
 
   // Lookups built once rather than scanned once per record (issue #983). A record, its
   // max and its spec row can each spell the lift differently (#1118), so they join on

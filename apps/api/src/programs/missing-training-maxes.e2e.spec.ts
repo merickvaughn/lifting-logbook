@@ -55,10 +55,10 @@ describe('GET /programs/:program/training-maxes/missing (e2e, in-memory adapters
       record({ setNum: 2, weight: 90 }),
       record({ lift: 'Squat', weight: 315, reps: 3 }),
     ]);
-    const get = async (query = '') => {
+    const get = async (query = '', program = PROGRAM) => {
       const res = await app.getHttpAdapter().getInstance().inject({
         method: 'GET',
-        url: `/programs/${PROGRAM}/training-maxes/missing${query}`,
+        url: `/programs/${program}/training-maxes/missing${query}`,
         headers: { authorization: `Bearer ${user}` },
       });
       expect(res.statusCode).toBe(200);
@@ -105,13 +105,8 @@ describe('GET /programs/:program/training-maxes/missing (e2e, in-memory adapters
 
   it('reads only the program asked for', async () => {
     const { get } = await seededUser();
-    const res = await app.getHttpAdapter().getInstance().inject({
-      method: 'GET',
-      url: '/programs/leangains/training-maxes/missing',
-      headers: { authorization: `Bearer missing-max-e2e-${nextUser}` },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual([]);
+
+    expect(await get('', 'leangains')).toEqual([]);
     expect(await get()).toHaveLength(1);
   });
 });
