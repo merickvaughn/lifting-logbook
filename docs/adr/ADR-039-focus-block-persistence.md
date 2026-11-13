@@ -258,20 +258,26 @@ same lock before it reads the block it compares the edit against. A request that
 locked waits for the other request's transaction to end, then reads what it saved: under the READ
 COMMITTED isolation the request transactions run at, each statement sees the rows committed before
 it began, so the read after the lock sees the other request's write. The lock lasts until the
-request's transaction ends (`RlsInterceptor`), so nothing has to release it. Blocks are locked in id
-order, so two requests that lock overlapping sets queue rather than deadlock.
+request's transaction ends (`RlsInterceptor`), so nothing has to release it. One `lockBlocks` call
+locks its blocks in id order, so two plan reads that lock overlapping sets queue rather than
+deadlock. `PATCH` takes a second lock after its own block: the block's queued successor. That
+order can't form a cycle, because the second lock is always on a block that starts later in the
+same series, and a plan read locks only active blocks, never a queued one.
 
 - **Locked only when there is something to write.** A plan read locks the `double` blocks that
   have a session to record, not every active block, so plan reads that record nothing never wait
   on each other or on a setup edit.
 - **A lift the setup edit added** isn't in the records the plan read loaded, so its session is
   recorded on the next plan read.
-- **What it doesn't cover.** The setup page sends a block's whole pool, as it loaded it. A `PATCH`
-  that saves after a plan read recorded a session therefore writes back the entry's older
-  `lastReps` and `lastDate`. Nothing is lost for good: the session is newer than the entry's
-  `lastDate` again, so the next plan read records it again. The same holds for two tabs editing
-  one block: the later save wins. Preventing that needs the client to say which version it edited,
-  below.
+- **What it doesn't cover.** The setup page sends a block's whole pool, as it loaded it, and a row
+  lock can't see a client's stale copy. A `PATCH` that saves after a plan read recorded a session
+  writes back the entry's older `lastReps` and `lastDate`. That one heals: the session is newer
+  than the entry's `lastDate` again, so the next plan read records it again. A carried training
+  max doesn't heal. A successor saved from a page that loaded it before the carry writes the
+  pre-carry max back, and nothing recomputes the carry. Two tabs editing one block are the same
+  case: the later save wins. Preventing these needs the client to say which version it edited
+  (the version check below), which
+  [#1287](https://github.com/merickvaughn/lifting-logbook/issues/1287) takes up.
 
 **Alternatives considered.** A version column checked on update (optimistic locking [10]) would
 refuse a write based on a stale read with a 409, which also covers the setup page's own stale

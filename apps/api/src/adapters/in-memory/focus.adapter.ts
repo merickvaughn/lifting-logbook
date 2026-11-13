@@ -43,7 +43,7 @@ export class InMemoryFocusRepository implements IFocusRepository, NumberedStore 
     return block ? clone(block) : null;
   }
 
-  /** Nothing runs between an await and the next here, so there is nothing to lock out. */
+  /** The in-memory store has no concurrent writers to lock out, so this only reads. */
   async lockBlocks(ids: readonly string[]): Promise<FocusBlock[]> {
     return [...new Set(ids)]
       .sort()
