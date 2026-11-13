@@ -58,6 +58,7 @@ export class PrismaUserDataExportRepository implements IUserDataExportRepository
       liftMetadata: withoutUserId(await this.prisma.liftMetadata.findMany({ where })),
       liftModifications: withoutUserId(await this.prisma.liftModification.findMany({ where })),
       liftModificationMaxes: withoutUserId(await this.prisma.liftModificationMax.findMany({ where })),
+      missingMaxDismissals: withoutUserId(await this.prisma.missingMaxDismissal.findMany({ where })),
       focusBlocks: withoutUserId(await this.prisma.focusBlock.findMany({ where })),
       focusDayStates: withoutUserId(await this.prisma.focusDayState.findMany({ where })),
     };

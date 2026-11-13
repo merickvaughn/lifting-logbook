@@ -33,4 +33,17 @@ export interface ITrainingMaxRepository {
 
   /** Deletes every training max for a program, regardless of lift. No-op if none exist. */
   deleteAllTrainingMaxes(program: string): Promise<void>;
+
+  /**
+   * The stable ids (#1139) of the lifts the user answered "Don't ask again" for in this program,
+   * on the offer to set up a missing training max (#1246). A dismissal survives a macrocycle
+   * delete, as the user's custom lifts do: it is their answer about the lift.
+   */
+  getMissingMaxDismissals(program: string): Promise<string[]>;
+
+  /** Stores "Don't ask again" for a lift, by stable id. A no-op if it is already stored. */
+  dismissMissingMax(program: string, liftId: string): Promise<void>;
+
+  /** Clears "Don't ask again" for a lift, by stable id ("Ask again"). A no-op if none is stored. */
+  undismissMissingMax(program: string, liftId: string): Promise<void>;
 }

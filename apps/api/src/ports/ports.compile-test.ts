@@ -115,6 +115,9 @@ const _trainingMaxRepo: ITrainingMaxRepository = {
     Promise.resolve(),
   deleteAllTrainingMaxes: (): Promise<void> =>
     Promise.resolve(),
+  getMissingMaxDismissals: (): Promise<string[]> => Promise.resolve([]),
+  dismissMissingMax: (): Promise<void> => Promise.resolve(),
+  undismissMissingMax: (): Promise<void> => Promise.resolve(),
 };
 
 // ---------------------------------------------------------------------------

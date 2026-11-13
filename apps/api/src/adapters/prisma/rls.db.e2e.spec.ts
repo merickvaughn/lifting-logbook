@@ -74,6 +74,7 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     await owner.focusDayState.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.liftModification.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.liftMetadata.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
+    await owner.missingMaxDismissal.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
   };
 
   beforeAll(async () => {
@@ -277,6 +278,26 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     expect(updated.count).toBe(1);
     const bobMax = await owner.liftModificationMax.findFirstOrThrow({ where: { userId: USER_BOB } });
     expect(bobMax.weight).toBe(65);
+  });
+
+  it("cannot read or write another user's missing_max_dismissal rows, and fails closed (#1270)", async () => {
+    await owner.missingMaxDismissal.createMany({
+      data: [USER_ALICE, USER_BOB].map((userId) => ({ userId, program: PROGRAM, liftId: 'romanian-deadlift' })),
+    });
+
+    // Deliberately unscoped: only RLS keeps Bob's dismissal from Alice.
+    const rows = await asUser(appDb, USER_ALICE, (tx) => tx.missingMaxDismissal.findMany());
+    expect(rows.map((row) => row.userId)).toEqual([USER_ALICE]);
+    expect(await asUser(appDb, null, (tx) => tx.missingMaxDismissal.count())).toBe(0);
+
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) =>
+        tx.missingMaxDismissal.create({ data: { userId: USER_BOB, program: 'elsewhere', liftId: 'cable-curl' } }),
+      ),
+    ).rejects.toThrow();
+    const deleted = await asUser(appDb, USER_ALICE, (tx) => tx.missingMaxDismissal.deleteMany());
+    expect(deleted.count).toBe(1);
+    expect(await owner.missingMaxDismissal.count({ where: { userId: USER_BOB } })).toBe(1);
   });
 
   it("cannot read another user's lift_metadata progression, and fails closed (#1210)", async () => {

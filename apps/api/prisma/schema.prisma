@@ -49,6 +49,19 @@ model TrainingMax {
   @@map("training_max")
 }
 
+// "Don't ask again" on the offer to set up a training max for a lift with logged sets and none
+// (#1246, #1270). Keyed by the lift's stable id (#1139), so every spelling of it is covered.
+model MissingMaxDismissal {
+  id        String   @id @default(cuid())
+  userId    String
+  program   String
+  liftId    String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, program, liftId])
+  @@map("missing_max_dismissal")
+}
+
 model MacrocycleDashboard {
   id                     String   @id @default(cuid())
   userId                 String
