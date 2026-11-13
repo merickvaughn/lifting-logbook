@@ -34,6 +34,15 @@
   margin: 0 0 var(--space-3);
 }
 
+.notice {
+  font-size: var(--font-size-sm);
+  margin: 0;
+}
+
+.notice:empty {
+  display: none;
+}
+
 .error {
   color: var(--color-error-text);
   font-size: var(--font-size-sm);

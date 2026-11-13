@@ -12,14 +12,19 @@ test.beforeEach(async ({ request }) => {
   await request.get(`${MOCK_API}/__reset?withWorkoutMissingMax=true`);
 });
 
-/** Logs every planned set of workout 1 (squat, then deadlift), so Finish workout shows. */
+/**
+ * Logs every planned set of workout 1 (squat, then deadlift), so Finish workout shows. Each set
+ * gets a typed weight: with no max, the deadlift plans at 0.
+ */
 async function logEverySet(page: Page) {
   await page.goto('/macrocycle/1/workout/1');
   for (const lift of ['squat', 'deadlift']) {
     await page.getByRole('button', { name: `Go to ${lift}` }).click();
-    const log = page.getByRole('region', { name: 'Working sets' }).getByRole('button', { name: 'Log' });
+    const sets = page.getByRole('region', { name: 'Working sets' });
+    const log = sets.getByRole('button', { name: 'Log' });
     for (let left = 3; left > 0; left--) {
       await expect(log).toHaveCount(left);
+      await sets.getByLabel('Weight in lbs').first().fill('250');
       await log.first().click();
     }
     await expect(log).toHaveCount(0);

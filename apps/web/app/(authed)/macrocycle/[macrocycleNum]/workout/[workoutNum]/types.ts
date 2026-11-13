@@ -60,11 +60,11 @@ export interface LiftData {
    */
   plan?: { spec: LiftingProgramSpecResponse; liftMax: number; progression?: ProgressionPlan };
   /**
-   * The lift's resolved progression type, with or without a spec row. Finishing the workout
-   * offers to set up a missing training max only for a lift that plans from one: any type but
-   * `manual` (#1211, #1246).
+   * The lift's resolved progression type and increment, with or without a spec row. Finishing the
+   * workout offers to set up a missing training max only for a lift that plans from one: any type
+   * but `manual` (#1211, #1246). The increment steps that offer's weight input.
    */
-  progressionType?: ProgressionPlan['rule']['type'];
+  progressionRule?: Pick<ProgressionPlan['rule'], 'type' | 'increment'>;
 }
 
 export interface WorkoutLoggerProps {

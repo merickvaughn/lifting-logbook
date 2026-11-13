@@ -673,9 +673,10 @@ const server = createServer(async (req, res) => {
         },
       ];
     }
-    // Workout 1's deadlift, for the Finish workout dialog (#1272). The mock's deadlift has a
-    // max, which the list ignores: only a PATCH clears an entry.
+    // Workout 1's deadlift, for the Finish workout dialog (#1272): its max is removed, as a lift
+    // the real list reports has none.
     if (url.searchParams.get('withWorkoutMissingMax') === 'true') {
+      state.trainingMaxes = state.trainingMaxes.filter((m) => m.lift !== 'deadlift');
       state.missingMaxes = [
         {
           lift: 'deadlift',
@@ -1260,10 +1261,12 @@ const server = createServer(async (req, res) => {
     }
 
     // GET /programs/:p/training-maxes/missing — lifts with sets and no max (#1246). `lifts`
-    // narrows it by display name or id; the PATCH above drops a lift once its max is set.
+    // narrows it by display name or id. As the real list does, it never reports a lift with a
+    // max; the PATCH above also drops the entry once one is set.
     if (method === 'GET' && rest[0] === 'training-maxes' && rest[1] === 'missing' && rest.length === 2) {
       const wanted = url.searchParams.getAll('lifts');
       const missing = state.missingMaxes
+        .filter((m) => !state.trainingMaxes.some((t) => t.lift === m.lift || t.lift === m.liftId))
         .filter((m) => wanted.length === 0 || wanted.includes(m.lift) || wanted.includes(m.liftId))
         .map((m) => ({ ...m, dismissed: state.missingMaxDismissals.has(m.liftId) }));
       json(res, missing);

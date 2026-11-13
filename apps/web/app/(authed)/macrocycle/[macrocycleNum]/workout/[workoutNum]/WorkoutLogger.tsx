@@ -1,10 +1,15 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiClientError } from '@lifting-logbook/api-client';
-import type { LiftModificationResponse, MissingTrainingMaxResponse, WeightUnit } from '@lifting-logbook/types';
-import { convertWeight, formatWeight, liftOccurrenceKey, roundToDisplay, withOccurrence } from '@lifting-logbook/core';
+import {
+  DEFAULT_WEIGHT_INCREMENT,
+  type LiftModificationResponse,
+  type MissingTrainingMaxResponse,
+  type WeightUnit,
+} from '@lifting-logbook/types';
+import { convertWeight, formatWeight, liftIdFor, liftOccurrenceKey, roundToDisplay, withOccurrence } from '@lifting-logbook/core';
 import {
   createLiftModification,
   createLiftRecord,
@@ -35,6 +40,21 @@ import {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * How long Finish workout waits for the missing-max read before leaving without it (#1246).
+ * Shorter than the client's own timeout: the lifter is waiting on a disabled button.
+ */
+export const MISSING_MAX_READ_TIMEOUT_MS = 5_000;
+
+/** `promise`, or a rejection once `ms` pass without it settling. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 // A lift occurrence's identity in this workout. A program can plan one lift twice in
 // a day, so the lift's name alone would give both occurrences one key, and logging a
@@ -933,6 +953,14 @@ export default function WorkoutLogger({
   // Finish workout's missing-max read is in flight, then its answer (#1246).
   const [finishing, setFinishing] = useState(false);
   const [missingMaxes, setMissingMaxes] = useState<MissingTrainingMaxResponse[] | null>(null);
+  // A late answer to that read, after the lifter has gone elsewhere, must not navigate them.
+  const unmounted = useRef(false);
+  useEffect(() => {
+    unmounted.current = false;
+    return () => {
+      unmounted.current = true;
+    };
+  }, []);
   // initialBodyWeight is non-null (and in lbs) when the server found a same-day body weight entry.
   const [bodyWeight, setBodyWeight] = useState<number | null>(initialBodyWeight);
   const [bodyWeightDone, setBodyWeightDone] = useState(
@@ -1157,12 +1185,12 @@ export default function WorkoutLogger({
       }
     }
     // Before leaving, offer to set up a training max for a lift this workout logged that plans
-    // from one and has none (#1246). Finishing is never held up: no such lift, or a failed
-    // read, navigates at once.
+    // from one and has none (#1246). Finishing is never held up: no such lift, or a failed or
+    // slow read, navigates at once.
     const asked = [
       ...new Set(
         lifts
-          .filter((l) => !l.focus && l.progressionType !== 'manual')
+          .filter((l) => !l.focus && l.progressionRule?.type !== 'manual')
           .filter((l) => l.workingSets.some((ws) => loggedSets.has(setKey(l, ws.setNum))))
           .map((l) => l.lift),
       ),
@@ -1172,15 +1200,16 @@ export default function WorkoutLogger({
       return;
     }
     setFinishing(true);
-    fetchMissingTrainingMaxes(program, asked).then(
+    withTimeout(fetchMissingTrainingMaxes(program, asked), MISSING_MAX_READ_TIMEOUT_MS).then(
       (list) => {
+        if (unmounted.current) return;
         const ask = list.filter((m) => !m.dismissed);
         if (ask.length > 0) setMissingMaxes(ask);
         else leaveWorkout();
       },
       (err: unknown) => {
         logClientError('fetchMissingTrainingMaxes', err, { program, source: 'workout' });
-        leaveWorkout();
+        if (!unmounted.current) leaveWorkout();
       },
     );
   }
@@ -1189,8 +1218,13 @@ export default function WorkoutLogger({
     router.push(`/macrocycle/${macrocycleNum}`);
   }
 
+  // The missing-max row steps by the lift's own increment, as its plan does.
+  function stepFor(liftId: string): number {
+    return lifts.find((l) => liftIdFor(l.lift) === liftId)?.progressionRule?.increment ?? DEFAULT_WEIGHT_INCREMENT;
+  }
+
   const missingMaxDialog = missingMaxes && (
-    <MissingMaxDialog program={program} missing={missingMaxes} unit={unit} onDone={leaveWorkout} />
+    <MissingMaxDialog program={program} missing={missingMaxes} unit={unit} stepFor={stepFor} onDone={leaveWorkout} />
   );
 
   // Body weight gate
@@ -1239,7 +1273,7 @@ export default function WorkoutLogger({
             onClick={handleFinishWorkout}
             disabled={finishing}
           >
-            Finish workout
+            {finishing ? 'Finishing…' : 'Finish workout'}
           </button>
         )}
         {missingMaxDialog}
@@ -1369,7 +1403,7 @@ export default function WorkoutLogger({
             onClick={handleFinishWorkout}
             disabled={finishing}
           >
-            Finish workout
+            {finishing ? 'Finishing…' : 'Finish workout'}
           </button>
         )}
       </footer>

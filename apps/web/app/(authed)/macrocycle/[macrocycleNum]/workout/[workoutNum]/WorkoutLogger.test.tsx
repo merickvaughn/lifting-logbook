@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { renderToString } from 'react-dom/server';
 import type { LiftingProgramSpecResponse, LiftModificationResponse, LiftRecordResponse, MissingTrainingMaxResponse } from '@lifting-logbook/types';
-import WorkoutLogger from './WorkoutLogger';
+import WorkoutLogger, { MISSING_MAX_READ_TIMEOUT_MS } from './WorkoutLogger';
 import type { LiftData, WorkingSetData, WorkoutLoggerProps } from './types';
 import {
   createLiftModification,
@@ -1298,6 +1298,8 @@ describe('WorkoutLogger — a lift without a training max, after Finish workout 
     estimate: { weight: 100, unit: 'lbs', from: { date: '2026-07-08', weight: 100, reps: 5 } },
     dismissed: false,
   };
+  const PRESS: MissingTrainingMaxResponse = { ...RDL, lift: 'Push Press', liftId: 'push-press' };
+  const MANUAL = { type: 'manual', increment: 5 } as const;
   const loggedLift = (overrides: Partial<LiftData> = {}) =>
     makeLift({
       lift: 'Romanian Deadlift',
@@ -1343,7 +1345,7 @@ describe('WorkoutLogger — a lift without a training max, after Finish workout 
 
   it("doesn't ask about a lift that progresses by hand, or a focus lift", async () => {
     const squat = loggedLift({ lift: 'Back Squat' });
-    const manual = loggedLift({ lift: 'Romanian Deadlift', progressionType: 'manual' });
+    const manual = loggedLift({ lift: 'Romanian Deadlift', progressionRule: MANUAL });
     const raise = loggedLift({ lift: 'Lateral Raise', focus: { area: 'Shoulders', summary: '3 sets' } });
     await finish({ lifts: [squat, manual, raise] });
 
@@ -1352,7 +1354,7 @@ describe('WorkoutLogger — a lift without a training max, after Finish workout 
   });
 
   it('leaves without a request when no lift it logged plans from a max', async () => {
-    await finish({ lifts: [loggedLift({ progressionType: 'manual' })] });
+    await finish({ lifts: [loggedLift({ progressionRule: MANUAL })] });
 
     expect(mockPush).toHaveBeenCalledWith('/macrocycle/1');
     expect(mockFetchMissingTrainingMaxes).not.toHaveBeenCalled();
@@ -1456,6 +1458,150 @@ describe('WorkoutLogger — a lift without a training max, after Finish workout 
       source: 'workout',
       count: 1,
     });
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  /** A promise and the function that resolves it, for requests a test answers out of order. */
+  function deferred<T>() {
+    let resolve: (value: T) => void = () => undefined;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it('leaves once both of two rows answered at the same time are done', async () => {
+    const first = deferred<never[]>();
+    const second = deferred<never[]>();
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL, PRESS]);
+    mockUpdateTrainingMaxes.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const user = await finish({ lifts: [loggedLift(), loggedLift({ lift: 'Push Press' })] });
+
+    const dialog = await screen.findByRole('dialog');
+    const [rdlSetUp, pressSetUp] = within(dialog).getAllByRole('button', { name: 'Set up' });
+    if (!rdlSetUp || !pressSetUp) throw new Error('expected two Set up buttons');
+    await user.click(rdlSetUp);
+    await user.click(pressSetUp);
+    await act(async () => first.resolve([]));
+    await act(async () => second.resolve([]));
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
+    expect(within(dialog).queryAllByRole('listitem')).toHaveLength(0);
+  });
+
+  it('moves focus to the next row and says what happened when one is answered', async () => {
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL, PRESS]);
+    mockUpdateTrainingMaxes.mockResolvedValue([]);
+    const user = await finish({ lifts: [loggedLift(), loggedLift({ lift: 'Push Press' })] });
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveAccessibleDescription(/they plan at 0 and don't progress/);
+    const [rdlSetUp] = within(dialog).getAllByRole('button', { name: 'Set up' });
+    if (!rdlSetUp) throw new Error('no Set up button');
+    await user.click(rdlSetUp);
+
+    await waitFor(() => expect(within(dialog).getByLabelText('Push Press training max')).toHaveFocus());
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Training max set up for Romanian Deadlift.');
+  });
+
+  it("holds Set up all while a row's own save is in flight, and the rows while it saves", async () => {
+    const rowSave = deferred<never[]>();
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL, PRESS]);
+    mockUpdateTrainingMaxes.mockReturnValueOnce(rowSave.promise).mockReturnValueOnce(new Promise(() => undefined));
+    const user = await finish({ lifts: [loggedLift(), loggedLift({ lift: 'Push Press' })] });
+
+    const dialog = await screen.findByRole('dialog');
+    const [rdlSetUp] = within(dialog).getAllByRole('button', { name: 'Set up' });
+    if (!rdlSetUp) throw new Error('no Set up button');
+    await user.click(rdlSetUp);
+    expect(within(dialog).getByRole('button', { name: 'Set up all' })).toBeDisabled();
+
+    await act(async () => rowSave.resolve([]));
+    await user.click(within(dialog).getByRole('button', { name: 'Set up all' }));
+
+    expect(within(dialog).getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Set up' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: "Don't ask again" })).toBeDisabled();
+  });
+
+  it('refuses a weight that is not a positive number on Set up all, and stays', async () => {
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL, PRESS]);
+    const user = await finish({ lifts: [loggedLift(), loggedLift({ lift: 'Push Press' })] });
+
+    const press = await screen.findByLabelText('Push Press training max');
+    await user.clear(press);
+    await user.type(press, '0');
+    await user.click(screen.getByRole('button', { name: 'Set up all' }));
+
+    expect(screen.getAllByRole('alert').map((a) => a.textContent)).toContain(
+      'Enter a positive number for Push Press, or clear it.',
+    );
+    expect(press).toHaveAttribute('aria-invalid', 'true');
+    expect(mockUpdateTrainingMaxes).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('leaves out a row left empty on Set up all', async () => {
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL, PRESS]);
+    mockUpdateTrainingMaxes.mockResolvedValue([]);
+    const user = await finish({ lifts: [loggedLift(), loggedLift({ lift: 'Push Press' })] });
+
+    await user.clear(await screen.findByLabelText('Push Press training max'));
+    await user.click(screen.getByRole('button', { name: 'Set up all' }));
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/macrocycle/1'));
+    expect(mockUpdateTrainingMaxes).toHaveBeenCalledWith('5-3-1', {
+      maxes: [{ lift: 'Romanian Deadlift', weight: 100, unit: 'lbs' }],
+    });
+  });
+
+  it("steps each row's weight by its lift's increment", async () => {
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL]);
+    await finish({ lifts: [loggedLift({ progressionRule: { type: 'linear', increment: 2.5 } })] });
+
+    expect(await screen.findByLabelText('Romanian Deadlift training max')).toHaveAttribute('step', '2.5');
+  });
+
+  it('says it is finishing while the read is in flight', async () => {
+    mockFetchMissingTrainingMaxes.mockReturnValue(new Promise(() => undefined));
+    await finish();
+
+    expect(screen.getByRole('button', { name: 'Finishing…' })).toBeDisabled();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('logs a read slower than its limit and leaves without it', async () => {
+    jest.useFakeTimers();
+    try {
+      mockFetchMissingTrainingMaxes.mockReturnValue(new Promise(() => undefined));
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+      render(<WorkoutLogger {...makeProps({ lifts: [loggedLift()] })} />);
+      await user.click(screen.getByRole('button', { name: 'Finish workout' }));
+
+      await act(async () => {
+        jest.advanceTimersByTime(MISSING_MAX_READ_TIMEOUT_MS);
+      });
+
+      expect(mockPush).toHaveBeenCalledWith('/macrocycle/1');
+      expect(mockLogClientError).toHaveBeenCalledWith('fetchMissingTrainingMaxes', expect.any(Error), {
+        program: '5-3-1',
+        source: 'workout',
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("doesn't navigate on an answer that arrives after the logger is gone", async () => {
+    const read = deferred<MissingTrainingMaxResponse[]>();
+    mockFetchMissingTrainingMaxes.mockReturnValue(read.promise);
+    const user = userEvent.setup();
+    const { unmount } = render(<WorkoutLogger {...makeProps({ lifts: [loggedLift()] })} />);
+    await user.click(screen.getByRole('button', { name: 'Finish workout' }));
+    unmount();
+
+    await act(async () => read.resolve([]));
+
     expect(mockPush).not.toHaveBeenCalled();
   });
 });
