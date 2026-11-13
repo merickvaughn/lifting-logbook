@@ -6,6 +6,7 @@ jest.mock('@/lib/api', () => ({
   fetchLiftRecords: jest.fn(),
   fetchTrainingMaxHistory: jest.fn(),
   fetchMacrocycles: jest.fn().mockResolvedValue([]),
+  fetchNonCycleRecords: jest.fn().mockResolvedValue([]),
 }));
 jest.mock('@/lib/active-program', () => ({
   getActiveProgram: jest.fn().mockResolvedValue('5-3-1'),
@@ -20,7 +21,7 @@ jest.mock('./HistoryTabs', () => ({
   ),
 }));
 
-import { fetchLiftRecords, fetchMacrocycles, fetchTrainingMaxHistory } from '@/lib/api';
+import { fetchLiftRecords, fetchMacrocycles, fetchNonCycleRecords, fetchTrainingMaxHistory } from '@/lib/api';
 import HistoryPage from './page';
 
 const record = (id: string, lift: string, date: string, weight: number) => ({
@@ -77,6 +78,43 @@ describe('HistoryPage across stored spellings', () => {
   });
 });
 
+// #1184: non-cycle workouts are listed whichever program is active, with no training max.
+describe('HistoryPage non-cycle workouts', () => {
+  const nonCycle = { ...record('nc', 'Squat', '2026-03-01', 405), program: 'non-cycle', workoutNum: 4 };
+
+  beforeEach(() => {
+    (fetchMacrocycles as jest.Mock).mockResolvedValue([]);
+    (fetchLiftRecords as jest.Mock).mockResolvedValue([record('program-row', 'Squat', '2026-02-01', 315)]);
+    // The active program has a Squat max that covers the non-cycle set's date.
+    (fetchTrainingMaxHistory as jest.Mock).mockResolvedValue({
+      entries: [
+        { id: 't', lift: 'Squat', weight: 350, unit: 'lbs', date: '2026-01-01', isPR: false, source: 'program', goalMet: false },
+      ],
+    });
+  });
+
+  it('lists one beside the program’s records, counts it for PRs, and shows no TM or %', async () => {
+    (fetchNonCycleRecords as jest.Mock).mockResolvedValue([nonCycle]);
+    const byId = new Map((await renderRecords()).map((r) => [r.id, r]));
+
+    expect(byId.get('nc')).toMatchObject({ program: 'non-cycle', tmAtTime: null, tmUnit: null, tmPercent: null, isPR: true });
+    expect(byId.get('program-row')).toMatchObject({ tmAtTime: 350, isPR: false });
+  });
+
+  it('shows the load notice when they can’t be fetched, and still lists the program’s records', async () => {
+    (fetchNonCycleRecords as jest.Mock).mockRejectedValue(new Error('API unavailable'));
+    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    expect(html).toContain('role="status"');
+    expect((await renderRecords()).map((r) => r.id)).toEqual(['program-row']);
+  });
+
+  it('links to recording one', async () => {
+    (fetchNonCycleRecords as jest.Mock).mockResolvedValue([]);
+    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    expect(html).toContain('href="/non-cycle/new"');
+  });
+});
+
 // #1197: the Macrocycles tab's list, and the notice when it can't be loaded.
 describe('HistoryPage macrocycles', () => {
   const MACROCYCLE = {
@@ -92,6 +130,7 @@ describe('HistoryPage macrocycles', () => {
 
   beforeEach(() => {
     (fetchLiftRecords as jest.Mock).mockResolvedValue([]);
+    (fetchNonCycleRecords as jest.Mock).mockResolvedValue([]);
     (fetchTrainingMaxHistory as jest.Mock).mockResolvedValue({ entries: [] });
   });
 

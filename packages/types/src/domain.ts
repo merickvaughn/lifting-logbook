@@ -199,6 +199,14 @@ export const MACROCYCLE_ORIGINS = ['imported', 'live', 'legacy', 'non-cycle'] as
 
 export type MacrocycleOrigin = (typeof MACROCYCLE_ORIGINS)[number];
 
+/**
+ * The reserved program id a non-cycle workout's sets are stored under: training outside any
+ * plan, in one `macrocycle` row numbered 1 with origin `non-cycle` (proposal 2026-11-06,
+ * decision 23). A custom program's id is a UUID and no catalog slug takes it, so it can't name
+ * a real program, and every `:program` route but the lift-record writes refuses it.
+ */
+export const NON_CYCLE_PROGRAM = 'non-cycle';
+
 /** Strength classification tier relative to bodyweight-based standards. */
 export type StrengthTier = 'intermediate' | 'advanced' | 'elite';
 

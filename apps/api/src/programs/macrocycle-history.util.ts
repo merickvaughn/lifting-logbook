@@ -1,7 +1,14 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
-import { ImportPreImage, MacrocycleDashboard, MAX_FILE_MACROCYCLE_NUM, toUTCMidnight } from '@lifting-logbook/core';
-import { MacrocycleStatus } from '@lifting-logbook/types';
+import {
+  ImportPreImage,
+  LiftRecord,
+  liftRecordNaturalKey,
+  MacrocycleDashboard,
+  MAX_FILE_MACROCYCLE_NUM,
+  toUTCMidnight,
+} from '@lifting-logbook/core';
+import { MacrocycleStatus, NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
 import { KeyNumbers, preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { DateRange, dateRangesByMacrocycle } from '../ports/ILiftRecordRepository';
@@ -384,6 +391,32 @@ export function legacyRowsPreImage(macrocycleNums: readonly number[]): ImportPre
   return Object.fromEntries(
     macrocycleNums.map((macrocycleNum) => [`${LEGACY_ROW_KEY}${macrocycleNum}`, { kind: 'created', wrote: { macrocycleNum } }]),
   );
+}
+
+/**
+ * A non-cycle set an import created is stored under the reserved program, not the batch's, so
+ * its key carries this prefix (#1184). The prefix keeps it from reading as a macrocycle number of
+ * the batch's program, so a renumbering never rewrites it, and undo deletes it from the
+ * non-cycle workouts.
+ */
+export const NON_CYCLE_ROW_KEY = `${NON_CYCLE_PROGRAM}:`;
+
+/** Pre-image entries for the non-cycle sets an import created. */
+export function nonCycleRowsPreImage(rows: readonly LiftRecord[]): ImportPreImage {
+  return Object.fromEntries(
+    rows.map((r) => [
+      `${NON_CYCLE_ROW_KEY}${liftRecordNaturalKey(r)}`,
+      { kind: 'created', wrote: { weight: r.weight, reps: r.reps, notes: r.notes } },
+    ]),
+  );
+}
+
+/** Splits a lift-records pre-image's keys into the non-cycle sets' natural keys and the rest. */
+export function splitNonCycleKeys(keys: readonly string[]): { nonCycleKeys: string[]; otherKeys: string[] } {
+  return {
+    nonCycleKeys: keys.filter((k) => k.startsWith(NON_CYCLE_ROW_KEY)).map((k) => k.slice(NON_CYCLE_ROW_KEY.length)),
+    otherKeys: keys.filter((k) => !k.startsWith(NON_CYCLE_ROW_KEY)),
+  };
 }
 
 /**

@@ -219,6 +219,47 @@ export interface CreateLiftRecordRequest {
   modifications?: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Non-cycle workouts (#1184): training outside any program, stored under the reserved program
+// NON_CYCLE_PROGRAM in one macrocycle numbered 1. Later sets go through
+// `POST /programs/non-cycle/lift-records` with the workout's number and date, and edits through
+// `PATCH /programs/non-cycle/lift-records/:id`, both sending `macrocycleId`.
+// ---------------------------------------------------------------------------
+
+/** Request body for `POST /non-cycle-workouts`: the workout's date and its first set. */
+export interface CreateNonCycleWorkoutRequest {
+  /** The lifter's local calendar day ("YYYY-MM-DD"), no more than one day past the server's. */
+  date: string;
+  lift: LiftName;
+  occurrence?: number;
+  setNum: number;
+  weight: number;
+  reps: number;
+  notes?: string;
+  modifications?: string[];
+}
+
+/** One non-cycle workout and its sets. */
+export interface NonCycleWorkoutResponse {
+  workoutNum: number;
+  /** ISO 8601 date. */
+  date: string;
+  /** The non-cycle macrocycle's stable id, sent with every write to the workout (#1198). */
+  macrocycleId: string;
+  /** In lift then set order. */
+  records: LiftRecordResponse[];
+}
+
+/**
+ * What a non-cycle workout shows beside a lift for reference (decision 23): its training max in
+ * the active program, and the previous max with the reps last performed at it. Weights are in
+ * pounds, the stored unit. `null` when the active program has no max for the lift.
+ */
+export interface NonCycleReferenceResponse {
+  lift: LiftName;
+  reference: { trainingMax: number; previous: { weight: number; reps: number } | null } | null;
+}
+
 /** Request body for updating an existing lift record (in-session editing). */
 export interface UpdateLiftRecordRequest {
   weight?: number;

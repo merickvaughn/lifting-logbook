@@ -1,3 +1,4 @@
+import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import {
   LIFT_RECORD_HEADER_MAP,
   LIFTING_PROGRAM_SPEC_HEADER_MAP,
@@ -69,9 +70,6 @@ export const LIFT_RECORD_EXPORT_HEADERS: readonly string[] = [
 
 /** Joins a set's modification ids in the `Modifications` column. Ids are uuids, so never contain it. */
 const LIFT_RECORD_MODIFICATION_SEPARATOR = ';';
-
-/** The reserved program holding workouts outside any cycle (decision 23 of the same proposal). */
-const NON_CYCLE_PROGRAM = 'non-cycle';
 
 const FORMULA_TRIGGER = /^[=+\-@\t\r\n]/;
 

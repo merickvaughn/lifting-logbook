@@ -10,6 +10,7 @@ import {
   SetOrder,
 } from '../../presets/programMatching';
 import { toUTCMidnight } from '../jsUtil';
+import { isNonCycleProgram } from './nonCycle';
 
 /**
  * The rules version of the import wizard's Assign step (#1172): groups imported lift
@@ -190,6 +191,12 @@ export interface SegmentedLiftHistory<T> {
   lone: LoneSession<T>[];
   /** Rows with no date, never guessed into a stretch. */
   unplaced: T[];
+  /**
+   * Rows whose `Program` cell is `non-cycle` (decision 23): stored as non-cycle workouts, so
+   * they're no session, take no part in any stretch, gap or lone session, and are returned
+   * here whether dated or not.
+   */
+  nonCycle: T[];
   /**
    * In a file with macrocycle numbers, dated rows with a blank number and no earlier row in
    * the same program to take one from: the lifter files them.
@@ -1042,9 +1049,11 @@ function firstAfter(sorted: readonly number[], value: number): number {
  * - Rows with no date are returned in `unplaced`.
  */
 export function segmentLiftHistory<T extends LiftHistoryRow>(
-  rows: readonly T[],
+  allRows: readonly T[],
   options: SegmentLiftHistoryOptions,
 ): SegmentedLiftHistory<T> {
+  const nonCycle = allRows.filter((row) => isNonCycleProgram(row.program));
+  const rows = allRows.filter((row) => !isNonCycleProgram(row.program));
   const unplaced = rows.filter((row) => !isDated(row));
   const dated = rows.filter(isDated);
   const segmenter = new Segmenter<T>(options);
@@ -1054,7 +1063,7 @@ export function segmentLiftHistory<T extends LiftHistoryRow>(
     const { drafts, unnumbered } = segmenter.byFileNumbers(dated);
     const { stretches, groups } = segmenter.build(drafts);
     const conflicts = segmenter.fileNumberConflicts(drafts, stretches, groups);
-    return { stretches, lone: [], unplaced, unnumbered, conflicts };
+    return { stretches, lone: [], unplaced, nonCycle, unnumbered, conflicts };
   }
 
   const sessions = toSessions(dated);
@@ -1074,5 +1083,12 @@ export function segmentLiftHistory<T extends LiftHistoryRow>(
     });
   });
 
-  return { stretches: segmenter.build(segmenter.byDates(kept)).stretches, lone, unplaced, unnumbered: [], conflicts: [] };
+  return {
+    stretches: segmenter.build(segmenter.byDates(kept)).stretches,
+    lone,
+    unplaced,
+    nonCycle,
+    unnumbered: [],
+    conflicts: [],
+  };
 }

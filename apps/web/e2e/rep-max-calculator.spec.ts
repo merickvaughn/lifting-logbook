@@ -7,13 +7,16 @@ const MOCK_API = process.env.PLAYWRIGHT_MOCK_API_URL ?? 'http://127.0.0.1:3004';
 
 const WORKOUT = '/macrocycle/1/workout/1';
 
-const VIEWS = [
+// Each view, and the mock state it needs (a `/__reset` query).
+const VIEWS: ReadonlyArray<readonly [string, string, string?]> = [
   ['workout', WORKOUT],
   ['workout detail', `${WORKOUT}/detail`],
   ['lift detail', `${WORKOUT}/detail/squat`],
   ['rest timer', `${WORKOUT}/timer`],
   ['training maxes', '/settings/training-maxes'],
-] as const;
+  // A non-cycle workout (#1184), with sets enough to scroll.
+  ['non-cycle workout', '/non-cycle/1', '?withNonCycleWorkout=true'],
+];
 
 const trigger = (page: Page) => page.getByRole('button', { name: 'Rep max calculator' });
 const dialog = (page: Page) => page.getByRole('dialog', { name: 'Rep max calculator' });
@@ -24,7 +27,8 @@ test.beforeAll(async ({ browser }, testInfo) => {
   test.setTimeout(300_000);
   const page = await browser.newPage({ baseURL: testInfo.project.use.baseURL });
   const manageLifts = `${WORKOUT}/detail/manage-lifts`;
-  for (const route of [...VIEWS.map(([, route]) => route), manageLifts]) {
+  for (const [, route, reset = ''] of [...VIEWS, ['manage lifts', manageLifts] as const]) {
+    await page.request.get(`${MOCK_API}/__reset${reset}`);
     await page.goto(route, { timeout: 90_000 });
     await expect(trigger(page)).toBeVisible({ timeout: 90_000 });
   }
@@ -53,8 +57,9 @@ async function openCalculator(page: Page) {
   }).toPass({ timeout: 20_000 });
 }
 
-for (const [view, route] of VIEWS) {
-  test(`opens from the ${view} view without moving the page, at phone width`, async ({ page }) => {
+for (const [view, route, reset] of VIEWS) {
+  test(`opens from the ${view} view without moving the page, at phone width`, async ({ page, request }) => {
+    if (reset) await request.get(`${MOCK_API}/__reset${reset}`);
     // Short enough that every view can scroll.
     await page.setViewportSize({ width: 375, height: 600 });
     await page.goto(route);

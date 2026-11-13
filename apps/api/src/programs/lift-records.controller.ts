@@ -18,6 +18,7 @@ import {
   ImportLiftRecordsResponse,
   LiftRecordResponse,
   MACROCYCLE_ID_HEADER,
+  NON_CYCLE_PROGRAM,
 } from '@lifting-logbook/types';
 import {
   LiftRecord,
@@ -30,6 +31,7 @@ import {
   parseLiftRecords,
   toUTCMidnight,
   validateLiftImport,
+  withImportProgram,
   withModifications,
   withOccurrence,
 } from '@lifting-logbook/core';
@@ -40,6 +42,9 @@ import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { CreateLiftRecordDto } from './create-lift-record.dto';
+import { MAX_WORKOUT_NUM } from './lift-record.limits';
+import { assertNonCycleSet } from './non-cycle.util';
+import { AllowsNonCycleProgram } from './reserved-program.guard';
 import { UpdateLiftRecordDto } from './update-lift-record.dto';
 import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
@@ -80,6 +85,7 @@ export class LiftRecordsController {
 
   @Post('lift-records')
   @HttpCode(HttpStatus.CREATED)
+  @AllowsNonCycleProgram()
   async createLiftRecord(
     @Param('program') program: string,
     @Body() body: CreateLiftRecordDto,
@@ -98,11 +104,17 @@ export class LiftRecordsController {
         `program in the request body ('${body.program}') does not match the route parameter ('${program}')`,
       );
     }
+    const nonCycle = program === NON_CYCLE_PROGRAM;
+    // The DTO allows a non-cycle workout's open-ended numbers (#1184); every program keeps 1000.
+    if (!nonCycle && body.workoutNum > MAX_WORKOUT_NUM) {
+      throw new BadRequestException(`workoutNum must not be greater than ${MAX_WORKOUT_NUM}`);
+    }
 
     const repos = await this.factory.forUser(user);
     const { liftRecord, macrocycleScheduledWorkout } = repos;
     const idRow = await checkMacrocycleId(repos, program, body.macrocycleNum, macrocycleId, 'POST lift-records');
     assertMacrocycleWritable(program, idRow);
+    if (nonCycle) await assertNonCycleSet(repos, body.workoutNum, body.date);
 
     const modificationNames = await assertSetModifications(repos, body.lift, body.modifications ?? []);
 
@@ -271,7 +283,7 @@ export class LiftRecordsController {
     const { classified, created: written } = await writeFileNumberRows(
       repos,
       program,
-      valid.map((r) => ({ ...r, program })),
+      valid.map((r) => withImportProgram(r, program)),
     );
 
     const liftNames = await liftNamesFor(repos);
@@ -281,6 +293,7 @@ export class LiftRecordsController {
   }
 
   @Patch('lift-records/:id')
+  @AllowsNonCycleProgram()
   async updateLiftRecord(
     @Param('program') program: string,
     @Param('id') id: string,

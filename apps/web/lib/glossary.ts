@@ -77,6 +77,12 @@ export const GLOSSARY = [
           'One training day\'s lifts. Workouts are numbered in order across the macrocycle (Workout 1, Workout 2, …). Your schedule only decides which calendar day each one lands on.',
       },
       {
+        id: 'non-cycle-workout',
+        term: 'Non-cycle workout',
+        definition:
+          'A workout done outside any program, such as a session on vacation. You pick the lifts as you go. Its sets stay in your history whichever program you switch to and count toward personal records, but they never change a training max.',
+      },
+      {
         id: 'deload',
         term: 'Deload',
         definition:

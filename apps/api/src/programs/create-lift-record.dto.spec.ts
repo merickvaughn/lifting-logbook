@@ -227,8 +227,12 @@ describe('CreateLiftRecordDto validation', () => {
     expect(await flattenConstraintKeys(dtoWith({ macrocycleNum: 40000000 }))).toContain('macrocycleNum.max');
   });
 
-  it('rejects a workoutNum above the sanity ceiling', async () => {
-    expect(await flattenConstraintKeys(dtoWith({ workoutNum: 40000000 }))).toContain('workoutNum.max');
+  // The DTO's ceiling is the column's, since a non-cycle workout's number has no other
+  // (#1184). LiftRecordsController keeps every other program at 1000: see
+  // non-cycle-workouts.e2e.spec.ts.
+  it('rejects a workoutNum past the Int column', async () => {
+    expect(await flattenConstraintKeys(dtoWith({ workoutNum: 2_147_483_648 }))).toContain('workoutNum.max');
+    expect(await flattenConstraintKeys(dtoWith({ workoutNum: 40000000 }))).not.toContain('workoutNum.max');
   });
 
   it('rejects a setNum above the sanity ceiling', async () => {

@@ -1,7 +1,9 @@
+import Link from 'next/link';
 import { storedIdListing } from '@lifting-logbook/core';
-import { fetchLiftRecords, fetchMacrocycles, fetchTrainingMaxHistory } from '@/lib/api';
+import { fetchLiftRecords, fetchMacrocycles, fetchNonCycleRecords, fetchTrainingMaxHistory } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
+import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
   LiftRecordResponse,
   MacrocycleSummaryResponse,
@@ -28,9 +30,15 @@ export default async function HistoryPage() {
   // The `.catch()` fallbacks keep the tabs rendering (graceful degradation);
   // `loadFailed` distinguishes a real fetch failure from a genuinely empty history.
   let loadFailed = false;
-  const [records, { entries: tmEntries }, macrocycles, unit] = await Promise.all([
+  const [programRecords, nonCycleRecords, { entries: tmEntries }, macrocycles, unit] = await Promise.all([
     // fallback-covered-by: apps/web/e2e/staging.spec.ts
     fetchLiftRecords(program).catch((): LiftRecordResponse[] => {
+      loadFailed = true;
+      return [];
+    }),
+    // Non-cycle workouts (#1184) are listed whichever program is active.
+    // fallback-covered-by: apps/web/app/(authed)/history/page.test.tsx
+    fetchNonCycleRecords().catch((): LiftRecordResponse[] => {
       loadFailed = true;
       return [];
     }),
@@ -47,6 +55,7 @@ export default async function HistoryPage() {
     getPreferredUnit(),
   ]);
 
+  const records = [...programRecords, ...nonCycleRecords];
   const sortedRecords = records.slice().sort((a, b) => b.date.localeCompare(a.date));
 
   // A record stored by catalog id shares its lift's PR with a record under the lift's name (#1135).
@@ -73,7 +82,8 @@ export default async function HistoryPage() {
   // again for every record (issue #981).
   const tmAtTime = buildTmAtTimeIndex(tmEntries);
   const enriched: EnrichedRecord[] = sortedRecords.map((r) => {
-    const tm = tmAtTime.find(r.lift, r.date);
+    // A non-cycle set wasn't done against any program's max, so it shows none (decision 23).
+    const tm = r.program === NON_CYCLE_PROGRAM ? null : tmAtTime.find(r.lift, r.date);
     const tmPercent =
       tm !== null ? Math.round((r.weight / tm.weight) * 1000) / 10 : null;
     return {
@@ -89,7 +99,8 @@ export default async function HistoryPage() {
     <main className={styles.pageContainer}>
       <h1 className={styles.pageHeading}>Lift History</h1>
       <p className={styles.pageIntro}>
-        Your logged lifts and Training Max (TM) progression over time.
+        Your logged lifts and Training Max (TM) progression over time.{' '}
+        <Link href="/non-cycle/new">Record a non-cycle workout</Link>
       </p>
       {loadFailed && (
         <p role="status" className={styles.loadError}>
