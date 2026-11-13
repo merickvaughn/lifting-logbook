@@ -79,7 +79,7 @@ describe('WorkoutsController', () => {
       unskipWorkout: jest.fn().mockResolvedValue(undefined),
     };
     // No lift has a last session unless a test seeds one (#1252).
-    liftRecordRepo = { getLastSessions: jest.fn().mockResolvedValue([]) };
+    liftRecordRepo = { getLastSessions: jest.fn().mockResolvedValue(new Map()) };
     factory = {
       forUser: jest.fn().mockResolvedValue({
         liftRecord: liftRecordRepo,
@@ -182,9 +182,11 @@ describe('WorkoutsController', () => {
       workoutRepo.getWorkout.mockRejectedValue(new WorkoutNotFoundError('5-3-1', 3, 1));
     });
 
-    it('reads it before the workout’s rescheduled date, and attaches it by set number under any spelling', async () => {
+    it('reads it before the workout’s rescheduled date, and attaches it to the lift by its catalog id', async () => {
       overrideRepo.getOverride.mockResolvedValue(new Date('2026-04-22T00:00:00.000Z'));
-      liftRecordRepo.getLastSessions.mockResolvedValue([curlSet('cable-curl', 2, 11), curlSet('Cable Curl', 1, 12)]);
+      liftRecordRepo.getLastSessions.mockResolvedValue(
+        new Map([['cable-curl', [curlSet('Cable Curl', 1, 12), curlSet('cable-curl', 2, 11)]]]),
+      );
 
       const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
 
@@ -199,17 +201,13 @@ describe('WorkoutsController', () => {
       expect(result.lifts[1]).not.toHaveProperty('lastSession');
     });
 
-    it('still returns the workout, with no last sessions, and logs why, when the read fails', async () => {
-      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    // Not caught: a failed statement aborts the request's RLS transaction, so nothing after it,
+    // the commit included, could succeed.
+    it('fails the workout read when the read fails', async () => {
       const failure = new Error('boom');
       liftRecordRepo.getLastSessions.mockRejectedValue(failure);
 
-      const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
-
-      expect(result.lifts.map((l) => l.lift)).toEqual(['Cable Curl', 'Squat']);
-      expect(result.lifts.some((l) => 'lastSession' in l)).toBe(false);
-      expect(errorSpy).toHaveBeenCalledWith(failure, 'getLastSessions failed; the lifts carry no lastSession');
-      errorSpy.mockRestore();
+      await expect(controller.getWorkout('5-3-1', '1', MOCK_USER)).rejects.toBe(failure);
     });
   });
 

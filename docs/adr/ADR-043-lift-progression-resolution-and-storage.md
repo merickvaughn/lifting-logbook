@@ -147,13 +147,23 @@ and a second reads that session's sets. The rule is point 6's: another workout i
 macrocycle dated on or before this one (its rescheduled date when it has one), under any spelling
 of the lift, counting only the lift's first occurrence. Two workouts on the same date resolve to the
 higher-numbered one, where the web's read left it to record order. `loadProgressionPlans` reads the
-field for a `double` lift and makes no request of its own. When the API's read fails, it logs the
-error and the lifts carry no `lastSession`, so a `double` lift plans as right after a bump, as a
-failed records read did before.
+field for a `double` lift and makes no request of its own.
 
-The API reads it for every lift on every workout read, since it doesn't resolve progression types.
-Rejected: a dedicated endpoint the web calls only for `double` lifts, which would keep a serial
-round trip and a transaction on those renders.
+Two behaviours change with the move:
+
+- **A failed read fails the workout read.** This replaces point 6's "a failed records read plans
+  `double` without a last session". The read runs inside the request's row-level-security
+  transaction, where a failed statement aborts the transaction. Catching it and carrying on would
+  either fail the commit or roll back a macrocycle row the response had already named. So it fails
+  the way the workout's other queries do.
+- **A program with no macrocycle dashboard** reads the macrocycle `currentMacrocycleOrFirst` falls
+  back to, as the rest of the workout does. `GET /lift-records` returned 404 there, so the web
+  planned `double` from the bottom of the range. Now sets logged in that macrocycle count.
+
+The API reads last sessions for every lift on every workout read, since it doesn't resolve
+progression types. That includes reads that never plan, such as the manage-lifts pages. Rejected: a
+dedicated endpoint the web calls only for `double` lifts, which would keep a serial round trip and
+a transaction on those renders.
 
 ## References
 

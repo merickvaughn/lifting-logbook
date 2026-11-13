@@ -294,7 +294,10 @@ describe('PrismaLiftRecordRepository', () => {
       ]);
       const prisma = makePrisma();
       (prisma.liftRecord as unknown as { groupBy: jest.Mock }).groupBy = groupBy;
-      (prisma.liftRecord.findMany as jest.Mock).mockResolvedValue([{ ...BASE_ROW, workoutNum: 2, lift: 'bench-press' }]);
+      (prisma.liftRecord.findMany as jest.Mock).mockResolvedValue([
+        { ...BASE_ROW, workoutNum: 2, lift: 'bench-press', setNum: 2, reps: 4 },
+        { ...BASE_ROW, workoutNum: 2, lift: 'Bench Press', setNum: 1, reps: 5 },
+      ]);
       const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
 
       const sets = await repo.getLastSessions('5-3-1', 2, ['Bench Press', 'My Curl'], before);
@@ -311,7 +314,9 @@ describe('PrismaLiftRecordRepository', () => {
           { workoutNum: 1, lift: { in: ['My Curl'] } },
         ],
       });
-      expect(sets.map((s) => [s.lift, s.workoutNum])).toEqual([['bench-press', 2]]);
+      // Keyed by catalog id, each lift's sets in set order whatever spelling they're stored under.
+      expect([...sets.keys()]).toEqual(['bench-press']);
+      expect(sets.get('bench-press')?.map((s) => [s.setNum, s.reps])).toEqual([[1, 5], [2, 4]]);
     });
 
     it('takes the higher workout on a tie of dates', async () => {
@@ -335,8 +340,8 @@ describe('PrismaLiftRecordRepository', () => {
       (prisma.liftRecord as unknown as { groupBy: jest.Mock }).groupBy = groupBy;
       const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
 
-      expect(await repo.getLastSessions('5-3-1', 2, ['Bench Press'], before)).toEqual([]);
-      expect(await repo.getLastSessions('5-3-1', 2, [], before)).toEqual([]);
+      expect(await repo.getLastSessions('5-3-1', 2, ['Bench Press'], before)).toEqual(new Map());
+      expect(await repo.getLastSessions('5-3-1', 2, [], before)).toEqual(new Map());
       expect(groupBy).toHaveBeenCalledTimes(1);
       expect(prisma.liftRecord.findMany).not.toHaveBeenCalled();
     });

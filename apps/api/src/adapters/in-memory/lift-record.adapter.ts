@@ -13,6 +13,7 @@ import {
   ILiftRecordRepository,
   LastSessionsBefore,
   latestWorkoutByLift,
+  setsByLift,
 } from '../../ports/ILiftRecordRepository';
 import { NumberedStore } from './renumber';
 
@@ -63,7 +64,7 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
     macrocycleNum: number,
     lifts: readonly string[],
     { workoutNum, through }: LastSessionsBefore,
-  ): Promise<LiftRecord[]> {
+  ): Promise<Map<string, LiftRecord[]>> {
     const wanted = new Set(lifts.flatMap(liftSpellings));
     const sets = (this.store.get(program) ?? []).filter(
       (r) =>
@@ -74,7 +75,7 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
         r.date.getTime() <= through.getTime(),
     );
     const latest = latestWorkoutByLift(sets);
-    return sets.filter((r) => latest.get(liftIdFor(r.lift)) === r.workoutNum);
+    return setsByLift(sets.filter((r) => latest.get(liftIdFor(r.lift)) === r.workoutNum));
   }
 
   async getRecordsForLifts(lifts: readonly string[], through: Date, from?: Date): Promise<LiftRecord[]> {

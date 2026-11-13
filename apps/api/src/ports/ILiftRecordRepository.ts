@@ -15,6 +15,19 @@ export function latestWorkoutByLift(sets: Iterable<{ lift: string; workoutNum: n
   return new Map([...latest].map(([id, { workoutNum }]) => [id, workoutNum]));
 }
 
+/** `sets` keyed by `liftIdFor`, each lift's in set order: the shape `getLastSessions` returns. */
+export function setsByLift(sets: Iterable<LiftRecord>): Map<string, LiftRecord[]> {
+  const byLift = new Map<string, LiftRecord[]>();
+  for (const set of sets) {
+    const id = liftIdFor(set.lift);
+    const lift = byLift.get(id);
+    if (lift) lift.push(set);
+    else byLift.set(id, [set]);
+  }
+  for (const lift of byLift.values()) lift.sort((a, b) => a.setNum - b.setNum);
+  return byLift;
+}
+
 /** The workout {@link ILiftRecordRepository.getLastSessions} reads the lifts' last sessions before. */
 export interface LastSessionsBefore {
   workoutNum: number;
@@ -54,13 +67,19 @@ export interface ILiftRecordRepository {
   getLoggedWorkoutNums(program: string, macrocycleNum: number): Promise<Set<number>>;
 
   /**
-   * Each of `lifts`' last session before a workout: the sets of the latest other workout in the
-   * macrocycle dated on or before `before.through` ({@link latestWorkoutByLift}), under any
-   * spelling of the lift (`liftSpellings`), and only the lift's first occurrence in each workout.
-   * What `GET /workouts/:n` reports as each lift's `lastSession`, which a `double` lift plans
-   * from (#1252). Two narrow queries, so the web no longer reads the whole macrocycle for it.
+   * Each of `lifts`' last session before a workout, keyed by `liftIdFor` ({@link setsByLift}): the
+   * sets of the latest other workout in the macrocycle dated on or before `before.through`
+   * ({@link latestWorkoutByLift}), under any spelling of the lift (`liftSpellings`), and only the
+   * lift's first occurrence in each workout. A lift with none is absent. What `GET /workouts/:n`
+   * reports as each lift's `lastSession`, which a `double` lift plans from (#1252). Two narrow
+   * queries, so the web no longer reads the whole macrocycle for it.
    */
-  getLastSessions(program: string, macrocycleNum: number, lifts: readonly string[], before: LastSessionsBefore): Promise<LiftRecord[]>;
+  getLastSessions(
+    program: string,
+    macrocycleNum: number,
+    lifts: readonly string[],
+    before: LastSessionsBefore,
+  ): Promise<Map<string, LiftRecord[]>>;
 
   /**
    * Every record of the given lifts dated on or before `through`, across all of the user's

@@ -6,7 +6,7 @@ import {
   Logger,
   Param,
 } from '@nestjs/common';
-import { LiftRecord, isSameLift, liftIdFor } from '@lifting-logbook/core';
+import { LiftRecord, liftIdFor } from '@lifting-logbook/core';
 import { WorkoutResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { modificationNamesFor } from '../lifts/lift-modification.util';
@@ -126,8 +126,9 @@ export class WorkoutsController {
   /**
    * The workout with each lift's `lastSession`, which a `double` lift plans from (#1252): read
    * here, in the workout's own transaction, so the web doesn't fetch the macrocycle's records for
-   * it. When the read fails the lifts carry none and the workout still loads; the web then plans
-   * a `double` lift as right after a bump.
+   * it. A failed read fails the workout read, as its other queries do: it can't be caught and
+   * skipped, since a failed statement aborts the request's RLS transaction, and with it any row
+   * `macrocycleIdFor` created.
    */
   private async withLastSessions(
     liftRecord: ILiftRecordRepository,
@@ -139,25 +140,18 @@ export class WorkoutsController {
     // The rescheduled date when there is one, as the web's `effectiveDateOf`: not a fallback.
     // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
     const day = workout.overrideDate ?? workout.date;
-    // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
-    const sets = await liftRecord
-      .getLastSessions(
-        program,
-        macrocycleNum,
-        workout.lifts.map((l) => l.lift),
-        { workoutNum: workout.workoutNum, through: new Date(`${day}T00:00:00.000Z`) },
-      )
-      .catch((err: unknown) => {
-        // Through the class logger (Pino), so the line keeps its trace_id.
-        this.logger.error(err, 'getLastSessions failed; the lifts carry no lastSession');
-        return [] as LiftRecord[];
-      });
-    if (sets.length === 0) return workout;
+    const sessions = await liftRecord.getLastSessions(
+      program,
+      macrocycleNum,
+      workout.lifts.map((l) => l.lift),
+      { workoutNum: workout.workoutNum, through: new Date(`${day}T00:00:00.000Z`) },
+    );
+    if (sessions.size === 0) return workout;
     const lifts = workout.lifts.map((wl) => {
-      const own = sets.filter((r) => isSameLift(r.lift, wl.lift)).sort((a, b) => a.setNum - b.setNum);
-      if (own.length === 0) return wl;
-      const latest = own.reduce((a, b) => (b.date > a.date ? b : a));
-      return { ...wl, lastSession: { date: latest.date.toISOString().slice(0, 10), reps: own.map((r) => r.reps) } };
+      const sets = sessions.get(liftIdFor(wl.lift));
+      if (!sets) return wl;
+      const latest = sets.reduce((a, b) => (b.date > a.date ? b : a));
+      return { ...wl, lastSession: { date: latest.date.toISOString().slice(0, 10), reps: sets.map((r) => r.reps) } };
     });
     return { ...workout, lifts };
   }

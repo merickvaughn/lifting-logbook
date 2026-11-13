@@ -693,8 +693,7 @@ describe('WorkoutLoggingPage — the plan follows the lift’s progression type 
     errSpy.mockRestore();
   });
 
-  // The API leaves `lastSession` off when the lift has none, or when its read failed, which it
-  // logs (workouts.controller.spec.ts).
+  // The API leaves `lastSession` off when the lift has none.
   it('plans a double lift as right after a bump when the workout carries no last session', async () => {
     seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], { specOverrides: curl });
     mockedMaxes.mockResolvedValueOnce([{ lift: 'Cable Curl', weight: 30, dateUpdated: '2026-01-01T00:00:00.000Z' }]);

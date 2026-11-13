@@ -147,7 +147,7 @@ export interface WorkoutLiftResponse {
    * another workout in this macrocycle dated on or before this one (by its `overrideDate`
    * when rescheduled), under any spelling of the lift, counting only the lift's first
    * occurrence in it. Its date (`YYYY-MM-DD`) and each set's reps, by set number. Absent
-   * when the lift has none, or when the API couldn't read it (#1252).
+   * when the lift has none (#1252).
    */
   lastSession?: { date: string; reps: number[] };
 }

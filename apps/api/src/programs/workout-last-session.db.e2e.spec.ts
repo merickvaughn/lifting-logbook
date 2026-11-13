@@ -3,8 +3,9 @@
 //
 // Postgres comes from jest.global-setup.js, which exposes LIFTING_TC_DATABASE_URL (the
 // restricted lifting_app role) and LIFTING_TC_OWNER_DATABASE_URL (the owner). Seeding and cleanup
-// use the owner; every request runs as lifting_app, so row-level security is what keeps another
-// user's later session out of this user's plan.
+// use the owner; every request runs as lifting_app. The repository's `userId` filter, backed by
+// row-level security, keeps another user's session out of this user's plan: the second test
+// fails only if both break (RLS alone is covered by rls.db.e2e.spec.ts).
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';

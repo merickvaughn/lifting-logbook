@@ -15,6 +15,7 @@ import {
   ILiftRecordRepository,
   LastSessionsBefore,
   latestWorkoutByLift,
+  setsByLift,
 } from '../../ports/ILiftRecordRepository';
 
 export class PrismaLiftRecordRepository implements ILiftRecordRepository {
@@ -48,8 +49,8 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     macrocycleNum: number,
     lifts: readonly string[],
     { workoutNum, through }: LastSessionsBefore,
-  ): Promise<LiftRecord[]> {
-    if (lifts.length === 0) return [];
+  ): Promise<Map<string, LiftRecord[]>> {
+    if (lifts.length === 0) return new Map();
     const where = {
       userId: this.userId,
       program,
@@ -59,20 +60,20 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
       date: { lte: through },
     };
     // The lifts' sessions first, one row per stored spelling, workout and date: grouped in SQL,
-    // so no set is read until the latest session is known.
+    // so no set is returned until the latest session is known.
     const sessions = await this.prisma.liftRecord.groupBy({
       by: ['lift', 'workoutNum', 'date'],
       where: { ...where, lift: { in: [...new Set(lifts.flatMap(liftSpellings))] } },
     });
     const latest = latestWorkoutByLift(sessions);
-    if (latest.size === 0) return [];
+    if (latest.size === 0) return new Map();
     const rows = await this.prisma.liftRecord.findMany({
       where: {
         ...where,
         OR: [...latest].map(([id, latestNum]) => ({ workoutNum: latestNum, lift: { in: [...liftSpellings(id)] } })),
       },
     });
-    return rows.map(rowToLiftRecord);
+    return setsByLift(rows.map(rowToLiftRecord));
   }
 
   async getRecordsForLifts(lifts: readonly string[], through: Date, from?: Date): Promise<LiftRecord[]> {
