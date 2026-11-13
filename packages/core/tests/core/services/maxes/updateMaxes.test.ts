@@ -217,6 +217,20 @@ describe("updateMaxes — a record's prescription is its workout day's (issue #1
     ]);
   });
 
+  it("skips a Manage Lifts replacement with no training max, and progresses the rest (#1103)", () => {
+    const spec = [row(1, 0, "Deadlift", 5, 10), row(1, 2, "Squat", 5, 5)];
+
+    const { maxes, skipped } = updateMaxes(
+      spec,
+      [max("Deadlift", 300), max("Squat", 250)],
+      [set1(1, "Rack Pull", 360, 5), set1(3, "Squat", 260, 5)],
+      fiveThreeOne(new Map([[1, [replace("Deadlift", "Rack Pull")]]])),
+    );
+
+    expect(maxes).toEqual([max("Deadlift", 300), { lift: "Squat", weight: 265, dateUpdated: new Date("2026-05-01") }]);
+    expect(skipped).toEqual([{ lift: "Rack Pull", reason: "no-training-max" }]);
+  });
+
   it("gives sets logged under a chain's earlier name the slot's prescription", () => {
     // Squat → Front Squat → Box Squat. The sets were logged while the slot held Front
     // Squat, which the spec doesn't name: they take Squat's row and progress Front

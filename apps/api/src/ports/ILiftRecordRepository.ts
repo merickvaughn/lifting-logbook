@@ -43,6 +43,20 @@ export interface ILiftRecordRepository {
   getRecordsForLifts(lifts: readonly string[], through: Date, from?: Date): Promise<LiftRecord[]>;
 
   /**
+   * The distinct lift names the program's records are stored under, in any macrocycle: where
+   * the missing-training-max list starts (#1246). A grouped query: it returns no sets, but scans
+   * one index entry per stored set in the program.
+   */
+  getLoggedLifts(program: string): Promise<string[]>;
+
+  /**
+   * Every record in the program, in any macrocycle, stored under exactly one of `lifts`. Unlike
+   * {@link getRecordsForLifts} it doesn't expand spellings: pass names from {@link getLoggedLifts}.
+   * Each record carries only the fields the missing-training-max list reads (`notes` is empty).
+   */
+  getProgramRecordsForLifts(program: string, lifts: readonly string[]): Promise<LiftRecord[]>;
+
+  /**
    * Appends records for a program, silently skipping any whose natural key already exists.
    * Returns the number of rows actually inserted (i.e. excluding duplicates).
    */

@@ -63,6 +63,15 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
       );
   }
 
+  async getLoggedLifts(program: string): Promise<string[]> {
+    return [...new Set((this.store.get(program) ?? []).map((r) => r.lift))];
+  }
+
+  async getProgramRecordsForLifts(program: string, lifts: readonly string[]): Promise<LiftRecord[]> {
+    const wanted = new Set(lifts);
+    return (this.store.get(program) ?? []).filter((r) => wanted.has(r.lift));
+  }
+
   async appendLiftRecords(program: string, records: LiftRecord[]): Promise<number> {
     // Mirror Prisma's createMany({ skipDuplicates: true }) on the natural-key
     // unique constraint: rows whose key already exists (or repeats within this

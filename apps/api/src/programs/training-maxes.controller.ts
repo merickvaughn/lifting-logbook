@@ -1,12 +1,13 @@
-import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Put } from '@nestjs/common';
-import { ModificationMaxResponse, TrainingMaxResponse } from '@lifting-logbook/types';
-import type { TrainingMax } from '@lifting-logbook/core';
+import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Put, Query } from '@nestjs/common';
+import { MissingTrainingMaxResponse, ModificationMaxResponse, TrainingMaxResponse } from '@lifting-logbook/types';
+import { missingMaxCandidate, missingTrainingMaxes, type TrainingMax } from '@lifting-logbook/core';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { modificationModesFor } from '../lifts/lift-modification.util';
 import { AuthUser } from '../ports/auth';
 import { LiftModificationNotFoundError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { toModificationMaxResponse, toTrainingMaxResponse } from './mappers';
+import { toMissingTrainingMaxResponse, toModificationMaxResponse, toTrainingMaxResponse } from './mappers';
 import { PutModificationMaxDto } from './put-modification-max.dto';
 import { UpdateTrainingMaxesDto } from './update-training-maxes.dto';
 
@@ -24,6 +25,30 @@ export class TrainingMaxesController {
     const { trainingMax } = await this.factory.forUser(user);
     const maxes = await trainingMax.getTrainingMaxes(program);
     return maxes.map(toTrainingMaxResponse);
+  }
+
+  /**
+   * The program's lifts with logged sets and no training max, each with an estimate to start
+   * from (#1246). `?lifts=` (once per lift) narrows it to those lifts, matched by stable id: the
+   * workout logger asks only about the lifts it logged.
+   */
+  @Get('training-maxes/missing')
+  async getMissingTrainingMaxes(
+    @Param('program') program: string,
+    @CurrentUser() user: AuthUser,
+    @Query('lifts') lifts?: string | string[],
+  ): Promise<MissingTrainingMaxResponse[]> {
+    const repos = await this.factory.forUser(user);
+    const wanted = lifts === undefined ? undefined : [lifts].flat();
+    const maxes = await repos.trainingMax.getTrainingMaxes(program);
+    // Only the lifts that could be missing a max are read set by set; the rest cost one grouped query.
+    const candidates = (await repos.liftRecord.getLoggedLifts(program)).filter(missingMaxCandidate(maxes, wanted));
+    if (candidates.length === 0) return [];
+    const records = await repos.liftRecord.getProgramRecordsForLifts(program, candidates);
+    const { modes } = await modificationModesFor(repos, records);
+    return missingTrainingMaxes({ trainingMaxes: maxes, records, modificationModes: modes, lifts: wanted }).map((m) =>
+      toMissingTrainingMaxResponse(m, false),
+    );
   }
 
   @Patch('training-maxes')
