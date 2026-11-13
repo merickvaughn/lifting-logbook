@@ -19,6 +19,7 @@ import {
   GoogleSheetTab,
   GoogleSheetWorkbookResponse,
   IMPORT_ERROR_FIELD_LIFT,
+  ImportAssignResponse,
   ImportClassification,
   ImportCommitResponse,
   ImportDryRunResponse,
@@ -55,6 +56,10 @@ import {
   liftRecordNaturalKey,
   programSpecNaturalKey,
   withImportProgram,
+  parseLiftRecords,
+  segmentLiftHistory,
+  toLiftHistoryRecord,
+  isLiftRecordExport,
 } from '@lifting-logbook/core';
 import type { SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
@@ -65,9 +70,18 @@ import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
+import { PrismaService } from '../adapters/prisma/prisma.service';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { IMPORT_HANDLERS } from './import-handlers';
+import {
+  assignImportDate,
+  assignProgramOptions,
+  assignResponse,
+  customKnownPrograms,
+  importAssignEnabled,
+  splitMaxCounts,
+} from './import-assign';
 import {
   lockForImport,
   removeEmptyLegacyRows,
@@ -103,6 +117,8 @@ export class ImportController {
 
   constructor(
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
+    // Custom programs are Prisma-only, so with no database there are none (see SwitchProgramController).
+    @Inject(PrismaService) private readonly prisma: PrismaService | null,
   ) {}
 
   @Post('import')
@@ -118,8 +134,9 @@ export class ImportController {
     @Query('excludeKeys') legacyExcludeKeys?: string,
     @Query('liftOverrides') legacyLiftOverrides?: string,
     @Query('splitDest') splitDestParam?: string,
-  ): Promise<ImportPreviewResponse | ImportCommitResponse | ImportDryRunResponse> {
+  ): Promise<ImportPreviewResponse | ImportCommitResponse | ImportDryRunResponse | ImportAssignResponse> {
     const { csvText, fields } = await readImportForm(req);
+    const assignEnabled = importAssignEnabled();
     let table = parseCsvText(csvText);
 
     const override = destinationParam && (Object.keys(IMPORT_HANDLERS) as ImportKind[]).includes(
@@ -127,6 +144,22 @@ export class ImportController {
     ) ? (destinationParam as ImportKind) : null;
 
     const columnOverrides = parseJsonParam<Record<string, string>>(overridesParam);
+
+    if (mode === 'assign') {
+      // With the flag off the Assign step doesn't exist (proposal Rollout step 2).
+      if (!assignEnabled) throw new NotFoundException();
+      if (override !== 'lift-records') {
+        throw new BadRequestException('mode=assign groups lift records: send destination=lift-records');
+      }
+      if (columnOverrides) table = applyColumnOverrides(table, columnOverrides, override);
+      const repos = await this.factory.forUser(user);
+      return this.assign(program, table, repos, user.id, {
+        excludeKeys: parseExcludeKeys(fields.get('excludeKeys')),
+        liftOverrides: parseLiftOverrides(fields.get('liftOverrides')),
+        splitDest: splitDestParam === '1',
+        today: fields.get('today'),
+      });
+    }
 
     if (mode === 'commit' || mode === 'dry-run') {
       if (!override) {
@@ -163,21 +196,25 @@ export class ImportController {
     const classification = classifyImport(table);
     const destination = override ?? classification.type;
     if (!destination) {
-      return { classification, destination: null, columnMappings: null, preview: null, errors: [] };
+      return { classification, destination: null, columnMappings: null, preview: null, errors: [], assignEnabled };
     }
 
     if (columnOverrides) {
       table = applyColumnOverrides(table, columnOverrides, destination);
     }
 
-    const columnMappings = fuzzyColumnMapper(table[0] ?? [], destination);
+    const assign = assignEnabled && destination === 'lift-records';
+    const columnMappings = fuzzyColumnMapper(table[0] ?? [], destination, { assign });
     const repos = await this.factory.forUser(user);
     // Only a strength-goal preview applies these (#1169).
     const liftOverrides = parseLiftOverrides(fields.get('liftOverrides'));
 
     // For lift-records, use soft validation so incomplete/ambiguous rows appear in REVIEW
     if (destination === 'lift-records') {
-      return this.previewLiftRecords(program, classification, destination, table, columnMappings, repos);
+      return {
+        ...(await this.previewLiftRecords(program, classification, destination, table, columnMappings, repos, assign)),
+        assignEnabled,
+      };
     }
 
     const { errors, preview } = await this.preview(program, destination, table, repos, liftOverrides);
@@ -187,6 +224,7 @@ export class ImportController {
       columnMappings,
       preview: errors.length ? null : preview,
       errors,
+      assignEnabled,
     };
   }
 
@@ -459,11 +497,11 @@ export class ImportController {
     table: SpreadsheetCell[][],
     columnMappings: ReturnType<typeof fuzzyColumnMapper>,
     repos: RepositoryBundle,
+    assign: boolean,
   ): Promise<ImportPreviewResponse> {
-    const handler = IMPORT_HANDLERS['lift-records'];
     let parsed: LiftRecord[];
     try {
-      parsed = handler.parse(table) as LiftRecord[];
+      parsed = parseLiftRecords(table, { assign });
     } catch (err) {
       return {
         classification,
@@ -486,7 +524,7 @@ export class ImportController {
     // Custom lifts are folded into the slot map fresh per request (#911) so a row whose
     // raw text already matches an existing custom lift's name resolves immediately
     // instead of being flagged ambiguous.
-    const softResult = validateLiftImportSoft(parsed, await effectiveSlotMapFor(repos));
+    const softResult = validateLiftImportSoft(parsed, await effectiveSlotMapFor(repos), { assign });
     if (softResult.hardErrors.length) {
       return { classification, destination, columnMappings, preview: null, errors: softResult.hardErrors };
     }
@@ -614,27 +652,8 @@ export class ImportController {
     // records each kept row's original 1-based position before filtering;
     // errors are remapped back to it after validation runs, so a failed
     // commit still points at the right CSV line.
-    let survivingRowOriginalIndexes: number[] | null = null;
-    if (excludeKeys.size > 0) {
-      const excludedRowIndexes = new Set(
-        [...excludeKeys]
-          .map((k) => /^__(?:ambiguous|incomplete|row)_(\d+)$/.exec(k)?.[1])
-          .filter((s): s is string => s !== undefined)
-          .map(Number),
-      );
-      if (excludedRowIndexes.size > 0) {
-        const kept: unknown[] = [];
-        const originalIndexes: number[] = [];
-        parsed.forEach((r, i) => {
-          const originalRowIndex = i + 1;
-          if (excludedRowIndexes.has(originalRowIndex)) return;
-          kept.push(r);
-          originalIndexes.push(originalRowIndex);
-        });
-        parsed = kept;
-        survivingRowOriginalIndexes = originalIndexes;
-      }
-    }
+    const { kept, originalIndexes: survivingRowOriginalIndexes } = excludeRowsByIndex(parsed, excludeKeys);
+    parsed = kept;
 
     // Strict validation (with overrides applied). Lift-records, training-maxes, and
     // strength-goals each get a custom-lift-aware slot map built fresh per request
@@ -657,15 +676,7 @@ export class ImportController {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
       ({ valid: rawValid, errors } = handler.validate(parsed as any));
     }
-    if (errors.length > 0) {
-      const originalIndexes = survivingRowOriginalIndexes;
-      throw new BadRequestException({
-        message: 'Validation failed',
-        errors: originalIndexes
-          ? errors.map((e) => ({ ...e, row: originalIndexes[e.row - 1] ?? e.row }))
-          : errors,
-      });
-    }
+    if (errors.length > 0) throw validationFailed(errors, survivingRowOriginalIndexes);
     let valid: unknown[] = rawValid;
 
     // Filter excluded keys. Only a tab opened before #1123 still sends these.
@@ -686,6 +697,87 @@ export class ImportController {
       return { rows: liftRecords, splitMaxes: trainingMaxes };
     }
     return { rows: valid, splitMaxes: [] };
+  }
+
+  /**
+   * `mode=assign` (#1253): the rules' grouping of the file into suggested macrocycles, after
+   * Review's lift overrides and exclusions (proposal decision 16). It validates as the commit
+   * does, except that the file needn't number its macrocycles or workouts and a row with no
+   * date is left out and counted. Nothing is written.
+   */
+  private async assign(
+    program: string,
+    table: SpreadsheetCell[][],
+    repos: RepositoryBundle,
+    userId: string,
+    choices: { excludeKeys: Set<string>; liftOverrides: Record<string, string>; splitDest: boolean; today: string | undefined },
+  ): Promise<ImportAssignResponse> {
+    const started = Date.now();
+    const importDate = assignImportDate(choices.today);
+    let parsed: LiftRecord[];
+    try {
+      parsed = parseLiftRecords(table, { assign: true });
+    } catch (err) {
+      throw new BadRequestException({ message: `Could not parse file: ${(err as Error).message}` });
+    }
+    if (parsed.length > MAX_IMPORT_ROWS) {
+      throw new BadRequestException({
+        message: `Import exceeds the ${MAX_IMPORT_ROWS.toLocaleString()}-row limit. Split the file into smaller batches.`,
+      });
+    }
+    // Overrides key off positions before exclusion, as in resolveCommitRows.
+    const { kept, originalIndexes } = excludeRowsByIndex(
+      withLiftOverrides(parsed, choices.liftOverrides),
+      choices.excludeKeys,
+    );
+    const { valid, errors, undated } = validateLiftImport(kept, await effectiveSlotMapFor(repos), { assign: true });
+    if (errors.length > 0) throw validationFailed(errors, originalIndexes);
+
+    // An export isn't split: its sets are sets, whatever their notes say (decision 22).
+    const exported = isLiftRecordExport(table[0] ?? []);
+    const split = choices.splitDest && !exported;
+    const { liftRecords, trainingMaxes } = split
+      ? splitLiftRecordsByDestination(valid)
+      : { liftRecords: valid, trainingMaxes: [] };
+
+    const customPrograms = await customKnownPrograms(this.prisma?.clientForRequest(), userId);
+    const segmented = segmentLiftHistory(liftRecords.map(toLiftHistoryRecord), {
+      importDate,
+      sourceProgram: program,
+      customPrograms,
+    });
+    const response = assignResponse(
+      segmented,
+      {
+        importDate,
+        undatedRows: undated.length,
+        exported,
+        programs: assignProgramOptions(customPrograms),
+        ...(split ? { split: await splitMaxCounts(trainingMaxes, segmented.stretches, program, repos) } : {}),
+      },
+      await liftNamesFor(repos),
+    );
+
+    // Counts only: rows, lift names and notes are the lifter's data (proposal Observability).
+    this.logger.log(
+      {
+        rows: kept.length,
+        sessions: response.sessions,
+        stretches: response.stretches.length,
+        unmatchedStretches: response.stretches.filter((s) => !s.matched).length,
+        loneSessions: response.lone.length,
+        nonCycleSessions: response.nonCycle.length,
+        unnumberedSessions: response.unnumbered.length,
+        conflicts: response.conflicts.length,
+        undatedRows: response.undatedRows,
+        exported,
+        splitChanges: response.split?.changes ?? 0,
+        splitOlderThanCurrent: response.split?.olderThanCurrent ?? 0,
+        durationMs: Date.now() - started,
+      },
+      'Import assign (#1253)',
+    );
+    return response;
   }
 
   /** The counts {@link commit} would return for these rows, without writing them (#1123). */
@@ -815,6 +907,38 @@ function withLiftOverrides<R extends { lift: unknown }>(rows: R[], liftOverrides
   return rows.map((r, i) => {
     const canonical = liftOverrides[String(i + 1)];
     return canonical ? { ...r, lift: canonical } : r;
+  });
+}
+
+/**
+ * Drops the rows Review excluded by position: `__row_<n>`, and the legacy `__ambiguous_<n>` and
+ * `__incomplete_<n>` a tab opened before #1123 sends. `originalIndexes` holds each kept row's
+ * 1-based position before filtering, so validation errors can name the right CSV line; it's
+ * null when nothing was dropped.
+ */
+function excludeRowsByIndex<R>(rows: R[], excludeKeys: Set<string>): { kept: R[]; originalIndexes: number[] | null } {
+  const excludedRowIndexes = new Set(
+    [...excludeKeys]
+      .map((k) => /^__(?:ambiguous|incomplete|row)_(\d+)$/.exec(k)?.[1])
+      .filter((s): s is string => s !== undefined)
+      .map(Number),
+  );
+  if (excludedRowIndexes.size === 0) return { kept: rows, originalIndexes: null };
+  const kept: R[] = [];
+  const originalIndexes: number[] = [];
+  rows.forEach((r, i) => {
+    if (excludedRowIndexes.has(i + 1)) return;
+    kept.push(r);
+    originalIndexes.push(i + 1);
+  });
+  return { kept, originalIndexes };
+}
+
+/** A 400 for validation errors, each `row` mapped back to its position before exclusion. */
+function validationFailed(errors: ImportError[], originalIndexes: number[] | null): BadRequestException {
+  return new BadRequestException({
+    message: 'Validation failed',
+    errors: originalIndexes ? errors.map((e) => ({ ...e, row: originalIndexes[e.row - 1] ?? e.row })) : errors,
   });
 }
 

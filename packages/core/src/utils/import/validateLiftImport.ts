@@ -29,6 +29,23 @@ export interface LiftImportValidationResult {
   valid: LiftRecord[];
   /** All errors encountered across all rows. */
   errors: ImportError[];
+  /** With {@link LiftImportOptions.assign}, the rows with no date, left out unchecked. Otherwise empty. */
+  undated: LiftRecord[];
+}
+
+/** How a lift-records file is validated. */
+export interface LiftImportOptions {
+  /**
+   * The file goes through the Assign step (#1253), which groups rows into macrocycles from their
+   * dates (proposal decisions 9 and 16). A missing macrocycle or workout number isn't an error,
+   * and a row with no date is left out and counted rather than failing the file.
+   */
+  assign?: boolean;
+}
+
+/** True when a row has no usable date. */
+export function hasNoDate(r: Pick<LiftRecord, 'date'>): boolean {
+  return !r.date || isNaN(r.date.getTime());
 }
 
 /**
@@ -45,19 +62,25 @@ export interface LiftImportValidationResult {
 export function validateLiftImport(
   records: LiftRecord[],
   slotMap: Readonly<Record<string, string>>,
+  options: LiftImportOptions = {},
 ): LiftImportValidationResult {
   const valid: LiftRecord[] = [];
   const errors: ImportError[] = [];
+  const undated: LiftRecord[] = [];
 
   records.forEach((r, i) => {
     const row = i + 1;
     const rowErrors: ImportError[] = [];
 
-    if (isNaN(r.macrocycleNum))
+    if (options.assign && hasNoDate(r)) {
+      undated.push(r);
+      return;
+    }
+    if (isNaN(r.macrocycleNum) && !options.assign)
       rowErrors.push({ row, field: 'macrocycleNum', code: 'MACROCYCLE_NUM_INVALID', message: 'Macrocycle # is not a number' });
     const outOfRange = fileMacrocycleNumError(row, r.macrocycleNum);
     if (outOfRange) rowErrors.push(outOfRange);
-    if (isNaN(r.workoutNum))
+    if (isNaN(r.workoutNum) && !options.assign)
       rowErrors.push({ row, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'Workout # is not a number' });
     if (isNaN(r.setNum))
       rowErrors.push({ row, field: 'setNum', code: 'SET_NUM_INVALID', message: 'Set # is not a number' });
@@ -65,7 +88,7 @@ export function validateLiftImport(
       rowErrors.push({ row, field: 'weight', code: 'WEIGHT_INVALID', message: 'Weight is not a number' });
     if (isNaN(r.reps))
       rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
-    if (!r.date || isNaN(r.date.getTime()))
+    if (hasNoDate(r))
       rowErrors.push({ row, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
 
     // String(r.lift ?? ''), not a bare `as unknown as string` cast: r.lift is
@@ -125,5 +148,5 @@ export function validateLiftImport(
     }
   });
 
-  return { valid, errors };
+  return { valid, errors, undated };
 }

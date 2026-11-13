@@ -6,13 +6,23 @@ import { LiftRecord, SpreadsheetCell } from "@src/core/models";
 import { parseDateStringUTC, toUTCMidnight } from "../jsUtil";
 import { tableToObjects } from "./tableToObjects";
 
+/** Columns the Assign step treats as unmapped when a cell is blank (#1253). */
+const ASSIGN_OPTIONAL_NUMBERS: ReadonlySet<string> = new Set(["macrocycleNum", "workoutNum"]);
+
 /**
  * Converts a 2D array to an array of LiftRecord objects.
+ *
+ * With `assign`, a blank `Macrocycle #` or `Workout #` cell reads as `NaN`, the same as a
+ * missing column, rather than `Number("")`'s 0: the Assign step reads either as "the file
+ * doesn't say" (#1253), while 0 is a number a file can really use.
  * @param {SpreadsheetCell[][]} data
  * @returns {LiftRecord[]}
  */
 
-export function parseLiftRecords(data: SpreadsheetCell[][]): LiftRecord[] {
+export function parseLiftRecords(
+  data: SpreadsheetCell[][],
+  options: { assign?: boolean } = {},
+): LiftRecord[] {
   const headerMap = LIFT_RECORD_HEADER_MAP;
   const rawObjects = tableToObjects(data, undefined);
   return rawObjects.map((obj) => {
@@ -26,7 +36,8 @@ export function parseLiftRecords(data: SpreadsheetCell[][]): LiftRecord[] {
         value = obj[alternate];
       }
       if (type === "number") {
-        value = Number(value);
+        const blank = value === undefined || value === null || String(value).trim() === "";
+        value = options.assign && blank && ASSIGN_OPTIONAL_NUMBERS.has(key) ? NaN : Number(value);
       }
       if (key === "date") {
         // Non-ISO date strings (the common case here -- CSV cells like

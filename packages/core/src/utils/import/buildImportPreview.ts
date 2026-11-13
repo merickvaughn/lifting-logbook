@@ -38,7 +38,8 @@ function tally(deltas: ImportDelta[]): ImportPreview {
   return {
     creates: deltas.filter((d) => d.kind === 'create' && !isUnresolved(d)).length,
     updates: deltas.filter((d) => d.kind === 'update').length,
-    skips: deltas.filter((d) => d.kind === 'skip').length,
+    // A row with no date (#1253) is left out, not skipped as already stored.
+    skips: deltas.filter((d) => d.kind === 'skip' && d.status !== 'undated').length,
     unresolved: deltas.filter(isUnresolved).length,
     deltas,
   };
@@ -146,6 +147,12 @@ export function buildLiftRecordsPreviewSoft(
     const key = `__incomplete_${rowIndex}`;
     const label = `Row ${rowIndex} (incomplete)`;
     deltas.push({ key, label, kind: 'create', status: 'incomplete', rowIndex });
+  }
+
+  // Rows with no date, under the Assign step (#1253): left out of the import, so they write
+  // nothing. Listed so Review can show them, and so the lifter can exclude them.
+  for (const { rowIndex } of softResult.undated ?? []) {
+    deltas.push({ key: `__undated_${rowIndex}`, label: `Row ${rowIndex} (no date)`, kind: 'skip', status: 'undated', rowIndex });
   }
 
   // Ambiguous rows — tag with status and original lift name for autocomplete

@@ -5,6 +5,7 @@ export * from './classifyAndCount';
 export * from './classifyImport';
 export * from './googleSheetUrl';
 export * from './importThresholds';
+export * from './liftHistoryRows';
 export * from './liftRecordNaturalKey';
 export * from './nonCycle';
 export * from './normalize-amrap';

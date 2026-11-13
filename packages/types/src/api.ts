@@ -820,7 +820,12 @@ export interface ImportClassification {
 }
 
 /** Row-level status for the interactive REVIEW step (Phase 3). */
-export type ImportRowStatus = 'ok' | 'incomplete' | 'ambiguous';
+/**
+ * `undated`: a lift-record row with no date, under the Assign step (#1253). It can't be placed
+ * in a macrocycle, so it's left out of the import and counted, rather than held at the
+ * incomplete-row gate. Excluding it at Review changes nothing it would write.
+ */
+export type ImportRowStatus = 'ok' | 'incomplete' | 'ambiguous' | 'undated';
 
 /** A single before→after row in a preview diff, formatted for display. */
 export interface ImportDelta {
@@ -953,6 +958,12 @@ export interface ImportPreviewResponse {
     destination: ImportKind;
     preview: ImportPreview;
   };
+  /**
+   * Whether `IMPORT_ASSIGN_ENABLED` is on (#1253). When it is, a lift-records file goes through
+   * the Assign step, so its program, macrocycle and workout columns aren't required. Absent
+   * means off.
+   */
+  assignEnabled?: boolean;
 }
 
 /**
@@ -1004,6 +1015,123 @@ export interface ImportDryRunResponse extends ImportWriteResult {
   destination: ImportKind;
   /** Counts for rows split to a second destination, as on {@link ImportCommitResponse}. */
   split?: { destination: ImportKind; created: number; updated: number; skipped: number };
+}
+
+/** A suggested macrocycle's status at the Assign step (proposal decisions 6 and 7). */
+export type AssignStretchStatus = 'in-progress' | 'completed' | 'overran' | 'abandoned';
+
+/** Why a stretch starts where it does: `segmentLiftHistory`'s `StretchStartReason`. */
+export type AssignStartReason =
+  | { kind: 'first-session' }
+  | { kind: 'gap'; days: number }
+  | { kind: 'previous-run-finished' }
+  | { kind: 'program-column-changed'; from: string | null; to: string }
+  | { kind: 'lift-outside-program'; lifts: string[] }
+  | { kind: 'set-order-changed'; lifts: Array<{ lift: string; from: string; to: string }> }
+  | { kind: 'previous-fits-no-program' }
+  | { kind: 'workout-number-fell-back'; from: number; to: number }
+  | { kind: 'file-macrocycle'; macrocycleNum: number };
+
+/** Where a stretch's program came from: `segmentLiftHistory`'s `StretchProgramReason`. */
+export type AssignProgramReason =
+  | { kind: 'column'; value: string }
+  | { kind: 'lifts'; tiedWith: string[]; bySetOrder: boolean }
+  | { kind: 'source' };
+
+/** Why a stretch has its suggested status: `segmentLiftHistory`'s `StretchStatusReason`. */
+export type AssignStatusReason =
+  | { kind: 'all-workouts-done' }
+  | { kind: 'next-is-restart' }
+  | { kind: 'next-is-different-program' }
+  | { kind: 'next-is-unmatched' }
+  | { kind: 'last-session-stale'; daysBeforeImport: number }
+  | { kind: 'past-expected-length'; weeksSinceStart: number }
+  | { kind: 'inside-expected-length'; weeksSinceStart: number }
+  | { kind: 'open-ended' }
+  | { kind: 'unmatched' };
+
+/** One session (every row with one date) at the Assign step. Dates are `YYYY-MM-DD`. */
+export interface AssignSession {
+  date: string;
+  /** The file's workout number, or the session's position in its stretch. */
+  workoutNum: number | null;
+  /** Display names of the session's lifts, in file order, each once. */
+  lifts: string[];
+  /** Rows (sets) in the session. */
+  sets: number;
+}
+
+/** A contiguous run of sessions the rules group into one suggested macrocycle. */
+export interface AssignStretch {
+  program: string;
+  /** False when the stretch's lifts fit no known program; it's then stored under `program`, flagged unmatched. */
+  matched: boolean;
+  /** Lifts outside `program` that the lifter is asked to confirm. */
+  liftsOutsideProgram: string[];
+  /** The program the stretch would be once its lifts are confirmed. */
+  candidateProgram: string | null;
+  /** The file's own macrocycle number, when it has them. */
+  fileMacrocycleNum: number | null;
+  startDate: string;
+  endDate: string;
+  sessions: AssignSession[];
+  completedWorkouts: number;
+  /** Null for a custom program, which is open-ended, or an unmatched stretch. */
+  expectedWorkouts: number | null;
+  /** Null when the rules can't suggest one, so the lifter must choose. */
+  status: AssignStretchStatus | null;
+  reasons: { start: AssignStartReason; program: AssignProgramReason; status: AssignStatusReason };
+}
+
+/** A single-lift session inside a break, for the lifter to file (proposal decision 5). */
+export interface AssignLoneSession {
+  session: AssignSession;
+  daysAfterPrevious: number | null;
+  daysBeforeNext: number | null;
+}
+
+/** A conflict between a file's macrocycle numbers and its dates (proposal decision 8). Indexes are into `stretches`. */
+export type AssignConflict =
+  | { kind: 'gap-inside-number'; stretch: number; from: string; to: string; days: number }
+  | { kind: 'numbers-overlap'; stretches: [number, number] };
+
+/** A program a stretch can be assigned to. */
+export interface AssignProgramOption {
+  id: string;
+  /** A custom program's name. Null for a built-in, which the client names from its own catalog. */
+  name: string | null;
+  /** Workouts in one run; null for a custom program, which is open-ended. */
+  workouts: number | null;
+  weeks: number;
+}
+
+/**
+ * Response for `POST /programs/:program/import?mode=assign` (#1253): the rules' grouping of a
+ * lift-records file into suggested macrocycles, from its dates, after Review's exclusions and
+ * lift overrides (proposal decision 16). Nothing is written.
+ */
+export interface ImportAssignResponse {
+  /** The import date the statuses were judged against, `YYYY-MM-DD`. */
+  importDate: string;
+  /** Dated sessions, counting lone, non-cycle and unnumbered ones. */
+  sessions: number;
+  stretches: AssignStretch[];
+  lone: AssignLoneSession[];
+  /** Sessions whose `Program` is `non-cycle`, stored as non-cycle workouts. */
+  nonCycle: AssignSession[];
+  /** In a file with macrocycle numbers, sessions with no number to take, for the lifter to file. */
+  unnumbered: AssignSession[];
+  conflicts: AssignConflict[];
+  /** Rows with no date: left out of the import and counted. */
+  undatedRows: number;
+  /** The file is this app's own export, so overlapping numbers don't block (decision 8). */
+  exported: boolean;
+  programs: AssignProgramOption[];
+  /**
+   * One-rep-max rows split to training maxes (decision 10), judged against the max of the
+   * program covering each row's date. Present only when the request asks for the split.
+   */
+  split?: { changes: number; olderThanCurrent: number };
 }
 
 /** Phase 3: Response for `POST /programs/:program/import/:batchId/undo`. */

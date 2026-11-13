@@ -1,6 +1,6 @@
 import { ImportError } from '@lifting-logbook/types';
 import { LiftRecord } from '../../models';
-import { fileMacrocycleNumError } from './validateLiftImport';
+import { fileMacrocycleNumError, hasNoDate, LiftImportOptions } from './validateLiftImport';
 
 /**
  * Soft variant of the lift-records validator (Phase 3 — interactive REVIEW step).
@@ -25,26 +25,38 @@ export interface LiftImportSoftResult {
   incomplete: Array<{ record: LiftRecord; rowIndex: number; errors: ImportError[] }>;
   ambiguous: Array<{ record: LiftRecord; rowIndex: number; originalLift: string }>;
   hardErrors: ImportError[];
+  /**
+   * With {@link LiftImportOptions.assign}, rows with no date (#1253). They can't be placed in a
+   * macrocycle, so the Assign step leaves them out and counts them instead of holding the wizard
+   * at the incomplete-row gate (proposal decision 16).
+   */
+  undated?: Array<{ record: LiftRecord; rowIndex: number }>;
 }
 
 export function validateLiftImportSoft(
   records: LiftRecord[],
   slotMap: Readonly<Record<string, string>>,
+  options: LiftImportOptions = {},
 ): LiftImportSoftResult {
   const validRows: LiftImportSoftResult['validRows'] = [];
   const incomplete: LiftImportSoftResult['incomplete'] = [];
   const ambiguous: LiftImportSoftResult['ambiguous'] = [];
   const hardErrors: ImportError[] = [];
+  const undated: NonNullable<LiftImportSoftResult['undated']> = [];
 
   records.forEach((r, i) => {
     const rowIndex = i + 1;
     const numericErrors: ImportError[] = [];
 
-    if (isNaN(r.macrocycleNum))
+    if (options.assign && hasNoDate(r)) {
+      undated.push({ record: r, rowIndex });
+      return;
+    }
+    if (isNaN(r.macrocycleNum) && !options.assign)
       numericErrors.push({ row: rowIndex, field: 'macrocycleNum', code: 'MACROCYCLE_NUM_INVALID', message: 'Macrocycle # is not a number' });
     const outOfRange = fileMacrocycleNumError(rowIndex, r.macrocycleNum);
     if (outOfRange) numericErrors.push(outOfRange);
-    if (isNaN(r.workoutNum))
+    if (isNaN(r.workoutNum) && !options.assign)
       numericErrors.push({ row: rowIndex, field: 'workoutNum', code: 'WORKOUT_NUM_INVALID', message: 'Workout # is not a number' });
     if (isNaN(r.setNum))
       numericErrors.push({ row: rowIndex, field: 'setNum', code: 'SET_NUM_INVALID', message: 'Set # is not a number' });
@@ -52,7 +64,7 @@ export function validateLiftImportSoft(
       numericErrors.push({ row: rowIndex, field: 'weight', code: 'WEIGHT_INVALID', message: 'Weight is not a number' });
     if (isNaN(r.reps))
       numericErrors.push({ row: rowIndex, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
-    if (!r.date || isNaN(r.date.getTime()))
+    if (hasNoDate(r))
       numericErrors.push({ row: rowIndex, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
 
     if (numericErrors.length > 0) {
@@ -77,5 +89,5 @@ export function validateLiftImportSoft(
     validRows.push({ record: { ...r, lift: slotMap[liftStr]! as LiftRecord['lift'] }, rowIndex });
   });
 
-  return { validRows, incomplete, ambiguous, hardErrors };
+  return { validRows, incomplete, ambiguous, hardErrors, ...(options.assign ? { undated } : {}) };
 }
