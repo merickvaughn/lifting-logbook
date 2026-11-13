@@ -1,4 +1,4 @@
-import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
+import { ImportError, IMPORT_ERROR_FIELD_LIFT, MACROCYCLE_STATUSES } from '@lifting-logbook/types';
 import { LiftRecord } from '../../models';
 import type { AssignBlankField, ParsedLiftRecord } from '../parser/parseLiftRecords';
 
@@ -53,6 +53,25 @@ export function assignBlank(r: ParsedLiftRecord, field: AssignBlankField, option
 }
 
 /**
+ * Row errors for an exported file's `Occurrence` and `Status` cells (#1254, decision 22), as the
+ * assign parse reads them: an occurrence must be a whole number from 0, and a status one of the
+ * macrocycle statuses. Absent cells are fine.
+ */
+export function exportColumnErrors(r: ParsedLiftRecord, row: number): ImportError[] {
+  const errors: ImportError[] = [];
+  if (r.occurrence !== undefined && !(Number.isInteger(r.occurrence) && r.occurrence >= 0))
+    errors.push({ row, field: 'occurrence', code: 'OCCURRENCE_INVALID', message: 'Occurrence must be a whole number from 0' });
+  if (r.status !== undefined && !(MACROCYCLE_STATUSES as readonly string[]).includes(r.status))
+    errors.push({
+      row,
+      field: 'status',
+      code: 'STATUS_INVALID',
+      message: `Status must be one of ${MACROCYCLE_STATUSES.join(', ')}`,
+    });
+  return errors;
+}
+
+/**
  * Validates an array of parsed LiftRecord rows against the provided slot map and
  * collects all errors before returning (all-or-nothing semantics).
  *
@@ -94,6 +113,7 @@ export function validateLiftImport(
       rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
     if (!r.date || isNaN(r.date.getTime()))
       rowErrors.push({ row, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
+    rowErrors.push(...exportColumnErrors(r, row));
 
     // String(r.lift ?? ''), not a bare `as unknown as string` cast: r.lift is
     // genuinely `undefined` whenever the uploaded table has no column mapped

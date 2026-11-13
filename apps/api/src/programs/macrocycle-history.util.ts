@@ -245,6 +245,16 @@ export async function lockForImport(
 }
 
 /**
+ * Starts an import through the Assign step (#1254): takes the user's import lock without waiting,
+ * so a second commit gets a 409 `import-in-progress` at once rather than writing the same rows
+ * once the first finishes (decision 13), then the macrocycle lock as {@link lockForImport} does.
+ */
+export async function lockForAssignedImport(repos: Pick<RepositoryBundle, 'macrocycle'>): Promise<void> {
+  if (!(await repos.macrocycle.tryLockImport())) throw importInProgress();
+  await lockForImport(repos);
+}
+
+/**
  * Takes the macrocycle lock exclusively for a renumbering that would move a number (#1199), or
  * for starting a non-cycle workout, which takes the next workout number (#1184), waiting as an
  * import does, then a 409 `macrocycle-busy`. The lock is re-entrant, so an import
@@ -488,11 +498,13 @@ export function splitLegacyRowKeys(keys: readonly string[]): { setKeys: string[]
 }
 
 /**
- * Undoes {@link placeFileRows} for an undone import: removes each of `macrocycleNums` that is
- * `legacy` and has no sets left, from every table that holds a number, and drops other batches'
- * keys on it. The caller passes the `legacy` macrocycles the import created and the numbers its
- * sets were on, so a `legacy` macrocycle another import created, which this one's sets joined,
- * goes once both imports are undone. A number the lifter logged sets into since keeps its row.
+ * Undoes {@link placeFileRows}, or an import through the Assign step (#1254), for an undone
+ * import: removes each of `macrocycleNums` that is `legacy` or `imported` and has no sets left,
+ * from every table that holds a number, and drops other batches' keys on it. The caller passes
+ * the macrocycles the import created and the numbers its sets were on, so a `legacy` macrocycle
+ * another import created, which this one's sets joined, goes once both imports are undone. A
+ * number the lifter logged sets into since keeps its row, and `live` and `non-cycle` rows always
+ * stay.
  */
 export async function removeEmptyLegacyRows(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord' | 'importBatch'>,
@@ -505,7 +517,9 @@ export async function removeEmptyLegacyRows(
     repos.liftRecord.getMacrocycleDateRanges(program),
   ]);
   const isEmpty = (r: MacrocycleRow) =>
-    r.origin === 'legacy' && macrocycleNums.includes(r.macrocycleNum) && !ranges.has(r.macrocycleNum);
+    (r.origin === 'legacy' || r.origin === 'imported') &&
+    macrocycleNums.includes(r.macrocycleNum) &&
+    !ranges.has(r.macrocycleNum);
   const empty = rows.filter(isEmpty).map((r) => r.macrocycleNum);
   if (empty.length === 0) return;
   await repos.macrocycle.delete(program, empty);
@@ -525,7 +539,7 @@ export async function removeEmptyLegacyRows(
  * undoing its import would delete them. With renumbering on, the renumbering moves them again
  * once the numbers close up.
  */
-async function moveUnstartedRows(
+export async function moveUnstartedRows(
   repos: Pick<RepositoryBundle, 'macrocycle'>,
   program: string,
   stored: ReadonlySet<number>,

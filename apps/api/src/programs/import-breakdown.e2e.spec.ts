@@ -1,0 +1,571 @@
+import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import multipart from '@fastify/multipart';
+import type { LiftRecord } from '@lifting-logbook/core';
+import type {
+  ImportBreakdown,
+  ImportBreakdownStretch,
+  ImportCommitResponse,
+  ImportDryRunResponse,
+  ImportPreviewResponse,
+} from '@lifting-logbook/types';
+import { AppModule } from '../app.module';
+import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
+import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { injectPage } from '../testing/macrocycle-id';
+import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
+import { DomainConflictFilter } from './conflict.filter';
+import { DomainNotFoundFilter } from './not-found.filter';
+
+/**
+ * In-memory E2E for an import through the Assign step (#1254): `mode=dry-run` and commit with the
+ * lifter's confirmed breakdown, and its undo. The concurrency, failure and row-limit criteria
+ * need Postgres, so they're in `import-breakdown.db.e2e.spec.ts`.
+ */
+describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
+  let app: NestFastifyApplication;
+  const FLAG = 'IMPORT_ASSIGN_ENABLED';
+  const savedFlag = process.env[FLAG];
+
+  beforeAll(async () => {
+    app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), { logger: false });
+    await app.register(multipart as never, { limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
+    app.useGlobalFilters(new DomainNotFoundFilter(), new DomainConflictFilter());
+    app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
+    await app.init();
+    await app.getHttpAdapter().getInstance().ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    if (savedFlag === undefined) delete process.env[FLAG];
+    else process.env[FLAG] = savedFlag;
+  });
+
+  // Each test is its own user, so the in-memory store starts empty.
+  let user = 'import-breakdown-e2e-0';
+  let nextUser = 0;
+  beforeEach(() => {
+    user = `import-breakdown-e2e-${++nextUser}`;
+    process.env[FLAG] = 'true';
+  });
+  const auth = () => ({ authorization: `Bearer ${user}` });
+  const repos = (): Promise<RepositoryBundle> =>
+    app.get<IRepositoryFactory>(REPOSITORY_FACTORY).forUser({ id: user, email: `${user}@example.com`, provider: 'dev' });
+
+  const importCsv = (program: string, csv: string, query: string, fields: Record<string, string> = {}) => {
+    const boundary = '----BreakdownBoundary';
+    const parts = [
+      ...Object.entries(fields).flatMap(([name, value]) => [
+        `--${boundary}`,
+        `Content-Disposition: form-data; name="${name}"`,
+        '',
+        value,
+      ]),
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+      'Content-Type: text/csv',
+      '',
+      csv,
+      `--${boundary}--`,
+    ];
+    return app.getHttpAdapter().getInstance().inject({
+      method: 'POST',
+      url: `/programs/${encodeURIComponent(program)}/import${query}`,
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, ...auth() },
+      payload: parts.join('\r\n'),
+    });
+  };
+
+  const DAY_MS = 86_400_000;
+  const START = Math.floor(Date.now() / DAY_MS) * DAY_MS - 200 * DAY_MS;
+  const ymd = (date: Date) => date.toISOString().slice(0, 10);
+  const day = (n: number) => ymd(new Date(START + n * DAY_MS));
+
+  const RPT_DAYS = [
+    ['Bench Press', 'Barbell Row', 'Overhead Press'],
+    ['Squat', 'Romanian Deadlift', 'Calf Raises'],
+    ['Deadlift', 'Weighted Pull-ups', 'Dips'],
+  ];
+  const FIVE_THREE_ONE_DAYS = [
+    ['Squat', 'Bench Press'],
+    ['Deadlift', 'Overhead Press'],
+  ];
+
+  interface Row {
+    day: number | null;
+    lift: string;
+    program?: string;
+    macrocycle?: number;
+    workout?: number;
+    notes?: string;
+    weight?: number;
+  }
+
+  /** `count` sessions cycling through `days`, every other day from `start`. */
+  const run = (days: string[][], start: number, count: number, extra: Partial<Row> = {}): Row[] =>
+    Array.from({ length: count }, (_, i) =>
+      (days[i % days.length] ?? []).map((lift) => ({ day: start + i * 2, lift, ...extra })),
+    ).flat();
+
+  /** A CSV with only the columns the rows use beyond date, lift, set, weight and reps. */
+  const csvOf = (rows: Row[], extraHeaders: string[] = []) => {
+    const withProgram = rows.some((r) => r.program !== undefined);
+    const withNumbers = rows.some((r) => r.macrocycle !== undefined || r.workout !== undefined);
+    const header = [
+      ...(withProgram ? ['Program'] : []),
+      ...(withNumbers ? ['Cycle #', 'Workout #'] : []),
+      'Date',
+      'Lift',
+      'Set #',
+      'Weight',
+      'Reps',
+      'Notes',
+      ...extraHeaders,
+    ];
+    const lines = rows.map((r) =>
+      [
+        ...(withProgram ? [r.program ?? ''] : []),
+        ...(withNumbers ? [r.macrocycle ?? '', r.workout ?? ''] : []),
+        r.day === null ? '' : day(r.day),
+        r.lift,
+        1,
+        r.weight ?? 100,
+        5,
+        r.notes ?? '',
+        ...extraHeaders.map(() => 0),
+      ].join(','),
+    );
+    return [header.join(','), ...lines].join('\n');
+  };
+
+  /** The distinct dates of `rows`, oldest first. */
+  const datesOf = (rows: Row[]) =>
+    [...new Set(rows.filter((r) => r.day !== null).map((r) => r.day as number))].sort((a, b) => a - b).map(day);
+
+  const stretch = (rows: Row[], program = 'rpt', extra: Partial<ImportBreakdownStretch> = {}): ImportBreakdownStretch => ({
+    program,
+    dates: datesOf(rows),
+    status: 'completed',
+    statusChosen: false,
+    ...extra,
+  });
+
+  const breakdownOf = (stretches: ImportBreakdownStretch[], extra: Partial<ImportBreakdown> = {}): ImportBreakdown => ({
+    stretches,
+    excludedDates: [],
+    nonCycleDates: [],
+    ...extra,
+  });
+
+  const send = (mode: 'commit' | 'dry-run', csv: string, breakdown: ImportBreakdown, query = '', program = 'rpt') =>
+    importCsv(program, csv, `?mode=${mode}&destination=lift-records${query}`, { breakdown: JSON.stringify(breakdown) });
+
+  const commit = async (csv: string, breakdown: ImportBreakdown, query = '') => {
+    const res = await send('commit', csv, breakdown, query);
+    expect(res.statusCode).toBe(200);
+    return res.json<ImportCommitResponse>();
+  };
+
+  const dryRun = async (csv: string, breakdown: ImportBreakdown, query = '') => {
+    const res = await send('dry-run', csv, breakdown, query);
+    expect(res.statusCode).toBe(200);
+    return res.json<ImportDryRunResponse>();
+  };
+
+  const undo = async (batchId: string | null, program = 'rpt') => {
+    const res = await app.getHttpAdapter().getInstance().inject({
+      method: 'POST',
+      url: `/programs/${program}/import/${batchId}/undo`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(200);
+    return res.json<{ restored: number; skipped: number; flagged: unknown[] }>();
+  };
+
+  const macrocycles = async (program = 'rpt') => (await repos()).macrocycle.list(program);
+
+  /** Every set stored under `program`, read through its macrocycle rows. */
+  const stored = async (program = 'rpt'): Promise<LiftRecord[]> => {
+    const bundle = await repos();
+    const sets: LiftRecord[] = [];
+    for (const m of await bundle.macrocycle.list(program)) {
+      sets.push(...(await bundle.liftRecord.getLiftRecords(program, m.macrocycleNum)));
+    }
+    return sets;
+  };
+
+  const counts = async () => ({
+    sets: (await stored('rpt')).length + (await stored('5-3-1')).length + (await stored('non-cycle')).length,
+    macrocycles: (await macrocycles('rpt')).length + (await macrocycles('5-3-1')).length,
+  });
+
+  it('commits a file with no program, macrocycle or workout columns', async () => {
+    const rows = run(RPT_DAYS, 0, 3);
+    const body = await commit(csvOf(rows), breakdownOf([stretch(rows, 'rpt', { statusChosen: true })]));
+
+    expect(body).toMatchObject({ created: 9, skipped: 0 });
+    expect(body.assigned).toMatchObject({ macrocycles: 1, nonCycleSessions: 0, excludedSessions: 0, undatedRows: 0 });
+    const [row, ...others] = await macrocycles();
+    expect(others).toEqual([]);
+    expect(row).toMatchObject({
+      origin: 'imported',
+      status: 'completed',
+      statusChosen: true,
+      unmatched: false,
+      startDate: new Date(`${day(0)}T00:00:00Z`),
+      endDate: new Date(`${day(4)}T00:00:00Z`),
+    });
+    const sets = await stored();
+    expect(sets).toHaveLength(9);
+    expect(new Set(sets.map((s) => s.macrocycleNum))).toEqual(new Set([row?.macrocycleNum]));
+    // No file numbers: each session's workout number is its place in the stretch.
+    expect(sets.filter((s) => s.date.getTime() === new Date(`${day(4)}T00:00:00Z`).getTime()).map((s) => s.workoutNum)).toEqual([3, 3, 3]);
+  });
+
+  it('marks a stretch unmatched when it holds lifts outside its program', async () => {
+    // Barbell Row and the rest of the RPT day aren't 5/3/1 lifts.
+    const rows = run(RPT_DAYS, 0, 2);
+    await commit(csvOf(rows), breakdownOf([stretch(rows, '5-3-1', { status: 'abandoned' })]));
+    expect(await macrocycles('5-3-1')).toEqual([
+      expect.objectContaining({ origin: 'imported', status: 'abandoned', statusChosen: false, unmatched: true }),
+    ]);
+  });
+
+  it('stores rows with blank number cells in their stretch, not under number 0', async () => {
+    // Row 1 is numbered; day 2's rows leave Cycle # and Workout # blank.
+    const rows = [{ day: 0, lift: 'Bench Press', macrocycle: 1, workout: 1 }, ...run(RPT_DAYS, 2, 1)];
+    const body = await commit(csvOf(rows), breakdownOf([stretch(rows)]));
+
+    expect(body.created).toBe(4);
+    const [row] = await macrocycles();
+    const sets = await stored();
+    expect(sets).toHaveLength(4);
+    expect(sets.every((s) => s.macrocycleNum === row?.macrocycleNum && s.macrocycleNum !== 0)).toBe(true);
+    expect(sets.map((s) => s.workoutNum).sort()).toEqual([1, 2, 2, 2]);
+  });
+
+  it("doesn't split an exported file's one-rep-max rows, through preview, dry run and commit", async () => {
+    const rows = [
+      ...run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 }),
+      { day: 5, lift: 'Squat', program: 'rpt', macrocycle: 1, notes: '1RM test', weight: 315 },
+    ];
+    const csv = csvOf(rows, ['Occurrence']);
+    const breakdown = breakdownOf([
+      { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false },
+    ]);
+
+    const previewed = await importCsv('rpt', csv, '?destination=lift-records&splitDest=1');
+    expect(previewed.statusCode).toBe(200);
+    expect(previewed.json<ImportPreviewResponse>().split).toBeUndefined();
+
+    const dry = await dryRun(csv, breakdown, '&splitDest=1');
+    expect(dry.split).toBeUndefined();
+    expect(dry.created).toBe(10);
+    expect(dry.assigned?.splitOlderThanCurrent).toBe(0);
+
+    const body = await commit(csv, breakdown, '&splitDest=1');
+    expect(body.split).toBeUndefined();
+    expect(body.created).toBe(10);
+    expect(await (await repos()).trainingMax.getTrainingMaxes('rpt')).toEqual([]);
+    expect((await stored()).filter((s) => s.notes === '1RM test')).toEqual([expect.objectContaining({ weight: 315 })]);
+  });
+
+  it("keeps a flag-off commit's rows out of an imported macrocycle with their number", async () => {
+    const rows = run(RPT_DAYS, 0, 3);
+    await commit(csvOf(rows), breakdownOf([stretch(rows)]));
+    const [imported] = await macrocycles();
+    expect(imported?.origin).toBe('imported');
+
+    delete process.env[FLAG];
+    const num = imported?.macrocycleNum ?? 0;
+    const later = [{ day: 40, lift: 'Squat', program: 'rpt', macrocycle: num, workout: 1 }];
+    const res = await importCsv('rpt', csvOf(later), '?mode=commit&destination=lift-records');
+    expect(res.statusCode).toBe(200);
+    expect(res.json<ImportCommitResponse>().created).toBe(1);
+
+    const after = await macrocycles();
+    const importedNow = after.find((m) => m.id === imported?.id);
+    const bundle = await repos();
+    const inImported = await bundle.liftRecord.getLiftRecords('rpt', importedNow?.macrocycleNum ?? -1);
+    expect(inImported).toHaveLength(9);
+    expect(inImported.some((s) => ymd(s.date) === day(40))).toBe(false);
+    expect((await stored()).filter((s) => ymd(s.date) === day(40))).toHaveLength(1);
+  });
+
+  describe('a breakdown that does not match the file', () => {
+    const rows = [...run(RPT_DAYS, 0, 3), ...run(RPT_DAYS, 30, 3)];
+    const first = rows.filter((r) => (r.day ?? 0) < 30);
+    const second = rows.filter((r) => (r.day ?? 0) >= 30);
+    const cases: Array<[string, ImportBreakdown]> = [
+      ['leaves a session out', breakdownOf([stretch(first)])],
+      ['names a date with no session', breakdownOf([stretch(first), { ...stretch(second), dates: [...datesOf(second), day(99)] }])],
+      ['puts a date in two places', breakdownOf([stretch(first), stretch(second)], { excludedDates: [day(0)] })],
+      // Days 0 and 4 in one stretch, day 2 with the later sessions.
+      ['has stretches that overlap', breakdownOf([{ ...stretch(first), dates: [day(0), day(4)] }, { ...stretch(second), dates: [day(2), ...datesOf(second)] }])],
+      ['names a program the lifter lacks', breakdownOf([stretch(first), stretch(second, 'no-such-program')])],
+      ['names a file macrocycle in a file that is not an export', breakdownOf([stretch(first), { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false }])],
+    ];
+
+    it.each(cases)('is rejected with nothing written when it %s', async (_name, breakdown) => {
+      for (const mode of ['dry-run', 'commit'] as const) {
+        const res = await send(mode, csvOf(rows), breakdown);
+        expect(res.statusCode).toBe(400);
+        expect(res.json<{ code: string }>().code).toBe('breakdown-mismatch');
+      }
+      expect(await counts()).toEqual({ sets: 0, macrocycles: 0 });
+    });
+  });
+
+  it('adds zero rows on a re-import, after a changed breakdown or a changed program', async () => {
+    const rows = [...run(RPT_DAYS, 0, 6), ...run(RPT_DAYS, 40, 3)];
+    const csv = csvOf(rows);
+    const first = rows.filter((r) => (r.day ?? 0) < 40);
+    const second = rows.filter((r) => (r.day ?? 0) >= 40);
+    await commit(csv, breakdownOf([stretch(first), stretch(second)]));
+    const before = await counts();
+    expect(before).toEqual({ sets: 27, macrocycles: 2 });
+
+    const again = await commit(csv, breakdownOf([stretch(first), stretch(second)]));
+    expect(again).toMatchObject({ created: 0, skipped: 27 });
+    expect(again.assigned?.macrocycles).toBe(0);
+
+    // The first stretch split in two, then everything under 5/3/1.
+    const early = first.filter((r) => (r.day ?? 0) < 6);
+    const late = first.filter((r) => (r.day ?? 0) >= 6);
+    expect((await commit(csv, breakdownOf([stretch(early), stretch(late), stretch(second)]))).created).toBe(0);
+    expect((await commit(csv, breakdownOf([stretch(first, '5-3-1'), stretch(second, '5-3-1')]))).created).toBe(0);
+    expect(await counts()).toEqual(before);
+  });
+
+  it('keeps two workouts on one date, re-imports nothing, and survives undoing an earlier batch', async () => {
+    // Two workouts on day 0 that repeat a set: the file's workout numbers keep them apart.
+    const sameDay: Row[] = [
+      { day: 0, lift: 'Squat', workout: 1, weight: 200 },
+      { day: 0, lift: 'Squat', workout: 2, weight: 200 },
+      { day: 0, lift: 'Bench Press', workout: 2, weight: 150 },
+    ];
+    const firstBatch = await commit(csvOf(sameDay), breakdownOf([stretch(sameDay)]));
+    expect(firstBatch.created).toBe(3);
+    expect(await stored()).toHaveLength(3);
+    expect((await commit(csvOf(sameDay), breakdownOf([stretch(sameDay)]))).created).toBe(0);
+
+    // A later file holds the same day and the next session.
+    const grown: Row[] = [...sameDay, { day: 2, lift: 'Deadlift', workout: 3, weight: 300 }];
+    expect((await commit(csvOf(grown), breakdownOf([stretch(grown)]))).created).toBe(1);
+    expect(await stored()).toHaveLength(4);
+
+    await undo(firstBatch.batchId);
+    expect((await stored()).map((s) => s.lift)).toEqual(['deadlift']);
+
+    expect((await commit(csvOf(grown), breakdownOf([stretch(grown)]))).created).toBe(3);
+    const sets = await stored();
+    expect(sets).toHaveLength(4);
+    expect(sets.filter((s) => s.lift === 'back-squat').map((s) => s.workoutNum).sort()).toEqual([1, 2]);
+  });
+
+  it('matches a lift id with its name, skips an exact repeat, and counts a changed row in the dry run', async () => {
+    const rows: Row[] = [
+      { day: 0, lift: 'Bench Press', weight: 100 },
+      { day: 2, lift: 'Squat', weight: 200 },
+    ];
+    await commit(csvOf(rows), breakdownOf([stretch(rows)]));
+
+    const respelled: Row[] = [{ day: 0, lift: 'bench-press', weight: 100 }];
+    expect((await dryRun(csvOf(respelled), breakdownOf([stretch(respelled)]))).created).toBe(0);
+
+    // Day 4's set appears twice; day 2's Squat is now 205.
+    const repeat: Row[] = [
+      { day: 4, lift: 'Deadlift', weight: 300 },
+      { day: 4, lift: 'Deadlift', weight: 300 },
+      { day: 2, lift: 'Squat', weight: 205 },
+    ];
+    const breakdown = breakdownOf([stretch(repeat)]);
+    const dry = await dryRun(csvOf(repeat), breakdown);
+    expect(dry).toMatchObject({ created: 1, skipped: 2 });
+    expect(dry.assigned?.changed).toBe(1);
+
+    const body = await commit(csvOf(repeat), breakdown);
+    expect(body).toMatchObject({ created: 1, skipped: 2 });
+    expect(body.skippedDetail).toHaveLength(2);
+    const sets = await stored();
+    expect(sets.filter((s) => s.lift === 'deadlift')).toHaveLength(1);
+    expect(sets.find((s) => s.lift === 'back-squat')?.weight).toBe(200);
+  });
+
+  it('stores a stretch whose file number is in use under the number its date gives it', async () => {
+    const older = run(RPT_DAYS, 0, 3);
+    await commit(csvOf(older), breakdownOf([stretch(older)]));
+    const [first] = await macrocycles();
+    expect(first?.macrocycleNum).toBe(1);
+
+    // The newer stretch's file says macrocycle 1 too.
+    const newer = run(RPT_DAYS, 30, 3, { program: 'rpt', macrocycle: 1 });
+    await commit(csvOf(newer), breakdownOf([stretch(newer)]));
+    const rows = await macrocycles();
+    expect(rows.map((m) => [m.macrocycleNum, ymd(m.startDate)])).toEqual([
+      [1, day(0)],
+      [2, day(30)],
+    ]);
+    const bundle = await repos();
+    expect((await bundle.liftRecord.getLiftRecords('rpt', 1)).map((s) => ymd(s.date))).not.toContain(day(30));
+    expect(await bundle.liftRecord.getLiftRecords('rpt', 2)).toHaveLength(9);
+  });
+
+  it('keeps numbers in date order around a live macrocycle, and undo puts them back', async () => {
+    const page = (method: string, url: string, body: unknown) =>
+      injectPage(app, {
+        method: method as 'POST',
+        url,
+        headers: { 'content-type': 'application/json', ...auth() },
+        payload: JSON.stringify(body),
+      });
+    const init = await page('POST', '/programs/rpt/macrocycles/initialize', { macrocycleDate: day(100) });
+    expect(init.statusCode).toBe(201);
+    const live = (await macrocycles())[0];
+    expect(live).toMatchObject({ macrocycleNum: 1, origin: 'live' });
+
+    const rows = run(RPT_DAYS, 0, 3);
+    const body = await commit(csvOf(rows), breakdownOf([stretch(rows)]));
+    expect((await macrocycles()).map((m) => [m.macrocycleNum, m.origin])).toEqual([
+      [1, 'imported'],
+      [2, 'live'],
+    ]);
+
+    const next = await page('POST', '/programs/rpt/macrocycles', { macrocycleDate: day(150) });
+    expect(next.statusCode).toBe(201);
+    expect(next.json<{ macrocycleNum: number }>().macrocycleNum).toBe(3);
+
+    await undo(body.batchId);
+    const after = await macrocycles();
+    expect(after.map((m) => m.macrocycleNum)).toEqual([1, 2]);
+    expect(after[0]?.id).toBe(live?.id);
+  });
+
+  it('leaves rows with no date out, counts them, and commits the rest', async () => {
+    const rows = [...run(RPT_DAYS, 0, 3), { day: null, lift: 'Squat' }, { day: null, lift: 'Dips' }];
+    const body = await commit(csvOf(rows), breakdownOf([stretch(rows)]));
+    expect(body.created).toBe(9);
+    expect(body.assigned?.undatedRows).toBe(2);
+    expect(await stored()).toHaveLength(9);
+  });
+
+  it('leaves training maxes alone apart from split rows, which go to the program covering their date', async () => {
+    const bundle = await repos();
+    const maxDate = new Date(`${day(100)}T00:00:00Z`);
+    await bundle.trainingMax.saveTrainingMaxes('rpt', [{ lift: 'back-squat', weight: 300, dateUpdated: maxDate }]);
+
+    // Two stretches with a 26-day break and no one-rep-max rows: no max changes.
+    const plain = [...run(RPT_DAYS, 0, 3), ...run(RPT_DAYS, 30, 3)];
+    await commit(
+      csvOf(plain),
+      breakdownOf([stretch(plain.filter((r) => (r.day ?? 0) < 30)), stretch(plain.filter((r) => (r.day ?? 0) >= 30))]),
+    );
+    expect(await bundle.trainingMax.getTrainingMaxes('rpt')).toEqual([expect.objectContaining({ lift: 'back-squat', weight: 300 })]);
+    expect(await bundle.trainingMax.getTrainingMaxes('5-3-1')).toEqual([]);
+
+    // 5/3/1 then RPT, each with a one-rep-max row inside its stretch. RPT's max is newer than its row.
+    const fiveThreeOne = run(FIVE_THREE_ONE_DAYS, 60, 6);
+    const rpt = run(RPT_DAYS, 74, 6);
+    const rows = [
+      ...fiveThreeOne,
+      { day: 65, lift: 'Squat', notes: '1RM test', weight: 315 },
+      ...rpt,
+      { day: 79, lift: 'Squat', notes: '1RM test', weight: 320 },
+    ];
+    const body = await commit(csvOf(rows), breakdownOf([stretch(fiveThreeOne, '5-3-1'), stretch(rpt)]), '&splitDest=1');
+    expect(body.assigned?.splitOlderThanCurrent).toBe(1);
+    expect(body.split).toMatchObject({ created: 1, skipped: 1 });
+    expect(await bundle.trainingMax.getTrainingMaxes('5-3-1')).toEqual([
+      expect.objectContaining({ lift: 'back-squat', weight: 315 }),
+    ]);
+    expect(await bundle.trainingMax.getTrainingMaxes('rpt')).toEqual([expect.objectContaining({ lift: 'back-squat', weight: 300 })]);
+
+    // The 5/3/1 max is undone with the rest of the import.
+    await undo(body.batchId);
+    expect(await bundle.trainingMax.getTrainingMaxes('5-3-1')).toEqual([]);
+    expect(await stored('5-3-1')).toEqual([]);
+  });
+
+  it('stores a lone session as a non-cycle workout, and undoes it', async () => {
+    const first = run(RPT_DAYS, 0, 3);
+    const lone: Row[] = [{ day: 19, lift: 'Bench Press' }];
+    const second = run(RPT_DAYS, 34, 3);
+    const rows = [...first, ...lone, ...second];
+    const breakdown = breakdownOf([stretch(first), stretch(second)], { nonCycleDates: [day(19)] });
+
+    const body = await commit(csvOf(rows), breakdown);
+    expect(body.created).toBe(19);
+    expect(body.assigned).toMatchObject({ macrocycles: 2, nonCycleSessions: 1 });
+    const nonCycle = await stored('non-cycle');
+    expect(nonCycle).toEqual([expect.objectContaining({ program: 'non-cycle', lift: 'bench-press' })]);
+    expect((await stored()).some((s) => ymd(s.date) === day(19))).toBe(false);
+    expect((await macrocycles()).map((m) => [ymd(m.startDate), m.endDate && ymd(m.endDate)])).toEqual([
+      [day(0), day(4)],
+      [day(34), day(38)],
+    ]);
+    expect(await (await repos()).trainingMax.getTrainingMaxes('rpt')).toEqual([]);
+
+    expect((await commit(csvOf(rows), breakdown)).created).toBe(0);
+
+    await undo(body.batchId);
+    expect(await stored('non-cycle')).toEqual([]);
+    expect(await counts()).toEqual({ sets: 0, macrocycles: 0 });
+  });
+
+  it('refuses to undo a batch grouped under another one', async () => {
+    const fiveThreeOne = run(FIVE_THREE_ONE_DAYS, 0, 2);
+    const rpt = run(RPT_DAYS, 20, 2);
+    const { batchId } = await commit(csvOf([...fiveThreeOne, ...rpt]), breakdownOf([stretch(fiveThreeOne, '5-3-1'), stretch(rpt)]));
+    const grouped = await (await repos()).importBatch.listGroup(batchId ?? '');
+    expect(grouped.map((b) => b.program)).toEqual(['5-3-1']);
+
+    const res = await app.getHttpAdapter().getInstance().inject({
+      method: 'POST',
+      url: `/programs/5-3-1/import/${grouped[0]?.id}/undo`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(await stored('5-3-1')).toHaveLength(4);
+  });
+
+  it('logs counts only', async () => {
+    const log = jest.spyOn(Logger.prototype, 'log');
+    try {
+      const rows = [...run(RPT_DAYS, 0, 3), { day: 19, lift: 'Bench Press' }, ...run(RPT_DAYS, 34, 3)];
+      const breakdown = breakdownOf(
+        [stretch(rows.filter((r) => (r.day ?? 0) < 19)), stretch(rows.filter((r) => (r.day ?? 0) > 19))],
+        { excludedDates: [day(19)] },
+      );
+      await commit(csvOf(rows), breakdown);
+      const call = log.mock.calls.find(([, message]) => message === 'Import breakdown (#1254)');
+      expect(call?.[0]).toEqual(
+        expect.objectContaining({
+          mode: 'commit',
+          stretches: 2,
+          macrocycles: 2,
+          excludedSessions: 1,
+          created: 18,
+          duplicates: 0,
+          changed: 0,
+        }),
+      );
+      expect(JSON.stringify(call?.[0])).not.toMatch(/Bench|Squat|Press|bench|squat/);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('refuses a breakdown with the flag off, or for another destination', async () => {
+    const rows = run(RPT_DAYS, 0, 1);
+    const breakdown = JSON.stringify(breakdownOf([stretch(rows)]));
+    const other = await importCsv('rpt', 'Date Updated,Lift,Weight\n2026-01-01,Squat,300', '?mode=commit&destination=training-maxes', { breakdown });
+    expect(other.statusCode).toBe(400);
+    delete process.env[FLAG];
+    const off = await importCsv('rpt', csvOf(rows), '?mode=commit&destination=lift-records', { breakdown });
+    expect(off.statusCode).toBe(400);
+    expect(await counts()).toEqual({ sets: 0, macrocycles: 0 });
+  });
+});

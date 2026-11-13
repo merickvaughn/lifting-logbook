@@ -25,6 +25,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
         program: batch.program,
         destination: batch.destination,
         preImage: batch.preImage as object,
+        groupId: batch.groupId ?? null,
       },
     });
   }
@@ -34,6 +35,14 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
       where: { id, userId },
     });
     return row ? toRecord(row) : null;
+  }
+
+  async listGroup(groupId: string): Promise<ImportBatchRecord[]> {
+    const rows = await this.prisma.importBatch.findMany({
+      where: { userId: this.userId, groupId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return rows.map(toRecord);
   }
 
   async deleteById(id: string, userId: string): Promise<void> {
@@ -125,5 +134,7 @@ function toRecord(row: ImportBatch): ImportBatchRecord {
     destination: row.destination as ImportKind,
     preImage: row.preImage as unknown as ImportPreImage,
     createdAt: row.createdAt,
+    // The raw-SQL listings select no `groupId`; none of their callers reads it.
+    groupId: row.groupId ?? null,
   };
 }

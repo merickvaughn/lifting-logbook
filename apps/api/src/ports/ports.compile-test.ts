@@ -274,6 +274,7 @@ const _focusRepo: IFocusRepository = {
 const _macrocycleRepo: IMacrocycleRepository = {
   tryLockShared: () => Promise.resolve(true),
   lockExclusive: () => Promise.resolve(true),
+  tryLockImport: () => Promise.resolve(true),
   list: () => Promise.resolve([]),
   findById: () => Promise.resolve(null),
   findByNumber: () => Promise.resolve(null),
@@ -303,6 +304,7 @@ const _importBatchRepo: IImportBatchRepository = {
   listWithKeysOn: () => Promise.resolve([]),
   listWithKeys: () => Promise.resolve([]),
   updatePreImages: (): Promise<void> => Promise.resolve(),
+  listGroup: () => Promise.resolve([]),
 };
 
 const _repositoryBundle: RepositoryBundle = {

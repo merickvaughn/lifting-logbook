@@ -120,7 +120,7 @@ export async function writeFileNumberRows(
  * stored workout. The non-cycle macrocycle gets its row on first use. The caller holds the lock
  * exclusively, as starting a non-cycle workout does.
  */
-async function placeNonCycleRows(
+export async function placeNonCycleRows(
   repos: Pick<RepositoryBundle, 'liftRecord' | 'macrocycle'>,
   rows: LiftRecord[],
 ): Promise<LiftRecord[]> {

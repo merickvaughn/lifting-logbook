@@ -8,6 +8,11 @@ export interface ImportBatchRecord {
   destination: ImportKind;
   preImage: ImportPreImage;
   createdAt: Date;
+  /**
+   * The id of the Source program's batch of the same import, which undoes this one with it
+   * (#1254). Absent on that batch and on every import that stores under one program.
+   */
+  groupId?: string | null;
 }
 
 /**
@@ -34,6 +39,8 @@ export type KeyNumbers = { on: readonly number[] } | { except: readonly number[]
 export interface IImportBatchRepository {
   save(batch: ImportBatchRecord): Promise<void>;
   findById(id: string, userId: string): Promise<ImportBatchRecord | null>;
+  /** The user's batches whose `groupId` is `groupId`: the other programs' batches of that import. */
+  listGroup(groupId: string): Promise<ImportBatchRecord[]>;
   deleteById(id: string, userId: string): Promise<void>;
   /**
    * The user's batches of one program and destination with a pre-image key whose number

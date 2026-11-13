@@ -3,6 +3,7 @@ import {
   LIFT_RECORD_HEADER_MAP,
 } from "@src/core/constants";
 import { LiftRecord, SpreadsheetCell } from "@src/core/models";
+import { LIFT_RECORD_EXPORT_TOKEN } from "../export/serializeExportCsv";
 import { parseDateStringUTC, toUTCMidnight } from "../jsUtil";
 import { tableToObjects } from "./tableToObjects";
 
@@ -13,8 +14,15 @@ export type AssignBlankField = "macrocycleNum" | "workoutNum" | "date";
  * A parsed lift record. With `assign`, `blankFields` names the fields whose cell was blank or
  * whose column is missing, so a validator can tell them from a cell it couldn't read: both
  * parse to `NaN` or an invalid date, but only a blank one is left to the Assign step.
+ *
+ * With `assign`, an exported file's `Occurrence` cell is read into `occurrence` (`NaN` when it
+ * can't be read), and its `Status` cell into `status`, trimmed and lower-cased (#1254, decision
+ * 22). A blank cell leaves either absent.
  */
-export type ParsedLiftRecord = LiftRecord & { blankFields?: readonly AssignBlankField[] };
+export type ParsedLiftRecord = LiftRecord & { blankFields?: readonly AssignBlankField[]; status?: string };
+
+/** The export's `Status` column (decision 22). */
+const STATUS_HEADER = "Status";
 
 const ASSIGN_BLANK_FIELDS: ReadonlySet<string> = new Set<AssignBlankField>(["macrocycleNum", "workoutNum", "date"]);
 
@@ -71,6 +79,13 @@ export function parseLiftRecords(
       result[key] = value;
     }
     if (blankFields.length > 0) result.blankFields = blankFields;
+    if (options.assign === true) {
+      const cell = (header: string) => String(obj[header] ?? "").trim();
+      const occurrence = cell(LIFT_RECORD_EXPORT_TOKEN);
+      if (occurrence !== "") result.occurrence = Number(occurrence);
+      const status = cell(STATUS_HEADER).toLowerCase();
+      if (status !== "") result.status = status;
+    }
     return result as unknown as ParsedLiftRecord;
   });
 }
