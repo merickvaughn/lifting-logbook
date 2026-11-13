@@ -441,8 +441,52 @@ const BUILT_IN_IDS: ReadonlySet<string> = new Set(BUILT_IN_KNOWN_PROGRAMS.map((p
  * block, so it never finishes by length and is never `completed` or `overran`. Known by id,
  * so a copy of a built-in still has the built-in's length.
  */
-function isOpenEnded(program: KnownProgram): boolean {
+export function isOpenEnded(program: KnownProgram): boolean {
   return !BUILT_IN_IDS.has(program.id);
+}
+
+/**
+ * A run's suggested status (decisions 6 and 7), from its program, the distinct workouts it
+ * completed and its first and last session dates, judged against `importDate`. `next` is the
+ * stretch that follows it, with its program key (its column's, else its matched or candidate
+ * program), or `undefined` when none does. A run with workouts left and one after it is
+ * `abandoned`, which wins over `overran`. A custom program is open-ended: never `completed` or
+ * `overran`. Undo reads a stored macrocycle's status again with it (#1255, decision 14).
+ */
+export function suggestStretchStatus(
+  program: KnownProgram,
+  run: {
+    completed: number;
+    firstDate: Date;
+    lastDate: Date;
+    next: { program: string | undefined } | undefined;
+    importDate: Date;
+  },
+): { status: StretchStatus; statusReason: StretchStatusReason } {
+  const openEnded = isOpenEnded(program);
+  if (!openEnded && run.completed >= program.workoutCount) {
+    return { status: 'completed', statusReason: { kind: 'all-workouts-done' } };
+  }
+  if (run.next) {
+    const kind =
+      run.next.program === undefined
+        ? 'next-is-unmatched'
+        : run.next.program === program.id
+          ? 'next-is-restart'
+          : 'next-is-different-program';
+    return { status: 'abandoned', statusReason: { kind } };
+  }
+  const importDate = toUTCMidnight(run.importDate);
+  const daysBeforeImport = daysBetween(run.lastDate, importDate);
+  if (daysBeforeImport > BREAK_DAYS) {
+    return { status: 'abandoned', statusReason: { kind: 'last-session-stale', daysBeforeImport } };
+  }
+  if (openEnded) return { status: 'in-progress', statusReason: { kind: 'open-ended' } };
+  const daysSinceStart = daysBetween(run.firstDate, importDate);
+  const weeksSinceStart = Math.floor(daysSinceStart / 7);
+  return daysSinceStart >= program.lengthWeeks * 7
+    ? { status: 'overran', statusReason: { kind: 'past-expected-length', weeksSinceStart } }
+    : { status: 'in-progress', statusReason: { kind: 'inside-expected-length', weeksSinceStart } };
 }
 
 /** Ties between custom programs go by name (owner decision 3), in one collation on every host. */
@@ -875,12 +919,6 @@ class Segmenter<T extends LiftHistoryRow> {
     return { stretches, groups };
   }
 
-  /**
-   * Decisions 6 and 7. `next` is the stretch that follows this one, with its program key
-   * (its column's, else its matched or candidate program), or `undefined` when none does. A
-   * stretch with workouts left and one after it is `abandoned`, which wins over `overran`.
-   * A custom program is open-ended: never `completed` or `overran`.
-   */
   private status(
     program: KnownProgram,
     completed: number,
@@ -888,30 +926,7 @@ class Segmenter<T extends LiftHistoryRow> {
     firstDate: Date,
     next: { program: string | undefined } | undefined,
   ): { status: StretchStatus; statusReason: StretchStatusReason } {
-    const openEnded = isOpenEnded(program);
-    if (!openEnded && completed >= program.workoutCount) {
-      return { status: 'completed', statusReason: { kind: 'all-workouts-done' } };
-    }
-    if (next) {
-      const kind =
-        next.program === undefined
-          ? 'next-is-unmatched'
-          : next.program === program.id
-            ? 'next-is-restart'
-            : 'next-is-different-program';
-      return { status: 'abandoned', statusReason: { kind } };
-    }
-    const importDate = toUTCMidnight(this.options.importDate);
-    const daysBeforeImport = daysBetween(lastDate, importDate);
-    if (daysBeforeImport > BREAK_DAYS) {
-      return { status: 'abandoned', statusReason: { kind: 'last-session-stale', daysBeforeImport } };
-    }
-    if (openEnded) return { status: 'in-progress', statusReason: { kind: 'open-ended' } };
-    const daysSinceStart = daysBetween(firstDate, importDate);
-    const weeksSinceStart = Math.floor(daysSinceStart / 7);
-    return daysSinceStart >= program.lengthWeeks * 7
-      ? { status: 'overran', statusReason: { kind: 'past-expected-length', weeksSinceStart } }
-      : { status: 'in-progress', statusReason: { kind: 'inside-expected-length', weeksSinceStart } };
+    return suggestStretchStatus(program, { completed, firstDate, lastDate, next, importDate: this.options.importDate });
   }
 
   /**

@@ -17,6 +17,9 @@ export interface MacrocycleRow {
   importedThrough: Date | null;
 }
 
+/** The fields {@link IMacrocycleRepository.update} can change; those left out stay as they are. */
+export type MacrocycleChanges = Partial<Pick<MacrocycleRow, 'startDate' | 'endDate' | 'status' | 'statusChosen' | 'unmatched'>>;
+
 export interface NewMacrocycle {
   program: string;
   macrocycleNum: number;
@@ -59,6 +62,15 @@ export interface IMacrocycleRepository {
 
   /** Every macrocycle of a program, in start-date order, ties by number. */
   list(program: string): Promise<MacrocycleRow[]>;
+
+  /** Every macrocycle in every program, in start-date order, ties by program then number. */
+  listAll(): Promise<MacrocycleRow[]>;
+
+  /**
+   * Sets a row's dates, status and flags (#1255): what a grown file's rows joining it, or an
+   * undo recomputing it, changes. No-op when the user has no row with that id.
+   */
+  update(id: string, changes: MacrocycleChanges): Promise<void>;
 
   /** The user's row with this stable id, in any program. */
   findById(id: string): Promise<MacrocycleRow | null>;

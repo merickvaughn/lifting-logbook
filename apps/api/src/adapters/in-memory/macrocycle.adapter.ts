@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { MacrocycleStatus } from '@lifting-logbook/types';
 import { MacrocycleNumberConflictError } from '../../ports/errors';
-import { IMacrocycleRepository, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
+import { IMacrocycleRepository, MacrocycleChanges, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
 import { NumberedStore } from './renumber';
 
 /**
@@ -107,6 +107,22 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
       .filter((r) => r.program === program)
       .sort((a, b) => a.startDate.getTime() - b.startDate.getTime() || a.macrocycleNum - b.macrocycleNum)
       .map((r) => ({ ...r }));
+  }
+
+  async listAll(): Promise<MacrocycleRow[]> {
+    return [...this.rows]
+      .sort(
+        (a, b) =>
+          a.startDate.getTime() - b.startDate.getTime() ||
+          a.program.localeCompare(b.program) ||
+          a.macrocycleNum - b.macrocycleNum,
+      )
+      .map((r) => ({ ...r }));
+  }
+
+  async update(id: string, changes: MacrocycleChanges): Promise<void> {
+    const row = this.rows.find((r) => r.id === id);
+    if (row) Object.assign(row, changes);
   }
 
   async findByNumber(program: string, macrocycleNum: number): Promise<MacrocycleRow | null> {

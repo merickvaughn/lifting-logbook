@@ -283,6 +283,8 @@ const _macrocycleRepo: IMacrocycleRepository = {
   lockExclusive: () => Promise.resolve(true),
   tryLockImport: () => Promise.resolve(true),
   list: () => Promise.resolve([]),
+  listAll: () => Promise.resolve([]),
+  update: () => Promise.resolve(),
   findById: () => Promise.resolve(null),
   findByNumber: () => Promise.resolve(null),
   highestNumber: () => Promise.resolve(0),
@@ -312,6 +314,8 @@ const _importBatchRepo: IImportBatchRepository = {
   listWithKeys: () => Promise.resolve([]),
   updatePreImages: (): Promise<void> => Promise.resolve(),
   listGroup: () => Promise.resolve([]),
+  listChoosing: () => Promise.resolve([]),
+  updateMacrocycles: (): Promise<void> => Promise.resolve(),
 };
 
 const _repositoryBundle: RepositoryBundle = {
