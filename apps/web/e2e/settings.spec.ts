@@ -75,8 +75,9 @@ test('training maxes offers setup for a lift with logged sets and no max', async
   await section.getByRole('button', { name: 'Set up' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Training max set up for Romanian Deadlift.' })).toBeFocused();
   await expect(page.getByRole('heading', { name: 'Lifts without a training max' })).toHaveCount(0);
-  // The table below now lists the lift with its new max.
-  await expect(page.getByLabel('Romanian Deadlift training max')).toHaveValue('100');
+  // The table below now lists the lift with its new max, saved under the stored id (#1290). The
+  // table still labels its rows by that id, as it does every max; #1291 tracks naming them.
+  await expect(page.getByLabel('romanian-deadlift training max')).toHaveValue('100');
 });
 
 test('units section saves the selected weight unit', async ({ page }) => {

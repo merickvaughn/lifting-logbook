@@ -38,8 +38,13 @@ export interface SkippedLiftResponse {
  * `GET /programs/:program/training-maxes/missing`. Weights are in pounds, the stored unit.
  */
 export interface MissingTrainingMaxResponse {
-  /** The lift as its latest set names it: the name to save its max under. */
+  /**
+   * The lift as its latest set stores it, often an id (`bench-press`, or a custom lift's UUID): the
+   * value to save its max under, so the max matches its sets. Not for display; see `name`.
+   */
   lift: LiftName;
+  /** The name to show: the catalog's or the custom lift's, else `lift` as stored (#1290). */
+  name: string;
   /** Its stable id (#1139), which a dismissal is keyed by. */
   liftId: string;
   /** ISO 8601 date ("YYYY-MM-DD") of its latest set. */

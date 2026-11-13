@@ -36,7 +36,7 @@ test('asks about the lift without a max, and saves it with Set up all', async ({
   await page.getByRole('button', { name: 'Finish workout' }).first().click();
 
   const dialog = page.getByRole('dialog', { name: 'New lifts need a training max' });
-  const weight = dialog.getByLabel('deadlift training max');
+  const weight = dialog.getByLabel('Deadlift training max');
   await expect(weight).toBeFocused();
   await expect(weight).toHaveValue('250');
   await expect(dialog.getByText('Estimated from 250 lbs × 5 on 6 Jan 2025')).toBeVisible();

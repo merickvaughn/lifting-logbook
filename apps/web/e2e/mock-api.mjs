@@ -665,7 +665,9 @@ const server = createServer(async (req, res) => {
     if (url.searchParams.get('withMissingMax') === 'true') {
       state.missingMaxes = [
         {
-          lift: 'Romanian Deadlift',
+          // `lift` as sets store it, `name` to show (#1290).
+          lift: 'romanian-deadlift',
+          name: 'Romanian Deadlift',
           liftId: 'romanian-deadlift',
           lastLoggedDate: '2025-01-06',
           setCount: 3,
@@ -680,6 +682,7 @@ const server = createServer(async (req, res) => {
       state.missingMaxes = [
         {
           lift: 'deadlift',
+          name: 'Deadlift',
           liftId: 'deadlift',
           lastLoggedDate: '2025-01-06',
           setCount: 3,
@@ -1444,16 +1447,19 @@ const server = createServer(async (req, res) => {
           );
           const created = allResolved ? AMBIGUOUS_LIFT_ROWS.length : 0;
           // The lifts the commit wrote (#1273). A committed one has sets and no max, so the
-          // missing list reports it, as the real one would.
+          // missing list reports it, as the real one would: `lift` as its sets store it (a custom
+          // lift's id) and `name` to show (#1290).
           const lifts = mode === 'commit' && created > 0 ? [...new Set(Object.values(liftOverrides))] : [];
           for (const liftId of lifts) {
             if (state.missingMaxes.some((m) => m.liftId === liftId)) continue;
             state.missingMaxes.push({
-              lift: state.customLifts.find((l) => l.id === liftId)?.name ?? liftId,
+              lift: liftId,
+              name: state.customLifts.find((l) => l.id === liftId)?.name ?? liftId,
               liftId,
               lastLoggedDate: '2026-01-01',
-              setCount: created,
-              estimate: { weight: 75, unit: 'lbs', from: { date: '2026-01-01', weight: 90, reps: 10 } },
+              setCount: AMBIGUOUS_LIFT_ROWS.filter((row) => liftOverrides[String(row.rowIndex)] === liftId).length,
+              // core's estimate from the best set, 90 × 10: Brzycki's 120, then 90% floored to 2.5.
+              estimate: { weight: 107.5, unit: 'lbs', from: { date: '2026-01-01', weight: 90, reps: 10 } },
             });
           }
           json(res, {

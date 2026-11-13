@@ -240,6 +240,16 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     expect(body.lifts).toEqual(['bench-press']);
   });
 
+  it('lists no lift that only a lone non-cycle session holds (#1273)', async () => {
+    const rpt = run([['Bench Press']], 0, 2);
+    const lone: Row[] = [{ day: 19, lift: 'Dips' }];
+    const body = await commit(csvOf([...rpt, ...lone]), breakdownOf([stretch(rpt)], { nonCycleDates: [day(19)] }));
+
+    expect(body.created).toBe(3);
+    expect(body.assigned).toMatchObject({ nonCycleSessions: 1 });
+    expect(body.lifts).toEqual(['bench-press']);
+  });
+
   it('marks a stretch unmatched when it holds lifts outside its program', async () => {
     // Barbell Row and the rest of the RPT day aren't 5/3/1 lifts.
     const rows = run(RPT_DAYS, 0, 2);
@@ -345,6 +355,8 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
 
     const again = await commit(csv, breakdownOf([stretch(first), stretch(second)]));
     expect(again).toMatchObject({ created: 0, skipped: 27 });
+    // Nothing written, so no lift is listed (#1273).
+    expect(again.lifts).toEqual([]);
     expect(again.assigned?.macrocycles).toBe(0);
 
     // The first stretch split in two, then everything under 5/3/1.

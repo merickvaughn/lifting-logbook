@@ -1709,15 +1709,20 @@ describe('ImportWizard', () => {
   // #1273: the import result offers a max for the lifts it brought in that have none.
   describe('lifts without a training max (#1273)', () => {
     const DAY = `${new Date().getFullYear()}-11-03`;
+    // `lift` as sets store it (an id, or a custom lift's UUID); `name` is shown (#1290).
     const RDL = {
-      lift: 'Romanian Deadlift',
+      lift: 'romanian-deadlift',
+      name: 'Romanian Deadlift',
       liftId: 'romanian-deadlift',
       lastLoggedDate: DAY,
       setCount: 3,
       estimate: { weight: 205, unit: 'lbs' as const, from: { date: DAY, weight: 200, reps: 8 } },
       dismissed: false,
     };
-    const CURL = { ...RDL, lift: 'Cable Curl', liftId: 'cable-curl', estimate: null, dismissed: true };
+    const CURL_ID = '0b6f3c1e-7d2a-4c55-9a8e-1f2d3c4b5a69';
+    const CURL = { ...RDL, lift: CURL_ID, name: 'Cable Curl', liftId: CURL_ID, estimate: null, dismissed: true };
+    // The block's own element, so a test can tell "no block" from a heading-less empty box.
+    const block = () => document.querySelector('.block');
     const RDL_CSV = new File(
       ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n5-3-1,1,1,2026-01-01,Romanian Deadlift,1,200,8'],
       'lifts.csv',
@@ -1739,10 +1744,11 @@ describe('ImportWizard', () => {
 
     it('lists each imported lift with no max, with its estimate, leaving out dismissed ones', async () => {
       mockFetchMissing.mockResolvedValue([RDL, CURL]);
-      await commitWithLifts(['romanian-deadlift', 'cable-curl', 'bench-press']);
+      await commitWithLifts(['romanian-deadlift', CURL_ID, 'bench-press']);
 
-      expect(await screen.findByRole('heading', HEADING)).toBeInTheDocument();
-      expect(mockFetchMissing).toHaveBeenCalledWith('prog-1', ['romanian-deadlift', 'cable-curl', 'bench-press']);
+      // An h2: the result step's only heading above it is the page's h1.
+      expect(await screen.findByRole('heading', { ...HEADING, level: 2 })).toBeInTheDocument();
+      expect(mockFetchMissing).toHaveBeenCalledWith('prog-1', ['romanian-deadlift', CURL_ID, 'bench-press']);
       const input = screen.getByRole('spinbutton', { name: 'Romanian Deadlift training max' });
       expect(input).toHaveValue(205);
       expect(input).toHaveAccessibleDescription('Estimated from 200 lbs × 8 on 3 Nov');
@@ -1756,13 +1762,14 @@ describe('ImportWizard', () => {
 
       await waitFor(() => expect(mockFetchMissing).toHaveBeenCalled());
       expect(screen.queryByRole('heading', HEADING)).not.toBeInTheDocument();
+      expect(block()).toBeNull();
     });
 
     it.each([[[]], [undefined]])('shows no block, and asks nothing, when the commit lists lifts %p', async (lifts) => {
       await commitWithLifts(lifts);
 
       expect(mockFetchMissing).not.toHaveBeenCalled();
-      expect(screen.queryByRole('heading', HEADING)).not.toBeInTheDocument();
+      expect(block()).toBeNull();
     });
 
     it('omits the block and logs when the read fails', async () => {
@@ -1778,11 +1785,12 @@ describe('ImportWizard', () => {
         }),
       );
       expect(screen.queryByRole('heading', HEADING)).not.toBeInTheDocument();
+      expect(block()).toBeNull();
       expect(screen.getByText('Import complete')).toBeInTheDocument();
     });
 
     it('removes a row once answered and says so', async () => {
-      mockFetchMissing.mockResolvedValue([RDL, { ...RDL, lift: 'Hammer Curl', liftId: 'hammer-curl' }]);
+      mockFetchMissing.mockResolvedValue([RDL, { ...RDL, lift: 'hammer-curl', name: 'Hammer Curl', liftId: 'hammer-curl' }]);
       mockUpdateMaxes.mockResolvedValue([]);
       mockDismiss.mockResolvedValue(undefined);
       const user = await commitWithLifts(['romanian-deadlift', 'hammer-curl']);
@@ -1794,7 +1802,7 @@ describe('ImportWizard', () => {
       expect(await screen.findByRole('status')).toHaveTextContent('Training max set up for Romanian Deadlift.');
       expect(screen.getByRole('status')).toHaveFocus();
       expect(mockUpdateMaxes).toHaveBeenCalledWith('prog-1', {
-        maxes: [{ lift: 'Romanian Deadlift', weight: 205, unit: 'lbs' }],
+        maxes: [{ lift: 'romanian-deadlift', weight: 205, unit: 'lbs' }],
       });
 
       await user.click(screen.getByRole('button', { name: "Don't ask again" }));

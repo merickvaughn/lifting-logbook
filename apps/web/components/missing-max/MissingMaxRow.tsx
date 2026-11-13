@@ -17,7 +17,7 @@ import { logClientError } from '@/lib/log-client-error';
 import styles from './MissingMaxRow.module.css';
 
 /** One lift on offer, as the missing list reports it, or from a progression `skipped` entry. */
-export type MissingMaxEntry = Pick<MissingTrainingMaxResponse, 'lift' | 'liftId' | 'estimate' | 'dismissed'> &
+export type MissingMaxEntry = Pick<MissingTrainingMaxResponse, 'lift' | 'name' | 'liftId' | 'estimate' | 'dismissed'> &
   Partial<Pick<MissingTrainingMaxResponse, 'setCount' | 'lastLoggedDate'>>;
 
 /** What every place that asks passes to the row, besides the entry itself. */
@@ -169,7 +169,7 @@ export function MissingMaxRow({
   return (
     <li className={styles.row}>
       <div className={styles.lift}>
-        <span className={styles.liftName}>{entry.lift}</span>
+        <span className={styles.liftName}>{entry.name}</span>
         {logged && <span className={styles.muted}>{logged}</span>}
       </div>
       <div className={styles.weight}>
@@ -177,7 +177,7 @@ export function MissingMaxRow({
           type="number"
           step={step}
           value={value}
-          aria-label={`${entry.lift} training max`}
+          aria-label={`${entry.name} training max`}
           aria-describedby={error ? `${estimateId} ${errorId}` : estimateId}
           aria-invalid={error ? true : undefined}
           autoComplete="off"
@@ -241,7 +241,7 @@ export function SkippedLiftRows({
           );
         }
         const liftId = liftIdFor(s.lift);
-        const entry = byId.get(liftId) ?? { lift: s.lift, liftId, estimate: null, dismissed: false };
+        const entry = byId.get(liftId) ?? { lift: s.lift, name: s.lift, liftId, estimate: null, dismissed: false };
         return <MissingMaxRow key={liftId} entry={entry} {...options} />;
       })}
     </ul>

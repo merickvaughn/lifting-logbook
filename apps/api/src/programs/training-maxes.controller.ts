@@ -16,6 +16,7 @@ import { MissingTrainingMaxResponse, ModificationMaxResponse, TrainingMaxRespons
 import { liftIdFor, missingMaxCandidate, missingTrainingMaxes, type TrainingMax } from '@lifting-logbook/core';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { modificationModesFor } from '../lifts/lift-modification.util';
+import { liftNamesFor } from './effective-slot-map.util';
 import { AuthUser } from '../ports/auth';
 import { LiftModificationNotFoundError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
@@ -71,8 +72,10 @@ export class TrainingMaxesController {
     const records = await repos.liftRecord.getProgramRecordsForLifts(program, candidates);
     const { modes } = await modificationModesFor(repos, records);
     const dismissed = new Set(await repos.trainingMax.getMissingMaxDismissals(program));
+    // Sets store a lift's id, so its name comes from the catalog or the custom lift (#1290).
+    const names = await liftNamesFor(repos);
     return missingTrainingMaxes({ trainingMaxes: maxes, records, modificationModes: modes, lifts: wanted }).map((m) =>
-      toMissingTrainingMaxResponse(m, dismissed.has(m.liftId)),
+      toMissingTrainingMaxResponse(m, dismissed.has(m.liftId), names),
     );
   }
 

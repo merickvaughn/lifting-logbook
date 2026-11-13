@@ -353,6 +353,23 @@ describe('Non-cycle workouts (e2e, in-memory adapters)', () => {
       expect(await list()).toEqual([]);
     });
 
+    it("leaves a non-cycle row's lift out of the commit's lifts (#1273)", async () => {
+      const { inject, importCsv } = newUser();
+      expect((await inject('POST', `/programs/${PROGRAM_A}/switch`)).statusCode).toBe(200);
+      // Only the non-cycle row has Dips, so a list that counted it would include `dips`.
+      const csv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-05,Squat,1,225,5,',
+        'non-cycle,1,9,2026-01-06,Dips,1,0,10,',
+      ].join('\n');
+
+      const commit = await importCsv(PROGRAM_A, csv, 'import?mode=commit&destination=lift-records');
+      expect(commit.statusCode).toBe(200);
+      const body = commit.json() as ImportCommitResponse;
+      expect(body.created).toBe(2);
+      expect(body.lifts).toEqual(['back-squat']);
+    });
+
     it('keeps a set recorded under a deleted workout’s number when the import that made it is undone', async () => {
       const { inject, importCsv, start, list } = newUser();
       const csv = [

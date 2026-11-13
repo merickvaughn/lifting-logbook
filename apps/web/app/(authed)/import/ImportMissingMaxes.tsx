@@ -65,9 +65,10 @@ export default function ImportMissingMaxes({
 
   return (
     <section className={styles.block} aria-labelledby="import-missing-maxes-heading">
-      <h3 id="import-missing-maxes-heading" className={styles.heading}>
+      {/* The result step has no h2 of its own ("Import complete" is a paragraph), so this follows the h1. */}
+      <h2 id="import-missing-maxes-heading" className={styles.heading}>
         Lifts without a training max
-      </h3>
+      </h2>
       <p className={styles.intro}>
         This import logged sets for these lifts, but they have no training max, so progression skips
         them.
@@ -81,8 +82,8 @@ export default function ImportMissingMaxes({
             program={program}
             source="import"
             preferredUnit={preferredUnit}
-            onSetUp={(lift) => answered(entry.liftId, `Training max set up for ${lift}.`)}
-            onDismissedChange={(liftId) => answered(liftId, `${entry.lift} won't be asked about again.`)}
+            onSetUp={() => answered(entry.liftId, `Training max set up for ${entry.name}.`)}
+            onDismissedChange={(liftId) => answered(liftId, `${entry.name} won't be asked about again.`)}
           />
         ))}
       </ul>

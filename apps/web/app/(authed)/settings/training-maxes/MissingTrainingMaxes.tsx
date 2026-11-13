@@ -52,15 +52,20 @@ export default function MissingTrainingMaxes({
 
   const announce = (text: string) => setNotice((prev) => ({ text, key: (prev?.key ?? 0) + 1 }));
 
+  // `lift` and `liftId` are as stored; the status line names the lift (#1290).
+  const nameOf = (match: (m: MissingTrainingMaxResponse) => boolean, fallback: string) =>
+    missing?.find(match)?.name ?? fallback;
+
   function setUp(lift: string) {
+    const name = nameOf((m) => m.lift === lift, lift);
     setMissing((prev) => prev?.filter((m) => m.lift !== lift) ?? null);
-    announce(`Training max set up for ${lift}.`);
+    announce(`Training max set up for ${name}.`);
     // The table below reads maxes on the server; refresh it to show the new one.
     router.refresh();
   }
 
   function setDismissed(liftId: string, dismissed: boolean) {
-    const lift = missing?.find((m) => m.liftId === liftId)?.lift ?? liftId;
+    const lift = nameOf((m) => m.liftId === liftId, liftId);
     setMissing((prev) => prev?.map((m) => (m.liftId === liftId ? { ...m, dismissed } : m)) ?? null);
     announce(dismissed ? `${lift} hidden from prompts.` : `${lift} will be asked about again.`);
   }

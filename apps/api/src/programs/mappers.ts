@@ -82,9 +82,17 @@ export const toTrainingMaxResponse = (m: TrainingMax): TrainingMaxResponse => ({
   dateUpdated: isoDate(m.dateUpdated),
 });
 
-/** `dismissed` comes from the lifter's dismissals, which the core list knows nothing of (#1246). */
-export const toMissingTrainingMaxResponse = (m: MissingTrainingMax, dismissed: boolean): MissingTrainingMaxResponse => ({
+/**
+ * `dismissed` comes from the lifter's dismissals, which the core list knows nothing of (#1246).
+ * `names` is lift id → name, built-in and custom (`liftNamesFor`); a stored value it lacks shows as is.
+ */
+export const toMissingTrainingMaxResponse = (
+  m: MissingTrainingMax,
+  dismissed: boolean,
+  names: ReadonlyMap<string, string>,
+): MissingTrainingMaxResponse => ({
   lift: m.lift,
+  name: names.get(m.lift) ?? m.lift,
   liftId: m.liftId,
   lastLoggedDate: isoDate(m.lastLoggedDate),
   setCount: m.setCount,
