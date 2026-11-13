@@ -59,9 +59,10 @@ export interface WorkoutPlan {
    * custom-lift fetch that classification needs is started before the load-
    * bearing fetches but only *awaited* here, so a page that decides not to
    * mount the timer (a completed workout — most detail-page views) never puts
-   * that round-trip on its critical path. The slow-fetch budget arms here too,
-   * on first call, so a page that never mounts the timer cannot log a
-   * degradation it never experienced.
+   * that round-trip on its critical path for classification. The slow-fetch
+   * budget arms on first call, here or in the progression read (which waits on it
+   * only when a lift's row names no type, #1249), so a page cannot log a
+   * degradation it never experienced, and never waits past the budget.
    *
    * `focus` is the day's focus work from {@link loadFocusPlan}, or `null` for none;
    * its lifts join the plan in placement order (#1060). It may be passed still in
@@ -150,7 +151,8 @@ export async function loadWorkoutPlan(
   caller: WorkoutPlanCaller,
 ): Promise<WorkoutPlan | null> {
   // Bounded and caught, unlike its four siblings: this one only enriches the
-  // accessory classification of the user's *own* lifts, so neither a failure nor
+  // accessory classification of the user's *own* lifts, and tells a custom lift
+  // from a catalog one when resolving a progression (#1249), so neither a failure nor
   // a slow response may take down — or hold up — a timer the lifter is standing
   // in the gym waiting on. The other four are load-bearing and keep their
   // fail-fast behavior.

@@ -47,7 +47,10 @@ function lastSessionOf(
  * Each of a workout's lifts' progression plan (#1211), index-aligned with `workout.lifts`. The
  * logger, the detail page and the timer all plan from it, so they agree (#1249); `caller` names
  * the page in the console lines. `customLifts` reads the lifter's own lifts, called only when the
- * settings are; the detail page and the timer pass the one bounded read they already share. A lift's type, range and increment resolve from its spec row, then its own
+ * settings are; the detail page and the timer pass the one bounded read they already share. That
+ * read resolves `[]` when it fails or runs out its budget, so there every lift resolves as a
+ * built-in rather than the whole settings read failing, as it does on the logger: the two differ
+ * only for a custom lift named like a catalog one, and only while `/lifts/custom` is down or slow. A lift's type, range and increment resolve from its spec row, then its own
  * value, the lifter's default and the catalog's (`resolveProgression`), finding its own value with
  * `lookupByLift` as `updateMaxes` does. The lifter's settings are read only when some lift's row
  * names no type, and the macrocycle's records only when some lift is on `double`, which plans from

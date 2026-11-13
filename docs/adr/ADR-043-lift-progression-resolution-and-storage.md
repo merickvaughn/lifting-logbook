@@ -128,7 +128,9 @@ the proposal's. These details weren't settled there:
    session. All three load the plan through `loadProgressionPlans`, so they agree
    ([#1249](https://github.com/merickvaughn/lifting-logbook/issues/1249)); the detail page and the
    timer read the lifter's custom lifts for it through the same bounded read the timer classifies
-   with, so a slow read holds the page for that budget at most.
+   with, so a slow read holds the page for that budget at most. A failed or slow custom-lift read
+   there resolves every lift as a built-in instead of failing the settings read, so during such an
+   outage a custom lift named like a catalog one plans by the catalog's default on those pages.
 
 ## References
 
