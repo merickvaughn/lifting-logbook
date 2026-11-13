@@ -71,6 +71,28 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
     });
   }
 
+  async listWithKeys(destination: ImportKind, keys: readonly string[]): Promise<ImportBatchRecord[]> {
+    if (keys.length === 0) return [];
+    // Raw SQL isn't auto-traced (ADR-024), so the filter gets a span.
+    return tracer.startActiveSpan('import_batch.list_with_keys', async (span) => {
+      try {
+        span.setAttribute('import_batch.keys', keys.length);
+        const rows = await this.prisma.$queryRaw<ImportBatch[]>`
+          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt" FROM "import_batch" b
+          WHERE b."userId" = ${this.userId} AND b."destination" = ${destination}
+            AND EXISTS (SELECT 1 FROM jsonb_object_keys(b."preImage") AS k WHERE k = ANY(${[...keys]}::text[]))`;
+        span.setAttribute('import_batch.count', rows.length);
+        return rows.map(toRecord);
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
   async updatePreImages(updates: ReadonlyArray<{ id: string; preImage: ImportPreImage }>): Promise<void> {
     if (updates.length === 0) return;
     const ids = updates.map((u) => u.id);

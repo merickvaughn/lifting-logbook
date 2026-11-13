@@ -13,16 +13,22 @@ export const NON_CYCLE_MACROCYCLE_NUM = 1;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * A non-cycle set's date, from the client's local calendar day. No timezone is stored, so the
- * server accepts a date up to one day past its own, which leaves room for a lifter ahead of UTC,
- * and rejects anything later with a 400.
+ * The latest day a non-cycle set can be dated: one day past the server's UTC day. No timezone
+ * is stored, so this leaves room for a lifter ahead of UTC.
+ */
+export function latestNonCycleDay(now: Date = new Date()): Date {
+  return new Date(toUTCMidnight(now).getTime() + DAY_MS);
+}
+
+/**
+ * A non-cycle set's date, from the client's local calendar day, up to
+ * {@link latestNonCycleDay}. Anything later gets a 400.
  */
 export function nonCycleDate(date: string | undefined, now: Date = new Date()): Date {
   if (!date) throw new BadRequestException('A non-cycle workout needs its date.');
   const day = toUTCMidnight(new Date(date));
   if (Number.isNaN(day.getTime())) throw new BadRequestException('date must be a valid calendar date');
-  const latest = toUTCMidnight(now).getTime() + DAY_MS;
-  if (day.getTime() > latest) {
+  if (day.getTime() > latestNonCycleDay(now).getTime()) {
     throw new BadRequestException(`date ${date} is in the future. A non-cycle workout is recorded on or before today.`);
   }
   return day;
@@ -37,12 +43,12 @@ export function nonCycleRecords(repos: Pick<RepositoryBundle, 'liftRecord'>): Pr
 export async function nonCycleWorkout(
   repos: Pick<RepositoryBundle, 'liftRecord'>,
   workoutNum: number,
-): Promise<LiftRecord[]> {
-  const sets = (await nonCycleRecords(repos))
-    .filter((r) => r.workoutNum === workoutNum)
-    .sort((a, b) => a.lift.localeCompare(b.lift) || (a.occurrence ?? 0) - (b.occurrence ?? 0) || a.setNum - b.setNum);
-  if (sets.length === 0) throw new NotFoundException(`Non-cycle workout ${workoutNum} not found`);
-  return sets;
+): Promise<[LiftRecord, ...LiftRecord[]]> {
+  const [first, ...rest] = (
+    await repos.liftRecord.getLiftRecords(NON_CYCLE_PROGRAM, NON_CYCLE_MACROCYCLE_NUM, workoutNum)
+  ).sort((a, b) => a.lift.localeCompare(b.lift) || (a.occurrence ?? 0) - (b.occurrence ?? 0) || a.setNum - b.setNum);
+  if (!first) throw new NotFoundException(`Non-cycle workout ${workoutNum} not found`);
+  return [first, ...rest];
 }
 
 /**
@@ -57,7 +63,7 @@ export async function assertNonCycleSet(
 ): Promise<void> {
   const day = nonCycleDate(date);
   const [first] = await nonCycleWorkout(repos, workoutNum);
-  if (first && first.date.getTime() !== day.getTime()) {
+  if (first.date.getTime() !== day.getTime()) {
     throw new BadRequestException(
       `Non-cycle workout ${workoutNum} is on ${first.date.toISOString().slice(0, 10)}, and each of its sets takes that date.`,
     );
@@ -88,6 +94,16 @@ export async function ensureNonCycleRow(
   const created = await find();
   if (!created) throw new Error('the non-cycle macrocycle row was not created');
   return created;
+}
+
+/**
+ * The non-cycle macrocycle's row, for reading a workout. Starting or importing a workout creates
+ * it, so a workout with sets always has one, and a missing row is a server error.
+ */
+export async function nonCycleRow(repos: Pick<RepositoryBundle, 'macrocycle'>): Promise<MacrocycleRow> {
+  const row = await repos.macrocycle.findByNumber(NON_CYCLE_PROGRAM, NON_CYCLE_MACROCYCLE_NUM);
+  if (!row) throw new Error('a non-cycle workout has sets but no macrocycle row');
+  return row;
 }
 
 /**

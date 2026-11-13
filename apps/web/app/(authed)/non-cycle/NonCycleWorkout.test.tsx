@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { LiftRecordResponse, NonCycleWorkoutResponse } from '@lifting-logbook/types';
 import NonCycleWorkout from './NonCycleWorkout';
@@ -9,11 +9,16 @@ import {
   fetchNonCycleReference,
   updateLiftRecord,
 } from '@/lib/client-api';
+import { localToday } from '@/lib/calendarDay';
 
 const mockPush = jest.fn();
 const mockRefresh = jest.fn();
+let mockPathname = '/non-cycle/new';
+// One object, as Next's router is.
+const mockRouter = { push: mockPush, refresh: mockRefresh };
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: mockPush, refresh: mockRefresh }),
+  useRouter: () => mockRouter,
+  usePathname: () => mockPathname,
 }));
 
 jest.mock('@/lib/client-api', () => ({
@@ -61,6 +66,7 @@ describe('NonCycleWorkout (#1184)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPathname = '/non-cycle/new';
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     (fetchNonCycleReference as jest.Mock).mockResolvedValue({ lift: 'Squat', reference: null });
   });
@@ -76,6 +82,8 @@ describe('NonCycleWorkout (#1184)', () => {
 
     const date = screen.getByLabelText('Date') as HTMLInputElement;
     await waitFor(() => expect(date.value).not.toBe(''));
+    // No later than the lifter's own day.
+    expect(date).toHaveAttribute('max', localToday());
     await user.clear(date);
     await user.type(date, '2026-11-10');
     await user.type(screen.getByLabelText('Lift'), 'Squat');
@@ -84,6 +92,8 @@ describe('NonCycleWorkout (#1184)', () => {
     expect(createNonCycleWorkout).toHaveBeenCalledWith({ date: '2026-11-10', lift: 'Squat', setNum: 1, weight: 225, reps: 5 });
     expect(await screen.findByRole('heading', { name: 'Non-cycle workout 3' })).toBeInTheDocument();
     expect(replaceState).toHaveBeenCalledWith(null, '', '/non-cycle/3');
+    // The address moved under the page, which already holds the workout.
+    mockPathname = '/non-cycle/3';
     expect(date).toBeDisabled();
 
     await enterSet(user, '235', '3');
@@ -93,7 +103,76 @@ describe('NonCycleWorkout (#1184)', () => {
       'mc-non-cycle',
     );
     expect(await screen.findByText(/Squat set 2:/)).toHaveTextContent('Squat set 2: 235 lbs × 3');
+    expect(mockRefresh).not.toHaveBeenCalled();
     replaceState.mockRestore();
+  });
+
+  it('asks the server for the workout when back or forward brings back the empty new page at its number', () => {
+    mockPathname = '/non-cycle/3';
+    renderWorkout(null);
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+
+    // A new workout's own address, or a workout page, doesn't.
+    cleanup();
+    mockRefresh.mockClear();
+    mockPathname = '/non-cycle/new';
+    renderWorkout(null);
+    cleanup();
+    mockPathname = '/non-cycle/3';
+    renderWorkout(WORKOUT);
+    expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
+  it('keeps a set and an edit saved at the same time', async () => {
+    const user = userEvent.setup();
+    let finishSet: (record: LiftRecordResponse) => void = () => {};
+    (createLiftRecord as jest.Mock).mockReturnValue(new Promise((resolve) => (finishSet = resolve)));
+    (updateLiftRecord as jest.Mock).mockResolvedValue(set('s1', 1, 225, 7));
+    renderWorkout(WORKOUT);
+
+    await enterSet(user, '235', '3');
+    await user.click(screen.getByRole('button', { name: 'Edit Squat set 1' }));
+    const reps = screen.getAllByLabelText('Reps').at(-1) as HTMLInputElement;
+    await user.clear(reps);
+    await user.type(reps, '7');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(/Squat set 1:/)).toHaveTextContent('225 lbs × 7');
+
+    finishSet(set('s2', 2, 235, 3));
+    expect(await screen.findByText(/Squat set 2:/)).toHaveTextContent('235 lbs × 3');
+    expect(screen.getByText(/Squat set 1:/)).toHaveTextContent('225 lbs × 7');
+  });
+
+  it('opens each edit from the stored set, not one left unsaved', async () => {
+    const user = userEvent.setup();
+    renderWorkout(WORKOUT);
+
+    await user.click(screen.getByRole('button', { name: 'Edit Squat set 1' }));
+    const reps = () => screen.getAllByLabelText('Reps').at(-1) as HTMLInputElement;
+    await user.clear(reps());
+    await user.type(reps(), '9');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Edit Squat set 1' }));
+    expect(reps()).toHaveValue(5);
+  });
+
+  it('looks the reference up for a catalog name or a finished one, not a partly typed name', async () => {
+    const user = userEvent.setup();
+    renderWorkout(null);
+    const lift = screen.getByLabelText('Lift');
+
+    await user.type(lift, 'Ben');
+    // A pause in typing isn't enough to look a name up.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(fetchNonCycleReference).not.toHaveBeenCalled();
+    await user.type(lift, 'ch Press');
+    await waitFor(() => expect(fetchNonCycleReference).toHaveBeenCalledWith('5-3-1', 'Bench Press'));
+    expect(fetchNonCycleReference).toHaveBeenCalledTimes(1);
+
+    await user.clear(lift);
+    await user.type(lift, 'Zercher squat');
+    await user.tab();
+    await waitFor(() => expect(fetchNonCycleReference).toHaveBeenCalledWith('5-3-1', 'Zercher squat'));
   });
 
   it('shows the reference line for the lift in the preferred unit', async () => {

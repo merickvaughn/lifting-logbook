@@ -245,8 +245,9 @@ export async function lockForImport(
 }
 
 /**
- * Takes the macrocycle lock exclusively for a renumbering that would move a number (#1199),
- * waiting as an import does, then a 409 `macrocycle-busy`. The lock is re-entrant, so an import
+ * Takes the macrocycle lock exclusively for a renumbering that would move a number (#1199), or
+ * for starting a non-cycle workout, which takes the next workout number (#1184), waiting as an
+ * import does, then a 409 `macrocycle-busy`. The lock is re-entrant, so an import
  * that holds it already gets it at once. Two starts or deletes that hold it shared and wait on
  * each other here deadlock; Postgres aborts one, which gets the same 409 when it's the one
  * waiting here. A deadlock aborted anywhere else in the request is a 500, and that request's
@@ -457,6 +458,25 @@ export async function forgetBatchKeys(
       span.end();
     }
   });
+}
+
+/**
+ * Drops deleted non-cycle sets' keys from the lift-records batches of any program. A new
+ * workout takes the number one past the highest stored, so a deleted workout's number comes
+ * back, and undoing an import would then delete the sets recorded under it (#1184).
+ * `naturalKeys` are the deleted sets' natural keys, without the {@link NON_CYCLE_ROW_KEY} prefix.
+ */
+export async function forgetNonCycleBatchKeys(
+  repos: Pick<RepositoryBundle, 'importBatch'>,
+  naturalKeys: readonly string[],
+): Promise<number> {
+  const gone = new Set(naturalKeys.map((k) => `${NON_CYCLE_ROW_KEY}${k}`));
+  const updates = (await repos.importBatch.listWithKeys('lift-records', [...gone])).map((batch) => ({
+    id: batch.id,
+    preImage: Object.fromEntries(Object.entries(batch.preImage).filter(([key]) => !gone.has(key))),
+  }));
+  await repos.importBatch.updatePreImages(updates);
+  return updates.length;
 }
 
 /** Splits a lift-records pre-image's keys into set keys and the `legacy` rows' numbers. */

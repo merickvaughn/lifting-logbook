@@ -327,8 +327,8 @@ export class ImportController {
       // A 1RM split's training maxes share this batch, keyed by lift id (#1148). Every set and
       // `legacy` row key starts with a macrocycle number, and a lift id (a kebab-case name or a
       // custom lift's UUID) never does.
-      // A non-cycle set's key carries its own prefix, so it's neither a training max nor a set
-      // of `program` (#1184).
+      // A non-cycle set's key, `non-cycle:<natural key>`, holds no number either, so it's
+      // split off first: it's neither a training max nor a set of `program` (#1184).
       const { nonCycleKeys, otherKeys } = splitNonCycleKeys(Object.keys(batch.preImage));
       const kept = new Set(otherKeys);
       const entries = Object.entries(batch.preImage).filter(([k]) => kept.has(k));

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { formatNonCycleReference, formatWeight } from '@lifting-logbook/core';
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type { LiftRecordResponse, NonCycleWorkoutResponse, WeightUnit } from '@lifting-logbook/types';
@@ -27,23 +27,20 @@ interface Props {
   workout: NonCycleWorkoutResponse | null;
 }
 
-/** The latest date a set can carry: the API refuses more than a day past its own (#1184). */
-function latestDate(): string {
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  return localToday(tomorrow);
-}
-
 /**
  * A non-cycle workout (proposal 2026-11-06, decision 23, #1184): sets done outside any
  * program, each saved as it's entered. Nothing here changes a training max.
  */
 export default function NonCycleWorkout({ program, catalog, unit, workout: initial }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const ids = useId();
   const [workout, setWorkout] = useState(initial);
   const [date, setDate] = useState(initial?.date ?? '');
   const [lift, setLift] = useState(initial?.records.at(-1)?.lift ?? '');
+  // The lift the reference line is for: set from a catalog name or when the field is left, so
+  // a partly typed name isn't looked up.
+  const [referenceLift, setReferenceLift] = useState(initial?.records.at(-1)?.lift ?? '');
   const [weight, setWeight] = useState('');
   const [reps, setReps] = useState('');
   const [reference, setReference] = useState('');
@@ -55,24 +52,35 @@ export default function NonCycleWorkout({ program, catalog, unit, workout: initi
     if (!initial) setDate((current) => current || localToday());
   }, [initial]);
 
-  // The reference line follows the lift. A failed read just leaves it blank.
+  // The first set moves the address to the workout's number without leaving this page (see
+  // saveSet). Going back or forward to that address later can restore this page as it was
+  // before the first set, with no workout. Only then does a numbered address show no workout,
+  // so the page asks the server for the workout's own page.
   useEffect(() => {
-    const name = lift.trim();
+    if (!workout && pathname !== '/non-cycle/new') router.refresh();
+  }, [workout, pathname, router]);
+
+  // A failed read just leaves the reference line blank.
+  useEffect(() => {
+    const name = referenceLift.trim();
     setReference('');
     if (!name) return;
     let cancelled = false;
-    const timer = setTimeout(() => {
-      fetchNonCycleReference(program, name)
-        .then(({ reference: ref }) => {
-          if (!cancelled && ref) setReference(formatNonCycleReference(ref, unit));
-        })
-        .catch((err: unknown) => logClientError('fetchNonCycleReference', err, { program }));
-    }, 300);
+    fetchNonCycleReference(program, name)
+      .then(({ reference: ref }) => {
+        if (!cancelled && ref) setReference(formatNonCycleReference(ref, unit));
+      })
+      .catch((err: unknown) => logClientError('fetchNonCycleReference', err, { program }));
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
-  }, [lift, program, unit]);
+  }, [referenceLift, program, unit]);
+
+  function changeLift(value: string) {
+    setLift(value);
+    const match = catalog.find((name) => name.toLowerCase() === value.trim().toLowerCase());
+    if (match) setReferenceLift(value);
+  }
 
   const records = workout?.records ?? [];
   const weightValue = Number(weight);
@@ -92,7 +100,8 @@ export default function NonCycleWorkout({ program, catalog, unit, workout: initi
       if (!workout) {
         const started = await createNonCycleWorkout({ date, lift: name, setNum, weight: weightValue, reps: repsValue });
         setWorkout(started);
-        // The workout now has a number; the address follows it without leaving the page.
+        // The workout now has a number. The address follows it without leaving the page, so
+        // nothing the lifter is doing here is interrupted.
         window.history.replaceState(null, '', `/non-cycle/${started.workoutNum}`);
       } else {
         const record = await createLiftRecord(
@@ -109,7 +118,7 @@ export default function NonCycleWorkout({ program, catalog, unit, workout: initi
           },
           workout.macrocycleId,
         );
-        setWorkout({ ...workout, records: [...workout.records, record] });
+        setWorkout((current) => current && { ...current, records: [...current.records, record] });
       }
       setReps('');
     } catch (err) {
@@ -128,7 +137,7 @@ export default function NonCycleWorkout({ program, catalog, unit, workout: initi
     setError(null);
     try {
       const updated = await updateLiftRecord(NON_CYCLE_PROGRAM, record.id, changes, workout.macrocycleId);
-      setWorkout({ ...workout, records: workout.records.map((r) => (r.id === record.id ? updated : r)) });
+      setWorkout((current) => current && { ...current, records: current.records.map((r) => (r.id === record.id ? updated : r)) });
       return true;
     } catch (err) {
       logClientError('updateLiftRecord', err, { program: NON_CYCLE_PROGRAM, workoutNum: workout.workoutNum });
@@ -168,7 +177,7 @@ export default function NonCycleWorkout({ program, catalog, unit, workout: initi
           <input
             type="date"
             value={date}
-            max={latestDate()}
+            max={localToday()}
             onChange={(e) => setDate(e.target.value)}
             disabled={workout !== null}
             required
@@ -180,7 +189,8 @@ export default function NonCycleWorkout({ program, catalog, unit, workout: initi
             type="text"
             list={`${ids}-lifts`}
             value={lift}
-            onChange={(e) => setLift(e.target.value)}
+            onChange={(e) => changeLift(e.target.value)}
+            onBlur={() => setReferenceLift(lift)}
             maxLength={100}
             autoComplete="off"
             required
@@ -253,9 +263,17 @@ function SetRow({
   onSave: (record: LiftRecordResponse, changes: { weight: number; reps: number }) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState(false);
-  const [weight, setWeight] = useState(String(record.weight));
-  const [reps, setReps] = useState(String(record.reps));
+  const [saving, setSaving] = useState(false);
+  const [weight, setWeight] = useState('');
+  const [reps, setReps] = useState('');
   const label = `${record.lift} set ${record.setNum}`;
+
+  // Each edit starts from the stored set, not from an edit left unsaved.
+  function startEditing() {
+    setWeight(String(record.weight));
+    setReps(String(record.reps));
+    setEditing(true);
+  }
 
   if (!editing) {
     return (
@@ -263,7 +281,7 @@ function SetRow({
         <span>
           {label}: {formatWeight(record.weight, 'lbs', unit)} × {record.reps}
         </span>
-        <button type="button" className={styles.secondary} onClick={() => setEditing(true)} aria-label={`Edit ${label}`}>
+        <button type="button" className={styles.secondary} onClick={startEditing} aria-label={`Edit ${label}`}>
           Edit
         </button>
       </li>
@@ -279,8 +297,12 @@ function SetRow({
         className={styles.editForm}
         onSubmit={(e) => {
           e.preventDefault();
-          if (!valid) return;
-          void onSave(record, { weight: weightValue, reps: repsValue }).then((saved) => saved && setEditing(false));
+          if (!valid || saving) return;
+          setSaving(true);
+          void onSave(record, { weight: weightValue, reps: repsValue }).then((saved) => {
+            setSaving(false);
+            if (saved) setEditing(false);
+          });
         }}
       >
         <span>{label}</span>
@@ -292,7 +314,7 @@ function SetRow({
           <span>Reps</span>
           <input type="number" min={1} step={1} value={reps} onChange={(e) => setReps(e.target.value)} />
         </label>
-        <button type="submit" className={styles.primary} disabled={!valid}>Save</button>
+        <button type="submit" className={styles.primary} disabled={!valid || saving}>Save</button>
         <button type="button" className={styles.secondary} onClick={() => setEditing(false)}>Cancel</button>
       </form>
     </li>

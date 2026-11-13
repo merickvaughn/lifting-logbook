@@ -28,7 +28,8 @@ const DB_E2E_HOOK_TIMEOUT_MS = 30_000;
 
 const USER_ALICE = 'non-cycle-db-alice';
 const USER_BOB = 'non-cycle-db-bob';
-const USERS = [USER_ALICE, USER_BOB];
+const USER_CAROL = 'non-cycle-db-carol';
+const USERS = [USER_ALICE, USER_BOB, USER_CAROL];
 
 async function asUser<T>(client: PrismaClient, userId: string | null, body: (tx: PrismaClient) => Promise<T>): Promise<T> {
   return client.$transaction(async (tx) => {
@@ -41,6 +42,7 @@ async function cleanup(owner: PrismaClient): Promise<void> {
   const where = { userId: { in: USERS } };
   await owner.liftRecord.deleteMany({ where });
   await owner.macrocycle.deleteMany({ where });
+  await owner.importBatch.deleteMany({ where });
 }
 
 describeOrSkip('non-cycle workouts (full app, lifting_app role)', () => {
@@ -130,13 +132,44 @@ describeOrSkip('non-cycle workouts (full app, lifting_app role)', () => {
     expect(list).toEqual(alice.records);
   });
 
+  it('leaves the reserved id out of the custom program list', async () => {
+    // The built-in half of the program list is reserved-program.registry.spec.ts.
+    const res = await injectAs(USER_ALICE, 'GET', '/programs/custom');
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as Array<{ id: string }>).map((p) => p.id)).not.toContain(NON_CYCLE_PROGRAM);
+  });
+
+  it('keeps a set recorded under a deleted workout’s number when the import that made it is undone', async () => {
+    const boundary = '----NonCycleDbBoundary';
+    const csv = [
+      'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+      '5-3-1,1,1,2026-01-05,Squat,1,225,5,',
+      'non-cycle,1,9,2026-01-06,Squat,1,315,1,',
+    ].join('\n');
+    const commit = await app.getHttpAdapter().getInstance().inject({
+      method: 'POST',
+      url: '/programs/5-3-1/import?mode=commit&destination=lift-records',
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${USER_CAROL}` },
+      payload: [`--${boundary}`, 'Content-Disposition: form-data; name="file"; filename="upload.csv"', 'Content-Type: text/csv', '', csv, `--${boundary}--`].join('\r\n'),
+    });
+    expect(commit.json()).toMatchObject({ created: 2 });
+    const imported = (await injectAs(USER_CAROL, 'GET', '/non-cycle-workouts/1')).json() as NonCycleWorkoutResponse;
+    expect((await injectAs(USER_CAROL, 'DELETE', '/non-cycle-workouts/1', undefined, imported.macrocycleId)).statusCode).toBe(204);
+
+    const redone = (await injectAs(USER_CAROL, 'POST', '/non-cycle-workouts', { date: '2026-01-06', lift: 'Squat', setNum: 1, weight: 300, reps: 2 })).json() as NonCycleWorkoutResponse;
+    expect(redone.workoutNum).toBe(1);
+    const undo = await injectAs(USER_CAROL, 'POST', `/programs/5-3-1/import/${(commit.json() as { batchId: string }).batchId}/undo`);
+    expect(undo.json()).toMatchObject({ restored: 1, skipped: 0 });
+    expect((await injectAs(USER_CAROL, 'GET', '/non-cycle-workouts')).json()).toEqual(redone.records);
+  });
+
   it('numbers two workouts started at once apart', async () => {
     const [first, second] = await Promise.all([
       injectAs(USER_ALICE, 'POST', '/non-cycle-workouts', setBody),
       injectAs(USER_ALICE, 'POST', '/non-cycle-workouts', setBody),
     ]);
     expect([first.statusCode, second.statusCode]).toEqual([201, 201]);
-    const nums = [first, second].map((res) => (res.json() as NonCycleWorkoutResponse).workoutNum).sort();
+    const nums = [first, second].map((res) => (res.json() as NonCycleWorkoutResponse).workoutNum).sort((a, b) => a - b);
     expect(nums).toEqual([alice.workoutNum + 1, alice.workoutNum + 2]);
   });
 });

@@ -129,7 +129,7 @@ describe('Non-cycle workouts (e2e, in-memory adapters)', () => {
       const first = await start();
       const second = await start();
       expect([first.workoutNum, second.workoutNum]).toEqual([1, 2]);
-      expect((await list()).map((r) => r.workoutNum).sort()).toEqual([1, 2]);
+      expect((await list()).map((r) => r.workoutNum).sort((a, b) => a - b)).toEqual([1, 2]);
     });
 
     it('adds later sets on the workout’s date, past workout 1000', async () => {
@@ -233,6 +233,12 @@ describe('Non-cycle workouts (e2e, in-memory adapters)', () => {
       expect(res.json()).toMatchObject({ code: 'program-reserved' });
     });
 
+    // Both are global guards, so registration order decides which runs first.
+    it('is checked after sign-in, so a request with no user gets a 401', async () => {
+      const res = await app.getHttpAdapter().getInstance().inject({ method: 'GET', url: `/programs/${NON_CYCLE_PROGRAM}/macrocycles` });
+      expect(res.statusCode).toBe(401);
+    });
+
     it('is a 400 from the file-number import paths', async () => {
       const { importCsv } = newUser();
       const csv = ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes', `5-3-1,1,1,${TODAY},Squat,1,225,5,`].join('\n');
@@ -243,9 +249,12 @@ describe('Non-cycle workouts (e2e, in-memory adapters)', () => {
     // The program list is the built-in catalog (reserved-program.registry.spec.ts) plus custom
     // programs, whose ids are UUIDs and which the in-memory adapters don't store.
     it('is missing from the past-macrocycles list', async () => {
-      const { inject, start } = newUser();
+      const { inject, repos, start } = newUser();
       expect((await inject('POST', `/programs/${PROGRAM_A}/switch`)).statusCode).toBe(200);
-      await start();
+      const workout = await start();
+      // The row exists, so leaving it out is the list's doing.
+      const row = await (await repos()).macrocycle.findByNumber(NON_CYCLE_PROGRAM, 1);
+      expect(row).toMatchObject({ id: workout.macrocycleId, origin: 'non-cycle' });
       const macrocycles = (await inject('GET', `/programs/${PROGRAM_A}/macrocycles`)).json() as MacrocycleSummaryResponse[];
       expect(macrocycles.length).toBeGreaterThan(0);
       expect(macrocycles.map((m) => m.origin)).not.toContain('non-cycle');
@@ -342,6 +351,27 @@ describe('Non-cycle workouts (e2e, in-memory adapters)', () => {
       expect(undo.statusCode).toBe(200);
       expect(undo.json()).toMatchObject({ restored: 3, skipped: 0 });
       expect(await list()).toEqual([]);
+    });
+
+    it('keeps a set recorded under a deleted workout’s number when the import that made it is undone', async () => {
+      const { inject, importCsv, start, list } = newUser();
+      const csv = [
+        'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+        '5-3-1,1,1,2026-01-05,Squat,1,225,5,',
+        'non-cycle,1,9,2026-01-06,Squat,1,315,1,',
+      ].join('\n');
+      const commit = await importCsv(PROGRAM_A, csv, 'import?mode=commit&destination=lift-records');
+      expect(commit.json()).toMatchObject({ created: 2 });
+      const imported = (await inject('GET', '/non-cycle-workouts/1')).json() as NonCycleWorkoutResponse;
+      expect((await inject('DELETE', '/non-cycle-workouts/1', undefined, imported.macrocycleId)).statusCode).toBe(204);
+
+      // The new workout takes number 1 again, with the same date, lift and set as the deleted one.
+      const redone = await start({ date: '2026-01-06', lift: 'Squat', setNum: 1, weight: 300, reps: 2 });
+      expect(redone.workoutNum).toBe(1);
+      const undo = await inject('POST', `/programs/${PROGRAM_A}/import/${(commit.json() as ImportCommitResponse).batchId}/undo`);
+      expect(undo.statusCode).toBe(200);
+      expect(undo.json()).toMatchObject({ restored: 1, skipped: 0 });
+      expect(await list()).toEqual(redone.records);
     });
   });
 

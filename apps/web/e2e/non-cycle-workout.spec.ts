@@ -70,6 +70,22 @@ test('records a set with no plan, and History lists it', async ({ page }) => {
   await expect(row.getByRole('cell').nth(4)).toHaveText('—');
 });
 
+test('shows the workout, not an empty new one, on going back to it', async ({ page }) => {
+  await page.goto('/non-cycle/new');
+  await main(page).getByLabel('Lift').fill('squat');
+  await main(page).getByLabel('Weight (lbs)').fill('245');
+  await main(page).getByLabel('Reps').fill('3');
+  await main(page).getByRole('button', { name: 'Save set' }).click();
+  await expect(page).toHaveURL(/\/non-cycle\/1$/);
+
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'History' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Lift History' })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/non-cycle\/1$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Non-cycle workout 1' })).toBeVisible();
+  await expect(main(page).getByText('squat set 1: 245 lbs × 3')).toBeVisible();
+});
+
 test('records and edits a set by keyboard alone', async ({ page }) => {
   await page.goto('/non-cycle/new');
   const lift = main(page).getByLabel('Lift');

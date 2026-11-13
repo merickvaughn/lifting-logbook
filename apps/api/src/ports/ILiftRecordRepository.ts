@@ -20,7 +20,8 @@ export function dateRangesByMacrocycle(rows: Iterable<{ macrocycleNum: number; d
 }
 
 export interface ILiftRecordRepository {
-  getLiftRecords(program: string, macrocycleNum: number): Promise<LiftRecord[]>;
+  /** The macrocycle's records, or only workout `workoutNum`'s when it's given. */
+  getLiftRecords(program: string, macrocycleNum: number, workoutNum?: number): Promise<LiftRecord[]>;
 
   /**
    * The distinct `workoutNum`s with at least one logged record in the macrocycle —

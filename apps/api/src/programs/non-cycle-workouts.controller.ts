@@ -18,7 +18,6 @@ import {
   LiftRecord,
   liftRecordNaturalKey,
   nonCycleReference,
-  toUTCMidnight,
   withModifications,
   withOccurrence,
 } from '@lifting-logbook/core';
@@ -36,17 +35,17 @@ import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { CreateNonCycleWorkoutDto } from './create-lift-record.dto';
 import { toLiftRecordResponse } from './mappers';
-import { checkMacrocycleId, lockForRenumbering } from './macrocycle-history.util';
+import { checkMacrocycleId, forgetNonCycleBatchKeys, lockForRenumbering } from './macrocycle-history.util';
 import {
   NON_CYCLE_MACROCYCLE_NUM,
   ensureNonCycleRow,
+  latestNonCycleDay,
   nextNonCycleWorkoutNum,
   nonCycleDate,
   nonCycleRecords,
+  nonCycleRow,
   nonCycleWorkout,
 } from './non-cycle.util';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Non-cycle workouts (proposal 2026-11-06, decision 23, #1184): training outside any program,
@@ -78,12 +77,11 @@ export class NonCycleWorkoutsController {
   ): Promise<NonCycleWorkoutResponse> {
     const repos = await this.factory.forUser(user);
     const records = await nonCycleWorkout(repos, workoutNum);
-    // Starting a workout or importing one creates the row, so this only fills in one left out.
-    const row = await ensureNonCycleRow(repos, records[0]?.date ?? new Date());
+    const row = await nonCycleRow(repos);
     const names = await modificationNamesFor(repos, records);
     return {
       workoutNum,
-      date: (records[0]?.date ?? new Date()).toISOString().slice(0, 10),
+      date: records[0].date.toISOString().slice(0, 10),
       macrocycleId: row.id,
       records: records.map((r) => toLiftRecordResponse(r, names)),
     };
@@ -138,11 +136,10 @@ export class NonCycleWorkoutsController {
     const repos = await this.factory.forUser(user);
     await checkMacrocycleId(repos, NON_CYCLE_PROGRAM, NON_CYCLE_MACROCYCLE_NUM, macrocycleId, 'DELETE non-cycle-workouts/:workoutNum');
     const records = await nonCycleWorkout(repos, workoutNum);
-    const deleted = await repos.liftRecord.deleteLiftRecordsByNaturalKeys(
-      NON_CYCLE_PROGRAM,
-      records.map(liftRecordNaturalKey),
-    );
-    this.logger.log({ sets: deleted }, 'Deleted a non-cycle workout');
+    const keys = records.map(liftRecordNaturalKey);
+    const deleted = await repos.liftRecord.deleteLiftRecordsByNaturalKeys(NON_CYCLE_PROGRAM, keys);
+    const batches = await forgetNonCycleBatchKeys(repos, keys);
+    this.logger.log({ sets: deleted, batches }, 'Deleted a non-cycle workout');
   }
 }
 
@@ -164,12 +161,11 @@ export class NonCycleReferenceController {
     const name = lift?.trim();
     if (!name || name.length > 100) throw new BadRequestException('lift is required, up to 100 characters');
     const repos = await this.factory.forUser(user);
-    // Sets dated up to the latest a non-cycle date can be (see nonCycleDate).
-    const through = new Date(toUTCMidnight(new Date()).getTime() + DAY_MS);
     const [trainingMaxes, history, sets] = await Promise.all([
       repos.trainingMax.getTrainingMaxes(program),
       repos.trainingMaxHistory.getHistory(program, { lift: name }),
-      repos.liftRecord.getRecordsForLifts([name], through),
+      // Sets dated up to the latest a non-cycle set can be.
+      repos.liftRecord.getRecordsForLifts([name], latestNonCycleDay()),
     ]);
     return { lift: name, reference: nonCycleReference({ lift: name, trainingMaxes, history, sets }) };
   }

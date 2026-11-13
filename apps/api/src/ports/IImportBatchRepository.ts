@@ -14,7 +14,9 @@ export interface ImportBatchRecord {
  * How a lift-records pre-image key's macrocycle number is read: the leading number of a set key
  * (`<n>:…`, current and date-blind legacy forms alike) or of a `legacy` row's key
  * (`macrocycle-row:<n>`). JavaScript and Postgres read it alike, so the Prisma adapter filters
- * batches in SQL with the same pattern {@link preImageKeyNumber} uses.
+ * batches in SQL with the same pattern {@link preImageKeyNumber} uses. Two kinds of key hold no
+ * number and read as null: a 1RM split's training max, keyed by lift id, and a non-cycle set,
+ * keyed `non-cycle:<natural key>` (#1184).
  */
 export const PRE_IMAGE_KEY_NUMBER = '^(?:macrocycle-row:)?([0-9]+)(?::|$)';
 
@@ -39,6 +41,12 @@ export interface IImportBatchRepository {
    * delete loads only the batches it changes.
    */
   listWithKeysOn(program: string, destination: ImportKind, which: KeyNumbers): Promise<ImportBatchRecord[]>;
+  /**
+   * The user's batches of one destination, under any program, holding at least one of `keys`,
+   * filtered in the database. A non-cycle set's key is the same whichever program's import
+   * created it, so deleting a non-cycle workout looks its keys up this way (#1184).
+   */
+  listWithKeys(destination: ImportKind, keys: readonly string[]): Promise<ImportBatchRecord[]>;
   /**
    * Replaces the pre-image of each of the user's batches named, in one statement, as a renumbering
    * or a delete does to the keys that hold a number.
