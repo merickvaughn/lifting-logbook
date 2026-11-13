@@ -142,6 +142,14 @@ export interface WorkoutLiftResponse {
    * {@link CreateLiftRecordRequest.occurrence}.
    */
   occurrence?: number;
+  /**
+   * The lift's latest session before this workout, which a `double` lift plans from (#1211):
+   * another workout in this macrocycle dated on or before this one (by its `overrideDate`
+   * when rescheduled), under any spelling of the lift, counting only the lift's first
+   * occurrence in it. Its date (`YYYY-MM-DD`) and each set's reps, by set number. Absent
+   * when the lift has none (#1252).
+   */
+  lastSession?: { date: string; reps: number[] };
 }
 
 /**

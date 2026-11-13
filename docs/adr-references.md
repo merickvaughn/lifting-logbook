@@ -247,6 +247,7 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 | [PostgreSQL 16 — `ALTER TABLE`, Notes](https://www.postgresql.org/docs/16/sql-altertable.html#SQL-ALTERTABLE-NOTES), [`UPDATE`](https://www.postgresql.org/docs/16/sql-update.html) | [ADR-043](adr/ADR-043-lift-progression-resolution-and-storage.md) | Nullable columns added without a rewrite, and an idempotent `UPDATE ... WHERE progression IS NULL` backfill. |
 | [Prisma — Customizing migrations](https://www.prisma.io/docs/orm/prisma-migrate/workflows/customizing-migrations) | [ADR-043](adr/ADR-043-lift-progression-resolution-and-storage.md) | The `amrap_gated` backfill is a hand-written data migration of its own, so a db e2e test can run it. |
 | [class-validator — decorators and custom validation classes](https://github.com/typestack/class-validator#validation-decorators) | [ADR-043](adr/ADR-043-lift-progression-resolution-and-storage.md) | `@IsIn` rejects an unknown type or `rpe`; the `IsAtMostSibling` constraint rejects a range whose bottom is above its top. |
+| [Prisma — Aggregation, grouping, and summarizing](https://www.prisma.io/docs/orm/prisma-client/queries/aggregation-grouping-summarizing#group-by) | [ADR-043](adr/ADR-043-lift-progression-resolution-and-storage.md) | `groupBy` emits SQL `GROUP BY`, so `getLastSessions` finds each lift's latest session without reading its sets (#1252 amendment). |
 
 ---
 

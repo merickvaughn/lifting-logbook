@@ -9,8 +9,8 @@ jest.mock('@/lib/api', () => ({
   // No modification has a max of its own unless a test says otherwise (#1153).
   fetchModificationMaxes: jest.fn().mockResolvedValue([]),
   fetchLatestBodyWeight: jest.fn().mockResolvedValue(null),
-  // Read only to find a `double` lift's last session (#1211), never to recover set ids (issue
-  // #978); the assertion below proves the latter.
+  // Never read: not to recover set ids (issue #978), nor for a `double` lift's last session, which
+  // the workout carries (#1252). The assertions below prove both.
   fetchLiftRecords: jest.fn().mockResolvedValue([]),
   // No active focus block unless a test says otherwise.
   fetchFocusPlan: jest.fn().mockResolvedValue({ groups: [] }),
@@ -113,7 +113,13 @@ const LOGGED_SET = { id: '5-3-1-1-1-20260106-Squat-1', setNum: 1, weight: 200, r
 // `sets` is loosely typed on purpose: one case feeds a planned lift id-less,
 // spec-shaped sets, which the real API never sends.
 function seedWorkout(
-  lifts: { lift: string; planned: boolean; sets: Record<string, unknown>[]; occurrence?: number }[],
+  lifts: {
+    lift: string;
+    planned: boolean;
+    sets: Record<string, unknown>[];
+    occurrence?: number;
+    lastSession?: { date: string; reps: number[] };
+  }[],
   { skipped = false, specOverrides = {} }: { skipped?: boolean; specOverrides?: Partial<LiftingProgramSpecResponse> } = {},
 ) {
   mockedWorkout.mockResolvedValue({
@@ -594,19 +600,10 @@ describe('WorkoutLoggingPage — what an own-max toggle re-plans from (#1153)', 
 // repeats last session's reps at 30.
 describe('WorkoutLoggingPage — the plan follows the lift’s progression type (#1211)', () => {
   const curl = { sets: 3, reps: 12, repsLow: 8, progression: 'double' as const, increment: 2.5, warmUpPct: '' };
-  const lastSession = (reps: number[]) =>
-    reps.map((r, i) => ({
-      id: `curl-${i + 1}`,
-      program: '5-3-1',
-      macrocycleNum: 1,
-      workoutNum: 4,
-      date: '2026-01-05',
-      lift: 'Cable Curl',
-      setNum: i + 1,
-      weight: 30,
-      reps: r,
-      notes: '',
-    }));
+  // The workout carries the lift's last session (#1252): workout 4's, on 2026-01-05.
+  const curlWith = (reps: number[]) => [
+    { lift: 'Cable Curl', planned: true, sets: [], lastSession: { date: '2026-01-05', reps } },
+  ];
   const planned = (lift: LiftData | undefined) => lift?.workingSets.map((s) => `${s.reps}@${s.totalLoad}`);
 
   beforeEach(() => {
@@ -614,18 +611,17 @@ describe('WorkoutLoggingPage — the plan follows the lift’s progression type 
   });
 
   it('plans the Cable Curl double at 3×8 after the bump, and last session’s reps before it', async () => {
-    seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], { specOverrides: curl });
+    seedWorkout(curlWith([12, 12, 12]), { specOverrides: curl });
     mockedMaxes.mockResolvedValueOnce([{ lift: 'Cable Curl', weight: 32.5, dateUpdated: '2026-01-05T00:00:00.000Z' }]);
-    mockedLiftRecords.mockResolvedValueOnce(lastSession([12, 12, 12]));
     const after = await renderPage();
     expect(planned(after.lifts[0])).toEqual(['8@32.5', '8@32.5', '8@32.5']);
-    expect(mockedLiftRecords).toHaveBeenCalledWith('5-3-1');
 
-    seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], { specOverrides: curl });
+    seedWorkout(curlWith([12, 11, 10]), { specOverrides: curl });
     mockedMaxes.mockResolvedValueOnce([{ lift: 'Cable Curl', weight: 30, dateUpdated: '2026-01-01T00:00:00.000Z' }]);
-    mockedLiftRecords.mockResolvedValueOnce(lastSession([12, 11, 10]));
     const before = await renderPage();
     expect(planned(before.lifts[0])).toEqual(['12@30', '11@30', '10@30']);
+    // The last session comes with the workout, not from the macrocycle's records (#1252).
+    expect(mockedLiftRecords).not.toHaveBeenCalled();
   });
 
   const hammerCurl = { progression: 'linear', progressionIncrement: 2.5, repsLow: null, repsHigh: 10 };
@@ -697,19 +693,14 @@ describe('WorkoutLoggingPage — the plan follows the lift’s progression type 
     errSpy.mockRestore();
   });
 
-  it('plans a double lift as right after a bump, and says why, when the records read fails', async () => {
-    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  // The API leaves `lastSession` off when the lift has none.
+  it('plans a double lift as right after a bump when the workout carries no last session', async () => {
     seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], { specOverrides: curl });
     mockedMaxes.mockResolvedValueOnce([{ lift: 'Cable Curl', weight: 30, dateUpdated: '2026-01-01T00:00:00.000Z' }]);
-    mockedLiftRecords.mockRejectedValueOnce(new Error('boom'));
 
     const { lifts } = await renderPage();
 
     expect(planned(lifts[0])).toEqual(['8@30', '8@30', '8@30']);
-    expect(errSpy).toHaveBeenCalledWith(
-      '[WorkoutLoggingPage] lift records read failed, planning double lifts without their last session',
-      expect.any(Error),
-    );
-    errSpy.mockRestore();
+    expect(mockedLiftRecords).not.toHaveBeenCalled();
   });
 });
