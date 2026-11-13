@@ -52,9 +52,6 @@ env:
   ARTIFACT_REPO: lifting-logbook
   REGION: us-central1
   TF_DIR: infra/terraform
-  # The staging lock's own unversioned bucket, created by infra/terraform/ci-locks.tf from the same
-  # project id (#1217). staging.yml derives it the same way.
-  STAGING_LOCK_BUCKET: ${{ vars.GCP_STAGING_PROJECT_ID }}-ci-locks
 
 jobs:
   # ── 0. Preflight: detect which environments are configured ───────────────
@@ -386,7 +383,7 @@ jobs:
       - name: Wait for and take the staging lock
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/staging-env-lock.py acquire --bucket "$STAGING_LOCK_BUCKET" --timeout-min 60 --holder-job "Deploy (staging)"
+        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 60 --holder-job "Deploy (staging)"
 
       # ── Database migrations (ADR-027) ──────────────────────────────────────
       # Mirror of the production migration step (see deploy-production). Applies
@@ -643,7 +640,7 @@ jobs:
       # always(): also on failure or cancellation. Deletes the lock only if this run holds it.
       - name: Release the staging lock
         if: always()
-        run: python3 scripts/staging-env-lock.py release --bucket "$STAGING_LOCK_BUCKET"
+        run: python3 scripts/staging-env-lock.py release --bucket "${{ secrets.TF_STATE_BUCKET }}"
 
   # ── 4. Smoke test staging ────────────────────────────────────────────────
   smoke-test:

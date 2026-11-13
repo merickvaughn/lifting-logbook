@@ -1,13 +1,16 @@
 # ─── Staging environment lock bucket (#1217) ─────────────────────────────────
 # scripts/staging-env-lock.py holds staging from a run's deploy through its integration tests
 # (#1208). It writes, refreshes and deletes small objects many times a day, so it gets its own
-# bucket. It used to write them in the Terraform state bucket. That bucket keeps object versions
-# for state recovery, so every lock write left a noncurrent version that never expired, mixed in
-# with production Terraform state.
+# bucket. It writes them in the Terraform state bucket until #1261. That bucket keeps object
+# versions for state recovery, so every lock write leaves a noncurrent version that never expires,
+# mixed in with production Terraform state.
 #
-# Staging only: production has no lock. staging.yml and deploy.yml derive the name the same way,
-# as `${{ vars.GCP_STAGING_PROJECT_ID }}-ci-locks` (STAGING_LOCK_BUCKET), so keep the two in step.
-# Every staging run applies this before it takes the lock.
+# Staging only: production has no lock. The name is `<project id>-ci-locks`, so workflows can
+# derive it from vars.GCP_STAGING_PROJECT_ID.
+#
+# This lands on main before any workflow uses it (#1260, then #1261). Every PR's staging run
+# applies Terraform from its own branch, so a resource that exists on only one branch is destroyed
+# by the next branch's apply, and a lock in it would vanish mid-run.
 resource "google_storage_bucket" "ci_locks" {
   count = var.environment == "staging" ? 1 : 0
 
