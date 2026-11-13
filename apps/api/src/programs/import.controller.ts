@@ -35,7 +35,6 @@ import {
 } from '@lifting-logbook/types';
 import {
   BUILT_IN_KNOWN_PROGRAMS,
-  ImportPreImage,
   KnownProgram,
   buildSkippedDetail,
   liftRecordLabel,
@@ -1211,15 +1210,16 @@ async function saveBatchGroup(
 ): Promise<string> {
   const groupId = randomUUID();
   const createdAt = new Date();
-  const source = batches.get(sourceProgram);
+  // `writeBreakdown` always gives the Source program a batch; an empty one writes the same row.
+  const source = batches.get(sourceProgram) ?? { preImage: {}, macrocycles: { created: [], extended: [] } };
   await repos.importBatch.save({
     id: groupId,
     userId,
     program: sourceProgram,
     destination: 'lift-records',
-    preImage: source?.preImage ?? {},
+    preImage: source.preImage,
     createdAt,
-    macrocycles: source?.macrocycles ?? null,
+    macrocycles: source.macrocycles,
   });
   for (const [program, { preImage, macrocycles }] of batches) {
     if (program === sourceProgram) continue;

@@ -760,31 +760,33 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
           stretch(rows.filter((r) => (r.day ?? 0) < 20), 'rpt', inProgress),
           stretch(rows.filter((r) => (r.day ?? 0) >= 20), '5-3-1', chosen ? { status: 'overran', statusChosen: true } : inProgress),
         ]);
-      const batches: Array<string | null> = [];
-      for (const [sessions, chosen] of [[3, true], [5, false], [7, false]] as const) {
+      const commitFile = async (sessions: number, chosen: boolean) => {
         const body = await commit(csvOf(file(sessions)), breakdown(file(sessions), chosen));
         expect(body.assigned).toMatchObject(sessions === 3 ? { macrocycles: 2, extended: 0 } : { macrocycles: 0, extended: 2 });
-        batches.push(body.batchId);
-      }
+        return body.batchId;
+      };
+      const firstBatch = await commitFile(3, true);
+      const secondBatch = await commitFile(5, false);
+      const thirdBatch = await commitFile(7, false);
       const span = async (program: string) => (await macrocycles(program)).map((m) => [m.startDate, m.endDate, m.status]);
       expect(await counts()).toEqual({ sets: 7 * 3 + 7 * 2, macrocycles: 2 });
       expect(await span('5-3-1')).toEqual([[at(20), at(32), 'overran']]);
 
       // The middle batch: both runs keep their dates, from the rows on either side of the gap.
-      await undo(batches[1] ?? null);
+      await undo(secondBatch);
       expect(await counts()).toEqual({ sets: 5 * 3 + 5 * 2, macrocycles: 2 });
       expect(await span('rpt')).toEqual([[at(0), at(12), 'abandoned']]);
       expect(await span('5-3-1')).toEqual([[at(20), at(32), 'overran']]);
 
       // The first batch: what's left starts where the last batch's rows do, and the chosen status stays.
-      await undo(batches[0] ?? null);
+      await undo(firstBatch);
       expect(await counts()).toEqual({ sets: 2 * 3 + 2 * 2, macrocycles: 2 });
       expect(await span('rpt')).toEqual([[at(10), at(12), 'abandoned']]);
       expect(await span('5-3-1')).toEqual([[at(30), at(32), 'overran']]);
       expect((await stored('5-3-1')).map((s) => s.date)).toEqual(expect.arrayContaining([at(30), at(32)]));
 
       // The last batch: nothing is left, so both macrocycles go.
-      await undo(batches[2] ?? null);
+      await undo(thirdBatch);
       expect(await counts()).toEqual(before);
     });
   });
