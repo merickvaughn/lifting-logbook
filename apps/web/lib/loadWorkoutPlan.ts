@@ -8,7 +8,8 @@ import { getPreferredUnit } from '@/lib/preferences';
 import { getUserToday } from '@/lib/userToday';
 import { CUSTOM_LIFTS_TIMEOUT_MS, toTimerLiftPlans } from '@/lib/timerPlan';
 import { withTimeout } from '@/lib/with-timeout';
-import { buildLiftDetails } from '@/lib/workoutPlan';
+import { loadProgressionPlans } from '@/lib/loadProgressionPlans';
+import { buildLiftDetails, liftSpecsForWorkout } from '@/lib/workoutPlan';
 import type { WorkoutLiftDetail } from '@/lib/workoutPlan';
 import { effectiveDateOf, statusOf } from '@/lib/workoutStatus';
 import type { WorkoutStatus } from '@/lib/workoutStatus';
@@ -173,7 +174,9 @@ export async function loadWorkoutPlan(
   // that is a failure bound, and 30s of blocked first paint for an optional
   // enrichment is not a useful outcome. `onTimeout` logs distinctly so "slow"
   // and "down" stay tellable apart in the logs. Memoized so a second
-  // `timerLifts()` call cannot arm a second budget.
+  // `timerLifts()` call cannot arm a second budget. The progression read below
+  // calls it too when a lift's row names no type (#1249); that read does wait
+  // on it, so the page has then experienced whatever it logs.
   // fallback-covered-by: apps/web/lib/__tests__/loadWorkoutPlan.test.ts
   let bounded: CustomLifts | undefined;
   const boundedCustomLifts = (): CustomLifts =>
@@ -194,7 +197,20 @@ export async function loadWorkoutPlan(
 
   if (!workout) return null;
 
-  const liftDetails = buildLiftDetails(workout, specs, maxes);
+  // Each lift plans by its progression type, as on the logger, so the two agree (#1249). A
+  // failed read inside plans the lift by its row and logs it under this page's name. Only a lift
+  // whose row names no type reads the settings, and with them the custom lifts: through the same
+  // bounded read the timer classifies with, so the page makes one request and never waits past
+  // the budget for it.
+  const progressions = await loadProgressionPlans(
+    program,
+    workout,
+    liftSpecsForWorkout(workout, specs),
+    maxes,
+    caller,
+    boundedCustomLifts,
+  );
+  const liftDetails = buildLiftDetails(workout, specs, maxes, progressions);
 
   return {
     workout,

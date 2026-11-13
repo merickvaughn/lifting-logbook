@@ -95,7 +95,7 @@ export default async function WorkoutLoggingPage({
   const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
   // What each lift plans by besides its row: its progression type and last session (#1211).
-  const progressions = await loadProgressionPlans(program, workout, liftSpecs, maxes);
+  const progressions = await loadProgressionPlans(program, workout, liftSpecs, maxes, 'WorkoutLoggingPage');
 
   const workoutLifts: LiftData[] = workout.lifts.map((wl, liftIndex) => {
     const tm = maxFor(wl.lift)?.weight ?? 0;

@@ -10,10 +10,14 @@ jest.mock('@/lib/api', () => ({
   fetchTrainingMaxes: jest.fn(),
   fetchCustomLifts: jest.fn(),
   fetchFocusPlan: jest.fn(),
+  // A lift with no spec row reads the progression settings (#1249); none of the lifter's own.
+  fetchAllLiftMetadata: jest.fn().mockResolvedValue([]),
+  fetchLiftRecords: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock('@/lib/active-program', () => ({
   getActiveProgram: jest.fn().mockResolvedValue('5-3-1'),
+  getUserSettings: jest.fn().mockResolvedValue({ defaultProgression: null, defaultWeightIncrement: null }),
 }));
 
 jest.mock('@/lib/preferences', () => ({
@@ -78,6 +82,8 @@ const mockedMaxes = fetchTrainingMaxes as unknown as jest.Mock;
 const mockedCustomLifts = fetchCustomLifts as unknown as jest.Mock;
 const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
 
+// Each row names its type, as every built-in preset's does, so nothing reads the progression
+// settings (#1249); the loader's own tests cover a row that names none.
 function spec(lift: string) {
   return {
     week: 1,
@@ -91,6 +97,7 @@ function spec(lift: string) {
     warmUpPct: '40,50,60',
     wtDecrementPct: 0,
     activation: '',
+    progression: 'amrap_gated' as const,
   };
 }
 
