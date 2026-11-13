@@ -128,11 +128,12 @@ carries no increment.
 
 `resolveProgression` (`packages/core/src/services/maxes/resolveProgression.ts`) uses it as the
 fourth source for a lift's type and rep range, after the program's spec row, the lift's own value
-and the lifter's default, and before the `amrap_gated` fallback. Nothing calls the resolver yet,
-so every lift still progresses by the one `updateMaxes` rule. The per-lift and per-user values
-and the dispatch arrive in later phases of
-[#1206](https://github.com/merickvaughn/lifting-logbook/issues/1206) (see the
-[proposal](proposals/2026-11-10-lift-progression-types.md)).
+and the lifter's default, and before the `amrap_gated` fallback. `updateMaxes` dispatches on its
+result and the workout logger plans by it
+([#1211](https://github.com/merickvaughn/lifting-logbook/issues/1211); see
+[Progression](#progression)). Every built-in program row names `amrap_gated`, so these defaults
+apply to custom rows left blank and to lifts with no spec row
+([proposal](proposals/2026-11-10-lift-progression-types.md)).
 
 ### Modifications change how a lift is performed
 
@@ -440,9 +441,26 @@ branches on `WeekType`:
 
 | `weekType` | Behavior |
 |---|---|
-| `training` | If set 1 met `spec.reps`, new TM = `weight + spec.increment` |
-| `test` | Uses the final set; new TM = that weight, no increment |
-| `deload` | No progression |
+| `training` | By the lift's resolved progression type (below) |
+| `test` | Uses the final set; new TM = that weight, no increment. The same for every type |
+| `deload` | No set moves a max, for every type |
+
+In a training week the type comes from `resolveProgression`
+([#1211](https://github.com/merickvaughn/lifting-logbook/issues/1211)):
+
+| Type | New TM |
+|---|---|
+| `amrap_gated` | If set 1 met the target, `weight + increment`. Every built-in row's type |
+| `linear` | If every set of the session met the target (at least the row's `sets` of them), set 1's `weight + increment` |
+| `double` | As `linear`, with the target the top of the range |
+| `percent_wave` | No set moves it. Once per wave, `TM + increment`: in the last spec week that plans the lift, once per pass through the spec's weeks, when the max is older than that week's first set. A test week ending the wave sets the max by its attempt instead. Off-program, once when `startNewMacrocycle` runs |
+| `manual` | Never |
+
+The target is the row's `reps` inside a program and the resolved `repsHigh` off it; the increment
+is the row's inside a program and the lift's own, then the default's, off it. A lift with no spec
+row whose type needs a target and has none is skipped as `no-target-reps`. Without the lifter's
+settings (a caller that passes none) only a row's own `progression` counts, and a lift with no
+row is skipped as `no-program-spec`, as before #1211.
 
 A computed *reduction* is never auto-applied — it is returned as a `MaxReductionFlag`
 for explicit review.
@@ -455,7 +473,7 @@ Modifications decide which max a set moves, through the same gates:
    ([#1153](https://github.com/merickvaughn/lifting-logbook/issues/1153)). With no max yet, the set
    starts one at its weight plus the increment, or at the attempt in a test week. It needs no lift
    max. `updateMaxes` returns these as `modificationMaxes`, and a reduction is flagged with the
-   `modificationId`.
+   `modificationId`. An own max follows its lift's resolved progression type.
 3. Otherwise, with no modifications or only `lift` ones: the lift's max moves as above. Note that no shipped preset ever sets `weekType`, so in practice
 only the `training` branch runs (divergence D5).
 

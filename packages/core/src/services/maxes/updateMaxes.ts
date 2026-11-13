@@ -1,8 +1,21 @@
-import type { LiftModificationMaxMode } from "@lifting-logbook/types";
+import type { LiftModificationMaxMode, ProgressionType, WeekType } from "@lifting-logbook/types";
 import { LiftingProgramSpec, LiftOverride, LiftRecord, ModificationMax, TrainingMax } from "@src/core/models";
+import { lookupLift, NamedLift } from "../../catalog/builtInLift";
 import { currentMaxLookup, liftIdFor, lookupByLift } from "../../catalog/liftIdentity";
-import { programWorkoutKeys, specRowsForWorkoutDay } from "../../presets/programLengths";
+import {
+  baseSpecMesocycleWeeks,
+  mesocycleWeekForProgramWeek,
+  programWorkoutKeys,
+  specRowsForWorkoutDay,
+} from "../../presets/programLengths";
 import { resolveDayPrescriptions } from "../workout/dayPrescriptions";
+import {
+  LiftProgressionMeta,
+  ResolvedProgression,
+  resolveProgression,
+  storedLiftProgression,
+  UserProgressionDefault,
+} from "./resolveProgression";
 
 const ABNORMAL_KEYWORDS = ['injury', 'unusual stimulus', 'skip'];
 
@@ -21,13 +34,15 @@ export interface MaxReductionFlag {
 }
 
 /**
- * A lift whose records `updateMaxes` left out: it has no training max, or no spec row to
- * progress it by. Imported history often names lifts the program doesn't plan (#1150).
+ * A lift whose records `updateMaxes` left out (#1150): it has no training max; it has no spec
+ * row and no progression settings were given to progress it by; or, off-program, its resolved
+ * type needs a rep target and none resolved (#1211). Imported history often names lifts the
+ * program doesn't plan.
  */
 export interface SkippedLift {
   /** The lift as its first skipped record names it. */
   lift: string;
-  reason: 'no-training-max' | 'no-program-spec';
+  reason: 'no-training-max' | 'no-program-spec' | 'no-target-reps';
 }
 
 export interface UpdateMaxesResult {
@@ -37,6 +52,18 @@ export interface UpdateMaxesResult {
   skipped: SkippedLift[];
   /** Every own max given in `modificationMaxes`, moved where a set moved it, plus any it created (#1153). */
   modificationMaxes: ModificationMax[];
+}
+
+/** The lifter's progression settings, which resolve each lift's type, rep range and increment (#1211). */
+export interface ProgressionSettings {
+  /** The lifter's `lift_metadata` rows. A crossed rep range reads as unset (`storedLiftProgression`). */
+  liftMeta: readonly ({ lift: string } & LiftProgressionMeta)[];
+  /** The lifter's default from Settings; null means the catalog's defaults apply. */
+  userDefault: UserProgressionDefault | null;
+  /** `user_settings.defaultWeightIncrement`, the off-program increment's last fallback. */
+  defaultWeightIncrement: number | null;
+  /** The lifter's custom lifts. A name one of them takes means it, and a custom lift has no catalog default (`lookupLift`). */
+  customLifts: readonly NamedLift[];
 }
 
 export interface UpdateMaxesOptions {
@@ -55,6 +82,18 @@ export interface UpdateMaxesOptions {
    * caller can't leave it out and have an `own` set start that max over, unflagged (#1243).
    */
   modificationMaxes: readonly ModificationMax[];
+  /**
+   * The lifter's progression settings (#1211). With them, a lift's type falls through from its
+   * spec row to its own value, the lifter's default and the catalog's, and a lift with no spec
+   * row progresses by its own target. Without them only a spec row's `progression` applies,
+   * every other row follows `amrap_gated`, and a lift with no spec row is skipped.
+   */
+  progression?: ProgressionSettings;
+  /**
+   * Set when the macrocycle the records belong to is ending (`startNewMacrocycle`). An off-program
+   * `percent_wave` lift has no wave to follow, so its max moves once, then (#1211).
+   */
+  endOfMacrocycle?: boolean;
 }
 
 /**
@@ -73,14 +112,46 @@ function targetOf(
   return own === undefined ? 'lift' : { own };
 }
 
+/** What moves a max for one record: its resolved type and increment, read against its row or its own target. */
+interface Rule {
+  type: ProgressionType;
+  /** The row's; `training` for a lift with no row. */
+  weekType: WeekType;
+  /** The row's set count; undefined for a lift with no row, where every logged set counts. */
+  sets: number | undefined;
+  /** The rep target: the row's `reps`, else the resolved `repsHigh`. */
+  target: number | null;
+  increment: number;
+}
+
+/** The types a session's sets move, by reading a rep target. */
+const NEEDS_TARGET: ReadonlySet<ProgressionType> = new Set(['linear', 'double', 'amrap_gated']);
+
 /**
  * Updates training maxes based on lift records and program spec.
  *
  * Behavior varies by weekType:
- *  - 'training' (default): progression gate is set 1 reps >= spec.reps; new TM = weight + increment.
+ *  - 'training' (default): the max moves by the record's resolved progression type (#1211):
+ *      - `amrap_gated`: set 1 reps >= the target; new TM = weight + increment. Today's rule, and
+ *        what a row with no type follows when no progression settings are given.
+ *      - `linear` and `double`: every set of the session reaches the target (inside a program, at
+ *        least the row's `sets` of them); new TM = set 1's weight + increment. For `double` the
+ *        target is the top of the range.
+ *      - `percent_wave`: no set moves it. The max moves by the increment once per wave: in the
+ *        last spec week that plans the lift, once per pass through the spec's weeks, when the max
+ *        is older than that week's first set; a program that tiles its spec twice has two waves.
+ *        A test week ending a wave sets the max by its attempt instead. Off-program, once at
+ *        `endOfMacrocycle`.
+ *      - `manual`: never.
  *  - 'test': uses final set (setNum === spec.sets); any non-zero reps without abnormal notes → new TM = weight (no increment).
  *            Abnormal-notes fallback: walk backwards through sets until an unaffected set is found.
- *  - 'deload': no progression — returns input maxes unchanged.
+ *            The same for every type.
+ *  - 'deload': no progression — returns input maxes unchanged, for every type.
+ *
+ * The target is the row's `reps` inside a program, and the resolved `repsHigh` off it; the
+ * increment is the row's inside a program and the lift's own, then the default's, off it
+ * (`resolveProgression`). An off-program lift whose type needs a target and has none is
+ * skipped as `no-target-reps`.
  *
  * In both training and test weeks, if the computed new TM would be lower than the current TM,
  * the update is NOT applied. Instead the lift is added to `flagged` so the caller can surface
@@ -95,8 +166,9 @@ function targetOf(
  * lift, or a workout past the program's last day) falls back to the lift's first spec
  * row, as before.
  *
- * A record whose lift has no training max, or no spec row at all, is skipped and listed in
- * `skipped`, so one unplanned lift doesn't stop the rest from progressing (#1150).
+ * A record whose lift has no training max is skipped and listed in `skipped`, so one unplanned
+ * lift doesn't stop the rest from progressing (#1150). So is one with no spec row when no
+ * progression settings are given.
  */
 export function updateMaxes(
   programSpec: LiftingProgramSpec[],
@@ -149,11 +221,87 @@ export function updateMaxes(
     return dayRowFor(record.lift) ?? programSpecFor(record.lift);
   };
 
-  // A test week's final set needs every set of that lift in the same workout,
-  // best attempt first. Grouped once, lazily, on the first such set: each group
-  // keeps input order and is sorted by setNum descending once — a stable sort of
-  // the input-ordered group is exactly what filtering then sorting the whole
-  // list per record produced, without re-walking it for every final set.
+  // The rule a record follows, or why it has none. Without progression settings a row resolves
+  // from its own `progression` alone, and a lift with no row has nothing to follow.
+  const settings = options.progression;
+  const liftMetaFor = lookupByLift((settings?.liftMeta ?? []).map((m) => [m.lift, storedLiftProgression(m)] as const));
+  const catalogFor = (lift: string) => {
+    const { builtIn, custom } = lookupLift(lift, settings?.customLifts ?? []);
+    return custom ? undefined : builtIn;
+  };
+  const resolveRule = (lift: string, spec: LiftingProgramSpec | undefined): Rule | SkippedLift['reason'] => {
+    if (!spec && !settings) return 'no-program-spec';
+    const resolved: ResolvedProgression = settings
+      ? resolveProgression(spec, liftMetaFor(lift), settings.userDefault, catalogFor(lift), settings.defaultWeightIncrement)
+      : resolveProgression(spec, null, null, null);
+    const target = spec ? spec.reps : resolved.repsHigh;
+    if (target === null && NEEDS_TARGET.has(resolved.type)) return 'no-target-reps';
+    return {
+      type: resolved.type,
+      weekType: spec?.weekType ?? 'training',
+      sets: spec?.sets,
+      target,
+      increment: resolved.increment,
+    };
+  };
+  // Resolved once per spec row and lift name, not once per record (as #983 did for the lookups).
+  const rules = new Map<LiftingProgramSpec | undefined, Map<string, Rule | SkippedLift['reason']>>();
+  const ruleFor = (record: LiftRecord, spec: LiftingProgramSpec | undefined): Rule | SkippedLift['reason'] => {
+    let byLift = rules.get(spec);
+    if (!byLift) rules.set(spec, (byLift = new Map()));
+    let rule = byLift.get(record.lift);
+    if (rule === undefined) byLift.set(record.lift, (rule = resolveRule(record.lift, spec)));
+    return rule;
+  };
+
+  // A wave ends with the last spec week that plans the lift, once per pass through the spec's weeks
+  // (#1211), so a lift the final week leaves out still moves. A percent_wave set in that week marks
+  // its pass.
+  const specWeeks = baseSpecMesocycleWeeks(programSpec);
+  const lastSpecWeek = new Map<string, number>();
+  for (const row of programSpec) {
+    const id = liftIdFor(row.lift);
+    lastSpecWeek.set(id, Math.max(lastSpecWeek.get(id) ?? 0, row.week));
+  }
+  const waveOf = (record: LiftRecord, spec: LiftingProgramSpec): number | undefined => {
+    const day = days[record.workoutNum - 1];
+    const last = lastSpecWeek.get(liftIdFor(record.lift)) ?? lastSpecWeek.get(liftIdFor(spec.lift));
+    if (!day || specWeeks === 0 || mesocycleWeekForProgramWeek(day.week, specWeeks) !== last) return undefined;
+    return Math.ceil(day.week / specWeeks);
+  };
+  // Each max's wave bumps, keyed by pass (or `off` for the macrocycle's end off-program), with the
+  // first and last set that ends the wave.
+  type WaveBumps = Map<number | 'off', { first: Date; last: Date; increment: number }>;
+  const time = (date: Date) => new Date(date).getTime();
+  const noteWave = (bumps: WaveBumps, record: LiftRecord, spec: LiftingProgramSpec | undefined, rule: Rule) => {
+    if (rule.type !== 'percent_wave' || rule.weekType === 'test') return;
+    const key = spec ? waveOf(record, spec) : options.endOfMacrocycle ? 'off' : undefined;
+    if (key === undefined) return;
+    const seen = bumps.get(key);
+    if (!seen) {
+      bumps.set(key, { first: record.date, last: record.date, increment: rule.increment });
+      return;
+    }
+    if (time(record.date) < time(seen.first)) seen.first = record.date;
+    if (time(record.date) > time(seen.last)) Object.assign(seen, { last: record.date, increment: rule.increment });
+  };
+  // The bumps in date order, each applied once. A pass bumps a max older than the first set that
+  // ends it, so recalculating midway through the wave's last week and again after it moves the max
+  // once. The macrocycle's end bumps a max older than its last set, so a re-run is a no-op.
+  const applyWaves = (bumps: WaveBumps | undefined, max: { weight: number; dateUpdated: Date } | undefined) => {
+    if (!bumps || !max) return;
+    const ordered = [...bumps.entries()].sort(([, a], [, b]) => time(a.last) - time(b.last));
+    for (const [key, { first, last, increment }] of ordered) {
+      if (time(key === 'off' ? last : first) <= time(max.dateUpdated)) continue;
+      max.weight += increment;
+      max.dateUpdated = last;
+    }
+  };
+
+  // A session's sets need every set of that lift in the same workout, best attempt first.
+  // Grouped once, lazily, on the first such set: each group keeps input order and is sorted by
+  // setNum descending once — a stable sort of the input-ordered group is exactly what filtering
+  // then sorting the whole list per record produced, without re-walking it for every final set.
   // Keyed by the max a set reads, so sets count as one lift exactly when they share a max.
   let setsByMaxAndWorkout: Map<TrainingMax, Map<number, LiftRecord[]>> | null = null;
   const setsFor = (max: TrainingMax, workoutNum: number): LiftRecord[] => {
@@ -178,15 +326,21 @@ export function updateMaxes(
     return setsByMaxAndWorkout.get(max)?.get(workoutNum) ?? [];
   };
 
+  const liftWaves = new Map<TrainingMax, WaveBumps>();
   progressed.forEach((record) => {
     const liftName = record.lift;
     const currentMax = maxFor(liftName);
     if (!currentMax) return skip(liftName, 'no-training-max');
 
     const spec = specFor(record);
-    if (!spec) return skip(liftName, 'no-program-spec');
+    const rule = ruleFor(record, spec);
+    if (typeof rule === 'string') return skip(liftName, rule);
 
-    const next = proposedMax(record, spec, currentMax, () => setsFor(currentMax, record.workoutNum));
+    let bumps = liftWaves.get(currentMax);
+    if (!bumps) liftWaves.set(currentMax, (bumps = new Map()));
+    noteWave(bumps, record, spec, rule);
+
+    const next = proposedMax(record, rule, currentMax, () => setsFor(currentMax, record.workoutNum));
     if (!next) return;
     if (next.weight < currentMax.weight) {
       flagged.push({ lift: currentMax.lift, currentWeight: currentMax.weight, proposedWeight: next.weight });
@@ -195,9 +349,11 @@ export function updateMaxes(
       currentMax.dateUpdated = next.date;
     }
   });
+  for (const [max, bumps] of liftWaves) applyWaves(bumps, max);
 
   // A set with an `own` modification moves that modification's max under the same gates, and needs
-  // no lift max (#1153). With no own max yet, its first qualifying set creates one.
+  // no lift max (#1153). With no own max yet, its first qualifying set creates one. It follows its
+  // lift's resolved progression.
   const ownMaxes = new Map<string, ModificationMax>(
     options.modificationMaxes.map((m) => [m.modificationId, { ...m }]),
   );
@@ -205,20 +361,26 @@ export function updateMaxes(
     const target = r.occurrence ? undefined : targetOf(r, options.modificationModes);
     return typeof target === 'object' ? [{ record: r, id: target.own }] : [];
   });
-  // A test week's sets of one own max in one workout, best attempt first. Few sets carry an own
-  // modification, so this filters per final set rather than grouping up front.
+  // A session's sets of one own max in one workout, best attempt first. Few sets carry an own
+  // modification, so this filters per set rather than grouping up front.
   const ownSetsFor = (id: string, workoutNum: number): LiftRecord[] =>
     ownSets
       .filter((s) => s.id === id && s.record.workoutNum === workoutNum)
       .map((s) => s.record)
       .sort((a, b) => b.setNum - a.setNum);
 
+  const ownWaves = new Map<string, WaveBumps>();
   ownSets.forEach(({ record, id }) => {
     const spec = specFor(record);
-    if (!spec) return skip(record.lift, 'no-program-spec');
+    const rule = ruleFor(record, spec);
+    if (typeof rule === 'string') return skip(record.lift, rule);
+
+    let bumps = ownWaves.get(id);
+    if (!bumps) ownWaves.set(id, (bumps = new Map()));
+    noteWave(bumps, record, spec, rule);
 
     const current = ownMaxes.get(id);
-    const next = proposedMax(record, spec, current, () => ownSetsFor(id, record.workoutNum));
+    const next = proposedMax(record, rule, current, () => ownSetsFor(id, record.workoutNum));
     if (!next) return;
     if (!current) {
       ownMaxes.set(id, { modificationId: id, weight: next.weight, dateUpdated: next.date });
@@ -229,39 +391,48 @@ export function updateMaxes(
       current.dateUpdated = next.date;
     }
   });
+  // An own max not created yet has nothing for a wave to move.
+  for (const [id, bumps] of ownWaves) applyWaves(bumps, ownMaxes.get(id));
 
   return { maxes: newMaxes, flagged, skipped, modificationMaxes: [...ownMaxes.values()] };
 }
 
 /**
- * The max `record` would set, under its spec row's week type, or undefined when it sets none.
+ * The max `record` would set under its rule, or undefined when it sets none.
  * `current` is the max it moves: undefined for an own max not created yet, which any qualifying set
- * is newer than. `weekSets` gives a test week's sets of that max in the workout, best attempt first.
+ * is newer than. `sessionSets` gives that max's sets in the record's workout, best attempt first.
  */
 function proposedMax(
   record: LiftRecord,
-  spec: LiftingProgramSpec,
+  rule: Rule,
   current: { dateUpdated: Date } | undefined,
-  weekSets: () => LiftRecord[],
+  sessionSets: () => LiftRecord[],
 ): { weight: number; date: Date } | undefined {
   const newer = (date: Date) =>
     !current || new Date(date).getTime() > new Date(current.dateUpdated).getTime();
-  const weekType = spec.weekType ?? 'training';
 
-  if (weekType === 'deload') return undefined;
+  if (rule.weekType === 'deload') return undefined;
 
-  if (weekType === 'test') {
+  if (rule.weekType === 'test') {
     // Only process when we see the final set, then walk backwards to find the best
     // unaffected set (in case the final set was flagged as abnormal).
-    if (record.setNum !== spec.sets) return undefined;
-    const candidate = weekSets().find((r) => r.reps > 0 && !isAbnormal(r.notes));
+    if (record.setNum !== rule.sets) return undefined;
+    const candidate = sessionSets().find((r) => r.reps > 0 && !isAbnormal(r.notes));
     return candidate && newer(candidate.date) ? { weight: candidate.weight, date: candidate.date } : undefined;
   }
 
-  // training week: process set 1 only
-  if (record.setNum !== 1) return undefined;
-  if (record.reps < spec.reps || !newer(record.date)) return undefined;
-  const updatedWeight = record.weight + spec.increment;
+  // training week: set 1 decides, for the types a set moves (not manual, percent_wave or rpe)
+  if (!NEEDS_TARGET.has(rule.type)) return undefined;
+  if (record.setNum !== 1 || rule.target === null || !newer(record.date)) return undefined;
+  if (rule.type === 'amrap_gated') {
+    if (record.reps < rule.target) return undefined;
+  } else {
+    // linear and double: every set of the session reaches the target, and none is missing.
+    const target = rule.target;
+    const sets = sessionSets();
+    if (sets.length < (rule.sets ?? 1) || sets.some((s) => s.reps < target)) return undefined;
+  }
+  const updatedWeight = record.weight + rule.increment;
   if (typeof updatedWeight !== "number" || isNaN(updatedWeight)) {
     throw new Error(`Updated weight for ${record.lift} is not a valid number: ${updatedWeight}`);
   }

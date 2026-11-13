@@ -29,6 +29,8 @@ export interface WorkoutSetDraft {
    * existed, which then counts as typed when it differs from the plan.
    */
   weightTyped?: boolean;
+  /** Whether the lifter typed `reps`, which a `double` lift's re-plan can change (#1211); as `weightTyped`. */
+  repsTyped?: boolean;
 }
 
 const KEY_PREFIX = 'workout-draft';
@@ -68,7 +70,8 @@ function isDraftShape(value: unknown): value is WorkoutSetDraft {
     typeof v.weight === 'string' &&
     typeof v.reps === 'string' &&
     typeof v.notes === 'string' &&
-    (v.weightTyped === undefined || typeof v.weightTyped === 'boolean')
+    (v.weightTyped === undefined || typeof v.weightTyped === 'boolean') &&
+    (v.repsTyped === undefined || typeof v.repsTyped === 'boolean')
   );
 }
 

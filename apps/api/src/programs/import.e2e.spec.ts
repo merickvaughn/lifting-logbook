@@ -148,9 +148,13 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
         payload: JSON.stringify({ macrocycleDate: '2026-01-05' }),
       });
       expect(init.statusCode).toBe(201);
+      // Every set of the row's three meets its 8 reps, so Bench Press moves whichever type its
+      // blank row resolves to: the catalog's linear, since #1211.
       const records = [
         'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
         `${BENCH_PROGRAM},1,1,2026-01-05,Bench P.,1,200,8,`,
+        `${BENCH_PROGRAM},1,1,2026-01-05,Bench P.,2,200,8,`,
+        `${BENCH_PROGRAM},1,1,2026-01-05,Bench P.,3,200,8,`,
       ].join('\n');
       expect((await importCsv(BENCH_PROGRAM, records, '?mode=commit&destination=lift-records')).statusCode).toBe(200);
 
@@ -160,7 +164,11 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
 
       const workout = (await inject('GET', '/workouts/1')).json();
       expect(workout.lifts).toEqual([
-        expect.objectContaining({ lift: 'Bench Press', planned: false, sets: [expect.objectContaining({ weight: 200 })] }),
+        expect.objectContaining({
+          lift: 'Bench Press',
+          planned: false,
+          sets: [1, 2, 3].map((setNum) => expect.objectContaining({ setNum, weight: 200 })),
+        }),
       ]);
 
       const recalc = await inject('POST', '/training-maxes/recalculate');
@@ -190,9 +198,13 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       });
       expect(init.statusCode).toBe(201);
       // Deadlift is a catalog lift, but this program has no spec row or training max for it.
+      // Bench Press logs all three of its row's sets, so it moves under the catalog's linear,
+      // which its blank row resolves to since #1211.
       const records = [
         'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
         `${PROGRAM},1,1,2026-01-05,Bench Press,1,200,8,`,
+        `${PROGRAM},1,1,2026-01-05,Bench Press,2,200,8,`,
+        `${PROGRAM},1,1,2026-01-05,Bench Press,3,200,8,`,
         `${PROGRAM},1,1,2026-01-05,Deadlift,1,185,5,`,
         `${PROGRAM},1,1,2026-01-05,Deadlift,2,185,5,`,
       ].join('\n');

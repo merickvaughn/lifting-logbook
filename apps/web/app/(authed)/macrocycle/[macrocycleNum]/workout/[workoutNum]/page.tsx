@@ -15,6 +15,7 @@ import {
   fetchWorkout,
 } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
+import { loadProgressionPlans } from '@/lib/loadProgressionPlans';
 import { loadFocusPlan } from '@/lib/loadWorkoutPlan';
 import { movedWorkoutPath } from '@/lib/macrocycleUrl';
 import { getPreferredUnit } from '@/lib/preferences';
@@ -93,6 +94,8 @@ export default async function WorkoutLoggingPage({
 
   const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
+  // What each lift plans by besides its row: its progression type and last session (#1211).
+  const progressions = await loadProgressionPlans(program, workout, liftSpecs, maxes);
 
   const workoutLifts: LiftData[] = workout.lifts.map((wl, liftIndex) => {
     const tm = maxFor(wl.lift)?.weight ?? 0;
@@ -105,7 +108,10 @@ export default async function WorkoutLoggingPage({
     // The plan comes from the spec, the same as on the details page: the API sends
     // an unlogged planned lift with no sets, and a partly logged lift with only the
     // sets logged so far (#1080). An `own` toggle re-plans it in the logger (#1153).
-    const { warmUpSets, workSets } = liftSets(planLift(spec, tm));
+    // Its progression type shapes it here too: a `double` lift plans its range, and a lift
+    // with no row on `linear` or `amrap_gated` plans its `repsHigh` (#1211).
+    const progression = progressions[liftIndex];
+    const { warmUpSets, workSets } = liftSets(planLift(spec, tm, { progression }));
 
     // `planned: false` is the API's contract for "these sets are logged records".
     // Each brings its own record id and notes (issue #978), so the page no longer
@@ -150,7 +156,7 @@ export default async function WorkoutLoggingPage({
       warmUpImplement: bwComponent ? WARMUP_IMPLEMENT[wl.lift] : undefined,
       warmUpSets,
       workingSets,
-      ...(spec && { plan: { spec, liftMax: tm } }),
+      ...(spec && { plan: { spec, liftMax: tm, ...(progression && { progression }) } }),
     };
   });
 

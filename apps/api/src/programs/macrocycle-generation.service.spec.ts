@@ -24,6 +24,8 @@ import { InMemoryTrainingMaxHistoryRepository } from '../adapters/in-memory/trai
 import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
 import { InMemoryImportBatchRepository } from '../adapters/in-memory/import-batch.adapter';
 import { InMemoryLiftModificationRepository } from '../adapters/in-memory/lift-modification.adapter';
+import { InMemoryLiftMetadataRepository } from '../adapters/in-memory/lift-metadata.adapter';
+import { InMemoryCustomLiftRepository } from '../adapters/in-memory/custom-lift.adapter';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { buildHistoryEntries, MacrocycleGenerationService } from './macrocycle-generation.service';
 
@@ -51,6 +53,9 @@ const stubProgramSpec = () => [
     warmUpPct: '0.4,0.5,0.6',
     wtDecrementPct: 0.1,
     activation: 'compound',
+    // Every preset row carries amrap_gated (packages/core/src/presets/index.ts), so the
+    // lifter's settings and the catalog's defaults never change how it progresses (#1211).
+    progression: 'amrap_gated' as const,
   },
 ];
 
@@ -104,6 +109,8 @@ describe('MacrocycleGenerationService', () => {
     workoutLiftOverride: jest.Mocked<IWorkoutLiftOverrideRepository>;
     workoutDateOverride: jest.Mocked<IWorkoutDateOverrideRepository>;
     liftModification: InMemoryLiftModificationRepository;
+    liftMetadata: InMemoryLiftMetadataRepository;
+    customLift: InMemoryCustomLiftRepository;
   };
 
   beforeEach(() => {
@@ -175,6 +182,8 @@ describe('MacrocycleGenerationService', () => {
       workoutLiftOverride: workoutLiftOverrideRepo,
       workoutDateOverride: workoutDateOverrideRepo,
       liftModification: new InMemoryLiftModificationRepository('user-1', new Map()),
+      liftMetadata: new InMemoryLiftMetadataRepository(),
+      customLift: new InMemoryCustomLiftRepository('user-1'),
     };
     service = new MacrocycleGenerationService();
   });
@@ -472,7 +481,7 @@ describe('MacrocycleGenerationService', () => {
         ]);
         expect(warnSpy).toHaveBeenCalledTimes(1);
         expect(warnSpy).toHaveBeenCalledWith(
-          { program: PROGRAM, macrocycleNum: 1, lift: 'Zercher Squat', reason: 'no-training-max' },
+          { program: PROGRAM, macrocycleNum: 1, lift: 'Zercher Squat', liftId: 'Zercher Squat', reason: 'no-training-max' },
           expect.stringContaining('#1150'),
         );
       } finally {
@@ -857,6 +866,87 @@ describe('MacrocycleGenerationService', () => {
       expect(trainingMaxRepo.deleteAllTrainingMaxes).not.toHaveBeenCalled();
     });
 
+  });
+
+  // updateMaxes resolves each lift's progression from the lifter's own settings (#1211). The
+  // program plans only Squat, so the curls below are off-program and progress by their own target.
+  describe("the lifter's progression settings (#1211)", () => {
+    const curlSets = (lift: string, reps: number[]) =>
+      reps.map((r, i) => ({
+        program: PROGRAM,
+        macrocycleNum: 1,
+        workoutNum: 1,
+        date: new Date('2026-04-20T00:00:00.000Z'),
+        lift,
+        setNum: i + 1,
+        weight: 40,
+        reps: r,
+        notes: '',
+      }));
+    const curlMax = (lift: string) => ({ lift, weight: 40, dateUpdated: new Date('2026-04-18T00:00:00.000Z') });
+
+    beforeEach(() => {
+      macrocycleDashboardRepo.getMacrocycleDashboard.mockResolvedValue(stubDashboard());
+      programSpecRepo.getProgramSpec.mockResolvedValue(stubProgramSpec());
+    });
+
+    it("progresses an off-program lift by its lift_metadata target and increment", async () => {
+      await repos.liftMetadata.upsertMetadata('Hammer Curl', { progression: 'linear', repsHigh: 10, progressionIncrement: 2.5 });
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue([...stubTrainingMaxes(), curlMax('Hammer Curl')]);
+      liftRecordRepo.getLiftRecords.mockResolvedValue([...stubLiftRecords(), ...curlSets('Hammer Curl', [10, 10])]);
+
+      const result = await service.recalculateMaxes(repos, PROGRAM);
+
+      expect(result.maxes).toEqual([
+        expect.objectContaining({ lift: 'Squat', weight: 270 }),
+        expect.objectContaining({ lift: 'Hammer Curl', weight: 42.5 }),
+      ]);
+      expect(result.skipped).toEqual([]);
+    });
+
+    it("reports and logs, with the lift's id, an off-program lift with no rep target", async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      // A custom lift has no catalog default, and the lifter's default names a type but no target.
+      userSettingsRepo.getSettings.mockResolvedValue({
+        activeProgram: null,
+        workoutSchedule: null,
+        defaultWeightIncrement: null,
+        defaultProgression: { type: 'linear' },
+      } as Awaited<ReturnType<IUserSettingsRepository['getSettings']>>);
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue([...stubTrainingMaxes(), curlMax('Landmine Press')]);
+      liftRecordRepo.getLiftRecords.mockResolvedValue([...stubLiftRecords(), ...curlSets('Landmine Press', [10, 10])]);
+
+      try {
+        const result = await service.recalculateMaxes(repos, PROGRAM);
+
+        expect(result.skipped).toEqual([{ lift: 'Landmine Press', reason: 'no-target-reps' }]);
+        expect(result.maxes).toEqual([
+          expect.objectContaining({ lift: 'Squat', weight: 270 }),
+          expect.objectContaining({ lift: 'Landmine Press', weight: 40 }),
+        ]);
+        expect(warnSpy).toHaveBeenCalledWith(
+          { program: PROGRAM, macrocycleNum: 1, lift: 'Landmine Press', liftId: 'Landmine Press', reason: 'no-target-reps' },
+          expect.stringContaining('#1211'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('bumps an off-program percent_wave lift once when a macrocycle starts, and not on a recalculation', async () => {
+      await repos.liftMetadata.upsertMetadata('Hammer Curl', { progression: 'percent_wave', progressionIncrement: 2.5 });
+      trainingMaxRepo.getTrainingMaxes.mockResolvedValue([...stubTrainingMaxes(), curlMax('Hammer Curl')]);
+      liftRecordRepo.getLiftRecords.mockResolvedValue([...stubLiftRecords(), ...curlSets('Hammer Curl', [8, 8])]);
+
+      const recalculated = await service.recalculateMaxes(repos, PROGRAM);
+      expect(recalculated.maxes).toContainEqual(expect.objectContaining({ lift: 'Hammer Curl', weight: 40 }));
+
+      await service.startNewMacrocycle(repos, PROGRAM);
+      expect(trainingMaxRepo.saveTrainingMaxes).toHaveBeenLastCalledWith(PROGRAM, [
+        expect.objectContaining({ lift: 'Squat', weight: 270 }),
+        expect.objectContaining({ lift: 'Hammer Curl', weight: 42.5 }),
+      ]);
+    });
   });
 
   describe('recalculateMaxes', () => {

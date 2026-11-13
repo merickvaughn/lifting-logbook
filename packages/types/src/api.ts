@@ -26,8 +26,11 @@ export interface MaxReductionFlagResponse {
 export interface SkippedLiftResponse {
   /** The lift as its records name it. */
   lift: LiftName;
-  /** It has no training max, or the program has no spec row for it. */
-  reason: 'no-training-max' | 'no-program-spec';
+  /**
+   * It has no training max; the program has no spec row for it and nothing else gave it a rule;
+   * or, off-program, its progression type needs a rep target and none resolved (#1211).
+   */
+  reason: 'no-training-max' | 'no-program-spec' | 'no-target-reps';
 }
 
 /** Response from POST /training-maxes/recalculate. */
@@ -35,7 +38,7 @@ export interface RecalculateMaxesResponse {
   maxes: TrainingMaxResponse[];
   /** Lifts whose computed new TM would be lower than the current TM — not auto-applied. */
   flagged: MaxReductionFlagResponse[];
-  /** Lifts with logged sets but no training max or spec row, so nothing progressed them. */
+  /** Lifts with logged sets that nothing progressed: no training max, or no rule or rep target to progress them by. */
   skipped: SkippedLiftResponse[];
 }
 

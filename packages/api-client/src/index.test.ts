@@ -81,6 +81,15 @@ describe('createApiClient', () => {
       expect(url).toBe('http://api.test/lifts/Front%20Squat%2FVariant/metadata');
     });
 
+    it('lists every lift metadata row from one path', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+      const client = makeClient();
+      await expect(client.fetchAllLiftMetadata()).resolves.toEqual([]);
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/lifts/metadata');
+      expect((init as { cache?: string }).cache).toBe('no-store');
+    });
+
     it('forwards the Next.js revalidate directive for cacheable reads', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
       const client = makeClient();

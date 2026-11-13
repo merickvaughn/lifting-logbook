@@ -9,16 +9,20 @@ jest.mock('@/lib/api', () => ({
   // No modification has a max of its own unless a test says otherwise (#1153).
   fetchModificationMaxes: jest.fn().mockResolvedValue([]),
   fetchLatestBodyWeight: jest.fn().mockResolvedValue(null),
-  // Not imported by the page any more (issue #978); kept on the mock so the
-  // assertion below can prove the whole-macrocycle refetch is gone rather than
-  // merely unmocked.
-  fetchLiftRecords: jest.fn(),
+  // Read only to find a `double` lift's last session (#1211), never to recover set ids (issue
+  // #978); the assertion below proves the latter.
+  fetchLiftRecords: jest.fn().mockResolvedValue([]),
   // No active focus block unless a test says otherwise.
   fetchFocusPlan: jest.fn().mockResolvedValue({ groups: [] }),
+  // No progression settings of the lifter's own unless a test says otherwise, so a lift
+  // follows its row, then the catalog's default (#1211).
+  fetchCustomLifts: jest.fn().mockResolvedValue([]),
+  fetchAllLiftMetadata: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock('@/lib/active-program', () => ({
   getActiveProgram: jest.fn().mockResolvedValue('5-3-1'),
+  getUserSettings: jest.fn().mockResolvedValue({ defaultProgression: null, defaultWeightIncrement: null }),
 }));
 
 jest.mock('@/lib/preferences', () => ({
@@ -62,6 +66,7 @@ jest.mock('./WorkoutLogger', () => ({
 }));
 
 import { emptyFocusDayState } from '@lifting-logbook/types';
+import type { LiftingProgramSpecResponse } from '@lifting-logbook/types';
 import { validateTrainingMaxImport, type TrainingMax } from '@lifting-logbook/core';
 import {
   fetchWorkout,
@@ -70,7 +75,10 @@ import {
   fetchLiftRecords,
   fetchFocusPlan,
   fetchModificationMaxes,
+  fetchAllLiftMetadata,
 } from '@/lib/api';
+import { getUserSettings } from '@/lib/active-program';
+import { getUserToday } from '@/lib/userToday';
 import { focusPlan, planGroup, planItem } from '@/lib/__tests__/focusPlanFixture';
 import WorkoutLoggingPage from './page';
 
@@ -80,6 +88,9 @@ const mockedMaxes = fetchTrainingMaxes as unknown as jest.Mock;
 const mockedLiftRecords = fetchLiftRecords as unknown as jest.Mock;
 const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
 const mockedModificationMaxes = fetchModificationMaxes as unknown as jest.Mock;
+const mockedLiftMetadata = fetchAllLiftMetadata as unknown as jest.Mock;
+const mockedUserSettings = getUserSettings as unknown as jest.Mock;
+const mockedUserToday = getUserToday as unknown as jest.Mock;
 
 function spec(lift: string) {
   return {
@@ -103,7 +114,7 @@ const LOGGED_SET = { id: '5-3-1-1-1-20260106-Squat-1', setNum: 1, weight: 200, r
 // spec-shaped sets, which the real API never sends.
 function seedWorkout(
   lifts: { lift: string; planned: boolean; sets: Record<string, unknown>[]; occurrence?: number }[],
-  { skipped = false, specOverrides = {} }: { skipped?: boolean; specOverrides?: Partial<ReturnType<typeof spec>> } = {},
+  { skipped = false, specOverrides = {} }: { skipped?: boolean; specOverrides?: Partial<LiftingProgramSpecResponse> } = {},
 ) {
   mockedWorkout.mockResolvedValue({
     program: '5-3-1',
@@ -544,7 +555,12 @@ describe('WorkoutLoggingPage — what an own-max toggle re-plans from (#1153)', 
 
     expect(mockedModificationMaxes).toHaveBeenCalledWith('5-3-1');
     expect(ownMaxes).toEqual({ 'm-wide': 150 });
-    expect(lifts[0]?.plan).toEqual({ spec: spec('Squat'), liftMax: 200 });
+    // The row names no type, so Squat follows the catalog's linear 5 (#1211).
+    expect(lifts[0]?.plan).toEqual({
+      spec: spec('Squat'),
+      liftMax: 200,
+      progression: { rule: { type: 'linear', repsLow: null, repsHigh: 5, increment: 5 } },
+    });
   });
 
   it('gives a lift with no spec row nothing to re-plan from', async () => {
@@ -567,6 +583,131 @@ describe('WorkoutLoggingPage — what an own-max toggle re-plans from (#1153)', 
     expect(lifts[0]?.workingSets.map((s) => s.totalLoad)).toEqual([200]);
     expect(errSpy).toHaveBeenCalledWith(
       '[WorkoutLoggingPage] own max fetch failed, planning from the lifts’ maxes',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
+  });
+});
+
+// The logger plans by each lift's progression type (#1211). Cable Curl on double, range 8–12:
+// 12,12,12 at 30 moved its max to 32.5, so the next plan is 3×8 at 32.5; before that move it
+// repeats last session's reps at 30.
+describe('WorkoutLoggingPage — the plan follows the lift’s progression type (#1211)', () => {
+  const curl = { sets: 3, reps: 12, repsLow: 8, progression: 'double' as const, increment: 2.5, warmUpPct: '' };
+  const lastSession = (reps: number[]) =>
+    reps.map((r, i) => ({
+      id: `curl-${i + 1}`,
+      program: '5-3-1',
+      macrocycleNum: 1,
+      workoutNum: 4,
+      date: '2026-01-05',
+      lift: 'Cable Curl',
+      setNum: i + 1,
+      weight: 30,
+      reps: r,
+      notes: '',
+    }));
+  const planned = (lift: LiftData | undefined) => lift?.workingSets.map((s) => `${s.reps}@${s.totalLoad}`);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('plans the Cable Curl double at 3×8 after the bump, and last session’s reps before it', async () => {
+    seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], { specOverrides: curl });
+    mockedMaxes.mockResolvedValueOnce([{ lift: 'Cable Curl', weight: 32.5, dateUpdated: '2026-01-05T00:00:00.000Z' }]);
+    mockedLiftRecords.mockResolvedValueOnce(lastSession([12, 12, 12]));
+    const after = await renderPage();
+    expect(planned(after.lifts[0])).toEqual(['8@32.5', '8@32.5', '8@32.5']);
+    expect(mockedLiftRecords).toHaveBeenCalledWith('5-3-1');
+
+    seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], { specOverrides: curl });
+    mockedMaxes.mockResolvedValueOnce([{ lift: 'Cable Curl', weight: 30, dateUpdated: '2026-01-01T00:00:00.000Z' }]);
+    mockedLiftRecords.mockResolvedValueOnce(lastSession([12, 11, 10]));
+    const before = await renderPage();
+    expect(planned(before.lifts[0])).toEqual(['12@30', '11@30', '10@30']);
+  });
+
+  const hammerCurl = { progression: 'linear', progressionIncrement: 2.5, repsLow: null, repsHigh: 10 };
+
+  it('plans an off-program linear lift at its repsHigh', async () => {
+    seedWorkout([{ lift: 'Hammer Curl', planned: true, sets: [] }]);
+    mockedSpec.mockResolvedValue([]);
+    mockedLiftMetadata.mockResolvedValueOnce([{ lift: 'Hammer Curl', ...hammerCurl }]);
+
+    const { lifts } = await renderPage();
+
+    expect(planned(lifts[0])).toEqual(['10@200', '10@200', '10@200']);
+    // Nothing reads its last session: it isn't on double.
+    expect(mockedLiftRecords).not.toHaveBeenCalled();
+    expect(lifts[0]).not.toHaveProperty('plan');
+  });
+
+  it("finds a lift's settings under another spelling, as updateMaxes does", async () => {
+    seedWorkout([{ lift: 'Bench P.', planned: true, sets: [] }]);
+    mockedSpec.mockResolvedValue([]);
+    mockedLiftMetadata.mockResolvedValueOnce([{ lift: 'Bench Press', ...hammerCurl, repsHigh: 8 }]);
+
+    const { lifts } = await renderPage();
+
+    expect(planned(lifts[0])).toEqual(['8@200', '8@200', '8@200']);
+  });
+
+  it('keeps a finished workout read-only when it logged an off-program lift', async () => {
+    const set = (setNum: number) => ({ ...LOGGED_SET, id: `hammer-${setNum}`, setNum, reps: 10 });
+    seedWorkout([{ lift: 'Hammer Curl', planned: false, sets: [set(1), set(2)] }]);
+    mockedSpec.mockResolvedValue([]);
+    mockedLiftMetadata.mockResolvedValueOnce([{ lift: 'Hammer Curl', ...hammerCurl }]);
+
+    const { lifts, readOnly } = await renderPage();
+
+    expect(lifts[0]?.workingSets.map((s) => s.setNum)).toEqual([1, 2]);
+    expect(readOnly).toBe(true);
+  });
+
+  it("still plans the sets left of an off-program lift logged partway through today's workout", async () => {
+    seedWorkout([{ lift: 'Hammer Curl', planned: false, sets: [{ ...LOGGED_SET, id: 'hammer-1', reps: 10 }] }]);
+    mockedSpec.mockResolvedValue([]);
+    mockedLiftMetadata.mockResolvedValueOnce([{ lift: 'Hammer Curl', ...hammerCurl }]);
+    // The workout is dated today.
+    mockedUserToday.mockResolvedValue('2026-01-06');
+    const { lifts, readOnly } = await renderPage().finally(() => mockedUserToday.mockResolvedValue('2026-10-30'));
+
+    expect(lifts[0]?.workingSets.map((s) => [s.setNum, Boolean(s.existing)])).toEqual([
+      [1, true],
+      [2, false],
+      [3, false],
+    ]);
+    expect(readOnly).toBe(false);
+  });
+
+  it('plans by each row and the catalog, and says why, when the settings read fails', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], { specOverrides: { ...curl, progression: undefined } });
+    mockedUserSettings.mockRejectedValueOnce(new Error('boom'));
+
+    const { lifts } = await renderPage();
+
+    // The row names no type, so Cable Curl follows the catalog's double: the bottom of its range.
+    expect(planned(lifts[0])).toEqual(['8@200', '8@200', '8@200']);
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutLoggingPage] progression settings read failed, planning each lift by its row and the catalog',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
+  });
+
+  it('plans a double lift as right after a bump, and says why, when the records read fails', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], { specOverrides: curl });
+    mockedMaxes.mockResolvedValueOnce([{ lift: 'Cable Curl', weight: 30, dateUpdated: '2026-01-01T00:00:00.000Z' }]);
+    mockedLiftRecords.mockRejectedValueOnce(new Error('boom'));
+
+    const { lifts } = await renderPage();
+
+    expect(planned(lifts[0])).toEqual(['8@30', '8@30', '8@30']);
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutLoggingPage] lift records read failed, planning double lifts without their last session',
       expect.any(Error),
     );
     errSpy.mockRestore();

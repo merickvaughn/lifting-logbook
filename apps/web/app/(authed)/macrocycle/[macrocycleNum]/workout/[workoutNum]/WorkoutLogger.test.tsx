@@ -291,8 +291,9 @@ describe('WorkoutLogger — in-progress set draft persistence (#878)', () => {
 
     const raw = window.localStorage.getItem(DRAFT_KEY);
     if (raw === null) throw new Error('expected a draft to be persisted');
-    // The weight was typed, which the draft records so a re-plan leaves it (#1153).
-    expect(JSON.parse(raw)).toEqual({ weight: '225', reps: '5', notes: '', weightTyped: true });
+    // The weight was typed, which the draft records so a re-plan leaves it (#1153); the reps
+    // weren't, so a re-plan may change them (#1211).
+    expect(JSON.parse(raw)).toEqual({ weight: '225', reps: '5', notes: '', weightTyped: true, repsTyped: false });
   });
 
   it('restores an in-progress set after a full remount (simulating a reload)', async () => {
@@ -1061,6 +1062,41 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
       await user.click(screen.getByRole('button', { name: 'Close grip', pressed: true }));
       expect(weights()).toEqual(['200', '160']);
       expect(warmUp()).toBe('100 lbs × 5');
+    });
+
+    it("re-plans a double lift's reps to the bottom of its range from an own max (#1211)", async () => {
+      const user = userEvent.setup();
+      mockFetchLiftModifications.mockResolvedValue([WIDE]);
+      // Before the lift's bump it repeats last session's 12, 11; the own max has no session to beat.
+      const doubleLift = makeLift({
+        warmUpSets: [{ reps: 5, totalLoad: 100 }],
+        workingSets: [
+          { setNum: 1, totalLoad: 200, reps: 12, amrap: false },
+          { setNum: 2, totalLoad: 200, reps: 11, amrap: false },
+        ],
+        plan: {
+          spec: { ...SPEC, reps: 12, repsLow: 8, progression: 'double' },
+          liftMax: 200,
+          progression: {
+            rule: { type: 'double', repsLow: 8, repsHigh: 12, increment: 5 },
+            maxDate: '2026-01-01T00:00:00.000Z',
+            lastSession: { date: '2026-01-05', reps: [12, 11] },
+          },
+        },
+      });
+      render(<WorkoutLogger {...makeProps({ lifts: [doubleLift], ownMaxes: { 'm-wide': 150 } })} />);
+      const reps = () => screen.getAllByLabelText('Reps').map((i) => (i as HTMLInputElement).value);
+      expect(reps()).toEqual(['12', '11']);
+
+      // Reps the lifter typed stay theirs, even when they match the old plan.
+      const [, set2] = screen.getAllByLabelText('Reps');
+      if (!set2) throw new Error('expected a reps input for set 2');
+      await user.clear(set2);
+      await user.type(set2, '11');
+
+      await user.click(await screen.findByRole('button', { name: 'Wide grip', pressed: false }));
+      expect(weights()).toEqual(['150', '150']);
+      expect(reps()).toEqual(['8', '11']);
     });
 
     it('logs the re-planned weight', async () => {
