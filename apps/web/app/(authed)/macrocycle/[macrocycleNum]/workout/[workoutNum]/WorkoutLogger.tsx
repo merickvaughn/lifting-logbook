@@ -3,13 +3,14 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { ApiClientError } from '@lifting-logbook/api-client';
-import type { LiftModificationResponse, WeightUnit } from '@lifting-logbook/types';
+import type { LiftModificationResponse, MissingTrainingMaxResponse, WeightUnit } from '@lifting-logbook/types';
 import { convertWeight, formatWeight, liftOccurrenceKey, roundToDisplay, withOccurrence } from '@lifting-logbook/core';
 import {
   createLiftModification,
   createLiftRecord,
   fetchLiftModifications,
   fetchLiftModificationsByLift,
+  fetchMissingTrainingMaxes,
   recordBodyWeight,
   rescheduleWorkout,
   updateLiftRecord,
@@ -18,6 +19,7 @@ import { modificationSuffix } from '@/lib/liftModifications';
 import { logClientError } from '@/lib/log-client-error';
 import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
 import { liftSets, planLift } from '@/lib/workoutPlan';
+import MissingMaxDialog from './MissingMaxDialog';
 import styles from './WorkoutLogger.module.css';
 import type { LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
 import {
@@ -928,6 +930,9 @@ export default function WorkoutLogger({
   const [editingSet, setEditingSet] = useState<string | null>(null);
   const [currentLiftIdx, setCurrentLiftIdx] = useState(0);
   const [viewMode, setViewMode] = useState<'per-lift' | 'overview'>('per-lift');
+  // Finish workout's missing-max read is in flight, then its answer (#1246).
+  const [finishing, setFinishing] = useState(false);
+  const [missingMaxes, setMissingMaxes] = useState<MissingTrainingMaxResponse[] | null>(null);
   // initialBodyWeight is non-null (and in lbs) when the server found a same-day body weight entry.
   const [bodyWeight, setBodyWeight] = useState<number | null>(initialBodyWeight);
   const [bodyWeightDone, setBodyWeightDone] = useState(
@@ -1151,8 +1156,42 @@ export default function WorkoutLogger({
         clearDraft(buildDraftKey(program, macrocycleNum, workoutNum, l.lift, ws.setNum, l.occurrence));
       }
     }
+    // Before leaving, offer to set up a training max for a lift this workout logged that plans
+    // from one and has none (#1246). Finishing is never held up: no such lift, or a failed
+    // read, navigates at once.
+    const asked = [
+      ...new Set(
+        lifts
+          .filter((l) => !l.focus && l.progressionType !== 'manual')
+          .filter((l) => l.workingSets.some((ws) => loggedSets.has(setKey(l, ws.setNum))))
+          .map((l) => l.lift),
+      ),
+    ];
+    if (asked.length === 0) {
+      leaveWorkout();
+      return;
+    }
+    setFinishing(true);
+    fetchMissingTrainingMaxes(program, asked).then(
+      (list) => {
+        const ask = list.filter((m) => !m.dismissed);
+        if (ask.length > 0) setMissingMaxes(ask);
+        else leaveWorkout();
+      },
+      (err: unknown) => {
+        logClientError('fetchMissingTrainingMaxes', err, { program, source: 'workout' });
+        leaveWorkout();
+      },
+    );
+  }
+
+  function leaveWorkout() {
     router.push(`/macrocycle/${macrocycleNum}`);
   }
+
+  const missingMaxDialog = missingMaxes && (
+    <MissingMaxDialog program={program} missing={missingMaxes} unit={unit} onDone={leaveWorkout} />
+  );
 
   // Body weight gate
   if (!bodyWeightDone) {
@@ -1198,10 +1237,12 @@ export default function WorkoutLogger({
             className={styles.finishBtn}
             type="button"
             onClick={handleFinishWorkout}
+            disabled={finishing}
           >
             Finish workout
           </button>
         )}
+        {missingMaxDialog}
       </div>
     );
   }
@@ -1326,11 +1367,13 @@ export default function WorkoutLogger({
             className={styles.finishBtn}
             type="button"
             onClick={handleFinishWorkout}
+            disabled={finishing}
           >
             Finish workout
           </button>
         )}
       </footer>
+      {missingMaxDialog}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { renderToString } from 'react-dom/server';
-import type { LiftingProgramSpecResponse, LiftModificationResponse, LiftRecordResponse } from '@lifting-logbook/types';
+import type { LiftingProgramSpecResponse, LiftModificationResponse, LiftRecordResponse, MissingTrainingMaxResponse } from '@lifting-logbook/types';
 import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, WorkingSetData, WorkoutLoggerProps } from './types';
 import {
@@ -10,6 +10,9 @@ import {
   createLiftRecord,
   fetchLiftModifications,
   fetchLiftModificationsByLift,
+  dismissMissingTrainingMax,
+  fetchMissingTrainingMaxes,
+  updateTrainingMaxes,
   recordBodyWeight,
   rescheduleWorkout,
   updateLiftRecord,
@@ -21,8 +24,9 @@ import { browserNavigation } from '@/lib/macrocycleUrl';
 
 // jest.mock is hoisted above the imports, so `createLiftRecord`/`recordBodyWeight`
 // resolve to the jest.fn() mocks below.
+const mockPush = jest.fn();
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: mockPush }),
 }));
 
 jest.mock('@/lib/client-api', () => ({
@@ -33,6 +37,10 @@ jest.mock('@/lib/client-api', () => ({
   fetchLiftModifications: jest.fn(),
   fetchLiftModificationsByLift: jest.fn(),
   createLiftModification: jest.fn(),
+  fetchMissingTrainingMaxes: jest.fn(),
+  updateTrainingMaxes: jest.fn(),
+  dismissMissingTrainingMax: jest.fn(),
+  undismissMissingTrainingMax: jest.fn(),
 }));
 
 // Wrapped, not replaced: the #783 tests below check what the real helper writes to the console.
@@ -58,6 +66,9 @@ const mockFetchLiftModifications = fetchLiftModifications as jest.MockedFunction
 const mockFetchLiftModificationsByLift = jest.mocked(fetchLiftModificationsByLift);
 const mockCreateLiftModification = createLiftModification as jest.MockedFunction<typeof createLiftModification>;
 const mockLogClientError = logClientError as jest.MockedFunction<typeof logClientError>;
+const mockFetchMissingTrainingMaxes = jest.mocked(fetchMissingTrainingMaxes);
+const mockUpdateTrainingMaxes = jest.mocked(updateTrainingMaxes);
+const mockDismissMissingTrainingMax = jest.mocked(dismissMissingTrainingMax);
 
 function makeLift(overrides: Partial<LiftData> = {}): LiftData {
   return {
@@ -102,6 +113,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   // No modifications unless a test says otherwise.
   mockFetchLiftModifications.mockResolvedValue([]);
+  // No lift is missing a training max unless a test says otherwise (#1272).
+  mockFetchMissingTrainingMaxes.mockResolvedValue([]);
   // The page load reads every lift in one request (#1242). By default it answers each lift with
   // what the single-lift read would, so a test sets a lift's list once for the load and the
   // refresh alike; one failed lift fails the whole request, as one failed response would.
@@ -1273,5 +1286,176 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     expect(screen.getByText('225 lbs × 5 · Paused')).toBeInTheDocument();
     expect(mockFetchLiftModifications).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Add modification' })).not.toBeInTheDocument();
+  });
+});
+
+describe('WorkoutLogger — a lift without a training max, after Finish workout (#1272)', () => {
+  const RDL: MissingTrainingMaxResponse = {
+    lift: 'Romanian Deadlift',
+    liftId: 'romanian-deadlift',
+    lastLoggedDate: '2026-07-08',
+    setCount: 3,
+    estimate: { weight: 100, unit: 'lbs', from: { date: '2026-07-08', weight: 100, reps: 5 } },
+    dismissed: false,
+  };
+  const loggedLift = (overrides: Partial<LiftData> = {}) =>
+    makeLift({
+      lift: 'Romanian Deadlift',
+      workingSets: [
+        { setNum: 1, totalLoad: 100, reps: 5, amrap: false, existing: { id: 'rec-1', weight: 100, reps: 5, notes: '' } },
+      ],
+      ...overrides,
+    });
+
+  async function finish(props: Partial<WorkoutLoggerProps> = { lifts: [loggedLift()] }) {
+    const user = userEvent.setup();
+    render(<WorkoutLogger {...makeProps(props)} />);
+    await user.click(screen.getByRole('button', { name: 'Finish workout' }));
+    return user;
+  }
+
+  it('asks about the lift, with focus on its weight, before leaving', async () => {
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL]);
+    await finish();
+
+    const dialog = await screen.findByRole('dialog', { name: 'New lifts need a training max' });
+    const input = within(dialog).getByLabelText('Romanian Deadlift training max');
+    expect(input).toHaveValue(100);
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(mockFetchMissingTrainingMaxes).toHaveBeenCalledWith('5-3-1', ['Romanian Deadlift']);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('leaves at once when no lift is missing a max', async () => {
+    await finish();
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/macrocycle/1'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('leaves at once when every missing lift was dismissed', async () => {
+    mockFetchMissingTrainingMaxes.mockResolvedValue([{ ...RDL, dismissed: true }]);
+    await finish();
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/macrocycle/1'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it("doesn't ask about a lift that progresses by hand, or a focus lift", async () => {
+    const squat = loggedLift({ lift: 'Back Squat' });
+    const manual = loggedLift({ lift: 'Romanian Deadlift', progressionType: 'manual' });
+    const raise = loggedLift({ lift: 'Lateral Raise', focus: { area: 'Shoulders', summary: '3 sets' } });
+    await finish({ lifts: [squat, manual, raise] });
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
+    expect(mockFetchMissingTrainingMaxes).toHaveBeenCalledWith('5-3-1', ['Back Squat']);
+  });
+
+  it('leaves without a request when no lift it logged plans from a max', async () => {
+    await finish({ lifts: [loggedLift({ progressionType: 'manual' })] });
+
+    expect(mockPush).toHaveBeenCalledWith('/macrocycle/1');
+    expect(mockFetchMissingTrainingMaxes).not.toHaveBeenCalled();
+  });
+
+  it('logs a failed read and leaves anyway', async () => {
+    const err = new Error('network down');
+    mockFetchMissingTrainingMaxes.mockRejectedValue(err);
+    await finish();
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/macrocycle/1'));
+    expect(mockLogClientError).toHaveBeenCalledWith('fetchMissingTrainingMaxes', err, {
+      program: '5-3-1',
+      source: 'workout',
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('leaves on Not now without saving', async () => {
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL]);
+    const user = await finish();
+
+    await user.click(await screen.findByRole('button', { name: 'Not now' }));
+
+    expect(mockPush).toHaveBeenCalledWith('/macrocycle/1');
+    expect(mockUpdateTrainingMaxes).not.toHaveBeenCalled();
+  });
+
+  it('leaves on Esc without saving', async () => {
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL]);
+    const user = await finish();
+
+    await screen.findByRole('dialog');
+    await user.keyboard('{Escape}');
+
+    expect(mockPush).toHaveBeenCalledWith('/macrocycle/1');
+    expect(mockUpdateTrainingMaxes).not.toHaveBeenCalled();
+  });
+
+  it('saves every row with a weight in one request on Set up all, then leaves', async () => {
+    const curl: MissingTrainingMaxResponse = { ...RDL, lift: 'Cable Curl', liftId: 'cable-curl', estimate: null };
+    const press: MissingTrainingMaxResponse = { ...RDL, lift: 'Push Press', liftId: 'push-press' };
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL, curl, press]);
+    mockUpdateTrainingMaxes.mockResolvedValue([]);
+    const user = await finish({
+      lifts: [loggedLift(), loggedLift({ lift: 'Cable Curl' }), loggedLift({ lift: 'Push Press' })],
+    });
+
+    const pressInput = await screen.findByLabelText('Push Press training max');
+    await user.clear(pressInput);
+    await user.type(pressInput, '120');
+    await user.click(screen.getByRole('button', { name: 'Set up all' }));
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/macrocycle/1'));
+    expect(mockUpdateTrainingMaxes).toHaveBeenCalledTimes(1);
+    expect(mockUpdateTrainingMaxes).toHaveBeenCalledWith('5-3-1', {
+      maxes: [
+        { lift: 'Romanian Deadlift', weight: 100, unit: 'lbs' },
+        { lift: 'Push Press', weight: 120, unit: 'lbs' },
+      ],
+    });
+  });
+
+  it('drops a row once it is answered, and leaves when the last one is', async () => {
+    const press: MissingTrainingMaxResponse = { ...RDL, lift: 'Push Press', liftId: 'push-press' };
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL, press]);
+    mockUpdateTrainingMaxes.mockResolvedValue([]);
+    mockDismissMissingTrainingMax.mockResolvedValue(undefined);
+    const user = await finish({ lifts: [loggedLift(), loggedLift({ lift: 'Push Press' })] });
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getAllByRole('listitem')).toHaveLength(2);
+    // Rows keep the list's order, so the first Set up is the Romanian Deadlift's.
+    const [rdlSetUp] = within(dialog).getAllByRole('button', { name: 'Set up' });
+    if (!rdlSetUp) throw new Error('no Set up button');
+    await user.click(rdlSetUp);
+    await waitFor(() => expect(within(dialog).getAllByRole('listitem')).toHaveLength(1));
+    expect(within(dialog).queryByLabelText('Romanian Deadlift training max')).not.toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: "Don't ask again" }));
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/macrocycle/1'));
+    expect(mockUpdateTrainingMaxes).toHaveBeenCalledWith('5-3-1', {
+      maxes: [{ lift: 'Romanian Deadlift', weight: 100, unit: 'lbs' }],
+    });
+    expect(mockDismissMissingTrainingMax).toHaveBeenCalledWith('5-3-1', 'push-press');
+  });
+
+  it('stays open, says so and logs it when Set up all fails', async () => {
+    const err = new Error('500');
+    mockFetchMissingTrainingMaxes.mockResolvedValue([RDL]);
+    mockUpdateTrainingMaxes.mockRejectedValue(err);
+    const user = await finish();
+
+    await user.click(await screen.findByRole('button', { name: 'Set up all' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't save the training maxes.");
+    expect(mockLogClientError).toHaveBeenCalledWith('updateTrainingMaxes', err, {
+      program: '5-3-1',
+      source: 'workout',
+      count: 1,
+    });
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });

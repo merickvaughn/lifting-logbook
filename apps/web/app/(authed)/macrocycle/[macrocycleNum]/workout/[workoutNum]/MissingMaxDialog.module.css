@@ -1,0 +1,78 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.dialog {
+  width: 100%;
+  max-width: 40rem;
+  /* Centers while it fits; a tall dialog scrolls from its top instead of being clipped. */
+  margin: auto 0;
+  padding: var(--space-4);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.title {
+  font-size: var(--font-size-lg);
+  margin: 0 0 var(--space-2);
+}
+
+.intro {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin: 0 0 var(--space-3);
+}
+
+.error {
+  color: var(--color-error-text);
+  font-size: var(--font-size-sm);
+  margin: var(--space-3) 0 0;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.primary,
+.secondary {
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-base);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.primary {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  border: none;
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondary {
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+}

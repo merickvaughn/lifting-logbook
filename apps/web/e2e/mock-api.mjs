@@ -673,6 +673,19 @@ const server = createServer(async (req, res) => {
         },
       ];
     }
+    // Workout 1's deadlift, for the Finish workout dialog (#1272). The mock's deadlift has a
+    // max, which the list ignores: only a PATCH clears an entry.
+    if (url.searchParams.get('withWorkoutMissingMax') === 'true') {
+      state.missingMaxes = [
+        {
+          lift: 'deadlift',
+          liftId: 'deadlift',
+          lastLoggedDate: '2025-01-06',
+          setCount: 3,
+          estimate: { weight: 250, unit: 'lbs', from: { date: '2025-01-06', weight: 250, reps: 5 } },
+        },
+      ];
+    }
     if (url.searchParams.get('withNonCycleWorkout') === 'true') {
       state.nonCycleRecords = [1, 2, 3].map((setNum) =>
         nonCycleRecord({ workoutNum: 1, date: '2026-11-10', lift: 'squat', setNum, weight: 225, reps: 5 }),
@@ -1238,6 +1251,8 @@ const server = createServer(async (req, res) => {
           } else {
             state.trainingMaxes.push({ lift: update.lift, weight: update.weight, unit: update.unit ?? 'lbs', dateUpdated: today });
           }
+          // A lift with a max is no longer missing one (#1246).
+          state.missingMaxes = state.missingMaxes.filter((m) => m.lift !== update.lift && m.liftId !== update.lift);
         }
       }
       json(res, state.trainingMaxes);
@@ -1245,11 +1260,10 @@ const server = createServer(async (req, res) => {
     }
 
     // GET /programs/:p/training-maxes/missing — lifts with sets and no max (#1246). `lifts`
-    // narrows it by display name or id; a max set since drops the lift.
+    // narrows it by display name or id; the PATCH above drops a lift once its max is set.
     if (method === 'GET' && rest[0] === 'training-maxes' && rest[1] === 'missing' && rest.length === 2) {
       const wanted = url.searchParams.getAll('lifts');
       const missing = state.missingMaxes
-        .filter((m) => !state.trainingMaxes.some((t) => t.lift === m.lift || t.lift === m.liftId))
         .filter((m) => wanted.length === 0 || wanted.includes(m.lift) || wanted.includes(m.liftId))
         .map((m) => ({ ...m, dismissed: state.missingMaxDismissals.has(m.liftId) }));
       json(res, missing);

@@ -49,6 +49,11 @@ export function shortDate(iso: string, now: Date = new Date()): string {
   });
 }
 
+/** The weight a row starts with: the estimate, or empty with none. */
+export function initialValue(entry: MissingMaxEntry): string {
+  return entry.estimate ? String(entry.estimate.weight) : '';
+}
+
 function estimateLine(entry: MissingMaxEntry): string {
   const { estimate } = entry;
   if (!estimate) return 'No set to estimate from: enter a training max';
@@ -75,11 +80,23 @@ export function MissingMaxRow({
   step = DEFAULT_WEIGHT_INCREMENT,
   onSetUp,
   onDismissedChange,
-}: MissingMaxRowOptions & { entry: MissingMaxEntry }) {
+  value: controlledValue,
+  onValueChange,
+}: MissingMaxRowOptions & {
+  entry: MissingMaxEntry;
+  /**
+   * The weight, when the caller holds it: the workout dialog's **Set up all** saves every row's
+   * value at once. Without it, the row keeps its own.
+   */
+  value?: string;
+  onValueChange?: (liftId: string, value: string) => void;
+}) {
   const estimateId = useId();
   const errorId = useId();
   const unit = entry.estimate?.unit ?? 'lbs';
-  const [value, setValue] = useState(entry.estimate ? String(entry.estimate.weight) : '');
+  const [ownValue, setOwnValue] = useState(() => initialValue(entry));
+  const value = controlledValue ?? ownValue;
+  const setValue = (next: string) => (onValueChange ? onValueChange(entry.liftId, next) : setOwnValue(next));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const logged = loggedLine(entry);
