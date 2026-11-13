@@ -601,7 +601,7 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     render(<WorkoutLogger {...makeProps({ lifts: [twoSets()] })} />);
 
     const toggle = await screen.findByRole('button', { name: 'Paused', pressed: false });
-    expect(mockFetchLiftModifications).toHaveBeenCalledWith('Back Squat');
+    expect(mockFetchLiftModificationsByLift).toHaveBeenCalledWith(['Back Squat']);
     const [logSet1] = screen.getAllByRole('button', { name: 'Log' });
     if (!logSet1) throw new Error('expected a Log button for set 1');
     await user.click(logSet1);
@@ -674,7 +674,7 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     await waitFor(() =>
       expect(mockLogClientError).toHaveBeenCalledWith('fetchLiftModificationsByLift', failure, {
         program: '5-3-1',
-        lifts: ['Back Squat'],
+        lifts: 'Back Squat',
       }),
     );
     expect(screen.queryByRole('button', { name: 'Add modification' })).not.toBeInTheDocument();

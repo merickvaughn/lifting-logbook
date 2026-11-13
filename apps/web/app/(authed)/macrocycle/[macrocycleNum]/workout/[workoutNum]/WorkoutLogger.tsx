@@ -961,7 +961,8 @@ export default function WorkoutLogger({
         if (!cancelled) setModificationsByLift((prev) => withLists(prev, names, (lift) => byLift[lift] ?? null));
       },
       (err: unknown) => {
-        logClientError('fetchLiftModificationsByLift', err, { program, lifts: names });
+        // A string, since the beacon keeps only scalar context values.
+        logClientError('fetchLiftModificationsByLift', err, { program, lifts: names.join(', ') });
         if (!cancelled) setModificationsByLift((prev) => withLists(prev, names, () => null));
       },
     );
