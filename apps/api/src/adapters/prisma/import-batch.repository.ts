@@ -3,12 +3,13 @@ import { ImportPreImage } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import {
+  BatchMacrocycles,
   IImportBatchRepository,
   ImportBatchRecord,
   KeyNumbers,
   PRE_IMAGE_KEY_NUMBER,
 } from '../../ports/IImportBatchRepository';
-import { parseBatchMacrocycles } from './import-batch-json';
+import { batchMacrocyclesJson, parseBatchMacrocycles } from './import-batch-json';
 
 const tracer = trace.getTracer('prisma-import-batch-repository');
 
@@ -27,7 +28,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
         destination: batch.destination,
         preImage: batch.preImage as object,
         groupId: batch.groupId ?? null,
-        ...(batch.macrocycles ? { macrocycles: { ...batch.macrocycles } } : {}),
+        ...(batch.macrocycles ? { macrocycles: batchMacrocyclesJson(batch.macrocycles) } : {}),
       },
     });
   }
@@ -124,6 +125,33 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
       } finally {
         span.end();
       }
+    });
+  }
+
+  async listChoosing(macrocycleId: string): Promise<ImportBatchRecord[]> {
+    // Raw SQL isn't auto-traced (ADR-024), so the filter gets a span.
+    return tracer.startActiveSpan('import_batch.list_choosing', async (span) => {
+      try {
+        const rows = await this.prisma.$queryRaw<ImportBatch[]>`
+          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId", b."macrocycles" FROM "import_batch" b
+          WHERE b."userId" = ${this.userId}
+            AND b."macrocycles"->'chosen' @> ${JSON.stringify([{ id: macrocycleId }])}::jsonb`;
+        span.setAttribute('import_batch.count', rows.length);
+        return rows.map(toRecord);
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
+  async updateMacrocycles(id: string, macrocycles: BatchMacrocycles): Promise<void> {
+    await this.prisma.importBatch.updateMany({
+      where: { id, userId: this.userId },
+      data: { macrocycles: batchMacrocyclesJson(macrocycles) },
     });
   }
 }

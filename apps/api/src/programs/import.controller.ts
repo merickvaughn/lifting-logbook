@@ -89,7 +89,7 @@ import {
   planSplitMaxes,
   splitMaxCounts,
 } from './import-assign';
-import { placeSuggestedStretches, recomputeMacrocycles, unwrittenFields } from './import-stored';
+import { placeSuggestedStretches, recomputeMacrocycles, releaseStatusChoices } from './import-stored';
 import {
   BreakdownBatch,
   BreakdownMismatchException,
@@ -452,17 +452,16 @@ export class ImportController {
         // before anything is renumbered.
         const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
         const nums = new Set([...legacyNums, ...setNums]);
-        const ids = new Set([...(part.macrocycles?.created ?? []), ...(part.macrocycles?.extended ?? []).map((e) => e.id)]);
-        for (const m of await repos.macrocycle.list(part.program)) {
-          if (nums.has(m.macrocycleNum)) ids.add(m.id);
-          if (ids.has(m.id)) nums.add(m.macrocycleNum);
+        // Only `imported` macrocycles are read again: a `live` or `legacy` row keeps what it holds.
+        const recorded = new Set([...(part.macrocycles?.created ?? []), ...(part.macrocycles?.extended ?? [])]);
+        const rows = await repos.macrocycle.list(part.program);
+        const ids = new Set<string>();
+        for (const m of rows) {
+          if (recorded.has(m.id)) nums.add(m.macrocycleNum);
+          if (m.origin === 'imported' && nums.has(m.macrocycleNum)) ids.add(m.id);
         }
-        // What a join wrote goes back where nothing has changed it since.
-        for (const { id, before, wrote } of part.macrocycles?.extended ?? []) {
-          const current = await repos.macrocycle.findById(id);
-          const back = current ? unwrittenFields(current, before, wrote) : {};
-          if (Object.keys(back).length > 0) await repos.macrocycle.update(id, back);
-        }
+        // The statuses the batch chose are released before anything is read again.
+        await releaseStatusChoices(repos, part, part.macrocycles?.chosen ?? [], new Map(rows.map((m) => [m.id, m])));
         await deleteCreated(part.program, createdKeys);
         // The non-cycle macrocycle's row stays, as it does when its workouts are deleted.
         await deleteCreated(NON_CYCLE_PROGRAM, nonCycleKeys);
@@ -1011,7 +1010,7 @@ export class ImportController {
         for (const [splitProgram, { existing, writes }] of split.byProgram) {
           if (writes.length === 0) continue;
           results.push(await repos.trainingMax.importTrainingMaxes(splitProgram, writes));
-          const batch = batches.get(splitProgram) ?? { preImage: {}, macrocycles: { created: [], extended: [] } };
+          const batch = batches.get(splitProgram) ?? { preImage: {}, macrocycles: { created: [], extended: [], chosen: [] } };
           Object.assign(batch.preImage, buildTrainingMaxPreImage(writes, existing));
           batches.set(splitProgram, batch);
         }

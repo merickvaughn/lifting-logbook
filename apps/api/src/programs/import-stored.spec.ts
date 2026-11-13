@@ -1,6 +1,8 @@
 import type { KnownProgram, LiftRecord } from '@lifting-logbook/core';
 import { InMemoryLiftRecordRepository } from '../adapters/in-memory/lift-record.adapter';
-import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
+import { InMemoryImportBatchRepository } from '../adapters/in-memory/import-batch.adapter';
+import { InMemoryMacrocycleRepository } from '../adapters/in-memory/macrocycle.adapter';
+import { ImportBatchRecord, StatusChoice } from '../ports/IImportBatchRepository';
 import { MacrocycleRow, NewMacrocycle } from '../ports/IMacrocycleRepository';
 import {
   HeldWorkouts,
@@ -8,7 +10,7 @@ import {
   continuedWorkoutNum,
   placeOnStored,
   recomputeMacrocycles,
-  unwrittenFields,
+  releaseStatusChoices,
 } from './import-stored';
 
 /**
@@ -151,16 +153,29 @@ describe('placeOnStored (#1255, decision 14)', () => {
 describe('continuedWorkoutNum (#1255, decision 9)', () => {
   const held: HeldWorkouts = { byDate: new Map([[at(0).getTime(), 1], [at(2).getTime(), 2]]), highest: 2, count: 2 };
 
+  const numbered = (rows: Array<{ date: Date; workoutNum: number }>) =>
+    rows.map(continuedWorkoutNum(rows.map((r) => ({ date: r.date, workoutNum: Number.isNaN(r.workoutNum) ? null : r.workoutNum })), held));
+
   it("keeps the file's numbers, gives a held date its workout, and numbers other new dates past the highest", () => {
-    const rows = [
-      { date: at(2), workoutNum: NaN },
-      { date: at(6), workoutNum: 9 },
-      { date: at(4), workoutNum: NaN },
-      { date: at(8), workoutNum: NaN },
-      { date: at(4), workoutNum: NaN },
-    ];
-    const next = continuedWorkoutNum(rows.map((r) => ({ date: r.date, workoutNum: Number.isNaN(r.workoutNum) ? null : r.workoutNum })), held);
-    expect(rows.map(next)).toEqual([2, 9, 3, 4, 3]);
+    expect(
+      numbered([
+        { date: at(2), workoutNum: NaN },
+        { date: at(6), workoutNum: 9 },
+        { date: at(4), workoutNum: NaN },
+        { date: at(8), workoutNum: NaN },
+        { date: at(4), workoutNum: NaN },
+      ]),
+    ).toEqual([2, 9, 10, 11, 10]);
+  });
+
+  it("gives an unnumbered row the file's number on another row that day, and never a number the file uses", () => {
+    expect(
+      numbered([
+        { date: at(4), workoutNum: NaN },
+        { date: at(6), workoutNum: 3 },
+        { date: at(6), workoutNum: NaN },
+      ]),
+    ).toEqual([4, 3, 3]);
   });
 
   it('refuses a row that is not one of the new rows', () => {
@@ -193,24 +208,78 @@ describe('recomputeMacrocycles (#1255)', () => {
     expect(await repos.macrocycle.findById(live.id)).toEqual(live);
     expect(await repos.macrocycle.findById(empty.id)).toEqual(empty);
   });
+
+  it("reads unmatched from the lifts left on it, whatever it held before", async () => {
+    const repos = setup();
+    const squats = { ...program('rpt', 9), lifts: new Set(['back-squat']) };
+    const row = await seed(repos, { program: 'rpt', num: 1, from: 0, sessions: 3, unmatched: true });
+    await recomputeMacrocycles(repos, [row.id], [squats], at(14));
+    expect(await repos.macrocycle.findById(row.id)).toMatchObject({ unmatched: false });
+    await recomputeMacrocycles(repos, [row.id], PROGRAMS, at(14));
+    expect(await repos.macrocycle.findById(row.id)).toMatchObject({ unmatched: true });
+  });
 });
 
-describe('unwrittenFields (#1255)', () => {
-  const row = (overrides: Partial<MacrocycleRow>) => macrocycleRowFixture(1, overrides);
-  const before = { status: 'in-progress', statusChosen: false, unmatched: false } as const;
-  const wrote = { status: 'abandoned', statusChosen: true, unmatched: true } as const;
+describe('releaseStatusChoices (#1255)', () => {
+  const FOUND = { status: 'in-progress', statusChosen: false } as const;
 
-  it('puts back each field still as the join wrote it', () => {
-    expect(unwrittenFields(row(wrote), before, wrote)).toEqual(before);
-    expect(unwrittenFields(row({ ...wrote, unmatched: false }), before, wrote)).toEqual({ status: 'in-progress', statusChosen: false });
+  /** A stored macrocycle and two batches that each chose a status for it, in turn. */
+  async function chained() {
+    const repos = { ...setup(), importBatch: new InMemoryImportBatchRepository() };
+    const row = await seed(repos, { program: 'rpt', num: 1, from: 0, sessions: 3 });
+    const batch = (id: string, day: number, chose: StatusChoice['chose'], before: StatusChoice['before']): ImportBatchRecord => ({
+      id,
+      userId: 'u',
+      program: 'rpt',
+      destination: 'lift-records',
+      preImage: {},
+      createdAt: at(day),
+      macrocycles: { created: [], extended: [row.id], chosen: [{ id: row.id, chose, before }] },
+    });
+    const first = batch('b-1', 10, 'overran', FOUND);
+    const second = batch('b-2', 20, 'abandoned', { status: 'overran', statusChosen: true });
+    await repos.importBatch.save(first);
+    await repos.importBatch.save(second);
+    await repos.macrocycle.update(row.id, { status: 'abandoned', statusChosen: true });
+    // Undo releases a batch's choices, then deletes it.
+    const undo = async (b: ImportBatchRecord) => {
+      const stored = (await repos.importBatch.findById(b.id, 'u'))?.macrocycles?.chosen ?? [];
+      const rows = new Map((await repos.macrocycle.list('rpt')).map((m) => [m.id, m]));
+      await releaseStatusChoices(repos, b, stored, rows);
+      await repos.importBatch.deleteById(b.id, 'u');
+    };
+    return { repos, row, first, second, undo };
+  }
+
+  it('ends where neither batch had run, whichever is undone first', async () => {
+    for (const order of ['first', 'second'] as const) {
+      const { repos, row, first, second, undo } = await chained();
+      for (const b of order === 'first' ? [first, second] : [second, first]) await undo(b);
+      expect(await repos.macrocycle.findById(row.id)).toMatchObject(FOUND);
+    }
   });
 
-  it('keeps a status the lifter chose since, with its chosen flag', () => {
-    expect(unwrittenFields(row({ ...wrote, status: 'completed' }), before, wrote)).toEqual({ unmatched: false });
+  it("hands an earlier batch's choice on to the later one rather than writing over it", async () => {
+    const { repos, row, first, undo } = await chained();
+    await undo(first);
+    expect(await repos.macrocycle.findById(row.id)).toMatchObject({ status: 'abandoned', statusChosen: true });
+    expect((await repos.importBatch.findById('b-2', 'u'))?.macrocycles?.chosen).toEqual([
+      { id: row.id, chose: 'abandoned', before: FOUND },
+    ]);
   });
 
-  it('puts back nothing the join left alone', () => {
-    expect(unwrittenFields(row(wrote), {}, {})).toEqual({});
-    expect(unwrittenFields(row({ statusChosen: true }), { statusChosen: false }, { statusChosen: true })).toEqual({ statusChosen: false });
+  it('keeps a status the lifter set since the choice in force', async () => {
+    const { repos, row, second, undo } = await chained();
+    await repos.macrocycle.update(row.id, { status: 'completed' });
+    await undo(second);
+    expect(await repos.macrocycle.findById(row.id)).toMatchObject({ status: 'completed', statusChosen: true });
+  });
+
+  it('leaves a created macrocycle unchosen', async () => {
+    const repos = { ...setup(), importBatch: new InMemoryImportBatchRepository() };
+    const row = await seed(repos, { program: 'rpt', num: 1, from: 0, sessions: 3, status: 'completed', statusChosen: true });
+    const choices: StatusChoice[] = [{ id: row.id, chose: 'completed', before: { statusChosen: false } }];
+    await releaseStatusChoices(repos, { id: 'b-1', createdAt: at(10) }, choices, new Map([[row.id, row]]));
+    expect(await repos.macrocycle.findById(row.id)).toMatchObject({ status: 'completed', statusChosen: false });
   });
 });

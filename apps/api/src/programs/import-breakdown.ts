@@ -21,8 +21,8 @@ import {
   withOccurrence,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
-import { BatchMacrocycles, JoinedFields } from '../ports/IImportBatchRepository';
-import { MacrocycleRow, NewMacrocycle } from '../ports/IMacrocycleRepository';
+import { BatchMacrocycles } from '../ports/IImportBatchRepository';
+import { NewMacrocycle } from '../ports/IMacrocycleRepository';
 import { dashboardOrNull, ensureCurrentRow, moveUnstartedRows, nonCycleRowsPreImage } from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
 import { placeNonCycleRows } from './import-handlers';
@@ -411,8 +411,9 @@ export interface BreakdownWrite {
  * Writes a plan under the import lock, which the caller holds. A joining stretch's rows go onto
  * its stored macrocycle, which takes the stretch's status if the lifter chose it. Each program's
  * other stretches become `imported` macrocycles numbered past every stored one in start-date
- * order. Once every program's rows and macrocycles are written, each joined macrocycle reads its
- * dates and, unless its status was chosen, its suggested status again from all its rows as of
+ * order. The batch records each status it chose and what the macrocycle held before, for undo.
+ * Once every program's rows and macrocycles are written, each joined macrocycle reads its dates,
+ * `unmatched` and, unless its status was chosen, its suggested status again from all its rows as of
  * `importDate` (decision 14), so the macrocycle that follows it can be one this import created
  * under any program. Then each program renumbers by date (decision 3), so a stretch's file number
  * never names a stored macrocycle. The pre-image keys carry the numbers as stored after that; the
@@ -427,7 +428,7 @@ export async function writeBreakdown(
   const batches = new Map<string, BreakdownBatch>();
   const batchOf = (program: string): BreakdownBatch => {
     let batch = batches.get(program);
-    if (!batch) batches.set(program, (batch = { preImage: {}, macrocycles: { created: [], extended: [] } }));
+    if (!batch) batches.set(program, (batch = { preImage: {}, macrocycles: { created: [], extended: [], chosen: [] } }));
     return batch;
   };
   batchOf(sourceProgram);
@@ -463,10 +464,12 @@ export async function writeBreakdown(
       await moveUnstartedRows(repos, program, storedNums, first - 1, first + rows.length - 1);
       await repos.macrocycle.createMany(rows);
       const ids = new Map((await repos.macrocycle.list(program)).map((m) => [m.macrocycleNum, m.id]));
-      for (const row of rows) {
-        const id = ids.get(row.macrocycleNum);
-        if (id === undefined) throw new Error(`Macrocycle ${row.macrocycleNum} of ${program} was not created`);
+      for (const [i, s] of ordered.entries()) {
+        const id = ids.get(first + i);
+        if (id === undefined) throw new Error(`Macrocycle ${first + i} of ${program} was not created`);
         batch.macrocycles.created.push(id);
+        // A new macrocycle had no status of its own, so the batch found it unchosen.
+        if (s.spec.statusChosen) batch.macrocycles.chosen.push({ id, chose: s.spec.status, before: { statusChosen: false } });
       }
     }
     const records = [
@@ -475,16 +478,21 @@ export async function writeBreakdown(
     ];
     created += await repos.liftRecord.appendLiftRecords(program, records);
     for (const { s, macrocycle } of joining) {
-      const { before, wrote } = joinChanges(macrocycle, s);
-      if (Object.keys(wrote).length > 0) await repos.macrocycle.update(macrocycle.id, wrote);
-      batch.macrocycles.extended.push({ id: macrocycle.id, before, wrote });
+      batch.macrocycles.extended.push(macrocycle.id);
+      if (!s.spec.statusChosen) continue;
+      await repos.macrocycle.update(macrocycle.id, { status: s.spec.status, statusChosen: true });
+      batch.macrocycles.chosen.push({
+        id: macrocycle.id,
+        chose: s.spec.status,
+        before: { status: macrocycle.status, statusChosen: macrocycle.statusChosen },
+      });
     }
     written.push({ program, batch, records });
   }
 
   await recomputeMacrocycles(
     repos,
-    written.flatMap(({ batch }) => batch.macrocycles.extended.map((e) => e.id)),
+    written.flatMap(({ batch }) => batch.macrocycles.extended),
     context.programs,
     context.importDate,
   );
@@ -506,29 +514,4 @@ export async function writeBreakdown(
   }
 
   return { created, batches };
-}
-
-/**
- * What a joining stretch writes onto its stored macrocycle: `unmatched` once one of its lifts
- * isn't in the program, and the status the lifter chose for it. Only the fields it changes, as they
- * were and as it sets them, so undo can put back each one nothing has changed since.
- */
-function joinChanges(m: MacrocycleRow, s: PlannedStretch): { before: JoinedFields; wrote: JoinedFields } {
-  const before: JoinedFields = {};
-  const wrote: JoinedFields = {};
-  if (s.unmatched && !m.unmatched) {
-    before.unmatched = false;
-    wrote.unmatched = true;
-  }
-  if (s.spec.statusChosen) {
-    if (m.status !== s.spec.status) {
-      before.status = m.status;
-      wrote.status = s.spec.status;
-    }
-    if (!m.statusChosen) {
-      before.statusChosen = false;
-      wrote.statusChosen = true;
-    }
-  }
-  return { before, wrote };
 }

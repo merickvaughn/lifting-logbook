@@ -6,12 +6,13 @@ import {
   LiftHistoryRecord,
   classifyLiftRecordRows,
   isOpenEnded,
+  liftKey,
   suggestStretchStatus,
   toUTCMidnight,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
-import { JoinedFields } from '../ports/IImportBatchRepository';
-import { MacrocycleChanges, MacrocycleRow } from '../ports/IMacrocycleRepository';
+import { ImportBatchRecord, StatusChoice } from '../ports/IImportBatchRepository';
+import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 
 /**
  * How an Assign stretch meets what's already stored (#1255, proposal decision 14). `mode=assign`
@@ -222,34 +223,44 @@ function assignStoredPlacement(placement: StoredPlacement, creating: ReadonlyArr
 
 /**
  * The workout number of a joining stretch's new row (decision 9), given all its new rows: the
- * file's where it has one; else, on a date the macrocycle already holds, that date's workout; else
- * continuing from its highest, one per new date of the unnumbered rows, in date order.
+ * file's where it has one. An unnumbered row takes its date's workout: the one the macrocycle
+ * holds on that date, else the file's number on another of the new rows that day. The other new
+ * dates continue in date order past the highest of the macrocycle's workouts and the file's
+ * numbers, so no two sessions share a number.
  */
 export function continuedWorkoutNum(
   creating: ReadonlyArray<{ date: Date; workoutNum: number | null }>,
   held: HeldWorkouts,
 ): (row: { date: Date; workoutNum: number }) => number {
   const dayOf = (r: { date: Date }) => toUTCMidnight(r.date).getTime();
-  const unnumbered = creating.filter((r) => r.workoutNum === null);
-  const newDates = [...new Set(unnumbered.map(dayOf).filter((t) => !held.byDate.has(t)))].sort((a, b) => a - b);
-  const position = new Map(newDates.map((t, n) => [t, held.highest + n + 1]));
+  const fileByDate = new Map<number, number>();
+  for (const r of creating) {
+    if (r.workoutNum !== null && !fileByDate.has(dayOf(r))) fileByDate.set(dayOf(r), r.workoutNum);
+  }
+  const highest = Math.max(held.highest, ...fileByDate.values());
+  const newDates = [
+    ...new Set(creating.map(dayOf).filter((t) => !held.byDate.has(t) && !fileByDate.has(t))),
+  ].sort((a, b) => a - b);
+  const position = new Map(newDates.map((t, n) => [t, highest + n + 1]));
   return (r) => {
     if (Number.isFinite(r.workoutNum)) return r.workoutNum;
-    const n = held.byDate.get(dayOf(r)) ?? position.get(dayOf(r));
+    const n = held.byDate.get(dayOf(r)) ?? fileByDate.get(dayOf(r)) ?? position.get(dayOf(r));
     if (n === undefined) throw new Error('continuedWorkoutNum: the row is not one of the new rows given');
     return n;
   };
 }
 
 /**
- * Reads each of `ids` again from the lift records left on it (decision 14): its dates, and unless
- * the lifter chose its status, the status the rules suggest as of `asOf`, judged against what
- * follows it. A commit runs it on the macrocycles its stretches joined, once every program's rows
- * and macrocycles are written; undo runs it on the batch's macrocycles, once every part's rows are
- * deleted and its emptied macrocycles removed. So the macrocycle that follows is read from what
- * stays, whichever program it's under. Dates are all written before any status is read, so the
- * order of `ids` doesn't matter. A macrocycle that isn't `imported`, is gone, or has no rows left
- * is skipped. Returns how many it read again.
+ * Reads each of `ids` again from the lift records left on it (decision 14): its dates; whether a
+ * lift on it is outside its program (`unmatched`, as the import sets it); and unless the lifter
+ * chose its status, the status the rules suggest as of `asOf`, judged against the macrocycle that
+ * follows it, spans read as {@link placeOnStored} reads them. A commit runs it on the macrocycles
+ * its stretches joined, once every program's rows and macrocycles are written; undo runs it on
+ * the batch's macrocycles, once every part's rows are deleted, its emptied macrocycles removed and
+ * its status choices released. So what follows is read from what stays, whichever program it's
+ * under. Every macrocycle's dates are written before any status is read, so the order of `ids`
+ * doesn't matter. A macrocycle that isn't `imported`, is gone, or has no rows left is skipped.
+ * Returns how many it read again.
  */
 export async function recomputeMacrocycles(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>,
@@ -260,33 +271,33 @@ export async function recomputeMacrocycles(
   if (ids.length === 0) return 0;
   const wanted = new Set(ids);
   const targets = (await repos.macrocycle.listAll()).filter((m) => wanted.has(m.id) && m.origin === 'imported');
-  const recomputed: Array<{ m: MacrocycleRow; startDate: Date; endDate: Date }> = [];
-  for (const program of new Set(targets.map((m) => m.program))) {
-    const ranges = await repos.liftRecord.getMacrocycleDateRanges(program);
-    for (const m of targets.filter((t) => t.program === program)) {
-      const range = ranges.get(m.macrocycleNum);
-      if (!range) continue;
-      const dates = { startDate: toUTCMidnight(range.first), endDate: toUTCMidnight(range.last) };
-      await repos.macrocycle.update(m.id, dates);
-      recomputed.push({ m, ...dates });
-    }
+  const recomputed: Array<{ m: MacrocycleRow; startDate: Date; endDate: Date; completed: number }> = [];
+  for (const m of targets) {
+    const records = await repos.liftRecord.getLiftRecords(m.program, m.macrocycleNum);
+    if (records.length === 0) continue;
+    const times = records.map((r) => toUTCMidnight(r.date).getTime());
+    const startDate = new Date(Math.min(...times));
+    const endDate = new Date(Math.max(...times));
+    const lifts = programs.find((p) => p.id === m.program)?.lifts;
+    const unmatched = lifts === undefined || records.some((r) => !lifts.has(liftKey(r.lift)));
+    await repos.macrocycle.update(m.id, { startDate, endDate, unmatched });
+    recomputed.push({ m, startDate, endDate, completed: new Set(records.map((r) => r.workoutNum)).size });
   }
 
   const unchosen = recomputed.filter(({ m }) => !m.statusChosen && programs.some((p) => p.id === m.program));
   if (unchosen.length === 0) return recomputed.length;
-  const others = (await repos.macrocycle.listAll()).filter((o) => o.program !== NON_CYCLE_PROGRAM);
-  for (const { m, startDate, endDate } of unchosen) {
+  const spans = await storedSpans(repos);
+  for (const { m, startDate, endDate, completed } of unchosen) {
     const known = programs.find((p) => p.id === m.program);
     if (!known) continue;
-    const after = others
-      .filter((o) => o.id !== m.id && o.startDate.getTime() > endDate.getTime())
-      .sort((a, b) => a.startDate.getTime() - b.startDate.getTime())[0];
-    const completed = (await repos.liftRecord.getLoggedWorkoutNums(m.program, m.macrocycleNum)).size;
+    const after = spans
+      .filter((o) => o.macrocycle.id !== m.id && o.start > endDate.getTime())
+      .sort((a, b) => a.start - b.start)[0];
     const { status } = suggestStretchStatus(known, {
       completed,
       firstDate: startDate,
       lastDate: endDate,
-      next: after ? { program: after.program } : undefined,
+      next: after ? { program: after.macrocycle.program } : undefined,
       importDate: asOf,
     });
     await repos.macrocycle.update(m.id, { status });
@@ -295,20 +306,40 @@ export async function recomputeMacrocycles(
 }
 
 /**
- * What undo puts back of a join's writes (#1255): each field `before` holds, where `current` still
- * holds what the join `wrote`. The status and its chosen flag go back together, and only while the
- * status is the one the join wrote, so a status the lifter chose since stays chosen.
+ * Undoes a batch's status choices (#1255). The choice in force on a macrocycle is the latest
+ * surviving batch's. For each of `choices`:
+ *
+ * - If no later surviving batch chose a status for the macrocycle, this one's is in force: while
+ *   the macrocycle still holds it, the status and its chosen flag go back to what the batch found.
+ *   A status the lifter set since stays.
+ * - Otherwise the next later batch's choice was made over this one, so it takes this one's
+ *   `before` as its own, and undoing it later puts back what was there before either.
+ *
+ * Either way undoing two batches' choices in any order ends where neither had run. `rows` holds
+ * the macrocycles as they are now, by id.
  */
-export function unwrittenFields(current: MacrocycleRow, before: JoinedFields, wrote: JoinedFields): MacrocycleChanges {
-  const back: MacrocycleChanges = {};
-  if (wrote.unmatched !== undefined && before.unmatched !== undefined && current.unmatched === wrote.unmatched) {
-    back.unmatched = before.unmatched;
-  }
-  if (wrote.status === undefined || current.status === wrote.status) {
-    if (wrote.status !== undefined && before.status !== undefined) back.status = before.status;
-    if (wrote.statusChosen !== undefined && before.statusChosen !== undefined && current.statusChosen === wrote.statusChosen) {
-      back.statusChosen = before.statusChosen;
+export async function releaseStatusChoices(
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'importBatch'>,
+  batch: Pick<ImportBatchRecord, 'id' | 'createdAt'>,
+  choices: readonly StatusChoice[],
+  rows: ReadonlyMap<string, MacrocycleRow>,
+): Promise<void> {
+  const isLater = (b: Pick<ImportBatchRecord, 'id' | 'createdAt'>) =>
+    b.createdAt.getTime() > batch.createdAt.getTime() || (b.createdAt.getTime() === batch.createdAt.getTime() && b.id > batch.id);
+  for (const choice of choices) {
+    const current = rows.get(choice.id);
+    if (!current) continue;
+    const next = (await repos.importBatch.listChoosing(choice.id))
+      .filter(isLater)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+    if (next?.macrocycles) {
+      const chosen = next.macrocycles.chosen.map((c) => (c.id === choice.id ? { ...c, before: choice.before } : c));
+      await repos.importBatch.updateMacrocycles(next.id, { ...next.macrocycles, chosen });
+    } else if (current.statusChosen && current.status === choice.chose) {
+      await repos.macrocycle.update(choice.id, {
+        statusChosen: choice.before.statusChosen,
+        ...(choice.before.status ? { status: choice.before.status } : {}),
+      });
     }
   }
-  return back;
 }

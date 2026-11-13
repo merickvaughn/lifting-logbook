@@ -756,12 +756,14 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
 
     it('undoes three batches out of order on a two-program file, recomputing what remains', async () => {
       const before = await counts();
-      // RPT every other day from day 0, 5/3/1 every other day from day 20; each file grows by two sessions of each.
-      const file = (sessions: number) => [...run(RPT_DAYS, 0, sessions), ...run(FIVE_THREE_ONE_DAYS, 20, sessions)];
+      // Recent dates, so statuses turn on what follows each run, not on its age: day 200 is today.
+      // 5/3/1 every other day from day 166, then RPT every other day from day 186; each file grows
+      // by two sessions of each.
+      const file = (sessions: number) => [...run(FIVE_THREE_ONE_DAYS, 166, sessions), ...run(RPT_DAYS, 186, sessions)];
       const breakdown = (rows: Row[], chosen: boolean) =>
         breakdownOf([
-          stretch(rows.filter((r) => (r.day ?? 0) < 20), 'rpt', inProgress),
-          stretch(rows.filter((r) => (r.day ?? 0) >= 20), '5-3-1', chosen ? { status: 'overran', statusChosen: true } : inProgress),
+          stretch(rows.filter((r) => (r.day ?? 0) < 186), '5-3-1', chosen ? { status: 'overran', statusChosen: true } : inProgress),
+          stretch(rows.filter((r) => (r.day ?? 0) >= 186), 'rpt', inProgress),
         ]);
       const commitFile = async (sessions: number, chosen: boolean) => {
         const body = await commit(csvOf(file(sessions)), breakdown(file(sessions), chosen));
@@ -773,20 +775,22 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
       const thirdBatch = await commitFile(7, false);
       const span = async (program: string) => (await macrocycles(program)).map((m) => [m.startDate, m.endDate, m.status]);
       expect(await counts()).toEqual({ sets: 7 * 3 + 7 * 2, macrocycles: 2 });
-      expect(await span('5-3-1')).toEqual([[at(20), at(32), 'overran']]);
+      expect(await span('5-3-1')).toEqual([[at(166), at(178), 'overran']]);
+      expect(await span('rpt')).toEqual([[at(186), at(198), 'in-progress']]);
 
       // The middle batch: both runs keep their dates, from the rows on either side of the gap.
       await undo(secondBatch);
       expect(await counts()).toEqual({ sets: 5 * 3 + 5 * 2, macrocycles: 2 });
-      expect(await span('rpt')).toEqual([[at(0), at(12), 'abandoned']]);
-      expect(await span('5-3-1')).toEqual([[at(20), at(32), 'overran']]);
+      expect(await span('5-3-1')).toEqual([[at(166), at(178), 'overran']]);
+      expect(await span('rpt')).toEqual([[at(186), at(198), 'in-progress']]);
 
-      // The first batch: what's left starts where the last batch's rows do, and the chosen status stays.
+      // The first batch: what's left starts where the last batch's rows do. The status the first
+      // batch chose goes with it, so 5/3/1's is read again from its rows: RPT follows it, so abandoned.
       await undo(firstBatch);
       expect(await counts()).toEqual({ sets: 2 * 3 + 2 * 2, macrocycles: 2 });
-      expect(await span('rpt')).toEqual([[at(10), at(12), 'abandoned']]);
-      expect(await span('5-3-1')).toEqual([[at(30), at(32), 'overran']]);
-      expect((await stored('5-3-1')).map((s) => s.date)).toEqual(expect.arrayContaining([at(30), at(32)]));
+      expect(await span('5-3-1')).toEqual([[at(176), at(178), 'abandoned']]);
+      expect(await span('rpt')).toEqual([[at(196), at(198), 'in-progress']]);
+      expect((await stored('5-3-1')).map((s) => s.date)).toEqual(expect.arrayContaining([at(176), at(178)]));
 
       // The last batch: nothing is left, so both macrocycles go.
       await undo(thirdBatch);
@@ -850,6 +854,42 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
       expect(await macrocycles()).toEqual([
         expect.objectContaining({ id: before?.id, startDate: at(0), endDate: at(4), status: 'abandoned', statusChosen: false, unmatched: false }),
       ]);
+    });
+
+    it('ends where it started when two joins that chose statuses are undone, in either order', async () => {
+      for (const order of ['first', 'second'] as const) {
+        user = `${user}-${order}`;
+        // Recent dates, so the run left at the end reads as in progress, not abandoned.
+        const seed = run(RPT_DAYS, 186, 2);
+        await commit(csvOf(seed), breakdownOf([stretch(seed, 'rpt', inProgress)]));
+        const [start] = await macrocycles();
+        expect(start).toMatchObject({ status: 'in-progress', statusChosen: false, unmatched: false });
+
+        // Each join adds a session and chooses a status; the first adds a lift RPT doesn't have.
+        const join = async (sessions: number, status: 'overran' | 'abandoned') => {
+          const rows = [...run(RPT_DAYS, 186, sessions), { day: 190, lift: 'Face Pull' }];
+          const body = await commit(csvOf(rows), breakdownOf([stretch(rows, 'rpt', { status, statusChosen: true })]));
+          expect(body.assigned).toMatchObject({ macrocycles: 0, extended: 1 });
+          return body.batchId;
+        };
+        const first = await join(3, 'overran');
+        const second = await join(4, 'abandoned');
+        expect(await macrocycles()).toEqual([
+          expect.objectContaining({ id: start?.id, status: 'abandoned', statusChosen: true, unmatched: true }),
+        ]);
+
+        for (const batchId of order === 'first' ? [first, second] : [second, first]) await undo(batchId);
+        expect(await macrocycles()).toEqual([
+          expect.objectContaining({
+            id: start?.id,
+            startDate: at(186),
+            endDate: at(188),
+            status: 'in-progress',
+            statusChosen: false,
+            unmatched: false,
+          }),
+        ]);
+      }
     });
 
     it('recomputes a run that a batch saved before #1255 created, once a later import extended it', async () => {
