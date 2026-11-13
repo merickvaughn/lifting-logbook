@@ -1,16 +1,24 @@
 # ─── Staging environment lock bucket (#1217) ─────────────────────────────────
 # scripts/staging-env-lock.py holds staging from a run's deploy through its integration tests
 # (#1208). It writes, refreshes and deletes small objects many times a day, so it gets its own
-# bucket. It writes them in the Terraform state bucket until #1261. That bucket keeps object
-# versions for state recovery, so every lock write leaves a noncurrent version that never expires,
-# mixed in with production Terraform state.
+# bucket. It used to write them in the Terraform state bucket, which keeps object versions for state
+# recovery, so every lock write left a noncurrent version that never expired (#1217).
 #
-# Staging only: production has no lock. The name is `<project id>-ci-locks`, so workflows can
-# derive it from vars.GCP_STAGING_PROJECT_ID.
+# Staging only: production has no lock. The name is `<project id>-ci-locks`; staging.yml and
+# deploy.yml derive it the same way from vars.GCP_STAGING_PROJECT_ID (STAGING_LOCK_BUCKET).
 #
-# This lands on main before any workflow uses it (#1260, then #1261). Every PR's staging run
-# applies Terraform from its own branch, so a resource that exists on only one branch is destroyed
-# by the next branch's apply.
+# Every PR's staging run applies Terraform from its own branch, so an apply from a config older
+# than this file destroys this bucket whenever no lock is in it (#1260). The workflows take the lock
+# before they apply, so no apply would put it back: instead staging-env-lock.py recreates a missing
+# bucket with these settings (--recreate-in-project), and the import block below adopts it (#1261).
+# Bootstrapping a new staging project: create the bucket before its first apply, since the import
+# block fails on a bucket that doesn't exist.
+import {
+  for_each = var.environment == "staging" ? toset(["${var.project_id}-ci-locks"]) : toset([])
+  to       = google_storage_bucket.ci_locks[0]
+  id       = each.value
+}
+
 resource "google_storage_bucket" "ci_locks" {
   count = var.environment == "staging" ? 1 : 0
 

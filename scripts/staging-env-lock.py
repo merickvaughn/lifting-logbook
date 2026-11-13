@@ -28,10 +28,14 @@ and the lock is older than --stale-min. The workflows release in an `always()` j
 
 Usage:
   python3 scripts/staging-env-lock.py acquire --bucket <bucket> [--timeout-min N] [--holder-job NAME]
+                                              [--recreate-in-project PROJECT]
   python3 scripts/staging-env-lock.py release --bucket <bucket>
 
 --timeout-min 0 never waits: it re-takes a lock this run already holds and otherwise fails at once.
 --holder-job names the one job (as GitHub displays it) whose completion ends this hold.
+--recreate-in-project creates the bucket in PROJECT if it is missing (#1261). The lock lives in its
+own unversioned bucket, `<staging project>-ci-locks` (infra/terraform/ci-locks.tf), not the
+versioned Terraform state bucket (#1217).
 
 Reads GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_WORKFLOW, GITHUB_EVENT_NAME, GITHUB_HEAD_REF,
 GITHUB_REF_NAME, GITHUB_SHA, GITHUB_REPOSITORY, GITHUB_SERVER_URL, and GH_TOKEN (to ask whether a
@@ -224,9 +228,11 @@ def release(store, me, log=print):
 class GcsStore:
     """One object, through the GCS JSON API with generation preconditions."""
 
-    def __init__(self, bucket, name, opener=urllib.request.urlopen, sleep=time.sleep, token=None):
+    def __init__(self, bucket, name, opener=urllib.request.urlopen, sleep=time.sleep, token=None,
+                 recreate_in_project=None):
         self.bucket = bucket
         self.name = name
+        self.recreate_in_project = recreate_in_project
         self._open = opener
         self._sleep = sleep
         self._token = token
@@ -241,8 +247,8 @@ class GcsStore:
             self._token_at = time.time()
         return {"Authorization": f"Bearer {self._token}"}
 
-    def _call(self, method, url, data=None, headers=None):
-        """Return (status, headers, body). 404 and 412 are answers; retry transient failures."""
+    def _call(self, method, url, data=None, headers=None, answers=(404, 412)):
+        """Return (status, headers, body). `answers` are answers, not errors; retry transient failures."""
         attempts = 4
         for attempt in range(1, attempts + 1):
             req = urllib.request.Request(url, data=data, method=method, headers={**self._auth(), **(headers or {})})
@@ -250,7 +256,7 @@ class GcsStore:
                 with self._open(req, timeout=30) as resp:
                     return resp.status, resp.headers, resp.read()
             except urllib.error.HTTPError as err:
-                if err.code in (404, 412):
+                if err.code in answers:
                     return err.code, err.headers, err.read()
                 if err.code not in RETRY_STATUS or attempt == attempts:
                     body = err.read().decode("utf-8", "replace")[:500]
@@ -291,11 +297,47 @@ class GcsStore:
         status, _, body = self._call(
             "POST", url, data=json.dumps(content).encode(), headers={"Content-Type": "application/json"}
         )
+        if status == 404 and self.recreate_in_project:
+            self._recreate_bucket()
+            status, _, body = self._call(
+                "POST", url, data=json.dumps(content).encode(), headers={"Content-Type": "application/json"}
+            )
         if status == 412:
             return None
         if status == 404:
-            raise LockError(f"GCS bucket '{self.bucket}' was not found; check the TF_STATE_BUCKET secret.")
+            raise LockError(
+                f"GCS bucket '{self.bucket}' was not found. infra/terraform/ci-locks.tf creates it; "
+                "check STAGING_LOCK_BUCKET in the workflow."
+            )
         return int(json.loads(body)["generation"])
+
+    def _recreate_bucket(self):
+        """Create the lock bucket again after something deleted it (#1261).
+
+        The workflows take this lock before the staging `terraform apply`, so if the bucket is gone
+        (an apply from a config older than infra/terraform/ci-locks.tf destroys it whenever no lock
+        is in it), no apply could run to put it back. The settings match ci-locks.tf, and its
+        `import` block adopts the bucket on the next apply. 409 means another run created it first."""
+        print(
+            f"::warning title=Staging lock bucket recreated::GCS bucket '{self.bucket}' was missing, so this "
+            f"run created it in {self.recreate_in_project}. Something deleted it, most likely a re-run of a "
+            "run whose Terraform config predates infra/terraform/ci-locks.tf. The next staging apply imports it."
+        )
+        spec = {
+            "name": self.bucket,
+            "location": "US-CENTRAL1",
+            "versioning": {"enabled": False},
+            "softDeletePolicy": {"retentionDurationSeconds": "0"},
+            "iamConfiguration": {
+                "uniformBucketLevelAccess": {"enabled": True},
+                "publicAccessPrevention": "enforced",
+            },
+        }
+        query = urllib.parse.urlencode({"project": self.recreate_in_project})
+        self._call(
+            "POST", f"{GCS}/storage/v1/b?{query}", data=json.dumps(spec).encode(),
+            headers={"Content-Type": "application/json"}, answers=(409,),
+        )
 
     def delete(self, if_generation):
         status, _, _ = self._call("DELETE", f"{self._object_url()}?ifGenerationMatch={if_generation}")
@@ -360,10 +402,11 @@ def main(argv=None):
     parser.add_argument("--stale-min", type=float, default=40)
     parser.add_argument("--poll-sec", type=float, default=15)
     parser.add_argument("--holder-job")
+    parser.add_argument("--recreate-in-project")
     args = parser.parse_args(argv)
 
     try:
-        store = GcsStore(args.bucket, args.object)
+        store = GcsStore(args.bucket, args.object, recreate_in_project=args.recreate_in_project)
         me = me_from_env(args.holder_job)
         if args.action == "release":
             release(store, me)
@@ -371,7 +414,9 @@ def main(argv=None):
         acquire(
             store, me, github_holder_done, time.time, time.sleep,
             timeout_s=args.timeout_min * 60, stale_s=args.stale_min * 60, poll_s=args.poll_sec,
-            priority_store=GcsStore(args.bucket, args.object + ".priority"),
+            priority_store=GcsStore(
+                args.bucket, args.object + ".priority", recreate_in_project=args.recreate_in_project
+            ),
         )
     except LockTimeout as err:
         print(f"::error title=Staging lock timeout::{err} See #1208.")

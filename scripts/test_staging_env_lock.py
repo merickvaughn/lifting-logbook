@@ -19,6 +19,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import threading
 import time
 import unittest
@@ -364,7 +365,62 @@ class GcsStoreTests(unittest.TestCase):
         store, _ = gcs(http_error(404))
         with self.assertRaises(lock.LockError) as ctx:
             store.write({}, if_generation=0)
-        self.assertIn("TF_STATE_BUCKET", str(ctx.exception))
+        self.assertIn("ci-locks.tf", str(ctx.exception))
+
+    def test_missing_bucket_is_recreated_then_the_write_retried(self):
+        store, opener = gcs(
+            http_error(404), FakeResponse(body=b'{"name": "bucket"}'), FakeResponse(body=b'{"generation": "46"}'),
+        )
+        store.recreate_in_project = "stg-project"
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(store.write({"run_id": "7"}, if_generation=0), 46)
+        create = opener.requests[1]
+        self.assertTrue(create.full_url.endswith("/storage/v1/b?project=stg-project"))
+        spec = json.loads(create.data)
+        self.assertEqual(spec["name"], "bucket")
+        self.assertEqual(spec["versioning"], {"enabled": False})
+        self.assertEqual(spec["softDeletePolicy"], {"retentionDurationSeconds": "0"})
+        self.assertIn("ifGenerationMatch=0", opener.requests[2].full_url)
+        self.assertIn("::warning title=Staging lock bucket recreated::", out.getvalue())
+
+    def test_recreated_bucket_matches_the_terraform_definition(self):
+        # The next staging apply imports a recreated bucket. A setting that differs from ci-locks.tf
+        # would show up there as a change (or a replacement, for location), so keep the two in step.
+        store, opener = gcs(http_error(404), FakeResponse(body=b"{}"), FakeResponse(body=b'{"generation": "1"}'))
+        store.recreate_in_project = "p"
+        with contextlib.redirect_stdout(io.StringIO()):
+            store.write({}, if_generation=0)
+        spec = json.loads(opener.requests[1].data)
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "infra", "terraform")
+        with open(os.path.join(root, "ci-locks.tf"), encoding="utf-8") as f:
+            tf = f.read()
+        with open(os.path.join(root, "variables.tf"), encoding="utf-8") as f:
+            region = re.search(r'variable "region" \{.*?default\s*=\s*"([^"]+)"', f.read(), re.S).group(1)
+        self.assertRegex(tf, r"location\s*=\s*var\.region")
+        self.assertEqual(spec["location"].lower(), region)
+        self.assertFalse(spec["versioning"]["enabled"])
+        self.assertRegex(tf, r"versioning\s*\{\s*enabled\s*=\s*false\s*\}")
+        self.assertRegex(
+            tf, r"retention_duration_seconds\s*=\s*%s\b" % spec["softDeletePolicy"]["retentionDurationSeconds"]
+        )
+        self.assertEqual(spec["iamConfiguration"]["uniformBucketLevelAccess"], {"enabled": True})
+        self.assertRegex(tf, r"uniform_bucket_level_access\s*=\s*true")
+        self.assertRegex(tf, r'public_access_prevention\s*=\s*"%s"' % spec["iamConfiguration"]["publicAccessPrevention"])
+
+    def test_bucket_created_by_another_run_meanwhile_is_fine(self):
+        store, opener = gcs(http_error(404), http_error(409), FakeResponse(body=b'{"generation": "47"}'))
+        store.recreate_in_project = "stg-project"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(store.write({}, if_generation=0), 47)
+        self.assertEqual(len(opener.requests), 3)
+
+    def test_failed_recreate_is_a_lock_error(self):
+        store, opener = gcs(http_error(404), http_error(403, b'{"error": "storage.buckets.create denied"}'))
+        store.recreate_in_project = "stg-project"
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(lock.LockError) as ctx:
+            store.write({}, if_generation=0)
+        self.assertIn("storage.buckets.create denied", str(ctx.exception))
+        self.assertIn("/storage/v1/b?project=stg-project", opener.requests[1].full_url)
 
     def test_throttling_server_errors_and_resets_are_retried(self):
         store, opener = gcs(
@@ -433,6 +489,15 @@ class MainTests(unittest.TestCase):
                 code = lock.main(["release", "--bucket", "b"])
         self.assertEqual(code, 1)
         self.assertIn("::error title=Staging lock error::GCS GET returned HTTP 403", out.getvalue())
+
+    def test_recreate_project_reaches_the_lock_and_priority_stores(self):
+        env = {"GITHUB_RUN_ID": "1", "GITHUB_REPOSITORY": "o/r"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(lock, "acquire") as acquire:
+            code = lock.main(["acquire", "--bucket", "b", "--recreate-in-project", "p"])
+        self.assertEqual(code, 0)
+        store = acquire.call_args.args[0]
+        self.assertEqual(store.recreate_in_project, "p")
+        self.assertEqual(acquire.call_args.kwargs["priority_store"].recreate_in_project, "p")
 
 
 if __name__ == "__main__":
