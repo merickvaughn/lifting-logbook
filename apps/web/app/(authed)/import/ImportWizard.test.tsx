@@ -1,14 +1,25 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
+  AssignSession,
+  AssignStretch,
   CustomLiftResponse,
   CustomProgramSummaryResponse,
+  ImportAssignResponse,
   ImportDelta,
   ImportPreviewResponse,
 } from '@lifting-logbook/types';
 import { LIFT_CATALOG } from '@lifting-logbook/core';
+import { ApiClientError } from '@lifting-logbook/api-client';
 import { ImportWizard } from './ImportWizard';
-import { commitImport, createCustomLift, dryRunImport, fetchCustomLifts, previewImport } from '@/lib/client-api';
+import {
+  assignImport,
+  commitImport,
+  createCustomLift,
+  dryRunImport,
+  fetchCustomLifts,
+  previewImport,
+} from '@/lib/client-api';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 
 // File.text() is not implemented in jsdom; use FileReader instead.
@@ -23,6 +34,7 @@ function readFileText(file: File): Promise<string> {
 
 jest.mock('@/lib/client-api', () => ({
   previewImport: jest.fn(),
+  assignImport: jest.fn(),
   commitImport: jest.fn(),
   dryRunImport: jest.fn(),
   createCustomLift: jest.fn(),
@@ -32,6 +44,7 @@ jest.mock('@/lib/client-api', () => ({
 const mockPreview = previewImport as jest.MockedFunction<typeof previewImport>;
 const mockCommit = commitImport as jest.MockedFunction<typeof commitImport>;
 const mockDryRun = dryRunImport as jest.MockedFunction<typeof dryRunImport>;
+const mockAssign = assignImport as jest.MockedFunction<typeof assignImport>;
 const mockCreateCustomLift = createCustomLift as jest.MockedFunction<typeof createCustomLift>;
 const mockFetchCustomLifts = fetchCustomLifts as jest.MockedFunction<typeof fetchCustomLifts>;
 
@@ -3599,5 +3612,288 @@ describe('ImportWizard', () => {
 
     await waitFor(() => expect(screen.getByText('Import complete')).toBeInTheDocument());
     expect(screen.queryByText('Skipped rows')).not.toBeInTheDocument();
+  });
+});
+
+// ── Assign step (#1256) ─────────────────────────────────────────────────────────
+
+const day = (date: string, lifts = ['Squat']): AssignSession => ({ date, workoutNum: null, lifts, sets: 3 });
+
+function stretch(dates: string[], over: Partial<AssignStretch> = {}): AssignStretch {
+  return {
+    program: 'rpt',
+    matched: true,
+    liftsOutsideProgram: [],
+    candidateProgram: null,
+    fileMacrocycleNum: null,
+    startDate: dates[0]!,
+    endDate: dates[dates.length - 1]!,
+    sessions: dates.map((d) => day(d)),
+    completedWorkouts: dates.length,
+    expectedWorkouts: 24,
+    status: 'completed',
+    fileStatus: null,
+    reasons: {
+      start: { kind: 'first-session' },
+      program: { kind: 'lifts', tiedWith: [], bySetOrder: false },
+      status: { kind: 'all-workouts-done' },
+    },
+    ...over,
+  };
+}
+
+function assignRes(over: Partial<ImportAssignResponse> = {}): ImportAssignResponse {
+  return {
+    importDate: '2026-11-13',
+    sessions: 4,
+    stretches: [
+      stretch(['2026-01-01', '2026-01-03']),
+      stretch(['2026-02-01', '2026-02-03'], { reasons: { start: { kind: 'gap', days: 29 }, program: { kind: 'source' }, status: { kind: 'all-workouts-done' } } }),
+    ],
+    lone: [],
+    nonCycle: [],
+    unnumbered: [],
+    conflicts: [],
+    undatedRows: 1,
+    exported: false,
+    // A custom program, so the names below don't depend on the built-in catalog's wording.
+    programs: [{ id: 'rpt', name: 'RPT', workouts: 24, weeks: 8 }],
+    split: { changes: 2, olderThanCurrent: 1 },
+    ...over,
+  };
+}
+
+// A file with no program, macrocycle or workout columns: with the step on, the server
+// doesn't ask for them (#1253), and its one undated row is a skip, not an incomplete row.
+const ASSIGN_PREVIEW: ImportPreviewResponse = {
+  classification: LIFT_RECORDS_PREVIEW.classification,
+  destination: 'lift-records',
+  columnMappings: [
+    { sourceHeader: 'Date', destinationField: 'date', confidence: 1, required: true },
+    { sourceHeader: 'Lift', destinationField: 'lift', confidence: 1, required: true },
+    { sourceHeader: 'Set #', destinationField: 'setNum', confidence: 1, required: true },
+    { sourceHeader: 'Weight', destinationField: 'weight', confidence: 1, required: true },
+    { sourceHeader: 'Reps', destinationField: 'reps', confidence: 1, required: true },
+  ],
+  preview: {
+    creates: 1,
+    updates: 0,
+    skips: 1,
+    unresolved: 0,
+    deltas: [
+      { key: 'squat-1', label: 'Squat 2026-01-01', kind: 'create', status: 'ok', rowIndex: 1 },
+      { key: '__undated_2', label: 'Row 2 (no date)', kind: 'skip', status: 'undated', rowIndex: 2 },
+    ],
+  },
+  errors: [],
+  assignEnabled: true,
+};
+
+const ASSIGN_FILE = () =>
+  new File(['Date,Lift,Set #,Weight,Reps\n2026-01-01,Squat,1,200,5\n,Squat,1,200,5'], 'h.csv', { type: 'text/csv' });
+
+const DRY_RUN_OK = {
+  ok: true as const,
+  data: { destination: 'lift-records' as const, created: 1, updated: 0, skipped: 1 },
+};
+
+async function toAssign(user: ReturnType<typeof userEvent.setup>) {
+  await navigateToLiftRecordsReview(user, ASSIGN_FILE());
+  await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Assign
+  await screen.findByRole('heading', { name: 'Assign your history to macrocycles' });
+}
+
+const nextButton = () => screen.getByRole('button', { name: 'Next' });
+
+describe('ImportWizard Assign step (#1256)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPreview.mockResolvedValue(ASSIGN_PREVIEW);
+    mockAssign.mockResolvedValue(assignRes());
+    mockDryRun.mockResolvedValue(DRY_RUN_OK);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('imports a file with no number columns through Assign, with its undated rows and split count shown', async () => {
+    const user = userEvent.setup();
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await navigateToLiftRecordsReview(user, ASSIGN_FILE());
+
+    // No number errors at Review, and the undated row doesn't hold the incomplete-row gate.
+    expect(screen.queryByText(/missing a required value/)).not.toBeInTheDocument();
+    expect(nextButton()).toBeEnabled();
+    await user.click(nextButton());
+
+    await screen.findByRole('heading', { name: 'Assign your history to macrocycles' });
+    expect(screen.getByText('Step 6 of 8 · Assign')).toBeInTheDocument();
+    expect(mockAssign).toHaveBeenCalledWith('prog-1', expect.any(File), expect.objectContaining({ splitDest: true, today: expect.any(String) }));
+    expect(screen.getByTestId('assign-undated')).toHaveTextContent('1 row has no date');
+    expect(screen.getByTestId('assign-split')).toHaveTextContent('2 one-rep-max rows would change a training max. 1 is older');
+
+    await user.click(nextButton()); // Assign → Preview
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    expect(mockDryRun).toHaveBeenCalledWith(
+      'prog-1',
+      expect.any(File),
+      'lift-records',
+      expect.objectContaining({
+        breakdown: {
+          stretches: [
+            { program: 'rpt', status: 'completed', statusChosen: false, dates: ['2026-01-01', '2026-01-03'] },
+            { program: 'rpt', status: 'completed', statusChosen: false, dates: ['2026-02-01', '2026-02-03'] },
+          ],
+          excludedDates: [],
+          nonCycleDates: [],
+        },
+        today: expect.any(String),
+      }),
+    );
+
+    mockCommit.mockResolvedValue({ ok: true, data: { destination: 'lift-records', created: 1, updated: 0, skipped: 1, batchId: 'b1' } });
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+    await screen.findByText('Import complete');
+    expect(mockCommit.mock.calls[0]![3]).toEqual(mockDryRun.mock.calls[0]![3]);
+  });
+
+  it('looks as it did with the step off: the number columns are required and there is no Assign step', async () => {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(LIFT_RECORDS_PREVIEW);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await user.upload(screen.getByLabelText('CSV file'), ASSIGN_FILE());
+    await user.click(screen.getByRole('button', { name: 'Analyze' }));
+    await screen.findByText('Lift History');
+    await user.click(nextButton()); // Classify → Map
+    for (const header of ['Program', 'Cycle #', 'Workout #']) {
+      const row = screen.getByLabelText(`Map column ${header}`).closest('tr')!;
+      expect(within(row).getByLabelText('required')).toBeInTheDocument();
+    }
+    expect(screen.getByText('Step 4 of 7 · Map columns')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Assign')).not.toBeInTheDocument();
+    await user.click(nextButton()); // Map → Review
+    await user.click(nextButton()); // Review → Preview
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    expect(mockAssign).not.toHaveBeenCalled();
+    expect(mockDryRun.mock.calls[0]![3]).not.toHaveProperty('breakdown');
+  });
+
+  it('returns to Assign with a fresh grouping when the server rejects the breakdown', async () => {
+    const user = userEvent.setup();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    const fresh = assignRes({ stretches: [stretch(['2026-01-01', '2026-02-03'], { status: 'abandoned' })] });
+    mockAssign.mockResolvedValueOnce(fresh);
+    mockDryRun.mockRejectedValueOnce(new ApiClientError('2026-02-04 is not in the file', 400, 'breakdown-mismatch'));
+    await user.click(nextButton());
+
+    expect(await screen.findByText(/no longer matched these macrocycles/)).toBeInTheDocument();
+    expect(screen.getByText('Step 6 of 8 · Assign')).toBeInTheDocument();
+    expect(mockAssign).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('assign-summary')).toHaveTextContent('in 1 macrocycle.');
+
+    // The same at commit.
+    await user.click(nextButton());
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    mockCommit.mockResolvedValueOnce({ ok: false, errors: [{ row: 0, code: 'UNEXPECTED_ERROR', message: 'x' }], code: 'breakdown-mismatch' });
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+    expect(await screen.findByText(/no longer matched these macrocycles/)).toBeInTheDocument();
+    expect(mockAssign).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps Assign edits while Review is unchanged, and discards them with a notice when rows change', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(assignRes({ stretches: [stretch(['2026-01-01', '2026-01-03'], { status: null })] }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    const status = screen.getByLabelText('Status for RPT from Jan 1, 2026');
+    await user.selectOptions(status, 'abandoned');
+    // Settling it doesn't collapse it under the lifter's focus.
+    expect(status).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await user.click(nextButton());
+    // Back at Assign, the settled stretch is collapsed to one line, with the edit kept.
+    expect(await screen.findByTestId('assign-settled')).toHaveTextContent('Unfinished');
+    expect(mockAssign).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await user.click(screen.getByRole('button', { name: 'Exclude Squat 2026-01-01' }));
+    await user.click(nextButton());
+    expect(await screen.findByText(/You changed rows at Review, so your changes here were discarded/)).toBeInTheDocument();
+    expect(mockAssign).toHaveBeenCalledTimes(2);
+    expect(mockAssign.mock.calls[1]![2]).toEqual(expect.objectContaining({ excludeKeys: ['__row_1'] }));
+    expect(screen.getByLabelText('Status for RPT from Jan 1, 2026')).toHaveValue('');
+  });
+
+  it('blocks Continue while file numbers overlap, unless the file is an export', async () => {
+    const user = userEvent.setup();
+    const overlapping = [
+      stretch(['2026-01-01', '2026-01-10'], { fileMacrocycleNum: 1 }),
+      stretch(['2026-01-05', '2026-01-15'], { fileMacrocycleNum: 2 }),
+    ];
+    mockAssign.mockResolvedValueOnce(
+      assignRes({ stretches: overlapping, conflicts: [{ kind: 'numbers-overlap', stretches: [0, 1] }] }),
+    );
+    const { unmount } = render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    expect(screen.getByText('MACROCYCLES SHARE DATES')).toBeInTheDocument();
+    expect(nextButton()).toBeDisabled();
+
+    // Joining them clears the overlap, and the joined stretch's status is the lifter's to choose.
+    await user.click(screen.getByRole('button', { name: 'Join RPT from Jan 5, 2026 with the macrocycle before it' }));
+    await user.selectOptions(screen.getByLabelText('Status for RPT from Jan 1, 2026'), 'completed');
+    expect(nextButton()).toBeEnabled();
+    unmount();
+
+    mockAssign.mockResolvedValueOnce(
+      assignRes({ stretches: overlapping, exported: true, conflicts: [{ kind: 'numbers-overlap', stretches: [0, 1] }] }),
+    );
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    expect(screen.queryByText('MACROCYCLES SHARE DATES')).not.toBeInTheDocument();
+    expect(nextButton()).toBeEnabled();
+  });
+
+  it('lets a lone session become a non-cycle workout, which clears its flag and enables Continue', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(
+      assignRes({ lone: [{ session: day('2026-01-20', ['Bench Press']), daysAfterPrevious: 17, daysBeforeNext: 12 }] }),
+    );
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    expect(screen.getByTestId('assign-decisions')).toHaveTextContent('1 decision left');
+    expect(nextButton()).toBeDisabled();
+
+    const nonCycle = screen.getByRole('button', { name: 'Store the Jan 20, 2026 workout as a non-cycle workout' });
+    await user.click(nonCycle);
+    expect(nonCycle).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('assign-decisions')).toHaveTextContent('Nothing left to decide');
+    expect(nextButton()).toBeEnabled();
+
+    await user.click(nextButton());
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    expect(mockDryRun.mock.calls[0]![3]).toEqual(
+      expect.objectContaining({ breakdown: expect.objectContaining({ nonCycleDates: ['2026-01-20'] }) }),
+    );
+  });
+
+  it('reports a failed mode=assign call through logClientError and stays at Review', async () => {
+    const user = userEvent.setup();
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const failure = new Error('API 500 Internal Server Error');
+    mockAssign.mockRejectedValueOnce(failure);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await navigateToLiftRecordsReview(user, ASSIGN_FILE());
+    await user.click(nextButton());
+
+    await waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith('[client-mutation] assignImport failed', failure, { programId: 'prog-1' }),
+    );
+    expect(await screen.findByText(failure.message)).toBeInTheDocument();
+    expect(screen.getByText('Step 5 of 8 · Review')).toBeInTheDocument();
   });
 });

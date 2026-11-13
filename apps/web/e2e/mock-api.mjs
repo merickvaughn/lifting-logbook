@@ -94,6 +94,71 @@ const AMBIGUOUS_LIFT_ROWS = [
   { rowIndex: 2, originalLift: 'Wide-Grip CBL Curls' },
 ];
 
+// The Assign step (#1256). A file with no program, macrocycle or workout columns, which the
+// step on doesn't ask for (#1253).
+const ASSIGN_PREVIEW = {
+  classification: { type: 'lift-records', confidence: 0.95, bucket: 'high', reasons: [], alternatives: [] },
+  destination: 'lift-records',
+  columnMappings: ['Date', 'Lift', 'Set #', 'Weight', 'Reps'].map((header, i) => ({
+    sourceHeader: header,
+    destinationField: ['date', 'lift', 'setNum', 'weight', 'reps'][i],
+    confidence: 1,
+    required: true,
+  })),
+  preview: {
+    creates: 1,
+    updates: 0,
+    skips: 0,
+    unresolved: 0,
+    deltas: [{ key: 'squat-1', label: 'Squat', kind: 'create', status: 'ok', rowIndex: 1 }],
+  },
+  errors: [],
+  assignEnabled: true,
+};
+
+// A long history: 30 macrocycles of three sessions, three weeks apart, with a one-lift
+// session in each of the first 20 breaks. The first has no status, so it stays open; the
+// rest are settled, so they collapse to one line.
+const ASSIGN_DAY = (offset) => new Date(Date.UTC(2024, 0, 1) + offset * 86400000).toISOString().slice(0, 10);
+const ASSIGN_RESPONSE = {
+  importDate: '2026-11-13',
+  sessions: 110,
+  stretches: Array.from({ length: 30 }, (_, i) => {
+    const dates = [0, 2, 4].map((d) => ASSIGN_DAY(i * 21 + d));
+    return {
+      program: 'rpt',
+      matched: true,
+      liftsOutsideProgram: [],
+      candidateProgram: null,
+      fileMacrocycleNum: null,
+      startDate: dates[0],
+      endDate: dates[2],
+      sessions: dates.map((date, n) => ({ date, workoutNum: n + 1, lifts: ['Squat', 'Bench Press'], sets: 6 })),
+      completedWorkouts: 3,
+      expectedWorkouts: 24,
+      status: i === 0 ? null : 'abandoned',
+      fileStatus: null,
+      reasons: {
+        start: i === 0 ? { kind: 'first-session' } : { kind: 'gap', days: 17 },
+        program: { kind: 'lifts', tiedWith: [], bySetOrder: false },
+        status: i === 0 ? { kind: 'unmatched' } : { kind: 'next-is-restart' },
+      },
+    };
+  }),
+  lone: Array.from({ length: 20 }, (_, i) => ({
+    session: { date: ASSIGN_DAY(i * 21 + 12), workoutNum: null, lifts: ['Bench Press'], sets: 3 },
+    daysAfterPrevious: 8,
+    daysBeforeNext: 9,
+  })),
+  nonCycle: [],
+  unnumbered: [],
+  conflicts: [],
+  undatedRows: 0,
+  exported: false,
+  // A custom program's name, so the spec doesn't depend on the built-in catalog's wording.
+  programs: [{ id: 'rpt', name: 'RPT', workouts: 24, weeks: 8 }],
+};
+
 // Column mappings for the Google Sheets LIFT_RECORDS tab's preview (#1111) —
 // every required lift-record field mapped, so MAP_COLUMNS lets the user continue.
 const SHEET_LIFT_RECORD_MAPPINGS = [
@@ -151,6 +216,9 @@ function createInitialState() {
     // workbook fetch answer like a sheet that is not link-shared.
     googleSheet: false,
     privateSheet: false,
+    // The import's Assign step (#1256): withAssign makes any upload lift history with the
+    // step on, and mode=assign return ASSIGN_RESPONSE's long file.
+    assign: false,
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
     // GET/POST /lifts/modifications (#1152) — the user's lift modifications, for every lift.
@@ -640,6 +708,9 @@ const server = createServer(async (req, res) => {
     }
     if (url.searchParams.get('withGoalSpellingCollision') === 'true') {
       state.goalSpellingCollision = true;
+    }
+    if (url.searchParams.get('withAssign') === 'true') {
+      state.assign = true;
     }
     if (url.searchParams.get('withGoogleSheet') === 'true') {
       state.googleSheet = true;
@@ -1514,6 +1585,15 @@ const server = createServer(async (req, res) => {
           },
           errors: [],
         });
+        return;
+      }
+
+      if (state.assign && mode === 'assign') {
+        json(res, ASSIGN_RESPONSE);
+        return;
+      }
+      if (state.assign && mode === 'preview') {
+        json(res, ASSIGN_PREVIEW);
         return;
       }
 

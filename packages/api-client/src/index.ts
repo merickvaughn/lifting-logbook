@@ -17,6 +17,8 @@ import type {
   FocusSettingsResponse,
   ReorderFocusBlocksRequest,
   MacrocycleDashboardResponse,
+  ImportAssignResponse,
+  ImportBreakdown,
   ImportCommitResponse,
   ImportDryRunResponse,
   ImportError,
@@ -127,7 +129,7 @@ const DATA_EXPORT_TIMEOUT_MS = 60_000;
 // relative (rawFetch prepends baseUrl).
 function importPath(
   program: string,
-  mode: 'preview' | 'commit' | 'dry-run',
+  mode: 'preview' | 'commit' | 'dry-run' | 'assign',
   destination?: ImportKind,
   opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>,
 ): string {
@@ -152,12 +154,17 @@ function importForm(file: File, opts?: CommitImportOpts): FormData {
   if (opts?.liftOverrides && Object.keys(opts.liftOverrides).length > 0) {
     form.append('liftOverrides', JSON.stringify(opts.liftOverrides));
   }
+  if (opts?.breakdown) form.append('breakdown', JSON.stringify(opts.breakdown));
+  if (opts?.today) form.append('today', opts.today);
   form.append('file', file);
   return form;
 }
 
-/** The server's answer to a commit or dry run: its response, or validation errors as data. */
-export type ImportCommitResult<T> = { ok: true; data: T } | { ok: false; errors: ImportError[] };
+/**
+ * The server's answer to a commit or dry run: its response, or validation errors as data. `code`
+ * is the API's own error code when it sends one, such as `breakdown-mismatch` (#1256).
+ */
+export type ImportCommitResult<T> = { ok: true; data: T } | { ok: false; errors: ImportError[]; code?: string };
 
 /** Phase 3 options for commitImport. */
 export interface CommitImportOpts {
@@ -172,6 +179,10 @@ export interface CommitImportOpts {
   liftOverrides?: Record<number, string>;
   /** When true, 1RM lift-record rows are split to Training Maxes. */
   splitDest?: boolean;
+  /** The lifter's confirmed Assign breakdown (#1254), for a lift-records dry run or commit. */
+  breakdown?: ImportBreakdown;
+  /** The lifter's local day, `YYYY-MM-DD`, that suggested statuses are judged against (#1253). */
+  today?: string;
 }
 
 // Carries the upstream HTTP status alongside the message so a caller that needs
@@ -593,7 +604,25 @@ export function createApiClient(config: ApiClientConfig) {
         return { ok: true, data: (await res.json()) as ImportCommitResponse };
       }
       const body = (await res.json().catch(() => ({}))) as { errors?: ImportError[]; code?: unknown; message?: unknown };
-      return { ok: false, errors: importFailureErrors(res.status, body) };
+      return {
+        ok: false,
+        errors: importFailureErrors(res.status, body),
+        ...(typeof body.code === 'string' ? { code: body.code } : {}),
+      };
+    },
+    /**
+     * Smart Import — the rules' grouping of a lift-records file into suggested macrocycles, for
+     * the Assign step (#1253). Nothing is written. Throws on any failure, with the API's code.
+     */
+    async assignImport(
+      program: string,
+      file: File,
+      opts?: Pick<CommitImportOpts, 'overrides' | 'excludeKeys' | 'liftOverrides' | 'splitDest' | 'today'>,
+    ): Promise<ImportAssignResponse> {
+      const path = importPath(program, 'assign', 'lift-records', opts);
+      const res = await rawFetch(path, { method: 'POST', body: importForm(file, opts), cache: 'no-store' });
+      if (!res.ok) throw await readError(res, path);
+      return (await res.json()) as ImportAssignResponse;
     },
     /**
      * Smart Import — reports the counts `commitImport` would return for these same

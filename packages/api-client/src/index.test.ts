@@ -521,7 +521,11 @@ describe('createApiClient', () => {
 
     it('commitImport shows the retry message of a 409 macrocycle-busy', async () => {
       mockFetch.mockResolvedValue(busy('import'));
-      await expect(makeClient().commitImport('5-3-1', file, 'lift-records')).resolves.toEqual({ ok: false, errors: retry });
+      await expect(makeClient().commitImport('5-3-1', file, 'lift-records')).resolves.toEqual({
+        ok: false,
+        errors: retry,
+        code: 'macrocycle-busy',
+      });
     });
 
     it('commitImport keeps the generic message for a 409 with another code', async () => {
@@ -529,6 +533,7 @@ describe('createApiClient', () => {
       await expect(makeClient().commitImport('5-3-1', file, 'lift-records')).resolves.toEqual({
         ok: false,
         errors: [{ row: 0, code: 'UNEXPECTED_ERROR', message: 'Unexpected error (HTTP 409)' }],
+        code: 'other',
       });
     });
 
@@ -696,6 +701,47 @@ describe('createApiClient', () => {
       expect(JSON.parse(form.get('excludeKeys') as string)).toEqual(['1:1:20260101:Rows, Cable:1']);
       expect(JSON.parse(form.get('liftOverrides') as string)).toEqual({ '2': 'bench-press' });
       expect((form.get('file') as File).name).toBe('records.csv');
+    });
+
+    it('assignImport POSTs mode=assign for lift records, with its fields in the body (#1256)', async () => {
+      const assign = { importDate: '2026-11-13', stretches: [] };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(assign), { status: 200 }));
+      const result = await makeClient().assignImport('5-3-1', file, {
+        excludeKeys: ['__row_2'],
+        splitDest: true,
+        today: '2026-11-13',
+      });
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/programs/5-3-1/import?mode=assign&destination=lift-records&splitDest=1');
+      const form = init.body as FormData;
+      expect(form.get('excludeKeys')).toBe('["__row_2"]');
+      expect(form.get('today')).toBe('2026-11-13');
+      expect(result).toEqual(assign);
+    });
+
+    it('assignImport throws with the API code on a failure (#1256)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ code: 'x', message: 'nope' }), { status: 400 }));
+      await expect(makeClient().assignImport('5-3-1', file)).rejects.toMatchObject({
+        name: 'ApiClientError',
+        status: 400,
+        code: 'x',
+      });
+    });
+
+    it('dryRunImport and commitImport send the breakdown, and commitImport returns a mismatch code (#1256)', async () => {
+      const breakdown = { stretches: [{ program: 'rpt', dates: ['2026-01-01'], status: 'completed' as const, statusChosen: false }], excludedDates: [], nonCycleDates: [] };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ created: 1 }), { status: 200 }));
+      const sent = () => lastCall()[1].body as FormData;
+      await makeClient().dryRunImport('5-3-1', file, 'lift-records', { breakdown, today: '2026-11-13' });
+      expect(JSON.parse(sent().get('breakdown') as string)).toEqual(breakdown);
+      expect(sent().get('today')).toBe('2026-11-13');
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ code: 'breakdown-mismatch', reason: 'date-not-in-file', message: 'x' }), { status: 400 }),
+      );
+      const result = await makeClient().commitImport('5-3-1', file, 'lift-records', { breakdown });
+      expect(JSON.parse(sent().get('breakdown') as string)).toEqual(breakdown);
+      expect(result).toMatchObject({ ok: false, code: 'breakdown-mismatch' });
     });
 
     it('commitImport sends neither field when there is nothing to exclude or remap', async () => {

@@ -81,6 +81,8 @@ export const {
   deleteLiftOverride,
   importLiftRecords,
   previewImport,
+  // A read, but of the file the user is importing, which only the browser has (#1256).
+  assignImport,
   commitImport,
   dryRunImport,
   undoImport,

@@ -41,9 +41,12 @@ export const Step = {
   CLASSIFY: 2,
   MAP_COLUMNS: 3,
   REVIEW: 4,
-  PREVIEW: 5,
-  DONE: 6,
+  ASSIGN: 5,
+  PREVIEW: 6,
+  DONE: 7,
 } as const;
+
+export type StepValue = (typeof Step)[keyof typeof Step];
 
 export const STEP_LABELS = [
   'Source',
@@ -51,9 +54,22 @@ export const STEP_LABELS = [
   'Classify',
   'Map columns',
   'Review',
+  'Assign',
   'Preview',
   'Done',
 ] as const;
+
+/** The steps a run shows: Assign only for a lift-records import with the step on (#1256). */
+export function visibleSteps(assign: boolean): StepValue[] {
+  return Object.values(Step).filter((s) => assign || s !== Step.ASSIGN);
+}
+
+/** The step Back goes to: the visible step before, except Classify, which goes back to Source past Analyzing. */
+export function previousStep(step: StepValue, assign: boolean): StepValue {
+  if (step === Step.CLASSIFY) return Step.SOURCE;
+  const steps = visibleSteps(assign);
+  return steps[steps.indexOf(step) - 1] ?? Step.SOURCE;
+}
 
 // Sanity check: ensure Step values match STEP_LABELS indices
 if (Object.values(Step).some((v) => typeof v === 'number' && v >= STEP_LABELS.length)) {

@@ -118,6 +118,12 @@ jobs:
       - name: Unit test timer phase-color check parsing
         run: node --test scripts/check-timer-phase-colors.test.mjs
 
+      - name: Verify macrocycle status colors are distinguishable in every theme
+        run: node scripts/check-macrocycle-status-colors.mjs
+
+      - name: Unit test macrocycle status-color check parsing
+        run: node --test scripts/check-macrocycle-status-colors.test.mjs
+
       # tempo-query-env.sh is sourced bash, so its test sources it for real against
       # fixture credentials in a throwaway directory (see #949) rather than importing it.
       - name: Unit test Tempo query credential resolution
