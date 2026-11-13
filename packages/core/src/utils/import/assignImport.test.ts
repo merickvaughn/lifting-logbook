@@ -184,6 +184,62 @@ describe('toLiftHistoryRecord', () => {
   });
 });
 
+describe("an exported file's Occurrence and Status columns (#1254)", () => {
+  const table = [
+    ['Date', 'Lift', 'Set #', 'Weight', 'Reps', 'Occurrence', 'Status'],
+    ['2026-01-05', 'Squat', '1', '100', '5', '1', ' Completed '],
+    ['2026-01-05', 'Squat', '1', '100', '5', '', ''],
+    ['2026-01-05', 'Squat', '1', '100', '5', '1.5', 'done'],
+  ];
+
+  it('reads them with assign, a blank cell as absent, and ignores them without it', () => {
+    const [read, blank, odd] = parseLiftRecords(table, { assign: true });
+    expect(read).toMatchObject({ occurrence: 1, status: 'completed' });
+    expect(blank).not.toHaveProperty('occurrence');
+    expect(blank).not.toHaveProperty('status');
+    expect(odd).toMatchObject({ occurrence: 1.5, status: 'done' });
+
+    const [plain] = parseLiftRecords(table);
+    expect(plain).not.toHaveProperty('occurrence');
+    expect(plain).not.toHaveProperty('status');
+  });
+
+  it('rejects an occurrence that is not a whole number from 0, and a status not in the list', () => {
+    const rows = parseLiftRecords(table, { assign: true });
+    const { errors } = validateLiftImport(rows, DEFAULT_SLOT_MAP, { assign: true });
+    expect(errors.map((e) => [e.row, e.code])).toEqual([
+      [3, 'OCCURRENCE_INVALID'],
+      [3, 'STATUS_INVALID'],
+    ]);
+    expect(
+      validateLiftImport([record({ occurrence: -1 })], DEFAULT_SLOT_MAP, { assign: true }).errors.map((e) => e.code),
+    ).toEqual(['OCCURRENCE_INVALID']);
+  });
+
+  it('holds such a row at the preview’s incomplete-row gate', () => {
+    const result = validateLiftImportSoft(parseLiftRecords(table, { assign: true }), DEFAULT_SLOT_MAP, { assign: true });
+    expect(result.validRows.map((r) => r.rowIndex)).toEqual([1, 2]);
+    expect(result.incomplete.map((r) => [r.rowIndex, r.errors.map((e) => e.code).sort()])).toEqual([
+      [3, ['OCCURRENCE_INVALID', 'STATUS_INVALID']],
+    ]);
+  });
+
+  it('reads headers re-saved in another case or with spaces', () => {
+    const resaved = [[...(table[0] ?? []).slice(0, 5), ' occurrence ', 'STATUS'], ...table.slice(1)];
+    expect(parseLiftRecords(resaved, { assign: true })[0]).toMatchObject({ occurrence: 1, status: 'completed' });
+  });
+
+  it("leaves a Status column alone in a file that isn't an export", () => {
+    const own = [
+      ['Date', 'Lift', 'Set #', 'Weight', 'Reps', 'Status'],
+      ['2026-01-05', 'Squat', '1', '100', '5', 'PR!'],
+    ];
+    const rows = parseLiftRecords(own, { assign: true });
+    expect(rows[0]).not.toHaveProperty('status');
+    expect(validateLiftImport(rows, DEFAULT_SLOT_MAP, { assign: true }).errors).toEqual([]);
+  });
+});
+
 describe('isLiftRecordExport', () => {
   it('is true only with an Occurrence column', () => {
     expect(isLiftRecordExport(['Program', 'Date', ' occurrence ', 'Lift'])).toBe(true);

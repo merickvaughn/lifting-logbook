@@ -25,6 +25,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
         program: batch.program,
         destination: batch.destination,
         preImage: batch.preImage as object,
+        groupId: batch.groupId ?? null,
       },
     });
   }
@@ -34,6 +35,14 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
       where: { id, userId },
     });
     return row ? toRecord(row) : null;
+  }
+
+  async listGroup(groupId: string): Promise<ImportBatchRecord[]> {
+    const rows = await this.prisma.importBatch.findMany({
+      where: { userId: this.userId, groupId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return rows.map(toRecord);
   }
 
   async deleteById(id: string, userId: string): Promise<void> {
@@ -51,7 +60,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
         // The key's number as `preImageKeyNumber` reads it; numeric, so a long digit run can't
         // overflow the cast. A key with no number matches neither way.
         const rows = await this.prisma.$queryRaw<ImportBatch[]>`
-          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt" FROM "import_batch" b
+          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId" FROM "import_batch" b
           WHERE b."userId" = ${this.userId} AND b."program" = ${program} AND b."destination" = ${destination}
             AND EXISTS (
               SELECT 1 FROM jsonb_object_keys(b."preImage") AS k,
@@ -78,7 +87,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
       try {
         span.setAttribute('import_batch.keys', keys.length);
         const rows = await this.prisma.$queryRaw<ImportBatch[]>`
-          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt" FROM "import_batch" b
+          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId" FROM "import_batch" b
           WHERE b."userId" = ${this.userId} AND b."destination" = ${destination}
             AND EXISTS (SELECT 1 FROM jsonb_object_keys(b."preImage") AS k WHERE k = ANY(${[...keys]}::text[]))`;
         span.setAttribute('import_batch.count', rows.length);
@@ -125,5 +134,6 @@ function toRecord(row: ImportBatch): ImportBatchRecord {
     destination: row.destination as ImportKind,
     preImage: row.preImage as unknown as ImportPreImage,
     createdAt: row.createdAt,
+    groupId: row.groupId,
   };
 }

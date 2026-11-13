@@ -261,6 +261,26 @@ The #1199 amendment renumbers on every change, behind a setting that stayed off 
 - While the migration runs, it holds every user's lock and the tables, so the old revision's page reads wait for it and carry no id, and its writes get 409 `import-in-progress`. On a local Postgres 16 in Docker, `20261112000003` took 1.7 to 1.8 seconds over three runs, as an owner that isn't superuser or `BYPASSRLS`, for ten users with ten macrocycles each and 20,000 sets, with no import batches, its backfill making all 100 rows and every number moving. It grows with the rows it moves and with import batches, whose keys the timings above put at about 0.2 seconds for 50 batches of 400 keys. Pages loaded in that time carry no id. Until the new API serves, the old revision still accepts their writes by number, as it has since #1198, and the number may now name a different macrocycle, so a set can land on the wrong one without an error; the runbook lists the `Macrocycle write without an id (#1198)` log lines to check. Once the new API serves, such a write gets the 400, which the old web shows as a generic error until the new web is live.
 - **Rollback:** revert the API image; the #1199 revision runs on the new numbers. Run the reversal only to undo the renumbering, after the API is reverted, and test it first in a transaction that's rolled back ([runbook](../deploy.md#reversing-the-macrocycle-renumbering)); if it refuses, the reverted API keeps running and you fix forward. The three columns can stay, since the old code ignores them. Don't roll the web back past #1198 while this API serves: that web sends no id, so every write would get the 400.
 
+## Amendment: storing an Assign breakdown ([#1254](https://github.com/merickvaughn/lifting-logbook/issues/1254))
+
+**Date:** 2026-11-13
+
+With `IMPORT_ASSIGN_ENABLED` on, `mode=dry-run` and commit take the lifter's confirmed breakdown of a lift-records file (proposal decision 17) and store each stretch with new rows as an `imported` macrocycle.
+
+1. **New macrocycles are numbered past every stored one, then the program renumbers by date.** Each program's new rows take the numbers after its highest, in start-date order, so no stretch can land on a stored number. `renumberProgram` (#1199 amendment) then moves every number into date order, batch keys included. A file's own `Macrocycle #` names nothing stored.
+2. **One batch per program, grouped.** An import can write to several programs (decision 15). The commit saves the Source program's batch, then one for each other program it wrote to, each carrying the new `import_batch."groupId"` set to the Source batch's id. Undoing the Source batch undoes the group, each batch under its own program, and a grouped batch can't be undone on its own (400) while its Source batch exists. There's no foreign key on `groupId`, so once the Source batch is gone (undone by a revision from before #1254), a grouped batch is undone on its own. Each batch's keys keep the existing form, so the renumbering rewrite, `listWithKeysOn` and the undo read them unchanged. The save isn't best-effort, unlike a file-number commit's: a failed save fails the request, and the transaction writes nothing.
+3. **Undo removes an empty `imported` macrocycle,** as it does an empty `legacy` one, using the `macrocycle-row:<n>` key the commit recorded. Empty means it has no lift records left.
+4. **A second concurrent commit gets 409 `import-in-progress`.** The commit takes a transaction-scoped advisory try-lock in its own namespace before it reads what's stored, then the exclusive macrocycle lock as any import does [6]. A commit that waited instead would read after the first committed and skip every row, which is correct but leaves the lifter watching a second commit that does nothing; the 409 says another import is running.
+
+**Alternatives rejected:**
+
+- **Recording the program with each key in one batch**, as decision 15 had it. Every reader of batch keys (the renumbering rewrite in the API and in SQL, `listWithKeysOn`, the undo) assumes one program per batch and would need a new key form. Grouped batches keep the key format and those readers as they are.
+- **Using the file's `Macrocycle #` when it's free.** A number free today can be taken by the time the renumbering runs, and date order replaces it anyway.
+
+**Consequences:**
+
+- The migration `20261113000001_import_batch_group` adds a nullable column and an index, so the old revision runs on it unchanged. **Rollback:** revert the API image. A grouped batch then undoes only its Source part under the old revision, so undo grouped imports before reverting, or leave the other programs' rows in place. Once this revision is back, each of those other programs' batches can be undone on its own.
+
 ## References
 
 1. [PostgreSQL 16 — Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html)

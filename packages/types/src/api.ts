@@ -702,6 +702,8 @@ export type ImportErrorCode =
   | 'WEEK_TYPE_INVALID'
   | 'FILE_PARSE_FAILED'
   | 'ROW_LIMIT_EXCEEDED'
+  | 'OCCURRENCE_INVALID'
+  | 'STATUS_INVALID'
   | 'UNEXPECTED_ERROR';
 
 /** A single validation error from a CSV import attempt. */
@@ -1006,6 +1008,8 @@ export interface ImportCommitResponse extends ImportWriteResult {
    * plain commit using neither, it matches the original CSV data-row number.
    */
   skippedDetail?: SkippedRecord[];
+  /** Present when the commit stored an Assign breakdown (#1254). */
+  assigned?: ImportAssignedCounts;
 }
 
 /**
@@ -1016,6 +1020,52 @@ export interface ImportDryRunResponse extends ImportWriteResult {
   destination: ImportKind;
   /** Counts for rows split to a second destination, as on {@link ImportCommitResponse}. */
   split?: { destination: ImportKind; created: number; updated: number; skipped: number };
+  /** Present when the dry run took an Assign breakdown (#1254). */
+  assigned?: ImportAssignedCounts;
+}
+
+/** What an import with an Assign breakdown does beyond the row counts (#1254). */
+export interface ImportAssignedCounts {
+  /** Macrocycles created: one per stretch with a new row. */
+  macrocycles: number;
+  /** Sessions stored as non-cycle workouts. */
+  nonCycleSessions: number;
+  /** Sessions the lifter left out. */
+  excludedSessions: number;
+  /** Rows with no date, left out (decision 16). */
+  undatedRows: number;
+  /** Rows skipped as duplicates whose weight or reps differ from the stored set, which stays as stored. */
+  changed: number;
+  /** One-rep-max rows split to training maxes and skipped as older than that program's current max. */
+  splitOlderThanCurrent: number;
+}
+
+/**
+ * One confirmed macrocycle in an Assign breakdown (#1254, proposal decision 17). It names its
+ * sessions by date, or for an exported file, whose macrocycles can share a date, by the file's
+ * program and macrocycle number.
+ */
+export interface ImportBreakdownStretch {
+  /** The program it's stored under. */
+  program: string;
+  /** Its session dates, `YYYY-MM-DD`. */
+  dates?: string[];
+  /** An exported file's `Program` and `Macrocycle #` for the stretch, in place of `dates`. */
+  file?: { program: string; macrocycleNum: number };
+  status: MacrocycleStatus;
+  /** The lifter chose `status` (or the export's `Status` column did), so no rule may change it. */
+  statusChosen: boolean;
+}
+
+/**
+ * The lifter's confirmed Assign breakdown, sent as the `breakdown` field of a lift-records
+ * `mode=dry-run` or `mode=commit` (#1254). Every dated session is in one stretch, in
+ * `excludedDates` or in `nonCycleDates`. A file's `non-cycle` rows needn't be listed.
+ */
+export interface ImportBreakdown {
+  stretches: ImportBreakdownStretch[];
+  excludedDates: string[];
+  nonCycleDates: string[];
 }
 
 /** A suggested macrocycle's status at the Assign step (proposal decisions 6 and 7). */
@@ -1081,6 +1131,11 @@ export interface AssignStretch {
   expectedWorkouts: number | null;
   /** Null when the rules can't suggest one, so the lifter must choose. */
   status: AssignStretchStatus | null;
+  /**
+   * An exported file's `Status` for the stretch's rows (#1254, decision 22): a status the lifter
+   * chose, which the wizard sends back with `statusChosen`. Null when the file has none.
+   */
+  fileStatus: MacrocycleStatus | null;
   reasons: { start: AssignStartReason; program: AssignProgramReason; status: AssignStatusReason };
 }
 

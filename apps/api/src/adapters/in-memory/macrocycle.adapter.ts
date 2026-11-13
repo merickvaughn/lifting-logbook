@@ -76,6 +76,13 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
     return this.numbered.reduce((rows, store) => rows + store.rewriteNumbers(program, changes), moving.length);
   }
 
+  /** Another request holds the import lock, for tests. */
+  importLockHeld = false;
+
+  async tryLockImport(): Promise<boolean> {
+    return !this.importLockHeld;
+  }
+
   async tryLockShared(): Promise<boolean> {
     return this.lockHeld !== 'exclusive';
   }
@@ -122,9 +129,9 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
       startDate: macrocycle.startDate,
       endDate: macrocycle.endDate ?? null,
       status: macrocycle.status,
-      statusChosen: false,
+      statusChosen: macrocycle.statusChosen ?? false,
       origin: macrocycle.origin,
-      unmatched: false,
+      unmatched: macrocycle.unmatched ?? false,
       importedThrough: null,
     };
     this.rows.push(row);

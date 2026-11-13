@@ -24,9 +24,20 @@ export interface NewMacrocycle {
   endDate?: Date;
   status: MacrocycleStatus;
   origin: MacrocycleOrigin;
+  /** Absent means false. An import through the Assign step sets both (#1254). */
+  statusChosen?: boolean;
+  unmatched?: boolean;
 }
 
 export interface IMacrocycleRepository {
+  /**
+   * Takes the user's import lock until the request's transaction ends, without waiting (#1254,
+   * proposal decision 13). False when another import holds it, so two commits of one file can't
+   * both write: the second gets a 409 at once rather than spending its transaction budget on a
+   * wait. A different lock from the macrocycle lock, which page writes share.
+   */
+  tryLockImport(): Promise<boolean>;
+
   /**
    * Takes the user's macrocycle write lock (proposal decision 13) in shared mode until the
    * request's transaction ends, without waiting. Page writes share it, so they run side by side.

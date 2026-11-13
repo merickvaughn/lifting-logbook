@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   HttpCode,
   HttpStatus,
@@ -23,6 +24,7 @@ import {
   ImportClassification,
   ImportCommitResponse,
   ImportDryRunResponse,
+  ImportBreakdown,
   ImportError,
   ImportKind,
   ImportPreview,
@@ -32,6 +34,11 @@ import {
   NON_CYCLE_PROGRAM,
 } from '@lifting-logbook/types';
 import {
+  BUILT_IN_KNOWN_PROGRAMS,
+  ImportPreImage,
+  KnownProgram,
+  buildSkippedDetail,
+  liftRecordLabel,
   LiftRecord,
   LiftingProgramSpec,
   TrainingMax,
@@ -80,9 +87,20 @@ import {
   assignProgramOptions,
   assignResponse,
   importAssignEnabled,
+  planSplitMaxes,
   splitMaxCounts,
 } from './import-assign';
 import {
+  BreakdownMismatchException,
+  PlacedBreakdown,
+  parseBreakdown,
+  placeBreakdown,
+  planBreakdown,
+  programCovering,
+  writeBreakdown,
+} from './import-breakdown';
+import {
+  lockForAssignedImport,
   lockForImport,
   removeEmptyLegacyRows,
   splitLegacyRowKeys,
@@ -184,8 +202,25 @@ export class ImportController {
       }
       const excludeKeys = parseExcludeKeys(fields.get('excludeKeys'));
       const liftOverrides = parseLiftOverrides(fields.get('liftOverrides'));
-      const splitDest = splitDestParam === '1';
+      // With the Assign step on, an export isn't split: its sets are sets, whatever their notes
+      // say (decision 22), as `mode=assign` and the preview already treat it.
+      const exported = assignEnabled && override === 'lift-records' && isLiftRecordExport(table[0] ?? []);
+      const splitDest = splitDestParam === '1' && !exported;
       const repos = await this.factory.forUser(user);
+      const breakdown = parseBreakdown(fields.get('breakdown'));
+      if (breakdown) {
+        if (!assignEnabled) throw new BadRequestException('A breakdown needs the Assign step, which is off');
+        if (override !== 'lift-records') {
+          throw new BadRequestException('A breakdown groups lift records: send destination=lift-records');
+        }
+        return this.importBreakdown(mode, program, table, repos, user.id, {
+          breakdown,
+          excludeKeys,
+          liftOverrides,
+          splitDest,
+          exported,
+        });
+      }
       // With the flag on, read blank numbers as the preview does, so the strict validator
       // rejects them rather than storing `Number('')`'s 0 that Review never showed (#1253).
       const rows = await this.resolveCommitRows(override, table, repos, excludeKeys, liftOverrides, splitDest, {
@@ -338,17 +373,22 @@ export class ImportController {
     if (!batch || batch.program !== program) {
       throw new NotFoundException(`Import batch ${batchId} not found`);
     }
+    // A grouped batch is undone with its Source batch. One whose Source batch is gone (undone by
+    // an API from before #1254, which knew no groups) is undone on its own.
+    if (batch.groupId && (await repos.importBatch.findById(batch.groupId, user.id))) {
+      throw new BadRequestException(`Import batch ${batchId} is part of import ${batch.groupId}. Undo that one.`);
+    }
 
     let restored = 0;
     let skipped = 0;
     const flagged: Array<{ key: string; reason: string }> = [];
 
-    const undoTrainingMaxes = async (entries: Array<[string, PreImageEntry]>) => {
+    const undoTrainingMaxes = async (entries: Array<[string, PreImageEntry]>, maxesProgram = program) => {
       if (entries.length === 0) return;
       // One read for every entry, rather than one per key.
-      const allMaxes = await repos.trainingMax.getTrainingMaxes(program);
+      const allMaxes = await repos.trainingMax.getTrainingMaxes(maxesProgram);
       for (const [lift, entry] of entries) {
-        const reason = await this.undoTrainingMax(repos, program, allMaxes, lift, entry);
+        const reason = await this.undoTrainingMax(repos, maxesProgram, allMaxes, lift, entry);
         if (reason === null) {
           restored++;
         } else {
@@ -366,21 +406,6 @@ export class ImportController {
     if (batch.destination === 'lift-records') {
       // The undo removes macrocycle rows, so it holds the lock exclusively, as the import did.
       await lockForImport(repos, 'undo');
-      // A 1RM split's training maxes share this batch, keyed by lift id (#1148). Every set and
-      // `legacy` row key starts with a macrocycle number, and a lift id (a kebab-case name or a
-      // custom lift's UUID) never does.
-      // A non-cycle set's key, `non-cycle:<natural key>`, holds no number either, so it's
-      // split off first: it's neither a training max nor a set of `program` (#1184).
-      const { nonCycleKeys, otherKeys } = splitNonCycleKeys(Object.keys(batch.preImage));
-      const kept = new Set(otherKeys);
-      const entries = Object.entries(batch.preImage).filter(([k]) => kept.has(k));
-      await undoTrainingMaxes(entries.filter(([k]) => preImageKeyNumber(k) === null));
-      // Collect all created keys and delete in a single query to avoid N+1 round-trips
-      const { setKeys: createdKeys, legacyNums } = splitLegacyRowKeys(
-        entries
-          .filter(([k, e]) => preImageKeyNumber(k) !== null && e.kind === 'created')
-          .map(([k]) => k),
-      );
       const deleteCreated = async (from: string, keys: string[]) => {
         if (keys.length === 0) return;
         const deleted = await repos.liftRecord.deleteLiftRecordsByNaturalKeys(from, keys);
@@ -391,17 +416,39 @@ export class ImportController {
           flagged.push({ key: '*', reason: `${missing} row(s) not found (already deleted?)` });
         }
       };
-      await deleteCreated(program, createdKeys);
-      // The non-cycle macrocycle's row stays, as it does when its workouts are deleted.
-      await deleteCreated(NON_CYCLE_PROGRAM, nonCycleKeys);
-      // The batch goes first, so the renumbering below doesn't rewrite the keys of a batch about
-      // to be deleted.
-      await repos.importBatch.deleteById(batchId, user.id);
-      // A `legacy` macrocycle left with no sets goes (ADR-042): one the import created, or one
-      // its sets joined, and the numbers close up.
-      const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
-      await removeEmptyLegacyRows(repos, program, [...new Set([...legacyNums, ...setNums])]);
-      await renumberProgram(repos, program);
+      // An import through the Assign step saved one batch per program it wrote to, grouped under
+      // this one (#1254). Each one's keys are read under its own program.
+      for (const part of [batch, ...(await repos.importBatch.listGroup(batch.id))]) {
+        // A 1RM split's training maxes share this batch, keyed by lift id (#1148). Every set and
+        // `legacy` row key starts with a macrocycle number, and a lift id (a kebab-case name or a
+        // custom lift's UUID) never does.
+        // A non-cycle set's key, `non-cycle:<natural key>`, holds no number either, so it's
+        // split off first: it's neither a training max nor a set of `program` (#1184).
+        const { nonCycleKeys, otherKeys } = splitNonCycleKeys(Object.keys(part.preImage));
+        const kept = new Set(otherKeys);
+        const entries = Object.entries(part.preImage).filter(([k]) => kept.has(k));
+        await undoTrainingMaxes(
+          entries.filter(([k]) => preImageKeyNumber(k) === null),
+          part.program,
+        );
+        // Collect all created keys and delete in a single query to avoid N+1 round-trips
+        const { setKeys: createdKeys, legacyNums } = splitLegacyRowKeys(
+          entries
+            .filter(([k, e]) => preImageKeyNumber(k) !== null && e.kind === 'created')
+            .map(([k]) => k),
+        );
+        await deleteCreated(part.program, createdKeys);
+        // The non-cycle macrocycle's row stays, as it does when its workouts are deleted.
+        await deleteCreated(NON_CYCLE_PROGRAM, nonCycleKeys);
+        // The batch goes first, so the renumbering below doesn't rewrite the keys of a batch about
+        // to be deleted.
+        await repos.importBatch.deleteById(part.id, user.id);
+        // A `legacy` or `imported` macrocycle left with no sets goes (ADR-042): one the import
+        // created, or one its sets joined, and the numbers close up.
+        const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
+        await removeEmptyLegacyRows(repos, part.program, [...new Set([...legacyNums, ...setNums])]);
+        await renumberProgram(repos, part.program);
+      }
     } else if (batch.destination === 'training-maxes') {
       await undoTrainingMaxes(Object.entries(batch.preImage));
       await repos.importBatch.deleteById(batchId, user.id);
@@ -538,8 +585,11 @@ export class ImportController {
     const liftNames = await liftNamesFor(repos);
     const preview = buildLiftRecordsPreviewSoft(softResult, stored, liftNames);
 
-    // Check for 1RM rows in the valid set
-    const { trainingMaxes: splitMaxes } = splitLiftRecordsByDestination(validWithProgram);
+    // Check for 1RM rows in the valid set. With the Assign step on, an export has none (decision 22).
+    const exported = assign && isLiftRecordExport(table[0] ?? []);
+    const { trainingMaxes: splitMaxes } = exported
+      ? { trainingMaxes: [] }
+      : splitLiftRecordsByDestination(validWithProgram);
     let split: ImportPreviewResponse['split'] | undefined;
     if (splitMaxes.length > 0) {
       const existingMaxes = await repos.trainingMax.getTrainingMaxes(program);
@@ -767,10 +817,7 @@ export class ImportController {
     );
     const liftRecords = rows as LiftRecord[];
 
-    // Custom programs are Prisma-only, so with no database there are none.
-    const customPrograms = this.prisma
-      ? await new CustomProgramsRepository(this.prisma.clientForRequest(), userId).listKnownPrograms()
-      : [];
+    const customPrograms = await this.customPrograms(userId);
     const segmented = segmentLiftHistory(liftRecords.map(toLiftHistoryRecord), {
       importDate,
       sourceProgram: program,
@@ -808,6 +855,144 @@ export class ImportController {
       'Import assign (#1253)',
     );
     return response;
+  }
+
+  /** The lifter's custom programs. They're Prisma-only, so with no database there are none. */
+  private async customPrograms(userId: string): Promise<KnownProgram[]> {
+    return this.prisma ? new CustomProgramsRepository(this.prisma.clientForRequest(), userId).listKnownPrograms() : [];
+  }
+
+  /**
+   * `mode=dry-run` and `mode=commit` with the lifter's confirmed Assign breakdown (#1254,
+   * proposal decision 17). The file is re-parsed with Review's edits, as `mode=assign` reads it,
+   * and the breakdown is checked against it before anything is written (400
+   * `breakdown-mismatch`). Each stretch with a new row becomes an `imported` macrocycle under its
+   * program, rows already stored are skipped (decision 13), and split rows go to the program of
+   * the stretch covering their date (decision 10). The commit saves one batch per program, the
+   * Source program's first with the others grouped under it, and a failed save fails the whole
+   * request, so its transaction writes nothing.
+   */
+  private async importBreakdown(
+    mode: 'commit' | 'dry-run',
+    program: string,
+    table: SpreadsheetCell[][],
+    repos: RepositoryBundle,
+    userId: string,
+    choices: {
+      breakdown: ImportBreakdown;
+      excludeKeys: Set<string>;
+      liftOverrides: Record<string, string>;
+      splitDest: boolean;
+      exported: boolean;
+    },
+  ): Promise<ImportCommitResponse | ImportDryRunResponse> {
+    const started = Date.now();
+    const { rows, splitMaxes, undated } = await this.resolveCommitRows(
+      'lift-records',
+      table,
+      repos,
+      choices.excludeKeys,
+      choices.liftOverrides,
+      choices.splitDest,
+      { assign: true },
+    );
+    const programs = [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(userId))];
+    let placed: PlacedBreakdown;
+    try {
+      placed = placeBreakdown(rows as LiftRecord[], choices.breakdown, {
+        exported: choices.exported,
+        programs: new Set(programs.map((p) => p.id)),
+      });
+    } catch (err) {
+      // The reason only: the message names the lifter's dates and programs.
+      if (err instanceof BreakdownMismatchException) {
+        this.logger.warn(
+          { mode, reason: err.reason, stretches: choices.breakdown.stretches.length },
+          'Import breakdown mismatch (#1254)',
+        );
+      }
+      throw err;
+    }
+    // A commit reads what's stored and writes under the import lock, so a second commit of the
+    // same file gets a 409 rather than writing it twice (decision 13).
+    if (mode === 'commit') {
+      try {
+        await lockForAssignedImport(repos);
+      } catch (err) {
+        if (err instanceof ConflictException) this.logger.warn({ mode }, 'Import breakdown refused: another import is running (#1254)');
+        throw err;
+      }
+    }
+    const plan = await planBreakdown(repos, placed, programs);
+    const split = await planSplitMaxes(splitMaxes, programCovering(placed.stretches, program), repos);
+    const splitRows = [...split.byProgram.values()];
+    const splitWrites = splitRows.reduce((n, s) => n + s.writes.length, 0);
+    const assigned = {
+      macrocycles: plan.stretches.length,
+      nonCycleSessions: placed.nonCycleSessions,
+      excludedSessions: placed.excludedSessions,
+      undatedRows: undated,
+      changed: plan.changed,
+      splitOlderThanCurrent: split.olderThanCurrent,
+    };
+
+    let created: number;
+    let splitCounts: ImportWriteResult | null = null;
+    let batchId: string | null = null;
+    if (mode === 'dry-run') {
+      created = plan.classified.filter((c) => c.kind === 'create').length;
+      if (splitMaxes.length > 0) {
+        splitCounts = sumCounts(
+          splitRows.map((s) => previewCounts(buildTrainingMaxPreview(s.writes, s.existing, new Map()))),
+        );
+      }
+    } else {
+      const written = await writeBreakdown(repos, program, plan);
+      created = written.created;
+      const preImages = written.preImages;
+      if (splitMaxes.length > 0) {
+        const results: ImportWriteResult[] = [];
+        for (const [splitProgram, { existing, writes }] of split.byProgram) {
+          if (writes.length === 0) continue;
+          results.push(await repos.trainingMax.importTrainingMaxes(splitProgram, writes));
+          preImages.set(splitProgram, { ...(preImages.get(splitProgram) ?? {}), ...buildTrainingMaxPreImage(writes, existing) });
+        }
+        splitCounts = sumCounts(results);
+      }
+      batchId = await saveBatchGroup(repos, userId, program, preImages);
+    }
+    // A split row not written is older than its program's max or than a newer row of its lift.
+    const splitResult = splitCounts && {
+      destination: 'training-maxes' as const,
+      ...splitCounts,
+      skipped: splitCounts.skipped + splitMaxes.length - splitWrites,
+    };
+    const skipped = plan.classified.length - created;
+
+    // Counts only: rows, lift names and notes are the lifter's data (proposal Observability).
+    this.logger.log(
+      {
+        mode,
+        stretches: choices.breakdown.stretches.length,
+        ...assigned,
+        created,
+        duplicates: skipped,
+        splitChanges: split.changes,
+        exported: choices.exported,
+        durationMs: Date.now() - started,
+      },
+      'Import breakdown (#1254)',
+    );
+
+    const counts = { destination: 'lift-records' as const, created, updated: 0, skipped, assigned };
+    if (mode === 'dry-run') return { ...counts, ...(splitResult ? { split: splitResult } : {}) };
+    const liftNames = await liftNamesFor(repos);
+    return {
+      ...counts,
+      batchId,
+      skippedDetail: buildSkippedDetail(plan.classified, ({ r }) => liftRecordLabel(r, liftNames)),
+      ...(splitResult ? { split: splitResult } : {}),
+    };
   }
 
   /** The counts {@link commit} would return for these rows, without writing them (#1123). */
@@ -970,6 +1155,42 @@ type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[]; undated: number 
 
 function previewCounts(preview: ImportPreview): ImportWriteResult {
   return { created: preview.creates, updated: preview.updates, skipped: preview.skips };
+}
+
+function sumCounts(results: readonly ImportWriteResult[]): ImportWriteResult {
+  return results.reduce(
+    (sum, r) => ({ created: sum.created + r.created, updated: sum.updated + r.updated, skipped: sum.skipped + r.skipped }),
+    { created: 0, updated: 0, skipped: 0 },
+  );
+}
+
+/**
+ * Saves an Assign import's batches (#1254): `sourceProgram`'s first, then one per other program
+ * it wrote to, grouped under the first, whose id it returns. Not best-effort, unlike a file-number
+ * commit's single batch: a batch is the only way to undo these rows, so a failed save fails the
+ * request and its transaction writes nothing (decision 17).
+ */
+async function saveBatchGroup(
+  repos: Pick<RepositoryBundle, 'importBatch'>,
+  userId: string,
+  sourceProgram: string,
+  preImages: ReadonlyMap<string, ImportPreImage>,
+): Promise<string> {
+  const groupId = randomUUID();
+  const createdAt = new Date();
+  await repos.importBatch.save({
+    id: groupId,
+    userId,
+    program: sourceProgram,
+    destination: 'lift-records',
+    preImage: preImages.get(sourceProgram) ?? {},
+    createdAt,
+  });
+  for (const [program, preImage] of preImages) {
+    if (program === sourceProgram) continue;
+    await repos.importBatch.save({ id: randomUUID(), userId, program, destination: 'lift-records', preImage, createdAt, groupId });
+  }
+  return groupId;
 }
 
 /**

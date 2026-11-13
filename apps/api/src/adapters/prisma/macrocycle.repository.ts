@@ -30,6 +30,9 @@ function toRow(row: Macrocycle): MacrocycleRow {
  */
 export const MACROCYCLE_LOCK_NAMESPACE = 1171;
 
+/** The seed of the import lock's key (#1254), so it's a different lock from the macrocycle lock. */
+export const IMPORT_LOCK_NAMESPACE = 1254;
+
 /**
  * Postgres's `lock_not_available`, raised when a lock wait reaches `lock_timeout`, and
  * `deadlock_detected`, raised in one of two requests that both hold the lock shared and both
@@ -61,6 +64,21 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
    */
   private inTransaction(): boolean {
     return typeof (this.prisma as { $transaction?: unknown }).$transaction !== 'function';
+  }
+
+  async tryLockImport(): Promise<boolean> {
+    return tracer.startActiveSpan('macrocycle.try_lock_import', async (span) => {
+      try {
+        span.setAttribute('lock.in_transaction', this.inTransaction());
+        const rows = await this.prisma.$queryRaw<{ locked: boolean }[]>`
+          SELECT pg_try_advisory_xact_lock(hashtextextended(${this.userId}, ${IMPORT_LOCK_NAMESPACE})) AS locked`;
+        const locked = rows[0]?.locked === true;
+        span.setAttribute('lock.acquired', locked);
+        return locked;
+      } finally {
+        span.end();
+      }
+    });
   }
 
   async tryLockShared(): Promise<boolean> {
@@ -149,6 +167,8 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
           endDate: macrocycle.endDate ?? null,
           status: macrocycle.status,
           origin: macrocycle.origin,
+          statusChosen: macrocycle.statusChosen ?? false,
+          unmatched: macrocycle.unmatched ?? false,
         },
       });
       return toRow(row);
@@ -173,6 +193,8 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
           endDate: m.endDate ?? null,
           status: m.status,
           origin: m.origin,
+          statusChosen: m.statusChosen ?? false,
+          unmatched: m.unmatched ?? false,
         })),
       });
     } catch (e) {

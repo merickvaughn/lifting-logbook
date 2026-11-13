@@ -4,6 +4,8 @@ import {
   AssignSession,
   AssignStretch,
   ImportAssignResponse,
+  MACROCYCLE_STATUSES,
+  MacrocycleStatus,
 } from '@lifting-logbook/types';
 import {
   BUILT_IN_KNOWN_PROGRAMS,
@@ -22,9 +24,9 @@ import type { RepositoryBundle } from '../ports/factory';
  * `IMPORT_ASSIGN_ENABLED` is `true`, and read per request so a test can set it.
  *
  * Leave it off until all of #1173 has merged. It already relaxes the preview (no number
- * columns or blank number cells needed, rows with no date counted), but until #1254 the
- * commit still rejects them, so today's wizard would pass a file at Review that it can't
- * import.
+ * columns or blank number cells needed, rows with no date counted), and since #1254 the
+ * commit accepts those files only with a `breakdown`, which the wizard doesn't send until
+ * its Assign step lands, so today's wizard would pass a file at Review that it can't import.
  */
 export function importAssignEnabled(): boolean {
   return process.env.IMPORT_ASSIGN_ENABLED === 'true';
@@ -72,9 +74,40 @@ export async function splitMaxCounts(
   sourceProgram: string,
   repos: Pick<RepositoryBundle, 'trainingMax'>,
 ): Promise<{ changes: number; olderThanCurrent: number }> {
-  const programOf = (date: Date) =>
+  const { changes, olderThanCurrent } = await planSplitMaxes(splitMaxes, programCoveringDate(stretches, sourceProgram), repos);
+  return { changes, olderThanCurrent };
+}
+
+/**
+ * The program of the first stretch whose dates span a date, else `fallback` (decision 10). Assign
+ * and the commit both place split rows through this.
+ */
+export function programCoveringDate(
+  stretches: ReadonlyArray<{ program: string; startDate: Date; endDate: Date }>,
+  fallback: string,
+): (date: Date) => string {
+  return (date) =>
     stretches.find((s) => s.startDate.getTime() <= date.getTime() && date.getTime() <= s.endDate.getTime())?.program ??
-    sourceProgram;
+    fallback;
+}
+
+/** One program's share of a split: its stored maxes and the newest row per lift to write. */
+export interface ProgramSplit {
+  existing: TrainingMax[];
+  writes: TrainingMax[];
+}
+
+/**
+ * Where the one-rep-max rows split to training maxes land (decision 10): each row goes to the
+ * program `programOf` gives its date, and for each program and lift only the newest row is
+ * written, unless it's older than that program's current max, when it's skipped and counted.
+ * `changes` counts the writes that change a max.
+ */
+export async function planSplitMaxes(
+  splitMaxes: readonly TrainingMax[],
+  programOf: (date: Date) => string,
+  repos: Pick<RepositoryBundle, 'trainingMax'>,
+): Promise<{ byProgram: Map<string, ProgramSplit>; changes: number; olderThanCurrent: number }> {
   // The newest row for each program and lift. Rows dated the same day keep the first in the
   // file, as `latestTrainingMaxFirst` does for the commit.
   const newest = new Map<string, { program: string; max: TrainingMax }>();
@@ -85,20 +118,24 @@ export async function splitMaxCounts(
     if (!kept || max.dateUpdated.getTime() > kept.max.dateUpdated.getTime()) newest.set(key, { program, max });
   }
 
-  const current = new Map<string, Map<string, TrainingMax>>();
+  const byProgram = new Map<string, ProgramSplit>();
   let changes = 0;
   let olderThanCurrent = 0;
   for (const { program, max } of newest.values()) {
-    let byLift = current.get(program);
-    if (!byLift) {
-      byLift = new Map((await repos.trainingMax.getTrainingMaxes(program)).map((m) => [m.lift, m]));
-      current.set(program, byLift);
+    let split = byProgram.get(program);
+    if (!split) {
+      split = { existing: await repos.trainingMax.getTrainingMaxes(program), writes: [] };
+      byProgram.set(program, split);
     }
-    const stored = byLift.get(max.lift);
-    if (stored && max.dateUpdated.getTime() < stored.dateUpdated.getTime()) olderThanCurrent++;
-    else if (!stored || stored.weight !== max.weight) changes++;
+    const stored = split.existing.find((m) => m.lift === max.lift);
+    if (stored && max.dateUpdated.getTime() < stored.dateUpdated.getTime()) {
+      olderThanCurrent++;
+      continue;
+    }
+    split.writes.push(max);
+    if (!stored || stored.weight !== max.weight) changes++;
   }
-  return { changes, olderThanCurrent };
+  return { byProgram, changes, olderThanCurrent };
 }
 
 // `YYYY-MM-DD`: lift-record dates are UTC midnight.
@@ -130,8 +167,22 @@ function sessionsOf(rows: readonly LiftHistoryRecord[]): Array<{ date: Date; row
   return [...byDate.entries()].sort(([a], [b]) => a - b).map(([time, list]) => ({ date: new Date(time), rows: list }));
 }
 
+/** A row as Assign reads it: an export's rows also carry the `Status` the assign parse read. */
+export type AssignRecord = LiftHistoryRecord & { status?: string };
+
+/**
+ * An exported file's `Status` for a stretch's rows (#1254, decision 22): the one value its rows
+ * carry, else null. The assign parse reads it onto each row, already checked against the statuses.
+ */
+function fileStatusOf(rows: ReadonlyArray<{ status?: string }>): MacrocycleStatus | null {
+  const values = new Set(rows.map((row) => row.status ?? ''));
+  values.delete('');
+  const [only] = values;
+  return values.size === 1 && (MACROCYCLE_STATUSES as readonly string[]).includes(only ?? '') ? (only as MacrocycleStatus) : null;
+}
+
 function assignStretch(
-  stretch: HistoryStretch<LiftHistoryRecord>,
+  stretch: HistoryStretch<AssignRecord>,
   liftNames: ReadonlyMap<string, string>,
 ): AssignStretch {
   const named = (lifts: readonly string[]) => lifts.map((lift) => liftNames.get(lift) ?? lift);
@@ -144,10 +195,11 @@ function assignStretch(
     fileMacrocycleNum: stretch.fileMacrocycleNum ?? null,
     startDate: ymd(stretch.startDate),
     endDate: ymd(stretch.endDate),
-    sessions: stretch.sessions.map((s: HistorySession<LiftHistoryRecord>) => assignSession(s, s.workoutNum, liftNames)),
+    sessions: stretch.sessions.map((s: HistorySession<AssignRecord>) => assignSession(s, s.workoutNum, liftNames)),
     completedWorkouts: stretch.completedWorkouts,
     expectedWorkouts: stretch.expectedWorkouts,
     status: stretch.status,
+    fileStatus: fileStatusOf(stretch.sessions.flatMap((s) => s.rows)),
     reasons: {
       start:
         start.kind === 'lift-outside-program'
@@ -163,7 +215,7 @@ function assignStretch(
 
 /** The `mode=assign` response for a segmented file. Lift ids become display names. */
 export function assignResponse(
-  segmented: SegmentedLiftHistory<LiftHistoryRecord>,
+  segmented: SegmentedLiftHistory<AssignRecord>,
   extra: {
     importDate: Date;
     undatedRows: number;
