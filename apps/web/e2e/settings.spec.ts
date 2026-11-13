@@ -52,6 +52,33 @@ test('settings hub exposes the sections and the sub-nav cross-navigates', async 
 // Settings hub: the Units section round-trips the lbs/kg preference.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Training maxes: the offer to set up a max for a lift with sets and none (#1246).
+// ---------------------------------------------------------------------------
+
+test('training maxes offers setup for a lift with logged sets and no max', async ({ page, request }) => {
+  await request.get(`${MOCK_API}/__reset?withMissingMax=true`);
+  await page.goto('/settings/training-maxes');
+
+  const section = page.getByRole('region', { name: 'Lifts without a training max' });
+  const input = section.getByLabel('Romanian Deadlift training max');
+  await expect(input).toHaveValue('100');
+  await expect(section.getByText('Estimated from 100 lbs × 5 on 6 Jan 2025')).toBeVisible();
+
+  await section.getByRole('button', { name: "Don't ask again" }).click();
+  const hidden = section.getByText('Hidden from prompts (1)');
+  await expect(hidden).toBeVisible();
+  await hidden.click();
+  await section.getByRole('button', { name: 'Ask again' }).click();
+  await expect(section.getByText(/Hidden from prompts/)).toHaveCount(0);
+
+  await section.getByRole('button', { name: 'Set up' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Training max set up for Romanian Deadlift.' })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Lifts without a training max' })).toHaveCount(0);
+  // The table below now lists the lift with its new max.
+  await expect(page.getByLabel('Romanian Deadlift training max')).toHaveValue('100');
+});
+
 test('units section saves the selected weight unit', async ({ page }) => {
   await page.goto('/settings/units');
 

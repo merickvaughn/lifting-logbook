@@ -15,6 +15,23 @@
   margin: 0;
 }
 
+.intro {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+.hidden {
+  margin-top: var(--space-3);
+}
+
+.hidden summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
 .tableWrapper {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;

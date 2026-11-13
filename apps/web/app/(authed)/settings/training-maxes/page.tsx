@@ -8,6 +8,7 @@ import { getActiveProgram, getUserSettings } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
 import RepMaxCalculator from '@/components/RepMaxCalculator';
 import TrainingMaxesForm from './TrainingMaxesForm';
+import MissingTrainingMaxes from './MissingTrainingMaxes';
 import { resolveStepIncrements } from './increments';
 import MaxHistory from './MaxHistory';
 
@@ -27,6 +28,7 @@ export default async function TrainingMaxesPage() {
 
   return (
     <>
+      <MissingTrainingMaxes program={program} preferredUnit={unit} step={defaultIncrement} />
       <TrainingMaxesForm
         program={program}
         lifts={lifts}

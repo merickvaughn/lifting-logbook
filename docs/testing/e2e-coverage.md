@@ -73,7 +73,7 @@ Tracking issue: [#259](https://github.com/merickvaughn/lifting-logbook/issues/25
 | `/onboarding` (final step only) | `POST /programs/:p/macrocycles/initialize` |
 | `/programs` | `GET /users/me/settings`, `GET /programs/custom` |
 | Programs — switch | `POST /programs/:p/switch` |
-| `/settings/training-maxes` | `GET /programs/:p/training-maxes`, `PATCH /programs/:p/training-maxes`, `GET /programs/:p/training-maxes/history` |
+| `/settings/training-maxes` | `GET /programs/:p/training-maxes`, `PATCH /programs/:p/training-maxes`, `GET /programs/:p/training-maxes/history`, `GET /programs/:p/training-maxes/missing`, `PUT`/`DELETE /programs/:p/training-maxes/missing/:liftId/dismissal` |
 | `/settings/strength-goals` | `GET /programs/:p/strength-goals`, `PUT /programs/:p/strength-goals/:lift`, `DELETE /programs/:p/strength-goals/:lift` |
 
 ## Running the Tests
