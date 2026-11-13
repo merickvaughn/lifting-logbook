@@ -364,7 +364,7 @@ class GcsStoreTests(unittest.TestCase):
         store, _ = gcs(http_error(404))
         with self.assertRaises(lock.LockError) as ctx:
             store.write({}, if_generation=0)
-        self.assertIn("TF_STATE_BUCKET", str(ctx.exception))
+        self.assertIn("ci-locks.tf", str(ctx.exception))
 
     def test_throttling_server_errors_and_resets_are_retried(self):
         store, opener = gcs(

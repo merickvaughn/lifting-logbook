@@ -293,7 +293,10 @@ class GcsStore:
         if status == 412:
             return None
         if status == 404:
-            raise LockError(f"GCS bucket '{self.bucket}' was not found; check the TF_STATE_BUCKET secret.")
+            raise LockError(
+                f"GCS bucket '{self.bucket}' was not found. infra/terraform/ci-locks.tf creates it, "
+                "so check that the staging terraform apply ran and that STAGING_LOCK_BUCKET matches it."
+            )
         return int(json.loads(body)["generation"])
 
     def delete(self, if_generation):

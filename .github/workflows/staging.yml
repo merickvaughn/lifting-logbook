@@ -51,6 +51,9 @@ env:
   # finish inside the queue's 60-minute check timeout; merge-queue waiters have priority over
   # pull_request waiters, so they wait only for the current holder.
   STAGING_LOCK_TIMEOUT_MIN: '45'
+  # The staging lock's own unversioned bucket, created by infra/terraform/ci-locks.tf from the same
+  # project id (#1217). deploy.yml derives it the same way.
+  STAGING_LOCK_BUCKET: ${{ vars.GCP_STAGING_PROJECT_ID }}-ci-locks
 
 jobs:
   # ── 0. Preflight: detect whether staging is configured ────────────────────
@@ -370,8 +373,8 @@ jobs:
   # cancelled to make room; merge-queue and post-merge waiters go before pull_request waiters.
   # Taken after build-images so the long image build stays outside it.
   #
-  # `environment: staging` on this job and unlock-staging makes every job that touches the lock
-  # read TF_STATE_BUCKET from the same scope as the deploy jobs, which run in that environment.
+  # `environment: staging` on this job and unlock-staging keeps every job that touches the lock in
+  # the same environment as the deploy jobs.
   lock-staging:
     name: Lock staging
     runs-on: ubuntu-latest
@@ -400,7 +403,7 @@ jobs:
       - name: Wait for and take the staging lock
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min "$STAGING_LOCK_TIMEOUT_MIN"
+        run: python3 scripts/staging-env-lock.py acquire --bucket "$STAGING_LOCK_BUCKET" --timeout-min "$STAGING_LOCK_TIMEOUT_MIN"
 
   # ── 3a. Deploy API (staging) ──────────────────────────────────────────────
   # Split into per-service jobs so they run in parallel within a single PR.
@@ -442,7 +445,7 @@ jobs:
       - name: Hold the staging lock
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 0
+        run: python3 scripts/staging-env-lock.py acquire --bucket "$STAGING_LOCK_BUCKET" --timeout-min 0
 
       # ── Database migrations (ADR-027) ──────────────────────────────────────
       # Apply pending Prisma migrations to the staging DB via the in-VPC Cloud
@@ -750,7 +753,7 @@ jobs:
       - name: Hold the staging lock
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 0
+        run: python3 scripts/staging-env-lock.py acquire --bucket "$STAGING_LOCK_BUCKET" --timeout-min 0
 
       - name: Set up GKE credentials
         if: needs.terraform-staging.outputs.gke_enabled == 'true'
@@ -948,7 +951,7 @@ jobs:
       - name: Hold the staging lock
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/staging-env-lock.py acquire --bucket "${{ secrets.TF_STATE_BUCKET }}" --timeout-min 0
+        run: python3 scripts/staging-env-lock.py acquire --bucket "$STAGING_LOCK_BUCKET" --timeout-min 0
 
       # Fail fast, naming both images, if staging doesn't run this run's build (#1208). The lock
       # should make that impossible; this proves it held before ~2m of npm ci and a test run that
@@ -1063,7 +1066,7 @@ jobs:
       - name: Release the staging lock
         if: always()
         continue-on-error: true
-        run: python3 scripts/staging-env-lock.py release --bucket "${{ secrets.TF_STATE_BUCKET }}"
+        run: python3 scripts/staging-env-lock.py release --bucket "$STAGING_LOCK_BUCKET"
 
   # ── 4b. Release the staging environment lock ────────────────────────────
   # always(): release whatever the tests' result, and also when this run is cancelled (a newer
@@ -1092,7 +1095,7 @@ jobs:
           service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
 
       - name: Release the staging lock
-        run: python3 scripts/staging-env-lock.py release --bucket "${{ secrets.TF_STATE_BUCKET }}"
+        run: python3 scripts/staging-env-lock.py release --bucket "$STAGING_LOCK_BUCKET"
 
   # ── 5. Report status (PR comment) ────────────────────────────────────────
   report-status:
