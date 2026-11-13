@@ -58,6 +58,11 @@ export interface ImportHandler<T> {
   ): Promise<Omit<ImportCommitResponse, 'destination' | 'batchId' | 'split'> & { preImage: ImportPreImage }>;
 }
 
+/** Each lift the rows name, once, in first-seen order: a commit's `lifts` (#1273). */
+export function liftsOf(rows: readonly Pick<LiftRecord, 'lift'>[]): string[] {
+  return [...new Set(rows.map((r) => r.lift))];
+}
+
 /**
  * Writes the rows of an import path that takes macrocycle numbers from a file
  * (`POST lift-records/import` and flag-off commits), under the lock the caller holds exclusively.
@@ -191,6 +196,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
       updated: 0,
       skipped: classified.length - created,
       skippedDetail: buildSkippedDetail(classified, (r) => liftRecordLabel(r, liftNames)),
+      lifts: liftsOf(toCreate),
       preImage: {
         ...buildLiftRecordsPreImage(toCreate),
         ...legacyRowsPreImage(legacyNums),

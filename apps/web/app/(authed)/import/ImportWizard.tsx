@@ -48,6 +48,7 @@ import {
   type SheetTabChoices,
   type TabPreviews,
 } from './SheetTabsStep';
+import ImportMissingMaxes from './ImportMissingMaxes';
 import SpellingCollisionNotice from './SpellingCollisionNotice';
 import styles from './import.module.css';
 
@@ -2308,6 +2309,19 @@ export function ImportWizard({
                   )}
                 </details>
               )}
+
+              {/* Imported lifts with no training max (#1273). Gone once undone: the sets are too. */}
+              {commitResult.destination === 'lift-records' &&
+                commitResult.lifts &&
+                commitResult.lifts.length > 0 &&
+                undoResult === null && (
+                  <ImportMissingMaxes
+                    key={commitResult.batchId}
+                    program={programId}
+                    lifts={commitResult.lifts}
+                    preferredUnit={unit}
+                  />
+                )}
 
               {/* Undo section */}
               {batchId !== null && undoResult === null && (

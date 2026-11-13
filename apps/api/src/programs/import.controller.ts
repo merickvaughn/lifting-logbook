@@ -81,7 +81,7 @@ import { PrismaService } from '../adapters/prisma/prisma.service';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { CustomProgramsRepository } from '../custom-programs/custom-programs.repository';
-import { IMPORT_HANDLERS } from './import-handlers';
+import { IMPORT_HANDLERS, liftsOf } from './import-handlers';
 import {
   assignImportDate,
   assignProgramOptions,
@@ -991,6 +991,8 @@ export class ImportController {
       ...counts,
       batchId,
       skippedDetail: buildSkippedDetail(plan.classified, ({ r }) => liftRecordLabel(r, liftNames)),
+      // Only this program's sets: another program's list wouldn't count the rest (#1273).
+      lifts: liftsOf(plan.stretches.filter((s) => s.spec.program === program).flatMap((s) => s.creating)),
       ...(splitResult ? { split: splitResult } : {}),
     };
   }

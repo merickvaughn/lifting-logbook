@@ -1028,6 +1028,14 @@ export interface ImportCommitResponse extends ImportWriteResult {
   skippedDetail?: SkippedRecord[];
   /** Present when the commit stored an Assign breakdown (#1254). */
   assigned?: ImportAssignedCounts;
+  /**
+   * Each lift this commit wrote a set for in the program it was made in, once, as stored (a lift
+   * id, such as `bench-press`). The import result asks which of them have no training max
+   * (`GET …/training-maxes/missing?lifts=…` takes ids) (#1246, #1273). Present only when
+   * `destination === 'lift-records'`; sets written to another program or as non-cycle workouts
+   * aren't listed, since that program's list wouldn't count them.
+   */
+  lifts?: string[];
 }
 
 /**

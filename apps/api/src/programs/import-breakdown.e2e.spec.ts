@@ -225,6 +225,19 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     expect(new Set(sets.map((s) => s.macrocycleNum))).toEqual(new Set([row?.macrocycleNum]));
     // No file numbers: each session's workout number is its place in the stretch.
     expect(sets.filter((s) => s.date.getTime() === new Date(`${day(4)}T00:00:00Z`).getTime()).map((s) => s.workoutNum)).toEqual([3, 3, 3]);
+    // Each lift written, once, as stored (#1273).
+    expect(body.lifts).toHaveLength(9);
+    expect([...(body.lifts ?? [])].sort()).toEqual([...new Set(sets.map((s) => s.lift))].sort());
+  });
+
+  it("lists only the lifts written to the importing program (#1273)", async () => {
+    // RPT's stretch has only Bench Press; the 5/3/1 stretch's Squat and Deadlift go to another program.
+    const rpt = run([['Bench Press']], 0, 2);
+    const fiveThreeOne = run([['Squat', 'Deadlift']], 10, 2);
+    const body = await commit(csvOf([...rpt, ...fiveThreeOne]), breakdownOf([stretch(rpt), stretch(fiveThreeOne, '5-3-1')]));
+
+    expect(body.created).toBe(6);
+    expect(body.lifts).toEqual(['bench-press']);
   });
 
   it('marks a stretch unmatched when it holds lifts outside its program', async () => {
