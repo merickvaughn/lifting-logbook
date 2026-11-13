@@ -4,6 +4,11 @@ jest.mock('@/lib/api', () => ({
   fetchTrainingMaxes: jest.fn(),
   fetchCustomLifts: jest.fn(),
   fetchFocusPlan: jest.fn(),
+  // The progression reads (#1249). `getUserSettings` is the real request-cached wrapper over
+  // `fetchUserSettings`, so a test can fail the read where the API would.
+  fetchUserSettings: jest.fn(),
+  fetchAllLiftMetadata: jest.fn(),
+  fetchLiftRecords: jest.fn(),
 }));
 
 jest.mock('@/lib/preferences', () => ({
@@ -15,9 +20,20 @@ jest.mock('@/lib/userToday', () => ({
   getUserToday: jest.fn().mockResolvedValue('2026-10-30'),
 }));
 
-import { fetchCustomLifts, fetchFocusPlan, fetchProgramSpec, fetchTrainingMaxes, fetchWorkout } from '@/lib/api';
+import {
+  fetchAllLiftMetadata,
+  fetchCustomLifts,
+  fetchFocusPlan,
+  fetchLiftRecords,
+  fetchProgramSpec,
+  fetchTrainingMaxes,
+  fetchUserSettings,
+  fetchWorkout,
+} from '@/lib/api';
 import { CUSTOM_LIFTS_TIMEOUT_MS } from '@/lib/timerPlan';
+import { loadProgressionPlans } from '@/lib/loadProgressionPlans';
 import { FOCUS_PLAN_TIMEOUT_MS, loadFocusPlan, loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
+import { planLift } from '@/lib/workoutPlan';
 import { focusPlan } from './focusPlanFixture';
 
 const mockedWorkout = fetchWorkout as unknown as jest.Mock;
@@ -25,7 +41,12 @@ const mockedSpec = fetchProgramSpec as unknown as jest.Mock;
 const mockedMaxes = fetchTrainingMaxes as unknown as jest.Mock;
 const mockedCustomLifts = fetchCustomLifts as unknown as jest.Mock;
 const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
+const mockedUserSettings = fetchUserSettings as unknown as jest.Mock;
+const mockedLiftMetadata = fetchAllLiftMetadata as unknown as jest.Mock;
+const mockedLiftRecords = fetchLiftRecords as unknown as jest.Mock;
 
+// Each row names its type, as every built-in preset's does, so a lift plans by its row and nothing
+// reads the progression settings unless a test clears it (#1249).
 function spec(lift: string, activation = '') {
   return {
     week: 1,
@@ -39,6 +60,7 @@ function spec(lift: string, activation = '') {
     warmUpPct: '40,50,60',
     wtDecrementPct: 0,
     activation,
+    progression: 'amrap_gated' as const,
   };
 }
 
@@ -60,6 +82,9 @@ function seedWorkout(lifts: string[], activation: Record<string, string> = {}, d
 beforeEach(() => {
   jest.clearAllMocks();
   mockedCustomLifts.mockResolvedValue([]);
+  mockedUserSettings.mockResolvedValue({ defaultProgression: null, defaultWeightIncrement: null });
+  mockedLiftMetadata.mockResolvedValue([]);
+  mockedLiftRecords.mockResolvedValue([]);
 });
 
 describe('loadWorkoutPlan', () => {
@@ -259,6 +284,110 @@ describe('loadWorkoutPlan', () => {
       ['Lateral Raise', { prep: 10, workSet: 45, restWork: 60 }],
       ['Face Pull', { prep: 10, workSet: 45, restWork: 60 }],
     ]);
+  });
+});
+
+// The detail page and the timer plan each lift by its progression type, as the logger does (#1249).
+describe('loadWorkoutPlan — the plan follows the lift’s progression type (#1249)', () => {
+  const work = (sets: readonly { type: string; reps: number; weight: number }[] | undefined) =>
+    sets?.filter((s) => s.type === 'work').map((s) => `${s.reps}@${s.weight}`);
+
+  it('plans the Cable Curl double at 3×8 after the bump, the same plan the logger gives', async () => {
+    // Range 8–12 at 30: 12,12,12 moved the max to 32.5 on that session's date, so the next plan
+    // drops to the bottom of the range at the new max.
+    seedWorkout(['Cable Curl']);
+    const row = { ...spec('Cable Curl'), sets: 3, reps: 12, repsLow: 8, progression: 'double' as const, increment: 2.5, warmUpPct: '' };
+    mockedSpec.mockResolvedValue([row]);
+    const maxes = [{ lift: 'Cable Curl', weight: 32.5, dateUpdated: '2026-01-05T00:00:00.000Z' }];
+    mockedMaxes.mockResolvedValue(maxes);
+    mockedLiftRecords.mockResolvedValue(
+      [12, 12, 12].map((reps, i) => ({
+        id: `curl-${i + 1}`,
+        program: '5-3-1',
+        macrocycleNum: 1,
+        workoutNum: 4,
+        date: '2026-01-05',
+        lift: 'Cable Curl',
+        setNum: i + 1,
+        weight: 30,
+        reps,
+        notes: '',
+      })),
+    );
+
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage');
+    if (!plan) throw new Error('expected a plan');
+
+    const [curl] = plan.liftDetails;
+    expect(work(curl?.plannedSets)).toEqual(['8@32.5', '8@32.5', '8@32.5']);
+    // The logger's plan for the same lift: its progression, through the same `planLift`.
+    const [loggerProgression] = await loadProgressionPlans('5-3-1', plan.workout, [row], maxes, 'WorkoutLoggingPage');
+    expect(curl?.plannedSets).toEqual(planLift(row, 32.5, { progression: loggerProgression }));
+    // And the timer counts down the same sets.
+    expect((await plan.timerLifts(null))[0]?.sets.map((s) => s.spec)).toEqual(['8 × 32.5 lbs', '8 × 32.5 lbs', '8 × 32.5 lbs']);
+  });
+
+  it('plans an off-program linear lift at its repsHigh, on the page and in the timer', async () => {
+    seedWorkout(['Hammer Curl']);
+    mockedSpec.mockResolvedValue([]);
+    mockedLiftMetadata.mockResolvedValue([
+      { lift: 'Hammer Curl', progression: 'linear', progressionIncrement: 2.5, repsLow: null, repsHigh: 10 },
+    ]);
+
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutTimerPage');
+    if (!plan) throw new Error('expected a plan');
+
+    expect(work(plan.liftDetails[0]?.plannedSets)).toEqual(['10@200', '10@200', '10@200']);
+    // Before #1249 a lift with no row planned nothing here, so the timer had no sets to count.
+    const [hammer] = await plan.timerLifts(null);
+    expect(hammer?.lift).toBe('Hammer Curl');
+    expect(hammer?.sets).toHaveLength(3);
+  });
+
+  it('plans by the row, and says why under its own name, when the settings read fails', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    seedWorkout(['Squat']);
+    // The row names no type, so the plan needs the lifter's settings.
+    const row = { ...spec('Squat'), progression: undefined };
+    mockedSpec.mockResolvedValue([row]);
+    mockedUserSettings.mockRejectedValue(new Error('boom'));
+
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage');
+
+    expect(plan?.liftDetails[0]?.plannedSets).toEqual(planLift(row, 200));
+    expect(plan?.liftDetails[0]).toMatchObject({ warmUpCount: 3, workCount: 3 });
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutDetailPage] progression settings read failed, planning each lift by its row and the catalog',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
+  });
+
+  it('waits no longer than the custom-lift budget for a row with no type, and reads custom lifts once', async () => {
+    // The progression read shares the timer's bounded custom-lift read, so a slow `/lifts/custom`
+    // holds the page for the budget at most, not the api-client's 30 s, and is requested once.
+    jest.useFakeTimers();
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      seedWorkout(['Squat']);
+      const row = { ...spec('Squat'), progression: undefined };
+      mockedSpec.mockResolvedValue([row]);
+      mockedCustomLifts.mockReturnValue(new Promise(() => undefined)); // never settles
+
+      const loading = loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage');
+      // The budget arms in the same tick the settings read starts.
+      for (let i = 0; i < 100 && mockedUserSettings.mock.calls.length === 0; i++) await Promise.resolve();
+      jest.advanceTimersByTime(CUSTOM_LIFTS_TIMEOUT_MS + 1);
+      const plan = await loading;
+
+      expect(plan?.liftDetails[0]?.plannedSets).toEqual(planLift(row, 200));
+      expect(warnSpy).toHaveBeenCalledWith('[WorkoutDetailPage] custom lifts fetch slow, classifying built-ins only');
+      expect((await plan?.timerLifts(null))?.map((l) => l.lift)).toEqual(['Squat']);
+      expect(mockedCustomLifts).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+      jest.useRealTimers();
+    }
   });
 });
 

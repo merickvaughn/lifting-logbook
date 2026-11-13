@@ -8,7 +8,8 @@ import { getPreferredUnit } from '@/lib/preferences';
 import { getUserToday } from '@/lib/userToday';
 import { CUSTOM_LIFTS_TIMEOUT_MS, toTimerLiftPlans } from '@/lib/timerPlan';
 import { withTimeout } from '@/lib/with-timeout';
-import { buildLiftDetails } from '@/lib/workoutPlan';
+import { loadProgressionPlans } from '@/lib/loadProgressionPlans';
+import { buildLiftDetails, liftSpecsForWorkout } from '@/lib/workoutPlan';
 import type { WorkoutLiftDetail } from '@/lib/workoutPlan';
 import { effectiveDateOf, statusOf } from '@/lib/workoutStatus';
 import type { WorkoutStatus } from '@/lib/workoutStatus';
@@ -58,9 +59,10 @@ export interface WorkoutPlan {
    * custom-lift fetch that classification needs is started before the load-
    * bearing fetches but only *awaited* here, so a page that decides not to
    * mount the timer (a completed workout — most detail-page views) never puts
-   * that round-trip on its critical path. The slow-fetch budget arms here too,
-   * on first call, so a page that never mounts the timer cannot log a
-   * degradation it never experienced.
+   * that round-trip on its critical path for classification. The slow-fetch
+   * budget arms on first call, here or in the progression read (which waits on it
+   * only when a lift's row names no type, #1249), so a page cannot log a
+   * degradation it never experienced, and never waits past the budget.
    *
    * `focus` is the day's focus work from {@link loadFocusPlan}, or `null` for none;
    * its lifts join the plan in placement order (#1060). It may be passed still in
@@ -149,7 +151,8 @@ export async function loadWorkoutPlan(
   caller: WorkoutPlanCaller,
 ): Promise<WorkoutPlan | null> {
   // Bounded and caught, unlike its four siblings: this one only enriches the
-  // accessory classification of the user's *own* lifts, so neither a failure nor
+  // accessory classification of the user's *own* lifts, and tells a custom lift
+  // from a catalog one when resolving a progression (#1249), so neither a failure nor
   // a slow response may take down — or hold up — a timer the lifter is standing
   // in the gym waiting on. The other four are load-bearing and keep their
   // fail-fast behavior.
@@ -173,7 +176,9 @@ export async function loadWorkoutPlan(
   // that is a failure bound, and 30s of blocked first paint for an optional
   // enrichment is not a useful outcome. `onTimeout` logs distinctly so "slow"
   // and "down" stay tellable apart in the logs. Memoized so a second
-  // `timerLifts()` call cannot arm a second budget.
+  // `timerLifts()` call cannot arm a second budget. The progression read below
+  // calls it too when a lift's row names no type (#1249); that read does wait
+  // on it, so the page has then experienced whatever it logs.
   // fallback-covered-by: apps/web/lib/__tests__/loadWorkoutPlan.test.ts
   let bounded: CustomLifts | undefined;
   const boundedCustomLifts = (): CustomLifts =>
@@ -194,7 +199,20 @@ export async function loadWorkoutPlan(
 
   if (!workout) return null;
 
-  const liftDetails = buildLiftDetails(workout, specs, maxes);
+  // Each lift plans by its progression type, as on the logger, so the two agree (#1249). A
+  // failed read inside plans the lift by its row and logs it under this page's name. Only a lift
+  // whose row names no type reads the settings, and with them the custom lifts: through the same
+  // bounded read the timer classifies with, so the page makes one request and never waits past
+  // the budget for it.
+  const progressions = await loadProgressionPlans(
+    program,
+    workout,
+    liftSpecsForWorkout(workout, specs),
+    maxes,
+    caller,
+    boundedCustomLifts,
+  );
+  const liftDetails = buildLiftDetails(workout, specs, maxes, progressions);
 
   return {
     workout,

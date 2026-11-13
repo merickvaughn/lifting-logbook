@@ -118,15 +118,19 @@ the proposal's. These details weren't settled there:
 5. **A stored rep range whose bottom is above its top reads as unset** (`storedLiftProgression`). The
    PATCH endpoint checks a one-end patch against the stored other end in a separate read, so two
    overlapping patches can store a crossed range.
-6. **The logger plans `double` flat at the max**, at the bottom of the range when the max moved on or
+6. **The logger, the detail page and the timer plan `double` flat at the max**, at the bottom of the range when the max moved on or
    after the lift's last session, otherwise at last session's reps. The last session comes from the
    current macrocycle's records, so a macrocycle's first session plans the bottom. From an own max it
    plans the bottom, since the lift's last session doesn't date that max. A lift with no spec row on
    `linear` or `amrap_gated` plans three sets of its `repsHigh` at its max. In a workout dated before
    today that logged it, it keeps only its logged sets, so a finished workout stays read-only. A failed settings read resolves each
    lift from its row and the catalog, and a failed records read plans `double` without a last
-   session. The detail page and the timer still plan by the row until
-   [#1249](https://github.com/merickvaughn/lifting-logbook/issues/1249).
+   session. All three load the plan through `loadProgressionPlans`, so they agree
+   ([#1249](https://github.com/merickvaughn/lifting-logbook/issues/1249)); the detail page and the
+   timer read the lifter's custom lifts for it through the same bounded read the timer classifies
+   with, so a slow read holds the page for that budget at most. A failed or slow custom-lift read
+   there resolves every lift as a built-in instead of failing the settings read, so during such an
+   outage a custom lift named like a catalog one plans by the catalog's default on those pages.
 
 ## References
 

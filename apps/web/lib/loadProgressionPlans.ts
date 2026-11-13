@@ -16,11 +16,10 @@ import type {
 } from '@lifting-logbook/types';
 import { getUserSettings } from '@/lib/active-program';
 import { fetchAllLiftMetadata, fetchCustomLifts, fetchLiftRecords } from '@/lib/api';
+import type { WorkoutPlanCaller } from '@/lib/loadWorkoutPlan';
 import { getUserToday } from '@/lib/userToday';
 import type { ProgressionPlan } from '@/lib/workoutPlan';
 import { effectiveDateOf } from '@/lib/workoutStatus';
-
-const PAGE = '[WorkoutLoggingPage]';
 
 /**
  * The lift's latest session in `records` before `workout`: another workout dated on or before it.
@@ -45,8 +44,13 @@ function lastSessionOf(
 }
 
 /**
- * Each of a workout's lifts' progression plan for the logger (#1211), index-aligned with
- * `workout.lifts`. A lift's type, range and increment resolve from its spec row, then its own
+ * Each of a workout's lifts' progression plan (#1211), index-aligned with `workout.lifts`. The
+ * logger, the detail page and the timer all plan from it, so they agree (#1249); `caller` names
+ * the page in the console lines. `customLifts` reads the lifter's own lifts, called only when the
+ * settings are; the detail page and the timer pass the one bounded read they already share. That
+ * read resolves `[]` when it fails or runs out its budget, so there every lift resolves as a
+ * built-in rather than the whole settings read failing, as it does on the logger: the two differ
+ * only for a custom lift named like a catalog one, and only while `/lifts/custom` is down or slow. A lift's type, range and increment resolve from its spec row, then its own
  * value, the lifter's default and the catalog's (`resolveProgression`), finding its own value with
  * `lookupByLift` as `updateMaxes` does. The lifter's settings are read only when some lift's row
  * names no type, and the macrocycle's records only when some lift is on `double`, which plans from
@@ -64,7 +68,10 @@ export async function loadProgressionPlans(
   workout: Pick<WorkoutResponse, 'workoutNum' | 'lifts' | 'date' | 'overrideDate'>,
   liftSpecs: readonly (LiftingProgramSpecResponse | undefined)[],
   maxes: readonly Pick<TrainingMaxResponse, 'lift' | 'weight' | 'dateUpdated'>[],
+  caller: WorkoutPlanCaller | 'WorkoutLoggingPage',
+  customLifts: () => ReturnType<typeof fetchCustomLifts> = fetchCustomLifts,
 ): Promise<(ProgressionPlan | undefined)[]> {
+  const PAGE = `[${caller}]`;
   const date = effectiveDateOf(workout);
   const loggedOffProgram = workout.lifts.map((wl, i) => !liftSpecs[i] && !wl.planned && wl.sets.length > 0);
   const past = loggedOffProgram.some(Boolean) && date.slice(0, 10) < (await getUserToday());
@@ -72,7 +79,7 @@ export async function loadProgressionPlans(
 
   const needsSettings = plans.some(({ spec }) => !spec?.progression);
   const settings = needsSettings
-    ? await Promise.all([getUserSettings(), fetchCustomLifts(), fetchAllLiftMetadata()]).then(
+    ? await Promise.all([getUserSettings(), customLifts(), fetchAllLiftMetadata()]).then(
         ([user, customLifts, metas]) => ({ user, customLifts, metaFor: lookupByLift(metas.map((m) => [m.lift, m] as const)) }),
         // fallback-covered-by: apps/web/app/(authed)/macrocycle/[macrocycleNum]/workout/[workoutNum]/page.test.tsx
         (err: unknown) => {

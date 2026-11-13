@@ -147,7 +147,7 @@ export function computePlannedSets(
 }
 
 /**
- * What the logger plans a lift by besides its spec row (#1211): its resolved progression, when
+ * What a lift plans by besides its spec row (#1211): its resolved progression, when
  * its max last moved, and its last session. Without it a lift plans by its row, as before.
  */
 export interface ProgressionPlan {
@@ -205,7 +205,7 @@ function planDouble(
  * this formula; only the logger passes an own max, when a toggle with one is on, since a slot has
  * no start-on modifications yet.
  *
- * Only the logger passes a `progression` (#1211), which plans by the lift's type: a `double` lift
+ * A `progression` (#1211; the detail page and the timer too since #1249) plans by the lift's type: a `double` lift
  * plans its range ({@link planDouble}), and a lift with no spec row on `linear` or `amrap_gated`
  * plans {@link OFF_PROGRAM_SETS} sets of its `repsHigh` at its max. Every other lift with a row
  * plans the row. With no spec row and nothing else to go by (an added lift, or a focus lift) it
@@ -345,12 +345,15 @@ export function liftSpecsForWorkout(
  * filtered: position is a lift occurrence's identity for the timer (ADR-035
  * Amendment 4), so a lift with no training max is kept as an empty plan.
  * Each lift's prescription comes from {@link liftSpecsForWorkout}; its weights
- * from its own training max — a replacement's, not its slot's.
+ * from its own training max — a replacement's, not its slot's. `progressions`,
+ * index-aligned with `workout.lifts` like the result, plans each lift by its
+ * progression type as the logger does (#1249); without one a lift plans by its row.
  */
 export function buildLiftDetails(
   workout: Pick<WorkoutResponse, 'week' | 'offset' | 'lifts'>,
   specs: readonly LiftingProgramSpecResponse[],
   maxes: readonly Pick<TrainingMaxResponse, 'lift' | 'weight' | 'dateUpdated'>[],
+  progressions: readonly (ProgressionPlan | undefined)[] = [],
 ): WorkoutLiftDetail[] {
   const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
@@ -359,7 +362,7 @@ export function buildLiftDetails(
     const spec = liftSpecs[i];
     // A slot has no start-on modifications yet, so the timer and this page plan from the lift's
     // max, as the logger does before a toggle.
-    const plannedSets = planLift(spec, tm);
+    const plannedSets = planLift(spec, tm, { progression: progressions[i] });
     return {
       lift: wl.lift,
       tm,
