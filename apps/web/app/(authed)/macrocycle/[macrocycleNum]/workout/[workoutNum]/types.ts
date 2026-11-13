@@ -1,4 +1,5 @@
 import type { LiftingProgramSpecResponse, LiftRecordResponse, WeightUnit } from '@lifting-logbook/types';
+import type { ProgressionPlan } from '@/lib/workoutPlan';
 
 export interface WarmUpSetData {
   /** Number of reps for this warm-up set. */
@@ -54,9 +55,10 @@ export interface LiftData {
   /**
    * The lift's spec row and its own max, so turning on an `own` modification can re-plan it
    * without a fetch (#1153). Absent where nothing plans the lift: a focus lift, or one with no spec
-   * row, which toggles label but don't re-plan.
+   * row, which toggles label but don't re-plan. `progression` is what the page planned it by besides
+   * the row (#1211), so a re-plan keeps its type.
    */
-  plan?: { spec: LiftingProgramSpecResponse; liftMax: number };
+  plan?: { spec: LiftingProgramSpecResponse; liftMax: number; progression?: ProgressionPlan };
 }
 
 export interface WorkoutLoggerProps {

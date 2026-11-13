@@ -1,12 +1,14 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
-import { UserWorkoutSchedule } from '@lifting-logbook/types';
+import { UserSettingsResponse, UserWorkoutSchedule } from '@lifting-logbook/types';
 import {
   MacrocycleDashboard,
   LiftingProgramSpec,
   distributeWorkouts,
   formatDateYYYYMMDD,
+  liftIdFor,
   MaxReductionFlag,
   programWorkoutKeys,
+  ProgressionSettings,
   SkippedLift,
   TrainingMax,
   TrainingMaxHistoryEntry,
@@ -48,6 +50,8 @@ type MacrocycleRepos = Pick<
   | 'workoutDateOverride'
   | 'importBatch'
   | 'liftModification'
+  | 'liftMetadata'
+  | 'customLift'
 >;
 
 /**
@@ -148,6 +152,23 @@ function datesForProgramDays(
     const scheduledDate = dates[i];
     return scheduledDate ? [{ workoutNum: i + 1, weekNum: day.week, scheduledDate }] : [];
   });
+}
+
+/**
+ * The lifter's progression settings, which `updateMaxes` resolves each lift's type, rep range and
+ * increment from (#1211; docs/adr/ADR-043-lift-progression-resolution-and-storage.md).
+ */
+async function progressionSettingsFor(
+  repos: Pick<MacrocycleRepos, 'liftMetadata' | 'customLift'>,
+  settings: Pick<UserSettingsResponse, 'defaultProgression' | 'defaultWeightIncrement'>,
+): Promise<ProgressionSettings> {
+  const [liftMeta, customLifts] = await Promise.all([repos.liftMetadata.listMetadata(), repos.customLift.list()]);
+  return {
+    liftMeta,
+    userDefault: settings.defaultProgression,
+    defaultWeightIncrement: settings.defaultWeightIncrement,
+    customLifts,
+  };
 }
 
 function round2dp(w: number): number {
@@ -252,11 +273,20 @@ export class MacrocycleGenerationService {
     // to the caller when advancing a macrocycle. Use recalculateMaxes to review flagged reductions.
     const { modes: modificationModes, lifts: modificationLifts } = await modificationModesFor(repos, liftRecords);
     const modificationMaxes = await ownMaxesFor(repos, program, liftRecords, modificationModes);
+    const settings = await repos.userSettings.getSettings();
+    // The macrocycle ends here, so an off-program percent_wave lift moves once (#1211).
     const { maxes: newMaxes, skipped, modificationMaxes: newModificationMaxes } = updateMaxes(
       programSpec,
       trainingMaxes,
       liftRecords,
-      { program, liftOverrides, modificationModes, modificationMaxes },
+      {
+        program,
+        liftOverrides,
+        modificationModes,
+        modificationMaxes,
+        progression: await progressionSettingsFor(repos, settings),
+        endOfMacrocycle: true,
+      },
     );
     this.warnSkipped(program, sourceMacrocycleNum, skipped);
 
@@ -282,7 +312,6 @@ export class MacrocycleGenerationService {
     // macrocycleNum hasn't advanced in the dashboard so a retry is safe. Scheduled date
     // rows use replace-all semantics and are idempotent across retries.
     await repos.trainingMax.saveTrainingMaxes(program, newMaxes);
-    const settings = await repos.userSettings.getSettings();
     const scheduledWorkouts = await saveScheduledDates(repos, program, newMacrocycle.macrocycleNum, newMacrocycle.macrocycleDate, programSpec, settings.workoutSchedule, this.logger);
     await repos.macrocycleDashboard.saveMacrocycleDashboard(newMacrocycle);
 
@@ -455,6 +484,7 @@ export class MacrocycleGenerationService {
       liftOverrides,
       modificationModes,
       modificationMaxes,
+      progression: await progressionSettingsFor(repos, await repos.userSettings.getSettings()),
     });
     this.warnSkipped(program, dashboard.macrocycleNum, result.skipped);
     await repos.trainingMax.saveTrainingMaxes(program, result.maxes);
@@ -468,12 +498,16 @@ export class MacrocycleGenerationService {
     return result;
   }
 
-  /** One warning per lift whose logged sets progressed nothing: no training max or no spec row (#1150). */
+  /**
+   * One warning per lift whose logged sets progressed nothing: no training max (#1150), or no rep
+   * target for its type off-program (#1211). Logged with the lift's id, since records spell it
+   * several ways.
+   */
   private warnSkipped(program: string, macrocycleNum: number, skipped: SkippedLift[]): void {
     for (const { lift, reason } of skipped) {
       this.logger.warn(
-        { program, macrocycleNum, lift, reason },
-        'updateMaxes skipped a lift with logged sets: it has no training max or no spec row (#1150)',
+        { program, macrocycleNum, lift, liftId: liftIdFor(lift), reason },
+        'updateMaxes skipped a lift with logged sets: it has no training max, no spec row, or no rep target (#1150, #1211)',
       );
     }
   }

@@ -261,6 +261,59 @@ describe('planLift — the one plan the logger, the detail page and the timer sh
   });
 });
 
+// The proposal's Cable Curl example (docs/proposals/2026-11-10-lift-progression-types.md): range
+// 8–12 at 30; 12,11,10 then 12,12,12 moves the max to 32.5, and the next plan is 3×8 at 32.5.
+describe('planLift — the plan follows the lift’s progression type (#1211)', () => {
+  const work = (sets: ReturnType<typeof planLift>) =>
+    sets.filter((s) => s.type === 'work').map((s) => `${s.reps}@${s.weight}`);
+  const curlRow = makeSpec({ lift: 'Cable Curl', sets: 3, reps: 12, repsLow: 8, progression: 'double', increment: 2.5, warmUpPct: '0.5' });
+  const double = { type: 'double' as const, repsLow: 8, repsHigh: 12, increment: 2.5 };
+
+  it('plans the Cable Curl double at the bottom of its range right after the bump', () => {
+    const plan = planLift(curlRow, 32.5, undefined, {
+      progression: double,
+      maxDate: '2026-01-07T00:00:00.000Z',
+      lastSession: { date: '2026-01-07', reps: [12, 12, 12] },
+    });
+    expect(work(plan)).toEqual(['8@32.5', '8@32.5', '8@32.5']);
+    // The row's warm-ups still lead it.
+    expect(plan.filter((s) => s.type === 'warmup')).toHaveLength(1);
+  });
+
+  it("plans last session's reps before the bump", () => {
+    const plan = planLift(curlRow, 30, undefined, {
+      progression: double,
+      maxDate: '2026-01-01T00:00:00.000Z',
+      lastSession: { date: '2026-01-05', reps: [12, 11, 10] },
+    });
+    expect(work(plan)).toEqual(['12@30', '11@30', '10@30']);
+  });
+
+  it('plans the bottom of the range with no last session, and from an own max when one is on', () => {
+    expect(work(planLift(curlRow, 30, 25, { progression: double }))).toEqual(['8@25', '8@25', '8@25']);
+  });
+
+  it('plans an off-program linear lift at its repsHigh, as many sets as last time', () => {
+    const linear = { type: 'linear' as const, repsLow: null, repsHigh: 10, increment: 1.25 };
+    expect(work(planLift(undefined, 41.25, undefined, { progression: linear }))).toEqual(['10@41.25', '10@41.25', '10@41.25']);
+    const lastSession = { date: '2026-01-05', reps: [10, 9] };
+    expect(work(planLift(undefined, 41.25, undefined, { progression: linear, lastSession }))).toEqual(['10@41.25', '10@41.25']);
+  });
+
+  it('plans nothing off-program for a lift with no target, no max, or a type with no rep rule', () => {
+    const linear = { type: 'linear' as const, repsLow: null, repsHigh: null, increment: 1.25 };
+    expect(planLift(undefined, 40, undefined, { progression: linear })).toEqual([]);
+    expect(planLift(undefined, 0, undefined, { progression: { ...linear, repsHigh: 10 } })).toEqual([]);
+    expect(planLift(undefined, 40, undefined, { progression: { ...linear, type: 'manual', repsHigh: 10 } })).toEqual([]);
+  });
+
+  it('plans an in-program lift on any other type by its row, as before', () => {
+    const squat = makeSpec({ sets: 2, reps: 5, wtDecrementPct: 0.1, warmUpPct: '' });
+    const linear = { type: 'linear' as const, repsLow: null, repsHigh: 5, increment: 5 };
+    expect(planLift(squat, 200, undefined, { progression: linear })).toEqual(planLift(squat, 200));
+  });
+});
+
 describe('buildLiftDetails — each lift’s prescription resolves through its day (issue #1014)', () => {
   // The spec endpoint serves the one stored block, while a workout carries its
   // *program* week and its day's offset. Pre-#1014 the lookup matched

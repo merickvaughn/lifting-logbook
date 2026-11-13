@@ -21,6 +21,18 @@ export interface LiftProgressionMeta {
   repsHigh?: number | null;
 }
 
+/**
+ * A stored `lift_metadata` row as `resolveProgression` should read it. A rep range whose bottom
+ * is above its top reads as unset, both ends: the PATCH endpoint checks a one-end patch against
+ * the stored other end in a separate read, so two overlapping patches can store a crossed range
+ * (#1211, from the review of PR #1219).
+ */
+export function storedLiftProgression(meta: LiftProgressionMeta): LiftProgressionMeta {
+  const { repsLow, repsHigh } = meta;
+  const crossed = repsLow != null && repsHigh != null && repsLow > repsHigh;
+  return crossed ? { ...meta, repsLow: null, repsHigh: null } : meta;
+}
+
 /** The lifter's default progression from Settings. Unset (null) means "use the catalog". */
 export interface UserProgressionDefault {
   type: ProgressionType;
@@ -59,8 +71,8 @@ export interface ResolvedProgression {
  * lift's own increment, then the lifter's default's, then `defaultWeightIncrement`, then
  * `DEFAULT_WEIGHT_INCREMENT`. The catalog carries no increment.
  *
- * Pure: it reads only its arguments. Nothing calls it yet; `updateMaxes` dispatches on
- * its result in #1211.
+ * Pure: it reads only its arguments. `updateMaxes` dispatches on its result (#1211), and the
+ * workout logger plans by it.
  */
 export function resolveProgression(
   row: ProgressionRow | null | undefined,

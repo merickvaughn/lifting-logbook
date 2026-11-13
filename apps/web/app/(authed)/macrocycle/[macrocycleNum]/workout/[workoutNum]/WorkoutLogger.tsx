@@ -1015,7 +1015,7 @@ export default function WorkoutLogger({
   function planned(lift: LiftData): LiftData {
     const ownMax = ownMaxFor(lift);
     if (!lift.plan || ownMax === undefined) return lift;
-    const { warmUpSets, workSets } = liftSets(planLift(lift.plan.spec, lift.plan.liftMax, ownMax));
+    const { warmUpSets, workSets } = liftSets(planLift(lift.plan.spec, lift.plan.liftMax, ownMax, lift.plan.progression));
     return {
       ...lift,
       warmUpSets,

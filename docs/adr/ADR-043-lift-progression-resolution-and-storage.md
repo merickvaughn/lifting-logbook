@@ -84,9 +84,42 @@ Every existing program must keep progressing exactly as it does today.
   open in a tab after the deploy, therefore can't undo the backfill.
 - The new web sends the progression fields, which the old API rejects as unknown. Roll the web back
   with the API, or before it.
-- Until #1211 lands, the stored values change nothing: no code path moves a max by them.
+- Until #1211 lands, the stored values change nothing: no code path moves a max by them. (It has
+  landed: see the amendment below.)
 - The mobile app doesn't expose either setting yet (out of scope in the proposal).
 - Adding the columns rewrites no table: each is nullable with no default [2].
+
+## Amendment: dispatch and the plan (#1211, 2026-11-12)
+
+Phase 3 ([#1211](https://github.com/merickvaughn/lifting-logbook/issues/1211)) reads the stored values.
+`updateMaxes` dispatches on the resolved type, and the workout logger plans by it. The type rules are
+the proposal's. These details weren't settled there:
+
+1. **The API passes the lifter's settings; a caller without them gets the old behaviour.** The
+   option carries `lift_metadata`, the default, `defaultWeightIncrement` and the custom lifts (a
+   custom lift named like a catalog lift has no catalog default, as `lookupLift` reads it). Without
+   it, only a row's own `progression` counts and a lift with no spec row is skipped as
+   `no-program-spec`. That keeps every existing caller and test on the old rule. The rejected
+   alternative was to always fall back to the catalog, which turns a test row with no type into
+   `linear` for Squat.
+2. **Test weeks and deloads stay the same for every type, `manual` included.** A test week takes the
+   best final set whatever the type, since the lifter chose the load there too. No set in a deload
+   moves a max.
+3. **A `percent_wave` wave ends on the lift's last set in the spec's last week of each pass**,
+   whatever that week's type, and the max moves once per pass. A deload ending a wave still ends it.
+   Requiring the program's very last workout was rejected: a lift the last day doesn't plan would
+   never move.
+4. **`linear` and `double` share one rule:** every set of the session meets the target, and inside a
+   program at least the row's `sets` were logged. The new max is set 1's weight plus the increment.
+5. **A stored rep range whose bottom is above its top reads as unset** (`storedLiftProgression`). The
+   PATCH endpoint checks a one-end patch against the stored other end in a separate read, so two
+   overlapping patches can store a crossed range.
+6. **The logger plans `double` flat at the max**, at the bottom of the range when the max moved on or
+   after the lift's last session, otherwise at last session's reps. The last session comes from the
+   current macrocycle's records, so a macrocycle's first session plans the bottom. A lift with no spec
+   row on `linear` or `amrap_gated` plans its `repsHigh` at its max, as many sets as its last session
+   or three. The detail page and the timer still plan by the row until
+   [#1249](https://github.com/merickvaughn/lifting-logbook/issues/1249).
 
 ## References
 
