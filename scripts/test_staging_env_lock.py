@@ -364,7 +364,38 @@ class GcsStoreTests(unittest.TestCase):
         store, _ = gcs(http_error(404))
         with self.assertRaises(lock.LockError) as ctx:
             store.write({}, if_generation=0)
-        self.assertIn("TF_STATE_BUCKET", str(ctx.exception))
+        self.assertIn("ci-locks.tf", str(ctx.exception))
+
+    def test_missing_bucket_is_recreated_then_the_write_retried(self):
+        store, opener = gcs(
+            http_error(404), FakeResponse(body=b'{"name": "bucket"}'), FakeResponse(body=b'{"generation": "46"}'),
+        )
+        store.recreate_in_project = "stg-project"
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(store.write({"run_id": "7"}, if_generation=0), 46)
+        create = opener.requests[1]
+        self.assertTrue(create.full_url.endswith("/storage/v1/b?project=stg-project"))
+        spec = json.loads(create.data)
+        self.assertEqual(spec["name"], "bucket")
+        self.assertEqual(spec["versioning"], {"enabled": False})
+        self.assertEqual(spec["softDeletePolicy"], {"retentionDurationSeconds": "0"})
+        self.assertIn("ifGenerationMatch=0", opener.requests[2].full_url)
+        self.assertIn("::warning title=Staging lock bucket recreated::", out.getvalue())
+
+    def test_bucket_created_by_another_run_meanwhile_is_fine(self):
+        store, opener = gcs(http_error(404), http_error(409), FakeResponse(body=b'{"generation": "47"}'))
+        store.recreate_in_project = "stg-project"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(store.write({}, if_generation=0), 47)
+        self.assertEqual(len(opener.requests), 3)
+
+    def test_failed_recreate_is_a_lock_error(self):
+        store, opener = gcs(http_error(404), http_error(403, b'{"error": "storage.buckets.create denied"}'))
+        store.recreate_in_project = "stg-project"
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(lock.LockError) as ctx:
+            store.write({}, if_generation=0)
+        self.assertIn("storage.buckets.create denied", str(ctx.exception))
+        self.assertIn("/storage/v1/b?project=stg-project", opener.requests[1].full_url)
 
     def test_throttling_server_errors_and_resets_are_retried(self):
         store, opener = gcs(
@@ -433,6 +464,15 @@ class MainTests(unittest.TestCase):
                 code = lock.main(["release", "--bucket", "b"])
         self.assertEqual(code, 1)
         self.assertIn("::error title=Staging lock error::GCS GET returned HTTP 403", out.getvalue())
+
+    def test_recreate_project_reaches_the_lock_and_priority_stores(self):
+        env = {"GITHUB_RUN_ID": "1", "GITHUB_REPOSITORY": "o/r"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(lock, "acquire") as acquire:
+            code = lock.main(["acquire", "--bucket", "b", "--recreate-in-project", "p"])
+        self.assertEqual(code, 0)
+        store = acquire.call_args.args[0]
+        self.assertEqual(store.recreate_in_project, "p")
+        self.assertEqual(acquire.call_args.kwargs["priority_store"].recreate_in_project, "p")
 
 
 if __name__ == "__main__":
