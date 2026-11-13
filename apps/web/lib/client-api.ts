@@ -92,9 +92,10 @@ export const {
   // live custom-lift list client-side (a stale/absent local copy otherwise
   // dead-ends the user with no way to recover short of a page reload; #911).
   fetchCustomLifts,
-  // The logger reads a lift's modifications client-side, so a stale toggle can refresh
-  // without a reload (#1152).
+  // The logger reads its lifts' modifications client-side, all in one request (#1242), so a
+  // stale toggle can refresh one lift without a reload (#1152).
   fetchLiftModifications,
+  fetchLiftModificationsByLift,
   createLiftModification,
   // The lift editor edits a lift's modifications and their own maxes (#1153), reading them
   // client-side the way the logger does.

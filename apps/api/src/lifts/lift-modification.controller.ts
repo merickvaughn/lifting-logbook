@@ -12,7 +12,11 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { LiftModification, LiftModificationResponse } from '@lifting-logbook/types';
+import {
+  LiftModification,
+  LiftModificationResponse,
+  LiftModificationsByLiftResponse,
+} from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
@@ -53,6 +57,30 @@ export class LiftModificationController {
     return modifications
       .filter((m) => !m.archivedAt && (liftIds === undefined || liftIds.has(m.lift)))
       .map(toLiftModificationResponse);
+  }
+
+  /**
+   * Several lifts' modifications in one request, for the workout logger (#1242): `?lift=` once per
+   * lift, each answered under the name it was asked by and resolved as the single-lift form does.
+   * Reads the user's custom lifts and modifications once, however many lifts are asked.
+   */
+  @Get('by-lift')
+  async listByLift(
+    @CurrentUser() user: AuthUser,
+    @Query('lift') lift?: string | string[],
+  ): Promise<LiftModificationsByLiftResponse> {
+    const names = lift === undefined ? [] : [lift].flat();
+    if (names.length === 0) return {};
+    const { customLift, liftModification } = await this.factory.forUser(user);
+    const customLifts = await customLift.list();
+    const listed = (await liftModification.list()).filter((m) => !m.archivedAt);
+    // `Object.fromEntries` makes each name an own property, so a name like `__proto__` is just a key.
+    return Object.fromEntries(
+      names.map((name) => {
+        const liftIds = modificationLiftIds(name, customLifts);
+        return [name, listed.filter((m) => liftIds.has(m.lift)).map(toLiftModificationResponse)];
+      }),
+    );
   }
 
   @Post()

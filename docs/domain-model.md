@@ -165,8 +165,11 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
   (`assertSetModifications`). `LiftRecordResponse` and `SetResponse` name each as `{ id, name }`.
 - Delete removes a modification no set names, and otherwise archives it: gone from the list, still
   named on those sets. Creating its name again brings the same row back.
-- The routes are under `/lifts/modifications`. The logger reads one lift's list at a time and shows
-  them as toggles under the lift name, with an inline **Add**
+- The routes are under `/lifts/modifications`. The logger reads every lift's list in one request
+  (`/lifts/modifications/by-lift`, keyed by the name each lift was asked under;
+  [#1242](https://github.com/merickvaughn/lifting-logbook/issues/1242)), refreshes one lift's list
+  when a set names a modification removed elsewhere, and shows them as toggles under the lift name,
+  with an inline **Add**
   ([#1152](https://github.com/merickvaughn/lifting-logbook/issues/1152)). A toggle applies to the
   occurrence's sets not yet logged. It starts from a toggle changed on this device since the
   occurrence's last log there, then from its last logged set. A failed read hides the toggles and says so, and sets still

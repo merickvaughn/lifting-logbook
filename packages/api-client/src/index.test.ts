@@ -286,6 +286,17 @@ describe('createApiClient', () => {
       expect(mockFetch.mock.calls[0]?.[0]).toBe('http://api.test/lifts/modifications?lift=Bench%20P.');
     });
 
+    it("lists several lifts' modifications in one request, one encoded `lift` per name (#1242)", async () => {
+      const byLift = { 'Bench P.': [], 'Squat & Co': [] };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(byLift), { status: 200 }));
+      const client = makeClient();
+      await expect(client.fetchLiftModificationsByLift(['Bench P.', 'Squat & Co'])).resolves.toEqual(byLift);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0]?.[0]).toBe(
+        'http://api.test/lifts/modifications/by-lift?lift=Bench%20P.&lift=Squat%20%26%20Co',
+      );
+    });
+
     it('returns the server message on a 409 create', async () => {
       mockFetch.mockResolvedValue(
         new Response(JSON.stringify({ message: "'Paused' already exists" }), { status: 409 }),

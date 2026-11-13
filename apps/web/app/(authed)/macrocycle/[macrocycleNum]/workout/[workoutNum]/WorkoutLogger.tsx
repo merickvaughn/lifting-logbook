@@ -9,6 +9,7 @@ import {
   createLiftModification,
   createLiftRecord,
   fetchLiftModifications,
+  fetchLiftModificationsByLift,
   recordBodyWeight,
   rescheduleWorkout,
   updateLiftRecord,
@@ -95,6 +96,17 @@ function toggleModification(
   if (ids.includes(id)) return ids.filter((x) => x !== id);
   const ownMax = (x: string) => modifications.find((m) => m.id === x)?.maxMode === 'own';
   return [...ids.filter((x) => !(ownMax(id) && ownMax(x))), id];
+}
+
+/** `byLift` with each of `lifts` set to `list(lift)`. */
+function withLists(
+  byLift: ReadonlyMap<string, LiftModificationResponse[] | null>,
+  lifts: readonly string[],
+  list: (lift: string) => LiftModificationResponse[] | null,
+): ReadonlyMap<string, LiftModificationResponse[] | null> {
+  const next = new Map(byLift);
+  for (const lift of lifts) next.set(lift, list(lift));
+  return next;
 }
 
 /**
@@ -936,22 +948,24 @@ export default function WorkoutLogger({
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // One read per lift in the workout. A read-only workout shows no toggles, so it reads nothing.
+  // One read for every lift in the workout (#1242), so a failure marks them all `null`. A read-only
+  // workout shows no toggles, so it reads nothing.
   const liftNames = [...new Set(lifts.map((l) => l.lift))].join('\n');
   useEffect(() => {
-    if (isReadOnly) return;
+    const names = liftNames.split('\n').filter(Boolean);
+    if (isReadOnly || names.length === 0) return;
     let cancelled = false;
-    for (const lift of liftNames.split('\n').filter(Boolean)) {
-      fetchLiftModifications(lift).then(
-        (list) => {
-          if (!cancelled) setModificationsByLift((prev) => new Map(prev).set(lift, list));
-        },
-        (err: unknown) => {
-          logClientError('fetchLiftModifications', err, { program, lift });
-          if (!cancelled) setModificationsByLift((prev) => new Map(prev).set(lift, null));
-        },
-      );
-    }
+    fetchLiftModificationsByLift(names).then(
+      (byLift) => {
+        // A name missing from the response reads as a failed read, not as a lift with none.
+        if (!cancelled) setModificationsByLift((prev) => withLists(prev, names, (lift) => byLift[lift] ?? null));
+      },
+      (err: unknown) => {
+        // A string, since the beacon keeps only scalar context values.
+        logClientError('fetchLiftModificationsByLift', err, { program, lifts: names.join(', ') });
+        if (!cancelled) setModificationsByLift((prev) => withLists(prev, names, () => null));
+      },
+    );
     return () => {
       cancelled = true;
     };

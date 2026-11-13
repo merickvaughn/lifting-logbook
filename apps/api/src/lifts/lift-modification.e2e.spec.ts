@@ -128,6 +128,28 @@ describe('Lift modifications HTTP (e2e, in-memory adapters)', () => {
       expect((filtered.json() as LiftModificationResponse[]).map((m) => m.id)).toEqual([modification.id]);
     });
 
+    it('reads several lifts in one request, each under the name it was asked by (#1242)', async () => {
+      const user = as('mods-by-lift');
+      expect((await user('POST', '/lifts/custom', { name: 'Cable Curl', classification: 'accessory' })).statusCode).toBe(201);
+      const wide = await createOn(user, 'Cable Curl', 'Wide grip');
+      const paused = await createOn(user, 'Squat', 'Paused');
+      await createOn(user, 'Deadlift', 'Deficit');
+
+      const res = await user('GET', '/lifts/modifications/by-lift?lift=Cable%20Curl&lift=cable-curl&lift=Squat&lift=Nothing');
+      expect(res.statusCode).toBe(200);
+      const byLift = res.json() as Record<string, LiftModificationResponse[]>;
+      expect(Object.keys(byLift).sort()).toEqual(['Cable Curl', 'Nothing', 'Squat', 'cable-curl']);
+      expect(byLift['Cable Curl']?.map((m) => m.id)).toEqual([wide.id]);
+      expect(byLift['cable-curl']).toEqual(byLift['Cable Curl']);
+      expect(byLift['Squat']?.map((m) => m.id)).toEqual([paused.id]);
+      expect(byLift['Nothing']).toEqual([]);
+
+      // One name reads the same as the single-lift form.
+      const one = (await user('GET', '/lifts/modifications/by-lift?lift=Squat')).json() as Record<string, unknown>;
+      expect(one).toEqual({ Squat: (await user('GET', '/lifts/modifications?lift=Squat')).json() });
+      expect((await user('GET', '/lifts/modifications/by-lift')).json()).toEqual({});
+    });
+
     it.each([
       ['a lift that resolves to nothing', { lift: 'Nothing', name: 'Paused' }],
       ['a blank name', { lift: 'Squat', name: '   ' }],

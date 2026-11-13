@@ -9,6 +9,7 @@ import {
   createLiftModification,
   createLiftRecord,
   fetchLiftModifications,
+  fetchLiftModificationsByLift,
   recordBodyWeight,
   rescheduleWorkout,
   updateLiftRecord,
@@ -30,6 +31,7 @@ jest.mock('@/lib/client-api', () => ({
   recordBodyWeight: jest.fn(),
   rescheduleWorkout: jest.fn(),
   fetchLiftModifications: jest.fn(),
+  fetchLiftModificationsByLift: jest.fn(),
   createLiftModification: jest.fn(),
 }));
 
@@ -53,6 +55,7 @@ const mockCreateLiftRecord = createLiftRecord as jest.MockedFunction<typeof crea
 const mockRecordBodyWeight = recordBodyWeight as jest.MockedFunction<typeof recordBodyWeight>;
 const mockUpdateLiftRecord = updateLiftRecord as jest.MockedFunction<typeof updateLiftRecord>;
 const mockFetchLiftModifications = fetchLiftModifications as jest.MockedFunction<typeof fetchLiftModifications>;
+const mockFetchLiftModificationsByLift = jest.mocked(fetchLiftModificationsByLift);
 const mockCreateLiftModification = createLiftModification as jest.MockedFunction<typeof createLiftModification>;
 const mockLogClientError = logClientError as jest.MockedFunction<typeof logClientError>;
 
@@ -99,6 +102,12 @@ beforeEach(() => {
   jest.clearAllMocks();
   // No modifications unless a test says otherwise.
   mockFetchLiftModifications.mockResolvedValue([]);
+  // The page load reads every lift in one request (#1242). By default it answers each lift with
+  // what the single-lift read would, so a test sets a lift's list once for the load and the
+  // refresh alike; one failed lift fails the whole request, as one failed response would.
+  mockFetchLiftModificationsByLift.mockImplementation(async (lifts) =>
+    Object.fromEntries(await Promise.all(lifts.map(async (lift) => [lift, await mockFetchLiftModifications(lift)]))),
+  );
   // Several tests below share the default program/macrocycle/workout/lift/set identity
   // from makeProps()/makeLift() and would otherwise leak drafts across tests.
   window.localStorage.clear();
@@ -592,7 +601,7 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     render(<WorkoutLogger {...makeProps({ lifts: [twoSets()] })} />);
 
     const toggle = await screen.findByRole('button', { name: 'Paused', pressed: false });
-    expect(mockFetchLiftModifications).toHaveBeenCalledWith('Back Squat');
+    expect(mockFetchLiftModificationsByLift).toHaveBeenCalledWith(['Back Squat']);
     const [logSet1] = screen.getAllByRole('button', { name: 'Log' });
     if (!logSet1) throw new Error('expected a Log button for set 1');
     await user.click(logSet1);
@@ -608,6 +617,37 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     // Set 1 keeps what it recorded; set 2 names its modification.
     expect(screen.getByText('225 lbs × 5')).toBeInTheDocument();
     expect(screen.getByText('225 lbs × 5 · Paused')).toBeInTheDocument();
+  });
+
+  it("reads every lift's modifications in one request, and shows each lift its own (#1242)", async () => {
+    const user = userEvent.setup();
+    const WIDE = modification('m-wide', 'Wide grip', { lift: 'bench-press' });
+    mockFetchLiftModificationsByLift.mockResolvedValue({ 'Back Squat': [PAUSED], 'Bench Press': [WIDE], Deadlift: [] });
+    const lifts = [makeLift(), makeLift({ lift: 'Bench Press' }), makeLift({ lift: 'Deadlift' }), makeLift({ occurrence: 1 })];
+    render(<WorkoutLogger {...makeProps({ lifts })} />);
+
+    expect(await screen.findByRole('group', { name: 'Back Squat modifications' })).toHaveTextContent('Paused');
+    expect(mockFetchLiftModificationsByLift).toHaveBeenCalledTimes(1);
+    expect(mockFetchLiftModificationsByLift).toHaveBeenCalledWith(['Back Squat', 'Bench Press', 'Deadlift']);
+    expect(mockFetchLiftModifications).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Go to Bench Press' }));
+    const bench = screen.getByRole('group', { name: 'Bench Press modifications' });
+    expect(within(bench).getByRole('button', { name: 'Wide grip', pressed: false })).toBeInTheDocument();
+    expect(within(bench).queryByRole('button', { name: 'Paused' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Go to Deadlift' }));
+    expect(screen.getByRole('button', { name: 'Add modification' })).toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { pressed: false })).toEqual([]);
+    expect(mockFetchLiftModificationsByLift).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a lift the response leaves out as a failed read, not a lift with none (#1242)', async () => {
+    mockFetchLiftModificationsByLift.mockResolvedValue({});
+    render(<WorkoutLogger {...makeProps()} />);
+
+    expect(await screen.findByText("Modifications didn't load, so sets log without them.")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add modification' })).not.toBeInTheDocument();
   });
 
   it('shows no toggles and sends no modifications for a lift without any', async () => {
@@ -632,9 +672,9 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     render(<WorkoutLogger {...makeProps()} />);
 
     await waitFor(() =>
-      expect(mockLogClientError).toHaveBeenCalledWith('fetchLiftModifications', failure, {
+      expect(mockLogClientError).toHaveBeenCalledWith('fetchLiftModificationsByLift', failure, {
         program: '5-3-1',
-        lift: 'Back Squat',
+        lifts: 'Back Squat',
       }),
     );
     expect(screen.queryByRole('button', { name: 'Add modification' })).not.toBeInTheDocument();

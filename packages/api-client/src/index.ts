@@ -27,6 +27,7 @@ import type {
   ImportUndoResponse,
   LiftMetadataResponse,
   LiftModificationResponse,
+  LiftModificationsByLiftResponse,
   LiftOverrideResponse,
   LiftingProgramSpecResponse,
   LiftRecordResponse,
@@ -691,6 +692,11 @@ export function createApiClient(config: ApiClientConfig) {
     // `lift` may be any name the lift resolves by; archived modifications are left out.
     fetchLiftModifications(lift: string): Promise<LiftModificationResponse[]> {
       return request(`/lifts/modifications?lift=${enc(lift)}`, { cache: 'no-store' });
+    },
+    // Several lifts in one request, keyed by the name each was asked under (#1242).
+    fetchLiftModificationsByLift(lifts: readonly string[]): Promise<LiftModificationsByLiftResponse> {
+      const query = lifts.map((lift) => `lift=${enc(lift)}`).join('&');
+      return request(`/lifts/modifications/by-lift?${query}`, { cache: 'no-store' });
     },
     // A 409 means this lift already has a modification of that name.
     createLiftModification(
