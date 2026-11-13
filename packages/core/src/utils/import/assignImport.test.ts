@@ -223,6 +223,21 @@ describe("an exported file's Occurrence and Status columns (#1254)", () => {
       [3, ['OCCURRENCE_INVALID', 'STATUS_INVALID']],
     ]);
   });
+
+  it('reads headers re-saved in another case or with spaces', () => {
+    const resaved = [[...(table[0] ?? []).slice(0, 5), ' occurrence ', 'STATUS'], ...table.slice(1)];
+    expect(parseLiftRecords(resaved, { assign: true })[0]).toMatchObject({ occurrence: 1, status: 'completed' });
+  });
+
+  it("leaves a Status column alone in a file that isn't an export", () => {
+    const own = [
+      ['Date', 'Lift', 'Set #', 'Weight', 'Reps', 'Status'],
+      ['2026-01-05', 'Squat', '1', '100', '5', 'PR!'],
+    ];
+    const rows = parseLiftRecords(own, { assign: true });
+    expect(rows[0]).not.toHaveProperty('status');
+    expect(validateLiftImport(rows, DEFAULT_SLOT_MAP, { assign: true }).errors).toEqual([]);
+  });
 });
 
 describe('isLiftRecordExport', () => {

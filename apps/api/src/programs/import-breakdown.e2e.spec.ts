@@ -18,6 +18,8 @@ import { injectPage } from '../testing/macrocycle-id';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
+import { NON_CYCLE_MACROCYCLE_NUM } from './non-cycle.util';
+import { InMemoryMacrocycleRepository } from '../adapters/in-memory/macrocycle.adapter';
 
 /**
  * In-memory E2E for an import through the Assign step (#1254): `mode=dry-run` and commit with the
@@ -483,10 +485,13 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     ]);
     expect(await bundle.trainingMax.getTrainingMaxes('rpt')).toEqual([expect.objectContaining({ lift: 'back-squat', weight: 300 })]);
 
-    // The 5/3/1 max is undone with the rest of the import.
+    // The 5/3/1 max is undone with the rest of the import, its sets, and its emptied macrocycle.
+    const fiveThreeOneNums = (await macrocycles('5-3-1')).map((m) => m.macrocycleNum);
+    expect(fiveThreeOneNums).toHaveLength(1);
     await undo(body.batchId);
     expect(await bundle.trainingMax.getTrainingMaxes('5-3-1')).toEqual([]);
-    expect(await stored('5-3-1')).toEqual([]);
+    expect(await macrocycles('5-3-1')).toEqual([]);
+    for (const n of fiveThreeOneNums) expect(await bundle.liftRecord.getLiftRecords('5-3-1', n)).toEqual([]);
   });
 
   it('stores a lone session as a non-cycle workout, and undoes it', async () => {
@@ -511,8 +516,44 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     expect((await commit(csvOf(rows), breakdown)).created).toBe(0);
 
     await undo(body.batchId);
-    expect(await stored('non-cycle')).toEqual([]);
+    // Read by number, so a set left behind without its macrocycle row would show.
+    expect(await (await repos()).liftRecord.getLiftRecords('non-cycle', NON_CYCLE_MACROCYCLE_NUM)).toEqual([]);
     expect(await counts()).toEqual({ sets: 0, macrocycles: 0 });
+  });
+
+  it('keeps two non-cycle sets apart that the file told apart only by macrocycle number', async () => {
+    const first = run(RPT_DAYS, 0, 3);
+    // One date, one workout number, the same set: one row in Cycle # 1, the other blank.
+    const lone: Row[] = [
+      { day: 19, lift: 'Squat', macrocycle: 1, workout: 3, weight: 200 },
+      { day: 19, lift: 'Squat', workout: 3, weight: 210 },
+    ];
+    const csv = csvOf([...first, ...lone]);
+    const breakdown = breakdownOf([stretch(first)], { nonCycleDates: [day(19)] });
+
+    expect((await dryRun(csv, breakdown)).created).toBe(11);
+    expect((await commit(csv, breakdown)).created).toBe(11);
+    expect((await stored('non-cycle')).map((s) => s.weight).sort()).toEqual([200, 210]);
+    expect((await commit(csv, breakdown)).created).toBe(0);
+  });
+
+  it("rejects a date stretch that takes an export's sessions from the stretch naming them", async () => {
+    const one = run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 });
+    // A session the lifter added to the export, with no Program or Cycle #.
+    const added: Row[] = [{ day: 10, lift: 'Squat' }];
+    const csv = csvOf([...one, ...added], ['Occurrence']);
+    const byFile: ImportBreakdownStretch = { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false };
+
+    const res = await send('commit', csv, breakdownOf([byFile, { ...stretch(added), dates: [day(4), day(10)] }]));
+    expect(res.statusCode).toBe(400);
+    expect(res.json<{ code: string; message: string }>()).toMatchObject({
+      code: 'breakdown-mismatch',
+      message: expect.stringContaining(day(4)),
+    });
+    expect(await counts()).toEqual({ sets: 0, macrocycles: 0 });
+
+    // The added session alone is the date stretch's to take.
+    expect((await commit(csv, breakdownOf([byFile, stretch(added)]))).created).toBe(10);
   });
 
   it('refuses to undo a batch grouped under another one', async () => {
@@ -529,6 +570,12 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(await stored('5-3-1')).toHaveLength(4);
+
+    // Once the Source batch is gone, as a revision from before #1254 leaves it, the grouped one undoes alone.
+    await (await repos()).importBatch.deleteById(batchId ?? '', user);
+    await undo(grouped[0]?.id ?? null, '5-3-1');
+    expect(await stored('5-3-1')).toEqual([]);
+    expect(await stored('rpt')).toHaveLength(6);
   });
 
   it('logs counts only', async () => {
@@ -563,9 +610,53 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     const breakdown = JSON.stringify(breakdownOf([stretch(rows)]));
     const other = await importCsv('rpt', 'Date Updated,Lift,Weight\n2026-01-01,Squat,300', '?mode=commit&destination=training-maxes', { breakdown });
     expect(other.statusCode).toBe(400);
+    expect(other.json<{ message: string }>().message).toMatch(/destination=lift-records/);
     delete process.env[FLAG];
     const off = await importCsv('rpt', csvOf(rows), '?mode=commit&destination=lift-records', { breakdown });
     expect(off.statusCode).toBe(400);
+    expect(off.json<{ message: string }>().message).toMatch(/Assign step/);
     expect(await counts()).toEqual({ sets: 0, macrocycles: 0 });
+  });
+
+  it('gives a commit a 409, writing nothing, while another import holds the lock', async () => {
+    const rows = run(RPT_DAYS, 0, 3);
+    const inMemory = (await repos()).macrocycle;
+    if (!(inMemory instanceof InMemoryMacrocycleRepository)) throw new Error('expected the in-memory macrocycle adapter');
+    inMemory.importLockHeld = true;
+    try {
+      const res = await send('commit', csvOf(rows), breakdownOf([stretch(rows)]));
+      expect(res.statusCode).toBe(409);
+      expect(res.json<{ code: string }>().code).toBe('import-in-progress');
+      // A dry run writes nothing, so it takes no lock.
+      expect((await dryRun(csvOf(rows), breakdownOf([stretch(rows)]))).created).toBe(9);
+    } finally {
+      inMemory.importLockHeld = false;
+    }
+    expect(await counts()).toEqual({ sets: 0, macrocycles: 0 });
+  });
+
+  it('logs a mismatch by its reason alone', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    try {
+      const rows = [...run(RPT_DAYS, 0, 3), ...run(RPT_DAYS, 30, 3)];
+      const res = await send('commit', csvOf(rows), breakdownOf([stretch(rows.filter((r) => (r.day ?? 0) < 30))]));
+      expect(res.json<{ reason: string }>().reason).toBe('sessions-left-out');
+      const call = warn.mock.calls.find(([, message]) => message === 'Import breakdown mismatch (#1254)');
+      expect(call?.[0]).toEqual({ mode: 'commit', reason: 'sessions-left-out', stretches: 1 });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("doesn't split an export committed with no breakdown while the flag is on", async () => {
+    const rows = [
+      ...run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 }),
+      { day: 5, lift: 'Squat', program: 'rpt', macrocycle: 1, notes: '1RM test', weight: 315 },
+    ].map((r) => ({ ...r, workout: Math.floor((r.day ?? 0) / 2) + 1 }));
+    const res = await importCsv('rpt', csvOf(rows, ['Occurrence']), '?mode=commit&destination=lift-records&splitDest=1');
+    expect(res.statusCode).toBe(200);
+    expect(res.json<ImportCommitResponse>()).toMatchObject({ created: 10 });
+    expect(res.json<ImportCommitResponse>().split).toBeUndefined();
+    expect(await (await repos()).trainingMax.getTrainingMaxes('rpt')).toEqual([]);
   });
 });

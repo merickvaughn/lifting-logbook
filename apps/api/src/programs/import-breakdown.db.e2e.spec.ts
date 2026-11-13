@@ -11,6 +11,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import { PrismaClient } from '@prisma/client';
 import multipart from '@fastify/multipart';
 import type { ImportBreakdown } from '@lifting-logbook/types';
+import { LiftRecord, buildLiftRecordsPreImage, liftRecordNaturalKey } from '@lifting-logbook/core';
 import { AppModule } from '../app.module';
 import { PrismaImportBatchRepository } from '../adapters/prisma/import-batch.repository';
 import { PrismaLiftRecordRepository } from '../adapters/prisma/lift-record.repository';
@@ -34,8 +35,12 @@ const ROW_LIMIT_TEST_TIMEOUT_MS = 120_000;
 const USER_RACE = 'import-breakdown-db-race';
 const USER_MACROCYCLE_FAILS = 'import-breakdown-db-macrocycle-fails';
 const USER_BATCH_FAILS = 'import-breakdown-db-batch-fails';
+const USER_GROUP_FAILS = 'import-breakdown-db-group-fails';
 const USER_ROW_LIMIT = 'import-breakdown-db-row-limit';
-const USERS = [USER_RACE, USER_MACROCYCLE_FAILS, USER_BATCH_FAILS, USER_ROW_LIMIT];
+const USERS = [USER_RACE, USER_MACROCYCLE_FAILS, USER_BATCH_FAILS, USER_GROUP_FAILS, USER_ROW_LIMIT];
+// The import transaction allows 30 s (IMPORT_TX_TIMEOUT_MS); the row-limit commit and its undo
+// must each finish well inside it. CI measured the commit at 1.7 s.
+const ROW_LIMIT_BUDGET_MS = 15_000;
 
 async function cleanup(owner: PrismaClient): Promise<void> {
   const where = { userId: { in: USERS } };
@@ -182,14 +187,42 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
 
   it('writes nothing when the batch save fails', async () => {
     const { csv, dates } = historyCsv('2024-01-01', 3, 1);
-    jest
+    const save = jest
       .spyOn(PrismaImportBatchRepository.prototype, 'save')
       .mockRejectedValue(new Error('forced batch save failure (#1254 test)'));
 
     const res = await commit(USER_BATCH_FAILS, csv, oneStretch(dates));
 
+    expect(save).toHaveBeenCalledTimes(1);
     expect(res.statusCode).toBe(500);
     expect(await written(USER_BATCH_FAILS)).toEqual({ sets: 0, macrocycles: 0, batches: 0 });
+  });
+
+  it('writes nothing when a grouped batch save fails after the Source batch saved', async () => {
+    const { csv, dates } = historyCsv('2024-01-01', 6, 1);
+    const breakdown: ImportBreakdown = {
+      stretches: [
+        { program: '5-3-1', dates: dates.slice(0, 3), status: 'completed', statusChosen: false },
+        { program: 'rpt', dates: dates.slice(3), status: 'completed', statusChosen: false },
+      ],
+      excludedDates: [],
+      nonCycleDates: [],
+    };
+    const original = PrismaImportBatchRepository.prototype.save;
+    let calls = 0;
+    jest.spyOn(PrismaImportBatchRepository.prototype, 'save').mockImplementation(async function (
+      this: PrismaImportBatchRepository,
+      ...args
+    ) {
+      if (++calls === 2) throw new Error('forced grouped batch save failure (#1254 test)');
+      return original.apply(this, args);
+    });
+
+    const res = await commit(USER_GROUP_FAILS, csv, breakdown);
+
+    expect(calls).toBe(2);
+    expect(res.statusCode).toBe(500);
+    expect(await written(USER_GROUP_FAILS)).toEqual({ sets: 0, macrocycles: 0, batches: 0 });
   });
 
   it(
@@ -210,26 +243,41 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
           origin: 'legacy',
         })),
       });
-      await owner.liftRecord.createMany({
-        data: Array.from({ length: STORED_MACROCYCLES }, (_, k) =>
-          Array.from({ length: SESSIONS_EACH }, (_, d) =>
-            LIFT_IDS.flatMap((lift) =>
-              Array.from({ length: SETS }, (_, s) => ({
-                userId: USER_ROW_LIMIT,
-                program: 'rpt',
-                macrocycleNum: k + 1,
-                workoutNum: d + 1,
-                date: new Date(`${dayFrom('2010-01-01', k * 60 + d)}T00:00:00Z`),
-                lift,
-                setNum: s + 1,
-                weight: 100,
-                reps: 5,
-              })),
-            ),
-          ).flat(),
+      const storedRecords: LiftRecord[] = Array.from({ length: STORED_MACROCYCLES }, (_, k) =>
+        Array.from({ length: SESSIONS_EACH }, (_, d) =>
+          LIFT_IDS.flatMap((lift) =>
+            Array.from({ length: SETS }, (_, s) => ({
+              program: 'rpt',
+              macrocycleNum: k + 1,
+              workoutNum: d + 1,
+              date: new Date(`${dayFrom('2010-01-01', k * 60 + d)}T00:00:00Z`),
+              lift,
+              setNum: s + 1,
+              weight: 100,
+              reps: 5,
+              notes: '',
+            })),
+          ),
         ).flat(),
+      ).flat();
+      await owner.liftRecord.createMany({ data: storedRecords.map((r) => ({ ...r, userId: USER_ROW_LIMIT })) });
+      // Each stored macrocycle came from an earlier import, whose 1,000 keys the renumbering rewrites.
+      await owner.importBatch.createMany({
+        data: Array.from({ length: STORED_MACROCYCLES }, (_, k) => ({
+          id: `${USER_ROW_LIMIT}-batch-${k + 1}`,
+          userId: USER_ROW_LIMIT,
+          program: 'rpt',
+          destination: 'lift-records',
+          // A JSON round trip gives Prisma a plain JSON value.
+          preImage: JSON.parse(JSON.stringify(buildLiftRecordsPreImage(storedRecords.filter((r) => r.macrocycleNum === k + 1)))),
+          createdAt: new Date(`${dayFrom('2020-01-01', k)}T00:00:00Z`),
+        })),
       });
       expect((await written(USER_ROW_LIMIT)).sets).toBe(20_000);
+      const keysOf = async (k: number) =>
+        Object.keys((await owner.importBatch.findUnique({ where: { id: `${USER_ROW_LIMIT}-batch-${k}` } }))?.preImage ?? {});
+      const firstKeys = (num: number) =>
+        storedRecords.filter((r) => r.macrocycleNum === 1).map((r) => liftRecordNaturalKey({ ...r, macrocycleNum: num }));
 
       // 250 sessions × 4 lifts × 5 sets = 5,000 rows, all before 2010.
       const { csv, dates } = historyCsv('2000-01-01', 250, SETS);
@@ -237,12 +285,13 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
       const res = await commit(USER_ROW_LIMIT, csv, oneStretch(dates));
       const durationMs = Date.now() - started;
       // The duration goes in the test output, as the criterion asks.
-      // eslint-disable-next-line no-console -- A measurement the reader of the CI log needs.
-      console.log(`[#1254] 5,000-row commit renumbering 20,000 stored rows took ${durationMs} ms`);
+      console.log(`[#1254] 5,000-row commit renumbering 20,000 stored rows and 20 batches took ${durationMs} ms`);
 
       expect(res.statusCode).toBe(200);
       expect(res.json()).toMatchObject({ created: 5_000 });
-      expect(durationMs).toBeLessThan(30_000);
+      expect(durationMs).toBeLessThan(ROW_LIMIT_BUDGET_MS);
+      // The first stored import's keys now name macrocycle 2.
+      expect((await keysOf(1)).sort()).toEqual(firstKeys(2).sort());
       const macrocycles = await owner.macrocycle.findMany({
         where: { userId: USER_ROW_LIMIT, program: 'rpt' },
         orderBy: { macrocycleNum: 'asc' },
@@ -254,6 +303,20 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
       ]);
       expect(await owner.liftRecord.count({ where: { userId: USER_ROW_LIMIT, macrocycleNum: 1 } })).toBe(5_000);
       expect(await owner.liftRecord.count({ where: { userId: USER_ROW_LIMIT, macrocycleNum: STORED_MACROCYCLES + 1 } })).toBe(1_000);
+
+      // Undo renumbers everything back, inside the same budget.
+      const undoStarted = Date.now();
+      const undone = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/programs/rpt/import/${res.json<{ batchId: string }>().batchId}/undo`,
+        headers: { authorization: `Bearer ${USER_ROW_LIMIT}` },
+      });
+      const undoMs = Date.now() - undoStarted;
+      console.log(`[#1254] undoing it took ${undoMs} ms`);
+      expect(undone.statusCode).toBe(200);
+      expect(undoMs).toBeLessThan(ROW_LIMIT_BUDGET_MS);
+      expect(await written(USER_ROW_LIMIT)).toEqual({ sets: 20_000, macrocycles: STORED_MACROCYCLES, batches: STORED_MACROCYCLES });
+      expect((await keysOf(1)).sort()).toEqual(firstKeys(1).sort());
     },
     ROW_LIMIT_TEST_TIMEOUT_MS,
   );

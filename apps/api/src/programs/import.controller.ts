@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   HttpCode,
   HttpStatus,
@@ -89,7 +90,15 @@ import {
   planSplitMaxes,
   splitMaxCounts,
 } from './import-assign';
-import { parseBreakdown, placeBreakdown, planBreakdown, programCovering, writeBreakdown } from './import-breakdown';
+import {
+  PlacedBreakdown,
+  mismatchReason,
+  parseBreakdown,
+  placeBreakdown,
+  planBreakdown,
+  programCovering,
+  writeBreakdown,
+} from './import-breakdown';
 import {
   lockForAssignedImport,
   lockForImport,
@@ -364,7 +373,9 @@ export class ImportController {
     if (!batch || batch.program !== program) {
       throw new NotFoundException(`Import batch ${batchId} not found`);
     }
-    if (batch.groupId) {
+    // A grouped batch is undone with its Source batch. One whose Source batch is gone (undone by
+    // an API from before #1254, which knew no groups) is undone on its own.
+    if (batch.groupId && (await repos.importBatch.findById(batch.groupId, user.id))) {
       throw new BadRequestException(`Import batch ${batchId} is part of import ${batch.groupId}. Undo that one.`);
     }
 
@@ -886,13 +897,30 @@ export class ImportController {
       { assign: true },
     );
     const programs = [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(userId))];
-    const placed = placeBreakdown(rows as LiftRecord[], choices.breakdown, {
-      exported: choices.exported,
-      programs: new Set(programs.map((p) => p.id)),
-    });
+    let placed: PlacedBreakdown;
+    try {
+      placed = placeBreakdown(rows as LiftRecord[], choices.breakdown, {
+        exported: choices.exported,
+        programs: new Set(programs.map((p) => p.id)),
+      });
+    } catch (err) {
+      // The reason only: the message names the lifter's dates and programs.
+      const reason = mismatchReason(err);
+      if (reason) {
+        this.logger.warn({ mode, reason, stretches: choices.breakdown.stretches.length }, 'Import breakdown mismatch (#1254)');
+      }
+      throw err;
+    }
     // A commit reads what's stored and writes under the import lock, so a second commit of the
     // same file gets a 409 rather than writing it twice (decision 13).
-    if (mode === 'commit') await lockForAssignedImport(repos);
+    if (mode === 'commit') {
+      try {
+        await lockForAssignedImport(repos);
+      } catch (err) {
+        if (err instanceof ConflictException) this.logger.warn({ mode }, 'Import breakdown refused: another import is running (#1254)');
+        throw err;
+      }
+    }
     const plan = await planBreakdown(repos, placed, programs);
     const split = await planSplitMaxes(splitMaxes, programCovering(placed.stretches, program), repos);
     const splitRows = [...split.byProgram.values()];
@@ -960,7 +988,7 @@ export class ImportController {
     return {
       ...counts,
       batchId,
-      skippedDetail: buildSkippedDetail(plan.classified, (r) => liftRecordLabel(r, liftNames)),
+      skippedDetail: buildSkippedDetail(plan.classified, ({ r }) => liftRecordLabel(r, liftNames)),
       ...(splitResult ? { split: splitResult } : {}),
     };
   }

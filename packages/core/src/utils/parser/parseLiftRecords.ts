@@ -4,6 +4,7 @@ import {
 } from "@src/core/constants";
 import { LiftRecord, SpreadsheetCell } from "@src/core/models";
 import { LIFT_RECORD_EXPORT_TOKEN } from "../export/serializeExportCsv";
+import { isLiftRecordExport } from "../import/liftHistoryRows";
 import { parseDateStringUTC, toUTCMidnight } from "../jsUtil";
 import { tableToObjects } from "./tableToObjects";
 
@@ -17,7 +18,9 @@ export type AssignBlankField = "macrocycleNum" | "workoutNum" | "date";
  *
  * With `assign`, an exported file's `Occurrence` cell is read into `occurrence` (`NaN` when it
  * can't be read), and its `Status` cell into `status`, trimmed and lower-cased (#1254, decision
- * 22). A blank cell leaves either absent.
+ * 22). A blank cell leaves either absent. A file that isn't an export may have a `Status` column
+ * of its own, so neither is read from one. Both headers match as `isLiftRecordExport` does,
+ * trimmed and in any case.
  */
 export type ParsedLiftRecord = LiftRecord & { blankFields?: readonly AssignBlankField[]; status?: string };
 
@@ -43,6 +46,12 @@ export function parseLiftRecords(
 ): ParsedLiftRecord[] {
   const headerMap = LIFT_RECORD_HEADER_MAP;
   const rawObjects = tableToObjects(data, undefined);
+  const headers = (data[0] ?? []).map((h) => String(h));
+  const exported = options.assign === true && isLiftRecordExport(headers);
+  const exportHeader = (name: string) =>
+    exported ? headers.find((h) => h.trim().toLowerCase() === name.toLowerCase()) : undefined;
+  const occurrenceHeader = exportHeader(LIFT_RECORD_EXPORT_TOKEN);
+  const statusHeader = exportHeader(STATUS_HEADER);
   return rawObjects.map((obj) => {
     const result: Record<string, unknown> = {};
     const blankFields: AssignBlankField[] = [];
@@ -79,13 +88,12 @@ export function parseLiftRecords(
       result[key] = value;
     }
     if (blankFields.length > 0) result.blankFields = blankFields;
-    if (options.assign === true) {
-      const cell = (header: string) => String(obj[header] ?? "").trim();
-      const occurrence = cell(LIFT_RECORD_EXPORT_TOKEN);
-      if (occurrence !== "") result.occurrence = Number(occurrence);
-      const status = cell(STATUS_HEADER).toLowerCase();
-      if (status !== "") result.status = status;
-    }
+    const cell = (header: string | undefined) =>
+      header === undefined ? "" : String(obj[header] ?? "").trim();
+    const occurrence = cell(occurrenceHeader);
+    if (occurrence !== "") result.occurrence = Number(occurrence);
+    const status = cell(statusHeader).toLowerCase();
+    if (status !== "") result.status = status;
     return result as unknown as ParsedLiftRecord;
   });
 }

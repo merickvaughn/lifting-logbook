@@ -235,6 +235,19 @@ describe('Import Assign step (#1253, e2e, in-memory adapters)', () => {
       expect(exported.exported).toBe(true);
     });
 
+    it("gives a stretch its export's Status when its rows agree, and null when they don't (#1254)", async () => {
+      const one = run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 });
+      const two = run(RPT_DAYS, 30, 3, { program: 'rpt', macrocycle: 2 });
+      const statuses = [...one.map(() => ' Completed'), ...two.map((_, i) => (i === 0 ? 'abandoned' : 'completed'))];
+      const [header, ...lines] = csvOf([...one, ...two], ['Occurrence']).split('\n');
+      const csv = [`${header},Status`, ...lines.map((line, i) => `${line},${statuses[i]}`)].join('\n');
+      const body = await assign('rpt', csv);
+      expect(body.stretches.map((s) => [s.fileMacrocycleNum, s.fileStatus])).toEqual([
+        [1, 'completed'],
+        [2, null],
+      ]);
+    });
+
     it('rejects a commit with blank number cells rather than storing them as 0', async () => {
       // Row 1 is numbered; rows 2 and 3 leave Cycle # and Workout # blank.
       const rows = [{ day: 0, lift: 'Bench Press', macrocycle: 1, workout: 1 }, ...run(RPT_DAYS, 2, 1)];

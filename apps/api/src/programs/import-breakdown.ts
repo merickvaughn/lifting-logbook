@@ -31,6 +31,7 @@ import {
 } from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
 import { placeNonCycleRows } from './import-handlers';
+import { programCoveringDate } from './import-assign';
 
 /**
  * An import through the Assign step (#1254, proposal decisions 3, 5, 13, 15 and 17): the lifter's
@@ -46,9 +47,28 @@ function isCalendarDate(value: unknown): value is string {
   return !Number.isNaN(day.getTime()) && ymd(day) === value;
 }
 
+/** How a breakdown can fail to match its file. It names no date or program, so it can be logged. */
+export type BreakdownMismatchReason =
+  | 'unknown-program'
+  | 'file-macrocycle-not-export'
+  | 'date-not-in-file'
+  | 'date-twice'
+  | 'file-macrocycle-not-in-file'
+  | 'file-macrocycle-twice'
+  | 'date-takes-file-sessions'
+  | 'sessions-left-out'
+  | 'stretches-overlap';
+
 /** The breakdown doesn't match the file: the wizard goes back to Assign for a fresh result. */
-function mismatch(message: string): BadRequestException {
-  return new BadRequestException({ statusCode: 400, code: 'breakdown-mismatch', message, error: 'Bad Request' });
+function mismatch(reason: BreakdownMismatchReason, message: string): BadRequestException {
+  return new BadRequestException({ statusCode: 400, code: 'breakdown-mismatch', reason, message, error: 'Bad Request' });
+}
+
+/** The reason of a `breakdown-mismatch` error, else null. */
+export function mismatchReason(err: unknown): BreakdownMismatchReason | null {
+  if (!(err instanceof BadRequestException)) return null;
+  const body = err.getResponse();
+  return isRecord(body) && body.code === 'breakdown-mismatch' ? (body.reason as BreakdownMismatchReason) : null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
@@ -110,6 +130,19 @@ export function parseBreakdown(field: string | undefined): ImportBreakdown | nul
 export interface PlacedStretch {
   spec: ImportBreakdownStretch;
   rows: LiftRecord[];
+  /** Its rows' first and last dates, or null when it has none. */
+  span: { startDate: Date; endDate: Date } | null;
+}
+
+/** The first and last of the rows' dates, or null for no rows. */
+function spanOf(rows: readonly LiftRecord[]): PlacedStretch['span'] {
+  let first = Infinity;
+  let last = -Infinity;
+  for (const r of rows) {
+    first = Math.min(first, r.date.getTime());
+    last = Math.max(last, r.date.getTime());
+  }
+  return rows.length === 0 ? null : { startDate: toUTCMidnight(new Date(first)), endDate: toUTCMidnight(new Date(last)) };
 }
 
 /** A breakdown checked against the file's rows. */
@@ -141,10 +174,10 @@ export function placeBreakdown(
 ): PlacedBreakdown {
   breakdown.stretches.forEach((s, i) => {
     if (s.program === NON_CYCLE_PROGRAM || !context.programs.has(s.program)) {
-      throw mismatch(`Stretch ${i + 1}'s program '${s.program}' isn't one of your programs.`);
+      throw mismatch('unknown-program', `Stretch ${i + 1}'s program '${s.program}' isn't one of your programs.`);
     }
     if (s.file && !context.exported) {
-      throw mismatch(`Stretch ${i + 1} names a file macrocycle, which only an exported file can.`);
+      throw mismatch('file-macrocycle-not-export', `Stretch ${i + 1} names a file macrocycle, which only an exported file can.`);
     }
   });
 
@@ -155,9 +188,11 @@ export function placeBreakdown(
   const describe = (place: Place) => (typeof place === 'number' ? `stretch ${place + 1}` : `the ${place} dates`);
   const byDate = new Map<string, Place>();
   const claim = (date: string, place: Place) => {
-    if (!fileDates.has(date)) throw mismatch(`${describe(place)} lists ${date}, which has no session in the file.`);
+    if (!fileDates.has(date)) {
+      throw mismatch('date-not-in-file', `${describe(place)} lists ${date}, which has no session in the file.`);
+    }
     const prior = byDate.get(date);
-    if (prior !== undefined) throw mismatch(`${date} is in both ${describe(prior)} and ${describe(place)}.`);
+    if (prior !== undefined) throw mismatch('date-twice', `${date} is in both ${describe(prior)} and ${describe(place)}.`);
     byDate.set(date, place);
   };
   const byPair = new Map<string, number>();
@@ -168,44 +203,63 @@ export function placeBreakdown(
     }
     const key = pairKey(s.file.program, s.file.macrocycleNum);
     if (!filePairs.has(key)) {
-      throw mismatch(`Stretch ${i + 1} names macrocycle ${s.file.macrocycleNum} of '${s.file.program}', which isn't in the file.`);
+      throw mismatch(
+        'file-macrocycle-not-in-file',
+        `Stretch ${i + 1} names macrocycle ${s.file.macrocycleNum} of '${s.file.program}', which isn't in the file.`,
+      );
     }
     const prior = byPair.get(key);
-    if (prior !== undefined) throw mismatch(`Stretches ${prior + 1} and ${i + 1} name the same file macrocycle.`);
+    if (prior !== undefined) {
+      throw mismatch('file-macrocycle-twice', `Stretches ${prior + 1} and ${i + 1} name the same file macrocycle.`);
+    }
     byPair.set(key, i);
   });
   for (const date of breakdown.excludedDates) claim(date, 'excluded');
   for (const date of breakdown.nonCycleDates) claim(date, 'non-cycle');
 
-  const stretches: PlacedStretch[] = breakdown.stretches.map((spec) => ({ spec, rows: [] }));
+  const stretchRows: LiftRecord[][] = breakdown.stretches.map(() => []);
   const kept: PlacedBreakdown['rows'] = [];
   const unplaced = new Set<string>();
   for (const r of rows) {
-    const place = isNonCycleProgram(r.program)
-      ? 'non-cycle'
-      : (byDate.get(ymd(r.date)) ?? byPair.get(pairKey(String(r.program ?? ''), r.macrocycleNum)));
+    const dated = byDate.get(ymd(r.date));
+    const paired = byPair.get(pairKey(String(r.program ?? ''), r.macrocycleNum));
+    // A date stretch can't take rows a file stretch names: they'd move without a word.
+    if (typeof dated === 'number' && paired !== undefined && !isNonCycleProgram(r.program)) {
+      throw mismatch(
+        'date-takes-file-sessions',
+        `Stretch ${dated + 1} lists ${ymd(r.date)}, whose sessions stretch ${paired + 1} names by file macrocycle.`,
+      );
+    }
+    const place = isNonCycleProgram(r.program) ? 'non-cycle' : (dated ?? paired);
     if (place === 'excluded') continue;
     if (place === 'non-cycle') kept.push({ r: { ...r, program: NON_CYCLE_PROGRAM }, stretch: null });
     else if (place === undefined) unplaced.add(ymd(r.date));
     else {
-      stretches[place]?.rows.push(r);
+      stretchRows[place]?.push(r);
       kept.push({ r, stretch: place });
     }
   }
   if (unplaced.size > 0) {
     const dates = [...unplaced].sort();
     throw mismatch(
+      'sessions-left-out',
       `The breakdown leaves out the sessions on ${dates.slice(0, 5).join(', ')}${dates.length > 5 ? ` and ${dates.length - 5} more` : ''}.`,
     );
   }
+  const stretches: PlacedStretch[] = breakdown.stretches.map((spec, i) => {
+    const placedRows = stretchRows[i] ?? [];
+    return { spec, rows: placedRows, span: spanOf(placedRows) };
+  });
 
   if (!context.exported) {
     const spans = stretches
-      .map((s, i) => ({ i, first: Math.min(...s.rows.map((r) => r.date.getTime())), last: Math.max(...s.rows.map((r) => r.date.getTime())) }))
-      .sort((a, b) => a.first - b.first);
+      .flatMap(({ span }, i) => (span ? [{ i, ...span }] : []))
+      .sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
     spans.forEach((span, k) => {
       const previous = spans[k - 1];
-      if (previous && span.first <= previous.last) throw mismatch(`Stretches ${previous.i + 1} and ${span.i + 1} overlap.`);
+      if (previous && span.startDate.getTime() <= previous.endDate.getTime()) {
+        throw mismatch('stretches-overlap', `Stretches ${previous.i + 1} and ${span.i + 1} overlap.`);
+      }
     });
   }
 
@@ -219,17 +273,13 @@ export function placeBreakdown(
 
 /** The program covering a date: the first stretch whose dates span it, else `fallback`. */
 export function programCovering(stretches: readonly PlacedStretch[], fallback: string): (date: Date) => string {
-  const spans = stretches
-    .filter((s) => s.rows.length > 0)
-    .map((s) => ({
-      program: s.spec.program,
-      first: Math.min(...s.rows.map((r) => r.date.getTime())),
-      last: Math.max(...s.rows.map((r) => r.date.getTime())),
-    }));
-  return (date) => spans.find((s) => s.first <= date.getTime() && date.getTime() <= s.last)?.program ?? fallback;
+  return programCoveringDate(
+    stretches.flatMap(({ spec, span }) => (span ? [{ program: spec.program, ...span }] : [])),
+    fallback,
+  );
 }
 
-type Classified = ClassifiedLiftRecordRow<{ r: LiftRecord; row: number }, LiftRecord>;
+type Classified = ClassifiedLiftRecordRow<{ r: PlacedBreakdown['rows'][number]; row: number }, LiftRecord>;
 
 /** A stretch's rows to create, as the plan places them. */
 interface PlannedStretch {
@@ -263,21 +313,27 @@ export async function planBreakdown(
   programs: readonly KnownProgram[],
 ): Promise<BreakdownPlan> {
   const records = placed.rows.map(({ r }) => r);
-  const classified = classifyLiftRecordRows(pairWithRowNumber(records), ({ r }) => r, await repos.liftRecord.findStoredSets(records));
+  const classified = classifyLiftRecordRows(
+    pairWithRowNumber(placed.rows),
+    ({ r }) => r.r,
+    await repos.liftRecord.findStoredSets(records),
+  );
   const changed = classified.filter(
-    ({ kind, paired, row: { r } }) => kind === 'skip' && paired && (paired.weight !== r.weight || paired.reps !== r.reps),
+    ({ kind, paired, row: { r } }) => kind === 'skip' && paired && (paired.weight !== r.r.weight || paired.reps !== r.r.reps),
   ).length;
   // The rows to create, by stretch, with the occurrence each is stored under.
   const creatingIn = new Map<number | null, LiftRecord[]>();
-  classified.forEach((c, i) => {
-    if (c.kind !== 'create') return;
-    const place = placed.rows[i]?.stretch ?? null;
-    const { occurrence: _fileOccurrence, ...rest } = c.row.r;
-    creatingIn.set(place, [...(creatingIn.get(place) ?? []), { ...rest, ...withOccurrence(c.occurrence) }]);
-  });
+  for (const c of classified) {
+    if (c.kind !== 'create') continue;
+    const { r, stretch } = c.row.r;
+    const { occurrence: _fileOccurrence, ...rest } = r;
+    let list = creatingIn.get(stretch);
+    if (!list) creatingIn.set(stretch, (list = []));
+    list.push({ ...rest, ...withOccurrence(c.occurrence) });
+  }
 
   const stretches: PlannedStretch[] = [];
-  placed.stretches.forEach(({ spec, rows }, index) => {
+  placed.stretches.forEach(({ spec, rows, span }, index) => {
     const sessionOf = new Map([...new Set(rows.map((r) => r.date.getTime()))].sort((a, b) => a - b).map((t, i) => [t, i + 1]));
     const creating = (creatingIn.get(index) ?? []).map((r) => ({
         ...r,
@@ -286,14 +342,13 @@ export async function planBreakdown(
         macrocycleNum: 0,
         workoutNum: Number.isFinite(r.workoutNum) ? r.workoutNum : (sessionOf.get(r.date.getTime()) ?? 1),
       }));
-    if (creating.length === 0) return;
+    // A stretch with a row to create has rows, so it has a span.
+    if (creating.length === 0 || !span) return;
     const lifts = programs.find((p) => p.id === spec.program)?.lifts;
-    const times = rows.map((r) => r.date.getTime());
     stretches.push({
       spec,
       creating: distinctKeys(creating),
-      startDate: toUTCMidnight(new Date(Math.min(...times))),
-      endDate: toUTCMidnight(new Date(Math.max(...times))),
+      ...span,
       unmatched: lifts === undefined || rows.some((r) => !lifts.has(liftKey(r.lift))),
     });
   });
@@ -323,7 +378,6 @@ function distinctKeys(rows: readonly LiftRecord[]): LiftRecord[] {
 /** What {@link writeBreakdown} wrote. */
 export interface BreakdownWrite {
   created: number;
-  macrocycles: number;
   /** Each program's pre-image: its sets, the macrocycles created and, for the Source program, the non-cycle sets. */
   preImages: Map<string, ImportPreImage>;
 }
@@ -345,7 +399,11 @@ export async function writeBreakdown(
   let created = 0;
 
   const byProgram = new Map<string, PlannedStretch[]>();
-  for (const s of plan.stretches) byProgram.set(s.spec.program, [...(byProgram.get(s.spec.program) ?? []), s]);
+  for (const s of plan.stretches) {
+    const list = byProgram.get(s.spec.program);
+    if (list) list.push(s);
+    else byProgram.set(s.spec.program, [s]);
+  }
   for (const [program, planned] of byProgram) {
     const dashboard = await dashboardOrNull(repos, program);
     if (dashboard) await ensureCurrentRow(repos, dashboard);
@@ -376,11 +434,12 @@ export async function writeBreakdown(
   }
 
   if (plan.nonCycle.length > 0) {
-    const nonCycle = await placeNonCycleRows(repos, plan.nonCycle);
+    // Rows the file kept apart by macrocycle number can share a non-cycle workout.
+    const nonCycle = distinctKeys(await placeNonCycleRows(repos, plan.nonCycle));
     created += await repos.liftRecord.appendLiftRecords(NON_CYCLE_PROGRAM, nonCycle);
     // A non-cycle set's key holds no program, so the Source program's batch carries them.
     addTo(sourceProgram, nonCycleRowsPreImage(nonCycle));
   }
 
-  return { created, macrocycles: plan.stretches.length, preImages };
+  return { created, preImages };
 }

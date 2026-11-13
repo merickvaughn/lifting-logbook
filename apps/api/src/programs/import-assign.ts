@@ -74,11 +74,21 @@ export async function splitMaxCounts(
   sourceProgram: string,
   repos: Pick<RepositoryBundle, 'trainingMax'>,
 ): Promise<{ changes: number; olderThanCurrent: number }> {
-  const programOf = (date: Date) =>
-    stretches.find((s) => s.startDate.getTime() <= date.getTime() && date.getTime() <= s.endDate.getTime())?.program ??
-    sourceProgram;
-  const { changes, olderThanCurrent } = await planSplitMaxes(splitMaxes, programOf, repos);
+  const { changes, olderThanCurrent } = await planSplitMaxes(splitMaxes, programCoveringDate(stretches, sourceProgram), repos);
   return { changes, olderThanCurrent };
+}
+
+/**
+ * The program of the first stretch whose dates span a date, else `fallback` (decision 10). Assign
+ * and the commit both place split rows through this.
+ */
+export function programCoveringDate(
+  stretches: ReadonlyArray<{ program: string; startDate: Date; endDate: Date }>,
+  fallback: string,
+): (date: Date) => string {
+  return (date) =>
+    stretches.find((s) => s.startDate.getTime() <= date.getTime() && date.getTime() <= s.endDate.getTime())?.program ??
+    fallback;
 }
 
 /** One program's share of a split: its stored maxes and the newest row per lift to write. */
@@ -157,19 +167,22 @@ function sessionsOf(rows: readonly LiftHistoryRecord[]): Array<{ date: Date; row
   return [...byDate.entries()].sort(([a], [b]) => a - b).map(([time, list]) => ({ date: new Date(time), rows: list }));
 }
 
+/** A row as Assign reads it: an export's rows also carry the `Status` the assign parse read. */
+export type AssignRecord = LiftHistoryRecord & { status?: string };
+
 /**
  * An exported file's `Status` for a stretch's rows (#1254, decision 22): the one value its rows
  * carry, else null. The assign parse reads it onto each row, already checked against the statuses.
  */
-function fileStatusOf(rows: readonly object[]): MacrocycleStatus | null {
-  const values = new Set(rows.map((row) => ('status' in row && typeof row.status === 'string' ? row.status : '')));
+function fileStatusOf(rows: ReadonlyArray<{ status?: string }>): MacrocycleStatus | null {
+  const values = new Set(rows.map((row) => row.status ?? ''));
   values.delete('');
   const [only] = values;
   return values.size === 1 && (MACROCYCLE_STATUSES as readonly string[]).includes(only ?? '') ? (only as MacrocycleStatus) : null;
 }
 
 function assignStretch(
-  stretch: HistoryStretch<LiftHistoryRecord>,
+  stretch: HistoryStretch<AssignRecord>,
   liftNames: ReadonlyMap<string, string>,
 ): AssignStretch {
   const named = (lifts: readonly string[]) => lifts.map((lift) => liftNames.get(lift) ?? lift);
@@ -182,7 +195,7 @@ function assignStretch(
     fileMacrocycleNum: stretch.fileMacrocycleNum ?? null,
     startDate: ymd(stretch.startDate),
     endDate: ymd(stretch.endDate),
-    sessions: stretch.sessions.map((s: HistorySession<LiftHistoryRecord>) => assignSession(s, s.workoutNum, liftNames)),
+    sessions: stretch.sessions.map((s: HistorySession<AssignRecord>) => assignSession(s, s.workoutNum, liftNames)),
     completedWorkouts: stretch.completedWorkouts,
     expectedWorkouts: stretch.expectedWorkouts,
     status: stretch.status,
@@ -202,7 +215,7 @@ function assignStretch(
 
 /** The `mode=assign` response for a segmented file. Lift ids become display names. */
 export function assignResponse(
-  segmented: SegmentedLiftHistory<LiftHistoryRecord>,
+  segmented: SegmentedLiftHistory<AssignRecord>,
   extra: {
     importDate: Date;
     undatedRows: number;
