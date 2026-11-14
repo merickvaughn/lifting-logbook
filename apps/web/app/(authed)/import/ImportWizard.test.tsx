@@ -8,7 +8,17 @@ import type {
 } from '@lifting-logbook/types';
 import { LIFT_CATALOG } from '@lifting-logbook/core';
 import { ImportWizard } from './ImportWizard';
-import { commitImport, createCustomLift, dryRunImport, fetchCustomLifts, previewImport } from '@/lib/client-api';
+import {
+  commitImport,
+  createCustomLift,
+  dismissMissingTrainingMax,
+  dryRunImport,
+  fetchCustomLifts,
+  fetchMissingTrainingMaxes,
+  previewImport,
+  undoImport,
+  updateTrainingMaxes,
+} from '@/lib/client-api';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 
 // File.text() is not implemented in jsdom; use FileReader instead.
@@ -27,6 +37,11 @@ jest.mock('@/lib/client-api', () => ({
   dryRunImport: jest.fn(),
   createCustomLift: jest.fn(),
   fetchCustomLifts: jest.fn(),
+  undoImport: jest.fn(),
+  fetchMissingTrainingMaxes: jest.fn(),
+  updateTrainingMaxes: jest.fn(),
+  dismissMissingTrainingMax: jest.fn(),
+  undismissMissingTrainingMax: jest.fn(),
 }));
 
 const mockPreview = previewImport as jest.MockedFunction<typeof previewImport>;
@@ -34,6 +49,10 @@ const mockCommit = commitImport as jest.MockedFunction<typeof commitImport>;
 const mockDryRun = dryRunImport as jest.MockedFunction<typeof dryRunImport>;
 const mockCreateCustomLift = createCustomLift as jest.MockedFunction<typeof createCustomLift>;
 const mockFetchCustomLifts = fetchCustomLifts as jest.MockedFunction<typeof fetchCustomLifts>;
+const mockUndo = undoImport as jest.MockedFunction<typeof undoImport>;
+const mockFetchMissing = fetchMissingTrainingMaxes as jest.MockedFunction<typeof fetchMissingTrainingMaxes>;
+const mockUpdateMaxes = updateTrainingMaxes as jest.MockedFunction<typeof updateTrainingMaxes>;
+const mockDismiss = dismissMissingTrainingMax as jest.MockedFunction<typeof dismissMissingTrainingMax>;
 
 const PROGRAMS: CustomProgramSummaryResponse[] = [
   { id: 'prog-1', name: 'My Program', description: null, baseTemplate: null, createdAt: '2026-01-01' },
@@ -543,6 +562,7 @@ describe('ImportWizard', () => {
       ok: true,
       data: { destination: 'lift-records', created: 0, updated: 0, skipped: 0 },
     });
+    mockFetchMissing.mockResolvedValue([]);
   });
 
   // #911 review, second pass: jest.clearAllMocks() (above) resets call
@@ -1684,6 +1704,124 @@ describe('ImportWizard', () => {
 
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
     expect(screen.queryByText(/more skipped row\(s\) not shown/)).not.toBeInTheDocument();
+  });
+
+  // #1273: the import result offers a max for the lifts it brought in that have none.
+  describe('lifts without a training max (#1273)', () => {
+    const DAY = `${new Date().getFullYear()}-11-03`;
+    // `lift` as sets store it (an id, or a custom lift's UUID); `name` is shown (#1290).
+    const RDL = {
+      lift: 'romanian-deadlift',
+      name: 'Romanian Deadlift',
+      liftId: 'romanian-deadlift',
+      lastLoggedDate: DAY,
+      setCount: 3,
+      estimate: { weight: 205, unit: 'lbs' as const, from: { date: DAY, weight: 200, reps: 8 } },
+      dismissed: false,
+    };
+    const CURL_ID = '0b6f3c1e-7d2a-4c55-9a8e-1f2d3c4b5a69';
+    const CURL = { ...RDL, lift: CURL_ID, name: 'Cable Curl', liftId: CURL_ID, estimate: null, dismissed: true };
+    // The block's own element, so a test can tell "no block" from a heading-less empty box.
+    const block = () => document.querySelector('.block');
+    const RDL_CSV = new File(
+      ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n5-3-1,1,1,2026-01-01,Romanian Deadlift,1,200,8'],
+      'lifts.csv',
+      { type: 'text/csv' },
+    );
+    const HEADING = { name: 'Lifts without a training max' };
+
+    async function commitWithLifts(lifts: string[] | undefined) {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(LIFT_RECORDS_PREVIEW);
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 3, updated: 0, skipped: 0, batchId: 'batch-mm', lifts },
+      });
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} unit="kg" />);
+      await commitLiftRecordsImport(user, RDL_CSV);
+      return user;
+    }
+
+    it('lists each imported lift with no max, with its estimate, leaving out dismissed ones', async () => {
+      mockFetchMissing.mockResolvedValue([RDL, CURL]);
+      await commitWithLifts(['romanian-deadlift', CURL_ID, 'bench-press']);
+
+      // An h2: the result step's only heading above it is the page's h1.
+      expect(await screen.findByRole('heading', { ...HEADING, level: 2 })).toBeInTheDocument();
+      expect(mockFetchMissing).toHaveBeenCalledWith('prog-1', ['romanian-deadlift', CURL_ID, 'bench-press']);
+      const input = screen.getByRole('spinbutton', { name: 'Romanian Deadlift training max' });
+      expect(input).toHaveValue(205);
+      expect(input).toHaveAccessibleDescription('Estimated from 200 lbs × 8 on 3 Nov');
+      // The preferred unit reaches the row as a conversion hint.
+      expect(input.parentElement).toHaveTextContent('≈ 92.99 kg');
+      expect(screen.queryByText('Cable Curl')).not.toBeInTheDocument();
+    });
+
+    it('shows no block when every imported lift has a max', async () => {
+      await commitWithLifts(['bench-press']);
+
+      await waitFor(() => expect(mockFetchMissing).toHaveBeenCalled());
+      expect(screen.queryByRole('heading', HEADING)).not.toBeInTheDocument();
+      expect(block()).toBeNull();
+    });
+
+    it.each([[[]], [undefined]])('shows no block, and asks nothing, when the commit lists lifts %p', async (lifts) => {
+      await commitWithLifts(lifts);
+
+      expect(mockFetchMissing).not.toHaveBeenCalled();
+      expect(block()).toBeNull();
+    });
+
+    it('omits the block and logs when the read fails', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const failure = new Error('network down');
+      mockFetchMissing.mockRejectedValue(failure);
+      await commitWithLifts(['romanian-deadlift']);
+
+      await waitFor(() =>
+        expect(errorSpy).toHaveBeenCalledWith('[client-mutation] fetchMissingTrainingMaxes failed', failure, {
+          program: 'prog-1',
+          source: 'import',
+        }),
+      );
+      expect(screen.queryByRole('heading', HEADING)).not.toBeInTheDocument();
+      expect(block()).toBeNull();
+      expect(screen.getByText('Import complete')).toBeInTheDocument();
+    });
+
+    it('removes a row once answered and says so', async () => {
+      mockFetchMissing.mockResolvedValue([RDL, { ...RDL, lift: 'hammer-curl', name: 'Hammer Curl', liftId: 'hammer-curl' }]);
+      mockUpdateMaxes.mockResolvedValue([]);
+      mockDismiss.mockResolvedValue(undefined);
+      const user = await commitWithLifts(['romanian-deadlift', 'hammer-curl']);
+      await screen.findByRole('heading', HEADING);
+
+      const [first, second] = screen.getAllByRole('button', { name: 'Set up' });
+      if (!first || !second) throw new Error('expected a Set up button per lift');
+      await user.click(first);
+      expect(await screen.findByRole('status')).toHaveTextContent('Training max set up for Romanian Deadlift.');
+      expect(screen.getByRole('status')).toHaveFocus();
+      expect(mockUpdateMaxes).toHaveBeenCalledWith('prog-1', {
+        maxes: [{ lift: 'romanian-deadlift', weight: 205, unit: 'lbs' }],
+      });
+
+      await user.click(screen.getByRole('button', { name: "Don't ask again" }));
+      expect(await screen.findByRole('status')).toHaveTextContent("Hammer Curl won't be asked about again.");
+      expect(mockDismiss).toHaveBeenCalledWith('prog-1', 'hammer-curl');
+      expect(screen.queryByRole('heading', HEADING)).not.toBeInTheDocument();
+      expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument();
+    });
+
+    it('drops the block once the import is undone', async () => {
+      mockFetchMissing.mockResolvedValue([RDL]);
+      mockUndo.mockResolvedValue({ batchId: 'batch-mm', restored: 3, skipped: 0, flagged: [] });
+      const user = await commitWithLifts(['romanian-deadlift']);
+      await screen.findByRole('heading', HEADING);
+
+      await user.click(screen.getByRole('button', { name: 'Undo this import' }));
+      await waitFor(() => expect(screen.queryByRole('heading', HEADING)).not.toBeInTheDocument());
+      expect(screen.getByText(/Undo complete: 3 restored/)).toBeInTheDocument();
+    });
   });
 
   // #1114: a row the commit would reject is neither a create nor committable.

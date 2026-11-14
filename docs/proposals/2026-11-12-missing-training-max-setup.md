@@ -64,7 +64,12 @@ progress it normally.
 ### Data
 
 - **`GET /programs/:program/training-maxes/missing`** lists each such lift with:
-  - `lift`, `lastLoggedDate` and `setCount`;
+  - `lift`, as its sets store it (often an id, such as `bench-press` or a custom lift's UUID): the
+    value to save its max under, not one to show;
+  - `name`, the lift's display name, from the catalog or the custom lift, else `lift`
+    ([#1290](https://github.com/merickvaughn/lifting-logbook/issues/1290));
+  - `liftId`, its stable id, which a dismissal is keyed by;
+  - `lastLoggedDate` and `setCount`;
   - `estimate` (`{ weight, unit, from: { date, weight, reps } } | null`);
   - `dismissed`.
   - An optional `lifts` query parameter narrows the list to the lifts a finished workout logged.

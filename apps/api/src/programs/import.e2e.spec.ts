@@ -292,6 +292,8 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(first).toMatchObject({ destination: 'lift-records', created: 1 });
       // Nothing skipped on the first commit — detail list is present but empty (issue #891).
       expect(first.skippedDetail).toEqual([]);
+      // The lift it wrote a set for, as stored, for the import result's missing-max list (#1273).
+      expect(first.lifts).toEqual(['bench-press']);
       const second = (
         await importCsv('import-lr', LIFT_CSV, '?mode=commit&destination=lift-records')
       ).json();
@@ -305,6 +307,8 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
           label: 'Bench Press · macrocycle 1 workout 1 set 1 (20260101)',
         },
       ]);
+      // Nothing written, so no lift to ask about.
+      expect(second.lifts).toEqual([]);
     });
 
     // Regression for issue #884: before the fix, both rows shared a date-less

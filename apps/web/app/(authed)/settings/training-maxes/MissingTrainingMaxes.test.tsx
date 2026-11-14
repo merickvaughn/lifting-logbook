@@ -25,8 +25,10 @@ const mockUndismiss = undismissMissingTrainingMax as jest.MockedFunction<typeof 
 const mockLog = logClientError as jest.MockedFunction<typeof logClientError>;
 
 const HEADING = 'Lifts without a training max';
+// Each `lift` as sets store it, a built-in id and a custom lift's UUID; `name` is shown (#1290).
 const RDL: MissingTrainingMaxResponse = {
-  lift: 'Romanian Deadlift',
+  lift: 'romanian-deadlift',
+  name: 'Romanian Deadlift',
   liftId: 'romanian-deadlift',
   lastLoggedDate: '2026-11-03',
   setCount: 12,
@@ -34,8 +36,9 @@ const RDL: MissingTrainingMaxResponse = {
   dismissed: false,
 };
 const CURL: MissingTrainingMaxResponse = {
-  lift: 'Cable Curl',
-  liftId: 'cable-curl',
+  lift: '0b6f3c1e-7d2a-4c55-9a8e-1f2d3c4b5a69',
+  name: 'Cable Curl',
+  liftId: '0b6f3c1e-7d2a-4c55-9a8e-1f2d3c4b5a69',
   lastLoggedDate: '2026-10-28',
   setCount: 4,
   estimate: null,
@@ -58,7 +61,7 @@ describe('Settings → Training Maxes: lifts without a training max (#1246, #127
     await user.click(screen.getByRole('button', { name: 'Set up' }));
 
     expect(mockUpdate).toHaveBeenCalledWith('5-3-1', {
-      maxes: [{ lift: 'Romanian Deadlift', weight: 100, unit: 'lbs' }],
+      maxes: [{ lift: 'romanian-deadlift', weight: 100, unit: 'lbs' }],
     });
     // The only lift now has a max, so the section goes, and the table refreshes to show it. Focus
     // moves to the status line, since the button it was on is gone.
@@ -84,7 +87,7 @@ describe('Settings → Training Maxes: lifts without a training max (#1246, #127
     await user.click(summary);
     await user.click(within(hidden).getByRole('button', { name: 'Ask again' }));
 
-    expect(mockUndismiss).toHaveBeenCalledWith('5-3-1', 'cable-curl');
+    expect(mockUndismiss).toHaveBeenCalledWith('5-3-1', CURL.liftId);
     const status = await screen.findByRole('status');
     expect(status).toHaveTextContent('Cable Curl will be asked about again.');
     expect(status).toHaveFocus();

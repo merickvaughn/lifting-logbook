@@ -20,7 +20,7 @@ This document maps every critical user flow to its test coverage across the API 
 | User settings (`GET`/`PATCH /users/me/settings`) | ✅ | ✅ | ❌ |
 | Custom programs (`GET`/`POST /programs/custom`) | N/A‡ | ✅ | ❌ |
 | Switch program (`POST /programs/:p/switch`) | ✅ | ✅ | ✅ |
-| Set up a missing training max (Settings, Finish workout) | ✅ | ✅ | ✅ |
+| Set up a missing training max (Settings, Finish workout, import result) | ✅ | ✅ | ✅ |
 
 **†** Body weight has no Prisma adapter. `BODY_WEIGHT_REPOSITORY` is always wired to `InMemoryBodyWeightRepository` — even when `DATABASE_URL` is set. The DB-spec test exercises the HTTP contract but cannot make DB-level persistence assertions.
 
@@ -76,6 +76,7 @@ Tracking issue: [#259](https://github.com/merickvaughn/lifting-logbook/issues/25
 | Programs — switch | `POST /programs/:p/switch` |
 | `/settings/training-maxes` | `GET /programs/:p/training-maxes`, `PATCH /programs/:p/training-maxes`, `GET /programs/:p/training-maxes/history`, `GET /programs/:p/training-maxes/missing`, `PUT`/`DELETE /programs/:p/training-maxes/missing/:liftId/dismissal` |
 | Workout logger — Finish workout | `GET /programs/:p/training-maxes/missing?lifts=…`, `PATCH /programs/:p/training-maxes`, `PUT`/`DELETE /programs/:p/training-maxes/missing/:liftId/dismissal` |
+| `/import` — lift-records result | `POST /programs/:p/import?mode=commit` (its `lifts`), `GET /programs/:p/training-maxes/missing?lifts=…`, `PATCH /programs/:p/training-maxes`, `PUT /programs/:p/training-maxes/missing/:liftId/dismissal` |
 | `/settings/strength-goals` | `GET /programs/:p/strength-goals`, `PUT /programs/:p/strength-goals/:lift`, `DELETE /programs/:p/strength-goals/:lift` |
 
 ## Running the Tests

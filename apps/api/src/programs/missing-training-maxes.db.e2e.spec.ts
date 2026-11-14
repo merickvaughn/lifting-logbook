@@ -109,6 +109,7 @@ describeOrSkip('missing training maxes (full app, lifting_app role)', () => {
     expect(missing).toEqual([
       {
         lift: 'Romanian Deadlift',
+        name: 'Romanian Deadlift',
         liftId: 'romanian-deadlift',
         lastLoggedDate: '2026-11-03',
         setCount: 2,

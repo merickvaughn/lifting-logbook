@@ -1290,15 +1290,17 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
 });
 
 describe('WorkoutLogger — a lift without a training max, after Finish workout (#1272)', () => {
+  // `lift` as sets store it; `name` is shown (#1290).
   const RDL: MissingTrainingMaxResponse = {
-    lift: 'Romanian Deadlift',
+    lift: 'romanian-deadlift',
+    name: 'Romanian Deadlift',
     liftId: 'romanian-deadlift',
     lastLoggedDate: '2026-07-08',
     setCount: 3,
     estimate: { weight: 100, unit: 'lbs', from: { date: '2026-07-08', weight: 100, reps: 5 } },
     dismissed: false,
   };
-  const PRESS: MissingTrainingMaxResponse = { ...RDL, lift: 'Push Press', liftId: 'push-press' };
+  const PRESS: MissingTrainingMaxResponse = { ...RDL, lift: 'push-press', name: 'Push Press', liftId: 'push-press' };
   const MANUAL = { type: 'manual', increment: 5 } as const;
   const loggedLift = (overrides: Partial<LiftData> = {}) =>
     makeLift({
@@ -1395,8 +1397,8 @@ describe('WorkoutLogger — a lift without a training max, after Finish workout 
   });
 
   it('saves every row with a weight in one request on Set up all, then leaves', async () => {
-    const curl: MissingTrainingMaxResponse = { ...RDL, lift: 'Cable Curl', liftId: 'cable-curl', estimate: null };
-    const press: MissingTrainingMaxResponse = { ...RDL, lift: 'Push Press', liftId: 'push-press' };
+    const curl: MissingTrainingMaxResponse = { ...RDL, lift: 'cable-curl', name: 'Cable Curl', liftId: 'cable-curl', estimate: null };
+    const press: MissingTrainingMaxResponse = { ...RDL, lift: 'push-press', name: 'Push Press', liftId: 'push-press' };
     mockFetchMissingTrainingMaxes.mockResolvedValue([RDL, curl, press]);
     mockUpdateTrainingMaxes.mockResolvedValue([]);
     const user = await finish({
@@ -1412,14 +1414,14 @@ describe('WorkoutLogger — a lift without a training max, after Finish workout 
     expect(mockUpdateTrainingMaxes).toHaveBeenCalledTimes(1);
     expect(mockUpdateTrainingMaxes).toHaveBeenCalledWith('5-3-1', {
       maxes: [
-        { lift: 'Romanian Deadlift', weight: 100, unit: 'lbs' },
-        { lift: 'Push Press', weight: 120, unit: 'lbs' },
+        { lift: 'romanian-deadlift', weight: 100, unit: 'lbs' },
+        { lift: 'push-press', weight: 120, unit: 'lbs' },
       ],
     });
   });
 
   it('drops a row once it is answered, and leaves when the last one is', async () => {
-    const press: MissingTrainingMaxResponse = { ...RDL, lift: 'Push Press', liftId: 'push-press' };
+    const press: MissingTrainingMaxResponse = { ...RDL, lift: 'push-press', name: 'Push Press', liftId: 'push-press' };
     mockFetchMissingTrainingMaxes.mockResolvedValue([RDL, press]);
     mockUpdateTrainingMaxes.mockResolvedValue([]);
     mockDismissMissingTrainingMax.mockResolvedValue(undefined);
@@ -1439,7 +1441,7 @@ describe('WorkoutLogger — a lift without a training max, after Finish workout 
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/macrocycle/1'));
     expect(mockUpdateTrainingMaxes).toHaveBeenCalledWith('5-3-1', {
-      maxes: [{ lift: 'Romanian Deadlift', weight: 100, unit: 'lbs' }],
+      maxes: [{ lift: 'romanian-deadlift', weight: 100, unit: 'lbs' }],
     });
     expect(mockDismissMissingTrainingMax).toHaveBeenCalledWith('5-3-1', 'push-press');
   });
@@ -1551,7 +1553,7 @@ describe('WorkoutLogger — a lift without a training max, after Finish workout 
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/macrocycle/1'));
     expect(mockUpdateTrainingMaxes).toHaveBeenCalledWith('5-3-1', {
-      maxes: [{ lift: 'Romanian Deadlift', weight: 100, unit: 'lbs' }],
+      maxes: [{ lift: 'romanian-deadlift', weight: 100, unit: 'lbs' }],
     });
   });
 

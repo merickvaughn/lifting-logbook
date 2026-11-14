@@ -87,7 +87,7 @@ export default function MissingMaxDialog({
     const refused = rows.filter((m) => (values[m.liftId] ?? '').trim() !== '' && parseWeight(values[m.liftId] ?? '') === null);
     if (refused.length > 0) {
       setInvalid(new Set(refused.map((m) => m.liftId)));
-      setError(`Enter a positive number for ${refused.map((m) => m.lift).join(', ')}, or clear it.`);
+      setError(`Enter a positive number for ${refused.map((m) => m.name).join(', ')}, or clear it.`);
       return;
     }
     const maxes = rows.flatMap((m) => {
@@ -151,8 +151,8 @@ export default function MissingMaxDialog({
               error={invalid.has(entry.liftId) ? 'Enter a positive number' : null}
               disabled={saving}
               onBusyChange={setBusy}
-              onSetUp={(lift) => answered(entry.liftId, `Training max set up for ${lift}.`)}
-              onDismissedChange={(liftId) => answered(liftId, `${entry.lift} won't be asked about again.`)}
+              onSetUp={() => answered(entry.liftId, `Training max set up for ${entry.name}.`)}
+              onDismissedChange={(liftId) => answered(liftId, `${entry.name} won't be asked about again.`)}
             />
           ))}
         </ul>

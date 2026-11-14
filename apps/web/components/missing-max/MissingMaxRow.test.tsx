@@ -23,8 +23,10 @@ const mockLog = logClientError as jest.MockedFunction<typeof logClientError>;
 
 // This year's date, so it reads without a year whenever the suite runs.
 const DAY = `${new Date().getFullYear()}-11-03`;
+// Stored by id, as sets store a lift; `name` is what the lifter sees (#1290).
 const RDL: MissingTrainingMaxResponse = {
-  lift: 'Romanian Deadlift',
+  lift: 'romanian-deadlift',
+  name: 'Romanian Deadlift',
   liftId: 'romanian-deadlift',
   lastLoggedDate: DAY,
   setCount: 12,
@@ -70,7 +72,7 @@ describe('MissingMaxRow (#1246)', () => {
     expect(input).toHaveAccessibleDescription('No set to estimate from: enter a training max');
   });
 
-  it('sets up the max with the weight entered', async () => {
+  it('shows the name, and sets up the max under the lift as stored, with the weight entered (#1290)', async () => {
     mockUpdate.mockResolvedValue([]);
     const user = userEvent.setup();
     const { onSetUp } = renderRow();
@@ -81,9 +83,11 @@ describe('MissingMaxRow (#1246)', () => {
     await user.click(screen.getByRole('button', { name: 'Set up' }));
 
     expect(mockUpdate).toHaveBeenCalledWith('5-3-1', {
-      maxes: [{ lift: 'Romanian Deadlift', weight: 105, unit: 'lbs' }],
+      maxes: [{ lift: 'romanian-deadlift', weight: 105, unit: 'lbs' }],
     });
-    await waitFor(() => expect(onSetUp).toHaveBeenCalledWith('Romanian Deadlift', 105));
+    await waitFor(() => expect(onSetUp).toHaveBeenCalledWith('romanian-deadlift', 105));
+    expect(screen.getByText('Romanian Deadlift')).toBeInTheDocument();
+    expect(screen.queryByText('romanian-deadlift')).not.toBeInTheDocument();
   });
 
   it('keeps the value and shows the error when the save fails', async () => {

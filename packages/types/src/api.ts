@@ -38,8 +38,13 @@ export interface SkippedLiftResponse {
  * `GET /programs/:program/training-maxes/missing`. Weights are in pounds, the stored unit.
  */
 export interface MissingTrainingMaxResponse {
-  /** The lift as its latest set names it: the name to save its max under. */
+  /**
+   * The lift as its latest set stores it, often an id (`bench-press`, or a custom lift's UUID): the
+   * value to save its max under, so the max matches its sets. Not for display; see `name`.
+   */
   lift: LiftName;
+  /** The name to show: the catalog's or the custom lift's, else `lift` as stored (#1290). */
+  name: string;
   /** Its stable id (#1139), which a dismissal is keyed by. */
   liftId: string;
   /** ISO 8601 date ("YYYY-MM-DD") of its latest set. */
@@ -1036,6 +1041,14 @@ export interface ImportCommitResponse extends ImportWriteResult {
   skippedDetail?: SkippedRecord[];
   /** Present when the commit stored an Assign breakdown (#1254). */
   assigned?: ImportAssignedCounts;
+  /**
+   * Each lift this commit wrote a set for in the program it was made in, once, as stored (a lift
+   * id, such as `bench-press`). The import result asks which of them have no training max
+   * (`GET …/training-maxes/missing?lifts=…` takes ids) (#1246, #1273). Present only when
+   * `destination === 'lift-records'`; sets written to another program or as non-cycle workouts
+   * aren't listed, since that program's list wouldn't count them.
+   */
+  lifts?: string[];
 }
 
 /**

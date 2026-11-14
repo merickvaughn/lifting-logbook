@@ -81,6 +81,7 @@ describe('GET /programs/:program/training-maxes/missing (e2e, in-memory adapters
     expect(await get()).toEqual([
       {
         lift: 'Romanian Deadlift',
+        name: 'Romanian Deadlift',
         liftId: 'romanian-deadlift',
         lastLoggedDate: '2026-11-03',
         setCount: 2,
@@ -92,6 +93,24 @@ describe('GET /programs/:program/training-maxes/missing (e2e, in-memory adapters
         dismissed: false,
       },
     ]);
+  });
+
+  it('names a lift its sets store by id, built-in or custom, and keeps `lift` as stored (#1290)', async () => {
+    const { repos, get } = await seededUser();
+    const custom = await repos.customLift.create({ name: 'Wide-Grip CBL Curls', classification: 'accessory' });
+    await repos.liftRecord.appendLiftRecords(PROGRAM, [
+      record({ lift: 'bench-press', workoutNum: 2 }),
+      record({ lift: custom.id, workoutNum: 2 }),
+    ]);
+
+    const byLift = new Map((await get()).map((m) => [m.lift, m.name]));
+    expect(byLift).toEqual(
+      new Map([
+        ['Romanian Deadlift', 'Romanian Deadlift'],
+        ['bench-press', 'Bench Press'],
+        [custom.id, 'Wide-Grip CBL Curls'],
+      ]),
+    );
   });
 
   it('narrows the list to the lifts asked for, by any spelling', async () => {
