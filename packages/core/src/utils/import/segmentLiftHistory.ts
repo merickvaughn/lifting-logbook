@@ -71,7 +71,8 @@ export interface SegmentLiftHistoryOptions {
    * The commit places this file's rows by date, as it does any file that isn't an export. A row
    * with no macrocycle number on a day a file macrocycle holds then joins that macrocycle rather
    * than being listed `unnumbered`, and counts toward its program and status (#1256). Its own
-   * `Workout #`, if it has one, counts as written, as the commit stores it.
+   * `Workout #`, if it has one, counts toward its session's number and the completed count,
+   * and the commit stores it unchanged.
    */
   placeByDate?: boolean;
 }

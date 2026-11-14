@@ -650,6 +650,7 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     const onDay2 = (await stored('5-3-1')).filter((r) => ymd(new Date(r.date)) === day(2));
     expect(onDay2.map((r) => r.workoutNum)).toEqual([6, 6, 6]);
   });
+
   it('refuses to undo a batch grouped under another one', async () => {
     const fiveThreeOne = run(FIVE_THREE_ONE_DAYS, 0, 2);
     const rpt = run(RPT_DAYS, 20, 2);
