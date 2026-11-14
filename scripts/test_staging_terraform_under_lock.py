@@ -39,6 +39,23 @@ def load(name):
         return yaml.safe_load(f)
 
 
+def load_action(uses):
+    """A local composite action's parsed action.yml, from its `uses: ./path`."""
+    with open(os.path.join(ROOT, uses[2:], "action.yml"), encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def compares_ar_repo_with_input(action):
+    """A step reads expected-ar-repo into EXPECTED_AR_REPO and compares Terraform's path with it."""
+    for s in action.get("runs", {}).get("steps") or []:
+        run = s.get("run") or ""
+        if ((s.get("env") or {}).get("EXPECTED_AR_REPO") == "${{ inputs.expected-ar-repo }}"
+                and "terraform output -raw artifact_registry_repo" in run
+                and '!= "$EXPECTED_AR_REPO"' in run):
+            return True
+    return False
+
+
 def step_commands(step):
     """The shell a step runs: its `run`, or for a local composite action, its steps' `run`s.
 
@@ -47,9 +64,7 @@ def step_commands(step):
     """
     uses = step.get("uses") or ""
     if uses.startswith("./"):
-        path = os.path.join(ROOT, uses[2:], "action.yml")
-        with open(path, encoding="utf-8") as f:
-            action = yaml.safe_load(f)
+        action = load_action(uses)
         script = "\n".join(s.get("run") or "" for s in action.get("runs", {}).get("steps") or [])
     else:
         script = step.get("run") or ""
@@ -148,6 +163,7 @@ def violations(workflow):
 
 
 real_step_commands = step_commands
+SHARED_APPLY = "./.github/actions/tf-apply-staging"
 
 
 class StagingApplyUnderLockTests(unittest.TestCase):
@@ -241,6 +257,23 @@ class StagingApplyUnderLockTests(unittest.TestCase):
             found, problems = violations(wf)
         self.assertIn("preflight", found)
         self.assertTrue(any(job == "preflight" for job, _ in problems), problems)
+
+    def test_both_workflows_apply_staging_through_the_shared_action(self):
+        """#1266: one copy of the staging apply, so a fix can't reach one workflow and miss the other."""
+        for name, job in (("staging.yml", "terraform-staging"), ("deploy.yml", "deploy-staging")):
+            applies = [s for s in load(name)["jobs"][job]["steps"] if is_apply(s)]
+            self.assertEqual([s.get("uses") for s in applies], [SHARED_APPLY], name)
+            self.assertEqual(applies[0].get("id"), "tf-outputs", f"{name}: the job reads steps.tf-outputs")
+        # The action, not the callers, compares Terraform's Artifact Registry path with its input.
+        self.assertTrue(compares_ar_repo_with_input(load_action(SHARED_APPLY)), "the mismatch check is missing")
+
+    def test_dropping_the_ar_repo_comparison_is_seen(self):
+        """Rule 4: reading artifact_registry_repo without comparing it to expected-ar-repo fails."""
+        action = load_action(SHARED_APPLY)
+        for s in action["runs"]["steps"]:
+            run = s.get("run") or ""
+            s["run"] = "\n".join(line for line in run.splitlines() if "EXPECTED_AR_REPO" not in line)
+        self.assertFalse(compares_ar_repo_with_input(action))
 
     def test_every_terraform_apply_in_staging_yml_is_checked(self):
         """staging.yml only targets staging, so every apply in it must be one this test checks."""
