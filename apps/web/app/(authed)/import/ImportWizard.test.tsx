@@ -3970,11 +3970,13 @@ describe('ImportWizard Assign step (#1256)', () => {
     await waitFor(() => expect(heading()).toHaveFocus());
     expect(mockAssign).toHaveBeenCalledTimes(5);
     expect(nextButton()).toBeEnabled();
-    // Going back leaves the notice behind.
-    await user.click(screen.getByRole('button', { name: 'Back' }));
+    // Going back from Preview leaves the notice behind: it isn't read again, and focus stays on Back.
     await user.click(nextButton());
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    await user.click(screen.getByRole('button', { name: 'Back' }));
     expect(await screen.findByTestId('assign-summary')).toBeInTheDocument();
     expect(screen.getByTestId('assign-notice')).toBeEmptyDOMElement();
+    expect(screen.getByRole('button', { name: 'Back' })).toHaveFocus();
   });
 
   it('keeps keyboard focus on what an edit changed, and opens a settled stretch from its own row', async () => {

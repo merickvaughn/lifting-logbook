@@ -357,7 +357,8 @@ export async function planBreakdown(
     const { spec, span, rows, raw } = stretch;
     if (raw.length === 0) continue;
     const sessionOf = new Map([...new Set(rows.map((r) => r.date.getTime()))].sort((a, b) => a - b).map((t, i) => [t, i + 1]));
-    // A row the file left unnumbered takes its day's lowest number, the one Assign shows (#1256).
+    // A row the file left unnumbered on a day with numbered rows takes the day's lowest number,
+    // the session's `workoutNum` in the `mode=assign` response (#1256).
     const dayNum = new Map<number, number>();
     for (const r of rows) {
       const num = fileWorkoutNum(r);
