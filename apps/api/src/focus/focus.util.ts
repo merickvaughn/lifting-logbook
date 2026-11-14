@@ -8,10 +8,11 @@ import {
   nextStart,
   parseIsoDate,
   recordLastSessions,
+  withoutStaleLastReps,
 } from '@lifting-logbook/core';
 import { DEFAULT_WEIGHT_INCREMENT, FocusBlock, FocusBlockResponse } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
-import { FocusBlockNotFoundError } from '../ports/errors';
+import { FocusBlockConflictError, FocusBlockNotFoundError } from '../ports/errors';
 import { FocusBlockPatch, IFocusRepository } from '../ports/IFocusRepository';
 import { MAX_WORKOUT_NUM } from '../programs/lift-record.limits';
 import { isValidWorkoutNum } from '../programs/mappers';
@@ -86,38 +87,98 @@ export async function loadFocusBlocks(
 const TIMER_FIELDS = ['prep', 'set', 'rest'] as const;
 
 /**
- * Carries an edit to a block into its successor while the successor is still queued. A
- * successor is stored on the first read after its block starts, with a copy of the block
- * as it was then, so without this an edit made mid-block would never reach it.
+ * Saves an edit to a block, and carries it into the block's successor while the successor is
+ * still queued. A successor is stored on the first read after its block starts, with a copy of
+ * the block as it was then, so without this an edit made mid-block would never reach it.
  *
- * Selection, overlap, progression and each timer value follow when the successor still
- * holds the block's value from before the edit; one the lifter changed on the successor
- * stays. Under `percent_wave`, each shared lift's max moves by the same amount the block's
- * did, which keeps an edit already made to the successor's max (ADR-039, Amendments 2 and 4).
+ * The block is read under its row lock, so a pool written from it on a workout's plan read
+ * can't land between this read and the update, which `withoutStaleLastReps` and the carry both
+ * compare against (ADR-039, Amendment 5). A date edit that would move the successor onto a
+ * start another block in the series holds is refused with `FocusBlockConflictError` before
+ * anything is written (Amendment 6).
  */
-export async function carryEditsToSuccessor(
+export async function saveBlockEdit(
   focus: IFocusRepository,
-  before: FocusBlock,
-  after: FocusBlock,
+  id: string,
+  patch: FocusBlockPatch,
   today: string,
-): Promise<void> {
+): Promise<FocusBlock> {
+  const [before] = await focus.lockBlocks([id]);
+  if (!before) throw new FocusBlockNotFoundError(id);
+  const edit = patch.pool ? { ...patch, pool: withoutStaleLastReps(before.pool, patch.pool) } : patch;
+  const after: FocusBlock = { ...before, ...edit };
+
+  const blocks = await focus.listBlocks();
+  const successor = await lockedSuccessor(focus, blocks, before, today);
+  const carry = successor ? successorPatch(before, after, successor) : {};
+  // Checked before either write, so a refused edit leaves both blocks as they were wherever
+  // the repository has no transaction to roll back. A successor that moves frees its start.
+  const moving = successor && carry.start !== undefined ? successor.id : undefined;
+  for (const start of [edit.start, carry.start]) {
+    if (start === undefined) continue;
+    const taken = blocks.some((b) => b.series === before.series && b.id !== before.id && b.id !== moving && b.start === start);
+    if (taken) throw new FocusBlockConflictError(before.series, start);
+  }
+  if (!successor || Object.keys(carry).length === 0) return focus.updateBlock(id, edit);
+
+  // Starts are unique within a series, so a successor moving later moves first, in case the
+  // block's new start is the successor's old one; one moving earlier waits for the block.
+  if (carry.start !== undefined && carry.start > successor.start) {
+    await focus.updateBlock(successor.id, carry);
+    return focus.updateBlock(id, edit);
+  }
+  const updated = await focus.updateBlock(id, edit);
+  try {
+    await focus.updateBlock(successor.id, carry);
+  } catch (e) {
+    // The lock lasts only as long as a transaction, and a repository on the base client has
+    // none: deleted since it was read (declined in another tab), there is nothing left to
+    // carry into, and the block's own edit is already saved.
+    if (!(e instanceof FocusBlockNotFoundError)) throw e;
+  }
+  return updated;
+}
+
+/**
+ * The queued block in `before`'s series that starts the day after `before` ends, read again
+ * under its row lock: the carry is computed from the successor's current values, so an edit
+ * to it saved in another request must land first, not be overwritten (ADR-039, Amendment 5).
+ * Gone by now (declined in another tab): there is nothing to carry into.
+ */
+async function lockedSuccessor(
+  focus: IFocusRepository,
+  blocks: readonly FocusBlock[],
+  before: FocusBlock,
+  today: string,
+): Promise<FocusBlock | undefined> {
   const start = nextStart(before);
   const isSuccessor = (block: FocusBlock) =>
-    block.id !== after.id && block.series === after.series && block.start === start && blockStatus(block, today) === 'queued';
-  const listed = (await focus.listBlocks()).find(isSuccessor);
-  if (!listed) return;
-  // Read again under its row lock: the patch below is computed from the successor's current
-  // values, so an edit to it saved in another request must land first, not be overwritten
-  // (ADR-039, Amendment 5). Gone by now (declined in another tab): nothing to carry into.
+    block.id !== before.id && block.series === before.series && block.start === start && blockStatus(block, today) === 'queued';
+  const listed = blocks.find(isSuccessor);
+  if (!listed) return undefined;
   const [successor] = (await focus.lockBlocks([listed.id])).filter(isSuccessor);
-  if (!successor) return;
+  return successor;
+}
 
+/**
+ * What a queued successor takes from its block's edit. Selection, overlap, progression,
+ * period, align and each timer value follow when the successor still holds the block's value
+ * from before the edit; one the lifter changed on the successor stays. Under `percent_wave`,
+ * each shared lift's max moves by the same amount the block's did, which keeps an edit already
+ * made to the successor's max (ADR-039, Amendments 2 and 4). The successor moves to start the
+ * day after the block's new range ends, so the series has no overlap and no gap (Amendment 6).
+ */
+export function successorPatch(before: FocusBlock, after: FocusBlock, successor: FocusBlock): FocusBlockPatch {
   const patch: FocusBlockPatch = {};
-  const follows = (field: 'selection' | 'overlap' | 'progression') =>
+  const follows = (field: 'selection' | 'overlap' | 'progression' | 'period' | 'align') =>
     before[field] !== after[field] && successor[field] === before[field];
   if (follows('selection')) patch.selection = after.selection;
   if (follows('overlap')) patch.overlap = after.overlap;
   if (follows('progression')) patch.progression = after.progression;
+  if (follows('period')) patch.period = after.period;
+  if (follows('align')) patch.align = after.align;
+  const start = nextStart(after);
+  if (start !== successor.start) patch.start = start;
 
   const timer = { ...successor.timer };
   for (const key of TIMER_FIELDS) {
@@ -134,16 +195,7 @@ export async function carryEditsToSuccessor(
       });
     }
   }
-
-  if (Object.keys(patch).length === 0) return;
-  try {
-    await focus.updateBlock(successor.id, patch);
-  } catch (e) {
-    // The lock lasts only as long as a transaction, and a repository on the base client has
-    // none: deleted since it was read (declined in another tab), there is nothing left to
-    // carry into, and the block's own edit is already saved.
-    if (!(e instanceof FocusBlockNotFoundError)) throw e;
-  }
+  return patch;
 }
 
 /** How far each lift's training max moved in the edit, for the lifts whose max did. */

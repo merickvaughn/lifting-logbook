@@ -25,7 +25,6 @@ import {
   planFocusDay,
   prescribe,
   summarizeBlock,
-  withoutStaleLastReps,
   type FocusGroup,
   type MuscleOverride,
 } from '@lifting-logbook/core';
@@ -57,13 +56,13 @@ import { currentMacrocycleOrFirst } from '../programs/workout-day.util';
 import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 import { checkMacrocycleId, lockForMacrocycleWrite } from '../programs/macrocycle-history.util';
 import {
-  carryEditsToSuccessor,
   loadFocusBlocks,
   loadFocusWorkoutContext,
   parseIsoDateParam,
   parseToday,
   parseWorkoutNum,
   recordFocusSessions,
+  saveBlockEdit,
   toFocusBlockResponse,
 } from './focus.util';
 
@@ -162,14 +161,7 @@ export class FocusController {
     if (dto.onEnd !== undefined) patch.onEnd = dto.onEnd;
     if (dto.nextArea !== undefined) patch.nextArea = dto.nextArea;
     if (dto.pool !== undefined) patch.pool = dto.pool.map((entry) => ({ ...entry }));
-    // Locked, so a pool written from it on a workout's plan read can't land between this read
-    // and the update, which `withoutStaleLastReps` and the successor carry both compare
-    // against (ADR-039, Amendment 5). Not the user's: updateBlock gives the 404.
-    const [before] = await focus.lockBlocks([id]);
-    if (before && patch.pool) patch.pool = withoutStaleLastReps(before.pool, patch.pool);
-    const updated = await focus.updateBlock(id, patch);
-    if (before) await carryEditsToSuccessor(focus, before, updated, today);
-    return toFocusBlockResponse(updated, today);
+    return toFocusBlockResponse(await saveBlockEdit(focus, id, patch, today), today);
   }
 
   /**

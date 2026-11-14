@@ -38,7 +38,6 @@ import {
   nextMonthName,
   renewalPrompts,
   reorderedIds,
-  shiftedFollowOn,
   shortDate,
   suggestedArea,
   upNext,
@@ -279,7 +278,9 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
     if (!blocks || !before || !today) return;
     const full = anchoredPatch(before, patch, today);
     const after = { ...before, ...full };
-    const shift = shiftedFollowOn(blocks, before, after, today);
+    // A date edit needs no save of its own for the block that follows: the API moves the
+    // queued follow-on to start the day after the block's new range, and the re-read after the
+    // save shows it (ADR-039, Amendment 6).
     // The API gives an active auto-roll block its successor on the next read, so a new
     // next area goes to that successor too, and going back to prompt removes it.
     // A block this page queued itself (a renewal, or a queued area) is never treated as one.
@@ -290,7 +291,6 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
       successor && !dropSuccessor && full.nextArea && full.nextArea !== successor.area ?
         { id: successor.id, patch: { area: full.nextArea, pool: defaultFocusPool(full.nextArea) } }
       : undefined;
-    const shifted = shift && shift.id !== dropSuccessor?.id ? shift : null;
 
     setBlocks(
       (current) =>
@@ -298,10 +298,8 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
         current.flatMap((block) => {
           if (block.id === id) return [after];
           if (block.id === dropSuccessor?.id) return [];
-          let next = block;
-          if (block.id === shifted?.id) next = { ...next, start: shifted.start };
-          if (block.id === retarget?.id) next = { ...next, ...retarget.patch };
-          return [next];
+          if (block.id === retarget?.id) return [{ ...block, ...retarget.patch }];
+          return [block];
         }),
     );
     const update = (blockId: string, body: UpdateFocusBlockRequest) =>
@@ -309,12 +307,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
         blockId,
         fields: Object.keys(body),
       });
-    // Start dates are unique within a series, so a follow-on moving later moves first, out
-    // of the way of the block's new range; one moving earlier waits for the block.
-    const followOnFirst = shifted && shifted.start > (blocks.find((b) => b.id === shifted.id)?.start ?? '');
-    if (shifted && followOnFirst) update(shifted.id, { start: shifted.start });
     update(id, full);
-    if (shifted && !followOnFirst) update(shifted.id, { start: shifted.start });
     if (retarget) update(retarget.id, retarget.patch);
     if (dropSuccessor) {
       save('deleteFocusBlock', () => deleteFocusBlock(dropSuccessor.id), BLOCKS_AND_WEEK, { blockId: dropSuccessor.id });

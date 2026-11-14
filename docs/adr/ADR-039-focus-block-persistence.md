@@ -231,7 +231,8 @@ What does not follow, and why:
   successor's position is always set directly. `PATCH` doesn't take a priority.
 - **`start`, `period` and `align`.** They decide where the successor starts, so following them
   means moving the successor, which the unique `(userId, series, start)` constraint can refuse.
-  That decision is [#1226](https://github.com/merickvaughn/lifting-logbook/issues/1226).
+  Amendment 6 ([#1226](https://github.com/merickvaughn/lifting-logbook/issues/1226)) since moves
+  the successor and lets `period` and `align` follow.
 - **The pool when `progression` follows into `percent_wave`.** The successor keeps its pool, so a
   lift both pools share keeps the successor's max rather than the block's max plus the increment
   a successor created under `percent_wave` would get. Later max edits on the block carry as
@@ -287,6 +288,48 @@ update (`jsonb_set` on one array element) would keep concurrent changes to diffe
 but a pool entry has no stable key in the JSON (entries are matched by lift name, and a setup
 edit can rename or reorder them), and the training-max carry moves several entries at once. A row
 lock keeps one read-modify-write per block at a time with no new column and no client change.
+
+## Amendment 6 — a date edit moves the queued successor (#1226)
+
+A block's `start`, `period` and `align` decide where its range ends, and its queued successor
+starts the day after. Before this amendment, an edit to any of them on the API left the successor
+where it was: a longer block overlapped it and a shorter one left a gap. The setup page covered
+for that with a second save that moved the successor, so other clients, and a page whose second
+save failed, left the series out of step. Now the API moves it, in the same
+`PATCH /focus/blocks/:id` (`saveBlockEdit` in `apps/api/src/focus/focus.util.ts`, which replaces
+the `carryEditsToSuccessor` that Amendments 4 and 5 name and computes the carry in
+`successorPatch`):
+
+- **Where it moves.** The successor (as Amendment 4 finds it, from the block's range before the
+  edit) moves to `nextStart` of the block as edited, if that differs from its start. Lengthening
+  October to a quarter moves November's successor to January 1; shortening it back moves the
+  successor back.
+- **`period` and `align` follow** under Amendment 4's rule: when the successor still holds the
+  block's value from before the edit. A successor the lifter gave its own align keeps it and still
+  moves. `start` itself never copies: the successor's start is always the day after the block.
+- **Order of the two writes.** The unique `(userId, series, start)` constraint is checked per
+  statement, so a successor moving later is updated first, in case the block's new start is the
+  successor's old one. One moving earlier is updated after the block, whose old range it moves into.
+- **A move onto a taken start fails whole.** When the successor's new start, or the block's own new
+  start, is already another block's start in the series (a block the lifter queued further out),
+  the `PATCH` is refused with the focus-block conflict `409` before either write, so nothing is
+  half-applied. A transaction would roll a half-applied edit back anyway; checking first keeps the
+  same result on a repository without one. The lifter moves or deletes the other block first.
+- **The setup page** no longer moves the follow-on itself (`shiftedFollowOn` is gone from
+  `apps/web/lib/focusSetup.ts`). It saves the block, and the re-read after the save shows where the
+  API put the successor.
+- **An edge it leaves alone.** A successor whose own align is `calendar` while its block is custom
+  (the lifter changed one of them) moves to the day after the block, which can be mid-month; its
+  calendar range then snaps to the whole month and overlaps the block's last days. Setting the
+  successor's align to custom, or the block's to calendar, removes the overlap. Choosing an align
+  for the lifter would override a value they set.
+
+**Alternatives considered.** Keeping the move on the setup page leaves every other client to
+repeat it and keeps the two saves separate, so a failed second save leaves an overlap. Moving the
+successor and shifting every later queued block in the series along with it would avoid the
+`409`, but it would move blocks the lifter placed by hand without their asking. Skipping the move
+when the new start is taken would save the block and leave the overlap the move exists to remove,
+with nothing to tell the lifter.
 
 ## References
 

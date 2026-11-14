@@ -3,7 +3,8 @@ import { FocusBlock } from '@lifting-logbook/types';
 import { InMemoryCustomLiftRepository } from '../adapters/in-memory/custom-lift.adapter';
 import { InMemoryFocusRepository } from '../adapters/in-memory/focus.adapter';
 import { InMemoryLiftRecordRepository } from '../adapters/in-memory/lift-record.adapter';
-import { carryEditsToSuccessor, recordFocusSessions } from './focus.util';
+import { FocusBlockConflictError, FocusBlockNotFoundError } from '../ports/errors';
+import { recordFocusSessions, saveBlockEdit } from './focus.util';
 
 const TODAY = '2026-10-25';
 
@@ -34,11 +35,11 @@ const november: FocusBlock = {
   pool: defaultFocusPool('Triceps'),
 };
 
-// Pairs the success path with the catch in carryEditsToSuccessor (focus.util.ts), which
+// Pairs the success path with the catch in saveBlockEdit (focus.util.ts), which
 // treats a successor deleted since it was read as nothing to carry (#1222, #1230).
-describe('carryEditsToSuccessor', () => {
-  const edited: FocusBlock = { ...october, progression: 'percent_wave' };
+describe('saveBlockEdit', () => {
   let focus: InMemoryFocusRepository;
+  const block = async (id: string) => focus.getBlock(id);
 
   beforeEach(async () => {
     focus = new InMemoryFocusRepository();
@@ -46,25 +47,35 @@ describe('carryEditsToSuccessor', () => {
     await focus.createBlock(november);
   });
 
-  it('updates the queued successor with the followed field', async () => {
-    await carryEditsToSuccessor(focus, october, edited, TODAY);
-    expect((await focus.getBlock('november'))?.progression).toBe('percent_wave');
+  it('saves the edit and updates the queued successor with the followed field', async () => {
+    const saved = await saveBlockEdit(focus, 'october', { progression: 'percent_wave' }, TODAY);
+    expect(saved.progression).toBe('percent_wave');
+    expect((await block('november'))?.progression).toBe('percent_wave');
+  });
+
+  it("throws FocusBlockNotFoundError for a block the user doesn't have", async () => {
+    await expect(saveBlockEdit(focus, 'nope', { overlap: 'skip' }, TODAY)).rejects.toBeInstanceOf(FocusBlockNotFoundError);
   });
 
   it('carries nothing, without failing, when the successor was deleted after it was listed', async () => {
     const listed = await focus.listBlocks();
     await focus.deleteBlock('november');
     jest.spyOn(focus, 'listBlocks').mockResolvedValue(listed);
-    await expect(carryEditsToSuccessor(focus, october, edited, TODAY)).resolves.toBeUndefined();
-    expect(await focus.getBlock('november')).toBeNull();
+    await expect(saveBlockEdit(focus, 'october', { progression: 'percent_wave' }, TODAY)).resolves.toMatchObject({
+      progression: 'percent_wave',
+    });
+    expect(await block('november')).toBeNull();
   });
 
   it('carries nothing, without failing, when the successor is deleted after its lock, as with no transaction', async () => {
-    const locked = await focus.lockBlocks(['november']);
+    const locked = new Map((await focus.lockBlocks(['october', 'november'])).map((b) => [b.id, b] as const));
     await focus.deleteBlock('november');
-    jest.spyOn(focus, 'lockBlocks').mockResolvedValue(locked);
-    await expect(carryEditsToSuccessor(focus, october, edited, TODAY)).resolves.toBeUndefined();
-    expect(await focus.getBlock('november')).toBeNull();
+    jest.spyOn(focus, 'listBlocks').mockResolvedValue([...locked.values()]);
+    jest.spyOn(focus, 'lockBlocks').mockImplementation(async (ids) => ids.flatMap((id) => locked.get(id) ?? []));
+    await expect(saveBlockEdit(focus, 'october', { progression: 'percent_wave' }, TODAY)).resolves.toMatchObject({
+      progression: 'percent_wave',
+    });
+    expect(await block('november')).toBeNull();
   });
 
   // #1230: the successor edit saved since the list was read is what the carry compares against.
@@ -72,13 +83,64 @@ describe('carryEditsToSuccessor', () => {
     const listed = await focus.listBlocks();
     await focus.updateBlock('november', { overlap: 'skip' });
     jest.spyOn(focus, 'listBlocks').mockResolvedValue(listed);
-    await carryEditsToSuccessor(focus, october, { ...october, overlap: 'swap' }, TODAY);
-    expect((await focus.getBlock('november'))?.overlap).toBe('skip');
+    await saveBlockEdit(focus, 'october', { overlap: 'swap' }, TODAY);
+    expect((await block('november'))?.overlap).toBe('skip');
   });
 
-  it('rethrows any other failure', async () => {
-    jest.spyOn(focus, 'updateBlock').mockRejectedValue(new Error('connection lost'));
-    await expect(carryEditsToSuccessor(focus, october, edited, TODAY)).rejects.toThrow('connection lost');
+  it("rethrows any other failure of the successor's update", async () => {
+    const update = focus.updateBlock.bind(focus);
+    jest
+      .spyOn(focus, 'updateBlock')
+      .mockImplementation((id, patch) => (id === 'november' ? Promise.reject(new Error('connection lost')) : update(id, patch)));
+    await expect(saveBlockEdit(focus, 'october', { progression: 'percent_wave' }, TODAY)).rejects.toThrow('connection lost');
+  });
+
+  // ADR-039, Amendment 6 (#1226): a date edit moves the queued successor.
+  describe('a date edit', () => {
+    it('moves the successor to start after the lengthened block, taking its new period', async () => {
+      await saveBlockEdit(focus, 'october', { period: 'quarterly' }, TODAY);
+      expect(await block('november')).toMatchObject({ start: '2027-01-01', period: 'quarterly', align: 'calendar' });
+    });
+
+    it('moves the successor earlier when the block is shortened, closing the gap', async () => {
+      await focus.updateBlock('october', { period: 'quarterly' });
+      await focus.updateBlock('november', { start: '2027-01-01', period: 'quarterly' });
+      await saveBlockEdit(focus, 'october', { period: 'monthly' }, TODAY);
+      expect(await block('november')).toMatchObject({ start: '2026-11-01', period: 'monthly' });
+    });
+
+    it('keeps an align the lifter set on the successor, and still moves it', async () => {
+      await focus.updateBlock('november', { align: 'custom' });
+      await saveBlockEdit(focus, 'october', { period: 'quarterly' }, TODAY);
+      expect(await block('november')).toMatchObject({ start: '2027-01-01', period: 'quarterly', align: 'custom' });
+    });
+
+    it('takes a new custom start and align, moving to the day after the new range', async () => {
+      await saveBlockEdit(focus, 'october', { align: 'custom', start: '2026-10-10' }, TODAY);
+      expect(await block('november')).toMatchObject({ start: '2026-11-10', period: 'monthly', align: 'custom' });
+    });
+
+    it("moves the successor first when the block's new start is the successor's old one", async () => {
+      await saveBlockEdit(focus, 'october', { align: 'custom', start: '2026-11-01' }, TODAY);
+      expect(await block('october')).toMatchObject({ start: '2026-11-01', align: 'custom' });
+      expect(await block('november')).toMatchObject({ start: '2026-12-01', align: 'custom' });
+    });
+
+    it('leaves the successor alone when the range end is unchanged', async () => {
+      await saveBlockEdit(focus, 'october', { align: 'custom', start: '2026-10-01' }, TODAY);
+      expect(await block('november')).toMatchObject({ start: '2026-11-01', align: 'custom' });
+    });
+
+    it('refuses a move onto a start another block in the series holds, saving nothing', async () => {
+      const january = { ...november, id: 'january', start: '2027-01-01', priority: 3 };
+      await focus.createBlock(january);
+      const error = await saveBlockEdit(focus, 'october', { period: 'quarterly' }, TODAY).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(FocusBlockConflictError);
+      expect(error).toMatchObject({ series: 'series', start: '2027-01-01' });
+      expect(await block('october')).toEqual(october);
+      expect(await block('november')).toEqual(november);
+      expect(await block('january')).toEqual(january);
+    });
   });
 });
 
