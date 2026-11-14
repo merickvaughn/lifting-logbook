@@ -62,6 +62,31 @@ test('Assign: a boundary moves by keyboard alone, keeping focus, and status is w
   await expect(page.getByTestId('assign-settled').first()).toContainText('Unfinished');
 });
 
+// #1257: an import is undone from the past-macrocycles list once the wizard is gone.
+test('Assign: an import is undone later from the past-macrocycles list', async ({ page }) => {
+  await toAssign(page);
+  await page.getByRole('button', { name: 'Keep every break: file the 20 one-lift workouts with the macrocycle before each' }).click();
+  await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Preview changes' })).toBeVisible();
+  await page.getByRole('button', { name: 'Commit import' }).click();
+  await expect(page.getByText('Import complete')).toBeVisible();
+
+  // Leave the wizard: its own Undo is gone with it.
+  await page.goto('/history');
+  await page.getByRole('tab', { name: 'Macrocycles' }).click();
+  const imported = page.getByRole('row').filter({ hasText: '2024-01-' });
+  await expect(imported).toHaveCount(2);
+
+  await page.getByRole('button', { name: 'Undo the import of macrocycle 2' }).click();
+  await expect(page.getByText(/Every set it added goes/)).toBeVisible();
+  await page.getByRole('button', { name: 'Undo import', exact: true }).click();
+
+  // Both of its macrocycles go, and the earlier history numbers from 1 again.
+  await expect(imported).toHaveCount(0);
+  await expect(page.getByRole('row').filter({ hasText: '2024-09-02' }).getByRole('cell').first()).toHaveText('1');
+});
+
 test('Assign: a long file stays workable at 375px', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await toAssign(page);

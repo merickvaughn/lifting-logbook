@@ -1236,7 +1236,9 @@ export class ImportController {
  */
 function touchedMacrocycleNums(batch: ImportBatchRecord, rows: readonly MacrocycleRow[]): Set<number> {
   const { setKeys, legacyNums } = splitLegacyRowKeys(
-    Object.keys(batch.preImage).filter((k) => preImageKeyNumber(k) !== null && batch.preImage[k].kind === 'created'),
+    Object.entries(batch.preImage)
+      .filter(([k, e]) => preImageKeyNumber(k) !== null && e.kind === 'created')
+      .map(([k]) => k),
   );
   const nums = new Set([...legacyNums, ...setKeys.map(preImageKeyNumber).filter((n): n is number => n !== null)]);
   const recorded = new Set([...(batch.macrocycles?.created ?? []), ...(batch.macrocycles?.extended ?? [])]);
