@@ -7,7 +7,6 @@ import {
   autoRollSuccessor,
   currentWeek,
   isUsableStart,
-  shiftedFollowOn,
   endsIn,
   followOnBlock,
   newFocusBlock,
@@ -158,27 +157,6 @@ describe('anchoredPatch', () => {
   it('leaves an explicit start and other fields alone', () => {
     expect(anchoredPatch(quarterly, { start: '2026-12-01' }, '2026-11-15')).toEqual({ start: '2026-12-01' });
     expect(anchoredPatch(quarterly, { overlap: 'skip' }, '2026-11-15')).toEqual({ overlap: 'skip' });
-  });
-});
-
-describe('shiftedFollowOn', () => {
-  const october = block({ id: 'oct', series: 's' });
-  const november = block({ id: 'nov', series: 's', start: '2026-11-01' });
-
-  it('moves a queued follow-on past a longer period instead of overlapping it', () => {
-    const quarter = { ...october, period: 'quarterly' as const };
-    expect(shiftedFollowOn([october, november], october, quarter, TODAY)).toEqual({ id: 'nov', start: '2027-01-01' });
-  });
-
-  it('moves it up to close the gap a shorter period leaves', () => {
-    const fromQuarter = { ...october, period: 'quarterly' as const };
-    const january = block({ id: 'jan', series: 's', start: '2027-01-01' });
-    expect(shiftedFollowOn([fromQuarter, january], fromQuarter, october, TODAY)).toEqual({ id: 'jan', start: '2026-11-01' });
-  });
-
-  it('is null when nothing follows, or it already starts in the right place', () => {
-    expect(shiftedFollowOn([october], october, { ...october, overlap: 'skip' }, TODAY)).toBeNull();
-    expect(shiftedFollowOn([october, november], october, { ...october, overlap: 'skip' }, TODAY)).toBeNull();
   });
 });
 

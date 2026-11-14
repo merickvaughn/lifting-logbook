@@ -38,7 +38,9 @@ const USER_OTHER = 'db-e2e-focus-other';
 const USER_SUCCESSOR = 'db-e2e-focus-successor';
 // The concurrent-write tests' user (#1230), so their blocks never enter another test's reads.
 const USER_RACE = 'db-e2e-focus-race';
-const USERS = [USER_OWNER, USER_OTHER, USER_SUCCESSOR, USER_RACE];
+// The successor date-edit tests' user (#1226).
+const USER_DATES = 'db-e2e-focus-dates';
+const USERS = [USER_OWNER, USER_OTHER, USER_SUCCESSOR, USER_RACE, USER_DATES];
 const PROGRAM = '5-3-1';
 const TODAY = '2026-10-25';
 
@@ -598,6 +600,96 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
 
       const row = await prisma.focusBlock.findUnique({ where: { id } });
       expect(row?.pool).toEqual([wave('Barbell Curl', 115), wave('Hammer Curl', 60)]);
+    });
+  });
+
+  // ADR-039, Amendment 6 (#1226): a date edit to a block moves its stored queued successor.
+  describe('a date edit with a queued successor (#1226)', () => {
+    const lifter = as(USER_DATES);
+    const patch = (id: string, body: unknown) => lifter('PATCH', `/focus/blocks/${id}?today=${TODAY}`, body);
+    const row = (id: string) => prisma.focusBlock.findUnique({ where: { id } });
+    const day = (date: Date | undefined) => date?.toISOString().slice(0, 10);
+
+    /** An active October auto-roll block, and the successor the blocks read stores for it. */
+    async function octoberWithSuccessor() {
+      const october = (
+        await lifter('POST', `/focus/blocks?today=${TODAY}`, blockBody({ area: 'Core', onEnd: 'autoroll', nextArea: 'Calves' }))
+      ).json() as FocusBlockResponse;
+      expect((await lifter('GET', `/focus/blocks?today=${TODAY}`)).statusCode).toBe(200);
+      const successor = await prisma.focusBlock.findFirst({
+        where: { userId: USER_DATES, series: october.series, start: new Date('2026-11-01') },
+      });
+      if (!successor) throw new Error('the read stored no successor');
+      return { october, successor };
+    }
+
+    afterEach(async () => {
+      await prisma.focusBlock.deleteMany({ where: { userId: USER_DATES } });
+    });
+
+    it('lengthening the block moves the successor to start after it, with the new period', async () => {
+      const { october, successor } = await octoberWithSuccessor();
+      expect(successor).toMatchObject({ period: 'monthly', align: 'calendar' });
+
+      const res = await patch(october.id, { period: 'quarterly' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ rangeStart: '2026-10-01', rangeEnd: '2026-12-31' });
+
+      const moved = await row(successor.id);
+      expect(day(moved?.start)).toBe('2027-01-01');
+      expect(moved).toMatchObject({ period: 'quarterly', align: 'calendar', area: 'Calves' });
+      // The moved successor still covers the roll, so the next read stores no second one.
+      expect((await lifter('GET', `/focus/blocks?today=${TODAY}`)).statusCode).toBe(200);
+      expect(await prisma.focusBlock.count({ where: { userId: USER_DATES, series: october.series } })).toBe(2);
+    });
+
+    it('refuses with 409, saving nothing, when another block in the series holds the new start', async () => {
+      const { october, successor } = await octoberWithSuccessor();
+      const january = await lifter(
+        'POST',
+        `/focus/blocks?today=${TODAY}`,
+        blockBody({ area: 'Calves', series: october.series, start: '2027-01-01' }),
+      );
+      expect(january.statusCode).toBe(201);
+      const { id: januaryId } = january.json() as FocusBlockResponse;
+
+      const res = await patch(october.id, { period: 'quarterly' });
+      expect(res.statusCode).toBe(409);
+
+      expect(await row(october.id)).toMatchObject({ period: 'monthly' });
+      expect(day((await row(successor.id))?.start)).toBe('2026-11-01');
+      expect((await row(successor.id))?.period).toBe('monthly');
+      expect(day((await row(januaryId))?.start)).toBe('2027-01-01');
+    });
+
+    it('moves a follow-on the lifter queued inside the new range, copying no settings', async () => {
+      const { october, successor } = await octoberWithSuccessor();
+      await prisma.focusBlock.update({ where: { id: successor.id }, data: { start: new Date('2026-11-15'), align: 'custom' } });
+      expect((await patch(october.id, { period: 'quarterly' })).statusCode).toBe(200);
+      expect(day((await row(successor.id))?.start)).toBe('2027-01-01');
+      expect((await row(successor.id))?.period).toBe('monthly');
+    });
+
+    it('refuses with 409, saving nothing, a lengthening that would overlap a block queued after the successor', async () => {
+      const { october, successor } = await octoberWithSuccessor();
+      const december = await lifter(
+        'POST',
+        `/focus/blocks?today=${TODAY}`,
+        blockBody({ area: 'Calves', series: october.series, start: '2026-12-01' }),
+      );
+      expect(december.statusCode).toBe(201);
+      expect((await patch(october.id, { period: 'quarterly' })).statusCode).toBe(409);
+      expect(await row(october.id)).toMatchObject({ period: 'monthly' });
+      expect(day((await row(successor.id))?.start)).toBe('2026-11-01');
+    });
+
+    it("moves the successor first when the block's new start is the successor's old one", async () => {
+      const { october, successor } = await octoberWithSuccessor();
+      const res = await patch(october.id, { align: 'custom', start: '2026-11-01' });
+      expect(res.statusCode).toBe(200);
+      expect(day((await row(october.id))?.start)).toBe('2026-11-01');
+      expect(await row(successor.id)).toMatchObject({ align: 'custom' });
+      expect(day((await row(successor.id))?.start)).toBe('2026-12-01');
     });
   });
 });

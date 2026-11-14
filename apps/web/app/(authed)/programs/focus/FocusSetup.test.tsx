@@ -555,7 +555,8 @@ describe('FocusSetup', () => {
     ).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('moves a follow-on later before moving the block onto its old start', async () => {
+  // ADR-039, Amendment 6 (#1226): the API moves the follow-on, so the page saves the block only.
+  it('saves only the block on a date edit, leaving its follow-on to the API', async () => {
     const user = userEvent.setup();
     // Custom Oct 12 – Nov 11, renewed from Nov 12.
     stored = stored.map((b) => (b.id === 'bi' ? { ...b, align: 'custom', start: '2026-10-12' } : b));
@@ -566,11 +567,9 @@ describe('FocusSetup', () => {
     fireEvent.change(date, { target: { value: '2026-10-20' } });
     fireEvent.blur(date);
 
-    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2));
-    expect(mocks.update.mock.calls.map(([id, patch]) => [id, patch])).toEqual([
-      ['bi-next', { start: '2026-11-20' }],
-      ['bi', { start: '2026-10-20' }],
-    ]);
+    await waitFor(() => expect(mocks.update).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
+    expect(mocks.update.mock.calls.map(([id, patch]) => [id, patch])).toEqual([['bi', { start: '2026-10-20' }]]);
   });
 
   it('shows the focus blocks when only the daily focus guide fails to load', async () => {

@@ -3,7 +3,6 @@
 // the dates through core's `blockStatus`, never from a stored field (ADR-039).
 
 import {
-  blockRange,
   blockStatus,
   daysLeft,
   defaultFocusPool,
@@ -169,29 +168,6 @@ export function anchoredPatch(
   const next = { ...block, ...patch };
   if (blockStatus(block, today) !== 'active' || blockStatus(next, today) === 'active') return patch;
   return { ...patch, start: next.align === 'calendar' ? `${today.slice(0, 8)}01` : today };
-}
-
-/**
- * The queued block that follows `before` in its series — its renewal, queued area or
- * auto-roll successor — moved to start the day after `after` ends. Without the move, a
- * longer period would overlap it and a shorter one would leave a gap. Null when nothing
- * follows, or it already starts there.
- */
-export function shiftedFollowOn(
-  blocks: readonly FocusBlock[],
-  before: FocusBlock,
-  after: FocusBlock,
-  today: string,
-): { id: string; start: string } | null {
-  const start = nextStart(after);
-  const followOn = blocks.find(
-    (other) =>
-      other.id !== before.id &&
-      other.series === before.series &&
-      blockStatus(other, today) === 'queued' &&
-      (other.start === nextStart(before) || other.start <= blockRange(after).end),
-  );
-  return followOn && followOn.start !== start ? { id: followOn.id, start } : null;
 }
 
 /** The auto-roll successor the API created for `block`, if it has one queued. */
