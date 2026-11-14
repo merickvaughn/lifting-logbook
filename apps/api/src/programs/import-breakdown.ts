@@ -357,13 +357,22 @@ export async function planBreakdown(
     const { spec, span, rows, raw } = stretch;
     if (raw.length === 0) continue;
     const sessionOf = new Map([...new Set(rows.map((r) => r.date.getTime()))].sort((a, b) => a - b).map((t, i) => [t, i + 1]));
+    // A row the file left unnumbered takes its day's lowest number, the one Assign shows (#1256).
+    const dayNum = new Map<number, number>();
+    for (const r of rows) {
+      const num = fileWorkoutNum(r);
+      const t = r.date.getTime();
+      if (num !== null && num < (dayNum.get(t) ?? Infinity)) dayNum.set(t, num);
+    }
     const continued = stored.kind === 'joins' ? continuedWorkoutNum(stretch.creating, stored.held) : null;
     const creating = raw.map((r) => ({
       ...r,
       program: spec.program,
       // A new macrocycle's number is given at write time.
       macrocycleNum: stored.kind === 'joins' ? stored.macrocycle.macrocycleNum : 0,
-      workoutNum: continued ? continued(r) : (fileWorkoutNum(r) ?? sessionOf.get(r.date.getTime()) ?? 1),
+      workoutNum: continued
+        ? continued(r)
+        : (fileWorkoutNum(r) ?? dayNum.get(r.date.getTime()) ?? sessionOf.get(r.date.getTime()) ?? 1),
     }));
     const lifts = programs.find((p) => p.id === spec.program)?.lifts;
     stretches.push({

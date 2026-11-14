@@ -180,15 +180,6 @@
   color: var(--color-text);
 }
 
-.notice {
-  margin: 0;
-  background: var(--color-info-bg);
-  border-left: 3px solid var(--color-accent);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
-}
-
 .summary {
   margin: 0;
   font-size: var(--font-size-sm);

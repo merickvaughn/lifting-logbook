@@ -179,10 +179,6 @@ export function moveStart(draft: AssignDraft, id: string, direction: 'earlier' |
   return edit(draft, stretches);
 }
 
-/**
- * Joins stretch `id` into the one before it. Sessions on one date become one. The joined stretch
- * keeps a status the lifter chose for the earlier one.
- */
 /** The stretch `id` and the one before it, which a join keeps; null for the first. */
 function withPrevious(draft: AssignDraft, id: string): { i: number; before: DraftStretch; self: DraftStretch } | null {
   const i = draft.stretches.findIndex((s) => s.id === id);
@@ -196,6 +192,10 @@ export function previousStretchId(draft: AssignDraft, id: string): string | null
   return withPrevious(draft, id)?.before.id ?? null;
 }
 
+/**
+ * Joins stretch `id` into the one before it. Sessions on one date become one. The joined stretch
+ * keeps a status the lifter chose for the earlier one.
+ */
 export function joinWithPrevious(draft: AssignDraft, id: string): AssignDraft {
   const pair = withPrevious(draft, id);
   if (!pair) return draft;

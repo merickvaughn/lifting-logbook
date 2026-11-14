@@ -853,6 +853,24 @@ describe('segmentLiftHistory', () => {
       expect(result.unnumbered[0]?.program).toBe('5-3-1');
     });
 
+    it("places an unnumbered row with its day's macrocycle, in file order, when placing by date (#1256)", () => {
+      // Barbell Row has no number to take and isn't a 5/3/1 lift; a row on a day with none stays out.
+      const rows = [
+        ...session(0, ['Barbell Row'], { program: 'rpt' }),
+        ...run(FIVE_THREE_ONE_DAYS, 0, 3, { extra: () => ({ program: '5-3-1', macrocycleNum: 1 }) }),
+        ...session(1, ['Dips'], { program: 'rpt' }),
+      ];
+      const placed = segment(rows, { placeByDate: true });
+      expect(placed.unnumbered.map((r) => r.lift)).toEqual(['Dips']);
+      expect(placed.stretches).toHaveLength(1);
+      expect(placed.stretches[0]?.sessions[0]?.rows.map((r) => r.lift)).toEqual(['Barbell Row', 'Squat', 'Bench Press']);
+      expect(placed.stretches[0]).toMatchObject({ matched: false, liftsOutsideProgram: ['Barbell Row'] });
+
+      const listed = segment(rows);
+      expect(listed.unnumbered.map((r) => r.lift)).toEqual(['Barbell Row', 'Dips']);
+      expect(listed.stretches[0]?.matched).toBe(true);
+    });
+
     it("keys each row by the file macrocycle it's grouped in, across spellings and blank cells (#1256)", () => {
       const rows = [
         ...session(0, ['Squat'], { program: '5-3-1' }),

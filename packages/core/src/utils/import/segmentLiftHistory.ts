@@ -67,6 +67,12 @@ export interface SegmentLiftHistoryOptions {
    * here: its spec may be one repeating block, so a run of it never finishes by length.
    */
   customPrograms?: readonly KnownProgram[];
+  /**
+   * The commit places this file's rows by date, as it does any file that isn't an export. A row
+   * with no macrocycle number on a day a file macrocycle holds then joins that macrocycle rather
+   * than being listed `unnumbered`, and counts toward its program and status (#1256).
+   */
+  placeByDate?: boolean;
 }
 
 export type StretchStatus = 'in-progress' | 'completed' | 'overran' | 'abandoned';
@@ -301,7 +307,8 @@ function sessionOrders(rows: readonly LiftHistoryRow[]): Map<string, SetOrder> {
   return orders;
 }
 
-function toSessions<T extends LiftHistoryRow>(rows: readonly Dated<T>[]): Session<T>[] {
+/** `unlabelled` rows don't name their session's program: a row placed by date only (#1256). */
+function toSessions<T extends LiftHistoryRow>(rows: readonly Dated<T>[], unlabelled?: ReadonlySet<T>): Session<T>[] {
   const byDay = new Map<number, Session<T>>();
   for (const row of rows) {
     const date = toUTCMidnight(row.date);
@@ -313,7 +320,7 @@ function toSessions<T extends LiftHistoryRow>(rows: readonly Dated<T>[]): Sessio
     session.rows.push(row);
     const key = liftKey(row.lift);
     if (!session.lifts.has(key)) session.lifts.set(key, row.lift.trim());
-    if (session.programValue === undefined) {
+    if (session.programValue === undefined && !unlabelled?.has(row)) {
       const program = programCell(row.program);
       if (program !== undefined) session.programValue = program;
     }
@@ -763,7 +770,8 @@ class Segmenter<T extends LiftHistoryRow> {
    * number takes the number of the nearest row above it in the same program (the row above
    * when its `Program` cell is blank too), else of a row of its own session (the same day and
    * program, or any program when its cell is blank), and a row with none to take is
-   * `unnumbered`. A blank `Program` cell belongs with the rest of its number.
+   * `unnumbered`, unless `placeByDate` puts it with a macrocycle on its day. A blank `Program`
+   * cell belongs with the rest of its number.
    */
   byFileNumbers(rows: readonly Dated<T>[]): { drafts: Draft<T>[]; unnumbered: T[] } {
     const cellKey = (row: T) => {
@@ -782,7 +790,7 @@ class Segmenter<T extends LiftHistoryRow> {
     }
     /** `session` is the row's number and day, so rows of one session share it. */
     const numbered: { row: Dated<T>; num: number; key: string | undefined; session: string }[] = [];
-    const unnumbered: T[] = [];
+    const unnumbered: Dated<T>[] = [];
     const lastByProgram = new Map<string, number>();
     let lastAny: number | undefined;
     for (const row of rows) {
@@ -833,15 +841,40 @@ class Segmenter<T extends LiftHistoryRow> {
       groups.set(id, group);
     }
 
+    // Placed by date, an unnumbered row on a macrocycle's day is part of it, in file order. Its
+    // own `Program` cell doesn't name the macrocycle's program: it joined by its date alone.
+    let left = unnumbered;
+    const placed = new Set<T>();
+    if (this.options.placeByDate) {
+      const order = new Map(rows.map((row, i) => [row, i]));
+      const byDay = new Map<number, Dated<T>[]>();
+      for (const group of groups.values()) {
+        for (const row of group.rows) {
+          const day = toUTCMidnight(row.date).getTime();
+          if (!byDay.has(day)) byDay.set(day, group.rows);
+        }
+      }
+      const joined = new Set<Dated<T>[]>();
+      left = unnumbered.filter((row) => {
+        const into = byDay.get(toUTCMidnight(row.date).getTime());
+        if (!into) return true;
+        into.push(row);
+        joined.add(into);
+        placed.add(row);
+        return false;
+      });
+      for (const into of joined) into.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+    }
+
     const drafts = [...groups.values()]
       .map((group) => {
-        const sessions = toSessions(group.rows);
+        const sessions = toSessions(group.rows, placed);
         const draft = this.newDraft({ kind: 'file-macrocycle', macrocycleNum: group.num }, group.num, group.key);
         for (const session of sessions) this.add(draft, session);
         return draft;
       })
       .sort((a, b) => (a.sessions[0]?.date.getTime() ?? 0) - (b.sessions[0]?.date.getTime() ?? 0));
-    return { drafts, unnumbered };
+    return { drafts, unnumbered: left };
   }
 
   /** Decision 9's program for a whole stretch, from the same totals `boundary` follows. */
@@ -1077,19 +1110,6 @@ function firstAfter(sorted: readonly number[], value: number): number {
 }
 
 /**
- * Groups imported lift history into suggested macrocycles from its dates.
- *
- * - A gap of more than {@link BREAK_DAYS} days between sessions, a finished run, a change in
- *   the file's `Program` column, a lift the stretch's program can't have, a transition day
- *   ending, a settled set order turning around, or a file workout number falling back
- *   starts a new stretch.
- * - A file with macrocycle numbers keeps its own groupings instead (decision 8): blank
- *   numbers take the one above, rows with none to take are `unnumbered`, and `conflicts`
- *   reports where the numbers disagree with the dates.
- * - Single-lift sessions inside a break are returned in `lone`, outside every stretch.
- * - Rows with no date are returned in `unplaced`.
- */
-/**
  * A file's rows as {@link segmentLiftHistory} and {@link fileMacrocycleKeys} both read them:
  * the non-cycle rows, the undated rest, and the dated rest that's grouped.
  */
@@ -1099,6 +1119,20 @@ function splitRows<T extends LiftHistoryRow>(allRows: readonly T[]) {
   return { nonCycle, unplaced: rows.filter((row) => !isDated(row)), dated: rows.filter(isDated) };
 }
 
+/**
+ * Groups imported lift history into suggested macrocycles from its dates.
+ *
+ * - A gap of more than {@link BREAK_DAYS} days between sessions, a finished run, a change in
+ *   the file's `Program` column, a lift the stretch's program can't have, a transition day
+ *   ending, a settled set order turning around, or a file workout number falling back
+ *   starts a new stretch.
+ * - A file with macrocycle numbers keeps its own groupings instead (decision 8): blank
+ *   numbers take the one above, rows with none to take are `unnumbered` (or, with
+ *   `placeByDate`, join a macrocycle on their day), and `conflicts` reports where the numbers
+ *   disagree with the dates.
+ * - Single-lift sessions inside a break are returned in `lone`, outside every stretch.
+ * - Rows with no date are returned in `unplaced`.
+ */
 export function segmentLiftHistory<T extends LiftHistoryRow>(
   allRows: readonly T[],
   options: SegmentLiftHistoryOptions,

@@ -113,6 +113,7 @@ const CHOICES: Record<SessionChoice, { label: string; name: (day: string) => str
 /** A stretch's card, which focus moves to after an edit removes the control that made it. */
 const cardId = (id: string) => `assign-card-${id}`;
 const DECISIONS_ID = 'assign-decisions';
+const HEADING_ID = 'assign-heading';
 
 /**
  * The Assign step (#1256): the rules' grouping of a lift-records file into macrocycles, for the
@@ -122,10 +123,13 @@ export default function AssignStep({
   res,
   draft,
   onChange,
+  focusHeading = false,
 }: {
   res: ImportAssignResponse;
   draft: AssignDraft;
   onChange: (next: AssignDraft) => void;
+  /** Focus the heading when shown: the control the lifter last used is gone (#1256). */
+  focusHeading?: boolean;
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const name = programNamer(res);
@@ -156,10 +160,15 @@ export default function AssignStep({
     document.getElementById(focusTarget)?.focus();
     setFocusTarget(null);
   }, [focusTarget]);
+  useEffect(() => {
+    if (focusHeading) setFocusTarget(HEADING_ID);
+  }, [focusHeading]);
 
   return (
     <div className={styles.step}>
-      <h2 className={styles.heading}>Assign your history to macrocycles</h2>
+      <h2 className={styles.heading} id={HEADING_ID} tabIndex={-1}>
+        Assign your history to macrocycles
+      </h2>
       <p className={styles.reason}>
         We grouped your workouts using their dates. These are suggestions: change anything before you
         continue. Macrocycles are numbered by date, so yours may be renumbered.

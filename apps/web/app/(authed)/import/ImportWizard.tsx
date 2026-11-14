@@ -43,7 +43,6 @@ import { LIFT_CLASSIFICATIONS } from './liftClassifications';
 import { KIND_LABEL, kindsForTarget, previousStep, Step, STEP_LABELS, visibleSteps } from './steps';
 import type { ImportTarget, StepValue } from './steps';
 import AssignStep from './AssignStep';
-import assignStyles from './AssignStep.module.css';
 import { buildBreakdown, initialDraft, openDecisions, type AssignDraft } from './assignDraft';
 import {
   SheetTabsStep,
@@ -1336,6 +1335,7 @@ export function ImportWizard({
     setAssignRes(null);
     setAssignDraft(null);
     assignKey.current = null;
+    setAssignNotice(null);
     setStep(Step.ASSIGN);
     await loadAssign(MISMATCH_NOTICE);
   }
@@ -2316,7 +2316,7 @@ export function ImportWizard({
             <div
               role="status"
               data-testid="assign-notice"
-              className={step === Step.ASSIGN && assignNotice ? assignStyles.notice : undefined}
+              className={step === Step.ASSIGN && assignNotice ? styles.notice : undefined}
             >
               {step === Step.ASSIGN ? assignNotice : null}
             </div>
@@ -2325,16 +2325,33 @@ export function ImportWizard({
             <>
               {assignRes && assignDraft ? (
                 // A fresh grouping remounts the step: its stretch ids name different stretches now.
-                <AssignStep key={assignLoads} res={assignRes} draft={assignDraft} onChange={setAssignDraft} />
+                // After a mismatch the control the lifter used is gone, so focus starts at the step.
+                <AssignStep
+                  key={assignLoads}
+                  res={assignRes}
+                  draft={assignDraft}
+                  onChange={setAssignDraft}
+                  focusHeading={assignNotice === MISMATCH_NOTICE}
+                />
               ) : (
-                !busy && (
-                  // The grouping the server refused is gone, so there's nothing to send until a reload works.
-                  <button type="button" className={styles.btnSecondary} onClick={() => void loadAssign(MISMATCH_NOTICE)}>
-                    Group my workouts again
-                  </button>
-                )
+                // The grouping the server refused is gone, so there's nothing to send until a reload works.
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  disabled={busy}
+                  onClick={() => {
+                    setAssignNotice(null);
+                    void loadAssign(MISMATCH_NOTICE);
+                  }}
+                >
+                  Group my workouts again
+                </button>
               )}
-              {error && <p className={styles.errorNote}>{error}</p>}
+              {error && (
+                <p className={styles.errorNote} role="alert">
+                  {error}
+                </p>
+              )}
             </>
           )}
 
@@ -2532,6 +2549,8 @@ export function ImportWizard({
               className={styles.btnSecondary}
               onClick={() => {
                 setError(null);
+                // A notice says why Assign was reloaded; it's stale once the lifter moves on.
+                setAssignNotice(null);
                 setStep(previousStep(step, assignActive));
               }}
               disabled={busy}

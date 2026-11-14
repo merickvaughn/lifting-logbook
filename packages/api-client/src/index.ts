@@ -582,7 +582,9 @@ export function createApiClient(config: ApiClientConfig) {
     /**
      * Smart Import — commit a CSV to the chosen destination. The server re-parses the
      * file (never trusting any client payload) and writes idempotently. Returns a
-     * discriminated union so callers handle validation errors without catching.
+     * discriminated union so callers handle row validation errors without catching; any
+     * other refusal, a coded 400 such as `breakdown-mismatch` included, throws an
+     * `ApiClientError`, as `dryRunImport` does (#1256).
      * Phase 3: pass `opts` for column overrides, row exclusions, lift remapping, or
      * 1RM split routing.
      */

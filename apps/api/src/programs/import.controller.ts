@@ -86,7 +86,6 @@ import {
   assignImportDate,
   assignProgramOptions,
   assignResponse,
-  foldUnnumberedByDate,
   importAssignEnabled,
   planSplitMaxes,
   splitMaxCounts,
@@ -863,13 +862,13 @@ export class ImportController {
     const liftRecords = rows as LiftRecord[];
 
     const customPrograms = await this.customPrograms(userId);
-    const grouped = segmentLiftHistory(liftRecords.map(toLiftHistoryRecord), {
+    const segmented = segmentLiftHistory(liftRecords.map(toLiftHistoryRecord), {
       importDate,
       sourceProgram: program,
       customPrograms,
+      // An export pairs rows by file macrocycle; the commit places any other file by date.
+      placeByDate: !exported,
     });
-    // An export pairs rows by file macrocycle, so only another file folds its unnumbered rows by date.
-    const segmented = exported ? grouped : foldUnnumberedByDate(grouped);
     const stored = await placeSuggestedStretches(repos, segmented.stretches, [
       ...BUILT_IN_KNOWN_PROGRAMS,
       ...customPrograms,

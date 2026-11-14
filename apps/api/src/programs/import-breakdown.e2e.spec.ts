@@ -631,6 +631,26 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     expect(result.created).toBe(10);
   });
 
+  it("counts a row joined to its day's macrocycle toward its program, under the day's workout number (#1256)", async () => {
+    // Barbell Row isn't a 5/3/1 lift, and this file numbers 5/3/1's workouts from 5.
+    const fiveThreeOne = run(FIVE_THREE_ONE_DAYS, 0, 3, { program: '5-3-1', macrocycle: 1 }).map((r) => ({
+      ...r,
+      workout: (r.day ?? 0) / 2 + 5,
+    }));
+    const csv = csvOf([...fiveThreeOne, { day: 2, lift: 'Barbell Row', program: 'rpt' }]);
+    const assigned = await assignOf(csv);
+    expect(assigned.unnumbered).toEqual([]);
+    const [only] = assigned.stretches;
+    expect(only).toMatchObject({ matched: false, liftsOutsideProgram: ['Barbell Row'] });
+    expect(only?.sessions.find((s) => s.date === day(2))).toMatchObject({ workoutNum: 6 });
+
+    const dates = only?.sessions.map((s) => s.date) ?? [];
+    await commit(csv, breakdownOf([{ program: '5-3-1', dates, status: 'completed', statusChosen: true }]));
+    expect(await macrocycles('5-3-1')).toEqual([expect.objectContaining({ unmatched: true })]);
+    const onDay2 = (await stored('5-3-1')).filter((r) => ymd(new Date(r.date)) === day(2));
+    expect(onDay2.map((r) => r.workoutNum)).toEqual([6, 6, 6]);
+  });
+
   it('refuses to undo a batch grouped under another one', async () => {
     const fiveThreeOne = run(FIVE_THREE_ONE_DAYS, 0, 2);
     const rpt = run(RPT_DAYS, 20, 2);

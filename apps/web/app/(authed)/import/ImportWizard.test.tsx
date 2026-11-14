@@ -3935,13 +3935,18 @@ describe('ImportWizard Assign step (#1256)', () => {
     expect(mockAssign).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId('assign-summary')).toHaveTextContent('in 1 macrocycle.');
     expect(screen.getByTestId('assign-settled')).toHaveAttribute('aria-expanded', 'false');
+    const heading = () => screen.getByRole('heading', { name: 'Assign your history to macrocycles' });
+    await waitFor(() => expect(heading()).toHaveFocus());
 
-    // The same at commit.
+    // The same at commit, from Preview into the region Preview already has.
     await user.click(nextButton());
     await screen.findByRole('heading', { name: 'Preview changes' });
+    const onPreview = screen.getByTestId('assign-notice');
+    expect(onPreview).toBeEmptyDOMElement();
     mockCommit.mockRejectedValueOnce(mismatch());
     await user.click(screen.getByRole('button', { name: 'Commit import' }));
-    expect(await screen.findByText(/no longer matched these macrocycles/)).toBeInTheDocument();
+    expect(await screen.findByText(/no longer matched these macrocycles/)).toBe(onPreview);
+    await waitFor(() => expect(heading()).toHaveFocus());
     expect(mockAssign).toHaveBeenCalledTimes(3);
 
     // A reload that fails leaves the lifter on Assign with its error, not on an emptied Preview,
@@ -3951,16 +3956,25 @@ describe('ImportWizard Assign step (#1256)', () => {
     mockCommit.mockRejectedValueOnce(mismatch());
     mockAssign.mockRejectedValueOnce(new Error('Grouping is unavailable'));
     await user.click(screen.getByRole('button', { name: 'Commit import' }));
-    expect(await screen.findByText('Grouping is unavailable')).toBeInTheDocument();
+    expect(await screen.findByText('Grouping is unavailable')).toHaveAttribute('role', 'alert');
     expect(screen.getByText('Step 6 of 8 · Assign')).toBeInTheDocument();
     expect(screen.queryByTestId('assign-summary')).not.toBeInTheDocument();
+    // No grouping came back, so there's no notice saying one did.
+    expect(screen.getByTestId('assign-notice')).toBeEmptyDOMElement();
     expect(nextButton()).toBeDisabled();
     // Trying again fetches a fresh grouping.
     mockAssign.mockResolvedValueOnce(fresh);
     await user.click(screen.getByRole('button', { name: 'Group my workouts again' }));
     expect(await screen.findByTestId('assign-summary')).toHaveTextContent('in 1 macrocycle.');
+    expect(screen.getByTestId('assign-notice')).toHaveTextContent(/no longer matched these macrocycles/);
+    await waitFor(() => expect(heading()).toHaveFocus());
     expect(mockAssign).toHaveBeenCalledTimes(5);
     expect(nextButton()).toBeEnabled();
+    // Going back leaves the notice behind.
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await user.click(nextButton());
+    expect(await screen.findByTestId('assign-summary')).toBeInTheDocument();
+    expect(screen.getByTestId('assign-notice')).toBeEmptyDOMElement();
   });
 
   it('keeps keyboard focus on what an edit changed, and opens a settled stretch from its own row', async () => {
