@@ -329,49 +329,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/staging-env-lock.py acquire --bucket "$STAGING_LOCK_BUCKET" --recreate-in-project "$STAGING_LOCK_PROJECT" --timeout-min 80 --holder-job "Deploy (staging)"
 
+      # Apply, capture outputs, and check Terraform's Artifact Registry path against the one
+      # build-images pushed to. Shared with staging.yml's terraform-staging job (#1266).
       - name: Terraform apply (staging)
-        working-directory: ${{ env.TF_DIR }}
+        id: tf-outputs
         # The 20m the terraform-staging job allowed before this step moved into this job.
         timeout-minutes: 20
-        # Bounded retry absorbs transient GCP API 5xx / eventual-consistency
-        # during apply (a real CI red-run driver per the #498 diagnosis —
-        # docs/runbooks/staging-ci-flakiness.md; #504 applies it here for prod
-        # parity). terraform apply is re-runnable; a genuine config error fails
-        # both attempts and hard-fails.
-        run: |
-          for attempt in 1 2; do
-            if terraform apply -auto-approve \
-                 -var-file=terraform.tfvars.staging \
-                 -var="billing_account=${{ secrets.GCP_BILLING_ACCOUNT }}"; then
-              exit 0
-            fi
-            if [ "${attempt}" -lt 2 ]; then
-              echo "Terraform apply attempt ${attempt} failed; retrying in 20s..."
-              sleep 20
-            fi
-          done
-          echo "::error title=Terraform apply failed::terraform apply (staging) failed on both attempts."
-          exit 1
-
-      - name: Capture Terraform outputs
-        id: tf-outputs
-        working-directory: ${{ env.TF_DIR }}
-        run: |
-          echo "gke_enabled=$(terraform output -raw gke_enabled)" >> "$GITHUB_OUTPUT"
-          echo "gke_cluster_name=$(terraform output -raw gke_cluster_name)" >> "$GITHUB_OUTPUT"
-          echo "cloud_run_api_url=$(terraform output -raw cloud_run_api_url)" >> "$GITHUB_OUTPUT"
-          echo "cloud_run_web_url=$(terraform output -raw cloud_run_web_url)" >> "$GITHUB_OUTPUT"
-          echo "otel_mirror_repo=$(terraform output -raw otel_collector_mirror_repo)" >> "$GITHUB_OUTPUT"
-          echo "kms_key_name=$(terraform output -raw kms_key_name)" >> "$GITHUB_OUTPUT"
-          echo "api_wi_sa=$(terraform output -raw cicd_service_account_email)" >> "$GITHUB_OUTPUT"
-          echo "web_workload_sa=$(terraform output -raw web_workload_sa)" >> "$GITHUB_OUTPUT"
-          # build-images pushed to preflight's computed path. Stop before deploying if Terraform
-          # manages a different repository.
-          TF_AR_REPO="$(terraform output -raw artifact_registry_repo)"
-          if [[ "$TF_AR_REPO" != "${{ needs.preflight.outputs.ar_repo }}" ]]; then
-            echo "::error title=Artifact Registry path mismatch::Terraform's artifact_registry_repo is '$TF_AR_REPO', but preflight computed '${{ needs.preflight.outputs.ar_repo }}' and build-images pushed there. Update preflight's ar_repo to match."
-            exit 1
-          fi
+        uses: ./.github/actions/tf-apply-staging
+        with:
+          billing-account: ${{ secrets.GCP_BILLING_ACCOUNT }}
+          expected-ar-repo: ${{ needs.preflight.outputs.ar_repo }}
+          tf-dir: ${{ env.TF_DIR }}
 
       # Refresh the lock's age. When GitHub can't say whether a holder is done, a waiter takes over
       # a lock older than 40 minutes (staging-env-lock.py --stale-min), and this job's apply (up to

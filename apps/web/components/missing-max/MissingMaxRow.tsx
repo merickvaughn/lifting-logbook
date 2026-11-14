@@ -17,7 +17,7 @@ import { logClientError } from '@/lib/log-client-error';
 import styles from './MissingMaxRow.module.css';
 
 /** One lift on offer, as the missing list reports it, or from a progression `skipped` entry. */
-export type MissingMaxEntry = Pick<MissingTrainingMaxResponse, 'lift' | 'liftId' | 'estimate' | 'dismissed'> &
+export type MissingMaxEntry = Pick<MissingTrainingMaxResponse, 'lift' | 'name' | 'liftId' | 'estimate' | 'dismissed'> &
   Partial<Pick<MissingTrainingMaxResponse, 'setCount' | 'lastLoggedDate'>>;
 
 /** What every place that asks passes to the row, besides the entry itself. */
@@ -49,6 +49,25 @@ export function shortDate(iso: string, now: Date = new Date()): string {
   });
 }
 
+/** The weight a row starts with: the estimate, or empty with none. */
+export function initialValue(entry: MissingMaxEntry): string {
+  return entry.estimate ? String(entry.estimate.weight) : '';
+}
+
+/**
+ * The unit a row's weight is entered and saved in: its estimate's, or the stored unit (lbs) with
+ * none, as the Training Maxes table does (`docs/standards/training-max-precision.md`).
+ */
+export function rowUnit(entry: MissingMaxEntry): WeightUnit {
+  return entry.estimate?.unit ?? 'lbs';
+}
+
+/** A typed weight as a positive number, or null when it isn't one. */
+export function parseWeight(value: string): number | null {
+  const weight = Number(value);
+  return value.trim() !== '' && Number.isFinite(weight) && weight > 0 ? weight : null;
+}
+
 function estimateLine(entry: MissingMaxEntry): string {
   const { estimate } = entry;
   if (!estimate) return 'No set to estimate from: enter a training max';
@@ -75,19 +94,45 @@ export function MissingMaxRow({
   step = DEFAULT_WEIGHT_INCREMENT,
   onSetUp,
   onDismissedChange,
-}: MissingMaxRowOptions & { entry: MissingMaxEntry }) {
+  value: controlledValue,
+  onValueChange,
+  error: callerError,
+  disabled = false,
+  onBusyChange,
+}: MissingMaxRowOptions & {
+  entry: MissingMaxEntry;
+  /**
+   * The weight, when the caller holds it: the workout dialog's **Set up all** saves every row's
+   * value at once. Without it, the row keeps its own.
+   */
+  value?: string;
+  onValueChange?: (liftId: string, value: string) => void;
+  /** An error the caller found in this row, such as **Set up all** refusing its weight. */
+  error?: string | null;
+  /** Holds the row's buttons while the caller is saving it some other way. */
+  disabled?: boolean;
+  /** Reports a write of the row's own starting and ending, so the caller can hold its own. */
+  onBusyChange?: (liftId: string, busy: boolean) => void;
+}) {
   const estimateId = useId();
   const errorId = useId();
-  const unit = entry.estimate?.unit ?? 'lbs';
-  const [value, setValue] = useState(entry.estimate ? String(entry.estimate.weight) : '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const unit = rowUnit(entry);
+  const [ownValue, setOwnValue] = useState(() => initialValue(entry));
+  const value = controlledValue ?? ownValue;
+  const setValue = (next: string) => (onValueChange ? onValueChange(entry.liftId, next) : setOwnValue(next));
+  const [busy, setOwnBusy] = useState(false);
+  const setBusy = (next: boolean) => {
+    setOwnBusy(next);
+    onBusyChange?.(entry.liftId, next);
+  };
+  const [ownError, setError] = useState<string | null>(null);
+  const error = ownError ?? callerError;
   const logged = loggedLine(entry);
   const context = { program, liftId: entry.liftId, source };
 
   async function setUp() {
-    const weight = Number(value);
-    if (value === '' || !Number.isFinite(weight) || weight <= 0) {
+    const weight = parseWeight(value);
+    if (weight === null) {
       setError('Enter a positive number');
       return;
     }
@@ -124,7 +169,7 @@ export function MissingMaxRow({
   return (
     <li className={styles.row}>
       <div className={styles.lift}>
-        <span className={styles.liftName}>{entry.lift}</span>
+        <span className={styles.liftName}>{entry.name}</span>
         {logged && <span className={styles.muted}>{logged}</span>}
       </div>
       <div className={styles.weight}>
@@ -132,7 +177,7 @@ export function MissingMaxRow({
           type="number"
           step={step}
           value={value}
-          aria-label={`${entry.lift} training max`}
+          aria-label={`${entry.name} training max`}
           aria-describedby={error ? `${estimateId} ${errorId}` : estimateId}
           aria-invalid={error ? true : undefined}
           autoComplete="off"
@@ -146,10 +191,10 @@ export function MissingMaxRow({
         {showHint && <span className={styles.muted}>≈ {formatWeight(Number(value), unit, preferredUnit)}</span>}
       </div>
       <div className={styles.actions}>
-        <button type="button" className={styles.primary} onClick={setUp} disabled={busy}>
+        <button type="button" className={styles.primary} onClick={setUp} disabled={busy || disabled}>
           Set up
         </button>
-        <button type="button" className={styles.secondary} onClick={toggleDismissed} disabled={busy}>
+        <button type="button" className={styles.secondary} onClick={toggleDismissed} disabled={busy || disabled}>
           {entry.dismissed ? 'Ask again' : "Don't ask again"}
         </button>
       </div>
@@ -196,7 +241,7 @@ export function SkippedLiftRows({
           );
         }
         const liftId = liftIdFor(s.lift);
-        const entry = byId.get(liftId) ?? { lift: s.lift, liftId, estimate: null, dismissed: false };
+        const entry = byId.get(liftId) ?? { lift: s.lift, name: s.lift, liftId, estimate: null, dismissed: false };
         return <MissingMaxRow key={liftId} entry={entry} {...options} />;
       })}
     </ul>

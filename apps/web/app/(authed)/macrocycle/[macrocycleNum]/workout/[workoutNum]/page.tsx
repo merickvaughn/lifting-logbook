@@ -157,6 +157,7 @@ export default async function WorkoutLoggingPage({
       warmUpSets,
       workingSets,
       ...(spec && { plan: { spec, liftMax: tm, ...(progression && { progression }) } }),
+      ...(progression && { progressionRule: { type: progression.rule.type, increment: progression.rule.increment } }),
     };
   });
 

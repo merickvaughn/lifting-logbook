@@ -637,6 +637,18 @@ describe('WorkoutLoggingPage — the plan follows the lift’s progression type 
     // Nothing reads its last session: it isn't on double.
     expect(mockedLiftRecords).not.toHaveBeenCalled();
     expect(lifts[0]).not.toHaveProperty('plan');
+    // With no spec row, Finish workout still knows how it progresses (#1272).
+    expect(lifts[0]?.progressionRule).toEqual({ type: 'linear', increment: 2.5 });
+  });
+
+  it("passes each lift's resolved type on, so Finish workout can leave out a manual lift (#1272)", async () => {
+    seedWorkout([{ lift: 'Cable Curl', planned: true, sets: [] }], {
+      specOverrides: { ...curl, progression: 'manual' as const },
+    });
+
+    const { lifts } = await renderPage();
+
+    expect(lifts[0]?.progressionRule).toEqual({ type: 'manual', increment: 2.5 });
   });
 
   it("finds a lift's settings under another spelling, as updateMaxes does", async () => {

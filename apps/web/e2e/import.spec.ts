@@ -277,4 +277,16 @@ test('import wizard REVIEW: create a new lift for an unrecognized name, resolvin
   await page.getByRole('button', { name: 'Commit import' }).click();
 
   await expect(page.getByText('Import complete')).toBeVisible();
+
+  // #1273: the new lift has sets and no training max, so the result offers one.
+  await expect(page.getByRole('heading', { name: 'Lifts without a training max' })).toBeVisible();
+  const input = page.getByRole('spinbutton', { name: 'Wide-Grip CBL Curls training max' });
+  await expect(input).toHaveValue('107.5');
+  await expect(page.getByText(/^Estimated from 90 lbs × 10 on 1 Jan/)).toBeVisible();
+  const saved = page.waitForRequest((r) => r.method() === 'PATCH' && r.url().includes('/training-maxes'));
+  await page.getByRole('button', { name: 'Set up' }).click();
+  // Saved under the lift as its sets store it, the custom lift's id, not its name (#1290).
+  expect((await saved).postDataJSON()).toEqual({ maxes: [{ lift: 'custom-1', weight: 107.5, unit: 'lbs' }] });
+  await expect(page.getByRole('status').filter({ hasText: 'Training max set up for Wide-Grip CBL Curls.' })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Lifts without a training max' })).toBeHidden();
 });
