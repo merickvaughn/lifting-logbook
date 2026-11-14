@@ -221,8 +221,10 @@ function createInitialState() {
     // The import's Assign step (#1256): withAssign makes any upload lift history with the
     // step on, and mode=assign return ASSIGN_RESPONSE's long file.
     assign: false,
-    // An Assign commit's macrocycles and its batch (#1257), which History lists and undoes.
+    // An Assign commit's macrocycles and its batch (#1257), which History lists and undoes, and
+    // the program they went into (#1300).
     assignedMacrocycles: [],
+    assignedProgram: null,
     importBatches: [],
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
@@ -1194,13 +1196,17 @@ const server = createServer(async (req, res) => {
     // GET /programs/:p/macrocycles
     if (method === 'GET' && rest[0] === 'macrocycles' && rest.length === 1) {
       // An Assign commit's macrocycles come first by date, and the rest number on after them.
-      json(res, [...state.assignedMacrocycles, ...MACROCYCLES].map((m, i) => ({ ...m, macrocycleNum: i + 1 })));
+      // Each program lists its own: the fixtures are the active program's (#1300).
+      const program = decodeURIComponent(parts[1]);
+      const assigned = program === state.assignedProgram ? state.assignedMacrocycles : [];
+      const fixtures = program === '5-3-1' ? MACROCYCLES : [];
+      json(res, [...assigned, ...fixtures].map((m, i) => ({ ...m, macrocycleNum: i + 1 })));
       return;
     }
 
     // GET /programs/:p/import/batches (#1257): the imports History offers Undo for.
     if (method === 'GET' && rest[0] === 'import' && rest[1] === 'batches' && rest.length === 2) {
-      json(res, state.importBatches);
+      json(res, state.importBatches.filter((b) => b.program === decodeURIComponent(parts[1])));
       return;
     }
 
@@ -1647,6 +1653,7 @@ const server = createServer(async (req, res) => {
       }
       // An Assign commit stores the first two stretches as macrocycles, under one batch (#1257).
       if (state.assign && mode === 'commit') {
+        state.assignedProgram = decodeURIComponent(parts[1]);
         state.assignedMacrocycles = ASSIGN_RESPONSE.stretches.slice(0, 2).map((s, i) => ({
           id: `mc-assigned-${i + 1}`,
           macrocycleNum: 0,

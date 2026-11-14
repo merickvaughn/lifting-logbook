@@ -26,6 +26,16 @@
   font-size: 0.875rem;
 }
 
+/* Which of the lifter's programs History shows (#1300). */
+.programPicker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+}
+
 /* Non-blocking notice shown when a history fetch fails (page still renders). */
 .loadError {
   margin-bottom: 1.5rem;

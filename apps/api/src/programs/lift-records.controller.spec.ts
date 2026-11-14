@@ -110,6 +110,12 @@ describe('LiftRecordsController', () => {
       expect(result[0]?.lift).toBe('Bench Press');
       expect(result[0]?.date).toBe('2026-04-20');
     });
+
+    it('returns no records, rather than a 404, for a program with no current macrocycle (#1300)', async () => {
+      // dashboardRepo rejects with ProgramNotFoundError by default.
+      await expect(controller.getLiftRecords('5-3-1', MOCK_USER)).resolves.toEqual([]);
+      expect(liftRecordRepo.getLiftRecords).not.toHaveBeenCalled();
+    });
   });
 
   describe('POST lift-records with modifications', () => {
