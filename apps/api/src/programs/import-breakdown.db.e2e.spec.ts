@@ -8,7 +8,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import multipart from '@fastify/multipart';
 import type { ImportBreakdown } from '@lifting-logbook/types';
 import { LiftRecord, buildLiftRecordsPreImage, liftRecordNaturalKey } from '@lifting-logbook/core';
@@ -416,5 +416,9 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
 
     expect(await list(USER_LIST_A)).toEqual([{ id: mine, program: 'rpt', createdAt: expect.any(String), macrocycleIds: await macrocycleOf(USER_LIST_A) }]);
     expect(await list(USER_LIST_B)).toEqual([{ id: theirs, program: 'rpt', createdAt: expect.any(String), macrocycleIds: await macrocycleOf(USER_LIST_B) }]);
+
+    // A batch saved before #1255 records no macrocycles: its created keys' numbers, read in SQL, name them.
+    await owner.importBatch.update({ where: { id: mine }, data: { macrocycles: Prisma.DbNull } });
+    expect(await list(USER_LIST_A)).toEqual([{ id: mine, program: 'rpt', createdAt: expect.any(String), macrocycleIds: await macrocycleOf(USER_LIST_A) }]);
   });
 });

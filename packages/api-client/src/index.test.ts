@@ -568,6 +568,21 @@ describe('createApiClient', () => {
       });
     });
 
+    it("undoImport throws a 400's message, such as a device clock too far off (#1257)", async () => {
+      const message = 'today must be within a day of the server date. Check your device clock.';
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message, statusCode: 400 }), { status: 400 }));
+      await expect(makeClient().undoImport('5-3-1', 'b-1', '2026-11-13')).rejects.toMatchObject({
+        name: 'ApiClientError',
+        status: 400,
+        message,
+      });
+      mockFetch.mockResolvedValue(new Response('not json', { status: 400 }));
+      await expect(makeClient().undoImport('5-3-1', 'b-1', '2026-11-13')).rejects.toMatchObject({
+        status: 400,
+        message: 'Undo import failed (HTTP 400)',
+      });
+    });
+
     it('undoImport sends the user day with the undo (#1257)', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ batchId: 'b-1', restored: 1, skipped: 0, flagged: [] })));
       await makeClient().undoImport('5-3-1', 'b-1', '2026-11-13');

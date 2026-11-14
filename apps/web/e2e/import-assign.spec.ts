@@ -78,12 +78,13 @@ test('Assign: an import is undone later from the past-macrocycles list', async (
   const imported = page.getByRole('row').filter({ hasText: '2024-01-' });
   await expect(imported).toHaveCount(2);
 
-  await page.getByRole('button', { name: 'Undo the import of macrocycle 2' }).click();
+  await page.getByRole('button', { name: 'Undo import of macrocycle 2' }).click();
   await expect(page.getByText(/Every set it added goes/)).toBeVisible();
   await page.getByRole('button', { name: 'Undo import', exact: true }).click();
 
-  // Both of its macrocycles go, and the earlier history numbers from 1 again.
+  // Both of its macrocycles go, the outcome stays, and the earlier history numbers from 1 again.
   await expect(imported).toHaveCount(0);
+  await expect(page.getByText(/^Undo complete: \d+ restored/)).toBeFocused();
   await expect(page.getByRole('row').filter({ hasText: '2024-09-02' }).getByRole('cell').first()).toHaveText('1');
 });
 

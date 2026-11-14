@@ -4,7 +4,9 @@ import {
   BatchMacrocycles,
   IImportBatchRepository,
   ImportBatchRecord,
+  ImportBatchSummaryRecord,
   KeyNumbers,
+  createdNumberedKeys,
   preImageKeyNumber,
 } from '../../ports/IImportBatchRepository';
 
@@ -25,10 +27,21 @@ export class InMemoryImportBatchRepository implements IImportBatchRepository {
     return [...this.store.values()].filter((b) => b.groupId === groupId);
   }
 
-  async listByProgram(program: string, destination: ImportKind): Promise<ImportBatchRecord[]> {
+  async listSummaries(program: string, destination: ImportKind): Promise<ImportBatchSummaryRecord[]> {
     return [...this.store.values()]
       .filter((b) => b.program === program && b.destination === destination)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+      .map((b) => {
+        const head = b.groupId ? this.store.get(b.groupId) : undefined;
+        return {
+          id: b.id,
+          program: b.program,
+          createdAt: b.createdAt,
+          source: head ? { id: head.id, program: head.program, createdAt: head.createdAt } : null,
+          macrocycles: b.macrocycles,
+          createdNums: [...new Set(createdNumberedKeys(b.preImage).flatMap((k) => preImageKeyNumber(k) ?? []))],
+        };
+      });
   }
 
   async deleteById(id: string, userId: string): Promise<void> {

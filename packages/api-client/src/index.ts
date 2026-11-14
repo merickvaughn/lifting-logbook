@@ -666,10 +666,12 @@ export function createApiClient(config: ApiClientConfig) {
         cache: 'no-store',
       });
       if (!res.ok) {
-        // A 409 macrocycle-busy (#1198) carries a message asking to try again. Anything else
-        // keeps the generic message the import wizard shows, with the status, code and body.
+        // A 409 macrocycle-busy (#1198) carries a message asking to try again, and a 400 says what
+        // to fix, such as a device clock too far from the server's (#1257). Anything else keeps
+        // the generic message the import wizard shows, with the status, code and body.
         const err = await readError(res, path);
         if (err.code === 'macrocycle-busy') throw err;
+        if (res.status === 400 && typeof err.body?.message === 'string') throw err;
         throw new ApiClientError(`Undo import failed (HTTP ${res.status})`, err.status, err.code, err.body);
       }
       return (await res.json()) as ImportUndoResponse;

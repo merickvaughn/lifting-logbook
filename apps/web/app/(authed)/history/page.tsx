@@ -37,6 +37,7 @@ export default async function HistoryPage() {
   // The `.catch()` fallbacks keep the tabs rendering (graceful degradation);
   // `loadFailed` distinguishes a real fetch failure from a genuinely empty history.
   let loadFailed = false;
+  let importsFailed = false;
   const [programRecords, nonCycleRecords, { entries: tmEntries }, macrocycles, imports, unit] = await Promise.all([
     // fallback-covered-by: apps/web/e2e/staging.spec.ts
     fetchLiftRecords(program).catch((): LiftRecordResponse[] => {
@@ -59,10 +60,11 @@ export default async function HistoryPage() {
       loadFailed = true;
       return [];
     }),
-    // The imports Undo is offered for (#1257). Without them the list shows no Undo.
+    // The imports Undo is offered for (#1257). Without them the history is whole but shows no
+    // Undo, so the notice says only that.
     // fallback-covered-by: apps/web/app/(authed)/history/page.test.tsx
     fetchImportBatches(program).catch((): ImportBatchSummary[] => {
-      loadFailed = true;
+      importsFailed = true;
       return [];
     }),
     getPreferredUnit(),
@@ -119,6 +121,11 @@ export default async function HistoryPage() {
         <p role="status" className={styles.loadError}>
           We couldn’t load your latest history just now. This is usually
           temporary — refresh the page in a moment to try again.
+        </p>
+      )}
+      {importsFailed && (
+        <p role="status" className={styles.loadError}>
+          Undoing an import isn’t available right now. Refresh the page in a moment to try again.
         </p>
       )}
       <HistoryTabs records={enriched} tmEntries={tmEntries} macrocycles={macrocycles} imports={imports} unit={unit} />

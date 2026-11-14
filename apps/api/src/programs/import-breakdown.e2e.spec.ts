@@ -1023,6 +1023,13 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
       if (!batch) throw new Error('The batch was not saved');
       return batch.createdAt.toISOString();
     };
+    /** Saves the batch again at `iso`, so commits a millisecond apart still sort by their order. */
+    const stamp = async (batchId: string | null, iso: string) => {
+      const bundle = await repos();
+      const batch = await bundle.importBatch.findById(batchId ?? '', user);
+      if (!batch) throw new Error('The batch was not saved');
+      await bundle.importBatch.save({ ...batch, createdAt: new Date(iso) });
+    };
 
     it("lists the lifter's imports newest first, each with its macrocycles and date", async () => {
       const first = run(RPT_DAYS, 0, 3);
@@ -1033,6 +1040,9 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
       const b = await commit(csvOf(second), breakdownOf([stretch(second)]));
       // An import through two programs is named by its Source program's batch in both lists.
       const c = await commit(csvOf([...fiveThreeOne, ...third]), breakdownOf([stretch(fiveThreeOne, '5-3-1'), stretch(third)]));
+      await stamp(a.batchId, '2026-01-01T00:00:00.000Z');
+      await stamp(b.batchId, '2026-01-01T01:00:00.000Z');
+      await stamp(c.batchId, '2026-01-01T02:00:00.000Z');
 
       expect(await listImports()).toEqual([
         { id: c.batchId, program: 'rpt', createdAt: await createdAt(c.batchId), macrocycleIds: [await macrocycleOn(80)] },
@@ -1046,6 +1056,26 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
       // An undone import is no longer listed.
       await undo(b.batchId);
       expect((await listImports()).map((i) => i.id)).toEqual([c.batchId, a.batchId]);
+    });
+
+    // Every row of an import offers Undo, so two can race: the second reads the batch before the
+    // first's lock is released, and must read it again under the lock.
+    it('answers 404 to an undo whose batch an earlier undo removed while it waited', async () => {
+      const sets = run(RPT_DAYS, 0, 3);
+      const { batchId } = await commit(csvOf(sets), breakdownOf([stretch(sets)]));
+      const bundle = await repos();
+      const stale = await bundle.importBatch.findById(batchId ?? '', user);
+      await undo(batchId);
+      const before = await stored();
+
+      const findById = jest.spyOn(bundle.importBatch, 'findById').mockResolvedValueOnce(stale);
+      try {
+        const res = await undoRequest(batchId);
+        expect(res.statusCode).toBe(404);
+      } finally {
+        findById.mockRestore();
+      }
+      expect(await stored()).toEqual(before);
     });
 
     it("never lists another user's imports", async () => {

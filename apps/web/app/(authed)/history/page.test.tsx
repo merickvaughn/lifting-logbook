@@ -182,10 +182,12 @@ describe('HistoryPage imports', () => {
     expect(html).not.toContain('role="status"');
   });
 
-  it('shows the load notice and offers no Undo when they can\'t be fetched', async () => {
+  it('says only that Undo is unavailable, and offers none, when they can\'t be fetched', async () => {
     (fetchImportBatches as jest.Mock).mockRejectedValue(new Error('API unavailable'));
     const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
-    expect(html).toContain('role="status"');
+    expect(html).toContain('Undoing an import isn’t available right now.');
+    // The history itself loaded, so its notice isn't shown.
+    expect(html).not.toContain('latest history');
     expect(html).toContain('data-imports="[]"');
   });
 });
