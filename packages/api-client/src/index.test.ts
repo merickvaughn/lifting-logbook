@@ -521,11 +521,7 @@ describe('createApiClient', () => {
 
     it('commitImport shows the retry message of a 409 macrocycle-busy', async () => {
       mockFetch.mockResolvedValue(busy('import'));
-      await expect(makeClient().commitImport('5-3-1', file, 'lift-records')).resolves.toEqual({
-        ok: false,
-        errors: retry,
-        code: 'macrocycle-busy',
-      });
+      await expect(makeClient().commitImport('5-3-1', file, 'lift-records')).resolves.toEqual({ ok: false, errors: retry });
     });
 
     it('commitImport keeps the generic message for a 409 with another code', async () => {
@@ -533,7 +529,6 @@ describe('createApiClient', () => {
       await expect(makeClient().commitImport('5-3-1', file, 'lift-records')).resolves.toEqual({
         ok: false,
         errors: [{ row: 0, code: 'UNEXPECTED_ERROR', message: 'Unexpected error (HTTP 409)' }],
-        code: 'other',
       });
     });
 
@@ -728,7 +723,7 @@ describe('createApiClient', () => {
       });
     });
 
-    it('dryRunImport and commitImport send the breakdown, and commitImport returns a mismatch code (#1256)', async () => {
+    it('dryRunImport and commitImport send the breakdown, and both throw a mismatch with its code (#1256)', async () => {
       const breakdown = { stretches: [{ program: 'rpt', dates: ['2026-01-01'], status: 'completed' as const, statusChosen: false }], excludedDates: [], nonCycleDates: [] };
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ created: 1 }), { status: 200 }));
       const sent = () => lastCall()[1].body as FormData;
@@ -736,12 +731,13 @@ describe('createApiClient', () => {
       expect(JSON.parse(sent().get('breakdown') as string)).toEqual(breakdown);
       expect(sent().get('today')).toBe('2026-11-13');
 
-      mockFetch.mockResolvedValue(
+      mockFetch.mockImplementation(async () =>
         new Response(JSON.stringify({ code: 'breakdown-mismatch', reason: 'date-not-in-file', message: 'x' }), { status: 400 }),
       );
-      const result = await makeClient().commitImport('5-3-1', file, 'lift-records', { breakdown });
+      const mismatch = { name: 'ApiClientError', status: 400, code: 'breakdown-mismatch' };
+      await expect(makeClient().commitImport('5-3-1', file, 'lift-records', { breakdown })).rejects.toMatchObject(mismatch);
       expect(JSON.parse(sent().get('breakdown') as string)).toEqual(breakdown);
-      expect(result).toMatchObject({ ok: false, code: 'breakdown-mismatch' });
+      await expect(makeClient().dryRunImport('5-3-1', file, 'lift-records', { breakdown })).rejects.toMatchObject(mismatch);
     });
 
     it('commitImport sends neither field when there is nothing to exclude or remap', async () => {

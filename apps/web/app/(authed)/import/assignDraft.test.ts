@@ -205,7 +205,7 @@ describe('assignDraft (#1256)', () => {
       program: 'rpt',
       status: 'completed',
       statusChosen: false,
-      file: { program: 'name:my rpt', macrocycleNum: 1 },
+      file: { group: 'name:my rpt', macrocycleNum: 1 },
     });
   });
 });

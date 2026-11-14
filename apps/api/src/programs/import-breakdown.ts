@@ -110,13 +110,13 @@ export function parseBreakdown(field: string | undefined): ImportBreakdown | nul
     if (file === undefined) return { ...common, dates: dates(raw.dates, `stretches[${i}].dates`) };
     if (
       !isRecord(file) ||
-      typeof file.program !== 'string' ||
+      typeof file.group !== 'string' ||
       typeof file.macrocycleNum !== 'number' ||
       !Number.isInteger(file.macrocycleNum)
     ) {
-      throw new BadRequestException(`${label}'s file must have a program and a whole macrocycle number`);
+      throw new BadRequestException(`${label}'s file must have a group and a whole macrocycle number`);
     }
-    return { ...common, file: { program: file.program, macrocycleNum: file.macrocycleNum } };
+    return { ...common, file: { group: file.group, macrocycleNum: file.macrocycleNum } };
   });
   return {
     stretches,
@@ -163,17 +163,20 @@ export interface PlacedBreakdown {
  * the lifter has, and stretches may not overlap unless the file is an export (decision 8). Any
  * mismatch is a 400 naming it, before anything is written.
  *
- * `fileKeys` gives each row's file macrocycle by position, as `mode=assign` grouped it
- * (`fileMacrocycleKeys`), so an export's rows pair with the macrocycles the lifter saw. A row that
- * pairs goes with its macrocycle even on an excluded or non-cycle date, which can only be another
- * row's (#1256).
+ * An export's `fileKeys` gives each of `rows`, by position, its file macrocycle as `mode=assign`
+ * grouped it (`fileMacrocycleKeys`), so its rows pair with the macrocycles the lifter saw. A row
+ * that pairs goes with its macrocycle even on an excluded or non-cycle date, which can only be
+ * another row's (#1256).
  */
 export function placeBreakdown(
   rows: readonly LiftRecord[],
   breakdown: ImportBreakdown,
-  context: { exported: boolean; programs: ReadonlySet<string>; fileKeys?: ReadonlyArray<string | undefined> },
+  context: { programs: ReadonlySet<string> } & (
+    | { exported: true; fileKeys: ReadonlyArray<string | undefined> }
+    | { exported: false }
+  ),
 ): PlacedBreakdown {
-  const fileKeys = context.fileKeys ?? [];
+  const fileKeys = context.exported ? context.fileKeys : [];
   breakdown.stretches.forEach((s, i) => {
     if (s.program === NON_CYCLE_PROGRAM || !context.programs.has(s.program)) {
       throw mismatch('unknown-program', `Stretch ${i + 1}'s program '${s.program}' isn't one of your programs.`);
@@ -203,11 +206,11 @@ export function placeBreakdown(
       for (const date of s.dates ?? []) claim(date, i);
       return;
     }
-    const key = fileMacrocycleKey(s.file.program, s.file.macrocycleNum);
+    const key = fileMacrocycleKey(s.file.group, s.file.macrocycleNum);
     if (!filePairs.has(key)) {
       throw mismatch(
         'file-macrocycle-not-in-file',
-        `Stretch ${i + 1} names macrocycle ${s.file.macrocycleNum} of '${s.file.program}', which isn't in the file.`,
+        `Stretch ${i + 1} names file macrocycle ${s.file.macrocycleNum}, which isn't in the file.`,
       );
     }
     const prior = byPair.get(key);

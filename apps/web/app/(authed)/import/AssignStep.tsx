@@ -25,6 +25,7 @@ import {
   openDecisions,
   overlaps,
   pendingSessions,
+  previousStretchId,
   setProgram,
   setStatus,
   splitAtLargestGap,
@@ -121,13 +122,10 @@ export default function AssignStep({
   res,
   draft,
   onChange,
-  notice,
 }: {
   res: ImportAssignResponse;
   draft: AssignDraft;
   onChange: (next: AssignDraft) => void;
-  /** Why the step was reloaded, if it was. */
-  notice: string | null;
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const name = programNamer(res);
@@ -158,9 +156,6 @@ export default function AssignStep({
     document.getElementById(focusTarget)?.focus();
     setFocusTarget(null);
   }, [focusTarget]);
-  // The notice is written into a live region that's already there, so a screen reader says it.
-  const [shownNotice, setShownNotice] = useState<string | null>(null);
-  useEffect(() => setShownNotice(notice), [notice]);
 
   return (
     <div className={styles.step}>
@@ -168,9 +163,6 @@ export default function AssignStep({
       <p className={styles.reason}>
         We grouped your workouts using their dates. These are suggestions: change anything before you
         continue. Macrocycles are numbered by date, so yours may be renumbered.
-      </p>
-      <p className={shownNotice ? styles.notice : undefined} role="status">
-        {shownNotice}
       </p>
 
       <p className={styles.summary} data-testid="assign-summary">
@@ -330,10 +322,10 @@ export default function AssignStep({
                     className={styles.btn}
                     aria-label={`Join ${label} with the macrocycle before it`}
                     onClick={() => {
-                      const before = draft.stretches[draft.stretches.findIndex((x) => x.id === s.id) - 1];
-                      if (!before) return;
-                      editStretch(before.id, joinWithPrevious(draft, s.id));
-                      setFocusTarget(cardId(before.id));
+                      const kept = previousStretchId(draft, s.id);
+                      if (kept === null) return;
+                      editStretch(kept, joinWithPrevious(draft, s.id));
+                      setFocusTarget(cardId(kept));
                     }}
                   >
                     Join

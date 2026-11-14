@@ -397,6 +397,14 @@ function settledOrder(tally: ReadonlyMap<SetOrder, number> | undefined): SetOrde
   return best;
 }
 
+/**
+ * The group a file macrocycle's stretch reports as `fileGroup`, and an export's commit pairs its
+ * rows by: the program key its rows were grouped on.
+ */
+function fileGroupOf(draft: Draft<unknown>): string {
+  return draft.groupKey ?? '';
+}
+
 /** A stretch being built, with running totals so adding a session costs the same however long it is. */
 interface Draft<T> {
   sessions: Session<T>[];
@@ -923,7 +931,7 @@ class Segmenter<T extends LiftHistoryRow> {
         liftsOutsideProgram: matched ? [] : outside,
         ...(candidate !== undefined && !matched ? { candidateProgram: candidate } : {}),
         ...(draft.fileMacrocycleNum !== undefined
-          ? { fileMacrocycleNum: draft.fileMacrocycleNum, fileGroup: draft.groupKey ?? '' }
+          ? { fileMacrocycleNum: draft.fileMacrocycleNum, fileGroup: fileGroupOf(draft) }
           : {}),
         startDate: first.date,
         endDate: last.date,
@@ -1081,14 +1089,21 @@ function firstAfter(sorted: readonly number[], value: number): number {
  * - Single-lift sessions inside a break are returned in `lone`, outside every stretch.
  * - Rows with no date are returned in `unplaced`.
  */
+/**
+ * A file's rows as {@link segmentLiftHistory} and {@link fileMacrocycleKeys} both read them:
+ * the non-cycle rows, the undated rest, and the dated rest that's grouped.
+ */
+function splitRows<T extends LiftHistoryRow>(allRows: readonly T[]) {
+  const nonCycle = allRows.filter((row) => isNonCycleProgram(row.program));
+  const rows = allRows.filter((row) => !isNonCycleProgram(row.program));
+  return { nonCycle, unplaced: rows.filter((row) => !isDated(row)), dated: rows.filter(isDated) };
+}
+
 export function segmentLiftHistory<T extends LiftHistoryRow>(
   allRows: readonly T[],
   options: SegmentLiftHistoryOptions,
 ): SegmentedLiftHistory<T> {
-  const nonCycle = allRows.filter((row) => isNonCycleProgram(row.program));
-  const rows = allRows.filter((row) => !isNonCycleProgram(row.program));
-  const unplaced = rows.filter((row) => !isDated(row));
-  const dated = rows.filter(isDated);
+  const { nonCycle, unplaced, dated } = splitRows(allRows);
   const segmenter = new Segmenter<T>(options);
 
   if (dated.some((row) => isFiniteNumber(row.macrocycleNum))) {
@@ -1142,11 +1157,11 @@ export function fileMacrocycleKeys<T extends LiftHistoryRow>(
   rows: readonly T[],
   options: SegmentLiftHistoryOptions,
 ): Array<string | undefined> {
-  const dated = rows.filter((row) => !isNonCycleProgram(row.program)).filter(isDated);
+  const { dated } = splitRows(rows);
   const keys = new Map<T, string>();
   for (const draft of new Segmenter<T>(options).byFileNumbers(dated).drafts) {
     if (draft.fileMacrocycleNum === undefined) continue;
-    const key = fileMacrocycleKey(draft.groupKey ?? '', draft.fileMacrocycleNum);
+    const key = fileMacrocycleKey(fileGroupOf(draft), draft.fileMacrocycleNum);
     for (const session of draft.sessions) for (const row of session.rows) keys.set(row, key);
   }
   return rows.map((row) => keys.get(row));

@@ -20,8 +20,8 @@ export interface DraftStretch {
   status: MacrocycleStatus | null;
   /** The lifter (or an export's `Status` column) chose the status, so no rule may change it. */
   statusChosen: boolean;
-  /** An export's own program and macrocycle number, sent in place of dates. */
-  file: { program: string; macrocycleNum: number } | null;
+  /** An export's own group and macrocycle number, sent in place of dates. */
+  file: { group: string; macrocycleNum: number } | null;
   /** The suggestion it started as, for its notes; null once a join or split changed it. */
   source: AssignStretch | null;
 }
@@ -59,7 +59,7 @@ export function initialDraft(res: ImportAssignResponse): AssignDraft {
       // The server pairs an export's rows by the group it put them in, not by any one cell.
       file:
         res.exported && s.fileMacrocycleNum !== null && s.fileGroup !== null
-          ? { program: s.fileGroup, macrocycleNum: s.fileMacrocycleNum }
+          ? { group: s.fileGroup, macrocycleNum: s.fileMacrocycleNum }
           : null,
       source: s,
     })),
@@ -183,11 +183,23 @@ export function moveStart(draft: AssignDraft, id: string, direction: 'earlier' |
  * Joins stretch `id` into the one before it. Sessions on one date become one. The joined stretch
  * keeps a status the lifter chose for the earlier one.
  */
-export function joinWithPrevious(draft: AssignDraft, id: string): AssignDraft {
+/** The stretch `id` and the one before it, which a join keeps; null for the first. */
+function withPrevious(draft: AssignDraft, id: string): { i: number; before: DraftStretch; self: DraftStretch } | null {
   const i = draft.stretches.findIndex((s) => s.id === id);
   const before = draft.stretches[i - 1];
   const self = draft.stretches[i];
-  if (i < 1 || !before || !self) return draft;
+  return i < 1 || !before || !self ? null : { i, before, self };
+}
+
+/** The id of the stretch a join of `id` keeps; null for the first. */
+export function previousStretchId(draft: AssignDraft, id: string): string | null {
+  return withPrevious(draft, id)?.before.id ?? null;
+}
+
+export function joinWithPrevious(draft: AssignDraft, id: string): AssignDraft {
+  const pair = withPrevious(draft, id);
+  if (!pair) return draft;
+  const { i, before, self } = pair;
   const joined = reshaped(before, mergeSessions([...before.sessions, ...self.sessions]));
   return edit(draft, draft.stretches.flatMap((s, n) => (n === i ? [] : n === i - 1 ? [joined] : [s])));
 }

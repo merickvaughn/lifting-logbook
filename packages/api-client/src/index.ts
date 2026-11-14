@@ -160,12 +160,8 @@ function importForm(file: File, opts?: CommitImportOpts): FormData {
   return form;
 }
 
-/**
- * The server's answer to a commit or dry run: its response, or validation errors as data. `code`
- * is the API's own error code when it sends one, such as `breakdown-mismatch` (#1256). Only
- * `commitImport` sets it: `dryRunImport` throws an `ApiClientError` carrying the code instead.
- */
-export type ImportCommitResult<T> = { ok: true; data: T } | { ok: false; errors: ImportError[]; code?: string };
+/** The server's answer to a commit or dry run: its response, or validation errors as data. */
+export type ImportCommitResult<T> = { ok: true; data: T } | { ok: false; errors: ImportError[] };
 
 /** Phase 3 options for commitImport. */
 export interface CommitImportOpts {
@@ -596,7 +592,8 @@ export function createApiClient(config: ApiClientConfig) {
       destination: ImportKind,
       opts?: CommitImportOpts,
     ): Promise<ImportCommitResult<ImportCommitResponse>> {
-      const res = await rawFetch(importPath(program, 'commit', destination, opts), {
+      const path = importPath(program, 'commit', destination, opts);
+      const res = await rawFetch(path, {
         method: 'POST',
         body: importForm(file, opts),
         cache: 'no-store',
@@ -604,12 +601,11 @@ export function createApiClient(config: ApiClientConfig) {
       if (res.ok) {
         return { ok: true, data: (await res.json()) as ImportCommitResponse };
       }
-      const body = (await res.json().catch(() => ({}))) as { errors?: ImportError[]; code?: unknown; message?: unknown };
-      return {
-        ok: false,
-        errors: importFailureErrors(res.status, body),
-        ...(typeof body.code === 'string' ? { code: body.code } : {}),
-      };
+      const body = (await res.clone().json().catch(() => ({}))) as { errors?: ImportError[]; code?: unknown; message?: unknown };
+      // A request the server refused with a code, such as a breakdown that no longer matches the
+      // file (#1256), isn't a problem with the file: it's thrown with its code, as `dryRunImport` throws it.
+      if (res.status === 400 && !body.errors && typeof body.code === 'string') throw await readError(res, path);
+      return { ok: false, errors: importFailureErrors(res.status, body) };
     },
     /**
      * Smart Import — the rules' grouping of a lift-records file into suggested macrocycles, for

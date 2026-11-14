@@ -3921,34 +3921,46 @@ describe('ImportWizard Assign step (#1256)', () => {
     // An opened stretch's id names another stretch in the fresh grouping, which starts closed.
     await user.click(screen.getAllByTestId('assign-settled')[0]!);
 
+    // The notice lands in a live region that was there before the fresh grouping remounted the step.
+    const region = screen.getByTestId('assign-notice');
+    expect(region).toHaveAttribute('role', 'status');
     const fresh = assignRes({ stretches: [stretch(['2026-01-01', '2026-02-03'], { status: 'abandoned' })] });
     mockAssign.mockResolvedValueOnce(fresh);
-    mockDryRun.mockRejectedValueOnce(new ApiClientError('2026-02-04 is not in the file', 400, 'breakdown-mismatch'));
+    const mismatch = () => new ApiClientError('2026-02-04 is not in the file', 400, 'breakdown-mismatch');
+    mockDryRun.mockRejectedValueOnce(mismatch());
     await user.click(nextButton());
 
-    expect(await screen.findByText(/no longer matched these macrocycles/)).toBeInTheDocument();
+    expect(await screen.findByText(/no longer matched these macrocycles/)).toBe(region);
     expect(screen.getByText('Step 6 of 8 · Assign')).toBeInTheDocument();
     expect(mockAssign).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId('assign-summary')).toHaveTextContent('in 1 macrocycle.');
     expect(screen.getByTestId('assign-settled')).toHaveAttribute('aria-expanded', 'false');
 
     // The same at commit.
-    const mismatch = { ok: false as const, errors: [{ row: 0, code: 'UNEXPECTED_ERROR' as const, message: 'x' }], code: 'breakdown-mismatch' };
     await user.click(nextButton());
     await screen.findByRole('heading', { name: 'Preview changes' });
-    mockCommit.mockResolvedValueOnce(mismatch);
+    mockCommit.mockRejectedValueOnce(mismatch());
     await user.click(screen.getByRole('button', { name: 'Commit import' }));
     expect(await screen.findByText(/no longer matched these macrocycles/)).toBeInTheDocument();
     expect(mockAssign).toHaveBeenCalledTimes(3);
 
-    // A reload that fails leaves the lifter on Assign with its error, not on an emptied Preview.
+    // A reload that fails leaves the lifter on Assign with its error, not on an emptied Preview,
+    // and the refused grouping is gone: nothing to send until a reload works.
     await user.click(nextButton());
     await screen.findByRole('heading', { name: 'Preview changes' });
-    mockCommit.mockResolvedValueOnce(mismatch);
+    mockCommit.mockRejectedValueOnce(mismatch());
     mockAssign.mockRejectedValueOnce(new Error('Grouping is unavailable'));
     await user.click(screen.getByRole('button', { name: 'Commit import' }));
     expect(await screen.findByText('Grouping is unavailable')).toBeInTheDocument();
     expect(screen.getByText('Step 6 of 8 · Assign')).toBeInTheDocument();
+    expect(screen.queryByTestId('assign-summary')).not.toBeInTheDocument();
+    expect(nextButton()).toBeDisabled();
+    // Trying again fetches a fresh grouping.
+    mockAssign.mockResolvedValueOnce(fresh);
+    await user.click(screen.getByRole('button', { name: 'Group my workouts again' }));
+    expect(await screen.findByTestId('assign-summary')).toHaveTextContent('in 1 macrocycle.');
+    expect(mockAssign).toHaveBeenCalledTimes(5);
+    expect(nextButton()).toBeEnabled();
   });
 
   it('keeps keyboard focus on what an edit changed, and opens a settled stretch from its own row', async () => {

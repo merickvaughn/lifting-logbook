@@ -86,6 +86,7 @@ import {
   assignImportDate,
   assignProgramOptions,
   assignResponse,
+  foldUnnumberedByDate,
   importAssignEnabled,
   planSplitMaxes,
   splitMaxCounts,
@@ -862,11 +863,13 @@ export class ImportController {
     const liftRecords = rows as LiftRecord[];
 
     const customPrograms = await this.customPrograms(userId);
-    const segmented = segmentLiftHistory(liftRecords.map(toLiftHistoryRecord), {
+    const grouped = segmentLiftHistory(liftRecords.map(toLiftHistoryRecord), {
       importDate,
       sourceProgram: program,
       customPrograms,
     });
+    // An export pairs rows by file macrocycle, so only another file folds its unnumbered rows by date.
+    const segmented = exported ? grouped : foldUnnumberedByDate(grouped);
     const stored = await placeSuggestedStretches(repos, segmented.stretches, [
       ...BUILT_IN_KNOWN_PROGRAMS,
       ...customPrograms,
@@ -954,21 +957,23 @@ export class ImportController {
     const programs = [...BUILT_IN_KNOWN_PROGRAMS, ...customPrograms];
     let placed: PlacedBreakdown;
     try {
-      placed = placeBreakdown(rows as LiftRecord[], choices.breakdown, {
-        exported: choices.exported,
-        programs: new Set(programs.map((p) => p.id)),
-        // An export's rows pair with its macrocycles as `mode=assign` grouped them. Grouping by
-        // file numbers doesn't read the import date.
-        ...(choices.exported
+      const ids = new Set(programs.map((p) => p.id));
+      placed = placeBreakdown(
+        rows as LiftRecord[],
+        choices.breakdown,
+        // An export's rows pair with its macrocycles as `mode=assign` grouped them.
+        choices.exported
           ? {
+              exported: true,
+              programs: ids,
               fileKeys: fileMacrocycleKeys((rows as LiftRecord[]).map(toLiftHistoryRecord), {
-                importDate: assignImportDate(undefined),
+                importDate: choices.importDate,
                 sourceProgram: program,
                 customPrograms,
               }),
             }
-          : {}),
-      });
+          : { exported: false, programs: ids },
+      );
     } catch (err) {
       // The reason only: the message names the lifter's dates and programs.
       if (err instanceof BreakdownMismatchException) {

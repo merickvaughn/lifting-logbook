@@ -283,7 +283,7 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     ];
     const csv = csvOf(rows, ['Occurrence']);
     const breakdown = breakdownOf([
-      { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false },
+      { program: 'rpt', file: { group: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false },
     ]);
 
     const previewed = await importCsv('rpt', csv, '?destination=lift-records&splitDest=1');
@@ -335,7 +335,7 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
       // Days 0 and 4 in one stretch, day 2 with the later sessions.
       ['has stretches that overlap', breakdownOf([{ ...stretch(first), dates: [day(0), day(4)] }, { ...stretch(second), dates: [day(2), ...datesOf(second)] }])],
       ['names a program the lifter lacks', breakdownOf([stretch(first), stretch(second, 'no-such-program')])],
-      ['names a file macrocycle in a file that is not an export', breakdownOf([stretch(first), { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false }])],
+      ['names a file macrocycle in a file that is not an export', breakdownOf([stretch(first), { program: 'rpt', file: { group: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false }])],
     ];
 
     it.each(cases)('is rejected with nothing written when it %s', async (_name, breakdown) => {
@@ -571,7 +571,7 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     // A session the lifter added to the export, with no Program or Cycle #.
     const added: Row[] = [{ day: 10, lift: 'Squat' }];
     const csv = csvOf([...one, ...added], ['Occurrence']);
-    const byFile: ImportBreakdownStretch = { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false };
+    const byFile: ImportBreakdownStretch = { program: 'rpt', file: { group: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false };
 
     const res = await send('commit', csv, breakdownOf([byFile, { ...stretch(added), dates: [day(4), day(10)] }]));
     expect(res.statusCode).toBe(400);
@@ -601,7 +601,7 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     const csv = csvOf(rows, ['Occurrence']);
     const [only] = (await assignOf(csv)).stretches;
     expect(only).toMatchObject({ fileMacrocycleNum: 1, fileGroup: 'rpt' });
-    const file = { program: only?.fileGroup ?? '', macrocycleNum: 1 };
+    const file = { group: only?.fileGroup ?? '', macrocycleNum: 1 };
     expect((await commit(csv, breakdownOf([{ program: 'rpt', file, status: 'completed', statusChosen: false }]))).created).toBe(9);
   });
 
@@ -611,8 +611,24 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     const csv = csvOf([stray, ...run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 })], ['Occurrence']);
     const assigned = await assignOf(csv);
     expect(assigned.unnumbered.map((s) => s.date)).toEqual([day(2)]);
-    const byFile: ImportBreakdownStretch = { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false };
+    const byFile: ImportBreakdownStretch = { program: 'rpt', file: { group: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false };
     expect((await commit(csv, breakdownOf([byFile], { excludedDates: [day(2)] }))).created).toBe(9);
+  });
+
+  it("puts an unnumbered row on a stretch's day into that stretch, in a file that isn't an export (#1256)", async () => {
+    // The same file without the export's columns: placed by date, so day 2's rows all go with rpt.
+    const stray: Row = { day: 2, lift: 'Deadlift', program: '5-3-1' };
+    const csv = csvOf([stray, ...run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 })]);
+    const assigned = await assignOf(csv);
+    expect(assigned.exported).toBe(false);
+    expect(assigned.unnumbered).toEqual([]);
+    const [only] = assigned.stretches;
+    expect(assigned.stretches).toHaveLength(1);
+    expect(only?.sessions.find((s) => s.date === day(2))?.lifts).toContain('Deadlift');
+
+    const dates = only?.sessions.map((s) => s.date) ?? [];
+    const result = await commit(csv, breakdownOf([{ program: 'rpt', dates, status: 'completed', statusChosen: false }]));
+    expect(result.created).toBe(10);
   });
 
   it('refuses to undo a batch grouped under another one', async () => {

@@ -43,6 +43,7 @@ import { LIFT_CLASSIFICATIONS } from './liftClassifications';
 import { KIND_LABEL, kindsForTarget, previousStep, Step, STEP_LABELS, visibleSteps } from './steps';
 import type { ImportTarget, StepValue } from './steps';
 import AssignStep from './AssignStep';
+import assignStyles from './AssignStep.module.css';
 import { buildBreakdown, initialDraft, openDecisions, type AssignDraft } from './assignDraft';
 import {
   SheetTabsStep,
@@ -98,6 +99,7 @@ type PlannedCommit = { file: File; opts?: CommitImportOpts; counts: ImportDryRun
 // The code a dry run or commit returns when its Assign breakdown no longer fits the file's rows (#1254).
 const BREAKDOWN_MISMATCH = 'breakdown-mismatch';
 const isMismatch = (e: unknown) => e instanceof ApiClientError && e.code === BREAKDOWN_MISMATCH;
+const MISMATCH_NOTICE = 'Your file no longer matched these macrocycles, so they were grouped again. Check them and continue.';
 
 // ImportDelta.key can repeat a natural key with a `#N` suffix, which identifies a row
 // only in this component.
@@ -1325,11 +1327,17 @@ export function ImportWizard({
 
   // The server rejected the breakdown (its rows no longer match it), so Assign starts again. The
   // wizard goes back first, so a failed reload's error shows on Assign, not on an emptied Preview.
-  async function reloadAfterMismatch() {
+  // The refused grouping is dropped first, so it can't be sent again or come back from the cache.
+  async function onBreakdownMismatch(op: 'dryRunImport' | 'commitImport') {
+    // Only the code: the server's message names the lifter's dates.
+    logClientError(op, new Error(BREAKDOWN_MISMATCH), { programId, destination });
     setPlannedCommit(null);
     setCommitErrors(null);
+    setAssignRes(null);
+    setAssignDraft(null);
+    assignKey.current = null;
     setStep(Step.ASSIGN);
-    await loadAssign('Your file no longer matched these macrocycles, so they were grouped again. Check them and continue.');
+    await loadAssign(MISMATCH_NOTICE);
   }
 
   // Asks the server what this commit would do, so the Preview tiles report the result of
@@ -1356,9 +1364,7 @@ export function ImportWizard({
       }
     } catch (e) {
       if (isMismatch(e)) {
-        // Only the code: the server's message names the lifter's dates.
-        logClientError('dryRunImport', new Error(BREAKDOWN_MISMATCH), { programId, destination });
-        await reloadAfterMismatch();
+        await onBreakdownMismatch('dryRunImport');
         return;
       }
       logClientError('dryRunImport', e, { programId, destination });
@@ -1382,9 +1388,6 @@ export function ImportWizard({
         // Tab previews taken before this commit no longer match what the server would compute.
         setTabPreviews({});
         setStep(Step.DONE);
-      } else if (result.code === BREAKDOWN_MISMATCH) {
-        logClientError('commitImport', new Error(BREAKDOWN_MISMATCH), { programId, destination });
-        await reloadAfterMismatch();
       } else {
         setCommitErrors(result.errors);
         if (result.errors.some((e) => e.code === 'UNRECOGNIZED_LIFT')) {
@@ -1392,6 +1395,10 @@ export function ImportWizard({
         }
       }
     } catch (e) {
+      if (isMismatch(e)) {
+        await onBreakdownMismatch('commitImport');
+        return;
+      }
       logClientError('commitImport', e, { programId, destination });
       setCommitErrors([
         { row: 0, code: 'UNEXPECTED_ERROR', message: e instanceof Error ? e.message : 'Import failed' },
@@ -2302,16 +2309,31 @@ export function ImportWizard({
           )}
 
           {/* ── ASSIGN ── */}
-          {step === Step.ASSIGN && assignRes && assignDraft && (
+          {/* Why Assign was reloaded. A notice arrives as the wizard moves to Assign from Review or
+              Preview, with a fresh grouping that remounts the step, so the live region is mounted on
+              all three steps: the notice lands in a region that's already there, and is read out. */}
+          {assignActive && (step === Step.REVIEW || step === Step.ASSIGN || step === Step.PREVIEW) && (
+            <div
+              role="status"
+              data-testid="assign-notice"
+              className={step === Step.ASSIGN && assignNotice ? assignStyles.notice : undefined}
+            >
+              {step === Step.ASSIGN ? assignNotice : null}
+            </div>
+          )}
+          {step === Step.ASSIGN && (
             <>
-              {/* A fresh grouping remounts the step: its stretch ids name different stretches now. */}
-              <AssignStep
-                key={assignLoads}
-                res={assignRes}
-                draft={assignDraft}
-                onChange={setAssignDraft}
-                notice={assignNotice}
-              />
+              {assignRes && assignDraft ? (
+                // A fresh grouping remounts the step: its stretch ids name different stretches now.
+                <AssignStep key={assignLoads} res={assignRes} draft={assignDraft} onChange={setAssignDraft} />
+              ) : (
+                !busy && (
+                  // The grouping the server refused is gone, so there's nothing to send until a reload works.
+                  <button type="button" className={styles.btnSecondary} onClick={() => void loadAssign(MISMATCH_NOTICE)}>
+                    Group my workouts again
+                  </button>
+                )
+              )}
               {error && <p className={styles.errorNote}>{error}</p>}
             </>
           )}

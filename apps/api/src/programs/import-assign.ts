@@ -217,6 +217,27 @@ function assignStretch(
   };
 }
 
+/**
+ * Moves each unnumbered row on a date a stretch lists into that stretch's session. A file that
+ * isn't an export is placed by date (decision 8): the commit puts every row on a date a stretch
+ * lists into that stretch, so such a row is part of the stretch, not a session to file. Filing it
+ * anywhere else would claim that date twice, and the commit would refuse every choice (#1256).
+ */
+export function foldUnnumberedByDate<T extends LiftHistoryRecord>(segmented: SegmentedLiftHistory<T>): SegmentedLiftHistory<T> {
+  const byDay = new Map<number, HistorySession<T>>();
+  const stretches = segmented.stretches.map((stretch) => {
+    const sessions = stretch.sessions.map((session) => ({ ...session, rows: [...session.rows] }));
+    for (const session of sessions) byDay.set(session.date.getTime(), session);
+    return { ...stretch, sessions };
+  });
+  const unnumbered = segmented.unnumbered.filter((row) => {
+    const session = byDay.get((row.date as Date).getTime());
+    session?.rows.push(row);
+    return !session;
+  });
+  return { ...segmented, stretches, unnumbered };
+}
+
 /** The `mode=assign` response for a segmented file. Lift ids become display names. */
 export function assignResponse(
   segmented: SegmentedLiftHistory<AssignRecord>,
