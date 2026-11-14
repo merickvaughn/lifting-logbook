@@ -1,5 +1,12 @@
 import { KnownProgram, knownProgramFromSpec, liftKey } from '../../presets';
-import { classifySetOrder, LiftHistoryRow, segmentLiftHistory, SegmentLiftHistoryOptions } from './segmentLiftHistory';
+import {
+  classifySetOrder,
+  fileMacrocycleKey,
+  fileMacrocycleKeys,
+  LiftHistoryRow,
+  segmentLiftHistory,
+  SegmentLiftHistoryOptions,
+} from './segmentLiftHistory';
 
 /** Day 0 is Monday 5 January 2026, UTC. */
 const day = (n: number): Date => new Date(Date.UTC(2026, 0, 5 + n));
@@ -829,6 +836,36 @@ describe('segmentLiftHistory', () => {
       expect(result.stretches).toHaveLength(1);
       expect(result.stretches[0]?.program).toBe('5-3-1');
       expect(result.conflicts).toEqual([]);
+    });
+
+    it("gives a session's leading blank number its session's number, from the same program (#1256)", () => {
+      // The number is on the session's second row only; a 5-3-1 row that day has none to take.
+      const rows = [
+        ...session(0, ['Squat'], { program: '5-3-1' }),
+        ...session(0, ['Calf Raises'], { program: 'rpt' }),
+        ...session(0, ['Squat'], { program: 'rpt', macrocycleNum: 1 }),
+        ...run(RPT_DAYS, 2, 2, { extra: () => ({ program: 'rpt', macrocycleNum: 1 }) }),
+      ];
+      const result = segment(rows);
+      expect(result.stretches).toHaveLength(1);
+      expect(result.stretches[0]?.sessions[0]?.rows.map((r) => r.lift)).toEqual(['Calf Raises', 'Squat']);
+      expect(result.unnumbered.map((r) => r.lift)).toEqual(['Squat']);
+      expect(result.unnumbered[0]?.program).toBe('5-3-1');
+    });
+
+    it("keys each row by the file macrocycle it's grouped in, across spellings and blank cells (#1256)", () => {
+      const rows = [
+        ...session(0, ['Squat'], { program: '5-3-1' }),
+        ...run(FIVE_THREE_ONE_DAYS, 2, 3, {
+          extra: (i) => ({ macrocycleNum: 1, program: i === 0 ? '5/3/1' : i === 1 ? null : '5-3-1' }),
+        }),
+      ];
+      const options = { importDate: day(lastDay(rows) + 2), sourceProgram: 'rpt' };
+      const [only] = segmentLiftHistory(rows, options).stretches;
+      expect(only).toMatchObject({ fileMacrocycleNum: 1, fileGroup: '5-3-1' });
+      const keys = fileMacrocycleKeys(rows, options);
+      expect(keys[0]).toBeUndefined();
+      expect(new Set(keys.slice(1))).toEqual(new Set([fileMacrocycleKey('5-3-1', 1)]));
     });
 
     it('flags two numbers in one program whose dates interleave', () => {

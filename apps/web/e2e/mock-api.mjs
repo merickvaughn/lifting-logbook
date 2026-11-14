@@ -131,6 +131,7 @@ const ASSIGN_RESPONSE = {
       liftsOutsideProgram: [],
       candidateProgram: null,
       fileMacrocycleNum: null,
+      fileGroup: null,
       startDate: dates[0],
       endDate: dates[2],
       sessions: dates.map((date, n) => ({ date, workoutNum: n + 1, lifts: ['Squat', 'Bench Press'], sets: 6 })),

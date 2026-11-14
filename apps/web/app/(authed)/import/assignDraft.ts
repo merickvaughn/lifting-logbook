@@ -35,6 +35,8 @@ export interface AssignDraft {
   filed: Record<string, SessionChoice>;
   /** Whether the lifter changed anything, so discarding the draft is worth saying. */
   edited: boolean;
+  /** The next stretch id's number, so a split never reuses one. */
+  nextId: number;
 }
 
 /** A session the lifter has to file: a lone session in a break, or one with no file number. */
@@ -54,16 +56,17 @@ export function initialDraft(res: ImportAssignResponse): AssignDraft {
       program: s.program,
       status: s.fileStatus ?? s.status,
       statusChosen: s.fileStatus !== null,
-      file: res.exported && s.fileMacrocycleNum !== null ? { program: fileProgram(s), macrocycleNum: s.fileMacrocycleNum } : null,
+      // The server pairs an export's rows by the group it put them in, not by any one cell.
+      file:
+        res.exported && s.fileMacrocycleNum !== null && s.fileGroup !== null
+          ? { program: s.fileGroup, macrocycleNum: s.fileMacrocycleNum }
+          : null,
       source: s,
     })),
     filed: {},
     edited: false,
+    nextId: res.stretches.length,
   };
-}
-
-function fileProgram(s: AssignStretch): string {
-  return s.reasons.program.kind === 'column' ? s.reasons.program.value : s.program;
 }
 
 export function pendingSessions(res: ImportAssignResponse): PendingSession[] {
@@ -88,6 +91,17 @@ export function canFile(draft: AssignDraft, date: string, choice: 'earlier' | 'l
   return neighbour(draft.stretches, date, choice) !== undefined;
 }
 
+const ALL_CHOICES: readonly SessionChoice[] = ['earlier', 'later', 'non-cycle', 'exclude'];
+const DATELESS_CHOICES: readonly SessionChoice[] = ['non-cycle', 'exclude'];
+
+/**
+ * The places a pending session can go. An export's stretches are sent as file macrocycles, not
+ * dates, so a session with no number can't join one.
+ */
+export function choicesFor(p: PendingSession, res: ImportAssignResponse): readonly SessionChoice[] {
+  return res.exported && p.unnumbered ? DATELESS_CHOICES : ALL_CHOICES;
+}
+
 /** The stretches with every filed session in place, in date order. */
 export function effectiveStretches(draft: AssignDraft, res: ImportAssignResponse): DraftStretch[] {
   const added = new Map<string, AssignSession[]>();
@@ -103,8 +117,37 @@ export function effectiveStretches(draft: AssignDraft, res: ImportAssignResponse
   });
 }
 
-function edit(draft: AssignDraft, stretches: DraftStretch[]): AssignDraft {
-  return { ...draft, stretches, edited: true };
+/**
+ * The draft with new stretches. A session filed with the stretch before or after it is filed
+ * again by the lifter once that neighbour changes, so it never silently lands in another one.
+ */
+function edit(draft: AssignDraft, stretches: DraftStretch[], nextId = draft.nextId): AssignDraft {
+  const filed = Object.fromEntries(
+    Object.entries(draft.filed).filter(
+      ([date, choice]) =>
+        (choice !== 'earlier' && choice !== 'later') ||
+        neighbour(draft.stretches, date, choice)?.id === neighbour(stretches, date, choice)?.id,
+    ),
+  );
+  return { ...draft, stretches, filed, edited: true, nextId };
+}
+
+/** Sessions in date order, those on one date made one. */
+function mergeSessions(sessions: readonly AssignSession[]): AssignSession[] {
+  const byDate = new Map<string, AssignSession>();
+  for (const s of sessions) {
+    const same = byDate.get(s.date);
+    byDate.set(s.date, same ? { ...same, lifts: [...new Set([...same.lifts, ...s.lifts])], sets: same.sets + s.sets } : s);
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * A stretch whose sessions an edit changed. A status the lifter didn't choose was the rules'
+ * reading of other sessions, so it's left for the lifter to choose, and the rules' notes go.
+ */
+function reshaped(s: DraftStretch, sessions: AssignSession[]): DraftStretch {
+  return { ...s, sessions, status: s.statusChosen ? s.status : null, source: null };
 }
 
 /**
@@ -124,40 +167,28 @@ export function moveStart(draft: AssignDraft, id: string, direction: 'earlier' |
   const before = draft.stretches[i - 1];
   const self = draft.stretches[i];
   if (!before || !self || !canMoveStart(draft, id, direction)) return draft;
+  // Stretches whose file numbers overlap can interleave, so the moved session is merged into
+  // date order rather than put at an end.
   const [nextBefore, nextSelf] =
     direction === 'later'
-      ? [[...before.sessions, ...self.sessions.slice(0, 1)], self.sessions.slice(1)]
-      : [before.sessions.slice(0, -1), [...before.sessions.slice(-1), ...self.sessions]];
+      ? [mergeSessions([...before.sessions, ...self.sessions.slice(0, 1)]), self.sessions.slice(1)]
+      : [before.sessions.slice(0, -1), mergeSessions([...before.sessions.slice(-1), ...self.sessions])];
   const stretches = draft.stretches.map((s, n) =>
-    n === i - 1 ? { ...before, sessions: nextBefore } : n === i ? { ...self, sessions: nextSelf } : s,
+    n === i - 1 ? reshaped(before, nextBefore) : n === i ? reshaped(self, nextSelf) : s,
   );
   return edit(draft, stretches);
 }
 
 /**
  * Joins stretch `id` into the one before it. Sessions on one date become one. The joined stretch
- * keeps a status the lifter chose for the earlier one; any other status was the rules' reading of
- * other sessions, so it's left for the lifter to choose.
+ * keeps a status the lifter chose for the earlier one.
  */
 export function joinWithPrevious(draft: AssignDraft, id: string): AssignDraft {
   const i = draft.stretches.findIndex((s) => s.id === id);
   const before = draft.stretches[i - 1];
   const self = draft.stretches[i];
   if (i < 1 || !before || !self) return draft;
-  const byDate = new Map(before.sessions.map((s) => [s.date, s]));
-  for (const s of self.sessions) {
-    const same = byDate.get(s.date);
-    byDate.set(
-      s.date,
-      same ? { ...same, lifts: [...new Set([...same.lifts, ...s.lifts])], sets: same.sets + s.sets } : s,
-    );
-  }
-  const joined: DraftStretch = {
-    ...before,
-    sessions: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
-    status: before.statusChosen ? before.status : null,
-    source: null,
-  };
+  const joined = reshaped(before, mergeSessions([...before.sessions, ...self.sessions]));
   return edit(draft, draft.stretches.flatMap((s, n) => (n === i ? [] : n === i - 1 ? [joined] : [s])));
 }
 
@@ -166,8 +197,8 @@ const daysBetween = (a: string, b: string) => (Date.parse(`${b}T00:00:00Z`) - Da
 
 /**
  * Splits stretch `id` in two at its largest gap between sessions, the earliest if several tie.
- * As with a join, a status the lifter didn't choose was the rules' reading of the whole stretch,
- * so both halves are left for the lifter to choose; a chosen one stays on both.
+ * As with a join, both halves are left for the lifter to choose a status, unless they chose one,
+ * which stays on both.
  */
 export function splitAtLargestGap(draft: AssignDraft, id: string): AssignDraft {
   const self = draft.stretches.find((s) => s.id === id);
@@ -178,11 +209,13 @@ export function splitAtLargestGap(draft: AssignDraft, id: string): AssignDraft {
     const gap = daysBetween(self.sessions[i]?.date ?? s.date, s.date);
     if (gap > widest) [widest, at] = [gap, i + 1];
   });
-  const status = self.statusChosen ? self.status : null;
-  const tail = self.sessions.slice(at);
-  const first: DraftStretch = { ...self, sessions: self.sessions.slice(0, at), status, source: null };
-  const second: DraftStretch = { ...first, id: `${id}+${tail[0]?.date ?? at}`, sessions: tail, file: null };
-  return edit(draft, draft.stretches.flatMap((s) => (s.id === id ? [first, second] : [s])));
+  const first = reshaped(self, self.sessions.slice(0, at));
+  const second: DraftStretch = { ...reshaped(self, self.sessions.slice(at)), id: `s${draft.nextId}`, file: null };
+  return edit(
+    draft,
+    draft.stretches.flatMap((s) => (s.id === id ? [first, second] : [s])),
+    draft.nextId + 1,
+  );
 }
 
 export function setProgram(draft: AssignDraft, id: string, program: string): AssignDraft {

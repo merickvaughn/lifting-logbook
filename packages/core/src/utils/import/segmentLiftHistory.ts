@@ -155,6 +155,12 @@ export interface HistoryStretch<T> {
   candidateProgram?: string;
   /** The file's macrocycle number, when the file has them (decision 8). */
   fileMacrocycleNum?: number;
+  /**
+   * With `fileMacrocycleNum`, the program group the file's rows were put in: its `Program`
+   * key, or `''` when its cells are blank. {@link fileMacrocycleKey} of the two names the
+   * stretch's rows (#1256).
+   */
+  fileGroup?: string;
   startDate: Date;
   endDate: Date;
   sessions: HistorySession<T>[];
@@ -747,14 +753,25 @@ class Segmenter<T extends LiftHistoryRow> {
   /**
    * Decision 8: one stretch per file program and number, whatever the dates say. A blank
    * number takes the number of the nearest row above it in the same program (the row above
-   * when its `Program` cell is blank too), and a row with none to take is `unnumbered`. A
-   * blank `Program` cell belongs with the rest of its number.
+   * when its `Program` cell is blank too), else of a row of its own session (the same day and
+   * program, or any program when its cell is blank), and a row with none to take is
+   * `unnumbered`. A blank `Program` cell belongs with the rest of its number.
    */
   byFileNumbers(rows: readonly Dated<T>[]): { drafts: Draft<T>[]; unnumbered: T[] } {
     const cellKey = (row: T) => {
       const value = programCell(row.program);
       return value === undefined ? undefined : this.cell(value).key;
     };
+    // A session's first row may leave its number to a later row (#1256). Unnumbered, it would
+    // share a day with its own stretch, so no place the lifter could file it would be valid.
+    const sessionNum = new Map<string, number>();
+    for (const row of rows) {
+      if (!isFiniteNumber(row.macrocycleNum)) continue;
+      const day = toUTCMidnight(row.date).getTime();
+      for (const key of [`${day}|*`, `${day}|${cellKey(row) ?? '*'}`]) {
+        if (!sessionNum.has(key)) sessionNum.set(key, row.macrocycleNum);
+      }
+    }
     /** `session` is the row's number and day, so rows of one session share it. */
     const numbered: { row: Dated<T>; num: number; key: string | undefined; session: string }[] = [];
     const unnumbered: T[] = [];
@@ -764,9 +781,8 @@ class Segmenter<T extends LiftHistoryRow> {
       const key = cellKey(row);
       const num = isFiniteNumber(row.macrocycleNum)
         ? row.macrocycleNum
-        : key === undefined
-          ? lastAny
-          : lastByProgram.get(key);
+        : ((key === undefined ? lastAny : lastByProgram.get(key)) ??
+          sessionNum.get(`${toUTCMidnight(row.date).getTime()}|${key ?? '*'}`));
       if (num === undefined) {
         unnumbered.push(row);
         continue;
@@ -906,7 +922,9 @@ class Segmenter<T extends LiftHistoryRow> {
         matched,
         liftsOutsideProgram: matched ? [] : outside,
         ...(candidate !== undefined && !matched ? { candidateProgram: candidate } : {}),
-        ...(draft.fileMacrocycleNum !== undefined ? { fileMacrocycleNum: draft.fileMacrocycleNum } : {}),
+        ...(draft.fileMacrocycleNum !== undefined
+          ? { fileMacrocycleNum: draft.fileMacrocycleNum, fileGroup: draft.groupKey ?? '' }
+          : {}),
         startDate: first.date,
         endDate: last.date,
         sessions: draft.sessions.map((s, n) => ({ date: s.date, rows: s.rows, workoutNum: nums?.[n] ?? n + 1 })),
@@ -1106,4 +1124,30 @@ export function segmentLiftHistory<T extends LiftHistoryRow>(
     unnumbered: [],
     conflicts: [],
   };
+}
+
+/** Names one file macrocycle: a stretch's `fileGroup` and `fileMacrocycleNum`, or a row's. */
+export function fileMacrocycleKey(group: string, macrocycleNum: number): string {
+  return `${group}|${macrocycleNum}`;
+}
+
+/**
+ * Each row's file macrocycle, as {@link segmentLiftHistory} groups a file with macrocycle numbers,
+ * by position: undefined for a row in none (undated, non-cycle or unnumbered). An export's commit
+ * pairs rows with the macrocycles its breakdown names by this, so the pairing and the grouping
+ * the lifter saw read the file one way, blank or differently spelled `Program` cells included
+ * (#1256).
+ */
+export function fileMacrocycleKeys<T extends LiftHistoryRow>(
+  rows: readonly T[],
+  options: SegmentLiftHistoryOptions,
+): Array<string | undefined> {
+  const dated = rows.filter((row) => !isNonCycleProgram(row.program)).filter(isDated);
+  const keys = new Map<T, string>();
+  for (const draft of new Segmenter<T>(options).byFileNumbers(dated).drafts) {
+    if (draft.fileMacrocycleNum === undefined) continue;
+    const key = fileMacrocycleKey(draft.groupKey ?? '', draft.fileMacrocycleNum);
+    for (const session of draft.sessions) for (const row of session.rows) keys.set(row, key);
+  }
+  return rows.map((row) => keys.get(row));
 }

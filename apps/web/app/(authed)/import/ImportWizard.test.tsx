@@ -3626,6 +3626,7 @@ function stretch(dates: string[], over: Partial<AssignStretch> = {}): AssignStre
     liftsOutsideProgram: [],
     candidateProgram: null,
     fileMacrocycleNum: null,
+    fileGroup: null,
     startDate: dates[0]!,
     endDate: dates[dates.length - 1]!,
     sessions: dates.map((d) => day(d)),
@@ -3784,6 +3785,8 @@ describe('ImportWizard Assign step (#1256)', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
     render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
     await toAssign(user);
+    // An opened stretch's id names another stretch in the fresh grouping, which starts closed.
+    await user.click(screen.getAllByTestId('assign-settled')[0]!);
 
     const fresh = assignRes({ stretches: [stretch(['2026-01-01', '2026-02-03'], { status: 'abandoned' })] });
     mockAssign.mockResolvedValueOnce(fresh);
@@ -3794,14 +3797,73 @@ describe('ImportWizard Assign step (#1256)', () => {
     expect(screen.getByText('Step 6 of 8 · Assign')).toBeInTheDocument();
     expect(mockAssign).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId('assign-summary')).toHaveTextContent('in 1 macrocycle.');
+    expect(screen.getByTestId('assign-settled')).toHaveAttribute('aria-expanded', 'false');
 
     // The same at commit.
+    const mismatch = { ok: false as const, errors: [{ row: 0, code: 'UNEXPECTED_ERROR' as const, message: 'x' }], code: 'breakdown-mismatch' };
     await user.click(nextButton());
     await screen.findByRole('heading', { name: 'Preview changes' });
-    mockCommit.mockResolvedValueOnce({ ok: false, errors: [{ row: 0, code: 'UNEXPECTED_ERROR', message: 'x' }], code: 'breakdown-mismatch' });
+    mockCommit.mockResolvedValueOnce(mismatch);
     await user.click(screen.getByRole('button', { name: 'Commit import' }));
     expect(await screen.findByText(/no longer matched these macrocycles/)).toBeInTheDocument();
     expect(mockAssign).toHaveBeenCalledTimes(3);
+
+    // A reload that fails leaves the lifter on Assign with its error, not on an emptied Preview.
+    await user.click(nextButton());
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    mockCommit.mockResolvedValueOnce(mismatch);
+    mockAssign.mockRejectedValueOnce(new Error('Grouping is unavailable'));
+    await user.click(screen.getByRole('button', { name: 'Commit import' }));
+    expect(await screen.findByText('Grouping is unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Step 6 of 8 · Assign')).toBeInTheDocument();
+  });
+
+  it('keeps keyboard focus on what an edit changed, and opens a settled stretch from its own row', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(
+      assignRes({
+        stretches: [
+          stretch(['2026-01-01', '2026-01-03']),
+          stretch(['2026-01-10', '2026-01-12']),
+          stretch(['2026-02-01', '2026-02-03', '2026-02-20']),
+        ],
+        lone: [
+          { session: day('2026-01-20', ['Bench Press']), daysAfterPrevious: 8, daysBeforeNext: 12 },
+          { session: day('2026-01-25', ['Bench Press']), daysAfterPrevious: 5, daysBeforeNext: 7 },
+        ],
+      }),
+    );
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    const [row] = screen.getAllByTestId('assign-settled');
+    await user.click(row!);
+    expect(row).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region', { name: 'RPT from Jan 1, 2026' })).toBeInTheDocument();
+    await user.click(row!);
+    expect(row).toHaveAttribute('aria-expanded', 'false');
+    expect(row).toHaveFocus();
+
+    // Each of these removes the button pressed.
+    await user.click(screen.getByRole('button', { name: /^Keep every break/ }));
+    expect(screen.getByTestId('assign-decisions')).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Join RPT from Feb 1, 2026 with the macrocycle before it' }));
+    const joined = screen.getByRole('region', { name: 'RPT from Jan 10, 2026' });
+    expect(joined).toHaveFocus();
+    await user.click(within(joined).getByRole('button', { name: 'Split at largest gap: RPT from Jan 10, 2026' }));
+    expect(screen.getByRole('region', { name: 'RPT from Jan 10, 2026' })).toHaveFocus();
+    expect(screen.getByRole('region', { name: 'RPT from Feb 1, 2026' })).toBeInTheDocument();
+  });
+
+  it('offers an export’s unnumbered workout only the places that need no macrocycle', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(assignRes({ exported: true, unnumbered: [day('2026-01-20')] }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    const choices = screen.getByRole('group', { name: 'Workout on Jan 20, 2026 has no macrocycle number' });
+    expect(within(choices).getAllByRole('button').map((b) => b.textContent)).toEqual(['As a non-cycle workout', 'Leave out']);
+    await user.click(within(choices).getByRole('button', { name: 'Leave out the Jan 20, 2026 workout' }));
+    expect(nextButton()).toBeEnabled();
   });
 
   it('keeps Assign edits while Review is unchanged, and discards them with a notice when rows change', async () => {
@@ -3832,8 +3894,8 @@ describe('ImportWizard Assign step (#1256)', () => {
   it('blocks Continue while file numbers overlap, unless the file is an export', async () => {
     const user = userEvent.setup();
     const overlapping = [
-      stretch(['2026-01-01', '2026-01-10'], { fileMacrocycleNum: 1 }),
-      stretch(['2026-01-05', '2026-01-15'], { fileMacrocycleNum: 2 }),
+      stretch(['2026-01-01', '2026-01-10'], { fileMacrocycleNum: 1, fileGroup: 'rpt' }),
+      stretch(['2026-01-05', '2026-01-15'], { fileMacrocycleNum: 2, fileGroup: 'rpt' }),
     ];
     mockAssign.mockResolvedValueOnce(
       assignRes({ stretches: overlapping, conflicts: [{ kind: 'numbers-overlap', stretches: [0, 1] }] }),

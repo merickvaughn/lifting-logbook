@@ -267,6 +267,8 @@ export function ImportWizard({
   const [assignDraft, setAssignDraft] = useState<AssignDraft | null>(null);
   const assignKey = useRef<string | null>(null);
   const [assignNotice, setAssignNotice] = useState<string | null>(null);
+  /** How many groupings have loaded, which keys the step so each one starts it afresh. */
+  const [assignLoads, setAssignLoads] = useState(0);
 
   // Column mapping overrides from MAP_COLUMNS step
   const [columnOverrides, setColumnOverrides] = useState<Map<string, string>>(new Map());
@@ -1289,6 +1291,7 @@ export function ImportWizard({
       if (previewGeneration.current !== startGeneration) return false; // preview discarded mid-request
       setAssignRes(res);
       setAssignDraft(initialDraft(res));
+      setAssignLoads((n) => n + 1);
       assignKey.current = JSON.stringify(request.opts ?? {});
       setAssignNotice(notice);
       setStep(Step.ASSIGN);
@@ -1319,10 +1322,12 @@ export function ImportWizard({
     );
   }
 
-  // The server rejected the breakdown (its rows no longer match it), so Assign starts again.
+  // The server rejected the breakdown (its rows no longer match it), so Assign starts again. The
+  // wizard goes back first, so a failed reload's error shows on Assign, not on an emptied Preview.
   async function reloadAfterMismatch() {
     setPlannedCommit(null);
     setCommitErrors(null);
+    setStep(Step.ASSIGN);
     await loadAssign('Your file no longer matched these macrocycles, so they were grouped again. Check them and continue.');
   }
 
@@ -2298,7 +2303,14 @@ export function ImportWizard({
           {/* ── ASSIGN ── */}
           {step === Step.ASSIGN && assignRes && assignDraft && (
             <>
-              <AssignStep res={assignRes} draft={assignDraft} onChange={setAssignDraft} notice={assignNotice} />
+              {/* A fresh grouping remounts the step: its stretch ids name different stretches now. */}
+              <AssignStep
+                key={assignLoads}
+                res={assignRes}
+                draft={assignDraft}
+                onChange={setAssignDraft}
+                notice={assignNotice}
+              />
               {error && <p className={styles.errorNote}>{error}</p>}
             </>
           )}

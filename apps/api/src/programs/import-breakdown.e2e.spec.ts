@@ -556,8 +556,38 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     });
     expect(await counts()).toEqual({ sets: 0, macrocycles: 0 });
 
-    // The added session alone is the date stretch's to take.
-    expect((await commit(csv, breakdownOf([byFile, stretch(added)]))).created).toBe(10);
+    // The added session takes the number above it, so Assign groups it in macrocycle 1 (#1256):
+    // a date stretch can't take it either, and the file stretch stores it.
+    expect((await send('commit', csv, breakdownOf([byFile, stretch(added)]))).statusCode).toBe(400);
+    expect((await commit(csv, breakdownOf([byFile]))).created).toBe(10);
+  });
+
+  /** `mode=assign`'s stretches for `csv`. */
+  const assignOf = async (csv: string) => {
+    const res = await importCsv('rpt', csv, '?mode=assign&destination=lift-records');
+    expect(res.statusCode).toBe(200);
+    return res.json<ImportAssignResponse>();
+  };
+
+  it("pairs an export's rows as Assign grouped them, blank and differently spelled Program cells included (#1256)", async () => {
+    const rows = run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 }).map((r, i) =>
+      i === 1 ? { ...r, program: '' } : i === 4 ? { ...r, program: 'RPT' } : r,
+    );
+    const csv = csvOf(rows, ['Occurrence']);
+    const [only] = (await assignOf(csv)).stretches;
+    expect(only).toMatchObject({ fileMacrocycleNum: 1, fileGroup: 'rpt' });
+    const file = { program: only?.fileGroup ?? '', macrocycleNum: 1 };
+    expect((await commit(csv, breakdownOf([{ program: 'rpt', file, status: 'completed', statusChosen: false }]))).created).toBe(9);
+  });
+
+  it("keeps an export's numbered rows on a day whose unnumbered session is left out (#1256)", async () => {
+    // A 5-3-1 row with no number to take, on a day the rpt macrocycle also trained.
+    const stray: Row = { day: 2, lift: 'Deadlift', program: '5-3-1' };
+    const csv = csvOf([stray, ...run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 })], ['Occurrence']);
+    const assigned = await assignOf(csv);
+    expect(assigned.unnumbered.map((s) => s.date)).toEqual([day(2)]);
+    const byFile: ImportBreakdownStretch = { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false };
+    expect((await commit(csv, breakdownOf([byFile], { excludedDates: [day(2)] }))).created).toBe(9);
   });
 
   it('refuses to undo a batch grouped under another one', async () => {

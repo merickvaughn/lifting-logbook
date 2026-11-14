@@ -2,6 +2,7 @@ import type { AssignStretch, ImportAssignResponse } from '@lifting-logbook/types
 import {
   buildBreakdown,
   canMoveStart,
+  choicesFor,
   effectiveStretches,
   fileAllWithEarlier,
   fileSession,
@@ -23,6 +24,7 @@ function stretch(dates: string[], over: Partial<AssignStretch> = {}): AssignStre
     liftsOutsideProgram: [],
     candidateProgram: null,
     fileMacrocycleNum: null,
+    fileGroup: null,
     startDate: dates[0]!,
     endDate: dates[dates.length - 1]!,
     sessions: dates.map((d) => session(d)),
@@ -77,6 +79,24 @@ describe('assignDraft (#1256)', () => {
     expect(moveStart(draft, 's1', 'later')).toBe(draft);
     expect(canMoveStart(draft, 's0', 'earlier')).toBe(false);
     expect(draft.edited).toBe(true);
+    // The rules read each status from sessions that have since moved; a chosen one stays.
+    expect(draft.stretches.map((s) => s.status)).toEqual([null, null]);
+    const chosen = moveStart(setStatus(initialDraft(r), 's1', 'overran'), 's1', 'earlier');
+    expect(chosen.stretches.map((s) => s.status)).toEqual([null, 'overran']);
+  });
+
+  it('keeps sessions in date order, one per date, when a start moves between interleaved stretches', () => {
+    const r = res({
+      stretches: [stretch(['2026-01-01', '2026-01-10', '2026-01-20']), stretch(['2026-01-05', '2026-01-15', '2026-01-25'])],
+      lone: [],
+    });
+    const moved = moveStart(initialDraft(r), 's1', 'later');
+    expect(dates(r, moved)).toEqual([['2026-01-01', '2026-01-05', '2026-01-10', '2026-01-20'], ['2026-01-15', '2026-01-25']]);
+    expect(overlaps(moved.stretches)).toHaveLength(1);
+
+    const shared = res({ stretches: [stretch(['2026-01-01', '2026-01-05']), stretch(['2026-01-05', '2026-01-09'])], lone: [] });
+    const merged = moveStart(initialDraft(shared), 's1', 'later');
+    expect(merged.stretches[0]!.sessions).toEqual([session('2026-01-01'), session('2026-01-05', ['Squat'], 6)]);
   });
 
   it('joins a stretch into the one before, merging a shared date and leaving the status to choose', () => {
@@ -111,6 +131,38 @@ describe('assignDraft (#1256)', () => {
     expect(splitAtLargestGap(draft, 's0')).toBe(draft);
   });
 
+  it('never gives two stretches one id, however often a stretch is split', () => {
+    const r = res({
+      stretches: [stretch(['2026-01-01', '2026-01-02', '2026-01-03', '2026-01-20', '2026-01-21', '2026-01-22'])],
+      lone: [],
+    });
+    // Split at Jan 3 → Jan 20, hand Jan 20 back, and split at that same gap again.
+    let draft = splitAtLargestGap(initialDraft(r), 's0');
+    draft = moveStart(draft, draft.stretches[1]!.id, 'later');
+    draft = splitAtLargestGap(draft, 's0');
+    expect(dates(r, draft)).toEqual([['2026-01-01', '2026-01-02', '2026-01-03'], ['2026-01-20'], ['2026-01-21', '2026-01-22']]);
+    expect(new Set(draft.stretches.map((s) => s.id)).size).toBe(3);
+  });
+
+  it('asks again where a session goes once the stretch it was filed with changes', () => {
+    const r = res();
+    const filed = fileSession(initialDraft(r), '2026-01-20', 'later');
+    // Joining takes away the stretch after it: it would otherwise be in no stretch at all.
+    const joined = joinWithPrevious(filed, 's1');
+    expect(joined.filed).toEqual({});
+    expect(openDecisions(joined, r)).toBe(2);
+    // An edit that leaves its neighbour alone keeps the choice.
+    expect(setStatus(filed, 's1', 'abandoned').filed).toEqual({ '2026-01-20': 'later' });
+    expect(fileSession(filed, '2026-01-20', 'non-cycle').filed).toEqual({ '2026-01-20': 'non-cycle' });
+  });
+
+  it('offers an export’s unnumbered session only places that need no stretch', () => {
+    const p = { session: session('2026-01-20'), daysAfterPrevious: null, daysBeforeNext: null, unnumbered: true };
+    expect(choicesFor(p, res({ exported: true }))).toEqual(['non-cycle', 'exclude']);
+    expect(choicesFor(p, res())).toEqual(['earlier', 'later', 'non-cycle', 'exclude']);
+    expect(choicesFor({ ...p, unnumbered: false }, res({ exported: true }))).toHaveLength(4);
+  });
+
   it('files a lone session with either neighbour, or out of every stretch', () => {
     const r = res();
     expect(openDecisions(initialDraft(r), r)).toBe(1);
@@ -137,9 +189,10 @@ describe('assignDraft (#1256)', () => {
   });
 
   it('counts overlapping stretches as decisions unless the file is an export, which sends its numbers', () => {
+    // The group the server put the rows in, which no one Program cell need spell.
     const stretches = [
-      stretch(['2026-01-01', '2026-01-10'], { fileMacrocycleNum: 1, reasons: { start: { kind: 'file-macrocycle', macrocycleNum: 1 }, program: { kind: 'column', value: 'rpt' }, status: { kind: 'all-workouts-done' } } }),
-      stretch(['2026-01-05', '2026-01-15'], { fileMacrocycleNum: 2 }),
+      stretch(['2026-01-01', '2026-01-10'], { fileMacrocycleNum: 1, fileGroup: 'name:my rpt' }),
+      stretch(['2026-01-05', '2026-01-15'], { fileMacrocycleNum: 2, fileGroup: 'name:my rpt' }),
     ];
     const plain = res({ stretches, lone: [] });
     expect(overlaps(initialDraft(plain).stretches)).toHaveLength(1);
@@ -151,7 +204,7 @@ describe('assignDraft (#1256)', () => {
       program: 'rpt',
       status: 'completed',
       statusChosen: false,
-      file: { program: 'rpt', macrocycleNum: 1 },
+      file: { program: 'name:my rpt', macrocycleNum: 1 },
     });
   });
 });

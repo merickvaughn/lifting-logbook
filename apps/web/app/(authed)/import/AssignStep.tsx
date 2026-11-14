@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MACROCYCLE_STATUSES } from '@lifting-logbook/types';
 import type {
   AssignStartReason,
@@ -13,6 +13,7 @@ import { STATUS_LABEL, STATUS_MARK } from '@/lib/macrocycleStatus';
 import {
   canFile,
   canMoveStart,
+  choicesFor,
   effectiveStretches,
   endOf,
   fileAllWithEarlier,
@@ -35,7 +36,7 @@ import {
 import styles from './AssignStep.module.css';
 
 /** A program's display name: a custom program's own, or the built-in catalog's. */
-export function programNamer(res: ImportAssignResponse): (id: string) => string {
+function programNamer(res: ImportAssignResponse): (id: string) => string {
   const custom = new Map(res.programs.map((p) => [p.id, p.name]));
   return (id) => custom.get(id) ?? PROGRAMS.find((p) => p.id === id)?.name ?? id;
 }
@@ -100,12 +101,17 @@ function Badge({ status }: { status: MacrocycleStatus | null }) {
   );
 }
 
-const CHOICES: Array<{ choice: SessionChoice; label: string; name: (day: string) => string }> = [
-  { choice: 'earlier', label: 'With the earlier macrocycle', name: (d) => `File the ${d} workout with the earlier macrocycle` },
-  { choice: 'later', label: 'With the later macrocycle', name: (d) => `File the ${d} workout with the later macrocycle` },
-  { choice: 'non-cycle', label: 'As a non-cycle workout', name: (d) => `Store the ${d} workout as a non-cycle workout` },
-  { choice: 'exclude', label: 'Leave it out', name: (d) => `Leave the ${d} workout out` },
-];
+/** Each control's name holds its visible label, so a voice command naming the label finds it. */
+const CHOICES: Record<SessionChoice, { label: string; name: (day: string) => string }> = {
+  earlier: { label: 'With the earlier macrocycle', name: (d) => `File the ${d} workout with the earlier macrocycle` },
+  later: { label: 'With the later macrocycle', name: (d) => `File the ${d} workout with the later macrocycle` },
+  'non-cycle': { label: 'As a non-cycle workout', name: (d) => `Store the ${d} workout as a non-cycle workout` },
+  exclude: { label: 'Leave out', name: (d) => `Leave out the ${d} workout` },
+};
+
+/** A stretch's card, which focus moves to after an edit removes the control that made it. */
+const cardId = (id: string) => `assign-card-${id}`;
+const DECISIONS_ID = 'assign-decisions';
 
 /**
  * The Assign step (#1256): the rules' grouping of a lift-records file into macrocycles, for the
@@ -144,6 +150,17 @@ export default function AssignStep({
     toggle(id, true);
     onChange(next);
   };
+  // An edit that removes the control that made it (Join, Split, Keep every break) moves focus to
+  // what it changed, rather than letting it fall to the page.
+  const [focusTarget, setFocusTarget] = useState<string | null>(null);
+  useEffect(() => {
+    if (focusTarget === null) return;
+    document.getElementById(focusTarget)?.focus();
+    setFocusTarget(null);
+  }, [focusTarget]);
+  // The notice is written into a live region that's already there, so a screen reader says it.
+  const [shownNotice, setShownNotice] = useState<string | null>(null);
+  useEffect(() => setShownNotice(notice), [notice]);
 
   return (
     <div className={styles.step}>
@@ -152,11 +169,9 @@ export default function AssignStep({
         We grouped your workouts using their dates. These are suggestions: change anything before you
         continue. Macrocycles are numbered by date, so yours may be renumbered.
       </p>
-      {notice && (
-        <p className={styles.notice} role="status">
-          {notice}
-        </p>
-      )}
+      <p className={shownNotice ? styles.notice : undefined} role="status">
+        {shownNotice}
+      </p>
 
       <p className={styles.summary} data-testid="assign-summary">
         {res.sessions} workout{res.sessions === 1 ? '' : 's'} in {stretches.length} macrocycle
@@ -219,7 +234,14 @@ export default function AssignStep({
           </p>
           {lone.length > 1 && (
             <div className={styles.options}>
-              <button type="button" className={styles.btn} onClick={() => onChange(fileAllWithEarlier(draft, res))}>
+              <button
+                type="button"
+                className={styles.btn}
+                onClick={() => {
+                  onChange(fileAllWithEarlier(draft, res));
+                  setFocusTarget(DECISIONS_ID);
+                }}
+              >
                 Keep every break: file the {lone.length} one-lift workouts with the macrocycle before each
               </button>
             </div>
@@ -228,9 +250,10 @@ export default function AssignStep({
             {pending.map((p) => {
               const day = fmtDay(p.session.date);
               const chosen = draft.filed[p.session.date];
+              const headingId = `assign-pending-${p.session.date}`;
               return (
                 <li key={p.session.date} className={styles.panel}>
-                  <p className={styles.heading}>
+                  <p className={styles.heading} id={headingId}>
                     {p.unnumbered
                       ? `Workout on ${day} has no macrocycle number`
                       : `One-lift workout on ${day}, in a break`}
@@ -240,8 +263,10 @@ export default function AssignStep({
                     {p.daysAfterPrevious !== null && `, ${p.daysAfterPrevious} days after the workout before it`}
                     {p.daysBeforeNext !== null && `, ${p.daysBeforeNext} days before the next`}.
                   </p>
-                  <div className={styles.options}>
-                    {CHOICES.map(({ choice, label, name: controlName }) => {
+                  {/* One choice per session: the group says which session its buttons file. */}
+                  <div className={styles.options} role="group" aria-labelledby={headingId}>
+                    {choicesFor(p, res).map((choice) => {
+                      const { label, name: controlName } = CHOICES[choice];
                       const unavailable =
                         (choice === 'earlier' || choice === 'later') && !canFile(draft, p.session.date, choice);
                       return (
@@ -304,14 +329,40 @@ export default function AssignStep({
                     type="button"
                     className={styles.btn}
                     aria-label={`Join ${label} with the macrocycle before it`}
-                    onClick={() => onChange(joinWithPrevious(draft, s.id))}
+                    onClick={() => {
+                      const before = draft.stretches[draft.stretches.findIndex((x) => x.id === s.id) - 1];
+                      if (!before) return;
+                      editStretch(before.id, joinWithPrevious(draft, s.id));
+                      setFocusTarget(cardId(before.id));
+                    }}
                   >
                     Join
                   </button>
                 </div>
               )}
-              {expanded ? (
-                <section className={`${styles.card} ${statusClass(s.status)}`} aria-label={label}>
+              {/* A settled stretch's row opens and closes it, and stays where it is either way. */}
+              {settled && (
+                <button
+                  type="button"
+                  className={`${styles.row} ${statusClass(s.status)}`}
+                  aria-expanded={expanded}
+                  aria-controls={expanded ? cardId(s.id) : undefined}
+                  data-testid="assign-settled"
+                  onClick={() => toggle(s.id, !expanded)}
+                >
+                  <span className={styles.rowText}>
+                    {name(s.program)} · {span} · {s.sessions.length} workouts
+                  </span>
+                  <Badge status={s.status} />
+                </button>
+              )}
+              {expanded && (
+                <section
+                  id={cardId(s.id)}
+                  tabIndex={-1}
+                  className={`${styles.card} ${statusClass(s.status)}`}
+                  aria-label={label}
+                >
                   <p className={styles.heading}>
                     {name(s.program)} · {span}
                   </p>
@@ -370,39 +421,24 @@ export default function AssignStep({
                       <button
                         type="button"
                         className={styles.btn}
-                        aria-label={`Split ${label} at its largest gap`}
-                        onClick={() => editStretch(s.id, splitAtLargestGap(draft, s.id))}
+                        aria-label={`Split at largest gap: ${label}`}
+                        onClick={() => {
+                          editStretch(s.id, splitAtLargestGap(draft, s.id));
+                          setFocusTarget(cardId(s.id));
+                        }}
                       >
                         Split at largest gap
                       </button>
                     )}
-                    {settled && (
-                      <button type="button" className={styles.btn} onClick={() => toggle(s.id, false)}>
-                        Done
-                      </button>
-                    )}
                   </div>
                 </section>
-              ) : (
-                <button
-                  type="button"
-                  className={`${styles.row} ${statusClass(s.status)}`}
-                  aria-expanded={false}
-                  data-testid="assign-settled"
-                  onClick={() => toggle(s.id, true)}
-                >
-                  <span className={styles.rowText}>
-                    {name(s.program)} · {span} · {s.sessions.length} workouts
-                  </span>
-                  <Badge status={s.status} />
-                </button>
               )}
             </li>
           );
         })}
       </ol>
 
-      <p className={styles.summary} role="status" data-testid="assign-decisions">
+      <p className={styles.summary} role="status" id={DECISIONS_ID} tabIndex={-1} data-testid="assign-decisions">
         {left === 0
           ? 'Nothing left to decide. Continue to Preview.'
           : `${left} decision${left === 1 ? '' : 's'} left before Preview.`}

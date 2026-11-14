@@ -64,6 +64,7 @@ import {
   withImportProgram,
   parseLiftRecords,
   segmentLiftHistory,
+  fileMacrocycleKeys,
   toLiftHistoryRecord,
   isLiftRecordExport,
 } from '@lifting-logbook/core';
@@ -949,12 +950,24 @@ export class ImportController {
       choices.splitDest,
       { assign: true },
     );
-    const programs = [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(userId))];
+    const customPrograms = await this.customPrograms(userId);
+    const programs = [...BUILT_IN_KNOWN_PROGRAMS, ...customPrograms];
     let placed: PlacedBreakdown;
     try {
       placed = placeBreakdown(rows as LiftRecord[], choices.breakdown, {
         exported: choices.exported,
         programs: new Set(programs.map((p) => p.id)),
+        // An export's rows pair with its macrocycles as `mode=assign` grouped them. Grouping by
+        // file numbers doesn't read the import date.
+        ...(choices.exported
+          ? {
+              fileKeys: fileMacrocycleKeys((rows as LiftRecord[]).map(toLiftHistoryRecord), {
+                importDate: assignImportDate(undefined),
+                sourceProgram: program,
+                customPrograms,
+              }),
+            }
+          : {}),
       });
     } catch (err) {
       // The reason only: the message names the lifter's dates and programs.

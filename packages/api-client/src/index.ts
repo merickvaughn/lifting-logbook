@@ -162,7 +162,8 @@ function importForm(file: File, opts?: CommitImportOpts): FormData {
 
 /**
  * The server's answer to a commit or dry run: its response, or validation errors as data. `code`
- * is the API's own error code when it sends one, such as `breakdown-mismatch` (#1256).
+ * is the API's own error code when it sends one, such as `breakdown-mismatch` (#1256). Only
+ * `commitImport` sets it: `dryRunImport` throws an `ApiClientError` carrying the code instead.
  */
 export type ImportCommitResult<T> = { ok: true; data: T } | { ok: false; errors: ImportError[]; code?: string };
 

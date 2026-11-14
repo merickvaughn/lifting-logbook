@@ -13,6 +13,7 @@ import {
   LiftRecord,
   buildLiftRecordsPreImage,
   classifyLiftRecordRows,
+  fileMacrocycleKey,
   isNonCycleProgram,
   liftKey,
   liftRecordNaturalKey,
@@ -155,21 +156,24 @@ export interface PlacedBreakdown {
   excludedSessions: number;
 }
 
-/** A row's file `Program` and `Macrocycle #`, which name an exported file's macrocycle. */
-const pairKey = (program: string, macrocycleNum: number) => `${program.trim()}|${macrocycleNum}`;
-
 /**
  * Places each of the file's rows (after Review's edits) by the breakdown: in its stretch, as a
  * non-cycle workout, or left out. Every dated session must be in exactly one place, every date
  * and file macrocycle the breakdown names must be in the file, every stretch's program must be one
  * the lifter has, and stretches may not overlap unless the file is an export (decision 8). Any
  * mismatch is a 400 naming it, before anything is written.
+ *
+ * `fileKeys` gives each row's file macrocycle by position, as `mode=assign` grouped it
+ * (`fileMacrocycleKeys`), so an export's rows pair with the macrocycles the lifter saw. A row that
+ * pairs goes with its macrocycle even on an excluded or non-cycle date, which can only be another
+ * row's (#1256).
  */
 export function placeBreakdown(
   rows: readonly LiftRecord[],
   breakdown: ImportBreakdown,
-  context: { exported: boolean; programs: ReadonlySet<string> },
+  context: { exported: boolean; programs: ReadonlySet<string>; fileKeys?: ReadonlyArray<string | undefined> },
 ): PlacedBreakdown {
+  const fileKeys = context.fileKeys ?? [];
   breakdown.stretches.forEach((s, i) => {
     if (s.program === NON_CYCLE_PROGRAM || !context.programs.has(s.program)) {
       throw mismatch('unknown-program', `Stretch ${i + 1}'s program '${s.program}' isn't one of your programs.`);
@@ -181,7 +185,7 @@ export function placeBreakdown(
 
   const fileRows = rows.filter((r) => !isNonCycleProgram(r.program));
   const fileDates = new Set(fileRows.map((r) => ymd(r.date)));
-  const filePairs = new Set(fileRows.map((r) => pairKey(String(r.program ?? ''), r.macrocycleNum)));
+  const filePairs = new Set(fileKeys.filter((key) => key !== undefined));
   type Place = number | 'excluded' | 'non-cycle';
   const describe = (place: Place) => (typeof place === 'number' ? `stretch ${place + 1}` : `the ${place} dates`);
   const byDate = new Map<string, Place>();
@@ -199,7 +203,7 @@ export function placeBreakdown(
       for (const date of s.dates ?? []) claim(date, i);
       return;
     }
-    const key = pairKey(s.file.program, s.file.macrocycleNum);
+    const key = fileMacrocycleKey(s.file.program, s.file.macrocycleNum);
     if (!filePairs.has(key)) {
       throw mismatch(
         'file-macrocycle-not-in-file',
@@ -218,9 +222,10 @@ export function placeBreakdown(
   const stretchRows: LiftRecord[][] = breakdown.stretches.map(() => []);
   const kept: PlacedBreakdown['rows'] = [];
   const unplaced = new Set<string>();
-  for (const r of rows) {
+  rows.forEach((r, i) => {
     const dated = byDate.get(ymd(r.date));
-    const paired = byPair.get(pairKey(String(r.program ?? ''), r.macrocycleNum));
+    const fileKey = fileKeys[i];
+    const paired = fileKey === undefined ? undefined : byPair.get(fileKey);
     // A date stretch can't take rows a file stretch names: they'd move without a word.
     if (typeof dated === 'number' && paired !== undefined && !isNonCycleProgram(r.program)) {
       throw mismatch(
@@ -228,15 +233,15 @@ export function placeBreakdown(
         `Stretch ${dated + 1} lists ${ymd(r.date)}, whose sessions stretch ${paired + 1} names by file macrocycle.`,
       );
     }
-    const place = isNonCycleProgram(r.program) ? 'non-cycle' : (dated ?? paired);
-    if (place === 'excluded') continue;
+    const place = isNonCycleProgram(r.program) ? 'non-cycle' : (paired ?? dated);
+    if (place === 'excluded') return;
     if (place === 'non-cycle') kept.push({ r: { ...r, program: NON_CYCLE_PROGRAM }, stretch: null });
     else if (place === undefined) unplaced.add(ymd(r.date));
     else {
       stretchRows[place]?.push(r);
       kept.push({ r, stretch: place });
     }
-  }
+  });
   if (unplaced.size > 0) {
     const dates = [...unplaced].sort();
     throw mismatch(
