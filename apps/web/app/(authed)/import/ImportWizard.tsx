@@ -663,7 +663,7 @@ export function ImportWizard({
     setBusy(true);
     try {
       // The program the tab was committed to, which the selector may no longer show.
-      const undo = await undoImport(entry.programId, entry.batchId);
+      const undo = await undoImport(entry.programId, entry.batchId, localToday());
       setCompletedTabs((prev) => prev.map((t) => (t === entry ? { ...t, undo } : t)));
     } catch (e) {
       logClientError('undoImport', e, { programId: entry.programId, batchId: entry.batchId });
@@ -1412,7 +1412,7 @@ export function ImportWizard({
     if (!programId || !batchId || undoResult !== null) return;
     setBusy(true);
     try {
-      const result = await undoImport(programId, batchId);
+      const result = await undoImport(programId, batchId, localToday());
       setUndoResult(result);
     } catch (e) {
       logClientError('undoImport', e, { programId, batchId });

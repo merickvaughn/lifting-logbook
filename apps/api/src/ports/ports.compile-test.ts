@@ -317,6 +317,7 @@ const _importBatchRepo: IImportBatchRepository = {
   listWithKeys: () => Promise.resolve([]),
   updatePreImages: (): Promise<void> => Promise.resolve(),
   listGroup: () => Promise.resolve([]),
+  listSummaries: () => Promise.resolve([]),
   listChoosing: () => Promise.resolve([]),
   updateMacrocycles: (): Promise<void> => Promise.resolve(),
 };

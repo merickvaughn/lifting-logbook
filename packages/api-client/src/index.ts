@@ -27,6 +27,7 @@ import type {
   GoogleSheetImportRequest,
   GoogleSheetWorkbookResponse,
   ImportPreviewResponse,
+  ImportBatchSummary,
   ImportUndoResponse,
   LiftMetadataResponse,
   LiftModificationResponse,
@@ -359,6 +360,10 @@ export function createApiClient(config: ApiClientConfig) {
     fetchMacrocycles(program: string): Promise<MacrocycleSummaryResponse[]> {
       return request(`/programs/${enc(program)}/macrocycles`, { cache: 'no-store' });
     },
+    /** The imports that touched the program's past macrocycles, newest first, each undoable (#1257). */
+    fetchImportBatches(program: string): Promise<ImportBatchSummary[]> {
+      return request(`/programs/${enc(program)}/import/batches`, { cache: 'no-store' });
+    },
     // Idempotent delete: a 404 (no existing macrocycle) is treated as success, matching
     // deleteStrengthGoal/deleteCustomProgram below.
     deleteCurrentMacrocycle(programId: string): Promise<void> {
@@ -651,18 +656,22 @@ export function createApiClient(config: ApiClientConfig) {
     /**
      * Phase 3: Undo a committed import by its batch ID. Restores prior values for
      * updated records, deletes newly created rows, and skips rows edited since import.
+     * `today` is the user's calendar day (YYYY-MM-DD), which the statuses of the macrocycles
+     * it reads again are judged against (#1255).
      */
-    async undoImport(program: string, batchId: string): Promise<ImportUndoResponse> {
-      const path = `/programs/${enc(program)}/import/${enc(batchId)}/undo`;
+    async undoImport(program: string, batchId: string, today: string): Promise<ImportUndoResponse> {
+      const path = `/programs/${enc(program)}/import/${enc(batchId)}/undo?today=${enc(today)}`;
       const res = await rawFetch(path, {
         method: 'POST',
         cache: 'no-store',
       });
       if (!res.ok) {
-        // A 409 macrocycle-busy (#1198) carries a message asking to try again. Anything else
-        // keeps the generic message the import wizard shows, with the status, code and body.
+        // A 409 macrocycle-busy (#1198) carries a message asking to try again, and a 400 says what
+        // to fix, such as a device clock too far from the server's (#1257). Anything else keeps
+        // the generic message the import wizard shows, with the status, code and body.
         const err = await readError(res, path);
         if (err.code === 'macrocycle-busy') throw err;
+        if (res.status === 400 && typeof err.body?.message === 'string') throw err;
         throw new ApiClientError(`Undo import failed (HTTP ${res.status})`, err.status, err.code, err.body);
       }
       return (await res.json()) as ImportUndoResponse;

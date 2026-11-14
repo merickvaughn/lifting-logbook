@@ -143,3 +143,54 @@
   padding-bottom: 0.25rem;
   border-bottom: 1px solid var(--color-border, #e5e7eb);
 }
+
+/* Undo an import from the Macrocycles tab (#1257). */
+.undoImport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.undoButton {
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--color-border-strong, #d1d5db);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text, #111827);
+  font-size: 0.875rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.undoButton:hover:not(:disabled) {
+  background: var(--color-surface-alt, #f3f4f6);
+}
+
+.undoButton:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.undoError {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-error-text, #c0392b);
+}
+
+.undoResult {
+  margin: 0 0 0.75rem;
+  color: var(--color-text, #111827);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}

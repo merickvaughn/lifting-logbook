@@ -8,7 +8,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import multipart from '@fastify/multipart';
 import type { ImportBreakdown } from '@lifting-logbook/types';
 import { LiftRecord, buildLiftRecordsPreImage, liftRecordNaturalKey } from '@lifting-logbook/core';
@@ -38,7 +38,18 @@ const USER_BATCH_FAILS = 'import-breakdown-db-batch-fails';
 const USER_GROUP_FAILS = 'import-breakdown-db-group-fails';
 const USER_ROW_LIMIT = 'import-breakdown-db-row-limit';
 const USER_GROWN = 'import-breakdown-db-grown';
-const USERS = [USER_RACE, USER_MACROCYCLE_FAILS, USER_BATCH_FAILS, USER_GROUP_FAILS, USER_ROW_LIMIT, USER_GROWN];
+const USER_LIST_A = 'import-breakdown-db-list-a';
+const USER_LIST_B = 'import-breakdown-db-list-b';
+const USERS = [
+  USER_RACE,
+  USER_MACROCYCLE_FAILS,
+  USER_BATCH_FAILS,
+  USER_GROUP_FAILS,
+  USER_ROW_LIMIT,
+  USER_GROWN,
+  USER_LIST_A,
+  USER_LIST_B,
+];
 // The import transaction allows 30 s (IMPORT_TX_TIMEOUT_MS); the row-limit commit and its undo
 // must each finish well inside it. CI measured the commit at 1.7 s.
 const ROW_LIMIT_BUDGET_MS = 15_000;
@@ -381,5 +392,33 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     ]);
     expect((await undo(ids(firstRes))).statusCode).toBe(200);
     expect(await written(USER_GROWN)).toEqual({ sets: 0, macrocycles: 0, batches: 0 });
+  });
+
+  it("lists only the lifter's own imports, as the restricted role (#1257)", async () => {
+    const list = async (user: string) => {
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'GET',
+        url: '/programs/rpt/import/batches',
+        headers: { authorization: `Bearer ${user}` },
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json<Array<{ id: string; macrocycleIds: string[] }>>();
+    };
+    const imported = async (user: string, start: string) => {
+      const { csv, dates } = historyCsv(start, 3, 1);
+      const res = await commit(user, csv, oneStretch(dates));
+      expect(res.statusCode).toBe(200);
+      return res.json<{ batchId: string }>().batchId;
+    };
+    const mine = await imported(USER_LIST_A, '2024-03-01');
+    const theirs = await imported(USER_LIST_B, '2024-03-01');
+    const macrocycleOf = async (user: string) => (await owner.macrocycle.findMany({ where: { userId: user } })).map((m) => m.id);
+
+    expect(await list(USER_LIST_A)).toEqual([{ id: mine, program: 'rpt', createdAt: expect.any(String), macrocycleIds: await macrocycleOf(USER_LIST_A) }]);
+    expect(await list(USER_LIST_B)).toEqual([{ id: theirs, program: 'rpt', createdAt: expect.any(String), macrocycleIds: await macrocycleOf(USER_LIST_B) }]);
+
+    // A batch saved before #1255 records no macrocycles: its created keys' numbers, read in SQL, name them.
+    await owner.importBatch.update({ where: { id: mine }, data: { macrocycles: Prisma.DbNull } });
+    expect(await list(USER_LIST_A)).toEqual([{ id: mine, program: 'rpt', createdAt: expect.any(String), macrocycleIds: await macrocycleOf(USER_LIST_A) }]);
   });
 });

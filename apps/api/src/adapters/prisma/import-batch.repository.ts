@@ -6,12 +6,24 @@ import {
   BatchMacrocycles,
   IImportBatchRepository,
   ImportBatchRecord,
+  ImportBatchSummaryRecord,
   KeyNumbers,
   PRE_IMAGE_KEY_NUMBER,
 } from '../../ports/IImportBatchRepository';
 import { batchMacrocyclesJson, parseBatchMacrocycles } from './import-batch-json';
 
 const tracer = trace.getTracer('prisma-import-batch-repository');
+
+interface SummaryRow {
+  id: string;
+  program: string;
+  createdAt: Date;
+  macrocycles: ImportBatch['macrocycles'];
+  sourceId: string | null;
+  sourceProgram: string | null;
+  sourceCreatedAt: Date | null;
+  createdNums: string[];
+}
 
 export class PrismaImportBatchRepository implements IImportBatchRepository {
   constructor(
@@ -48,6 +60,46 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     return rows.map(toRecord);
+  }
+
+  async listSummaries(program: string, destination: ImportKind): Promise<ImportBatchSummaryRecord[]> {
+    // The created keys' numbers are read in the database, as `createdNumberedKeys` and
+    // `preImageKeyNumber` read them, so no pre-image is loaded. Raw SQL isn't auto-traced (ADR-024).
+    return tracer.startActiveSpan('import_batch.list_summaries', async (span) => {
+      try {
+        const rows = await this.prisma.$queryRaw<SummaryRow[]>`
+          SELECT b."id", b."program", b."createdAt", b."macrocycles",
+            s."id" AS "sourceId", s."program" AS "sourceProgram", s."createdAt" AS "sourceCreatedAt",
+            COALESCE((
+              SELECT array_agg(DISTINCT key.num)::text[]
+              FROM jsonb_each(b."preImage") AS e(k, v),
+                LATERAL (SELECT substring(e.k from ${PRE_IMAGE_KEY_NUMBER})::numeric AS num) AS key
+              WHERE key.num IS NOT NULL AND e.v->>'kind' = 'created'
+            ), '{}') AS "createdNums"
+          FROM "import_batch" b
+            LEFT JOIN "import_batch" s ON s."id" = b."groupId" AND s."userId" = ${this.userId}
+          WHERE b."userId" = ${this.userId} AND b."program" = ${program} AND b."destination" = ${destination}
+          ORDER BY b."createdAt" DESC, b."id" DESC`;
+        span.setAttribute('import_batch.count', rows.length);
+        return rows.map((row) => ({
+          id: row.id,
+          program: row.program,
+          createdAt: row.createdAt,
+          source:
+            row.sourceId && row.sourceProgram && row.sourceCreatedAt
+              ? { id: row.sourceId, program: row.sourceProgram, createdAt: row.sourceCreatedAt }
+              : null,
+          macrocycles: parseBatchMacrocycles(row.macrocycles),
+          createdNums: row.createdNums.map(Number),
+        }));
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
   }
 
   async deleteById(id: string, userId: string): Promise<void> {

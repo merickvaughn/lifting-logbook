@@ -63,11 +63,40 @@ export function preImageKeyNumber(key: string): number | null {
 /** A key's number is one of `on`, or any number but those in `except`. */
 export type KeyNumbers = { on: readonly number[] } | { except: readonly number[] };
 
+/**
+ * The keys of a lift-records pre-image that hold a number and that the batch created: its sets and
+ * `legacy` rows, which undo deletes and whose macrocycles it reads again. The Prisma adapter's
+ * {@link IImportBatchRepository.listSummaries} applies the same rule in SQL.
+ */
+export function createdNumberedKeys(preImage: ImportPreImage): string[] {
+  return Object.entries(preImage)
+    .filter(([key, entry]) => preImageKeyNumber(key) !== null && entry.kind === 'created')
+    .map(([key]) => key);
+}
+
+/**
+ * A lift-records batch as the import list reads it (#1257): the numbers its created keys hold
+ * rather than its pre-image, which can run to thousands of keys.
+ */
+export interface ImportBatchSummaryRecord {
+  id: string;
+  program: string;
+  createdAt: Date;
+  /** The Source program's batch of the same import, when this one is grouped under it and it still exists (#1254). */
+  source: { id: string; program: string; createdAt: Date } | null;
+  /** See {@link ImportBatchRecord.macrocycles}. */
+  macrocycles: BatchMacrocycles | null | undefined;
+  /** The distinct numbers ({@link preImageKeyNumber}) of {@link createdNumberedKeys}. */
+  createdNums: number[];
+}
+
 export interface IImportBatchRepository {
   save(batch: ImportBatchRecord): Promise<void>;
   findById(id: string, userId: string): Promise<ImportBatchRecord | null>;
   /** The user's batches whose `groupId` is `groupId`: the other programs' batches of that import. */
   listGroup(groupId: string): Promise<ImportBatchRecord[]>;
+  /** The user's batches of one program and destination, newest first, as summaries (#1257). */
+  listSummaries(program: string, destination: ImportKind): Promise<ImportBatchSummaryRecord[]>;
   deleteById(id: string, userId: string): Promise<void>;
   /**
    * The user's batches of one program and destination with a pre-image key whose number

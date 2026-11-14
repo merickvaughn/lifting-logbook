@@ -249,7 +249,7 @@ describe('Google Sheets import (#1111)', () => {
     // The earlier tab's result stays visible with its own undo.
     expect(screen.getByText(/LIFT_RECORDS — Lift History: 3 created/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Undo LIFT_RECORDS' }));
-    expect(mockUndo).toHaveBeenCalledWith('prog-1', 'batch-lifts');
+    expect(mockUndo).toHaveBeenCalledWith('prog-1', 'batch-lifts', expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
     expect(await screen.findByText('Undone (3 restored).')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Import another file' })).toBeInTheDocument();
   });

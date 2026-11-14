@@ -221,6 +221,9 @@ function createInitialState() {
     // The import's Assign step (#1256): withAssign makes any upload lift history with the
     // step on, and mode=assign return ASSIGN_RESPONSE's long file.
     assign: false,
+    // An Assign commit's macrocycles and its batch (#1257), which History lists and undoes.
+    assignedMacrocycles: [],
+    importBatches: [],
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
     // GET/POST /lifts/modifications (#1152) — the user's lift modifications, for every lift.
@@ -1190,7 +1193,14 @@ const server = createServer(async (req, res) => {
 
     // GET /programs/:p/macrocycles
     if (method === 'GET' && rest[0] === 'macrocycles' && rest.length === 1) {
-      json(res, MACROCYCLES);
+      // An Assign commit's macrocycles come first by date, and the rest number on after them.
+      json(res, [...state.assignedMacrocycles, ...MACROCYCLES].map((m, i) => ({ ...m, macrocycleNum: i + 1 })));
+      return;
+    }
+
+    // GET /programs/:p/import/batches (#1257): the imports History offers Undo for.
+    if (method === 'GET' && rest[0] === 'import' && rest[1] === 'batches' && rest.length === 2) {
+      json(res, state.importBatches);
       return;
     }
 
@@ -1635,6 +1645,29 @@ const server = createServer(async (req, res) => {
         json(res, ASSIGN_PREVIEW);
         return;
       }
+      // An Assign commit stores the first two stretches as macrocycles, under one batch (#1257).
+      if (state.assign && mode === 'commit') {
+        state.assignedMacrocycles = ASSIGN_RESPONSE.stretches.slice(0, 2).map((s, i) => ({
+          id: `mc-assigned-${i + 1}`,
+          macrocycleNum: 0,
+          startDate: s.startDate,
+          endDate: s.endDate,
+          status: 'completed',
+          origin: 'imported',
+          current: false,
+          unmatched: false,
+        }));
+        state.importBatches = [
+          {
+            id: 'batch-assign',
+            program: decodeURIComponent(parts[1]),
+            createdAt: new Date().toISOString(),
+            macrocycleIds: state.assignedMacrocycles.map((m) => m.id),
+          },
+        ];
+        json(res, { destination: 'lift-records', created: 36, updated: 0, skipped: 0, errors: [], batchId: 'batch-assign' });
+        return;
+      }
 
       if (mode === 'commit' || mode === 'dry-run') {
         // batchId enables the Phase 3 undo flow.
@@ -1751,6 +1784,12 @@ const server = createServer(async (req, res) => {
     }
     // POST /programs/:p/import/:batchId/undo — Phase 3 undo
     if (method === 'POST' && rest[0] === 'import' && rest.length === 3 && rest[2] === 'undo') {
+      // Undoing a recorded batch removes its macrocycles (#1257).
+      const batch = state.importBatches.find((b) => b.id === rest[1]);
+      if (batch) {
+        state.assignedMacrocycles = state.assignedMacrocycles.filter((m) => !batch.macrocycleIds.includes(m.id));
+        state.importBatches = state.importBatches.filter((b) => b !== batch);
+      }
       json(res, { batchId: rest[1], restored: 2, skipped: 0, flagged: [] });
       return;
     }

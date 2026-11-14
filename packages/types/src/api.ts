@@ -1268,6 +1268,22 @@ export interface ImportUndoResponse {
   flagged: Array<{ key: string; reason: string }>;
 }
 
+/**
+ * One import that touched a program's macrocycles, from `GET /programs/:program/import/batches`
+ * (#1257), so the import can be undone after leaving the wizard. An import through the Assign
+ * step that wrote to several programs is undone as a whole, through its Source program's batch:
+ * `id` and `program` name that batch, whichever program's list it appears in.
+ */
+export interface ImportBatchSummary {
+  /** The batch to undo: `POST /programs/{program}/import/{id}/undo`. */
+  id: string;
+  program: string;
+  /** When the import was committed, as an ISO 8601 timestamp. */
+  createdAt: string;
+  /** The listed program's macrocycles the import created or added sets to, by id. */
+  macrocycleIds: string[];
+}
+
 /** Request body for `POST /programs/:program/import/google-sheet` (#1111). */
 export interface GoogleSheetImportRequest {
   /** A Google Sheets link (any tab) or a bare spreadsheet ID. */

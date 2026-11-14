@@ -88,6 +88,7 @@ export const {
   fetchModificationMaxes,
   fetchTrainingMaxHistory,
   fetchMacrocycles,
+  fetchImportBatches,
   updateTrainingMaxHistoryEntry,
   updateTrainingMaxes,
   fetchWorkout,

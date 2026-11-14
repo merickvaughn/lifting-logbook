@@ -7,6 +7,7 @@ jest.mock('@/lib/api', () => ({
   fetchTrainingMaxHistory: jest.fn(),
   fetchMacrocycles: jest.fn().mockResolvedValue([]),
   fetchNonCycleRecords: jest.fn().mockResolvedValue([]),
+  fetchImportBatches: jest.fn().mockResolvedValue([]),
 }));
 jest.mock('@/lib/active-program', () => ({
   getActiveProgram: jest.fn().mockResolvedValue('5-3-1'),
@@ -16,12 +17,22 @@ jest.mock('@/lib/preferences', () => ({
 }));
 jest.mock('./HistoryTabs', () => ({
   __esModule: true,
-  default: ({ records, macrocycles }: { records: unknown; macrocycles: unknown }) => (
-    <div data-records={JSON.stringify(records)} data-macrocycles={JSON.stringify(macrocycles)} />
+  default: ({ records, macrocycles, imports }: { records: unknown; macrocycles: unknown; imports: unknown }) => (
+    <div
+      data-records={JSON.stringify(records)}
+      data-macrocycles={JSON.stringify(macrocycles)}
+      data-imports={JSON.stringify(imports)}
+    />
   ),
 }));
 
-import { fetchLiftRecords, fetchMacrocycles, fetchNonCycleRecords, fetchTrainingMaxHistory } from '@/lib/api';
+import {
+  fetchImportBatches,
+  fetchLiftRecords,
+  fetchMacrocycles,
+  fetchNonCycleRecords,
+  fetchTrainingMaxHistory,
+} from '@/lib/api';
 import HistoryPage from './page';
 
 const record = (id: string, lift: string, date: string, weight: number) => ({
@@ -148,5 +159,35 @@ describe('HistoryPage macrocycles', () => {
     const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
     expect(html).toContain('role="status"');
     expect(html).toContain('data-macrocycles="[]"');
+  });
+});
+
+// #1257: the imports Undo is offered for, and the notice when they can't be loaded.
+describe('HistoryPage imports', () => {
+  const BATCH = { id: 'b-1', program: '5-3-1', createdAt: '2026-11-01T12:00:00.000Z', macrocycleIds: ['m-1'] };
+
+  beforeEach(() => {
+    (fetchLiftRecords as jest.Mock).mockResolvedValue([]);
+    (fetchNonCycleRecords as jest.Mock).mockResolvedValue([]);
+    (fetchTrainingMaxHistory as jest.Mock).mockResolvedValue({ entries: [] });
+    (fetchMacrocycles as jest.Mock).mockResolvedValue([]);
+  });
+
+  it('passes the program\'s imports to the tabs, with no notice', async () => {
+    (fetchImportBatches as jest.Mock).mockResolvedValue([BATCH]);
+    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    expect(fetchImportBatches).toHaveBeenCalledWith('5-3-1');
+    const encoded = html.match(/data-imports="([^"]*)"/)?.[1] ?? '';
+    expect(JSON.parse(encoded.replace(/&quot;/g, '"'))).toEqual([BATCH]);
+    expect(html).not.toContain('role="status"');
+  });
+
+  it('says only that Undo is unavailable, and offers none, when they can\'t be fetched', async () => {
+    (fetchImportBatches as jest.Mock).mockRejectedValue(new Error('API unavailable'));
+    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    expect(html).toContain('Undoing an import isn’t available right now.');
+    // The history itself loaded, so its notice isn't shown.
+    expect(html).not.toContain('latest history');
+    expect(html).toContain('data-imports="[]"');
   });
 });

@@ -1,10 +1,17 @@
 import Link from 'next/link';
 import { storedIdListing } from '@lifting-logbook/core';
-import { fetchLiftRecords, fetchMacrocycles, fetchNonCycleRecords, fetchTrainingMaxHistory } from '@/lib/api';
+import {
+  fetchImportBatches,
+  fetchLiftRecords,
+  fetchMacrocycles,
+  fetchNonCycleRecords,
+  fetchTrainingMaxHistory,
+} from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
+  ImportBatchSummary,
   LiftRecordResponse,
   MacrocycleSummaryResponse,
   TrainingMaxHistoryEntryResponse,
@@ -30,7 +37,8 @@ export default async function HistoryPage() {
   // The `.catch()` fallbacks keep the tabs rendering (graceful degradation);
   // `loadFailed` distinguishes a real fetch failure from a genuinely empty history.
   let loadFailed = false;
-  const [programRecords, nonCycleRecords, { entries: tmEntries }, macrocycles, unit] = await Promise.all([
+  let importsFailed = false;
+  const [programRecords, nonCycleRecords, { entries: tmEntries }, macrocycles, imports, unit] = await Promise.all([
     // fallback-covered-by: apps/web/e2e/staging.spec.ts
     fetchLiftRecords(program).catch((): LiftRecordResponse[] => {
       loadFailed = true;
@@ -50,6 +58,13 @@ export default async function HistoryPage() {
     // fallback-covered-by: apps/web/app/(authed)/history/page.test.tsx
     fetchMacrocycles(program).catch((): MacrocycleSummaryResponse[] => {
       loadFailed = true;
+      return [];
+    }),
+    // The imports Undo is offered for (#1257). Without them the history is whole but shows no
+    // Undo, so the notice says only that.
+    // fallback-covered-by: apps/web/app/(authed)/history/page.test.tsx
+    fetchImportBatches(program).catch((): ImportBatchSummary[] => {
+      importsFailed = true;
       return [];
     }),
     getPreferredUnit(),
@@ -108,7 +123,12 @@ export default async function HistoryPage() {
           temporary — refresh the page in a moment to try again.
         </p>
       )}
-      <HistoryTabs records={enriched} tmEntries={tmEntries} macrocycles={macrocycles} unit={unit} />
+      {importsFailed && (
+        <p role="status" className={styles.loadError}>
+          Undoing an import isn’t available right now. Refresh the page in a moment to try again.
+        </p>
+      )}
+      <HistoryTabs records={enriched} tmEntries={tmEntries} macrocycles={macrocycles} imports={imports} unit={unit} />
     </main>
   );
 }

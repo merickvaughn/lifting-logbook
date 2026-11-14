@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Body,
   ConflictException,
+  Get,
   Controller,
   HttpCode,
   HttpStatus,
@@ -24,6 +25,7 @@ import {
   ImportClassification,
   ImportCommitResponse,
   ImportDryRunResponse,
+  ImportBatchSummary,
   ImportBreakdown,
   ImportError,
   ImportKind,
@@ -75,7 +77,8 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { preImageKeyNumber } from '../ports/IImportBatchRepository';
+import { BatchMacrocycles, createdNumberedKeys, preImageKeyNumber } from '../ports/IImportBatchRepository';
+import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { PrismaService } from '../adapters/prisma/prisma.service';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
@@ -363,6 +366,35 @@ export class ImportController {
     return { tabs };
   }
 
+  /**
+   * The lifter's lift-records imports that touched this program's past macrocycles, newest first,
+   * so an import can be undone from the past-macrocycles list once the wizard is gone (#1257). One
+   * through the Assign step that wrote to several programs is named by its Source program's batch,
+   * which undoes it as a whole.
+   */
+  @Get('import/batches')
+  async listImportBatches(
+    @Param('program') program: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ImportBatchSummary[]> {
+    const repos = await this.factory.forUser(user);
+    const [batches, rows] = await Promise.all([
+      repos.importBatch.listSummaries(program, 'lift-records'),
+      repos.macrocycle.list(program),
+    ]);
+    return batches.flatMap((batch) => {
+      const nums = touchedMacrocycleNums(batch.createdNums, batch.macrocycles, rows);
+      // The rows undo can remove or read again: a `live` macrocycle keeps what it holds.
+      const macrocycleIds = rows
+        .filter((m) => (m.origin === 'imported' || m.origin === 'legacy') && nums.has(m.macrocycleNum))
+        .map((m) => m.id);
+      if (macrocycleIds.length === 0) return [];
+      // A Source batch that's gone leaves its part to be undone on its own, as undo does.
+      const source = batch.source ?? batch;
+      return [{ id: source.id, program: source.program, createdAt: source.createdAt.toISOString(), macrocycleIds }];
+    });
+  }
+
   @Post('import/:batchId/undo')
   @HttpCode(HttpStatus.OK)
   @RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)
@@ -413,6 +445,10 @@ export class ImportController {
       const asOf = assignImportDate(today);
       // The undo removes macrocycle rows, so it holds the lock exclusively, as the import did.
       await lockForImport(repos, 'undo');
+      // Read again under the lock: an undo of the same import that held it first has deleted the
+      // batch, and its keys predate that undo's renumbering (#1257).
+      const current = await repos.importBatch.findById(batchId, user.id);
+      if (!current) throw new NotFoundException(`Import batch ${batchId} not found`);
       const deleteCreated = async (from: string, keys: string[]) => {
         if (keys.length === 0) return;
         const deleted = await repos.liftRecord.deleteLiftRecordsByNaturalKeys(from, keys);
@@ -425,7 +461,7 @@ export class ImportController {
       };
       // An import through the Assign step saved one batch per program it wrote to, grouped under
       // this one (#1254). Each one's keys are read under its own program.
-      const parts = [batch, ...(await repos.importBatch.listGroup(batch.id))];
+      const parts = [current, ...(await repos.importBatch.listGroup(current.id))];
       // Every part's rows go, and its emptied macrocycles with them, before any macrocycle left is
       // read again: what follows a macrocycle can be one another part is about to remove (#1255).
       const touched: Array<{ program: string; nums: number[]; ids: string[] }> = [];
@@ -443,24 +479,13 @@ export class ImportController {
           part.program,
         );
         // Collect all created keys and delete in a single query to avoid N+1 round-trips
-        const { setKeys: createdKeys, legacyNums } = splitLegacyRowKeys(
-          entries
-            .filter(([k, e]) => preImageKeyNumber(k) !== null && e.kind === 'created')
-            .map(([k]) => k),
-        );
-        // The macrocycles the batch touched: those it created or extended, and those its sets and
-        // `legacy` rows are on, which is all a batch from before #1255 records. Read by number
-        // before anything is renumbered.
-        const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
-        const nums = new Set([...legacyNums, ...setNums]);
-        // Only `imported` macrocycles are read again: a `live` or `legacy` row keeps what it holds.
-        const recorded = new Set([...(part.macrocycles?.created ?? []), ...(part.macrocycles?.extended ?? [])]);
+        const created = createdNumberedKeys(part.preImage);
+        const { setKeys: createdKeys } = splitLegacyRowKeys(created);
+        // Read by number before anything is renumbered.
         const rows = await repos.macrocycle.list(part.program);
-        const ids = new Set<string>();
-        for (const m of rows) {
-          if (recorded.has(m.id)) nums.add(m.macrocycleNum);
-          if (m.origin === 'imported' && nums.has(m.macrocycleNum)) ids.add(m.id);
-        }
+        const nums = touchedMacrocycleNums(created.flatMap((k) => preImageKeyNumber(k) ?? []), part.macrocycles, rows);
+        // Only `imported` macrocycles are read again: a `live` or `legacy` row keeps what it holds.
+        const ids = new Set(rows.filter((m) => m.origin === 'imported' && nums.has(m.macrocycleNum)).map((m) => m.id));
         // The statuses the batch chose are released before anything is read again.
         await releaseStatusChoices(repos, part, part.macrocycles?.chosen ?? [], new Map(rows.map((m) => [m.id, m])));
         await deleteCreated(part.program, createdKeys);
@@ -1192,6 +1217,22 @@ export class ImportController {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     return handler.validate(parsed as any);
   }
+}
+
+/**
+ * The numbers of `rows`, its program's macrocycles, that a lift-records batch touched: those it
+ * created or extended, and `createdNums`, the numbers of its created sets and `legacy` rows
+ * ({@link createdNumberedKeys}), which is all a batch from before #1255 records.
+ */
+function touchedMacrocycleNums(
+  createdNums: readonly number[],
+  macrocycles: BatchMacrocycles | null | undefined,
+  rows: readonly MacrocycleRow[],
+): Set<number> {
+  const nums = new Set(createdNums);
+  const recorded = new Set([...(macrocycles?.created ?? []), ...(macrocycles?.extended ?? [])]);
+  for (const m of rows) if (recorded.has(m.id)) nums.add(m.macrocycleNum);
+  return nums;
 }
 
 /** Replaces the lift of each overridden row. `liftOverrides` keys are 1-based positions in `rows`. */
