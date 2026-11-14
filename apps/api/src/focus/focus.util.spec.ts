@@ -141,6 +141,41 @@ describe('saveBlockEdit', () => {
       expect(await block('november')).toEqual(november);
       expect(await block('january')).toEqual(january);
     });
+
+    it('moves a follow-on queued inside the new range to start after it, copying no settings', async () => {
+      await focus.updateBlock('november', { start: '2026-11-15', align: 'custom' });
+      await saveBlockEdit(focus, 'october', { period: 'quarterly' }, TODAY);
+      expect(await block('november')).toMatchObject({ start: '2027-01-01', period: 'monthly', align: 'custom' });
+    });
+
+    it('refuses a lengthening that would overlap a block queued after the successor, saving nothing', async () => {
+      const december = { ...november, id: 'december', start: '2026-12-01', priority: 3 };
+      await focus.createBlock(december);
+      const error = await saveBlockEdit(focus, 'october', { period: 'quarterly' }, TODAY).catch((e: unknown) => e);
+      expect(error).toMatchObject({ series: 'series', start: '2026-12-01' });
+      expect(await block('october')).toEqual(october);
+      expect(await block('november')).toEqual(november);
+    });
+
+    // The block is written first here, so only the check before both writes keeps it unchanged.
+    it('refuses a successor moving earlier onto a taken start before the block is written', async () => {
+      await focus.updateBlock('october', { period: 'quarterly' });
+      await focus.updateBlock('november', { start: '2027-01-01', period: 'quarterly' });
+      await focus.createBlock({ ...november, id: 'extra', start: '2026-11-01', priority: 3 });
+      const error = await saveBlockEdit(focus, 'october', { period: 'monthly' }, TODAY).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(FocusBlockConflictError);
+      expect(await block('october')).toMatchObject({ period: 'quarterly' });
+      expect(await block('november')).toMatchObject({ start: '2027-01-01' });
+    });
+
+    it('saves the block when the successor moving later was deleted after its lock', async () => {
+      const locked = new Map((await focus.lockBlocks(['october', 'november'])).map((b) => [b.id, b] as const));
+      await focus.deleteBlock('november');
+      jest.spyOn(focus, 'listBlocks').mockResolvedValue([...locked.values()]);
+      jest.spyOn(focus, 'lockBlocks').mockImplementation(async (ids) => ids.flatMap((id) => locked.get(id) ?? []));
+      await expect(saveBlockEdit(focus, 'october', { period: 'quarterly' }, TODAY)).resolves.toMatchObject({ period: 'quarterly' });
+      expect(await block('october')).toMatchObject({ period: 'quarterly' });
+    });
   });
 });
 

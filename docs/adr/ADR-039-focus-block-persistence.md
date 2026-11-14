@@ -217,7 +217,8 @@ would see if the successor had never been edited.
 The successor is the queued block in the series that starts the day after the block, as before
 the edit, ends. That includes a block the lifter queued in the series by hand, because decision 4
 already treats it as the roll's successor. Like the training-max carry in Amendment 2, this runs
-on `PATCH /focus/blocks/:id` (`carryEditsToSuccessor` in `apps/api/src/focus/focus.util.ts`), and
+on `PATCH /focus/blocks/:id` (`carryEditsToSuccessor` in `apps/api/src/focus/focus.util.ts`, now
+`saveBlockEdit` and `successorPatch`, Amendment 6), and
 the two land in one update to the successor.
 
 What does not follow, and why:
@@ -248,7 +249,8 @@ gives for every case except a successor edited back to its block's value.
 ## Amendment 5 — pool writes read the block under a row lock (#1230)
 
 Two server paths write a block's whole pool computed from the pool they read: the training-max
-carry into a queued successor (`carryEditsToSuccessor`, Amendments 2 and 4) and the session
+carry into a queued successor (`carryEditsToSuccessor`, Amendments 2 and 4; now `saveBlockEdit`,
+Amendment 6) and the session
 recording on a workout's focus plan read (`recordFocusSessions`, Amendment 3). Each read the block
 earlier in the request, so a `PATCH /focus/blocks/:id` that saved between that read and the write
 was overwritten without an error: an edited entry went back to its old weight or max.
@@ -304,17 +306,27 @@ the `carryEditsToSuccessor` that Amendments 4 and 5 name and computes the carry 
   edit) moves to `nextStart` of the block as edited, if that differs from its start. Lengthening
   October to a quarter moves November's successor to January 1; shortening it back moves the
   successor back.
+- **A follow-on the lifter queued later** also moves when there is no successor on the day after
+  the block, and the lengthened range now reaches it: the first queued block in the series that
+  starts after the block's old range and inside its new one. This is the case the setup page's
+  second save used to cover, such as a follow-on moved to start November 15. It only moves; it
+  takes none of the block's settings, because it doesn't start where a successor would.
 - **`period` and `align` follow** under Amendment 4's rule: when the successor still holds the
   block's value from before the edit. A successor the lifter gave its own align keeps it and still
   moves. `start` itself never copies: the successor's start is always the day after the block.
 - **Order of the two writes.** The unique `(userId, series, start)` constraint is checked per
   statement, so a successor moving later is updated first, in case the block's new start is the
   successor's old one. One moving earlier is updated after the block, whose old range it moves into.
-- **A move onto a taken start fails whole.** When the successor's new start, or the block's own new
-  start, is already another block's start in the series (a block the lifter queued further out),
-  the `PATCH` is refused with the focus-block conflict `409` before either write, so nothing is
-  half-applied. A transaction would roll a half-applied edit back anyway; checking first keeps the
-  same result on a repository without one. The lifter moves or deletes the other block first.
+- **A move onto a taken start, or into another queued block, fails whole.** The `PATCH` is refused
+  with the focus-block conflict `409` before either write when the successor's new start, or the
+  block's own new start, is already another block's start in the series. It is also refused when
+  the block's new range, or the moved successor's, would overlap a queued block in the series that
+  the old range didn't overlap. An example is a block the lifter queued further out, which
+  lengthening the block would run into. The check reads the blocks as listed, so a start taken
+  after that read is refused by the unique constraint, and the request's transaction rolls back the
+  other write. The lifter moves or deletes the other block first.
+- **A successor deleted after it was read** (declined in another tab, on a repository with no
+  transaction to hold the lock) is skipped in either write order, and the block's edit is saved.
 - **The setup page** no longer moves the follow-on itself (`shiftedFollowOn` is gone from
   `apps/web/lib/focusSetup.ts`). It saves the block, and the re-read after the save shows where the
   API put the successor.

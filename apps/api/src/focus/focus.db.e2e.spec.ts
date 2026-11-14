@@ -662,6 +662,27 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(day((await row(januaryId))?.start)).toBe('2027-01-01');
     });
 
+    it('moves a follow-on the lifter queued inside the new range, copying no settings', async () => {
+      const { october, successor } = await octoberWithSuccessor();
+      await prisma.focusBlock.update({ where: { id: successor.id }, data: { start: new Date('2026-11-15'), align: 'custom' } });
+      expect((await patch(october.id, { period: 'quarterly' })).statusCode).toBe(200);
+      expect(day((await row(successor.id))?.start)).toBe('2027-01-01');
+      expect((await row(successor.id))?.period).toBe('monthly');
+    });
+
+    it('refuses with 409, saving nothing, a lengthening that would overlap a block queued after the successor', async () => {
+      const { october, successor } = await octoberWithSuccessor();
+      const december = await lifter(
+        'POST',
+        `/focus/blocks?today=${TODAY}`,
+        blockBody({ area: 'Calves', series: october.series, start: '2026-12-01' }),
+      );
+      expect(december.statusCode).toBe(201);
+      expect((await patch(october.id, { period: 'quarterly' })).statusCode).toBe(409);
+      expect(await row(october.id)).toMatchObject({ period: 'monthly' });
+      expect(day((await row(successor.id))?.start)).toBe('2026-11-01');
+    });
+
     it("moves the successor first when the block's new start is the successor's old one", async () => {
       const { october, successor } = await octoberWithSuccessor();
       const res = await patch(october.id, { align: 'custom', start: '2026-11-01' });

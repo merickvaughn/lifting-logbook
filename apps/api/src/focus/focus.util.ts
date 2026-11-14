@@ -93,9 +93,11 @@ const TIMER_FIELDS = ['prep', 'set', 'rest'] as const;
  *
  * The block is read under its row lock, so a pool written from it on a workout's plan read
  * can't land between this read and the update, which `withoutStaleLastReps` and the carry both
- * compare against (ADR-039, Amendment 5). A date edit that would move the successor onto a
- * start another block in the series holds is refused with `FocusBlockConflictError` before
- * anything is written (Amendment 6).
+ * compare against (ADR-039, Amendment 5). A date edit moves the block's queued follow-on to
+ * start the day after its new range. It is refused with `FocusBlockConflictError` before
+ * anything is written when the block's new start or the follow-on's is another series block's
+ * start, or when either new range would overlap a queued block in the series that the old one
+ * didn't (Amendment 6).
  */
 export async function saveBlockEdit(
   focus: IFocusRepository,
@@ -109,55 +111,107 @@ export async function saveBlockEdit(
   const after: FocusBlock = { ...before, ...edit };
 
   const blocks = await focus.listBlocks();
-  const successor = await lockedSuccessor(focus, blocks, before, today);
-  const carry = successor ? successorPatch(before, after, successor) : {};
-  // Checked before either write, so a refused edit leaves both blocks as they were wherever
-  // the repository has no transaction to roll back. A successor that moves frees its start.
-  const moving = successor && carry.start !== undefined ? successor.id : undefined;
-  for (const start of [edit.start, carry.start]) {
-    if (start === undefined) continue;
-    const taken = blocks.some((b) => b.series === before.series && b.id !== before.id && b.id !== moving && b.start === start);
-    if (taken) throw new FocusBlockConflictError(before.series, start);
-  }
-  if (!successor || Object.keys(carry).length === 0) return focus.updateBlock(id, edit);
+  const followOn = await lockedFollowOn(focus, blocks, before, after, today);
+  // Only the successor (the block on the day after) takes the block's settings (Amendment 4);
+  // a follow-on the lifter queued later, inside the block's new range, only moves.
+  const carry =
+    !followOn ? {}
+    : followOn.start === nextStart(before) ? successorPatch(before, after, followOn)
+    : startAfter(after, followOn);
+  checkSeriesDates(blocks, before, after, followOn, carry, today);
+  if (!followOn || Object.keys(carry).length === 0) return focus.updateBlock(id, edit);
 
-  // Starts are unique within a series, so a successor moving later moves first, in case the
-  // block's new start is the successor's old one; one moving earlier waits for the block.
-  if (carry.start !== undefined && carry.start > successor.start) {
-    await focus.updateBlock(successor.id, carry);
+  const carryIntoFollowOn = async () => {
+    try {
+      await focus.updateBlock(followOn.id, carry);
+    } catch (e) {
+      // The lock lasts only as long as a transaction, and a repository on the base client has
+      // none: deleted since it was read (declined in another tab), there is nothing left to
+      // carry into, and the block's own edit is still saved.
+      if (!(e instanceof FocusBlockNotFoundError)) throw e;
+    }
+  };
+  // Starts are unique within a series, so a follow-on moving later moves first, in case the
+  // block's new start is the follow-on's old one; one moving earlier waits for the block.
+  if (carry.start !== undefined && carry.start > followOn.start) {
+    await carryIntoFollowOn();
     return focus.updateBlock(id, edit);
   }
   const updated = await focus.updateBlock(id, edit);
-  try {
-    await focus.updateBlock(successor.id, carry);
-  } catch (e) {
-    // The lock lasts only as long as a transaction, and a repository on the base client has
-    // none: deleted since it was read (declined in another tab), there is nothing left to
-    // carry into, and the block's own edit is already saved.
-    if (!(e instanceof FocusBlockNotFoundError)) throw e;
-  }
+  await carryIntoFollowOn();
   return updated;
 }
 
 /**
- * The queued block in `before`'s series that starts the day after `before` ends, read again
- * under its row lock: the carry is computed from the successor's current values, so an edit
- * to it saved in another request must land first, not be overwritten (ADR-039, Amendment 5).
- * Gone by now (declined in another tab): there is nothing to carry into.
+ * The queued block that follows `before` in its series, read again under its row lock: the
+ * carry is computed from its current values, so an edit to it saved in another request must
+ * land first, not be overwritten (ADR-039, Amendment 5). That is the successor, starting the
+ * day after `before` ends, or else the first queued block in the series that starts after
+ * `before`'s old range and inside its new one, which a lengthened block would otherwise
+ * overlap (Amendment 6). Gone by now (declined in another tab): there is nothing to carry into.
  */
-async function lockedSuccessor(
+async function lockedFollowOn(
   focus: IFocusRepository,
   blocks: readonly FocusBlock[],
   before: FocusBlock,
+  after: FocusBlock,
   today: string,
 ): Promise<FocusBlock | undefined> {
-  const start = nextStart(before);
-  const isSuccessor = (block: FocusBlock) =>
-    block.id !== before.id && block.series === before.series && block.start === start && blockStatus(block, today) === 'queued';
-  const listed = blocks.find(isSuccessor);
+  const successorStart = nextStart(before);
+  const oldEnd = blockRange(before).end;
+  const newEnd = blockRange(after).end;
+  const isFollowOn = (block: FocusBlock) =>
+    block.id !== before.id &&
+    block.series === before.series &&
+    blockStatus(block, today) === 'queued' &&
+    (block.start === successorStart || (block.start > oldEnd && block.start <= newEnd));
+  const listed = blocks
+    .filter(isFollowOn)
+    .sort((a, b) => Number(b.start === successorStart) - Number(a.start === successorStart) || a.start.localeCompare(b.start))[0];
   if (!listed) return undefined;
-  const [successor] = (await focus.lockBlocks([listed.id])).filter(isSuccessor);
-  return successor;
+  const [followOn] = (await focus.lockBlocks([listed.id])).filter(isFollowOn);
+  return followOn;
+}
+
+/**
+ * Throws `FocusBlockConflictError` when the edit would put two blocks in the series on one
+ * start, or overlap a queued block in the series that neither block overlapped before. It runs
+ * before either write, against the blocks as listed; a start taken after the list was read is
+ * refused by the unique constraint, and the request's transaction rolls back the other write.
+ */
+function checkSeriesDates(
+  blocks: readonly FocusBlock[],
+  before: FocusBlock,
+  after: FocusBlock,
+  followOn: FocusBlock | undefined,
+  carry: FocusBlockPatch,
+  today: string,
+): void {
+  const others = blocks.filter((b) => b.series === before.series && b.id !== before.id && b.id !== followOn?.id);
+  // A follow-on that moves frees its start; one that stays keeps it.
+  const staying = followOn && carry.start === undefined ? [followOn] : [];
+  for (const start of [after.start === before.start ? undefined : after.start, carry.start]) {
+    const taken = start !== undefined && [...others, ...staying].some((b) => b.start === start);
+    if (taken) throw new FocusBlockConflictError(before.series, start);
+  }
+  const moves: [FocusBlock, FocusBlock][] = [[before, after]];
+  if (followOn && carry.start !== undefined) moves.push([followOn, { ...followOn, ...carry }]);
+  for (const [was, now] of moves) {
+    const clash = others.find((b) => blockStatus(b, today) === 'queued' && overlaps(now, b) && !overlaps(was, b));
+    if (clash) throw new FocusBlockConflictError(before.series, clash.start);
+  }
+}
+
+function overlaps(a: FocusBlock, b: FocusBlock): boolean {
+  const x = blockRange(a);
+  const y = blockRange(b);
+  return x.start <= y.end && y.start <= x.end;
+}
+
+/** Moves `followOn` to start the day after `after` ends, if it doesn't already. */
+function startAfter(after: FocusBlock, followOn: FocusBlock): FocusBlockPatch {
+  const start = nextStart(after);
+  return start === followOn.start ? {} : { start };
 }
 
 /**
@@ -168,7 +222,7 @@ async function lockedSuccessor(
  * made to the successor's max (ADR-039, Amendments 2 and 4). The successor moves to start the
  * day after the block's new range ends, so the series has no overlap and no gap (Amendment 6).
  */
-export function successorPatch(before: FocusBlock, after: FocusBlock, successor: FocusBlock): FocusBlockPatch {
+function successorPatch(before: FocusBlock, after: FocusBlock, successor: FocusBlock): FocusBlockPatch {
   const patch: FocusBlockPatch = {};
   const follows = (field: 'selection' | 'overlap' | 'progression' | 'period' | 'align') =>
     before[field] !== after[field] && successor[field] === before[field];
@@ -177,8 +231,7 @@ export function successorPatch(before: FocusBlock, after: FocusBlock, successor:
   if (follows('progression')) patch.progression = after.progression;
   if (follows('period')) patch.period = after.period;
   if (follows('align')) patch.align = after.align;
-  const start = nextStart(after);
-  if (start !== successor.start) patch.start = start;
+  Object.assign(patch, startAfter(after, successor));
 
   const timer = { ...successor.timer };
   for (const key of TIMER_FIELDS) {
