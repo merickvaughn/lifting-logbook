@@ -180,6 +180,37 @@ describe('HistoryTabs — Macrocycles', () => {
       expect(status).toHaveFocus();
     });
 
+    it('keeps the outcome, and its focus, when the undo empties the list', async () => {
+      const user = userEvent.setup();
+      const only = macrocycle({ id: 'a', macrocycleNum: 1, origin: 'imported' });
+      const tabs = (macrocycles: MacrocycleSummaryResponse[]) => (
+        <HistoryTabs records={[]} tmEntries={[]} macrocycles={macrocycles} imports={[older]} unit="lbs" />
+      );
+      const { rerender } = render(tabs([only]));
+      await user.click(screen.getByRole('tab', { name: 'Macrocycles' }));
+      mockUndo.mockResolvedValue({ batchId: 'b-old', restored: 2, skipped: 0, flagged: [] });
+
+      await user.click(screen.getByRole('button', { name: 'Undo import of macrocycle 1' }));
+      await user.click(screen.getByRole('button', { name: 'Undo import' }));
+      expect(await screen.findByText('Undo complete: 2 restored.')).toHaveFocus();
+
+      // The refresh brings back no macrocycles.
+      rerender(tabs([]));
+      expect(screen.getByText('No macrocycles yet.')).toBeInTheDocument();
+      expect(screen.getByText('Undo complete: 2 restored.')).toHaveFocus();
+    });
+
+    it('clears the last outcome once another undo is begun', async () => {
+      const user = await openTab();
+      mockUndo.mockResolvedValue({ batchId: 'b-new', restored: 1, skipped: 0, flagged: [] });
+      await user.click(screen.getByRole('button', { name: 'Undo import of macrocycle 2' }));
+      await user.click(screen.getByRole('button', { name: 'Undo import' }));
+      await screen.findByText('Undo complete: 1 restored.');
+
+      await user.click(screen.getByRole('button', { name: 'Undo import of macrocycle 1' }));
+      expect(screen.queryByText('Undo complete: 1 restored.')).not.toBeInTheDocument();
+    });
+
     it('runs one undo at a time: every Undo waits while one runs', async () => {
       const user = await openTab();
       let finish: (value: { batchId: string; restored: number; skipped: number; flagged: [] }) => void = () => {};

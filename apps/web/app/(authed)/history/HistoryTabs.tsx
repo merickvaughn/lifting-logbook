@@ -155,12 +155,14 @@ function MacrocyclesTab({
     }
   }
 
+  // Both branches render the outcome as the first child of a `div`, so undoing the last import
+  // keeps the same element, with its focus and announcement, when the table gives way.
   if (macrocycles.length === 0) {
     return (
-      <>
+      <div>
         <UndoResult result={result} resultRef={resultRef} />
         <p className={styles.empty}>No macrocycles yet.</p>
-      </>
+      </div>
     );
   }
   return (
@@ -240,6 +242,7 @@ function MacrocyclesTab({
                               onClick={() => {
                                 setConfirming(m.id);
                                 setError(null);
+                                setResult(null);
                                 setFocusTarget({ kind: 'confirm', id: m.id });
                               }}
                               disabled={busy}
