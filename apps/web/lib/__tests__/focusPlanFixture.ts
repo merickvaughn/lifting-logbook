@@ -43,6 +43,7 @@ export function focusBlock(overrides: Partial<FocusBlockResponse> = {}): FocusBl
     onEnd: 'prompt',
     nextArea: null,
     pool: [poolEntry('Lateral Raise'), poolEntry('Face Pull')],
+    version: 1,
     status: 'active',
     rangeStart: '2026-10-01',
     rangeEnd: '2026-12-31',

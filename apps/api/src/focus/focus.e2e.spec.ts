@@ -5,6 +5,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import { MROUND, defaultFocusPool, defaultPoolEntry } from '@lifting-logbook/core';
 import {
   DEFAULT_FOCUS_BUDGET,
+  FOCUS_BLOCK_STALE_CODE,
   FocusBlockResponse,
   FocusBlockSummaryResponse,
   FocusDayPlanResponse,
@@ -134,6 +135,37 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       expect(cleared.json()).toMatchObject({ onEnd: 'prompt', nextArea: null });
     });
 
+    // ADR-039, Amendment 7 (#1287).
+    it('starts a block at version 1 and raises it on each update, but not on a reorder', async () => {
+      const versioned = as('focus-e2e-version');
+      const first = (await versioned.create(blockBody())).json() as FocusBlockResponse;
+      const second = (await versioned.create(blockBody({ area: 'Core' }))).json() as FocusBlockResponse;
+      expect([first.version, second.version]).toEqual([1, 1]);
+      const url = `/focus/blocks/${second.id}?today=${TODAY}`;
+      const checked = await versioned.inject('PATCH', url, { selection: 'fixed', version: 1 });
+      expect(checked.statusCode).toBe(200);
+      expect((checked.json() as FocusBlockResponse).version).toBe(2);
+      // Without a version, an update isn't checked, and still counts.
+      expect(((await versioned.inject('PATCH', url, { selection: 'rules' })).json() as FocusBlockResponse).version).toBe(3);
+
+      const reordered = await versioned.inject('PUT', `/focus/blocks/order?today=${TODAY}`, { ids: [second.id, first.id] });
+      expect((reordered.json() as FocusBlockResponse[]).map((block) => block.version)).toEqual([3, 1]);
+    });
+
+    it('409s an update sent with a version that is no longer stored, and writes nothing', async () => {
+      const versioned = as('focus-e2e-version-stale');
+      const created = (await versioned.create(blockBody())).json() as FocusBlockResponse;
+      const url = `/focus/blocks/${created.id}?today=${TODAY}`;
+      const saved = (await versioned.inject('PATCH', url, { selection: 'fixed', version: 1 })).json() as FocusBlockResponse;
+
+      const res = await versioned.inject('PATCH', url, { selection: 'pick', version: 1 });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: FOCUS_BLOCK_STALE_CODE });
+      expect(await versioned.list()).toEqual([saved]);
+      // A version from the future is just as stale.
+      expect((await versioned.inject('PATCH', url, { selection: 'pick', version: 3 })).statusCode).toBe(409);
+    });
+
     it('409s on a second block in the same series starting the same day', async () => {
       const [first] = await user.list();
       const res = await user.create(blockBody({ series: first?.series }));
@@ -201,6 +233,7 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       ['a primitive pool entry', { pool: ['Hammer Curl'] }],
       ['an unknown pool field', { pool: [{ ...entry('Hammer Curl'), note: 'x' }] }],
       ['an unknown block field', { status: 'active' }],
+      ['a version, which the API sets', { version: 1 }],
       ['an oversized pool', { pool: Array.from({ length: 21 }, (_, i) => entry(`Lift ${i}`)) }],
     ])('rejects a block with %s', async (_label, overrides) => {
       expect((await user.create(blockBody(overrides))).statusCode).toBe(400);
@@ -229,6 +262,17 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
     it('rejects a null on an update field that takes no null', async () => {
       const created = (await user.create(blockBody())).json() as FocusBlockResponse;
       const res = await user.inject('PATCH', `/focus/blocks/${created.id}?today=${TODAY}`, { area: null });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it.each([
+      ['zero', 0],
+      ['a fraction', 1.5],
+      ['a string', '1'],
+      ['null', null],
+    ])('rejects an update whose version is %s', async (_label, version) => {
+      const created = (await user.create(blockBody({ series: `version-${String(version)}` }))).json() as FocusBlockResponse;
+      const res = await user.inject('PATCH', `/focus/blocks/${created.id}?today=${TODAY}`, { selection: 'fixed', version });
       expect(res.statusCode).toBe(400);
     });
   });
@@ -353,6 +397,46 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
       expect(after?.pool.filter((e) => e.lift !== 'Cable Curl')).toEqual(created?.pool.filter((e) => e.lift !== 'Cable Curl'));
     });
 
+    // #1287: a page that read the successor before a max was carried into it sends the pool it
+    // read. Saved, that would put the pre-carry max back, and nothing would carry it again.
+    it('refuses a save of a successor read before a max was carried into it, so the carry stays', async () => {
+      const other = as('focus-e2e-rollover-wave-stale');
+      const curl = entry('Cable Curl', { trainingMax: 40, percent: 80, repsHigh: 10, sets: 3 });
+      const biceps = (
+        await other.create(
+          blockBody({ area: 'Biceps', period: 'monthly', start: '2026-10-01', progression: 'percent_wave', onEnd: 'autoroll', nextArea: 'Biceps', pool: [curl] }),
+        )
+      ).json() as FocusBlockResponse;
+      const queued = () => other.list().then((list) => list.find((block) => block.series === biceps.series && block.id !== biceps.id));
+      const loaded = await queued();
+      expect(loaded).toMatchObject({ status: 'queued', progression: 'percent_wave', version: 1 });
+      expect(loaded?.pool.find((e) => e.lift === 'Cable Curl')?.trainingMax).toBe(41.25);
+
+      // The running block's max goes from 40 to 60, which carries into the successor.
+      expect((await other.inject('PATCH', `/focus/blocks/${biceps.id}?today=${TODAY}`, { pool: [{ ...curl, trainingMax: 60 }] })).statusCode).toBe(200);
+      const carried = await queued();
+      expect(carried?.pool.find((e) => e.lift === 'Cable Curl')?.trainingMax).toBe(61.25);
+      expect(carried?.version).toBe(2);
+
+      // The page then saves a sets edit to the successor, from the pool it read first.
+      const fromLoaded = (pool: FocusPoolEntry[]) => pool.map((e) => (e.lift === 'Cable Curl' ? { ...e, sets: 5 } : e));
+      const stale = await other.inject('PATCH', `/focus/blocks/${loaded?.id}?today=${TODAY}`, {
+        pool: fromLoaded(loaded?.pool ?? []),
+        version: loaded?.version,
+      });
+      expect(stale.statusCode).toBe(409);
+      expect(stale.json()).toMatchObject({ code: FOCUS_BLOCK_STALE_CODE });
+      expect(await queued()).toEqual(carried);
+
+      // Made again from the block as it now reads, the edit saves and the carry stays.
+      const retried = await other.inject('PATCH', `/focus/blocks/${carried?.id}?today=${TODAY}`, {
+        pool: fromLoaded(carried?.pool ?? []),
+        version: carried?.version,
+      });
+      expect(retried.statusCode).toBe(200);
+      expect((retried.json() as FocusBlockResponse).pool.find((e) => e.lift === 'Cable Curl')).toMatchObject({ trainingMax: 61.25, sets: 5 });
+    });
+
     // ADR-039, Amendment 4 (#1222): the successor is stored when the block starts, so its
     // settings follow later edits to the block while it is still queued.
     describe("a queued successor following its block's settings", () => {
@@ -381,6 +465,7 @@ describe('Focus work HTTP (e2e, in-memory adapters)', () => {
 
         expect(await successor()).toEqual({
           ...stored,
+          version: 2,
           progression: 'percent_wave',
           selection: 'rotate',
           overlap: 'swap',

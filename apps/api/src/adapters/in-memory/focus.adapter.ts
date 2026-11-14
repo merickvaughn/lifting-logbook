@@ -1,4 +1,4 @@
-import { DEFAULT_FOCUS_BUDGET, FocusBlock, FocusBudget, FocusDayState } from '@lifting-logbook/types';
+import { DEFAULT_FOCUS_BUDGET, FocusBlock, FocusBudget, FocusDayState, StoredFocusBlock } from '@lifting-logbook/types';
 import { FocusBlockPatch, IFocusRepository } from '../../ports/IFocusRepository';
 import { FocusBlockConflictError, FocusBlockNotFoundError } from '../../ports/errors';
 import { NumberedStore, dropFromMap, numbersInMap, rekeyMap } from './renumber';
@@ -10,7 +10,7 @@ function dayKeyNumber(key: string): { program: string; macrocycleNum: number } {
 
 /** Mirrors PrismaFocusRepository, including its (series, start) uniqueness. */
 export class InMemoryFocusRepository implements IFocusRepository, NumberedStore {
-  private readonly blocks = new Map<string, FocusBlock>();
+  private readonly blocks = new Map<string, StoredFocusBlock>();
   private readonly dayStates = new Map<string, FocusDayState>();
   private budget: FocusBudget = { ...DEFAULT_FOCUS_BUDGET };
 
@@ -31,20 +31,20 @@ export class InMemoryFocusRepository implements IFocusRepository, NumberedStore 
     dropFromMap(this.dayStates, program, macrocycleNums, dayKeyNumber);
   }
 
-  async listBlocks(): Promise<FocusBlock[]> {
+  async listBlocks(): Promise<StoredFocusBlock[]> {
     // Insertion order breaks ties, as createdAt does in the Prisma adapter.
     return [...this.blocks.values()]
       .sort((a, b) => a.priority - b.priority || a.start.localeCompare(b.start))
       .map(clone);
   }
 
-  async getBlock(id: string): Promise<FocusBlock | null> {
+  async getBlock(id: string): Promise<StoredFocusBlock | null> {
     const block = this.blocks.get(id);
     return block ? clone(block) : null;
   }
 
   /** The in-memory store has no concurrent writers to lock out, so this only reads. */
-  async lockBlocks(ids: readonly string[]): Promise<FocusBlock[]> {
+  async lockBlocks(ids: readonly string[]): Promise<StoredFocusBlock[]> {
     return [...new Set(ids)]
       .sort()
       .flatMap((id) => {
@@ -53,27 +53,28 @@ export class InMemoryFocusRepository implements IFocusRepository, NumberedStore 
       });
   }
 
-  async createBlock(block: FocusBlock): Promise<FocusBlock> {
+  async createBlock(block: FocusBlock): Promise<StoredFocusBlock> {
     if (this.startTaken(block.series, block.start)) {
       throw new FocusBlockConflictError(block.series, block.start);
     }
-    this.blocks.set(block.id, clone(block));
-    return clone(block);
+    const stored = firstVersion(block);
+    this.blocks.set(block.id, stored);
+    return clone(stored);
   }
 
   async createBlocksIfAbsent(blocks: readonly FocusBlock[]): Promise<void> {
     for (const block of blocks) {
-      if (!this.startTaken(block.series, block.start)) this.blocks.set(block.id, clone(block));
+      if (!this.startTaken(block.series, block.start)) this.blocks.set(block.id, firstVersion(block));
     }
   }
 
-  async updateBlock(id: string, patch: FocusBlockPatch): Promise<FocusBlock> {
+  async updateBlock(id: string, patch: FocusBlockPatch): Promise<StoredFocusBlock> {
     const existing = this.blocks.get(id);
     if (!existing) throw new FocusBlockNotFoundError(id);
     if (patch.start !== undefined && this.startTaken(existing.series, patch.start, id)) {
       throw new FocusBlockConflictError(existing.series, patch.start);
     }
-    const updated: FocusBlock = { ...existing, ...patch };
+    const updated: StoredFocusBlock = { ...existing, ...patch, version: existing.version + 1 };
     this.blocks.set(id, clone(updated));
     return clone(updated);
   }
@@ -122,8 +123,13 @@ export class InMemoryFocusRepository implements IFocusRepository, NumberedStore 
 }
 
 // Copies keep callers from mutating stored state, as a database round trip would.
-function clone(block: FocusBlock): FocusBlock {
+function clone<B extends FocusBlock>(block: B): B {
   return structuredClone(block);
+}
+
+/** A new block as stored, at version 1 whatever version a copied block carried. */
+function firstVersion(block: FocusBlock): StoredFocusBlock {
+  return { ...structuredClone(block), version: 1 };
 }
 
 function dayKey(program: string, macrocycleNum: number, workoutNum: number): string {

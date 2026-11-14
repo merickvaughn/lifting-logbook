@@ -8,6 +8,7 @@ import { FastifyReply } from 'fastify';
 import {
   CustomLiftConflictError,
   FocusBlockConflictError,
+  FocusBlockStaleError,
   LiftModificationConflictError,
   MacrocycleNumberConflictError,
   ReservedLiftNameConflictError,
@@ -17,6 +18,7 @@ type DomainConflict =
   | CustomLiftConflictError
   | ReservedLiftNameConflictError
   | FocusBlockConflictError
+  | FocusBlockStaleError
   | LiftModificationConflictError
   | MacrocycleNumberConflictError;
 
@@ -29,6 +31,7 @@ type DomainConflict =
   CustomLiftConflictError,
   ReservedLiftNameConflictError,
   FocusBlockConflictError,
+  FocusBlockStaleError,
   LiftModificationConflictError,
   MacrocycleNumberConflictError,
 )
@@ -39,8 +42,8 @@ export class DomainConflictFilter implements ExceptionFilter {
       statusCode: HttpStatus.CONFLICT,
       message: err.message,
       error: 'Conflict',
-      // A client tells this 409 from the others by its code (ADR-042).
-      ...(err instanceof MacrocycleNumberConflictError && { code: err.code }),
+      // A client tells this 409 from the others by its code (ADR-042), when the error has one.
+      ...('code' in err && typeof err.code === 'string' && { code: err.code }),
     });
   }
 }

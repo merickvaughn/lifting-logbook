@@ -280,7 +280,7 @@ same series, and a plan read locks only active blocks, never a queued one.
   pre-carry max back, and nothing recomputes the carry. Two tabs editing one block are the same
   case: the later save wins. Preventing these needs the client to say which version it edited
   (the version check below), which
-  [#1287](https://github.com/merickvaughn/lifting-logbook/issues/1287) takes up.
+  [#1287](https://github.com/merickvaughn/lifting-logbook/issues/1287) adds in Amendment 7.
 
 **Alternatives considered.** A version column checked on update (optimistic locking [10]) would
 refuse a write based on a stale read with a 409, which also covers the setup page's own stale
@@ -342,6 +342,57 @@ successor and shifting every later queued block in the series along with it woul
 `409`, but it would move blocks the lifter placed by hand without their asking. Skipping the move
 when the new start is taken would save the block and leave the overlap the move exists to remove,
 with nothing to tell the lifter.
+
+## Amendment 7 — a save from a stale read is refused by version (#1287)
+
+Amendment 5's lock keeps server writes from overwriting each other, but the setup page sends a
+block's whole pool as it loaded it. A successor it loaded before a training max was carried in
+got the pre-carry max back on its next save, and nothing carried it again. Each block now has a
+version, and `PATCH /focus/blocks/:id` can refuse a write based on an older read [10]:
+
+- **The version.** A `version` column (migration `20261114120000_focus_block_version`) starts at
+  1 and goes up by one on every `updateBlock`. That covers the lifter's own edits and everything
+  the API writes to a block: a setting or max carried into a successor, a successor moved by a
+  date edit, a session recorded on a plan read, a predecessor set to prompt when its successor is
+  deleted. Every block the API returns carries it (`StoredFocusBlock`).
+- **The check.** `PATCH` takes an optional `version`. When sent, it is compared with the block
+  read under Amendment 5's row lock, so no write can land between the check and the update. Like
+  that lock, this holds only inside the request's RLS transaction; on the bare
+  `SYSTEM_DATABASE_URL` client, which no deployment sets (#534), the check and the update are
+  separate statements. A mismatch is a `409` with the code `focus-block-stale` (`FOCUS_BLOCK_STALE_CODE`), and nothing
+  is written. Without a version the update isn't checked. That keeps every existing client
+  working, and the web only sends a version the API returned, so a new web on the old API
+  during a deploy sends none.
+- **A reorder leaves it alone.** Priority is written only by a reorder, and `PATCH` never writes
+  it, so a stale save can't undo a reorder. Raising the version there would refuse the page's
+  next edit after its own reorder.
+- **The setup page** sends the version of the block it showed when the lifter made the edit, or
+  its own earlier checked save's answer when that is later. Versions only go up, so it keeps the
+  higher one. A save queued behind the page's own save therefore isn't refused, but one made
+  before another client's write is. Every card edit is checked, not only pool edits: the page
+  builds them from what it showed (a period change on an active block also sends a start
+  anchored to the shown dates). The successor retarget or removal that follows a next-area or
+  prompt edit runs only once the block's own save succeeds, and the retarget sends no version:
+  it replaces the successor's area and pool whatever they hold. Its answer isn't kept, since its
+  version covers writes the page never showed. On the `409` the page re-reads, as it does after
+  any failed save, and says the block changed after the page loaded it, so the lifter's change
+  didn't save. The lifter makes it again on the block as stored.
+- **What it covers.** All three cases Amendment 5 left: the carried max, a recorded session that
+  a stale save would have overwritten until the next plan read, and two tabs editing one block,
+  where the second save now gets the `409` instead of winning silently.
+- **What it costs.** A refused edit has to be made again. The setup page reads the blocks and
+  this week's plans at the same time, and a plan read can record a session, so the first edit to
+  a `double` block right after a workout can be refused once. That refusal is correct: the
+  block's weight did change.
+
+**Alternatives considered.** Sending only the entries and fields the page changed, merged by the
+server into the current pool by lift name, would need no redo. But it needs a new partial-pool
+request shape, removing or reordering entries need operations of their own, entries have no
+stable key (Amendment 5), and the same field changed in two places still goes to the later save
+without a word. An `updatedAt` timestamp as the token gives two writes in the same millisecond
+the same value; a counter can't. A required version would refuse every client that doesn't send
+one, including the web during a deploy. Retrying a refused save on the page by reapplying it to
+the fresh read would put the whole stale pool back, which is the overwrite this prevents.
 
 ## References
 

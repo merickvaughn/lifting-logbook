@@ -362,9 +362,14 @@ function focusStatus(block, today) {
   return today < start ? 'queued' : today > end ? 'ended' : 'active';
 }
 
+// A stored block's version, which every PATCH raises (ADR-039, Amendment 7). Seeds start at 1.
+function focusVersion(block) {
+  return block.version ?? 1;
+}
+
 function focusResponse(block, today) {
   const { start, end } = focusRange(block);
-  return { ...block, status: focusStatus(block, today), rangeStart: start, rangeEnd: end };
+  return { ...block, version: focusVersion(block), status: focusStatus(block, today), rangeStart: start, rangeEnd: end };
 }
 
 function focusNextStart(block) {
@@ -405,6 +410,7 @@ function materializeFocusRollovers(today) {
       nextArea: null,
       priority: state.focusBlocks.reduce((max, b) => Math.max(max, b.priority), 0) + 1,
       pool: [seedPoolEntry(FOCUS_AREA_LIFT[block.nextArea])],
+      version: 1,
     });
   }
 }
@@ -807,7 +813,12 @@ const server = createServer(async (req, res) => {
         state.focusBlocks
           .filter((b) => focusStatus(b, today) !== 'ended')
           .reduce((max, b) => Math.max(max, b.priority), 0) + 1;
-      const created = { ...body, id, series: body.series ?? id, priority };
+      // The API refuses a version on create and starts every block at 1.
+      if (body.version !== undefined) {
+        json(res, { statusCode: 400, message: ['property version should not exist'], error: 'Bad Request' }, 400);
+        return;
+      }
+      const created = { ...body, id, series: body.series ?? id, priority, version: 1 };
       state.focusBlocks.push(created);
       json(res, focusResponse(created, today), 201);
       return;
@@ -841,8 +852,12 @@ const server = createServer(async (req, res) => {
         json(res, { statusCode: 404, message: 'Focus block not found' }, 404);
         return;
       }
-      const { series: _series, priority: _priority, id: _id, ...patch } = body;
-      Object.assign(existing, patch);
+      const { series: _series, priority: _priority, id: _id, version, ...patch } = body;
+      if (version !== undefined && version !== focusVersion(existing)) {
+        json(res, { statusCode: 409, message: 'Focus block changed since it was read', error: 'Conflict', code: 'focus-block-stale' }, 409);
+        return;
+      }
+      Object.assign(existing, patch, { version: focusVersion(existing) + 1 });
       json(res, focusResponse(existing, today));
       return;
     }

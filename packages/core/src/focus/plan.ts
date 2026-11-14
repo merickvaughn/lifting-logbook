@@ -12,8 +12,9 @@ export function focusLiftCostSec(sets: number, timer: FocusTimer): number {
   return focusDurationSec(sets, timer) + timer.rest;
 }
 
-export interface FocusGroup {
-  block: FocusBlock;
+/** `B` is the caller's block type, so a block passed in comes back with its own fields. */
+export interface FocusGroup<B extends FocusBlock = FocusBlock> {
+  block: B;
   /** Today's selection, with trimmed lifts removed from `items`. */
   selection: FocusSelectionResult;
   /** Lifts the user trimmed for today. */
@@ -28,8 +29,8 @@ export interface FocusTrimSuggestion {
   seconds: number;
 }
 
-export interface FocusDayPlan {
-  groups: FocusGroup[];
+export interface FocusDayPlan<B extends FocusBlock = FocusBlock> {
+  groups: FocusGroup<B>[];
   sets: number;
   seconds: number;
   /** Over the daily guide on sets or minutes. Advisory only. */
@@ -37,8 +38,8 @@ export interface FocusDayPlan {
   suggestion: FocusTrimSuggestion | null;
 }
 
-export interface PlanFocusDayInput {
-  blocks: readonly FocusBlock[];
+export interface PlanFocusDayInput<B extends FocusBlock = FocusBlock> {
+  blocks: readonly B[];
   plannedLifts: readonly string[];
   /** Passed to {@link selectForDay} for rotation. */
   rotationIndex: number;
@@ -54,9 +55,9 @@ export interface PlanFocusDayInput {
  * with its selection and the day's trims applied. When the totals are over the guide, the
  * suggestion is the last lift of the lowest-priority block that still has lifts.
  */
-export function planFocusDay(input: PlanFocusDayInput): FocusDayPlan {
+export function planFocusDay<B extends FocusBlock>(input: PlanFocusDayInput<B>): FocusDayPlan<B> {
   const { blocks, plannedLifts, rotationIndex, dayState, budget, today, resolveMuscles } = input;
-  const groups: FocusGroup[] = blocks
+  const groups: FocusGroup<B>[] = blocks
     .filter((block) => blockStatus(block, today) === 'active')
     .sort((a, b) => a.priority - b.priority)
     .map((block) => {

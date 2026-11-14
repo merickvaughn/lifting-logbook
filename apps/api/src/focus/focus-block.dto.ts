@@ -197,6 +197,9 @@ export class UpdateFocusBlockDto implements UpdateFocusBlockRequest {
   @Validate(HasUniquePoolLiftsConstraint)
   @Type(() => FocusPoolEntryDto)
   pool?: FocusPoolEntryDto[];
+
+  // The version the client read; checked against the stored one (ADR-039, Amendment 7).
+  @ValidateIf((o: UpdateFocusBlockDto) => o.version !== undefined) @IsInt() @Min(1) version?: number;
 }
 
 export class ReorderFocusBlocksDto implements ReorderFocusBlocksRequest {

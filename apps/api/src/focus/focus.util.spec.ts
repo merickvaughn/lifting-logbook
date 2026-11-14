@@ -35,6 +35,9 @@ const november: FocusBlock = {
   pool: defaultFocusPool('Triceps'),
 };
 
+/** A block as created and never updated since: version 1 (ADR-039, Amendment 7). */
+const unchanged = (b: FocusBlock) => ({ ...b, version: 1 });
+
 // Pairs the success path with the catch in saveBlockEdit (focus.util.ts), which
 // treats a successor deleted since it was read as nothing to carry (#1222, #1230).
 describe('saveBlockEdit', () => {
@@ -137,9 +140,9 @@ describe('saveBlockEdit', () => {
       const error = await saveBlockEdit(focus, 'october', { period: 'quarterly' }, TODAY).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(FocusBlockConflictError);
       expect(error).toMatchObject({ series: 'series', start: '2027-01-01' });
-      expect(await block('october')).toEqual(october);
-      expect(await block('november')).toEqual(november);
-      expect(await block('january')).toEqual(january);
+      expect(await block('october')).toEqual(unchanged(october));
+      expect(await block('november')).toEqual(unchanged(november));
+      expect(await block('january')).toEqual(unchanged(january));
     });
 
     it('moves a follow-on queued inside the new range to start after it, copying no settings', async () => {
@@ -153,8 +156,8 @@ describe('saveBlockEdit', () => {
       await focus.createBlock(december);
       const error = await saveBlockEdit(focus, 'october', { period: 'quarterly' }, TODAY).catch((e: unknown) => e);
       expect(error).toMatchObject({ series: 'series', start: '2026-12-01' });
-      expect(await block('october')).toEqual(october);
-      expect(await block('november')).toEqual(november);
+      expect(await block('october')).toEqual(unchanged(october));
+      expect(await block('november')).toEqual(unchanged(november));
     });
 
     // The block is written first here, so only the check before both writes keeps it unchanged.
