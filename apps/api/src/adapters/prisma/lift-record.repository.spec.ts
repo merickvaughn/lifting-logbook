@@ -275,6 +275,78 @@ describe('PrismaLiftRecordRepository', () => {
     });
   });
 
+  describe('getLastSessions (#1252)', () => {
+    const before = { workoutNum: 3, through: new Date('2026-04-08T00:00:00.000Z') };
+    const scope = {
+      userId: 'user-1',
+      program: '5-3-1',
+      macrocycleNum: 2,
+      workoutNum: { not: 3 },
+      occurrence: 0,
+      date: { lte: before.through },
+    };
+
+    it('groups the lifts’ earlier sessions, then reads only each lift’s latest one, under every spelling', async () => {
+      const groupBy = jest.fn().mockResolvedValue([
+        { lift: 'Bench Press', workoutNum: 1, date: new Date('2026-04-01T00:00:00.000Z') },
+        { lift: 'bench-press', workoutNum: 2, date: new Date('2026-04-04T00:00:00.000Z') },
+        { lift: 'My Curl', workoutNum: 1, date: new Date('2026-04-01T00:00:00.000Z') },
+      ]);
+      const prisma = makePrisma();
+      (prisma.liftRecord as unknown as { groupBy: jest.Mock }).groupBy = groupBy;
+      (prisma.liftRecord.findMany as jest.Mock).mockResolvedValue([
+        { ...BASE_ROW, workoutNum: 2, lift: 'bench-press', setNum: 2, reps: 4 },
+        { ...BASE_ROW, workoutNum: 2, lift: 'Bench Press', setNum: 1, reps: 5 },
+      ]);
+      const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
+
+      const sets = await repo.getLastSessions('5-3-1', 2, ['Bench Press', 'My Curl'], before);
+
+      expect(groupBy).toHaveBeenCalledWith({
+        by: ['lift', 'workoutNum', 'date'],
+        where: { ...scope, lift: { in: expect.arrayContaining(['Bench Press', 'bench-press', 'My Curl']) } },
+      });
+      const { where } = (prisma.liftRecord.findMany as jest.Mock).mock.calls[0][0];
+      expect(where).toEqual({
+        ...scope,
+        OR: [
+          { workoutNum: 2, lift: { in: expect.arrayContaining(['Bench Press', 'bench-press']) } },
+          { workoutNum: 1, lift: { in: ['My Curl'] } },
+        ],
+      });
+      // Keyed by catalog id, each lift's sets in set order whatever spelling they're stored under.
+      expect([...sets.keys()]).toEqual(['bench-press']);
+      expect(sets.get('bench-press')?.map((s) => [s.setNum, s.reps])).toEqual([[1, 5], [2, 4]]);
+    });
+
+    it('takes the higher workout on a tie of dates', async () => {
+      const date = new Date('2026-04-04T00:00:00.000Z');
+      const prisma = makePrisma();
+      (prisma.liftRecord as unknown as { groupBy: jest.Mock }).groupBy = jest.fn().mockResolvedValue([
+        { lift: 'Bench Press', workoutNum: 2, date },
+        { lift: 'Bench Press', workoutNum: 1, date },
+      ]);
+      const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
+
+      await repo.getLastSessions('5-3-1', 2, ['Bench Press'], before);
+
+      const { where } = (prisma.liftRecord.findMany as jest.Mock).mock.calls[0][0];
+      expect(where.OR).toEqual([{ workoutNum: 2, lift: { in: expect.arrayContaining(['Bench Press']) } }]);
+    });
+
+    it('reads no sets when no lift has an earlier session, and nothing for no lifts', async () => {
+      const prisma = makePrisma();
+      const groupBy = jest.fn().mockResolvedValue([]);
+      (prisma.liftRecord as unknown as { groupBy: jest.Mock }).groupBy = groupBy;
+      const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
+
+      expect(await repo.getLastSessions('5-3-1', 2, ['Bench Press'], before)).toEqual(new Map());
+      expect(await repo.getLastSessions('5-3-1', 2, [], before)).toEqual(new Map());
+      expect(groupBy).toHaveBeenCalledTimes(1);
+      expect(prisma.liftRecord.findMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe('deleteLiftRecordsByNaturalKeys', () => {
     it('includes date in the OR-filter clause', async () => {
       const prisma = makePrisma();

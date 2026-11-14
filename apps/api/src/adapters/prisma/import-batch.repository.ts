@@ -3,11 +3,13 @@ import { ImportPreImage } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import {
+  BatchMacrocycles,
   IImportBatchRepository,
   ImportBatchRecord,
   KeyNumbers,
   PRE_IMAGE_KEY_NUMBER,
 } from '../../ports/IImportBatchRepository';
+import { batchMacrocyclesJson, parseBatchMacrocycles } from './import-batch-json';
 
 const tracer = trace.getTracer('prisma-import-batch-repository');
 
@@ -26,6 +28,9 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
         destination: batch.destination,
         preImage: batch.preImage as object,
         groupId: batch.groupId ?? null,
+        // The import's own time, taken under its lock, so undo orders batches as they were written.
+        createdAt: batch.createdAt,
+        ...(batch.macrocycles ? { macrocycles: batchMacrocyclesJson(batch.macrocycles) } : {}),
       },
     });
   }
@@ -60,7 +65,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
         // The key's number as `preImageKeyNumber` reads it; numeric, so a long digit run can't
         // overflow the cast. A key with no number matches neither way.
         const rows = await this.prisma.$queryRaw<ImportBatch[]>`
-          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId" FROM "import_batch" b
+          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId", b."macrocycles" FROM "import_batch" b
           WHERE b."userId" = ${this.userId} AND b."program" = ${program} AND b."destination" = ${destination}
             AND EXISTS (
               SELECT 1 FROM jsonb_object_keys(b."preImage") AS k,
@@ -87,7 +92,7 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
       try {
         span.setAttribute('import_batch.keys', keys.length);
         const rows = await this.prisma.$queryRaw<ImportBatch[]>`
-          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId" FROM "import_batch" b
+          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId", b."macrocycles" FROM "import_batch" b
           WHERE b."userId" = ${this.userId} AND b."destination" = ${destination}
             AND EXISTS (SELECT 1 FROM jsonb_object_keys(b."preImage") AS k WHERE k = ANY(${[...keys]}::text[]))`;
         span.setAttribute('import_batch.count', rows.length);
@@ -124,6 +129,33 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
       }
     });
   }
+
+  async listChoosing(macrocycleId: string): Promise<ImportBatchRecord[]> {
+    // Raw SQL isn't auto-traced (ADR-024), so the filter gets a span.
+    return tracer.startActiveSpan('import_batch.list_choosing', async (span) => {
+      try {
+        const rows = await this.prisma.$queryRaw<ImportBatch[]>`
+          SELECT b."id", b."userId", b."program", b."destination", b."preImage", b."createdAt", b."groupId", b."macrocycles" FROM "import_batch" b
+          WHERE b."userId" = ${this.userId}
+            AND b."macrocycles"->'chosen' @> ${JSON.stringify([{ id: macrocycleId }])}::jsonb`;
+        span.setAttribute('import_batch.count', rows.length);
+        return rows.map(toRecord);
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
+  async updateMacrocycles(id: string, macrocycles: BatchMacrocycles): Promise<void> {
+    await this.prisma.importBatch.updateMany({
+      where: { id, userId: this.userId },
+      data: { macrocycles: batchMacrocyclesJson(macrocycles) },
+    });
+  }
 }
 
 function toRecord(row: ImportBatch): ImportBatchRecord {
@@ -135,5 +167,6 @@ function toRecord(row: ImportBatch): ImportBatchRecord {
     preImage: row.preImage as unknown as ImportPreImage,
     createdAt: row.createdAt,
     groupId: row.groupId,
+    macrocycles: parseBatchMacrocycles(row.macrocycles),
   };
 }

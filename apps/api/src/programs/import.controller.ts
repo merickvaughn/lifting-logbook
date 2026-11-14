@@ -35,7 +35,6 @@ import {
 } from '@lifting-logbook/types';
 import {
   BUILT_IN_KNOWN_PROGRAMS,
-  ImportPreImage,
   KnownProgram,
   buildSkippedDetail,
   liftRecordLabel,
@@ -90,7 +89,9 @@ import {
   planSplitMaxes,
   splitMaxCounts,
 } from './import-assign';
+import { placeSuggestedStretches, recomputeMacrocycles, releaseStatusChoices } from './import-stored';
 import {
+  BreakdownBatch,
   BreakdownMismatchException,
   PlacedBreakdown,
   parseBreakdown,
@@ -219,6 +220,7 @@ export class ImportController {
           liftOverrides,
           splitDest,
           exported,
+          importDate: assignImportDate(fields.get('today')),
         });
       }
       // With the flag on, read blank numbers as the preview does, so the strict validator
@@ -367,7 +369,10 @@ export class ImportController {
     @Param('program') program: string,
     @Param('batchId') batchId: string,
     @CurrentUser() user: AuthUser,
+    // The lifter's day, as the commit takes it, for the statuses undo reads again (#1255).
+    @Query('today') today?: string,
   ): Promise<ImportUndoResponse> {
+    const started = Date.now();
     const repos = await this.factory.forUser(user);
     const batch = await repos.importBatch.findById(batchId, user.id);
     if (!batch || batch.program !== program) {
@@ -404,6 +409,7 @@ export class ImportController {
       : [];
 
     if (batch.destination === 'lift-records') {
+      const asOf = assignImportDate(today);
       // The undo removes macrocycle rows, so it holds the lock exclusively, as the import did.
       await lockForImport(repos, 'undo');
       const deleteCreated = async (from: string, keys: string[]) => {
@@ -418,7 +424,11 @@ export class ImportController {
       };
       // An import through the Assign step saved one batch per program it wrote to, grouped under
       // this one (#1254). Each one's keys are read under its own program.
-      for (const part of [batch, ...(await repos.importBatch.listGroup(batch.id))]) {
+      const parts = [batch, ...(await repos.importBatch.listGroup(batch.id))];
+      // Every part's rows go, and its emptied macrocycles with them, before any macrocycle left is
+      // read again: what follows a macrocycle can be one another part is about to remove (#1255).
+      const touched: Array<{ program: string; nums: number[]; ids: string[] }> = [];
+      for (const part of parts) {
         // A 1RM split's training maxes share this batch, keyed by lift id (#1148). Every set and
         // `legacy` row key starts with a macrocycle number, and a lift id (a kebab-case name or a
         // custom lift's UUID) never does.
@@ -437,18 +447,51 @@ export class ImportController {
             .filter(([k, e]) => preImageKeyNumber(k) !== null && e.kind === 'created')
             .map(([k]) => k),
         );
+        // The macrocycles the batch touched: those it created or extended, and those its sets and
+        // `legacy` rows are on, which is all a batch from before #1255 records. Read by number
+        // before anything is renumbered.
+        const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
+        const nums = new Set([...legacyNums, ...setNums]);
+        // Only `imported` macrocycles are read again: a `live` or `legacy` row keeps what it holds.
+        const recorded = new Set([...(part.macrocycles?.created ?? []), ...(part.macrocycles?.extended ?? [])]);
+        const rows = await repos.macrocycle.list(part.program);
+        const ids = new Set<string>();
+        for (const m of rows) {
+          if (recorded.has(m.id)) nums.add(m.macrocycleNum);
+          if (m.origin === 'imported' && nums.has(m.macrocycleNum)) ids.add(m.id);
+        }
+        // The statuses the batch chose are released before anything is read again.
+        await releaseStatusChoices(repos, part, part.macrocycles?.chosen ?? [], new Map(rows.map((m) => [m.id, m])));
         await deleteCreated(part.program, createdKeys);
         // The non-cycle macrocycle's row stays, as it does when its workouts are deleted.
         await deleteCreated(NON_CYCLE_PROGRAM, nonCycleKeys);
         // The batch goes first, so the renumbering below doesn't rewrite the keys of a batch about
         // to be deleted.
         await repos.importBatch.deleteById(part.id, user.id);
-        // A `legacy` or `imported` macrocycle left with no sets goes (ADR-042): one the import
-        // created, or one its sets joined, and the numbers close up.
-        const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
-        await removeEmptyLegacyRows(repos, part.program, [...new Set([...legacyNums, ...setNums])]);
-        await renumberProgram(repos, part.program);
+        touched.push({ program: part.program, nums: [...nums], ids: [...ids] });
       }
+      // A `legacy` or `imported` macrocycle left with no sets goes (ADR-042): one the import
+      // created, or one its sets joined.
+      let removed = 0;
+      for (const { program: p, nums } of touched) removed += await removeEmptyLegacyRows(repos, p, nums);
+      // The `imported` macrocycles left are recomputed from the sets on them, which a later import
+      // may have added to, rather than restored (#1255, decision 14).
+      const ids = touched.flatMap((t) => t.ids);
+      const recomputed = ids.length > 0
+        ? await recomputeMacrocycles(
+            repos,
+            ids,
+            [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(user.id))],
+            asOf,
+          )
+        : 0;
+      // And the numbers close up.
+      for (const { program: p } of touched) await renumberProgram(repos, p);
+      // Counts only: dates and statuses are the lifter's data.
+      this.logger.log(
+        { parts: parts.length, macrocyclesRecomputed: recomputed, macrocyclesRemoved: removed, durationMs: Date.now() - started },
+        'Import undo recomputed its macrocycles (#1255)',
+      );
     } else if (batch.destination === 'training-maxes') {
       await undoTrainingMaxes(Object.entries(batch.preImage));
       await repos.importBatch.deleteById(batchId, user.id);
@@ -823,6 +866,10 @@ export class ImportController {
       sourceProgram: program,
       customPrograms,
     });
+    const stored = await placeSuggestedStretches(repos, segmented.stretches, [
+      ...BUILT_IN_KNOWN_PROGRAMS,
+      ...customPrograms,
+    ]);
     const response = assignResponse(
       segmented,
       {
@@ -830,6 +877,7 @@ export class ImportController {
         undatedRows: undated,
         exported,
         programs: assignProgramOptions(customPrograms),
+        stored,
         ...(split ? { split: await splitMaxCounts(splitMaxes, segmented.stretches, program, repos) } : {}),
       },
       await liftNamesFor(repos),
@@ -846,6 +894,9 @@ export class ImportController {
         nonCycleSessions: response.nonCycle.length,
         unnumberedSessions: response.unnumbered.length,
         conflicts: response.conflicts.length,
+        joiningStretches: stored.filter((s) => s.kind === 'joins').length,
+        alreadyImportedStretches: stored.filter((s) => s.kind === 'already-imported').length,
+        overlappingStretches: stored.filter((s) => s.kind === 'overlaps').length,
         undatedRows: response.undatedRows,
         exported,
         splitChanges: response.split?.changes ?? 0,
@@ -884,6 +935,8 @@ export class ImportController {
       liftOverrides: Record<string, string>;
       splitDest: boolean;
       exported: boolean;
+      /** What a joined macrocycle's suggested status is judged against (#1255). */
+      importDate: Date;
     },
   ): Promise<ImportCommitResponse | ImportDryRunResponse> {
     const started = Date.now();
@@ -927,8 +980,10 @@ export class ImportController {
     const split = await planSplitMaxes(splitMaxes, programCovering(placed.stretches, program), repos);
     const splitRows = [...split.byProgram.values()];
     const splitWrites = splitRows.reduce((n, s) => n + s.writes.length, 0);
+    const extended = plan.stretches.filter((s) => s.stored.kind === 'joins').length;
     const assigned = {
-      macrocycles: plan.stretches.length,
+      macrocycles: plan.stretches.length - extended,
+      extended,
       nonCycleSessions: placed.nonCycleSessions,
       excludedSessions: placed.excludedSessions,
       undatedRows: undated,
@@ -947,19 +1002,21 @@ export class ImportController {
         );
       }
     } else {
-      const written = await writeBreakdown(repos, program, plan);
+      const written = await writeBreakdown(repos, program, plan, { programs, importDate: choices.importDate });
       created = written.created;
-      const preImages = written.preImages;
+      const batches = written.batches;
       if (splitMaxes.length > 0) {
         const results: ImportWriteResult[] = [];
         for (const [splitProgram, { existing, writes }] of split.byProgram) {
           if (writes.length === 0) continue;
           results.push(await repos.trainingMax.importTrainingMaxes(splitProgram, writes));
-          preImages.set(splitProgram, { ...(preImages.get(splitProgram) ?? {}), ...buildTrainingMaxPreImage(writes, existing) });
+          const batch = batches.get(splitProgram) ?? { preImage: {}, macrocycles: { created: [], extended: [], chosen: [] } };
+          Object.assign(batch.preImage, buildTrainingMaxPreImage(writes, existing));
+          batches.set(splitProgram, batch);
         }
         splitCounts = sumCounts(results);
       }
-      batchId = await saveBatchGroup(repos, userId, program, preImages);
+      batchId = await saveBatchGroup(repos, userId, program, batches);
     }
     // A split row not written is older than its program's max or than a newer row of its lift.
     const splitResult = splitCounts && {
@@ -1177,21 +1234,34 @@ async function saveBatchGroup(
   repos: Pick<RepositoryBundle, 'importBatch'>,
   userId: string,
   sourceProgram: string,
-  preImages: ReadonlyMap<string, ImportPreImage>,
+  batches: ReadonlyMap<string, BreakdownBatch>,
 ): Promise<string> {
   const groupId = randomUUID();
   const createdAt = new Date();
+  const source = batches.get(sourceProgram);
+  // `writeBreakdown` always gives the Source program a batch.
+  if (!source) throw new Error(`No import batch for the Source program ${sourceProgram}`);
   await repos.importBatch.save({
     id: groupId,
     userId,
     program: sourceProgram,
     destination: 'lift-records',
-    preImage: preImages.get(sourceProgram) ?? {},
+    preImage: source.preImage,
     createdAt,
+    macrocycles: source.macrocycles,
   });
-  for (const [program, preImage] of preImages) {
+  for (const [program, { preImage, macrocycles }] of batches) {
     if (program === sourceProgram) continue;
-    await repos.importBatch.save({ id: randomUUID(), userId, program, destination: 'lift-records', preImage, createdAt, groupId });
+    await repos.importBatch.save({
+      id: randomUUID(),
+      userId,
+      program,
+      destination: 'lift-records',
+      preImage,
+      createdAt,
+      groupId,
+      macrocycles,
+    });
   }
   return groupId;
 }

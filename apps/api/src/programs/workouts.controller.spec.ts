@@ -9,6 +9,7 @@ import { IWorkoutDateOverrideRepository } from '../ports/IWorkoutDateOverrideRep
 import { IWorkoutLiftOverrideRepository } from '../ports/IWorkoutLiftOverrideRepository';
 import { IWorkoutRepository } from '../ports/IWorkoutRepository';
 import { IWorkoutSkipOverrideRepository } from '../ports/IWorkoutSkipOverrideRepository';
+import { ILiftRecordRepository } from '../ports/ILiftRecordRepository';
 import { ProgramNotFoundError, WorkoutNotFoundError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
@@ -41,6 +42,7 @@ describe('WorkoutsController', () => {
   let liftOverrideRepo: jest.Mocked<IWorkoutLiftOverrideRepository>;
   let scheduledWorkoutRepo: jest.Mocked<IMacrocycleScheduledWorkoutRepository>;
   let skipOverrideRepo: jest.Mocked<IWorkoutSkipOverrideRepository>;
+  let liftRecordRepo: Pick<jest.Mocked<ILiftRecordRepository>, 'getLastSessions'>;
   let factory: jest.Mocked<IRepositoryFactory>;
 
   beforeEach(async () => {
@@ -76,8 +78,11 @@ describe('WorkoutsController', () => {
       skipWorkout: jest.fn().mockResolvedValue(undefined),
       unskipWorkout: jest.fn().mockResolvedValue(undefined),
     };
+    // No lift has a last session unless a test seeds one (#1252).
+    liftRecordRepo = { getLastSessions: jest.fn().mockResolvedValue(new Map()) };
     factory = {
       forUser: jest.fn().mockResolvedValue({
+        liftRecord: liftRecordRepo,
         workout: workoutRepo,
         macrocycle: macrocycleRepo,
         macrocycleDashboard: dashboardRepo,
@@ -156,6 +161,54 @@ describe('WorkoutsController', () => {
       { id: '5-3-1-3-1-20260420-Squat-1', setNum: 1, weight: 200, reps: 5, amrap: false, notes: '' },
       { id: '5-3-1-3-1-20260420-Squat-2', setNum: 2, weight: 220, reps: 5, amrap: true, notes: 'AMRAP' },
     ]);
+  });
+
+  describe('each lift’s last session (#1252)', () => {
+    const curlSet = (lift: string, setNum: number, reps: number) => ({
+      program: '5-3-1',
+      macrocycleNum: 3,
+      workoutNum: 4,
+      date: new Date('2026-04-15T00:00:00.000Z'),
+      lift,
+      setNum,
+      weight: 30,
+      reps,
+      notes: '',
+    });
+
+    beforeEach(() => {
+      dashboardRepo.getMacrocycleDashboard.mockResolvedValue({ macrocycleNum: 3, macrocycleDate: new Date('2026-04-20T00:00:00.000Z') });
+      specRepo.getProgramSpec.mockResolvedValue([specRow(1, 0, 'Cable Curl', 1), specRow(1, 0, 'Squat', 2)]);
+      workoutRepo.getWorkout.mockRejectedValue(new WorkoutNotFoundError('5-3-1', 3, 1));
+    });
+
+    it('reads it before the workout’s rescheduled date, and attaches it to the lift by its catalog id', async () => {
+      overrideRepo.getOverride.mockResolvedValue(new Date('2026-04-22T00:00:00.000Z'));
+      liftRecordRepo.getLastSessions.mockResolvedValue(
+        new Map([['cable-curl', [curlSet('Cable Curl', 1, 12), curlSet('cable-curl', 2, 11)]]]),
+      );
+
+      const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
+
+      expect(liftRecordRepo.getLastSessions).toHaveBeenCalledWith('5-3-1', 3, ['Cable Curl', 'Squat'], {
+        workoutNum: 1,
+        through: new Date('2026-04-22T00:00:00.000Z'),
+      });
+      expect(result.lifts.map((l) => [l.lift, l.lastSession])).toEqual([
+        ['Cable Curl', { date: '2026-04-15', reps: [12, 11] }],
+        ['Squat', undefined],
+      ]);
+      expect(result.lifts[1]).not.toHaveProperty('lastSession');
+    });
+
+    // Not caught: a failed statement aborts the request's RLS transaction, so nothing after it,
+    // the commit included, could succeed.
+    it('fails the workout read when the read fails', async () => {
+      const failure = new Error('boom');
+      liftRecordRepo.getLastSessions.mockRejectedValue(failure);
+
+      await expect(controller.getWorkout('5-3-1', '1', MOCK_USER)).rejects.toBe(failure);
+    });
   });
 
   it('keeps each set id addressed to the stored row under a replace override (issue #978)', async () => {

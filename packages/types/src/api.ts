@@ -147,6 +147,14 @@ export interface WorkoutLiftResponse {
    * {@link CreateLiftRecordRequest.occurrence}.
    */
   occurrence?: number;
+  /**
+   * The lift's latest session before this workout, which a `double` lift plans from (#1211):
+   * another workout in this macrocycle dated on or before this one (by its `overrideDate`
+   * when rescheduled), under any spelling of the lift, counting only the lift's first
+   * occurrence in it. Its date (`YYYY-MM-DD`) and each set's reps, by set number. Absent
+   * when the lift has none (#1252).
+   */
+  lastSession?: { date: string; reps: number[] };
 }
 
 /**
@@ -1057,8 +1065,10 @@ export interface ImportDryRunResponse extends ImportWriteResult {
 
 /** What an import with an Assign breakdown does beyond the row counts (#1254). */
 export interface ImportAssignedCounts {
-  /** Macrocycles created: one per stretch with a new row. */
+  /** Macrocycles created: one per stretch with a new row that joins no stored macrocycle. */
   macrocycles: number;
+  /** Stored macrocycles that a stretch's new rows joined, extending them (#1255, decision 14). */
+  extended: number;
   /** Sessions stored as non-cycle workouts. */
   nonCycleSessions: number;
   /** Sessions the lifter left out. */
@@ -1168,7 +1178,24 @@ export interface AssignStretch {
    */
   fileStatus: MacrocycleStatus | null;
   reasons: { start: AssignStartReason; program: AssignProgramReason; status: AssignStatusReason };
+  /** How the stretch, as suggested, meets what's already stored (#1255, decision 14). */
+  stored: AssignStoredPlacement;
 }
+
+/**
+ * How a suggested stretch meets the stored macrocycles (#1255, proposal decision 14). The commit
+ * places the confirmed breakdown by the same rule, so an edited boundary can change it.
+ *
+ * - `new`: it would form a macrocycle of its own.
+ * - `already-imported`: every row is already stored, so it writes nothing.
+ * - `joins`: its `newWorkouts` new sessions join stored macrocycle `macrocycleNum` of its program.
+ * - `overlaps`: its dates overlap stored macrocycles it can't join, so it forms its own.
+ */
+export type AssignStoredPlacement =
+  | { kind: 'new' }
+  | { kind: 'already-imported' }
+  | { kind: 'joins'; macrocycleNum: number; newWorkouts: number }
+  | { kind: 'overlaps'; macrocycles: Array<{ program: string; macrocycleNum: number }> };
 
 /** A single-lift session inside a break, for the lifter to file (proposal decision 5). */
 export interface AssignLoneSession {

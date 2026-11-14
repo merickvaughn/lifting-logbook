@@ -300,20 +300,17 @@ describe('loadWorkoutPlan — the plan follows the lift’s progression type (#1
     mockedSpec.mockResolvedValue([row]);
     const maxes = [{ lift: 'Cable Curl', weight: 32.5, dateUpdated: '2026-01-05T00:00:00.000Z' }];
     mockedMaxes.mockResolvedValue(maxes);
-    mockedLiftRecords.mockResolvedValue(
-      [12, 12, 12].map((reps, i) => ({
-        id: `curl-${i + 1}`,
-        program: '5-3-1',
-        macrocycleNum: 1,
-        workoutNum: 4,
-        date: '2026-01-05',
-        lift: 'Cable Curl',
-        setNum: i + 1,
-        weight: 30,
-        reps,
-        notes: '',
-      })),
-    );
+    // The workout carries the lift's last session, workout 4's (#1252).
+    const lastSession = { date: '2026-01-05', reps: [12, 12, 12] };
+    mockedWorkout.mockResolvedValue({
+      program: '5-3-1',
+      macrocycleNum: 1,
+      workoutNum: 1,
+      week: 1,
+      date: '2999-01-01',
+      skipped: false,
+      lifts: [{ lift: 'Cable Curl', sets: [], planned: true, lastSession }],
+    });
 
     const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage');
     if (!plan) throw new Error('expected a plan');
@@ -321,10 +318,13 @@ describe('loadWorkoutPlan — the plan follows the lift’s progression type (#1
     const [curl] = plan.liftDetails;
     expect(work(curl?.plannedSets)).toEqual(['8@32.5', '8@32.5', '8@32.5']);
     // The logger's plan for the same lift: its progression, through the same `planLift`.
-    const [loggerProgression] = await loadProgressionPlans('5-3-1', plan.workout, [row], maxes, 'WorkoutLoggingPage');
+    const [loggerProgression] = await loadProgressionPlans(plan.workout, [row], maxes, 'WorkoutLoggingPage');
+    expect(loggerProgression?.lastSession).toEqual(lastSession);
     expect(curl?.plannedSets).toEqual(planLift(row, 32.5, { progression: loggerProgression }));
     // And the timer counts down the same sets.
     expect((await plan.timerLifts(null))[0]?.sets.map((s) => s.spec)).toEqual(['8 × 32.5 lbs', '8 × 32.5 lbs', '8 × 32.5 lbs']);
+    // Nothing reads the macrocycle's records for it.
+    expect(mockedLiftRecords).not.toHaveBeenCalled();
   });
 
   it('plans an off-program linear lift at its repsHigh, on the page and in the timer', async () => {

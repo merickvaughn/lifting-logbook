@@ -11,7 +11,6 @@ jest.mock('@/lib/api', () => ({
   fetchFocusPlan: jest.fn().mockResolvedValue({ groups: [] }),
   // A lift with no spec row reads the progression settings (#1249); none of the lifter's own.
   fetchAllLiftMetadata: jest.fn().mockResolvedValue([]),
-  fetchLiftRecords: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock('@/lib/active-program', () => ({

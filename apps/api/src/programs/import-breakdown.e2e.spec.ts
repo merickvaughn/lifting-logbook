@@ -5,6 +5,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import multipart from '@fastify/multipart';
 import type { LiftRecord } from '@lifting-logbook/core';
 import type {
+  ImportAssignResponse,
   ImportBreakdown,
   ImportBreakdownStretch,
   ImportCommitResponse,
@@ -177,12 +178,15 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     return res.json<ImportDryRunResponse>();
   };
 
-  const undo = async (batchId: string | null, program = 'rpt') => {
-    const res = await app.getHttpAdapter().getInstance().inject({
+  const undoRequest = (batchId: string | null, program = 'rpt', today?: string) =>
+    app.getHttpAdapter().getInstance().inject({
       method: 'POST',
-      url: `/programs/${program}/import/${batchId}/undo`,
+      url: `/programs/${program}/import/${batchId}/undo${today === undefined ? '' : `?today=${today}`}`,
       headers: auth(),
     });
+
+  const undo = async (batchId: string | null, program = 'rpt', today?: string) => {
+    const res = await undoRequest(batchId, program, today);
     expect(res.statusCode).toBe(200);
     return res.json<{ restored: number; skipped: number; flagged: unknown[] }>();
   };
@@ -683,5 +687,250 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     expect(res.json<ImportCommitResponse>()).toMatchObject({ created: 10 });
     expect(res.json<ImportCommitResponse>().split).toBeUndefined();
     expect(await (await repos()).trainingMax.getTrainingMaxes('rpt')).toEqual([]);
+  });
+
+  describe('a file that has grown (#1255, decision 14)', () => {
+    const assign = async (csv: string, program = 'rpt') => {
+      const res = await importCsv(program, csv, '?mode=assign&destination=lift-records');
+      expect(res.statusCode).toBe(200);
+      return res.json<ImportAssignResponse>();
+    };
+    const at = (n: number) => new Date(`${day(n)}T00:00:00Z`);
+    const inProgress = { status: 'in-progress', statusChosen: false } as const;
+
+    it('extends its macrocycle: new rows take its number and workouts, and its end date moves', async () => {
+      const first = run(RPT_DAYS, 0, 3);
+      await commit(csvOf(first), breakdownOf([stretch(first, 'rpt', inProgress)]));
+      const [before] = await macrocycles();
+
+      const grown = run(RPT_DAYS, 0, 6);
+      const placed = await assign(csvOf(grown));
+      expect(placed.stretches.map((s) => s.stored)).toEqual([
+        { kind: 'joins', macrocycleNum: before?.macrocycleNum, newWorkouts: 3 },
+      ]);
+      const preview = await dryRun(csvOf(grown), breakdownOf([stretch(grown, 'rpt', inProgress)]));
+      expect(preview.assigned).toMatchObject({ macrocycles: 0, extended: 1 });
+
+      const body = await commit(csvOf(grown), breakdownOf([stretch(grown, 'rpt', inProgress)]));
+      expect(body).toMatchObject({ created: 9, skipped: 9 });
+      expect(body.assigned).toMatchObject({ macrocycles: 0, extended: 1 });
+      const [after, ...others] = await macrocycles();
+      expect(others).toEqual([]);
+      expect(after).toMatchObject({ id: before?.id, macrocycleNum: before?.macrocycleNum, startDate: at(0), endDate: at(10) });
+      const sets = await stored();
+      expect(sets).toHaveLength(18);
+      expect(new Set(sets.map((s) => s.macrocycleNum))).toEqual(new Set([before?.macrocycleNum]));
+      // No file numbers: the new sessions continue from the stored run's highest workout.
+      expect([...new Set(sets.filter((s) => s.date >= at(6)).map((s) => s.workoutNum))].sort()).toEqual([4, 5, 6]);
+    });
+
+    it('extends a run from a file holding only the sessions after it, within 14 days', async () => {
+      const first = run(RPT_DAYS, 0, 3);
+      await commit(csvOf(first), breakdownOf([stretch(first, 'rpt', inProgress)]));
+      const later = run(RPT_DAYS, 14, 2);
+      expect((await assign(csvOf(later))).stretches.map((s) => s.stored.kind)).toEqual(['joins']);
+      await commit(csvOf(later), breakdownOf([stretch(later, 'rpt', inProgress)]));
+      expect(await macrocycles()).toEqual([expect.objectContaining({ startDate: at(0), endDate: at(16) })]);
+    });
+
+    it("doesn't extend a finished run, a run 15 days back, or one the file's workout numbers restart", async () => {
+      const finished = run(RPT_DAYS, 0, 3);
+      await commit(csvOf(finished), breakdownOf([stretch(finished, 'rpt', { status: 'completed', statusChosen: true })]));
+      const after = run(RPT_DAYS, 6, 2);
+      expect((await assign(csvOf(after))).stretches.map((s) => s.stored)).toEqual([{ kind: 'new' }]);
+      await commit(csvOf(after), breakdownOf([stretch(after, 'rpt', inProgress)]));
+      expect((await macrocycles()).map((m) => [m.startDate, m.endDate])).toEqual([
+        [at(0), at(4)],
+        [at(6), at(8)],
+      ]);
+
+      // 15 days after the last session is a break (decision 4).
+      const stale = run(RPT_DAYS, 23, 1);
+      expect((await assign(csvOf(stale))).stretches.map((s) => s.stored.kind)).toEqual(['new']);
+
+      // Workout 1 again after workout 2 is a restart (decision 7).
+      user = `${user}-restart`;
+      const numbered = run(RPT_DAYS, 0, 2).map((r) => ({ ...r, workout: (r.day ?? 0) / 2 + 1 }));
+      await commit(csvOf(numbered), breakdownOf([stretch(numbered, 'rpt', inProgress)]));
+      const restart = run(RPT_DAYS, 6, 1).map((r) => ({ ...r, workout: 1 }));
+      expect((await assign(csvOf(restart))).stretches.map((s) => s.stored.kind)).toEqual(['new']);
+    });
+
+    it('reads a stretch with nothing new as already imported, and writes nothing for it', async () => {
+      const rows = run(RPT_DAYS, 0, 3);
+      await commit(csvOf(rows), breakdownOf([stretch(rows, 'rpt', inProgress)]));
+      expect((await assign(csvOf(rows))).stretches.map((s) => s.stored)).toEqual([{ kind: 'already-imported' }]);
+      const again = await commit(csvOf(rows), breakdownOf([stretch(rows, 'rpt', inProgress)]));
+      expect(again).toMatchObject({ created: 0, assigned: { macrocycles: 0, extended: 0 } });
+    });
+
+    it('forms its own macrocycle over another program, and says the dates overlap', async () => {
+      const fiveThreeOne = run(FIVE_THREE_ONE_DAYS, 0, 4);
+      await commit(csvOf(fiveThreeOne), breakdownOf([stretch(fiveThreeOne, '5-3-1', inProgress)]));
+      const [other] = await macrocycles('5-3-1');
+      // RPT sessions on the days between 5/3/1's.
+      const rpt = run(RPT_DAYS, 1, 3);
+      expect((await assign(csvOf(rpt))).stretches.map((s) => s.stored)).toEqual([
+        { kind: 'overlaps', macrocycles: [{ program: '5-3-1', macrocycleNum: other?.macrocycleNum }] },
+      ]);
+      const body = await commit(csvOf(rpt), breakdownOf([stretch(rpt, 'rpt', inProgress)]));
+      expect(body.assigned).toMatchObject({ macrocycles: 1, extended: 0 });
+      expect(await macrocycles('rpt')).toEqual([expect.objectContaining({ startDate: at(1), endDate: at(5) })]);
+      expect(await macrocycles('5-3-1')).toEqual([expect.objectContaining({ id: other?.id, startDate: at(0), endDate: at(6) })]);
+    });
+
+    it('undoes three batches out of order on a two-program file, recomputing what remains', async () => {
+      const before = await counts();
+      // Recent dates, so statuses turn on what follows each run, not on its age: day 200 is today.
+      // 5/3/1 every other day from day 166, then RPT every other day from day 186; each file grows
+      // by two sessions of each.
+      const file = (sessions: number) => [...run(FIVE_THREE_ONE_DAYS, 166, sessions), ...run(RPT_DAYS, 186, sessions)];
+      const breakdown = (rows: Row[], chosen: boolean) =>
+        breakdownOf([
+          stretch(rows.filter((r) => (r.day ?? 0) < 186), '5-3-1', chosen ? { status: 'overran', statusChosen: true } : inProgress),
+          stretch(rows.filter((r) => (r.day ?? 0) >= 186), 'rpt', inProgress),
+        ]);
+      const commitFile = async (sessions: number, chosen: boolean) => {
+        const body = await commit(csvOf(file(sessions)), breakdown(file(sessions), chosen));
+        expect(body.assigned).toMatchObject(sessions === 3 ? { macrocycles: 2, extended: 0 } : { macrocycles: 0, extended: 2 });
+        return body.batchId;
+      };
+      const firstBatch = await commitFile(3, true);
+      const secondBatch = await commitFile(5, false);
+      const thirdBatch = await commitFile(7, false);
+      const span = async (program: string) => (await macrocycles(program)).map((m) => [m.startDate, m.endDate, m.status]);
+      expect(await counts()).toEqual({ sets: 7 * 3 + 7 * 2, macrocycles: 2 });
+      expect(await span('5-3-1')).toEqual([[at(166), at(178), 'overran']]);
+      expect(await span('rpt')).toEqual([[at(186), at(198), 'in-progress']]);
+
+      // The middle batch: both runs keep their dates, from the rows on either side of the gap.
+      await undo(secondBatch);
+      expect(await counts()).toEqual({ sets: 5 * 3 + 5 * 2, macrocycles: 2 });
+      expect(await span('5-3-1')).toEqual([[at(166), at(178), 'overran']]);
+      expect(await span('rpt')).toEqual([[at(186), at(198), 'in-progress']]);
+
+      // The first batch: what's left starts where the last batch's rows do. The status the first
+      // batch chose goes with it, so 5/3/1's is read again from its rows: RPT follows it, so abandoned.
+      await undo(firstBatch);
+      expect(await counts()).toEqual({ sets: 2 * 3 + 2 * 2, macrocycles: 2 });
+      expect(await span('5-3-1')).toEqual([[at(176), at(178), 'abandoned']]);
+      expect(await span('rpt')).toEqual([[at(196), at(198), 'in-progress']]);
+      expect((await stored('5-3-1')).map((s) => s.date)).toEqual(expect.arrayContaining([at(176), at(178)]));
+
+      // The last batch: nothing is left, so both macrocycles go.
+      await undo(thirdBatch);
+      expect(await counts()).toEqual(before);
+    });
+
+    it("reads a joined run's status against what follows it once the import, or its undo, is written", async () => {
+      // Recent dates, so a run's status turns on what follows it, not on its age: day 200 is today.
+      const first = run(RPT_DAYS, 186, 3);
+      await commit(csvOf(first), breakdownOf([stretch(first, 'rpt', inProgress)]));
+      const grown = run(RPT_DAYS, 186, 5);
+      const fiveThreeOne = run(FIVE_THREE_ONE_DAYS, 196, 2);
+      const body = await commit(
+        csvOf([...grown, ...fiveThreeOne]),
+        breakdownOf([stretch(grown, 'rpt', inProgress), stretch(fiveThreeOne, '5-3-1', inProgress)]),
+      );
+      expect(body.assigned).toMatchObject({ macrocycles: 1, extended: 1 });
+      const span = async (program: string) => (await macrocycles(program)).map((m) => [m.startDate, m.endDate, m.status]);
+      // The 5/3/1 run this import created follows the RPT run it extended.
+      expect(await span('rpt')).toEqual([[at(186), at(194), 'abandoned']]);
+
+      // Undo takes the lifter's day, as the commit does, and refuses one that isn't a date.
+      expect((await undoRequest(body.batchId, 'rpt', '2026-02-30')).statusCode).toBe(400);
+      expect(await span('rpt')).toEqual([[at(186), at(194), 'abandoned']]);
+      // With the 5/3/1 run gone, nothing follows RPT's last session, 10 days ago.
+      await undo(body.batchId, 'rpt', day(200));
+      expect(await span('rpt')).toEqual([[at(186), at(190), 'in-progress']]);
+      expect(await macrocycles('5-3-1')).toEqual([]);
+    });
+
+    it("gives a new set on a date the run already holds that date's workout", async () => {
+      const first = run(RPT_DAYS, 0, 3);
+      await commit(csvOf(first), breakdownOf([stretch(first, 'rpt', inProgress)]));
+      const [before] = await macrocycles();
+      // An accessory added to the second session after the first export, and a fourth session.
+      const grown = [...run(RPT_DAYS, 0, 4), { day: 2, lift: 'Face Pull' }];
+      expect((await assign(csvOf(grown))).stretches.map((s) => s.stored)).toEqual([
+        { kind: 'joins', macrocycleNum: before?.macrocycleNum, newWorkouts: 1 },
+      ]);
+      await commit(csvOf(grown), breakdownOf([stretch(grown, 'rpt', inProgress)]));
+      const workoutsOn = async (n: number) =>
+        [...new Set((await stored()).filter((s) => s.date.getTime() === at(n).getTime()).map((s) => s.workoutNum))];
+      expect(await workoutsOn(2)).toEqual([2]);
+      expect(await workoutsOn(6)).toEqual([4]);
+    });
+
+    it('puts back the status, chosen flag and unmatched flag a join wrote when its batch is undone', async () => {
+      const first = run(RPT_DAYS, 0, 3);
+      await commit(csvOf(first), breakdownOf([stretch(first, 'rpt', inProgress)]));
+      const [before] = await macrocycles();
+      expect(before).toMatchObject({ statusChosen: false, unmatched: false });
+      // A lift RPT doesn't have, and a status the lifter chose.
+      const grown = [...run(RPT_DAYS, 0, 4), { day: 6, lift: 'Face Pull' }];
+      const body = await commit(csvOf(grown), breakdownOf([stretch(grown, 'rpt', { status: 'overran', statusChosen: true })]));
+      expect(await macrocycles()).toEqual([
+        expect.objectContaining({ id: before?.id, status: 'overran', statusChosen: true, unmatched: true }),
+      ]);
+
+      await undo(body.batchId);
+      // Its status is read again from its rows, from 200 days back: abandoned.
+      expect(await macrocycles()).toEqual([
+        expect.objectContaining({ id: before?.id, startDate: at(0), endDate: at(4), status: 'abandoned', statusChosen: false, unmatched: false }),
+      ]);
+    });
+
+    it('ends where it started when two joins that chose statuses are undone, in either order', async () => {
+      for (const order of ['first', 'second'] as const) {
+        user = `${user}-${order}`;
+        // Recent dates, so the run left at the end reads as in progress, not abandoned.
+        const seed = run(RPT_DAYS, 186, 2);
+        await commit(csvOf(seed), breakdownOf([stretch(seed, 'rpt', inProgress)]));
+        const [start] = await macrocycles();
+        expect(start).toMatchObject({ status: 'in-progress', statusChosen: false, unmatched: false });
+
+        // Each join adds a session and chooses a status; the first adds a lift RPT doesn't have.
+        const join = async (sessions: number, status: 'overran' | 'abandoned') => {
+          const rows = [...run(RPT_DAYS, 186, sessions), { day: 190, lift: 'Face Pull' }];
+          const body = await commit(csvOf(rows), breakdownOf([stretch(rows, 'rpt', { status, statusChosen: true })]));
+          expect(body.assigned).toMatchObject({ macrocycles: 0, extended: 1 });
+          return body.batchId;
+        };
+        const first = await join(3, 'overran');
+        const second = await join(4, 'abandoned');
+        expect(await macrocycles()).toEqual([
+          expect.objectContaining({ id: start?.id, status: 'abandoned', statusChosen: true, unmatched: true }),
+        ]);
+
+        for (const batchId of order === 'first' ? [first, second] : [second, first]) await undo(batchId);
+        expect(await macrocycles()).toEqual([
+          expect.objectContaining({
+            id: start?.id,
+            startDate: at(186),
+            endDate: at(188),
+            status: 'in-progress',
+            statusChosen: false,
+            unmatched: false,
+          }),
+        ]);
+      }
+    });
+
+    it('recomputes a run that a batch saved before #1255 created, once a later import extended it', async () => {
+      const first = run(RPT_DAYS, 0, 3);
+      const { batchId } = await commit(csvOf(first), breakdownOf([stretch(first, 'rpt', inProgress)]));
+      if (!batchId) throw new Error('The commit saved no batch');
+      // As an API from before #1255 saved it: no record of its macrocycles.
+      const bundle = await repos();
+      const saved = await bundle.importBatch.findById(batchId, user);
+      if (!saved) throw new Error('The batch was not saved');
+      await bundle.importBatch.save({ ...saved, macrocycles: null });
+
+      const grown = run(RPT_DAYS, 0, 5);
+      await commit(csvOf(grown), breakdownOf([stretch(grown, 'rpt', inProgress)]));
+      await undo(batchId);
+      expect(await macrocycles()).toEqual([expect.objectContaining({ startDate: at(6), endDate: at(8) })]);
+    });
   });
 });

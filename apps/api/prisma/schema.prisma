@@ -420,6 +420,9 @@ model ImportBatch {
   createdAt   DateTime @default(now())
   // The Source program's batch of the same import, which undoes this one with it (#1254).
   groupId     String?
+  // The macrocycles an Assign import created or extended, by id, and the statuses it chose for
+  // them (#1255): `{ created, extended, chosen }`.
+  macrocycles Json?
 
   @@index([userId, program])
   @@index([userId, groupId])

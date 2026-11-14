@@ -205,7 +205,6 @@ export async function loadWorkoutPlan(
   // bounded read the timer classifies with, so the page makes one request and never waits past
   // the budget for it.
   const progressions = await loadProgressionPlans(
-    program,
     workout,
     liftSpecsForWorkout(workout, specs),
     maxes,
