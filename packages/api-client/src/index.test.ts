@@ -704,6 +704,48 @@ describe('createApiClient', () => {
       expect((form.get('file') as File).name).toBe('records.csv');
     });
 
+    it('assignImport POSTs mode=assign for lift records, with its fields in the body (#1256)', async () => {
+      const assign = { importDate: '2026-11-13', stretches: [] };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(assign), { status: 200 }));
+      const result = await makeClient().assignImport('5-3-1', file, {
+        excludeKeys: ['__row_2'],
+        splitDest: true,
+        today: '2026-11-13',
+      });
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/programs/5-3-1/import?mode=assign&destination=lift-records&splitDest=1');
+      const form = init.body as FormData;
+      expect(form.get('excludeKeys')).toBe('["__row_2"]');
+      expect(form.get('today')).toBe('2026-11-13');
+      expect(result).toEqual(assign);
+    });
+
+    it('assignImport throws with the API code on a failure (#1256)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ code: 'x', message: 'nope' }), { status: 400 }));
+      await expect(makeClient().assignImport('5-3-1', file)).rejects.toMatchObject({
+        name: 'ApiClientError',
+        status: 400,
+        code: 'x',
+      });
+    });
+
+    it('dryRunImport and commitImport send the breakdown, and both throw a mismatch with its code (#1256)', async () => {
+      const breakdown = { stretches: [{ program: 'rpt', dates: ['2026-01-01'], status: 'completed' as const, statusChosen: false }], excludedDates: [], nonCycleDates: [] };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ created: 1 }), { status: 200 }));
+      const sent = () => lastCall()[1].body as FormData;
+      await makeClient().dryRunImport('5-3-1', file, 'lift-records', { breakdown, today: '2026-11-13' });
+      expect(JSON.parse(sent().get('breakdown') as string)).toEqual(breakdown);
+      expect(sent().get('today')).toBe('2026-11-13');
+
+      mockFetch.mockImplementation(async () =>
+        new Response(JSON.stringify({ code: 'breakdown-mismatch', reason: 'date-not-in-file', message: 'x' }), { status: 400 }),
+      );
+      const mismatch = { name: 'ApiClientError', status: 400, code: 'breakdown-mismatch' };
+      await expect(makeClient().commitImport('5-3-1', file, 'lift-records', { breakdown })).rejects.toMatchObject(mismatch);
+      expect(JSON.parse(sent().get('breakdown') as string)).toEqual(breakdown);
+      await expect(makeClient().dryRunImport('5-3-1', file, 'lift-records', { breakdown })).rejects.toMatchObject(mismatch);
+    });
+
     it('commitImport sends neither field when there is nothing to exclude or remap', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ created: 0 }), { status: 200 }));
       const client = makeClient();

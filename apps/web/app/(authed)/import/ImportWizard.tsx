@@ -6,6 +6,7 @@ import type {
   ColumnMapping,
   CustomLiftResponse,
   GoogleSheetTab,
+  ImportAssignResponse,
   ImportCommitResponse,
   ImportDelta,
   ImportDryRunResponse,
@@ -24,8 +25,9 @@ import {
   LIFT_CATALOG,
   formatWeight,
 } from '@lifting-logbook/core';
-import type { CommitImportOpts } from '@lifting-logbook/api-client';
+import { ApiClientError, type CommitImportOpts } from '@lifting-logbook/api-client';
 import {
+  assignImport,
   commitImport,
   createCustomLift,
   dryRunImport,
@@ -38,8 +40,10 @@ import { localToday } from '@/lib/calendarDay';
 import { logClientError } from '@/lib/log-client-error';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 import { LIFT_CLASSIFICATIONS } from './liftClassifications';
-import { KIND_LABEL, kindsForTarget, Step, STEP_LABELS } from './steps';
-import type { ImportTarget } from './steps';
+import { KIND_LABEL, kindsForTarget, previousStep, Step, STEP_LABELS, visibleSteps } from './steps';
+import type { ImportTarget, StepValue } from './steps';
+import AssignStep from './AssignStep';
+import { buildBreakdown, initialDraft, openDecisions, type AssignDraft } from './assignDraft';
 import {
   SheetTabsStep,
   defaultTabChoices,
@@ -90,6 +94,11 @@ type CreateLiftDraft = {
 // Preview step shows these counts and Commit sends this exact request, so the two
 // can't drift apart.
 type PlannedCommit = { file: File; opts?: CommitImportOpts; counts: ImportDryRunResponse };
+
+// The code a dry run or commit returns when its Assign breakdown no longer fits the file's rows (#1254).
+const BREAKDOWN_MISMATCH = 'breakdown-mismatch';
+const isMismatch = (e: unknown) => e instanceof ApiClientError && e.code === BREAKDOWN_MISMATCH;
+const MISMATCH_NOTICE = 'Your file no longer matched these macrocycles, so they were grouped again. Check them and continue.';
 
 // ImportDelta.key can repeat a natural key with a `#N` suffix, which identifies a row
 // only in this component.
@@ -204,7 +213,7 @@ export function ImportWizard({
    */
   unit?: WeightUnit;
 }) {
-  const [step, setStep] = useState<typeof Step[keyof typeof Step]>(Step.SOURCE);
+  const [step, setStep] = useState<StepValue>(Step.SOURCE);
   const [programId, setProgramId] = useState<string>(programs[0]?.id ?? '');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportPreviewResponse | null>(null);
@@ -253,6 +262,16 @@ export function ImportWizard({
   const [batchId, setBatchId] = useState<string | null>(null);
   const [undoResult, setUndoResult] = useState<ImportUndoResponse | null>(null);
 
+  // The Assign step (#1256): the server's grouping, the lifter's edits to it, the Review
+  // request it was taken for, and why it was last reloaded. Edits belong to that request's
+  // rows, so a Review change that alters the request discards them.
+  const [assignRes, setAssignRes] = useState<ImportAssignResponse | null>(null);
+  const [assignDraft, setAssignDraft] = useState<AssignDraft | null>(null);
+  const assignKey = useRef<string | null>(null);
+  const [assignNotice, setAssignNotice] = useState<string | null>(null);
+  /** How many groupings have loaded, which keys the step so each one starts it afresh. */
+  const [assignLoads, setAssignLoads] = useState(0);
+
   // Column mapping overrides from MAP_COLUMNS step
   const [columnOverrides, setColumnOverrides] = useState<Map<string, string>>(new Map());
 
@@ -279,6 +298,9 @@ export function ImportWizard({
   const selectedProgram = programs.find((p) => p.id === programId);
   const availableKinds = kindsForTarget(selectedProgram);
   const destinationUnavailable = destination !== null && !availableKinds.includes(destination);
+  // Lift records go through the Assign step once the server has it on (IMPORT_ASSIGN_ENABLED).
+  const assignActive = preview?.assignEnabled === true && destination === 'lift-records';
+  const steps = visibleSteps(assignActive);
 
   // A template can't take a program file, so moving to one unchecks any tab chosen as one.
   function selectProgram(id: string) {
@@ -511,6 +533,14 @@ export function ImportWizard({
     setKeptSpellings(new Set());
     setPlannedCommit(null);
     setCommitErrors(null);
+    clearAssign();
+  }
+
+  function clearAssign() {
+    setAssignRes(null);
+    setAssignDraft(null);
+    assignKey.current = null;
+    setAssignNotice(null);
   }
 
   // `source` defaults to the file in state; a Google Sheets tab passes its file
@@ -1235,19 +1265,89 @@ export function ImportWizard({
     };
   }
 
+  // The request for the user's Review choices. The commit is blocked until unresolved rows are
+  // fixed, and they'd fail a dry run or the Assign call too, so those count the file around them.
+  function reviewRequest(sourceFile: File): { file: File; opts?: CommitImportOpts } {
+    const request = buildCommitRequest(sourceFile);
+    const unresolved = (previewBody?.deltas ?? []).filter(
+      (d) => !excludedKeys.has(d.key) && (d.status === 'incomplete' || reviewCounts.needsLiftKeys.has(d.key)),
+    );
+    return unresolved.length > 0
+      ? {
+          ...request,
+          opts: { ...request.opts, excludeKeys: [...(request.opts?.excludeKeys ?? []), ...unresolved.map(excludeKeyFor)] },
+        }
+      : request;
+  }
+
+  // Fetches the Assign step's grouping for the Review request and starts a fresh draft of it.
+  // Returns false if the call failed.
+  async function loadAssign(notice: string | null): Promise<boolean> {
+    if (!programId || !file) return false;
+    const request = reviewRequest(file);
+    const startGeneration = previewGeneration.current;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await assignImport(programId, request.file, { ...request.opts, today: localToday() });
+      if (previewGeneration.current !== startGeneration) return false; // preview discarded mid-request
+      setAssignRes(res);
+      setAssignDraft(initialDraft(res));
+      setAssignLoads((n) => n + 1);
+      assignKey.current = JSON.stringify(request.opts ?? {});
+      setAssignNotice(notice);
+      setStep(Step.ASSIGN);
+      return true;
+    } catch (e) {
+      logClientError('assignImport', e, { programId });
+      setError(e instanceof Error ? e.message : 'Grouping your workouts failed');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Review → Assign. The draft is kept while the Review request is unchanged; otherwise its
+  // rows may have changed, so it's discarded for a fresh grouping.
+  async function enterAssign() {
+    if (!file) return;
+    const key = JSON.stringify(reviewRequest(file).opts ?? {});
+    if (assignRes && assignKey.current === key) {
+      setAssignNotice(null);
+      setStep(Step.ASSIGN);
+      return;
+    }
+    await loadAssign(
+      assignDraft?.edited
+        ? 'You changed rows at Review, so your changes here were discarded. This is a fresh grouping.'
+        : null,
+    );
+  }
+
+  // The server rejected the breakdown (its rows no longer match it), so Assign starts again. The
+  // wizard goes back first, so a failed reload's error shows on Assign, not on an emptied Preview.
+  // The refused grouping is dropped first, so it can't be sent again or come back from the cache.
+  async function onBreakdownMismatch(op: 'dryRunImport' | 'commitImport') {
+    // Only the code: the server's message names the lifter's dates.
+    logClientError(op, new Error(BREAKDOWN_MISMATCH), { programId, destination });
+    setPlannedCommit(null);
+    setCommitErrors(null);
+    setAssignRes(null);
+    setAssignDraft(null);
+    assignKey.current = null;
+    setAssignNotice(null);
+    setStep(Step.ASSIGN);
+    await loadAssign(MISMATCH_NOTICE);
+  }
+
   // Asks the server what this commit would do, so the Preview tiles report the result of
   // the user's excludes, remaps and edits rather than the file as uploaded (#1123).
   async function enterPreview() {
     if (!programId || !file || !destination) return;
-    const request = buildCommitRequest(file);
-    // The commit is blocked until unresolved rows are fixed, and they'd fail this dry
-    // run too, so count the rest of the file around them.
-    const unresolved = (previewBody?.deltas ?? []).filter(
-      (d) => !excludedKeys.has(d.key) && (d.status === 'incomplete' || reviewCounts.needsLiftKeys.has(d.key)),
-    );
+    const request = reviewRequest(file);
     const opts: CommitImportOpts | undefined =
-      unresolved.length > 0
-        ? { ...request.opts, excludeKeys: [...(request.opts?.excludeKeys ?? []), ...unresolved.map(excludeKeyFor)] }
+      assignActive && assignRes && assignDraft
+        ? { ...request.opts, breakdown: buildBreakdown(assignDraft, assignRes), today: localToday() }
         : request.opts;
     const startGeneration = previewGeneration.current;
     setCommitErrors(null);
@@ -1256,13 +1356,17 @@ export function ImportWizard({
     try {
       const result = await dryRunImport(programId, request.file, destination, opts);
       if (previewGeneration.current !== startGeneration) return; // preview discarded mid-request
-      setPlannedCommit(result.ok ? { ...request, counts: result.data } : null);
+      setPlannedCommit(result.ok ? { file: request.file, opts, counts: result.data } : null);
       if (!result.ok) setCommitErrors(result.errors);
       setStep(Step.PREVIEW);
       if (!result.ok && result.errors.some((e) => e.code === 'UNRECOGNIZED_LIFT')) {
         await refreshCustomLiftsAfterRejection();
       }
     } catch (e) {
+      if (isMismatch(e)) {
+        await onBreakdownMismatch('dryRunImport');
+        return;
+      }
       logClientError('dryRunImport', e, { programId, destination });
       setError(e instanceof Error ? e.message : 'Preview failed');
     } finally {
@@ -1291,6 +1395,10 @@ export function ImportWizard({
         }
       }
     } catch (e) {
+      if (isMismatch(e)) {
+        await onBreakdownMismatch('commitImport');
+        return;
+      }
       logClientError('commitImport', e, { programId, destination });
       setCommitErrors([
         { row: 0, code: 'UNEXPECTED_ERROR', message: e instanceof Error ? e.message : 'Import failed' },
@@ -1352,6 +1460,7 @@ export function ImportWizard({
     setColumnOverrides(new Map());
     setBatchId(null);
     setUndoResult(null);
+    clearAssign();
   }
 
   return (
@@ -1360,7 +1469,7 @@ export function ImportWizard({
         <header className={styles.header}>
           <h1 className={styles.headerTitle}>Import a file</h1>
           <p className={styles.headerSubtitle}>
-            Step {step + 1} of {STEP_LABELS.length} · {STEP_LABELS[step]}
+            Step {steps.indexOf(step) + 1} of {steps.length} · {STEP_LABELS[step]}
           </p>
           {currentTab && (
             <p className={styles.headerSubtitle}>
@@ -1368,9 +1477,9 @@ export function ImportWizard({
             </p>
           )}
           <nav className={styles.progressDots} aria-label="Import progress">
-            {STEP_LABELS.map((label, i) => (
+            {steps.map((i) => (
               <span
-                key={label}
+                key={STEP_LABELS[i]}
                 className={[
                   styles.dot,
                   i === step ? styles.dotActive : '',
@@ -1379,7 +1488,7 @@ export function ImportWizard({
                   .filter(Boolean)
                   .join(' ')}
                 aria-current={i === step ? 'step' : undefined}
-                aria-label={label}
+                aria-label={STEP_LABELS[i]}
               />
             ))}
           </nav>
@@ -2199,6 +2308,53 @@ export function ImportWizard({
             </fieldset>
           )}
 
+          {/* ── ASSIGN ── */}
+          {/* Why Assign was reloaded. A notice arrives as the wizard moves to Assign from Review or
+              Preview, with a fresh grouping that remounts the step, so the live region is mounted on
+              all three steps: the notice lands in a region that's already there, and is read out. */}
+          {assignActive && (step === Step.REVIEW || step === Step.ASSIGN || step === Step.PREVIEW) && (
+            <div
+              role="status"
+              data-testid="assign-notice"
+              className={step === Step.ASSIGN && assignNotice ? styles.notice : undefined}
+            >
+              {step === Step.ASSIGN ? assignNotice : null}
+            </div>
+          )}
+          {step === Step.ASSIGN && (
+            <>
+              {assignRes && assignDraft ? (
+                // A fresh grouping remounts the step: its stretch ids name different stretches now.
+                // After a mismatch the control the lifter used is gone, so focus starts at the step.
+                <AssignStep
+                  key={assignLoads}
+                  res={assignRes}
+                  draft={assignDraft}
+                  onChange={setAssignDraft}
+                  focusHeading={assignNotice === MISMATCH_NOTICE}
+                />
+              ) : (
+                // The grouping the server refused is gone, so there's nothing to send until a reload works.
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  disabled={busy}
+                  onClick={() => {
+                    setAssignNotice(null);
+                    void loadAssign(MISMATCH_NOTICE);
+                  }}
+                >
+                  Group my workouts again
+                </button>
+              )}
+              {error && (
+                <p className={styles.errorNote} role="alert">
+                  {error}
+                </p>
+              )}
+            </>
+          )}
+
           {/* ── PREVIEW ── */}
           {step === Step.PREVIEW && previewBody && (
             <>
@@ -2387,13 +2543,15 @@ export function ImportWizard({
 
         {/* ── ACTION ROW ── */}
         <div className={styles.actionRow}>
-          {step >= 2 && step <= 5 && (
+          {step >= Step.CLASSIFY && step <= Step.PREVIEW && (
             <button
               type="button"
               className={styles.btnSecondary}
               onClick={() => {
                 setError(null);
-                setStep((step === Step.CLASSIFY ? Step.SOURCE : step - 1) as typeof Step[keyof typeof Step]);
+                // A notice says why Assign was reloaded; it's stale once the lifter moves on.
+                setAssignNotice(null);
+                setStep(previousStep(step, assignActive));
               }}
               disabled={busy}
             >
@@ -2455,7 +2613,7 @@ export function ImportWizard({
             <button
               type="button"
               className={styles.btnPrimary}
-              onClick={enterPreview}
+              onClick={assignActive ? enterAssign : enterPreview}
               disabled={
                 busy ||
                 // A create resolving after the dry run would change what Commit should send.
@@ -2465,6 +2623,17 @@ export function ImportWizard({
                   reviewMaxes !== null &&
                   reviewMaxes.filter((r) => !excludedKeys.has(r.lift)).length === 0)
               }
+            >
+              Next
+            </button>
+          )}
+
+          {step === Step.ASSIGN && (
+            <button
+              type="button"
+              className={styles.btnPrimary}
+              onClick={enterPreview}
+              disabled={busy || !assignRes || !assignDraft || openDecisions(assignDraft, assignRes) > 0}
             >
               Next
             </button>

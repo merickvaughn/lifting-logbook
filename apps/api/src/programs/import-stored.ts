@@ -235,7 +235,8 @@ export function continuedWorkoutNum(
   const dayOf = (r: { date: Date }) => toUTCMidnight(r.date).getTime();
   const fileByDate = new Map<number, number>();
   for (const r of creating) {
-    if (r.workoutNum !== null && !fileByDate.has(dayOf(r))) fileByDate.set(dayOf(r), r.workoutNum);
+    // A day's lowest number, as Assign reports the session (#1256).
+    if (r.workoutNum !== null && r.workoutNum < (fileByDate.get(dayOf(r)) ?? Infinity)) fileByDate.set(dayOf(r), r.workoutNum);
   }
   // Every file number counts, including a second one on a date (a double session).
   const fileNums = creating.flatMap((r) => (r.workoutNum === null ? [] : [r.workoutNum]));

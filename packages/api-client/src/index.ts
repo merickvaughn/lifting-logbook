@@ -17,6 +17,8 @@ import type {
   FocusSettingsResponse,
   ReorderFocusBlocksRequest,
   MacrocycleDashboardResponse,
+  ImportAssignResponse,
+  ImportBreakdown,
   ImportCommitResponse,
   ImportDryRunResponse,
   ImportError,
@@ -128,7 +130,7 @@ const DATA_EXPORT_TIMEOUT_MS = 60_000;
 // relative (rawFetch prepends baseUrl).
 function importPath(
   program: string,
-  mode: 'preview' | 'commit' | 'dry-run',
+  mode: 'preview' | 'commit' | 'dry-run' | 'assign',
   destination?: ImportKind,
   opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>,
 ): string {
@@ -153,6 +155,8 @@ function importForm(file: File, opts?: CommitImportOpts): FormData {
   if (opts?.liftOverrides && Object.keys(opts.liftOverrides).length > 0) {
     form.append('liftOverrides', JSON.stringify(opts.liftOverrides));
   }
+  if (opts?.breakdown) form.append('breakdown', JSON.stringify(opts.breakdown));
+  if (opts?.today) form.append('today', opts.today);
   form.append('file', file);
   return form;
 }
@@ -173,6 +177,10 @@ export interface CommitImportOpts {
   liftOverrides?: Record<number, string>;
   /** When true, 1RM lift-record rows are split to Training Maxes. */
   splitDest?: boolean;
+  /** The lifter's confirmed Assign breakdown (#1254), for a lift-records dry run or commit. */
+  breakdown?: ImportBreakdown;
+  /** The lifter's local day, `YYYY-MM-DD`, that suggested statuses are judged against (#1253). */
+  today?: string;
 }
 
 // Carries the upstream HTTP status alongside the message so a caller that needs
@@ -579,7 +587,9 @@ export function createApiClient(config: ApiClientConfig) {
     /**
      * Smart Import — commit a CSV to the chosen destination. The server re-parses the
      * file (never trusting any client payload) and writes idempotently. Returns a
-     * discriminated union so callers handle validation errors without catching.
+     * discriminated union so callers handle row validation errors without catching; any
+     * other refusal, a coded 400 such as `breakdown-mismatch` included, throws an
+     * `ApiClientError`, as `dryRunImport` does (#1256).
      * Phase 3: pass `opts` for column overrides, row exclusions, lift remapping, or
      * 1RM split routing.
      */
@@ -589,7 +599,8 @@ export function createApiClient(config: ApiClientConfig) {
       destination: ImportKind,
       opts?: CommitImportOpts,
     ): Promise<ImportCommitResult<ImportCommitResponse>> {
-      const res = await rawFetch(importPath(program, 'commit', destination, opts), {
+      const path = importPath(program, 'commit', destination, opts);
+      const res = await rawFetch(path, {
         method: 'POST',
         body: importForm(file, opts),
         cache: 'no-store',
@@ -597,8 +608,25 @@ export function createApiClient(config: ApiClientConfig) {
       if (res.ok) {
         return { ok: true, data: (await res.json()) as ImportCommitResponse };
       }
-      const body = (await res.json().catch(() => ({}))) as { errors?: ImportError[]; code?: unknown; message?: unknown };
+      const body = (await res.clone().json().catch(() => ({}))) as { errors?: ImportError[]; code?: unknown; message?: unknown };
+      // A request the server refused with a code, such as a breakdown that no longer matches the
+      // file (#1256), isn't a problem with the file: it's thrown with its code, as `dryRunImport` throws it.
+      if (res.status === 400 && !body.errors && typeof body.code === 'string') throw await readError(res, path);
       return { ok: false, errors: importFailureErrors(res.status, body) };
+    },
+    /**
+     * Smart Import — the rules' grouping of a lift-records file into suggested macrocycles, for
+     * the Assign step (#1253). Nothing is written. Throws on any failure, with the API's code.
+     */
+    async assignImport(
+      program: string,
+      file: File,
+      opts?: Pick<CommitImportOpts, 'overrides' | 'excludeKeys' | 'liftOverrides' | 'splitDest' | 'today'>,
+    ): Promise<ImportAssignResponse> {
+      const path = importPath(program, 'assign', 'lift-records', opts);
+      const res = await rawFetch(path, { method: 'POST', body: importForm(file, opts), cache: 'no-store' });
+      if (!res.ok) throw await readError(res, path);
+      return (await res.json()) as ImportAssignResponse;
     },
     /**
      * Smart Import — reports the counts `commitImport` would return for these same

@@ -195,6 +195,7 @@ function assignStretch(
     liftsOutsideProgram: named(stretch.liftsOutsideProgram),
     candidateProgram: stretch.candidateProgram ?? null,
     fileMacrocycleNum: stretch.fileMacrocycleNum ?? null,
+    fileGroup: stretch.fileGroup ?? null,
     startDate: ymd(stretch.startDate),
     endDate: ymd(stretch.endDate),
     sessions: stretch.sessions.map((s: HistorySession<AssignRecord>) => assignSession(s, s.workoutNum, liftNames)),

@@ -695,6 +695,25 @@ automatically. See [#960](https://github.com/merickvaughn/lifting-logbook/issues
 [#977](https://github.com/merickvaughn/lifting-logbook/issues/977) and
 [ADR-035](docs/adr/ADR-035-client-side-rest-timer-state.md).
 
+### Macrocycle status colors (`AssignStep.module.css` ↔ `globals.css`)
+
+The import's Assign step marks each macrocycle with one of six statuses: the five
+`MACROCYCLE_STATUSES` plus `unset`, a status the lifter still has to choose. Each status is also
+written out, but two sharing a color in one theme make the list harder to scan, and nothing else
+would catch it. The guard reads the statuses from `packages/types/src/domain.ts`, which token paints
+each from the `.status-<name>` rules in
+[`apps/web/app/(authed)/import/AssignStep.module.css`](apps/web/app/(authed)/import/AssignStep.module.css),
+and what each token resolves to from `globals.css`, reusing the timer guard's theme readers.
+
+**Run before pushing whenever you add a theme or a status, or retune a `--color-status-*` token:**
+
+```bash
+node scripts/check-macrocycle-status-colors.mjs && node --test scripts/check-macrocycle-status-colors.test.mjs
+```
+
+Both also run as CI steps (`ci.yml` → `lint-and-test`). See
+[#1256](https://github.com/merickvaughn/lifting-logbook/issues/1256).
+
 ### Coverage Requirements
 
 <!-- When #259 ships: remove the "until then" clause from the frontend row below. Tracked as a checklist item on issue #259. -->

@@ -66,6 +66,7 @@ import {
   withImportProgram,
   parseLiftRecords,
   segmentLiftHistory,
+  fileMacrocycleKeys,
   toLiftHistoryRecord,
   isLiftRecordExport,
 } from '@lifting-logbook/core';
@@ -899,6 +900,8 @@ export class ImportController {
       importDate,
       sourceProgram: program,
       customPrograms,
+      // An export pairs rows by file macrocycle; the commit places any other file by date.
+      placeByDate: !exported,
     });
     const stored = await placeSuggestedStretches(repos, segmented.stretches, [
       ...BUILT_IN_KNOWN_PROGRAMS,
@@ -983,13 +986,27 @@ export class ImportController {
       choices.splitDest,
       { assign: true },
     );
-    const programs = [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(userId))];
+    const customPrograms = await this.customPrograms(userId);
+    const programs = [...BUILT_IN_KNOWN_PROGRAMS, ...customPrograms];
     let placed: PlacedBreakdown;
     try {
-      placed = placeBreakdown(rows as LiftRecord[], choices.breakdown, {
-        exported: choices.exported,
-        programs: new Set(programs.map((p) => p.id)),
-      });
+      const ids = new Set(programs.map((p) => p.id));
+      placed = placeBreakdown(
+        rows as LiftRecord[],
+        choices.breakdown,
+        // An export's rows pair with its macrocycles as `mode=assign` grouped them.
+        choices.exported
+          ? {
+              exported: true,
+              programs: ids,
+              fileKeys: fileMacrocycleKeys((rows as LiftRecord[]).map(toLiftHistoryRecord), {
+                importDate: choices.importDate,
+                sourceProgram: program,
+                customPrograms,
+              }),
+            }
+          : { exported: false, programs: ids },
+      );
     } catch (err) {
       // The reason only: the message names the lifter's dates and programs.
       if (err instanceof BreakdownMismatchException) {

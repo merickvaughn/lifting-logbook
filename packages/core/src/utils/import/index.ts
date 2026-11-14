@@ -9,7 +9,14 @@ export * from './liftHistoryRows';
 export * from './liftRecordNaturalKey';
 export * from './nonCycle';
 export * from './normalize-amrap';
-export { BREAK_DAYS, isOpenEnded, segmentLiftHistory, suggestStretchStatus } from './segmentLiftHistory';
+export {
+  BREAK_DAYS,
+  fileMacrocycleKey,
+  fileMacrocycleKeys,
+  isOpenEnded,
+  segmentLiftHistory,
+  suggestStretchStatus,
+} from './segmentLiftHistory';
 export type {
   FileNumberConflict,
   HistorySession,
