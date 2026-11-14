@@ -1108,6 +1108,9 @@ jobs:
           otlp_secret: lifting-logbook-prod-otel-otlp-auth-header
           loki_secret: lifting-logbook-prod-otel-loki-auth-header
           otel_mirror_repo: ${{ steps.tf-prod.outputs.otel_mirror_repo }}
+          # The importer's Assign step (#1173), on in production after its staging run (#1295).
+          # To turn it off, set it to "false": removing the line keeps the live value.
+          ingress_env: IMPORT_ASSIGN_ENABLED=true
 
       # ── Production DB-backed smoke test (#460) ─────────────────────────────
       # The migrate guard above prevents shipping against an unmigrated schema;
