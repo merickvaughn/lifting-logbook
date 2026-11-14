@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import http from 'node:http';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -76,25 +77,28 @@ async function startApp(env: Partial<Record<(typeof ENV)[number], string>>) {
   return app;
 }
 
-function client(app: NestFastifyApplication, user: string) {
-  const post = (url: string, csv: string, fields: Record<string, string> = {}) => {
-    const boundary = '----SuggestBoundary';
-    const parts = [
-      ...Object.entries(fields).flatMap(([name, value]) => [`--${boundary}`, `Content-Disposition: form-data; name="${name}"`, '', value]),
-      `--${boundary}`,
-      'Content-Disposition: form-data; name="file"; filename="upload.csv"',
-      'Content-Type: text/csv',
-      '',
-      csv,
-      `--${boundary}--`,
-    ];
-    return app.getHttpAdapter().getInstance().inject({
-      method: 'POST',
-      url,
-      headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${user}` },
-      payload: parts.join('\r\n'),
-    });
+const BOUNDARY = '----SuggestBoundary';
+
+/** An upload of `csv` with form `fields`, and the headers to send it as `user`. */
+function uploadOf(user: string, csv: string, fields: Record<string, string> = {}) {
+  const parts = [
+    ...Object.entries(fields).flatMap(([name, value]) => [`--${BOUNDARY}`, `Content-Disposition: form-data; name="${name}"`, '', value]),
+    `--${BOUNDARY}`,
+    'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+    'Content-Type: text/csv',
+    '',
+    csv,
+    `--${BOUNDARY}--`,
+  ];
+  return {
+    headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}`, authorization: `Bearer ${user}` },
+    payload: parts.join('\r\n'),
   };
+}
+
+function client(app: NestFastifyApplication, user: string) {
+  const post = (url: string, csv: string, fields: Record<string, string> = {}) =>
+    app.getHttpAdapter().getInstance().inject({ method: 'POST', url, ...uploadOf(user, csv, fields) });
   return {
     preview: (csv: string) => post('/programs/5-3-1/import?destination=lift-records', csv),
     assign: (csv: string) => post('/programs/5-3-1/import?mode=assign&destination=lift-records', csv, { today }),
@@ -187,12 +191,39 @@ describe('Import suggestions (#1174, e2e, in-memory adapters)', () => {
       answer = { suggestions: [] };
       spy = jest.spyOn(OpenAICompatibleImportSuggestionsAdapter.prototype, 'suggest').mockImplementation(async (call) => {
         calls.push(call);
-        return { output: answer, inputTokens: 10, outputTokens: 2 };
+        return { output: answer, inputTokens: 10, outputTokens: 2, truncated: false };
       });
     });
     afterEach(() => spy.mockRestore());
 
     const payloadOf = (i = 0) => calls[i]?.payload as SuggestionPayload;
+
+    // inject() never closes a socket, so this one listens on a real port and hangs up mid-call.
+    it('aborts the provider call when the client disconnects', async () => {
+      let reached: () => void = () => undefined;
+      const atProvider = new Promise<void>((resolve) => (reached = resolve));
+      let providerSignal: AbortSignal | undefined;
+      spy.mockImplementationOnce(
+        (_call, signal) =>
+          new Promise((_resolve, reject) => {
+            providerSignal = signal;
+            signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'APIUserAbortError' })));
+            reached();
+          }),
+      );
+      await app.listen(0, '127.0.0.1');
+      const { hostname, port } = new URL(await app.getUrl());
+      const { headers, payload } = uploadOf(newUser(), csvOf(fiveThreeOne(0, 6)));
+      const req = http.request({ host: hostname, port, method: 'POST', path: '/programs/5-3-1/import/suggestions', headers });
+      req.on('error', () => undefined); // the hang-up below
+      req.end(payload);
+
+      await atProvider;
+      expect(providerSignal?.aborted).toBe(false);
+      req.destroy();
+      await new Promise<void>((resolve) => providerSignal?.addEventListener('abort', () => resolve(), { once: true }));
+      expect(providerSignal?.aborted).toBe(true);
+    });
 
     it('names the provider on the Assign response', async () => {
       const res = await client(app, newUser()).assign(csvOf(fiveThreeOne(0, 6)));

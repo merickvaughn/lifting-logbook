@@ -205,6 +205,27 @@ describe('validateSuggestions (#1174)', () => {
       });
     });
 
+    it('restores each whole placeholder once, with ten or more custom lifts', () => {
+      // Eleven custom lifts, numbered custom-lift-1 to custom-lift-11 in order of first appearance.
+      const ids = Array.from({ length: 11 }, (_, i) => `own-${i + 1}`);
+      const names = new Map(ids.map((id, i) => [id, `Own Lift ${i + 1}`]));
+      // A lifter's name that reads like a placeholder isn't replaced a second time.
+      names.set('own-1', 'custom-lift-2 copy');
+      const segmented = segment(rowsOf([...fiveThreeOne(0, 4), { day: 8, lifts: ids }]));
+      const built = buildSuggestionPayload(
+        { segmented, importDate: IMPORT_DATE, programs: PROGRAMS, exported: false, notes: false },
+        names,
+      );
+      expect(built.placeholders.get('custom-lift-10')).toBe('Own Lift 10');
+      const text = 'custom-lift-10 then custom-lift-1, custom-lift-11; custom-lift-99 is unknown';
+      expect(validateSuggestions({ suggestions: [{ kind: 'note', from: null, to: null, text }] }, segmented, built, false)).toEqual({
+        suggestions: [
+          { kind: 'note', from: null, to: null, text: 'Own Lift 10 then custom-lift-2 copy, Own Lift 11; custom-lift-99 is unknown' },
+        ],
+        dropped: NONE,
+      });
+    });
+
     it('drops a note dated outside the file as out of range', () => {
       expect(setup()({ kind: 'note', from: ymdOf(0), to: '2026-10-01', text: 'x' }).dropped).toEqual({
         ...NONE,

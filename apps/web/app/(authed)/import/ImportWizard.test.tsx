@@ -4340,23 +4340,46 @@ describe('ImportWizard Assign suggestions (#1174)', () => {
     await user.click(yes());
     expect(await screen.findByText('Squat stalled.')).toBeInTheDocument();
 
-    // A refused breakdown reloads the same grouping, which asks again; a yes doesn't resend.
-    await user.click(screen.getByRole('button', { name: 'Store the Jan 20, 2026 workout as a non-cycle workout' }));
-    mockDryRun.mockRejectedValueOnce(new ApiClientError('2026-02-04 is not in the file', 400, 'breakdown-mismatch'));
-    await user.click(nextButton());
-    await screen.findByText(/no longer matched these macrocycles/);
-    expect(mockAssign).toHaveBeenCalledTimes(2);
+    // A row excluded at Review and then included again is the same request, regrouped from
+    // scratch, so the question is asked again and a yes doesn't resend.
+    const regroupSameRequest = async () => {
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      await user.click(screen.getByRole('button', { name: 'Exclude Squat 2026-01-01' }));
+      await user.click(nextButton());
+      await screen.findByRole('button', { name: 'Yes, use suggestions' });
+      await user.click(screen.getByRole('button', { name: 'Back' }));
+      await user.click(screen.getByRole('button', { name: 'Re-include Squat 2026-01-01' }));
+      await user.click(nextButton());
+      await screen.findByRole('button', { name: 'Yes, use suggestions' });
+    };
+    await regroupSameRequest();
+    expect(mockAssign).toHaveBeenCalledTimes(3);
     await user.click(yes());
     expect(await screen.findByText('Squat stalled.')).toBeInTheDocument();
     expect(mockSuggest).toHaveBeenCalledTimes(1);
 
     // The other notes choice is a different request.
-    mockAssign.mockResolvedValueOnce(suggestingRes());
-    mockDryRun.mockRejectedValueOnce(new ApiClientError('2026-02-04 is not in the file', 400, 'breakdown-mismatch'));
-    await user.click(screen.getByRole('button', { name: 'Store the Jan 20, 2026 workout as a non-cycle workout' }));
-    await user.click(nextButton());
-    await screen.findByRole('button', { name: 'Yes, use suggestions' });
+    await regroupSameRequest();
     await user.click(within(panel()).getByRole('checkbox', { name: /Include my workout notes/ }));
+    await user.click(yes());
+    await screen.findByText('Squat stalled.');
+    expect(mockSuggest).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks the model again after a refused breakdown, since the reload can group the file differently', async () => {
+    const user = userEvent.setup();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockSuggest.mockResolvedValue(ready({ suggestions: [{ kind: 'note', from: null, to: null, text: 'Squat stalled.' }] }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(yes());
+    expect(await screen.findByText('Squat stalled.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Store the Jan 20, 2026 workout as a non-cycle workout' }));
+    mockDryRun.mockRejectedValueOnce(new ApiClientError('2026-02-04 is not in the file', 400, 'breakdown-mismatch'));
+    await user.click(nextButton());
+    await screen.findByText(/no longer matched these macrocycles/);
+    expect(mockAssign).toHaveBeenCalledTimes(2);
     await user.click(yes());
     await screen.findByText('Squat stalled.');
     expect(mockSuggest).toHaveBeenCalledTimes(2);

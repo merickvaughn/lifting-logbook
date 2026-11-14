@@ -73,8 +73,14 @@ describe('AnthropicImportSuggestionsAdapter (#1174)', () => {
     const messages = body.messages as Array<{ role: string; content: string }>;
     expect(messages).toHaveLength(1);
     expectAllowed(messages[0]?.content ?? '', notes);
-    expect(result).toEqual({ output: answer.content[0]?.input, inputTokens: 900, outputTokens: 40 });
+    expect(result).toEqual({ output: answer.content[0]?.input, inputTokens: 900, outputTokens: 40, truncated: false });
     expect(adapter.label).toBe('Anthropic (claude-test)');
+  });
+
+  it('reports an answer that stopped at the token limit as truncated', async () => {
+    const create = jest.fn().mockResolvedValue({ ...answer, stop_reason: 'max_tokens' });
+    const adapter = new AnthropicImportSuggestionsAdapter('m', 'k', { messages: { create } } as unknown as Pick<Anthropic, 'messages'>);
+    await expect(adapter.suggest(call(false), new AbortController().signal)).resolves.toMatchObject({ truncated: true });
   });
 
   it('returns the text when the model answers without the tool', async () => {
@@ -84,13 +90,14 @@ describe('AnthropicImportSuggestionsAdapter (#1174)', () => {
       output: 'no idea',
       inputTokens: null,
       outputTokens: null,
+      truncated: false,
     });
   });
 });
 
 describe('OpenAICompatibleImportSuggestionsAdapter (#1174)', () => {
-  const completion = (content: string) => ({
-    choices: [{ message: { content } }],
+  const completion = (content: string, finish_reason = 'stop') => ({
+    choices: [{ message: { content }, finish_reason }],
     usage: { prompt_tokens: 800, completion_tokens: 30 },
   });
   const adapterWith = (create: jest.Mock) =>
@@ -112,8 +119,16 @@ describe('OpenAICompatibleImportSuggestionsAdapter (#1174)', () => {
     expect(messages.map((m) => m.role)).toEqual(['system', 'user']);
     expect(messages[0]?.content).toBe(SUGGESTION_SYSTEM_PROMPT);
     expectAllowed(messages[1]?.content ?? '', notes);
-    expect(result).toEqual({ output: { suggestions: [] }, inputTokens: 800, outputTokens: 30 });
+    expect(result).toEqual({ output: { suggestions: [] }, inputTokens: 800, outputTokens: 30, truncated: false });
     expect(adapter.label).toBe('qwen3:14b at localhost:11434');
+  });
+
+  it('reports an answer that stopped at the token limit as truncated', async () => {
+    const adapter = adapterWith(jest.fn().mockResolvedValue(completion('{"suggestions": [{"ki', 'length')));
+    await expect(adapter.suggest(call(false), new AbortController().signal)).resolves.toMatchObject({
+      output: '{"suggestions": [{"ki',
+      truncated: true,
+    });
   });
 
   it('skips a reasoning block before the JSON', async () => {
@@ -142,6 +157,8 @@ describe('buildImportSuggestionProvider (#1174)', () => {
     ['set with no model', { IMPORT_SUGGESTIONS_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'k' }],
     ['openai-compatible with no base URL', { IMPORT_SUGGESTIONS_PROVIDER: 'openai-compatible', IMPORT_SUGGESTIONS_MODEL: 'm' }],
     ['an unknown provider', { IMPORT_SUGGESTIONS_PROVIDER: 'gemini', IMPORT_SUGGESTIONS_MODEL: 'm' }],
+    // The SDK would accept no key and fail every request, so suggestions would show as on.
+    ['anthropic with no API key', { IMPORT_SUGGESTIONS_PROVIDER: 'anthropic', IMPORT_SUGGESTIONS_MODEL: 'm', ANTHROPIC_API_KEY: ' ' }],
   ])('is off when the provider is %s', (_label, env) => {
     expect(buildImportSuggestionProvider(env as NodeJS.ProcessEnv)).toBeNull();
   });
@@ -163,5 +180,17 @@ describe('buildImportSuggestionProvider (#1174)', () => {
     } as NodeJS.ProcessEnv);
     expect(provider).toBeInstanceOf(OpenAICompatibleImportSuggestionsAdapter);
     expect(provider?.label).toBe('qwen3:14b at localhost:11434');
+  });
+
+  it.each([
+    ['has no host', 'ollama-box:11434'],
+    ['does not parse', 'not a url'],
+  ])('names a base URL that %s whole, so the lifter still sees where sets would go', (_label, baseURL) => {
+    const provider = buildImportSuggestionProvider({
+      IMPORT_SUGGESTIONS_PROVIDER: 'openai-compatible',
+      IMPORT_SUGGESTIONS_MODEL: 'qwen3:14b',
+      IMPORT_SUGGESTIONS_BASE_URL: baseURL,
+    } as NodeJS.ProcessEnv);
+    expect(provider?.label).toBe(`qwen3:14b at ${baseURL}`);
   });
 });

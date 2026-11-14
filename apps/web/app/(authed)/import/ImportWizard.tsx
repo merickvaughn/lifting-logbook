@@ -1414,10 +1414,9 @@ export function ImportWizard({
     logClientError(op, new Error(BREAKDOWN_MISMATCH), { programId, destination });
     setPlannedCommit(null);
     setCommitErrors(null);
-    setAssignRes(null);
-    setAssignDraft(null);
-    assignKey.current = null;
-    setAssignNotice(null);
+    // Suggestions were checked against the refused grouping, and the reload can group the same
+    // request differently, so they go with it.
+    clearAssign();
     setStep(Step.ASSIGN);
     await loadAssign(MISMATCH_NOTICE);
   }

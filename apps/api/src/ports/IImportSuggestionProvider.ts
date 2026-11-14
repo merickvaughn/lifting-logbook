@@ -21,6 +21,8 @@ export interface ImportSuggestionCallResult {
   /** Token counts, when the provider reports them. */
   inputTokens: number | null;
   outputTokens: number | null;
+  /** The model stopped at `maxOutputTokens`, so `output` is cut off. */
+  truncated: boolean;
 }
 
 export interface IImportSuggestionProvider {

@@ -40,11 +40,13 @@ export class OpenAICompatibleImportSuggestionsAdapter implements IImportSuggesti
       },
       { signal },
     );
-    const content = completion.choices[0]?.message?.content ?? '';
+    const choice = completion.choices[0];
+    const content = choice?.message?.content ?? '';
     return {
       output: parseJson(content),
       inputTokens: completion.usage?.prompt_tokens ?? null,
       outputTokens: completion.usage?.completion_tokens ?? null,
+      truncated: choice?.finish_reason === 'length',
     };
   }
 }
@@ -59,9 +61,15 @@ function parseJson(content: string): unknown {
   }
 }
 
+/**
+ * Where the lifter is told their sets go. A base URL with no host to show (`ollama-box:11434`
+ * parses as a scheme) or that doesn't parse is shown whole rather than as nothing, so the label
+ * still names the configured server; the SDK then fails the call, and the lifter sees
+ * "unavailable". Covered by the factory tests for both.
+ */
 function hostOf(baseURL: string): string {
   try {
-    return new URL(baseURL).host;
+    return new URL(baseURL).host || baseURL;
   } catch {
     return baseURL;
   }

@@ -15,6 +15,7 @@ import type {
 import { IMPORT_DATE, PROGRAMS, rowsOf, fiveThreeOne, segment, twoRuns, ymdOf } from '../testing/import-suggestion-fixtures';
 import { InMemoryImportSuggestionUsage, PrismaImportSuggestionUsage } from './import-suggestion-usage';
 import { ImportSuggestionsService, SUGGESTION_DEADLINE_MS, type SuggestionSource } from './import-suggestions.service';
+import * as validation from './suggestion-validation';
 
 const exporter = new InMemorySpanExporter();
 new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] }).register();
@@ -41,10 +42,11 @@ class FakeProvider implements IImportSuggestionProvider {
   }
 }
 
-const answering = (output: unknown) => async (): Promise<ImportSuggestionCallResult> => ({
+const answering = (output: unknown, truncated = false) => async (): Promise<ImportSuggestionCallResult> => ({
   output,
   inputTokens: 1_234,
   outputTokens: 56,
+  truncated,
 });
 
 /** Never answers; rejects once its signal aborts, as the SDKs do. */
@@ -247,7 +249,50 @@ describe('ImportSuggestionsService (#1174)', () => {
     left.abort();
 
     await expect(pending).resolves.toEqual({ status: 'unavailable', reason: 'error' });
-    expect(logged).toContainEqual(['warn', expect.objectContaining({ outcome: 'aborted' }), expect.any(String)]);
+    // Leaving is ordinary navigation, so it's logged at info, not as a failure.
+    expect(logged).toContainEqual(['log', expect.objectContaining({ outcome: 'aborted' }), expect.any(String)]);
+    expect(logged.filter(([level]) => level === 'warn')).toEqual([]);
+  });
+
+  it('counts nothing and calls nothing when the lifter left before the file was read', async () => {
+    const prisma = new FakePrisma();
+    const provider = new FakeProvider(answering({ suggestions: [] }), prisma);
+    const left = new AbortController();
+    const result = await serviceWith(provider, prisma).suggest({
+      userId: 'user-1',
+      notes: false,
+      load: async () => {
+        left.abort();
+        return source();
+      },
+      signal: left.signal,
+    });
+
+    expect(result).toEqual({ status: 'unavailable', reason: 'error' });
+    expect(provider.calls).toHaveLength(0);
+    expect(prisma.usage).toHaveLength(0);
+    expect(logged).toContainEqual(['log', expect.objectContaining({ outcome: 'aborted' }), expect.any(String)]);
+  });
+
+  it('logs an answer cut off at the token limit as truncated', async () => {
+    const provider = new FakeProvider(answering('{"suggestions": [{"kind": "no', true));
+    const result = await serviceWith(provider).suggest({ userId: 'user-1', notes: false, load: async () => source() });
+
+    expect(result).toMatchObject({ status: 'ready', suggestions: [], dropped: { malformed: 1 } });
+    expect(logged).toContainEqual(['log', expect.objectContaining({ outcome: 'ready', truncated: true }), expect.any(String)]);
+    const [span] = exporter.getFinishedSpans();
+    expect(span?.attributes['import_suggestions.truncated']).toBe(true);
+  });
+
+  it('lets an error in validating the answer through, rather than reporting the provider unavailable', async () => {
+    const provider = new FakeProvider(answering({ suggestions: [] }));
+    const bug = new TypeError('validation bug');
+    jest.spyOn(validation, 'validateSuggestions').mockImplementation(() => {
+      throw bug;
+    });
+
+    await expect(serviceWith(provider).suggest({ userId: 'user-1', notes: false, load: async () => source() })).rejects.toBe(bug);
+    expect(logged.filter(([level]) => level === 'warn')).toEqual([]);
   });
 
   describe('logs and spans', () => {
@@ -276,6 +321,7 @@ describe('ImportSuggestionsService (#1174)', () => {
           notesSent: true,
           inputTokens: 1_234,
           outputTokens: 56,
+          truncated: false,
           suggestions: 1,
           droppedMalformed: 1,
           droppedUnknownLift: 0,
@@ -303,6 +349,7 @@ describe('ImportSuggestionsService (#1174)', () => {
         'import_suggestions.notes_sent': false,
         'import_suggestions.input_tokens': 1_234,
         'import_suggestions.output_tokens': 56,
+        'import_suggestions.truncated': false,
       });
     });
   });

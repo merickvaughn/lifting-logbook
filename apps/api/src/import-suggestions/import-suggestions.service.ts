@@ -3,13 +3,16 @@ import { SpanStatusCode, trace } from '@opentelemetry/api';
 import {
   IMPORT_SUGGESTION_HOURLY_LIMIT,
   IMPORT_SUGGESTION_MAX_SETS,
-  type ImportSuggestionDropReason,
   type ImportSuggestionsResponse,
 } from '@lifting-logbook/types';
 import type { SegmentedLiftHistory } from '@lifting-logbook/core';
 import { RlsContextService } from '../adapters/prisma/rls-context.service';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
-import type { IImportSuggestionProvider, IImportSuggestionUsage } from '../ports/IImportSuggestionProvider';
+import type {
+  IImportSuggestionProvider,
+  IImportSuggestionUsage,
+  ImportSuggestionCallResult,
+} from '../ports/IImportSuggestionProvider';
 import { IMPORT_SUGGESTION_PROVIDER, IMPORT_SUGGESTION_USAGE } from '../ports/tokens';
 import { SUGGESTION_SYSTEM_PROMPT } from './suggestion-prompt';
 import { buildSuggestionPayload, type SuggestionProgram, type SuggestionRow } from './suggestion-payload';
@@ -29,8 +32,6 @@ export interface SuggestionSource {
   /** The lifter's names for their lifts by id, custom ones included. */
   liftNames: ReadonlyMap<string, string>;
 }
-
-const NO_DROPS: Record<ImportSuggestionDropReason, number> = { malformed: 0, 'unknown-lift': 0, 'out-of-range': 0 };
 
 /**
  * The import wizard's optional LLM suggestions (#1174, proposal decisions 11 and 12). The rules'
@@ -103,6 +104,13 @@ export class ImportSuggestionsService {
       return { status: 'too-large', sets: built.sets, limit: IMPORT_SUGGESTION_MAX_SETS };
     }
 
+    // A lifter who left while the file was read hasn't reached the provider, so nothing is counted
+    // (decision 3 counts a request once it's about to be sent). Nobody is waiting for the answer.
+    if (params.signal?.aborted) {
+      log({ outcome: 'aborted' });
+      return { status: 'unavailable', reason: 'error' };
+    }
+
     const now = params.now ?? new Date();
     const allowance = await this.usage.tryConsume(params.userId, now, IMPORT_SUGGESTION_HOURLY_LIMIT);
     if (!allowance.allowed) {
@@ -120,8 +128,11 @@ export class ImportSuggestionsService {
     else params.signal?.addEventListener('abort', onAbort, { once: true });
 
     const callStarted = Date.now();
+    let result: ImportSuggestionCallResult;
+    // Only the provider call is caught: an error in validating its answer is this code's bug, not a
+    // provider outage, and surfaces as a 500 with its stack.
     try {
-      const result = await this.tracer.startActiveSpan('import.suggestions.provider_call', async (span) => {
+      result = await this.tracer.startActiveSpan('import.suggestions.provider_call', async (span) => {
         span.setAttributes({
           'import_suggestions.provider': provider.kind,
           'import_suggestions.sets_sent': built.sets,
@@ -135,6 +146,7 @@ export class ImportSuggestionsService {
           );
           if (out.inputTokens !== null) span.setAttribute('import_suggestions.input_tokens', out.inputTokens);
           if (out.outputTokens !== null) span.setAttribute('import_suggestions.output_tokens', out.outputTokens);
+          span.setAttribute('import_suggestions.truncated', out.truncated);
           return out;
         } catch (err) {
           // The error's type only: a provider's message can quote the request.
@@ -144,44 +156,43 @@ export class ImportSuggestionsService {
           span.end();
         }
       });
-
-      const validated = validateSuggestions(result.output, segmented, built, source.exported);
-      log({
-        outcome: 'ready',
-        providerMs: Date.now() - callStarted,
-        inputTokens: result.inputTokens,
-        outputTokens: result.outputTokens,
-        suggestions: validated.suggestions.length,
-        droppedMalformed: validated.dropped.malformed,
-        droppedUnknownLift: validated.dropped['unknown-lift'],
-        droppedOutOfRange: validated.dropped['out-of-range'],
-      });
-      return {
-        status: 'ready',
-        provider: provider.label,
-        notesSent: params.notes,
-        summarizedSessions: built.summarizedSessions,
-        suggestions: validated.suggestions,
-        dropped: { ...NO_DROPS, ...validated.dropped },
-      };
     } catch (err) {
       const reason = deadline.signal.aborted && (deadline.signal.reason as Error)?.message === 'deadline' ? 'timeout' : 'error';
-      const left = params.signal?.aborted === true;
-      this.logger.warn(
-        {
-          ...counts,
-          outcome: left ? 'aborted' : reason === 'timeout' ? 'timeout' : 'error',
-          error: errorName(err),
-          providerMs: Date.now() - callStarted,
-          durationMs: Date.now() - started,
-        },
-        'Import suggestions failed (#1174)',
-      );
+      const fields = {
+        ...counts,
+        error: errorName(err),
+        providerMs: Date.now() - callStarted,
+        durationMs: Date.now() - started,
+      };
+      // Leaving the step is ordinary navigation, not a failure.
+      if (params.signal?.aborted) this.logger.log({ ...fields, outcome: 'aborted' }, 'Import suggestions (#1174)');
+      else this.logger.warn({ ...fields, outcome: reason }, 'Import suggestions failed (#1174)');
       return { status: 'unavailable', reason };
     } finally {
       clearTimeout(timer);
       params.signal?.removeEventListener('abort', onAbort);
     }
+
+    const validated = validateSuggestions(result.output, segmented, built, source.exported);
+    log({
+      outcome: 'ready',
+      providerMs: Date.now() - callStarted,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      truncated: result.truncated,
+      suggestions: validated.suggestions.length,
+      droppedMalformed: validated.dropped.malformed,
+      droppedUnknownLift: validated.dropped['unknown-lift'],
+      droppedOutOfRange: validated.dropped['out-of-range'],
+    });
+    return {
+      status: 'ready',
+      provider: provider.label,
+      notesSent: params.notes,
+      summarizedSessions: built.summarizedSessions,
+      suggestions: validated.suggestions,
+      dropped: validated.dropped,
+    };
   }
 }
 

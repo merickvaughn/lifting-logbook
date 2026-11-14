@@ -46,9 +46,17 @@ Each request logs one line of counts, never the payload, a prompt or a response
 | 5 | `notesSent` | Whether the lifter chose to send notes |
 | 6 | `providerMs`, `durationMs`, `inputTokens`, `outputTokens` | Cost and speed |
 | 7 | `suggestions`, `droppedMalformed`, `droppedUnknownLift`, `droppedOutOfRange` | What came back and what validation dropped |
+| 8 | `truncated` | The model stopped at the 2,000-token output limit, so its answer was cut off |
 
-A high `droppedMalformed` count means the model isn't returning the JSON asked for. A high
+A high `droppedMalformed` count means the model isn't returning the JSON asked for, unless
+`truncated` is true: then the answer ran out of room, and the fix is a model that thinks less
+before answering, or a higher limit (`SUGGESTION_MAX_OUTPUT_TOKENS`), not the prompt. A high
 `droppedOutOfRange` count means it is suggesting dates or programs the file doesn't have.
+
+`timeout` and `error` are logged at warn. `aborted`, a lifter leaving the step, is ordinary and
+logged at info; a request whose lifter left before the file was read isn't counted toward the
+hourly limit. An error in this code's own handling of an answer isn't reported as a provider
+failure: it surfaces as a 500 with its stack.
 
 To see whether suggestions are on, look for the API's startup line `Import suggestions use …`,
 or check the `suggestions` field of a `mode=assign` response: `null` means off.
@@ -62,7 +70,7 @@ or check the `suggestions` field of a `mode=assign` response: `null` means off.
 | 1 | `IMPORT_SUGGESTIONS_PROVIDER` | `anthropic` or `openai-compatible`. No default: unset or empty means off. |
 | 2 | `IMPORT_SUGGESTIONS_MODEL` | Required. |
 | 3 | `IMPORT_SUGGESTIONS_BASE_URL` | Required for `openai-compatible`, such as `http://127.0.0.1:11434/v1` for Ollama. |
-| 4 | `IMPORT_SUGGESTIONS_API_KEY` | The provider's key. `anthropic` falls back to `ANTHROPIC_API_KEY`; a local server ignores it. |
+| 4 | `IMPORT_SUGGESTIONS_API_KEY` | The provider's key. `anthropic` falls back to `ANTHROPIC_API_KEY`, and is off with neither; a local server ignores it. |
 
 The Assign step itself must be on (`IMPORT_ASSIGN_ENABLED=true`, see
 [Turn the import Assign step off](import-assign-flag.md)).

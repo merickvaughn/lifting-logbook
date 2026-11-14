@@ -53,6 +53,7 @@ export class AnthropicImportSuggestionsAdapter implements IImportSuggestionProvi
       output: use ? use.input : text,
       inputTokens: response.usage?.input_tokens ?? null,
       outputTokens: response.usage?.output_tokens ?? null,
+      truncated: response.stop_reason === 'max_tokens',
     };
   }
 }

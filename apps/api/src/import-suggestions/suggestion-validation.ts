@@ -6,6 +6,7 @@ import type {
 } from '@lifting-logbook/types';
 import type { SegmentedLiftHistory } from '@lifting-logbook/core';
 import type { BuiltSuggestionPayload, SuggestionRow } from './suggestion-payload';
+import { SESSION_CHOICES, STRETCH_STATUSES } from './suggestion-prompt';
 
 /**
  * Checks what a model returned against the file's parsed rows and the rules' grouping (#1174,
@@ -19,9 +20,9 @@ export const MAX_SUGGESTION_TEXT = 500;
 /** The most suggestions kept from one response; any past it are dropped as out of range. */
 export const MAX_SUGGESTIONS = 40;
 
-const STATUSES: readonly AssignStretchStatus[] = ['in-progress', 'completed', 'overran', 'abandoned'];
-const CHOICES: readonly ImportSuggestionSessionChoice[] = ['earlier', 'later', 'non-cycle', 'exclude'];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** The placeholders `buildSuggestionPayload` sends for custom lift and program names. */
+const PLACEHOLDER = /custom-(?:lift|program)-\d+/g;
 
 export interface ValidatedSuggestions {
   suggestions: ImportSuggestion[];
@@ -57,13 +58,14 @@ export function validateSuggestions(
   const unnumbered = new Set(
     segmented.unnumbered.flatMap((row) => (row.date instanceof Date ? [ymd(row.date)] : [])),
   );
-  const allDates = new Set([...inStretch, ...lone, ...unnumbered]);
+  const allDates = [...new Set([...inStretch, ...lone, ...unnumbered])].sort();
+  const firstDay = allDates[0];
+  const lastDay = allDates[allDates.length - 1];
 
-  const restore = (text: string) => {
-    let out = text;
-    for (const [placeholder, real] of built.placeholders) out = out.split(placeholder).join(real);
-    return out;
-  };
+  // Each whole placeholder token, replaced once: `custom-lift-10` is not `custom-lift-1` and a "0",
+  // and a real name is never read as another placeholder. Unknown tokens are left as written.
+  const restore = (text: string) =>
+    text.replace(PLACEHOLDER, (token) => built.placeholders.get(token) ?? token);
 
   const suggestions: ImportSuggestion[] = [];
   for (const item of items) {
@@ -105,7 +107,7 @@ export function validateSuggestions(
       }
       case 'lone': {
         if (!isDate(item.date) || typeof item.choice !== 'string') return 'malformed';
-        if (!(CHOICES as readonly string[]).includes(item.choice)) return 'out-of-range';
+        if (!(SESSION_CHOICES as readonly string[]).includes(item.choice)) return 'out-of-range';
         const choice = item.choice as ImportSuggestionSessionChoice;
         const date = item.date;
         if (!lone.has(date) && !unnumbered.has(date)) return 'out-of-range';
@@ -116,7 +118,7 @@ export function validateSuggestions(
       case 'status': {
         if (!isDate(item.stretchStart) || typeof item.status !== 'string') return 'malformed';
         const stretch = startingOn(item.stretchStart);
-        if (!stretch || !(STATUSES as readonly string[]).includes(item.status)) return 'out-of-range';
+        if (!stretch || !(STRETCH_STATUSES as readonly string[]).includes(item.status)) return 'out-of-range';
         // One that changes nothing isn't a suggestion.
         if (stretch.status === item.status) return 'out-of-range';
         return { kind: 'status', stretchStart: item.stretchStart, status: item.status as AssignStretchStatus, reason: text };
@@ -147,10 +149,7 @@ export function validateSuggestions(
 
   // A note may name any day from the file's first session to its last.
   function inFile(date: string): boolean {
-    const sorted = [...allDates].sort();
-    const first = sorted[0];
-    const last = sorted[sorted.length - 1];
-    return first !== undefined && last !== undefined && date >= first && date <= last;
+    return firstDay !== undefined && lastDay !== undefined && date >= firstDay && date <= lastDay;
   }
 }
 

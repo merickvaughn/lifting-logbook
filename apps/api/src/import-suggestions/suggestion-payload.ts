@@ -43,7 +43,7 @@ export interface SuggestionPayloadInput {
 }
 
 /** Sessions on each side of a break or flag that keep every set when a file is over the cap. */
-export const SESSIONS_AROUND_FLAGS = 2;
+const SESSIONS_AROUND_FLAGS = 2;
 
 /** One set as sent. `notes` only when the lifter opted in and the set has some. */
 interface SentSet {

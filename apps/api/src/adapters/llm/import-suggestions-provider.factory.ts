@@ -16,7 +16,8 @@ const logger = new Logger('ImportSuggestionsProviderFactory');
  * - `IMPORT_SUGGESTIONS_MODEL`: required.
  * - `IMPORT_SUGGESTIONS_BASE_URL`: required for `openai-compatible`, such as Ollama's
  *   `http://localhost:11434/v1`.
- * - `IMPORT_SUGGESTIONS_API_KEY`: the provider's key; `anthropic` falls back to `ANTHROPIC_API_KEY`.
+ * - `IMPORT_SUGGESTIONS_API_KEY`: the provider's key; `anthropic` falls back to `ANTHROPIC_API_KEY`,
+ *   and is off when neither is set.
  */
 export function buildImportSuggestionProvider(env: NodeJS.ProcessEnv = process.env): IImportSuggestionProvider | null {
   const provider = (env.IMPORT_SUGGESTIONS_PROVIDER ?? '').trim().toLowerCase();
@@ -28,8 +29,14 @@ export function buildImportSuggestionProvider(env: NodeJS.ProcessEnv = process.e
   }
   const apiKey = env.IMPORT_SUGGESTIONS_API_KEY?.trim() || undefined;
   if (provider === 'anthropic') {
+    // The SDK accepts a missing key until a request is sent, so check it here.
+    const key = apiKey ?? (env.ANTHROPIC_API_KEY?.trim() || undefined);
+    if (!key) {
+      logger.warn('IMPORT_SUGGESTIONS_PROVIDER is anthropic but no API key is set, so import suggestions are off');
+      return null;
+    }
     logger.log(`Import suggestions use Anthropic (model ${model})`);
-    return new AnthropicImportSuggestionsAdapter(model, apiKey ?? env.ANTHROPIC_API_KEY);
+    return new AnthropicImportSuggestionsAdapter(model, key);
   }
   if (provider === 'openai-compatible') {
     const baseURL = (env.IMPORT_SUGGESTIONS_BASE_URL ?? '').trim();
