@@ -1091,8 +1091,12 @@ export interface ImportBreakdownStretch {
   program: string;
   /** Its session dates, `YYYY-MM-DD`. */
   dates?: string[];
-  /** An exported file's `Program` and `Macrocycle #` for the stretch, in place of `dates`. */
-  file?: { program: string; macrocycleNum: number };
+  /**
+   * An exported file's macrocycle for the stretch, in place of `dates`: the `fileGroup` and
+   * `fileMacrocycleNum` that `mode=assign` gave it. `group` is an opaque token to send back as
+   * given, not a program.
+   */
+  file?: { group: string; macrocycleNum: number };
   status: MacrocycleStatus;
   /** The lifter chose `status` (or the export's `Status` column did), so no rule may change it. */
   statusChosen: boolean;
@@ -1164,6 +1168,11 @@ export interface AssignStretch {
   candidateProgram: string | null;
   /** The file's own macrocycle number, when it has them. */
   fileMacrocycleNum: number | null;
+  /**
+   * With `fileMacrocycleNum`, the program group the file's rows were put in, which an export's
+   * breakdown sends back as `file.group` (#1256). Null when the file has no numbers.
+   */
+  fileGroup: string | null;
   startDate: string;
   endDate: string;
   sessions: AssignSession[];

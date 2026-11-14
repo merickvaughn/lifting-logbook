@@ -190,6 +190,18 @@ describe('continuedWorkoutNum (#1255, decision 9)', () => {
     }
   });
 
+  it("gives an unnumbered row its day's lowest file number, whichever comes first (#1256)", () => {
+    for (const [a, b] of [[7, 6], [6, 7]]) {
+      expect(
+        numbered([
+          { date: at(6), workoutNum: a as number },
+          { date: at(6), workoutNum: b as number },
+          { date: at(6), workoutNum: NaN },
+        ]),
+      ).toEqual([a, b, 6]);
+    }
+  });
+
   it('refuses a row that is not one of the new rows', () => {
     expect(() => continuedWorkoutNum([], held)({ date: at(20), workoutNum: NaN })).toThrow();
   });

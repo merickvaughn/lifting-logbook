@@ -6,11 +6,11 @@ import { formatWeight, liftIdFor, storedIdListing } from '@lifting-logbook/core'
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
   MacrocycleOrigin,
-  MacrocycleStatus,
   MacrocycleSummaryResponse,
   TrainingMaxHistoryEntryResponse,
   WeightUnit,
 } from '@lifting-logbook/types';
+import { STATUS_LABEL } from '@/lib/macrocycleStatus';
 import type { EnrichedRecord } from './page';
 import styles from './history.module.css';
 
@@ -69,16 +69,6 @@ export default function HistoryTabs({
     </div>
   );
 }
-
-// The import prototype's wording (docs/mockups/import-macrocycle-assignment.html), plus
-// "Status unknown" for history whose status nothing records (proposal decision 18).
-const STATUS_LABEL: Record<MacrocycleStatus, string> = {
-  completed: 'Completed',
-  overran: 'Ran past its length',
-  abandoned: 'Unfinished',
-  'in-progress': 'In progress',
-  unknown: 'Status unknown',
-};
 
 const ORIGIN_LABEL: Record<MacrocycleOrigin, string> = {
   imported: 'Imported',

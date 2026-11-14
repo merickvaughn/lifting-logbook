@@ -1,0 +1,94 @@
+import { test, expect, type Page } from '@playwright/test';
+
+// The import wizard's Assign step (#1256), against the mock's withAssign file: 30 macrocycles
+// three weeks apart, a one-lift session in each of the first 20 breaks, and the first
+// macrocycle with no status. Host pinned to 127.0.0.1 and the port injected per run (#741, #746).
+const MOCK_API = process.env.PLAYWRIGHT_MOCK_API_URL ?? 'http://127.0.0.1:3004';
+
+// /import compiles on demand in Next dev, and a cold compile on Windows can outlast the
+// default timeouts, so warm it once (#698).
+test.beforeAll(async ({ browser }, testInfo) => {
+  test.setTimeout(120_000);
+  const page = await browser.newPage({ baseURL: testInfo.project.use.baseURL });
+  await page.goto('/import', { timeout: 90_000 });
+  await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 90_000 });
+  await page.close();
+});
+
+test.beforeEach(async ({ request }) => {
+  await request.get(`${MOCK_API}/__reset?withAssign=true`);
+});
+
+async function toAssign(page: Page) {
+  await page.goto('/import');
+  await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
+  await page.getByLabel('CSV file').setInputFiles({
+    name: 'history.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Date,Lift,Set #,Weight,Reps\n2024-01-01,Squat,1,200,5'),
+  });
+  await page.getByRole('button', { name: 'Analyze' }).click();
+  await expect(page.getByText('Lift History')).toBeVisible();
+  const next = page.getByRole('button', { name: 'Next', exact: true });
+  await next.click(); // → Map columns
+  await next.click(); // → Review
+  await next.click(); // → Assign
+  await expect(page.getByRole('heading', { name: 'Assign your history to macrocycles' })).toBeVisible();
+}
+
+test('Assign: a boundary moves by keyboard alone, keeping focus, and status is written out', async ({ page }) => {
+  await toAssign(page);
+
+  // Each control is named for its stretch, so the same press twice is told apart by name.
+  const later = page.getByRole('button', { name: 'Start RPT from Jan 22, 2024 one workout later' });
+  await later.focus();
+  await page.keyboard.press('Enter');
+  const moved = page.getByRole('button', { name: 'Start RPT from Jan 24, 2024 one workout later' });
+  await expect(moved).toBeFocused();
+  await page.keyboard.press('Space');
+  const movedAgain = page.getByRole('button', { name: 'Start RPT from Jan 26, 2024 one workout later' });
+  await expect(movedAgain).toBeFocused();
+  // One session left, so the control says it can't go further, and keeps focus.
+  await expect(movedAgain).toHaveAttribute('aria-disabled', 'true');
+  await page.keyboard.press('Enter');
+  await expect(movedAgain).toBeFocused();
+
+  // Other controls carry their stretch's name too.
+  await expect(page.getByRole('button', { name: 'Join RPT from Jan 26, 2024 with the macrocycle before it' })).toBeVisible();
+  await expect(page.getByLabel('Status for RPT from Jan 1, 2024')).toBeVisible();
+
+  // Status is text as well as color: the open stretch needs one, the settled ones say theirs.
+  await expect(page.getByRole('region', { name: 'RPT from Jan 1, 2024' })).toContainText('Status needed');
+  await expect(page.getByTestId('assign-settled').first()).toContainText('Unfinished');
+});
+
+test('Assign: a long file stays workable at 375px', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await toAssign(page);
+
+  const overflow = () =>
+    page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(await overflow()).toBeLessThanOrEqual(0);
+
+  // The 29 settled macrocycles are one line each.
+  const settled = page.getByTestId('assign-settled');
+  await expect(settled).toHaveCount(29);
+  for (const row of await settled.all()) {
+    const box = await row.boundingBox();
+    expect(box?.height ?? 0).toBeLessThan(56);
+  }
+
+  // One action keeps every break, filing each lone session with the macrocycle before it.
+  await page.getByRole('button', { name: 'Keep every break: file the 20 one-lift workouts with the macrocycle before each' }).click();
+  const earlier = page.getByRole('button', { name: /^File the .* workout with the earlier macrocycle$/ });
+  await expect(earlier).toHaveCount(20);
+  for (const button of await earlier.all()) {
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+  }
+
+  await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
+  await expect(page.getByTestId('assign-decisions')).toHaveText('Nothing left to decide. Continue to Preview.');
+  expect(await overflow()).toBeLessThanOrEqual(0);
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Preview changes' })).toBeVisible();
+});

@@ -283,7 +283,7 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     ];
     const csv = csvOf(rows, ['Occurrence']);
     const breakdown = breakdownOf([
-      { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false },
+      { program: 'rpt', file: { group: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false },
     ]);
 
     const previewed = await importCsv('rpt', csv, '?destination=lift-records&splitDest=1');
@@ -335,7 +335,7 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
       // Days 0 and 4 in one stretch, day 2 with the later sessions.
       ['has stretches that overlap', breakdownOf([{ ...stretch(first), dates: [day(0), day(4)] }, { ...stretch(second), dates: [day(2), ...datesOf(second)] }])],
       ['names a program the lifter lacks', breakdownOf([stretch(first), stretch(second, 'no-such-program')])],
-      ['names a file macrocycle in a file that is not an export', breakdownOf([stretch(first), { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false }])],
+      ['names a file macrocycle in a file that is not an export', breakdownOf([stretch(first), { program: 'rpt', file: { group: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false }])],
     ];
 
     it.each(cases)('is rejected with nothing written when it %s', async (_name, breakdown) => {
@@ -571,7 +571,7 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     // A session the lifter added to the export, with no Program or Cycle #.
     const added: Row[] = [{ day: 10, lift: 'Squat' }];
     const csv = csvOf([...one, ...added], ['Occurrence']);
-    const byFile: ImportBreakdownStretch = { program: 'rpt', file: { program: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false };
+    const byFile: ImportBreakdownStretch = { program: 'rpt', file: { group: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false };
 
     const res = await send('commit', csv, breakdownOf([byFile, { ...stretch(added), dates: [day(4), day(10)] }]));
     expect(res.statusCode).toBe(400);
@@ -581,8 +581,74 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
     });
     expect(await counts()).toEqual({ sets: 0, macrocycles: 0 });
 
-    // The added session alone is the date stretch's to take.
-    expect((await commit(csv, breakdownOf([byFile, stretch(added)]))).created).toBe(10);
+    // The added session takes the number above it, so Assign groups it in macrocycle 1 (#1256):
+    // a date stretch can't take it either, and the file stretch stores it.
+    expect((await send('commit', csv, breakdownOf([byFile, stretch(added)]))).statusCode).toBe(400);
+    expect((await commit(csv, breakdownOf([byFile]))).created).toBe(10);
+  });
+
+  /** `mode=assign`'s stretches for `csv`. */
+  const assignOf = async (csv: string) => {
+    const res = await importCsv('rpt', csv, '?mode=assign&destination=lift-records');
+    expect(res.statusCode).toBe(200);
+    return res.json<ImportAssignResponse>();
+  };
+
+  it("pairs an export's rows as Assign grouped them, blank and differently spelled Program cells included (#1256)", async () => {
+    const rows = run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 }).map((r, i) =>
+      i === 1 ? { ...r, program: '' } : i === 4 ? { ...r, program: 'RPT' } : r,
+    );
+    const csv = csvOf(rows, ['Occurrence']);
+    const [only] = (await assignOf(csv)).stretches;
+    expect(only).toMatchObject({ fileMacrocycleNum: 1, fileGroup: 'rpt' });
+    const file = { group: only?.fileGroup ?? '', macrocycleNum: 1 };
+    expect((await commit(csv, breakdownOf([{ program: 'rpt', file, status: 'completed', statusChosen: false }]))).created).toBe(9);
+  });
+
+  it("keeps an export's numbered rows on a day whose unnumbered session is left out (#1256)", async () => {
+    // A 5-3-1 row with no number to take, on a day the rpt macrocycle also trained.
+    const stray: Row = { day: 2, lift: 'Deadlift', program: '5-3-1' };
+    const csv = csvOf([stray, ...run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 })], ['Occurrence']);
+    const assigned = await assignOf(csv);
+    expect(assigned.unnumbered.map((s) => s.date)).toEqual([day(2)]);
+    const byFile: ImportBreakdownStretch = { program: 'rpt', file: { group: 'rpt', macrocycleNum: 1 }, status: 'completed', statusChosen: false };
+    expect((await commit(csv, breakdownOf([byFile], { excludedDates: [day(2)] }))).created).toBe(9);
+  });
+
+  it("puts an unnumbered row on a stretch's day into that stretch, in a file that isn't an export (#1256)", async () => {
+    // The same file without the export's columns: placed by date, so day 2's rows all go with rpt.
+    const stray: Row = { day: 2, lift: 'Deadlift', program: '5-3-1' };
+    const csv = csvOf([stray, ...run(RPT_DAYS, 0, 3, { program: 'rpt', macrocycle: 1 })]);
+    const assigned = await assignOf(csv);
+    expect(assigned.exported).toBe(false);
+    expect(assigned.unnumbered).toEqual([]);
+    const [only] = assigned.stretches;
+    expect(assigned.stretches).toHaveLength(1);
+    expect(only?.sessions.find((s) => s.date === day(2))?.lifts).toContain('Deadlift');
+
+    const dates = only?.sessions.map((s) => s.date) ?? [];
+    const result = await commit(csv, breakdownOf([{ program: 'rpt', dates, status: 'completed', statusChosen: false }]));
+    expect(result.created).toBe(10);
+  });
+
+  it("counts a row joined to its day's macrocycle toward its program, under the day's workout number (#1256)", async () => {
+    // Barbell Row isn't a 5/3/1 lift, and this file numbers 5/3/1's workouts from 5.
+    const fiveThreeOne = run(FIVE_THREE_ONE_DAYS, 0, 3, { program: '5-3-1', macrocycle: 1 }).map((r) => ({
+      ...r,
+      workout: (r.day ?? 0) / 2 + 5,
+    }));
+    const csv = csvOf([...fiveThreeOne, { day: 2, lift: 'Barbell Row', program: 'rpt' }]);
+    const assigned = await assignOf(csv);
+    expect(assigned.unnumbered).toEqual([]);
+    const [only] = assigned.stretches;
+    expect(only).toMatchObject({ matched: false, liftsOutsideProgram: ['Barbell Row'] });
+    expect(only?.sessions.find((s) => s.date === day(2))).toMatchObject({ workoutNum: 6 });
+
+    const dates = only?.sessions.map((s) => s.date) ?? [];
+    await commit(csv, breakdownOf([{ program: '5-3-1', dates, status: 'completed', statusChosen: true }]));
+    expect(await macrocycles('5-3-1')).toEqual([expect.objectContaining({ unmatched: true })]);
+    const onDay2 = (await stored('5-3-1')).filter((r) => ymd(new Date(r.date)) === day(2));
+    expect(onDay2.map((r) => r.workoutNum)).toEqual([6, 6, 6]);
   });
 
   it('refuses to undo a batch grouped under another one', async () => {

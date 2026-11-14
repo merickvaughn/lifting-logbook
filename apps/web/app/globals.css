@@ -132,6 +132,15 @@ a {
   --color-rest: #27ae60;
   --color-prep: #e0a800;
   --color-activation: #8e44ad;
+  /* Macrocycle statuses at the import's Assign step (#1256). Each must differ from
+     the others in this theme, which scripts/check-macrocycle-status-colors.mjs checks,
+     and reach 3:1 against the surface as a mark beside the status text. */
+  --color-status-completed: #1e8449;
+  --color-status-in-progress: #2471a3;
+  --color-status-overran: #b9770e;
+  --color-status-abandoned: #5f6b6d;
+  --color-status-unknown: #6c3483;
+  --color-status-unset: #c0392b;
   /* Focus-work areas (#1058): one hue per area, dark enough to read as 11px
      text on a 14% tint of itself. */
   --color-area-shoulders: oklch(0.5 0.13 245);
@@ -186,6 +195,13 @@ a {
   /* Violet: the only hue family left that this theme's accent (green), rest
      (blue), prep (amber) and overrun (red) do not already occupy (#960). */
   --color-activation: #7c3aed;
+  /* Macrocycle statuses (#1256), as in navy. */
+  --color-status-completed: #15803d;
+  --color-status-in-progress: #0369a1;
+  --color-status-overran: #b45309;
+  --color-status-abandoned: #52525b;
+  --color-status-unknown: #6d28d9;
+  --color-status-unset: #dc2626;
   /* Focus-work areas (#1058), as in navy: both themes are light. */
   --color-area-shoulders: oklch(0.5 0.13 245);
   --color-area-biceps: oklch(0.5 0.13 150);
