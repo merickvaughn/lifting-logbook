@@ -378,6 +378,29 @@ class IngressExtraEnvTest(unittest.TestCase):
         self.assertEqual(len(drop), 1)
         self.assertEqual(drop[0]["value"], "true")
 
+    def test_api_feature_flag_set_from_the_actions_ingress_env(self):
+        # The api deploy passes no guard env, so the action's `ingress_env` (#1295) reaches the
+        # injector after a blank line: the shape `printf '%s\n%s\n' "" "$INGRESS_ENV_INPUT"` gives.
+        env = clean_env(**{**REQUIRED_ENV, "INGRESS_EXTRA_ENV": "\nIMPORT_ASSIGN_ENABLED=true"})
+        proc = run_injector(FIXTURE, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        api = containers_by_name(yaml.safe_load(proc.stdout))["api"]
+        flag = [e for e in api["env"] if e["name"] == "IMPORT_ASSIGN_ENABLED"]
+        self.assertEqual(flag, [{"name": "IMPORT_ASSIGN_ENABLED", "value": "true"}])
+        # Turning it off is a value, not a removal: the live "true" is replaced.
+        with tempfile.TemporaryDirectory() as d:
+            on_path = os.path.join(d, "on.yaml")
+            with open(on_path, "w", encoding="utf-8") as f:
+                f.write(proc.stdout)
+            env = clean_env(**{**REQUIRED_ENV, "INGRESS_EXTRA_ENV": "\nIMPORT_ASSIGN_ENABLED=false"})
+            off = run_injector(on_path, env=env)
+        self.assertEqual(off.returncode, 0, off.stderr)
+        api = containers_by_name(yaml.safe_load(off.stdout))["api"]
+        self.assertEqual(
+            [e for e in api["env"] if e["name"] == "IMPORT_ASSIGN_ENABLED"],
+            [{"name": "IMPORT_ASSIGN_ENABLED", "value": "false"}],
+        )
+
     def test_malformed_extra_env_exits_nonzero(self):
         # A line with no '=' must fail the deploy loudly — no manifest emitted.
         env = clean_env(**{**WEB_ENV, "INGRESS_EXTRA_ENV": "NOEQUALS_HERE"})

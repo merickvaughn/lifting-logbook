@@ -13,6 +13,8 @@ image:
 
 env:
   NODE_ENV: staging
+  # The importer's Assign step (#1173), on in staging first (#1295).
+  IMPORT_ASSIGN_ENABLED: "true"
 
 autoscaling:
   minReplicas: 1

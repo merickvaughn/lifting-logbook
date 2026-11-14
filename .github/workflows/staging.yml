@@ -626,6 +626,9 @@ jobs:
           otlp_secret: lifting-logbook-stg-otel-otlp-auth-header
           loki_secret: lifting-logbook-stg-otel-loki-auth-header
           otel_mirror_repo: ${{ needs.terraform-staging.outputs.otel_mirror_repo }}
+          # The importer's Assign step (#1173), on in staging first (#1295). Matches deploy.yml.
+          # To turn it off, set it to "false" here and there: removing the line keeps the live value.
+          ingress_env: IMPORT_ASSIGN_ENABLED=true
 
       # Guard against a HOLLOW GREEN (#823). The deploy step above intentionally
       # carries continue-on-error: true (#498 — a failed *revision* must still let

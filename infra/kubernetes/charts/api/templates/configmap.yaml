@@ -11,3 +11,4 @@ data:
   # (charts/otel-collector), reached in-namespace at http://otel-collector:4318.
   # Without this the SDK falls back to localhost:4318 and nothing is exported (#812).
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.env.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}
+  IMPORT_ASSIGN_ENABLED: {{ .Values.env.IMPORT_ASSIGN_ENABLED | quote }}

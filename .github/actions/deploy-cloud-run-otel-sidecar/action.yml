@@ -85,6 +85,13 @@ inputs:
       confirms legit beacons tag same-origin (#809).
     required: false
     default: "false"
+  ingress_env:
+    description: >-
+      Newline-separated KEY=VALUE pairs set on the ingress container on every deploy, such as a
+      feature flag (#1295). Everything else in the live env is kept, so dropping a key here leaves
+      it set: turn a flag off by setting it to 'false' rather than removing it.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -164,6 +171,8 @@ runs:
     # OTEL_COLLECTOR_IMAGE_* parts for the injector below.
     - name: Inject OTel sidecar and replace service
       shell: bash
+      env:
+        INGRESS_ENV_INPUT: ${{ inputs.ingress_env }}
       run: |
         source infra/observability/grafana-endpoints.env
         source infra/observability/otel-collector-image.env
@@ -188,6 +197,11 @@ runs:
           INGRESS_EXTRA_ENV=$(printf 'CLIENT_ERROR_ALLOWED_ORIGINS=%s\nCLIENT_ERROR_DROP_CROSS_ORIGIN=%s\n' \
             "$SELF_URL" "${{ inputs.client_error_drop_cross_origin }}")
           echo "Same-origin guard (#809): allowlist=${SELF_URL} drop=${{ inputs.client_error_drop_cross_origin }}"
+        fi
+        # The caller's own env (#1295), read from the step env rather than spliced into the script.
+        if [ -n "$INGRESS_ENV_INPUT" ]; then
+          INGRESS_EXTRA_ENV=$(printf '%s\n%s\n' "$INGRESS_EXTRA_ENV" "$INGRESS_ENV_INPUT")
+          echo "Ingress env (#1295): $(printf '%s\n' "$INGRESS_ENV_INPUT" | sed -n 's/=.*//p' | paste -sd, -)"
         fi
         INGRESS_CONTAINER_NAME="${{ inputs.ingress_container_name }}" \
         INGRESS_IMAGE="${{ inputs.image }}" \
