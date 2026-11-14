@@ -36,6 +36,7 @@ import {
   FocusDayState,
   FocusPlanGroupResponse,
   FocusSettingsResponse,
+  StoredFocusBlock,
   emptyFocusDayState,
 } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -161,7 +162,7 @@ export class FocusController {
     if (dto.onEnd !== undefined) patch.onEnd = dto.onEnd;
     if (dto.nextArea !== undefined) patch.nextArea = dto.nextArea;
     if (dto.pool !== undefined) patch.pool = dto.pool.map((entry) => ({ ...entry }));
-    return toFocusBlockResponse(await saveBlockEdit(focus, id, patch, today), today);
+    return toFocusBlockResponse(await saveBlockEdit(focus, id, patch, today, dto.version), today);
   }
 
   /**
@@ -343,7 +344,7 @@ function notEnded(blocks: readonly FocusBlock[], today: string): FocusBlock[] {
   return blocks.filter((block) => blockStatus(block, today) !== 'ended');
 }
 
-function toGroupResponse(group: FocusGroup, today: string, increment: number): FocusPlanGroupResponse {
+function toGroupResponse(group: FocusGroup<StoredFocusBlock>, today: string, increment: number): FocusPlanGroupResponse {
   const { block, selection, trimmed } = group;
   return {
     block: toFocusBlockResponse(block, today),

@@ -10,9 +10,9 @@ import {
   recordLastSessions,
   withoutStaleLastReps,
 } from '@lifting-logbook/core';
-import { DEFAULT_WEIGHT_INCREMENT, FocusBlock, FocusBlockResponse } from '@lifting-logbook/types';
+import { DEFAULT_WEIGHT_INCREMENT, FocusBlock, FocusBlockResponse, StoredFocusBlock } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
-import { FocusBlockConflictError, FocusBlockNotFoundError } from '../ports/errors';
+import { FocusBlockConflictError, FocusBlockNotFoundError, FocusBlockStaleError } from '../ports/errors';
 import { FocusBlockPatch, IFocusRepository } from '../ports/IFocusRepository';
 import { MAX_WORKOUT_NUM } from '../programs/lift-record.limits';
 import { isValidWorkoutNum } from '../programs/mappers';
@@ -48,7 +48,7 @@ export function parseWorkoutNum(value: string): number {
   return workoutNum;
 }
 
-export function toFocusBlockResponse(block: FocusBlock, today: string): FocusBlockResponse {
+export function toFocusBlockResponse(block: StoredFocusBlock, today: string): FocusBlockResponse {
   const range = blockRange(block);
   return { ...block, status: blockStatus(block, today), rangeStart: range.start, rangeEnd: range.end };
 }
@@ -69,7 +69,7 @@ export function toFocusBlockResponse(block: FocusBlock, today: string): FocusBlo
 export async function loadFocusBlocks(
   repos: Pick<RepositoryBundle, 'focus' | 'userSettings'>,
   today: string,
-): Promise<FocusBlock[]> {
+): Promise<StoredFocusBlock[]> {
   const { focus } = repos;
   const blocks = await focus.listBlocks();
   let successors = expandRollovers(blocks, today, defaultFocusPool, 0);
@@ -98,15 +98,22 @@ const TIMER_FIELDS = ['prep', 'set', 'rest'] as const;
  * anything is written when the block's new start or the follow-on's is another series block's
  * start, or when either new range would overlap a queued block in the series that the old one
  * didn't (Amendment 6).
+ *
+ * With `version`, the edit is refused with `FocusBlockStaleError` unless the block is still
+ * at that version: a client sending a pool it read before another write (a training max
+ * carried in, a recorded session, another tab's edit) would write that read back over it
+ * (Amendment 7). It is checked under the lock, so no write can land after the check.
  */
 export async function saveBlockEdit(
   focus: IFocusRepository,
   id: string,
   patch: FocusBlockPatch,
   today: string,
-): Promise<FocusBlock> {
+  version?: number,
+): Promise<StoredFocusBlock> {
   const [before] = await focus.lockBlocks([id]);
   if (!before) throw new FocusBlockNotFoundError(id);
+  if (version !== undefined && version !== before.version) throw new FocusBlockStaleError(id, version, before.version);
   const edit = patch.pool ? { ...patch, pool: withoutStaleLastReps(before.pool, patch.pool) } : patch;
   const after: FocusBlock = { ...before, ...edit };
 
@@ -272,9 +279,9 @@ function trainingMaxChanges(before: FocusBlock, after: FocusBlock): Map<string, 
  */
 export async function recordFocusSessions(
   repos: Pick<RepositoryBundle, 'focus' | 'liftRecord' | 'customLift'>,
-  blocks: FocusBlock[],
+  blocks: StoredFocusBlock[],
   today: string,
-): Promise<FocusBlock[]> {
+): Promise<StoredFocusBlock[]> {
   const doubles = blocks.filter((block) => block.progression === 'double' && blockStatus(block, today) === 'active');
   if (doubles.length === 0) return blocks;
 
@@ -297,7 +304,7 @@ export async function recordFocusSessions(
   // row lock: a setup edit saved since `blocks` was read lands first and is kept (ADR-039,
   // Amendment 5). A lift that edit added has no records read here, and is recorded on the
   // next plan read. Each block read again replaces its older copy in what's returned.
-  const current = new Map<string, FocusBlock>();
+  const current = new Map<string, StoredFocusBlock>();
   for (const block of await repos.focus.lockBlocks(due.map((block) => block.id))) {
     const pool =
       block.progression === 'double' && blockStatus(block, today) === 'active'

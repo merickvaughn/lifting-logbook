@@ -2,15 +2,18 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApiClientError } from '@lifting-logbook/api-client';
 import { daysLeft, defaultFocusPool, rangeLabel } from '@lifting-logbook/core';
 import {
   FOCUS_AREAS,
+  FOCUS_BLOCK_STALE_CODE,
   FOCUS_LIMITS,
   type CreateFocusBlockRequest,
   type FocusArea,
   type FocusBlock,
   type FocusBudget,
   type FocusDayPlanResponse,
+  type StoredFocusBlock,
   type UpdateFocusBlockRequest,
   type WeightUnit,
 } from '@lifting-logbook/types';
@@ -70,6 +73,11 @@ function writeDismissed(ids: ReadonlySet<string>): void {
   }
 }
 
+/** Records each block's version, keeping the higher one: versions only go up. */
+function noteVersions(versions: Map<string, number>, blocks: readonly StoredFocusBlock[]): void {
+  for (const block of blocks) versions.set(block.id, Math.max(block.version, versions.get(block.id) ?? 0));
+}
+
 type WeekPlans = { status: 'loading' } | { status: 'error' } | { status: 'ready'; plans: FocusDayPlanResponse[] };
 
 /** What a save can change, and so what to re-read once the saves are done. */
@@ -81,6 +89,9 @@ interface Reread {
 const NOTHING: Reread = { blocks: false, week: false, guide: false };
 const EVERYTHING: Reread = { blocks: true, week: true, guide: true };
 const BLOCKS_AND_WEEK: Reread = { blocks: true, week: true, guide: false };
+
+/** Why the last saves failed: `stale` when one was refused because its block changed after the page read it. */
+type SaveFailure = 'failed' | 'stale';
 
 interface Props {
   program: string;
@@ -108,7 +119,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
   const [loadFailed, setLoadFailed] = useState(false);
   const [budget, setBudget] = useState<FocusBudget | null>(null);
   const [guideFailed, setGuideFailed] = useState(false);
-  const [saveFailed, setSaveFailed] = useState(false);
+  const [saveFailed, setSaveFailed] = useState<SaveFailure | null>(null);
   const [week, setWeek] = useState<WeekPlans>({ status: 'loading' });
   const [openId, setOpenId] = useState<string | null>(null);
   const [newArea, setNewArea] = useState<FocusArea | null>(null);
@@ -126,6 +137,13 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
   /** What the saves since the last re-read can have changed. */
   const stale = useRef<Reread>({ ...NOTHING });
   const failedSinceReread = useRef(false);
+  const staleSinceReread = useRef(false);
+  /**
+   * Each block's version as this page last knew it: from a read it showed, or from its own
+   * save's answer. A save sends it back, so the API refuses an edit made to a block that
+   * changed since, such as a training max carried into it (ADR-039, Amendment 7).
+   */
+  const versions = useRef(new Map<string, number>());
   /** Follow-on blocks this page created, which are never mistaken for auto-roll successors. */
   const queuedHere = useRef(new Set<string>());
   /** The `?block=` focus block, until the first load of the blocks has opened it. */
@@ -163,6 +181,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
     try {
       const loaded = await fetchFocusBlocks(day);
       if (current()) {
+        noteVersions(versions.current, loaded);
         setBlocks(loaded);
         setLoadFailed(false);
       }
@@ -241,6 +260,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
       } catch (error) {
         logClientError(operation, error, context);
         failedSinceReread.current = true;
+        if (error instanceof ApiClientError && error.code === FOCUS_BLOCK_STALE_CODE) staleSinceReread.current = true;
         stale.current = { ...EVERYTHING };
       }
       pending.current -= 1;
@@ -268,8 +288,9 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
       // Claimed only once the blocks on screen really are what the API stored. A failed
       // blocks re-read shows its own alert; a failed week or guide re-read shows in its
       // own section.
-      if (failedSinceReread.current && blocksRead) setSaveFailed(true);
+      if (failedSinceReread.current && blocksRead) setSaveFailed(staleSinceReread.current ? 'stale' : 'failed');
       failedSinceReread.current = false;
+      staleSinceReread.current = false;
     });
   }
 
@@ -302,13 +323,22 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
           return [block];
         }),
     );
-    const update = (blockId: string, body: UpdateFocusBlockRequest) =>
-      save('updateFocusBlock', (day) => updateFocusBlock(blockId, body, day).then(() => undefined), BLOCKS_AND_WEEK, {
-        blockId,
-        fields: Object.keys(body),
-      });
-    update(id, full);
-    if (retarget) update(retarget.id, retarget.patch);
+    // `checked` sends the version the edit was made against. The retarget replaces the
+    // successor's area and pool whatever they hold, so it doesn't depend on what was read.
+    const update = (blockId: string, body: UpdateFocusBlockRequest, checked: boolean) =>
+      save(
+        'updateFocusBlock',
+        async (day) => {
+          // Read when the save runs, so it includes this page's own saves ahead of it.
+          const version = checked ? versions.current.get(blockId) : undefined;
+          const saved = await updateFocusBlock(blockId, version === undefined ? body : { ...body, version }, day);
+          noteVersions(versions.current, [saved]);
+        },
+        BLOCKS_AND_WEEK,
+        { blockId, fields: Object.keys(body) },
+      );
+    update(id, full, true);
+    if (retarget) update(retarget.id, retarget.patch, false);
     if (dropSuccessor) {
       save('deleteFocusBlock', () => deleteFocusBlock(dropSuccessor.id), BLOCKS_AND_WEEK, { blockId: dropSuccessor.id });
     }
@@ -321,6 +351,7 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
       async (day) => {
         try {
           const created = await createFocusBlock(request, day);
+          noteVersions(versions.current, [created]);
           if (request.series) queuedHere.current.add(created.id);
           setBlocks((current) => [...(current ?? []), created]);
           if (open) setOpenId(created.id);
@@ -459,8 +490,10 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
         </p>
       : saveFailed && (
           <p className={styles.alert} role="alert">
-            A change didn’t save, so the page now shows what was saved.{' '}
-            <button type="button" className={styles.linkBtn} onClick={() => setSaveFailed(false)}>
+            {saveFailed === 'stale' ?
+              'A focus block changed after this page loaded it, so your change to it didn’t save. The page now shows the block as saved, so you can make the change again.'
+            : 'A change didn’t save, so the page now shows what was saved.'}{' '}
+            <button type="button" className={styles.linkBtn} onClick={() => setSaveFailed(null)}>
               Dismiss
             </button>
           </p>

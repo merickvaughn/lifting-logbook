@@ -222,8 +222,23 @@ export function emptyFocusDayState(): FocusDayState {
   return { modes: {}, picks: {}, trims: {}, placement: DEFAULT_FOCUS_PLACEMENT, order: null, dismissed: false };
 }
 
+/**
+ * A focus block as stored. `version` goes up by one with every update to the block, so a
+ * client that sends back the version it loaded is refused when someone else's write landed
+ * since (ADR-039, Amendment 7).
+ */
+export interface StoredFocusBlock extends FocusBlock {
+  version: number;
+}
+
+/**
+ * The `code` of the 409 a `PATCH /focus/blocks/:id` gets when its `version` is not the
+ * block's current one: the block changed after the client read it.
+ */
+export const FOCUS_BLOCK_STALE_CODE = 'focus-block-stale';
+
 /** A focus block as the API returns it, with its derived status and date range. */
-export interface FocusBlockResponse extends FocusBlock {
+export interface FocusBlockResponse extends StoredFocusBlock {
   /** Derived from the dates and the request's `today`; never stored. */
   status: FocusBlockStatus;
   /** First day of the block, inclusive (ISO date). */
@@ -254,8 +269,15 @@ export interface CreateFocusBlockRequest {
   pool: FocusPoolEntry[];
 }
 
-/** Replaces any of a focus block's fields. `series` is fixed; `priority` changes by reorder. */
-export type UpdateFocusBlockRequest = Partial<Omit<CreateFocusBlockRequest, 'series' | 'priority'>>;
+/**
+ * Replaces any of a focus block's fields. `series` is fixed; `priority` changes by reorder.
+ * `version`, when sent, must be the block's current version, or the update is refused with
+ * a 409 whose code is `FOCUS_BLOCK_STALE_CODE` and nothing is written. Without it the update
+ * is not checked.
+ */
+export type UpdateFocusBlockRequest = Partial<Omit<CreateFocusBlockRequest, 'series' | 'priority'>> & {
+  version?: number;
+};
 
 /** Every focus block id, in priority order, highest first. */
 export interface ReorderFocusBlocksRequest {

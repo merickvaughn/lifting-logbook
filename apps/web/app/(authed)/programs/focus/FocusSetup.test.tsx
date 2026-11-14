@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { ApiClientError } from '@lifting-logbook/api-client';
 import { defaultFocusPool, defaultPoolEntry } from '@lifting-logbook/core';
 import {
   DEFAULT_FOCUS_TIMER,
+  FOCUS_BLOCK_STALE_CODE,
   emptyFocusDayState,
   type FocusBlock,
   type FocusBlockResponse,
@@ -67,6 +69,7 @@ function block(overrides: Partial<FocusBlock> & Pick<FocusBlock, 'id'>): FocusBl
     onEnd: 'prompt',
     nextArea: null,
     pool: [defaultPoolEntry('Lateral Raise')],
+    version: 1,
     // Status and range are what the API derives; the page derives its own from the dates.
     status: 'active',
     rangeStart: '2026-10-01',
@@ -150,8 +153,14 @@ beforeEach(() => {
   mocks.list.mockImplementation(async () => stored.map((b) => ({ ...b })));
   mocks.settings.mockImplementation(async () => ({ ...storedGuide }));
   mocks.plan.mockImplementation(async (_program, workoutNum) => plan(workoutNum));
-  mocks.update.mockImplementation(async (id, patch) => {
-    stored = stored.map((b) => (b.id === id ? { ...b, ...patch } : b));
+  mocks.update.mockImplementation(async (id, body) => {
+    const { version, ...patch } = body;
+    const current = stored.find((b) => b.id === id) ?? SHOULDERS;
+    // As the API does: a version that isn't the stored one is refused, and a write raises it.
+    if (version !== undefined && version !== current.version) {
+      throw new ApiClientError('Focus block changed since it was read', 409, FOCUS_BLOCK_STALE_CODE);
+    }
+    stored = stored.map((b) => (b.id === id ? { ...b, ...patch, version: b.version + 1 } : b));
     return stored.find((b) => b.id === id) ?? SHOULDERS;
   });
   mocks.create.mockImplementation(async (request) => {
@@ -239,7 +248,7 @@ describe('FocusSetup', () => {
     const period = screen.getByRole('radiogroup', { name: 'Period' });
     await user.click(within(period).getByRole('radio', { name: 'Quarterly' }));
 
-    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('bi', { period: 'quarterly' }, TODAY));
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('bi', { period: 'quarterly', version: 1 }, TODAY));
     expect(within(period).getByRole('radio', { name: 'Quarterly' })).toHaveAttribute('aria-checked', 'true');
   });
 
@@ -258,7 +267,7 @@ describe('FocusSetup', () => {
     await user.click(await screen.findByRole('button', { name: /^›?\s*Biceps/ }));
     await user.click(screen.getByRole('button', { name: 'Increase Sets (Lateral Raise)' }));
     await waitFor(() =>
-      expect(mocks.update).toHaveBeenCalledWith('bi', { pool: [{ ...defaultPoolEntry('Lateral Raise'), sets: 4 }] }, TODAY),
+      expect(mocks.update).toHaveBeenCalledWith('bi', { pool: [{ ...defaultPoolEntry('Lateral Raise'), sets: 4 }], version: 1 }, TODAY),
     );
   });
 
@@ -277,7 +286,7 @@ describe('FocusSetup', () => {
     await waitFor(() =>
       expect(mocks.update).toHaveBeenCalledWith(
         'bi',
-        { pool: [defaultPoolEntry('Lateral Raise'), defaultPoolEntry('Hammer Curl')] },
+        { pool: [defaultPoolEntry('Lateral Raise'), defaultPoolEntry('Hammer Curl')], version: 1 },
         TODAY,
       ),
     );
@@ -401,6 +410,31 @@ describe('FocusSetup', () => {
     );
   });
 
+  // #1287 (ADR-039, Amendment 7): a block written since the page read it, here by a training
+  // max carried into it, refuses the page's save rather than taking back the older pool.
+  it('reloads a block that changed since the page read it, and says the change didn’t save', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Biceps/ }));
+    stored = stored.map((b) =>
+      b.id === 'bi' ? { ...b, version: 2, pool: [{ ...defaultPoolEntry('Lateral Raise'), sets: 5 }] } : b,
+    );
+    await user.click(screen.getByRole('button', { name: 'Increase Sets (Lateral Raise)' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'A focus block changed after this page loaded it, so your change to it didn’t save. The page now shows the block as saved, so you can make the change again.',
+    );
+    expect(mocks.update).toHaveBeenCalledWith('bi', { pool: [{ ...defaultPoolEntry('Lateral Raise'), sets: 4 }], version: 1 }, TODAY);
+    expect(mocks.logError).toHaveBeenCalledWith('updateFocusBlock', expect.any(ApiClientError), { blockId: 'bi', fields: ['pool'] });
+    // The re-read shows what was stored, and the next edit is made against it.
+    expect(screen.getByRole('status', { name: 'Sets (Lateral Raise)' })).toHaveTextContent('5');
+    await user.click(screen.getByRole('button', { name: 'Increase Sets (Lateral Raise)' }));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenLastCalledWith('bi', { pool: [{ ...defaultPoolEntry('Lateral Raise'), sets: 6 }], version: 2 }, TODAY),
+    );
+    expect(stored.find((b) => b.id === 'bi')?.pool[0]?.sets).toBe(6);
+  });
+
   it('does not claim the stored state is shown when the re-read after a failed save fails too', async () => {
     const user = userEvent.setup();
     mocks.update.mockRejectedValue(new Error('API 400'));
@@ -448,7 +482,8 @@ describe('FocusSetup', () => {
 
     saveSecond();
     await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(3));
-    expect(mocks.update).toHaveBeenLastCalledWith('bi', { pool: [{ ...defaultPoolEntry('Lateral Raise'), sets: 5 }] }, TODAY);
+    // The first save's answer gave the block version 2, so the second save sends that.
+    expect(mocks.update).toHaveBeenLastCalledWith('bi', { pool: [{ ...defaultPoolEntry('Lateral Raise'), sets: 5 }], version: 2 }, TODAY);
     expect(screen.getByRole('status', { name: 'Sets (Lateral Raise)' })).toHaveTextContent('5');
   });
 
@@ -495,8 +530,9 @@ describe('FocusSetup', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: /^›?\s*Shoulders/ }));
     await user.selectOptions(screen.getByRole('combobox', { name: 'Next area' }), 'Biceps');
-    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('sh', { nextArea: 'Biceps' }, TODAY));
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('sh', { nextArea: 'Biceps', version: 1 }, TODAY));
     await waitFor(() =>
+      // No version: the successor's area and pool are replaced whatever they hold.
       expect(mocks.update).toHaveBeenCalledWith('roll', { area: 'Biceps', pool: defaultFocusPool('Biceps') }, TODAY),
     );
   });
@@ -507,7 +543,7 @@ describe('FocusSetup', () => {
     await user.click(await screen.findByRole('button', { name: /^›?\s*Shoulders/ }));
     await user.click(within(screen.getByRole('radiogroup', { name: 'When it ends' })).getByRole('radio', { name: 'Prompt me' }));
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith('roll'));
-    expect(mocks.update).toHaveBeenCalledWith('sh', { onEnd: 'prompt', nextArea: null }, TODAY);
+    expect(mocks.update).toHaveBeenCalledWith('sh', { onEnd: 'prompt', nextArea: null, version: 1 }, TODAY);
   });
 
   it('saves a custom start date on blur, and only a date the block can run from', async () => {
@@ -525,7 +561,7 @@ describe('FocusSetup', () => {
 
     fireEvent.change(date, { target: { value: '2026-10-15' } });
     fireEvent.blur(date);
-    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('bi', { start: '2026-10-15' }, TODAY));
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('bi', { start: '2026-10-15', version: 1 }, TODAY));
   });
 
   it('still re-reads the focus blocks when a newer save discards the re-read', async () => {
@@ -569,7 +605,7 @@ describe('FocusSetup', () => {
 
     await waitFor(() => expect(mocks.update).toHaveBeenCalled());
     await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
-    expect(mocks.update.mock.calls.map(([id, patch]) => [id, patch])).toEqual([['bi', { start: '2026-10-20' }]]);
+    expect(mocks.update.mock.calls.map(([id, patch]) => [id, patch])).toEqual([['bi', { start: '2026-10-20', version: 1 }]]);
   });
 
   it('shows the focus blocks when only the daily focus guide fails to load', async () => {

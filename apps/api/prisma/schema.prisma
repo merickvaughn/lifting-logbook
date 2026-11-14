@@ -295,6 +295,9 @@ model FocusBlock {
   onEnd       String
   nextArea    String?
   pool        Json
+  // Up by one on every update, so PATCH can refuse a write based on a stale read (ADR-039,
+  // Amendment 7). A reorder writes only priority, which PATCH can't, so it leaves this alone.
+  version     Int      @default(1)
   createdAt   DateTime @default(now())
 
   // Keeps an auto-roll successor, created on read, from being created twice.

@@ -13,6 +13,7 @@ import {
   FocusPeriod,
   FOCUS_PROGRESSION_TYPES,
   FocusSelection,
+  StoredFocusBlock,
 } from '@lifting-logbook/types';
 import { FocusBlockPatch, IFocusRepository } from '../../ports/IFocusRepository';
 import { FocusBlockConflictError, FocusBlockNotFoundError } from '../../ports/errors';
@@ -37,12 +38,13 @@ interface FocusBlockRow {
   onEnd: string;
   nextArea: string | null;
   pool: Prisma.JsonValue;
+  version: number;
 }
 
 // The enum columns carry CHECK constraints (migration 20261025000000_add_focus_work), so a
 // row's strings are always members of their unions; the JSON columns are parsed instead.
 // `progression` is narrowed with a lookup instead of a cast, and a value outside the vocabulary throws.
-function toFocusBlock(row: FocusBlockRow): FocusBlock {
+function toFocusBlock(row: FocusBlockRow): StoredFocusBlock {
   const progression = FOCUS_PROGRESSION_TYPES.find((type) => type === row.progression);
   if (progression === undefined) {
     throw new Error(`Focus block ${row.id} has an unknown progression: ${row.progression}`);
@@ -62,6 +64,7 @@ function toFocusBlock(row: FocusBlockRow): FocusBlock {
     onEnd: row.onEnd as FocusOnEnd,
     nextArea: row.nextArea as FocusArea | null,
     pool: parseFocusPool(row.pool),
+    version: row.version,
   };
 }
 
@@ -83,7 +86,7 @@ export class PrismaFocusRepository implements IFocusRepository {
     private readonly userId: string,
   ) {}
 
-  async listBlocks(): Promise<FocusBlock[]> {
+  async listBlocks(): Promise<StoredFocusBlock[]> {
     const rows = await this.prisma.focusBlock.findMany({
       where: { userId: this.userId },
       orderBy: [{ priority: 'asc' }, { start: 'asc' }, { createdAt: 'asc' }],
@@ -91,14 +94,14 @@ export class PrismaFocusRepository implements IFocusRepository {
     return rows.map(toFocusBlock);
   }
 
-  async getBlock(id: string): Promise<FocusBlock | null> {
+  async getBlock(id: string): Promise<StoredFocusBlock | null> {
     // The PK is `id` alone, so guard on userId: a bare where:{id} would read another
     // user's block wherever RLS is not in force.
     const row = await this.prisma.focusBlock.findFirst({ where: { id, userId: this.userId } });
     return row ? toFocusBlock(row) : null;
   }
 
-  async lockBlocks(ids: readonly string[]): Promise<FocusBlock[]> {
+  async lockBlocks(ids: readonly string[]): Promise<StoredFocusBlock[]> {
     const unique = [...new Set(ids)];
     if (unique.length === 0) return [];
     // Raw SQL isn't auto-traced (ADR-024), hence the manual span. Row locks taken in id order,
@@ -131,7 +134,7 @@ export class PrismaFocusRepository implements IFocusRepository {
     });
   }
 
-  async createBlock(block: FocusBlock): Promise<FocusBlock> {
+  async createBlock(block: FocusBlock): Promise<StoredFocusBlock> {
     try {
       const row = await this.prisma.focusBlock.create({ data: this.createInput(block) });
       return toFocusBlock(row);
@@ -151,11 +154,14 @@ export class PrismaFocusRepository implements IFocusRepository {
     });
   }
 
-  async updateBlock(id: string, patch: FocusBlockPatch): Promise<FocusBlock> {
+  async updateBlock(id: string, patch: FocusBlockPatch): Promise<StoredFocusBlock> {
     const owned = await this.getBlock(id);
     if (!owned) throw new FocusBlockNotFoundError(id);
     try {
-      const row = await this.prisma.focusBlock.update({ where: { id }, data: toColumns(patch) });
+      const row = await this.prisma.focusBlock.update({
+        where: { id },
+        data: { ...toColumns(patch), version: { increment: 1 } },
+      });
       return toFocusBlock(row);
     } catch (e) {
       if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {

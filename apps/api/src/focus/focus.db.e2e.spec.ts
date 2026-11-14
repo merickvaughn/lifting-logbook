@@ -16,6 +16,7 @@ import { PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
 import { defaultFocusPool, defaultPoolEntry } from '@lifting-logbook/core';
 import {
+  FOCUS_BLOCK_STALE_CODE,
   FocusBlockResponse,
   FocusBlockSummaryResponse,
   FocusDayPlanResponse,
@@ -600,6 +601,35 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
 
       const row = await prisma.focusBlock.findUnique({ where: { id } });
       expect(row?.pool).toEqual([wave('Barbell Curl', 115), wave('Hammer Curl', 60)]);
+    });
+
+    // #1287 (ADR-039, Amendment 7): the lock can't see a page's stale copy, but its version can.
+    it("409s a successor save sent with the version it had before the block's training max carried in", async () => {
+      const wave = (lift: string, trainingMax: number, sets = 3) => entry(lift, { trainingMax, sets });
+      const block = (await lifter(
+        'POST',
+        `/focus/blocks?today=${TODAY}`,
+        blockBody({ series: 'stale-wave', progression: 'percent_wave', pool: [wave('Barbell Curl', 100)] }),
+      )).json() as FocusBlockResponse;
+      const loaded = (await lifter(
+        'POST',
+        `/focus/blocks?today=${TODAY}`,
+        blockBody({ series: 'stale-wave', start: '2026-11-01', progression: 'percent_wave', pool: [wave('Barbell Curl', 105)] }),
+      )).json() as FocusBlockResponse;
+      expect(loaded.version).toBe(1);
+
+      const raised = await lifter('PATCH', `/focus/blocks/${block.id}?today=${TODAY}`, { pool: [wave('Barbell Curl', 110)] });
+      expect(raised.statusCode).toBe(200);
+      const carried = await prisma.focusBlock.findUnique({ where: { id: loaded.id } });
+      expect(carried).toMatchObject({ version: 2, pool: [wave('Barbell Curl', 115)] });
+
+      const stale = await lifter('PATCH', `/focus/blocks/${loaded.id}?today=${TODAY}`, {
+        pool: [wave('Barbell Curl', 105, 5)],
+        version: loaded.version,
+      });
+      expect(stale.statusCode).toBe(409);
+      expect(stale.json()).toMatchObject({ code: FOCUS_BLOCK_STALE_CODE });
+      expect(await prisma.focusBlock.findUnique({ where: { id: loaded.id } })).toEqual(carried);
     });
   });
 

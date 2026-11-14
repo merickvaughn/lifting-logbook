@@ -17,6 +17,7 @@ export function makeBlock(overrides: Partial<FocusBlockResponse> = {}): FocusBlo
     onEnd: 'prompt',
     nextArea: null,
     pool: [],
+    version: 1,
     status: 'active',
     rangeStart: '2026-10-01',
     rangeEnd: '2026-10-31',

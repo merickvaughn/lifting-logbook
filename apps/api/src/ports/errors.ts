@@ -5,6 +5,8 @@
  * (queue workers, CLI tools, alternate transports).
  */
 
+import { FOCUS_BLOCK_STALE_CODE } from '@lifting-logbook/types';
+
 export class ProgramNotFoundError extends Error {
   constructor(public readonly program: string) {
     super(`Program '${program}' not found`);
@@ -81,6 +83,24 @@ export class FocusBlockConflictError extends Error {
   ) {
     super(`Focus block series '${series}' already has a focus block starting ${start}`);
     this.name = 'FocusBlockConflictError';
+  }
+}
+
+/**
+ * A focus block update named a `version` that isn't the block's current one: the block was
+ * written after the client read it, and saving would overwrite that write (ADR-039,
+ * Amendment 7). Nothing is written.
+ */
+export class FocusBlockStaleError extends Error {
+  readonly code = FOCUS_BLOCK_STALE_CODE;
+
+  constructor(
+    public readonly id: string,
+    public readonly sent: number,
+    public readonly current: number,
+  ) {
+    super(`Focus block '${id}' changed since it was read: version ${sent} was sent, ${current} is stored`);
+    this.name = 'FocusBlockStaleError';
   }
 }
 
