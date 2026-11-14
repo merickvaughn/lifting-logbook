@@ -4,7 +4,7 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { SpanStatusCode } from '@opentelemetry/api';
 import type { LiftRecord } from '@lifting-logbook/core';
-import { IMPORT_SUGGESTION_HOURLY_LIMIT } from '@lifting-logbook/types';
+import { IMPORT_SUGGESTION_DEADLINE_MS, IMPORT_SUGGESTION_HOURLY_LIMIT } from '@lifting-logbook/types';
 import { RlsContextService } from '../adapters/prisma/rls-context.service';
 import type { PrismaService } from '../adapters/prisma/prisma.service';
 import type {
@@ -14,7 +14,7 @@ import type {
 } from '../ports/IImportSuggestionProvider';
 import { IMPORT_DATE, PROGRAMS, rowsOf, fiveThreeOne, segment, twoRuns, ymdOf } from '../testing/import-suggestion-fixtures';
 import { InMemoryImportSuggestionUsage, PrismaImportSuggestionUsage } from './import-suggestion-usage';
-import { ImportSuggestionsService, SUGGESTION_DEADLINE_MS, type SuggestionSource } from './import-suggestions.service';
+import { ImportSuggestionsService, type SuggestionSource } from './import-suggestions.service';
 import * as validation from './suggestion-validation';
 
 const exporter = new InMemorySpanExporter();
@@ -206,7 +206,7 @@ describe('ImportSuggestionsService (#1174)', () => {
       const service = serviceWith(new FakeProvider(hanging()));
 
       const pending = service.suggest({ userId: 'user-1', notes: false, load: async () => src });
-      await jest.advanceTimersByTimeAsync(SUGGESTION_DEADLINE_MS);
+      await jest.advanceTimersByTimeAsync(IMPORT_SUGGESTION_DEADLINE_MS);
 
       await expect(pending).resolves.toEqual({ status: 'unavailable', reason: 'timeout' });
       expect(src.segmented).toEqual(before);
@@ -254,7 +254,7 @@ describe('ImportSuggestionsService (#1174)', () => {
     expect(logged.filter(([level]) => level === 'warn')).toEqual([]);
   });
 
-  it('counts nothing and calls nothing when the lifter left before the file was read', async () => {
+  it('counts nothing and calls nothing when the lifter left before the request was counted', async () => {
     const prisma = new FakePrisma();
     const provider = new FakeProvider(answering({ suggestions: [] }), prisma);
     const left = new AbortController();

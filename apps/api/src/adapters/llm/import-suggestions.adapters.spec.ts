@@ -182,15 +182,30 @@ describe('buildImportSuggestionProvider (#1174)', () => {
     expect(provider?.label).toBe('qwen3:14b at localhost:11434');
   });
 
+  // Every call would fail, so suggestions would show as on and always come back unavailable.
   it.each([
     ['has no host', 'ollama-box:11434'],
+    ['has no host and credentials', 'user:secret@ollama-box:11434'],
     ['does not parse', 'not a url'],
-  ])('names a base URL that %s whole, so the lifter still sees where sets would go', (_label, baseURL) => {
+    ['is not http', 'ftp://ollama-box/v1'],
+    // Node's fetch refuses a URL with credentials, so the SDK would throw on every call.
+    ['has credentials', 'https://user:secret@llm.example.com/v1'],
+  ])('is off when the base URL %s', (_label, baseURL) => {
+    expect(
+      buildImportSuggestionProvider({
+        IMPORT_SUGGESTIONS_PROVIDER: 'openai-compatible',
+        IMPORT_SUGGESTIONS_MODEL: 'qwen3:14b',
+        IMPORT_SUGGESTIONS_BASE_URL: baseURL,
+      } as NodeJS.ProcessEnv),
+    ).toBeNull();
+  });
+
+  it('names only the host, never the path', () => {
     const provider = buildImportSuggestionProvider({
       IMPORT_SUGGESTIONS_PROVIDER: 'openai-compatible',
       IMPORT_SUGGESTIONS_MODEL: 'qwen3:14b',
-      IMPORT_SUGGESTIONS_BASE_URL: baseURL,
+      IMPORT_SUGGESTIONS_BASE_URL: 'https://llm.example.com/v1',
     } as NodeJS.ProcessEnv);
-    expect(provider?.label).toBe(`qwen3:14b at ${baseURL}`);
+    expect(provider?.label).toBe('qwen3:14b at llm.example.com');
   });
 });

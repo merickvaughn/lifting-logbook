@@ -1267,6 +1267,8 @@ export interface ImportAssignResponse {
 export const IMPORT_SUGGESTION_MAX_SETS = 1500;
 /** Suggestion requests each user may make per hour (proposal decision 12). */
 export const IMPORT_SUGGESTION_HOURLY_LIMIT = 10;
+/** How long the model gets to answer a suggestion request, with no retries (proposal decision 12). */
+export const IMPORT_SUGGESTION_DEADLINE_MS = 60_000;
 
 /** What a lone or unnumbered session can be filed as at the Assign step. */
 export type ImportSuggestionSessionChoice = 'earlier' | 'later' | 'non-cycle' | 'exclude';

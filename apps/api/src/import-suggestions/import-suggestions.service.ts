@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import {
+  IMPORT_SUGGESTION_DEADLINE_MS,
   IMPORT_SUGGESTION_HOURLY_LIMIT,
   IMPORT_SUGGESTION_MAX_SETS,
   type ImportSuggestionsResponse,
@@ -18,8 +19,6 @@ import { SUGGESTION_SYSTEM_PROMPT } from './suggestion-prompt';
 import { buildSuggestionPayload, type SuggestionProgram, type SuggestionRow } from './suggestion-payload';
 import { validateSuggestions } from './suggestion-validation';
 
-/** How long the model gets (decision 12). There are no retries. */
-export const SUGGESTION_DEADLINE_MS = 60_000;
 /** The most tokens the model may return (decision 11). */
 export const SUGGESTION_MAX_OUTPUT_TOKENS = 2_000;
 
@@ -122,7 +121,7 @@ export class ImportSuggestionsService {
     }
 
     const deadline = new AbortController();
-    const timer = setTimeout(() => deadline.abort(new Error('deadline')), SUGGESTION_DEADLINE_MS);
+    const timer = setTimeout(() => deadline.abort(new Error('deadline')), IMPORT_SUGGESTION_DEADLINE_MS);
     const onAbort = () => deadline.abort(new Error('client-left'));
     if (params.signal?.aborted) onAbort();
     else params.signal?.addEventListener('abort', onAbort, { once: true });

@@ -60,7 +60,7 @@ import type {
   UserSettingsResponse,
   WorkoutResponse,
 } from '@lifting-logbook/types';
-import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
+import { IMPORT_SUGGESTION_DEADLINE_MS, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 
 // ---------------------------------------------------------------------------
 // @lifting-logbook/api-client
@@ -126,24 +126,19 @@ const JSON_HEADERS: Record<string, string> = { 'Content-Type': 'application/json
 // 5 minutes) while still bounding the wait a hung request forces on the caller.
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
-// An import suggestion request waits on an LLM (#1174). The server's longest answer is the sum of
-// its parts: reading the file's grouping (a 30 s transaction, after up to 2 s waiting for a
-// connection), counting the request (5 s, after up to 2 s), then the model's 60 s deadline. That's
-// 99 s; the rest leaves room for the upload and the reply. Shorter than that, the client could give
-// up on a request the server has already counted. Keep this in step with those server limits.
-const SUGGEST_TIMEOUT_MS = 120_000;
+// An import suggestion request waits on an LLM (#1174). Before the model's deadline, the server
+// reads the file's grouping (a 30 s transaction, after up to 2 s waiting for a connection) and
+// counts the request (5 s, after up to 2 s): 39 s. The rest of the margin is for the upload and
+// the reply. Shorter than that, the client could give up on a request the server has counted.
+const SUGGEST_TIMEOUT_MS = IMPORT_SUGGESTION_DEADLINE_MS + 60_000;
 const DATA_EXPORT_TIMEOUT_MS = 60_000;
 
-// Smart-import endpoint path with mode + optional destination override. Returned
-// relative (rawFetch prepends baseUrl). `suggestions` is its own route, which
-// reads the file the same way but takes no mode (#1174).
-function importPath(
-  program: string,
-  mode: 'preview' | 'commit' | 'dry-run' | 'assign' | 'suggestions',
+// The import query options every smart-import route takes.
+function importQuery(
+  params: URLSearchParams,
   destination?: ImportKind,
   opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>,
-): string {
-  const params = new URLSearchParams(mode === 'suggestions' ? {} : { mode });
+): URLSearchParams {
   if (destination) params.set('destination', destination);
   if (opts?.overrides && Object.keys(opts.overrides).length > 0) {
     params.set('overrides', JSON.stringify(opts.overrides));
@@ -151,9 +146,25 @@ function importPath(
   if (opts?.splitDest) {
     params.set('splitDest', '1');
   }
-  const query = params.toString();
-  const route = mode === 'suggestions' ? 'import/suggestions' : 'import';
-  return `/programs/${enc(program)}/${route}${query ? `?${query}` : ''}`;
+  return params;
+}
+
+// Smart-import endpoint path with mode + optional destination override. Returned
+// relative (rawFetch prepends baseUrl).
+function importPath(
+  program: string,
+  mode: 'preview' | 'commit' | 'dry-run' | 'assign',
+  destination?: ImportKind,
+  opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>,
+): string {
+  const params = importQuery(new URLSearchParams({ mode }), destination, opts);
+  return `/programs/${enc(program)}/import?${params.toString()}`;
+}
+
+// The suggestions route (#1174), which reads the file as the Assign step does but takes no mode.
+function suggestionsPath(program: string, opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>): string {
+  const query = importQuery(new URLSearchParams(), undefined, opts).toString();
+  return `/programs/${enc(program)}/import/suggestions${query ? `?${query}` : ''}`;
 }
 
 // Import form. The per-row options go in the body, not the URL: with one entry per
@@ -652,7 +663,7 @@ export function createApiClient(config: ApiClientConfig) {
       },
       signal?: AbortSignal,
     ): Promise<ImportSuggestionsResponse> {
-      const path = importPath(program, 'suggestions', undefined, opts);
+      const path = suggestionsPath(program, opts);
       const form = importForm(file, opts);
       if (opts.notes) form.set('notes', '1');
       // The caller's signal and this request's own timeout, combined by hand: `AbortSignal.any`

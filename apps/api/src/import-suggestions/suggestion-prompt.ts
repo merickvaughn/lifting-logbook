@@ -1,12 +1,4 @@
-import type { AssignStretchStatus, ImportSuggestion, ImportSuggestionSessionChoice } from '@lifting-logbook/types';
-
-// The response's closed value sets, written once for the prompt, the schema and the validator. Each
-// is built from a `Record` over its type, so a value the type gains or loses is a compile error here.
-const valuesOf = <T extends string>(all: Record<T, true>) => Object.keys(all) as T[];
-export const SUGGESTION_KINDS = valuesOf<ImportSuggestion['kind']>({ boundary: true, lone: true, status: true, program: true, note: true });
-export const BOUNDARY_ACTIONS = valuesOf<Extract<ImportSuggestion, { kind: 'boundary' }>['action']>({ add: true, remove: true });
-export const SESSION_CHOICES = valuesOf<ImportSuggestionSessionChoice>({ earlier: true, later: true, 'non-cycle': true, exclude: true });
-export const STRETCH_STATUSES = valuesOf<AssignStretchStatus>({ 'in-progress': true, completed: true, overran: true, abandoned: true });
+import { BOUNDARY_ACTIONS, SESSION_CHOICES, STRETCH_STATUSES, SUGGESTION_KINDS } from './suggestion-contract';
 
 const oneOf = (values: readonly string[]) => values.map((v) => `"${v}"`).join(' | ');
 

@@ -6,7 +6,7 @@ import type {
 } from '@lifting-logbook/types';
 import type { SegmentedLiftHistory } from '@lifting-logbook/core';
 import type { BuiltSuggestionPayload, SuggestionRow } from './suggestion-payload';
-import { SESSION_CHOICES, STRETCH_STATUSES } from './suggestion-prompt';
+import { BOUNDARY_ACTIONS, SESSION_CHOICES, STRETCH_STATUSES } from './suggestion-contract';
 
 /**
  * Checks what a model returned against the file's parsed rows and the rules' grouping (#1174,
@@ -94,16 +94,26 @@ export function validateSuggestions(
 
     switch (item.kind) {
       case 'boundary': {
-        if ((item.action !== 'add' && item.action !== 'remove') || !isDate(item.date)) return 'malformed';
+        if (typeof item.action !== 'string' || !isDate(item.date)) return 'malformed';
+        if (!(BOUNDARY_ACTIONS as readonly string[]).includes(item.action)) return 'malformed';
+        const action = item.action as Extract<ImportSuggestion, { kind: 'boundary' }>['action'];
         // An export's macrocycles are its own, so there's no boundary to move (decision 8).
         if (exported) return 'out-of-range';
         const date = item.date;
-        if (item.action === 'add') {
-          if (!inStretch.has(date) || starts.has(date)) return 'out-of-range';
-        } else if (starts.get(date) !== 1 || date === firstStart) {
-          return 'out-of-range';
+        switch (action) {
+          case 'add':
+            if (!inStretch.has(date) || starts.has(date)) return 'out-of-range';
+            break;
+          case 'remove':
+            if (starts.get(date) !== 1 || date === firstStart) return 'out-of-range';
+            break;
+          default: {
+            // An action added to the type must be checked here before it's accepted.
+            const unhandled: never = action;
+            return unhandled;
+          }
         }
-        return { kind: 'boundary', action: item.action, date, reason: text };
+        return { kind: 'boundary', action, date, reason: text };
       }
       case 'lone': {
         if (!isDate(item.date) || typeof item.choice !== 'string') return 'malformed';

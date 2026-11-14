@@ -216,13 +216,23 @@ describe('Import suggestions (#1174, e2e, in-memory adapters)', () => {
       const { headers, payload } = uploadOf(newUser(), csvOf(fiveThreeOne(0, 6)));
       const req = http.request({ host: hostname, port, method: 'POST', path: '/programs/5-3-1/import/suggestions', headers });
       req.on('error', () => undefined); // the hang-up below
-      req.end(payload);
+      // A response before the provider is reached (a 4xx, say) fails here with its status, rather
+      // than leaving the test to time out.
+      const answeredFirst = new Promise<never>((_resolve, reject) =>
+        req.on('response', (res) => reject(new Error(`answered ${res.statusCode} before the provider call`))),
+      );
+      try {
+        req.end(payload);
 
-      await atProvider;
-      expect(providerSignal?.aborted).toBe(false);
-      req.destroy();
-      await new Promise<void>((resolve) => providerSignal?.addEventListener('abort', () => resolve(), { once: true }));
-      expect(providerSignal?.aborted).toBe(true);
+        await Promise.race([atProvider, answeredFirst]);
+        expect(providerSignal?.aborted).toBe(false);
+        req.destroy();
+        await new Promise<void>((resolve) => providerSignal?.addEventListener('abort', () => resolve(), { once: true }));
+        expect(providerSignal?.aborted).toBe(true);
+      } finally {
+        req.destroy();
+        answeredFirst.catch(() => undefined);
+      }
     });
 
     it('names the provider on the Assign response', async () => {

@@ -22,7 +22,9 @@ export class OpenAICompatibleImportSuggestionsAdapter implements IImportSuggesti
     apiKey: string | undefined,
     client?: Pick<OpenAI, 'chat'>,
   ) {
-    this.label = `${model} at ${hostOf(baseURL)}`;
+    // The host only: never the path, and never credentials written into the URL. The factory
+    // only builds this adapter for an http(s) URL with a host.
+    this.label = `${model} at ${new URL(baseURL).host}`;
     // The SDK refuses to start without a key; a local server ignores it.
     this.client = client ?? new OpenAI({ baseURL, apiKey: apiKey ?? 'unused', maxRetries: 0 });
   }
@@ -58,19 +60,5 @@ function parseJson(content: string): unknown {
     return JSON.parse(text);
   } catch {
     return text;
-  }
-}
-
-/**
- * Where the lifter is told their sets go. A base URL with no host to show (`ollama-box:11434`
- * parses as a scheme) or that doesn't parse is shown whole rather than as nothing, so the label
- * still names the configured server; the SDK then fails the call, and the lifter sees
- * "unavailable". Covered by the factory tests for both.
- */
-function hostOf(baseURL: string): string {
-  try {
-    return new URL(baseURL).host || baseURL;
-  } catch {
-    return baseURL;
   }
 }

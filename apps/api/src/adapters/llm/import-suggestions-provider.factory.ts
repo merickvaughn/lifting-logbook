@@ -44,12 +44,35 @@ export function buildImportSuggestionProvider(env: NodeJS.ProcessEnv = process.e
       logger.warn('IMPORT_SUGGESTIONS_PROVIDER is openai-compatible but IMPORT_SUGGESTIONS_BASE_URL is not set, so import suggestions are off');
       return null;
     }
+    // A base URL every call would fail on, such as `ollama-box:11434` (a scheme, no host) or one
+    // with credentials (which fetch refuses), would offer suggestions that always come back
+    // unavailable and use up the lifter's requests.
+    if (!isHttpUrl(baseURL)) {
+      logger.warn(
+        'IMPORT_SUGGESTIONS_BASE_URL is not an http(s) URL with a host and no credentials (put a key in IMPORT_SUGGESTIONS_API_KEY), so import suggestions are off',
+      );
+      return null;
+    }
     const adapter = new OpenAICompatibleImportSuggestionsAdapter(model, baseURL, apiKey);
     logger.log(`Import suggestions use ${adapter.label}`);
     return adapter;
   }
   logger.warn(`IMPORT_SUGGESTIONS_PROVIDER "${provider}" isn't anthropic or openai-compatible, so import suggestions are off`);
   return null;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      url.host !== '' &&
+      url.username === '' &&
+      url.password === ''
+    );
+  } catch {
+    return false; // doesn't parse: the factory test's "not a url" case
+  }
 }
 
 export const importSuggestionProvider: Provider = {
