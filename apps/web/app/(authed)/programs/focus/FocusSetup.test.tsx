@@ -447,6 +447,32 @@ describe('FocusSetup', () => {
     expect(screen.queryByText(/the page now shows what was saved/)).not.toBeInTheDocument();
   });
 
+  it('leaves the auto-roll successor alone when the block’s own save is refused as stale', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Shoulders/ }));
+    const successor = stored.find((b) => b.id === 'roll');
+    stored = stored.map((b) => (b.id === 'sh' ? { ...b, version: 2 } : b));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Next area' }), 'Biceps');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('A focus block changed after this page loaded it');
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+    expect(mocks.update).toHaveBeenCalledWith('sh', { nextArea: 'Biceps', version: 1 }, TODAY);
+    expect(stored.find((b) => b.id === 'roll')).toEqual(successor);
+  });
+
+  it('sends no version for blocks the API returned without one', async () => {
+    mocks.list.mockImplementation(async () =>
+      stored.map(({ version: _version, ...b }) => b as FocusBlockResponse),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^›?\s*Biceps/ }));
+    await user.click(within(screen.getByRole('radiogroup', { name: 'Period' })).getByRole('radio', { name: 'Quarterly' }));
+
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('bi', { period: 'quarterly' }, TODAY));
+  });
+
   it('keeps an edit made while the re-read is in flight', async () => {
     const user = userEvent.setup();
     renderPage();

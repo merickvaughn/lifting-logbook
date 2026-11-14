@@ -144,7 +144,7 @@ export function reorderedIds(
 }
 
 /** Priorities as the API assigns them after a reorder: each block's 1-based position. */
-export function withPriorities(blocks: readonly FocusBlock[], ids: readonly string[]): FocusBlock[] {
+export function withPriorities<B extends FocusBlock>(blocks: readonly B[], ids: readonly string[]): B[] {
   return blocks.map((block) => {
     const index = ids.indexOf(block.id);
     return index < 0 ? block : { ...block, priority: index + 1 };

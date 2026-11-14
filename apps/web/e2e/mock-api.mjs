@@ -811,7 +811,12 @@ const server = createServer(async (req, res) => {
         state.focusBlocks
           .filter((b) => focusStatus(b, today) !== 'ended')
           .reduce((max, b) => Math.max(max, b.priority), 0) + 1;
-      const created = { ...body, id, series: body.series ?? id, priority };
+      // The API refuses a version on create and starts every block at 1.
+      if (body.version !== undefined) {
+        json(res, { statusCode: 400, message: ['property version should not exist'], error: 'Bad Request' }, 400);
+        return;
+      }
+      const created = { ...body, id, series: body.series ?? id, priority, version: 1 };
       state.focusBlocks.push(created);
       json(res, focusResponse(created, today), 201);
       return;

@@ -73,9 +73,14 @@ function writeDismissed(ids: ReadonlySet<string>): void {
   }
 }
 
-/** Records each block's version, keeping the higher one: versions only go up. */
-function noteVersions(versions: Map<string, number>, blocks: readonly StoredFocusBlock[]): void {
-  for (const block of blocks) versions.set(block.id, Math.max(block.version, versions.get(block.id) ?? 0));
+/**
+ * The version an edit was made against: the one the page showed when the edit was made, or
+ * its own earlier save's answer when that is later, since versions only go up. None when the
+ * API sent none (one from before #1287), so the save isn't checked.
+ */
+function editVersion(shown: number | undefined, saved: number | undefined): number | undefined {
+  const known = [shown, saved].filter((version): version is number => Number.isInteger(version));
+  return known.length > 0 ? Math.max(...known) : undefined;
 }
 
 type WeekPlans = { status: 'loading' } | { status: 'error' } | { status: 'ready'; plans: FocusDayPlanResponse[] };
@@ -115,7 +120,7 @@ interface Props {
  */
 export default function FocusSetup({ program, macrocycleNum, programLifts, workouts, unit, requestedBlock }: Props) {
   const [today, setToday] = useState<string | null>(null);
-  const [blocks, setBlocks] = useState<FocusBlock[] | null>(null);
+  const [blocks, setBlocks] = useState<StoredFocusBlock[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [budget, setBudget] = useState<FocusBudget | null>(null);
   const [guideFailed, setGuideFailed] = useState(false);
@@ -139,11 +144,12 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
   const failedSinceReread = useRef(false);
   const staleSinceReread = useRef(false);
   /**
-   * Each block's version as this page last knew it: from a read it showed, or from its own
-   * save's answer. A save sends it back, so the API refuses an edit made to a block that
-   * changed since, such as a training max carried into it (ADR-039, Amendment 7).
+   * Each block's version from this page's own checked saves' answers. An edit sends the
+   * version it was made against (`editVersion`), so the API refuses one made to a block that
+   * changed since, such as a training max carried into it (ADR-039, Amendment 7). An
+   * unchecked save's answer isn't kept: its version covers writes the page never showed.
    */
-  const versions = useRef(new Map<string, number>());
+  const savedVersions = useRef(new Map<string, number>());
   /** Follow-on blocks this page created, which are never mistaken for auto-roll successors. */
   const queuedHere = useRef(new Set<string>());
   /** The `?block=` focus block, until the first load of the blocks has opened it. */
@@ -181,7 +187,6 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
     try {
       const loaded = await fetchFocusBlocks(day);
       if (current()) {
-        noteVersions(versions.current, loaded);
         setBlocks(loaded);
         setLoadFailed(false);
       }
@@ -323,25 +328,23 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
           return [block];
         }),
     );
-    // `checked` sends the version the edit was made against. The retarget replaces the
-    // successor's area and pool whatever they hold, so it doesn't depend on what was read.
-    const update = (blockId: string, body: UpdateFocusBlockRequest, checked: boolean) =>
-      save(
-        'updateFocusBlock',
-        async (day) => {
-          // Read when the save runs, so it includes this page's own saves ahead of it.
-          const version = checked ? versions.current.get(blockId) : undefined;
-          const saved = await updateFocusBlock(blockId, version === undefined ? body : { ...body, version }, day);
-          noteVersions(versions.current, [saved]);
-        },
-        BLOCKS_AND_WEEK,
-        { blockId, fields: Object.keys(body) },
-      );
-    update(id, full, true);
-    if (retarget) update(retarget.id, retarget.patch, false);
-    if (dropSuccessor) {
-      save('deleteFocusBlock', () => deleteFocusBlock(dropSuccessor.id), BLOCKS_AND_WEEK, { blockId: dropSuccessor.id });
-    }
+    save(
+      'updateFocusBlock',
+      async (day) => {
+        // The version shown is taken with the edit; this page's own saves ahead of it are
+        // read when the save runs.
+        const version = editVersion(before.version, savedVersions.current.get(id));
+        const saved = await updateFocusBlock(id, version === undefined ? full : { ...full, version }, day);
+        if (version !== undefined && Number.isInteger(saved.version)) savedVersions.current.set(id, saved.version);
+        // The successor follows only a saved edit: one refused leaves the block's next area
+        // as it was. The retarget replaces the successor's area and pool whatever they hold,
+        // so it sends no version.
+        if (retarget) await updateFocusBlock(retarget.id, retarget.patch, day);
+        if (dropSuccessor) await deleteFocusBlock(dropSuccessor.id);
+      },
+      BLOCKS_AND_WEEK,
+      { blockId: id, fields: Object.keys(full), ...(successor && { successorId: successor.id }) },
+    );
   }
 
   function createBlock(request: CreateFocusBlockRequest, open: boolean) {
@@ -351,7 +354,6 @@ export default function FocusSetup({ program, macrocycleNum, programLifts, worko
       async (day) => {
         try {
           const created = await createFocusBlock(request, day);
-          noteVersions(versions.current, [created]);
           if (request.series) queuedHere.current.add(created.id);
           setBlocks((current) => [...(current ?? []), created]);
           if (open) setOpenId(created.id);

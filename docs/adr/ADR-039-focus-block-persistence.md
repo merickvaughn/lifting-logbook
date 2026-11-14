@@ -356,19 +356,25 @@ version, and `PATCH /focus/blocks/:id` can refuse a write based on an older read
   date edit, a session recorded on a plan read, a predecessor set to prompt when its successor is
   deleted. Every block the API returns carries it (`StoredFocusBlock`).
 - **The check.** `PATCH` takes an optional `version`. When sent, it is compared with the block
-  read under Amendment 5's row lock, so no write can land between the check and the update. A
-  mismatch is a `409` with the code `focus-block-stale` (`FOCUS_BLOCK_STALE_CODE`), and nothing
+  read under Amendment 5's row lock, so no write can land between the check and the update. Like
+  that lock, this holds only inside the request's RLS transaction; on the bare
+  `SYSTEM_DATABASE_URL` client, which no deployment sets (#534), the check and the update are
+  separate statements. A mismatch is a `409` with the code `focus-block-stale` (`FOCUS_BLOCK_STALE_CODE`), and nothing
   is written. Without a version the update isn't checked. That keeps every existing client
   working, and the web only sends a version the API returned, so a new web on the old API
   during a deploy sends none.
 - **A reorder leaves it alone.** Priority is written only by a reorder, and `PATCH` never writes
   it, so a stale save can't undo a reorder. Raising the version there would refuse the page's
   next edit after its own reorder.
-- **The setup page** sends the version from the last read it showed, or from its own save's
-  answer when that is later. Versions only go up, so it keeps the higher one. A save queued
-  behind the page's own save therefore isn't refused, but one made before another client's write
-  is. The successor retarget that follows a next-area edit sends none: it replaces the
-  successor's area and pool whatever they hold. On the `409` the page re-reads, as it does after
+- **The setup page** sends the version of the block it showed when the lifter made the edit, or
+  its own earlier checked save's answer when that is later. Versions only go up, so it keeps the
+  higher one. A save queued behind the page's own save therefore isn't refused, but one made
+  before another client's write is. Every card edit is checked, not only pool edits: the page
+  builds them from what it showed (a period change on an active block also sends a start
+  anchored to the shown dates). The successor retarget or removal that follows a next-area or
+  prompt edit runs only once the block's own save succeeds, and the retarget sends no version:
+  it replaces the successor's area and pool whatever they hold. Its answer isn't kept, since its
+  version covers writes the page never showed. On the `409` the page re-reads, as it does after
   any failed save, and says the block changed after the page loaded it, so the lifter's change
   didn't save. The lifter makes it again on the block as stored.
 - **What it covers.** All three cases Amendment 5 left: the carried max, a recorded session that

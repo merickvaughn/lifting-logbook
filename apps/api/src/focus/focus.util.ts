@@ -102,7 +102,8 @@ const TIMER_FIELDS = ['prep', 'set', 'rest'] as const;
  * With `version`, the edit is refused with `FocusBlockStaleError` unless the block is still
  * at that version: a client sending a pool it read before another write (a training max
  * carried in, a recorded session, another tab's edit) would write that read back over it
- * (Amendment 7). It is checked under the lock, so no write can land after the check.
+ * (Amendment 7). It is checked under the lock, so inside the request's transaction no write can
+ * land after the check.
  */
 export async function saveBlockEdit(
   focus: IFocusRepository,

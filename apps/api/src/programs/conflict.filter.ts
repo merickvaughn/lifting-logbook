@@ -42,8 +42,8 @@ export class DomainConflictFilter implements ExceptionFilter {
       statusCode: HttpStatus.CONFLICT,
       message: err.message,
       error: 'Conflict',
-      // A client tells this 409 from the others by its code (ADR-042).
-      ...((err instanceof MacrocycleNumberConflictError || err instanceof FocusBlockStaleError) && { code: err.code }),
+      // A client tells this 409 from the others by its code (ADR-042), when the error has one.
+      ...('code' in err && typeof err.code === 'string' && { code: err.code }),
     });
   }
 }
