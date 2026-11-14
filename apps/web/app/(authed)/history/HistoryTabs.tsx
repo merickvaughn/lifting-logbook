@@ -150,6 +150,8 @@ function MacrocyclesTab({
     } catch (e) {
       logClientError('undoImport', e, { programId: batch.program, batchId: batch.id });
       setError({ macrocycleId, message: e instanceof Error ? e.message : 'Undo failed' });
+      // The confirm button was disabled while the undo ran, which drops its focus: hand it back.
+      setFocusTarget({ kind: 'confirm', id: macrocycleId });
     } finally {
       setBusy(false);
     }

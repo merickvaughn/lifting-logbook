@@ -62,8 +62,8 @@ test('Assign: a boundary moves by keyboard alone, keeping focus, and status is w
   await expect(page.getByTestId('assign-settled').first()).toContainText('Unfinished');
 });
 
-// #1257: an import is undone from the past-macrocycles list once the wizard is gone.
-test('Assign: an import is undone later from the past-macrocycles list', async ({ page }) => {
+/** Commits the file through Assign, then leaves the wizard for the past-macrocycles list. */
+async function importThenOpenHistory(page: Page) {
   await toAssign(page);
   await page.getByRole('button', { name: 'Keep every break: file the 20 one-lift workouts with the macrocycle before each' }).click();
   await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
@@ -77,6 +77,12 @@ test('Assign: an import is undone later from the past-macrocycles list', async (
   await page.getByRole('tab', { name: 'Macrocycles' }).click();
   const imported = page.getByRole('row').filter({ hasText: '2024-01-' });
   await expect(imported).toHaveCount(2);
+  return imported;
+}
+
+// #1257: an import is undone from the past-macrocycles list once the wizard is gone.
+test('Assign: an import is undone later from the past-macrocycles list', async ({ page }) => {
+  const imported = await importThenOpenHistory(page);
 
   await page.getByRole('button', { name: 'Undo import of macrocycle 2' }).click();
   await expect(page.getByText(/Every set it added goes/)).toBeVisible();
@@ -86,6 +92,23 @@ test('Assign: an import is undone later from the past-macrocycles list', async (
   await expect(imported).toHaveCount(0);
   await expect(page.getByText(/^Undo complete: \d+ restored/)).toBeFocused();
   await expect(page.getByRole('row').filter({ hasText: '2024-09-02' }).getByRole('cell').first()).toHaveText('1');
+});
+
+// The confirm button is disabled while the undo runs, which in a browser drops its focus.
+test('Assign: a failed undo from the list says why and keeps focus on its confirm', async ({ page }) => {
+  const imported = await importThenOpenHistory(page);
+  const message = 'today must be within a day of the server date. Check your device clock.';
+  await page.route('**/import/*/undo*', (route) =>
+    route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ statusCode: 400, message }) }),
+  );
+
+  await page.getByRole('button', { name: 'Undo import of macrocycle 2' }).click();
+  const confirm = page.getByRole('button', { name: 'Undo import', exact: true });
+  await confirm.click();
+
+  await expect(page.getByRole('alert').filter({ hasText: message })).toBeVisible();
+  await expect(confirm).toBeFocused();
+  await expect(imported).toHaveCount(2);
 });
 
 test('Assign: a long file stays workable at 375px', async ({ page }) => {
