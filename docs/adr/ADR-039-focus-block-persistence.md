@@ -244,6 +244,50 @@ every block edit would discard edits made to the successor. A per-field "edited"
 successor would separate the two exactly, but it is stored state that the compare above already
 gives for every case except a successor edited back to its block's value.
 
+## Amendment 5 — pool writes read the block under a row lock (#1230)
+
+Two server paths write a block's whole pool computed from the pool they read: the training-max
+carry into a queued successor (`carryEditsToSuccessor`, Amendments 2 and 4) and the session
+recording on a workout's focus plan read (`recordFocusSessions`, Amendment 3). Each read the block
+earlier in the request, so a `PATCH /focus/blocks/:id` that saved between that read and the write
+was overwritten without an error: an edited entry went back to its old weight or max.
+
+Each of these writes now reads the block again with `IFocusRepository.lockBlocks`, a `SELECT …
+FOR UPDATE` [9] on the block's row, and computes the new pool from that read. `PATCH` takes the
+same lock before it reads the block it compares the edit against. A request that finds the row
+locked waits for the other request's transaction to end, then reads what it saved: under the READ
+COMMITTED isolation the request transactions run at, each statement sees the rows committed before
+it began, so the read after the lock sees the other request's write. The lock lasts until the
+request's transaction ends (`RlsInterceptor`), so nothing has to release it. One `lockBlocks` call
+locks its blocks in id order, so two plan reads that lock overlapping sets queue rather than
+deadlock. `PATCH` takes a second lock after its own block: the block's queued successor. That
+order can't form a cycle, because the second lock is always on a block that starts later in the
+same series, and a plan read locks only active blocks, never a queued one.
+
+- **Locked only when there is something to write.** A plan read locks the `double` blocks that
+  have a session to record, not every active block, so plan reads that record nothing never wait
+  on each other or on a setup edit.
+- **A lift the setup edit added** isn't in the records the plan read loaded, so its session is
+  recorded on the next plan read.
+- **What it doesn't cover.** The setup page sends a block's whole pool, as it loaded it, and a row
+  lock can't see a client's stale copy. A `PATCH` that saves after a plan read recorded a session
+  writes back the entry's older `lastReps` and `lastDate`. That one heals: the session is newer
+  than the entry's `lastDate` again, so the next plan read records it again. A carried training
+  max doesn't heal. A successor saved from a page that loaded it before the carry writes the
+  pre-carry max back, and nothing recomputes the carry. Two tabs editing one block are the same
+  case: the later save wins. Preventing these needs the client to say which version it edited
+  (the version check below), which
+  [#1287](https://github.com/merickvaughn/lifting-logbook/issues/1287) takes up.
+
+**Alternatives considered.** A version column checked on update (optimistic locking [10]) would
+refuse a write based on a stale read with a 409, which also covers the setup page's own stale
+pool, but every client that writes a block would have to send the version and retry on a 409,
+and a plan read that refused its own write would have to retry inside the request. A per-entry
+update (`jsonb_set` on one array element) would keep concurrent changes to different entries,
+but a pool entry has no stable key in the JSON (entries are matched by lift name, and a setup
+edit can rename or reorder them), and the training-max carry moves several entries at once. A row
+lock keeps one read-modify-write per block at a time with no new column and no client change.
+
 ## References
 
 1. E. F. Codd, ["A Relational Model of Data for Large Shared Data Banks"](https://doi.org/10.1145/362384.362685), *Communications of the ACM* 13(6), 1970 — §2, redundancy and derivable data.
@@ -254,3 +298,5 @@ gives for every case except a successor edited back to its block's value.
 6. IETF [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265), *HTTP State Management Mechanism* — the `Path` and `Max-Age` cookie attributes the `tz` cookie sets.
 7. PostgreSQL 16 documentation, [`ALTER TABLE`](https://www.postgresql.org/docs/16/sql-altertable.html) — `NO FORCE ROW LEVEL SECURITY` / `FORCE ROW LEVEL SECURITY`.
 8. PostgreSQL 16 documentation, [§55.2.2.1 Multiple Statements in a Simple Query](https://www.postgresql.org/docs/16/protocol-flow.html#PROTOCOL-FLOW-MULTI-STATEMENT) — a multi-statement query string runs as one implicit transaction.
+9. PostgreSQL 16 documentation, [§13.3.2 Row-Level Locks](https://www.postgresql.org/docs/16/explicit-locking.html#LOCKING-ROWS) and [§13.2.1 Read Committed Isolation Level](https://www.postgresql.org/docs/16/transaction-iso.html#XACT-READ-COMMITTED) — `FOR UPDATE` waits for a concurrent writer and locks the row until the transaction ends; each later statement sees rows committed before it began.
+10. M. Fowler, ["Optimistic Offline Lock"](https://martinfowler.com/eaaCatalog/optimisticOfflineLock.html), *Patterns of Enterprise Application Architecture* — the version-check alternative.

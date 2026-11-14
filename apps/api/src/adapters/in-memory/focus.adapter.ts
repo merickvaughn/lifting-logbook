@@ -43,6 +43,16 @@ export class InMemoryFocusRepository implements IFocusRepository, NumberedStore 
     return block ? clone(block) : null;
   }
 
+  /** The in-memory store has no concurrent writers to lock out, so this only reads. */
+  async lockBlocks(ids: readonly string[]): Promise<FocusBlock[]> {
+    return [...new Set(ids)]
+      .sort()
+      .flatMap((id) => {
+        const block = this.blocks.get(id);
+        return block ? [clone(block)] : [];
+      });
+  }
+
   async createBlock(block: FocusBlock): Promise<FocusBlock> {
     if (this.startTaken(block.series, block.start)) {
       throw new FocusBlockConflictError(block.series, block.start);

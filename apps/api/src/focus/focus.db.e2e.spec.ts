@@ -36,7 +36,9 @@ const USER_OWNER = 'db-e2e-focus';
 const USER_OTHER = 'db-e2e-focus-other';
 // Its own user, so a failure there leaves no blocks behind for the owner's tests.
 const USER_SUCCESSOR = 'db-e2e-focus-successor';
-const USERS = [USER_OWNER, USER_OTHER, USER_SUCCESSOR];
+// The concurrent-write tests' user (#1230), so their blocks never enter another test's reads.
+const USER_RACE = 'db-e2e-focus-race';
+const USERS = [USER_OWNER, USER_OTHER, USER_SUCCESSOR, USER_RACE];
 const PROGRAM = '5-3-1';
 const TODAY = '2026-10-25';
 
@@ -455,5 +457,147 @@ describeOrSkip('Focus work HTTP (e2e, PrismaRepositoryFactory)', () => {
 
     const row = await prisma.focusBlock.findUnique({ where: { id } });
     expect(row?.pool).toEqual([entry('Cable Curl', { weight: 25, lastReps: [12, 12, 13], lastDate: '2026-10-20' })]);
+  });
+
+  // #1230: two requests that each write a block's pool, run at once. An HTTP request can't be
+  // paused between its read and its write, so another transaction holds the block's row while
+  // both requests are sent, in a fixed order, and lets go once both are waiting on it. Each
+  // request must read the pool it writes from under the lock: one that read it before waiting
+  // writes back a pool missing the other request's change.
+  describe('concurrent pool writes (#1230)', () => {
+    const lifter = as(USER_RACE);
+
+    /** Holds `id`'s row lock in a transaction of its own, until `release`. */
+    async function holdRow(id: string): Promise<{ pid: number; release: () => Promise<void> }> {
+      const client = new Client({ connectionString: OWNER_URL });
+      await client.connect();
+      await client.query('BEGIN');
+      const { rows } = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      await client.query('SELECT "id" FROM "focus_block" WHERE "id" = $1 FOR UPDATE', [id]);
+      return {
+        pid: rows[0]?.pid ?? NaN,
+        release: async () => {
+          await client.query('ROLLBACK');
+          await client.end();
+        },
+      };
+    }
+
+    /**
+     * Waits until `count` sessions are queued, directly or behind another waiter, on a lock the
+     * session `pid` holds. Counted from `pid`, so other suites' lock waits on the shared
+     * database don't count.
+     */
+    async function waitForWaiters(pid: number, count: number): Promise<void> {
+      const deadline = Date.now() + 15_000;
+      for (;;) {
+        const rows = await prisma.$queryRaw<{ waiting: bigint }[]>`
+          WITH RECURSIVE behind(pid) AS (
+            SELECT ${pid}::int
+            UNION
+            SELECT activity.pid FROM pg_stat_activity activity
+            JOIN behind ON behind.pid = ANY(pg_blocking_pids(activity.pid))
+          )
+          SELECT count(*) - 1 AS waiting FROM behind`;
+        if (Number(rows[0]?.waiting ?? 0) >= count) return;
+        if (Date.now() > deadline) throw new Error(`fewer than ${count} requests waited on the held row`);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
+    /** Sends `first`, then `second` once `first` waits on the held row, and releases it. */
+    async function sendWhileHeld(
+      id: string,
+      first: () => ReturnType<typeof lifter>,
+      second: () => ReturnType<typeof lifter>,
+    ) {
+      const held = await holdRow(id);
+      const sent = (async () => {
+        const a = first();
+        await waitForWaiters(held.pid, 1);
+        const b = second();
+        await waitForWaiters(held.pid, 2);
+        return [a, b] as const;
+      })();
+      const [a, b] = await sent.finally(held.release);
+      return Promise.all([a, b]);
+    }
+
+    afterEach(async () => {
+      // A stored percent_wave row would fail the migration test's re-added CHECK.
+      await prisma.focusBlock.deleteMany({ where: { userId: USER_RACE } });
+      await prisma.liftRecord.deleteMany({ where: { userId: USER_RACE } });
+    });
+
+    it("keeps a setup edit to one entry and a plan read's recorded session on another", async () => {
+      await prisma.liftRecord.createMany({
+        data: [1, 2].map((setNum) => ({
+          userId: USER_RACE,
+          program: PROGRAM,
+          macrocycleNum: 1,
+          workoutNum: 1,
+          date: new Date('2026-10-20T00:00:00.000Z'),
+          lift: 'Cable Curl',
+          setNum,
+          weight: 25,
+          reps: 12,
+        })),
+      });
+      const pool = [entry('Cable Curl'), entry('Hammer Curl', { weight: 20 })];
+      const created = await lifter('POST', `/focus/blocks?today=${TODAY}`, blockBody({ series: 'race-double', pool }));
+      expect(created.statusCode).toBe(201);
+      const { id } = created.json() as FocusBlockResponse;
+
+      // The setup page sends the pool it loaded, with Hammer Curl's weight changed.
+      const edit = [entry('Cable Curl'), entry('Hammer Curl', { weight: 30 })];
+      const [patched, planned] = await sendWhileHeld(
+        id,
+        () => lifter('PATCH', `/focus/blocks/${id}?today=${TODAY}`, { pool: edit }),
+        () => lifter('GET', `/programs/${PROGRAM}/workouts/1/focus?today=${TODAY}`),
+      );
+      expect(patched.statusCode).toBe(200);
+      expect(planned.statusCode).toBe(200);
+
+      const row = await prisma.focusBlock.findUnique({ where: { id } });
+      expect(row?.pool).toEqual([
+        entry('Cable Curl', { weight: 25, lastReps: [12, 12], lastDate: '2026-10-20' }),
+        entry('Hammer Curl', { weight: 30 }),
+      ]);
+    });
+
+    it("keeps an edit to the queued successor and the block's training-max change carried into it", async () => {
+      const wave = (lift: string, trainingMax: number) => entry(lift, { trainingMax });
+      const block = (await lifter(
+        'POST',
+        `/focus/blocks?today=${TODAY}`,
+        blockBody({ series: 'race-wave', progression: 'percent_wave', pool: [wave('Barbell Curl', 100), wave('Hammer Curl', 50)] }),
+      )).json() as FocusBlockResponse;
+      // Queued by hand in the series, so it's the block's successor (ADR-039, decision 4).
+      const successor = await lifter(
+        'POST',
+        `/focus/blocks?today=${TODAY}`,
+        blockBody({
+          series: 'race-wave',
+          start: '2026-11-01',
+          progression: 'percent_wave',
+          pool: [wave('Barbell Curl', 105), wave('Hammer Curl', 55)],
+        }),
+      );
+      expect(successor.statusCode).toBe(201);
+      const { id } = successor.json() as FocusBlockResponse;
+
+      const [edited, raised] = await sendWhileHeld(
+        id,
+        // The lifter's own edit to the successor's Hammer Curl max.
+        () => lifter('PATCH', `/focus/blocks/${id}?today=${TODAY}`, { pool: [wave('Barbell Curl', 105), wave('Hammer Curl', 60)] }),
+        // The block's Barbell Curl max up 10, which carries into the successor.
+        () => lifter('PATCH', `/focus/blocks/${block.id}?today=${TODAY}`, { pool: [wave('Barbell Curl', 110), wave('Hammer Curl', 50)] }),
+      );
+      expect(edited.statusCode).toBe(200);
+      expect(raised.statusCode).toBe(200);
+
+      const row = await prisma.focusBlock.findUnique({ where: { id } });
+      expect(row?.pool).toEqual([wave('Barbell Curl', 115), wave('Hammer Curl', 60)]);
+    });
   });
 });
