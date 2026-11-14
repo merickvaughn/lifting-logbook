@@ -103,7 +103,6 @@ test('Assign: an import into a program that isn’t active is undone from Histor
   await page.getByLabel('Program').selectOption({ label: 'My Custom Program' });
   await page.getByRole('button', { name: 'Show', exact: true }).click();
   await expect(page).toHaveURL(/[?&]program=cust-1/);
-  await expect(page.getByText('We couldn’t load your latest history just now.', { exact: false })).toHaveCount(0);
   await page.getByRole('tab', { name: 'Macrocycles' }).click();
   await expect(imported).toHaveCount(2);
 

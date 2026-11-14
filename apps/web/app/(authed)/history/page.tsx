@@ -48,13 +48,15 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
     // fallback-covered-by: apps/web/app/(authed)/history/page.test.tsx
     getUserSettings().then(
       (settings) => settings.activeProgram,
-      (): string | null => {
+      (e: unknown): string | null => {
+        console.error('HistoryPage: user settings fetch failed, choosing from the custom programs', e);
         loadFailed = true;
         return null;
       },
     ),
     // fallback-covered-by: apps/web/app/(authed)/history/page.test.tsx
-    fetchCustomPrograms().catch((): CustomProgramSummaryResponse[] => {
+    fetchCustomPrograms().catch((e: unknown): CustomProgramSummaryResponse[] => {
+      console.error('HistoryPage: custom programs fetch failed, offering the active program only', e);
       loadFailed = true;
       return [];
     }),
@@ -147,8 +149,9 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
         Your logged lifts and Training Max (TM) progression over time.{' '}
         <Link href="/non-cycle/new">Record a non-cycle workout</Link>
       </p>
-      {programs.length > 1 && program !== undefined && (
-        // A plain GET form, so it works before the page hydrates.
+      {programs.length > 1 && programs.some((p) => p.id === program) && (
+        // A plain GET form, so it works before the page hydrates. Only when the program shown is
+        // one of its options, or the select would show another as chosen.
         <form method="get" action="/history" className={styles.programPicker}>
           <label htmlFor="history-program">Program</label>
           <select id="history-program" name="program" defaultValue={program}>

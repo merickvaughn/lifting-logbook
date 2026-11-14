@@ -235,6 +235,40 @@ describe('HistoryPage program', () => {
     expect(html).not.toContain('id="history-program"');
   });
 
+  // The API answers lift-records with no sets for a program with no current macrocycle.
+  it('lists an imported-only program’s macrocycles and imports, with no notice', async () => {
+    const imported = {
+      id: 'm-imported',
+      macrocycleNum: 1,
+      startDate: '2024-01-01',
+      endDate: '2024-01-26',
+      status: 'completed',
+      origin: 'imported',
+      current: false,
+      unmatched: false,
+    };
+    const batch = { id: 'b-imported', program: CUSTOM.id, createdAt: '2026-11-14T12:00:00.000Z', macrocycleIds: ['m-imported'] };
+    (fetchMacrocycles as jest.Mock).mockResolvedValue([imported]);
+    (fetchImportBatches as jest.Mock).mockResolvedValue([batch]);
+
+    const html = renderToStaticMarkup((await historyPage({ program: CUSTOM.id })) as ReactElement);
+
+    expect(fetchLiftRecords).toHaveBeenCalledWith(CUSTOM.id);
+    expect(html).not.toContain('role="status"');
+    const attr = (name: string) => JSON.parse((html.match(new RegExp(`${name}="([^"]*)"`))?.[1] ?? '').replace(/&quot;/g, '"'));
+    expect(attr('data-macrocycles')).toEqual([imported]);
+    expect(attr('data-imports')).toEqual([batch]);
+  });
+
+  it('offers no picker when the active program isn’t among the lifter’s programs', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '9f0e1d2c-3b4a-4596-8a7b-6c5d4e3f2a1b' });
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([CUSTOM, { ...CUSTOM, id: '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d', name: 'Other' }]);
+
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
+
+    expect(html).not.toContain('id="history-program"');
+  });
+
   it('shows the active program by default, and offers the others', async () => {
     const html = renderToStaticMarkup((await historyPage()) as ReactElement);
 
