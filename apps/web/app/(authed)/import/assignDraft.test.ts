@@ -25,6 +25,7 @@ function stretch(dates: string[], over: Partial<AssignStretch> = {}): AssignStre
     candidateProgram: null,
     fileMacrocycleNum: null,
     fileGroup: null,
+    stored: { kind: 'new' },
     startDate: dates[0]!,
     endDate: dates[dates.length - 1]!,
     sessions: dates.map((d) => session(d)),

@@ -132,6 +132,7 @@ const ASSIGN_RESPONSE = {
       candidateProgram: null,
       fileMacrocycleNum: null,
       fileGroup: null,
+      stored: { kind: 'new' },
       startDate: dates[0],
       endDate: dates[2],
       sessions: dates.map((date, n) => ({ date, workoutNum: n + 1, lifts: ['Squat', 'Bench Press'], sets: 6 })),
