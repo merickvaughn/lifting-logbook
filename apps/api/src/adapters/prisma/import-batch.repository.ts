@@ -50,6 +50,14 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
     return rows.map(toRecord);
   }
 
+  async listByProgram(program: string, destination: ImportKind): Promise<ImportBatchRecord[]> {
+    const rows = await this.prisma.importBatch.findMany({
+      where: { userId: this.userId, program, destination },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+    return rows.map(toRecord);
+  }
+
   async deleteById(id: string, userId: string): Promise<void> {
     await this.prisma.importBatch.deleteMany({ where: { id, userId } });
   }

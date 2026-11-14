@@ -25,6 +25,12 @@ export class InMemoryImportBatchRepository implements IImportBatchRepository {
     return [...this.store.values()].filter((b) => b.groupId === groupId);
   }
 
+  async listByProgram(program: string, destination: ImportKind): Promise<ImportBatchRecord[]> {
+    return [...this.store.values()]
+      .filter((b) => b.program === program && b.destination === destination)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+  }
+
   async deleteById(id: string, userId: string): Promise<void> {
     const record = this.store.get(id);
     if (record && record.userId === userId) this.store.delete(id);

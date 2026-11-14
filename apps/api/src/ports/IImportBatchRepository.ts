@@ -68,6 +68,8 @@ export interface IImportBatchRepository {
   findById(id: string, userId: string): Promise<ImportBatchRecord | null>;
   /** The user's batches whose `groupId` is `groupId`: the other programs' batches of that import. */
   listGroup(groupId: string): Promise<ImportBatchRecord[]>;
+  /** The user's batches of one program and destination, newest first (#1257). */
+  listByProgram(program: string, destination: ImportKind): Promise<ImportBatchRecord[]>;
   deleteById(id: string, userId: string): Promise<void>;
   /**
    * The user's batches of one program and destination with a pre-image key whose number

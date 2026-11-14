@@ -6,6 +6,7 @@ import multipart from '@fastify/multipart';
 import type { LiftRecord } from '@lifting-logbook/core';
 import type {
   ImportAssignResponse,
+  ImportBatchSummary,
   ImportBreakdown,
   ImportBreakdownStretch,
   ImportCommitResponse,
@@ -931,6 +932,69 @@ describe('Import breakdown (#1254, e2e, in-memory adapters)', () => {
       await commit(csvOf(grown), breakdownOf([stretch(grown, 'rpt', inProgress)]));
       await undo(batchId);
       expect(await macrocycles()).toEqual([expect.objectContaining({ startDate: at(6), endDate: at(8) })]);
+    });
+  });
+
+  // #1257: the past-macrocycles list offers Undo for each of these.
+  describe('the import list', () => {
+    const listImports = async (program = 'rpt') => {
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'GET',
+        url: `/programs/${program}/import/batches`,
+        headers: auth(),
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json<ImportBatchSummary[]>();
+    };
+    /** The id of `program`'s macrocycle starting on day `n`. */
+    const macrocycleOn = async (n: number, program = 'rpt') => {
+      const row = (await macrocycles(program)).find((m) => ymd(m.startDate) === day(n));
+      if (!row) throw new Error(`No ${program} macrocycle starts on day ${n}`);
+      return row.id;
+    };
+    const createdAt = async (batchId: string | null) => {
+      const batch = await (await repos()).importBatch.findById(batchId ?? '', user);
+      if (!batch) throw new Error('The batch was not saved');
+      return batch.createdAt.toISOString();
+    };
+
+    it("lists the lifter's imports newest first, each with its macrocycles and date", async () => {
+      const first = run(RPT_DAYS, 0, 3);
+      const second = run(RPT_DAYS, 30, 3);
+      const fiveThreeOne = run(FIVE_THREE_ONE_DAYS, 60, 2);
+      const third = run(RPT_DAYS, 80, 3);
+      const a = await commit(csvOf(first), breakdownOf([stretch(first)]));
+      const b = await commit(csvOf(second), breakdownOf([stretch(second)]));
+      // An import through two programs is named by its Source program's batch in both lists.
+      const c = await commit(csvOf([...fiveThreeOne, ...third]), breakdownOf([stretch(fiveThreeOne, '5-3-1'), stretch(third)]));
+
+      expect(await listImports()).toEqual([
+        { id: c.batchId, program: 'rpt', createdAt: await createdAt(c.batchId), macrocycleIds: [await macrocycleOn(80)] },
+        { id: b.batchId, program: 'rpt', createdAt: await createdAt(b.batchId), macrocycleIds: [await macrocycleOn(30)] },
+        { id: a.batchId, program: 'rpt', createdAt: await createdAt(a.batchId), macrocycleIds: [await macrocycleOn(0)] },
+      ]);
+      expect(await listImports('5-3-1')).toEqual([
+        { id: c.batchId, program: 'rpt', createdAt: await createdAt(c.batchId), macrocycleIds: [await macrocycleOn(60, '5-3-1')] },
+      ]);
+
+      // An undone import is no longer listed.
+      await undo(b.batchId);
+      expect((await listImports()).map((i) => i.id)).toEqual([c.batchId, a.batchId]);
+    });
+
+    it("never lists another user's imports", async () => {
+      const mine = run(RPT_DAYS, 0, 3);
+      const { batchId } = await commit(csvOf(mine), breakdownOf([stretch(mine)]));
+      const owner = user;
+
+      user = `${owner}-other`;
+      expect(await listImports()).toEqual([]);
+      const theirs = run(RPT_DAYS, 40, 3);
+      await commit(csvOf(theirs), breakdownOf([stretch(theirs)]));
+      expect(await listImports()).toHaveLength(1);
+
+      user = owner;
+      expect((await listImports()).map((i) => i.id)).toEqual([batchId]);
     });
   });
 });

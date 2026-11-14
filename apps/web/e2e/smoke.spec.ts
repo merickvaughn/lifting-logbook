@@ -233,7 +233,8 @@ test('history page lists past macrocycles with status and dates', async ({ page 
   await page.getByRole('tab', { name: 'Macrocycles' }).click();
 
   const imported = page.getByRole('row').filter({ hasText: 'Imported' });
-  await expect(imported.getByRole('cell')).toHaveText(['1', '2024-09-02', '2024-10-25', 'Completed', 'Imported']);
+  // The last cell holds Undo for an import still on record (#1257); the mock records none.
+  await expect(imported.getByRole('cell')).toHaveText(['1', '2024-09-02', '2024-10-25', 'Completed', 'Imported', '']);
   await expect(page.getByRole('row').filter({ hasText: '(current)' })).toContainText('In progress');
 });
 

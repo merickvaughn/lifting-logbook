@@ -25,6 +25,7 @@ import type {
   GoogleSheetImportRequest,
   GoogleSheetWorkbookResponse,
   ImportPreviewResponse,
+  ImportBatchSummary,
   ImportUndoResponse,
   LiftMetadataResponse,
   LiftModificationResponse,
@@ -351,6 +352,10 @@ export function createApiClient(config: ApiClientConfig) {
     fetchMacrocycles(program: string): Promise<MacrocycleSummaryResponse[]> {
       return request(`/programs/${enc(program)}/macrocycles`, { cache: 'no-store' });
     },
+    /** The imports that touched the program's past macrocycles, newest first, each undoable (#1257). */
+    fetchImportBatches(program: string): Promise<ImportBatchSummary[]> {
+      return request(`/programs/${enc(program)}/import/batches`, { cache: 'no-store' });
+    },
     // Idempotent delete: a 404 (no existing macrocycle) is treated as success, matching
     // deleteStrengthGoal/deleteCustomProgram below.
     deleteCurrentMacrocycle(programId: string): Promise<void> {
@@ -623,9 +628,11 @@ export function createApiClient(config: ApiClientConfig) {
     /**
      * Phase 3: Undo a committed import by its batch ID. Restores prior values for
      * updated records, deletes newly created rows, and skips rows edited since import.
+     * `today` is the user's calendar day (YYYY-MM-DD), which the statuses of the macrocycles
+     * it reads again are judged against (#1255).
      */
-    async undoImport(program: string, batchId: string): Promise<ImportUndoResponse> {
-      const path = `/programs/${enc(program)}/import/${enc(batchId)}/undo`;
+    async undoImport(program: string, batchId: string, today: string): Promise<ImportUndoResponse> {
+      const path = `/programs/${enc(program)}/import/${enc(batchId)}/undo?today=${enc(today)}`;
       const res = await rawFetch(path, {
         method: 'POST',
         cache: 'no-store',

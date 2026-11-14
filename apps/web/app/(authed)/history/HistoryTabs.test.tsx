@@ -1,8 +1,21 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { MacrocycleSummaryResponse, TrainingMaxHistoryEntryResponse } from '@lifting-logbook/types';
+import type {
+  ImportBatchSummary,
+  MacrocycleSummaryResponse,
+  TrainingMaxHistoryEntryResponse,
+} from '@lifting-logbook/types';
+import { undoImport } from '@/lib/client-api';
+import { logClientError } from '@/lib/log-client-error';
 import HistoryTabs from './HistoryTabs';
 import type { EnrichedRecord } from './page';
+
+const refresh = jest.fn();
+jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
+jest.mock('@/lib/client-api', () => ({ undoImport: jest.fn() }));
+jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
+const mockUndo = undoImport as jest.MockedFunction<typeof undoImport>;
+const mockLog = logClientError as jest.MockedFunction<typeof logClientError>;
 
 const RECORD: EnrichedRecord = {
   id: 'rec-1',
@@ -100,5 +113,72 @@ describe('HistoryTabs — Macrocycles', () => {
     render(<HistoryTabs records={[]} tmEntries={[]} macrocycles={[]} unit="lbs" />);
     await user.click(screen.getByRole('tab', { name: 'Macrocycles' }));
     expect(screen.getByText('No macrocycles yet.')).toBeInTheDocument();
+  });
+
+  // #1257: an import is undone from here once the wizard is gone.
+  describe('Undo import', () => {
+    const older: ImportBatchSummary = { id: 'b-old', program: '5-3-1', createdAt: '2026-10-01T00:00:00.000Z', macrocycleIds: ['a', 'b'] };
+    const newer: ImportBatchSummary = { id: 'b-new', program: 'rpt', createdAt: '2026-11-01T00:00:00.000Z', macrocycleIds: ['b'] };
+
+    beforeEach(() => {
+      refresh.mockReset();
+      mockUndo.mockReset();
+      mockLog.mockReset();
+    });
+
+    async function openTab() {
+      const user = userEvent.setup();
+      render(
+        <HistoryTabs
+          records={[]}
+          tmEntries={[]}
+          macrocycles={[
+            macrocycle({ id: 'a', macrocycleNum: 1, origin: 'imported' }),
+            macrocycle({ id: 'b', macrocycleNum: 2, origin: 'imported' }),
+            macrocycle({ id: 'c', macrocycleNum: 3, current: true }),
+          ]}
+          imports={[newer, older]}
+          unit="lbs"
+        />,
+      );
+      await user.click(screen.getByRole('tab', { name: 'Macrocycles' }));
+      return user;
+    }
+
+    it('offers it only on an imported macrocycle, for the newest import that touched it', async () => {
+      const user = await openTab();
+      expect(screen.queryByRole('button', { name: 'Undo the import of macrocycle 3' })).not.toBeInTheDocument();
+      mockUndo.mockResolvedValue({ batchId: 'b-new', restored: 3, skipped: 0, flagged: [] });
+
+      await user.click(screen.getByRole('button', { name: 'Undo the import of macrocycle 2' }));
+      const row = screen.getAllByRole('row')[2];
+      expect(within(row).getByText(/Every set it added goes/)).toBeInTheDocument();
+      await user.click(within(row).getByRole('button', { name: 'Undo import' }));
+
+      expect(mockUndo).toHaveBeenCalledWith('rpt', 'b-new', expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+      expect(refresh).toHaveBeenCalled();
+    });
+
+    it('asks first, and does nothing on Cancel', async () => {
+      const user = await openTab();
+      await user.click(screen.getByRole('button', { name: 'Undo the import of macrocycle 1' }));
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(mockUndo).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Undo the import of macrocycle 1' })).toBeInTheDocument();
+    });
+
+    it('shows and reports a failed undo', async () => {
+      const user = await openTab();
+      const failure = new Error('Undo import failed (HTTP 500)');
+      mockUndo.mockRejectedValue(failure);
+
+      await user.click(screen.getByRole('button', { name: 'Undo the import of macrocycle 1' }));
+      await user.click(screen.getByRole('button', { name: 'Undo import' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Undo import failed (HTTP 500)');
+      expect(mockLog).toHaveBeenCalledWith('undoImport', failure, { programId: '5-3-1', batchId: 'b-old' });
+      expect(refresh).not.toHaveBeenCalled();
+    });
   });
 });

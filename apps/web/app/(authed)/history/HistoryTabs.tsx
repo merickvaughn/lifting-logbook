@@ -2,15 +2,20 @@
 
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { formatWeight, liftIdFor, storedIdListing } from '@lifting-logbook/core';
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
+  ImportBatchSummary,
   MacrocycleOrigin,
   MacrocycleStatus,
   MacrocycleSummaryResponse,
   TrainingMaxHistoryEntryResponse,
   WeightUnit,
 } from '@lifting-logbook/types';
+import { undoImport } from '@/lib/client-api';
+import { localToday } from '@/lib/calendarDay';
+import { logClientError } from '@/lib/log-client-error';
 import type { EnrichedRecord } from './page';
 import styles from './history.module.css';
 
@@ -20,11 +25,14 @@ export default function HistoryTabs({
   records,
   tmEntries,
   macrocycles,
+  imports = [],
   unit,
 }: {
   records: EnrichedRecord[];
   tmEntries: TrainingMaxHistoryEntryResponse[];
   macrocycles: MacrocycleSummaryResponse[];
+  /** The imports that touched these macrocycles, newest first, each undoable (#1257). */
+  imports?: ImportBatchSummary[];
   unit: WeightUnit;
 }) {
   const [tab, setTab] = useState<Tab>('history');
@@ -64,7 +72,7 @@ export default function HistoryTabs({
       <div role="tabpanel">
         {tab === 'history' && <LiftHistoryTab records={records} unit={unit} />}
         {tab === 'timeline' && <TmTimelineTab entries={tmEntries} unit={unit} />}
-        {tab === 'macrocycles' && <MacrocyclesTab macrocycles={macrocycles} />}
+        {tab === 'macrocycles' && <MacrocyclesTab macrocycles={macrocycles} imports={imports} />}
       </div>
     </div>
   );
@@ -87,8 +95,24 @@ const ORIGIN_LABEL: Record<MacrocycleOrigin, string> = {
   'non-cycle': 'Outside a macrocycle',
 };
 
-/** Every macrocycle of the program, newest first (ADR-042). */
-function MacrocyclesTab({ macrocycles }: { macrocycles: MacrocycleSummaryResponse[] }) {
+/**
+ * Every macrocycle of the program, newest first (ADR-042), each with an Undo for the newest import
+ * that touched it (#1257).
+ */
+function MacrocyclesTab({
+  macrocycles,
+  imports,
+}: {
+  macrocycles: MacrocycleSummaryResponse[];
+  imports: ImportBatchSummary[];
+}) {
+  const importOf = useMemo(() => {
+    const byMacrocycle = new Map<string, ImportBatchSummary>();
+    for (const batch of imports) {
+      for (const id of batch.macrocycleIds) if (!byMacrocycle.has(id)) byMacrocycle.set(id, batch);
+    }
+    return byMacrocycle;
+  }, [imports]);
   if (macrocycles.length === 0) {
     return <p className={styles.empty}>No macrocycles yet.</p>;
   }
@@ -102,26 +126,87 @@ function MacrocyclesTab({ macrocycles }: { macrocycles: MacrocycleSummaryRespons
             <th>End</th>
             <th>Status</th>
             <th>Source</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
           {macrocycles
             .slice()
             .reverse()
-            .map((m) => (
-              <tr key={m.id}>
-                <td>
-                  {m.macrocycleNum}
-                  {m.current && ' (current)'}
-                </td>
-                <td>{m.startDate}</td>
-                <td>{m.endDate ?? '—'}</td>
-                <td>{STATUS_LABEL[m.status]}</td>
-                <td>{ORIGIN_LABEL[m.origin]}</td>
-              </tr>
-            ))}
+            .map((m) => {
+              const batch = importOf.get(m.id);
+              return (
+                <tr key={m.id}>
+                  <td>
+                    {m.macrocycleNum}
+                    {m.current && ' (current)'}
+                  </td>
+                  <td>{m.startDate}</td>
+                  <td>{m.endDate ?? '—'}</td>
+                  <td>{STATUS_LABEL[m.status]}</td>
+                  <td>{ORIGIN_LABEL[m.origin]}</td>
+                  <td>{batch && <UndoImport batch={batch} macrocycleNum={m.macrocycleNum} />}</td>
+                </tr>
+              );
+            })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/**
+ * Undoes an import from the past-macrocycles list, once the wizard is gone (#1257). The import is
+ * undone as a whole, so it asks first: every set it added goes, from every macrocycle and program.
+ */
+function UndoImport({ batch, macrocycleNum }: { batch: ImportBatchSummary; macrocycleNum: number }) {
+  const router = useRouter();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleUndo() {
+    setBusy(true);
+    setError(null);
+    try {
+      await undoImport(batch.program, batch.id, localToday());
+      setConfirming(false);
+      router.refresh();
+    } catch (e) {
+      logClientError('undoImport', e, { programId: batch.program, batchId: batch.id });
+      setError(e instanceof Error ? e.message : 'Undo failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={styles.undoImport}>
+      {confirming ? (
+        <>
+          <span>Undo this import? Every set it added goes, from every program and macrocycle it wrote to.</span>
+          <button type="button" className={styles.undoButton} onClick={handleUndo} disabled={busy}>
+            {busy ? 'Undoing…' : 'Undo import'}
+          </button>
+          <button type="button" className={styles.undoButton} onClick={() => setConfirming(false)} disabled={busy}>
+            Cancel
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className={styles.undoButton}
+          aria-label={`Undo the import of macrocycle ${macrocycleNum}`}
+          onClick={() => setConfirming(true)}
+        >
+          Undo import
+        </button>
+      )}
+      {error && (
+        <p role="alert" className={styles.undoError}>
+          {error}
+        </p>
+      )}
     </div>
   );
 }

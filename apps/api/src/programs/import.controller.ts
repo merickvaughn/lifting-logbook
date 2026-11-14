@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Body,
   ConflictException,
+  Get,
   Controller,
   HttpCode,
   HttpStatus,
@@ -24,6 +25,7 @@ import {
   ImportClassification,
   ImportCommitResponse,
   ImportDryRunResponse,
+  ImportBatchSummary,
   ImportBreakdown,
   ImportError,
   ImportKind,
@@ -74,7 +76,8 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { preImageKeyNumber } from '../ports/IImportBatchRepository';
+import { ImportBatchRecord, preImageKeyNumber } from '../ports/IImportBatchRepository';
+import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { PrismaService } from '../adapters/prisma/prisma.service';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
@@ -362,6 +365,45 @@ export class ImportController {
     return { tabs };
   }
 
+  /**
+   * The lifter's lift-records imports that touched this program's past macrocycles, newest first,
+   * so an import can be undone from the past-macrocycles list once the wizard is gone (#1257). One
+   * through the Assign step that wrote to several programs is named by its Source program's batch,
+   * which undoes it as a whole.
+   */
+  @Get('import/batches')
+  async listImportBatches(
+    @Param('program') program: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ImportBatchSummary[]> {
+    const repos = await this.factory.forUser(user);
+    const [batches, rows] = await Promise.all([
+      repos.importBatch.listByProgram(program, 'lift-records'),
+      repos.macrocycle.list(program),
+    ]);
+    // One read per import that wrote to several programs, not per batch.
+    const sources = new Map<string, ImportBatchRecord | null>();
+    const summaries: ImportBatchSummary[] = [];
+    for (const batch of batches) {
+      const nums = touchedMacrocycleNums(batch, rows);
+      // The rows undo can remove or read again: a `live` macrocycle keeps what it holds.
+      const macrocycleIds = rows
+        .filter((m) => (m.origin === 'imported' || m.origin === 'legacy') && nums.has(m.macrocycleNum))
+        .map((m) => m.id);
+      if (macrocycleIds.length === 0) continue;
+      let source = batch;
+      if (batch.groupId) {
+        if (!sources.has(batch.groupId)) {
+          sources.set(batch.groupId, await repos.importBatch.findById(batch.groupId, user.id));
+        }
+        // A Source batch that's gone leaves its part to be undone on its own, as undo does.
+        source = sources.get(batch.groupId) ?? batch;
+      }
+      summaries.push({ id: source.id, program: source.program, createdAt: source.createdAt.toISOString(), macrocycleIds });
+    }
+    return summaries;
+  }
+
   @Post('import/:batchId/undo')
   @HttpCode(HttpStatus.OK)
   @RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)
@@ -442,24 +484,16 @@ export class ImportController {
           part.program,
         );
         // Collect all created keys and delete in a single query to avoid N+1 round-trips
-        const { setKeys: createdKeys, legacyNums } = splitLegacyRowKeys(
+        const { setKeys: createdKeys } = splitLegacyRowKeys(
           entries
             .filter(([k, e]) => preImageKeyNumber(k) !== null && e.kind === 'created')
             .map(([k]) => k),
         );
-        // The macrocycles the batch touched: those it created or extended, and those its sets and
-        // `legacy` rows are on, which is all a batch from before #1255 records. Read by number
-        // before anything is renumbered.
-        const setNums = createdKeys.map(preImageKeyNumber).filter((n): n is number => n !== null);
-        const nums = new Set([...legacyNums, ...setNums]);
-        // Only `imported` macrocycles are read again: a `live` or `legacy` row keeps what it holds.
-        const recorded = new Set([...(part.macrocycles?.created ?? []), ...(part.macrocycles?.extended ?? [])]);
+        // Read by number before anything is renumbered.
         const rows = await repos.macrocycle.list(part.program);
-        const ids = new Set<string>();
-        for (const m of rows) {
-          if (recorded.has(m.id)) nums.add(m.macrocycleNum);
-          if (m.origin === 'imported' && nums.has(m.macrocycleNum)) ids.add(m.id);
-        }
+        const nums = touchedMacrocycleNums(part, rows);
+        // Only `imported` macrocycles are read again: a `live` or `legacy` row keeps what it holds.
+        const ids = new Set(rows.filter((m) => m.origin === 'imported' && nums.has(m.macrocycleNum)).map((m) => m.id));
         // The statuses the batch chose are released before anything is read again.
         await releaseStatusChoices(repos, part, part.macrocycles?.chosen ?? [], new Map(rows.map((m) => [m.id, m])));
         await deleteCreated(part.program, createdKeys);
@@ -1178,6 +1212,21 @@ export class ImportController {
 }
 
 /** Replaces the lift of each overridden row. `liftOverrides` keys are 1-based positions in `rows`. */
+/**
+ * The numbers of `rows`, its program's macrocycles, that a lift-records batch touched: those it
+ * created or extended, and those its sets and `legacy` rows are on, which is all a batch from
+ * before #1255 records.
+ */
+function touchedMacrocycleNums(batch: ImportBatchRecord, rows: readonly MacrocycleRow[]): Set<number> {
+  const { setKeys, legacyNums } = splitLegacyRowKeys(
+    Object.keys(batch.preImage).filter((k) => preImageKeyNumber(k) !== null && batch.preImage[k].kind === 'created'),
+  );
+  const nums = new Set([...legacyNums, ...setKeys.map(preImageKeyNumber).filter((n): n is number => n !== null)]);
+  const recorded = new Set([...(batch.macrocycles?.created ?? []), ...(batch.macrocycles?.extended ?? [])]);
+  for (const m of rows) if (recorded.has(m.id)) nums.add(m.macrocycleNum);
+  return nums;
+}
+
 function withLiftOverrides<R extends { lift: unknown }>(rows: R[], liftOverrides: Record<string, string>): R[] {
   return rows.map((r, i) => {
     const canonical = liftOverrides[String(i + 1)];
