@@ -67,6 +67,14 @@
   color: var(--color-on-accent);
 }
 
+/* The answer a question expects, such as Yes to LLM suggestions (#1174). */
+.btnPrimary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-on-accent);
+  font-weight: var(--font-weight-medium);
+}
+
 /* aria-disabled rather than disabled, so a press that reaches the end keeps focus on the control. */
 .btn[aria-disabled='true'] {
   opacity: 0.5;

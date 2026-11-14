@@ -75,6 +75,7 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     await owner.liftModification.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.liftMetadata.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.missingMaxDismissal.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
+    await owner.importSuggestionUsage.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
   };
 
   beforeAll(async () => {
@@ -298,6 +299,24 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     const deleted = await asUser(appDb, USER_ALICE, (tx) => tx.missingMaxDismissal.deleteMany());
     expect(deleted.count).toBe(1);
     expect(await owner.missingMaxDismissal.count({ where: { userId: USER_BOB } })).toBe(1);
+  });
+
+  it("cannot read or write another user's import_suggestion_usage rows, and fails closed (#1174)", async () => {
+    await owner.importSuggestionUsage.createMany({
+      data: [USER_ALICE, USER_BOB].map((userId) => ({ userId, usedAt: new Date() })),
+    });
+
+    // Deliberately unscoped: only RLS keeps Bob's count from Alice.
+    const rows = await asUser(appDb, USER_ALICE, (tx) => tx.importSuggestionUsage.findMany());
+    expect(rows.map((row) => row.userId)).toEqual([USER_ALICE]);
+    expect(await asUser(appDb, null, (tx) => tx.importSuggestionUsage.count())).toBe(0);
+
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) => tx.importSuggestionUsage.create({ data: { userId: USER_BOB, usedAt: new Date() } })),
+    ).rejects.toThrow();
+    const deleted = await asUser(appDb, USER_ALICE, (tx) => tx.importSuggestionUsage.deleteMany());
+    expect(deleted.count).toBe(1);
+    expect(await owner.importSuggestionUsage.count({ where: { userId: USER_BOB } })).toBe(1);
   });
 
   it("cannot read another user's lift_metadata progression, and fails closed (#1210)", async () => {

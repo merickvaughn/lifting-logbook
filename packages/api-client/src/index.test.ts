@@ -744,6 +744,45 @@ describe('createApiClient', () => {
       });
     });
 
+    it('suggestImport POSTs to the suggestions route with the Review request and the notes choice (#1174)', async () => {
+      mockFetch.mockImplementation(async () => new Response(JSON.stringify({ status: 'off' }), { status: 200 }));
+      const result = await makeClient().suggestImport('5-3-1', file, {
+        overrides: { Exercise: 'lift' },
+        excludeKeys: ['__row_2'],
+        splitDest: true,
+        today: '2026-11-14',
+        notes: true,
+      });
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/programs/5-3-1/import/suggestions?overrides=%7B%22Exercise%22%3A%22lift%22%7D&splitDest=1');
+      const form = init.body as FormData;
+      expect(form.get('excludeKeys')).toBe('["__row_2"]');
+      expect(form.get('notes')).toBe('1');
+      expect(result).toEqual({ status: 'off' });
+
+      await makeClient().suggestImport('5-3-1', file, { notes: false });
+      expect(lastCall()[0]).toBe('http://api.test/programs/5-3-1/import/suggestions');
+      expect((lastCall()[1].body as FormData).has('notes')).toBe(false);
+    });
+
+    it('suggestImport aborts the request when the caller’s signal aborts (#1174)', async () => {
+      let sent: () => void = () => undefined;
+      const fetched = new Promise<void>((resolve) => (sent = resolve));
+      // Like fetch, it rejects with the signal's reason once the signal aborts.
+      mockFetch.mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+            sent();
+          }),
+      );
+      const caller = new AbortController();
+      const pending = makeClient().suggestImport('5-3-1', file, { notes: false }, caller.signal);
+      await fetched;
+      caller.abort(new Error('left the step'));
+      await expect(pending).rejects.toThrow('left the step');
+    });
+
     it('dryRunImport and commitImport send the breakdown, and both throw a mismatch with its code (#1256)', async () => {
       const breakdown = { stretches: [{ program: 'rpt', dates: ['2026-01-01'], status: 'completed' as const, statusChosen: false }], excludedDates: [], nonCycleDates: [] };
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ created: 1 }), { status: 200 }));

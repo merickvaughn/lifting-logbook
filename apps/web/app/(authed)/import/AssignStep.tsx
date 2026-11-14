@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ComponentProps } from 'react';
 import { MACROCYCLE_STATUSES } from '@lifting-logbook/types';
 import type {
   AssignStartReason,
@@ -34,6 +34,7 @@ import {
   type AssignDraft,
   type SessionChoice,
 } from './assignDraft';
+import AssignSuggestions from './AssignSuggestions';
 import styles from './AssignStep.module.css';
 
 /** A program's display name: a custom program's own, or the built-in catalog's. */
@@ -124,12 +125,15 @@ export default function AssignStep({
   draft,
   onChange,
   focusHeading = false,
+  suggestions,
 }: {
   res: ImportAssignResponse;
   draft: AssignDraft;
   onChange: (next: AssignDraft) => void;
   /** Focus the heading when shown: the control the lifter last used is gone (#1256). */
   focusHeading?: boolean;
+  /** The LLM suggestions' state and handlers (#1174), which the wizard owns. */
+  suggestions?: Omit<ComponentProps<typeof AssignSuggestions>, 'res' | 'draft' | 'onChange' | 'programName'>;
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const name = programNamer(res);
@@ -173,6 +177,10 @@ export default function AssignStep({
         We grouped your workouts using their dates. These are suggestions: change anything before you
         continue. Macrocycles are numbered by date, so yours may be renumbered.
       </p>
+
+      {suggestions && (
+        <AssignSuggestions res={res} draft={draft} onChange={onChange} programName={name} {...suggestions} />
+      )}
 
       <p className={styles.summary} data-testid="assign-summary">
         {res.sessions} workout{res.sessions === 1 ? '' : 's'} in {stretches.length} macrocycle

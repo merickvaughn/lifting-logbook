@@ -21,6 +21,7 @@ For severity levels, escalation paths, and the incident response checklist, see
 | [Staging CI flakiness](staging-ci-flakiness.md) | `staging.yml` red runs that pass on re-run | SEV3 |
 | [Macrocycle rename rollback](macrocycle-rename-rollback.md) | Reverting ADR-038 / PR #1041 after its rename migration ran | SEV2 |
 | [Turn the import Assign step off](import-assign-flag.md) | Stopping new assigned imports (`IMPORT_ASSIGN_ENABLED`) in an environment | SEV3 |
+| [Import suggestions from an AI model](import-suggestions.md) | Turning suggestions on or off (`IMPORT_SUGGESTIONS_PROVIDER`), a provider outage, or a local Ollama setup | SEV3 |
 
 ---
 

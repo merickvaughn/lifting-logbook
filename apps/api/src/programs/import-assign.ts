@@ -228,6 +228,8 @@ export function assignResponse(
     split?: { changes: number; olderThanCurrent: number };
     /** Each stretch's placement among the stored macrocycles, in `segmented.stretches` order (#1255). */
     stored: readonly AssignStoredPlacement[];
+    /** Who LLM suggestions would go to, or null when they're off (#1174). */
+    suggestionsProvider: string | null;
   },
   liftNames: ReadonlyMap<string, string>,
 ): ImportAssignResponse {
@@ -257,5 +259,6 @@ export function assignResponse(
     exported: extra.exported,
     programs: extra.programs,
     ...(extra.split ? { split: extra.split } : {}),
+    suggestions: extra.suggestionsProvider === null ? null : { provider: extra.suggestionsProvider },
   };
 }

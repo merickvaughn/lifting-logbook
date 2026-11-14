@@ -19,6 +19,7 @@ import type {
   MacrocycleDashboardResponse,
   ImportAssignResponse,
   ImportBreakdown,
+  ImportSuggestionsResponse,
   ImportCommitResponse,
   ImportDryRunResponse,
   ImportError,
@@ -59,7 +60,7 @@ import type {
   UserSettingsResponse,
   WorkoutResponse,
 } from '@lifting-logbook/types';
-import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
+import { IMPORT_SUGGESTION_DEADLINE_MS, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 
 // ---------------------------------------------------------------------------
 // @lifting-logbook/api-client
@@ -124,7 +125,29 @@ const JSON_HEADERS: Record<string, string> = { 'Content-Type': 'application/json
 // above any real request in this app (Cloud Run's own default request timeout is
 // 5 minutes) while still bounding the wait a hung request forces on the caller.
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+// An import suggestion request waits on an LLM (#1174). Before the model's deadline, the server
+// reads the file's grouping (a 30 s transaction, after up to 2 s waiting for a connection) and
+// counts the request (5 s, after up to 2 s): 39 s. The rest of the margin is for the upload and
+// the reply. Shorter than that, the client could give up on a request the server has counted.
+const SUGGEST_TIMEOUT_MS = IMPORT_SUGGESTION_DEADLINE_MS + 60_000;
 const DATA_EXPORT_TIMEOUT_MS = 60_000;
+
+// The import query options every smart-import route takes.
+function importQuery(
+  params: URLSearchParams,
+  destination?: ImportKind,
+  opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>,
+): URLSearchParams {
+  if (destination) params.set('destination', destination);
+  if (opts?.overrides && Object.keys(opts.overrides).length > 0) {
+    params.set('overrides', JSON.stringify(opts.overrides));
+  }
+  if (opts?.splitDest) {
+    params.set('splitDest', '1');
+  }
+  return params;
+}
 
 // Smart-import endpoint path with mode + optional destination override. Returned
 // relative (rawFetch prepends baseUrl).
@@ -134,15 +157,14 @@ function importPath(
   destination?: ImportKind,
   opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>,
 ): string {
-  const params = new URLSearchParams({ mode });
-  if (destination) params.set('destination', destination);
-  if (opts?.overrides && Object.keys(opts.overrides).length > 0) {
-    params.set('overrides', JSON.stringify(opts.overrides));
-  }
-  if (opts?.splitDest) {
-    params.set('splitDest', '1');
-  }
+  const params = importQuery(new URLSearchParams({ mode }), destination, opts);
   return `/programs/${enc(program)}/import?${params.toString()}`;
+}
+
+// The suggestions route (#1174), which reads the file as the Assign step does but takes no mode.
+function suggestionsPath(program: string, opts?: Pick<CommitImportOpts, 'overrides' | 'splitDest'>): string {
+  const query = importQuery(new URLSearchParams(), undefined, opts).toString();
+  return `/programs/${enc(program)}/import/suggestions${query ? `?${query}` : ''}`;
 }
 
 // Import form. The per-row options go in the body, not the URL: with one entry per
@@ -627,6 +649,38 @@ export function createApiClient(config: ApiClientConfig) {
       const res = await rawFetch(path, { method: 'POST', body: importForm(file, opts), cache: 'no-store' });
       if (!res.ok) throw await readError(res, path);
       return (await res.json()) as ImportAssignResponse;
+    },
+    /**
+     * Smart Import — an LLM's suggestions for the Assign step's grouping (#1174), sent only once
+     * the lifter has said yes. `notes` sends the file's workout notes too. `signal` lets the wizard
+     * abort the request when the lifter leaves the step. Throws on any failure, with the API's code.
+     */
+    async suggestImport(
+      program: string,
+      file: File,
+      opts: Pick<CommitImportOpts, 'overrides' | 'excludeKeys' | 'liftOverrides' | 'splitDest' | 'today'> & {
+        notes: boolean;
+      },
+      signal?: AbortSignal,
+    ): Promise<ImportSuggestionsResponse> {
+      const path = suggestionsPath(program, opts);
+      const form = importForm(file, opts);
+      if (opts.notes) form.set('notes', '1');
+      // The caller's signal and this request's own timeout, combined by hand: `AbortSignal.any`
+      // is missing from Safari before 17.4.
+      const bounded = new AbortController();
+      const timer = setTimeout(() => bounded.abort(new DOMException('Timed out', 'TimeoutError')), SUGGEST_TIMEOUT_MS);
+      const onAbort = () => bounded.abort(signal?.reason);
+      if (signal?.aborted) onAbort();
+      else signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        const res = await rawFetch(path, { method: 'POST', body: form, cache: 'no-store', signal: bounded.signal });
+        if (!res.ok) throw await readError(res, path);
+        return (await res.json()) as ImportSuggestionsResponse;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+      }
     },
     /**
      * Smart Import — reports the counts `commitImport` would return for these same

@@ -194,6 +194,7 @@ sequences the runbooks below in reading order and explains what the signals mean
 | [Database unreachable](runbooks/database-unreachable.md) | DB connection error triage — SEV1 |
 | [Auth provider outage](runbooks/auth-provider-outage.md) | 401/403 surge + Clerk status incident — SEV2 |
 | [Deploy regression rollback](runbooks/deploy-regression-rollback.md) | Error rate spike correlated with a recent deploy — SEV2 |
+| [Import suggestions from an AI model](runbooks/import-suggestions.md) | Turning the import wizard's AI suggestions on or off, a provider outage, or a local Ollama setup — SEV3 |
 
 ---
 

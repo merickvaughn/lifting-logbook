@@ -1255,7 +1255,76 @@ export interface ImportAssignResponse {
    * program covering each row's date. Present only when the request asks for the split.
    */
   split?: { changes: number; olderThanCurrent: number };
+  /**
+   * Whether an LLM can add suggestions to this grouping (#1174, proposal decision 12), and whose:
+   * null when `IMPORT_SUGGESTIONS_PROVIDER` isn't set, which is how the wizard tells Off from
+   * Unavailable. Nothing is sent to it until the lifter answers yes.
+   */
+  suggestions: { provider: string } | null;
 }
+
+/** Most sets one suggestion request carries (proposal decision 11). */
+export const IMPORT_SUGGESTION_MAX_SETS = 1500;
+/** Suggestion requests each user may make per hour (proposal decision 12). */
+export const IMPORT_SUGGESTION_HOURLY_LIMIT = 10;
+/** How long the model gets to answer a suggestion request, with no retries (proposal decision 12). */
+export const IMPORT_SUGGESTION_DEADLINE_MS = 60_000;
+
+/** What a lone or unnumbered session can be filed as at the Assign step. */
+export type ImportSuggestionSessionChoice = 'earlier' | 'later' | 'non-cycle' | 'exclude';
+
+/**
+ * One LLM suggestion for the Assign step (#1174, proposal decision 12's table). Each is anchored to
+ * session dates (`YYYY-MM-DD`) of the rules' grouping it was asked about, so the wizard can tell
+ * when the lifter's own edits have left it out of date. Nothing changes until the lifter accepts one.
+ *
+ * - `boundary`: accepting adds (`add`) or removes (`remove`) a boundary at a session date.
+ * - `lone`: answers a decision 5 flag for the lone or unnumbered session on `date`.
+ * - `status`: sets the status of the stretch starting on `stretchStart`.
+ * - `program`: sets the program of the stretch starting on `stretchStart`.
+ * - `note`: changes nothing. It can only be dismissed.
+ */
+export type ImportSuggestion =
+  | { kind: 'boundary'; action: 'add' | 'remove'; date: string; reason: string }
+  | { kind: 'lone'; date: string; choice: ImportSuggestionSessionChoice; reason: string }
+  | { kind: 'status'; stretchStart: string; status: AssignStretchStatus; reason: string }
+  | { kind: 'program'; stretchStart: string; program: string; reason: string }
+  | { kind: 'note'; from: string | null; to: string | null; text: string };
+
+/**
+ * Why the server dropped a suggestion the model returned (#1174):
+ * - `malformed`: not a suggestion of a known kind with the fields it needs, or a response that
+ *   wasn't JSON at all (counted once).
+ * - `unknown-lift`: it names a lift that isn't in the file.
+ * - `out-of-range`: its date isn't a session it can apply to, its status or program isn't one
+ *   the lifter could choose, or it would change nothing.
+ */
+export type ImportSuggestionDropReason = 'malformed' | 'unknown-lift' | 'out-of-range';
+
+/**
+ * Response for `POST /programs/:program/import/suggestions` (#1174). The rules' grouping never
+ * waits on this or changes with it.
+ *
+ * - `off`: no provider is configured, so nothing was sent.
+ * - `limited`: the lifter has used this hour's {@link IMPORT_SUGGESTION_HOURLY_LIMIT} requests.
+ * - `too-large`: even with summaries, the file is over {@link IMPORT_SUGGESTION_MAX_SETS} sets.
+ * - `unavailable`: the provider failed or ran past its deadline.
+ * - `ready`: the suggestions that passed validation, and how many were dropped and why.
+ */
+export type ImportSuggestionsResponse =
+  | { status: 'off' }
+  | { status: 'limited'; retryAfterMinutes: number }
+  | { status: 'too-large'; sets: number; limit: number }
+  | { status: 'unavailable'; reason: 'timeout' | 'error' }
+  | {
+      status: 'ready';
+      provider: string;
+      notesSent: boolean;
+      /** Sessions sent as a summary (date, lift names and top set) rather than every set. */
+      summarizedSessions: number;
+      suggestions: ImportSuggestion[];
+      dropped: Record<ImportSuggestionDropReason, number>;
+    };
 
 /** Phase 3: Response for `POST /programs/:program/import/:batchId/undo`. */
 export interface ImportUndoResponse {

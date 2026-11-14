@@ -83,6 +83,8 @@ export const {
   previewImport,
   // A read, but of the file the user is importing, which only the browser has (#1256).
   assignImport,
+  // Sends the file the user is importing to the LLM suggestions route, once they say yes (#1174).
+  suggestImport,
   commitImport,
   dryRunImport,
   undoImport,
