@@ -61,8 +61,9 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
   CustomProgram: 'customPrograms',
   CustomProgramSpec: 'customProgramSpecs',
 };
-// Internal undo state for an import, not the user's data.
-const NOT_EXPORTED = ['ImportBatch'];
+// Internal undo state for an import, and the hourly count of import suggestion requests (#1174):
+// not the user's data.
+const NOT_EXPORTED = ['ImportBatch', 'ImportSuggestionUsage'];
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
 const OWNER_DATABASE_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;
@@ -94,6 +95,7 @@ async function cleanUsers(prisma: PrismaClient): Promise<void> {
   await prisma.macrocycleScheduledWorkout.deleteMany({ where });
   await prisma.customProgram.deleteMany({ where });
   await prisma.importBatch.deleteMany({ where });
+  await prisma.importSuggestionUsage.deleteMany({ where });
 }
 
 /** At least one row in every user-scoped table. `mark` lands in a text column of most. */

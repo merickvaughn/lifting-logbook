@@ -159,6 +159,8 @@ const ASSIGN_RESPONSE = {
   exported: false,
   // A custom program's name, so the spec doesn't depend on the built-in catalog's wording.
   programs: [{ id: 'rpt', name: 'RPT', workouts: 24, weeks: 8 }],
+  // No LLM provider, so the step shows no suggestions question (#1174).
+  suggestions: null,
 };
 
 // Column mappings for the Google Sheets LIFT_RECORDS tab's preview (#1111) —

@@ -8,6 +8,7 @@ import type {
   ImportAssignResponse,
   ImportDelta,
   ImportPreviewResponse,
+  ImportSuggestionsResponse,
 } from '@lifting-logbook/types';
 import { LIFT_CATALOG } from '@lifting-logbook/core';
 import { ApiClientError } from '@lifting-logbook/api-client';
@@ -21,6 +22,7 @@ import {
   fetchCustomLifts,
   fetchMissingTrainingMaxes,
   previewImport,
+  suggestImport,
   undoImport,
   updateTrainingMaxes,
 } from '@/lib/client-api';
@@ -39,6 +41,7 @@ function readFileText(file: File): Promise<string> {
 jest.mock('@/lib/client-api', () => ({
   previewImport: jest.fn(),
   assignImport: jest.fn(),
+  suggestImport: jest.fn(),
   commitImport: jest.fn(),
   dryRunImport: jest.fn(),
   createCustomLift: jest.fn(),
@@ -54,6 +57,7 @@ const mockPreview = previewImport as jest.MockedFunction<typeof previewImport>;
 const mockCommit = commitImport as jest.MockedFunction<typeof commitImport>;
 const mockDryRun = dryRunImport as jest.MockedFunction<typeof dryRunImport>;
 const mockAssign = assignImport as jest.MockedFunction<typeof assignImport>;
+const mockSuggest = suggestImport as jest.MockedFunction<typeof suggestImport>;
 const mockCreateCustomLift = createCustomLift as jest.MockedFunction<typeof createCustomLift>;
 const mockFetchCustomLifts = fetchCustomLifts as jest.MockedFunction<typeof fetchCustomLifts>;
 const mockUndo = undoImport as jest.MockedFunction<typeof undoImport>;
@@ -3793,6 +3797,7 @@ function assignRes(over: Partial<ImportAssignResponse> = {}): ImportAssignRespon
     // A custom program, so the names below don't depend on the built-in catalog's wording.
     programs: [{ id: 'rpt', name: 'RPT', workouts: 24, weeks: 8 }],
     split: { changes: 2, olderThanCurrent: 1 },
+    suggestions: null,
     ...over,
   };
 }
@@ -4118,5 +4123,273 @@ describe('ImportWizard Assign step (#1256)', () => {
     );
     expect(await screen.findByText(failure.message)).toBeInTheDocument();
     expect(screen.getByText('Step 5 of 8 · Review')).toBeInTheDocument();
+  });
+});
+
+// ── Assign step's LLM suggestions (#1174) ───────────────────────────────────────
+
+describe('ImportWizard Assign suggestions (#1174)', () => {
+  // Two stretches and a lone session between them, with suggestions on.
+  const suggestingRes = (over: Partial<ImportAssignResponse> = {}) =>
+    assignRes({
+      stretches: [
+        stretch(['2026-01-01', '2026-01-03', '2026-01-05']),
+        stretch(['2026-02-01', '2026-02-03'], { reasons: { start: { kind: 'gap', days: 27 }, program: { kind: 'source' }, status: { kind: 'all-workouts-done' } } }),
+      ],
+      lone: [{ session: day('2026-01-20', ['Bench Press']), daysAfterPrevious: 15, daysBeforeNext: 12 }],
+      programs: [
+        { id: 'rpt', name: 'RPT', workouts: 24, weeks: 8 },
+        { id: '5-3-1', name: 'Five Three One', workouts: 24, weeks: 12 },
+      ],
+      suggestions: { provider: 'qwen3:14b at localhost:11434' },
+      ...over,
+    });
+
+  const ready = (over: Partial<Extract<ImportSuggestionsResponse, { status: 'ready' }>> = {}): ImportSuggestionsResponse => ({
+    status: 'ready',
+    provider: 'qwen3:14b at localhost:11434',
+    notesSent: false,
+    summarizedSessions: 0,
+    suggestions: [],
+    dropped: { malformed: 0, 'unknown-lift': 0, 'out-of-range': 0 },
+    ...over,
+  });
+
+  /** A suggestions request the test answers when it chooses. */
+  function deferredSuggest() {
+    let answer: (r: ImportSuggestionsResponse) => void = () => undefined;
+    mockSuggest.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    return (r: ImportSuggestionsResponse) => act(async () => answer(r));
+  }
+
+  const yes = () => screen.getByRole('button', { name: 'Yes, use suggestions' });
+  const panel = () => screen.getByTestId('assign-suggestions');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPreview.mockResolvedValue(ASSIGN_PREVIEW);
+    mockAssign.mockResolvedValue(suggestingRes());
+    mockDryRun.mockResolvedValue(DRY_RUN_OK);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('shows nothing and sends nothing when suggestions are off', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(suggestingRes({ suggestions: null }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    expect(screen.queryByTestId('assign-suggestions')).not.toBeInTheDocument();
+    expect(mockSuggest).not.toHaveBeenCalled();
+  });
+
+  it('asks first, with the provider, what is sent and notes off, and Continue works without an answer', async () => {
+    const user = userEvent.setup();
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    expect(panel()).toHaveTextContent('Use suggestions from qwen3:14b at localhost:11434?');
+    expect(panel()).toHaveTextContent('date, lift name, set number, weight and reps');
+    expect(within(panel()).getByRole('checkbox', { name: /Include my workout notes/ })).not.toBeChecked();
+    await waitFor(() => expect(yes()).toHaveFocus());
+    expect(mockSuggest).not.toHaveBeenCalled();
+
+    // Store the lone session so nothing is left to decide, then continue without answering.
+    await user.click(screen.getByRole('button', { name: 'Store the Jan 20, 2026 workout as a non-cycle workout' }));
+    await user.click(nextButton());
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    expect(mockSuggest).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing when the lifter declines', async () => {
+    const user = userEvent.setup();
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(screen.getByRole('button', { name: 'Not this time' }));
+    expect(panel()).toHaveTextContent('No suggestions for this import. Nothing was sent.');
+    expect(mockSuggest).not.toHaveBeenCalled();
+  });
+
+  it('keeps the step complete while the request is out, and applies each kind of suggestion on Accept', async () => {
+    const user = userEvent.setup();
+    const answer = deferredSuggest();
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    await user.click(within(panel()).getByRole('checkbox', { name: /Include my workout notes/ }));
+    await user.click(yes());
+    expect(mockSuggest).toHaveBeenCalledWith(
+      'prog-1',
+      expect.any(File),
+      expect.objectContaining({ notes: true, splitDest: true, today: expect.any(String) }),
+      expect.any(AbortSignal),
+    );
+    // Pending: the grouping is on screen and usable.
+    expect(within(panel()).getByRole('status')).toHaveTextContent('Looking for suggestions. You can carry on');
+    expect(screen.getByTestId('assign-summary')).toHaveTextContent('in 2 macrocycles.');
+
+    await answer(
+      ready({
+        notesSent: true,
+        suggestions: [
+          { kind: 'boundary', action: 'add', date: '2026-01-03', reason: 'Weights dropped back here.' },
+          { kind: 'lone', date: '2026-01-20', choice: 'non-cycle', reason: 'A one-off test day.' },
+          { kind: 'status', stretchStart: '2026-02-01', status: 'abandoned', reason: 'It stops after two sessions.' },
+          { kind: 'program', stretchStart: '2026-02-01', program: '5-3-1', reason: 'These are 5/3/1’s lifts.' },
+          { kind: 'note', from: '2026-01-01', to: '2026-01-05', text: 'Squat stalled for three sessions.' },
+        ],
+        dropped: { malformed: 1, 'unknown-lift': 2, 'out-of-range': 0 },
+      }),
+    );
+
+    expect(panel()).toHaveTextContent('Suggestions only. Nothing changes unless you accept it.');
+    expect(panel()).toHaveTextContent('Your notes were included.');
+    expect(screen.getAllByTestId('assign-suggestion')).toHaveLength(5);
+    expect(screen.getByTestId('assign-suggestions-dropped-malformed')).toHaveTextContent('1 other suggestion was dropped because it wasn’t readable.');
+    expect(screen.getByTestId('assign-suggestions-dropped-unknown-lift')).toHaveTextContent(
+      '2 other suggestions were dropped because they named lifts that aren’t in this file.',
+    );
+    expect(screen.queryByTestId('assign-suggestions-dropped-out-of-range')).not.toBeInTheDocument();
+
+    // A note changes nothing, so it can only be dismissed.
+    const note = screen.getAllByTestId('assign-suggestion')[4]!;
+    expect(within(note).queryByRole('button', { name: /^Accept/ })).not.toBeInTheDocument();
+    await user.click(within(note).getByRole('button', { name: 'Dismiss: Note on Jan 1, 2026 to Jan 5, 2026' }));
+    expect(note).toHaveTextContent('Dismissed.');
+    expect(note).toHaveFocus();
+
+    const lone = screen.getByRole('button', { name: 'Store the Jan 20, 2026 workout as a non-cycle workout' });
+    expect(lone).toHaveAttribute('aria-pressed', 'false');
+    await user.click(screen.getByRole('button', { name: 'Accept: File the Jan 20, 2026 workout as a non-cycle workout' }));
+    expect(lone).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('button', { name: 'Accept: Mark RPT from Feb 1, 2026 as Unfinished' }));
+    await user.click(screen.getByRole('button', { name: 'Accept: Set the program of RPT from Feb 1, 2026 to Five Three One' }));
+    await user.click(screen.getByRole('button', { name: 'Accept: Start a new macrocycle on Jan 3, 2026' }));
+    expect(screen.getByTestId('assign-summary')).toHaveTextContent('in 3 macrocycles.');
+    expect(screen.getAllByText('Accepted.')).toHaveLength(4);
+
+    // The two halves of the split need a status; the rest is as accepted.
+    await user.selectOptions(screen.getByLabelText('Status for RPT from Jan 1, 2026'), 'completed');
+    await user.selectOptions(screen.getByLabelText('Status for RPT from Jan 3, 2026'), 'completed');
+    await user.click(nextButton());
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    expect(mockDryRun.mock.calls[0]![3]).toEqual(
+      expect.objectContaining({
+        breakdown: {
+          stretches: [
+            { program: 'rpt', status: 'completed', statusChosen: true, dates: ['2026-01-01'] },
+            { program: 'rpt', status: 'completed', statusChosen: true, dates: ['2026-01-03', '2026-01-05'] },
+            { program: '5-3-1', status: 'abandoned', statusChosen: true, dates: ['2026-02-01', '2026-02-03'] },
+          ],
+          excludedDates: [],
+          nonCycleDates: ['2026-01-20'],
+        },
+      }),
+    );
+  });
+
+  it('drops and counts suggestions the lifter’s edits made out of date while the request was out', async () => {
+    const user = userEvent.setup();
+    const answer = deferredSuggest();
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(yes());
+
+    // Join the two stretches while the request is pending.
+    await user.click(screen.getByRole('button', { name: 'Join RPT from Feb 1, 2026 with the macrocycle before it' }));
+    await answer(
+      ready({
+        suggestions: [
+          { kind: 'boundary', action: 'remove', date: '2026-02-01', reason: 'One run.' },
+          { kind: 'status', stretchStart: '2026-02-01', status: 'abandoned', reason: 'Stopped.' },
+          { kind: 'lone', date: '2026-01-20', choice: 'exclude', reason: 'Not part of a run.' },
+        ],
+      }),
+    );
+
+    expect(screen.getAllByTestId('assign-suggestion')).toHaveLength(1);
+    expect(screen.getByTestId('assign-suggestions-out-of-date')).toHaveTextContent(
+      '2 suggestions were dropped because your changes left them out of date.',
+    );
+  });
+
+  it('aborts the request when the lifter leaves the step, and asks again on return', async () => {
+    const user = userEvent.setup();
+    deferredSuggest();
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(yes());
+    const signal = mockSuggest.mock.calls[0]![3]!;
+    expect(signal.aborted).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(signal.aborted).toBe(true);
+    await user.click(nextButton());
+    expect(await screen.findByRole('button', { name: 'Yes, use suggestions' })).toBeInTheDocument();
+  });
+
+  it('reuses a ready result for the same file and notes choice', async () => {
+    const user = userEvent.setup();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockSuggest.mockResolvedValue(ready({ suggestions: [{ kind: 'note', from: null, to: null, text: 'Squat stalled.' }] }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(yes());
+    expect(await screen.findByText('Squat stalled.')).toBeInTheDocument();
+
+    // A refused breakdown reloads the same grouping, which asks again; a yes doesn't resend.
+    await user.click(screen.getByRole('button', { name: 'Store the Jan 20, 2026 workout as a non-cycle workout' }));
+    mockDryRun.mockRejectedValueOnce(new ApiClientError('2026-02-04 is not in the file', 400, 'breakdown-mismatch'));
+    await user.click(nextButton());
+    await screen.findByText(/no longer matched these macrocycles/);
+    expect(mockAssign).toHaveBeenCalledTimes(2);
+    await user.click(yes());
+    expect(await screen.findByText('Squat stalled.')).toBeInTheDocument();
+    expect(mockSuggest).toHaveBeenCalledTimes(1);
+
+    // The other notes choice is a different request.
+    mockAssign.mockResolvedValueOnce(suggestingRes());
+    mockDryRun.mockRejectedValueOnce(new ApiClientError('2026-02-04 is not in the file', 400, 'breakdown-mismatch'));
+    await user.click(screen.getByRole('button', { name: 'Store the Jan 20, 2026 workout as a non-cycle workout' }));
+    await user.click(nextButton());
+    await screen.findByRole('button', { name: 'Yes, use suggestions' });
+    await user.click(within(panel()).getByRole('checkbox', { name: /Include my workout notes/ }));
+    await user.click(yes());
+    await screen.findByText('Squat stalled.');
+    expect(mockSuggest).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a failed request through logClientError and says suggestions aren’t available', async () => {
+    const user = userEvent.setup();
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const failure = new Error('API 502 Bad Gateway');
+    mockSuggest.mockRejectedValueOnce(failure);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(yes());
+
+    expect(await within(panel()).findByText(/Suggestions aren’t available right now/)).toBeInTheDocument();
+    expect(errorSpy).toHaveBeenCalledWith('[client-mutation] suggestImport failed', failure, { programId: 'prog-1' });
+    // The step is unaffected.
+    expect(screen.getByTestId('assign-summary')).toHaveTextContent('in 2 macrocycles.');
+  });
+
+  it('says when the hourly limit or the file’s size stopped the request', async () => {
+    const user = userEvent.setup();
+    mockSuggest.mockResolvedValueOnce({ status: 'limited', retryAfterMinutes: 12 });
+    const { unmount } = render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(yes());
+    expect(await within(panel()).findByText(/Try again in 12 minutes/)).toBeInTheDocument();
+    unmount();
+
+    mockSuggest.mockResolvedValueOnce({ status: 'too-large', sets: 1_800, limit: 1_500 });
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(yes());
+    expect(await within(panel()).findByText(/1800 sets, over the 1500 a request can carry/)).toBeInTheDocument();
   });
 });

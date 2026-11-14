@@ -304,8 +304,40 @@ The agent must operate on the authenticated user's data store configuration (ADR
 
 ---
 
+## Addendum (2026-11-14): import suggestions are a second LLM port, not this agent
+
+[#1174](https://github.com/merickvaughn/lifting-logbook/issues/1174) adds a second LLM boundary,
+`IImportSuggestionProvider`, for the import wizard's Assign step. It follows this ADR's adapter
+boundary (a port in `apps/api/src/ports/`, Anthropic and OpenAI-compatible adapters, the SDKs only in
+`apps/api`), and departs from it on purpose in four places. The reasons are in the proposal's
+[decisions 11 and 12](../proposals/2026-11-06-import-macrocycle-assignment.md):
+
+1. **No default provider.** `buildImportSuggestionProvider` returns null unless
+   `IMPORT_SUGGESTIONS_PROVIDER` names a provider and its settings are complete, where the planning
+   agent's factory falls back to a local OpenAI-compatible endpoint. Suggestions send a lifter's whole
+   history, so a half-set configuration must not send it somewhere unintended.
+2. **One structured call, not a tool loop.** The model gets the rules' grouping and every set up
+   front and returns a list of suggestions: a forced tool call on Anthropic, JSON mode on
+   OpenAI-compatible servers, because Ollama's compatibility layer confirms JSON mode but not
+   `json_schema`. The SDKs' own retries are off: one call, a 60-second deadline.
+3. **Free text is replaced before sending.** Custom lift and program names go as placeholders and
+   are mapped back in what the lifter sees; notes are sent only when the lifter opts in. The agent
+   above sends lift history unscrubbed (`CLAUDE.md` → Observability, item 2).
+4. **Validated, not trusted.** Every suggestion is checked against the file's parsed rows, and the
+   ones that don't hold are dropped and counted. Nothing is written until the lifter accepts a
+   suggestion into their draft and commits.
+
+The per-lifter hourly count lives in `import_suggestion_usage`, with forced row-level security like
+every user table ([ADR-010](ADR-010-multi-tenancy-data-isolation.md)), under a per-user transaction
+advisory lock so several API instances count together. No transaction is held during the model
+call ([#518](https://github.com/merickvaughn/lifting-logbook/issues/518)).
+
+---
+
 ## References
 
+- [Ollama — OpenAI compatibility](https://github.com/ollama/ollama/blob/main/docs/openai.md) — The Chat Completions surface the OpenAI-compatible import suggestions adapter targets, including JSON mode (`response_format: { type: "json_object" }`); see the 2026-11-14 addendum.
+- [PostgreSQL — Advisory Lock Functions](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS) — `pg_advisory_xact_lock`, which serializes each lifter's hourly suggestion count across API instances; see the 2026-11-14 addendum.
 - [Anthropic — Tool Use (Function Calling)](https://docs.anthropic.com/en/docs/tool-use) — The Anthropic guide to tool use with the Messages API; documents the tool schema format, the agentic loop pattern, and the `propose_<output>` tool pattern for structured output.
 - [Anthropic Node.js SDK (`@anthropic-ai/sdk`)](https://github.com/anthropics/anthropic-sdk-node) — The SDK used in the adapter; documents `client.messages.create()` and the `tool_use` / `tool_result` message block types.
 - [Anthropic — Model Deprecation Policy](https://docs.anthropic.com/en/docs/deprecations) — Anthropic's published deprecation timeline for model versions; the `CYCLE_AGENT_MODEL` env var must be kept current as `claude-sonnet-4-6` ages out.

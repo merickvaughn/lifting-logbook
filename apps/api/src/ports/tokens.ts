@@ -9,5 +9,7 @@ export const PROGRAM_PHILOSOPHY_REPOSITORY = Symbol(
   'IProgramPhilosophyRepository',
 );
 export const MACROCYCLE_PLANNING_AGENT = Symbol('IMacrocyclePlanningAgent');
+export const IMPORT_SUGGESTION_PROVIDER = Symbol('IImportSuggestionProvider');
+export const IMPORT_SUGGESTION_USAGE = Symbol('IImportSuggestionUsage');
 export const AUTH_PROVIDER = Symbol('IAuthProvider');
 export const REPOSITORY_FACTORY = Symbol('IRepositoryFactory');

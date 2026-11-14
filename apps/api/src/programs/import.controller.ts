@@ -31,6 +31,7 @@ import {
   ImportKind,
   ImportPreview,
   ImportPreviewResponse,
+  ImportSuggestionsResponse,
   ImportUndoResponse,
   ImportWriteResult,
   NON_CYCLE_PROGRAM,
@@ -82,6 +83,7 @@ import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { PrismaService } from '../adapters/prisma/prisma.service';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
+import { ImportSuggestionsService } from '../import-suggestions/import-suggestions.service';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { CustomProgramsRepository } from '../custom-programs/custom-programs.repository';
 import { IMPORT_HANDLERS, liftsOf } from './import-handlers';
@@ -142,6 +144,7 @@ export class ImportController {
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
     // Custom programs are Prisma-only, so with no database there are none (see SwitchProgramController).
     @Inject(PrismaService) private readonly prisma: PrismaService | null,
+    private readonly suggestions: ImportSuggestionsService,
   ) {}
 
   @Post('import')
@@ -271,6 +274,72 @@ export class ImportController {
       errors,
       assignEnabled,
     };
+  }
+
+  /**
+   * The Assign step's optional LLM suggestions (#1174, proposal decisions 11 and 12). It takes the
+   * same file and Review choices as `mode=assign`, plus `notes=1` when the lifter opts to send
+   * their notes, and asks the configured provider about the rules' grouping. The wizard sends it
+   * only after the lifter says yes, and never waits on it for the grouping itself.
+   *
+   * `@SkipRlsTransaction()`: no connection is held during the upload or the model call (#518,
+   * #925). The service reads the file's grouping and counts the request in short transactions of
+   * their own, before the call.
+   */
+  @Post('import/suggestions')
+  @HttpCode(HttpStatus.OK)
+  @SkipRlsTransaction()
+  async suggest(
+    @Param('program') program: string,
+    @Req() req: FastifyRequest,
+    @CurrentUser() user: AuthUser,
+    @Query('overrides') overridesParam?: string,
+    @Query('splitDest') splitDestParam?: string,
+  ): Promise<ImportSuggestionsResponse> {
+    // Suggestions are part of the Assign step, which doesn't exist with the flag off.
+    if (!importAssignEnabled()) throw new NotFoundException();
+    const { csvText, fields } = await readImportForm(req);
+    let table = parseCsvText(csvText);
+    const columnOverrides = parseJsonParam<Record<string, string>>(overridesParam);
+    if (columnOverrides) table = applyColumnOverrides(table, columnOverrides, 'lift-records');
+    const choices = {
+      excludeKeys: parseExcludeKeys(fields.get('excludeKeys')),
+      liftOverrides: parseLiftOverrides(fields.get('liftOverrides')),
+      splitDest: splitDestParam === '1',
+      today: fields.get('today'),
+    };
+
+    // The lifter left the step, so the wizard dropped the request: stop the model too.
+    const left = new AbortController();
+    const socket = req.raw.socket as NodeJS.EventEmitter | undefined;
+    const onClose = () => left.abort();
+    socket?.once?.('close', onClose);
+    try {
+      return await this.suggestions.suggest({
+        userId: user.id,
+        notes: fields.get('notes') === '1',
+        signal: left.signal,
+        load: async () => {
+          const repos = await this.factory.forUser(user);
+          const { segmented, importDate, exported, customPrograms } = await this.segmentForAssign(
+            program,
+            table,
+            repos,
+            user.id,
+            choices,
+          );
+          return {
+            segmented,
+            importDate,
+            exported,
+            programs: assignProgramOptions(customPrograms),
+            liftNames: await liftNamesFor(repos),
+          };
+        },
+      });
+    } finally {
+      socket?.removeListener?.('close', onClose);
+    }
   }
 
   /**
@@ -871,29 +940,8 @@ export class ImportController {
     choices: { excludeKeys: Set<string>; liftOverrides: Record<string, string>; splitDest: boolean; today: string | undefined },
   ): Promise<ImportAssignResponse> {
     const started = Date.now();
-    const importDate = assignImportDate(choices.today);
-    // An export isn't split: its sets are sets, whatever their notes say (decision 22).
-    const exported = isLiftRecordExport(table[0] ?? []);
-    const split = choices.splitDest && !exported;
-    const { rows, splitMaxes, undated } = await this.resolveCommitRows(
-      'lift-records',
-      table,
-      repos,
-      choices.excludeKeys,
-      choices.liftOverrides,
-      split,
-      { assign: true },
-    );
-    const liftRecords = rows as LiftRecord[];
-
-    const customPrograms = await this.customPrograms(userId);
-    const segmented = segmentLiftHistory(liftRecords.map(toLiftHistoryRecord), {
-      importDate,
-      sourceProgram: program,
-      customPrograms,
-      // An export pairs rows by file macrocycle; the commit places any other file by date.
-      placeByDate: !exported,
-    });
+    const { importDate, exported, split, liftRecords, splitMaxes, undated, customPrograms, segmented } =
+      await this.segmentForAssign(program, table, repos, userId, choices);
     const stored = await placeSuggestedStretches(repos, segmented.stretches, [
       ...BUILT_IN_KNOWN_PROGRAMS,
       ...customPrograms,
@@ -907,6 +955,7 @@ export class ImportController {
         programs: assignProgramOptions(customPrograms),
         stored,
         ...(split ? { split: await splitMaxCounts(splitMaxes, segmented.stretches, program, repos) } : {}),
+        suggestionsProvider: this.suggestions.providerLabel,
       },
       await liftNamesFor(repos),
     );
@@ -934,6 +983,43 @@ export class ImportController {
       'Import assign (#1253)',
     );
     return response;
+  }
+
+  /**
+   * The file as Assign reads it (#1253): its rows after Review's edits, and the rules' grouping of
+   * them. `mode=assign` and the suggestion request (#1174) both start here, so the model is asked
+   * about exactly the grouping the lifter sees.
+   */
+  private async segmentForAssign(
+    program: string,
+    table: SpreadsheetCell[][],
+    repos: RepositoryBundle,
+    userId: string,
+    choices: { excludeKeys: Set<string>; liftOverrides: Record<string, string>; splitDest: boolean; today: string | undefined },
+  ) {
+    const importDate = assignImportDate(choices.today);
+    // An export isn't split: its sets are sets, whatever their notes say (decision 22).
+    const exported = isLiftRecordExport(table[0] ?? []);
+    const split = choices.splitDest && !exported;
+    const { rows, splitMaxes, undated } = await this.resolveCommitRows(
+      'lift-records',
+      table,
+      repos,
+      choices.excludeKeys,
+      choices.liftOverrides,
+      split,
+      { assign: true },
+    );
+    const liftRecords = rows as LiftRecord[];
+    const customPrograms = await this.customPrograms(userId);
+    const segmented = segmentLiftHistory(liftRecords.map(toLiftHistoryRecord), {
+      importDate,
+      sourceProgram: program,
+      customPrograms,
+      // An export pairs rows by file macrocycle; the commit places any other file by date.
+      placeByDate: !exported,
+    });
+    return { importDate, exported, split, liftRecords, splitMaxes, undated, customPrograms, segmented };
   }
 
   /** The lifter's custom programs. They're Prisma-only, so with no database there are none. */

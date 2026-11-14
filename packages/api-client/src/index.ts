@@ -19,6 +19,7 @@ import type {
   MacrocycleDashboardResponse,
   ImportAssignResponse,
   ImportBreakdown,
+  ImportSuggestionsResponse,
   ImportCommitResponse,
   ImportDryRunResponse,
   ImportError,
@@ -124,6 +125,9 @@ const JSON_HEADERS: Record<string, string> = { 'Content-Type': 'application/json
 // above any real request in this app (Cloud Run's own default request timeout is
 // 5 minutes) while still bounding the wait a hung request forces on the caller.
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+// An import suggestion request waits on an LLM, which the server gives 60 seconds (#1174).
+const SUGGEST_TIMEOUT_MS = 90_000;
 const DATA_EXPORT_TIMEOUT_MS = 60_000;
 
 // Smart-import endpoint path with mode + optional destination override. Returned
@@ -627,6 +631,41 @@ export function createApiClient(config: ApiClientConfig) {
       const res = await rawFetch(path, { method: 'POST', body: importForm(file, opts), cache: 'no-store' });
       if (!res.ok) throw await readError(res, path);
       return (await res.json()) as ImportAssignResponse;
+    },
+    /**
+     * Smart Import — an LLM's suggestions for the Assign step's grouping (#1174), sent only once
+     * the lifter has said yes. `notes` sends the file's workout notes too. `signal` lets the wizard
+     * abort the request when the lifter leaves the step. Throws on any failure, with the API's code.
+     */
+    async suggestImport(
+      program: string,
+      file: File,
+      opts: Pick<CommitImportOpts, 'overrides' | 'excludeKeys' | 'liftOverrides' | 'splitDest' | 'today'> & {
+        notes: boolean;
+      },
+      signal?: AbortSignal,
+    ): Promise<ImportSuggestionsResponse> {
+      const params = new URLSearchParams();
+      if (opts.overrides && Object.keys(opts.overrides).length > 0) params.set('overrides', JSON.stringify(opts.overrides));
+      if (opts.splitDest) params.set('splitDest', '1');
+      const query = params.toString();
+      const path = `/programs/${enc(program)}/import/suggestions${query ? `?${query}` : ''}`;
+      const form = importForm(file, opts);
+      if (opts.notes) form.set('notes', '1');
+      // The server gives the model 60 seconds; this leaves room for the upload and the reply.
+      const bounded = new AbortController();
+      const timer = setTimeout(() => bounded.abort(new DOMException('Timed out', 'TimeoutError')), SUGGEST_TIMEOUT_MS);
+      const onAbort = () => bounded.abort(signal?.reason);
+      if (signal?.aborted) onAbort();
+      else signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        const res = await rawFetch(path, { method: 'POST', body: form, cache: 'no-store', signal: bounded.signal });
+        if (!res.ok) throw await readError(res, path);
+        return (await res.json()) as ImportSuggestionsResponse;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+      }
     },
     /**
      * Smart Import — reports the counts `commitImport` would return for these same

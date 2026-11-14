@@ -62,6 +62,18 @@ model MissingMaxDismissal {
   @@map("missing_max_dismissal")
 }
 
+/// One import suggestion request that reached an LLM provider (#1174, proposal decision 12), so
+/// each user's 10 per hour hold across API instances. Rows older than an hour are deleted as the
+/// user's next request is counted. Bookkeeping, not the lifter's data: not exported.
+model ImportSuggestionUsage {
+  id     String   @id @default(cuid())
+  userId String
+  usedAt DateTime @default(now())
+
+  @@index([userId, usedAt])
+  @@map("import_suggestion_usage")
+}
+
 model MacrocycleDashboard {
   id                     String   @id @default(cuid())
   userId                 String

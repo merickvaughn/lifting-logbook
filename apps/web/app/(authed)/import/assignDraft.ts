@@ -221,6 +221,18 @@ export function splitAtLargestGap(draft: AssignDraft, id: string): AssignDraft {
     const gap = daysBetween(self.sessions[i]?.date ?? s.date, s.date);
     if (gap > widest) [widest, at] = [gap, i + 1];
   });
+  return splitAt(draft, id, self.sessions[at]?.date ?? '');
+}
+
+/**
+ * Splits stretch `id` so a new one starts at its session on `date` (#1174), as accepting a
+ * boundary suggestion does. Both halves are left for the lifter to choose a status, as with
+ * {@link splitAtLargestGap}. Unchanged when `date` isn't one of its sessions after the first.
+ */
+export function splitAt(draft: AssignDraft, id: string, date: string): AssignDraft {
+  const self = draft.stretches.find((s) => s.id === id);
+  const at = self ? self.sessions.findIndex((s) => s.date === date) : -1;
+  if (!self || at < 1) return draft;
   const first = reshaped(self, self.sessions.slice(0, at));
   const second: DraftStretch = { ...reshaped(self, self.sessions.slice(at)), id: `s${draft.nextId}`, file: null };
   return edit(

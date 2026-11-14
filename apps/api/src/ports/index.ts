@@ -7,6 +7,7 @@ export * from './IFocusRepository';
 export * from './IMacrocycleDashboardRepository';
 export * from './IMacrocycleRepository';
 export * from './IMacrocyclePlanningAgent';
+export * from './IImportSuggestionProvider';
 export * from './ILiftingProgramSpecRepository';
 export * from './ILiftRecordRepository';
 export * from './IProgramPhilosophyRepository';

@@ -202,6 +202,8 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 | [Anthropic — Tool Use (Function Calling)](https://docs.anthropic.com/en/docs/tool-use) | [ADR-016](adr/ADR-016-cycle-planning-agent.md) | The Anthropic guide to tool use with the Messages API; documents the tool schema format, the agentic loop pattern, and the `propose_<output>` tool pattern for structured output. |
 | [Anthropic Node.js SDK (`@anthropic-ai/sdk`)](https://github.com/anthropics/anthropic-sdk-node) | [ADR-016](adr/ADR-016-cycle-planning-agent.md) | The SDK used in the cycle planning adapter; documents `client.messages.create()` and the `tool_use` / `tool_result` message block types. |
 | [Anthropic — Model Deprecation Policy](https://docs.anthropic.com/en/docs/deprecations) | [ADR-016](adr/ADR-016-cycle-planning-agent.md) | Anthropic's published model deprecation timeline; the `MACROCYCLE_AGENT_MODEL` env var (named `CYCLE_AGENT_MODEL` before ADR-038) must be kept current as model versions age out. |
+| [Ollama — OpenAI compatibility](https://github.com/ollama/ollama/blob/main/docs/openai.md) | [ADR-016](adr/ADR-016-cycle-planning-agent.md) | The Chat Completions surface the OpenAI-compatible import suggestions adapter targets, including JSON mode (#1174 addendum). |
+| [PostgreSQL — Advisory Lock Functions](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS) | [ADR-016](adr/ADR-016-cycle-planning-agent.md) | `pg_advisory_xact_lock`, which serializes each lifter's hourly import suggestion count across API instances (#1174 addendum). |
 
 ---
 

@@ -54,6 +54,7 @@ function res(over: Partial<ImportAssignResponse> = {}): ImportAssignResponse {
     undatedRows: 0,
     exported: false,
     programs: [],
+    suggestions: null,
     ...over,
   };
 }

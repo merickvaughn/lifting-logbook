@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type {
   ColumnMapping,
@@ -15,6 +15,7 @@ import type {
   ImportPreviewResponse,
   ImportGoalSpellingCollision,
   ImportSpellingCollision,
+  ImportSuggestionsResponse,
   ImportUndoResponse,
   LiftClassification,
   WeightUnit,
@@ -34,6 +35,7 @@ import {
   fetchCustomLifts,
   fetchGoogleSheetWorkbook,
   previewImport,
+  suggestImport,
   undoImport,
 } from '@/lib/client-api';
 import { localToday } from '@/lib/calendarDay';
@@ -43,6 +45,7 @@ import { LIFT_CLASSIFICATIONS } from './liftClassifications';
 import { KIND_LABEL, kindsForTarget, previousStep, Step, STEP_LABELS, visibleSteps } from './steps';
 import type { ImportTarget, StepValue } from './steps';
 import AssignStep from './AssignStep';
+import type { SuggestState, SuggestionAnswer } from './AssignSuggestions';
 import { buildBreakdown, initialDraft, openDecisions, type AssignDraft } from './assignDraft';
 import {
   SheetTabsStep,
@@ -271,6 +274,30 @@ export function ImportWizard({
   const [assignNotice, setAssignNotice] = useState<string | null>(null);
   /** How many groupings have loaded, which keys the step so each one starts it afresh. */
   const [assignLoads, setAssignLoads] = useState(0);
+
+  // The Assign step's optional LLM suggestions (#1174): asked once per grouping, sent only on
+  // yes, aborted when the lifter leaves the step, and reused for the same file and notes choice.
+  const [suggestState, setSuggestState] = useState<SuggestState>({ phase: 'unasked' });
+  const [suggestNotes, setSuggestNotes] = useState(false);
+  const [suggestAnswers, setSuggestAnswers] = useState<Record<number, SuggestionAnswer>>({});
+  /** Yes takes focus when a fresh grouping shows the question, not on every return to the step. */
+  const [suggestFocus, setSuggestFocus] = useState(false);
+  const suggestAbort = useRef<AbortController | null>(null);
+  /** Ready results by Review request and notes choice, for this file. */
+  const suggestCache = useRef(new Map<string, ImportSuggestionsResponse>());
+  // Leaving the step aborts a pending request (decision 12), and the question is asked again on
+  // return. Unmounting the wizard does the same.
+  // Yes takes focus only as a fresh grouping first shows, so a return from Preview keeps focus on Back.
+  const pendingSuggestions = suggestState.phase === 'pending';
+  useEffect(() => {
+    if (step === Step.ASSIGN) return;
+    setSuggestFocus(false);
+    if (!pendingSuggestions) return;
+    suggestAbort.current?.abort();
+    suggestAbort.current = null;
+    setSuggestState({ phase: 'unasked' });
+  }, [step, pendingSuggestions]);
+  useEffect(() => () => suggestAbort.current?.abort(), []);
 
   // Column mapping overrides from MAP_COLUMNS step
   const [columnOverrides, setColumnOverrides] = useState<Map<string, string>>(new Map());
@@ -541,6 +568,17 @@ export function ImportWizard({
     setAssignDraft(null);
     assignKey.current = null;
     setAssignNotice(null);
+    resetSuggestions();
+    suggestCache.current.clear();
+  }
+
+  // A fresh grouping asks again. A request still out is for the old one, so it's dropped.
+  function resetSuggestions() {
+    suggestAbort.current?.abort();
+    suggestAbort.current = null;
+    setSuggestState({ phase: 'unasked' });
+    setSuggestAnswers({});
+    setSuggestFocus(false);
   }
 
   // `source` defaults to the file in state; a Google Sheets tab passes its file
@@ -1296,6 +1334,9 @@ export function ImportWizard({
       setAssignLoads((n) => n + 1);
       assignKey.current = JSON.stringify(request.opts ?? {});
       setAssignNotice(notice);
+      resetSuggestions();
+      // After a mismatch, focus goes to the step's heading instead.
+      setSuggestFocus(notice !== MISMATCH_NOTICE);
       setStep(Step.ASSIGN);
       return true;
     } catch (e) {
@@ -1304,6 +1345,47 @@ export function ImportWizard({
       return false;
     } finally {
       setBusy(false);
+    }
+  }
+
+  // The lifter's answer to the suggestions question (#1174). Nothing is sent before a yes. The
+  // grouping is already on screen and complete, so nothing waits on this request.
+  async function answerSuggestions(yes: boolean) {
+    setSuggestFocus(false);
+    if (!yes) {
+      setSuggestState({ phase: 'declined' });
+      return;
+    }
+    if (!programId || !file) return;
+    const notes = suggestNotes;
+    const request = reviewRequest(file);
+    const cacheKey = `${JSON.stringify(request.opts ?? {})}|${notes ? 'notes' : 'no-notes'}`;
+    const cached = suggestCache.current.get(cacheKey);
+    if (cached) {
+      setSuggestState({ phase: 'done', notes, result: cached });
+      return;
+    }
+    suggestAbort.current?.abort();
+    const controller = new AbortController();
+    suggestAbort.current = controller;
+    setSuggestState({ phase: 'pending', notes });
+    try {
+      const result = await suggestImport(
+        programId,
+        request.file,
+        { ...request.opts, today: localToday(), notes },
+        controller.signal,
+      );
+      // Left the step, or a fresh grouping replaced the one this was about.
+      if (controller.signal.aborted) return;
+      if (result.status === 'ready') suggestCache.current.set(cacheKey, result);
+      setSuggestState({ phase: 'done', notes, result });
+    } catch (e) {
+      if (controller.signal.aborted) return;
+      logClientError('suggestImport', e, { programId });
+      setSuggestState({ phase: 'done', notes, result: null });
+    } finally {
+      if (suggestAbort.current === controller) suggestAbort.current = null;
     }
   }
 
@@ -2332,6 +2414,15 @@ export function ImportWizard({
                   draft={assignDraft}
                   onChange={setAssignDraft}
                   focusHeading={assignNotice === MISMATCH_NOTICE}
+                  suggestions={{
+                    state: suggestState,
+                    notes: suggestNotes,
+                    onNotesChange: setSuggestNotes,
+                    onAnswer: (yes) => void answerSuggestions(yes),
+                    answers: suggestAnswers,
+                    onAnswerSuggestion: (index, answer) => setSuggestAnswers((prev) => ({ ...prev, [index]: answer })),
+                    focusYes: suggestFocus,
+                  }}
                 />
               ) : (
                 // The grouping the server refused is gone, so there's nothing to send until a reload works.

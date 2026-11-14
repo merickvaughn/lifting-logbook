@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { macrocyclePlanningAgentProvider } from '../adapters/llm/macrocycle-planning-provider.factory';
+import { importSuggestionProvider } from '../adapters/llm/import-suggestions-provider.factory';
+import { importSuggestionUsageProvider } from '../import-suggestions/import-suggestion-usage';
+import { ImportSuggestionsService } from '../import-suggestions/import-suggestions.service';
 import { BodyWeightController } from './body-weight.controller';
 import { MacrocycleDashboardController } from './macrocycle-dashboard.controller';
 import { MacrocycleGenerationController } from './macrocycle-generation.controller';
@@ -42,6 +45,9 @@ import { WorkoutsController } from './workouts.controller';
   ],
   providers: [
     macrocyclePlanningAgentProvider,
+    importSuggestionProvider,
+    importSuggestionUsageProvider,
+    ImportSuggestionsService,
     MacrocycleGenerationService,
     // After AuthModule's guard, which AppModule imports first, so an unauthenticated
     // request is still a 401.
