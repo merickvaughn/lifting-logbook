@@ -46,7 +46,9 @@ response also carries `assignEnabled`.
   (`apps/api/src/programs/import.controller.ts`).
 - **Stored rows stay.** Macrocycles, sets and statuses written by earlier assigned imports are left
   alone, and each import can still be undone from the History page's Macrocycles tab. Undo isn't
-  behind the flag.
+  behind the flag. That tab lists only the lifter's active program, so an import into another
+  program shows there once that program is active
+  ([#1300](https://github.com/merickvaughn/lifting-logbook/issues/1300)).
 
 ### Turn it off through the deploy (the durable way)
 
