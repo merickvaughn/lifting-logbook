@@ -51,6 +51,7 @@ import { toLiftRecordResponse } from './mappers';
 import {
   assertMacrocycleWritable,
   checkMacrocycleId,
+  dashboardOrNull,
   lockForImport,
 } from './macrocycle-history.util';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
@@ -76,9 +77,11 @@ export class LiftRecordsController {
     @CurrentUser() user: AuthUser,
   ): Promise<LiftRecordResponse[]> {
     const repos = await this.factory.forUser(user);
-    const { liftRecord, macrocycleDashboard } = repos;
-    const dashboard = await macrocycleDashboard.getMacrocycleDashboard(program);
-    const records = await liftRecord.getLiftRecords(program, dashboard.macrocycleNum);
+    // The current macrocycle's sets. A program with only imported history has no current
+    // macrocycle, so none, rather than a 404 that History reads as a failed load (#1300).
+    const dashboard = await dashboardOrNull(repos, program);
+    if (!dashboard) return [];
+    const records = await repos.liftRecord.getLiftRecords(program, dashboard.macrocycleNum);
     const names = await modificationNamesFor(repos, records);
     return records.map((r) => toLiftRecordResponse(r, names));
   }

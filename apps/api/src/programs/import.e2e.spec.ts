@@ -1713,7 +1713,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       return commit.json();
     };
 
-    // Through the repository: GET lift-records needs a macrocycle dashboard these programs lack.
+    // Through the repository: GET lift-records lists only the current macrocycle, which these programs lack.
     const storedRecords = async (program: string) => {
       const repos = await app
         .get<IRepositoryFactory>(REPOSITORY_FACTORY)

@@ -4,37 +4,13 @@ import type { CustomLiftResponse, CustomProgramSummaryResponse, WeightUnit } fro
 import { getUserSettings } from '@/lib/active-program';
 import { fetchCustomLifts, fetchCustomPrograms } from '@/lib/api';
 import { getPreferredUnit } from '@/lib/preferences';
-import { PROGRAMS } from '@/lib/programs';
+import { userPrograms } from '@/lib/user-programs';
 import { ImportWizard } from './ImportWizard';
-import type { ImportTarget } from './steps';
 
 export const metadata: Metadata = {
   title: 'Import — Lifting Logbook',
   description: 'Import any CSV — lift history, training maxes, strength goals, or a program.',
 };
-
-// Custom programs are addressed by UUID and built-in templates by slug, as on the API.
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * The user's custom programs, plus the template they're on if they're on one. The
- * active program comes first because the wizard preselects the first entry, and
- * importing should default to the program the rest of the app is reading (#1115).
- *
- * The template's name falls back to its slug because the catalog doesn't list every
- * slug the API serves ('5-3-1' is a preset, while the catalog's entry is '531').
- */
-function importTargets(
-  customPrograms: CustomProgramSummaryResponse[],
-  activeProgram: string | null,
-): ImportTarget[] {
-  const targets: ImportTarget[] = [...customPrograms];
-  if (activeProgram && !UUID_PATTERN.test(activeProgram)) {
-    const name = PROGRAMS.find((p) => p.id === activeProgram)?.name ?? activeProgram;
-    targets.push({ id: activeProgram, name, isTemplate: true });
-  }
-  return targets.sort((a, b) => Number(b.id === activeProgram) - Number(a.id === activeProgram));
-}
 
 export default async function ImportPage() {
   // The fetches below have no data dependency on each other — run them
@@ -77,7 +53,9 @@ export default async function ImportPage() {
     console.error('ImportPage: user settings fetch failed, omitting active program', settingsResult.reason);
     activeProgram = null;
   }
-  const programs = importTargets(customPrograms, activeProgram);
+  // The active program comes first because the wizard preselects the first entry, and
+  // importing should default to the program the rest of the app is reading (#1115).
+  const programs = userPrograms(customPrograms, activeProgram);
 
   // Feeds the REVIEW step's ambiguous-row remap datalist (#911). On fetch failure,
   // render with an empty list rather than crashing — the wizard still works, it

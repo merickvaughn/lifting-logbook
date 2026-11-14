@@ -19,9 +19,11 @@ test.beforeEach(async ({ request }) => {
   await request.get(`${MOCK_API}/__reset?withAssign=true`);
 });
 
-async function toAssign(page: Page) {
+/** To the Assign step, importing into `program` (by its name) when given, else the active one. */
+async function toAssign(page: Page, program?: string) {
   await page.goto('/import');
   await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
+  if (program) await page.getByLabel('Program').selectOption({ label: program });
   await page.getByLabel('CSV file').setInputFiles({
     name: 'history.csv',
     mimeType: 'text/csv',
@@ -62,15 +64,20 @@ test('Assign: a boundary moves by keyboard alone, keeping focus, and status is w
   await expect(page.getByTestId('assign-settled').first()).toContainText('Unfinished');
 });
 
-/** Commits the file through Assign, then leaves the wizard for the past-macrocycles list. */
-async function importThenOpenHistory(page: Page) {
-  await toAssign(page);
+/** Commits the file through Assign into `program` when given, else the active one. */
+async function commitThroughAssign(page: Page, program?: string) {
+  await toAssign(page, program);
   await page.getByRole('button', { name: 'Keep every break: file the 20 one-lift workouts with the macrocycle before each' }).click();
   await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Preview changes' })).toBeVisible();
   await page.getByRole('button', { name: 'Commit import' }).click();
   await expect(page.getByText('Import complete')).toBeVisible();
+}
+
+/** Commits the file through Assign, then leaves the wizard for the past-macrocycles list. */
+async function importThenOpenHistory(page: Page) {
+  await commitThroughAssign(page);
 
   // Leave the wizard: its own Undo is gone with it.
   await page.goto('/history');
@@ -79,6 +86,31 @@ async function importThenOpenHistory(page: Page) {
   await expect(imported).toHaveCount(2);
   return imported;
 }
+
+// #1300: History shows any of the lifter's programs, so an import into one that isn't active
+// can be undone there too.
+test('Assign: an import into a program that isn’t active is undone from History', async ({ page, request }) => {
+  await request.get(`${MOCK_API}/__reset?withAssign=true&withCustomProgram=true`);
+  await commitThroughAssign(page, 'My Custom Program');
+
+  // History opens on the active program, which the import didn't touch.
+  await page.goto('/history');
+  await page.getByRole('tab', { name: 'Macrocycles' }).click();
+  const imported = page.getByRole('row').filter({ hasText: '2024-01-' });
+  await expect(page.getByRole('row').filter({ hasText: '2024-09-02' })).toHaveCount(1);
+  await expect(imported).toHaveCount(0);
+
+  await page.getByLabel('Program').selectOption({ label: 'My Custom Program' });
+  await page.getByRole('button', { name: 'Show', exact: true }).click();
+  await expect(page).toHaveURL(/[?&]program=cust-1/);
+  await page.getByRole('tab', { name: 'Macrocycles' }).click();
+  await expect(imported).toHaveCount(2);
+
+  await page.getByRole('button', { name: 'Undo import of macrocycle 2' }).click();
+  await page.getByRole('button', { name: 'Undo import', exact: true }).click();
+  await expect(imported).toHaveCount(0);
+  await expect(page.getByText(/^Undo complete: \d+ restored/)).toBeFocused();
+});
 
 // #1257: an import is undone from the past-macrocycles list once the wizard is gone.
 test('Assign: an import is undone later from the past-macrocycles list', async ({ page }) => {

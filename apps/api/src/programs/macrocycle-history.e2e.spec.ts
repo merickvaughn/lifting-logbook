@@ -174,6 +174,17 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       expect(body.lifts.flatMap((l) => l.sets).some((s) => s.weight === 999)).toBe(false);
     });
 
+    // #1300: History reads this for any program with imports, so a 404 left its load notice up.
+    it('answers GET lift-records with no sets, not a 404, when the program has only imported history', async () => {
+      const user = as('history-records-no-dashboard');
+      await user.seedImported(1, '2025-01-06', '2025-02-17');
+
+      const res = await user.inject('GET', `/programs/${PROGRAM}/lift-records`);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual([]);
+    });
+
     it('returns no imported rows for the current macrocycle, and the next number is unused', async () => {
       const user = as('history-current');
       await user.seedImported(1, '2025-01-06', '2025-02-17');

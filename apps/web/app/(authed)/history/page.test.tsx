@@ -8,9 +8,9 @@ jest.mock('@/lib/api', () => ({
   fetchMacrocycles: jest.fn().mockResolvedValue([]),
   fetchNonCycleRecords: jest.fn().mockResolvedValue([]),
   fetchImportBatches: jest.fn().mockResolvedValue([]),
-}));
-jest.mock('@/lib/active-program', () => ({
-  getActiveProgram: jest.fn().mockResolvedValue('5-3-1'),
+  fetchCustomPrograms: jest.fn().mockResolvedValue([]),
+  // Read through the real lib/active-program, so these tests hold whichever of its reads the page uses.
+  fetchUserSettings: jest.fn().mockResolvedValue({ activeProgram: '5-3-1' }),
 }));
 jest.mock('@/lib/preferences', () => ({
   getPreferredUnit: jest.fn().mockResolvedValue('lbs'),
@@ -27,13 +27,17 @@ jest.mock('./HistoryTabs', () => ({
 }));
 
 import {
+  fetchCustomPrograms,
   fetchImportBatches,
   fetchLiftRecords,
   fetchMacrocycles,
   fetchNonCycleRecords,
   fetchTrainingMaxHistory,
+  fetchUserSettings,
 } from '@/lib/api';
 import HistoryPage from './page';
+
+const historyPage = (params: { program?: string } = {}) => HistoryPage({ searchParams: Promise.resolve(params) });
 
 const record = (id: string, lift: string, date: string, weight: number) => ({
   id,
@@ -49,7 +53,7 @@ const record = (id: string, lift: string, date: string, weight: number) => ({
 });
 
 async function renderRecords(): Promise<EnrichedRecord[]> {
-  const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+  const html = renderToStaticMarkup((await historyPage()) as ReactElement);
   const encoded = html.match(/data-records="([^"]*)"/)?.[1];
   if (encoded === undefined) throw new Error('data-records attribute not found in rendered output');
   return JSON.parse(encoded.replace(/&quot;/g, '"')) as EnrichedRecord[];
@@ -114,14 +118,14 @@ describe('HistoryPage non-cycle workouts', () => {
 
   it('shows the load notice when they can’t be fetched, and still lists the program’s records', async () => {
     (fetchNonCycleRecords as jest.Mock).mockRejectedValue(new Error('API unavailable'));
-    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
     expect(html).toContain('role="status"');
     expect((await renderRecords()).map((r) => r.id)).toEqual(['program-row']);
   });
 
   it('links to recording one', async () => {
     (fetchNonCycleRecords as jest.Mock).mockResolvedValue([]);
-    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
     expect(html).toContain('href="/non-cycle/new"');
   });
 });
@@ -147,7 +151,7 @@ describe('HistoryPage macrocycles', () => {
 
   it('passes the program\'s macrocycles to the tabs, with no notice', async () => {
     (fetchMacrocycles as jest.Mock).mockResolvedValue([MACROCYCLE]);
-    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
     expect(fetchMacrocycles).toHaveBeenCalledWith('5-3-1');
     const encoded = html.match(/data-macrocycles="([^"]*)"/)?.[1] ?? '';
     expect(JSON.parse(encoded.replace(/&quot;/g, '"'))).toEqual([MACROCYCLE]);
@@ -156,7 +160,7 @@ describe('HistoryPage macrocycles', () => {
 
   it('shows the load notice when the macrocycles can\'t be fetched', async () => {
     (fetchMacrocycles as jest.Mock).mockRejectedValue(new Error('API unavailable'));
-    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
     expect(html).toContain('role="status"');
     expect(html).toContain('data-macrocycles="[]"');
   });
@@ -175,7 +179,7 @@ describe('HistoryPage imports', () => {
 
   it('passes the program\'s imports to the tabs, with no notice', async () => {
     (fetchImportBatches as jest.Mock).mockResolvedValue([BATCH]);
-    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
     expect(fetchImportBatches).toHaveBeenCalledWith('5-3-1');
     const encoded = html.match(/data-imports="([^"]*)"/)?.[1] ?? '';
     expect(JSON.parse(encoded.replace(/&quot;/g, '"'))).toEqual([BATCH]);
@@ -184,10 +188,138 @@ describe('HistoryPage imports', () => {
 
   it('says only that Undo is unavailable, and offers none, when they can\'t be fetched', async () => {
     (fetchImportBatches as jest.Mock).mockRejectedValue(new Error('API unavailable'));
-    const html = renderToStaticMarkup((await HistoryPage()) as ReactElement);
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
     expect(html).toContain('Undoing an import isn’t available right now.');
     // The history itself loaded, so its notice isn't shown.
     expect(html).not.toContain('latest history');
     expect(html).toContain('data-imports="[]"');
+  });
+});
+
+// #1300: an import can go into any of the lifter's programs, and History can show each of them.
+describe('HistoryPage program', () => {
+  const CUSTOM = {
+    id: '0b5c1f3e-8a2d-4c6b-9e7f-1a2b3c4d5e6f',
+    name: 'Sheets import',
+    description: null,
+    baseTemplate: null,
+    createdAt: '2026-11-13',
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Like the API: a program the account doesn't have is a 404.
+    (fetchLiftRecords as jest.Mock).mockImplementation(async (program: string) => {
+      if (program !== CUSTOM.id && program !== '5-3-1') throw new Error('404');
+      return [];
+    });
+    (fetchNonCycleRecords as jest.Mock).mockResolvedValue([]);
+    (fetchTrainingMaxHistory as jest.Mock).mockResolvedValue({ entries: [] });
+    (fetchMacrocycles as jest.Mock).mockResolvedValue([]);
+    (fetchImportBatches as jest.Mock).mockResolvedValue([]);
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([CUSTOM]);
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '5-3-1' });
+  });
+
+  it('shows the lifter’s only program, with no notice, when none is active', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: null });
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([CUSTOM]);
+
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
+
+    expect(fetchLiftRecords).toHaveBeenCalledWith(CUSTOM.id);
+    expect(fetchMacrocycles).toHaveBeenCalledWith(CUSTOM.id);
+    expect(fetchImportBatches).toHaveBeenCalledWith(CUSTOM.id);
+    expect(html).not.toContain('role="status"');
+    // One program, so there's nothing to choose.
+    expect(html).not.toContain('id="history-program"');
+  });
+
+  // The API answers lift-records with no sets for a program with no current macrocycle.
+  it('lists an imported-only program’s macrocycles and imports, with no notice', async () => {
+    const imported = {
+      id: 'm-imported',
+      macrocycleNum: 1,
+      startDate: '2024-01-01',
+      endDate: '2024-01-26',
+      status: 'completed',
+      origin: 'imported',
+      current: false,
+      unmatched: false,
+    };
+    const batch = { id: 'b-imported', program: CUSTOM.id, createdAt: '2026-11-14T12:00:00.000Z', macrocycleIds: ['m-imported'] };
+    (fetchMacrocycles as jest.Mock).mockResolvedValue([imported]);
+    (fetchImportBatches as jest.Mock).mockResolvedValue([batch]);
+
+    const html = renderToStaticMarkup((await historyPage({ program: CUSTOM.id })) as ReactElement);
+
+    expect(fetchLiftRecords).toHaveBeenCalledWith(CUSTOM.id);
+    expect(html).not.toContain('role="status"');
+    const attr = (name: string) => JSON.parse((html.match(new RegExp(`${name}="([^"]*)"`))?.[1] ?? '').replace(/&quot;/g, '"'));
+    expect(attr('data-macrocycles')).toEqual([imported]);
+    expect(attr('data-imports')).toEqual([batch]);
+  });
+
+  it('offers no picker when the active program isn’t among the lifter’s programs', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '9f0e1d2c-3b4a-4596-8a7b-6c5d4e3f2a1b' });
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([CUSTOM, { ...CUSTOM, id: '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d', name: 'Other' }]);
+
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
+
+    expect(html).not.toContain('id="history-program"');
+  });
+
+  it('shows the active program by default, and offers the others', async () => {
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
+
+    expect(fetchMacrocycles).toHaveBeenCalledWith('5-3-1');
+    expect(html).toContain('<label for="history-program">Program</label>');
+    expect(html).toContain(`<option value="${CUSTOM.id}">Sheets import</option>`);
+    expect(html).toMatch(/<option value="5-3-1" selected="">[^<]* \(active\)<\/option>/);
+  });
+
+  it('shows the program asked for when it’s one of the lifter’s', async () => {
+    const html = renderToStaticMarkup((await historyPage({ program: CUSTOM.id })) as ReactElement);
+
+    expect(fetchMacrocycles).toHaveBeenCalledWith(CUSTOM.id);
+    expect(fetchMacrocycles).not.toHaveBeenCalledWith('5-3-1');
+    expect(html).toContain(`<option value="${CUSTOM.id}" selected="">Sheets import</option>`);
+  });
+
+  it('shows the active program when the one asked for isn’t the lifter’s', async () => {
+    await historyPage({ program: 'someone-elses' });
+
+    expect(fetchMacrocycles).toHaveBeenCalledWith('5-3-1');
+    expect(fetchMacrocycles).not.toHaveBeenCalledWith('someone-elses');
+  });
+
+  it('loads only non-cycle workouts, with no notice, for an account with no program', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: null });
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([]);
+
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
+
+    expect(fetchLiftRecords).not.toHaveBeenCalled();
+    expect(fetchMacrocycles).not.toHaveBeenCalled();
+    expect(fetchNonCycleRecords).toHaveBeenCalled();
+    expect(html).not.toContain('role="status"');
+  });
+
+  it('shows the load notice, and the active program, when the custom programs can’t be fetched', async () => {
+    (fetchCustomPrograms as jest.Mock).mockRejectedValue(new Error('API unavailable'));
+
+    const html = renderToStaticMarkup((await historyPage({ program: CUSTOM.id })) as ReactElement);
+
+    expect(fetchMacrocycles).toHaveBeenCalledWith('5-3-1');
+    expect(html).toContain('role="status"');
+  });
+
+  it('shows the load notice, and the lifter’s first program, when their settings can’t be fetched', async () => {
+    (fetchUserSettings as jest.Mock).mockRejectedValue(new Error('API unavailable'));
+
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
+
+    expect(fetchMacrocycles).toHaveBeenCalledWith(CUSTOM.id);
+    expect(html).toContain('role="status"');
   });
 });
