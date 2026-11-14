@@ -64,7 +64,7 @@ The comparison is pre-registered before either version's output is seen. The own
 
 1. Piece 1 ships first, in two deploys. The first adds the table, stable ids, the write guards and clients that send the id, and it counts writes with no id. Numbers don't change yet, because migrations run while the last good API revision is still serving, and that revision doesn't check ids. The second runs the renumbering backfill and starts rejecting writes with no id. Piece 1 writes no imported rows, so its code can be reverted until piece 3 is on. Its backfill changes stored numbers, so reverting those takes the reversal script in decision 18.
 2. Pieces 3, 6, 7 and 8 sit behind `IMPORT_ASSIGN_ENABLED`, off by default. With it off, the wizard shows the same steps and required columns as today, but piece 1 still changes how the file-number paths read those numbers (decision 2). It goes on in staging first, then production. Piece 7 is behind the flag because an exported file only round-trips through assigned imports.
-3. Turning the flag off stops new assigned imports and leaves stored rows alone. That's the normal way back.
+3. Turning the flag off stops new assigned imports and leaves stored rows alone. That's the normal way back. [`docs/runbooks/import-assign-flag.md`](../runbooks/import-assign-flag.md) says how.
 4. Reverting piece 1's code isn't safe once imported rows exist, because `prevNum + 1` can land on an imported number. Undo those batches first, or leave piece 1 in place.
 5. Piece 9 has no flag, because a lifter who doesn't use it sees nothing change apart from one new action. Its Assign choice arrives with piece 3, behind that flag. Reverting piece 9's code leaves its rows stored and out of sight until it's back.
 

@@ -39,6 +39,9 @@ env:
   # so it lives here (the chart default) rather than the per-env values/ overlays.
   # The GKE-staging Helm deploy steps also pass it via --set (#812).
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+  # The importer's Assign step (#1173), off unless an environment's values/ overlay turns it on
+  # (#1295). Cloud Run gets the same flag from the deploy workflows.
+  IMPORT_ASSIGN_ENABLED: "false"
 
 # GCP-specific config
 gcp:

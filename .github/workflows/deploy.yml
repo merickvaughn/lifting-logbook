@@ -534,6 +534,9 @@ jobs:
           otlp_secret: lifting-logbook-stg-otel-otlp-auth-header
           loki_secret: lifting-logbook-stg-otel-loki-auth-header
           otel_mirror_repo: ${{ steps.tf-outputs.outputs.otel_mirror_repo }}
+          # The importer's Assign step (#1173), on in staging first (#1295). Matches staging.yml.
+          # To turn it off, set it to "false" here and there: removing the line keeps the live value.
+          ingress_env: IMPORT_ASSIGN_ENABLED=true
 
       # web sidecar via the shared composite action (see the api step above). web_sa
       # triggers the least-privilege grant of the three otel secrets to the web workload
