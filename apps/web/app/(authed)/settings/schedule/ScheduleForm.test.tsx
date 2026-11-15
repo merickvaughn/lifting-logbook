@@ -33,7 +33,7 @@ describe('ScheduleForm re-dating the current macrocycle (#1032)', () => {
   it('re-dates the active program’s macrocycle from the local date after saving, and says what changed', async () => {
     const user = userEvent.setup();
     mockSave.mockResolvedValue(saved({ type: 'fixed', days: [1, 3] }));
-    mockRedate.mockResolvedValue({ scheduled: true, redated: 21, firstDate: '2026-05-21', kept: 2 });
+    mockRedate.mockResolvedValue({ macrocycleNum: 1, scheduled: true, redated: 21, firstDate: '2026-05-21', kept: 2 });
     render(<ScheduleForm initialSchedule={{ type: 'fixed', days: [0, 2, 4] }} activeProgram="5-3-1" />);
 
     expect(screen.getByRole('checkbox', REDATE_BOX)).toBeChecked();
@@ -63,6 +63,18 @@ describe('ScheduleForm re-dating the current macrocycle (#1032)', () => {
     expect(screen.queryByRole('checkbox', REDATE_BOX)).not.toBeInTheDocument();
   });
 
+  it('says there was nothing to re-date when the program has no current macrocycle', async () => {
+    const user = userEvent.setup();
+    mockSave.mockResolvedValue(saved(null));
+    mockRedate.mockResolvedValue({ macrocycleNum: null, scheduled: false, redated: 0, firstDate: null, kept: 0 });
+    render(<ScheduleForm initialSchedule={null} activeProgram="5-3-1" />);
+
+    await user.click(screen.getByRole('button', { name: 'Save schedule' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/no current macrocycle/);
+    expect(screen.getByRole('button', { name: 'Save schedule' })).toBeEnabled();
+  });
+
   it('says the schedule saved and logs the error when re-dating fails', async () => {
     const user = userEvent.setup();
     const err = new Error('boom');
@@ -90,11 +102,11 @@ describe('ScheduleForm re-dating the current macrocycle (#1032)', () => {
 
 describe('redateMessage (#1032)', () => {
   it.each<[string, Parameters<typeof redateMessage>[0], RegExp]>([
-    ['no current macrocycle', null, /no current macrocycle/],
-    ['cleared, nothing done', { scheduled: false, redated: 0, firstDate: null, kept: 0 }, /no longer scheduled\.$/],
-    ['cleared, some done', { scheduled: false, redated: 0, firstDate: null, kept: 3 }, /The 3 you've logged or skipped keep their scheduled dates/],
-    ['scheduled, all done', { scheduled: true, redated: 0, firstDate: null, kept: 24 }, /none were re-dated/],
-    ['scheduled, one left', { scheduled: true, redated: 1, firstDate: '2026-05-22', kept: 23 }, /Re-dated 1 workout in/],
+    ['no current macrocycle', { macrocycleNum: null, scheduled: true, redated: 0, firstDate: null, kept: 0 }, /no current macrocycle/],
+    ['cleared, nothing done', { macrocycleNum: 1, scheduled: false, redated: 0, firstDate: null, kept: 0 }, /no longer scheduled\.$/],
+    ['cleared, some done', { macrocycleNum: 1, scheduled: false, redated: 0, firstDate: null, kept: 3 }, /The 3 you've logged or skipped keep their scheduled dates/],
+    ['scheduled, all done', { macrocycleNum: 1, scheduled: true, redated: 0, firstDate: null, kept: 24 }, /none were re-dated/],
+    ['scheduled, one left', { macrocycleNum: 1, scheduled: true, redated: 1, firstDate: '2026-05-22', kept: 23 }, /Re-dated 1 workout in/],
   ])('%s', (_label, result, expected) => {
     expect(redateMessage(result)).toMatch(expected);
   });

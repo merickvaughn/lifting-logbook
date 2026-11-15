@@ -1256,19 +1256,20 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && rest[0] === 'macrocycles' && rest[1] === 'current' && rest[2] === 'redate') {
       const body = await readBody(req);
       if (rejectIfInvalidBody(res, body)) return;
-      if (state.noCurrentMacrocycle) {
-        json(res, { statusCode: 404, message: 'No active macrocycle' }, 404);
+      if (typeof body.today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(body.today)) {
+        json(res, { statusCode: 400, message: 'date must be a calendar date in YYYY-MM-DD format' }, 400);
         return;
       }
-      if (body.today !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(body.today)) {
-        json(res, { statusCode: 400, message: 'today must be an ISO date (YYYY-MM-DD)' }, 400);
+      if (state.noCurrentMacrocycle) {
+        json(res, { macrocycleNum: null, scheduled: false, redated: 0, firstDate: null, kept: 0 });
         return;
       }
       const scheduled = state.workoutSchedule !== null;
       json(res, {
+        macrocycleNum: 1,
         scheduled,
         redated: scheduled ? 5 : 0,
-        firstDate: scheduled ? (body.today ?? '2026-05-21') : null,
+        firstDate: scheduled ? body.today : null,
         kept: 0,
       });
       return;

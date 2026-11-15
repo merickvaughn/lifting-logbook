@@ -27,7 +27,9 @@ import { StartNewMacrocycleDto } from './start-new-macrocycle.dto';
 import {
   assertMacrocycleWritable,
   checkMacrocycleId,
+  dashboardOrNull,
   lockForMacrocycleWrite,
+  lockForRenumbering,
   closingStatus,
   ensureCurrentRow,
   forgetBatchKeys,
@@ -161,8 +163,9 @@ function datesForProgramDays(
  * - **Rescheduled workouts** (a `workout_date_override`) keep their override, which decides their
  *   date, and their row. They take no schedule day.
  * - **With a schedule**, every other program day gets a new row. The lowest-numbered one takes the
- *   schedule's first day on or after `from`, and the rest follow in program order. The schedule's
- *   weeks count from the macrocycle's start, so a rotating schedule stays in step with it.
+ *   schedule's first day on or after `from` (or the macrocycle's start, if later), and the rest
+ *   follow in program order. The schedule's weeks count from the macrocycle's first week, so a
+ *   rotating schedule stays in step with it.
  * - **Without one**, those days get no row, and the rescheduled ones lose theirs, so a macrocycle
  *   with nothing logged or skipped leaves schedule mode.
  *
@@ -191,12 +194,13 @@ export function redatedScheduledWorkouts(
     : [];
   if (!workoutSchedule || toDate.length === 0) return { rows: kept, redated: [] };
 
-  // Dated from the macrocycle's first week, then trimmed to `from`: each calendar day before
-  // `from` holds at most one date, so that many extra dates always reach past it.
+  // Dated from the Monday of `from`'s week, with a rotating schedule turned to the week it is on
+  // there, then trimmed to `from`: that week holds at most six dates before it. So the work is
+  // bounded by the workouts to date, however far `from` is from the macrocycle's start.
   const start = toUTCMidnight(macrocycleDate);
   const from = toUTCMidnight(input.from) > start ? toUTCMidnight(input.from) : start;
-  const daysBefore = Math.round((from.getTime() - start.getTime()) / 86_400_000) + 7;
-  const dates = distributeWorkouts(toDate.length + daysBefore, workoutSchedule, start)
+  const weeksIn = Math.round((mondayOf(from).getTime() - mondayOf(start).getTime()) / (7 * 86_400_000));
+  const dates = distributeWorkouts(toDate.length + 7, rotatedBy(workoutSchedule, weeksIn), from)
     .flatMap((week) => week.workouts)
     .filter((date) => date >= from)
     .slice(0, toDate.length);
@@ -215,6 +219,21 @@ export function redatedScheduledWorkouts(
     rows: [...kept, ...redated].sort((a, b) => a.workoutNum - b.workoutNum),
     redated,
   };
+}
+
+/** UTC midnight of the Monday of `date`'s week, as `distributeWorkouts` aligns weeks. */
+function mondayOf(date: Date): Date {
+  const d = toUTCMidnight(date);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d;
+}
+
+/** The schedule as it runs `weeks` weeks in: a rotating one starts on that week's pattern. */
+function rotatedBy(schedule: UserWorkoutSchedule, weeks: number): UserWorkoutSchedule {
+  const pattern = schedule.weeks ?? [];
+  if (schedule.type !== 'rotating' || pattern.length === 0) return schedule;
+  const k = weeks % pattern.length;
+  return { ...schedule, weeks: [...pattern.slice(k), ...pattern.slice(0, k)] };
 }
 
 /**
@@ -489,21 +508,24 @@ export class MacrocycleGenerationService {
     program: string,
     today: Date,
   ): Promise<RedateMacrocycleResponse> {
-    // It writes the current macrocycle's rows, so an import can't renumber under it (decision 13).
+    // An import holding the lock is a 409 at once, as for any macrocycle write (decision 13). Then
+    // it takes the lock exclusively, waiting out page writes in flight: it decides which workouts
+    // keep their rows from what is logged, skipped and rescheduled, so none of those may land
+    // between its reads and its write.
     await lockForMacrocycleWrite(repos);
-    const dashboard = await repos.macrocycleDashboard.getMacrocycleDashboard(program);
+    await lockForRenumbering(repos);
+    const dashboard = await dashboardOrNull(repos, program);
+    if (!dashboard) return { macrocycleNum: null, scheduled: false, redated: 0, firstDate: null, kept: 0 };
     const { macrocycleNum } = dashboard;
     const row = await repos.macrocycle.findByNumber(program, macrocycleNum);
     if (row) assertMacrocycleWritable(program, row);
-    const [programSpec, settings, rows, logged, skipped, overrides] = await Promise.all([
-      repos.liftingProgramSpec.getProgramSpec(program),
-      repos.userSettings.getSettings(),
-      repos.macrocycleScheduledWorkout.getScheduledWorkouts(program, macrocycleNum),
-      repos.liftRecord.getLoggedWorkoutNums(program, macrocycleNum),
-      repos.workoutSkipOverride.getSkipsForMacrocycle(program, macrocycleNum),
-      repos.workoutDateOverride.getOverridesForMacrocycle(program, macrocycleNum),
-    ]);
-    const workoutSchedule = settings.workoutSchedule;
+    // One after another: the request's queries share one transaction's connection.
+    const programSpec = await repos.liftingProgramSpec.getProgramSpec(program);
+    const { workoutSchedule } = await repos.userSettings.getSettings();
+    const rows = await repos.macrocycleScheduledWorkout.getScheduledWorkouts(program, macrocycleNum);
+    const logged = await repos.liftRecord.getLoggedWorkoutNums(program, macrocycleNum);
+    const skipped = await repos.workoutSkipOverride.getSkipsForMacrocycle(program, macrocycleNum);
+    const overrides = await repos.workoutDateOverride.getOverridesForMacrocycle(program, macrocycleNum);
     const done = new Set([...logged, ...skipped]);
     const result = redatedScheduledWorkouts(
       program,
@@ -520,6 +542,7 @@ export class MacrocycleGenerationService {
       'Re-dated the current macrocycle (#1032)',
     );
     return {
+      macrocycleNum,
       scheduled: workoutSchedule !== null,
       redated: result.redated.length,
       firstDate: first ? first.scheduledDate.toISOString().slice(0, 10) : null,

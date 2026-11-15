@@ -529,6 +529,7 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       { method: 'DELETE', url: `${base}/macrocycles/1/workouts/1/skip` },
       { method: 'PUT', url: `${base}/workouts/1/focus-state`, body: { ...emptyFocusDayState(), dismissed: true } },
       { method: 'POST', url: `${base}/macrocycles`, body: { fromMacrocycleNum: 1 } },
+      { method: 'POST', url: `${base}/macrocycles/current/redate`, body: { today: '2026-01-05' } },
     ];
 
     /**

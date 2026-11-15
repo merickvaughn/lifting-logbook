@@ -1141,6 +1141,33 @@ describe('redatedScheduledWorkouts', () => {
     expect(result?.redated.map((r) => r.weekNum)).toEqual(Array.from({ length: 24 }, (_, i) => Math.floor(i / 2) + 1));
   });
 
+  it('turns a rotating schedule to the week it is on when re-dating starts weeks in', () => {
+    // Wednesday May 27 is in week 2 (Tue/Thu): Thu May 28, then week 3's Mon/Wed/Fri, then week 4's Tue.
+    const result = redatedScheduledWorkouts('5-3-1', spec(), {
+      ...base,
+      from: day('2026-05-27'),
+      workoutSchedule: { type: 'rotating', weeks: [[MON, WED, FRI], [TUE, DAY_INDEX.THU]] },
+    }, logger);
+    expect(result?.redated.slice(0, 5).map((r) => iso(r.scheduledDate))).toEqual([
+      '2026-05-28', '2026-06-01', '2026-06-03', '2026-06-05', '2026-06-09',
+    ]);
+  });
+
+  it('dates no more than a week past the workouts it re-dates, however far off today is', () => {
+    // Generating from the macrocycle's start would ask for one date per day up to today.
+    const distribute = jest.mocked(distributeWorkouts);
+    distribute.mockClear();
+    const result = redatedScheduledWorkouts('5-3-1', spec(), {
+      ...base,
+      from: day('9999-12-27'),
+      workoutSchedule: { type: 'rotating', weeks: [[MON], [WED], [FRI]] },
+    }, logger);
+    expect(distribute).toHaveBeenCalledTimes(1);
+    expect(distribute.mock.calls[0]?.[0]).toBe(24 + 7);
+    expect(result?.redated).toHaveLength(24);
+    expect(result?.redated[0] && result.redated[0].scheduledDate >= day('9999-12-27')).toBe(true);
+  });
+
   it('repairs rows scheduled before #1023: drops unlogged rows past the last day and dates the missing days', () => {
     const rows = [
       ...original().slice(0, 10),

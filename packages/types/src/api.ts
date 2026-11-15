@@ -67,8 +67,8 @@ export interface RecalculateMaxesResponse {
 
 /** Request body for POST /programs/:program/macrocycles/current/redate (#1032). */
 export interface RedateMacrocycleRequest {
-  /** The lifter's local date (YYYY-MM-DD). The re-dated workouts start on or after it. Defaults to the server's UTC date. */
-  today?: string;
+  /** The lifter's local date (YYYY-MM-DD). The re-dated workouts start on or after it. */
+  today: string;
 }
 
 /**
@@ -76,6 +76,8 @@ export interface RedateMacrocycleRequest {
  * re-dating the current macrocycle by the saved schedule changed.
  */
 export interface RedateMacrocycleResponse {
+  /** The macrocycle re-dated, or null when the program has no current macrocycle, so nothing was. */
+  macrocycleNum: number | null;
   /** Whether a schedule is saved. Without one, the macrocycle's unlogged workouts lose their scheduled dates. */
   scheduled: boolean;
   /** Workouts given a new date. Always 0 without a schedule. */

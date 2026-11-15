@@ -1478,7 +1478,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
         expect((await send('PATCH', '/users/me/settings', { workoutSchedule: { type: 'fixed', days: [1, 3] } })).statusCode).toBe(200);
         const res = await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/current/redate`, { today: '2026-05-21' });
         expect(res.statusCode).toBe(200);
-        expect(res.json()).toEqual({ scheduled: true, redated: dayCount - 3, firstDate: '2026-05-21', kept: 2 });
+        expect(res.json()).toEqual({ macrocycleNum: 1, scheduled: true, redated: dayCount - 3, firstDate: '2026-05-21', kept: 2 });
 
         const after = await dates();
         expect(after.byNum.size).toBe(dayCount);
@@ -1498,7 +1498,7 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
         expect((await send('PATCH', '/users/me/settings', { workoutSchedule: null })).statusCode).toBe(200);
         const res = await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/current/redate`, { today: '2026-05-21' });
         expect(res.statusCode).toBe(200);
-        expect(res.json()).toEqual({ scheduled: false, redated: 0, firstDate: null, kept: 0 });
+        expect(res.json()).toEqual({ macrocycleNum: 1, scheduled: false, redated: 0, firstDate: null, kept: 0 });
         expect((await dates()).weeks).toEqual([]);
       });
 
@@ -1508,28 +1508,35 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
           { program: SEED_PROGRAM, macrocycleNum: 1, workoutNum: 3, date: new Date('2026-05-22T00:00:00Z'), lift: 'Squat', setNum: 1, weight: 200, reps: 5, notes: '' },
         ]);
         expect((await send('PATCH', '/users/me/settings', { workoutSchedule: null })).statusCode).toBe(200);
-        const res = await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/current/redate`, {});
-        expect(res.json()).toEqual({ scheduled: false, redated: 0, firstDate: null, kept: 1 });
+        const res = await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/current/redate`, { today: '2026-05-21' });
+        expect(res.json()).toEqual({ macrocycleNum: 1, scheduled: false, redated: 0, firstDate: null, kept: 1 });
         const scheduled = await bundle.macrocycleScheduledWorkout.getScheduledWorkouts(SEED_PROGRAM, 1);
         expect(scheduled.map((s) => s.workoutNum)).toEqual([3]);
         expect((await dates()).byNum.get(3)).toBe('2026-05-22');
       });
 
-      it('is a 404 when the program has no current macrocycle', async () => {
+      // A 200, not a 404, so the page can tell "nothing to re-date" from a route that failed.
+      it('re-dates nothing, with macrocycleNum null, when the program has no current macrocycle', async () => {
         const res = await injectPage(app, {
           method: 'POST',
           url: `/programs/${SEED_PROGRAM}/macrocycles/current/redate`,
           headers: { 'content-type': 'application/json', authorization: 'Bearer redate-e2e-none' },
-          payload: JSON.stringify({}),
+          payload: JSON.stringify({ today: '2026-05-21' }),
         });
-        expect(res.statusCode).toBe(404);
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toEqual({ macrocycleNum: null, scheduled: false, redated: 0, firstDate: null, kept: 0 });
       });
 
-      it('rejects a today that is not a date', async () => {
-        const { send } = await startScheduled('redate-e2e-bad-date');
-        const res = await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/current/redate`, { today: 'tomorrow' });
-        expect(res.statusCode).toBe(400);
-      });
+      // Each would move the start a day or more: an offset datetime, a rolled-over day, or a
+      // format that parses to no date at all and silently re-dated from the macrocycle's start.
+      it.each([['missing', undefined], ['not a date', 'tomorrow'], ['a datetime', '2026-05-21T23:00:00-05:00'], ['a day that does not exist', '2026-02-30'], ['a week date', '2026-W21'], ['no separators', '20260521']])(
+        'rejects a today that is %s',
+        async (_label, today) => {
+          const { send } = await startScheduled(`redate-e2e-bad-date-${String(today)}`);
+          const res = await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/current/redate`, today === undefined ? {} : { today });
+          expect(res.statusCode).toBe(400);
+        },
+      );
     });
   });
 

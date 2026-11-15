@@ -228,15 +228,24 @@ this ADR's: workout N is the program's N-th day. The rules live in `redatedSched
 - **Re-dating repairs macrocycles scheduled before this ADR:** an unlogged row past the program's
   last day goes, and a day with no row gets one.
 
-The lifter's local date comes from the browser, because the server's UTC date is a day ahead in a
-US evening. The endpoint takes the macrocycle lock but no macrocycle id: it re-dates whichever
-macrocycle is current, which is what a settings page means.
+The request carries the lifter's local date as a bare `YYYY-MM-DD` (`today`, required; a datetime
+or an impossible date is a 400), because the server's UTC date is a day ahead in a US evening. Dates
+are generated from the Monday of that week, with a rotating schedule turned to the week it is on,
+so a far-off `today` costs no more than a near one. The endpoint takes no macrocycle id: it
+re-dates whichever macrocycle is current, which is what a settings page means, and answers 200 with
+`macrocycleNum: null` when there is none. It takes the macrocycle lock exclusively, as starting a
+new macrocycle does: it reads which workouts are logged, skipped and rescheduled, then rewrites every
+row, so a log or skip landing in between would be dated over. It waits out page writes in flight and
+answers 409 `macrocycle-busy` if they hold the lock past the wait, or `import-in-progress` while an
+import holds it.
 
 Verification: `programs.e2e.spec.ts` (*re-dating the current macrocycle*) changes Mon/Wed/Fri to
 Tue/Thu mid-macrocycle with one workout logged out of order, one skipped and one rescheduled, and
-clears a schedule with and without logged work. `macrocycle-generation.service.spec.ts`
-(`redatedScheduledWorkouts`) covers a rotating schedule, pre-#1023 rows, a macrocycle starting
-after today, and `distributeWorkouts` dating too few. `ScheduleForm.test.tsx` and the Playwright
+clears a schedule with and without logged work, and refuses malformed dates.
+`macrocycle-generation.service.spec.ts` (`redatedScheduledWorkouts`) covers a rotating schedule
+from its first and a later week, a far-off `today`, pre-#1023 rows, a macrocycle starting after
+today, and `distributeWorkouts` dating too few. `macrocycle.db.e2e.spec.ts` checks the endpoint is
+refused while an import holds the lock. `ScheduleForm.test.tsx` and the Playwright
 `settings.spec.ts` cover the page.
 
 ## References

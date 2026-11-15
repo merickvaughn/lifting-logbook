@@ -53,8 +53,8 @@ function formatDay(isoDate: string): string {
 }
 
 /** What re-dating the current macrocycle did (#1032), in the lifter's words. */
-export function redateMessage(result: RedateMacrocycleResponse | null): string {
-  if (result === null) return 'You have no current macrocycle, so there was nothing to re-date.';
+export function redateMessage(result: RedateMacrocycleResponse): string {
+  if (result.macrocycleNum === null) return 'You have no current macrocycle, so there was nothing to re-date.';
   if (!result.scheduled) {
     if (result.kept === 0) return 'Your current macrocycle is no longer scheduled.';
     return (
@@ -72,11 +72,11 @@ export function redateMessage(result: RedateMacrocycleResponse | null): string {
 
 export default function ScheduleForm({
   initialSchedule,
-  activeProgram = null,
+  activeProgram,
 }: {
   initialSchedule: UserWorkoutSchedule | null;
   /** The program whose current macrocycle saving can re-date; null offers no re-dating. */
-  activeProgram?: string | null;
+  activeProgram: string | null;
 }) {
   const init = initialState(initialSchedule);
   const [mode, setMode] = useState<Mode>(init.mode);
@@ -133,33 +133,35 @@ export default function ScheduleForm({
     }
     setSaving(true);
     try {
-      // Re-seed local state from the canonical server response. `useState` initializers
-      // only run on mount, so without this the form would keep showing optimistic local
-      // state if the server normalized the payload (e.g., re-sorted days, dropped dupes)
-      // or if a future code path returns a stored value different from what we sent.
-      const result = await saveSchedule({ workoutSchedule: payload });
-      const next = initialState(result.workoutSchedule);
-      setMode(next.mode);
-      setFixedDays(next.fixedDays);
-      setRotatingWeeks(next.rotatingWeeks);
-      setSavedAt(new Date().toLocaleTimeString());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save schedule.');
-      setSaving(false);
-      return;
-    }
-    // A schedule otherwise dates a macrocycle only when it starts (#1032).
-    if (activeProgram && redate) {
       try {
-        setRedateNote(redateMessage(await redateMacrocycle(activeProgram, localToday())));
+        // Re-seed local state from the canonical server response. `useState` initializers
+        // only run on mount, so without this the form would keep showing optimistic local
+        // state if the server normalized the payload (e.g., re-sorted days, dropped dupes)
+        // or if a future code path returns a stored value different from what we sent.
+        const result = await saveSchedule({ workoutSchedule: payload });
+        const next = initialState(result.workoutSchedule);
+        setMode(next.mode);
+        setFixedDays(next.fixedDays);
+        setRotatingWeeks(next.rotatingWeeks);
+        setSavedAt(new Date().toLocaleTimeString());
       } catch (err) {
-        logClientError('redateMacrocycle', err, { program: activeProgram });
-        setError(
-          'Your schedule is saved, but re-dating your current macrocycle failed. Save again to retry.',
-        );
+        setError(err instanceof Error ? err.message : 'Failed to save schedule.');
+        return;
       }
+      // A schedule otherwise dates a macrocycle only when it starts (#1032).
+      if (activeProgram && redate) {
+        try {
+          setRedateNote(redateMessage(await redateMacrocycle(activeProgram, localToday())));
+        } catch (err) {
+          logClientError('redateMacrocycle', err, { program: activeProgram });
+          setError(
+            'Your schedule is saved, but re-dating your current macrocycle failed. Save again to retry.',
+          );
+        }
+      }
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   }
 
   return (

@@ -63,7 +63,8 @@ export class MacrocycleGenerationController {
   /**
    * Re-dates the current macrocycle by the saved schedule, or takes it out of schedule mode when
    * none is saved (#1032). The schedule page calls it after saving, so it writes to whichever
-   * macrocycle is current and takes no macrocycle id.
+   * macrocycle is current and takes no macrocycle id. With no current macrocycle it is a 200 with
+   * `macrocycleNum: null`, so a 404 always means something went wrong.
    */
   @Post('macrocycles/current/redate')
   @HttpCode(HttpStatus.OK)
@@ -73,8 +74,7 @@ export class MacrocycleGenerationController {
     @CurrentUser() user: AuthUser,
   ): Promise<RedateMacrocycleResponse> {
     const repos = await this.factory.forUser(user);
-    const today = dto.today ? new Date(dto.today) : new Date();
-    return this.macrocycleGenerationService.redateCurrentMacrocycle(repos, program, today);
+    return this.macrocycleGenerationService.redateCurrentMacrocycle(repos, program, new Date(dto.today));
   }
 
   @Post('training-maxes/recalculate')
