@@ -722,7 +722,8 @@ initial value. [#1062](https://github.com/merickvaughn/lifting-logbook/issues/10
 [#1064](https://github.com/merickvaughn/lifting-logbook/issues/1064) found ten such tokens. The
 guard reads every `--name:` declaration in the `.css` files git tracks under `apps/web` (and
 `'--name':` keys in `.ts`/`.tsx` style objects), then fails on any `var(--name` in those files that
-names none of them, fallback or not. CSS comments are skipped, and it fails rather than pass if it
+names none of them, fallback or not. Block comments are skipped, but `//` comments in TS/TSX are
+still read, so a line comment naming an undefined token fails it. It fails rather than pass if it
 reads no stylesheets, definitions or uses, or nothing from `globals.css`.
 
 **Run before pushing whenever you add or rename a `var(--…)` use or a token in `globals.css`:**

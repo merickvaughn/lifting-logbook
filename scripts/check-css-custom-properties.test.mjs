@@ -8,16 +8,16 @@ import {
   extractDefinitions,
   extractUses,
   readWebFiles,
-  stripCssComments,
+  stripBlockComments,
 } from './check-css-custom-properties.mjs';
 
 const GLOBALS = `:root {\n  --space-2: 0.5rem;\n}\n[data-theme="navy"] {\n  --color-accent: #3498db;\n}\n`;
 
 const files = (...extra) => [{ path: GLOBALS_CSS, text: GLOBALS }, ...extra];
 
-test('stripCssComments blanks comments but keeps their newlines', () => {
+test('stripBlockComments blanks comments but keeps their newlines', () => {
   const css = 'a {}\n/* one\n   two var(--x) */\nb { color: red; }';
-  const stripped = stripCssComments(css);
+  const stripped = stripBlockComments(css);
   assert.equal(stripped.split('\n').length, css.split('\n').length);
   assert.ok(!stripped.includes('var(--x)'));
 });
@@ -45,6 +45,14 @@ test('known bad: an undefined property is flagged even with a fallback', () => {
   const css = '.a {\n  color: var(--color-primary, #2563eb);\n}';
   const { undefinedUses } = checkFiles(files({ path: 'apps/web/a.module.css', text: css }));
   assert.deepEqual(undefinedUses, [{ name: '--color-primary', path: 'apps/web/a.module.css', line: 2 }]);
+});
+
+test('TSX block comments are skipped; line comments are still read', () => {
+  const tsx = "/* was var(--color-primary) */\n<a style={{ color: 'var(--color-accent)' }} />\n// var(--color-badge)";
+  assert.deepEqual(extractUses('a.tsx', tsx).map((u) => [u.name, u.line]), [
+    ['--color-accent', 2],
+    ['--color-badge', 3],
+  ]);
 });
 
 test('known bad: an undefined property in a TSX style string is flagged', () => {

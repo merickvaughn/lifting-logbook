@@ -14,9 +14,10 @@
  *     `.ts`/`.tsx` file (a property set from a React `style` object).
  *   - Uses: every `var(--name` in a `.css`, `.ts` or `.tsx` file.
  *
- * CSS comments are stripped first, so a comment that mentions `var(--color-status-…)` isn't
- * read as a use. A property defined anywhere counts as defined everywhere: the guard doesn't
- * model which selector a declaration sits under.
+ * Block comments are stripped first, so a comment that mentions `var(--color-status-…)` isn't
+ * read as a use. `//` line comments in TS/TSX are still read: stripping them safely would need a
+ * tokenizer, since `//` also appears inside strings such as URLs. A property defined anywhere
+ * counts as defined everywhere: the guard doesn't model which selector a declaration sits under.
  *
  * It refuses to pass vacuously: if it finds no stylesheets, no definitions, no uses, or nothing
  * defined in apps/web/app/globals.css, it fails rather than report a clean result.
@@ -35,8 +36,8 @@ export const GLOBALS_CSS = 'apps/web/app/globals.css';
 const SCANNED = /\.(css|tsx?)$/;
 
 /** Removes `/* … *\/` comments, keeping newlines so reported line numbers stay right. */
-export function stripCssComments(css) {
-  return css.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ' '));
+export function stripBlockComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ' '));
 }
 
 function lineAt(text, index) {
@@ -46,13 +47,12 @@ function lineAt(text, index) {
 /** The custom properties a file defines. */
 export function extractDefinitions(path, text) {
   const pattern = path.endsWith('.css') ? /(?:^|[{;\s])(--[\w-]+)\s*:/g : /['"](--[\w-]+)['"]\s*:/g;
-  const source = path.endsWith('.css') ? stripCssComments(text) : text;
-  return new Set([...source.matchAll(pattern)].map((m) => m[1]));
+  return new Set([...stripBlockComments(text).matchAll(pattern)].map((m) => m[1]));
 }
 
 /** Every `var(--name` in a file, with its line number. */
 export function extractUses(path, text) {
-  const source = path.endsWith('.css') ? stripCssComments(text) : text;
+  const source = stripBlockComments(text);
   return [...source.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => ({
     name: m[1],
     path,
