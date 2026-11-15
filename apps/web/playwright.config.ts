@@ -77,6 +77,12 @@ export default defineConfig({
   // Local runs compile every page before the first test, so a cold Next dev compile on
   // Windows can't fail a test on timing (#1049). Skipped in CI, which is unchanged.
   globalSetup: process.env.CI ? undefined : './e2e/warmup.global-setup.ts',
+  // Even with every page compiled, a dev-server render on Windows under the full suite's
+  // load can outlast expect's 5 s default: a link click from the timer page to the
+  // compiled workout detail page took more than 5 s once in a 92-test run (#1049), and
+  // 1.9-5.0 s alone. A passing assertion returns as soon as it holds, so only a failing
+  // one waits longer. Local Windows only, like Jest's win32 testTimeout (#567).
+  expect: { timeout: process.platform === 'win32' && !process.env.CI ? 15_000 : 5_000 },
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
