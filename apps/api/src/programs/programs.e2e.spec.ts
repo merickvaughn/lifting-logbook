@@ -1426,6 +1426,111 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(dashRes.statusCode).toBe(200);
       expect(dashRes.json().weeks).toEqual([]);
     });
+
+    // Issue #1032: a schedule dated a macrocycle only when it started, so changing or clearing
+    // it mid-macrocycle did nothing until the next one.
+    describe('re-dating the current macrocycle (issue #1032)', () => {
+      const MON_WED_FRI: UserWorkoutSchedule = { type: 'fixed', days: [0, 2, 4] };
+      type DashboardWorkout = { workoutNum: number; date: string };
+
+      async function startScheduled(userId: string) {
+        const authorization = `Bearer ${userId}`;
+        await setScheduleForUser(userId, MON_WED_FRI);
+        const send = (method: 'POST' | 'PATCH', url: string, body: unknown = {}) =>
+          injectPage(app, {
+            method,
+            url,
+            headers: { 'content-type': 'application/json', authorization },
+            payload: JSON.stringify(body),
+          });
+        const dates = async (): Promise<{ weeks: unknown[]; byNum: Map<number, string> }> => {
+          const res = await injectPage(app, {
+            method: 'GET',
+            url: `/programs/${SEED_PROGRAM}/macrocycles/current`,
+            headers: { authorization },
+          });
+          expect(res.statusCode).toBe(200);
+          const { weeks } = res.json() as { weeks: { workouts: DashboardWorkout[] }[] };
+          return { weeks, byNum: new Map(weeks.flatMap((w) => w.workouts).map((w) => [w.workoutNum, w.date])) };
+        };
+        // Monday 2026-05-18: workouts 1–6 fall on May 18, 20, 22, 25, 27 and 29.
+        expect((await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/initialize`, { macrocycleDate: '2026-05-18' })).statusCode).toBe(201);
+        const bundle = await app
+          .get<InMemoryRepositoryFactory>(REPOSITORY_FACTORY)
+          .forUser({ id: userId, email: '', provider: 'dev' });
+        return { send, dates, bundle };
+      }
+
+      it('re-dates the unlogged workouts from today; logged, skipped and rescheduled ones keep their dates', async () => {
+        const { send, dates, bundle } = await startScheduled('redate-e2e-change');
+        const before = await dates();
+        expect(before.byNum.get(2)).toBe('2026-05-20');
+        const dayCount = before.byNum.size;
+
+        // Workout 2 logged before workout 1, which is skipped: done out of order.
+        await bundle.liftRecord.appendLiftRecords(SEED_PROGRAM, [
+          { program: SEED_PROGRAM, macrocycleNum: 1, workoutNum: 2, date: new Date('2026-05-20T00:00:00Z'), lift: 'Squat', setNum: 1, weight: 200, reps: 5, notes: '' },
+        ]);
+        expect((await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/1/workouts/1/skip`)).statusCode).toBe(204);
+        expect((await send('PATCH', `/programs/${SEED_PROGRAM}/macrocycles/1/workouts/4/reschedule`, { newDate: '2026-06-30' })).statusCode).toBe(204);
+
+        // Tue/Thu from Thursday 2026-05-21.
+        expect((await send('PATCH', '/users/me/settings', { workoutSchedule: { type: 'fixed', days: [1, 3] } })).statusCode).toBe(200);
+        const res = await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/current/redate`, { today: '2026-05-21' });
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toEqual({ scheduled: true, redated: dayCount - 3, firstDate: '2026-05-21', kept: 2 });
+
+        const after = await dates();
+        expect(after.byNum.size).toBe(dayCount);
+        expect(after.byNum.get(1)).toBe('2026-05-18');
+        expect(after.byNum.get(2)).toBe('2026-05-20');
+        expect(after.byNum.get(3)).toBe('2026-05-21');
+        expect(after.byNum.get(4)).toBe('2026-06-30');
+        expect(after.byNum.get(5)).toBe('2026-05-26');
+        expect(after.byNum.get(6)).toBe('2026-05-28');
+        expect(after.byNum.get(7)).toBe('2026-06-02');
+      });
+
+      it('clearing the schedule takes a macrocycle with nothing logged out of schedule mode', async () => {
+        const { send, dates } = await startScheduled('redate-e2e-clear');
+        expect((await dates()).weeks.length).toBeGreaterThan(0);
+
+        expect((await send('PATCH', '/users/me/settings', { workoutSchedule: null })).statusCode).toBe(200);
+        const res = await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/current/redate`, { today: '2026-05-21' });
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toEqual({ scheduled: false, redated: 0, firstDate: null, kept: 0 });
+        expect((await dates()).weeks).toEqual([]);
+      });
+
+      it('clearing the schedule keeps a logged workout dated, and the rest lose their scheduled dates', async () => {
+        const { send, dates, bundle } = await startScheduled('redate-e2e-clear-logged');
+        await bundle.liftRecord.appendLiftRecords(SEED_PROGRAM, [
+          { program: SEED_PROGRAM, macrocycleNum: 1, workoutNum: 3, date: new Date('2026-05-22T00:00:00Z'), lift: 'Squat', setNum: 1, weight: 200, reps: 5, notes: '' },
+        ]);
+        expect((await send('PATCH', '/users/me/settings', { workoutSchedule: null })).statusCode).toBe(200);
+        const res = await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/current/redate`, {});
+        expect(res.json()).toEqual({ scheduled: false, redated: 0, firstDate: null, kept: 1 });
+        const scheduled = await bundle.macrocycleScheduledWorkout.getScheduledWorkouts(SEED_PROGRAM, 1);
+        expect(scheduled.map((s) => s.workoutNum)).toEqual([3]);
+        expect((await dates()).byNum.get(3)).toBe('2026-05-22');
+      });
+
+      it('is a 404 when the program has no current macrocycle', async () => {
+        const res = await injectPage(app, {
+          method: 'POST',
+          url: `/programs/${SEED_PROGRAM}/macrocycles/current/redate`,
+          headers: { 'content-type': 'application/json', authorization: 'Bearer redate-e2e-none' },
+          payload: JSON.stringify({}),
+        });
+        expect(res.statusCode).toBe(404);
+      });
+
+      it('rejects a today that is not a date', async () => {
+        const { send } = await startScheduled('redate-e2e-bad-date');
+        const res = await send('POST', `/programs/${SEED_PROGRAM}/macrocycles/current/redate`, { today: 'tomorrow' });
+        expect(res.statusCode).toBe(400);
+      });
+    });
   });
 
   describe('workout skip override', () => {

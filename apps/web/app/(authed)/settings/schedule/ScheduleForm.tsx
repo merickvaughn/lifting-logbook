@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import type { UserWorkoutSchedule } from '@lifting-logbook/types';
-import { saveSchedule } from './actions';
+import type { RedateMacrocycleResponse, UserWorkoutSchedule } from '@lifting-logbook/types';
+import { logClientError } from '@/lib/log-client-error';
+import { redateMacrocycle, saveSchedule } from './actions';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 
@@ -34,18 +35,58 @@ function toggleDay(days: number[], day: number): number[] {
     : [...days, day].sort((a, b) => a - b);
 }
 
+// The lifter's own calendar date, which the re-dated workouts start on or after. The server's
+// UTC date is a day ahead in a US evening.
+function localToday(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function formatDay(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+/** What re-dating the current macrocycle did (#1032), in the lifter's words. */
+export function redateMessage(result: RedateMacrocycleResponse | null): string {
+  if (result === null) return 'You have no current macrocycle, so there was nothing to re-date.';
+  if (!result.scheduled) {
+    if (result.kept === 0) return 'Your current macrocycle is no longer scheduled.';
+    return (
+      `The workouts left in your current macrocycle are no longer scheduled. The ${result.kept} ` +
+      `you've logged or skipped keep their scheduled dates, so the macrocycle still lists them by ` +
+      `those dates.`
+    );
+  }
+  if (result.redated === 0 || result.firstDate === null) {
+    return 'Every workout in your current macrocycle is logged, skipped or rescheduled, so none were re-dated.';
+  }
+  const workouts = result.redated === 1 ? '1 workout' : `${result.redated} workouts`;
+  return `Re-dated ${workouts} in your current macrocycle, starting ${formatDay(result.firstDate)}.`;
+}
+
 export default function ScheduleForm({
   initialSchedule,
+  activeProgram = null,
 }: {
   initialSchedule: UserWorkoutSchedule | null;
+  /** The program whose current macrocycle saving can re-date; null offers no re-dating. */
+  activeProgram?: string | null;
 }) {
   const init = initialState(initialSchedule);
   const [mode, setMode] = useState<Mode>(init.mode);
   const [fixedDays, setFixedDays] = useState<number[]>(init.fixedDays);
   const [rotatingWeeks, setRotatingWeeks] = useState<number[][]>(init.rotatingWeeks);
+  const [redate, setRedate] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [redateNote, setRedateNote] = useState<string | null>(null);
 
   // Switching modes resets the other mode's draft state so buildPayload never silently
   // carries selections the user no longer sees. Without this, fixed → rotating → fixed
@@ -57,6 +98,7 @@ export default function ScheduleForm({
     if (next !== 'rotating') setRotatingWeeks([[]]);
     setError(null);
     setSavedAt(null);
+    setRedateNote(null);
   }
 
   function buildPayload(): UserWorkoutSchedule | null {
@@ -82,6 +124,7 @@ export default function ScheduleForm({
   async function handleSave() {
     setError(null);
     setSavedAt(null);
+    setRedateNote(null);
     const payload = buildPayload();
     const validationError = validate(payload);
     if (validationError) {
@@ -102,9 +145,21 @@ export default function ScheduleForm({
       setSavedAt(new Date().toLocaleTimeString());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save schedule.');
-    } finally {
       setSaving(false);
+      return;
     }
+    // A schedule otherwise dates a macrocycle only when it starts (#1032).
+    if (activeProgram && redate) {
+      try {
+        setRedateNote(redateMessage(await redateMacrocycle(activeProgram, localToday())));
+      } catch (err) {
+        logClientError('redateMacrocycle', err, { program: activeProgram });
+        setError(
+          'Your schedule is saved, but re-dating your current macrocycle failed. Save again to retry.',
+        );
+      }
+    }
+    setSaving(false);
   }
 
   return (
@@ -201,12 +256,21 @@ export default function ScheduleForm({
         </div>
       )}
 
+      {activeProgram && (
+        <label>
+          <input type="checkbox" checked={redate} onChange={(e) => setRedate(e.target.checked)} />
+          Also re-date the workouts left in my current macrocycle. Logged, skipped and rescheduled
+          workouts keep their dates.
+        </label>
+      )}
+
       <div>
         <button type="button" onClick={handleSave} disabled={saving}>
           {saving ? 'Saving…' : 'Save schedule'}
         </button>
         {error && <p role="alert">{error}</p>}
         {savedAt && <p>Saved at {savedAt}.</p>}
+        {redateNote && <p role="status">{redateNote}</p>}
       </div>
     </section>
   );

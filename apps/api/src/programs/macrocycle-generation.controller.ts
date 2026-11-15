@@ -3,6 +3,7 @@ import {
   MACROCYCLE_ID_HEADER,
   MacrocycleDashboardResponse,
   RecalculateMaxesResponse,
+  RedateMacrocycleResponse,
 } from '@lifting-logbook/types';
 import { weekTypeForDate } from '@lifting-logbook/core';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -13,6 +14,7 @@ import { toMacrocycleDashboardResponse, toTrainingMaxResponse } from './mappers'
 import { ParseProgramPipe } from './program.pipe';
 import { InitializeMacrocycleDto } from './initialize-macrocycle.dto';
 import { StartNewMacrocycleDto } from './start-new-macrocycle.dto';
+import { RedateMacrocycleDto } from './redate-macrocycle.dto';
 import { MacrocycleGenerationService } from './macrocycle-generation.service';
 
 @Controller('programs/:program')
@@ -56,6 +58,23 @@ export class MacrocycleGenerationController {
       overrides: new Map(),
     });
     return toMacrocycleDashboardResponse(newMacrocycle, currentWeekType);
+  }
+
+  /**
+   * Re-dates the current macrocycle by the saved schedule, or takes it out of schedule mode when
+   * none is saved (#1032). The schedule page calls it after saving, so it writes to whichever
+   * macrocycle is current and takes no macrocycle id.
+   */
+  @Post('macrocycles/current/redate')
+  @HttpCode(HttpStatus.OK)
+  async redateCurrentMacrocycle(
+    @Param('program', ParseProgramPipe) program: string,
+    @Body() dto: RedateMacrocycleDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<RedateMacrocycleResponse> {
+    const repos = await this.factory.forUser(user);
+    const today = dto.today ? new Date(dto.today) : new Date();
+    return this.macrocycleGenerationService.redateCurrentMacrocycle(repos, program, today);
   }
 
   @Post('training-maxes/recalculate')

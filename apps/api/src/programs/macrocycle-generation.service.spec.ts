@@ -27,7 +27,7 @@ import { InMemoryLiftModificationRepository } from '../adapters/in-memory/lift-m
 import { InMemoryLiftMetadataRepository } from '../adapters/in-memory/lift-metadata.adapter';
 import { InMemoryCustomLiftRepository } from '../adapters/in-memory/custom-lift.adapter';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
-import { buildHistoryEntries, MacrocycleGenerationService } from './macrocycle-generation.service';
+import { buildHistoryEntries, MacrocycleGenerationService, redatedScheduledWorkouts } from './macrocycle-generation.service';
 
 const PROGRAM = '5-3-1';
 
@@ -1104,5 +1104,101 @@ describe('buildHistoryEntries', () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ lift: 'Squat', weight: 316.25, source: 'test' });
+  });
+});
+
+// Issue #1032: re-dating the current macrocycle when the schedule changes or is cleared.
+describe('redatedScheduledWorkouts', () => {
+  const { MON, TUE, WED, FRI } = DAY_INDEX;
+  const spec = () => structuredClone(PRESET_BASE_SPECS['5-3-1'] ?? []);
+  const day = (isoDate: string) => new Date(`${isoDate}T00:00:00.000Z`);
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const logger = new Logger('test');
+  // 5-3-1 trains two days a week for 12 weeks; started Monday 2026-05-18 on Mon/Wed/Fri.
+  const original = () =>
+    distributeWorkouts(24, { type: 'fixed', days: [MON, WED, FRI] }, day('2026-05-18'))
+      .flatMap((w) => w.workouts)
+      .map((scheduledDate, i) => ({ workoutNum: i + 1, weekNum: Math.floor(i / 2) + 1, scheduledDate }));
+  const base = {
+    rows: original(),
+    done: new Set<number>(),
+    rescheduled: new Set<number>(),
+    macrocycleDate: day('2026-05-18'),
+    from: day('2026-05-21'),
+  };
+
+  it('keeps a rotating schedule in step with the macrocycle start', () => {
+    // Week 1 (from May 18) trains Mon/Wed/Fri, week 2 Tue/Thu. From Thursday May 21 the first
+    // dates are Fri May 22, then week 2's Tue May 26 and Thu May 28, then week 3's Mon Jun 1.
+    const result = redatedScheduledWorkouts('5-3-1', spec(), {
+      ...base,
+      workoutSchedule: { type: 'rotating', weeks: [[MON, WED, FRI], [TUE, DAY_INDEX.THU]] },
+    }, logger);
+    expect(result?.redated.slice(0, 4).map((r) => iso(r.scheduledDate))).toEqual([
+      '2026-05-22', '2026-05-26', '2026-05-28', '2026-06-01',
+    ]);
+    expect(result?.redated.map((r) => r.workoutNum)).toEqual(Array.from({ length: 24 }, (_, i) => i + 1));
+    expect(result?.redated.map((r) => r.weekNum)).toEqual(Array.from({ length: 24 }, (_, i) => Math.floor(i / 2) + 1));
+  });
+
+  it('repairs rows scheduled before #1023: drops unlogged rows past the last day and dates the missing days', () => {
+    const rows = [
+      ...original().slice(0, 10),
+      { workoutNum: 30, weekNum: 10, scheduledDate: day('2026-07-01') },
+      { workoutNum: 31, weekNum: 10, scheduledDate: day('2026-07-03') },
+    ];
+    const result = redatedScheduledWorkouts('5-3-1', spec(), {
+      ...base,
+      rows,
+      done: new Set([1, 31]),
+      workoutSchedule: { type: 'fixed', days: [MON, WED, FRI] },
+    }, logger);
+    // Workout 1 and the logged row past the last day keep theirs; workouts 2 to 24 are all dated.
+    expect(result?.rows.map((r) => r.workoutNum)).toEqual([...Array.from({ length: 24 }, (_, i) => i + 1), 31]);
+    expect(result?.rows[0]?.scheduledDate).toEqual(day('2026-05-18'));
+    expect(result?.redated[0]).toMatchObject({ workoutNum: 2, scheduledDate: day('2026-05-22') });
+  });
+
+  it('starts no earlier than the macrocycle when the macrocycle starts after today', () => {
+    const result = redatedScheduledWorkouts('5-3-1', spec(), {
+      ...base,
+      macrocycleDate: day('2026-06-03'),
+      workoutSchedule: { type: 'fixed', days: [MON, WED, FRI] },
+    }, logger);
+    expect(result?.redated[0] && iso(result.redated[0].scheduledDate)).toBe('2026-06-03');
+  });
+
+  it('without a schedule keeps only the logged and skipped rows, dropping a rescheduled one', () => {
+    const result = redatedScheduledWorkouts('5-3-1', spec(), {
+      ...base,
+      done: new Set([2, 5]),
+      rescheduled: new Set([3]),
+      workoutSchedule: null,
+    }, logger);
+    expect(result).toEqual({ rows: base.rows.filter((r) => r.workoutNum === 2 || r.workoutNum === 5), redated: [] });
+  });
+
+  it('with a schedule keeps a rescheduled workout out of the schedule days, row and all', () => {
+    const result = redatedScheduledWorkouts('5-3-1', spec(), {
+      ...base,
+      rescheduled: new Set([1]),
+      workoutSchedule: { type: 'fixed', days: [MON, WED, FRI] },
+    }, logger);
+    expect(result?.rows[0]).toEqual(base.rows[0]);
+    expect(result?.redated[0]).toMatchObject({ workoutNum: 2, scheduledDate: day('2026-05-22') });
+  });
+
+  it('returns null, with a structured error, if distributeWorkouts dates too few', () => {
+    jest.mocked(distributeWorkouts).mockReturnValueOnce([{ week: 1, workouts: [day('2026-05-22')] }]);
+    const errorSpy = jest.spyOn(logger, 'error').mockImplementation(() => undefined);
+    const result = redatedScheduledWorkouts('5-3-1', spec(), {
+      ...base,
+      workoutSchedule: { type: 'fixed', days: [MON, WED, FRI] },
+    }, logger);
+    expect(result).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ program: '5-3-1', toDate: 24, dated: 1 }),
+      expect.stringContaining('not re-dated'),
+    );
   });
 });
