@@ -123,7 +123,12 @@ test('Assign: an import into a program that isn’t active is undone from Histor
   await page.getByLabel('Program').selectOption({ label: 'My Custom Program' });
   await page.getByRole('button', { name: 'Show', exact: true }).click();
   await expect(page).toHaveURL(/[?&]program=cust-1/);
-  await page.getByRole('tab', { name: 'Macrocycles' }).click();
+  // Show is a plain GET form, so the new page can take the click before it hydrates.
+  const macrocycles = page.getByRole('tab', { name: 'Macrocycles' });
+  await expect(async () => {
+    await macrocycles.click();
+    await expect(macrocycles).toHaveAttribute('aria-selected', 'true', { timeout: 1_000 });
+  }).toPass();
   await expect(imported).toHaveCount(2);
 
   await page.getByRole('button', { name: 'Undo import of macrocycle 2' }).click();
@@ -188,6 +193,9 @@ test('Assign: a long file stays workable at 375px', async ({ page }) => {
   }
 
   await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
+  // The lift outside RPT's plan fits the width too (#1212).
+  expect(await overflow()).toBeLessThanOrEqual(0);
+  await page.getByRole('button', { name: 'Confirm the progression for Face Pull in RPT from Jan 1, 2024' }).click();
   await expect(page.getByTestId('assign-decisions')).toHaveText('Nothing left to decide. Continue to Preview.');
   expect(await overflow()).toBeLessThanOrEqual(0);
   await page.getByRole('button', { name: 'Next', exact: true }).click();
