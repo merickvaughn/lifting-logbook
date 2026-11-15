@@ -4,10 +4,12 @@ import { useState } from 'react';
 import { convertWeight, evaluateStrengthTier, formatWeight, lookupByStoredId, roundToDisplay } from '@lifting-logbook/core';
 import type {
   BodyWeightResponse,
+  CustomLiftResponse,
   StrengthGoalResponse,
   TrainingMaxResponse,
   WeightUnit,
 } from '@lifting-logbook/types';
+import { logClientError } from '@/lib/log-client-error';
 import { saveStrengthGoal, removeStrengthGoal, saveBodyWeight } from './actions';
 
 interface Props {
@@ -17,6 +19,8 @@ interface Props {
   bodyWeight: BodyWeightResponse | null;
   /** Global display preference — also the default unit for new goal/body-weight entries. */
   preferredUnit: WeightUnit;
+  /** A custom lift is stored by its id, so the page names it from here. */
+  customLifts: CustomLiftResponse[];
 }
 
 interface GoalRowState {
@@ -73,7 +77,19 @@ function computeProgress({
   return null;
 }
 
-export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyWeight, preferredUnit }: Props) {
+function targetText(goal: StrengthGoalResponse, preferredUnit: WeightUnit): string {
+  if (goal.goalType === 'relative') return goal.ratio !== undefined ? `${goal.ratio}× BW` : '';
+  return goal.target !== undefined ? formatWeight(goal.target, goal.unit, preferredUnit) : '';
+}
+
+export default function StrengthGoalsForm({
+  program,
+  trainingMaxes,
+  goals,
+  bodyWeight,
+  preferredUnit,
+  customLifts,
+}: Props) {
   const [currentBw, setCurrentBw] = useState<number | null>(bodyWeight?.weight ?? null);
   const [currentBwUnit, setCurrentBwUnit] = useState<WeightUnit>(bodyWeight?.unit ?? preferredUnit);
   const [bwInput, setBwInput] = useState(String(bodyWeight?.weight ?? ''));
@@ -81,9 +97,19 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
   const [savingBw, setSavingBw] = useState(false);
   const [bwError, setBwError] = useState<string | null>(null);
 
+  // The goals stored now, kept as saves and removals land so every lookup below reads them.
+  const [storedGoals, setStoredGoals] = useState<StrengthGoalResponse[]>(goals);
+  const customNames = new Map(customLifts.map((l) => [l.id, l.name]));
+  const nameOf = (lift: string) => customNames.get(lift) ?? lift;
+
   // A goal and its max can spell the lift differently (#1135), so a row finds its goal
   // through this, and saves and deletes under the goal's own name rather than adding a second.
-  const goalFor = lookupByStoredId(goals.map((g) => [g.lift, g] as const));
+  const goalFor = lookupByStoredId(storedGoals.map((g) => [g.lift, g] as const));
+  // A goal no card reaches (its lift has no max, or the card reads another spelling's goal)
+  // is listed under the cards, so it can still be seen and removed (#1179).
+  const carded = new Set(trainingMaxes.map((m) => goalFor(m.lift)));
+  const uncarded = storedGoals.filter((g) => !carded.has(g));
+  const [listed, setListed] = useState<Record<string, { removing: boolean; error: string | null }>>({});
   const initialRows = Object.fromEntries(
     trainingMaxes.map((m) => {
       const existing = goalFor(m.lift);
@@ -102,9 +128,6 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
   );
 
   const [rows, setRows] = useState<Record<string, GoalRowState>>(initialRows);
-  const [savedGoals, setSavedGoals] = useState<Record<string, boolean>>(
-    Object.fromEntries(trainingMaxes.map((m) => [m.lift, goalFor(m.lift) !== undefined])),
-  );
 
   function updateRow(lift: string, patch: Partial<GoalRowState>) {
     setRows((prev) => ({ ...prev, [lift]: { ...prev[lift], ...patch } }));
@@ -177,7 +200,12 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
         unit: row.unit,
         ratio: row.ratio,
       }));
-      setSavedGoals((prev) => ({ ...prev, ...Object.fromEntries(lifts.map((l) => [l, true])) }));
+      const saved: StrengthGoalResponse = { ...body, lift: goalLift, updatedAt: new Date().toISOString() };
+      setStoredGoals((prev) =>
+        prev.some((g) => g.lift === goalLift)
+          ? prev.map((g) => (g.lift === goalLift ? saved : g))
+          : [...prev, saved],
+      );
     } catch {
       updateRow(lift, { error: 'Save failed' });
     } finally {
@@ -193,9 +221,9 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
     try {
       await removeStrengthGoal(program, goalLift);
       // A row can then reach another goal for its lift, which is what a reload would show.
-      const remaining = lookupByStoredId(
-        goals.filter((g) => g.lift !== goalLift).map((g) => [g.lift, g] as const),
-      );
+      const left = storedGoals.filter((g) => g.lift !== goalLift);
+      const remaining = lookupByStoredId(left.map((g) => [g.lift, g] as const));
+      setStoredGoals(left);
       updateRows(lifts, (l) => {
         const next = remaining(l);
         return next
@@ -207,14 +235,22 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
             }
           : { target: '', ratio: '' };
       });
-      setSavedGoals((prev) => ({
-        ...prev,
-        ...Object.fromEntries(lifts.map((l) => [l, remaining(l) !== undefined])),
-      }));
     } catch {
       updateRow(lift, { error: 'Delete failed' });
     } finally {
       updateRows(lifts, () => ({ saving: false }));
+    }
+  }
+
+  async function handleRemoveListed(goalLift: string) {
+    setListed((prev) => ({ ...prev, [goalLift]: { removing: true, error: null } }));
+    try {
+      await removeStrengthGoal(program, goalLift);
+      setStoredGoals((prev) => prev.filter((g) => g.lift !== goalLift));
+      setListed((prev) => ({ ...prev, [goalLift]: { removing: false, error: null } }));
+    } catch (err) {
+      logClientError('removeStrengthGoal', err, { program, lift: goalLift });
+      setListed((prev) => ({ ...prev, [goalLift]: { removing: false, error: 'Remove failed' } }));
     }
   }
 
@@ -281,7 +317,8 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
         <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Lift Goals</h2>
         {trainingMaxes.map((m) => {
           const row = rows[m.lift];
-          const hasGoal = savedGoals[m.lift];
+          const hasGoal = goalFor(m.lift) !== undefined;
+          const name = nameOf(m.lift);
           const bwInRowUnit = currentBw !== null ? convertWeight(currentBw, currentBwUnit, row.unit) : null;
           const progress = currentBw
             ? computeProgress({
@@ -317,7 +354,7 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.5rem' }}>
-                <strong>{m.lift}</strong>
+                <strong>{name}</strong>
                 <span style={{ fontSize: '0.85rem', color: '#666' }}>
                   Current max: {formatWeight(m.weight, m.unit, preferredUnit)}
                 </span>
@@ -354,7 +391,7 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
                     value={row.ratio}
                     onChange={(e) => updateRow(m.lift, { ratio: e.target.value })}
                     style={{ width: 140 }}
-                    aria-label={`Body weight ratio for ${m.lift}`}
+                    aria-label={`Body weight ratio for ${name}`}
                   />
                   <span style={{ fontSize: '0.85rem', color: '#555' }}>× BW</span>
                   {computedTarget !== null && (
@@ -368,7 +405,7 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
                   <select
                     value={row.unit}
                     onChange={(e) => updateRow(m.lift, { unit: e.target.value as 'lbs' | 'kg' })}
-                    aria-label={`Unit for ${m.lift}`}
+                    aria-label={`Unit for ${name}`}
                   >
                     <option value="lbs">lbs</option>
                     <option value="kg">kg</option>
@@ -382,12 +419,12 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
                     value={row.target}
                     onChange={(e) => updateRow(m.lift, { target: e.target.value })}
                     style={{ width: 110 }}
-                    aria-label={`Target weight for ${m.lift}`}
+                    aria-label={`Target weight for ${name}`}
                   />
                   <select
                     value={row.unit}
                     onChange={(e) => updateRow(m.lift, { unit: e.target.value as 'lbs' | 'kg' })}
-                    aria-label={`Unit for ${m.lift}`}
+                    aria-label={`Unit for ${name}`}
                   >
                     <option value="lbs">lbs</option>
                     <option value="kg">kg</option>
@@ -450,6 +487,48 @@ export default function StrengthGoalsForm({ program, trainingMaxes, goals, bodyW
           );
         })}
       </section>
+
+      {uncarded.length > 0 && (
+        <section style={{ marginTop: '1.5rem' }}>
+          <h2 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>Other Goals</h2>
+          <p style={{ fontSize: '0.85rem', color: '#666', margin: '0 0 0.5rem' }}>
+            These goals have no card above, so their progress isn&apos;t shown. Either the lift has no
+            training max yet, or its card shows a goal stored under another spelling of the lift.
+          </p>
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {uncarded.map((g) => {
+              const name = nameOf(g.lift);
+              const state = listed[g.lift];
+              return (
+                <li
+                  key={g.lift}
+                  style={{
+                    border: '1px solid #ddd',
+                    borderRadius: 6,
+                    padding: '0.5rem 0.75rem',
+                    marginBottom: '0.5rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'baseline' }}>
+                    <strong>{name}</strong>
+                    <span style={{ fontSize: '0.85rem', color: '#666' }}>Goal: {targetText(g, preferredUnit)}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveListed(g.lift)}
+                      disabled={state?.removing}
+                      aria-label={`Remove goal for ${name}`}
+                      style={{ marginLeft: 'auto' }}
+                    >
+                      {state?.removing ? '…' : '✕ Remove'}
+                    </button>
+                  </div>
+                  {state?.error && <p style={{ color: 'red', fontSize: '0.8rem', margin: '0.25rem 0 0' }}>{state.error}</p>}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }
