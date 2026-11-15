@@ -83,6 +83,7 @@ export const {
   fetchMacrocycleDashboard,
   createMacrocycle,
   deleteCurrentMacrocycle,
+  redateCurrentMacrocycle,
   fetchProgramSpec,
   fetchTrainingMaxes,
   fetchModificationMaxes,

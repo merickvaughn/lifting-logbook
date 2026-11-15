@@ -43,6 +43,7 @@ import type {
   PatchLiftMetadataRequest,
   PutModificationMaxRequest,
   RecordBodyWeightRequest,
+  RedateMacrocycleResponse,
   RescheduleRequest,
   StrengthGoalResponse,
   SwitchProgramResponse,
@@ -391,6 +392,17 @@ export function createApiClient(config: ApiClientConfig) {
     deleteCurrentMacrocycle(programId: string): Promise<void> {
       return requestVoidIdempotent(`/programs/${enc(programId)}/macrocycles/current`, {
         method: 'DELETE',
+        cache: 'no-store',
+      });
+    },
+
+    // Re-dates the current macrocycle by the saved schedule, from `today` (YYYY-MM-DD, the
+    // lifter's local date), or takes it out of schedule mode when none is saved (#1032).
+    redateCurrentMacrocycle(programId: string, today: string): Promise<RedateMacrocycleResponse> {
+      return request(`/programs/${enc(programId)}/macrocycles/current/redate`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ today }),
         cache: 'no-store',
       });
     },

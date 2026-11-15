@@ -150,7 +150,8 @@ Existing cycles keep their stored dates:
   The warning carries no user, so it can't identify the cycles; re-dating (#1032) would find
   them in the database.
 
-Re-dating a cycle when the schedule changes is [#1032](https://github.com/merickvaughn/lifting-logbook/issues/1032).
+Re-dating a cycle when the schedule changes is [#1032](https://github.com/merickvaughn/lifting-logbook/issues/1032),
+and it repairs both shapes: see the amendment below.
 
 Two limits are not changed by this ADR, and a third was fixed later:
 - **A mid-cycle spec edit still renumbers the workouts**, as it always has.
@@ -196,6 +197,56 @@ Two limits are not changed by this ADR, and a third was fixed later:
   - `estimateCompletionDate` gives the same answer with and without a schedule that dates the
     days alike, and counts overrides in both modes.
   - `workoutDateResolver` follows its precedence.
+
+## Amendment (2026-11-15): re-dating the current macrocycle
+
+**Issue:** [#1032](https://github.com/merickvaughn/lifting-logbook/issues/1032). The decisions are
+the repo owner's, given on the issue on 2026-11-03.
+
+A schedule dated a macrocycle only when it started, so changing or clearing it mid-macrocycle did
+nothing until the next one. `POST /programs/:program/macrocycles/current/redate` now re-dates the
+current macrocycle by the saved schedule, and the Schedule settings page calls it after saving
+unless the lifter unticks *Also re-date the workouts left in my current macrocycle*. The mapping is
+this ADR's: workout N is the program's N-th day. The rules live in `redatedScheduledWorkouts`
+(`apps/api/src/programs/macrocycle-generation.service.ts`).
+
+- **Re-dating starts at the next unlogged workout.** The lowest-numbered workout that isn't logged
+  or skipped takes the schedule's first day on or after the lifter's local date (or the
+  macrocycle's start, if that is later), and the rest follow in program order. The schedule's
+  weeks count from the macrocycle's start, so a rotating schedule stays in step with it.
+- **Logged and skipped workouts keep their rows,** whatever order they were done in. The owner
+  sometimes does a week's workouts out of order or spreads them out, so nothing assumes they were
+  logged in number order.
+- **A rescheduled workout keeps its override,** which still decides its date, and takes no schedule
+  day. With a schedule its row stays too; it is hidden behind the override.
+- **Clearing the schedule deletes the rows of every workout not logged or skipped,** rescheduled
+  ones included. A macrocycle with nothing logged or skipped leaves schedule mode. One with logged
+  or skipped workouts keeps their rows, and so stays in schedule mode with the rest dated
+  spec-relatively; the settings page says so. Turning those rows into date overrides would have
+  left the macrocycle fully unscheduled, but would mark logged workouts *rescheduled*, which they
+  weren't.
+- **Re-dating repairs macrocycles scheduled before this ADR:** an unlogged row past the program's
+  last day goes, and a day with no row gets one.
+
+The request carries the lifter's local date as a bare `YYYY-MM-DD` (`today`, required; a datetime
+or an impossible date is a 400), because the server's UTC date is a day ahead in a US evening. Dates
+are generated from the Monday of that week, with a rotating schedule turned to the week it is on,
+so a far-off `today` costs no more than a near one. The endpoint takes no macrocycle id: it
+re-dates whichever macrocycle is current, which is what a settings page means, and answers 200 with
+`macrocycleNum: null` when there is none. It takes the macrocycle lock exclusively, as starting a
+new macrocycle does: it reads which workouts are logged, skipped and rescheduled, then rewrites every
+row, so a log or skip landing in between would be dated over. It waits out page writes in flight and
+answers 409 `macrocycle-busy` if they hold the lock past the wait, or `import-in-progress` while an
+import holds it.
+
+Verification: `programs.e2e.spec.ts` (*re-dating the current macrocycle*) changes Mon/Wed/Fri to
+Tue/Thu mid-macrocycle with one workout logged out of order, one skipped and one rescheduled, and
+clears a schedule with and without logged work, and refuses malformed dates.
+`macrocycle-generation.service.spec.ts` (`redatedScheduledWorkouts`) covers a rotating schedule
+from its first and a later week, a far-off `today`, pre-#1023 rows, a macrocycle starting after
+today, and `distributeWorkouts` dating too few. `macrocycle.db.e2e.spec.ts` checks the endpoint is
+refused while an import holds the lock. `ScheduleForm.test.tsx` and the Playwright
+`settings.spec.ts` cover the page.
 
 ## References
 
