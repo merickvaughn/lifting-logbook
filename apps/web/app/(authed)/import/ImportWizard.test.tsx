@@ -27,6 +27,7 @@ import {
   updateTrainingMaxes,
 } from '@/lib/client-api';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
+import { localToday } from '@/lib/calendarDay';
 
 // File.text() is not implemented in jsdom; use FileReader instead.
 function readFileText(file: File): Promise<string> {
@@ -2497,7 +2498,14 @@ describe('ImportWizard', () => {
         await renderToReview(user);
         await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
 
-        expect(await previewedRows()).toEqual(['"squat",300', '"bench",210', '"deadlift",400']);
+        // The older rows go in too, behind the newest, for the server to skip (#1128).
+        expect(await previewedRows()).toEqual([
+          '"squat",300',
+          '"bench",210',
+          '"deadlift",400',
+          '"bench",190',
+          '"deadlift",350',
+        ]);
         expect(tiles()).toEqual({ Create: '1', Update: '1', Skip: '1' });
       });
 
@@ -2507,7 +2515,7 @@ describe('ImportWizard', () => {
         await user.clear(screen.getByLabelText('Weight for bench'));
         await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
 
-        expect(await previewedRows()).toEqual(['"squat",300', '"deadlift",400']);
+        expect(await previewedRows()).toEqual(['"squat",300', '"deadlift",400', '"deadlift",350']);
       });
 
       it('does not let an older row replace an unchanged weight of zero', async () => {
@@ -2553,7 +2561,76 @@ describe('ImportWizard', () => {
         await user.type(screen.getByLabelText('Weight for bench'), '200');
         await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
 
-        expect(await previewedRows()).toEqual(['"squat",300', '"bench",200', '"deadlift",400']);
+        expect(await previewedRows()).toEqual([
+          '"squat",300',
+          '"bench",200',
+          '"deadlift",400',
+          '"bench",190',
+          '"deadlift",350',
+        ]);
+      });
+
+      describe('sends every row of the file with its date (#1128)', () => {
+        const WITH_DUPLICATE: ImportPreviewResponse = {
+          ...TM_PREVIEW,
+          preview: {
+            creates: 2,
+            updates: 0,
+            skips: 1,
+            unresolved: 0,
+            deltas: [
+              { key: 'squat', label: 'squat', kind: 'create', after: '300', date: '2026-09-28' },
+              { key: 'bench', label: 'bench', kind: 'create', after: '200', date: '2026-09-27' },
+              { key: 'squat#1', label: 'squat', kind: 'skip', after: '280', date: '2026-09-01' },
+            ],
+          },
+        };
+
+        async function sentLines() {
+          const file = mockDryRun.mock.calls[0]?.[1] as File;
+          return (await readFileText(file)).split('\n');
+        }
+
+        beforeEach(() => mockPreview.mockResolvedValue(WITH_DUPLICATE));
+
+        it('keeps an older row of a lift, after the newest, so the server reports it as skipped', async () => {
+          const user = userEvent.setup();
+          await renderToReview(user);
+          await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+          expect(await sentLines()).toEqual([
+            'Date Updated,Lift,Weight',
+            '2026-09-28,"squat",300',
+            '2026-09-27,"bench",200',
+            // Dated as the newest row, so it can't win even if that row is edited.
+            '2026-09-28,"squat",280',
+          ]);
+        });
+
+        it("dates an edited row today, and its lift's older rows with it", async () => {
+          const user = userEvent.setup();
+          await renderToReview(user);
+          await user.clear(screen.getByLabelText('Weight for squat'));
+          await user.type(screen.getByLabelText('Weight for squat'), '310');
+          await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+          const today = localToday();
+          expect(await sentLines()).toEqual([
+            'Date Updated,Lift,Weight',
+            `${today},"squat",310`,
+            '2026-09-27,"bench",200',
+            `${today},"squat",280`,
+          ]);
+        });
+
+        it("leaves out a removed row and its lift's older rows", async () => {
+          const user = userEvent.setup();
+          await renderToReview(user);
+          await user.click(screen.getByRole('button', { name: 'Remove squat' }));
+          await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+          expect(await sentLines()).toEqual(['Date Updated,Lift,Weight', '2026-09-27,"bench",200']);
+        });
       });
     });
 

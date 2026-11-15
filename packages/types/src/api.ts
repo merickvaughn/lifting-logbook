@@ -883,6 +883,11 @@ export interface ImportDelta {
   rowIndex?: number;
   /** Phase 3: original unresolved lift name, populated on 'ambiguous' rows. */
   originalLift?: string;
+  /**
+   * The row's Date Updated, `YYYY-MM-DD`, on training-max deltas only. The wizard sends it back
+   * at commit, so a stored max keeps the file's date (#1128).
+   */
+  date?: string;
 }
 
 /** Aggregate counts plus per-row deltas for a previewed import. */
