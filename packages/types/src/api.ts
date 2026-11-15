@@ -475,6 +475,11 @@ export interface LiftOverrideResponse {
 export interface LiftMetadataResponse {
   lift: string;
   muscleGroups: string[];
+  /**
+   * Muscles a working set counts ½ toward (#1017, ADR-036). Both muscle lists empty means the
+   * lift uses its built-in defaults.
+   */
+  secondaryMuscleGroups: string[];
   substitutions: string[];
   foundational: boolean;
   /**
@@ -494,6 +499,7 @@ export interface LiftMetadataResponse {
  */
 export interface PatchLiftMetadataRequest {
   muscleGroups?: string[];
+  secondaryMuscleGroups?: string[];
   substitutions?: string[];
   foundational?: boolean;
   progression?: LiftProgressionType | null;

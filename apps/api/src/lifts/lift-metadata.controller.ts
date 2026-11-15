@@ -13,7 +13,7 @@ import { LiftMetadataResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
-import { LiftMetadata, LiftMetadataPatch } from '../ports/ILiftMetadataRepository';
+import { ILiftMetadataRepository, LiftMetadata, LiftMetadataPatch } from '../ports/ILiftMetadataRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { PatchLiftMetadataDto } from './patch-lift-metadata.dto';
 
@@ -21,6 +21,7 @@ function toResponse(meta: LiftMetadata): LiftMetadataResponse {
   return {
     lift: meta.lift,
     muscleGroups: meta.muscleGroups,
+    secondaryMuscleGroups: meta.secondaryMuscleGroups,
     substitutions: meta.substitutions,
     foundational: meta.foundational,
     progression: meta.progression,
@@ -32,6 +33,7 @@ function toResponse(meta: LiftMetadata): LiftMetadataResponse {
 
 const PATCH_FIELDS = [
   'muscleGroups',
+  'secondaryMuscleGroups',
   'substitutions',
   'foundational',
   'progression',
@@ -68,6 +70,7 @@ export class LiftMetadataController {
       : {
           lift,
           muscleGroups: [],
+          secondaryMuscleGroups: [],
           substitutions: [],
           foundational: false,
           progression: null,
@@ -90,6 +93,12 @@ export class LiftMetadataController {
       if (dto[field] !== undefined) Object.assign(patch, { [field]: dto[field] });
     }
 
+    const { stored, legacy } = await readLegacyRow(liftMetadata, lift);
+    // A row saved before #1017 under the lift's URL-encoded name is retired by this save. Until
+    // the real name has a row of its own, the legacy row is the lift's metadata, so its values
+    // are the starting point and none of them is lost.
+    const base = stored === null && legacy ? legacy : undefined;
+
     // The DTO checks a range sent whole; a patch that sets one end and leaves the other out is
     // checked against the other end as stored, so the row never holds a bottom above its top
     // (#1210). The read and the write are separate, so two overlapping one-end patches could
@@ -97,14 +106,41 @@ export class LiftMetadataController {
     const lowOnly = typeof patch.repsLow === 'number' && patch.repsHigh === undefined;
     const highOnly = typeof patch.repsHigh === 'number' && patch.repsLow === undefined;
     if (lowOnly || highOnly) {
-      const stored = await liftMetadata.getMetadata(lift);
-      const repsLow = lowOnly ? patch.repsLow : stored?.repsLow;
-      const repsHigh = highOnly ? patch.repsHigh : stored?.repsHigh;
+      const current = stored === undefined ? await liftMetadata.getMetadata(lift) : stored ?? base;
+      const repsLow = lowOnly ? patch.repsLow : current?.repsLow;
+      const repsHigh = highOnly ? patch.repsHigh : current?.repsHigh;
       if (typeof repsLow === 'number' && typeof repsHigh === 'number' && repsLow > repsHigh) {
         throw new BadRequestException('repsLow must be at most repsHigh');
       }
     }
 
-    return toResponse(await liftMetadata.upsertMetadata(lift, patch));
+    if (base) {
+      for (const field of PATCH_FIELDS) {
+        if (patch[field] === undefined) Object.assign(patch, { [field]: base[field] });
+      }
+    }
+    const saved = await liftMetadata.upsertMetadata(lift, patch);
+    // RlsInterceptor runs the request in one transaction, so the write and this delete land or
+    // fail together: a failed delete rolls the save back and the PATCH reports it.
+    if (legacy) await liftMetadata.deleteMetadata(legacy.lift);
+    return toResponse(saved);
   }
+}
+
+/**
+ * The row stored under `lift` and the legacy row stored under exactly the name the pre-#1017
+ * editor saved, `encodeURIComponent(lift)`. Nothing else is matched, so a row whose name only
+ * looks encoded is never deleted. Read only when encoding changes `lift`, since only then can a
+ * legacy row exist; `stored` is undefined when nothing was read.
+ */
+async function readLegacyRow(
+  liftMetadata: ILiftMetadataRepository,
+  lift: string,
+): Promise<{ stored: LiftMetadata | null | undefined; legacy: LiftMetadata | null }> {
+  const encoded = encodeURIComponent(lift);
+  if (encoded === lift) return { stored: undefined, legacy: null };
+  // Sequential: the request's queries share one interactive transaction.
+  const stored = await liftMetadata.getMetadata(lift);
+  const legacy = await liftMetadata.getMetadata(encoded);
+  return { stored, legacy };
 }

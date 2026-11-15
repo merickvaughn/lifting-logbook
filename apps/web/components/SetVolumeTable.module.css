@@ -1,0 +1,43 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 0.5rem;
+}
+
+.table th,
+.table td {
+  padding: 0.375rem 0.5rem;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  text-align: left;
+}
+
+.table th[scope='row'] {
+  font-weight: 400;
+}
+
+.table .number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.uncounted th,
+.uncounted td {
+  color: var(--color-text-muted);
+}
+
+.uncounted th[scope='colgroup'] {
+  font-weight: 600;
+  padding-top: 0.75rem;
+}
+
+.empty {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}

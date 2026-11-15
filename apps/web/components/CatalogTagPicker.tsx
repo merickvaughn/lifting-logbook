@@ -9,16 +9,29 @@ interface Props {
   value: string[];
   onChange: (value: string[]) => void;
   disabled?: boolean;
+  /**
+   * What the search offers; defaults to the catalog's lift names. A value outside it (a
+   * legacy free-text muscle tag, say) still shows as a chip and can be removed.
+   */
+  options?: readonly string[];
+  placeholder?: string;
 }
 
 const CATALOG_NAMES = LIFT_CATALOG.map((l) => l.name);
 
-export default function CatalogTagPicker({ id, value, onChange, disabled }: Props) {
+export default function CatalogTagPicker({
+  id,
+  value,
+  onChange,
+  disabled,
+  options = CATALOG_NAMES,
+  placeholder = 'Search lifts…',
+}: Props) {
   const [query, setQuery] = useState('');
   const wrapperRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
 
-  const filtered = CATALOG_NAMES.filter(
+  const filtered = options.filter(
     (name) =>
       !value.includes(name) &&
       name.toLowerCase().includes(query.toLowerCase()),
@@ -76,7 +89,7 @@ export default function CatalogTagPicker({ id, value, onChange, disabled }: Prop
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={value.length === 0 ? 'Search lifts…' : ''}
+          placeholder={value.length === 0 ? placeholder : ''}
           disabled={disabled}
           role="combobox"
           aria-autocomplete="list"

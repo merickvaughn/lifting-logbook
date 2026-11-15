@@ -3,6 +3,8 @@ import type { LiftProgressionType } from '@lifting-logbook/types';
 export interface LiftMetadata {
   lift: string;
   muscleGroups: string[];
+  /** Muscles a set counts ½ toward (#1017). Both lists empty means the built-in defaults. */
+  secondaryMuscleGroups: string[];
   substitutions: string[];
   foundational: boolean;
   /** The lift's own progression (#1210). Null falls through to the lifter's default. */
@@ -15,6 +17,7 @@ export interface LiftMetadata {
 /** An omitted field is left unchanged; `null` clears a progression field. */
 export interface LiftMetadataPatch {
   muscleGroups?: string[];
+  secondaryMuscleGroups?: string[];
   substitutions?: string[];
   foundational?: boolean;
   progression?: LiftProgressionType | null;
@@ -31,4 +34,6 @@ export interface ILiftMetadataRepository {
    */
   listMetadata(): Promise<LiftMetadata[]>;
   upsertMetadata(lift: string, patch: LiftMetadataPatch): Promise<LiftMetadata>;
+  /** Deletes the row stored under exactly `lift`; a missing row is not an error. */
+  deleteMetadata(lift: string): Promise<void>;
 }
