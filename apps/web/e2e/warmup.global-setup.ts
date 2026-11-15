@@ -30,7 +30,8 @@ export default async function warmup(config: FullConfig) {
         // A cold page can abort mid-load (#1049 saw net::ERR_ABORTED from a Fast Refresh
         // reload). It has usually compiled anyway, and a test on it still reports a real
         // failure, so one bad route doesn't stop the run.
-        console.log(`[e2e warmup] ${route} failed (${seconds()}s): ${(err as Error).message.split('\n')[0]}`);
+        const message = err instanceof Error ? err.message : String(err);
+        console.log(`[e2e warmup] ${route} failed (${seconds()}s): ${message.split('\n')[0]}`);
       }
     }
   } finally {
