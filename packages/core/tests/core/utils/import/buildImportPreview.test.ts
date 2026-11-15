@@ -6,6 +6,7 @@ import {
   buildProgramSpecPreview,
   latestTrainingMaxFirst,
   liftRecordLabel,
+  parseTrainingMaxes,
   programSpecNaturalKey,
   trainingMaxRowKind,
   strengthGoalRowKind,
@@ -182,8 +183,22 @@ describe("buildTrainingMaxPreview", () => {
       CUSTOM_LIFTS,
     );
     expect(preview.deltas).toEqual([
-      { key: "custom-id", label: "Cable Curl", kind: "update", before: "100", after: "110" },
+      { key: "custom-id", label: "Cable Curl", kind: "update", before: "100", after: "110", date: "2026-01-01" },
     ]);
+  });
+
+  // #1128: the wizard sends the date back at commit, so a stored max keeps the file's date.
+  it("gives each row the day from its Date Updated", () => {
+    const preview = buildTrainingMaxPreview(
+      parseTrainingMaxes([
+        ["Date Updated", "Lift", "Weight"],
+        ["9/28/2026", "squat", 300],
+        ["9/1/2026", "squat", 280],
+      ]),
+      [],
+      NO_CUSTOM_LIFTS,
+    );
+    expect(preview.deltas.map((d) => d.date)).toEqual(["2026-09-28", "2026-09-01"]);
   });
 
   // #1117: two rows resolving to one lift, e.g. `OH Press-HV` and `OH Press`.

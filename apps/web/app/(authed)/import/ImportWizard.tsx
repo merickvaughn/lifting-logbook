@@ -57,10 +57,10 @@ import {
 } from './SheetTabsStep';
 import ImportMissingMaxes from './ImportMissingMaxes';
 import SpellingCollisionNotice from './SpellingCollisionNotice';
+import { buildTrainingMaxesCsv, naturalKeyOf, trainingMaxCommitRows, type EditableMax } from './trainingMaxCommit';
 import styles from './import.module.css';
 
 type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous' | 'needs-lift';
-type EditableMax = { lift: string; label: string; weight: string };
 type QueuedTab = { name: string; csv: string; kind: ImportKind };
 type CompletedTab = {
   name: string;
@@ -103,24 +103,10 @@ const BREAKDOWN_MISMATCH = 'breakdown-mismatch';
 const isMismatch = (e: unknown) => e instanceof ApiClientError && e.code === BREAKDOWN_MISMATCH;
 const MISMATCH_NOTICE = 'Your file no longer matched these macrocycles, so they were grouped again. Check them and continue.';
 
-// ImportDelta.key can repeat a natural key with a `#N` suffix, which identifies a row
-// only in this component.
-function naturalKeyOf(delta: ImportDelta): string {
-  return delta.key.replace(/#\d+$/, '');
-}
-
 // The server's position key leaves a same-keyed row alone (#1123). An API rolled back to
 // before that has no rowIndex and matches the bare natural key.
 function excludeKeyFor(delta: ImportDelta): string {
   return delta.rowIndex !== undefined ? `__row_${delta.rowIndex}` : naturalKeyOf(delta);
-}
-
-function buildTrainingMaxesCsv(rows: Pick<EditableMax, 'lift' | 'weight'>[]): string {
-  const today = localToday();
-  const lines = rows
-    .filter((r) => Number(r.weight) > 0)
-    .map((r) => `${today},"${r.lift.replace(/"/g, '""')}",${Number(r.weight)}`);
-  return ['Date Updated,Lift,Weight', ...lines].join('\n');
 }
 
 type FieldOption = { key: string; label: string };
@@ -505,6 +491,12 @@ export function ImportWizard({
   }, [previewBody, excludedKeys, rowLiftText, resolveLiftValue]);
   const needsLiftCount = reviewCounts.needsLiftKeys.size;
   const unresolvedCount = needsLiftCount + reviewCounts.incomplete;
+  // How many rows a training-max commit would send. Review lists only creates and updates, so an
+  // empty list can still send unchanged rows, for the server to report as skipped (#1128).
+  const trainingMaxRowsToSend =
+    destination === 'training-maxes' && reviewMaxes !== null
+      ? trainingMaxCommitRows(reviewMaxes, previewBody?.deltas ?? [], excludedKeys, localToday()).length
+      : null;
 
   // The create-in-flight guard must be keyed by the NAME actually being
   // submitted to POST /lifts/custom, not by the row's original CSV text: N
@@ -759,7 +751,7 @@ export function ImportWizard({
         rows.deltas
           .filter((d) => d.kind === 'create' || d.kind === 'update')
           // A create or update row's key is the stored lift, with no duplicate suffix.
-          .map((d) => ({ lift: d.key, label: spellingOf.get(d.key) ?? d.label, weight: d.after ?? '' })),
+          .map((d) => ({ lift: d.key, label: spellingOf.get(d.key) ?? d.label, weight: d.after ?? '', date: d.date })),
       );
     }
     setReviewEditsDiscarded(editsDiscarded);
@@ -792,9 +784,18 @@ export function ImportWizard({
       return [
         ...(wasStored ? prev.filter((r) => r.lift !== row.lift) : prev),
         ...(wasStored && next
-          ? [{ lift: row.lift, label: current?.label ?? collision.label, weight: String(next.weight) }]
+          ? [
+              {
+                lift: row.lift,
+                label: current?.label ?? collision.label,
+                weight: String(next.weight),
+                date: next.dateUpdated,
+              },
+            ]
           : []),
-        { lift: lift.id, label: lift.name, weight: wasStored && current ? current.weight : String(row.weight) },
+        wasStored && current
+          ? { lift: lift.id, label: lift.name, weight: current.weight, date: current.date }
+          : { lift: lift.id, label: lift.name, weight: String(row.weight), date: row.dateUpdated },
       ];
     });
   }
@@ -1251,22 +1252,10 @@ export function ImportWizard({
     const deltas = previewBody?.deltas ?? [];
     if (destination === 'training-maxes' && reviewMaxes !== null) {
       // Rebuild CSV from the edited maxes list so that inline weight edits and excluded rows
-      // are authoritative at commit time. excludedKeys is enforced here (via filter) rather
-      // than via the server-side excludeKeys param, because the rebuilt CSV already omits
-      // those rows — passing excludeKeys on top would be redundant and error-prone.
-      const activeMaxes = reviewMaxes.filter((r) => !excludedKeys.has(r.lift));
-      // Review doesn't list a lift the file leaves unchanged, but the server still has
-      // to see it to report it as skipped (#1123). Only a lift's first row goes back in:
-      // an older duplicate would be written if the row ahead of it were dropped.
-      const seenLifts = new Set(reviewMaxes.map((r) => r.lift));
-      const unchangedMaxes = deltas
-        .filter((d) => {
-          if (d.kind !== 'skip' || seenLifts.has(naturalKeyOf(d))) return false;
-          seenLifts.add(naturalKeyOf(d));
-          return true;
-        })
-        .map((d) => ({ lift: naturalKeyOf(d), weight: d.after ?? '' }));
-      const csv = buildTrainingMaxesCsv([...activeMaxes, ...unchangedMaxes]);
+      // are authoritative at commit time. The rebuilt file leaves out an excluded row and its
+      // lift's older rows, so excludeKeys isn't sent on top. The rows Review doesn't list go
+      // back in, so the server counts them as skipped (#1128).
+      const csv = buildTrainingMaxesCsv(reviewMaxes, deltas, excludedKeys, localToday());
       // No column overrides: this CSV has canonical headers and rows from a preview
       // that already applied them. Sending them again would rename columns twice.
       return { file: new File([csv], sourceFile.name, { type: 'text/csv' }) };
@@ -1968,7 +1957,8 @@ export function ImportWizard({
                                   setReviewMaxes((prev) =>
                                     prev
                                       ? prev.map((r) =>
-                                          r.lift === row.lift ? { ...r, weight: e.target.value } : r,
+                                          // An edited max is dated today, not with the file's date.
+                                          r.lift === row.lift ? { ...r, weight: e.target.value, date: undefined } : r,
                                         )
                                       : prev,
                                   )
@@ -1995,7 +1985,11 @@ export function ImportWizard({
                           })}
                       </ul>
                       {reviewMaxes.filter((r) => !excludedKeys.has(r.lift)).length === 0 && (
-                        <p className={styles.infoBox}>All rows removed. Nothing will be imported.</p>
+                        <p className={styles.infoBox}>
+                          {trainingMaxRowsToSend === 0
+                            ? 'All rows removed. Nothing will be imported.'
+                            : 'Every row left matches your stored maxes, so nothing will change.'}
+                        </p>
                       )}
                     </>
                   ) : (
@@ -2709,9 +2703,7 @@ export function ImportWizard({
                 // A create resolving after the dry run would change what Commit should send.
                 busyLiftNames.size > 0 ||
                 !previewBody ||
-                (destination === 'training-maxes' &&
-                  reviewMaxes !== null &&
-                  reviewMaxes.filter((r) => !excludedKeys.has(r.lift)).length === 0)
+                trainingMaxRowsToSend === 0
               }
             >
               Next
