@@ -1282,6 +1282,30 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // POST /programs/:p/macrocycles/current/redate (#1032): re-dates the current macrocycle by
+    // the saved schedule from the lifter's `today`, or unschedules it when none is saved.
+    if (method === 'POST' && rest[0] === 'macrocycles' && rest[1] === 'current' && rest[2] === 'redate') {
+      const body = await readBody(req);
+      if (rejectIfInvalidBody(res, body)) return;
+      if (typeof body.today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(body.today)) {
+        json(res, { statusCode: 400, message: 'date must be a calendar date in YYYY-MM-DD format' }, 400);
+        return;
+      }
+      if (state.noCurrentMacrocycle) {
+        json(res, { macrocycleNum: null, scheduled: false, redated: 0, firstDate: null, kept: 0 });
+        return;
+      }
+      const scheduled = state.workoutSchedule !== null;
+      json(res, {
+        macrocycleNum: 1,
+        scheduled,
+        redated: scheduled ? 5 : 0,
+        firstDate: scheduled ? body.today : null,
+        kept: 0,
+      });
+      return;
+    }
+
     // GET /programs/:p/workouts/:workoutNum/focus?today=YYYY-MM-DD (#1058)
     if (method === 'GET' && rest[0] === 'workouts' && rest[2] === 'focus' && rest.length === 3) {
       const today = url.searchParams.get('today');

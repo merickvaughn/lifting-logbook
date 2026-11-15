@@ -272,6 +272,8 @@ No frequency comparison is performed — any schedule works with any program. Th
 
 If there is no active program when the schedule is set, no prompt is shown; the schedule is saved and the prompt fires when the next program is selected.
 
+> **As built (#1032):** saving the schedule re-dates the current macrocycle's remaining workouts, unless the lifter unticks the option on the Schedule settings page; clearing it takes the unlogged workouts out of schedule mode. See the [ADR-037 amendment](../adr/ADR-037-schedule-dates-program-days.md#amendment-2026-11-15-re-dating-the-current-macrocycle) for the rules.
+
 ### 3. Cycle Dashboard Generation
 
 **File:** `packages/core/src/services/dashboard/` (extend existing)

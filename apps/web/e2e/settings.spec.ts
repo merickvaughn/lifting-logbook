@@ -149,3 +149,24 @@ test('settings hub links to the Import wizard, which renders when reached', asyn
   // on Windows; give the first render headroom (mirrors smoke.spec's 15s nav waits).
   await expect(page.getByRole('heading', { name: 'Import a file' })).toBeVisible({ timeout: 15_000 });
 });
+
+// ---------------------------------------------------------------------------
+// Schedule: saving re-dates the current macrocycle, and clearing unschedules it (#1032).
+// ---------------------------------------------------------------------------
+
+test('schedule section re-dates the current macrocycle on save, and clearing unschedules it', async ({ page }) => {
+  await page.goto('/settings/schedule');
+  await expect(page.getByRole('heading', { name: 'Workout Schedule' })).toBeVisible({ timeout: 15_000 });
+  const redate = page.getByRole('checkbox', { name: /re-date the workouts left in my current macrocycle/i });
+  await expect(redate).toBeChecked();
+
+  await page.getByRole('radio', { name: 'Fixed days' }).check();
+  await page.getByRole('checkbox', { name: 'Tue' }).check();
+  await page.getByRole('checkbox', { name: 'Thu' }).check();
+  await page.getByRole('button', { name: 'Save schedule' }).click();
+  await expect(page.getByRole('status')).toHaveText(/Re-dated 5 workouts in your current macrocycle, starting /);
+
+  await page.getByRole('radio', { name: /No schedule/ }).check();
+  await page.getByRole('button', { name: 'Save schedule' }).click();
+  await expect(page.getByRole('status')).toHaveText('Your current macrocycle is no longer scheduled.');
+});

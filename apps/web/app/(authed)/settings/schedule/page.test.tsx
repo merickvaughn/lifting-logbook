@@ -9,8 +9,10 @@ jest.mock('@/lib/api', () => ({
 // It echoes the resolved schedule so we can assert what the page passed down.
 jest.mock('./ScheduleForm', () => ({
   __esModule: true,
-  default: ({ initialSchedule }: { initialSchedule: unknown }) => (
-    <div data-schedule={JSON.stringify(initialSchedule)}>schedule-form</div>
+  default: ({ initialSchedule, activeProgram }: { initialSchedule: unknown; activeProgram: unknown }) => (
+    <div data-schedule={JSON.stringify(initialSchedule)} data-program={JSON.stringify(activeProgram)}>
+      schedule-form
+    </div>
   ),
 }));
 
@@ -34,6 +36,8 @@ describe('SchedulePage — fetch fallback', () => {
     expect(html).toContain('schedule-form');
     // Data-level assertion: the real fetched schedule reached the form.
     expect(html).toContain('&quot;type&quot;:&quot;fixed&quot;');
+    // The active program reaches the form, which re-dates its current macrocycle (#1032).
+    expect(html).toContain('data-program="&quot;5-3-1&quot;"');
   });
 
   it('falls back to a null schedule (no throw) when the API is unreachable', async () => {

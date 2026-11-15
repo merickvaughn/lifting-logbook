@@ -15,5 +15,10 @@ export default async function SchedulePage() {
   // /macrocycle, and keeps the build-time prerender from crashing when no API is running.
   // fallback-covered-by: apps/web/app/(authed)/settings/schedule/page.test.tsx
   const settings = await fetchUserSettings().catch(() => DEFAULT_SETTINGS);
-  return <ScheduleForm initialSchedule={settings.workoutSchedule} />;
+  return (
+    <ScheduleForm
+      initialSchedule={settings.workoutSchedule}
+      activeProgram={settings.activeProgram}
+    />
+  );
 }

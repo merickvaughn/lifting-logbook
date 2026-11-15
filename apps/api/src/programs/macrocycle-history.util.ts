@@ -255,8 +255,9 @@ export async function lockForAssignedImport(repos: Pick<RepositoryBundle, 'macro
 }
 
 /**
- * Takes the macrocycle lock exclusively for a renumbering that would move a number (#1199), or
- * for starting a non-cycle workout, which takes the next workout number (#1184), waiting as an
+ * Takes the macrocycle lock exclusively for a renumbering that would move a number (#1199), for
+ * starting a non-cycle workout, which takes the next workout number (#1184), or for re-dating the
+ * current macrocycle, which keeps the dates of what is logged by then (#1032), waiting as an
  * import does, then a 409 `macrocycle-busy`. The lock is re-entrant, so an import
  * that holds it already gets it at once. Two starts or deletes that hold it shared and wait on
  * each other here deadlock; Postgres aborts one, which gets the same 409 when it's the one

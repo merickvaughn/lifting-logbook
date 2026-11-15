@@ -56,8 +56,8 @@ export class MacrocycleDashboardController {
     // dated spec-relatively. Either marks a macrocycle scheduled before #1023, or a
     // program whose days changed mid-macrocycle. The web never links to such a row, so
     // this is the one place that sees it. The log is structured, so how often such
-    // macrocycles are loaded is a plain `| json` count in Loki. It can't name the macrocycle:
-    // finding those is re-dating's job, from the database (#1032).
+    // macrocycles are loaded is a plain `| json` count in Loki. It can't name the macrocycle;
+    // saving the schedule with re-dating on repairs it (#1032, ADR-037 amendment).
     if (scheduledWorkouts.length > 0) {
       const { pastLastDay, unscheduledDays } = scheduleCoverage(dashboard.program, programSpec, scheduledWorkouts);
       if (pastLastDay.length > 0 || unscheduledDays > 0) {
