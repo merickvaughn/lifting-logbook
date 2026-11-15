@@ -79,7 +79,7 @@
 }
 
 .weekType_training {
-  color: var(--color-info-text, #1d4ed8);
+  color: var(--color-info-text);
 }
 
 .weekType_deload {

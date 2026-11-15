@@ -124,6 +124,12 @@ jobs:
       - name: Unit test macrocycle status-color check parsing
         run: node --test scripts/check-macrocycle-status-colors.test.mjs
 
+      - name: Verify every CSS custom property apps/web uses is defined
+        run: node scripts/check-css-custom-properties.mjs
+
+      - name: Unit test CSS custom-property check parsing
+        run: node --test scripts/check-css-custom-properties.test.mjs
+
       # tempo-query-env.sh is sourced bash, so its test sources it for real against
       # fixture credentials in a throwaway directory (see #949) rather than importing it.
       - name: Unit test Tempo query credential resolution

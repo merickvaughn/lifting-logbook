@@ -12,7 +12,7 @@
 }
 
 .chipList:focus-within {
-  border-color: var(--color-primary, #0070f3);
+  border-color: var(--color-accent);
 }
 
 .chip {
@@ -31,7 +31,7 @@
   border: none;
   cursor: pointer;
   padding: 0;
-  color: var(--color-text-secondary, #666);
+  color: var(--color-text-muted);
   line-height: 1;
   font-size: 1rem;
 }
@@ -56,5 +56,5 @@
 }
 
 .textInput::placeholder {
-  color: var(--color-text-secondary, #666);
+  color: var(--color-text-muted);
 }

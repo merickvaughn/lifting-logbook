@@ -43,7 +43,7 @@ export default async function EditLiftPage({
     <main style={{ maxWidth: '600px', margin: '0 auto', padding: '1.5rem 1rem' }}>
       <Link
         href={`/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/manage-lifts`}
-        style={{ fontSize: '0.875rem', color: 'var(--color-primary, #0070f3)', textDecoration: 'none' }}
+        style={{ fontSize: '0.875rem', color: 'var(--color-accent)', textDecoration: 'none' }}
       >
         ← Back to Manage Lifts
       </Link>

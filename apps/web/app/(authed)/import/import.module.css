@@ -604,7 +604,7 @@
 }
 
 .mappingTable tr.unmappedRequired td {
-  background: var(--color-error-bg, #fff5f5);
+  background: var(--color-error-bg);
 }
 
 .sourceHeaderCell {
@@ -678,7 +678,7 @@
 }
 
 .unmappedAlert {
-  background: var(--color-error-bg, #fff5f5);
+  background: var(--color-error-bg);
   border-left: 3px solid var(--color-error, #e53e3e);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
@@ -759,7 +759,7 @@
 }
 
 .deltaIncomplete td {
-  background: var(--color-error-bg, #fff5f5);
+  background: var(--color-error-bg);
 }
 
 .deltaAmbiguous td {
@@ -926,7 +926,7 @@
 }
 
 .undoBtn:hover:not(:disabled) {
-  background: var(--color-error-bg, #fff5f5);
+  background: var(--color-error-bg);
 }
 
 .undoBtn:disabled {

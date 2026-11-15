@@ -7,7 +7,7 @@
 .backLink {
   display: inline-block;
   font-size: 0.875rem;
-  color: var(--color-text-secondary, #666);
+  color: var(--color-text-muted);
   text-decoration: none;
   margin-bottom: 1.25rem;
 }
@@ -28,7 +28,7 @@
 
 .subtitle {
   font-size: 0.875rem;
-  color: var(--color-text-secondary, #666);
+  color: var(--color-text-muted);
   margin: 0;
 }
 
@@ -46,8 +46,8 @@
   align-items: center;
   gap: 0.25rem;
   padding: 0.5rem 1rem;
-  background: var(--color-primary, #0070f3);
-  color: #fff;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
   border-radius: 6px;
   font-size: 0.875rem;
   font-weight: 500;

@@ -714,6 +714,26 @@ node scripts/check-macrocycle-status-colors.mjs && node --test scripts/check-mac
 Both also run as CI steps (`ci.yml` → `lint-and-test`). See
 [#1256](https://github.com/merickvaughn/lifting-logbook/issues/1256).
 
+### Undefined CSS custom properties (`apps/web`)
+
+`var(--x, fallback)` with an undefined `--x` renders fine and passes every test, but the fallback is
+a fixed value that ignores the theme, and without a fallback the property silently takes its
+initial value. [#1062](https://github.com/merickvaughn/lifting-logbook/issues/1062) and
+[#1064](https://github.com/merickvaughn/lifting-logbook/issues/1064) found ten such tokens. The
+guard reads every `--name:` declaration in the `.css` files git tracks under `apps/web` (and
+`'--name':` keys in `.ts`/`.tsx` style objects), then fails on any `var(--name` in those files that
+names none of them, fallback or not. CSS comments are skipped, and it fails rather than pass if it
+reads no stylesheets, definitions or uses, or nothing from `globals.css`.
+
+**Run before pushing whenever you add or rename a `var(--…)` use or a token in `globals.css`:**
+
+```bash
+node scripts/check-css-custom-properties.mjs && node --test scripts/check-css-custom-properties.test.mjs
+```
+
+Both also run as CI steps (`ci.yml` → `lint-and-test`). A new token belongs in every theme block of
+[`apps/web/app/globals.css`](apps/web/app/globals.css), or in `:root` if it doesn't vary by theme.
+
 ### Coverage Requirements
 
 <!-- When #259 ships: remove the "until then" clause from the frontend row below. Tracked as a checklist item on issue #259. -->
