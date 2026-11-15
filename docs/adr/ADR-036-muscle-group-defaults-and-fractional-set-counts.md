@@ -249,10 +249,13 @@ Option 4 left three consumers of `DEFAULT_SLOT_MAP` to #1015. The owner decided 
   Leangains and RPT history keeps matching the program.
 - **`Weighted Pull-ups` is a bodyweight-component lift**, as J4 in `docs/PRD.md` asks and as Dips
   already is in the same two programs. The logger now finds bodyweight lifts through
-  `builtInLiftFor`, which knows every name a built-in goes by, rather than `DEFAULT_SLOT_MAP`. Its
-  warm-up implements are keyed by catalog id, so "Weighted Pull-ups" gets "lat pulldown" and "Dip"
-  gets "dips (unweighted)". The logger asks for body weight on Leangains Day A and RPT Day C, reads
-  the lift's training max as total load (body weight plus added), and logs the added weight.
+  `builtInLiftFor`, which knows every name a built-in goes by, rather than `DEFAULT_SLOT_MAP`. That
+  reaches every name of the catalog's `pull-up` entry: "Weighted Pull-ups", the display name
+  "Pull-up" that the custom-program picker stores, and the id `pull-up` that import can store. None
+  of those were bodyweight before. Warm-up implements are keyed by catalog id, so all three get
+  "lat pulldown", and "Dip" gets "dips (unweighted)". The logger asks for body weight on Leangains
+  Day A and RPT Day C, reads the lift's training max as total load (body weight plus added), and
+  logs the added weight.
 - **The custom-lift guard still reserves only `DEFAULT_SLOT_MAP` names.** Option 8's second half is
   declined: before #1120 and #1186, a custom lift was the only way a Leangains lifter got "Cable Row"
   or "Leg Curl" recognized, so reserving every built-in name would shadow lifts users already have,
@@ -262,8 +265,13 @@ Option 4 left three consumers of `DEFAULT_SLOT_MAP` to #1015. The owner decided 
 
 Consequences:
 
-- A `Weighted Pull-ups` training max entered as the added weight alone now reads as total load. The
-  logger shows "BW" until the lifter re-enters it as body weight plus added.
+- A pull-up training max ("Weighted Pull-ups", or "Pull-up" in a custom program) entered as the
+  added weight alone now reads as total load. The logger shows "BW" until the lifter re-enters it
+  as body weight plus added.
+- The workout detail page and the rest timer have no bodyweight handling (`buildLiftDetails`), so
+  once that max is total load they show pull-up sets at the total (e.g. 225 lb) while the logger
+  shows "+45". Dips and Chin-up already behave this way
+  ([#1326](https://github.com/merickvaughn/lifting-logbook/issues/1326)).
 - The logger reads only built-ins for bodyweight. A custom lift's own `isBodyweightComponent` is not
   read there, as before this amendment ([#1319](https://github.com/merickvaughn/lifting-logbook/issues/1319)).
 

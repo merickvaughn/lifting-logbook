@@ -725,6 +725,8 @@ describe('WorkoutLoggingPage — bodyweight-component lifts by any of their name
   it("treats Leangains' and RPT's Weighted Pull-ups as a bodyweight lift, with its warm-up implement", async () => {
     seedWorkout([
       { lift: 'Weighted Pull-ups', planned: true, sets: [] },
+      // The catalog name a custom program's picker stores: bodyweight too, by the same entry.
+      { lift: 'Pull-up', planned: true, sets: [] },
       { lift: 'Dips', planned: true, sets: [] },
       { lift: 'Dip', planned: true, sets: [] },
       { lift: 'Chin-up', planned: true, sets: [] },
@@ -735,6 +737,7 @@ describe('WorkoutLoggingPage — bodyweight-component lifts by any of their name
 
     expect(lifts.map((l) => [l.lift, l.isBodyweightComponent, l.warmUpImplement])).toEqual([
       ['Weighted Pull-ups', true, 'lat pulldown'],
+      ['Pull-up', true, 'lat pulldown'],
       ['Dips', true, 'dips (unweighted)'],
       ['Dip', true, 'dips (unweighted)'],
       ['Chin-up', true, 'lat pulldown'],
