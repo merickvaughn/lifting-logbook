@@ -300,8 +300,9 @@ applied a production change unrelated to the merge that triggered it.
 
 The `gh pr *` commands the steps above depend on — `gh pr create` (step 7), `gh pr merge`
 (step 8), `gh pr view --json`, `gh pr comment` — are **all GraphQL** calls, and this repo's 60+
-concurrent worktrees share **one GitHub API rate-limit bucket per resource class**. GraphQL can
-therefore exhaust while the separate **REST (core)** bucket is still healthy. Motivating incident:
+concurrent worktrees share **one token's GitHub API rate limits**, counted separately for GraphQL
+and REST (core). GraphQL can therefore exhaust while the separate **REST (core)** bucket is still
+healthy. Motivating incident:
 [PR #700](https://github.com/merickvaughn/lifting-logbook/pull/700)'s session (2026-07-05) — `gh pr
 create` died with `GraphQL: API rate limit already exceeded` while REST core showed 4999/5000. The
 buckets are independent, so when a `gh pr` command fails that way, don't wait for the reset — fall
@@ -309,12 +310,16 @@ back to the REST equivalents. (The global
 [`CLAUDE.md`](https://github.com/brownm09/dev-env/blob/main/claude/CLAUDE.md) documents the rate-limit
 *hazard*; the steps below are the *mitigation*.)
 
-- **Compare both buckets first** — REST usually still has budget:
-  ```bash
-  gh api rate_limit
-  # resources.graphql = gh pr create / merge / view --json / comment
-  # resources.core    = the gh api REST calls below
-  ```
+- **Judge the error from the failing call, not from a `gh api rate_limit` reading.** A `gh pr`
+  command that fails with `API rate limit already exceeded` is the evidence: fall back to the REST
+  calls below. A reading can't confirm or refute that error. One token has two rate-limit counters
+  with separate resets, and each `gh api rate_limit` read shows only one of them, often not the one
+  rejecting calls. A later call that passes doesn't mean the budget is back either, since some calls
+  pass while the busier counter is at 0. Recovery comes at the reset of a counter reading 0; if no
+  reading shows 0, the reset time isn't known. Measured in the
+  [finding on dev-env#1238](https://github.com/brownm09/dev-env/issues/1238#issuecomment-6671406131);
+  the global `CLAUDE.md` states the rule under *Never mutate git state directly* → *GraphQL rate
+  limits*.
 - **Create a PR** instead of `gh pr create` — write the body to a scratch file first so backticks
   aren't mangled by the shell:
   ```bash
@@ -323,8 +328,8 @@ back to the REST equivalents. (The global
     -F body=@C:/Users/brown/.claude/scratch/pr-body.md
   ```
 - **Merge.** `gh pr merge <N> --auto --squash` is a single lightweight GraphQL call that arms GitHub
-  to squash-merge once checks pass — prefer it while GraphQL has *any* budget. If GraphQL is fully
-  exhausted, merge over REST — GitHub still deletes the branch server-side, since
+  to squash-merge once checks pass — try it first. If that call itself fails with a rate-limit
+  error, merge over REST — GitHub still deletes the branch server-side, since
   `delete_branch_on_merge` is enabled, so there is no explicit ref-delete (it would 422):
   ```bash
   gh api -X PUT repos/merickvaughn/lifting-logbook/pulls/<N>/merge -f merge_method=squash
