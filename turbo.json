@@ -51,7 +51,7 @@
     // $TURBO_ROOT$ ones are not. See #845.
     "lint": {
       "inputs": [
-        "src/**", "app/**", "lib/**", "components/**", "scripts/**", "*.ts", "*.tsx", ".eslintrc*", "eslint.config*",
+        "src/**", "app/**", "lib/**", "components/**", "scripts/**", "prisma/**", "*.ts", "*.tsx", ".eslintrc*", "eslint.config*",
         "$TURBO_ROOT$/eslint.config.js", "$TURBO_ROOT$/tools/eslint-rules/*.js", "!$TURBO_ROOT$/tools/eslint-rules/*.test.js",
         "$TURBO_ROOT$/apps/web/**/*.test.*", "$TURBO_ROOT$/apps/web/**/*.spec.*",
         "$TURBO_ROOT$/apps/api/src/**/*.test.*", "$TURBO_ROOT$/apps/api/src/**/*.spec.*",
