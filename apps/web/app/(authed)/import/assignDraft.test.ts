@@ -255,4 +255,35 @@ describe('lifts outside a stretch’s program (#1212)', () => {
     const draft = initialDraft(unknown);
     expect(isSettled(draft.stretches[0]!, new Set(), draft, unknown)).toBe(false);
   });
+
+  it('leaves a stretch whose Program column names no known program open after its lifts are confirmed', () => {
+    const column = (known: boolean) =>
+      stretch(['2026-01-01'], {
+        matched: false,
+        liftsOutsideProgram: ['Face Pull'],
+        sessions: [session('2026-01-01', ['Squat', 'Face Pull'])],
+        reasons: {
+          start: { kind: 'first-session' },
+          program: { kind: 'column', value: known ? 'RPT' : 'GZCLP', known },
+          status: { kind: 'all-workouts-done' },
+        },
+      });
+    for (const known of [true, false]) {
+      const labelled = res({ stretches: [column(known)], lone: [], lifts });
+      const draft = confirmLift(initialDraft(labelled), 'Face Pull', 'double');
+      expect(isSettled(draft.stretches[0]!, new Set(), draft, labelled)).toBe(known);
+    }
+  });
+
+  it('reads a lift named like an Object property as unconfirmed', () => {
+    const odd = { name: 'constructor', metadataLift: 'constructor', programs: [], progression: 'linear' as const };
+    const named = res({
+      stretches: [stretch(['2026-01-01'], { matched: false, sessions: [session('2026-01-01', ['constructor'])] })],
+      lone: [],
+      lifts: [odd],
+    });
+    const draft = initialDraft(named);
+    expect(openDecisions(draft, named)).toBe(1);
+    expect(liftProgression(draft, odd)).toBe('linear');
+  });
 });

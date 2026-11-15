@@ -916,17 +916,18 @@ const server = createServer(async (req, res) => {
   // gets a response: empty defaults when none is stored. Never a 404 (#1190).
   // -------------------------------------------------------------------------
   const metadataMatch = /^\/lifts\/([^/]+)\/metadata$/.exec(url.pathname);
+  const emptyLiftMetadata = (lift) => ({
+    lift,
+    muscleGroups: [],
+    substitutions: [],
+    foundational: false,
+    progression: null,
+    progressionIncrement: null,
+    repsLow: null,
+    repsHigh: null,
+  });
   if (method === 'GET' && metadataMatch) {
-    json(res, {
-      lift: decodeURIComponent(metadataMatch[1]),
-      muscleGroups: [],
-      substitutions: [],
-      foundational: false,
-      progression: null,
-      progressionIncrement: null,
-      repsLow: null,
-      repsHigh: null,
-    });
+    json(res, emptyLiftMetadata(decodeURIComponent(metadataMatch[1])));
     return;
   }
 
@@ -935,17 +936,7 @@ const server = createServer(async (req, res) => {
   if (method === 'PATCH' && metadataMatch) {
     const body = await readBody(req);
     if (rejectIfInvalidBody(res, body)) return;
-    json(res, {
-      lift: decodeURIComponent(metadataMatch[1]),
-      muscleGroups: [],
-      substitutions: [],
-      foundational: false,
-      progression: null,
-      progressionIncrement: null,
-      repsLow: null,
-      repsHigh: null,
-      ...body,
-    });
+    json(res, { ...emptyLiftMetadata(decodeURIComponent(metadataMatch[1])), ...body });
     return;
   }
 

@@ -4238,6 +4238,44 @@ describe('ImportWizard Assign lift progressions (#1212)', () => {
     expect(screen.getByTestId('assign-decisions')).toHaveTextContent('1 decision left before Preview.');
     expect(nextButton()).toBeDisabled();
   });
+
+  it('holds Back and Next while a change to a confirmed lift saves, so a failure is still shown on the step', async () => {
+    const user = userEvent.setup();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    let fail: (e: unknown) => void = () => {};
+    mockPatchLiftMetadata.mockReturnValue(new Promise<LiftMetadataResponse>((_, reject) => (fail = reject)));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    const back = screen.getByRole('button', { name: 'Back' });
+
+    // Confirmed, the step has nothing left to decide; a change then saves under it.
+    await user.click(confirm());
+    expect(nextButton()).toBeEnabled();
+    await user.selectOptions(picker(), 'double');
+    expect(nextButton()).toBeDisabled();
+    expect(back).toBeDisabled();
+
+    fail(new Error('network down'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t save the progression for Face Pull.');
+    expect(picker()).toHaveValue('manual');
+    expect(nextButton()).toBeEnabled();
+    expect(back).toBeEnabled();
+  });
+
+  it('reports a failed save without the request path, which names the lift', async () => {
+    const user = userEvent.setup();
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockPatchLiftMetadata.mockRejectedValue(new ApiClientError('API 502 Bad Gateway for /lifts/face-pull/metadata', 502));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    await user.selectOptions(picker(), 'linear');
+    await screen.findByRole('alert');
+    const [, reported] = errorSpy.mock.calls.find(([prefix]) => prefix === '[client-mutation] patchLiftMetadata failed') ?? [];
+    expect(reported).toBeInstanceOf(ApiClientError);
+    expect(reported).toMatchObject({ status: 502 });
+    expect((reported as Error).message).not.toMatch(/face-pull|lifts/i);
+  });
 });
 
 // ── Assign step's LLM suggestions (#1174) ───────────────────────────────────────

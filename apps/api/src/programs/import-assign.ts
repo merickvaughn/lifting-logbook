@@ -72,7 +72,8 @@ export function assignProgramOptions(customPrograms: readonly KnownProgram[]): A
  * Each lift in `lifts` (stored spellings) once, by display name (#1212): the programs that plan
  * it, and the progression it follows with no program row, which Assign preselects for a lift
  * its stretch's program doesn't plan. A change is saved to the lift's own `lift_metadata` row
- * when it has one, under whatever spelling it was saved, so the lift doesn't get a second row.
+ * when it has one, under whatever spelling it was saved, so the lift doesn't get a second row;
+ * else under its display name, the spelling the lift editor reads it by.
  */
 export function assignLifts(
   lifts: Iterable<string>,
@@ -87,12 +88,14 @@ export function assignLifts(
     if (byName.has(name)) continue;
     const key = liftKey(lift);
     const { type } = lookup.resolve(lift);
+    // With no row, the type comes from a lift, a default or the catalog, none of which can be
+    // `rpe`. If one ever were, Assign would preselect a type `updateMaxes` doesn't use.
+    if (!isLiftProgressionType(type)) throw new Error(`A lift's progression resolved to ${type} with no program row`);
     byName.set(name, {
       name,
-      metadataLift: lookup.liftMetaFor(lift)?.lift ?? lift,
+      metadataLift: lookup.liftMetaFor(lift)?.lift ?? name,
       programs: programs.filter((p) => p.lifts.has(key)).map((p) => p.id),
-      // With no row, the type comes from a lift, a default or the catalog, none of which can be `rpe`.
-      progression: isLiftProgressionType(type) ? type : 'amrap_gated',
+      progression: type,
     });
   }
   return [...byName.values()];

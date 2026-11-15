@@ -114,7 +114,8 @@ describe('import-assign helpers (#1253)', () => {
         new Map([['bench-press', 'Bench Press']]),
       );
       expect(lifts).toEqual([
-        { name: 'Bench Press', metadataLift: 'bench-press', programs: ['rpt', 'c1'], progression: 'linear' },
+        // With no row, a change is saved under the display name the lift editor reads.
+        { name: 'Bench Press', metadataLift: 'Bench Press', programs: ['rpt', 'c1'], progression: 'linear' },
         // Its own row wins over the default and is saved under the spelling it was saved with.
         { name: 'Face Pull', metadataLift: 'face-pull', programs: [], progression: 'manual' },
         { name: 'Sled Push', metadataLift: 'Sled Push', programs: ['c1'], progression: 'linear' },

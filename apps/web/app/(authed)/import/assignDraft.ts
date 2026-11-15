@@ -288,7 +288,7 @@ export function overlaps(stretches: DraftStretch[]): Array<[DraftStretch, DraftS
  * them (#1212). With no spec row to take a progression from, each needs the lifter's confirmation.
  */
 export function outsideLifts(s: DraftStretch, res: ImportAssignResponse): AssignLift[] {
-  const byName = new Map(res.lifts.map((l) => [l.name, l]));
+  const byName = liftsByName(res);
   const names = new Set(s.sessions.flatMap((x) => x.lifts));
   return [...names].flatMap((name) => {
     const lift = byName.get(name);
@@ -296,9 +296,33 @@ export function outsideLifts(s: DraftStretch, res: ImportAssignResponse): Assign
   });
 }
 
+/** `res.lifts` by name, built once per response: it's read for every stretch on every render. */
+const liftDirectories = new WeakMap<ImportAssignResponse, ReadonlyMap<string, AssignLift>>();
+function liftsByName(res: ImportAssignResponse): ReadonlyMap<string, AssignLift> {
+  let byName = liftDirectories.get(res);
+  if (!byName) {
+    byName = new Map(res.lifts.map((l) => [l.name, l]));
+    liftDirectories.set(res, byName);
+  }
+  return byName;
+}
+
+/** Whether the lifter has confirmed `name`. An own-property check: a lift's name is free text. */
+export function isConfirmed(draft: AssignDraft, name: string): boolean {
+  return Object.hasOwn(draft.confirmedLifts, name);
+}
+
 /** The lift's progression as the lifter has it: confirmed or saved, else the server's preselection. */
 export function liftProgression(draft: AssignDraft, lift: AssignLift): LiftProgressionType {
-  return draft.confirmedLifts[lift.name] ?? lift.progression;
+  return (isConfirmed(draft, lift.name) ? draft.confirmedLifts[lift.name] : undefined) ?? lift.progression;
+}
+
+/** `set` with `key` added (`on`) or removed. */
+export function withMember<T>(set: ReadonlySet<T>, key: T, on: boolean): ReadonlySet<T> {
+  const next = new Set(set);
+  if (on) next.add(key);
+  else next.delete(key);
+  return next;
 }
 
 export function confirmLift(draft: AssignDraft, name: string, progression: LiftProgressionType): AssignDraft {
@@ -308,7 +332,7 @@ export function confirmLift(draft: AssignDraft, name: string, progression: LiftP
 /** Names of the lifts outside `stretches`' programs that the lifter hasn't confirmed. */
 function unconfirmedLifts(draft: AssignDraft, stretches: readonly DraftStretch[], res: ImportAssignResponse): Set<string> {
   return new Set(
-    stretches.flatMap((s) => outsideLifts(s, res).map((l) => l.name)).filter((name) => !(name in draft.confirmedLifts)),
+    stretches.flatMap((s) => outsideLifts(s, res).map((l) => l.name)).filter((name) => !isConfirmed(draft, name)),
   );
 }
 
@@ -359,8 +383,15 @@ export function isSettled(
     s.status !== null &&
     !overlapping.has(s.id) &&
     unconfirmedLifts(draft, [s], res).size === 0 &&
-    (s.source === null || s.source.matched || s.source.liftsOutsideProgram.length > 0)
+    (s.source === null ||
+      s.source.matched ||
+      (s.source.liftsOutsideProgram.length > 0 && !namesUnknownProgram(s.source)))
   );
+}
+
+function namesUnknownProgram(s: AssignStretch): boolean {
+  const reason = s.reasons.program;
+  return reason.kind === 'column' && !reason.known;
 }
 
 /** `2025-02-03` as "Feb 3, 2025", read as a calendar day. */

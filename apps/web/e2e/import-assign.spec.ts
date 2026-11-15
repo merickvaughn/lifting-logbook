@@ -86,8 +86,9 @@ test('Assign: a lift outside the program has its progression changed by keyboard
   const picker = page.getByRole('combobox', { name: 'Progression for Face Pull in RPT from Jan 1, 2024' });
   await expect(picker).toHaveValue('double');
   const saved = page.waitForRequest((r) => r.method() === 'PATCH' && r.url().endsWith('/lifts/Face%20Pull/metadata'));
+  // From Double, the option above is Linear.
   await picker.focus();
-  await picker.selectOption('linear');
+  await page.keyboard.press('ArrowUp');
   expect((await saved).postDataJSON()).toEqual({ progression: 'linear' });
 
   await expect(page.getByTestId('assign-decisions')).toHaveText('Nothing left to decide. Continue to Preview.');
@@ -101,10 +102,19 @@ async function importThenOpenHistory(page: Page) {
 
   // Leave the wizard: its own Undo is gone with it.
   await page.goto('/history');
-  await page.getByRole('tab', { name: 'Macrocycles' }).click();
+  await openMacrocyclesTab(page);
   const imported = page.getByRole('row').filter({ hasText: '2024-01-' });
   await expect(imported).toHaveCount(2);
   return imported;
+}
+
+/** History's Macrocycles tab. A click can land before the page hydrates, so it's retried. */
+async function openMacrocyclesTab(page: Page) {
+  const tab = page.getByRole('tab', { name: 'Macrocycles' });
+  await expect(async () => {
+    await tab.click();
+    await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 1_000 });
+  }).toPass({ timeout: 20_000 });
 }
 
 // #1300: History shows any of the lifter's programs, so an import into one that isn't active
@@ -115,7 +125,7 @@ test('Assign: an import into a program that isn’t active is undone from Histor
 
   // History opens on the active program, which the import didn't touch.
   await page.goto('/history');
-  await page.getByRole('tab', { name: 'Macrocycles' }).click();
+  await openMacrocyclesTab(page);
   const imported = page.getByRole('row').filter({ hasText: '2024-01-' });
   await expect(page.getByRole('row').filter({ hasText: '2024-09-02' })).toHaveCount(1);
   await expect(imported).toHaveCount(0);
@@ -123,12 +133,8 @@ test('Assign: an import into a program that isn’t active is undone from Histor
   await page.getByLabel('Program').selectOption({ label: 'My Custom Program' });
   await page.getByRole('button', { name: 'Show', exact: true }).click();
   await expect(page).toHaveURL(/[?&]program=cust-1/);
-  // Show is a plain GET form, so the new page can take the click before it hydrates.
-  const macrocycles = page.getByRole('tab', { name: 'Macrocycles' });
-  await expect(async () => {
-    await macrocycles.click();
-    await expect(macrocycles).toHaveAttribute('aria-selected', 'true', { timeout: 1_000 });
-  }).toPass();
+  // Show is a plain GET form, so this is a fresh page to hydrate.
+  await openMacrocyclesTab(page);
   await expect(imported).toHaveCount(2);
 
   await page.getByRole('button', { name: 'Undo import of macrocycle 2' }).click();

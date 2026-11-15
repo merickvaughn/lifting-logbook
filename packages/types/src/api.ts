@@ -1130,7 +1130,7 @@ export type AssignStartReason =
 
 /** Where a stretch's program came from: `segmentLiftHistory`'s `StretchProgramReason`. */
 export type AssignProgramReason =
-  | { kind: 'column'; value: string }
+  | { kind: 'column'; value: string; known: boolean }
   | { kind: 'lifts'; tiedWith: string[]; bySetOrder: boolean }
   | { kind: 'source' };
 

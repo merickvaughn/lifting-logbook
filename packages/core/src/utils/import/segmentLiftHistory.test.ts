@@ -431,7 +431,7 @@ describe('segmentLiftHistory', () => {
         candidateProgram: '5-3-1',
         liftsOutsideProgram: [],
       });
-      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: 'GZCLP' });
+      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: 'GZCLP', known: false });
     });
 
     it('continues where a Program value first appears and names the program the lifts are in', () => {
@@ -439,7 +439,7 @@ describe('segmentLiftHistory', () => {
       const rows = [...first, ...run(RPT_DAYS, lastDay(first) + 2, 2, { extra: () => ({ program: 'RPT' }) })];
       const result = segment(rows);
       expect(result.stretches).toHaveLength(1);
-      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: 'RPT' });
+      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: 'RPT', known: true });
     });
   });
 
@@ -506,7 +506,7 @@ describe('segmentLiftHistory', () => {
     it("takes the file's column over the lifts, unmatched when its lifts are not all in it", () => {
       const result = segment(run(RPT_DAYS, 0, 3, { extra: () => ({ program: '5/3/1' }) }));
       expect(result.stretches[0]).toMatchObject({ program: '5-3-1', matched: false, status: null });
-      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: '5/3/1' });
+      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: '5/3/1', known: true });
       expect(result.stretches[0]?.liftsOutsideProgram).toEqual([
         'Barbell Row',
         'Romanian Deadlift',
@@ -575,7 +575,7 @@ describe('segmentLiftHistory', () => {
     it('is named by a Program cell holding the name the caller gives it', () => {
       const result = segment(run(kbDays, 0, 6, { extra: () => ({ program: 'kb plan' }) }), { customPrograms: [kbPlan] });
       expect(result.stretches[0]?.program).toBe('custom-kb');
-      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: 'kb plan' });
+      expect(result.stretches[0]?.reasons.program).toEqual({ kind: 'column', value: 'kb plan', known: true });
     });
   });
 

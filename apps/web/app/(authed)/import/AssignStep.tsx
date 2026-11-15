@@ -10,8 +10,6 @@ import type {
   LiftProgressionType,
   MacrocycleStatus,
 } from '@lifting-logbook/types';
-import { patchLiftMetadata } from '@/lib/client-api';
-import { logClientError } from '@/lib/log-client-error';
 import { PROGRAMS } from '@/lib/programs';
 import { PROGRESSION_LABELS } from '@/lib/progression';
 import { STATUS_LABEL, STATUS_MARK } from '@/lib/macrocycleStatus';
@@ -24,6 +22,7 @@ import {
   fileAllWithEarlier,
   fileSession,
   fmtDay,
+  isConfirmed,
   isSettled,
   joinWithPrevious,
   liftProgression,
@@ -38,6 +37,7 @@ import {
   splitAtLargestGap,
   startOf,
   stretchName,
+  withMember,
   type AssignDraft,
   type SessionChoice,
 } from './assignDraft';
@@ -132,6 +132,9 @@ export default function AssignStep({
   draft,
   onChange,
   onConfirmLift,
+  liftSaves,
+  failedLiftSaves,
+  onSaveLift,
   focusHeading = false,
   suggestions,
 }: {
@@ -143,6 +146,15 @@ export default function AssignStep({
    * is saved first, and the draft may have moved on by the time the save returns.
    */
   onConfirmLift: (name: string, progression: LiftProgressionType) => void;
+  /**
+   * Changed progressions being saved, by lift name. The wizard holds the saves so Back and Next
+   * wait for them, and a failure is still shown if this step remounts.
+   */
+  liftSaves: ReadonlyMap<string, LiftProgressionType>;
+  /** Lifts whose last save failed. */
+  failedLiftSaves: ReadonlySet<string>;
+  /** Saves a changed progression to the lift, then confirms it. */
+  onSaveLift: (lift: AssignLift, progression: LiftProgressionType) => void;
   /** Focus the heading when shown: the control the lifter last used is gone (#1256). */
   focusHeading?: boolean;
   /** The LLM suggestions' state and handlers (#1174), which the wizard owns. */
@@ -157,13 +169,7 @@ export default function AssignStep({
   const left = openDecisions(draft, res);
   const lone = pending.filter((p) => !p.unnumbered && draft.filed[p.session.date] === undefined);
   const programIds = [...new Set([...res.programs.map((p) => p.id), ...stretches.map((s) => s.program)])];
-  const toggle = (id: string, on: boolean) =>
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
+  const toggle = (id: string, on: boolean) => setOpen((prev) => withMember(prev, id, on));
   // A stretch the lifter is editing stays open, so settling it doesn't collapse it under their focus.
   const editStretch = (id: string, next: AssignDraft) => {
     toggle(id, true);
@@ -180,32 +186,6 @@ export default function AssignStep({
   useEffect(() => {
     if (focusHeading) setFocusTarget(HEADING_ID);
   }, [focusHeading]);
-
-  // A changed progression is saved to the lift before it counts as confirmed (#1212). While the
-  // save runs its picker shows the new value; a failed save puts the old one back and says so.
-  const [saving, setSaving] = useState<Readonly<Record<string, LiftProgressionType>>>({});
-  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
-  const markFailed = (name: string, on: boolean) =>
-    setFailed((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(name);
-      else next.delete(name);
-      return next;
-    });
-  async function saveProgression(lift: AssignLift, progression: LiftProgressionType) {
-    setSaving((prev) => ({ ...prev, [lift.name]: progression }));
-    markFailed(lift.name, false);
-    try {
-      await patchLiftMetadata(lift.metadataLift, { progression });
-      onConfirmLift(lift.name, progression);
-    } catch (e) {
-      // No lift name: the file's lift names are the lifter's data (proposal Observability).
-      logClientError('patchLiftMetadata', e, { step: 'import-assign' });
-      markFailed(lift.name, true);
-    } finally {
-      setSaving((prev) => Object.fromEntries(Object.entries(prev).filter(([name]) => name !== lift.name)));
-    }
-  }
 
   return (
     <div className={styles.step}>
@@ -429,8 +409,10 @@ export default function AssignStep({
                       </p>
                       <ul className={styles.list}>
                         {outside.map((lift) => {
-                          const confirmed = lift.name in draft.confirmedLifts;
-                          const pending = saving[lift.name];
+                          const confirmed = isConfirmed(draft, lift.name);
+                          // While a change saves, its picker shows the new value; a failed save
+                          // puts the old one back and says so.
+                          const pending = liftSaves.get(lift.name);
                           return (
                             <li key={lift.name} className={styles.fields}>
                               <label>
@@ -445,7 +427,7 @@ export default function AssignStep({
                                     const value = LIFT_PROGRESSION_TYPES.find((type) => type === e.target.value);
                                     if (!value || pending !== undefined) return;
                                     toggle(s.id, true);
-                                    void saveProgression(lift, value);
+                                    onSaveLift(lift, value);
                                   }}
                                 >
                                   {LIFT_PROGRESSION_TYPES.map((type) => (
@@ -464,13 +446,12 @@ export default function AssignStep({
                                 onClick={() => {
                                   if (pending !== undefined || confirmed) return;
                                   toggle(s.id, true);
-                                  markFailed(lift.name, false);
                                   onConfirmLift(lift.name, lift.progression);
                                 }}
                               >
                                 {confirmed ? 'Confirmed' : 'Confirm'}
                               </button>
-                              {failed.has(lift.name) && (
+                              {failedLiftSaves.has(lift.name) && (
                                 <p className={styles.error} role="alert">
                                   Couldn’t save the progression for {lift.name}. Try again.
                                 </p>

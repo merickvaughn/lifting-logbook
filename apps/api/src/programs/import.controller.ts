@@ -96,7 +96,6 @@ import {
   planSplitMaxes,
   splitMaxCounts,
 } from './import-assign';
-import { progressionSettingsFor } from './macrocycle-generation.service';
 import { placeSuggestedStretches, recomputeMacrocycles, releaseStatusChoices } from './import-stored';
 import {
   BreakdownBatch,
@@ -116,7 +115,7 @@ import {
   splitNonCycleKeys,
 } from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
-import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
+import { liftNamesFor, liftNamesOf, effectiveSlotMapFor, progressionSettingsFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
 import {
   GoogleSheetFetchError,
@@ -946,7 +945,9 @@ export class ImportController {
       await this.segmentForAssign(program, table, repos, userId, choices);
     const knownPrograms = [...BUILT_IN_KNOWN_PROGRAMS, ...customPrograms];
     const stored = await placeSuggestedStretches(repos, segmented.stretches, knownPrograms);
-    const liftNames = await liftNamesFor(repos);
+    // Read once for both the lifts' names and their progression settings.
+    const customLifts = await repos.customLift.list();
+    const liftNames = liftNamesOf(customLifts);
     const response = assignResponse(
       segmented,
       {
@@ -957,7 +958,7 @@ export class ImportController {
         lifts: assignLifts(
           new Set(liftRecords.map((r) => r.lift)),
           knownPrograms,
-          await progressionSettingsFor(repos, await repos.userSettings.getSettings()),
+          await progressionSettingsFor(repos, await repos.userSettings.getSettings(), customLifts),
           liftNames,
         ),
         stored,
