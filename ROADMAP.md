@@ -129,7 +129,7 @@ First deployable version. Styled web app running against a real database, deploy
 
 | Work stream | Description | Issues |
 |---|---|---|
-| *(all shipped)* | | |
+| Weekly sets per muscle group and movement pattern | Default and per-lift primary/secondary muscles, and weekly working-set counts by muscle group or movement pattern on the program views and the current week. Core counters ([#1016](https://github.com/merickvaughn/lifting-logbook/issues/1016)) and the overrides API, lift editor and shared volume table ([#1017](https://github.com/merickvaughn/lifting-logbook/issues/1017)) first; then the program views ([#1018](https://github.com/merickvaughn/lifting-logbook/issues/1018)) and the current week ([#1019](https://github.com/merickvaughn/lifting-logbook/issues/1019)) | [#1013](https://github.com/merickvaughn/lifting-logbook/issues/1013) |
 
 ### Shipped
 

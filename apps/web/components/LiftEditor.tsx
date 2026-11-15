@@ -5,9 +5,9 @@ import { useRouter } from 'next/navigation';
 import { patchLiftMetadata } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import { EMPTY_PROGRESSION_DRAFT, parseProgressionDraft, progressionDraft } from '@/lib/progression';
-import type { LiftMetadataResponse } from '@lifting-logbook/types';
+import { canonicalMuscleGroup, type ResolvedMuscleTargets } from '@lifting-logbook/core';
+import { MUSCLE_GROUPS, type LiftMetadataResponse, type MuscleTargets } from '@lifting-logbook/types';
 import CatalogTagPicker from './CatalogTagPicker';
-import FreeTagPicker from './FreeTagPicker';
 import LiftModificationsEditor from './LiftModificationsEditor';
 import ProgressionFields from './ProgressionFields';
 import styles from './LiftEditor.module.css';
@@ -18,11 +18,33 @@ interface Props {
   macrocycleNum: number;
   workoutNum: number;
   initialMetadata: LiftMetadataResponse;
+  /** The lift's effective muscles, resolved over all of the user's rows (#1017). */
+  muscles: ResolvedMuscleTargets;
+  /** The built-in defaults for the lift's name, or null when it has none. */
+  defaultMuscles: MuscleTargets | null;
 }
 
-export default function LiftEditor({ program, macrocycleNum, workoutNum, initialMetadata }: Props) {
+const NO_MUSCLES: MuscleTargets = { primary: [], secondary: [] };
+
+/** Equal as sets of muscles, ignoring case and order, as the resolver reads them. */
+function sameMuscles(a: readonly string[], b: readonly string[]): boolean {
+  const key = (list: readonly string[]) =>
+    [...new Set(list.map((m) => canonicalMuscleGroup(m).toLowerCase()).filter(Boolean))].sort().join('|');
+  return key(a) === key(b);
+}
+
+export default function LiftEditor({
+  program,
+  macrocycleNum,
+  workoutNum,
+  initialMetadata,
+  muscles,
+  defaultMuscles,
+}: Props) {
   const router = useRouter();
-  const [muscleGroups, setMuscleGroups] = useState<string[]>(initialMetadata.muscleGroups);
+  const defaults = defaultMuscles ?? NO_MUSCLES;
+  const [primary, setPrimary] = useState<string[]>([...muscles.primary]);
+  const [secondary, setSecondary] = useState<string[]>([...muscles.secondary]);
   const [substitutions, setSubstitutions] = useState<string[]>(initialMetadata.substitutions);
   const [foundational, setFoundational] = useState(initialMetadata.foundational);
   const [progression, setProgression] = useState(() =>
@@ -36,6 +58,19 @@ export default function LiftEditor({ program, macrocycleNum, workoutNum, initial
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Both lists empty is how a row says "use the defaults", so lists equal to the defaults are
+  // saved that way: the lift then follows any later change to them (ADR-036).
+  const bothEmpty = primary.length === 0 && secondary.length === 0;
+  const usesDefaults =
+    bothEmpty || (sameMuscles(primary, defaults.primary) && sameMuscles(secondary, defaults.secondary));
+  const inPrimary = new Set(primary.map((m) => m.toLowerCase()));
+  const inSecondary = new Set(secondary.map((m) => m.toLowerCase()));
+  let source: string;
+  if (!usesDefaults) source = 'Your own.';
+  else if (!defaultMuscles) source = 'None set. This lift’s sets aren’t counted toward any muscle.';
+  else if (bothEmpty) source = 'Built-in defaults, which apply when both lists are empty.';
+  else source = 'Built-in defaults.';
+
   async function handleSave() {
     const parsed = parseProgressionDraft(progression, { incrementWithoutType: true });
     if ('error' in parsed) {
@@ -46,7 +81,8 @@ export default function LiftEditor({ program, macrocycleNum, workoutNum, initial
     setError(null);
     try {
       await patchLiftMetadata(initialMetadata.lift, {
-        muscleGroups,
+        muscleGroups: usesDefaults ? [] : primary,
+        secondaryMuscleGroups: usesDefaults ? [] : secondary,
         substitutions,
         foundational,
         progression: parsed.values.type,
@@ -67,7 +103,8 @@ export default function LiftEditor({ program, macrocycleNum, workoutNum, initial
   }
 
   function handleReset() {
-    setMuscleGroups([]);
+    setPrimary([...defaults.primary]);
+    setSecondary([...defaults.secondary]);
     setSubstitutions([]);
     setFoundational(false);
     setProgression(EMPTY_PROGRESSION_DRAFT);
@@ -81,17 +118,35 @@ export default function LiftEditor({ program, macrocycleNum, workoutNum, initial
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label} htmlFor="muscleGroups">
-          Muscle Groups
+        <label className={styles.label} htmlFor="primaryMuscles">
+          Primary Muscles
         </label>
-        <FreeTagPicker
-          id="muscleGroups"
-          value={muscleGroups}
-          onChange={setMuscleGroups}
-          placeholder="e.g. Quads, Glutes, Hamstrings"
+        <CatalogTagPicker
+          id="primaryMuscles"
+          value={primary}
+          onChange={setPrimary}
+          options={MUSCLE_GROUPS.filter((m) => !inSecondary.has(m.toLowerCase()))}
+          placeholder="Search muscles…"
           disabled={saving}
         />
       </div>
+
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor="secondaryMuscles">
+          Secondary Muscles (count ½)
+        </label>
+        <CatalogTagPicker
+          id="secondaryMuscles"
+          value={secondary}
+          onChange={setSecondary}
+          options={MUSCLE_GROUPS.filter((m) => !inPrimary.has(m.toLowerCase()))}
+          placeholder="Search muscles…"
+          disabled={saving}
+        />
+      </div>
+      <p className={styles.hint} aria-live="polite">
+        Source: {source}
+      </p>
 
       <div className={styles.field}>
         <label className={styles.label} htmlFor="substitutions">

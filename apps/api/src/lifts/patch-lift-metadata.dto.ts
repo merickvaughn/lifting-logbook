@@ -15,6 +15,13 @@ export class PatchLiftMetadataDto {
   @IsString({ each: true })
   @MaxLength(100, { each: true })
   @IsOptional()
+  secondaryMuscleGroups?: string[];
+
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  @IsOptional()
   substitutions?: string[];
 
   @IsBoolean()

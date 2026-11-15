@@ -5,6 +5,7 @@ import { ILiftMetadataRepository, LiftMetadata, LiftMetadataPatch } from '../../
 type LiftMetadataRow = {
   lift: string;
   muscleGroups: string[];
+  secondaryMuscleGroups: string[] | null;
   substitutions: string[];
   foundational: boolean;
   progression: string | null;
@@ -17,6 +18,8 @@ function toMetadata(row: LiftMetadataRow): LiftMetadata {
   return {
     lift: row.lift,
     muscleGroups: row.muscleGroups,
+    // The column is nullable, as Prisma generates scalar lists, though nothing writes null.
+    secondaryMuscleGroups: row.secondaryMuscleGroups ?? [],
     substitutions: row.substitutions,
     foundational: row.foundational,
     // An unknown stored value reads as unset, so the lifter's default applies (#1210).
@@ -48,6 +51,9 @@ export class PrismaLiftMetadataRepository implements ILiftMetadataRepository {
   async upsertMetadata(lift: string, patch: LiftMetadataPatch): Promise<LiftMetadata> {
     const update = {
       ...(patch.muscleGroups !== undefined ? { muscleGroups: patch.muscleGroups } : {}),
+      ...(patch.secondaryMuscleGroups !== undefined
+        ? { secondaryMuscleGroups: patch.secondaryMuscleGroups }
+        : {}),
       ...(patch.substitutions !== undefined ? { substitutions: patch.substitutions } : {}),
       ...(patch.foundational !== undefined ? { foundational: patch.foundational } : {}),
       ...(patch.progression !== undefined ? { progression: patch.progression } : {}),
@@ -61,5 +67,9 @@ export class PrismaLiftMetadataRepository implements ILiftMetadataRepository {
       create: { userId: this.userId, lift, muscleGroups: [], substitutions: [], foundational: false, ...update },
     });
     return toMetadata(row);
+  }
+
+  async deleteMetadata(lift: string): Promise<void> {
+    await this.prisma.liftMetadata.deleteMany({ where: { userId: this.userId, lift } });
   }
 }

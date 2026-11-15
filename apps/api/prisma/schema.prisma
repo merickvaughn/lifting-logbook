@@ -193,6 +193,9 @@ model LiftMetadata {
   userId        String
   lift          String
   muscleGroups  String[]
+  // Muscles a set counts ½ toward (#1017, ADR-036). Both lists empty means the built-in
+  // defaults apply.
+  secondaryMuscleGroups String[] @default([])
   substitutions String[]
   foundational  Boolean  @default(false)
   // The lift's own progression (#1210, ADR-043). Null falls through to the lifter's default,

@@ -107,11 +107,16 @@ Every catalog entry is a `CatalogLift`: a `Lift` plus `muscles: MuscleTargets`. 
 does not carry muscles: a custom lift under its own name has no defaults, and the API never
 returns catalog muscles.
 
-Per-user overrides still live in `LiftMetadata` (`muscleGroups`, `substitutions`, `foundational`).
-That is a **separate per-user table keyed by lift *name***, while `CustomLift` is keyed by uuid.
+Per-user overrides still live in `LiftMetadata` (`muscleGroups` for primary muscles,
+`secondaryMuscleGroups`, `substitutions`, `foundational`). That is a **separate per-user table keyed
+by lift *name***, while `CustomLift` is keyed by uuid.
 - An override on an exact lift name replaces the defaults for that name. Overrides do not follow
   aliases: one on "Squat" leaves "Back Squat" on its defaults.
-- An empty list means "use the defaults".
+- Both muscle lists empty means "use the defaults". The lift editor saves lists equal to the
+  defaults that way, so the lift follows any later change to them.
+- Before #1017 the lift editor stored a multi-word lift under its URL-encoded name
+  ("Bench%20Press"). The resolver reads such a row under the real name until the real name has
+  a row, and saving the real name retires it, carrying its values forward.
 - `muscleGroups` is still an unconstrained `String[]`. Readers canonicalize it
   case-insensitively against the vocabulary and keep unknown text as its own row
   (`buildMuscleTargetResolver`, `packages/core/src/catalog/muscles.ts`).
@@ -653,6 +658,7 @@ classDiagram
         <<persisted>>
         +string lift
         +string[] muscleGroups
+        +string[] secondaryMuscleGroups
         +bool foundational
     }
 

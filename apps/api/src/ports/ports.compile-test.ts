@@ -166,6 +166,7 @@ const _liftMetadataRepo: ILiftMetadataRepository = {
     Promise.resolve({
       lift: '',
       muscleGroups: [],
+      secondaryMuscleGroups: [],
       substitutions: [],
       foundational: false,
       progression: null,
@@ -173,6 +174,7 @@ const _liftMetadataRepo: ILiftMetadataRepository = {
       repsLow: null,
       repsHigh: null,
     }),
+  deleteMetadata: () => Promise.resolve(),
 };
 
 const _strengthGoalRepo: IStrengthGoalRepository = {

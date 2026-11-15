@@ -36,6 +36,20 @@ test('a lift in the workout opens its edit form', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible();
 });
 
+// #1017: the mock's "deadlift" is the catalog id, whose built-in muscles fill the editor.
+test("shows a lift's built-in default muscles and where they came from", async ({ page }) => {
+  await page.goto(`${EDIT}/deadlift`);
+  await expect(page.getByLabel('Primary Muscles')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove Glutes' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove Forearms' })).toBeVisible();
+  await expect(page.getByText('Source: Built-in defaults.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Remove Glutes' }).click();
+  await expect(page.getByText('Source: Your own.')).toBeVisible();
+  await page.getByRole('button', { name: 'Reset' }).click();
+  await expect(page.getByRole('button', { name: 'Remove Glutes' })).toBeVisible();
+});
+
 test("gives a lift's modification its own max (#1153)", async ({ page, request }) => {
   await request.post(`${MOCK_API}/lifts/modifications`, { data: { lift: 'squat', name: 'Paused' } });
   await page.goto(`${EDIT}/squat`);

@@ -70,8 +70,11 @@ function canonicalList(labels: readonly string[]): string[] {
  * the bug's exact signature — a `%` and no whitespace, since `encodeURIComponent` never
  * leaves a literal space — and nothing else is decoded: a real name like "Squat %40 RPE"
  * keeps its identity. A name that is not valid percent-encoding is left alone.
+ *
+ * Exported so the API can retire a legacy row when the lift editor saves its real name, and
+ * the editor can fill from one, by the same rule this resolver reads them with.
  */
-function legacyEncodedLiftName(lift: string): string | undefined {
+export function legacyEncodedLiftName(lift: string): string | undefined {
   if (!lift.includes('%') || /\s/.test(lift)) return undefined;
   try {
     const decoded = decodeURIComponent(lift);

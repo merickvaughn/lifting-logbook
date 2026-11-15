@@ -17,6 +17,7 @@ export class InMemoryLiftMetadataRepository implements ILiftMetadataRepository {
     const existing: LiftMetadata = this.store.get(lift) ?? {
       lift,
       muscleGroups: [],
+      secondaryMuscleGroups: [],
       substitutions: [],
       foundational: false,
       progression: null,
@@ -27,6 +28,7 @@ export class InMemoryLiftMetadataRepository implements ILiftMetadataRepository {
     const updated: LiftMetadata = {
       lift,
       muscleGroups: patch.muscleGroups ?? existing.muscleGroups,
+      secondaryMuscleGroups: patch.secondaryMuscleGroups ?? existing.secondaryMuscleGroups,
       substitutions: patch.substitutions ?? existing.substitutions,
       foundational: patch.foundational ?? existing.foundational,
       progression: patch.progression !== undefined ? patch.progression : existing.progression,
@@ -37,5 +39,9 @@ export class InMemoryLiftMetadataRepository implements ILiftMetadataRepository {
     };
     this.store.set(lift, updated);
     return updated;
+  }
+
+  async deleteMetadata(lift: string): Promise<void> {
+    this.store.delete(lift);
   }
 }

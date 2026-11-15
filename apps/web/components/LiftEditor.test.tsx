@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { LiftMetadataResponse } from '@lifting-logbook/types';
+import type { ResolvedMuscleTargets } from '@lifting-logbook/core';
+import type { LiftMetadataResponse, MuscleTargets } from '@lifting-logbook/types';
 import LiftEditor from './LiftEditor';
 import { patchLiftMetadata } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
@@ -15,9 +16,6 @@ jest.mock('@/lib/client-api', () => ({
 jest.mock('@/lib/log-client-error', () => ({
   logClientError: jest.fn(),
 }));
-// The tag pickers aren't under test here.
-jest.mock('./CatalogTagPicker', () => ({ __esModule: true, default: () => null }));
-jest.mock('./FreeTagPicker', () => ({ __esModule: true, default: () => null }));
 // Tested on its own; here it only has to receive the program and lift (#1153).
 jest.mock('./LiftModificationsEditor', () => ({
   __esModule: true,
@@ -34,6 +32,7 @@ const mockLog = logClientError as jest.MockedFunction<typeof logClientError>;
 const metadata = (overrides: Partial<LiftMetadataResponse> = {}): LiftMetadataResponse => ({
   lift: 'Cable Curl',
   muscleGroups: [],
+  secondaryMuscleGroups: [],
   substitutions: [],
   foundational: false,
   progression: null,
@@ -43,8 +42,23 @@ const metadata = (overrides: Partial<LiftMetadataResponse> = {}): LiftMetadataRe
   ...overrides,
 });
 
-const renderEditor = (meta = metadata()) =>
-  render(<LiftEditor program="5-3-1" macrocycleNum={1} workoutNum={2} initialMetadata={meta} />);
+const NONE: ResolvedMuscleTargets = { primary: [], secondary: [], source: 'none' };
+
+const renderEditor = (
+  meta = metadata(),
+  muscles: ResolvedMuscleTargets = NONE,
+  defaultMuscles: MuscleTargets | null = null,
+) =>
+  render(
+    <LiftEditor
+      program="5-3-1"
+      macrocycleNum={1}
+      workoutNum={2}
+      initialMetadata={meta}
+      muscles={muscles}
+      defaultMuscles={defaultMuscles}
+    />,
+  );
 
 describe("LiftEditor — the lift's modifications (#1153)", () => {
   it('edits them for the program and lift', () => {
@@ -84,6 +98,7 @@ describe('LiftEditor progression (#1210)', () => {
     await waitFor(() =>
       expect(mockPatch).toHaveBeenCalledWith('Cable Curl', {
         muscleGroups: [],
+        secondaryMuscleGroups: [],
         substitutions: [],
         foundational: false,
         progression: 'double',
@@ -176,5 +191,102 @@ describe('LiftEditor progression (#1210)', () => {
     await user.click(screen.getByRole('button', { name: 'Save Changes' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Failed to save');
     expect(mockLog).toHaveBeenCalledWith('patchLiftMetadata', err, { lift: 'Cable Curl' });
+  });
+});
+
+describe('LiftEditor muscles (#1017)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const BENCH: MuscleTargets = { primary: ['Chest', 'Triceps'], secondary: ['Front Delts'] };
+  const bench = (muscles: ResolvedMuscleTargets = { ...BENCH, source: 'default' }) =>
+    renderEditor(metadata({ lift: 'Bench Press' }), muscles, BENCH);
+  // A picker's chips are its remove buttons, one per muscle.
+  const chips = (label: string) => {
+    const list = screen.getByLabelText(label).parentElement;
+    return list ? within(list).queryAllByRole('button').map((b) => b.getAttribute('aria-label')) : [];
+  };
+  const saved = () => mockPatch.mock.calls[0][1];
+
+  it('shows the built-in defaults and says where they came from', () => {
+    bench();
+    expect(chips('Primary Muscles')).toEqual(['Remove Chest', 'Remove Triceps']);
+    expect(chips('Secondary Muscles (count ½)')).toEqual(['Remove Front Delts']);
+    expect(screen.getByText('Source: Built-in defaults.')).toBeInTheDocument();
+  });
+
+  it('shows the lifter’s own muscles, including a legacy tag outside the vocabulary', () => {
+    bench({ primary: ['Chest', 'pecs-upper'], secondary: [], source: 'custom' });
+    expect(chips('Primary Muscles')).toEqual(['Remove Chest', 'Remove pecs-upper']);
+    expect(screen.getByText('Source: Your own.')).toBeInTheDocument();
+  });
+
+  it('says a lift with no defaults and no muscles is not counted', () => {
+    renderEditor();
+    expect(screen.getByText(/Source: None set\./)).toBeInTheDocument();
+  });
+
+  it('offers muscles from the vocabulary, leaving out ones the other list holds', async () => {
+    const user = userEvent.setup();
+    bench();
+    await user.type(screen.getByLabelText('Secondary Muscles (count ½)'), 'tri');
+    // Triceps is primary, so the secondary search finds nothing to offer.
+    expect(screen.queryByRole('option', { name: 'Triceps' })).not.toBeInTheDocument();
+    await user.clear(screen.getByLabelText('Secondary Muscles (count ½)'));
+    await user.type(screen.getByLabelText('Secondary Muscles (count ½)'), 'side');
+    await user.click(screen.getByRole('option', { name: 'Side Delts' }));
+    expect(chips('Secondary Muscles (count ½)')).toEqual(['Remove Front Delts', 'Remove Side Delts']);
+    expect(screen.getByText('Source: Your own.')).toBeInTheDocument();
+  });
+
+  it('saves a change as the lifter’s own lists', async () => {
+    const user = userEvent.setup();
+    mockPatch.mockResolvedValue(metadata());
+    bench();
+    await user.click(screen.getByRole('button', { name: 'Remove Triceps' }));
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    expect(saved()).toMatchObject({ muscleGroups: ['Chest'], secondaryMuscleGroups: ['Front Delts'] });
+  });
+
+  it('saves lists equal to the defaults as empty, in any order or case', async () => {
+    const user = userEvent.setup();
+    mockPatch.mockResolvedValue(metadata());
+    bench({ primary: ['triceps', 'Chest'], secondary: ['Front Delts'], source: 'custom' });
+    expect(screen.getByText('Source: Built-in defaults.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    expect(saved()).toMatchObject({ muscleGroups: [], secondaryMuscleGroups: [] });
+  });
+
+  it('Reset restores the defaults, which then save as empty', async () => {
+    const user = userEvent.setup();
+    mockPatch.mockResolvedValue(metadata());
+    bench({ primary: ['Quads'], secondary: [], source: 'custom' });
+    await user.click(screen.getByRole('button', { name: 'Reset' }));
+    expect(chips('Primary Muscles')).toEqual(['Remove Chest', 'Remove Triceps']);
+    expect(chips('Secondary Muscles (count ½)')).toEqual(['Remove Front Delts']);
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    expect(saved()).toMatchObject({ muscleGroups: [], secondaryMuscleGroups: [] });
+  });
+
+  it('says emptied lists fall back to the defaults', async () => {
+    const user = userEvent.setup();
+    bench();
+    for (const muscle of ['Chest', 'Triceps', 'Front Delts']) {
+      await user.click(screen.getByRole('button', { name: `Remove ${muscle}` }));
+    }
+    expect(screen.getByText(/Source: Built-in defaults, which apply when both lists are empty/)).toBeInTheDocument();
+  });
+
+  it('saves a lift with no defaults under its own lists', async () => {
+    const user = userEvent.setup();
+    mockPatch.mockResolvedValue(metadata());
+    renderEditor();
+    await user.type(screen.getByLabelText('Primary Muscles'), 'bice');
+    await user.click(screen.getByRole('option', { name: 'Biceps' }));
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    expect(saved()).toMatchObject({ muscleGroups: ['Biceps'], secondaryMuscleGroups: [] });
   });
 });

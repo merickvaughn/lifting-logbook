@@ -275,6 +275,24 @@ Consequences:
 - The logger reads only built-ins for bodyweight. A custom lift's own `isBodyweightComponent` is not
   read there, as before this amendment ([#1319](https://github.com/merickvaughn/lifting-logbook/issues/1319)).
 
+## Amendment 4: saving the real name retires a legacy encoded row (2026-11-15, [#1017](https://github.com/merickvaughn/lifting-logbook/issues/1017))
+
+Secondary muscles are stored in their own column, `LiftMetadata.secondaryMuscleGroups`, and the
+lift editor saves lists equal to the defaults as two empty lists, so the lift follows any later
+change to the defaults.
+
+`PATCH /lifts/:lift/metadata` on a name that `encodeURIComponent` changes also retires that name's
+legacy encoded rows, matched by core's `legacyEncodedLiftName`, the rule the resolver reads them
+with. When the real name has no row yet, the legacy row's values are the base the patch applies
+to, so nothing it held is lost. After the write, the legacy rows are deleted. Without this, a
+legacy row would stay in the table after the save, shadowed by the real-name row but still holding
+substitutions and a progression that no screen shows and the data export still carries.
+
+A one-time SQL migration that renames encoded rows was rejected. It would have to decode
+percent-encoding in SQL, the same rule core's TypeScript applies, and settle a row whose real name
+already exists. That would be a second copy of the rule, run once, against data that only the
+running app can interpret.
+
 ## References
 
 - Pelland, J. C., Remmert, J. F., Robinson, Z. P., Hinson, S. R., Zourdos, M. C. "The Resistance

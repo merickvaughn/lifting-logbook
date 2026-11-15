@@ -9,11 +9,12 @@ import {
   Param,
   Patch,
 } from '@nestjs/common';
+import { legacyEncodedLiftName } from '@lifting-logbook/core';
 import { LiftMetadataResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
-import { LiftMetadata, LiftMetadataPatch } from '../ports/ILiftMetadataRepository';
+import { ILiftMetadataRepository, LiftMetadata, LiftMetadataPatch } from '../ports/ILiftMetadataRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { PatchLiftMetadataDto } from './patch-lift-metadata.dto';
 
@@ -21,6 +22,7 @@ function toResponse(meta: LiftMetadata): LiftMetadataResponse {
   return {
     lift: meta.lift,
     muscleGroups: meta.muscleGroups,
+    secondaryMuscleGroups: meta.secondaryMuscleGroups,
     substitutions: meta.substitutions,
     foundational: meta.foundational,
     progression: meta.progression,
@@ -32,6 +34,7 @@ function toResponse(meta: LiftMetadata): LiftMetadataResponse {
 
 const PATCH_FIELDS = [
   'muscleGroups',
+  'secondaryMuscleGroups',
   'substitutions',
   'foundational',
   'progression',
@@ -68,6 +71,7 @@ export class LiftMetadataController {
       : {
           lift,
           muscleGroups: [],
+          secondaryMuscleGroups: [],
           substitutions: [],
           foundational: false,
           progression: null,
@@ -90,6 +94,12 @@ export class LiftMetadataController {
       if (dto[field] !== undefined) Object.assign(patch, { [field]: dto[field] });
     }
 
+    const { stored, legacy } = await readLegacyRows(liftMetadata, lift);
+    // A row saved before #1017 under the lift's URL-encoded name is retired by this save. Until
+    // the real name has a row of its own, the legacy row is the lift's metadata, so its values
+    // are the starting point and none of them is lost.
+    const base = stored === null ? legacy[0] : undefined;
+
     // The DTO checks a range sent whole; a patch that sets one end and leaves the other out is
     // checked against the other end as stored, so the row never holds a bottom above its top
     // (#1210). The read and the write are separate, so two overlapping one-end patches could
@@ -97,14 +107,40 @@ export class LiftMetadataController {
     const lowOnly = typeof patch.repsLow === 'number' && patch.repsHigh === undefined;
     const highOnly = typeof patch.repsHigh === 'number' && patch.repsLow === undefined;
     if (lowOnly || highOnly) {
-      const stored = await liftMetadata.getMetadata(lift);
-      const repsLow = lowOnly ? patch.repsLow : stored?.repsLow;
-      const repsHigh = highOnly ? patch.repsHigh : stored?.repsHigh;
+      const current = stored === undefined ? await liftMetadata.getMetadata(lift) : stored ?? base;
+      const repsLow = lowOnly ? patch.repsLow : current?.repsLow;
+      const repsHigh = highOnly ? patch.repsHigh : current?.repsHigh;
       if (typeof repsLow === 'number' && typeof repsHigh === 'number' && repsLow > repsHigh) {
         throw new BadRequestException('repsLow must be at most repsHigh');
       }
     }
 
-    return toResponse(await liftMetadata.upsertMetadata(lift, patch));
+    if (base) {
+      for (const field of PATCH_FIELDS) {
+        if (patch[field] === undefined) Object.assign(patch, { [field]: base[field] });
+      }
+    }
+    const saved = await liftMetadata.upsertMetadata(lift, patch);
+    // Not one transaction with the write: a legacy row left behind by a failure here is
+    // shadowed by the real-name row, which every reader prefers, and the next save retries.
+    for (const row of legacy) await liftMetadata.deleteMetadata(row.lift);
+    return toResponse(saved);
   }
+}
+
+/**
+ * The row stored under `lift` and any legacy rows stored under its URL-encoded name (#1017).
+ * Read only when `encodeURIComponent` changes `lift`, since only such a name can have a legacy
+ * row; `stored` is undefined when nothing was read.
+ */
+async function readLegacyRows(
+  liftMetadata: ILiftMetadataRepository,
+  lift: string,
+): Promise<{ stored: LiftMetadata | null | undefined; legacy: LiftMetadata[] }> {
+  if (encodeURIComponent(lift) === lift) return { stored: undefined, legacy: [] };
+  const rows = await liftMetadata.listMetadata();
+  return {
+    stored: rows.find((row) => row.lift === lift) ?? null,
+    legacy: rows.filter((row) => legacyEncodedLiftName(row.lift) === lift),
+  };
 }

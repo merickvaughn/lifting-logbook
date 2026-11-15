@@ -1184,6 +1184,100 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(401);
     });
 
+    // #1017: a user of its own, so these rows stay out of the exact list asserted above.
+    describe('muscle overrides (#1017)', () => {
+      const AS_CAROL = { authorization: 'Bearer user-1017-muscles' };
+      const asCarol = (method: 'GET' | 'PATCH', url: string, body?: unknown) =>
+        injectPage(app, {
+          method,
+          url,
+          headers: body === undefined ? AS_CAROL : { 'content-type': 'application/json', ...AS_CAROL },
+          ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
+        });
+      type Row = { lift: string; muscleGroups: string[]; secondaryMuscleGroups: string[]; substitutions: string[]; foundational: boolean };
+      const list = async () => (await asCarol('GET', '/lifts/metadata')).json() as Row[];
+
+      it('reads secondaryMuscleGroups as empty for a lift with no row', async () => {
+        const res = await asCarol('GET', '/lifts/Squat/metadata');
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toMatchObject({ muscleGroups: [], secondaryMuscleGroups: [] });
+      });
+
+      it('round-trips secondaryMuscleGroups, and a patch without it keeps it', async () => {
+        const patched = await asCarol('PATCH', '/lifts/Squat/metadata', {
+          muscleGroups: ['Quads'],
+          secondaryMuscleGroups: ['Glutes', 'Adductors'],
+        });
+        expect(patched.statusCode).toBe(200);
+        expect(patched.json()).toMatchObject({ muscleGroups: ['Quads'], secondaryMuscleGroups: ['Glutes', 'Adductors'] });
+
+        await asCarol('PATCH', '/lifts/Squat/metadata', { foundational: true });
+        expect((await asCarol('GET', '/lifts/Squat/metadata')).json()).toMatchObject({
+          secondaryMuscleGroups: ['Glutes', 'Adductors'],
+          foundational: true,
+        });
+        expect((await list()).find((row) => row.lift === 'Squat')?.secondaryMuscleGroups).toEqual(['Glutes', 'Adductors']);
+      });
+
+      it('validates secondaryMuscleGroups like muscleGroups', async () => {
+        const res = await asCarol('PATCH', '/lifts/Squat/metadata', { secondaryMuscleGroups: 'Glutes' });
+        expect(res.statusCode).toBe(400);
+        const tooMany = await asCarol('PATCH', '/lifts/Squat/metadata', {
+          secondaryMuscleGroups: Array.from({ length: 21 }, (_, i) => `Muscle ${i}`),
+        });
+        expect(tooMany.statusCode).toBe(400);
+      });
+
+      it('stores a multi-word lift under its real name', async () => {
+        const res = await asCarol('PATCH', '/lifts/Romanian%20Deadlift/metadata', { muscleGroups: ['Hamstrings'] });
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toMatchObject({ lift: 'Romanian Deadlift' });
+        expect((await list()).map((row) => row.lift)).toContain('Romanian Deadlift');
+      });
+
+      it('retires a legacy URL-encoded row, carrying its values, when the real name is saved', async () => {
+        // Before #1017 the lift editor stored "Bench%20Press"; sending it encoded once more
+        // reproduces such a row.
+        await asCarol('PATCH', '/lifts/Bench%2520Press/metadata', {
+          muscleGroups: ['Chest'],
+          substitutions: ['Dip'],
+          foundational: true,
+        });
+        expect((await list()).map((row) => row.lift)).toContain('Bench%20Press');
+
+        const res = await asCarol('PATCH', '/lifts/Bench%20Press/metadata', { secondaryMuscleGroups: ['Triceps'] });
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toMatchObject({
+          lift: 'Bench Press',
+          muscleGroups: ['Chest'],
+          secondaryMuscleGroups: ['Triceps'],
+          substitutions: ['Dip'],
+          foundational: true,
+        });
+        const lifts = (await list()).map((row) => row.lift);
+        expect(lifts).toContain('Bench Press');
+        expect(lifts).not.toContain('Bench%20Press');
+      });
+
+      it('deletes a legacy row without copying it when the real name already has one', async () => {
+        await asCarol('PATCH', '/lifts/Cable%20Row/metadata', { muscleGroups: ['Upper Back'] });
+        await asCarol('PATCH', '/lifts/Cable%2520Row/metadata', { muscleGroups: ['Lats'], foundational: true });
+        expect((await list()).map((row) => row.lift)).toEqual(expect.arrayContaining(['Cable Row', 'Cable%20Row']));
+
+        const res = await asCarol('PATCH', '/lifts/Cable%20Row/metadata', { substitutions: [] });
+        expect(res.json()).toMatchObject({ lift: 'Cable Row', muscleGroups: ['Upper Back'], foundational: false });
+        expect((await list()).map((row) => row.lift)).not.toContain('Cable%20Row');
+      });
+
+      it("keeps one user's rows out of another's list", async () => {
+        const bob = await app
+          .getHttpAdapter()
+          .getInstance()
+          .inject({ method: 'GET', url: '/lifts/metadata', headers: AS_BOB });
+        expect((bob.json() as Row[]).map((row) => row.lift)).not.toContain('Bench Press');
+      });
+    });
+
     it('user isolation: User B gets empty defaults when User A has metadata', async () => {
       const res = await app
         .getHttpAdapter()
