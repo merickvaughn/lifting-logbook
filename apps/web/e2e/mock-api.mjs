@@ -912,6 +912,15 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
+  // GET /lifts/metadata — every lift the user has stored metadata for (#1211). The mock
+  // stores none, so every lift reads its built-in defaults (#1017).
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && url.pathname === '/lifts/metadata') {
+    json(res, []);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
   // GET /lifts/:lift/metadata — like the real API (lift-metadata.controller.ts), any lift
   // gets a response: empty defaults when none is stored. Never a 404 (#1190).
   // -------------------------------------------------------------------------
@@ -919,6 +928,7 @@ const server = createServer(async (req, res) => {
   const emptyLiftMetadata = (lift) => ({
     lift,
     muscleGroups: [],
+    secondaryMuscleGroups: [],
     substitutions: [],
     foundational: false,
     progression: null,

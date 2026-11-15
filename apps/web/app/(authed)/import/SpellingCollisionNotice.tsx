@@ -83,13 +83,11 @@ const COPY = {
     stored: 'most recent max',
     separate:
       'Their maxes are stored separately, but a program uses one of them for this lift, and not always the most recent.',
-    kept: '',
   },
   goal: {
     stored: 'first goal',
-    separate: 'Their goals are stored separately, but the goals page may show only one of them for this lift.',
-    // The page draws a card per training max, and a new custom lift has none yet.
-    kept: ' A kept goal shows on the goals page once its custom lift has a training max.',
+    // The goals page lists every goal, but a lift's card tracks progress toward one (#1179).
+    separate: 'Their goals are stored separately, but the goals page may show progress toward only one of them.',
   },
 };
 
@@ -106,12 +104,12 @@ function collisionMessage(kind: keyof typeof COPY, label: string, rows: readonly
   };
   const named = `${list(rows.map((row) => row.spelling))} are both ${label}`;
   if (byLift.size === 1) {
-    return `${named}, so ${onlyOne(rows)}. To keep another ${kind}, keep its row as a custom lift.${copy.kept}`;
+    return `${named}, so ${onlyOne(rows)}. To keep another ${kind}, keep its row as a custom lift.`;
   }
   const shared = [...byLift.values()]
     .filter((group) => group.length > 1)
     .map((group) => `Of ${list(group.map((row) => row.spelling))}, ${onlyOne(group)}.`);
-  return [`${named}. ${copy.separate}`, ...shared, `To keep them apart, keep a row as a custom lift.${copy.kept}`].join(' ');
+  return [`${named}. ${copy.separate}`, ...shared, 'To keep them apart, keep a row as a custom lift.'].join(' ');
 }
 
 /**

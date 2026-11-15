@@ -1,7 +1,8 @@
 import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
-import { isSameLift } from '@lifting-logbook/core';
-import { fetchLiftMetadata, fetchWorkout } from '@/lib/api';
+import { buildMuscleTargetResolver, defaultMuscleTargetsFor, isSameLift } from '@lifting-logbook/core';
+import type { LiftMetadataResponse } from '@lifting-logbook/types';
+import { fetchAllLiftMetadata, fetchWorkout } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import LiftEditor from '@/components/LiftEditor';
 import { movedWorkoutPath } from '@/lib/macrocycleUrl';
@@ -25,6 +26,11 @@ export default async function EditLiftPage({
   // A lift is editable here when this workout plans it, which is where Manage Lifts links
   // from. fetchWorkout returns null only for a 404; any other failure throws to the error
   // boundary, as does a failed metadata fetch.
+  //
+  // The metadata is read from the whole list rather than the single-lift GET (#1017): before
+  // #1017 this page saved a multi-word lift under its URL-encoded name ("Bench%20Press"). Read
+  // through the list, such a row fills the editor until the real name has a row of its own, so
+  // saving carries its values forward, and the API then retires it.
   const program = await getActiveProgram();
   const workout = await fetchWorkout(program, workoutNum);
   if (!workout || !workout.lifts.some((planned) => isSameLift(planned.lift, lift))) {
@@ -37,7 +43,17 @@ export default async function EditLiftPage({
   );
   if (moved) redirect(moved);
 
-  const metadata = await fetchLiftMetadata(lift);
+  // The legacy row is the one stored under exactly the name the old editor saved, the same row
+  // the API retires on save.
+  const rows = await fetchAllLiftMetadata();
+  const encoded = encodeURIComponent(lift);
+  const row =
+    rows.find((meta) => meta.lift === lift) ?? (encoded === lift ? undefined : rows.find((meta) => meta.lift === encoded));
+  const metadata: LiftMetadataResponse = row ? { ...row, lift } : emptyMetadata(lift);
+  // Resolved from the row the form is filled from, so the muscles shown are the ones a save
+  // writes. Resolved here, since the resolver is a closure and can't cross to the client.
+  const muscles = buildMuscleTargetResolver(row ? [metadata] : [])(lift);
+  const defaultMuscles = defaultMuscleTargetsFor(lift) ?? null;
 
   return (
     <main style={{ maxWidth: '600px', margin: '0 auto', padding: '1.5rem 1rem' }}>
@@ -57,7 +73,23 @@ export default async function EditLiftPage({
         macrocycleNum={macrocycleNum}
         workoutNum={workoutNum}
         initialMetadata={metadata}
+        muscles={muscles}
+        defaultMuscles={defaultMuscles}
       />
     </main>
   );
+}
+
+function emptyMetadata(lift: string): LiftMetadataResponse {
+  return {
+    lift,
+    muscleGroups: [],
+    secondaryMuscleGroups: [],
+    substitutions: [],
+    foundational: false,
+    progression: null,
+    progressionIncrement: null,
+    repsLow: null,
+    repsHigh: null,
+  };
 }

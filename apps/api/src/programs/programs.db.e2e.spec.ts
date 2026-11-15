@@ -945,6 +945,50 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       });
       expect(bobRow).toBeNull();
     });
+
+    // #1017: the bulk read and the secondary column, run as the restricted lifting_app role.
+    it('GET /lifts/metadata lists only the caller\'s rows, with secondaryMuscleGroups', async () => {
+      const injectRaw = (opts: InjectOptions) => injectPage(app, opts);
+      const AS_ALICE = { authorization: `Bearer ${USER_ALICE}` };
+      const AS_BOB = { authorization: `Bearer ${USER_BOB}` };
+
+      const alicePatch = await injectRaw({
+        method: 'PATCH',
+        url: '/lifts/Hip%20Thrust/metadata',
+        headers: { 'content-type': 'application/json', ...AS_ALICE },
+        payload: JSON.stringify({ muscleGroups: ['Glutes'], secondaryMuscleGroups: ['Hamstrings'] }),
+      });
+      expect(alicePatch.statusCode).toBe(200);
+      const row = await prisma.liftMetadata.findFirst({ where: { userId: USER_ALICE, lift: 'Hip Thrust' } });
+      expect(row?.secondaryMuscleGroups).toEqual(['Hamstrings']);
+
+      type Row = { lift: string; secondaryMuscleGroups: string[] };
+      const aliceList = (await injectRaw({ method: 'GET', url: '/lifts/metadata', headers: AS_ALICE })).json() as Row[];
+      expect(aliceList.find((meta) => meta.lift === 'Hip Thrust')?.secondaryMuscleGroups).toEqual(['Hamstrings']);
+
+      const bobList = await injectRaw({ method: 'GET', url: '/lifts/metadata', headers: AS_BOB });
+      expect(bobList.statusCode).toBe(200);
+      expect((bobList.json() as Row[]).map((meta) => meta.lift)).not.toContain('Hip Thrust');
+    });
+
+    // The column is nullable, as Prisma generates scalar lists; the repository reads null as [].
+    it('a null secondaryMuscleGroups reads as empty', async () => {
+      await prisma.$executeRaw`INSERT INTO "lift_metadata" ("id", "userId", "lift", "muscleGroups", "secondaryMuscleGroups", "substitutions") VALUES (gen_random_uuid()::text, ${TEST_USER}, 'Calf Raise', ARRAY['Calves'], NULL, ARRAY[]::text[])`;
+      const res = await get('/lifts/Calf%20Raise/metadata');
+      expect(res.json()).toMatchObject({ muscleGroups: ['Calves'], secondaryMuscleGroups: [] });
+    });
+
+    it('saving the real name retires a legacy URL-encoded row', async () => {
+      await prisma.liftMetadata.create({
+        data: { userId: TEST_USER, lift: 'Lat%20Pulldown', muscleGroups: ['Lats'], substitutions: [], foundational: true },
+      });
+      const res = await patchJson('/lifts/Lat%20Pulldown/metadata', { secondaryMuscleGroups: ['Biceps'] });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ muscleGroups: ['Lats'], secondaryMuscleGroups: ['Biceps'], foundational: true });
+
+      const rows = await prisma.liftMetadata.findMany({ where: { userId: TEST_USER, lift: { contains: 'Pulldown' } } });
+      expect(rows.map((row) => row.lift)).toEqual(['Lat Pulldown']);
+    });
   });
 
   // ---------------------------------------------------------------------------

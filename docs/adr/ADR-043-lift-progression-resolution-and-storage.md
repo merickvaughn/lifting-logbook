@@ -155,7 +155,9 @@ Two behaviours change with the move:
   `double` without a last session". The read runs inside the request's row-level-security
   transaction, where a failed statement aborts the transaction. Catching it and carrying on would
   either fail the commit or roll back a macrocycle row the response had already named. So it fails
-  the way the workout's other queries do.
+  the way the workout's other queries do. The skip read on the same endpoint was caught and read as
+  no skips until [#1288](https://github.com/merickvaughn/lifting-logbook/issues/1288), and now
+  fails the same way. A savepoint could keep that fallback, but only for one read.
 - **A program with no macrocycle dashboard** reads the macrocycle `currentMacrocycleOrFirst` falls
   back to, as the rest of the workout does. `GET /lift-records` returned 404 there, so the web
   planned `double` from the bottom of the range. Now sets logged in that macrocycle count.

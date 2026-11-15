@@ -107,11 +107,17 @@ Every catalog entry is a `CatalogLift`: a `Lift` plus `muscles: MuscleTargets`. 
 does not carry muscles: a custom lift under its own name has no defaults, and the API never
 returns catalog muscles.
 
-Per-user overrides still live in `LiftMetadata` (`muscleGroups`, `substitutions`, `foundational`).
-That is a **separate per-user table keyed by lift *name***, while `CustomLift` is keyed by uuid.
+Per-user overrides still live in `LiftMetadata` (`muscleGroups` for primary muscles,
+`secondaryMuscleGroups`, `substitutions`, `foundational`). That is a **separate per-user table keyed
+by lift *name***, while `CustomLift` is keyed by uuid.
 - An override on an exact lift name replaces the defaults for that name. Overrides do not follow
   aliases: one on "Squat" leaves "Back Squat" on its defaults.
-- An empty list means "use the defaults".
+- Both muscle lists empty means "use the defaults". The lift editor saves lists equal to the
+  defaults that way, so the lift follows any later change to them.
+- Before #1017 the lift editor stored a multi-word lift under its URL-encoded name
+  ("Bench%20Press"). The resolver reads such a row under the real name until the real name has
+  a row. Saving the real name retires the row stored under exactly `encodeURIComponent(lift)`,
+  carrying its values forward (ADR-036 Amendment 4).
 - `muscleGroups` is still an unconstrained `String[]`. Readers canonicalize it
   case-insensitively against the vocabulary and keep unknown text as its own row
   (`buildMuscleTargetResolver`, `packages/core/src/catalog/muscles.ts`).
@@ -208,11 +214,12 @@ built-in goes by:
 - per-entry alias;
 - slot name.
 
-Lift classification, default muscles and movement patterns all resolve through it. The per-entry
-aliases are deliberately **not** in `DEFAULT_SLOT_MAP`. That map also drives the logger's
-bodyweight detection, import validation and the custom-lift collision guard, and aliasing
-`Weighted Pull-ups` there would flip it to a bodyweight-component lift. Those are separate
-decisions, tracked in [#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015).
+Lift classification, default muscles, movement patterns and the logger's bodyweight detection all
+resolve through it, so Leangains' and RPT's `Weighted Pull-ups` is a bodyweight-component lift. The
+per-entry aliases and the presets' catalog display names are deliberately **not** in
+`DEFAULT_SLOT_MAP`: its names are reserved against custom lifts, and a lifter may already have a
+custom lift under one of them (ADR-036 Amendment 3,
+[#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015)).
 
 Import also accepts every catalog display name and id, through `buildImportSlotMap`, without adding
 them to `DEFAULT_SLOT_MAP` ([#1116](https://github.com/merickvaughn/lifting-logbook/issues/1116)).
@@ -652,6 +659,7 @@ classDiagram
         <<persisted>>
         +string lift
         +string[] muscleGroups
+        +string[] secondaryMuscleGroups
         +bool foundational
     }
 

@@ -60,12 +60,12 @@ export class WorkoutsController {
       workoutDateOverride.getOverride(program, dashboard.macrocycleNum, workoutNum),
       workoutLiftOverride.getOverrides(program, dashboard.macrocycleNum, workoutNum),
       macrocycleScheduledWorkout.getScheduledWorkouts(program, dashboard.macrocycleNum),
-      // fallback-covered-by: apps/api/src/programs/workouts.controller.spec.ts
-      workoutSkipOverride.getSkipsForMacrocycle(program, dashboard.macrocycleNum).catch((err: unknown) => {
-        // Through the class logger (Pino), so the line keeps its trace_id.
-        this.logger.error(err, 'getSkipsForMacrocycle failed; defaulting to empty set');
-        return new Set<number>();
-      }),
+      // A failed skip read fails the workout read, as `withLastSessions` does (#1288). It isn't
+      // caught and read as no skips: the request runs in one RLS transaction, which a failed
+      // statement aborts, so the request can't carry on past it. Every later query would fail,
+      // or the commit would roll back a macrocycle row `macrocycleIdFor` created. A savepoint
+      // could keep the fallback, but only for this read; failing matches the request's others.
+      workoutSkipOverride.getSkipsForMacrocycle(program, dashboard.macrocycleNum),
     ]);
     const scheduledWorkout = scheduledWorkouts.find((s) => s.workoutNum === workoutNum);
     const scheduledDate = scheduledWorkout?.scheduledDate;

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { StrengthGoalResponse, TrainingMaxResponse } from '@lifting-logbook/types';
 import StrengthGoalsForm from './StrengthGoalsForm';
@@ -27,6 +27,7 @@ function renderForm(trainingMaxes: TrainingMaxResponse[], goals: StrengthGoalRes
       goals={goals}
       bodyWeight={{ date: '2026-06-01', weight: 100, unit: 'lbs' }}
       preferredUnit="lbs"
+      customLifts={[]}
     />,
   );
 }
@@ -122,5 +123,50 @@ describe('StrengthGoalsForm across stored spellings', () => {
   it('keeps a goal on one name off a max under another name for that lift', () => {
     renderForm([max('Lateral Raise')], [goal('C. Lat Raise')]);
     expect(screen.queryByText(/of goal/)).not.toBeInTheDocument();
+    // #1179: it is listed under the cards instead.
+    expect(within(screen.getByRole('list')).getByText('C. Lat Raise')).toBeInTheDocument();
+  });
+
+  // #1179: a card reads one goal, so a second spelling's goal is listed under the cards.
+  describe('a goal hidden behind another spelling', () => {
+    const backSquat: StrengthGoalResponse = { ...goal('Back Squat'), target: 300 };
+
+    it('is listed, while the card shows its own spelling\'s goal', () => {
+      renderForm([max('back-squat')], [goal('back-squat'), backSquat]);
+      expect(screen.getByLabelText('Target weight for back-squat')).toHaveValue(200);
+      const listed = within(screen.getByRole('list'));
+      expect(listed.getByText('Back Squat')).toBeInTheDocument();
+      expect(listed.getByText('Goal: 300 lbs')).toBeInTheDocument();
+    });
+
+    it('is removed under its own stored lift, leaving the card\'s goal alone', async () => {
+      const user = userEvent.setup();
+      (removeStrengthGoal as jest.Mock).mockResolvedValue(undefined);
+      renderForm([max('back-squat')], [goal('back-squat'), backSquat]);
+      await user.click(screen.getByRole('button', { name: 'Remove goal for Back Squat' }));
+      await waitFor(() => expect(removeStrengthGoal).toHaveBeenCalledWith('5-3-1', 'Back Squat'));
+      await waitFor(() => expect(screen.queryByRole('list')).not.toBeInTheDocument());
+      expect(screen.getByLabelText('Target weight for back-squat')).toHaveValue(200);
+    });
+
+    it('moves onto the card once the card\'s own goal is removed', async () => {
+      const user = userEvent.setup();
+      (removeStrengthGoal as jest.Mock).mockResolvedValue(undefined);
+      renderForm([max('back-squat')], [goal('back-squat'), backSquat]);
+      await user.click(screen.getByRole('button', { name: '✕ Remove' }));
+      await waitFor(() => expect(removeStrengthGoal).toHaveBeenCalledWith('5-3-1', 'back-squat'));
+      await waitFor(() => expect(screen.getByLabelText('Target weight for back-squat')).toHaveValue(300));
+      expect(screen.queryByRole('list')).not.toBeInTheDocument();
+    });
+
+    it('saves the card under the goal it now shows, rather than the one it removed', async () => {
+      const user = userEvent.setup();
+      (removeStrengthGoal as jest.Mock).mockResolvedValue(undefined);
+      renderForm([max('back-squat')], [goal('back-squat'), backSquat]);
+      await user.click(screen.getByRole('button', { name: '✕ Remove' }));
+      await waitFor(() => expect(screen.getByLabelText('Target weight for back-squat')).toHaveValue(300));
+      await user.click(screen.getByRole('button', { name: /save/i }));
+      await waitFor(() => expect(saveStrengthGoal).toHaveBeenCalledWith('5-3-1', 'Back Squat', expect.anything()));
+    });
   });
 });

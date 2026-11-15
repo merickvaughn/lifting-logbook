@@ -253,10 +253,12 @@ export function buildTrainingMaxPreview(
     const label = liftNames.get(m.lift) ?? m.lift;
     const after = `${m.weight}`;
     const before = existingByLift.get(m.lift);
+    // The parser stores the file's day as UTC midnight, so this is that day.
+    const date = m.dateUpdated.toISOString().slice(0, 10);
     deltas.push(
       before === undefined
-        ? { key: displayKey, label, kind, after }
-        : { key: displayKey, label, kind, before: `${before}`, after },
+        ? { key: displayKey, label, kind, after, date }
+        : { key: displayKey, label, kind, before: `${before}`, after, date },
     );
   }
   return tally(deltas);

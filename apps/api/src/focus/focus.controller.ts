@@ -26,7 +26,6 @@ import {
   prescribe,
   summarizeBlock,
   type FocusGroup,
-  type MuscleOverride,
 } from '@lifting-logbook/core';
 import {
   FocusBlock,
@@ -296,7 +295,6 @@ export class FocusWorkoutController {
       // URL-encoded rows onto their real names (#1017).
       repos.liftMetadata.listMetadata(),
     ]);
-    const overrides: MuscleOverride[] = metadata.map((meta) => ({ lift: meta.lift, muscleGroups: meta.muscleGroups }));
     const dayState = savedState ?? emptyFocusDayState();
     const plan = planFocusDay({
       blocks,
@@ -307,7 +305,7 @@ export class FocusWorkoutController {
       dayState,
       budget,
       today,
-      resolveMuscles: buildMuscleTargetResolver(overrides),
+      resolveMuscles: buildMuscleTargetResolver(metadata),
     });
 
     return {

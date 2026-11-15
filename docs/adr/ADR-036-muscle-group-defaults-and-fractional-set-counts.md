@@ -240,6 +240,65 @@ catalog id is not another name for this purpose, because import can store any li
 reverse. An exact match still wins. This goes through `lookupByStoredId` in
 `packages/core/src/catalog/liftIdentity.ts`.
 
+## Amendment 3: the preset names outside `DEFAULT_SLOT_MAP` (2026-11-15, [#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015))
+
+Option 4 left three consumers of `DEFAULT_SLOT_MAP` to #1015. The owner decided all three:
+
+- **Import** recognizes the preset names as built-ins. [#1186](https://github.com/merickvaughn/lifting-logbook/pull/1186)
+  (#947) already did this through `buildImportSlotMap`, which stores an alias as written, so restored
+  Leangains and RPT history keeps matching the program.
+- **`Weighted Pull-ups` is a bodyweight-component lift**, as J4 in `docs/PRD.md` asks and as Dips
+  already is in the same two programs. The logger now finds bodyweight lifts through
+  `builtInLiftFor`, which knows every name a built-in goes by, rather than `DEFAULT_SLOT_MAP`. That
+  reaches every name of the catalog's `pull-up` entry: "Weighted Pull-ups", the display name
+  "Pull-up" that the custom-program picker stores, and the id `pull-up`. None of those were
+  bodyweight before. Warm-up implements are keyed by catalog id, so all three get
+  "lat pulldown", and "Dip" gets "dips (unweighted)". The logger asks for body weight on Leangains
+  Day A and RPT Day C, reads the lift's training max as total load (body weight plus added), and
+  logs the added weight.
+- **The custom-lift guard still reserves only `DEFAULT_SLOT_MAP` names.** Option 8's second half is
+  declined: before #1120 and #1186, a custom lift was the only way a Leangains lifter got "Cable Row"
+  or "Leg Curl" recognized, so reserving every built-in name would shadow lifts users already have,
+  and production custom lifts were not audited. The preset names stay out of `DEFAULT_SLOT_MAP` for
+  the same reason. `builtInLift.test.ts` lists them as the map's exceptions and fails if a preset
+  adds a name that is neither in the map nor on that list.
+
+Consequences:
+
+- A pull-up training max ("Weighted Pull-ups", or "Pull-up" in a custom program) entered as the
+  added weight alone now reads as total load. The logger shows "BW" until the lifter re-enters it
+  as body weight plus added.
+- The workout detail page and the rest timer have no bodyweight handling (`buildLiftDetails`), so
+  once that max is total load they show pull-up sets at the total (e.g. 225 lb) while the logger
+  shows "+45". Dips and Chin-up already behave this way
+  ([#1326](https://github.com/merickvaughn/lifting-logbook/issues/1326)).
+- The logger reads only built-ins for bodyweight. A custom lift's own `isBodyweightComponent` is not
+  read there, as before this amendment ([#1319](https://github.com/merickvaughn/lifting-logbook/issues/1319)).
+
+## Amendment 4: saving the real name retires a legacy encoded row (2026-11-15, [#1017](https://github.com/merickvaughn/lifting-logbook/issues/1017))
+
+Secondary muscles are stored in their own column, `LiftMetadata.secondaryMuscleGroups`, and the
+lift editor saves lists equal to the defaults as two empty lists, so the lift follows any later
+change to the defaults.
+
+`PATCH /lifts/:lift/metadata` on a name that `encodeURIComponent` changes also retires that name's
+legacy row. That is the row stored under exactly `encodeURIComponent(lift)`, the only form the old
+editor wrote. When the real name has no row yet, the legacy row's values are the base the patch
+applies to, so nothing it held is lost. The legacy row is deleted after the write, in the same
+request transaction, so a failed delete rolls the save back. Without this, a legacy row would stay
+in the table after the save, shadowed by the real-name row. It would still hold substitutions and a
+progression that no screen shows and the data export still carries. The lift editor fills from the
+same row.
+
+The match is exact, not core's broader read rule (a `%`, no whitespace, decodes to the name).
+This is a delete, so it must not take a row whose name only looks encoded, such as a lift
+genuinely named with a `%`.
+
+A one-time SQL migration that renames encoded rows was rejected. It would have to decode
+percent-encoding in SQL, which core does in TypeScript, and settle a row whose real name already
+exists. That would be a second copy of the decoding, run once, against data that only the running
+app can interpret.
+
 ## References
 
 - Pelland, J. C., Remmert, J. F., Robinson, Z. P., Hinson, S. R., Zourdos, M. C. "The Resistance

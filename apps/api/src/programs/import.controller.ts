@@ -644,7 +644,7 @@ export class ImportController {
           }
         }
       }
-      // Delete the batch record now that undo has been applied (best-effort; ignore failures)
+      // Delete the batch record now that undo has been applied.
       await repos.importBatch.deleteById(batchId, user.id);
     }
 
@@ -1233,21 +1233,16 @@ export class ImportController {
       splitResult = { destination: 'training-maxes', ...tmResult };
     }
 
-    // Save import batch for undo; best-effort — a save failure leaves batchId null but the
-    // import data is already written and the commit response still succeeds.
+    // The batch undo reads. A failed save fails the commit (#1288): it runs in the request's RLS
+    // transaction, which a failed statement aborts, so carrying on would report rows the commit
+    // then rolls back.
     const batchId = randomUUID();
-    let savedBatchId: string | null = null;
-    try {
-      await repos.importBatch.save({ id: batchId, userId, program, destination, preImage, createdAt: new Date() });
-      savedBatchId = batchId;
-    } catch {
-      // Intentional: undo availability is non-critical; import commit must not fail here
-    }
+    await repos.importBatch.save({ id: batchId, userId, program, destination, preImage, createdAt: new Date() });
 
     return {
       destination,
       ...commitCounts,
-      batchId: savedBatchId,
+      batchId,
       ...(splitResult ? { split: splitResult } : {}),
     };
   }
@@ -1378,9 +1373,9 @@ function sumCounts(results: readonly ImportWriteResult[]): ImportWriteResult {
 
 /**
  * Saves an Assign import's batches (#1254): `sourceProgram`'s first, then one per other program
- * it wrote to, grouped under the first, whose id it returns. Not best-effort, unlike a file-number
- * commit's single batch: a batch is the only way to undo these rows, so a failed save fails the
- * request and its transaction writes nothing (decision 17).
+ * it wrote to, grouped under the first, whose id it returns. Not best-effort: a batch is the only
+ * way to undo these rows, so a failed save fails the request and its transaction writes nothing
+ * (decision 17).
  */
 async function saveBatchGroup(
   repos: Pick<RepositoryBundle, 'importBatch'>,

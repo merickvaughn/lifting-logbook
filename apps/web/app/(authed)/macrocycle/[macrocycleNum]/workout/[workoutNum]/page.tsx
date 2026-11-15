@@ -1,7 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
 import {
-  LIFT_CATALOG,
-  DEFAULT_SLOT_MAP,
+  builtInLiftFor,
   convertWeight,
   currentMaxLookup,
   withOccurrence,
@@ -26,19 +25,24 @@ import WorkoutLogger from './WorkoutLogger';
 import type { LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
 
 /**
- * Hard-coded warm-up implement names for bodyweight-component exercises.
+ * Hard-coded warm-up implement names for bodyweight-component exercises, by catalog id, so
+ * every name a lift goes by gets one ("Dips" and "Dip", "Pull-up" and Leangains' "Weighted
+ * Pull-ups").
  * Follow-on: make these configurable per exercise (see proposal open questions).
  */
 const WARMUP_IMPLEMENT: Record<string, string> = {
-  'Chin-up': 'lat pulldown',
-  'Pull-up': 'lat pulldown',
-  'Dips': 'dips (unweighted)',
+  'chin-up': 'lat pulldown',
+  'pull-up': 'lat pulldown',
+  'dip': 'dips (unweighted)',
 };
 
-function isBodyweightComponent(liftName: string): boolean {
-  const catalogId = DEFAULT_SLOT_MAP[liftName];
-  if (!catalogId) return false;
-  return LIFT_CATALOG.find((l) => l.id === catalogId)?.isBodyweightComponent ?? false;
+/**
+ * The built-in bodyweight-component lift `liftName` names, by any of its names: a slot
+ * name, catalog name or id, or a preset's alias such as "Weighted Pull-ups" (issue #1015).
+ */
+function bodyweightLift(liftName: string): { implement: string | undefined } | undefined {
+  const lift = builtInLiftFor(liftName);
+  return lift?.isBodyweightComponent ? { implement: WARMUP_IMPLEMENT[lift.id] } : undefined;
 }
 
 /** A workout is read-only when every working set across every lift has a logged record. */
@@ -146,14 +150,14 @@ export default async function WorkoutLoggingPage({
       workingSets.push({ setNum: s.setNum, totalLoad: s.weight, reps: s.reps, amrap: s.amrap, existing: toExisting(s) });
     }
 
-    const bwComponent = isBodyweightComponent(wl.lift);
+    const bodyweight = bodyweightLift(wl.lift);
 
     return {
       lift: wl.lift,
       // Each occurrence of a lift the day plans twice logs its own sets (#1027).
       ...withOccurrence(wl.occurrence),
-      isBodyweightComponent: bwComponent,
-      warmUpImplement: bwComponent ? WARMUP_IMPLEMENT[wl.lift] : undefined,
+      isBodyweightComponent: bodyweight !== undefined,
+      warmUpImplement: bodyweight?.implement,
       warmUpSets,
       workingSets,
       ...(spec && { plan: { spec, liftMax: tm, ...(progression && { progression }) } }),
