@@ -57,7 +57,7 @@ import {
 } from './SheetTabsStep';
 import ImportMissingMaxes from './ImportMissingMaxes';
 import SpellingCollisionNotice from './SpellingCollisionNotice';
-import { buildTrainingMaxesCsv, naturalKeyOf, type EditableMax } from './trainingMaxCommit';
+import { buildTrainingMaxesCsv, naturalKeyOf, trainingMaxCommitRows, type EditableMax } from './trainingMaxCommit';
 import styles from './import.module.css';
 
 type ReviewFilter = 'all' | 'new' | 'updates' | 'skips' | 'incomplete' | 'ambiguous' | 'needs-lift';
@@ -491,6 +491,12 @@ export function ImportWizard({
   }, [previewBody, excludedKeys, rowLiftText, resolveLiftValue]);
   const needsLiftCount = reviewCounts.needsLiftKeys.size;
   const unresolvedCount = needsLiftCount + reviewCounts.incomplete;
+  // How many rows a training-max commit would send. Review lists only creates and updates, so an
+  // empty list can still send unchanged rows, for the server to report as skipped (#1128).
+  const trainingMaxRowsToSend =
+    destination === 'training-maxes' && reviewMaxes !== null
+      ? trainingMaxCommitRows(reviewMaxes, previewBody?.deltas ?? [], excludedKeys, localToday()).length
+      : null;
 
   // The create-in-flight guard must be keyed by the NAME actually being
   // submitted to POST /lifts/custom, not by the row's original CSV text: N
@@ -1246,10 +1252,9 @@ export function ImportWizard({
     const deltas = previewBody?.deltas ?? [];
     if (destination === 'training-maxes' && reviewMaxes !== null) {
       // Rebuild CSV from the edited maxes list so that inline weight edits and excluded rows
-      // are authoritative at commit time. excludedKeys is enforced here (via filter) rather
-      // than via the server-side excludeKeys param, because the rebuilt CSV already omits
-      // those rows — passing excludeKeys on top would be redundant and error-prone.
-      // The rows Review doesn't list go back in too, so the server counts them as skipped (#1128).
+      // are authoritative at commit time. The rebuilt file leaves out an excluded row and its
+      // lift's older rows, so excludeKeys isn't sent on top. The rows Review doesn't list go
+      // back in, so the server counts them as skipped (#1128).
       const csv = buildTrainingMaxesCsv(reviewMaxes, deltas, excludedKeys, localToday());
       // No column overrides: this CSV has canonical headers and rows from a preview
       // that already applied them. Sending them again would rename columns twice.
@@ -1980,7 +1985,11 @@ export function ImportWizard({
                           })}
                       </ul>
                       {reviewMaxes.filter((r) => !excludedKeys.has(r.lift)).length === 0 && (
-                        <p className={styles.infoBox}>All rows removed. Nothing will be imported.</p>
+                        <p className={styles.infoBox}>
+                          {trainingMaxRowsToSend === 0
+                            ? 'All rows removed. Nothing will be imported.'
+                            : 'Every row left matches your stored maxes, so nothing will change.'}
+                        </p>
                       )}
                     </>
                   ) : (
@@ -2694,9 +2703,7 @@ export function ImportWizard({
                 // A create resolving after the dry run would change what Commit should send.
                 busyLiftNames.size > 0 ||
                 !previewBody ||
-                (destination === 'training-maxes' &&
-                  reviewMaxes !== null &&
-                  reviewMaxes.filter((r) => !excludedKeys.has(r.lift)).length === 0)
+                trainingMaxRowsToSend === 0
               }
             >
               Next

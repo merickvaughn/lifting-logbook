@@ -10,7 +10,16 @@ import type {
   ImportPreviewResponse,
   ImportSuggestionsResponse,
 } from '@lifting-logbook/types';
-import { LIFT_CATALOG } from '@lifting-logbook/core';
+import {
+  LIFT_CATALOG,
+  buildTrainingMaxPreview,
+  classifyAndCount,
+  latestTrainingMaxFirst,
+  parseCsvText,
+  parseTrainingMaxes,
+  trainingMaxRowKind,
+  type TrainingMax,
+} from '@lifting-logbook/core';
 import { ApiClientError } from '@lifting-logbook/api-client';
 import { ImportWizard } from './ImportWizard';
 import {
@@ -2630,6 +2639,90 @@ describe('ImportWizard', () => {
           await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
 
           expect(await sentLines()).toEqual(['Date Updated,Lift,Weight', '2026-09-27,"bench",200']);
+        });
+      });
+
+      // The mocks classify and store whatever file they get, with the core functions the API
+      // runs, so the counts on screen come from the file the wizard actually sends (#1128).
+      describe('reports the counts of the file it was given (#1128)', () => {
+        const FILE_TEXT = [
+          'Date Updated,Lift,Weight',
+          '9/28/2026,squat,300',
+          '9/27/2026,bench,200',
+          '9/1/2026,squat,280',
+        ].join('\n');
+        let stored: TrainingMax[];
+
+        const rowsOf = async (file: File) => parseTrainingMaxes(parseCsvText(await readFileText(file)));
+        const classify = async (file: File) => buildTrainingMaxPreview(await rowsOf(file), stored, new Map());
+
+        beforeEach(() => {
+          stored = [];
+          mockPreview.mockImplementation(async (_program, source) => ({
+            ...TM_PREVIEW,
+            preview: await classify(source as File),
+          }));
+          mockDryRun.mockImplementation(async (_program, file) => {
+            const { creates, updates, skips } = await classify(file);
+            return { ok: true, data: { destination: 'training-maxes', created: creates, updated: updates, skipped: skips } };
+          });
+          mockCommit.mockImplementation(async (_program, file) => {
+            const weightOf = new Map(stored.map((m) => [m.lift, m.weight]));
+            const byLift = new Map(stored.map((m) => [m.lift, m]));
+            const counts = await classifyAndCount(
+              latestTrainingMaxFirst(await rowsOf(file)),
+              (m) => m.lift,
+              (m) => trainingMaxRowKind(m, weightOf),
+              (m) => {
+                byLift.set(m.lift, m);
+              },
+            );
+            stored = [...byLift.values()];
+            return { ok: true, data: { destination: 'training-maxes', ...counts, batchId: 'batch-1' } };
+          });
+        });
+
+        async function importFile(user: ReturnType<typeof userEvent.setup>) {
+          const { unmount } = render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+          await navigateToReview(user, new File([FILE_TEXT], 'tm.csv', { type: 'text/csv' }));
+          const note = screen.queryByText(/matches your stored maxes/)?.textContent;
+          await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+          await screen.findByText('Preview changes');
+          const previewed = tiles();
+          await user.click(screen.getByRole('button', { name: 'Commit import' }));
+          await screen.findByText('Import complete');
+          const summary = screen.getByText(/created, .* updated, .* skipped\./).textContent;
+          unmount();
+          return { note, previewed, summary };
+        }
+
+        it('shows an older row of a lift as skipped, in the preview and the summary', async () => {
+          const user = userEvent.setup();
+          const { previewed, summary } = await importFile(user);
+
+          expect(previewed).toEqual({ Create: '2', Update: '0', Skip: '1' });
+          expect(summary).toContain('2 created, 0 updated, 1 skipped.');
+        });
+
+        it('reports every row as skipped when the same file is imported again', async () => {
+          const user = userEvent.setup();
+          await importFile(user);
+          const { note, previewed, summary } = await importFile(user);
+
+          // Review lists nothing, but Next still sends the file for the server to skip.
+          expect(note).toBe('Every row left matches your stored maxes, so nothing will change.');
+          expect(previewed).toEqual({ Create: '0', Update: '0', Skip: '3' });
+          expect(summary).toContain('0 created, 0 updated, 3 skipped.');
+        });
+
+        it("stores each max with the file's date", async () => {
+          const user = userEvent.setup();
+          await importFile(user);
+
+          expect(stored.map((m) => [m.lift, m.weight, m.dateUpdated.toISOString().slice(0, 10)])).toEqual([
+            ['squat', 300, '2026-09-28'],
+            ['bench', 200, '2026-09-27'],
+          ]);
         });
       });
     });
