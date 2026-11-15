@@ -4,10 +4,9 @@ import {
   serializeProgramSpec,
   serializeStrengthGoals,
   serializeTrainingMaxes,
-  splitLiftRecordsForImport,
 } from '@lifting-logbook/core';
 import { UserDataRows } from '../ports/IUserDataExportRepository';
-import { MAX_IMPORT_ROWS } from '../programs/import-file.util';
+import { exportParts } from './lift-record-export';
 
 /** Bumped when `logbook.json` changes shape, so a future restore path can migrate older bundles. */
 const LOGBOOK_SCHEMA_VERSION = 1;
@@ -44,7 +43,7 @@ export function buildExportFiles(rows: UserDataRows, now: Date): Record<string, 
   const specsFor = (program: string) =>
     (rows.customPrograms.find((p) => p.id === program)?.specs ?? []).map(named);
 
-  const parts = splitLiftRecordsForImport(rows.liftRecords.map(named), MAX_IMPORT_ROWS);
+  const parts = exportParts(rows.liftRecords.map(named), rows.macrocycles);
   const files: Record<string, string> = {};
   if (parts.length > 1) {
     parts.forEach((part, i) => {

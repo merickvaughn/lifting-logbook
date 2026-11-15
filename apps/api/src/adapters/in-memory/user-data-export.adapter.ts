@@ -1,6 +1,10 @@
-import { LiftRecord } from '@lifting-logbook/core';
+import { LiftRecord, LiftRecordExportRow } from '@lifting-logbook/core';
 import { ICustomLiftRepository } from '../../ports/ICustomLiftRepository';
-import { IUserDataExportRepository, UserDataRows } from '../../ports/IUserDataExportRepository';
+import {
+  IUserDataExportRepository,
+  LiftRecordExportFilter,
+  UserDataRows,
+} from '../../ports/IUserDataExportRepository';
 import { IUserSettingsRepository } from '../../ports/IUserSettingsRepository';
 import { InMemoryStrengthGoalRepository } from './strength-goal.adapter';
 import { InMemoryTrainingMaxRepository } from './training-max.adapter';
@@ -20,17 +24,31 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
     private readonly userSettings: IUserSettingsRepository,
   ) {}
 
+  private allLiftRecords(): LiftRecordExportRow[] {
+    return [...this.records].flatMap(([program, rows]) =>
+      rows.map((r) => ({
+        ...r,
+        program,
+        occurrence: r.occurrence ?? 0,
+        modifications: r.modifications ?? [],
+      })),
+    );
+  }
+
+  async readLiftRecords(filter: LiftRecordExportFilter): Promise<LiftRecordExportRow[]> {
+    return this.allLiftRecords().filter(
+      (r) =>
+        (filter.program === undefined || r.program === filter.program) &&
+        (filter.macrocycleNum === undefined || r.macrocycleNum === filter.macrocycleNum) &&
+        (filter.from === undefined || r.date.getTime() >= filter.from.getTime()) &&
+        (filter.to === undefined || r.date.getTime() <= filter.to.getTime()),
+    );
+  }
+
   async readAll(): Promise<UserDataRows> {
     const settings = await this.userSettings.getSettings();
     return {
-      liftRecords: [...this.records].flatMap(([program, rows]) =>
-        rows.map((r) => ({
-          ...r,
-          program,
-          occurrence: r.occurrence ?? 0,
-          modifications: r.modifications ?? [],
-        })),
-      ),
+      liftRecords: this.allLiftRecords(),
       trainingMaxes: this.trainingMax.allByProgram(),
       strengthGoals: this.strengthGoal.allByProgram(),
       customPrograms: [],

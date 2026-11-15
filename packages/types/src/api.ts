@@ -1063,6 +1063,36 @@ export interface ImportDryRunResponse extends ImportWriteResult {
   assigned?: ImportAssignedCounts;
 }
 
+/**
+ * Query of `GET /users/me/export/lift-records` and its `/parts` (#1308, proposal decision 22).
+ * Every field narrows the sets; none means all of them. `macrocycle` is a macrocycle's stable id,
+ * so it names the program too. Dates are `YYYY-MM-DD`, and both ends are included.
+ */
+export interface LiftRecordExportQuery {
+  program?: string;
+  macrocycle?: string;
+  from?: string;
+  to?: string;
+}
+
+/** One file of a filtered sets download: at most the importer's row limit, cut between macrocycles. */
+export interface LiftRecordExportPart {
+  /** From 1, oldest first, the order to upload them in. */
+  part: number;
+  rows: number;
+  /** Its first and last set's dates, `YYYY-MM-DD`. */
+  from: string;
+  to: string;
+}
+
+/** Response for `GET /users/me/export/lift-records/parts` (#1308). */
+export interface LiftRecordExportPartsResponse {
+  /** Sets the filter takes, across every part. */
+  rows: number;
+  /** Empty when the filter takes no sets. */
+  parts: LiftRecordExportPart[];
+}
+
 /** What an import with an Assign breakdown does beyond the row counts (#1254). */
 export interface ImportAssignedCounts {
   /** Macrocycles created: one per stretch with a new row that joins no stored macrocycle. */
@@ -1079,6 +1109,11 @@ export interface ImportAssignedCounts {
   changed: number;
   /** One-rep-max rows split to training maxes and skipped as older than that program's current max. */
   splitOlderThanCurrent: number;
+  /**
+   * Modification ids an exported file's `Modifications` column named that the account no longer
+   * has, dropped from their sets (decision 22, #1308).
+   */
+  droppedModifications: number;
 }
 
 /**

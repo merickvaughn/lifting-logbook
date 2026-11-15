@@ -337,7 +337,10 @@ const _repositoryBundle: RepositoryBundle = {
   strengthGoal: _strengthGoalRepo,
   trainingMax: _trainingMaxRepo,
   trainingMaxHistory: _trainingMaxHistoryRepo,
-  userDataExport: { readAll: () => Promise.reject(new Error('not implemented')) },
+  userDataExport: {
+    readAll: () => Promise.reject(new Error('not implemented')),
+    readLiftRecords: () => Promise.reject(new Error('not implemented')),
+  },
   userSettings: _userSettingsRepo,
   workout: _workoutRepo,
   workoutDateOverride: _workoutDateOverrideRepo,

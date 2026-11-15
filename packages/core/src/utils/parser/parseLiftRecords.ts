@@ -3,7 +3,11 @@ import {
   LIFT_RECORD_HEADER_MAP,
 } from "@src/core/constants";
 import { LiftRecord, SpreadsheetCell } from "@src/core/models";
-import { LIFT_RECORD_EXPORT_TOKEN } from "../export/serializeExportCsv";
+import {
+  LIFT_RECORD_EXPORT_TOKEN,
+  LIFT_RECORD_MODIFICATION_SEPARATOR,
+  unescapeCsvFormula,
+} from "../export/serializeExportCsv";
 import { isLiftRecordExport } from "../import/liftHistoryRows";
 import { parseDateStringUTC, toUTCMidnight } from "../jsUtil";
 import { tableToObjects } from "./tableToObjects";
@@ -20,12 +24,20 @@ export type AssignBlankField = "macrocycleNum" | "workoutNum" | "date";
  * can't be read), and its `Status` cell into `status`, trimmed and lower-cased (#1254, decision
  * 22). A blank cell leaves either absent. A file that isn't an export may have a `Status` column
  * of its own, so neither is read from one. Both headers match as `isLiftRecordExport` does,
- * trimmed and in any case.
+ * trimmed and in any case. Its `Modifications` cell is read into `modifications` the same way
+ * (#1308): the ids the export joined, which the importer checks against the account.
+ *
+ * In any exported file, `Program`, `Lift` and `Notes` lose the apostrophe the export put in front
+ * of a formula character (decision 22, `unescapeCsvFormula`).
  */
 export type ParsedLiftRecord = LiftRecord & { blankFields?: readonly AssignBlankField[]; status?: string };
 
 /** The export's `Status` column (decision 22). */
 const STATUS_HEADER = "Status";
+/** The export's `Modifications` column (decision 22). */
+const MODIFICATIONS_HEADER = "Modifications";
+/** The text fields the export escapes. */
+const ESCAPED_FIELDS: ReadonlySet<string> = new Set(["program", "lift", "notes"]);
 
 const ASSIGN_BLANK_FIELDS: ReadonlySet<string> = new Set<AssignBlankField>(["macrocycleNum", "workoutNum", "date"]);
 
@@ -47,11 +59,13 @@ export function parseLiftRecords(
   const headerMap = LIFT_RECORD_HEADER_MAP;
   const rawObjects = tableToObjects(data, undefined);
   const headers = (data[0] ?? []).map((h) => String(h));
-  const exported = options.assign === true && isLiftRecordExport(headers);
+  const isExport = isLiftRecordExport(headers);
+  const exported = options.assign === true && isExport;
   const exportHeader = (name: string) =>
     exported ? headers.find((h) => h.trim().toLowerCase() === name.toLowerCase()) : undefined;
   const occurrenceHeader = exportHeader(LIFT_RECORD_EXPORT_TOKEN);
   const statusHeader = exportHeader(STATUS_HEADER);
+  const modificationsHeader = exportHeader(MODIFICATIONS_HEADER);
   return rawObjects.map((obj) => {
     const result: Record<string, unknown> = {};
     const blankFields: AssignBlankField[] = [];
@@ -85,6 +99,9 @@ export function parseLiftRecords(
         // calendar day regardless of the parsing host's timezone (issue #884).
         value = toUTCMidnight(parseDateStringUTC(String(value ?? "")));
       }
+      if (isExport && ESCAPED_FIELDS.has(key) && typeof value === "string") {
+        value = unescapeCsvFormula(value);
+      }
       result[key] = value;
     }
     if (blankFields.length > 0) result.blankFields = blankFields;
@@ -94,6 +111,11 @@ export function parseLiftRecords(
     if (occurrence !== "") result.occurrence = Number(occurrence);
     const status = cell(statusHeader).toLowerCase();
     if (status !== "") result.status = status;
+    const modifications = cell(modificationsHeader)
+      .split(LIFT_RECORD_MODIFICATION_SEPARATOR)
+      .map((id) => id.trim())
+      .filter((id) => id !== "");
+    if (modifications.length > 0) result.modifications = modifications;
     return result as unknown as ParsedLiftRecord;
   });
 }

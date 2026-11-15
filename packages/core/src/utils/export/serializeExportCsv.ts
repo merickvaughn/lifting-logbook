@@ -25,6 +25,11 @@ export interface LiftRecordExportRow {
   reps: number;
   notes: string;
   modifications: readonly string[];
+  /**
+   * Its macrocycle's stored status (#1308). Absent or null writes an empty `Status` cell, as for a
+   * non-cycle workout, which has no status to keep.
+   */
+  status?: string | null;
 }
 
 export interface TrainingMaxExportRow {
@@ -75,9 +80,10 @@ export const LIFT_RECORD_EXPORT_HEADERS: readonly string[] = [
 ];
 
 /** Joins a set's modification ids in the `Modifications` column. Ids are uuids, so never contain it. */
-const LIFT_RECORD_MODIFICATION_SEPARATOR = ';';
+export const LIFT_RECORD_MODIFICATION_SEPARATOR = ';';
 
 const FORMULA_TRIGGER = /^[=+\-@\t\r\n]/;
+const ESCAPED_FORMULA = /^'[=+\-@\t\r\n]/;
 
 /**
  * A leading apostrophe on text a spreadsheet would run as a formula (decision 22). Only for free
@@ -88,9 +94,16 @@ export function escapeCsvFormula(text: string): string {
 }
 
 /**
- * `Status` is written empty until the macrocycle table holds one (#1171). A status in this column
- * counts as one the lifter chose (decision 22), so an empty cell is the only value that stays
- * correct when a file exported now is imported later.
+ * Reverses {@link escapeCsvFormula} for the importer (decision 22): drops a leading apostrophe
+ * only when a formula character follows it, so text that really starts with one stays as written.
+ */
+export function unescapeCsvFormula(text: string): string {
+  return ESCAPED_FORMULA.test(text) ? text.slice(1) : text;
+}
+
+/**
+ * `Status` holds each set's macrocycle status (#1308), which import reads as one the lifter chose
+ * (decision 22), so a round trip keeps it. A non-cycle workout's is empty.
  */
 export function serializeLiftRecords(records: readonly LiftRecordExportRow[]): string {
   return serializeCsvText([
@@ -107,7 +120,7 @@ export function serializeLiftRecords(records: readonly LiftRecordExportRow[]): s
       escapeCsvFormula(r.notes),
       r.occurrence,
       r.modifications.join(LIFT_RECORD_MODIFICATION_SEPARATOR),
-      '',
+      r.status ?? '',
     ]),
   ]);
 }

@@ -69,6 +69,7 @@ import {
   segmentLiftHistory,
   fileMacrocycleKeys,
   toLiftHistoryRecord,
+  withModifications,
   isLiftRecordExport,
 } from '@lifting-logbook/core';
 import type { LiftImportOptions, SpreadsheetCell } from '@lifting-logbook/core';
@@ -919,12 +920,25 @@ export class ImportController {
       }
     }
 
+    // An export's `Modifications` names ids; keep the ones this account has (decision 22, #1308).
+    let droppedModifications = 0;
+    if (assign && (valid as LiftRecord[]).some((r) => r.modifications?.length)) {
+      const known = new Set((await repos.liftModification.list()).map((m) => m.id));
+      valid = (valid as LiftRecord[]).map((r) => {
+        if (!r.modifications?.length) return r;
+        const kept = r.modifications.filter((id) => known.has(id));
+        droppedModifications += r.modifications.length - kept.length;
+        const { modifications: _all, ...rest } = r;
+        return { ...rest, ...withModifications(kept) };
+      });
+    }
+
     // For splitDest, partition before committing to avoid double-writing 1RM rows as lift-records
     if (destination === 'lift-records' && splitDest) {
       const { liftRecords, trainingMaxes } = splitLiftRecordsByDestination(valid as LiftRecord[]);
-      return { rows: liftRecords, splitMaxes: trainingMaxes, undated };
+      return { rows: liftRecords, splitMaxes: trainingMaxes, undated, droppedModifications };
     }
-    return { rows: valid, splitMaxes: [], undated };
+    return { rows: valid, splitMaxes: [], undated, droppedModifications };
   }
 
   /**
@@ -1054,7 +1068,7 @@ export class ImportController {
     },
   ): Promise<ImportCommitResponse | ImportDryRunResponse> {
     const started = Date.now();
-    const { rows, splitMaxes, undated } = await this.resolveCommitRows(
+    const { rows, splitMaxes, undated, droppedModifications } = await this.resolveCommitRows(
       'lift-records',
       table,
       repos,
@@ -1117,6 +1131,7 @@ export class ImportController {
       undatedRows: undated,
       changed: plan.changed,
       splitOlderThanCurrent: split.olderThanCurrent,
+      droppedModifications,
     };
 
     let created: number;
@@ -1354,8 +1369,10 @@ async function unrecognizedGoalOverrides(
 /**
  * The rows a commit writes: to its destination, and 1RM rows split off to training maxes.
  * `undated`: with `assign`, how many rows were left out for a blank date (#1253).
+ * `droppedModifications`: with `assign`, how many modification ids an export named that the
+ * account doesn't have, dropped from their sets (#1308).
  */
-type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[]; undated: number };
+type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[]; undated: number; droppedModifications: number };
 
 function previewCounts(preview: ImportPreview): ImportWriteResult {
   return { created: preview.creates, updated: preview.updates, skipped: preview.skips };

@@ -359,6 +359,37 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect(files['logbook.json']).toContain('owner-marker');
   });
 
+  // The filtered sets download (#1308) reads through the same forced row-level security.
+  describe('filtered sets download', () => {
+    const get = (url: string, user = USER_OWNER) =>
+      app.getHttpAdapter().getInstance().inject({ method: 'GET', url, headers: { authorization: `Bearer ${user}` } });
+
+    it("holds only the owner's sets, under every filter, each with its macrocycle's status", async () => {
+      for (const filter of ['', `?program=${ACTIVE_PROGRAM}`, '?from=2026-01-01&to=2026-01-31']) {
+        const res = await get(`/users/me/export/lift-records${filter}`);
+        expect(res.statusCode).toBe(200);
+        expect(res.body).not.toContain(OTHER_MARK);
+        expect(res.body).toContain('owner-marker');
+      }
+      const owned = await prisma.liftRecord.count({ where: { userId: USER_OWNER } });
+      const parts = (await get('/users/me/export/lift-records/parts')).json<{ rows: number }>();
+      expect(parts.rows).toBe(owned);
+      const active = (await get(`/users/me/export/lift-records?program=${ACTIVE_PROGRAM}`)).body.split('\n').slice(1);
+      expect(active.filter((line) => line.trim() !== '').every((line) => line.trimEnd().endsWith(',in-progress'))).toBe(true);
+    });
+
+    it("404s another user's macrocycle, which row-level security hides", async () => {
+      const theirs = await prisma.macrocycle.findFirstOrThrow({ where: { userId: USER_OTHER } });
+      expect((await get(`/users/me/export/lift-records?macrocycle=${theirs.id}`)).statusCode).toBe(404);
+      const mine = await prisma.macrocycle.findFirstOrThrow({ where: { userId: USER_OWNER, program: ACTIVE_PROGRAM } });
+      const res = await get(`/users/me/export/lift-records?macrocycle=${mine.id}`);
+      expect(res.statusCode).toBe(200);
+      expect(res.body.split('\n').slice(1).filter((line) => line.trim() !== '')).toHaveLength(
+        await prisma.liftRecord.count({ where: { userId: USER_OWNER, program: ACTIVE_PROGRAM, macrocycleNum: mine.macrocycleNum } }),
+      );
+    });
+  });
+
   it('leaves the user id out of logbook.json', () => {
     expect(files['logbook.json']).not.toContain(USER_OWNER);
     expect(files['logbook.json']).not.toContain('"userId"');
