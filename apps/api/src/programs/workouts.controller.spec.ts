@@ -854,28 +854,15 @@ describe('WorkoutsController', () => {
       expect(skipOverrideRepo.getSkipsForMacrocycle).toHaveBeenCalledWith('5-3-1', 3);
     });
 
-    it('treats getSkipsForMacrocycle failure as empty skip set (does not propagate the error)', async () => {
-      // The controller swallows getSkipsForMacrocycle errors and falls back to an
-      // empty Set so a transient skip-store failure cannot break the workout
-      // response. Verify the fallback branch separately from the success
-      // branch — see docs/standards/error-fallback-test-coverage.md.
-      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-      try {
-        dashboardRepo.getMacrocycleDashboard.mockResolvedValue(dashboard);
-        specRepo.getProgramSpec.mockResolvedValue(spec);
-        workoutRepo.getWorkout.mockRejectedValue(new WorkoutNotFoundError('5-3-1', 3, 1));
-        skipOverrideRepo.getSkipsForMacrocycle.mockRejectedValue(new Error('skip store unavailable'));
+    it('fails the workout read when getSkipsForMacrocycle fails, rather than reading no skips (#1288)', async () => {
+      // A failed statement aborts the request's RLS transaction, so the read can't be caught
+      // and carried past. workout-skip-read.db.e2e.spec.ts shows the aborted transaction.
+      dashboardRepo.getMacrocycleDashboard.mockResolvedValue(dashboard);
+      specRepo.getProgramSpec.mockResolvedValue(spec);
+      workoutRepo.getWorkout.mockRejectedValue(new WorkoutNotFoundError('5-3-1', 3, 1));
+      skipOverrideRepo.getSkipsForMacrocycle.mockRejectedValue(new Error('skip store unavailable'));
 
-        const result = await controller.getWorkout('5-3-1', '1', MOCK_USER);
-
-        expect(result.skipped).toBe(false);
-        expect(errorSpy).toHaveBeenCalledWith(
-          expect.objectContaining({ message: 'skip store unavailable' }),
-          expect.stringContaining('getSkipsForMacrocycle failed'),
-        );
-      } finally {
-        errorSpy.mockRestore();
-      }
+      await expect(controller.getWorkout('5-3-1', '1', MOCK_USER)).rejects.toThrow('skip store unavailable');
     });
   });
 });

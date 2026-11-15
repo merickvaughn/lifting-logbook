@@ -311,6 +311,23 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(second.lifts).toEqual([]);
     });
 
+    // The save runs in the request's RLS transaction, which a failed statement aborts, so the
+    // commit can't report success without its batch: under Postgres it would have written nothing.
+    it('fails the commit when its undo batch cannot be saved (#1288)', async () => {
+      const repos = await app
+        .get<IRepositoryFactory>(REPOSITORY_FACTORY)
+        .forUser({ id: userId, email: 'dev@example.com', provider: 'dev' });
+      const save = jest.spyOn(repos.importBatch, 'save').mockRejectedValue(new Error('batch store unavailable'));
+      try {
+        const res = await importCsv('import-lr', LIFT_CSV, '?mode=commit&destination=lift-records');
+
+        expect(res.statusCode).toBe(500);
+        expect(save).toHaveBeenCalledTimes(1);
+      } finally {
+        save.mockRestore();
+      }
+    });
+
     // Regression for issue #884: before the fix, both rows shared a date-less
     // key and the second silently collapsed into the first. Re-committing the
     // identical file afterward — the same idempotency check the sibling test
