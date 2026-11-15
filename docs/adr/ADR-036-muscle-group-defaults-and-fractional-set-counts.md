@@ -240,6 +240,33 @@ catalog id is not another name for this purpose, because import can store any li
 reverse. An exact match still wins. This goes through `lookupByStoredId` in
 `packages/core/src/catalog/liftIdentity.ts`.
 
+## Amendment 3: the preset names outside `DEFAULT_SLOT_MAP` (2026-11-15, [#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015))
+
+Option 4 left three consumers of `DEFAULT_SLOT_MAP` to #1015. The owner decided all three:
+
+- **Import** recognizes the preset names as built-ins. [#1186](https://github.com/merickvaughn/lifting-logbook/pull/1186)
+  (#947) already did this through `buildImportSlotMap`, which stores an alias as written, so restored
+  Leangains and RPT history keeps matching the program.
+- **`Weighted Pull-ups` is a bodyweight-component lift**, as J4 in `docs/PRD.md` asks and as Dips
+  already is in the same two programs. The logger now finds bodyweight lifts through
+  `builtInLiftFor`, which knows every name a built-in goes by, rather than `DEFAULT_SLOT_MAP`. Its
+  warm-up implements are keyed by catalog id, so "Weighted Pull-ups" gets "lat pulldown" and "Dip"
+  gets "dips (unweighted)". The logger asks for body weight on Leangains Day A and RPT Day C, reads
+  the lift's training max as total load (body weight plus added), and logs the added weight.
+- **The custom-lift guard still reserves only `DEFAULT_SLOT_MAP` names.** Option 8's second half is
+  declined: before #1120 and #1186, a custom lift was the only way a Leangains lifter got "Cable Row"
+  or "Leg Curl" recognized, so reserving every built-in name would shadow lifts users already have,
+  and production custom lifts were not audited. The preset names stay out of `DEFAULT_SLOT_MAP` for
+  the same reason. `builtInLift.test.ts` lists them as the map's exceptions and fails if a preset
+  adds a name that is neither in the map nor on that list.
+
+Consequences:
+
+- A `Weighted Pull-ups` training max entered as the added weight alone now reads as total load. The
+  logger shows "BW" until the lifter re-enters it as body weight plus added.
+- The logger reads only built-ins for bodyweight. A custom lift's own `isBodyweightComponent` is not
+  read there, as before this amendment.
+
 ## References
 
 - Pelland, J. C., Remmert, J. F., Robinson, Z. P., Hinson, S. R., Zourdos, M. C. "The Resistance

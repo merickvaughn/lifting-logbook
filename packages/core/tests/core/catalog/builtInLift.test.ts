@@ -1,4 +1,4 @@
-import { DEFAULT_SLOT_MAP, LIFT_CATALOG, PRESET_BASE_SPECS, builtInLiftFor } from '@src/core';
+import { DEFAULT_SLOT_MAP, LIFT_CATALOG, PRESET_BASE_SPECS, builtInLiftFor, resolveLift } from '@src/core';
 
 describe('builtInLiftFor', () => {
   it('resolves every catalog lift by its display name and its id', () => {
@@ -27,8 +27,8 @@ describe('builtInLiftFor', () => {
   });
 
   it('keeps per-entry aliases out of DEFAULT_SLOT_MAP', () => {
-    // DEFAULT_SLOT_MAP also drives the logger's bodyweight detection and import
-    // validation; aliasing a preset name there is a separate decision (issue #1015).
+    // DEFAULT_SLOT_MAP's names are reserved against custom lifts; a lifter may already
+    // have a custom lift under a preset alias, so they stay out (issue #1015).
     const slotNames = new Set(Object.keys(DEFAULT_SLOT_MAP));
     for (const lift of LIFT_CATALOG) {
       for (const alias of lift.aliases ?? []) {
@@ -50,6 +50,44 @@ describe('builtInLiftFor', () => {
       expect({ name, resolved: lift !== undefined }).toEqual({ name, resolved: true });
       expect(lift?.muscles.primary.length).toBeGreaterThan(0);
     }
+  });
+
+  describe('preset lifts through DEFAULT_SLOT_MAP (issue #1015)', () => {
+    // The preset lift names DEFAULT_SLOT_MAP leaves out on purpose: its names are reserved
+    // against custom lifts, and a lifter may already have one under these (ADR-036
+    // Amendment 3). Each still resolves as a built-in through builtInLiftFor.
+    const SLOT_MAP_EXCEPTIONS: Readonly<Record<string, string>> = {
+      // Catalog display names
+      'Romanian Deadlift': 'romanian-deadlift',
+      'Cable Row': 'cable-row',
+      'Leg Curl': 'leg-curl',
+      // Per-entry aliases
+      'Weighted Pull-ups': 'pull-up',
+      'Incline DB Press': 'incline-db-press',
+      'Calf Raises': 'calf-raise',
+      'Lateral Raises': 'lateral-raise',
+    };
+    const presetLifts = [
+      ...new Set(Object.values(PRESET_BASE_SPECS).flatMap((spec) => spec.map((row) => row.lift))),
+    ];
+
+    it('extracts the preset lift names', () => {
+      // Guards against a vacuous pass: an empty extraction would satisfy every loop below.
+      expect(presetLifts.length).toBeGreaterThan(0);
+    });
+
+    it.each(presetLifts)('%s resolves through DEFAULT_SLOT_MAP or is a listed exception', (name) => {
+      if (name in SLOT_MAP_EXCEPTIONS) {
+        expect(() => resolveLift(name, DEFAULT_SLOT_MAP, LIFT_CATALOG)).toThrow(/Unknown exercise slot/);
+        expect(builtInLiftFor(name)?.id).toBe(SLOT_MAP_EXCEPTIONS[name]);
+      } else {
+        expect(resolveLift(name, DEFAULT_SLOT_MAP, LIFT_CATALOG).id).toBe(builtInLiftFor(name)?.id);
+      }
+    });
+
+    it('lists no exception that no preset uses', () => {
+      expect(Object.keys(SLOT_MAP_EXCEPTIONS).filter((name) => !presetLifts.includes(name))).toEqual([]);
+    });
   });
 
   it('resolves the six Leangains/RPT names that previously resolved to nothing', () => {

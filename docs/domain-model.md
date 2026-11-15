@@ -208,11 +208,12 @@ built-in goes by:
 - per-entry alias;
 - slot name.
 
-Lift classification, default muscles and movement patterns all resolve through it. The per-entry
-aliases are deliberately **not** in `DEFAULT_SLOT_MAP`. That map also drives the logger's
-bodyweight detection, import validation and the custom-lift collision guard, and aliasing
-`Weighted Pull-ups` there would flip it to a bodyweight-component lift. Those are separate
-decisions, tracked in [#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015).
+Lift classification, default muscles, movement patterns and the logger's bodyweight detection all
+resolve through it, so Leangains' and RPT's `Weighted Pull-ups` is a bodyweight-component lift. The
+per-entry aliases and the presets' catalog display names are deliberately **not** in
+`DEFAULT_SLOT_MAP`: its names are reserved against custom lifts, and a lifter may already have a
+custom lift under one of them (ADR-036 Amendment 3,
+[#1015](https://github.com/merickvaughn/lifting-logbook/issues/1015)).
 
 Import also accepts every catalog display name and id, through `buildImportSlotMap`, without adding
 them to `DEFAULT_SLOT_MAP` ([#1116](https://github.com/merickvaughn/lifting-logbook/issues/1116)).

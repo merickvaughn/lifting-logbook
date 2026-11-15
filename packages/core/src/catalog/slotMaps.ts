@@ -10,11 +10,21 @@ import { LIFT_CATALOG } from './lifts';
  */
 
 /**
- * Covers all slot names used by the 5/3/1 and RPT program templates,
- * including both canonical names (from LIFT_NAMES) and CSV-abbreviated forms.
+ * The reserved built-in lift names: full names, the RPT spreadsheet's CSV
+ * abbreviations, and the catalog ids they map to. It covers every lift the 5/3/1
+ * template uses, but not every lift Leangains and RPT use.
+ *
+ * Those presets also use catalog display names ("Romanian Deadlift", "Cable Row",
+ * "Leg Curl") and per-entry aliases ("Weighted Pull-ups", "Calf Raises"), which
+ * `builtInLiftFor` resolves. `builtInLift.test.ts` lists them as this map's
+ * exceptions. They stay out of it because every key here is reserved: the
+ * custom-lift create/rename guard refuses it (`canonicalAliasFor`), and it
+ * outranks a same-named custom lift (`lookupLift`, `buildEffectiveSlotMap`). A
+ * lifter may already have a custom lift under one of those names, so reserving
+ * them would shadow it (ADR-036 Amendment 3, issue #1015).
  */
 export const DEFAULT_SLOT_MAP: Readonly<Record<string, string>> = {
-  // Canonical names shared by 5/3/1 and LIFT_NAMES
+  // Full names
   'Squat':           'back-squat',
   'Bench Press':     'bench-press',
   'Deadlift':        'deadlift',
@@ -112,9 +122,8 @@ export function buildEffectiveSlotMap(
 
 /**
  * Every built-in catalog lift, by display name and id, mapped to its display name, plus each alias
- * mapped to itself. Import-only: adding these to DEFAULT_SLOT_MAP would also change the logger's
- * bodyweight detection and reserve the names against custom lifts (see
- * CatalogLift.aliases, issue #1015).
+ * mapped to itself. Import-only: adding these to DEFAULT_SLOT_MAP would reserve the names
+ * against custom lifts and store them as ids (see DEFAULT_SLOT_MAP, issue #1015).
  *
  * The value is the display name, not the id, because that is what the rest of the
  * app matches on: a program's `lift` is the name its picker stored, and training
