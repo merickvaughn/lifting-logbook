@@ -1017,7 +1017,11 @@ export interface ImportWriteResult {
 /** Response for `POST /programs/:program/import?mode=commit`. */
 export interface ImportCommitResponse extends ImportWriteResult {
   destination: ImportKind;
-  /** Phase 3: UUID of the ImportBatch record; null if the batch save failed (import still succeeds). */
+  /**
+   * Phase 3: UUID of the ImportBatch record. Every commit returns one: a failed batch save fails
+   * the commit (#1288). Typed nullable because the Assign commit sets it in a branch the compiler
+   * can't follow.
+   */
   batchId: string | null;
   /**
    * Phase 3: counts for rows automatically split to a second destination

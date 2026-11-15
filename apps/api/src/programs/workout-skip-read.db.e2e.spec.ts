@@ -12,8 +12,8 @@
 // query's. Before #1288 the controller logged that it was carrying on with no skips while the
 // request failed anyway.
 //
-// The failure is a restrictive RLS policy on `workout_skip_override` that raises for one test
-// user's rows only, so DB suites running alongside this one read their skips as usual. Seeding,
+// The failure is a restrictive RLS policy on `workout_skip_override` that raises only in one test
+// user's requests, so DB suites running alongside this one read their skips as usual. Seeding,
 // the policy and cleanup use the owner; every request runs as lifting_app.
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
@@ -62,9 +62,11 @@ describeOrSkip('a failed skip read on a workout (full app, lifting_app role)', (
       `CREATE FUNCTION ${FUNCTION}() RETURNS boolean LANGUAGE plpgsql AS $$
        BEGIN RAISE EXCEPTION '${FAILURE}'; END $$`,
     );
+    // Keyed on the session, not the row, so another suite's scan of this user's row can't raise,
+    // and through CASE, whose evaluation order Postgres guarantees (OR's it doesn't).
     await owner.$executeRawUnsafe(
       `CREATE POLICY "${POLICY}" ON "workout_skip_override" AS RESTRICTIVE FOR SELECT
-       USING ("userId" <> '${USER}' OR ${FUNCTION}())`,
+       USING (CASE WHEN current_setting('app.current_user_id', true) = '${USER}' THEN ${FUNCTION}() ELSE true END)`,
     );
     process.env.DATABASE_URL = APP_DB_URL;
     app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), { logger: false });
@@ -80,7 +82,7 @@ describeOrSkip('a failed skip read on a workout (full app, lifting_app role)', (
     await owner.$disconnect();
   }, DB_E2E_HOOK_TIMEOUT_MS);
 
-  it("fails the request with the skip query's own error, not a later query's", async () => {
+  it("fails the request with the skip query's own Postgres error, not an aborted-transaction one", async () => {
     const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     try {
       const res = await app.getHttpAdapter().getInstance().inject({

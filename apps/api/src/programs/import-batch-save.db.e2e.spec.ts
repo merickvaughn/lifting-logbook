@@ -5,8 +5,8 @@
 // but the aborted transaction then rolled back every row the response reported. The commit now
 // fails instead, so a lifter is never told rows were imported that weren't.
 //
-// The failure is a restrictive RLS policy on `import_batch` that raises on one test user's
-// inserts only, so DB suites running alongside this one save their batches as usual. Seeding, the
+// The failure is a restrictive RLS policy on `import_batch` that raises only in one test user's
+// requests, so DB suites running alongside this one save their batches as usual. Seeding, the
 // policy and cleanup use the owner; every request runs as lifting_app.
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
@@ -78,9 +78,11 @@ describeOrSkip('a failed undo-batch save on an import commit (full app, lifting_
       `CREATE FUNCTION ${FUNCTION}() RETURNS boolean LANGUAGE plpgsql AS $$
        BEGIN RAISE EXCEPTION '${FAILURE}'; END $$`,
     );
+    // Keyed on the session, through CASE, whose evaluation order Postgres guarantees (OR's it
+    // doesn't), so no other suite's insert can raise.
     await owner.$executeRawUnsafe(
       `CREATE POLICY "${POLICY}" ON "import_batch" AS RESTRICTIVE FOR INSERT
-       WITH CHECK ("userId" <> '${USER}' OR ${FUNCTION}())`,
+       WITH CHECK (CASE WHEN current_setting('app.current_user_id', true) = '${USER}' THEN ${FUNCTION}() ELSE true END)`,
     );
     process.env.DATABASE_URL = APP_DB_URL;
     app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), { logger: false });

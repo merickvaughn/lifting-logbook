@@ -856,7 +856,8 @@ describe('WorkoutsController', () => {
 
     it('fails the workout read when getSkipsForMacrocycle fails, rather than reading no skips (#1288)', async () => {
       // A failed statement aborts the request's RLS transaction, so the read can't be caught
-      // and carried past. workout-skip-read.db.e2e.spec.ts shows the aborted transaction.
+      // and carried past. workout-skip-read.db.e2e.spec.ts shows the request failing with the skip
+      // query's own Postgres error.
       dashboardRepo.getMacrocycleDashboard.mockResolvedValue(dashboard);
       specRepo.getProgramSpec.mockResolvedValue(spec);
       workoutRepo.getWorkout.mockRejectedValue(new WorkoutNotFoundError('5-3-1', 3, 1));
