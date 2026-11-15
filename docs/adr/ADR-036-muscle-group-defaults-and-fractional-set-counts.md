@@ -251,8 +251,8 @@ Option 4 left three consumers of `DEFAULT_SLOT_MAP` to #1015. The owner decided 
   already is in the same two programs. The logger now finds bodyweight lifts through
   `builtInLiftFor`, which knows every name a built-in goes by, rather than `DEFAULT_SLOT_MAP`. That
   reaches every name of the catalog's `pull-up` entry: "Weighted Pull-ups", the display name
-  "Pull-up" that the custom-program picker stores, and the id `pull-up` that import can store. None
-  of those were bodyweight before. Warm-up implements are keyed by catalog id, so all three get
+  "Pull-up" that the custom-program picker stores, and the id `pull-up`. None of those were
+  bodyweight before. Warm-up implements are keyed by catalog id, so all three get
   "lat pulldown", and "Dip" gets "dips (unweighted)". The logger asks for body weight on Leangains
   Day A and RPT Day C, reads the lift's training max as total load (body weight plus added), and
   logs the added weight.
