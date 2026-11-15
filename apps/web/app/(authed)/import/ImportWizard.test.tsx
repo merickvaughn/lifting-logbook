@@ -1292,13 +1292,14 @@ describe('ImportWizard', () => {
       expect(mockDryRun.mock.calls[0]?.[3]?.excludeKeys).toEqual(['__row_1']);
     });
 
-    it('says a kept goal needs a training max to show on the goals page', async () => {
+    // #1179: the goals page lists a goal with no training max, so a kept goal no longer waits on one.
+    it('no longer says a kept goal needs a training max to show on the goals page', async () => {
       const user = userEvent.setup();
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await toReview(user);
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'A kept goal shows on the goals page once its custom lift has a training max.',
-      );
+      const notice = screen.getByRole('status');
+      expect(notice).toHaveTextContent('the goals page may show progress toward only one of them.');
+      expect(notice).not.toHaveTextContent('training max');
     });
 
     it('does not reuse a custom lift the file already has a goal for', async () => {
