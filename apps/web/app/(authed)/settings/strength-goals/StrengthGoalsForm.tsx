@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { convertWeight, evaluateStrengthTier, formatWeight, lookupByStoredId, roundToDisplay } from '@lifting-logbook/core';
 import type {
   BodyWeightResponse,
@@ -98,7 +98,14 @@ export default function StrengthGoalsForm({
   const [bwError, setBwError] = useState<string | null>(null);
 
   // The goals stored now, kept as saves and removals land so every lookup below reads them.
+  // The ref is the latest list even mid-render, so a handler resuming after its `await` builds
+  // on any change another handler made meanwhile instead of writing back its own snapshot.
   const [storedGoals, setStoredGoals] = useState<StrengthGoalResponse[]>(goals);
+  const goalsRef = useRef(goals);
+  function updateGoals(update: (prev: StrengthGoalResponse[]) => StrengthGoalResponse[]) {
+    goalsRef.current = update(goalsRef.current);
+    setStoredGoals(goalsRef.current);
+  }
   const customNames = new Map(customLifts.map((l) => [l.id, l.name]));
   const nameOf = (lift: string) => customNames.get(lift) ?? lift;
 
@@ -201,7 +208,7 @@ export default function StrengthGoalsForm({
         ratio: row.ratio,
       }));
       const saved: StrengthGoalResponse = { ...body, lift: goalLift, updatedAt: new Date().toISOString() };
-      setStoredGoals((prev) =>
+      updateGoals((prev) =>
         prev.some((g) => g.lift === goalLift)
           ? prev.map((g) => (g.lift === goalLift ? saved : g))
           : [...prev, saved],
@@ -221,9 +228,8 @@ export default function StrengthGoalsForm({
     try {
       await removeStrengthGoal(program, goalLift);
       // A row can then reach another goal for its lift, which is what a reload would show.
-      const left = storedGoals.filter((g) => g.lift !== goalLift);
-      const remaining = lookupByStoredId(left.map((g) => [g.lift, g] as const));
-      setStoredGoals(left);
+      updateGoals((prev) => prev.filter((g) => g.lift !== goalLift));
+      const remaining = lookupByStoredId(goalsRef.current.map((g) => [g.lift, g] as const));
       updateRows(lifts, (l) => {
         const next = remaining(l);
         return next
@@ -246,7 +252,7 @@ export default function StrengthGoalsForm({
     setListed((prev) => ({ ...prev, [goalLift]: { removing: true, error: null } }));
     try {
       await removeStrengthGoal(program, goalLift);
-      setStoredGoals((prev) => prev.filter((g) => g.lift !== goalLift));
+      updateGoals((prev) => prev.filter((g) => g.lift !== goalLift));
       setListed((prev) => ({ ...prev, [goalLift]: { removing: false, error: null } }));
     } catch (err) {
       logClientError('removeStrengthGoal', err, { program, lift: goalLift });

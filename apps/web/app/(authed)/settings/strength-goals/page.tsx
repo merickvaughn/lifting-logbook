@@ -10,7 +10,13 @@ export default async function StrengthGoalsPage() {
     fetchStrengthGoals(program),
     fetchLatestBodyWeight(program),
     getPreferredUnit(),
-    fetchCustomLifts(),
+    // Custom lifts only name a custom lift's goal or card, so the page still renders, with
+    // stored ids for those names, when they can't be read.
+    // fallback-covered-by: apps/web/app/(authed)/settings/strength-goals/page.test.tsx
+    fetchCustomLifts().catch((err: unknown) => {
+      console.error('[StrengthGoalsPage] custom lifts fetch failed, showing custom lifts by id', err);
+      return [];
+    }),
   ]);
 
   return (

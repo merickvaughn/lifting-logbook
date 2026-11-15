@@ -172,6 +172,24 @@ describe('StrengthGoalsForm — goals with no card', () => {
     expect(logClientError).toHaveBeenCalledWith('removeStrengthGoal', failure, { program: '5-3-1', lift: 'Deadlift' });
   });
 
+  it('keeps a listed goal gone when a card delete started earlier finishes after it', async () => {
+    const user = userEvent.setup();
+    let finishCard: () => void = () => undefined;
+    (removeStrengthGoal as jest.Mock)
+      .mockReturnValueOnce(new Promise<void>((resolve) => { finishCard = resolve; }))
+      .mockResolvedValueOnce(undefined);
+    renderForm([
+      { lift: 'Back Squat', goalType: 'absolute', target: 300, unit: 'lbs', updatedAt: '2026-06-01' },
+      { lift: 'Deadlift', goalType: 'absolute', target: 405, unit: 'lbs', updatedAt: '2026-06-01' },
+    ]);
+    await user.click(screen.getByRole('button', { name: '✕ Remove' }));
+    await user.click(screen.getByRole('button', { name: 'Remove goal for Deadlift' }));
+    await waitFor(() => expect(screen.queryByRole('list')).not.toBeInTheDocument());
+    finishCard();
+    await waitFor(() => expect(screen.queryByRole('button', { name: '✕ Remove' })).not.toBeInTheDocument());
+    expect(screen.queryByText('Deadlift')).not.toBeInTheDocument();
+  });
+
   it('names a custom lift\'s card by the lift\'s name', () => {
     render(
       <StrengthGoalsForm
