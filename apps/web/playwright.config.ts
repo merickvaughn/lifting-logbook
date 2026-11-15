@@ -74,6 +74,9 @@ export default defineConfig({
   // Playwright's default testMatch also grabs `*.test.ts`; those are Jest unit tests
   // (e.g. e2e/mock-api.test.ts, which uses `describe`) and must not run under Playwright.
   testIgnore: ['**/staging.spec.ts', '**/*.test.ts'],
+  // Local runs compile every page before the first test, so a cold Next dev compile on
+  // Windows can't fail a test on timing (#1049). Skipped in CI, which is unchanged.
+  globalSetup: process.env.CI ? undefined : './e2e/warmup.global-setup.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
