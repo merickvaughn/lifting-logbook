@@ -46,7 +46,7 @@ import { KIND_LABEL, kindsForTarget, previousStep, Step, STEP_LABELS, visibleSte
 import type { ImportTarget, StepValue } from './steps';
 import AssignStep from './AssignStep';
 import type { SuggestState, SuggestionAnswer } from './AssignSuggestions';
-import { buildBreakdown, initialDraft, openDecisions, type AssignDraft } from './assignDraft';
+import { buildBreakdown, confirmLift, initialDraft, openDecisions, type AssignDraft } from './assignDraft';
 import {
   SheetTabsStep,
   defaultTabChoices,
@@ -2412,6 +2412,9 @@ export function ImportWizard({
                   res={assignRes}
                   draft={assignDraft}
                   onChange={setAssignDraft}
+                  onConfirmLift={(lift, progression) =>
+                    setAssignDraft((prev) => prev && confirmLift(prev, lift, progression))
+                  }
                   focusHeading={assignNotice === MISMATCH_NOTICE}
                   suggestions={{
                     state: suggestState,

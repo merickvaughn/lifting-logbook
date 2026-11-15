@@ -1218,6 +1218,21 @@ export type AssignConflict =
   | { kind: 'gap-inside-number'; stretch: number; from: string; to: string; days: number }
   | { kind: 'numbers-overlap'; stretches: [number, number] };
 
+/**
+ * A lift in the file at the Assign step (#1212): the programs that plan it, so the step can list
+ * the lifts a stretch's program doesn't, and the progression to preselect for each of those.
+ */
+export interface AssignLift {
+  /** Its display name, as `AssignSession.lifts` has it. */
+  name: string;
+  /** The `lift_metadata` row a progression change is saved to (`PATCH /lifts/:lift/metadata`). */
+  metadataLift: string;
+  /** Ids of the `programs` whose spec plans it. */
+  programs: string[];
+  /** Its progression with no program row: its own value, else the lifter's default, else the catalog's. */
+  progression: LiftProgressionType;
+}
+
 /** A program a stretch can be assigned to. */
 export interface AssignProgramOption {
   id: string;
@@ -1250,6 +1265,8 @@ export interface ImportAssignResponse {
   /** The file is this app's own export, so overlapping numbers don't block (decision 8). */
   exported: boolean;
   programs: AssignProgramOption[];
+  /** Every lift in the file's dated rows, once each (#1212). */
+  lifts: AssignLift[];
   /**
    * One-rep-max rows split to training maxes (decision 10), judged against the max of the
    * program covering each row's date. Present only when the request asks for the split.

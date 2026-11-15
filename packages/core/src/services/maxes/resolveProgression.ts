@@ -27,7 +27,7 @@ export interface LiftProgressionMeta {
  * the stored other end in a separate read, so two overlapping patches can store a crossed range
  * (#1211, from the review of PR #1219).
  */
-export function storedLiftProgression(meta: LiftProgressionMeta): LiftProgressionMeta {
+export function storedLiftProgression<T extends LiftProgressionMeta>(meta: T): T {
   const { repsLow, repsHigh } = meta;
   const crossed = repsLow != null && repsHigh != null && repsLow > repsHigh;
   return crossed ? { ...meta, repsLow: null, repsHigh: null } : meta;

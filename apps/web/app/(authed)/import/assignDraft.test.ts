@@ -3,14 +3,19 @@ import {
   buildBreakdown,
   canMoveStart,
   choicesFor,
+  confirmLift,
   effectiveStretches,
   fileAllWithEarlier,
   fileSession,
   initialDraft,
+  isSettled,
   joinWithPrevious,
+  liftProgression,
   moveStart,
   openDecisions,
+  outsideLifts,
   overlaps,
+  setProgram,
   setStatus,
   splitAtLargestGap,
 } from './assignDraft';
@@ -54,6 +59,7 @@ function res(over: Partial<ImportAssignResponse> = {}): ImportAssignResponse {
     undatedRows: 0,
     exported: false,
     programs: [],
+    lifts: [],
     suggestions: null,
     ...over,
   };
@@ -208,5 +214,45 @@ describe('assignDraft (#1256)', () => {
       statusChosen: false,
       file: { group: 'name:my rpt', macrocycleNum: 1 },
     });
+  });
+});
+
+describe('lifts outside a stretch’s program (#1212)', () => {
+  const lifts = [
+    { name: 'Squat', metadataLift: 'Squat', programs: ['rpt', '531'], progression: 'linear' as const },
+    { name: 'Face Pull', metadataLift: 'Face Pull', programs: [], progression: 'double' as const },
+    { name: 'Dips', metadataLift: 'Dips', programs: ['rpt'], progression: 'linear' as const },
+  ];
+  const withFacePull = (dates: string[]) =>
+    stretch(dates, {
+      matched: false,
+      liftsOutsideProgram: ['Face Pull'],
+      sessions: dates.map((d) => session(d, ['Squat', 'Face Pull', 'Dips'])),
+    });
+  const r = res({ stretches: [withFacePull(['2026-01-01', '2026-01-03']), withFacePull(['2026-02-01'])], lone: [], lifts });
+
+  it('lists each lift the program doesn’t plan, once, and follows a change of program', () => {
+    const draft = initialDraft(r);
+    expect(outsideLifts(draft.stretches[0]!, r).map((l) => l.name)).toEqual(['Face Pull']);
+    const moved = setProgram(draft, 's0', '531');
+    expect(outsideLifts(moved.stretches[0]!, r).map((l) => l.name)).toEqual(['Face Pull', 'Dips']);
+  });
+
+  it('counts each unconfirmed lift once as a decision, and the stretch settles once it’s confirmed', () => {
+    const draft = initialDraft(r);
+    expect(openDecisions(draft, r)).toBe(1);
+    expect(isSettled(draft.stretches[0]!, new Set(), draft, r)).toBe(false);
+
+    const confirmed = confirmLift(draft, 'Face Pull', 'double');
+    expect(openDecisions(confirmed, r)).toBe(0);
+    expect(confirmed.stretches.every((s) => isSettled(s, new Set(), confirmed, r))).toBe(true);
+    expect(liftProgression(confirmed, lifts[1]!)).toBe('double');
+    expect(liftProgression(confirmLift(draft, 'Face Pull', 'manual'), lifts[1]!)).toBe('manual');
+  });
+
+  it('still leaves a stretch unmatched only by its Program column for the lifter to look at', () => {
+    const unknown = res({ stretches: [stretch(['2026-01-01'], { matched: false })], lone: [] });
+    const draft = initialDraft(unknown);
+    expect(isSettled(draft.stretches[0]!, new Set(), draft, unknown)).toBe(false);
   });
 });

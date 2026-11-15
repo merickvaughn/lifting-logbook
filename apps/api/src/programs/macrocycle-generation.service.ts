@@ -158,7 +158,7 @@ function datesForProgramDays(
  * The lifter's progression settings, which `updateMaxes` resolves each lift's type, rep range and
  * increment from (#1211; docs/adr/ADR-043-lift-progression-resolution-and-storage.md).
  */
-async function progressionSettingsFor(
+export async function progressionSettingsFor(
   repos: Pick<MacrocycleRepos, 'liftMetadata' | 'customLift'>,
   settings: Pick<UserSettingsResponse, 'defaultProgression' | 'defaultWeightIncrement'>,
 ): Promise<ProgressionSettings> {

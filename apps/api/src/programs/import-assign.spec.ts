@@ -3,7 +3,7 @@ import type { TrainingMax } from '@lifting-logbook/core';
 import type { PrismaExecutor } from '../adapters/prisma/prisma-tx.util';
 import { CustomProgramsRepository } from '../custom-programs/custom-programs.repository';
 import type { RepositoryBundle } from '../ports/factory';
-import { assignImportDate, assignProgramOptions, importAssignEnabled, splitMaxCounts } from './import-assign';
+import { assignImportDate, assignLifts, assignProgramOptions, importAssignEnabled, splitMaxCounts } from './import-assign';
 
 describe('import-assign helpers (#1253)', () => {
   describe('importAssignEnabled', () => {
@@ -90,6 +90,41 @@ describe('import-assign helpers (#1253)', () => {
 
       // rpt's January 20 row has no stored max to match, and 5-3-1's January 10 row changes its max.
       expect(counts).toEqual({ changes: 2, olderThanCurrent: 0 });
+    });
+  });
+
+  describe('assignLifts (#1212)', () => {
+    const programs = [
+      { id: 'rpt', lifts: new Set(['bench-press', 'deadlift']), workoutCount: 24, lengthWeeks: 8, setOrder: new Map() },
+      { id: 'c1', lifts: new Set(['bench-press', 'Sled Push']), workoutCount: 0, lengthWeeks: 1, setOrder: new Map() },
+    ];
+    const settings = {
+      liftMeta: [{ lift: 'face-pull', progression: 'manual' as const }],
+      userDefault: { type: 'linear' as const },
+      defaultWeightIncrement: null,
+      customLifts: [{ id: 'u1', name: 'Sled Push' }],
+    };
+
+    it('lists each lift once by name, with the programs that plan it and its preselected progression', () => {
+      // `bench-press` and `Bench Press` are two spellings of one lift; the id reads as its display name.
+      const lifts = assignLifts(
+        ['bench-press', 'Bench Press', 'Face Pull', 'Sled Push', 'Leg Curl'],
+        programs,
+        settings,
+        new Map([['bench-press', 'Bench Press']]),
+      );
+      expect(lifts).toEqual([
+        { name: 'Bench Press', metadataLift: 'bench-press', programs: ['rpt', 'c1'], progression: 'linear' },
+        // Its own row wins over the default and is saved under the spelling it was saved with.
+        { name: 'Face Pull', metadataLift: 'face-pull', programs: [], progression: 'manual' },
+        { name: 'Sled Push', metadataLift: 'Sled Push', programs: ['c1'], progression: 'linear' },
+        { name: 'Leg Curl', metadataLift: 'Leg Curl', programs: [], progression: 'linear' },
+      ]);
+    });
+
+    it("takes the catalog's when the lifter has no default", () => {
+      const [legCurl] = assignLifts(['Leg Curl'], programs, { ...settings, userDefault: null }, new Map());
+      expect(legCurl?.progression).toBe('double');
     });
   });
 });

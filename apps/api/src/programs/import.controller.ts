@@ -89,12 +89,14 @@ import { CustomProgramsRepository } from '../custom-programs/custom-programs.rep
 import { IMPORT_HANDLERS, liftsOf } from './import-handlers';
 import {
   assignImportDate,
+  assignLifts,
   assignProgramOptions,
   assignResponse,
   importAssignEnabled,
   planSplitMaxes,
   splitMaxCounts,
 } from './import-assign';
+import { progressionSettingsFor } from './macrocycle-generation.service';
 import { placeSuggestedStretches, recomputeMacrocycles, releaseStatusChoices } from './import-stored';
 import {
   BreakdownBatch,
@@ -942,10 +944,9 @@ export class ImportController {
     const started = Date.now();
     const { importDate, exported, split, liftRecords, splitMaxes, undated, customPrograms, segmented } =
       await this.segmentForAssign(program, table, repos, userId, choices);
-    const stored = await placeSuggestedStretches(repos, segmented.stretches, [
-      ...BUILT_IN_KNOWN_PROGRAMS,
-      ...customPrograms,
-    ]);
+    const knownPrograms = [...BUILT_IN_KNOWN_PROGRAMS, ...customPrograms];
+    const stored = await placeSuggestedStretches(repos, segmented.stretches, knownPrograms);
+    const liftNames = await liftNamesFor(repos);
     const response = assignResponse(
       segmented,
       {
@@ -953,11 +954,17 @@ export class ImportController {
         undatedRows: undated,
         exported,
         programs: assignProgramOptions(customPrograms),
+        lifts: assignLifts(
+          new Set(liftRecords.map((r) => r.lift)),
+          knownPrograms,
+          await progressionSettingsFor(repos, await repos.userSettings.getSettings()),
+          liftNames,
+        ),
         stored,
         ...(split ? { split: await splitMaxCounts(splitMaxes, segmented.stretches, program, repos) } : {}),
         suggestionsProvider: this.suggestions.providerLabel,
       },
-      await liftNamesFor(repos),
+      liftNames,
     );
 
     // Counts only: rows, lift names and notes are the lifter's data (proposal Observability).

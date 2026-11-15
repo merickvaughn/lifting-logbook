@@ -69,11 +69,31 @@ async function commitThroughAssign(page: Page, program?: string) {
   await toAssign(page, program);
   await page.getByRole('button', { name: 'Keep every break: file the 20 one-lift workouts with the macrocycle before each' }).click();
   await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
+  await page.getByRole('button', { name: 'Confirm the progression for Face Pull in RPT from Jan 1, 2024' }).click();
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Preview changes' })).toBeVisible();
   await page.getByRole('button', { name: 'Commit import' }).click();
   await expect(page.getByText('Import complete')).toBeVisible();
 }
+
+// #1212: a lift the stretch's program doesn't plan has its progression confirmed before Preview.
+test('Assign: a lift outside the program has its progression changed by keyboard and saved', async ({ page }) => {
+  await toAssign(page);
+  await page.getByRole('button', { name: 'Keep every break: file the 20 one-lift workouts with the macrocycle before each' }).click();
+  await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
+  await expect(page.getByTestId('assign-decisions')).toHaveText('1 decision left before Preview.');
+
+  const picker = page.getByRole('combobox', { name: 'Progression for Face Pull in RPT from Jan 1, 2024' });
+  await expect(picker).toHaveValue('double');
+  const saved = page.waitForRequest((r) => r.method() === 'PATCH' && r.url().endsWith('/lifts/Face%20Pull/metadata'));
+  await picker.focus();
+  await picker.selectOption('linear');
+  expect((await saved).postDataJSON()).toEqual({ progression: 'linear' });
+
+  await expect(page.getByTestId('assign-decisions')).toHaveText('Nothing left to decide. Continue to Preview.');
+  await expect(picker).toBeFocused();
+  await expect(picker).toHaveValue('linear');
+});
 
 /** Commits the file through Assign, then leaves the wizard for the past-macrocycles list. */
 async function importThenOpenHistory(page: Page) {
