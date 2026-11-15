@@ -170,9 +170,14 @@ Push a trivial commit to `main` (or merge a PR) and watch the workflow in **Acti
 With the staging secrets in place, the pipeline runs:
 
 ```
-preflight → build → deploy-staging (terraform apply + deploy, under the staging lock) → smoke-test
+preflight → build → deploy-staging (terraform apply + deploy + smoke test, under the staging lock)
          → [manual approval] → terraform-production → deploy-production
 ```
+
+The smoke test runs inside `deploy-staging`, before it releases the staging lock, so no
+`staging.yml` run can redeploy staging under it. Besides `/livez`, `/sign-in` and the API's
+`/health`, it asserts that `GET /version` on both services reports the merge commit
+(`scripts/check-served-version.sh`), so it fails if staging is serving any other build (#1052).
 
 The staging Cloud Run URL appears in the `deploy-staging` job output. Smoke-test
 manually with:
@@ -184,11 +189,11 @@ curl -I https://<staging-api-url>/health   # expect 200 or 403
 
 The Nest `HealthController` is `@Public()` and returns `200`. Cloud Run's IAM layer
 may return `403` first if the service is configured `--no-allow-unauthenticated`;
-the workflow's smoke-test job accepts both statuses for the same reason
+the workflow's smoke test accepts both statuses for the same reason
 (`.github/workflows/deploy.yml`, "API smoke test").
 
-If the smoke-test job fails, the production job will not run — production stays on
-the previous revision. The smoke-test logic lives in `.github/workflows/deploy.yml`
+If the smoke test fails, `deploy-staging` fails and the production job will not run —
+production stays on the previous revision. The smoke-test logic lives in `.github/workflows/deploy.yml`
 (search for "Smoke test").
 
 ---

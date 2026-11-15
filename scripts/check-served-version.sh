@@ -10,8 +10,9 @@
 # third argument (as deploy.yml's prod /readyz smoke mints one).
 #
 # Only point it at a service nothing else deploys to concurrently, with a SHA the image was BUILT
-# with: deploy.yml's production services (GIT_SHA=github.sha, serialized by the deploy-main group).
-# Not staging — staging.yml's skip-build runs reuse an earlier image (#671), so GIT_SHA isn't the
+# with: deploy.yml's production services (GIT_SHA=github.sha, serialized by the deploy-main group),
+# and deploy.yml's staging services while deploy-staging holds the staging lock (#1052).
+# Not staging.yml — its skip-build runs reuse an earlier image (#671), so GIT_SHA isn't the
 # run's commit. There scripts/check-cloud-run-serving-revision.py (run by the deploy action) catches
 # a pin, and scripts/check-staging-deployed-image.py checks the run's own images (#1208).
 #

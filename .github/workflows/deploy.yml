@@ -1,8 +1,8 @@
 name: Deploy
 
 # Runs on every push to main.
-# Pipeline: [preflight] → build images → terraform + deploy staging (under the staging lock) →
-#           smoke test → [manual approval] → terraform production → deploy production
+# Pipeline: [preflight] → build images → terraform + deploy + smoke test staging (under the
+#           staging lock) → [manual approval] → terraform production → deploy production
 #
 # Staging is optional. When GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER is not set,
 # staging jobs are skipped and the pipeline goes directly from build-images to
@@ -286,11 +286,12 @@ jobs:
   deploy-staging:
     name: Deploy (staging)
     runs-on: ubuntu-latest
-    # Up to 80m waiting for the staging lock, then 20m of Terraform apply and 30m of deploy, plus
-    # 5m spare. The wait covers the longest hold a staging.yml run can have (terraform-staging's
+    # Up to 80m waiting for the staging lock, then 20m of Terraform apply, 30m of deploy and 10m of
+    # smoke test (its probes give up after about 8m), plus 5m spare. The wait covers the longest
+    # hold a staging.yml run can have (terraform-staging's
     # 20m, deploy-api's 30m, then the integration tests' 25m), so a lost race can't skip this
     # merge's production deploy; this run's waiter also has priority over pull_request waiters.
-    timeout-minutes: 135
+    timeout-minutes: 145
     needs: [preflight, build-images]
     if: needs.preflight.outputs.staging_enabled == 'true' && needs.build-images.result == 'success'
     permissions:
@@ -298,9 +299,6 @@ jobs:
       id-token: write
       actions: read   # ask GitHub whether the staging lock's holder run has completed
     environment: staging
-    outputs:
-      cloud_run_api_url: ${{ steps.tf-outputs.outputs.cloud_run_api_url }}
-      cloud_run_web_url: ${{ steps.tf-outputs.outputs.cloud_run_web_url }}
 
     steps:
       - uses: actions/checkout@v5
@@ -442,7 +440,7 @@ jobs:
         if: steps.tf-outputs.outputs.gke_enabled == 'true'
         # GKE is the optional 10%-traffic A/B target (ADR-009); Cloud Run below is the
         # real serving path. A GKE rollout problem must never fail this job — that would
-        # skip smoke-test and the (Cloud-Run-only) production gate. Matches staging.yml.
+        # skip the staging smoke test and the (Cloud-Run-only) production gate. Matches staging.yml.
         continue-on-error: true
         run: |
           helm upgrade --install api ./infra/kubernetes/charts/api \
@@ -605,20 +603,21 @@ jobs:
             --set-string image.digest="${OTEL_COLLECTOR_IMAGE_DIGEST}" \
             --wait --timeout=5m
 
-      # always(): also on failure or cancellation. Deletes the lock only if this run holds it.
-      - name: Release the staging lock
-        if: always()
-        run: python3 scripts/staging-env-lock.py release --bucket "$STAGING_LOCK_BUCKET"
+      # ── 4. Smoke test staging, still under the staging lock (#1052) ────────
+      # The smoke test is the staging gate deploy-production needs, so it has to probe this merge's
+      # build. It runs in this job, before the release below, because staging.yml deploys the same
+      # services for every PR push and merge-queue entry: once the lock is released, the next
+      # waiter can redeploy them, and a smoke test in a later job would pass or fail on that run's
+      # build. Holding the lock also means a staging.yml run can't cancel or fail this gate; it
+      # waits, and its waiters are never cancelled.
+      #
+      # Refreshed again for the same reason as the refresh above: the deploy (up to 30m) plus these
+      # probes must not reach the 40 minutes after which a waiter may take over the lock.
+      - name: Refresh the staging lock before the smoke test
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/staging-env-lock.py acquire --bucket "$STAGING_LOCK_BUCKET" --recreate-in-project "$STAGING_LOCK_PROJECT" --timeout-min 0 --holder-job "Deploy (staging)"
 
-  # ── 4. Smoke test staging ────────────────────────────────────────────────
-  smoke-test:
-    name: Smoke Test (staging)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [preflight, deploy-staging]
-    if: needs.preflight.outputs.staging_enabled == 'true' && needs.deploy-staging.result == 'success'
-
-    steps:
       # Two-probe staging smoke (#402, renamed /healthz → /livez in #409).
       # One probe owned by app code (/livez), one by the user-facing auth
       # flow (/sign-in). They distinguish three failure modes that a single
@@ -639,7 +638,7 @@ jobs:
         run: |
           # %/ strips a trailing slash so $BASE_URL/livez never becomes
           # https://.../livez double-slashed (#405 review finding).
-          BASE_URL="${{ needs.deploy-staging.outputs.cloud_run_web_url }}"
+          BASE_URL="${{ steps.tf-outputs.outputs.cloud_run_web_url }}"
           BASE_URL="${BASE_URL%/}"
           # Allow up to 3 minutes for Cloud Run to become healthy
           for i in $(seq 1 18); do
@@ -655,7 +654,7 @@ jobs:
 
       - name: Smoke test Cloud Run staging — /sign-in (Clerk auth flow)
         run: |
-          BASE_URL="${{ needs.deploy-staging.outputs.cloud_run_web_url }}"
+          BASE_URL="${{ steps.tf-outputs.outputs.cloud_run_web_url }}"
           BASE_URL="${BASE_URL%/}"
           # The runtime is already up (/livez succeeded immediately before this
           # step). /sign-in should respond within seconds, not minutes — if Clerk
@@ -672,23 +671,38 @@ jobs:
           done
           echo "Staging /sign-in smoke FAILED — runtime healthy but Clerk auth flow not serving 200 (check middleware matcher and Clerk env vars)" && exit 1
 
-      # No /version (served-build) probe here, unlike prod (#1042). Staging is shared: staging.yml
-      # redeploys these services for every PR push and merge-queue entry, and deploy-staging
-      # releases the staging lock (#1208) before this job starts, so by now stg-web may legitimately serve another commit — and a failure here would
-      # block deploy-production. A pin in staging is caught instead by the deploy action's
-      # "Verify the newest revision serves 100% of traffic" step.
-      - name: Smoke test Cloud Run staging (API auth check)
+      # Which build answered (#1042, #1052). /livez and /sign-in pass against any revision; /version
+      # reports the GIT_SHA baked into the image, github.sha for every deploy.yml build. This job
+      # still holds the staging lock, so no other run has deployed since the steps above.
+      - name: Smoke test Cloud Run staging — /version (served web build)
+        run: bash scripts/check-served-version.sh "${{ steps.tf-outputs.outputs.cloud_run_web_url }}" "${{ github.sha }}"
+
+      - name: Smoke test Cloud Run staging (API auth check) + /version (served API build)
         run: |
+          API_URL="${{ steps.tf-outputs.outputs.cloud_run_api_url }}"
+          API_URL="${API_URL%/}"
           # API requires Cloud Run IAM auth — a 403 confirms it is up and rejecting
           # unauthenticated requests correctly. A 200 is also acceptable (e.g., if
           # service-to-service auth is later wired up via a service account).
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "${{ needs.deploy-staging.outputs.cloud_run_api_url }}/health")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/health")
           if [ "$STATUS" = "403" ] || [ "$STATUS" = "200" ]; then
             echo "API smoke test passed (status=$STATUS)"
           else
             echo "API smoke test failed: expected 200 or 403, got $STATUS" && exit 1
           fi
+          # /version needs an identity token for the service, minted the way the production
+          # /readyz smoke does (impersonation: WIF-federated creds can't mint ID tokens directly).
+          ID_TOKEN=$(gcloud auth print-identity-token \
+            --impersonate-service-account="${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}" \
+            --audiences="$API_URL" \
+            --include-email)
+          [ -n "$ID_TOKEN" ] || { echo "ERROR: failed to mint Cloud Run identity token for $API_URL"; exit 1; }
+          bash scripts/check-served-version.sh "$API_URL" "${{ github.sha }}" "$ID_TOKEN"
+
+      # always(): also on failure or cancellation. Deletes the lock only if this run holds it.
+      - name: Release the staging lock
+        if: always()
+        run: python3 scripts/staging-env-lock.py release --bucket "$STAGING_LOCK_BUCKET"
 
   # ── 4b. Plan production (read-only — surfaces the prod blast radius) ─────
   # Runs `terraform plan` against the PRODUCTION workspace and writes the
@@ -853,17 +867,17 @@ jobs:
     # approve (#542). It is intentionally advisory: the `if:` below does NOT
     # require plan-production to succeed, so a transient plan failure removes the
     # summary for that run but never blocks the deploy.
-    needs: [preflight, build-images, deploy-staging, smoke-test, plan-production]
+    needs: [preflight, build-images, deploy-staging, plan-production]
     # Only deploy when the pipeline is actually ready: build succeeded and,
-    # when staging is enabled, the staging smoke test passed. `always()` lets
-    # this run even though deploy-staging/smoke-test are skipped in
-    # production-only mode (their `skipped` result is not `success`).
+    # when staging is enabled, deploy-staging (which ends with the staging smoke
+    # test, #1052) passed. `always()` lets this run even though deploy-staging is
+    # skipped in production-only mode (its `skipped` result is not `success`).
     if: |
       always() &&
       needs.build-images.result == 'success' &&
       (
         needs.preflight.outputs.staging_enabled != 'true' ||
-        needs.smoke-test.result == 'success'
+        needs.deploy-staging.result == 'success'
       )
     # gh run list (used by the cancelled-run ancestry audit near the end of this job)
     # works with contents: read alone — see staging.yml's build-images job for the
@@ -1179,7 +1193,7 @@ jobs:
       # ── Production web served-surface smoke (#490 item 3 / #382 / #407) ────
       # Verify the *live* prod web surface through the real Cloud Run ingress
       # after deploy, using the same two-probe shape the staging smoke uses (the
-      # smoke-test job): /livez (Next.js runtime, owned by app code) and /sign-in
+      # end of deploy-staging): /livez (Next.js runtime, owned by app code) and /sign-in
       # (Clerk auth flow, owned by middleware). Staging exercises this before the
       # promote gate, but prod previously had only the DB-backed API /readyz smoke
       # above — the web served surface was never re-checked in prod, so both
