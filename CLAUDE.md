@@ -301,8 +301,8 @@ applied a production change unrelated to the merge that triggered it.
 The `gh pr *` commands the steps above depend on — `gh pr create` (step 7), `gh pr merge`
 (step 8), `gh pr view --json`, `gh pr comment` — are **all GraphQL** calls, and this repo's 60+
 concurrent worktrees share **one token's GitHub API rate limits**, counted separately for GraphQL
-and REST (core). GraphQL can
-therefore exhaust while the separate **REST (core)** bucket is still healthy. Motivating incident:
+and REST (core). GraphQL can therefore exhaust while the separate **REST (core)** bucket is still
+healthy. Motivating incident:
 [PR #700](https://github.com/merickvaughn/lifting-logbook/pull/700)'s session (2026-07-05) — `gh pr
 create` died with `GraphQL: API rate limit already exceeded` while REST core showed 4999/5000. The
 buckets are independent, so when a `gh pr` command fails that way, don't wait for the reset — fall
