@@ -282,16 +282,22 @@ lift editor saves lists equal to the defaults as two empty lists, so the lift fo
 change to the defaults.
 
 `PATCH /lifts/:lift/metadata` on a name that `encodeURIComponent` changes also retires that name's
-legacy encoded rows, matched by core's `legacyEncodedLiftName`, the rule the resolver reads them
-with. When the real name has no row yet, the legacy row's values are the base the patch applies
-to, so nothing it held is lost. After the write, the legacy rows are deleted. Without this, a
-legacy row would stay in the table after the save, shadowed by the real-name row but still holding
-substitutions and a progression that no screen shows and the data export still carries.
+legacy row. That is the row stored under exactly `encodeURIComponent(lift)`, the only form the old
+editor wrote. When the real name has no row yet, the legacy row's values are the base the patch
+applies to, so nothing it held is lost. The legacy row is deleted after the write, in the same
+request transaction, so a failed delete rolls the save back. Without this, a legacy row would stay
+in the table after the save, shadowed by the real-name row. It would still hold substitutions and a
+progression that no screen shows and the data export still carries. The lift editor fills from the
+same row.
+
+The match is exact, not core's broader read rule (a `%`, no whitespace, decodes to the name).
+This is a delete, so it must not take a row whose name only looks encoded, such as a lift
+genuinely named with a `%`.
 
 A one-time SQL migration that renames encoded rows was rejected. It would have to decode
-percent-encoding in SQL, the same rule core's TypeScript applies, and settle a row whose real name
-already exists. That would be a second copy of the rule, run once, against data that only the
-running app can interpret.
+percent-encoding in SQL, which core does in TypeScript, and settle a row whose real name already
+exists. That would be a second copy of the decoding, run once, against data that only the running
+app can interpret.
 
 ## References
 

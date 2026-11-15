@@ -139,7 +139,30 @@ describe('EditLiftPage (#1190)', () => {
   it('matches a lift the workout stores under another spelling', async () => {
     mockedWorkout.mockResolvedValue(workout('Bench Press'));
 
-    expect(await renderEdit('bench-press')).toContain('lift-editor:5-3-1:bench-press:');
+    const html = await renderEdit('bench-press');
+    expect(html).toContain('lift-editor:5-3-1:bench-press:false');
+    expect(html).toContain('muscles:default:Chest/Triceps,Front Delts');
+  });
+
+  // The muscles come from the row the form fills from, so the editor never shows one row's
+  // muscles beside another row's settings, and what it shows is what a save writes.
+  it('takes the muscles from the same row as the rest of the form', async () => {
+    mockedWorkout.mockResolvedValue(workout('Bench Press'));
+    mockedMetadata.mockResolvedValue([row('Bench Press', ['Triceps'])]);
+
+    const html = await renderEdit('bench-press');
+    expect(html).toContain('lift-editor:5-3-1:bench-press:false');
+    expect(html).toContain('muscles:default:Chest/');
+  });
+
+  it('ignores a row whose name only looks encoded', async () => {
+    mockedWorkout.mockResolvedValue(workout('Front Squat'));
+    // Decodes to "Front Squat", but encodeURIComponent writes "Front%20Squat".
+    mockedMetadata.mockResolvedValue([row('Front%20Squa%74', ['Core'])]);
+
+    const html = await renderEdit('Front Squat');
+    expect(html).toContain('lift-editor:5-3-1:Front Squat:false');
+    expect(html).toContain('muscles:default:');
   });
 
   it('404s a lift that is not in the workout, without fetching its metadata', async () => {

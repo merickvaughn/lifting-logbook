@@ -17,8 +17,9 @@ interface Props {
   program: string;
   macrocycleNum: number;
   workoutNum: number;
-  initialMetadata: LiftMetadataResponse;
-  /** The lift's effective muscles, resolved over all of the user's rows (#1017). */
+  /** The muscle lists aren't taken from here; `muscles` is their one source (#1017). */
+  initialMetadata: Omit<LiftMetadataResponse, 'muscleGroups' | 'secondaryMuscleGroups'>;
+  /** The lift's effective muscles, resolved from the row the form is filled from (#1017). */
   muscles: ResolvedMuscleTargets;
   /** The built-in defaults for the lift's name, or null when it has none. */
   defaultMuscles: MuscleTargets | null;

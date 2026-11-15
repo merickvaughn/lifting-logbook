@@ -5,7 +5,7 @@ jest.mock('@/lib/api', () => ({
 
 import { buildMuscleTargetResolver, movementPatternsFor } from '@lifting-logbook/core';
 import { fetchAllLiftMetadata, fetchCustomLifts } from '@/lib/api';
-import { loadVolumeResolvers } from '@/lib/volumeResolvers';
+import { VOLUME_INPUTS_TIMEOUT_MS, loadVolumeResolvers } from '@/lib/volumeResolvers';
 
 const mockedMetadata = fetchAllLiftMetadata as unknown as jest.Mock;
 const mockedCustomLifts = fetchCustomLifts as unknown as jest.Mock;
@@ -42,7 +42,12 @@ describe('loadVolumeResolvers (#1017)', () => {
   it('returns the overrides and custom lifts the resolvers are built from', async () => {
     const inputs = await loadVolumeResolvers('test-page');
 
-    expect(inputs).toEqual({ overrides: [override], customLifts: [customLift] });
+    expect(inputs).toEqual({
+      overrides: [override],
+      customLifts: [customLift],
+      overridesFailed: false,
+      customLiftsFailed: false,
+    });
     // Serializable, as a server component must pass it to a client one.
     expect(JSON.parse(JSON.stringify(inputs))).toEqual(inputs);
     expect(buildMuscleTargetResolver(inputs.overrides)('Bench Press')).toEqual({
@@ -60,7 +65,9 @@ describe('loadVolumeResolvers (#1017)', () => {
 
     // The override is gone, so Bench Press reads its defaults, and the custom lifts still load.
     expect(inputs.overrides).toEqual([]);
+    expect(inputs.overridesFailed).toBe(true);
     expect(inputs.customLifts).toEqual([customLift]);
+    expect(inputs.customLiftsFailed).toBe(false);
     expect(buildMuscleTargetResolver(inputs.overrides)('Bench Press')).toEqual({
       primary: ['Chest'],
       secondary: ['Triceps', 'Front Delts'],
@@ -78,11 +85,74 @@ describe('loadVolumeResolvers (#1017)', () => {
     const inputs = await loadVolumeResolvers('test-page');
 
     expect(inputs.customLifts).toEqual([]);
+    expect(inputs.customLiftsFailed).toBe(true);
     expect(inputs.overrides).toEqual([override]);
+    expect(inputs.overridesFailed).toBe(false);
     expect(movementPatternsFor('Sled Push', inputs.customLifts)).toBeUndefined();
     expect(error).toHaveBeenCalledWith(
       '[test-page] custom lifts fetch failed; leaving custom lifts uncounted',
       expect.any(Error),
     );
+  });
+
+  describe('a slow fetch', () => {
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      jest.useFakeTimers();
+      warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      jest.useRealTimers();
+      warn.mockRestore();
+    });
+
+    it('stops waiting for the overrides after the budget, and logs it', async () => {
+      mockedMetadata.mockReturnValue(new Promise(() => {}));
+
+      const pending = loadVolumeResolvers('test-page');
+      await jest.advanceTimersByTimeAsync(VOLUME_INPUTS_TIMEOUT_MS);
+      const inputs = await pending;
+
+      expect(inputs).toEqual({
+        overrides: [],
+        customLifts: [customLift],
+        overridesFailed: true,
+        customLiftsFailed: false,
+      });
+      expect(warn).toHaveBeenCalledWith(
+        '[test-page] lift metadata fetch slow; counting sets by built-in muscle defaults',
+      );
+      expect(error).not.toHaveBeenCalled();
+    });
+
+    it('stops waiting for the custom lifts after the budget, and logs it', async () => {
+      mockedCustomLifts.mockReturnValue(new Promise(() => {}));
+
+      const pending = loadVolumeResolvers('test-page');
+      await jest.advanceTimersByTimeAsync(VOLUME_INPUTS_TIMEOUT_MS);
+      const inputs = await pending;
+
+      expect(inputs).toEqual({
+        overrides: [override],
+        customLifts: [],
+        overridesFailed: false,
+        customLiftsFailed: true,
+      });
+      expect(warn).toHaveBeenCalledWith('[test-page] custom lifts fetch slow; leaving custom lifts uncounted');
+    });
+
+    it('waits for a fetch that answers within the budget', async () => {
+      mockedMetadata.mockReturnValue(
+        new Promise((resolve) => setTimeout(() => resolve([override]), VOLUME_INPUTS_TIMEOUT_MS - 1)),
+      );
+
+      const pending = loadVolumeResolvers('test-page');
+      await jest.advanceTimersByTimeAsync(VOLUME_INPUTS_TIMEOUT_MS);
+      const inputs = await pending;
+
+      expect(inputs.overrides).toEqual([override]);
+      expect(inputs.overridesFailed).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+    });
   });
 });

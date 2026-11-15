@@ -67,7 +67,7 @@ export default function SetVolumeTable({ caption, rowHeader, order, columns }: P
           <tr key={row.key}>
             <th scope="row">{row.key}</th>
             {row.sets.map((sets, i) => (
-              <td key={columns[i]?.label ?? i} className={styles.number}>
+              <td key={i} className={styles.number}>
                 {formatSetCount(sets)}
               </td>
             ))}
@@ -85,7 +85,7 @@ export default function SetVolumeTable({ caption, rowHeader, order, columns }: P
             <tr key={lift.lift}>
               <th scope="row">{lift.lift}</th>
               {lift.sets.map((sets, i) => (
-                <td key={columns[i]?.label ?? i} className={styles.number}>
+                <td key={i} className={styles.number}>
                   {formatSetCount(sets)}
                 </td>
               ))}

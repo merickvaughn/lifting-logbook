@@ -1,11 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
-import {
-  buildMuscleTargetResolver,
-  defaultMuscleTargetsFor,
-  isSameLift,
-  legacyEncodedLiftName,
-} from '@lifting-logbook/core';
+import { buildMuscleTargetResolver, defaultMuscleTargetsFor, isSameLift } from '@lifting-logbook/core';
 import type { LiftMetadataResponse } from '@lifting-logbook/types';
 import { fetchAllLiftMetadata, fetchWorkout } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
@@ -48,13 +43,16 @@ export default async function EditLiftPage({
   );
   if (moved) redirect(moved);
 
+  // The legacy row is the one stored under exactly the name the old editor saved, the same row
+  // the API retires on save.
   const rows = await fetchAllLiftMetadata();
+  const encoded = encodeURIComponent(lift);
   const row =
-    rows.find((meta) => meta.lift === lift) ??
-    rows.find((meta) => legacyEncodedLiftName(meta.lift) === lift);
+    rows.find((meta) => meta.lift === lift) ?? (encoded === lift ? undefined : rows.find((meta) => meta.lift === encoded));
   const metadata: LiftMetadataResponse = row ? { ...row, lift } : emptyMetadata(lift);
-  // Resolved here, since the resolver is a closure and can't cross to the client component.
-  const muscles = buildMuscleTargetResolver(rows)(lift);
+  // Resolved from the row the form is filled from, so the muscles shown are the ones a save
+  // writes. Resolved here, since the resolver is a closure and can't cross to the client.
+  const muscles = buildMuscleTargetResolver(row ? [metadata] : [])(lift);
   const defaultMuscles = defaultMuscleTargetsFor(lift) ?? null;
 
   return (

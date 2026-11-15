@@ -1228,6 +1228,15 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
         expect(tooMany.statusCode).toBe(400);
       });
 
+      // An explicit null passed @IsOptional() and reached Prisma's non-nullable columns as a 500.
+      it.each(['muscleGroups', 'secondaryMuscleGroups', 'substitutions', 'foundational'])(
+        'rejects a null %s with 400',
+        async (field) => {
+          const res = await asCarol('PATCH', '/lifts/Squat/metadata', { [field]: null });
+          expect(res.statusCode).toBe(400);
+        },
+      );
+
       it('stores a multi-word lift under its real name', async () => {
         const res = await asCarol('PATCH', '/lifts/Romanian%20Deadlift/metadata', { muscleGroups: ['Hamstrings'] });
         expect(res.statusCode).toBe(200);
@@ -1269,12 +1278,27 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
         expect((await list()).map((row) => row.lift)).not.toContain('Cable%20Row');
       });
 
+      // Only the exact name the old editor saved is legacy. "Caf%c3%a9" decodes to "Café" but
+      // isn't encodeURIComponent's output ("Caf%C3%A9"), so it is somebody's real row.
+      it('leaves a row whose name only looks encoded', async () => {
+        await asCarol('PATCH', '/lifts/Caf%25c3%25a9/metadata', { muscleGroups: ['Core'] });
+        expect((await list()).map((row) => row.lift)).toContain('Caf%c3%a9');
+
+        const res = await asCarol('PATCH', '/lifts/Caf%C3%A9/metadata', { foundational: true });
+        expect(res.json()).toMatchObject({ lift: 'Café', muscleGroups: [], foundational: true });
+        expect((await list()).map((row) => row.lift)).toEqual(expect.arrayContaining(['Café', 'Caf%c3%a9']));
+      });
+
       it("keeps one user's rows out of another's list", async () => {
+        await asCarol('PATCH', '/lifts/Hip%20Thrust/metadata', { muscleGroups: ['Glutes'] });
+        expect((await list()).map((row) => row.lift)).toContain('Hip Thrust');
+
         const bob = await app
           .getHttpAdapter()
           .getInstance()
           .inject({ method: 'GET', url: '/lifts/metadata', headers: AS_BOB });
-        expect((bob.json() as Row[]).map((row) => row.lift)).not.toContain('Bench Press');
+        expect(bob.statusCode).toBe(200);
+        expect((bob.json() as Row[]).map((row) => row.lift)).not.toContain('Hip Thrust');
       });
     });
 

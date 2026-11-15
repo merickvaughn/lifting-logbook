@@ -116,7 +116,8 @@ by lift *name***, while `CustomLift` is keyed by uuid.
   defaults that way, so the lift follows any later change to them.
 - Before #1017 the lift editor stored a multi-word lift under its URL-encoded name
   ("Bench%20Press"). The resolver reads such a row under the real name until the real name has
-  a row, and saving the real name retires it, carrying its values forward.
+  a row. Saving the real name retires the row stored under exactly `encodeURIComponent(lift)`,
+  carrying its values forward (ADR-036 Amendment 4).
 - `muscleGroups` is still an unconstrained `String[]`. Readers canonicalize it
   case-insensitively against the vocabulary and keep unknown text as its own row
   (`buildMuscleTargetResolver`, `packages/core/src/catalog/muscles.ts`).

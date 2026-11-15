@@ -9,7 +9,6 @@ import {
   Param,
   Patch,
 } from '@nestjs/common';
-import { legacyEncodedLiftName } from '@lifting-logbook/core';
 import { LiftMetadataResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
@@ -94,11 +93,11 @@ export class LiftMetadataController {
       if (dto[field] !== undefined) Object.assign(patch, { [field]: dto[field] });
     }
 
-    const { stored, legacy } = await readLegacyRows(liftMetadata, lift);
+    const { stored, legacy } = await readLegacyRow(liftMetadata, lift);
     // A row saved before #1017 under the lift's URL-encoded name is retired by this save. Until
     // the real name has a row of its own, the legacy row is the lift's metadata, so its values
     // are the starting point and none of them is lost.
-    const base = stored === null ? legacy[0] : undefined;
+    const base = stored === null && legacy ? legacy : undefined;
 
     // The DTO checks a range sent whole; a patch that sets one end and leaves the other out is
     // checked against the other end as stored, so the row never holds a bottom above its top
@@ -121,26 +120,27 @@ export class LiftMetadataController {
       }
     }
     const saved = await liftMetadata.upsertMetadata(lift, patch);
-    // Not one transaction with the write: a legacy row left behind by a failure here is
-    // shadowed by the real-name row, which every reader prefers, and the next save retries.
-    for (const row of legacy) await liftMetadata.deleteMetadata(row.lift);
+    // RlsInterceptor runs the request in one transaction, so the write and this delete land or
+    // fail together: a failed delete rolls the save back and the PATCH reports it.
+    if (legacy) await liftMetadata.deleteMetadata(legacy.lift);
     return toResponse(saved);
   }
 }
 
 /**
- * The row stored under `lift` and any legacy rows stored under its URL-encoded name (#1017).
- * Read only when `encodeURIComponent` changes `lift`, since only such a name can have a legacy
- * row; `stored` is undefined when nothing was read.
+ * The row stored under `lift` and the legacy row stored under exactly the name the pre-#1017
+ * editor saved, `encodeURIComponent(lift)`. Nothing else is matched, so a row whose name only
+ * looks encoded is never deleted. Read only when encoding changes `lift`, since only then can a
+ * legacy row exist; `stored` is undefined when nothing was read.
  */
-async function readLegacyRows(
+async function readLegacyRow(
   liftMetadata: ILiftMetadataRepository,
   lift: string,
-): Promise<{ stored: LiftMetadata | null | undefined; legacy: LiftMetadata[] }> {
-  if (encodeURIComponent(lift) === lift) return { stored: undefined, legacy: [] };
-  const rows = await liftMetadata.listMetadata();
-  return {
-    stored: rows.find((row) => row.lift === lift) ?? null,
-    legacy: rows.filter((row) => legacyEncodedLiftName(row.lift) === lift),
-  };
+): Promise<{ stored: LiftMetadata | null | undefined; legacy: LiftMetadata | null }> {
+  const encoded = encodeURIComponent(lift);
+  if (encoded === lift) return { stored: undefined, legacy: null };
+  // Sequential: the request's queries share one interactive transaction.
+  const stored = await liftMetadata.getMetadata(lift);
+  const legacy = await liftMetadata.getMetadata(encoded);
+  return { stored, legacy };
 }
