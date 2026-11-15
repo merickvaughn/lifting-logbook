@@ -174,6 +174,12 @@ jobs:
       - name: Check staging terraform apply runs under the staging lock
         run: python scripts/test_staging_terraform_under_lock.py -v
 
+      # deploy.yml's staging smoke test (the gate deploy-production needs) probes staging only while
+      # deploy-staging holds the staging lock, and asserts /version == github.sha on web and api,
+      # so another run's deploy can't stand in for this merge's build (#1052). Needs PyYAML.
+      - name: Check deploy.yml's staging smoke test runs under the staging lock
+        run: python scripts/test_staging_smoke_under_lock.py -v
+
       # staging.yml's pre-test check: passes on this run's image by tag or digest, fails naming both
       # images when another run's deploy replaced it.
       - name: Unit test the staging deployed-image check (scripts/check-staging-deployed-image.py)

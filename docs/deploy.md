@@ -355,7 +355,7 @@ Push or merge to `main`. The pipeline runs automatically.
 
 ### Approving a production deploy
 
-After `build-images`, `deploy-staging`, and `smoke-test` succeed, the run pauses at the
+After `build-images` and `deploy-staging` (which ends with the staging smoke test) succeed, the run pauses at the
 `production` environment gate (the Required-reviewer rule from [Step 6](#step-6--configure-github-environment-protection-rules))
 and waits for approval before the `deploy-production` job starts. This gate is what applies
 pending Prisma migrations to prod — it sits in front of the in-VPC migrate job and the
