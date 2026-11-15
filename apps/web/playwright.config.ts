@@ -74,6 +74,16 @@ export default defineConfig({
   // Playwright's default testMatch also grabs `*.test.ts`; those are Jest unit tests
   // (e.g. e2e/mock-api.test.ts, which uses `describe`) and must not run under Playwright.
   testIgnore: ['**/staging.spec.ts', '**/*.test.ts'],
+  // Local runs compile every page before the first test, so a cold Next dev compile on
+  // Windows can't fail a test on timing (#1049). Skipped in CI, which is unchanged, and
+  // with E2E_SKIP_WARMUP=1 for a quick local run of one spec against a warm .next.
+  globalSetup: process.env.CI || process.env.E2E_SKIP_WARMUP ? undefined : './e2e/warmup.global-setup.ts',
+  // Even with every page compiled, a dev-server render on Windows under the full suite's
+  // load can outlast expect's 5 s default: a link click from the timer page to the
+  // compiled workout detail page took more than 5 s once in a 92-test run (#1049), and
+  // 1.9-5.0 s alone. A passing assertion returns as soon as it holds, so only a failing
+  // one waits longer. Local Windows only, like Jest's win32 testTimeout (#567).
+  expect: { timeout: process.platform === 'win32' && !process.env.CI ? 15_000 : 5_000 },
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

@@ -28,10 +28,14 @@ function headings(page: Page) {
  * trigger a retry after the first click took effect. Every action used here is:
  * placement radios, Keep everything / Show suggestion, Undo, Reset order, and Trim,
  * which ignores a lift already trimmed and is disabled while a save is in flight.
+ *
+ * The click has its own short timeout. A retry that finds the button disabled by the
+ * first click's save would otherwise wait for it to be enabled, and when the save
+ * lands the button is removed, so that wait outlasted the whole toPass (#1049).
  */
 async function clickOnceHydrated(button: Locator, landed: Locator) {
   await expect(async () => {
-    if (await button.isVisible()) await button.click();
+    if (await button.isVisible()) await button.click({ timeout: 1_000 });
     await expect(landed).toBeVisible({ timeout: 1_000 });
   }).toPass({ timeout: 20_000 });
 }
