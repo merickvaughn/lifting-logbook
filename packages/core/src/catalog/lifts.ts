@@ -28,12 +28,11 @@ const MANUAL: CatalogProgression = { type: 'manual' };
  *     override them per lift (`LiftMetadata`). Defaults attach to the name, so a custom
  *     lift reads them only when it shares a built-in's name or alias. See ADR-036.
  *   - aliases: other names the built-in program presets use for this lift (e.g.
- *     "Calf Raises"). `builtInLiftFor` recognizes them — so they classify and count — but
- *     they are deliberately NOT in `DEFAULT_SLOT_MAP`, which also drives the logger's
- *     bodyweight detection and the custom-lift collision guard, each a separate decision
- *     (issue #1015). Aliasing "Weighted Pull-ups" there, for instance, would flip it to a
- *     bodyweight-component lift. Import alone accepts them, through `buildImportSlotMap`,
- *     so a preset's own rows can be restored (issue #947).
+ *     "Calf Raises"). `builtInLiftFor` recognizes them, so they classify, count, and (for
+ *     "Weighted Pull-ups") get the logger's bodyweight handling. They are deliberately NOT
+ *     in `DEFAULT_SLOT_MAP`, whose names the custom-lift guard reserves (issue #1015).
+ *     Import accepts them through `buildImportSlotMap` and stores them as written, so a
+ *     preset's own rows can be restored (issue #947).
  *   - progression: the lift's default progression type and rep range (issue #1209); see
  *     {@link CatalogProgression}.
  */

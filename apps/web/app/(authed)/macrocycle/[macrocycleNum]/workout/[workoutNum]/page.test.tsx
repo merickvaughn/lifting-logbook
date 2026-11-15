@@ -716,3 +716,32 @@ describe('WorkoutLoggingPage — the plan follows the lift’s progression type 
     expect(mockedLiftRecords).not.toHaveBeenCalled();
   });
 });
+
+describe('WorkoutLoggingPage — bodyweight-component lifts by any of their names (#1015)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("treats Leangains' and RPT's Weighted Pull-ups as a bodyweight lift, with its warm-up implement", async () => {
+    seedWorkout([
+      { lift: 'Weighted Pull-ups', planned: true, sets: [] },
+      // The catalog name a custom program's picker stores: bodyweight too, by the same entry.
+      { lift: 'Pull-up', planned: true, sets: [] },
+      { lift: 'Dips', planned: true, sets: [] },
+      { lift: 'Dip', planned: true, sets: [] },
+      { lift: 'Chin-up', planned: true, sets: [] },
+      { lift: 'Squat', planned: true, sets: [] },
+    ]);
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => [l.lift, l.isBodyweightComponent, l.warmUpImplement])).toEqual([
+      ['Weighted Pull-ups', true, 'lat pulldown'],
+      ['Pull-up', true, 'lat pulldown'],
+      ['Dips', true, 'dips (unweighted)'],
+      ['Dip', true, 'dips (unweighted)'],
+      ['Chin-up', true, 'lat pulldown'],
+      ['Squat', false, undefined],
+    ]);
+  });
+});
