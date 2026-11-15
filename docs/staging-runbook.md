@@ -155,9 +155,10 @@ gcloud sql instances patch "$INSTANCE" \
   --no-assign-ip --project=lifting-logbook-staging --quiet
 ```
 
-The seed script (`apps/api/prisma/seed.ts`) uses `upsert` everywhere — re-running it is
-safe. It writes 12 cycles × 6 lifts of 5/3/1 data under the synthetic user
-`seed_user_clerkid_staging_001`, which is not reachable via any real Clerk token.
+The seed script (`apps/api/prisma/seed.ts`) writes three macrocycles of the built-in `5-3-1`
+program under the synthetic user `seed_user_clerkid_staging_001`, which is not reachable via any
+real Clerk token. Re-running it is safe: it deletes that user's rows and writes them again, in one
+transaction, and touches no other user.
 
 The full table-by-table row count is documented in
 [`deploy.md` § Step 3.5 — Seed staging data](deploy.md#step-35--seed-staging-data).

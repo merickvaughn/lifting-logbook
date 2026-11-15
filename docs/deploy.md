@@ -216,21 +216,29 @@ pipeline runs the `lifting-logbook-stg-migrate` Cloud Run Job automatically — 
 [ADR-027](adr/ADR-027-deploy-pipeline-migrations.md); for manual runs use
 `./scripts/migrate-staging-db.sh`).
 
-**What it creates:**
+**What it creates:** a seed user running the built-in `5-3-1` program, with two completed
+12-week macrocycles and a current one started four weeks ago. Program, lift and workout names all
+come from the preset spec (`PRESET_BASE_SPECS['5-3-1']`: Squat, Bench Press, Deadlift, Overhead
+Press), so the dashboard plans the seed user's lifts and finds their training maxes
+([#1022](https://github.com/merickvaughn/lifting-logbook/issues/1022)). The rows are built in
+`apps/api/prisma/seed-plan.ts`.
 
 | Table | Rows |
 |---|---|
-| `user_settings` | 1 (seed user) |
-| `lift_metadata` | 6 lifts (squat, deadlift, bench-press, overhead-press, barbell-row, romanian-deadlift) |
-| `training_max` | 6 (current maxes after 12 seeded macrocycles) |
-| `training_max_history` | ~24 (PR entries every 3rd macrocycle) |
-| `macrocycle_dashboard` | 1 (current macrocycle state) |
-| `strength_goal` | 6 (relative bodyweight ratio targets) |
-| `lift_record` | ~216 (12 macrocycles × 3 workouts × 2 lifts/workout × 3 sets) |
+| `user_settings` | 1 (active program `5-3-1`, no workout schedule, so workouts are dated from the spec) |
+| `macrocycle` | 3 (two `completed`, one `in-progress`) |
+| `macrocycle_dashboard` | 1 (macrocycle 3) |
+| `training_max` | 4 (one per preset lift) |
+| `training_max_history` | 12 (each lift's max at the start of each macrocycle) |
+| `strength_goal` | 4 (relative bodyweight ratio targets) |
+| `lift_record` | about 336 (2 × 24 workouts, plus the current macrocycle's 8 past workouts; 2 lifts × 3 sets each) |
+
+It writes no `lift_metadata`, so each lift's built-in muscle groups apply.
 
 **Seed user ID:** `seed_user_clerkid_staging_001` — this is a synthetic Clerk user ID. It will
 not appear in your Clerk dashboard and cannot be accessed via a real auth token. It is useful for
-schema validation, API smoke tests, and query testing.
+schema validation, API smoke tests, and query testing. Against a locally run API with the dev
+auth adapter, a bearer token of `seed_user_clerkid_staging_001` acts as this user.
 
 **Command:**
 
@@ -243,8 +251,11 @@ DATABASE_URL="postgresql://lifting-logbook-app:<password>@127.0.0.1:5434/lifting
   npx --prefix apps/api prisma db seed
 ```
 
-**Idempotency:** the seed script uses `upsert` on all tables. Re-running it is safe — existing
-rows are left unchanged, and no duplicates are created.
+**Re-running it** resets the seed user: in one transaction, it deletes every row the seed user
+has in every table with a `userId` column, then writes the data above again, dated from the day
+it runs. No other user's rows are touched. This also clears the rows earlier versions of the seed
+wrote under program `531` and lift names like `squat`, so re-running the seed is the cleanup for
+an existing staging database.
 
 ---
 
