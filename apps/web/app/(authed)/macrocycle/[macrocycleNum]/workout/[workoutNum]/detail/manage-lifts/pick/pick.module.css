@@ -7,7 +7,7 @@
 .backLink {
   display: inline-block;
   font-size: 0.875rem;
-  color: var(--color-text-secondary, #666);
+  color: var(--color-text-muted);
   text-decoration: none;
   margin-bottom: 1.25rem;
 }

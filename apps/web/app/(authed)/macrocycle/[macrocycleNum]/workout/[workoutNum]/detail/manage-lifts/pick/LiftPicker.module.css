@@ -10,7 +10,7 @@
 }
 
 .searchInput:focus {
-  border-color: var(--color-primary, #0070f3);
+  border-color: var(--color-accent);
 }
 
 .liftList {
@@ -38,8 +38,8 @@
 }
 
 .liftButton:hover:not(:disabled) {
-  background: var(--color-primary-light, #e8f0fe);
-  border-color: var(--color-primary, #0070f3);
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
 }
 
 .liftButton:disabled {
@@ -48,12 +48,12 @@
 }
 
 .spinner {
-  color: var(--color-text-secondary, #888);
+  color: var(--color-text-muted);
 }
 
 .noResults {
   padding: 1rem;
-  color: var(--color-text-secondary, #888);
+  color: var(--color-text-muted);
   font-size: 0.875rem;
 }
 

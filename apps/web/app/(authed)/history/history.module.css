@@ -70,8 +70,8 @@
 }
 
 .tabActive {
-  color: var(--color-primary, #2563eb);
-  border-bottom-color: var(--color-primary, #2563eb);
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
   font-weight: 600;
 }
 
@@ -122,7 +122,7 @@
 }
 
 .table tbody tr:hover {
-  background: var(--color-surface-hover, #f9fafb);
+  background: var(--color-surface);
 }
 
 .prBadge {

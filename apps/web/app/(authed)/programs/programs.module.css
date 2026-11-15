@@ -36,8 +36,8 @@
 .tab:hover { color: var(--color-text, #111827); }
 
 .tabActive {
-  color: var(--color-primary, #2563eb);
-  border-bottom-color: var(--color-primary, #2563eb);
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
   font-weight: 600;
 }
 
@@ -59,12 +59,12 @@
   cursor: pointer;
 }
 
-.chip:hover { color: var(--color-text, #111827); border-color: var(--color-primary, #2563eb); }
+.chip:hover { color: var(--color-text, #111827); border-color: var(--color-accent); }
 
 .chipActive {
-  background: var(--color-primary, #2563eb);
-  color: #fff;
-  border-color: var(--color-primary, #2563eb);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  border-color: var(--color-accent);
 }
 
 /* ----- Program cards ----- */
@@ -83,8 +83,8 @@
 }
 
 .programCardActive {
-  border-color: var(--color-primary, #2563eb);
-  background: var(--color-primary-light, #eff6ff);
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
 }
 
 .programCardHeader {
@@ -107,8 +107,8 @@
 .currentBadge {
   margin-left: auto;
   padding: 0.125rem 0.5rem;
-  background: var(--color-primary, #2563eb);
-  color: #fff;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
   border-radius: 4px;
   font-size: 0.75rem;
   font-weight: 600;
@@ -124,8 +124,8 @@
 
 .btnPrimary {
   padding: 0.375rem 0.875rem;
-  background: var(--color-primary, #2563eb);
-  color: #fff;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
   border: none;
   border-radius: 6px;
   font-size: 0.875rem;
@@ -145,13 +145,13 @@
   cursor: pointer;
 }
 
-.btnSecondary:hover { background: var(--color-surface-hover, #f9fafb); }
+.btnSecondary:hover { background: var(--color-surface); }
 
 .btnDanger {
   padding: 0.375rem 0.875rem;
   background: none;
-  color: var(--color-danger, #dc2626);
-  border: 1px solid var(--color-danger, #dc2626);
+  color: var(--color-error);
+  border: 1px solid var(--color-error);
   border-radius: 6px;
   font-size: 0.875rem;
   cursor: pointer;
@@ -251,9 +251,9 @@
 }
 
 .subTabActive {
-  background: var(--color-primary, #2563eb);
-  color: #fff;
-  border-color: var(--color-primary, #2563eb);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  border-color: var(--color-accent);
 }
 
 .editorForm {
@@ -297,7 +297,7 @@
   text-align: center;
 }
 
-.specTable th { background: var(--color-surface-hover, #f9fafb); font-weight: 600; }
+.specTable th { background: var(--color-surface); font-weight: 600; }
 
 .specInput {
   width: 56px;
@@ -336,7 +336,7 @@
   padding: 0.625rem;
   border: 1px solid var(--color-border, #e5e7eb);
   border-radius: 6px;
-  background: var(--color-surface-hover, #f9fafb);
+  background: var(--color-surface);
 }
 
 .instanceHeader {
@@ -356,12 +356,12 @@
   border: 1px dashed var(--color-border, #d1d5db);
   border-radius: 6px;
   background: none;
-  color: var(--color-primary, #2563eb);
+  color: var(--color-accent);
   font-size: 0.875rem;
   cursor: pointer;
 }
 
-.addDayButton:hover { background: var(--color-surface-hover, #f9fafb); }
+.addDayButton:hover { background: var(--color-surface); }
 .addDayButton:disabled { opacity: 0.5; cursor: default; }
 
 .customProgramList { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -379,7 +379,7 @@
 .customProgramMeta { font-size: 0.8125rem; color: var(--color-text-muted, #6b7280); }
 
 .errorNote {
-  color: var(--color-danger, #dc2626);
+  color: var(--color-error);
   font-size: 0.875rem;
   margin-top: 0.5rem;
 }
