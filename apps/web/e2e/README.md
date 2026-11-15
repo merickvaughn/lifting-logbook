@@ -4,7 +4,16 @@ End-to-end tests that run against the live Cloud Run staging environment.
 They are not a substitute for unit or component tests — they verify that the
 full auth → web → API stack is wired correctly after a deploy.
 
-## How to run locally
+## The local suite
+
+The other specs here run against `next dev` and the mock API (`mock-api.mjs`), using
+[`playwright.config.ts`](../playwright.config.ts): `npm run test:e2e -w @lifting-logbook/web`.
+Outside CI, its global setup ([`warmup.global-setup.ts`](warmup.global-setup.ts)) first loads
+every page once so a cold compile can't fail a test on timing. Set `E2E_SKIP_WARMUP=1` to skip
+that for a quick run of one spec. Windows notes and troubleshooting are in the root
+[`CLAUDE.md`](../../../CLAUDE.md) → apps/web Playwright E2E (local).
+
+## How to run the staging suite locally
 
 Prerequisites:
 - The staging environment must be deployed (Terraform + Cloud Run).

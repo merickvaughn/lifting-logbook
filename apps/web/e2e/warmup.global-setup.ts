@@ -22,14 +22,22 @@ export default async function warmup(config: FullConfig) {
     const page = await browser.newPage({ baseURL });
     for (const route of routes) {
       const t0 = Date.now();
-      const response = await page.goto(route, { waitUntil: 'load', timeout: ROUTE_TIMEOUT_MS });
-      const seconds = ((Date.now() - t0) / 1000).toFixed(1);
-      console.log(`[e2e warmup] ${route} -> ${response?.status() ?? 'no response'} (${seconds}s)`);
+      const seconds = () => ((Date.now() - t0) / 1000).toFixed(1);
+      try {
+        const response = await page.goto(route, { waitUntil: 'load', timeout: ROUTE_TIMEOUT_MS });
+        console.log(`[e2e warmup] ${route} -> ${response?.status() ?? 'no response'} (${seconds()}s)`);
+      } catch (err) {
+        // A cold page can abort mid-load (#1049 saw net::ERR_ABORTED from a Fast Refresh
+        // reload). It has usually compiled anyway, and a test on it still reports a real
+        // failure, so one bad route doesn't stop the run.
+        console.log(`[e2e warmup] ${route} failed (${seconds()}s): ${(err as Error).message.split('\n')[0]}`);
+      }
     }
   } finally {
     await browser.close();
   }
   // Leave the mock as a fresh run finds it, for specs that don't reset it themselves.
-  await fetch(`${process.env.PLAYWRIGHT_MOCK_API_URL}/__reset`);
+  const reset = await fetch(`${process.env.PLAYWRIGHT_MOCK_API_URL}/__reset`);
+  if (!reset.ok) throw new Error(`e2e warmup: mock reset answered ${reset.status}`);
   console.log(`[e2e warmup] ${routes.length} routes in ${((Date.now() - started) / 1000).toFixed(0)}s`);
 }
