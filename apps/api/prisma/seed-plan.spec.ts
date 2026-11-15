@@ -1,12 +1,16 @@
 import { Prisma } from '@prisma/client';
 import {
+  MROUND,
   PRESET_BASE_SPECS,
+  PROG_SPEC_WORK_PCTS,
   currentMaxLookup,
   noScheduleWorkoutDateUTC,
   programWorkoutKeys,
   specRowsForWorkoutDay,
+  updateMaxes,
 } from '@lifting-logbook/core';
-import { PROGRAM_DEFAULTS } from '../src/programs/macrocycle-generation.service';
+import { InMemoryRepositoryFactory } from '../src/adapters/factory/in-memory-repository-factory';
+import { MacrocycleGenerationService, PROGRAM_DEFAULTS } from '../src/programs/macrocycle-generation.service';
 import { PROGRAM, SEED_USER_ID, buildSeedPlan, resetSeedUser } from './seed-plan';
 
 // The staging seed user must be a user the app can plan for (#1022): an earlier seed wrote
@@ -52,6 +56,81 @@ describe('buildSeedPlan', () => {
       expect(record.date).toEqual(noScheduleWorkoutDateUTC(start, key.week, key.offset));
       expect(new Date(record.date).getTime()).toBeLessThan(today.getTime());
     }
+  });
+
+  it('logs each set at the weight the app plans it at', () => {
+    const starts = new Map(plan.macrocycles.map((m) => [m.macrocycleNum, new Date(m.startDate)]));
+    // Each macrocycle's own max: the one history records at its start.
+    const maxAt = new Map(
+      plan.trainingMaxHistory.map((h) => [`${new Date(h.date).toISOString()}|${h.lift}`, h.weight]),
+    );
+    for (const record of plan.liftRecords) {
+      const key = keys[record.workoutNum - 1];
+      const start = starts.get(record.macrocycleNum);
+      const row = key && specRowsForWorkoutDay(spec, key.week, key.offset).find((r) => r.lift === record.lift);
+      const max = start && maxAt.get(`${start.toISOString()}|${record.lift}`);
+      if (!row || !max) throw new Error(`No spec row or max for ${record.lift} in workout ${record.workoutNum}`);
+      const pct = (PROG_SPEC_WORK_PCTS(row.sets, row.wtDecrementPct) as number[])[record.setNum - 1];
+      expect(pct).toBeDefined();
+      expect(record.weight).toBe(MROUND(max * (pct ?? 0), row.increment));
+    }
+  });
+
+  // amrap_gated progression reads set 1 (#1210), so sets logged in another order would make
+  // Recalculate propose lowering every max.
+  it('lowers no training max when the current macrocycle is recalculated', () => {
+    const current = plan.dashboard.macrocycleNum;
+    const records = plan.liftRecords
+      .filter((r) => r.macrocycleNum === current)
+      .map((r) => ({
+        program: r.program,
+        macrocycleNum: r.macrocycleNum,
+        workoutNum: r.workoutNum,
+        date: new Date(r.date),
+        lift: r.lift,
+        occurrence: r.occurrence ?? 0,
+        setNum: r.setNum,
+        weight: r.weight,
+        reps: r.reps,
+        notes: r.notes ?? '',
+      }));
+    const maxes = plan.trainingMaxes.map((m) => ({ lift: m.lift, weight: m.weight, dateUpdated: new Date(m.dateUpdated) }));
+    expect(records.length).toBeGreaterThan(0);
+
+    const result = updateMaxes(spec, maxes, records, {
+      program: PROGRAM,
+      liftOverrides: new Map(),
+      modificationModes: new Map(),
+      modificationMaxes: [],
+    });
+
+    expect(result.flagged).toEqual([]);
+    expect(result.skipped).toEqual([]);
+    for (const max of result.maxes) {
+      expect(max.weight).toBeGreaterThan(maxes.find((m) => m.lift === max.lift)?.weight ?? Infinity);
+    }
+  });
+
+  it('writes the dashboard row initializing that macrocycle would', async () => {
+    const repos = await new InMemoryRepositoryFactory().forUser({
+      id: 'seed-plan-spec-user',
+      email: 'seed-plan-spec@example.com',
+      provider: 'dev',
+    });
+    const start = new Date(plan.dashboard.macrocycleDate);
+    const { dashboard } = await new MacrocycleGenerationService().initializeFirstMacrocycle(repos, PROGRAM, {
+      macrocycleDate: start.toISOString(),
+    });
+
+    expect(plan.dashboard).toMatchObject({
+      program: dashboard.program,
+      macrocycleUnit: dashboard.macrocycleUnit,
+      macrocycleDate: dashboard.macrocycleDate,
+      macrocycleStartWeekday: dashboard.macrocycleStartWeekday,
+      programType: dashboard.programType,
+      // The service numbered its macrocycle 1; the seed's current one is later.
+      sheetName: dashboard.sheetName.replace(`_Cycle_${dashboard.macrocycleNum}_`, `_Cycle_${plan.dashboard.macrocycleNum}_`),
+    });
   });
 
   it('writes no two sets with the same natural key', () => {

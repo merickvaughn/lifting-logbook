@@ -231,7 +231,7 @@ Press), so the dashboard plans the seed user's lifts and finds their training ma
 | `training_max` | 4 (one per preset lift) |
 | `training_max_history` | 12 (each lift's max at the start of each macrocycle) |
 | `strength_goal` | 4 (relative bodyweight ratio targets) |
-| `lift_record` | about 336 (2 × 24 workouts, plus the current macrocycle's 8 past workouts; 2 lifts × 3 sets each) |
+| `lift_record` | 336 (2 × 24 workouts, plus the current macrocycle's 8 past workouts; 2 lifts × 3 sets each) |
 
 It writes no `lift_metadata`, so each lift's built-in muscle groups apply.
 
@@ -248,8 +248,12 @@ auth adapter, a bearer token of `seed_user_clerkid_staging_001` acts as this use
 # sslmode=disable required: proxy handles TLS; Prisma must not negotiate SSL independently
 cloud-sql-proxy "lifting-logbook-staging:us-central1:lifting-logbook-stg-db-<suffix>?port=5434" &
 DATABASE_URL="postgresql://lifting-logbook-app:<password>@127.0.0.1:5434/lifting_logbook?sslmode=disable" \
-  npx --prefix apps/api prisma db seed
+  npm run db:seed -w @lifting-logbook/api
 ```
+
+`db:seed` builds `packages/core` before running `prisma db seed`. The seed reads the preset spec
+from core's compiled `dist`, so seeding from a stale build would write an old spec's lift names
+(the stale-`dist` hazard behind #944).
 
 **Re-running it** resets the seed user: in one transaction, it deletes every row the seed user
 has in every table with a `userId` column, then writes the data above again, dated from the day

@@ -6,13 +6,14 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "node dist/main.js",
-    "lint": "eslint src scripts",
+    "lint": "eslint src scripts prisma",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "jest",
     "test:db": "jest --testPathPatterns=db\\.e2e",
     "db:generate": "prisma generate",
     "postinstall": "prisma generate",
-    "seed:tm-history": "ts-node scripts/seed-tm-history.ts"
+    "seed:tm-history": "ts-node scripts/seed-tm-history.ts",
+    "db:seed": "turbo run build --filter=@lifting-logbook/core && prisma db seed"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",

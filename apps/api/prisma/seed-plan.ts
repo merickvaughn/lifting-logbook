@@ -1,6 +1,8 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import {
+  MROUND,
   PRESET_BASE_SPECS,
+  PROG_SPEC_WORK_PCTS,
   WEEKDAY_MAP,
   Weekday,
   addDaysUTC,
@@ -31,13 +33,6 @@ const COMPLETED_MACROCYCLES = 2;
 /** Program weeks of the current macrocycle that are already past, and logged. */
 const CURRENT_WEEKS_LOGGED = 4;
 
-/** Wendler's percentages of training max for each set, by block week. */
-const SET_PERCENTAGES: Record<number, readonly number[]> = {
-  1: [0.65, 0.75, 0.85],
-  2: [0.7, 0.8, 0.9],
-  3: [0.75, 0.85, 0.95],
-};
-
 /** Each preset lift's first training max (lbs) and its bodyweight-ratio strength goal. */
 const LIFT_START: Record<string, { startMax: number; goalRatio: number }> = {
   Squat: { startMax: 225, goalRatio: 1.5 },
@@ -56,16 +51,17 @@ export interface SeedPlan {
   strengthGoals: Prisma.StrengthGoalCreateManyInput[];
 }
 
-function roundToPlate(weight: number): number {
-  return Math.round(weight / 2.5) * 2.5;
-}
-
 /**
  * The seed user's data as of `now`: `COMPLETED_MACROCYCLES` finished macrocycles, then a
  * current one started `CURRENT_WEEKS_LOGGED` weeks ago with every workout before today
  * logged. No workout schedule is set, so workouts are dated spec-relatively, as the
  * dashboard dates them. No `LiftMetadata` is written, so each lift's built-in muscle groups
  * apply (ADR-036).
+ *
+ * Each set is logged at the weight the app plans it at (`computePlannedSets`: the training
+ * max times `PROG_SPEC_WORK_PCTS`, rounded to the row's increment), and an AMRAP row's extra
+ * reps go on set 1, the set `amrap_gated` progression reads. So recalculating maxes from the
+ * seeded sets moves no max down.
  */
 export function buildSeedPlan(now: Date): SeedPlan {
   const spec = PRESET_BASE_SPECS[PROGRAM];
@@ -153,14 +149,13 @@ export function buildSeedPlan(now: Date): SeedPlan {
       const occurrences = new Map<string, number>();
       for (const row of specRowsForWorkoutDay(spec, key.week, key.offset)) {
         const lift = lifts.find((l) => l.name === row.lift);
-        const percentages = SET_PERCENTAGES[row.week];
-        if (!lift || !percentages) throw new Error(`No seed data for ${row.lift} in block week ${row.week}`);
+        if (!lift) throw new Error(`No seed data for ${row.lift}`);
         const occurrence = occurrences.get(row.lift) ?? 0;
         occurrences.set(row.lift, occurrence + 1);
-        for (let setNum = 1; setNum <= row.sets; setNum++) {
-          const pct = percentages[setNum - 1];
-          if (pct === undefined) throw new Error(`No percentage for set ${setNum} of ${row.lift}`);
-          const amrap = row.amrap === true && setNum === row.sets;
+        const workPcts: number[] = PROG_SPEC_WORK_PCTS(row.sets, row.wtDecrementPct);
+        for (const [s, pct] of workPcts.entries()) {
+          const setNum = s + 1;
+          const amrap = row.amrap === true && setNum === 1;
           plan.liftRecords.push({
             userId: SEED_USER_ID,
             program: PROGRAM,
@@ -170,7 +165,7 @@ export function buildSeedPlan(now: Date): SeedPlan {
             lift: row.lift,
             occurrence,
             setNum,
-            weight: roundToPlate(maxFor(lift, index) * pct),
+            weight: MROUND(maxFor(lift, index) * pct, row.increment),
             // A few reps past the prescription on the AMRAP set, varying by workout.
             reps: amrap ? row.reps + 1 + ((macrocycleNum + i) % 4) : row.reps,
             notes: amrap ? 'AMRAP set' : '',
@@ -195,9 +190,34 @@ export function buildSeedPlan(now: Date): SeedPlan {
 }
 
 /**
+ * Writes `plan` for the seed user in one transaction, after deleting every row the user
+ * already has, so a run either replaces the seed user's data or leaves it as it was (#1022).
+ */
+export async function writeSeedPlan(prisma: PrismaClient, plan: SeedPlan): Promise<void> {
+  await prisma.$transaction(
+    async (tx) => {
+      // Row-level security admits only this user's rows, for a role it applies to (issue #511).
+      // A role that bypasses it, like the migrator's, ignores the setting.
+      await tx.$queryRaw`SELECT set_config('app.current_user_id', ${SEED_USER_ID}, true)`;
+      await resetSeedUser(tx);
+      await tx.userSettings.create({ data: plan.userSettings });
+      await tx.macrocycle.createMany({ data: plan.macrocycles });
+      await tx.macrocycleDashboard.create({ data: plan.dashboard });
+      await tx.trainingMax.createMany({ data: plan.trainingMaxes });
+      await tx.trainingMaxHistory.createMany({ data: plan.trainingMaxHistory });
+      await tx.liftRecord.createMany({ data: plan.liftRecords });
+      await tx.strengthGoal.createMany({ data: plan.strengthGoals });
+    },
+    { timeout: 60_000 },
+  );
+}
+
+/**
  * Deletes every row the seed user has, so each run writes the plan from scratch (#1022).
  * The user is synthetic and no Clerk token reaches it, so nothing else writes these rows.
- * `seed-plan.spec.ts` fails if a table with a `userId` column is missing here.
+ * `seed-plan.spec.ts` fails if a model with a `userId` field is missing here. That covers every
+ * user-scoped table as long as each one names its owner `userId`, as all do today; the one child
+ * table without it (`custom_program_spec`) cascades from `custom_program`.
  */
 export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void> {
   const where = { userId: SEED_USER_ID };

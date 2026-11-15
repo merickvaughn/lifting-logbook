@@ -148,7 +148,7 @@ cloud-sql-proxy --port 5434 \
 PROXY_PID=$!
 
 DATABASE_URL="postgresql://lifting-logbook-app:<password>@127.0.0.1:5434/lifting_logbook?sslmode=disable" \
-  npx --prefix apps/api prisma db seed
+  npm run db:seed -w @lifting-logbook/api
 
 kill "$PROXY_PID"
 gcloud sql instances patch "$INSTANCE" \
