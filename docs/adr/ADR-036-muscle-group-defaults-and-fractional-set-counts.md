@@ -265,7 +265,7 @@ Consequences:
 - A `Weighted Pull-ups` training max entered as the added weight alone now reads as total load. The
   logger shows "BW" until the lifter re-enters it as body weight plus added.
 - The logger reads only built-ins for bodyweight. A custom lift's own `isBodyweightComponent` is not
-  read there, as before this amendment.
+  read there, as before this amendment ([#1319](https://github.com/merickvaughn/lifting-logbook/issues/1319)).
 
 ## References
 
