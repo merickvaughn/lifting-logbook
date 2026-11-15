@@ -98,7 +98,7 @@ export default function StrengthGoalsForm({
   const [bwError, setBwError] = useState<string | null>(null);
 
   // The goals stored now, kept as saves and removals land so every lookup below reads them.
-  // The ref is the latest list even mid-render, so a handler resuming after its `await` builds
+  // The ref holds the latest list before React re-renders, so a handler resuming after its `await` builds
   // on any change another handler made meanwhile instead of writing back its own snapshot.
   const [storedGoals, setStoredGoals] = useState<StrengthGoalResponse[]>(goals);
   const goalsRef = useRef(goals);
