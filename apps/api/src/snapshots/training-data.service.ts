@@ -68,6 +68,9 @@ export async function clearTrainingData(
     });
   }
   const data = await repos.trainingData.read();
+  // A row added between the lock and the read would be saved without being locked, so another
+  // write could still change it before the delete.
+  if (TRAINING_TABLES.some((table) => data[table].length !== counts[table])) throw dataChanged();
   let snapshot: StoredSnapshotSummary;
   try {
     snapshot = await repos.dataSnapshot.create({
@@ -84,7 +87,7 @@ export async function clearTrainingData(
       { cause: err },
     );
   }
-  // The rows read are locked, so only a row added since can make a count differ. It isn't in
+  // Every row read is locked, so only a row added since can make a count differ. It isn't in
   // the snapshot, so it's a 409 and the transaction rolls back rather than deleting it unsaved.
   const cleared = await repos.trainingData.clear();
   if (TRAINING_TABLES.some((table) => cleared[table] !== data[table].length)) throw dataChanged();

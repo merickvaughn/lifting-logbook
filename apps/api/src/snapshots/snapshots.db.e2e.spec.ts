@@ -552,15 +552,16 @@ describeOrSkip('Clear data and snapshots (#1309, e2e, PrismaRepositoryFactory)',
     async function clearDuring(userId: string, counts: TrainingDataCounts, write: (client: Client) => Promise<void>) {
       const client = new Client({ connectionString: APP_ROLE_URL });
       await client.connect();
+      let response: ReturnType<typeof inject> | undefined;
       try {
         await client.query('BEGIN');
         await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
         await write(client);
         const { rows } = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
         const writer = rows[0]?.pid;
-        const response = inject(userId, 'POST', '/users/me/training-data/clear', { counts });
-        // The clear's wait shows as a backend blocked by the writer. The macrocycle lock gives up
-        // after 5 s, so this checks often.
+        response = inject(userId, 'POST', '/users/me/training-data/clear', { counts });
+        // The clear's wait shows as a backend blocked by the writer. A wait on the macrocycle lock
+        // gives up after 5 s, so this checks often; a wait on a row lock has no limit.
         const deadline = Date.now() + 4_000;
         let blocked = 0;
         while (blocked === 0 && Date.now() < deadline) {
@@ -569,11 +570,14 @@ describeOrSkip('Clear data and snapshots (#1309, e2e, PrismaRepositoryFactory)',
           blocked = waiting[0]?.n ?? 0;
           if (blocked === 0) await new Promise((resolve) => setTimeout(resolve, 20));
         }
-        expect(blocked).toBe(1);
+        if (blocked !== 1) throw new Error(`Expected the clear to be blocked on the writer within 4 s; ${blocked} backends were.`);
         await client.query('COMMIT');
         return await response;
       } finally {
+        // Ending the connection rolls back a write left open by a failure above, which releases a
+        // clear still waiting on it; waiting for that clear keeps it from outliving the test.
         await client.end();
+        await response?.catch(() => undefined);
       }
     }
 

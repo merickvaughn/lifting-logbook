@@ -64,6 +64,20 @@ describe('SnapshotsController failures (#1309)', () => {
     expect(JSON.stringify(logged.mock.calls)).not.toContain('row contents');
   });
 
+  it('logs a 409 the service raised because data changed, and not one for confirmed counts that changed', async () => {
+    const warned = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const changed = new ConflictException({ statusCode: 409, code: 'data-changed' });
+    const { controller } = failingWith(changed);
+
+    await expect(controller.clear(USER, { counts: {} as never })).rejects.toBe(changed);
+    expect(warned).toHaveBeenCalledWith(expect.objectContaining({ action: 'clear' }), expect.any(String));
+
+    warned.mockClear();
+    const countsChanged = new ConflictException({ statusCode: 409, code: 'counts-changed' });
+    await expect(failingWith(countsChanged).controller.clear(USER, { counts: {} as never })).rejects.toBe(countsChanged);
+    expect(warned).not.toHaveBeenCalled();
+  });
+
   it('turns a timeout into a 503', async () => {
     const { controller } = failingWith(prismaError('P2028'));
 

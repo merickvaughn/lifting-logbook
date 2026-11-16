@@ -180,7 +180,11 @@ export class SnapshotsController {
     try {
       return await this.rlsContext.withUserContext(fn, TRAINING_DATA_TX_TIMEOUT_MS);
     } catch (err) {
-      if (err instanceof HttpException && err.getStatus() < 500) throw err;
+      if (err instanceof HttpException && err.getStatus() < 500) {
+        // A collision the service found itself, logged like the ones Postgres reports below.
+        if (isDataChanged(err)) this.logger.warn({ action, durationMs: Date.now() - started }, 'Training data changed while it ran (#1309)');
+        throw err;
+      }
       const failure = describeFailure(err instanceof HttpException && err.cause !== undefined ? err.cause : err);
       this.logger.error({ action, ...failure, durationMs: Date.now() - started }, 'Training data action failed (#1309)');
       if (isConcurrentWrite(failure)) throw dataChanged();
@@ -210,6 +214,11 @@ const CONCURRENT_WRITE_DB_CODES = new Set(['40001', '40P01']);
 function isConcurrentWrite(failure: Failure): boolean {
   if (failure.code === 'P2034' || failure.code === 'P2003') return true;
   return failure.code === 'P2010' && failure.dbCode !== undefined && CONCURRENT_WRITE_DB_CODES.has(failure.dbCode);
+}
+
+function isDataChanged(err: HttpException): boolean {
+  const response = err.getResponse();
+  return typeof response === 'object' && 'code' in response && response.code === 'data-changed';
 }
 
 /**

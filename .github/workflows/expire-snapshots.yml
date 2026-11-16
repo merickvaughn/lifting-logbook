@@ -57,7 +57,7 @@ jobs:
           # still fails the run.
           if ! out=$(gcloud run jobs describe "$JOB" --region="$REGION" --project="$PROJECT" --format='value(name)' 2>&1); then
             if grep -qF "Cannot find job [$JOB]." <<<"$out"; then
-              echo "::notice::$JOB doesn't exist yet in $PROJECT, so there is nothing to run."
+              echo "::warning::$JOB doesn't exist in $PROJECT, so no snapshots expired. Expected only until the first deploy after #1309; after that, check that Terraform still defines the job."
               exit 0
             fi
             echo "$out" >&2
@@ -84,7 +84,7 @@ jobs:
           # fails the run.
           if ! out=$(gcloud run jobs describe "$JOB" --region="$REGION" --project="$PROJECT" --format='value(name)' 2>&1); then
             if grep -qF "Cannot find job [$JOB]." <<<"$out"; then
-              echo "::notice::$JOB doesn't exist yet in $PROJECT, so there is nothing to run."
+              echo "::warning::$JOB doesn't exist in $PROJECT, so no snapshots expired. Expected only until the first deploy after #1309; after that, check that Terraform still defines the job."
               exit 0
             fi
             echo "$out" >&2
