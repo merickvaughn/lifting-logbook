@@ -14,6 +14,7 @@ export async function readUserPrograms(
 ): Promise<{ activeProgram: string | null; programs: UserProgram[]; failed: boolean }> {
   let failed = false;
   const [activeProgram, customPrograms] = await Promise.all([
+    // fallback-covered-by: apps/web/app/(authed)/settings/data/page.test.tsx
     getUserSettings().then(
       (settings) => settings.activeProgram,
       (e: unknown): string | null => {
@@ -22,6 +23,7 @@ export async function readUserPrograms(
         return null;
       },
     ),
+    // fallback-covered-by: apps/web/app/(authed)/settings/data/page.test.tsx
     fetchCustomPrograms().catch((e: unknown): CustomProgramSummaryResponse[] => {
       console.error(`${caller}: custom programs fetch failed, offering the active program only`, e);
       failed = true;
