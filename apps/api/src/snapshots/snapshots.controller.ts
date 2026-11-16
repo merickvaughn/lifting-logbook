@@ -37,7 +37,10 @@ import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { ClearTrainingDataDto, SnapshotLiftRecordsQueryDto } from './training-data.dto';
 import { DATA_CHANGED, clearTrainingData, dataChanged, restoreSnapshot } from './training-data.service';
 
-/** Every failed clear, restore or download logs this, a collision with `reason: 'data-changed'`. */
+/**
+ * The message of every failure `run()` logs. A collision also carries `reason: 'data-changed'`.
+ * A 409 for changed counts and a 404 aren't logged.
+ */
 const FAILURE_LOG = 'Training data action failed (#1309)';
 
 /**

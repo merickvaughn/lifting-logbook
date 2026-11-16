@@ -7,7 +7,7 @@ import { SnapshotsController, TRAINING_DATA_TX_TIMEOUT_MS } from './snapshots.co
 import { DATA_CHANGED, dataChanged } from './training-data.service';
 
 const FAILURE_LOG = 'Training data action failed (#1309)';
-const USER: AuthUser ={ id: 'snapshots-controller-spec', email: 'spec@example.com', provider: 'dev' };
+const USER: AuthUser = { id: 'snapshots-controller-spec', email: 'spec@example.com', provider: 'dev' };
 const prismaError = (code: string, dbCode?: string) =>
   new PrismaClientKnownRequestError('Unique constraint failed on notes "row contents"', {
     code,
@@ -65,7 +65,8 @@ describe('SnapshotsController failures (#1309)', () => {
     const { controller, logged } = failingWith(failure);
 
     await expect(controller.restore(USER, 'id')).rejects.toBe(failure);
-    expect(logged).toHaveBeenCalledWith(expect.objectContaining({ code: 'P2010', dbCode: '23505' }), expect.any(String));
+    expect(logged).toHaveBeenCalledWith(expect.objectContaining({ code: 'P2010', dbCode: '23505' }), FAILURE_LOG);
+    expect(logged.mock.calls[0]?.[0]).not.toHaveProperty('reason');
     expect(JSON.stringify(logged.mock.calls)).not.toContain('row contents');
   });
 
@@ -82,10 +83,12 @@ describe('SnapshotsController failures (#1309)', () => {
     expect(logged).not.toHaveBeenCalled();
   });
 
-  it('turns a timeout into a 503', async () => {
-    const { controller } = failingWith(prismaError('P2028'));
+  it('turns a timeout into a 503, logged as a failure but not a collision', async () => {
+    const { controller, logged } = failingWith(prismaError('P2028'));
 
     await expect(controller.restore(USER, 'id')).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(logged).toHaveBeenCalledWith(expect.objectContaining({ code: 'P2028' }), FAILURE_LOG);
+    expect(logged.mock.calls[0]?.[0]).not.toHaveProperty('reason');
   });
 
   it('logs a failed save’s cause with its Prisma code, and never a Prisma message, which can quote rows', async () => {
@@ -96,8 +99,9 @@ describe('SnapshotsController failures (#1309)', () => {
 
     expect(logged).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'clear', error: 'PrismaClientKnownRequestError', code: 'P2002', target: ['userId'] }),
-      'Training data action failed (#1309)',
+      FAILURE_LOG,
     );
+    expect(logged.mock.calls[0]?.[0]).not.toHaveProperty('reason');
     expect(JSON.stringify(logged.mock.calls)).not.toContain('row contents');
   });
 
