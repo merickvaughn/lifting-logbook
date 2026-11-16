@@ -14,10 +14,10 @@ export interface DefaultProgressionPatch {
 }
 
 export interface UpsertSettingsPatch {
-  // No clear-via-null semantics (unlike the three fields below) — it's switched by
-  // POST /programs/:program/switch, not cleared here. UpdateSettingsDto rejects `null`
-  // explicitly so this type can stay `string` rather than `string | null`.
-  activeProgram?: string;
+  // It's switched by POST /programs/:program/switch, and UpdateSettingsDto rejects `null`, so
+  // the settings route can't clear it. Only an import's undo passes `null`, putting back a user
+  // who had no active program before the import continued a run (#1180).
+  activeProgram?: string | null;
   // Explicit `null` clears the schedule; `undefined` leaves it unchanged.
   workoutSchedule?: UserWorkoutSchedule | null;
   // Explicit `null` clears the override (falls back to the 1.25 app default);

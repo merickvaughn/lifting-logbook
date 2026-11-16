@@ -1248,6 +1248,27 @@ export interface ImportBreakdown {
   stretches: ImportBreakdownStretch[];
   excludedDates: string[];
   nonCycleDates: string[];
+  /** The run to continue as the current macrocycle, when the lifter chose to (#1180). */
+  continue?: ImportBreakdownContinue;
+}
+
+/**
+ * Continuing the file's latest run as the current macrocycle (#1180, proposal decisions 2 and 10).
+ * The run is stored `live` and `in-progress`, whatever its stretch's status says.
+ */
+export interface ImportBreakdownContinue {
+  /** Index into `stretches` of the run: the one that ends last. */
+  stretch: number;
+  /**
+   * The id of the program's live macrocycle the lifter agreed to end ({@link AssignContinueOffer.live}).
+   * Required when the program has one: without it the commit is refused.
+   */
+  endLive?: string;
+  /**
+   * The training maxes to overwrite, each with the weight to store: the computed value or one the
+   * lifter entered. A lift left out keeps its max. Each lift with no max must be here.
+   */
+  maxes: Array<{ lift: string; weight: number }>;
 }
 
 /** A suggested macrocycle's status at the Assign step (proposal decisions 6 and 7). */
@@ -1415,6 +1436,37 @@ export interface ImportAssignResponse {
    * Unavailable. Nothing is sent to it until the lifter answers yes.
    */
   suggestions: { provider: string } | null;
+  /**
+   * The offer to continue the last stretch as the current macrocycle (#1180, decision 2), or null
+   * when it can't be: it needs a known program with workouts left and a last session no more than
+   * 14 days before `importDate`, and none of its rows may already be stored. Off until chosen.
+   */
+  continue: AssignContinueOffer | null;
+}
+
+/** See {@link ImportAssignResponse.continue}. */
+export interface AssignContinueOffer {
+  /** Index into `stretches`: the last. The offer holds only while its sessions and program are as suggested. */
+  stretch: number;
+  /** The program's live macrocycle, which continuing ends, or null when the program has none. */
+  live: { id: string; macrocycleNum: number; sets: number } | null;
+  /** Each lift the program plans, in its order (decision 10). */
+  maxes: AssignContinueMax[];
+}
+
+/** A lift's training max at the continue offer (#1180, decision 10). */
+export interface AssignContinueMax {
+  /** The lift as its max is stored, which the breakdown sends back. */
+  lift: string;
+  /** Its display name. */
+  name: string;
+  /** Its current training max, or null with none. */
+  current: number | null;
+  /**
+   * The max the run's sets give it, lower ones included, or null when no set of the run moves it.
+   * A lift with no max starts from zero, so null there means the lifter has to enter one.
+   */
+  computed: number | null;
 }
 
 /** Most sets one suggestion request carries (proposal decision 11). */

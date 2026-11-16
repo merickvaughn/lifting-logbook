@@ -99,6 +99,18 @@ import {
 } from './import-assign';
 import { placeSuggestedStretches, recomputeMacrocycles, releaseStatusChoices } from './import-stored';
 import {
+  ContinuePlan,
+  ContinueRefusedException,
+  ContinueRun,
+  ContinuedUndoRefusedException,
+  applyContinue,
+  continueOffer,
+  continuedRunToUndo,
+  planContinue,
+  releaseContinuedRun,
+  restoreAroundContinuedRun,
+} from './import-continue';
+import {
   BreakdownBatch,
   BreakdownMismatchException,
   PlacedBreakdown,
@@ -456,8 +468,10 @@ export class ImportController {
     return batches.flatMap((batch) => {
       const nums = touchedMacrocycleNums(batch.createdNums, batch.macrocycles, rows);
       // The rows undo can remove or read again: a `live` macrocycle keeps what it holds.
+      // A run the import continued as current (#1180) goes with it, though it's `live`.
+      const continuedId = batch.macrocycles?.continued?.id;
       const macrocycleIds = rows
-        .filter((m) => (m.origin === 'imported' || m.origin === 'legacy') && nums.has(m.macrocycleNum))
+        .filter((m) => ((m.origin === 'imported' || m.origin === 'legacy') && nums.has(m.macrocycleNum)) || m.id === continuedId)
         .map((m) => m.id);
       if (macrocycleIds.length === 0) return [];
       // A Source batch that's gone leaves its part to be undone on its own, as undo does.
@@ -520,19 +534,36 @@ export class ImportController {
       // batch, and its keys predate that undo's renumbering (#1257).
       const current = await repos.importBatch.findById(batchId, user.id);
       if (!current) throw new NotFoundException(`Import batch ${batchId} not found`);
+      const notFound = (missing: number) => {
+        if (missing <= 0) return;
+        skipped += missing;
+        flagged.push({ key: '*', reason: `${missing} row(s) not found (already deleted?)` });
+      };
       const deleteCreated = async (from: string, keys: string[]) => {
         if (keys.length === 0) return;
         const deleted = await repos.liftRecord.deleteLiftRecordsByNaturalKeys(from, keys);
         restored += deleted;
-        if (deleted < keys.length) {
-          const missing = keys.length - deleted;
-          skipped += missing;
-          flagged.push({ key: '*', reason: `${missing} row(s) not found (already deleted?)` });
-        }
+        notFound(keys.length - deleted);
       };
       // An import through the Assign step saved one batch per program it wrote to, grouped under
       // this one (#1254). Each one's keys are read under its own program.
       const parts = [current, ...(await repos.importBatch.listGroup(current.id))];
+      // A run the import continued as current (#1180) is checked before anything changes: undo is
+      // refused once another macrocycle is current or the run is gone.
+      const continuedRuns = new Map<string, MacrocycleRow>();
+      for (const part of parts) {
+        const continued = part.macrocycles?.continued;
+        if (!continued) continue;
+        try {
+          continuedRuns.set(part.id, await continuedRunToUndo(repos, part.id, part.program, continued));
+        } catch (err) {
+          if (err instanceof ContinuedUndoRefusedException) {
+            this.logger.warn({ parts: parts.length, reason: err.reason }, 'Import undo refused: continued run (#1180)');
+          }
+          throw err;
+        }
+      }
+      let movedToNonCycle = 0;
       // Every part's rows go, and its emptied macrocycles with them, before any macrocycle left is
       // read again: what follows a macrocycle can be one another part is about to remove (#1255).
       const touched: Array<{ program: string; nums: number[]; ids: string[] }> = [];
@@ -551,7 +582,7 @@ export class ImportController {
         );
         // Collect all created keys and delete in a single query to avoid N+1 round-trips
         const created = createdNumberedKeys(part.preImage);
-        const { setKeys: createdKeys } = splitLegacyRowKeys(created);
+        let { setKeys: createdKeys } = splitLegacyRowKeys(created);
         // Read by number before anything is renumbered.
         const rows = await repos.macrocycle.list(part.program);
         const nums = touchedMacrocycleNums(created.flatMap((k) => preImageKeyNumber(k) ?? []), part.macrocycles, rows);
@@ -559,6 +590,14 @@ export class ImportController {
         const ids = new Set(rows.filter((m) => m.origin === 'imported' && nums.has(m.macrocycleNum)).map((m) => m.id));
         // The statuses the batch chose are released before anything is read again.
         await releaseStatusChoices(repos, part, part.macrocycles?.chosen ?? [], new Map(rows.map((m) => [m.id, m])));
+        const continuedRun = continuedRuns.get(part.id);
+        if (continuedRun) {
+          const released = await releaseContinuedRun(repos, part.program, continuedRun, createdKeys);
+          createdKeys = released.keysLeft;
+          restored += released.removed;
+          notFound(released.missing);
+          movedToNonCycle += released.moved;
+        }
         await deleteCreated(part.program, createdKeys);
         // The non-cycle macrocycle's row stays, as it does when its workouts are deleted.
         await deleteCreated(NON_CYCLE_PROGRAM, nonCycleKeys);
@@ -584,9 +623,23 @@ export class ImportController {
         : 0;
       // And the numbers close up.
       for (const { program: p } of touched) await renumberProgram(repos, p);
+      // Then what continuing changed around the run is put back, the ended macrocycle read by id.
+      for (const part of parts) {
+        const continued = part.macrocycles?.continued;
+        if (continued && continuedRuns.has(part.id)) {
+          flagged.push(...(await restoreAroundContinuedRun(repos, part.program, continued)));
+        }
+      }
       // Counts only: dates and statuses are the lifter's data.
       this.logger.log(
-        { parts: parts.length, macrocyclesRecomputed: recomputed, macrocyclesRemoved: removed, durationMs: Date.now() - started },
+        {
+          parts: parts.length,
+          macrocyclesRecomputed: recomputed,
+          macrocyclesRemoved: removed,
+          continuedRunsUndone: continuedRuns.size,
+          movedToNonCycle,
+          durationMs: Date.now() - started,
+        },
         'Import undo recomputed its macrocycles (#1255)',
       );
     } else if (batch.destination === 'training-maxes') {
@@ -955,9 +1008,10 @@ export class ImportController {
       await this.segmentForAssign(program, table, repos, userId, choices);
     const knownPrograms = [...BUILT_IN_KNOWN_PROGRAMS, ...customPrograms];
     const stored = await placeSuggestedStretches(repos, segmented.stretches, knownPrograms);
-    // Read once for both the lifts' names and their progression settings.
+    // Read once for the lifts' names and their progression settings.
     const customLifts = await repos.customLift.list();
     const liftNames = liftNamesOf(customLifts);
+    const progression = await progressionSettingsFor(repos, await repos.userSettings.getSettings(), customLifts);
     const response = assignResponse(
       segmented,
       {
@@ -965,15 +1019,16 @@ export class ImportController {
         undatedRows: undated,
         exported,
         programs: assignProgramOptions(customPrograms),
-        lifts: assignLifts(
-          new Set(liftRecords.map((r) => r.lift)),
-          knownPrograms,
-          await progressionSettingsFor(repos, await repos.userSettings.getSettings(), customLifts),
-          liftNames,
-        ),
+        lifts: assignLifts(new Set(liftRecords.map((r) => r.lift)), knownPrograms, progression, liftNames),
         stored,
         ...(split ? { split: await splitMaxCounts(splitMaxes, segmented.stretches, program, repos) } : {}),
         suggestionsProvider: this.suggestions.providerLabel,
+        continueOffer: await continueOffer(repos, segmented.stretches, stored, {
+          importDate,
+          programs: knownPrograms,
+          progression,
+          liftNames,
+        }),
       },
       liftNames,
     );
@@ -996,6 +1051,7 @@ export class ImportController {
         exported,
         splitChanges: response.split?.changes ?? 0,
         splitOlderThanCurrent: response.split?.olderThanCurrent ?? 0,
+        continueOffered: response.continue !== null,
         durationMs: Date.now() - started,
       },
       'Import assign (#1253)',
@@ -1123,6 +1179,35 @@ export class ImportController {
       }
     }
     const plan = await planBreakdown(repos, placed, programs);
+    // The run the lifter continues as current (#1180), checked before anything is written.
+    const continueChoice = choices.breakdown.continue;
+    const continuedSpec = continueChoice ? placed.stretches[continueChoice.stretch]?.spec : undefined;
+    let continuePlan: ContinuePlan | null = null;
+    if (continueChoice) {
+      const placedRun = placed.stretches[continueChoice.stretch];
+      const planned = plan.stretches.find((s) => s.spec === continuedSpec);
+      const run: ContinueRun | undefined = placedRun?.span
+        ? {
+            program: placedRun.spec.program,
+            ...placedRun.span,
+            workoutNums: planned?.creating.map((r) => r.workoutNum) ?? [],
+            placement: planned?.stored.kind ?? 'already-imported',
+            // A row the plan doesn't create is stored already, in some program.
+            someStored: (planned?.creating.length ?? 0) < placedRun.rows.length,
+          }
+        : undefined;
+      const others = placed.stretches.flatMap((s, i) =>
+        i !== continueChoice.stretch && s.span ? [{ program: s.spec.program, ...s.span }] : [],
+      );
+      try {
+        continuePlan = await planContinue(repos, continueChoice, run, others, { programs, importDate: choices.importDate });
+      } catch (err) {
+        if (err instanceof ContinueRefusedException) {
+          this.logger.warn({ mode, reason: err.reason }, 'Import breakdown continue refused (#1180)');
+        }
+        throw err;
+      }
+    }
     const split = await planSplitMaxes(splitMaxes, programCovering(placed.stretches, program), repos);
     const splitRows = [...split.byProgram.values()];
     const splitWrites = splitRows.reduce((n, s) => n + s.writes.length, 0);
@@ -1149,7 +1234,11 @@ export class ImportController {
         );
       }
     } else {
-      const written = await writeBreakdown(repos, program, plan, { programs, importDate: choices.importDate });
+      const written = await writeBreakdown(repos, program, plan, {
+        programs,
+        importDate: choices.importDate,
+        ...(continuedSpec ? { continued: continuedSpec } : {}),
+      });
       created = written.created;
       const batches = written.batches;
       if (splitMaxes.length > 0) {
@@ -1162,6 +1251,16 @@ export class ImportController {
           batches.set(splitProgram, batch);
         }
         splitCounts = sumCounts(results);
+      }
+      if (continuePlan) {
+        if (!written.continuedId) throw new Error('The continued run was not created');
+        // The run's rows were written under its program, so its batch is there.
+        const batch = batches.get(continuePlan.program);
+        if (!batch) throw new Error(`No batch for the continued run's program ${continuePlan.program}`);
+        batch.macrocycles.continued = await applyContinue(repos, continuePlan, written.continuedId, {
+          importDate: choices.importDate,
+          preImage: batch.preImage,
+        });
       }
       batchId = await saveBatchGroup(repos, userId, program, batches);
     }
@@ -1183,6 +1282,9 @@ export class ImportController {
         duplicates: skipped,
         splitChanges: split.changes,
         exported: choices.exported,
+        continued: continuePlan !== null,
+        continueEndedLive: Boolean(continuePlan?.live),
+        continueMaxesWritten: continuePlan?.maxes.length ?? 0,
         durationMs: Date.now() - started,
       },
       'Import breakdown (#1254)',

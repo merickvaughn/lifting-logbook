@@ -181,6 +181,7 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
           origin: macrocycle.origin,
           statusChosen: macrocycle.statusChosen ?? false,
           unmatched: macrocycle.unmatched ?? false,
+          importedThrough: macrocycle.importedThrough ?? null,
         },
       });
       return toRow(row);
@@ -207,6 +208,7 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
           origin: m.origin,
           statusChosen: m.statusChosen ?? false,
           unmatched: m.unmatched ?? false,
+          importedThrough: m.importedThrough ?? null,
         })),
       });
     } catch (e) {

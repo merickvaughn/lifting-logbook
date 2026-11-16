@@ -30,6 +30,8 @@ export interface NewMacrocycle {
   /** Absent means false. An import through the Assign step sets both (#1254). */
   statusChosen?: boolean;
   unmatched?: boolean;
+  /** Absent means null. A run an import continues as current sets it to its last session (#1180). */
+  importedThrough?: Date;
 }
 
 export interface IMacrocycleRepository {

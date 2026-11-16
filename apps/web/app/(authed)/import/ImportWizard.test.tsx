@@ -3976,6 +3976,7 @@ function assignRes(over: Partial<ImportAssignResponse> = {}): ImportAssignRespon
     lifts: [{ name: 'Squat', metadataLift: 'Squat', programs: ['rpt', '5-3-1'], progression: 'linear' }],
     split: { changes: 2, olderThanCurrent: 1 },
     suggestions: null,
+    continue: null,
     ...over,
   };
 }
@@ -4738,5 +4739,159 @@ describe('ImportWizard Assign suggestions (#1174)', () => {
     await toAssign(user);
     await user.click(yes());
     expect(await within(panel()).findByText(/1800 sets, over the 1500 a request can carry/)).toBeInTheDocument();
+  });
+});
+
+describe('ImportWizard Assign: continue the last run as current (#1180)', () => {
+  const LAST = 'RPT from Feb 1, 2026';
+  const offer = (over: Partial<NonNullable<ImportAssignResponse['continue']>> = {}): ImportAssignResponse['continue'] => ({
+    stretch: 1,
+    live: null,
+    maxes: [
+      { lift: 'Squat', name: 'Squat', current: 200, computed: 210 },
+      { lift: 'Bench Press', name: 'Bench Press', current: null, computed: 150 },
+      { lift: 'Deadlift', name: 'Deadlift', current: null, computed: null },
+    ],
+    ...over,
+  });
+  const continueBox = () => screen.getByRole('checkbox', { name: `Continue ${LAST} as my current macrocycle` });
+  const maxGroup = (lift: string) => screen.getByRole('radiogroup', { name: `Training max for ${lift}` });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPreview.mockResolvedValue(ASSIGN_PREVIEW);
+    mockDryRun.mockResolvedValue(DRY_RUN_OK);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('keeps each max by default, takes an entered value, locks the status, and sends the choice', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(assignRes({ continue: offer() }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    // Kept as history until the lifter chooses otherwise.
+    expect(continueBox()).not.toBeChecked();
+    expect(screen.queryByRole('radiogroup', { name: /Training max for/ })).not.toBeInTheDocument();
+    await user.click(continueBox());
+
+    // Keep is the default; a lift with no max to keep starts on its computed value, else on a value to enter.
+    expect(within(maxGroup('Squat')).getByRole('radio', { name: 'Keep current (200)' })).toBeChecked();
+    expect(within(maxGroup('Bench Press')).getByRole('radio', { name: 'Keep current (none)' })).toBeDisabled();
+    expect(within(maxGroup('Bench Press')).getByRole('radio', { name: 'Use computed (150)' })).toBeChecked();
+    expect(within(maxGroup('Deadlift')).getByRole('radio', { name: 'Enter a value' })).toBeChecked();
+    expect(screen.getByTestId('assign-decisions')).toHaveTextContent('1 decision left before Preview.');
+    expect(nextButton()).toBeDisabled();
+
+    // The continued run's status is locked in progress.
+    const [, lastRow] = screen.getAllByTestId('assign-settled');
+    if (!lastRow) throw new Error('expected the last run settled');
+    expect(lastRow).toHaveTextContent('In progress');
+    await user.click(lastRow);
+    const status = screen.getByLabelText(`Status for ${LAST}`);
+    expect(status).toBeDisabled();
+    expect(status).toHaveValue('in-progress');
+
+    await user.click(screen.getByRole('spinbutton', { name: 'New training max for Deadlift' }));
+    await user.paste('315');
+    expect(screen.getByTestId('assign-decisions')).toHaveTextContent('Nothing left to decide.');
+    await user.click(nextButton());
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    expect(mockDryRun.mock.calls[0]![3]).toEqual(
+      expect.objectContaining({
+        breakdown: expect.objectContaining({
+          stretches: [
+            expect.objectContaining({ status: 'completed' }),
+            expect.objectContaining({ status: 'in-progress', statusChosen: false }),
+          ],
+          continue: {
+            stretch: 1,
+            maxes: [
+              { lift: 'Bench Press', weight: 150 },
+              { lift: 'Deadlift', weight: 315 },
+            ],
+          },
+        }),
+      }),
+    );
+  });
+
+  it('blocks Next until the lifter agrees to end the live macrocycle, showing its set count', async () => {
+    const user = userEvent.setup();
+    const live = { id: 'm-live', macrocycleNum: 3, sets: 12 };
+    mockAssign.mockResolvedValue(
+      assignRes({ continue: offer({ live, maxes: [{ lift: 'Squat', name: 'Squat', current: 200, computed: null }] }) }),
+    );
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    expect(nextButton()).toBeEnabled();
+    await user.click(continueBox());
+
+    const agree = screen.getByRole('checkbox', { name: /End macrocycle 3, your current one in this program, which holds 12 sets/ });
+    expect(agree).not.toBeChecked();
+    expect(screen.getByTestId('assign-decisions')).toHaveTextContent('1 decision left before Preview.');
+    expect(nextButton()).toBeDisabled();
+
+    await user.click(agree);
+    expect(nextButton()).toBeEnabled();
+    await user.click(nextButton());
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    expect(mockDryRun.mock.calls[0]![3]).toEqual(
+      expect.objectContaining({
+        breakdown: expect.objectContaining({ continue: { stretch: 1, endLive: 'm-live', maxes: [] } }),
+      }),
+    );
+  });
+
+  it('withdraws the offer once the run it was for changes', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(assignRes({ continue: offer() }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(continueBox());
+    // Joining the last run into the one before it makes a different run, which the offer wasn't for.
+    await user.click(screen.getByRole('button', { name: `Join ${LAST} with the macrocycle before it` }));
+    expect(screen.queryByRole('checkbox', { name: /as my current macrocycle/ })).not.toBeInTheDocument();
+    // The joined run's status is the lifter's again.
+    await user.selectOptions(screen.getByLabelText('Status for RPT from Jan 1, 2026'), 'completed');
+    await user.click(nextButton());
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    expect(mockDryRun.mock.calls[0]![3]).toEqual(
+      expect.objectContaining({ breakdown: expect.not.objectContaining({ continue: expect.anything() }) }),
+    );
+  });
+
+  it('marks an empty max value invalid and says what it needs', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(assignRes({ continue: offer() }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(continueBox());
+
+    const input = screen.getByRole('spinbutton', { name: 'New training max for Deadlift' });
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAccessibleDescription('Enter a training max above 0.');
+    await user.click(input);
+    await user.paste('315');
+    expect(input).toHaveAttribute('aria-invalid', 'false');
+  });
+
+  it('groups again when the server refuses the continue, saying why', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(assignRes({ continue: offer({ maxes: [{ lift: 'Squat', name: 'Squat', current: 200, computed: null }] }) }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(continueBox());
+
+    mockDryRun.mockRejectedValueOnce(new ApiClientError('A set was logged since', 400, 'continue-refused'));
+    await user.click(nextButton());
+
+    expect(await screen.findByTestId('assign-notice')).toHaveTextContent(/continuing your last run was checked again/);
+    expect(screen.getByText('Step 6 of 8 · Assign')).toBeInTheDocument();
+    expect(mockAssign).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Assign your history to macrocycles' })).toHaveFocus());
   });
 });

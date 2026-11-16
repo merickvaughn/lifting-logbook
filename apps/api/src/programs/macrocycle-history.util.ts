@@ -7,6 +7,8 @@ import {
   MacrocycleDashboard,
   MAX_FILE_MACROCYCLE_NUM,
   toUTCMidnight,
+  WEEKDAY_MAP,
+  Weekday,
 } from '@lifting-logbook/core';
 import { MacrocycleStatus, NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
@@ -582,6 +584,33 @@ export function closingStatus(loggedWorkoutNums: ReadonlySet<number>, programWor
   if (programWorkouts === 0) return 'unknown';
   const logged = [...loggedWorkoutNums].filter((n) => n >= 1 && n <= programWorkouts).length;
   return logged >= programWorkouts ? 'completed' : 'abandoned';
+}
+
+/**
+ * How a live macrocycle closes when another becomes current (decision 1): it ends on its last
+ * set, or its start with none, and keeps a status the lifter chose, else {@link closingStatus}.
+ */
+export function closingEnd(
+  row: Pick<MacrocycleRow, 'startDate' | 'status' | 'statusChosen'>,
+  lastSet: Date | undefined,
+  loggedWorkoutNums: ReadonlySet<number>,
+  programWorkouts: number,
+): { endDate: Date; status: MacrocycleStatus } {
+  return {
+    endDate: lastSet ?? row.startDate,
+    status: row.statusChosen ? row.status : closingStatus(loggedWorkoutNums, programWorkouts),
+  };
+}
+
+/**
+ * The weekday a macrocycle starting on `date` starts on, as the `Weekday` enum spells it: the value
+ * a dashboard stores, and what reading one back checks for.
+ */
+export function weekdayOf(date: Date): Weekday {
+  // Search enum values (PascalCase) rather than WEEKDAY_MAP keys (lowercase).
+  const day = Object.values(Weekday).find((v) => WEEKDAY_MAP[v.toLowerCase()] === date.getUTCDay());
+  if (!day) throw new Error(`No Weekday mapping for UTC day index ${date.getUTCDay()}`);
+  return day;
 }
 
 /**

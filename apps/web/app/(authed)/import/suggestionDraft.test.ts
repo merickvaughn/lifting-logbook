@@ -43,6 +43,7 @@ function res(over: Partial<ImportAssignResponse> = {}): ImportAssignResponse {
     programs: [],
     lifts: [],
     suggestions: { provider: 'Test model' },
+    continue: null,
     ...over,
   };
 }

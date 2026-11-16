@@ -15,8 +15,6 @@ import {
   toUTCMidnight,
   updateMaxes,
   weekTypeForDate,
-  WEEKDAY_MAP,
-  Weekday,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
@@ -29,7 +27,8 @@ import {
   dashboardOrNull,
   lockForMacrocycleWrite,
   lockForRenumbering,
-  closingStatus,
+  closingEnd,
+  weekdayOf,
   ensureCurrentRow,
   forgetBatchKeys,
   nextMacrocycleNumber,
@@ -366,12 +365,16 @@ export class MacrocycleGenerationService {
     });
     // The closing macrocycle ends on its last session, or its start with none (decision 1). A
     // status the lifter chose stays.
-    await repos.macrocycle.close(program, dashboard.macrocycleNum, {
-      endDate: closingRange.get(dashboard.macrocycleNum)?.last ?? closingRow.startDate,
-      status: closingRow.statusChosen
-        ? closingRow.status
-        : closingStatus(closingWorkoutNums, programWorkoutKeys(program, programSpec).length),
-    });
+    await repos.macrocycle.close(
+      program,
+      dashboard.macrocycleNum,
+      closingEnd(
+        closingRow,
+        closingRange.get(dashboard.macrocycleNum)?.last,
+        closingWorkoutNums,
+        programWorkoutKeys(program, programSpec).length,
+      ),
+    );
 
     // Write order: maxes → scheduled dates → dashboard. If dashboard write fails,
     // macrocycleNum hasn't advanced in the dashboard so a retry is safe. Scheduled date
@@ -427,14 +430,7 @@ export class MacrocycleGenerationService {
     }
 
     const macrocycleDate = dto.macrocycleDate ? new Date(dto.macrocycleDate) : new Date();
-    // Search enum values (PascalCase) rather than WEEKDAY_MAP keys (lowercase)
-    // to ensure the stored value matches the Weekday enum contract.
-    const weekdayName = Object.values(Weekday).find(
-      (v) => WEEKDAY_MAP[v.toLowerCase()] === macrocycleDate.getUTCDay(),
-    );
-    if (!weekdayName) {
-      throw new Error(`No Weekday mapping for UTC day index ${macrocycleDate.getUTCDay()}`);
-    }
+    const weekdayName = weekdayOf(macrocycleDate);
 
     // 1 for a program with no history; after imported history, the number past it (ADR-042).
     const macrocycleNum = await nextMacrocycleNumber(repos, program, null);

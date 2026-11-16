@@ -110,8 +110,21 @@ type PlannedCommit = { file: File; opts?: CommitImportOpts; counts: ImportDryRun
 
 // The code a dry run or commit returns when its Assign breakdown no longer fits the file's rows (#1254).
 const BREAKDOWN_MISMATCH = 'breakdown-mismatch';
-const isMismatch = (e: unknown) => e instanceof ApiClientError && e.code === BREAKDOWN_MISMATCH;
 const MISMATCH_NOTICE = 'Your file no longer matched these macrocycles, so they were grouped again. Check them and continue.';
+// The run the lifter chose to continue can't continue any more (#1180): a macrocycle started in
+// another tab, a max deleted, a run gone stale overnight. A fresh grouping makes a fresh offer.
+const CONTINUE_REFUSED = 'continue-refused';
+const CONTINUE_NOTICE =
+  'Your training changed since these macrocycles were grouped, so continuing your last run was checked again. Check them and continue.';
+/** The notices of a grouping the server refused, which Assign shows with focus on its heading. */
+const REGROUP_NOTICES: ReadonlySet<string | null> = new Set([MISMATCH_NOTICE, CONTINUE_NOTICE]);
+/** A breakdown the server refused, so Assign starts again: its code, and the notice to show. */
+function regroupFor(e: unknown): { code: string; notice: string } | null {
+  if (!(e instanceof ApiClientError)) return null;
+  if (e.code === BREAKDOWN_MISMATCH) return { code: BREAKDOWN_MISMATCH, notice: MISMATCH_NOTICE };
+  if (e.code === CONTINUE_REFUSED) return { code: CONTINUE_REFUSED, notice: CONTINUE_NOTICE };
+  return null;
+}
 
 // The server's position key leaves a same-keyed row alone (#1123). An API rolled back to
 // before that has no rowIndex and matches the bare natural key.
@@ -1368,7 +1381,7 @@ export function ImportWizard({
       setAssignNotice(notice);
       resetSuggestions();
       // After a mismatch, focus goes to the step's heading instead.
-      setSuggestFocus(notice !== MISMATCH_NOTICE);
+      setSuggestFocus(!REGROUP_NOTICES.has(notice));
       setStep(Step.ASSIGN);
       return true;
     } catch (e) {
@@ -1438,19 +1451,20 @@ export function ImportWizard({
     );
   }
 
-  // The server rejected the breakdown (its rows no longer match it), so Assign starts again. The
-  // wizard goes back first, so a failed reload's error shows on Assign, not on an emptied Preview.
-  // The refused grouping is dropped first, so it can't be sent again or come back from the cache.
-  async function onBreakdownMismatch(op: 'dryRunImport' | 'commitImport') {
+  // The server rejected the breakdown (its rows no longer match it, or the run it continues can't
+  // continue), so Assign starts again. The wizard goes back first, so a failed reload's error shows
+  // on Assign, not on an emptied Preview. The refused grouping is dropped first, so it can't be
+  // sent again or come back from the cache.
+  async function onBreakdownRefused(op: 'dryRunImport' | 'commitImport', refused: { code: string; notice: string }) {
     // Only the code: the server's message names the lifter's dates.
-    logClientError(op, new Error(BREAKDOWN_MISMATCH), { programId, destination });
+    logClientError(op, new Error(refused.code), { programId, destination });
     setPlannedCommit(null);
     setCommitErrors(null);
     // Suggestions were checked against the refused grouping, and the reload can group the same
     // request differently, so they go with it.
     clearAssign();
     setStep(Step.ASSIGN);
-    await loadAssign(MISMATCH_NOTICE);
+    await loadAssign(refused.notice);
   }
 
   // Asks the server what this commit would do, so the Preview tiles report the result of
@@ -1476,8 +1490,9 @@ export function ImportWizard({
         await refreshCustomLiftsAfterRejection();
       }
     } catch (e) {
-      if (isMismatch(e)) {
-        await onBreakdownMismatch('dryRunImport');
+      const refused = regroupFor(e);
+      if (refused) {
+        await onBreakdownRefused('dryRunImport', refused);
         return;
       }
       logClientError('dryRunImport', e, { programId, destination });
@@ -1508,8 +1523,9 @@ export function ImportWizard({
         }
       }
     } catch (e) {
-      if (isMismatch(e)) {
-        await onBreakdownMismatch('commitImport');
+      const refused = regroupFor(e);
+      if (refused) {
+        await onBreakdownRefused('commitImport', refused);
         return;
       }
       logClientError('commitImport', e, { programId, destination });
@@ -2453,7 +2469,7 @@ export function ImportWizard({
                   liftSaves={liftSaves}
                   failedLiftSaves={failedLiftSaves}
                   onSaveLift={(lift, progression) => void saveLiftProgression(lift, progression)}
-                  focusHeading={assignNotice === MISMATCH_NOTICE}
+                  focusHeading={REGROUP_NOTICES.has(assignNotice)}
                   suggestions={{
                     state: suggestState,
                     notes: suggestNotes,

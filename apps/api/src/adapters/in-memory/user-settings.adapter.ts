@@ -24,8 +24,8 @@ export class InMemoryUserSettingsRepository implements IUserSettingsRepository {
   }
 
   // Mirrors PrismaUserSettingsRepository's patch semantics: `undefined` leaves a field
-  // unchanged, explicit `null` clears it (activeProgram has no clear semantics — see
-  // UpsertSettingsPatch).
+  // unchanged, explicit `null` clears it (for activeProgram, only an import's undo sends one —
+  // see UpsertSettingsPatch).
   async upsertSettings(patch: UpsertSettingsPatch): Promise<UserSettingsResponse> {
     if (patch.activeProgram !== undefined) this.activeProgram = patch.activeProgram;
     if (patch.workoutSchedule !== undefined) this.workoutSchedule = patch.workoutSchedule;
