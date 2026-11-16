@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
+  AssignLift,
   AssignSession,
   AssignStretch,
   CustomLiftResponse,
@@ -9,6 +10,8 @@ import type {
   ImportDelta,
   ImportPreviewResponse,
   ImportSuggestionsResponse,
+  LiftMetadataResponse,
+  LiftProgressionType,
 } from '@lifting-logbook/types';
 import {
   LIFT_CATALOG,
@@ -30,6 +33,7 @@ import {
   dryRunImport,
   fetchCustomLifts,
   fetchMissingTrainingMaxes,
+  patchLiftMetadata,
   previewImport,
   suggestImport,
   undoImport,
@@ -61,6 +65,7 @@ jest.mock('@/lib/client-api', () => ({
   updateTrainingMaxes: jest.fn(),
   dismissMissingTrainingMax: jest.fn(),
   undismissMissingTrainingMax: jest.fn(),
+  patchLiftMetadata: jest.fn(),
 }));
 
 const mockPreview = previewImport as jest.MockedFunction<typeof previewImport>;
@@ -74,6 +79,7 @@ const mockUndo = undoImport as jest.MockedFunction<typeof undoImport>;
 const mockFetchMissing = fetchMissingTrainingMaxes as jest.MockedFunction<typeof fetchMissingTrainingMaxes>;
 const mockUpdateMaxes = updateTrainingMaxes as jest.MockedFunction<typeof updateTrainingMaxes>;
 const mockDismiss = dismissMissingTrainingMax as jest.MockedFunction<typeof dismissMissingTrainingMax>;
+const mockPatchLiftMetadata = patchLiftMetadata as jest.MockedFunction<typeof patchLiftMetadata>;
 
 const PROGRAMS: CustomProgramSummaryResponse[] = [
   { id: 'prog-1', name: 'My Program', description: null, baseTemplate: null, createdAt: '2026-01-01' },
@@ -3967,6 +3973,7 @@ function assignRes(over: Partial<ImportAssignResponse> = {}): ImportAssignRespon
     exported: false,
     // A custom program, so the names below don't depend on the built-in catalog's wording.
     programs: [{ id: 'rpt', name: 'RPT', workouts: 24, weeks: 8 }],
+    lifts: [{ name: 'Squat', metadataLift: 'Squat', programs: ['rpt', '5-3-1'], progression: 'linear' }],
     split: { changes: 2, olderThanCurrent: 1 },
     suggestions: null,
     ...over,
@@ -4294,6 +4301,152 @@ describe('ImportWizard Assign step (#1256)', () => {
     );
     expect(await screen.findByText(failure.message)).toBeInTheDocument();
     expect(screen.getByText('Step 5 of 8 · Review')).toBeInTheDocument();
+  });
+});
+
+// ── Assign step: progressions of lifts outside a stretch's program (#1212) ───────
+
+describe('ImportWizard Assign lift progressions (#1212)', () => {
+  // The second stretch has Face Pull, which RPT doesn't plan; its stored row is spelled `face-pull`.
+  const LIFTS: AssignLift[] = [
+    { name: 'Squat', metadataLift: 'Squat', programs: ['rpt'], progression: 'linear' },
+    { name: 'Face Pull', metadataLift: 'face-pull', programs: [], progression: 'manual' },
+  ];
+  const withFacePull = () =>
+    assignRes({
+      stretches: [
+        stretch(['2026-01-01', '2026-01-03']),
+        stretch(['2026-02-01', '2026-02-03'], {
+          matched: false,
+          liftsOutsideProgram: ['Face Pull'],
+          sessions: ['2026-02-01', '2026-02-03'].map((d) => day(d, ['Squat', 'Face Pull'])),
+          reasons: { start: { kind: 'gap', days: 29 }, program: { kind: 'source' }, status: { kind: 'all-workouts-done' } },
+        }),
+      ],
+      lifts: LIFTS,
+    });
+  const SECOND = 'RPT from Feb 1, 2026';
+  const picker = () => screen.getByRole('combobox', { name: `Progression for Face Pull in ${SECOND}` });
+  const confirm = () => screen.getByRole('button', { name: `Confirm the progression for Face Pull in ${SECOND}` });
+  const metadata = (progression: LiftProgressionType): LiftMetadataResponse => ({
+    lift: 'face-pull',
+    muscleGroups: [],
+    secondaryMuscleGroups: [],
+    substitutions: [],
+    foundational: false,
+    progression,
+    progressionIncrement: null,
+    repsLow: null,
+    repsHigh: null,
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPreview.mockResolvedValue(ASSIGN_PREVIEW);
+    mockAssign.mockResolvedValue(withFacePull());
+    mockDryRun.mockResolvedValue(DRY_RUN_OK);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('lists a lift the program doesn’t plan with its progression preselected, and holds the stretch until it’s confirmed', async () => {
+    const user = userEvent.setup();
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    // A native select, found by its label, with the server's preselection; Squat is planned, so it isn't listed.
+    expect(picker().tagName).toBe('SELECT');
+    expect(picker()).toHaveValue('manual');
+    expect(screen.queryByRole('combobox', { name: /Progression for Squat/ })).not.toBeInTheDocument();
+    const card = screen.getByRole('region', { name: SECOND });
+    expect(card).toHaveTextContent('Face Pull isn’t in RPT');
+
+    // Not matched yet: the stretch stays open, it's a decision left, and Preview waits.
+    expect(screen.getByTestId('assign-decisions')).toHaveTextContent('1 decision left before Preview.');
+    expect(nextButton()).toBeDisabled();
+    expect(screen.getAllByTestId('assign-settled')).toHaveLength(1);
+
+    // Confirming the preselection saves nothing and settles the stretch.
+    await user.click(confirm());
+    expect(mockPatchLiftMetadata).not.toHaveBeenCalled();
+    expect(screen.getByTestId('assign-decisions')).toHaveTextContent('Nothing left to decide.');
+    expect(screen.getAllByTestId('assign-settled')).toHaveLength(2);
+    expect(nextButton()).toBeEnabled();
+  });
+
+  it('saves a change to the lift’s own row, which confirms it', async () => {
+    const user = userEvent.setup();
+    mockPatchLiftMetadata.mockResolvedValue(metadata('double'));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    await user.selectOptions(picker(), 'double');
+    expect(mockPatchLiftMetadata).toHaveBeenCalledWith('face-pull', { progression: 'double' });
+    await waitFor(() => expect(screen.getByTestId('assign-decisions')).toHaveTextContent('Nothing left to decide.'));
+    expect(nextButton()).toBeEnabled();
+    // Settled, it stays open under the lifter's focus, with the saved value confirmed.
+    expect(screen.getAllByTestId('assign-settled')[1]).toHaveAttribute('aria-expanded', 'true');
+    expect(picker()).toHaveFocus();
+    expect(picker()).toHaveValue('double');
+    expect(confirm()).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('reports a failed save through logClientError, puts the old value back, and leaves the lift unconfirmed', async () => {
+    const user = userEvent.setup();
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const failure = new Error('network down');
+    mockPatchLiftMetadata.mockRejectedValue(failure);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    await user.selectOptions(picker(), 'linear');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t save the progression for Face Pull.');
+    // No lift name in the context: the file's lift names are the lifter's data.
+    expect(errorSpy).toHaveBeenCalledWith('[client-mutation] patchLiftMetadata failed', failure, { step: 'import-assign' });
+    expect(picker()).toHaveValue('manual');
+    expect(confirm()).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('assign-decisions')).toHaveTextContent('1 decision left before Preview.');
+    expect(nextButton()).toBeDisabled();
+  });
+
+  it('holds Back and Next while a change to a confirmed lift saves, so a failure is still shown on the step', async () => {
+    const user = userEvent.setup();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    let fail: (e: unknown) => void = () => {};
+    mockPatchLiftMetadata.mockReturnValue(new Promise<LiftMetadataResponse>((_, reject) => (fail = reject)));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    const back = screen.getByRole('button', { name: 'Back' });
+
+    // Confirmed, the step has nothing left to decide; a change then saves under it.
+    await user.click(confirm());
+    expect(nextButton()).toBeEnabled();
+    await user.selectOptions(picker(), 'double');
+    expect(nextButton()).toBeDisabled();
+    expect(back).toBeDisabled();
+
+    fail(new Error('network down'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t save the progression for Face Pull.');
+    expect(picker()).toHaveValue('manual');
+    expect(nextButton()).toBeEnabled();
+    expect(back).toBeEnabled();
+  });
+
+  it('reports a failed save without the request path, which names the lift', async () => {
+    const user = userEvent.setup();
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockPatchLiftMetadata.mockRejectedValue(new ApiClientError('API 502 Bad Gateway for /lifts/face-pull/metadata', 502));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    await user.selectOptions(picker(), 'linear');
+    await screen.findByRole('alert');
+    const [, reported] = errorSpy.mock.calls.find(([prefix]) => prefix === '[client-mutation] patchLiftMetadata failed') ?? [];
+    expect(reported).toBeInstanceOf(ApiClientError);
+    expect(reported).toMatchObject({ status: 502 });
+    expect((reported as Error).message).not.toMatch(/face-pull|lifts/i);
   });
 });
 

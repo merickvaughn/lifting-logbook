@@ -115,7 +115,8 @@ export type StretchStartReason =
 
 /** Where a stretch's program came from (decision 9). */
 export type StretchProgramReason =
-  | { kind: 'column'; value: string }
+  /** `known`: the value names one of the lifter's programs, not their own label ("GZCLP"). */
+  | { kind: 'column'; value: string; known: boolean }
   /** `bySetOrder`: sessions' set order chose among programs that all contain the lifts. */
   | { kind: 'lifts'; tiedWith: string[]; bySetOrder: boolean }
   | { kind: 'source' };
@@ -901,7 +902,7 @@ class Segmenter<T extends LiftHistoryRow> {
       return {
         program: named,
         id: named.id,
-        reason: { kind: 'column', value: column.value },
+        reason: { kind: 'column', value: column.value, known: true },
         outside,
         ...(outside.length > 0 && onlyUnknownOutside(named) ? { candidate: named.id } : {}),
       };
@@ -923,7 +924,7 @@ class Segmenter<T extends LiftHistoryRow> {
     return {
       program: undefined,
       id: this.options.sourceProgram,
-      reason: column ? { kind: 'column', value: column.value } : { kind: 'source' },
+      reason: column ? { kind: 'column', value: column.value, known: false } : { kind: 'source' },
       outside: reference ? outsideOf(reference) : [...draft.allLifts.values()],
       ...(match ? { candidate: match.program.id } : {}),
     };

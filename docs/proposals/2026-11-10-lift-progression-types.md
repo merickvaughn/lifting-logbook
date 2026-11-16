@@ -108,6 +108,10 @@ in a stretch that the stretch's program doesn't plan, with its progression prese
 own value, else the lifter's default, else the catalog's. The lifter confirms or changes each before
 the stretch counts as matched. A change is saved to the lift's `lift_metadata` row.
 
+"Matched" here means settled at Assign: each unconfirmed lift is a decision left before Preview. The
+stored macrocycle's `unmatched` flag keeps its meaning from the import proposal's decision 9, a lift
+outside the program, so confirming doesn't change the breakdown or the commit (decision 16).
+
 ### Focus blocks
 
 Focus blocks share the same vocabulary rather than keeping their own `FOCUS_PROGRESSIONS`. Stored
@@ -191,6 +195,12 @@ On 2026-11-10, while drafting this proposal:
 | 13 | Focus blocks | Progress by their type too, not only renamed |
 | 14 | Where a lift's own value is stored | `lift_metadata`, so built-ins can have one too, revising decision 1's "a column on custom lifts" |
 | 15 | `linear` | Adds the increment only when every set of the session reaches the target |
+
+On 2026-11-15, while building the Import phase ([#1212](https://github.com/merickvaughn/lifting-logbook/issues/1212)):
+
+| # | Question | Answer |
+|---|----------|--------|
+| 16 | Does confirming a lift at Assign clear the stored `unmatched` flag? | No. Confirming is an Assign decision only; the flag still means a lift outside the program |
 
 ### Risks by dimension
 

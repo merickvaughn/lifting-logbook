@@ -1,5 +1,6 @@
 import {
   builtInLiftFor,
+  progressionLookup,
   resolveProgression,
   type LiftProgressionMeta,
   type ProgressionRow,
@@ -101,5 +102,30 @@ describe("resolveProgression", () => {
         type: "manual", source: "catalog", increment: 2.5,
       });
     });
+  });
+});
+
+// Issue #1212: what import's Assign step preselects for a lift its stretch's program doesn't plan.
+describe("progressionLookup", () => {
+  const settings = (userDefault: UserProgressionDefault | null, liftMeta = [{ lift: "face-pull", progression: "manual" as const }]) =>
+    progressionLookup({ liftMeta, userDefault, defaultWeightIncrement: null, customLifts: [{ name: "Sled Push" }] });
+
+  it("takes the lift's own value over the lifter's default, under any spelling of the lift", () => {
+    const lookup = settings({ type: "linear" });
+    expect(lookup.resolve("Face Pull")).toMatchObject({ type: "manual", source: "lift" });
+    expect(lookup.liftMetaFor("Face Pull")?.lift).toBe("face-pull");
+  });
+
+  it("takes the lifter's default over the catalog's when the lift has no value of its own", () => {
+    expect(settings({ type: "linear" }, []).resolve("Face Pull")).toMatchObject({ type: "linear", source: "user" });
+  });
+
+  it("takes the catalog's when the lifter has no default", () => {
+    expect(settings(null, []).resolve("Face Pull")).toMatchObject({ type: "double", repsLow: 8, repsHigh: 12, source: "catalog" });
+  });
+
+  it("gives a custom lift no catalog default", () => {
+    expect(settings(null, []).resolve("Sled Push")).toMatchObject({ type: "amrap_gated", source: "fallback" });
+    expect(settings(null, []).liftMetaFor("Sled Push")).toBeUndefined();
   });
 });

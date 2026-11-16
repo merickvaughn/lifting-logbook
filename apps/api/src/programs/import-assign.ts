@@ -1,20 +1,25 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  AssignLift,
   AssignProgramOption,
   AssignSession,
   AssignStoredPlacement,
   AssignStretch,
   ImportAssignResponse,
+  isLiftProgressionType,
   MACROCYCLE_STATUSES,
   MacrocycleStatus,
 } from '@lifting-logbook/types';
 import {
   BUILT_IN_KNOWN_PROGRAMS,
+  liftKey,
+  progressionLookup,
   toUTCMidnight,
   type HistorySession,
   type HistoryStretch,
   type KnownProgram,
   type LiftHistoryRecord,
+  type ProgressionSettings,
   type SegmentedLiftHistory,
   type TrainingMax,
 } from '@lifting-logbook/core';
@@ -61,6 +66,39 @@ export function assignProgramOptions(customPrograms: readonly KnownProgram[]): A
     // A custom program is open-ended (#1172), so it has no length to run past.
     ...customPrograms.map((p) => ({ id: p.id, name: p.name ?? p.id, workouts: null, weeks: p.lengthWeeks })),
   ];
+}
+
+/**
+ * Each lift in `lifts` (stored spellings) once, by display name (#1212): the programs that plan
+ * it, and the progression it follows with no program row, which Assign preselects for a lift
+ * its stretch's program doesn't plan. A change is saved to the lift's own `lift_metadata` row
+ * when it has one, under whatever spelling it was saved, so the lift doesn't get a second row;
+ * else under its display name, the spelling the lift editor reads it by.
+ */
+export function assignLifts(
+  lifts: Iterable<string>,
+  programs: readonly KnownProgram[],
+  settings: ProgressionSettings,
+  liftNames: ReadonlyMap<string, string>,
+): AssignLift[] {
+  const lookup = progressionLookup(settings);
+  const byName = new Map<string, AssignLift>();
+  for (const lift of lifts) {
+    const name = liftNames.get(lift) ?? lift;
+    if (byName.has(name)) continue;
+    const key = liftKey(lift);
+    const { type } = lookup.resolve(lift);
+    // With no row, the type comes from a lift, a default or the catalog, none of which can be
+    // `rpe`. If one ever were, Assign would preselect a type `updateMaxes` doesn't use.
+    if (!isLiftProgressionType(type)) throw new Error(`A lift's progression resolved to ${type} with no program row`);
+    byName.set(name, {
+      name,
+      metadataLift: lookup.liftMetaFor(lift)?.lift ?? name,
+      programs: programs.filter((p) => p.lifts.has(key)).map((p) => p.id),
+      progression: type,
+    });
+  }
+  return [...byName.values()];
 }
 
 /**
@@ -225,6 +263,8 @@ export function assignResponse(
     undatedRows: number;
     exported: boolean;
     programs: AssignProgramOption[];
+    /** The file's lifts ({@link assignLifts}). */
+    lifts: AssignLift[];
     split?: { changes: number; olderThanCurrent: number };
     /** Each stretch's placement among the stored macrocycles, in `segmented.stretches` order (#1255). */
     stored: readonly AssignStoredPlacement[];
@@ -258,6 +298,7 @@ export function assignResponse(
     undatedRows: extra.undatedRows,
     exported: extra.exported,
     programs: extra.programs,
+    lifts: extra.lifts,
     ...(extra.split ? { split: extra.split } : {}),
     suggestions: extra.suggestionsProvider === null ? null : { provider: extra.suggestionsProvider },
   };

@@ -1,4 +1,5 @@
-import { buildImportSlotMap, LIFT_CATALOG } from '@lifting-logbook/core';
+import { buildImportSlotMap, LIFT_CATALOG, type ProgressionSettings } from '@lifting-logbook/core';
+import type { UserSettingsResponse } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
 
 /**
@@ -46,8 +47,30 @@ export async function effectiveSlotMapFor(repos: RepositoryBundle): Promise<Reco
  * request, on top of effectiveSlotMapFor's, for the reason its doc comment accepts.
  */
 export async function liftNamesFor(repos: RepositoryBundle): Promise<Map<string, string>> {
-  const customLifts = await repos.customLift.list();
+  return liftNamesOf(await repos.customLift.list());
+}
+
+/** `liftNamesFor` from custom lifts the caller has already read. */
+export function liftNamesOf(customLifts: readonly { id: string; name: string }[]): Map<string, string> {
   return new Map(
     [...LIFT_CATALOG, ...customLifts].map((lift): [string, string] => [lift.id, lift.name]),
   );
+}
+
+/**
+ * The lifter's progression settings, which `updateMaxes` resolves each lift's type, rep range and
+ * increment from (#1211; docs/adr/ADR-043-lift-progression-resolution-and-storage.md), and the
+ * import's Assign step preselects from (#1212). Takes the custom lifts the caller has read.
+ */
+export async function progressionSettingsFor(
+  repos: Pick<RepositoryBundle, 'liftMetadata'>,
+  settings: Pick<UserSettingsResponse, 'defaultProgression' | 'defaultWeightIncrement'>,
+  customLifts: ProgressionSettings['customLifts'],
+): Promise<ProgressionSettings> {
+  return {
+    liftMeta: await repos.liftMetadata.listMetadata(),
+    userDefault: settings.defaultProgression,
+    defaultWeightIncrement: settings.defaultWeightIncrement,
+    customLifts,
+  };
 }

@@ -69,11 +69,32 @@ async function commitThroughAssign(page: Page, program?: string) {
   await toAssign(page, program);
   await page.getByRole('button', { name: 'Keep every break: file the 20 one-lift workouts with the macrocycle before each' }).click();
   await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
+  await page.getByRole('button', { name: 'Confirm the progression for Face Pull in RPT from Jan 1, 2024' }).click();
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Preview changes' })).toBeVisible();
   await page.getByRole('button', { name: 'Commit import' }).click();
   await expect(page.getByText('Import complete')).toBeVisible();
 }
+
+// #1212: a lift the stretch's program doesn't plan has its progression confirmed before Preview.
+test('Assign: a lift outside the program has its progression changed by keyboard and saved', async ({ page }) => {
+  await toAssign(page);
+  await page.getByRole('button', { name: 'Keep every break: file the 20 one-lift workouts with the macrocycle before each' }).click();
+  await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
+  await expect(page.getByTestId('assign-decisions')).toHaveText('1 decision left before Preview.');
+
+  const picker = page.getByRole('combobox', { name: 'Progression for Face Pull in RPT from Jan 1, 2024' });
+  await expect(picker).toHaveValue('double');
+  const saved = page.waitForRequest((r) => r.method() === 'PATCH' && r.url().endsWith('/lifts/Face%20Pull/metadata'));
+  // From Double, the option above is Linear.
+  await picker.focus();
+  await page.keyboard.press('ArrowUp');
+  expect((await saved).postDataJSON()).toEqual({ progression: 'linear' });
+
+  await expect(page.getByTestId('assign-decisions')).toHaveText('Nothing left to decide. Continue to Preview.');
+  await expect(picker).toBeFocused();
+  await expect(picker).toHaveValue('linear');
+});
 
 /** Commits the file through Assign, then leaves the wizard for the past-macrocycles list. */
 async function importThenOpenHistory(page: Page) {
@@ -81,10 +102,19 @@ async function importThenOpenHistory(page: Page) {
 
   // Leave the wizard: its own Undo is gone with it.
   await page.goto('/history');
-  await page.getByRole('tab', { name: 'Macrocycles' }).click();
+  await openMacrocyclesTab(page);
   const imported = page.getByRole('row').filter({ hasText: '2024-01-' });
   await expect(imported).toHaveCount(2);
   return imported;
+}
+
+/** History's Macrocycles tab. A click can land before the page hydrates, so it's retried. */
+async function openMacrocyclesTab(page: Page) {
+  const tab = page.getByRole('tab', { name: 'Macrocycles' });
+  await expect(async () => {
+    await tab.click();
+    await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 1_000 });
+  }).toPass({ timeout: 20_000 });
 }
 
 // #1300: History shows any of the lifter's programs, so an import into one that isn't active
@@ -95,7 +125,7 @@ test('Assign: an import into a program that isn’t active is undone from Histor
 
   // History opens on the active program, which the import didn't touch.
   await page.goto('/history');
-  await page.getByRole('tab', { name: 'Macrocycles' }).click();
+  await openMacrocyclesTab(page);
   const imported = page.getByRole('row').filter({ hasText: '2024-01-' });
   await expect(page.getByRole('row').filter({ hasText: '2024-09-02' })).toHaveCount(1);
   await expect(imported).toHaveCount(0);
@@ -103,7 +133,8 @@ test('Assign: an import into a program that isn’t active is undone from Histor
   await page.getByLabel('Program').selectOption({ label: 'My Custom Program' });
   await page.getByRole('button', { name: 'Show', exact: true }).click();
   await expect(page).toHaveURL(/[?&]program=cust-1/);
-  await page.getByRole('tab', { name: 'Macrocycles' }).click();
+  // Show is a plain GET form, so this is a fresh page to hydrate.
+  await openMacrocyclesTab(page);
   await expect(imported).toHaveCount(2);
 
   await page.getByRole('button', { name: 'Undo import of macrocycle 2' }).click();
@@ -168,6 +199,9 @@ test('Assign: a long file stays workable at 375px', async ({ page }) => {
   }
 
   await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
+  // The lift outside RPT's plan fits the width too (#1212).
+  expect(await overflow()).toBeLessThanOrEqual(0);
+  await page.getByRole('button', { name: 'Confirm the progression for Face Pull in RPT from Jan 1, 2024' }).click();
   await expect(page.getByTestId('assign-decisions')).toHaveText('Nothing left to decide. Continue to Preview.');
   expect(await overflow()).toBeLessThanOrEqual(0);
   await page.getByRole('button', { name: 'Next', exact: true }).click();

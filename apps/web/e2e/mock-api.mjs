@@ -135,7 +135,13 @@ const ASSIGN_RESPONSE = {
       stored: { kind: 'new' },
       startDate: dates[0],
       endDate: dates[2],
-      sessions: dates.map((date, n) => ({ date, workoutNum: n + 1, lifts: ['Squat', 'Bench Press'], sets: 6 })),
+      // The first also has a lift RPT doesn't plan, for the lifter to confirm its progression (#1212).
+      sessions: dates.map((date, n) => ({
+        date,
+        workoutNum: n + 1,
+        lifts: i === 0 ? ['Squat', 'Bench Press', 'Face Pull'] : ['Squat', 'Bench Press'],
+        sets: i === 0 ? 9 : 6,
+      })),
       completedWorkouts: 3,
       expectedWorkouts: 24,
       status: i === 0 ? null : 'abandoned',
@@ -159,6 +165,11 @@ const ASSIGN_RESPONSE = {
   exported: false,
   // A custom program's name, so the spec doesn't depend on the built-in catalog's wording.
   programs: [{ id: 'rpt', name: 'RPT', workouts: 24, weeks: 8 }],
+  lifts: [
+    { name: 'Squat', metadataLift: 'Squat', programs: ['rpt'], progression: 'linear' },
+    { name: 'Bench Press', metadataLift: 'Bench Press', programs: ['rpt'], progression: 'linear' },
+    { name: 'Face Pull', metadataLift: 'Face Pull', programs: [], progression: 'double' },
+  ],
   // No LLM provider, so the step shows no suggestions question (#1174).
   suggestions: null,
 };
@@ -914,18 +925,28 @@ const server = createServer(async (req, res) => {
   // gets a response: empty defaults when none is stored. Never a 404 (#1190).
   // -------------------------------------------------------------------------
   const metadataMatch = /^\/lifts\/([^/]+)\/metadata$/.exec(url.pathname);
+  const emptyLiftMetadata = (lift) => ({
+    lift,
+    muscleGroups: [],
+    secondaryMuscleGroups: [],
+    substitutions: [],
+    foundational: false,
+    progression: null,
+    progressionIncrement: null,
+    repsLow: null,
+    repsHigh: null,
+  });
   if (method === 'GET' && metadataMatch) {
-    json(res, {
-      lift: decodeURIComponent(metadataMatch[1]),
-      muscleGroups: [],
-      secondaryMuscleGroups: [],
-      substitutions: [],
-      foundational: false,
-      progression: null,
-      progressionIncrement: null,
-      repsLow: null,
-      repsHigh: null,
-    });
+    json(res, emptyLiftMetadata(decodeURIComponent(metadataMatch[1])));
+    return;
+  }
+
+  // PATCH /lifts/:lift/metadata — the import's Assign step saves a progression change (#1212).
+  // Not stored: nothing in the mock reads it back.
+  if (method === 'PATCH' && metadataMatch) {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    json(res, { ...emptyLiftMetadata(decodeURIComponent(metadataMatch[1])), ...body });
     return;
   }
 

@@ -285,6 +285,24 @@ describe('Import Assign step (#1253, e2e, in-memory adapters)', () => {
       expect(body.stretches).toHaveLength(2);
     });
 
+    it("lists the file's lifts with the programs that plan them and the progression to preselect (#1212)", async () => {
+      const send = (method: 'PATCH', url: string, payload: object) =>
+        app.getHttpAdapter().getInstance().inject({ method, url, headers: AUTH, payload });
+      expect((await send('PATCH', '/lifts/Face%20Pull/metadata', { progression: 'manual' })).statusCode).toBe(200);
+      expect((await send('PATCH', '/users/me/settings', { defaultProgression: { type: 'linear' } })).statusCode).toBe(200);
+
+      const rows = run(RPT_DAYS, 0, 3).flatMap((r) =>
+        r.lift === 'Bench Press' ? [r, { ...r, lift: 'Face Pull' }, { ...r, lift: 'Hammer Curl' }] : [r],
+      );
+      const body = await assign('rpt', csvOf(rows));
+      const byName = new Map(body.lifts.map((l) => [l.name, l]));
+      expect(byName.get('Face Pull')).toEqual({ name: 'Face Pull', metadataLift: 'Face Pull', programs: [], progression: 'manual' });
+      // No value of its own, so the lifter's default wins over the catalog's `double`.
+      expect(byName.get('Hammer Curl')).toEqual({ name: 'Hammer Curl', metadataLift: 'Hammer Curl', programs: [], progression: 'linear' });
+      expect(byName.get('Bench Press')?.programs).toContain('rpt');
+      expect(body.lifts).toHaveLength(new Set(rows.map((r) => r.lift)).size);
+    });
+
     it('counts split rows against the max of the program covering their date', async () => {
       // rpt's Squat max is dated after its stretch's one-rep-max row; 5-3-1 has no maxes.
       const tm = await importCsv(

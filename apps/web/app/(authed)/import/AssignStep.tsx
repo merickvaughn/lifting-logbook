@@ -1,14 +1,17 @@
 'use client';
 
 import { useEffect, useState, type ComponentProps } from 'react';
-import { MACROCYCLE_STATUSES } from '@lifting-logbook/types';
+import { LIFT_PROGRESSION_TYPES, MACROCYCLE_STATUSES } from '@lifting-logbook/types';
 import type {
+  AssignLift,
   AssignStartReason,
   AssignStatusReason,
   ImportAssignResponse,
+  LiftProgressionType,
   MacrocycleStatus,
 } from '@lifting-logbook/types';
 import { PROGRAMS } from '@/lib/programs';
+import { PROGRESSION_LABELS } from '@/lib/progression';
 import { STATUS_LABEL, STATUS_MARK } from '@/lib/macrocycleStatus';
 import {
   canFile,
@@ -19,10 +22,13 @@ import {
   fileAllWithEarlier,
   fileSession,
   fmtDay,
+  isConfirmed,
   isSettled,
   joinWithPrevious,
+  liftProgression,
   moveStart,
   openDecisions,
+  outsideLifts,
   overlaps,
   pendingSessions,
   previousStretchId,
@@ -31,6 +37,7 @@ import {
   splitAtLargestGap,
   startOf,
   stretchName,
+  withMember,
   type AssignDraft,
   type SessionChoice,
 } from './assignDraft';
@@ -124,12 +131,30 @@ export default function AssignStep({
   res,
   draft,
   onChange,
+  onConfirmLift,
+  liftSaves,
+  failedLiftSaves,
+  onSaveLift,
   focusHeading = false,
   suggestions,
 }: {
   res: ImportAssignResponse;
   draft: AssignDraft;
   onChange: (next: AssignDraft) => void;
+  /**
+   * Records a lift's progression as confirmed (#1212). Separate from `onChange` because a change
+   * is saved first, and the draft may have moved on by the time the save returns.
+   */
+  onConfirmLift: (name: string, progression: LiftProgressionType) => void;
+  /**
+   * Changed progressions being saved, by lift name. The wizard holds the saves so Back and Next
+   * wait for them, and a failure is still shown if this step remounts.
+   */
+  liftSaves: ReadonlyMap<string, LiftProgressionType>;
+  /** Lifts whose last save failed. */
+  failedLiftSaves: ReadonlySet<string>;
+  /** Saves a changed progression to the lift, then confirms it. */
+  onSaveLift: (lift: AssignLift, progression: LiftProgressionType) => void;
   /** Focus the heading when shown: the control the lifter last used is gone (#1256). */
   focusHeading?: boolean;
   /** The LLM suggestions' state and handlers (#1174), which the wizard owns. */
@@ -144,13 +169,7 @@ export default function AssignStep({
   const left = openDecisions(draft, res);
   const lone = pending.filter((p) => !p.unnumbered && draft.filed[p.session.date] === undefined);
   const programIds = [...new Set([...res.programs.map((p) => p.id), ...stretches.map((s) => s.program)])];
-  const toggle = (id: string, on: boolean) =>
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
+  const toggle = (id: string, on: boolean) => setOpen((prev) => withMember(prev, id, on));
   // A stretch the lifter is editing stays open, so settling it doesn't collapse it under their focus.
   const editStretch = (id: string, next: AssignDraft) => {
     toggle(id, true);
@@ -305,7 +324,8 @@ export default function AssignStep({
       <ol className={styles.list} aria-label="Macrocycles">
         {stretches.map((s, i) => {
           const label = stretchName(s, name);
-          const settled = isSettled(s, overlapping);
+          const settled = isSettled(s, overlapping, draft, res);
+          const outside = outsideLifts(s, res);
           const expanded = !settled || open.has(s.id);
           const span = `${fmtDay(startOf(s))} to ${fmtDay(endOf(s))}`;
           const workouts = `${s.sessions.length}${s.source?.expectedWorkouts ? ` of ${s.source.expectedWorkouts}` : ''} workouts`;
@@ -380,11 +400,67 @@ export default function AssignStep({
                     {workouts}.
                     {s.source && !s.statusChosen && s.status === s.source.status && ` ${statusWhy(s.source.reasons.status)}`}
                   </p>
-                  {s.source && s.source.liftsOutsideProgram.length > 0 && (
-                    <p className={styles.reason}>
-                      {s.source.liftsOutsideProgram.join(', ')} {s.source.liftsOutsideProgram.length === 1 ? 'isn’t' : 'aren’t'} in{' '}
-                      {name(s.program)}.
-                    </p>
+                  {outside.length > 0 && (
+                    <div className={styles.lifts}>
+                      <p className={styles.reason}>
+                        {outside.map((l) => l.name).join(', ')} {outside.length === 1 ? 'isn’t' : 'aren’t'} in{' '}
+                        {name(s.program)}, so no program row says how {outside.length === 1 ? 'it progresses' : 'they progress'}.
+                        Confirm each progression or change it. A change is saved to the lift.
+                      </p>
+                      <ul className={styles.list}>
+                        {outside.map((lift) => {
+                          const confirmed = isConfirmed(draft, lift.name);
+                          // While a change saves, its picker shows the new value; a failed save
+                          // puts the old one back and says so.
+                          const pending = liftSaves.get(lift.name);
+                          return (
+                            <li key={lift.name} className={styles.fields}>
+                              <label>
+                                {lift.name}
+                                <select
+                                  aria-label={`Progression for ${lift.name} in ${label}`}
+                                  value={pending ?? liftProgression(draft, lift)}
+                                  aria-busy={pending !== undefined || undefined}
+                                  onChange={(e) => {
+                                    // One save at a time, so they can't land out of order. Not
+                                    // disabled while saving, which would drop keyboard focus.
+                                    const value = LIFT_PROGRESSION_TYPES.find((type) => type === e.target.value);
+                                    if (!value || pending !== undefined) return;
+                                    toggle(s.id, true);
+                                    onSaveLift(lift, value);
+                                  }}
+                                >
+                                  {LIFT_PROGRESSION_TYPES.map((type) => (
+                                    <option key={type} value={type}>
+                                      {PROGRESSION_LABELS[type]}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <button
+                                type="button"
+                                className={styles.btn}
+                                aria-pressed={confirmed}
+                                aria-disabled={pending !== undefined || undefined}
+                                aria-label={`Confirm the progression for ${lift.name} in ${label}`}
+                                onClick={() => {
+                                  if (pending !== undefined || confirmed) return;
+                                  toggle(s.id, true);
+                                  onConfirmLift(lift.name, lift.progression);
+                                }}
+                              >
+                                {confirmed ? 'Confirmed' : 'Confirm'}
+                              </button>
+                              {failedLiftSaves.has(lift.name) && (
+                                <p className={styles.error} role="alert">
+                                  Couldn’t save the progression for {lift.name}. Try again.
+                                </p>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
                   )}
                   {s.source && !s.source.matched && s.program === s.source.program && (
                     <p className={styles.reason}>

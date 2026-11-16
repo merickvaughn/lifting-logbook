@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
-import { RedateMacrocycleResponse, UserSettingsResponse, UserWorkoutSchedule } from '@lifting-logbook/types';
+import { RedateMacrocycleResponse, UserWorkoutSchedule } from '@lifting-logbook/types';
 import {
   MacrocycleDashboard,
   LiftingProgramSpec,
@@ -8,7 +8,6 @@ import {
   liftIdFor,
   MaxReductionFlag,
   programWorkoutKeys,
-  ProgressionSettings,
   SkippedLift,
   TrainingMax,
   TrainingMaxHistoryEntry,
@@ -36,6 +35,7 @@ import {
   nextMacrocycleNumber,
 } from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
+import { progressionSettingsFor } from './effective-slot-map.util';
 import { modificationModesFor, ownMaxesFor, saveOwnMaxes } from '../lifts/lift-modification.util';
 
 type MacrocycleRepos = Pick<
@@ -236,23 +236,6 @@ function rotatedBy(schedule: UserWorkoutSchedule, weeks: number): UserWorkoutSch
   return { ...schedule, weeks: [...pattern.slice(k), ...pattern.slice(0, k)] };
 }
 
-/**
- * The lifter's progression settings, which `updateMaxes` resolves each lift's type, rep range and
- * increment from (#1211; docs/adr/ADR-043-lift-progression-resolution-and-storage.md).
- */
-async function progressionSettingsFor(
-  repos: Pick<MacrocycleRepos, 'liftMetadata' | 'customLift'>,
-  settings: Pick<UserSettingsResponse, 'defaultProgression' | 'defaultWeightIncrement'>,
-): Promise<ProgressionSettings> {
-  const [liftMeta, customLifts] = await Promise.all([repos.liftMetadata.listMetadata(), repos.customLift.list()]);
-  return {
-    liftMeta,
-    userDefault: settings.defaultProgression,
-    defaultWeightIncrement: settings.defaultWeightIncrement,
-    customLifts,
-  };
-}
-
 function round2dp(w: number): number {
   return Math.round(w * 100) / 100;
 }
@@ -366,7 +349,7 @@ export class MacrocycleGenerationService {
         liftOverrides,
         modificationModes,
         modificationMaxes,
-        progression: await progressionSettingsFor(repos, settings),
+        progression: await progressionSettingsFor(repos, settings, await repos.customLift.list()),
         endOfMacrocycle: true,
       },
     );
@@ -628,7 +611,11 @@ export class MacrocycleGenerationService {
       liftOverrides,
       modificationModes,
       modificationMaxes,
-      progression: await progressionSettingsFor(repos, await repos.userSettings.getSettings()),
+      progression: await progressionSettingsFor(
+        repos,
+        await repos.userSettings.getSettings(),
+        await repos.customLift.list(),
+      ),
     });
     this.warnSkipped(program, dashboard.macrocycleNum, result.skipped);
     await repos.trainingMax.saveTrainingMaxes(program, result.maxes);

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type {
+  AssignLift,
   ColumnMapping,
   CustomLiftResponse,
   GoogleSheetTab,
@@ -18,6 +19,7 @@ import type {
   ImportSuggestionsResponse,
   ImportUndoResponse,
   LiftClassification,
+  LiftProgressionType,
   WeightUnit,
 } from '@lifting-logbook/types';
 import {
@@ -34,6 +36,7 @@ import {
   dryRunImport,
   fetchCustomLifts,
   fetchGoogleSheetWorkbook,
+  patchLiftMetadata,
   previewImport,
   suggestImport,
   undoImport,
@@ -46,7 +49,14 @@ import { KIND_LABEL, kindsForTarget, previousStep, Step, STEP_LABELS, visibleSte
 import type { ImportTarget, StepValue } from './steps';
 import AssignStep from './AssignStep';
 import type { SuggestState, SuggestionAnswer } from './AssignSuggestions';
-import { buildBreakdown, initialDraft, openDecisions, type AssignDraft } from './assignDraft';
+import {
+  buildBreakdown,
+  confirmLift,
+  initialDraft,
+  openDecisions,
+  withMember,
+  type AssignDraft,
+} from './assignDraft';
 import {
   SheetTabsStep,
   defaultTabChoices,
@@ -260,6 +270,38 @@ export function ImportWizard({
   const [assignNotice, setAssignNotice] = useState<string | null>(null);
   /** How many groupings have loaded, which keys the step so each one starts it afresh. */
   const [assignLoads, setAssignLoads] = useState(0);
+  // A changed lift progression is saved to the lift before it counts as confirmed (#1212). The
+  // saves live here, not in the step, so Back and Next wait for them: a failure then can't land
+  // after the step is gone, and a remount can't start a second save for the same lift.
+  const [liftSaves, setLiftSaves] = useState<ReadonlyMap<string, LiftProgressionType>>(new Map());
+  const [failedLiftSaves, setFailedLiftSaves] = useState<ReadonlySet<string>>(new Set());
+  function confirmAssignLift(name: string, progression: LiftProgressionType) {
+    setFailedLiftSaves((prev) => withMember(prev, name, false));
+    setAssignDraft((prev) => prev && confirmLift(prev, name, progression));
+  }
+  async function saveLiftProgression(lift: AssignLift, progression: LiftProgressionType) {
+    setLiftSaves((prev) => new Map(prev).set(lift.name, progression));
+    setFailedLiftSaves((prev) => withMember(prev, lift.name, false));
+    try {
+      await patchLiftMetadata(lift.metadataLift, { progression });
+      confirmAssignLift(lift.name, progression);
+    } catch (e) {
+      // A message the api-client builds names the request path, and so the lift: the file's lift
+      // names are the lifter's data (proposal Observability), so only the status is reported.
+      const reported =
+        e instanceof ApiClientError
+          ? new ApiClientError(`Saving a lift progression failed (${e.status})`, e.status, e.code)
+          : e;
+      logClientError('patchLiftMetadata', reported, { step: 'import-assign' });
+      setFailedLiftSaves((prev) => withMember(prev, lift.name, true));
+    } finally {
+      setLiftSaves((prev) => {
+        const next = new Map(prev);
+        next.delete(lift.name);
+        return next;
+      });
+    }
+  }
 
   // The Assign step's optional LLM suggestions (#1174): asked once per grouping, sent only on
   // yes, aborted when the lifter leaves the step, and reused for the same file and notes choice.
@@ -558,6 +600,7 @@ export function ImportWizard({
   function clearAssign() {
     setAssignRes(null);
     setAssignDraft(null);
+    setFailedLiftSaves(new Set());
     assignKey.current = null;
     setAssignNotice(null);
     resetSuggestions();
@@ -2406,6 +2449,10 @@ export function ImportWizard({
                   res={assignRes}
                   draft={assignDraft}
                   onChange={setAssignDraft}
+                  onConfirmLift={confirmAssignLift}
+                  liftSaves={liftSaves}
+                  failedLiftSaves={failedLiftSaves}
+                  onSaveLift={(lift, progression) => void saveLiftProgression(lift, progression)}
                   focusHeading={assignNotice === MISMATCH_NOTICE}
                   suggestions={{
                     state: suggestState,
@@ -2637,7 +2684,7 @@ export function ImportWizard({
                 setAssignNotice(null);
                 setStep(previousStep(step, assignActive));
               }}
-              disabled={busy}
+              disabled={busy || (step === Step.ASSIGN && liftSaves.size > 0)}
             >
               Back
             </button>
@@ -2715,7 +2762,9 @@ export function ImportWizard({
               type="button"
               className={styles.btnPrimary}
               onClick={enterPreview}
-              disabled={busy || !assignRes || !assignDraft || openDecisions(assignDraft, assignRes) > 0}
+              disabled={
+                busy || !assignRes || !assignDraft || liftSaves.size > 0 || openDecisions(assignDraft, assignRes) > 0
+              }
             >
               Next
             </button>

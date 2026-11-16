@@ -66,6 +66,29 @@ export interface ProgressionSettings {
   customLifts: readonly NamedLift[];
 }
 
+/**
+ * Each lift's progression from the lifter's settings, as `updateMaxes` reads it: the lift's own
+ * `lift_metadata` row under any spelling of the lift, then the lifter's default, then the
+ * catalog's for a built-in. Import's Assign step preselects from it too (#1212).
+ */
+export function progressionLookup(settings: ProgressionSettings): {
+  /** The lift's stored `lift_metadata` row, under whichever spelling it was saved. */
+  liftMetaFor: (lift: string) => ({ lift: string } & LiftProgressionMeta) | undefined;
+  /** The lift's progression, inside a program when given its spec `row`. */
+  resolve: (lift: string, row?: LiftingProgramSpec | null) => ResolvedProgression;
+} {
+  const liftMetaFor = lookupByLift(settings.liftMeta.map((m) => [m.lift, storedLiftProgression(m)] as const));
+  const catalogFor = (lift: string) => {
+    const { builtIn, custom } = lookupLift(lift, settings.customLifts);
+    return custom ? undefined : builtIn;
+  };
+  return {
+    liftMetaFor,
+    resolve: (lift, row) =>
+      resolveProgression(row, liftMetaFor(lift), settings.userDefault, catalogFor(lift), settings.defaultWeightIncrement),
+  };
+}
+
 export interface UpdateMaxesOptions {
   /** The records' program, which numbers its workouts (`programWorkoutKeys`). */
   program: string;
@@ -234,17 +257,10 @@ export function updateMaxes(
 
   // The rule a record follows, or why it has none. Without progression settings a row resolves
   // from its own `progression` alone, and a lift with no row has nothing to follow.
-  const settings = options.progression;
-  const liftMetaFor = lookupByLift((settings?.liftMeta ?? []).map((m) => [m.lift, storedLiftProgression(m)] as const));
-  const catalogFor = (lift: string) => {
-    const { builtIn, custom } = lookupLift(lift, settings?.customLifts ?? []);
-    return custom ? undefined : builtIn;
-  };
+  const lookup = options.progression ? progressionLookup(options.progression) : undefined;
   const resolveRule = (lift: string, spec: LiftingProgramSpec | undefined): Rule | SkippedLift['reason'] => {
-    if (!spec && !settings) return 'no-program-spec';
-    const resolved: ResolvedProgression = settings
-      ? resolveProgression(spec, liftMetaFor(lift), settings.userDefault, catalogFor(lift), settings.defaultWeightIncrement)
-      : resolveProgression(spec, null, null, null);
+    if (!spec && !lookup) return 'no-program-spec';
+    const resolved: ResolvedProgression = lookup ? lookup.resolve(lift, spec) : resolveProgression(spec, null, null, null);
     const target = spec ? spec.reps : resolved.repsHigh;
     if (target === null && NEEDS_TARGET.has(resolved.type)) return 'no-target-reps';
     return {

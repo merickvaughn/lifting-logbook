@@ -41,6 +41,7 @@ function res(over: Partial<ImportAssignResponse> = {}): ImportAssignResponse {
     undatedRows: 0,
     exported: false,
     programs: [],
+    lifts: [],
     suggestions: { provider: 'Test model' },
     ...over,
   };

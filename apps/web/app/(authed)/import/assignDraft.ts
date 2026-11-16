@@ -1,8 +1,10 @@
 import type {
+  AssignLift,
   AssignSession,
   AssignStretch,
   ImportAssignResponse,
   ImportBreakdown,
+  LiftProgressionType,
   MacrocycleStatus,
 } from '@lifting-logbook/types';
 
@@ -33,6 +35,11 @@ export interface AssignDraft {
   stretches: DraftStretch[];
   /** The lifter's choice for each lone or unnumbered session, by date. */
   filed: Record<string, SessionChoice>;
+  /**
+   * The progression the lifter confirmed or saved for each lift a stretch's program doesn't
+   * plan, by name (#1212). It's the lift's, so one confirmation covers every stretch it's in.
+   */
+  confirmedLifts: Record<string, LiftProgressionType>;
   /** Whether the lifter changed anything, so discarding the draft is worth saying. */
   edited: boolean;
   /** The next stretch id's number, so a split never reuses one. */
@@ -64,6 +71,7 @@ export function initialDraft(res: ImportAssignResponse): AssignDraft {
       source: s,
     })),
     filed: {},
+    confirmedLifts: {},
     edited: false,
     nextId: res.stretches.length,
   };
@@ -275,12 +283,69 @@ export function overlaps(stretches: DraftStretch[]): Array<[DraftStretch, DraftS
   return pairs;
 }
 
-/** What the lifter still has to decide before Preview: sessions to file, statuses, and overlaps. */
+/**
+ * The lifts in stretch `s` that its program doesn't plan, in the order its sessions first have
+ * them (#1212). With no spec row to take a progression from, each needs the lifter's confirmation.
+ */
+export function outsideLifts(s: DraftStretch, res: ImportAssignResponse): AssignLift[] {
+  const byName = liftsByName(res);
+  const names = new Set(s.sessions.flatMap((x) => x.lifts));
+  return [...names].flatMap((name) => {
+    const lift = byName.get(name);
+    return lift && !lift.programs.includes(s.program) ? [lift] : [];
+  });
+}
+
+/** `res.lifts` by name, built once per response: it's read for every stretch on every render. */
+const liftDirectories = new WeakMap<ImportAssignResponse, ReadonlyMap<string, AssignLift>>();
+function liftsByName(res: ImportAssignResponse): ReadonlyMap<string, AssignLift> {
+  let byName = liftDirectories.get(res);
+  if (!byName) {
+    byName = new Map(res.lifts.map((l) => [l.name, l]));
+    liftDirectories.set(res, byName);
+  }
+  return byName;
+}
+
+/** Whether the lifter has confirmed `name`. An own-property check: a lift's name is free text. */
+export function isConfirmed(draft: AssignDraft, name: string): boolean {
+  return Object.hasOwn(draft.confirmedLifts, name);
+}
+
+/** The lift's progression as the lifter has it: confirmed or saved, else the server's preselection. */
+export function liftProgression(draft: AssignDraft, lift: AssignLift): LiftProgressionType {
+  return (isConfirmed(draft, lift.name) ? draft.confirmedLifts[lift.name] : undefined) ?? lift.progression;
+}
+
+/** `set` with `key` added (`on`) or removed. */
+export function withMember<T>(set: ReadonlySet<T>, key: T, on: boolean): ReadonlySet<T> {
+  const next = new Set(set);
+  if (on) next.add(key);
+  else next.delete(key);
+  return next;
+}
+
+export function confirmLift(draft: AssignDraft, name: string, progression: LiftProgressionType): AssignDraft {
+  return { ...draft, confirmedLifts: { ...draft.confirmedLifts, [name]: progression }, edited: true };
+}
+
+/** Names of the lifts outside `stretches`' programs that the lifter hasn't confirmed. */
+function unconfirmedLifts(draft: AssignDraft, stretches: readonly DraftStretch[], res: ImportAssignResponse): Set<string> {
+  return new Set(
+    stretches.flatMap((s) => outsideLifts(s, res).map((l) => l.name)).filter((name) => !isConfirmed(draft, name)),
+  );
+}
+
+/**
+ * What the lifter still has to decide before Preview: sessions to file, statuses, overlaps, and
+ * the progression of each lift outside its stretch's program.
+ */
 export function openDecisions(draft: AssignDraft, res: ImportAssignResponse): number {
   const unfiled = pendingSessions(res).filter((p) => draft.filed[p.session.date] === undefined).length;
   const stretches = effectiveStretches(draft, res);
   const unset = stretches.filter((s) => s.status === null).length;
-  return unfiled + unset + (res.exported ? 0 : overlaps(stretches).length);
+  const lifts = unconfirmedLifts(draft, stretches, res).size;
+  return unfiled + unset + lifts + (res.exported ? 0 : overlaps(stretches).length);
 }
 
 /** The confirmed breakdown, once nothing is left to decide. */
@@ -302,13 +367,31 @@ export function buildBreakdown(draft: AssignDraft, res: ImportAssignResponse): I
   };
 }
 
-/** A stretch is settled when nothing about it asks for the lifter's attention. */
-export function isSettled(s: DraftStretch, overlapping: ReadonlySet<string>): boolean {
+/**
+ * A stretch is settled when nothing about it asks for the lifter's attention. One the rules
+ * left unmatched for lifts outside its program counts as matched once the lifter has confirmed
+ * each lift its program doesn't plan (#1212); one unmatched for a `Program` naming no known
+ * program still needs the lifter to look at it.
+ */
+export function isSettled(
+  s: DraftStretch,
+  overlapping: ReadonlySet<string>,
+  draft: AssignDraft,
+  res: ImportAssignResponse,
+): boolean {
   return (
     s.status !== null &&
     !overlapping.has(s.id) &&
-    (s.source === null || (s.source.matched && s.source.liftsOutsideProgram.length === 0))
+    unconfirmedLifts(draft, [s], res).size === 0 &&
+    (s.source === null ||
+      s.source.matched ||
+      (s.source.liftsOutsideProgram.length > 0 && !namesUnknownProgram(s.source)))
   );
+}
+
+function namesUnknownProgram(s: AssignStretch): boolean {
+  const reason = s.reasons.program;
+  return reason.kind === 'column' && !reason.known;
 }
 
 /** `2025-02-03` as "Feb 3, 2025", read as a calendar day. */

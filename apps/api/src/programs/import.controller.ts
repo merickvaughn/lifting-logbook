@@ -90,6 +90,7 @@ import { CustomProgramsRepository } from '../custom-programs/custom-programs.rep
 import { IMPORT_HANDLERS, liftsOf } from './import-handlers';
 import {
   assignImportDate,
+  assignLifts,
   assignProgramOptions,
   assignResponse,
   importAssignEnabled,
@@ -115,7 +116,7 @@ import {
   splitNonCycleKeys,
 } from './macrocycle-history.util';
 import { renumberProgram } from './macrocycle-renumbering';
-import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
+import { liftNamesFor, liftNamesOf, effectiveSlotMapFor, progressionSettingsFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
 import {
   GoogleSheetFetchError,
@@ -952,10 +953,11 @@ export class ImportController {
     const started = Date.now();
     const { importDate, exported, split, liftRecords, splitMaxes, undated, customPrograms, segmented } =
       await this.segmentForAssign(program, table, repos, userId, choices);
-    const stored = await placeSuggestedStretches(repos, segmented.stretches, [
-      ...BUILT_IN_KNOWN_PROGRAMS,
-      ...customPrograms,
-    ]);
+    const knownPrograms = [...BUILT_IN_KNOWN_PROGRAMS, ...customPrograms];
+    const stored = await placeSuggestedStretches(repos, segmented.stretches, knownPrograms);
+    // Read once for both the lifts' names and their progression settings.
+    const customLifts = await repos.customLift.list();
+    const liftNames = liftNamesOf(customLifts);
     const response = assignResponse(
       segmented,
       {
@@ -963,11 +965,17 @@ export class ImportController {
         undatedRows: undated,
         exported,
         programs: assignProgramOptions(customPrograms),
+        lifts: assignLifts(
+          new Set(liftRecords.map((r) => r.lift)),
+          knownPrograms,
+          await progressionSettingsFor(repos, await repos.userSettings.getSettings(), customLifts),
+          liftNames,
+        ),
         stored,
         ...(split ? { split: await splitMaxCounts(splitMaxes, segmented.stretches, program, repos) } : {}),
         suggestionsProvider: this.suggestions.providerLabel,
       },
-      await liftNamesFor(repos),
+      liftNames,
     );
 
     // Counts only: rows, lift names and notes are the lifter's data (proposal Observability).
