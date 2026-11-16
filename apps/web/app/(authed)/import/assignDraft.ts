@@ -1,9 +1,11 @@
 import type {
+  AssignContinueMax,
   AssignLift,
   AssignSession,
   AssignStretch,
   ImportAssignResponse,
   ImportBreakdown,
+  ImportBreakdownContinue,
   LiftProgressionType,
   MacrocycleStatus,
 } from '@lifting-logbook/types';
@@ -40,10 +42,26 @@ export interface AssignDraft {
    * plan, by name (#1212). It's the lift's, so one confirmation covers every stretch it's in.
    */
   confirmedLifts: Record<string, LiftProgressionType>;
+  /** Continuing the offer's run as the current macrocycle (#1180), or null to keep it as history. */
+  continued: ContinueDraft | null;
   /** Whether the lifter changed anything, so discarding the draft is worth saying. */
   edited: boolean;
   /** The next stretch id's number, so a split never reuses one. */
   nextId: number;
+}
+
+/**
+ * What the lifter does with a lift's training max when continuing a run (#1180, decision 10):
+ * keep the current one, take the value the run's sets compute, or enter one (null until entered).
+ */
+export type ContinueMaxChoice = { kind: 'keep' } | { kind: 'computed' } | { kind: 'value'; weight: number | null };
+
+/** The lifter's choices for a continued run. */
+export interface ContinueDraft {
+  /** Agreed to end the program's live macrocycle, which continuing ends. */
+  endLive: boolean;
+  /** Each lift's choice, by its stored spelling (`AssignContinueMax.lift`). */
+  maxes: Record<string, ContinueMaxChoice>;
 }
 
 /** A session the lifter has to file: a lone session in a break, or one with no file number. */
@@ -72,6 +90,7 @@ export function initialDraft(res: ImportAssignResponse): AssignDraft {
     })),
     filed: {},
     confirmedLifts: {},
+    continued: null,
     edited: false,
     nextId: res.stretches.length,
   };
@@ -336,16 +355,101 @@ function unconfirmedLifts(draft: AssignDraft, stretches: readonly DraftStretch[]
   );
 }
 
+// ---------------------------------------------------------------------------
+// Continuing the last run as the current macrocycle (#1180, decisions 2 and 10)
+// ---------------------------------------------------------------------------
+
 /**
- * What the lifter still has to decide before Preview: sessions to file, statuses, overlaps, and
- * the progression of each lift outside its stretch's program.
+ * The stretch the server offered to continue, while the offer still holds: it's the last
+ * stretch, with the offer's sessions and program. An edit that changes any of that withdraws the
+ * offer, since the server's checks and computed maxes were for that run.
+ */
+export function continueTarget(draft: AssignDraft, res: ImportAssignResponse): DraftStretch | null {
+  const offer = res.continue;
+  const source = offer ? res.stretches[offer.stretch] : undefined;
+  const last = effectiveStretches(draft, res).at(-1);
+  if (!source || !last || last.source !== source || last.program !== source.program) return null;
+  return last.sessions.length === source.sessions.length ? last : null;
+}
+
+/** The run being continued, or null when it isn't (or the offer no longer holds). */
+export function continuing(draft: AssignDraft, res: ImportAssignResponse): DraftStretch | null {
+  return draft.continued ? continueTarget(draft, res) : null;
+}
+
+/**
+ * The default choice for a lift: keep the current max (decision 10). A lift with no max has none
+ * to keep, so it starts on the computed value when there is one, else on a value to enter.
+ */
+export function defaultMaxChoice(max: AssignContinueMax): ContinueMaxChoice {
+  if (max.current !== null) return { kind: 'keep' };
+  return max.computed !== null ? { kind: 'computed' } : { kind: 'value', weight: null };
+}
+
+/** The lift's choice as the lifter has it. */
+export function maxChoice(draft: AssignDraft, max: AssignContinueMax): ContinueMaxChoice {
+  return (draft.continued && Object.hasOwn(draft.continued.maxes, max.lift) ? draft.continued.maxes[max.lift] : undefined) ??
+    defaultMaxChoice(max);
+}
+
+/** Turns continuing on or off. Off drops its choices, so turning it on again starts from the defaults. */
+export function setContinuing(draft: AssignDraft, on: boolean): AssignDraft {
+  return { ...draft, continued: on ? { endLive: false, maxes: {} } : null, edited: true };
+}
+
+export function setEndLive(draft: AssignDraft, endLive: boolean): AssignDraft {
+  return draft.continued ? { ...draft, continued: { ...draft.continued, endLive }, edited: true } : draft;
+}
+
+export function setMaxChoice(draft: AssignDraft, lift: string, choice: ContinueMaxChoice): AssignDraft {
+  return draft.continued
+    ? { ...draft, continued: { ...draft.continued, maxes: { ...draft.continued.maxes, [lift]: choice } }, edited: true }
+    : draft;
+}
+
+/** The weight a choice writes, or null to keep the current max. Undefined when it has none yet. */
+function chosenWeight(choice: ContinueMaxChoice, max: AssignContinueMax): number | null | undefined {
+  switch (choice.kind) {
+    case 'keep':
+      return max.current === null ? undefined : null;
+    case 'computed':
+      return max.computed ?? undefined;
+    case 'value':
+      return choice.weight !== null && choice.weight > 0 ? choice.weight : undefined;
+  }
+}
+
+/** The continue decisions left: agreeing to end the live macrocycle, and each max with no value. */
+function openContinueDecisions(draft: AssignDraft, res: ImportAssignResponse): number {
+  const offer = res.continue;
+  if (!offer || !draft.continued || !continueTarget(draft, res)) return 0;
+  const agreement = offer.live && !draft.continued.endLive ? 1 : 0;
+  return agreement + offer.maxes.filter((m) => chosenWeight(maxChoice(draft, m), m) === undefined).length;
+}
+
+/**
+ * What the lifter still has to decide before Preview: sessions to file, statuses, overlaps, the
+ * progression of each lift outside its stretch's program, and a continued run's choices.
  */
 export function openDecisions(draft: AssignDraft, res: ImportAssignResponse): number {
   const unfiled = pendingSessions(res).filter((p) => draft.filed[p.session.date] === undefined).length;
   const stretches = effectiveStretches(draft, res);
-  const unset = stretches.filter((s) => s.status === null).length;
+  const continued = continuing(draft, res);
+  // A continued run is in progress whatever status it was given.
+  const unset = stretches.filter((s) => s.status === null && s !== continued).length;
   const lifts = unconfirmedLifts(draft, stretches, res).size;
-  return unfiled + unset + lifts + (res.exported ? 0 : overlaps(stretches).length);
+  return unfiled + unset + lifts + (res.exported ? 0 : overlaps(stretches).length) + openContinueDecisions(draft, res);
+}
+
+/** The breakdown's `continue`, or undefined when the run isn't continued. */
+function breakdownContinue(draft: AssignDraft, res: ImportAssignResponse, index: number): ImportBreakdownContinue | undefined {
+  const offer = res.continue;
+  if (!offer || !draft.continued || !continueTarget(draft, res)) return undefined;
+  const maxes = offer.maxes.flatMap((m) => {
+    const weight = chosenWeight(maxChoice(draft, m), m);
+    return typeof weight === 'number' ? [{ lift: m.lift, weight }] : [];
+  });
+  return { stretch: index, ...(offer.live && draft.continued.endLive ? { endLive: offer.live.id } : {}), maxes };
 }
 
 /** The confirmed breakdown, once nothing is left to decide. */
@@ -355,15 +459,21 @@ export function buildBreakdown(draft: AssignDraft, res: ImportAssignResponse): I
       .filter(([, c]) => c === choice)
       .map(([date]) => date)
       .sort();
+  const stretches = effectiveStretches(draft, res);
+  const continued = continuing(draft, res);
+  const continueChoice = continued ? breakdownContinue(draft, res, stretches.indexOf(continued)) : undefined;
   return {
-    stretches: effectiveStretches(draft, res).map((s) => ({
+    stretches: stretches.map((s) => ({
       program: s.program,
-      status: s.status ?? 'unknown',
-      statusChosen: s.statusChosen,
+      // The server stores a continued run in progress whatever it's sent.
+      ...(s === continued
+        ? { status: 'in-progress' as const, statusChosen: false }
+        : { status: s.status ?? 'unknown', statusChosen: s.statusChosen }),
       ...(s.file ? { file: s.file } : { dates: s.sessions.map((x) => x.date) }),
     })),
     excludedDates: datesFiled('exclude'),
     nonCycleDates: datesFiled('non-cycle'),
+    ...(continueChoice ? { continue: continueChoice } : {}),
   };
 }
 

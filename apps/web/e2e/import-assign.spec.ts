@@ -207,3 +207,48 @@ test('Assign: a long file stays workable at 375px', async ({ page }) => {
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Preview changes' })).toBeVisible();
 });
+
+test('Assign: the last run continues as current by keyboard, at 375px, with its status locked (#1180)', async ({ page, request }) => {
+  await request.get(`${MOCK_API}/__reset?withAssign=true&withContinue=true`);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await toAssign(page);
+  const overflow = () =>
+    page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  const decisions = page.getByTestId('assign-decisions');
+
+  // Settle everything else, so what's left is the continue's.
+  await page.getByRole('button', { name: 'Keep every break: file the 20 one-lift workouts with the macrocycle before each' }).click();
+  await page.getByLabel('Status for RPT from Jan 1, 2024').selectOption('completed');
+  await page.getByRole('button', { name: 'Confirm the progression for Face Pull in RPT from Jan 1, 2024' }).click();
+  await expect(decisions).toHaveText('Nothing left to decide. Continue to Preview.');
+
+  const continueBox = page.getByRole('checkbox', { name: /^Continue RPT from .* as my current macrocycle$/ });
+  await continueBox.focus();
+  await page.keyboard.press('Space');
+  await expect(continueBox).toBeChecked();
+  // Agreeing to end the live macrocycle, and a value for Bench Press, which has no max.
+  await expect(decisions).toHaveText('2 decisions left before Preview.');
+  const keepSquat = page.getByRole('radiogroup', { name: 'Training max for Squat' }).getByRole('radio', { name: 'Keep current (200)' });
+  await expect(keepSquat).toBeChecked();
+  expect(await overflow()).toBeLessThanOrEqual(0);
+
+  const agree = page.getByRole('checkbox', { name: /End macrocycle 3, your current one in this program, which holds 12 sets/ });
+  await agree.focus();
+  await page.keyboard.press('Space');
+  await expect(decisions).toHaveText('1 decision left before Preview.');
+
+  const bench = page.getByRole('spinbutton', { name: 'New training max for Bench Press' });
+  await bench.focus();
+  await page.keyboard.type('185');
+  await expect(decisions).toHaveText('Nothing left to decide. Continue to Preview.');
+
+  // The continued run reads in progress, and its status can't be changed.
+  const last = page.getByTestId('assign-settled').last();
+  await expect(last).toContainText('In progress');
+  await last.click();
+  await expect(page.getByLabel(/^Status for RPT from /).last()).toBeDisabled();
+  expect(await overflow()).toBeLessThanOrEqual(0);
+
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Preview changes' })).toBeVisible();
+});

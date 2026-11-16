@@ -4,6 +4,7 @@ import {
   canMoveStart,
   choicesFor,
   confirmLift,
+  continueTarget,
   effectiveStretches,
   fileAllWithEarlier,
   fileSession,
@@ -11,10 +12,14 @@ import {
   isSettled,
   joinWithPrevious,
   liftProgression,
+  maxChoice,
   moveStart,
   openDecisions,
   outsideLifts,
   overlaps,
+  setContinuing,
+  setEndLive,
+  setMaxChoice,
   setProgram,
   setStatus,
   splitAtLargestGap,
@@ -61,6 +66,7 @@ function res(over: Partial<ImportAssignResponse> = {}): ImportAssignResponse {
     programs: [],
     lifts: [],
     suggestions: null,
+    continue: null,
     ...over,
   };
 }
@@ -285,5 +291,82 @@ describe('lifts outside a stretch’s program (#1212)', () => {
     const draft = initialDraft(named);
     expect(openDecisions(draft, named)).toBe(1);
     expect(liftProgression(draft, odd)).toBe('linear');
+  });
+});
+
+describe('continuing the last run as current (#1180)', () => {
+  const SQUAT = { lift: 'Squat', name: 'Squat', current: 200, computed: 210 };
+  const offered = (live: { id: string; macrocycleNum: number; sets: number } | null = null, over: Partial<ImportAssignResponse> = {}) =>
+    res({
+      lone: [],
+      continue: {
+        stretch: 1,
+        live,
+        maxes: [SQUAT, { lift: 'Bench Press', name: 'Bench Press', current: null, computed: null }],
+      },
+      ...over,
+    });
+
+  it('is off until chosen, and sends nothing then', () => {
+    const r = offered();
+    const draft = initialDraft(r);
+    expect(continueTarget(draft, r)?.id).toBe('s1');
+    expect(buildBreakdown(draft, r).continue).toBeUndefined();
+  });
+
+  it('keeps a stored max by default and needs a value for a lift with none', () => {
+    const r = offered();
+    const draft = setContinuing(initialDraft(r), true);
+    expect(maxChoice(draft, SQUAT)).toEqual({ kind: 'keep' });
+    expect(openDecisions(draft, r)).toBe(1);
+
+    const entered = setMaxChoice(draft, 'Bench Press', { kind: 'value', weight: 185 });
+    expect(openDecisions(entered, r)).toBe(0);
+    expect(buildBreakdown(entered, r).continue).toEqual({ stretch: 1, maxes: [{ lift: 'Bench Press', weight: 185 }] });
+    const computed = setMaxChoice(entered, 'Squat', { kind: 'computed' });
+    expect(buildBreakdown(computed, r).continue?.maxes).toEqual([
+      { lift: 'Squat', weight: 210 },
+      { lift: 'Bench Press', weight: 185 },
+    ]);
+    // A zero or blank value is still a decision left.
+    expect(openDecisions(setMaxChoice(draft, 'Bench Press', { kind: 'value', weight: 0 }), r)).toBe(1);
+  });
+
+  it('needs agreement to end the live macrocycle, and sends its id once agreed', () => {
+    const r = offered({ id: 'm-live', macrocycleNum: 2, sets: 9 });
+    const draft = setMaxChoice(setContinuing(initialDraft(r), true), 'Bench Press', { kind: 'value', weight: 185 });
+    expect(openDecisions(draft, r)).toBe(1);
+    const agreed = setEndLive(draft, true);
+    expect(openDecisions(agreed, r)).toBe(0);
+    expect(buildBreakdown(agreed, r).continue?.endLive).toBe('m-live');
+  });
+
+  it('stores the run in progress whatever status it had, and leaves an unset status no decision', () => {
+    const r = offered(null, {
+      stretches: [stretch(['2026-01-01', '2026-01-03', '2026-01-05']), stretch(['2026-02-01', '2026-02-03'], { status: null })],
+    });
+    const off = initialDraft(r);
+    expect(openDecisions(off, r)).toBe(1);
+    const draft = setMaxChoice(setContinuing(off, true), 'Bench Press', { kind: 'value', weight: 100 });
+    expect(openDecisions(draft, r)).toBe(0);
+    expect(buildBreakdown(draft, r).stretches[1]).toMatchObject({ status: 'in-progress', statusChosen: false });
+    // A status the lifter chose is set aside too.
+    const chosen = setStatus(draft, 's1', 'abandoned');
+    expect(buildBreakdown(chosen, r).stretches[1]).toMatchObject({ status: 'in-progress', statusChosen: false });
+  });
+
+  it('is withdrawn when the run it was offered for changes', () => {
+    const r = offered();
+    const on = setMaxChoice(setContinuing(initialDraft(r), true), 'Bench Press', { kind: 'value', weight: 100 });
+    // Another program, a session filed into it, or a join each make a different run.
+    expect(continueTarget(setProgram(on, 's1', '5-3-1'), r)).toBeNull();
+    const withLone = res({ continue: r.continue });
+    expect(continueTarget(fileSession(initialDraft(withLone), '2026-01-20', 'later'), withLone)).toBeNull();
+    expect(continueTarget(fileSession(initialDraft(withLone), '2026-01-20', 'earlier'), withLone)?.id).toBe('s1');
+    expect(continueTarget(joinWithPrevious(on, 's1'), r)).toBeNull();
+    // Withdrawn, it sends nothing and holds nothing back.
+    const changed = setProgram(on, 's1', '5-3-1');
+    expect(buildBreakdown(changed, r).continue).toBeUndefined();
+    expect(buildBreakdown(changed, r).stretches[1]).toMatchObject({ status: 'completed' });
   });
 });

@@ -172,6 +172,19 @@ const ASSIGN_RESPONSE = {
   ],
   // No LLM provider, so the step shows no suggestions question (#1174).
   suggestions: null,
+  // No run to continue as current unless withContinue (#1180).
+  continue: null,
+};
+
+// withContinue's offer (#1180): the last stretch continues as current, ending a live macrocycle
+// with 12 sets. Squat has a max to keep; Bench Press has none and nothing computed, so it needs a value.
+const CONTINUE_OFFER = {
+  stretch: ASSIGN_RESPONSE.stretches.length - 1,
+  live: { id: 'mc-live', macrocycleNum: 3, sets: 12 },
+  maxes: [
+    { lift: 'Squat', name: 'Squat', current: 200, computed: 210 },
+    { lift: 'Bench Press', name: 'Bench Press', current: null, computed: null },
+  ],
 };
 
 // Column mappings for the Google Sheets LIFT_RECORDS tab's preview (#1111) —
@@ -234,6 +247,8 @@ function createInitialState() {
     // The import's Assign step (#1256): withAssign makes any upload lift history with the
     // step on, and mode=assign return ASSIGN_RESPONSE's long file.
     assign: false,
+    // With assign, mode=assign also offers to continue the last stretch as current (#1180).
+    continueOffer: false,
     // An Assign commit's macrocycles and its batch (#1257), which History lists and undoes, and
     // the program they went into (#1300).
     assignedMacrocycles: [],
@@ -737,6 +752,9 @@ const server = createServer(async (req, res) => {
     }
     if (url.searchParams.get('withAssign') === 'true') {
       state.assign = true;
+    }
+    if (url.searchParams.get('withContinue') === 'true') {
+      state.continueOffer = true;
     }
     if (url.searchParams.get('withGoogleSheet') === 'true') {
       state.googleSheet = true;
@@ -1716,7 +1734,7 @@ const server = createServer(async (req, res) => {
       }
 
       if (state.assign && mode === 'assign') {
-        json(res, ASSIGN_RESPONSE);
+        json(res, state.continueOffer ? { ...ASSIGN_RESPONSE, continue: CONTINUE_OFFER } : ASSIGN_RESPONSE);
         return;
       }
       if (state.assign && mode === 'preview') {

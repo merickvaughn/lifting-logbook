@@ -3,6 +3,8 @@
 import { useEffect, useState, type ComponentProps } from 'react';
 import { LIFT_PROGRESSION_TYPES, MACROCYCLE_STATUSES } from '@lifting-logbook/types';
 import type {
+  AssignContinueMax,
+  AssignContinueOffer,
   AssignLift,
   AssignStartReason,
   AssignStatusReason,
@@ -17,6 +19,8 @@ import {
   canFile,
   canMoveStart,
   choicesFor,
+  continueTarget,
+  continuing,
   effectiveStretches,
   endOf,
   fileAllWithEarlier,
@@ -26,12 +30,16 @@ import {
   isSettled,
   joinWithPrevious,
   liftProgression,
+  maxChoice,
   moveStart,
   openDecisions,
   outsideLifts,
   overlaps,
   pendingSessions,
   previousStretchId,
+  setContinuing,
+  setEndLive,
+  setMaxChoice,
   setProgram,
   setStatus,
   splitAtLargestGap,
@@ -39,6 +47,7 @@ import {
   stretchName,
   withMember,
   type AssignDraft,
+  type ContinueMaxChoice,
   type SessionChoice,
 } from './assignDraft';
 import AssignSuggestions from './AssignSuggestions';
@@ -122,6 +131,116 @@ const CHOICES: Record<SessionChoice, { label: string; name: (day: string) => str
 const cardId = (id: string) => `assign-card-${id}`;
 const DECISIONS_ID = 'assign-decisions';
 const HEADING_ID = 'assign-heading';
+const CONTINUE_ID = 'assign-continue';
+const CONTINUE_LOCK_ID = 'assign-continue-lock';
+
+const weightText = (weight: number | null) => (weight === null ? 'none' : `${weight}`);
+
+/**
+ * The offer to continue the file's last run as the current macrocycle (#1180, decisions 2 and
+ * 10). Continuing ends the program's live macrocycle, which needs the lifter's agreement, and
+ * sets each lift's training max as the lifter chooses: keep the current one (the default), take
+ * the value the run's sets compute, or enter one. A lift with no max needs a value.
+ */
+function ContinuePanel({
+  offer,
+  label,
+  draft,
+  onChange,
+}: {
+  offer: AssignContinueOffer;
+  label: string;
+  draft: AssignDraft;
+  onChange: (next: AssignDraft) => void;
+}) {
+  const on = draft.continued !== null;
+  const live = offer.live;
+  return (
+    <section className={styles.decide} aria-labelledby={CONTINUE_ID}>
+      <p className={styles.eyebrow} id={CONTINUE_ID}>
+        YOUR CURRENT MACROCYCLE
+      </p>
+      <p className={styles.reason}>
+        {label} has workouts left and its last workout was recent. You can continue it in the app as your current
+        macrocycle, or keep it as history.
+      </p>
+      <label className={styles.fields}>
+        <input type="checkbox" checked={on} onChange={(e) => onChange(setContinuing(draft, e.target.checked))} />
+        Continue {label} as my current macrocycle
+      </label>
+      {on && live && (
+        <label className={styles.fields}>
+          <input
+            type="checkbox"
+            checked={draft.continued?.endLive ?? false}
+            onChange={(e) => onChange(setEndLive(draft, e.target.checked))}
+          />
+          End macrocycle {live.macrocycleNum}, your current one in this program, which holds {live.sets} set
+          {live.sets === 1 ? '' : 's'}. Its sets stay in its history.
+        </label>
+      )}
+      {on && (
+        <fieldset className={styles.lifts}>
+          <legend className={styles.reason}>Training maxes</legend>
+          <ul className={styles.list}>
+            {offer.maxes.map((max) => (
+              <ContinueMaxRow key={max.lift} max={max} draft={draft} onChange={onChange} />
+            ))}
+          </ul>
+        </fieldset>
+      )}
+    </section>
+  );
+}
+
+function ContinueMaxRow({
+  max,
+  draft,
+  onChange,
+}: {
+  max: AssignContinueMax;
+  draft: AssignDraft;
+  onChange: (next: AssignDraft) => void;
+}) {
+  const choice = maxChoice(draft, max);
+  const groupName = `continue-max-${max.lift}`;
+  const radio = (kind: ContinueMaxChoice['kind'], text: string, disabled: boolean) => (
+    <label>
+      <input
+        type="radio"
+        name={groupName}
+        checked={choice.kind === kind}
+        disabled={disabled}
+        onChange={() =>
+          onChange(setMaxChoice(draft, max.lift, kind === 'value' ? { kind, weight: null } : { kind }))
+        }
+      />
+      {text}
+    </label>
+  );
+  return (
+    <li className={styles.fields} role="radiogroup" aria-label={`Training max for ${max.name}`}>
+      <span>{max.name}</span>
+      {radio('keep', `Keep current (${weightText(max.current)})`, max.current === null)}
+      {radio('computed', `Use computed (${max.computed === null ? 'no change' : max.computed})`, max.computed === null)}
+      {radio('value', 'Enter a value', false)}
+      {choice.kind === 'value' && (
+        <input
+          type="number"
+          min={0}
+          step="any"
+          inputMode="decimal"
+          aria-label={`New training max for ${max.name}`}
+          value={choice.weight ?? ''}
+          onChange={(e) => {
+            const weight = e.target.value === '' ? null : Number(e.target.value);
+            onChange(setMaxChoice(draft, max.lift, { kind: 'value', weight: Number.isFinite(weight) ? weight : null }));
+          }}
+        />
+      )}
+    </li>
+  );
+}
 
 /**
  * The Assign step (#1256): the rules' grouping of a lift-records file into macrocycles, for the
@@ -162,7 +281,12 @@ export default function AssignStep({
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const name = programNamer(res);
-  const stretches = effectiveStretches(draft, res);
+  const offered = continueTarget(draft, res);
+  const continued = continuing(draft, res);
+  // A continued run is in progress whatever status it was given (#1180).
+  const stretches = effectiveStretches(draft, res).map((s) =>
+    s === continued ? { ...s, status: 'in-progress' as const, statusChosen: false } : s,
+  );
   const pairs = overlaps(stretches);
   const overlapping = new Set(res.exported ? [] : pairs.flatMap(([a, b]) => [a.id, b.id]));
   const pending = pendingSessions(res);
@@ -319,6 +443,15 @@ export default function AssignStep({
             })}
           </ul>
         </section>
+      )}
+
+      {offered && res.continue && (
+        <ContinuePanel
+          offer={res.continue}
+          label={stretchName(offered, name)}
+          draft={draft}
+          onChange={onChange}
+        />
       )}
 
       <ol className={styles.list} aria-label="Macrocycles">
@@ -487,7 +620,9 @@ export default function AssignStep({
                       Status
                       <select
                         aria-label={`Status for ${label}`}
+                        aria-describedby={s.id === continued?.id ? CONTINUE_LOCK_ID : undefined}
                         value={s.status ?? ''}
+                        disabled={s.id === continued?.id}
                         onChange={(e) => {
                           const value = MACROCYCLE_STATUSES.find((status) => status === e.target.value);
                           if (value) editStretch(s.id, setStatus(draft, s.id, value));
@@ -501,6 +636,11 @@ export default function AssignStep({
                         ))}
                       </select>
                     </label>
+                    {s.id === continued?.id && (
+                      <p className={styles.reason} id={CONTINUE_LOCK_ID}>
+                        It continues as your current macrocycle, so it’s in progress.
+                      </p>
+                    )}
                     {/* Filed lone sessions stay where they were filed, so only the stretch's own sessions split. */}
                     {!res.exported && (draft.stretches.find((x) => x.id === s.id)?.sessions.length ?? 0) > 1 && (
                       <button
