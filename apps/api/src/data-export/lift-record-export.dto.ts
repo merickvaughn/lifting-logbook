@@ -30,4 +30,9 @@ export class LiftRecordExportDownloadQueryDto extends LiftRecordExportQueryDto {
   @IsOptional()
   @Matches(/^[1-9]\d{0,4}$/, { message: 'part must be a whole number from 1' })
   part?: string;
+
+  /** The listing's `split`. When given, a split that has changed since is a 409. */
+  @IsOptional()
+  @Matches(/^[0-9a-f]{16}$/, { message: 'split must be the value the parts listing returned' })
+  split?: string;
 }

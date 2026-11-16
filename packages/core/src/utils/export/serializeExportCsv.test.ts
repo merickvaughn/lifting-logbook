@@ -36,22 +36,30 @@ const record = (overrides: Partial<LiftRecordExportRow> = {}): LiftRecordExportR
 });
 
 describe('escapeCsvFormula', () => {
-  it.each(['=SUM(A1)', '+1', '-1', '@cmd', '\tx', '\rx', '\nx'])('prefixes %j', (text) => {
+  // Text that really starts with apostrophes before a trigger gets one more, so import can tell.
+  it.each(['=SUM(A1)', '+1', '-1', '@cmd', '\tx', '\rx', '\nx', "'=x", "''-ish"])('prefixes %j', (text) => {
     expect(escapeCsvFormula(text)).toBe(`'${text}`);
   });
 
-  it.each(['', 'Bench Press', "'=already", 'a=b'])('leaves %j alone', (text) => {
+  it.each(['', 'Bench Press', "'tis", "'", 'a=b'])('leaves %j alone', (text) => {
     expect(escapeCsvFormula(text)).toBe(text);
   });
 });
 
 describe('unescapeCsvFormula', () => {
-  it.each(['=SUM(A1)', '+1', '-1', '@cmd', '\tx', '\rx', '\nx'])('reverses the escape of %j', (text) => {
-    expect(unescapeCsvFormula(escapeCsvFormula(text))).toBe(text);
+  it.each(['=SUM(A1)', '+1', '-1', '@cmd', '\tx', '\rx', '\nx', "'=x", "''-ish", "'tis", "'", ''])(
+    'reverses the escape of %j',
+    (text) => {
+      expect(unescapeCsvFormula(escapeCsvFormula(text))).toBe(text);
+    },
+  );
+
+  it.each(['', "'", "'tis", "''tis", 'Bench Press'])('leaves %j alone', (text) => {
+    expect(unescapeCsvFormula(text)).toBe(text);
   });
 
-  it.each(['', "'", "'tis", "''=x", 'Bench Press'])('leaves %j alone', (text) => {
-    expect(unescapeCsvFormula(text)).toBe(text);
+  it('drops one apostrophe of several before a trigger', () => {
+    expect(unescapeCsvFormula("''=x")).toBe("'=x");
   });
 });
 

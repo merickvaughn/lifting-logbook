@@ -141,15 +141,21 @@ describe('Filtered sets download (#1308, e2e, in-memory adapters)', () => {
   };
 
   const statuses = async () =>
-    (await (await repos()).macrocycle.listAll()).map((m) => `${m.program}:${m.macrocycleNum}:${m.status}:${m.origin}`);
+    (await (await repos()).macrocycle.listAll()).map(
+      (m) => `${m.program}:${m.macrocycleNum}:${m.status}:${m.statusChosen ? 'chosen' : 'inferred'}:${m.origin}`,
+    );
 
-  /** Stores sets and their macrocycle directly, as a lifter's history would be. */
+  /**
+   * Stores sets and their macrocycle directly, as a lifter's history would be. Its status is one
+   * the lifter chose unless `statusChosen` says the rules inferred it.
+   */
   const seed = async (
     program: string,
     macrocycleNum: number,
     status: MacrocycleStatus,
     sets: Array<Partial<LiftRecord> & { day: number }>,
     as = user,
+    statusChosen = true,
   ) => {
     const bundle = await repos(as);
     const days = sets.map((s) => s.day);
@@ -159,7 +165,7 @@ describe('Filtered sets download (#1308, e2e, in-memory adapters)', () => {
       startDate: new Date(START + Math.min(...days) * DAY_MS),
       endDate: new Date(START + Math.max(...days) * DAY_MS),
       status,
-      statusChosen: false,
+      statusChosen,
       origin: 'imported',
       unmatched: false,
       importedThrough: null,
@@ -190,16 +196,17 @@ describe('Filtered sets download (#1308, e2e, in-memory adapters)', () => {
       OTHER = `${user}-other`;
       await seed('rpt', 1, 'completed', [{ day: 0 }, { day: 2, workoutNum: 2 }]);
       rptTwo = (await seed('rpt', 2, 'abandoned', [{ day: 10 }, { day: 12, workoutNum: 2 }])).id;
-      await seed('5-3-1', 1, 'overran', [{ day: 4, lift: 'Squat' }]);
+      await seed('5-3-1', 1, 'overran', [{ day: 4, lift: 'Squat' }], user, false);
       await seed('rpt', 1, 'completed', [{ day: 0, notes: 'other lifter' }, { day: 10, notes: 'other lifter' }], OTHER);
     });
 
     const dates = (csv: string) => rowsOf(csv).map((r) => `${r.Program}:${r['Macrocycle #']}:${r.Date}`).sort();
 
-    it('takes every program with no filter, and each set carries its status', async () => {
+    it('takes every program with no filter, and each set carries its status where the lifter chose it', async () => {
       const rows = rowsOf(await csvOf());
+      // 5-3-1's `overran` was inferred, so it's left for the rules to suggest again on re-upload.
       expect(rows.map((r) => `${r.Program}:${r['Macrocycle #']}:${r.Status}`).sort()).toEqual([
-        '5-3-1:1:overran',
+        '5-3-1:1:',
         'rpt:1:completed',
         'rpt:1:completed',
         'rpt:2:abandoned',
@@ -247,11 +254,40 @@ describe('Filtered sets download (#1308, e2e, in-memory adapters)', () => {
     });
 
     it('lists one part with its counts and dates, and names the file', async () => {
-      expect(await partsOf({ program: 'rpt' })).toEqual({ rows: 4, parts: [{ part: 1, rows: 4, from: day(0), to: day(12) }] });
-      expect(await partsOf({ program: 'leangains' })).toEqual({ rows: 0, parts: [] });
+      expect(await partsOf({ program: 'rpt' })).toEqual({
+        rows: 4,
+        parts: [{ part: 1, rows: 4, from: day(0), to: day(12) }],
+        split: expect.stringMatching(/^[0-9a-f]{16}$/),
+      });
+      expect(await partsOf({ program: 'leangains' })).toMatchObject({ rows: 0, parts: [] });
       const res = await download();
       expect(res.headers['content-type']).toBe('text/csv; charset=utf-8');
       expect(res.headers['content-disposition']).toMatch(/^attachment; filename="lift-records-\d{4}-\d{2}-\d{2}\.csv"$/);
+    });
+
+    it('refuses a part once a set added or removed may have moved the split, and not before', async () => {
+      const { split } = await partsOf();
+      expect((await download({ part: 1, split })).statusCode).toBe(200);
+      // A different filter is a different split.
+      expect((await download({ part: 1, split, program: 'rpt' })).statusCode).toBe(409);
+      await (await repos()).liftRecord.appendLiftRecords('rpt', [
+        {
+          program: 'rpt',
+          macrocycleNum: 2,
+          workoutNum: 3,
+          date: new Date(START + 14 * DAY_MS),
+          lift: 'Bench Press',
+          setNum: 1,
+          weight: 100,
+          reps: 5,
+          notes: '',
+        },
+      ] as LiftRecord[]);
+      const changed = await download({ part: 1, split });
+      expect(changed.statusCode).toBe(409);
+      expect(changed.json<{ message: string }>().message).toMatch(/List the parts again/);
+      expect((await download({ part: 1, split: (await partsOf()).split })).statusCode).toBe(200);
+      expect((await download({ split: 'not-a-split' })).statusCode).toBe(400);
     });
 
     it('refuses a request with no token', async () => {
@@ -286,7 +322,13 @@ describe('Filtered sets download (#1308, e2e, in-memory adapters)', () => {
         line([program, m, w, day(d), lift, 1, 100, 5, extra.notes ?? '', extra.occ ?? 0, extra.mods ?? '', extra.status ?? '']);
       const rptOne = (w: number, d: number, extra: { occ?: number; notes?: string; mods?: string } = {}) =>
         ['Bench Press', 'Barbell Row', 'Overhead Press'].map((lift, i) =>
-          set('rpt', 1, w, d, lift, { status: 'completed', ...extra, notes: i === 0 ? (extra.notes ?? '') : '' }),
+          set('rpt', 1, w, d, lift, {
+            status: 'completed',
+            ...extra,
+            notes: i === 0 ? (extra.notes ?? '') : '',
+            // The modification is the bench press's, so only that set carries it.
+            mods: i === 0 ? (extra.mods ?? '') : '',
+          }),
         );
       return [
         LIFT_RECORD_EXPORT_HEADERS.join(','),
@@ -319,14 +361,14 @@ describe('Filtered sets download (#1308, e2e, in-memory adapters)', () => {
       const before = { sets: canonical(exported), macrocycles: await statuses() };
       // What the fixture asked for is what's stored.
       expect(before.macrocycles.sort()).toEqual([
-        '5-3-1:1:overran:imported',
-        'non-cycle:1:unknown:non-cycle',
-        'rpt:1:completed:imported',
-        'rpt:2:abandoned:imported',
+        '5-3-1:1:overran:chosen:imported',
+        'non-cycle:1:unknown:inferred:non-cycle',
+        'rpt:1:completed:chosen:imported',
+        'rpt:2:abandoned:chosen:imported',
       ]);
       // Import stores a catalog lift by its id, which the export then writes.
       expect(rowsOf(exported).filter((r) => r.Date === day(0) && r.Lift === 'bench-press').map((r) => r.Occurrence).sort()).toEqual(['0', '1']);
-      expect(rowsOf(exported).filter((r) => r.Modifications !== '').map((r) => r.Modifications)).toEqual([id, id, id]);
+      expect(rowsOf(exported).filter((r) => r.Modifications !== '').map((r) => r.Modifications)).toEqual([id]);
 
       // Re-importing without a clear adds nothing.
       expect((await reimport(exported)).created).toBe(0);
@@ -343,26 +385,59 @@ describe('Filtered sets download (#1308, e2e, in-memory adapters)', () => {
 
     it('drops and counts a modification id the account no longer has', async () => {
       const { id } = await modification();
+      // The fixture's one modified set names a known id and an unknown one.
       const csv = fixture(`${id};00000000-0000-4000-8000-000000000000`);
       const result = await reimport(csv);
-      // The fixture's one modified workout has three sets, each naming both ids.
+      expect(result.assigned?.droppedModifications).toBe(1);
+      const modified = rowsOf(await csvOf()).filter((r) => r.Modifications !== '');
+      expect(modified.map((r) => r.Modifications)).toEqual([id]);
+      // The count is of the file's rows, so a re-import that adds nothing still says what it named.
+      const again = await reimport(csv);
+      expect(again.created).toBe(0);
+      expect(again.assigned?.droppedModifications).toBe(1);
+    });
+
+    it("drops another lift's modification, a repeat, and a second with its own max, as logging a set would", async () => {
+      const bundle = await repos();
+      const create = (lift: string, name: string, maxMode: 'own' | 'none') =>
+        bundle.liftModification.create({ lift, name, description: '', maxMode });
+      const paused = await create('bench-press', 'Paused', 'own');
+      const spoto = await create('bench-press', 'Spoto', 'own');
+      const tempo = await create('bench-press', 'Tempo', 'none');
+      const box = await create('squat', 'Box', 'none');
+      const result = await reimport(fixture([paused.id, paused.id, spoto.id, box.id, tempo.id].join(';')));
       expect(result.assigned?.droppedModifications).toBe(3);
       const modified = rowsOf(await csvOf()).filter((r) => r.Modifications !== '');
-      expect(modified.map((r) => r.Modifications)).toEqual([id, id, id]);
+      expect(modified.map((r) => r.Modifications)).toEqual([`${paused.id};${tempo.id}`]);
+    });
+
+    it('checks the ids on a commit sent without a breakdown too', async () => {
+      const { id } = await modification();
+      const row = ['rpt', 1, 1, day(0), 'Bench Press', 1, 100, 5, '', 0, `${id};00000000-0000-4000-8000-000000000000`, ''];
+      const csv = [LIFT_RECORD_EXPORT_HEADERS.join(','), row.join(',')].join('\n');
+      expect((await upload(csv, 'commit')).statusCode).toBe(200);
+      const stored = await (await repos()).liftRecord.getLiftRecords('rpt', 1);
+      expect(stored.map((r) => r.modifications)).toEqual([[id]]);
     });
 
     it.each(['=', '+', '-', '@', '\t', '\r', '\n'])('exports a note starting with %j escaped, and reads it back as written', async (trigger) => {
       const note = `${trigger}1+1`;
-      await seed('rpt', 1, 'completed', [{ day: 0, notes: note }, { day: 0, setNum: 2, notes: "'tis paused", weight: -10 }]);
+      // A note that really starts with an apostrophe before the trigger gets one more, so it too
+      // comes back as written.
+      await seed('rpt', 1, 'completed', [
+        { day: 0, notes: note },
+        { day: 0, setNum: 2, notes: "'tis paused", weight: -10 },
+        { day: 0, setNum: 3, notes: `'${note}` },
+      ]);
       const exported = await csvOf();
       const raw = rowsOf(exported);
-      expect(raw.map((r) => r.Notes).sort()).toEqual([`'${note}`, "'tis paused"].sort());
+      expect(raw.map((r) => r.Notes).sort()).toEqual([`'${note}`, "'tis paused", `''${note}`].sort());
       expect(raw.find((r) => r['Set #'] === '2')?.Weight).toBe('-10');
 
       await clearSets();
-      expect((await reimport(exported)).created).toBe(2);
+      expect((await reimport(exported)).created).toBe(3);
       const stored = await (await repos()).liftRecord.getLiftRecords('rpt', 1);
-      expect(stored.map((r) => r.notes).sort()).toEqual([note, "'tis paused"].sort());
+      expect(stored.map((r) => r.notes).sort()).toEqual([note, "'tis paused", `'${note}`].sort());
       expect(stored.find((r) => r.setNum === 2)?.weight).toBe(-10);
     });
   });

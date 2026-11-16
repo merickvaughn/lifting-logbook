@@ -69,7 +69,6 @@ import {
   segmentLiftHistory,
   fileMacrocycleKeys,
   toLiftHistoryRecord,
-  withModifications,
   isLiftRecordExport,
 } from '@lifting-logbook/core';
 import type { LiftImportOptions, SpreadsheetCell } from '@lifting-logbook/core';
@@ -78,6 +77,7 @@ import { randomUUID } from 'crypto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
+import { keepSetModifications } from '../lifts/lift-modification.util';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { BatchMacrocycles, createdNumberedKeys, preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
@@ -920,17 +920,13 @@ export class ImportController {
       }
     }
 
-    // An export's `Modifications` names ids; keep the ones this account has (decision 22, #1308).
+    // An export's `Modifications` names ids. Any parse that read them, with or without a breakdown,
+    // keeps only those a logged set could carry (decision 22, #1308).
     let droppedModifications = 0;
-    if (assign && (valid as LiftRecord[]).some((r) => r.modifications?.length)) {
-      const known = new Set((await repos.liftModification.list()).map((m) => m.id));
-      valid = (valid as LiftRecord[]).map((r) => {
-        if (!r.modifications?.length) return r;
-        const kept = r.modifications.filter((id) => known.has(id));
-        droppedModifications += r.modifications.length - kept.length;
-        const { modifications: _all, ...rest } = r;
-        return { ...rest, ...withModifications(kept) };
-      });
+    if (destination === 'lift-records') {
+      const kept = await keepSetModifications(repos, valid as LiftRecord[]);
+      valid = kept.records;
+      droppedModifications = kept.dropped;
     }
 
     // For splitDest, partition before committing to avoid double-writing 1RM rows as lift-records

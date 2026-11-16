@@ -22,7 +22,7 @@ export interface UserDataRows {
   /** Null until the user changes a setting. */
   userSettings: { activeProgram: string | null } | null;
   /** Typed where the lift-record CSV reads each set's status (#1308). */
-  macrocycles: (StoredRow & { program: string; macrocycleNum: number; status: string })[];
+  macrocycles: (StoredRow & { program: string; macrocycleNum: number; status: string; statusChosen: boolean })[];
   macrocycleDashboards: StoredRow[];
   macrocycleScheduledWorkouts: StoredRow[];
   trainingMaxHistory: StoredRow[];

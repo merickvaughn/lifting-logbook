@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Controller,
   Get,
   HttpException,
@@ -21,7 +22,13 @@ import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
 import { LiftRecordExportFilter } from '../ports/IUserDataExportRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { buildExportFiles, exportFileName, rowCounts, zipExportFiles } from './build-data-export';
-import { calendarDay, describeParts, exportParts, liftRecordExportFileName } from './lift-record-export';
+import {
+  calendarDay,
+  describeParts,
+  exportParts,
+  liftRecordExportFileName,
+  splitFingerprint,
+} from './lift-record-export';
 import { LiftRecordExportDownloadQueryDto, LiftRecordExportQueryDto } from './lift-record-export.dto';
 
 /** How long the reads may take. A long history reads many rows, on one connection. */
@@ -88,8 +95,12 @@ export class DataExportController {
     @Query() query: LiftRecordExportQueryDto,
   ): Promise<LiftRecordExportPartsResponse> {
     const started = Date.now();
-    const parts = await this.readParts(user, query);
-    const response = { rows: parts.reduce((n, p) => n + p.length, 0), parts: describeParts(parts) };
+    const parts = await this.readParts(user, query, started);
+    const response = {
+      rows: parts.reduce((n, p) => n + p.length, 0),
+      parts: describeParts(parts),
+      split: splitFingerprint(parts),
+    };
     this.logger.log(
       { filters: filtersSet(query), rows: response.rows, parts: parts.length, durationMs: Date.now() - started },
       'Sets export parts listed (#1308)',
@@ -99,7 +110,8 @@ export class DataExportController {
 
   /**
    * One part of a filtered sets download (#1308): a CSV in decision 22's format, which `/import`
-   * reads back. `part` defaults to 1, and a filter that takes no sets gives a header alone.
+   * reads back. `part` defaults to 1, and a filter that takes no sets gives a header alone. With
+   * the listing's `split`, a split that has changed since is a 409, so no macrocycle is missed.
    */
   @Get('lift-records')
   @SkipRlsTransaction()
@@ -109,7 +121,13 @@ export class DataExportController {
   ): Promise<StreamableFile> {
     const started = Date.now();
     const part = query.part === undefined ? 1 : Number(query.part);
-    const parts = await this.readParts(user, query);
+    const parts = await this.readParts(user, query, started);
+    if (query.split !== undefined && query.split !== splitFingerprint(parts)) {
+      this.logger.warn({ filters: filtersSet(query), part, parts: parts.length }, 'Sets export split changed (#1308)');
+      throw new ConflictException(
+        'Your sets have changed since the parts were listed, so they may now be split differently. List the parts again and download each one.',
+      );
+    }
     if (part > Math.max(parts.length, 1)) {
       throw new NotFoundException(`This download has ${parts.length} part${parts.length === 1 ? '' : 's'}.`);
     }
@@ -125,17 +143,25 @@ export class DataExportController {
     });
   }
 
-  private async readParts(user: AuthUser, query: LiftRecordExportQueryDto) {
+  /** The transaction covers the reads alone, so splitting doesn't hold a pooled connection. */
+  private async readParts(user: AuthUser, query: LiftRecordExportQueryDto, started: number) {
+    let read;
     try {
-      return await this.rlsContext.withUserContext(async () => {
+      read = await this.rlsContext.withUserContext(async () => {
         const repos = await this.factory.forUser(user);
         const filter = await resolveFilter(query, repos);
-        return exportParts(await repos.userDataExport.readLiftRecords(filter), await repos.macrocycle.listAll());
+        return {
+          records: await repos.userDataExport.readLiftRecords(filter),
+          macrocycles: await repos.macrocycle.listAll(),
+        };
       }, DATA_EXPORT_TX_TIMEOUT_MS);
     } catch (err) {
       if (err instanceof HttpException) throw err;
       const code = err instanceof PrismaClientKnownRequestError ? err.code : undefined;
-      this.logger.error({ filters: filtersSet(query), code }, 'Sets export failed (#1308)');
+      this.logger.error(
+        { filters: filtersSet(query), code, durationMs: Date.now() - started },
+        'Sets export failed (#1308)',
+      );
       if (code === 'P2028') {
         throw new ServiceUnavailableException(
           'Your sets took too long to read, so nothing was downloaded. Please try again in a moment.',
@@ -143,6 +169,7 @@ export class DataExportController {
       }
       throw err;
     }
+    return exportParts(read.records, read.macrocycles);
   }
 }
 

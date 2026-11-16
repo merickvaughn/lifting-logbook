@@ -1091,6 +1091,11 @@ export interface LiftRecordExportPartsResponse {
   rows: number;
   /** Empty when the filter takes no sets. */
   parts: LiftRecordExportPart[];
+  /**
+   * Identifies this split. Pass it with each part's download: if a set was added or removed since,
+   * the parts may have moved, so the download is refused with a 409 rather than miss a macrocycle.
+   */
+  split: string;
 }
 
 /** What an import with an Assign breakdown does beyond the row counts (#1254). */
@@ -1110,8 +1115,10 @@ export interface ImportAssignedCounts {
   /** One-rep-max rows split to training maxes and skipped as older than that program's current max. */
   splitOlderThanCurrent: number;
   /**
-   * Modification ids an exported file's `Modifications` column named that the account no longer
-   * has, dropped from their sets (decision 22, #1308).
+   * Modification ids an exported file's `Modifications` column named that its sets couldn't carry,
+   * one per id per row (decision 22, #1308). That's an id the account no longer has, another
+   * lift's modification, a repeat, a second one with its own max, or one past the per-set cap.
+   * It counts the file's rows, so a row skipped as a duplicate still counts what it named.
    */
   droppedModifications: number;
 }

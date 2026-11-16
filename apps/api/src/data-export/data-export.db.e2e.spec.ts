@@ -9,6 +9,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import multipart from '@fastify/multipart';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { strFromU8, unzipSync } from 'fflate';
+import { parseCsvText } from '@lifting-logbook/core';
 import type { ImportCommitResponse, ImportKind, ImportPreviewResponse } from '@lifting-logbook/types';
 import { PrismaService } from '../adapters/prisma/prisma.service';
 import { AppModule } from '../app.module';
@@ -364,7 +365,7 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
     const get = (url: string, user = USER_OWNER) =>
       app.getHttpAdapter().getInstance().inject({ method: 'GET', url, headers: { authorization: `Bearer ${user}` } });
 
-    it("holds only the owner's sets, under every filter, each with its macrocycle's status", async () => {
+    it("holds only the owner's sets, under every filter, with no status the lifter didn't choose", async () => {
       for (const filter of ['', `?program=${ACTIVE_PROGRAM}`, '?from=2026-01-01&to=2026-01-31']) {
         const res = await get(`/users/me/export/lift-records${filter}`);
         expect(res.statusCode).toBe(200);
@@ -374,8 +375,15 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
       const owned = await prisma.liftRecord.count({ where: { userId: USER_OWNER } });
       const parts = (await get('/users/me/export/lift-records/parts')).json<{ rows: number }>();
       expect(parts.rows).toBe(owned);
-      const active = (await get(`/users/me/export/lift-records?program=${ACTIVE_PROGRAM}`)).body.split('\n').slice(1);
-      expect(active.filter((line) => line.trim() !== '').every((line) => line.trimEnd().endsWith(',in-progress'))).toBe(true);
+      // The live run's `in-progress` was never chosen, so it isn't written: re-uploaded, it would
+      // come back locked on an imported macrocycle (decision 22).
+      const [header = [], ...active] = parseCsvText(
+        (await get(`/users/me/export/lift-records?program=${ACTIVE_PROGRAM}`)).body,
+      );
+      const status = header.indexOf('Status');
+      expect(status).toBeGreaterThan(-1);
+      expect(active.length).toBeGreaterThan(0);
+      expect(active.map((row) => String(row[status] ?? ''))).toEqual(active.map(() => ''));
     });
 
     it("404s another user's macrocycle, which row-level security hides", async () => {

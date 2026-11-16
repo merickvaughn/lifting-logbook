@@ -26,8 +26,8 @@ export interface LiftRecordExportRow {
   notes: string;
   modifications: readonly string[];
   /**
-   * Its macrocycle's stored status (#1308). Absent or null writes an empty `Status` cell, as for a
-   * non-cycle workout, which has no status to keep.
+   * Its macrocycle's status, where the lifter chose it (#1308). Absent or null writes an empty
+   * `Status` cell, as for an inferred status or a non-cycle workout.
    */
   status?: string | null;
 }
@@ -82,8 +82,12 @@ export const LIFT_RECORD_EXPORT_HEADERS: readonly string[] = [
 /** Joins a set's modification ids in the `Modifications` column. Ids are uuids, so never contain it. */
 export const LIFT_RECORD_MODIFICATION_SEPARATOR = ';';
 
-const FORMULA_TRIGGER = /^[=+\-@\t\r\n]/;
-const ESCAPED_FORMULA = /^'[=+\-@\t\r\n]/;
+/**
+ * A formula character, after any apostrophes. Text of this shape gets one more apostrophe on export
+ * and loses one on import, so the two are exact inverses: `=x` exports as `'=x`, and a note that
+ * really starts `'=x` exports as `''=x`.
+ */
+const FORMULA_TRIGGER = /^'*[=+\-@\t\r\n]/;
 
 /**
  * A leading apostrophe on text a spreadsheet would run as a formula (decision 22). Only for free
@@ -95,15 +99,17 @@ export function escapeCsvFormula(text: string): string {
 
 /**
  * Reverses {@link escapeCsvFormula} for the importer (decision 22): drops a leading apostrophe
- * only when a formula character follows it, so text that really starts with one stays as written.
+ * only when apostrophes and then a formula character follow it, so text that really starts with
+ * one, like `'tis`, stays as written.
  */
 export function unescapeCsvFormula(text: string): string {
-  return ESCAPED_FORMULA.test(text) ? text.slice(1) : text;
+  return text.startsWith("'") && FORMULA_TRIGGER.test(text.slice(1)) ? text.slice(1) : text;
 }
 
 /**
- * `Status` holds each set's macrocycle status (#1308), which import reads as one the lifter chose
- * (decision 22), so a round trip keeps it. A non-cycle workout's is empty.
+ * `Status` holds each set's macrocycle status where the lifter chose it (#1308). Import reads it as
+ * chosen (decision 22), so a round trip keeps it. An inferred status or a non-cycle workout's is
+ * empty, and the rules suggest it again on import.
  */
 export function serializeLiftRecords(records: readonly LiftRecordExportRow[]): string {
   return serializeCsvText([
