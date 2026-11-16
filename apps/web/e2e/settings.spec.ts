@@ -184,7 +184,8 @@ test('a clear that fails leaves focus on its confirm button', async ({ page, req
   await page.keyboard.press('Tab');
   await page.keyboard.press('Enter');
 
-  await expect(page.getByRole('alert')).toContainText('Couldn’t clear your training data.');
+  // Not getByRole('alert') alone: Next's route announcer is an empty alert too.
+  await expect(page.getByRole('alert').filter({ hasText: 'Couldn’t clear your training data.' })).toBeVisible();
   // A disabled button would have lost focus to the page's body while the clear ran.
   await expect(page.getByRole('button', { name: 'Clear 48 rows' })).toBeFocused();
 });
