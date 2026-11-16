@@ -13,10 +13,16 @@ const SUMMARY = { id: true, kind: true, scope: true, counts: true, createdAt: tr
 
 type SummaryRow = Prisma.DataSnapshotGetPayload<{ select: typeof SUMMARY }>;
 
+/** A stored kind this release knows; the column is plain text. */
+function snapshotKind(kind: string): StoredSnapshotSummary['kind'] {
+  if (kind !== 'clear') throw new Error(`snapshot kind ${kind} is not one this release reads`);
+  return kind;
+}
+
 function summary(row: SummaryRow): StoredSnapshotSummary {
   return {
     id: row.id,
-    kind: 'clear',
+    kind: snapshotKind(row.kind),
     // Written only by `create` below, from these types.
     scope: row.scope as unknown as DataSnapshotScope,
     counts: row.counts as unknown as TrainingDataCounts,
@@ -38,7 +44,7 @@ export class PrismaDataSnapshotRepository implements IDataSnapshotRepository {
         kind: snapshot.kind,
         scope: snapshot.scope as unknown as Prisma.InputJsonObject,
         counts: snapshot.counts as unknown as Prisma.InputJsonObject,
-        rows: encodeSnapshotRows(snapshot.data),
+        rows: await encodeSnapshotRows(snapshot.data),
         createdAt: snapshot.createdAt,
         expiresAt: snapshot.expiresAt,
       },
@@ -61,7 +67,7 @@ export class PrismaDataSnapshotRepository implements IDataSnapshotRepository {
       where: { id, userId: this.userId, expiresAt: { gt: now } },
       select: { ...SUMMARY, rows: true },
     });
-    return row ? { ...summary(row), data: decodeSnapshotRows(row.rows) } : null;
+    return row ? { ...summary(row), data: await decodeSnapshotRows(row.rows) } : null;
   }
 
   async delete(id: string): Promise<boolean> {

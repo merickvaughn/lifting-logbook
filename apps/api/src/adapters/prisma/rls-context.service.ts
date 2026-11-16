@@ -1,4 +1,5 @@
 import { Injectable, Optional } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ClsService } from 'nestjs-cls';
 import { trace } from '@opentelemetry/api';
 import { PrismaService } from './prisma.service';
@@ -37,11 +38,13 @@ export class RlsContextService {
    * Run `fn` inside a short-lived transaction with `app.current_user_id` set to the CLS userId, so
    * repositories built inside `fn` are RLS-scoped to the caller. When there is no Prisma client
    * (in-memory mode), `fn` runs directly with no transaction. A caller whose one operation reads a
-   * lot can pass a longer `timeoutMs`.
+   * lot can pass a longer `timeoutMs`, and one that reads rows and then deletes them can pass
+   * `isolationLevel`, so a write committed in between fails it rather than being lost.
    */
   async withUserContext<T>(
     fn: () => Promise<T>,
     timeoutMs: number = RlsContextService.SHORT_TX_TIMEOUT_MS,
+    isolationLevel?: Prisma.TransactionIsolationLevel,
   ): Promise<T> {
     if (!this.prisma) {
       return fn();
@@ -67,7 +70,7 @@ export class RlsContextService {
           this.cls.set(RLS_TX_CLIENT, undefined);
         }
       },
-      { timeout: timeoutMs },
+      isolationLevel ? { timeout: timeoutMs, isolationLevel } : { timeout: timeoutMs },
     );
   }
 }

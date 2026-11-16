@@ -16,6 +16,7 @@ import {
   ServiceUnavailableException,
   StreamableFile,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { serializeLiftRecords } from '@lifting-logbook/core';
 import {
@@ -37,8 +38,13 @@ import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { ClearTrainingDataDto, SnapshotLiftRecordsQueryDto } from './training-data.dto';
 import { clearTrainingData, restoreSnapshot } from './training-data.service';
 
-/** How long clear, restore and a snapshot download may take. A long history is many rows. */
-export const TRAINING_DATA_TX_TIMEOUT_MS = 30_000;
+/**
+ * How long clear, restore and a snapshot download may take. Measured on 2026-11-15 against a local
+ * Postgres 16 with 78,000 sets, a heavy lifter's ten years: clear took 2.0 s and restore 15.2 s,
+ * 9.9 s of it inserting and 3.9 s renumbering. 60 s leaves about four times that for a slower
+ * database; past it the transaction rolls back and the request is a 503.
+ */
+export const TRAINING_DATA_TX_TIMEOUT_MS = 60_000;
 
 function total(counts: TrainingDataCounts): number {
   return TRAINING_TABLES.reduce((n, table) => n + counts[table], 0);
@@ -163,21 +169,46 @@ export class SnapshotsController {
     return exportParts(liftRecordRows(snapshot.data), macrocycleRows(snapshot.data));
   }
 
-  /** Runs `fn` in the user's RLS transaction, logging a failure and turning a timeout into a 503. */
+  /**
+   * Runs `fn` in the user's RLS transaction, logging a failure and turning a timeout into a 503.
+   * Clear and restore read rows and then write or delete them, so they run at `REPEATABLE READ`: a
+   * write committed in between (a training-max edit, a modification deleted) fails them with a
+   * 409 rather than being deleted unsaved or breaking a foreign key.
+   */
   private async run<T>(action: 'clear' | 'restore' | 'download', started: number, fn: () => Promise<T>): Promise<T> {
     try {
-      return await this.rlsContext.withUserContext(fn, TRAINING_DATA_TX_TIMEOUT_MS);
+      return await this.rlsContext.withUserContext(
+        fn,
+        TRAINING_DATA_TX_TIMEOUT_MS,
+        action === 'download' ? undefined : Prisma.TransactionIsolationLevel.RepeatableRead,
+      );
     } catch (err) {
       if (err instanceof HttpException && err.getStatus() < 500) throw err;
-      const code = err instanceof PrismaClientKnownRequestError ? err.code : undefined;
-      this.logger.error(
-        { action, code, durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) },
-        'Training data action failed (#1309)',
-      );
-      if (code === 'P2028') {
+      const failure = describeFailure(err instanceof HttpException && err.cause !== undefined ? err.cause : err);
+      this.logger.error({ action, ...failure, durationMs: Date.now() - started }, 'Training data action failed (#1309)');
+      if (failure.code === 'P2034' || failure.code === 'P2003') {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'data-changed',
+          message: 'Your data changed while this ran, so nothing changed. Please try again.',
+          error: 'Conflict',
+        });
+      }
+      if (failure.code === 'P2028') {
         throw new ServiceUnavailableException('This took too long, so nothing changed. Please try again in a moment.');
       }
       throw err;
     }
   }
+}
+
+/**
+ * What a failure log may say about `err`: its name and Prisma code and target. A Prisma error's
+ * message can quote the call's arguments, which here are the lifter's rows, so only other errors'
+ * messages are logged.
+ */
+function describeFailure(err: unknown): { error: string; code?: string; target?: unknown; message?: string } {
+  if (err instanceof PrismaClientKnownRequestError) return { error: err.name, code: err.code, target: err.meta?.['target'] };
+  if (!(err instanceof Error)) return { error: typeof err };
+  return err.name.startsWith('PrismaClient') ? { error: err.name } : { error: err.name, message: err.message };
 }

@@ -476,8 +476,10 @@ resource "google_cloud_run_v2_job" "expire_snapshots" {
     template {
       service_account = google_service_account.api_workload.email
 
-      # The next day's run retries; reads already treat expired rows as gone.
-      max_retries = 0
+      # Deleting expired rows is idempotent, so a transient failure (a dropped
+      # connection) retries once; past that the run fails and the next day's
+      # tries again. Reads already treat expired rows as gone.
+      max_retries = 1
 
       vpc_access {
         connector = google_vpc_access_connector.main.id

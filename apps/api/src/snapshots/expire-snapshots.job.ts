@@ -33,11 +33,12 @@ export interface ExpiryLogEntry {
 export async function runExpiryJob(db: Queryable, log: (entry: ExpiryLogEntry) => void): Promise<number> {
   try {
     const [who] = (
-      // The cutoff stays Postgres text: a JS Date would drop its microseconds, and node-postgres
-      // sends a Date in local time, which a `timestamp` column reads without the offset.
+      // `expiresAt` holds UTC wall-clock time with no zone, so the cutoff is UTC wall-clock time
+      // too, as the expiry policies compare it, whatever the session's TimeZone. It stays Postgres
+      // text: a JS Date would drop its microseconds and be sent in local time.
       await db.query<{ role: string; owner: string; cutoff: string }>(
-        `SELECT current_user AS role, pg_get_userbyid(relowner) AS owner, now()::text AS cutoff
-           FROM pg_class WHERE oid = '"data_snapshot"'::regclass`,
+        `SELECT current_user AS role, pg_get_userbyid(relowner) AS owner, (now() AT TIME ZONE 'UTC')::text AS cutoff
+           FROM pg_class WHERE oid = to_regclass('"data_snapshot"')`,
       )
     ).rows;
     if (!who) throw new Error('the data_snapshot table was not found');
@@ -51,9 +52,9 @@ export async function runExpiryJob(db: Queryable, log: (entry: ExpiryLogEntry) =
       return 1;
     }
     // One cutoff for both statements, so a row expiring between them isn't counted as left.
-    const deleted = (await db.query(`DELETE FROM "data_snapshot" WHERE "expiresAt" <= $1::timestamptz`, [who.cutoff])).rowCount ?? 0;
+    const deleted = (await db.query(`DELETE FROM "data_snapshot" WHERE "expiresAt" <= $1::timestamp`, [who.cutoff])).rowCount ?? 0;
     const [left] = (
-      await db.query<{ remaining: string }>(`SELECT count(*) AS remaining FROM "data_snapshot" WHERE "expiresAt" <= $1::timestamptz`, [
+      await db.query<{ remaining: string }>(`SELECT count(*) AS remaining FROM "data_snapshot" WHERE "expiresAt" <= $1::timestamp`, [
         who.cutoff,
       ])
     ).rows;

@@ -62,9 +62,14 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository, Trai
   }
 
   restoreTraining(rows: readonly TrainingRow[]): number {
+    const ids = new Set(this.rows.map((r) => r.id));
+    const numbers = new Set(this.rows.map((r) => `${r.program}|${r.macrocycleNum}`));
     let added = 0;
     for (const row of rows as unknown as MacrocycleRow[]) {
-      if (this.rows.some((r) => r.id === row.id || (r.program === row.program && r.macrocycleNum === row.macrocycleNum))) continue;
+      const number = `${row.program}|${row.macrocycleNum}`;
+      if (ids.has(row.id) || numbers.has(number)) continue;
+      ids.add(row.id);
+      numbers.add(number);
       this.rows.push({ ...row });
       added++;
     }

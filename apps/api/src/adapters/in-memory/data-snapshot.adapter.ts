@@ -23,7 +23,7 @@ export class InMemoryDataSnapshotRepository implements IDataSnapshotRepository {
       throw new Error('snapshot could not be saved');
     }
     const { data, ...rest } = snapshot;
-    const stored = { ...structuredClone(rest), id: randomUUID(), rows: encodeSnapshotRows(data) };
+    const stored = { ...structuredClone(rest), id: randomUUID(), rows: await encodeSnapshotRows(data) };
     this.snapshots.set(stored.id, stored);
     return this.summary(stored);
   }
@@ -44,7 +44,7 @@ export class InMemoryDataSnapshotRepository implements IDataSnapshotRepository {
   async get(id: string, now: Date): Promise<StoredSnapshot | null> {
     const stored = this.snapshots.get(id);
     if (!stored || stored.expiresAt <= now) return null;
-    return { ...this.summary(stored), data: decodeSnapshotRows(stored.rows) };
+    return { ...this.summary(stored), data: await decodeSnapshotRows(stored.rows) };
   }
 
   async delete(id: string): Promise<boolean> {

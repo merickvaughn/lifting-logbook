@@ -41,16 +41,22 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
 
   restoreTraining(rows: readonly TrainingRow[]): number {
     const held = new Set(this.trainingRows().map((r) => setKey(r.program, r as unknown as LiftRecord)));
-    let added = 0;
+    const added = new Map<string, LiftRecord[]>();
     for (const { program, ...row } of rows) {
       const record = row as unknown as LiftRecord;
       const key = setKey(program, record);
       if (held.has(key)) continue;
       held.add(key);
-      this.store.set(program, [...(this.store.get(program) ?? []), record]);
-      added++;
+      const list = added.get(program) ?? [];
+      list.push(record);
+      added.set(program, list);
     }
-    return added;
+    let count = 0;
+    for (const [program, records] of added) {
+      this.store.set(program, [...(this.store.get(program) ?? []), ...records]);
+      count += records.length;
+    }
+    return count;
   }
 
   rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {

@@ -28,33 +28,56 @@ success.
 1. **One `data_snapshot` row per clear.** It holds the user, the kind (`clear`), the scope (the
    programs with rows), the row counts per table, the expiry, and the rows as gzip-compressed JSON
    in a `BYTEA` column. Dates are written as `{"$date": ISO}` so they come back as dates, and the
-   payload carries a version. The table has the usual forced isolation policy.
+   payload carries a version. The table has the usual forced isolation policy. A snapshot is
+   written back with the columns it was read with, so a migration that changes a cleared table's
+   columns must give a new column a default, or raise the payload version and read the old one.
+   `snapshots.db.e2e.spec.ts` pins each cleared model's columns, so such a migration fails a test
+   until that's decided.
 2. **The snapshot covers exactly what Clear removes.** That's decision 20's eleven tables plus
    `lift_modification_max`, the own maxes of lift modifications, which the owner chose to clear.
    `missing_max_dismissal` stays, also the owner's choice. The snapshot is saved, then the tables
    are cleared, in one transaction that holds the import and macrocycle locks. If the save fails,
    the transaction rolls back and nothing is cleared. If the stored counts differ from the ones the
    lifter confirmed, nothing happens and the response is a 409.
-3. **Restore inserts only what's missing, then renumbers.** For each program, the snapshot's
-   macrocycle numbers move past every number stored now, in every numbered table and in
-   lift-record import pre-images. Then each row goes in unless a stored row holds its key:
-   `createMany` with `skipDuplicates` in Postgres. So a program's dashboard, a lift's training max
-   and a modification's own max saved since the clear are kept. When the dashboard is kept, the
-   snapshot's current macrocycle comes back closed, as starting the next macrocycle closes one.
-   Non-cycle workouts share one macrocycle that is never renumbered, so their workout numbers move
-   past the logged ones instead. Each program is then renumbered by start date (ADR-042), and the
-   snapshot is deleted. A restore can't run twice.
+3. **Restore inserts only what's missing, then renumbers.**
+   - **Sets stored again are left out.** A snapshot set whose date, lift and set number a stored
+     set already holds, in any program, isn't restored: decision 13's duplicate rule, the
+     owner's choice, so a lifter who imported the clear's download before restoring doesn't get
+     every set twice. A macrocycle left with no sets isn't restored, nor its other rows, unless
+     it's the current one and its dashboard comes back. A non-cycle workout left with no sets
+     loses its rows. Batch keys naming what was left out are dropped, and a batch left with
+     nothing to undo isn't restored.
+   - **Numbers move past the stored ones.** For each program, the snapshot's macrocycle numbers
+     move past every number stored now, in every numbered table, and its import batches' keys
+     move with them. A batch imported since the clear names only numbers in use, because
+     deleting a macrocycle drops its keys (#1199). Non-cycle workouts share one macrocycle that is
+     never renumbered, so their workout numbers move past the logged ones instead, and so do the
+     `non-cycle:` keys any program's batch holds for them (#1184). The non-cycle macrocycle then
+     starts at its earliest set.
+   - **Then each row goes in unless a stored row holds its key:** `createMany` with
+     `skipDuplicates` in Postgres. So a program's dashboard, a lift's training max and a
+     modification's own max saved since the clear are kept. When the dashboard is kept, the
+     snapshot's current macrocycle comes back closed, as starting the next macrocycle closes one.
+     Each program is then renumbered by start date (ADR-042), and the snapshot is deleted. A
+     restore can't run twice.
+   - **Clear and restore run at `REPEATABLE READ`**, so a write committed while they run, such as
+     a training-max edit, fails them with a 409 rather than being deleted unsaved or breaking a
+     foreign key. Their transaction may take 60 seconds: on 2026-11-15 a local Postgres 16 cleared
+     78,000 sets, a heavy lifter's ten years, in 2.0 s and restored them in 15.2 s.
 4. **Every read treats an expired snapshot as gone.** List, restore and download filter on
    `expiresAt > now`, so a late or failed job never extends retention.
 5. **The expiry job reaches expired rows through two owner-only policies.** `data_snapshot` has a
-   `SELECT` policy and a `DELETE` policy, each `USING ("expiresAt" <= now() AND current_user =
-   <the table's owner>)`. The owner is read from `pg_class`, so the policies hold whichever role
-   ran the migration. Policies of one command combine with `OR`, so the API role still sees only
-   the current user's rows. The job is a script in the API image, run as a Cloud Run job with the
-   migrator connection. It checks that it runs as the table's owner, deletes rows up to one cutoff,
-   counts what's left up to the same cutoff, logs both as JSON, and exits non-zero when it isn't
-   the owner or a row is left. A daily workflow executes it, as `deploy.yml` executes the migrate
-   job.
+   `SELECT` policy and a `DELETE` policy, each `USING ("expiresAt" <= (now() AT TIME ZONE 'UTC')
+   AND current_user = <the table's owner>)`. `expiresAt` is a `timestamp` holding UTC wall-clock
+   time, as Prisma writes it, so the comparison is in UTC whatever the session's `TimeZone`. The
+   owner is read from `pg_class`, so the policies hold whichever role ran the migration. Policies
+   of one command combine with `OR`, so the API role still sees only the current user's rows. The
+   job is a script in the API image, run as a Cloud Run job with the migrator connection, retried
+   once since deleting is idempotent. It checks that it runs as the table's owner, deletes rows up
+   to one UTC cutoff, counts what's left up to the same cutoff, logs both as JSON, and exits
+   non-zero when it isn't the owner or a row is left. A daily workflow executes it, as
+   `deploy.yml` executes the migrate job, and opens or comments on a `snapshot-expiry-failed`
+   issue when a run fails.
 
 ## Alternatives considered
 
@@ -68,18 +91,25 @@ success.
 - **Set `app.current_user_id` to each user in turn.** Rejected: the job would first need the list
   of users with snapshots, which it can't read either, and a per-user loop is slower and more code
   for the same result.
-- **Store snapshots as rows in shadow copies of each table.** Rejected: twelve more tables to keep
-  in step with every schema change, where one compressed payload with a version needs nothing.
+- **Store snapshots as rows in shadow copies of each table.** Rejected: twelve more tables, each
+  migrated with its source table. A versioned payload asks a schema change for a default or a
+  reader of the old version instead, and the column pin says when.
 - **Restore by overwriting.** Rejected by decision 21's own wording: restore must not lose anything
   saved since the clear.
+- **Restore every snapshot set, beside any stored again since.** Rejected by the owner: after
+  importing the clear's download and then restoring, every set would be stored twice under
+  different macrocycles.
 
 ## Consequences
 
 - A restore can bring back a training max for a lift that has none now, beside newer maxes for
   other lifts. That's the "missing only" rule, not a merge of values.
 - A restored import batch keeps working for undo, because its pre-image keys move with the
-  macrocycle numbers. A batch's non-cycle keys hold no number, so they don't move with non-cycle
-  workout numbers.
+  macrocycle numbers and its non-cycle keys with the non-cycle workout numbers.
+- Restored non-cycle workouts are numbered after those logged since the clear, not put back in
+  date order with them.
+- In the `SYSTEM_DATABASE_URL`-only mode, which no deployment uses, the user context runs with no
+  transaction, so clear and restore aren't atomic there, as no write path in that mode is.
 - The expiry policies give the migrator read and delete access to expired snapshots of every user.
   The migrator already owns the table and could drop it, so this grants nothing it couldn't take.
 - Overwrite with a fresh import (the proposal's overwrite criteria) can reuse the table and payload
@@ -93,4 +123,6 @@ success.
 4. PostgreSQL 16 documentation, [System Information Functions](https://www.postgresql.org/docs/16/functions-info.html) — `pg_get_userbyid` and `current_user`.
 5. Prisma documentation, [`createMany`](https://www.prisma.io/docs/orm/reference/prisma-client-reference#createmany) — `skipDuplicates` inserts with `ON CONFLICT DO NOTHING`.
 6. Google Cloud documentation, [Execute jobs](https://cloud.google.com/run/docs/execute/jobs) — `gcloud run jobs execute --wait` returns the execution's result.
-7. Node.js documentation, [`zlib`](https://nodejs.org/api/zlib.html) — `gzipSync` and `gunzipSync`.
+7. Node.js documentation, [`zlib`](https://nodejs.org/api/zlib.html) — `gzip` and `gunzip`, which run on the thread pool rather than blocking the event loop.
+8. PostgreSQL 16 documentation, [§13.2.2 Repeatable Read Isolation Level](https://www.postgresql.org/docs/16/transaction-iso.html#XACT-REPEATABLE-READ) — a transaction that updates or deletes a row changed by a concurrent commit fails with a serialization error.
+9. PostgreSQL 16 documentation, [§9.9.4 `AT TIME ZONE`](https://www.postgresql.org/docs/16/functions-datetime.html#FUNCTIONS-DATETIME-ZONECONVERT) — converting `timestamp with time zone` to the wall-clock `timestamp` of a zone.

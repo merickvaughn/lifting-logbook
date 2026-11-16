@@ -14,18 +14,23 @@ import { PrismaService } from '../adapters/prisma/prisma.service';
 import { AppModule } from '../app.module';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
+import { NUMBERED_TRAINING_TABLES, TRAINING_TABLES, TrainingTable } from '../ports/ITrainingDataRepository';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { ExpiryLogEntry, runExpiryJob } from './expire-snapshots.job';
+import { TRAINING_DATA_TX_TIMEOUT_MS } from './snapshots.controller';
 
-// See programs.db.e2e.spec.ts (#567): headroom for a contended full-suite Windows run.
+// See programs.db.e2e.spec.ts (#567): headroom for a contended full-suite Windows run. The tests
+// clear and restore whole histories, so they take it too.
 const DB_E2E_HOOK_TIMEOUT_MS = 30_000;
+jest.setTimeout(DB_E2E_HOOK_TIMEOUT_MS);
 
 const USER_CLEARED = 'db-e2e-snapshots-cleared';
 const USER_OTHER = 'db-e2e-snapshots-other';
 const USER_NEWER = 'db-e2e-snapshots-newer';
 const USER_NO_BACKUP = 'db-e2e-snapshots-no-backup';
 const USER_ISOLATED = 'db-e2e-snapshots-isolated';
-const USERS = [USER_CLEARED, USER_OTHER, USER_NEWER, USER_NO_BACKUP, USER_ISOLATED];
+const USER_LONG = 'db-e2e-snapshots-long';
+const USERS = [USER_CLEARED, USER_OTHER, USER_NEWER, USER_NO_BACKUP, USER_ISOLATED, USER_LONG];
 const PROGRAM = '5-3-1';
 const CUSTOM_PROGRAM_IDS: Record<string, string> = {
   [USER_CLEARED]: '0e130900-0000-4000-8000-000000000001',
@@ -61,6 +66,106 @@ const KEPT = [
   'CustomProgramSpec',
   'ImportSuggestionUsage',
 ];
+
+/** Each cleared table's Prisma model. */
+const MODEL_OF: Record<TrainingTable, string> = {
+  macrocycles: 'Macrocycle',
+  liftRecords: 'LiftRecord',
+  macrocycleDashboards: 'MacrocycleDashboard',
+  macrocycleScheduledWorkouts: 'MacrocycleScheduledWorkout',
+  trainingMaxes: 'TrainingMax',
+  trainingMaxHistory: 'TrainingMaxHistory',
+  liftModificationMaxes: 'LiftModificationMax',
+  workoutDateOverrides: 'WorkoutDateOverride',
+  workoutSkipOverrides: 'WorkoutSkipOverride',
+  workoutLiftOverrides: 'WorkoutLiftOverride',
+  focusDayStates: 'FocusDayState',
+  importBatches: 'ImportBatch',
+};
+
+/**
+ * The columns a snapshot's payload holds for each cleared table, as of payload version 1. A
+ * snapshot stays restorable for 30 days, so when a migration changes these, one taken before it
+ * still holds the old columns: give a new column a default, or raise the payload version in
+ * snapshot-payload.ts and read the old one, then update this list.
+ */
+const PAYLOAD_COLUMNS: Record<string, string[]> = {
+  FocusDayState: ['id', 'macrocycleNum', 'program', 'state', 'updatedAt', 'userId', 'workoutNum'],
+  ImportBatch: ['createdAt', 'destination', 'groupId', 'id', 'macrocycles', 'preImage', 'program', 'userId'],
+  LiftModificationMax: ['dateUpdated', 'id', 'modificationId', 'program', 'userId', 'weight'],
+  LiftRecord: [
+    'date',
+    'id',
+    'lift',
+    'macrocycleNum',
+    'modifications',
+    'notes',
+    'occurrence',
+    'program',
+    'reps',
+    'setNum',
+    'userId',
+    'weight',
+    'workoutNum',
+  ],
+  Macrocycle: [
+    'backfillClosedAt',
+    'backfillNumber',
+    'backfilledAt',
+    'createdAt',
+    'endDate',
+    'id',
+    'importedThrough',
+    'macrocycleNum',
+    'origin',
+    'program',
+    'startDate',
+    'status',
+    'statusChosen',
+    'unmatched',
+    'userId',
+  ],
+  MacrocycleDashboard: [
+    'id',
+    'macrocycleDate',
+    'macrocycleNum',
+    'macrocycleStartWeekday',
+    'macrocycleUnit',
+    'program',
+    'programType',
+    'sheetName',
+    'userId',
+  ],
+  MacrocycleScheduledWorkout: ['id', 'macrocycleNum', 'program', 'scheduledDate', 'userId', 'weekNum', 'workoutNum'],
+  TrainingMax: ['dateUpdated', 'id', 'lift', 'program', 'userId', 'weight'],
+  TrainingMaxHistory: [
+    'createdAt',
+    'date',
+    'goalMet',
+    'id',
+    'isPR',
+    'lift',
+    'modificationId',
+    'program',
+    'reps',
+    'source',
+    'userId',
+    'weight',
+  ],
+  WorkoutDateOverride: ['createdAt', 'id', 'macrocycleNum', 'newDate', 'program', 'userId', 'workoutNum'],
+  WorkoutLiftOverride: ['action', 'createdAt', 'id', 'lift', 'macrocycleNum', 'program', 'replacedBy', 'userId', 'workoutNum'],
+  WorkoutSkipOverride: ['id', 'macrocycleNum', 'program', 'reason', 'skippedAt', 'userId', 'workoutNum'],
+};
+
+/** A model's stored columns, by name. */
+function columnsOf(model: string): string[] {
+  const found = Prisma.dmmf.datamodel.models.find((m) => m.name === model);
+  if (!found) throw new Error(`no Prisma model ${model}`);
+  return found.fields
+    .filter((f) => f.kind !== 'object')
+    .map((f) => f.name)
+    .sort();
+}
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
 const OWNER_DATABASE_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;
@@ -271,7 +376,70 @@ describeOrSkip('Clear data and snapshots (#1309, e2e, PrismaRepositoryFactory)',
   it('decides for every model in the schema whether Clear data removes it', () => {
     const models = Prisma.dmmf.datamodel.models.map((model) => model.name).sort();
     expect(models).toEqual([...CLEARED, ...KEPT, 'DataSnapshot'].sort());
+    expect(TRAINING_TABLES.map((table) => MODEL_OF[table]).sort()).toEqual([...CLEARED].sort());
   });
+
+  it('moves every cleared table that holds a macrocycle number on restore', () => {
+    const numbered = CLEARED.filter((model) => columnsOf(model).includes('macrocycleNum')).sort();
+    expect(NUMBERED_TRAINING_TABLES.map((table) => MODEL_OF[table]).sort()).toEqual(numbered);
+  });
+
+  it('pins the columns a snapshot holds, so a schema change decides what an older snapshot restores', () => {
+    expect(Object.fromEntries(CLEARED.map((model) => [model, columnsOf(model)]))).toEqual(PAYLOAD_COLUMNS);
+  });
+
+  it(
+    'clears and restores a long history inside the transaction timeout',
+    async () => {
+      // A heavy lifter's ten years is about 78,000 sets (SNAPSHOT_HISTORY_SETS=78000 measures it);
+      // CI runs a lighter history so the suite stays quick.
+      const sets = Number(process.env.SNAPSHOT_HISTORY_SETS ?? 12_000);
+      const perMacrocycle = 600; // 20 workouts of 6 lifts by 5 sets.
+      const macrocycles = Math.ceil(sets / perMacrocycle);
+      const userId = USER_LONG;
+      const first = day('2010-01-04').getTime();
+      const startOf = (i: number) => new Date(first + i * 28 * 86_400_000);
+      // The seeded macrocycles hold numbers 1 and 2 and start in 2025.
+      await prisma.macrocycle.createMany({
+        data: Array.from({ length: macrocycles }, (_, i) => ({
+          userId,
+          program: PROGRAM,
+          macrocycleNum: i + 3,
+          startDate: startOf(i),
+          endDate: new Date(startOf(i).getTime() + 25 * 86_400_000),
+          status: 'completed',
+          origin: 'imported',
+        })),
+      });
+      const rows = [];
+      for (let i = 0; i < macrocycles; i++) {
+        for (let w = 0; w < 20; w++) {
+          const date = new Date(startOf(i).getTime() + (Math.floor(w / 5) * 7 + (w % 5)) * 86_400_000);
+          for (let lift = 0; lift < 6; lift++) {
+            for (let setNum = 1; setNum <= 5; setNum++) {
+              rows.push({ userId, program: PROGRAM, macrocycleNum: i + 3, workoutNum: w + 1, date, lift: `Lift ${lift}`, setNum, weight: 100 + lift, reps: 5 });
+            }
+          }
+        }
+      }
+      for (let i = 0; i < rows.length; i += 10_000) await prisma.liftRecord.createMany({ data: rows.slice(i, i + 10_000) });
+      const counts = await apiCounts(userId);
+
+      let started = Date.now();
+      const snapshot = await clear(userId);
+      const clearMs = Date.now() - started;
+      started = Date.now();
+      // A transaction past TRAINING_DATA_TX_TIMEOUT_MS fails the request with a 503.
+      expect((await inject(userId, 'POST', `/users/me/snapshots/${snapshot.id}/restore`)).statusCode).toBe(200);
+      const restoreMs = Date.now() - started;
+
+      expect(await apiCounts(userId)).toEqual(counts);
+      if (process.env.SNAPSHOT_HISTORY_SETS) {
+        process.stdout.write(`${JSON.stringify({ sets: rows.length, clearMs, restoreMs, timeoutMs: TRAINING_DATA_TX_TIMEOUT_MS })}\n`);
+      }
+    },
+    120_000,
+  );
 
   it('clears only decision 20’s tables, leaves another user alone, and a restore brings every row back', async () => {
     const before = await countsOf(prisma, USER_CLEARED);
@@ -415,22 +583,33 @@ describeOrSkip('Clear data and snapshots (#1309, e2e, PrismaRepositoryFactory)',
      * as `role`. `migration_owner` stands in for the migrator: it owns `data_snapshot` and is
      * neither a superuser nor BYPASSRLS, so forced row-level security binds it.
      */
-    async function runJob(role: 'migration_owner' | 'lifting_app', setup: (client: Client) => Promise<void> = async () => {}) {
+    async function runJob(
+      role: 'migration_owner' | 'lifting_app',
+      setup: (client: Client) => Promise<void> = async () => {},
+      timeZone = 'UTC',
+    ) {
       const client = new Client({ connectionString: OWNER_URL });
       await client.connect();
       const log: ExpiryLogEntry[] = [];
       try {
         await client.query('BEGIN');
+        // The session's zone, which must not move the expiry: `expiresAt` holds UTC wall-clock
+        // time, as Prisma writes it. Two rows sit an hour either side of now, inside any offset.
+        await client.query(`SELECT set_config('TimeZone', $1, true)`, [timeZone]);
         await client.query(
           `INSERT INTO "data_snapshot" ("id", "userId", "kind", "scope", "counts", "rows", "expiresAt") VALUES
-             ($1, $5, 'clear', '{}', '{}', '\\x00', now() - interval '1 day'),
-             ($2, $5, 'clear', '{}', '{}', '\\x00', now() + interval '1 day'),
-             ($3, $6, 'clear', '{}', '{}', '\\x00', now() - interval '1 second'),
-             ($4, $6, 'clear', '{}', '{}', '\\x00', now() + interval '29 days')`,
+             ($1, $5, 'clear', '{}', '{}', '\\x00', (now() AT TIME ZONE 'UTC') - interval '1 day'),
+             ($2, $5, 'clear', '{}', '{}', '\\x00', (now() AT TIME ZONE 'UTC') + interval '1 hour'),
+             ($3, $6, 'clear', '{}', '{}', '\\x00', (now() AT TIME ZONE 'UTC') - interval '1 hour'),
+             ($4, $6, 'clear', '{}', '{}', '\\x00', (now() AT TIME ZONE 'UTC') + interval '29 days')`,
           [IDS.expiredA, IDS.keptA, IDS.expiredB, IDS.keptB, USER_CLEARED, USER_OTHER],
         );
         const expired = Number(
-          (await client.query<{ n: string }>(`SELECT count(*) AS n FROM "data_snapshot" WHERE "expiresAt" <= now()`)).rows[0]?.n,
+          (
+            await client.query<{ n: string }>(
+              `SELECT count(*) AS n FROM "data_snapshot" WHERE "expiresAt" <= (now() AT TIME ZONE 'UTC')`,
+            )
+          ).rows[0]?.n,
         );
         await client.query('CREATE ROLE "snapshot_migration_owner" NOSUPERUSER NOBYPASSRLS');
         await client.query('ALTER TABLE "data_snapshot" OWNER TO "snapshot_migration_owner"');
@@ -448,14 +627,17 @@ describeOrSkip('Clear data and snapshots (#1309, e2e, PrismaRepositoryFactory)',
       }
     }
 
-    it('deletes every user’s expired snapshots as the migration role, keeps the rest, and logs the count', async () => {
-      const { exitCode, log, left, expired } = await runJob('migration_owner');
+    it.each(['UTC', 'Pacific/Auckland', 'America/New_York'])(
+      'deletes every user’s expired snapshots as the migration role, keeps the rest, and logs the count (session zone %s)',
+      async (timeZone) => {
+        const { exitCode, log, left, expired } = await runJob('migration_owner', undefined, timeZone);
 
-      expect(exitCode).toBe(0);
-      expect(left).toEqual([IDS.keptA, IDS.keptB]);
-      expect(expired).toBeGreaterThanOrEqual(2);
-      expect(log).toEqual([{ severity: 'INFO', message: 'Expired snapshots deleted (#1309)', deleted: expired, remaining: 0 }]);
-    });
+        expect(exitCode).toBe(0);
+        expect(left).toEqual([IDS.keptA, IDS.keptB]);
+        expect(expired).toBeGreaterThanOrEqual(2);
+        expect(log).toEqual([{ severity: 'INFO', message: 'Expired snapshots deleted (#1309)', deleted: expired, remaining: 0 }]);
+      },
+    );
 
     it('fails when an expired snapshot is left', async () => {
       const { exitCode, log, left, expired } = await runJob('migration_owner', async (client) => {

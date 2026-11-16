@@ -1,6 +1,12 @@
+import { promisify } from 'node:util';
 import { isDate } from 'node:util/types';
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { gunzip as gunzipCallback, gzip as gzipCallback } from 'node:zlib';
 import { TrainingData } from '../ports/ITrainingDataRepository';
+
+// The async calls, so compressing a long history doesn't block the event loop while its
+// transaction holds the locks.
+const gzip = promisify(gzipCallback);
+const gunzip = promisify(gunzipCallback);
 
 /**
  * A snapshot's rows as stored in `data_snapshot.rows` (#1309, proposal decision 21): JSON with
@@ -23,7 +29,7 @@ function isDateMarker(value: unknown): value is { $date: string } {
   );
 }
 
-export function encodeSnapshotRows(data: TrainingData): Buffer {
+export async function encodeSnapshotRows(data: TrainingData): Promise<Buffer> {
   const payload: Payload = { version: PAYLOAD_VERSION, data };
   // `this[key]` is the value before `Date.prototype.toJSON` turned it into a string. `isDate`
   // rather than `instanceof`, which misses a Date made in another realm (`structuredClone` under
@@ -32,11 +38,11 @@ export function encodeSnapshotRows(data: TrainingData): Buffer {
     const raw = this[key];
     return isDate(raw) ? { $date: raw.toISOString() } : value;
   });
-  return gzipSync(Buffer.from(json, 'utf8'));
+  return gzip(Buffer.from(json, 'utf8'));
 }
 
-export function decodeSnapshotRows(rows: Buffer): TrainingData {
-  const payload = JSON.parse(gunzipSync(rows).toString('utf8'), (_key, value: unknown) =>
+export async function decodeSnapshotRows(rows: Buffer): Promise<TrainingData> {
+  const payload = JSON.parse((await gunzip(rows)).toString('utf8'), (_key, value: unknown) =>
     isDateMarker(value) ? new Date(value.$date) : value,
   ) as Payload;
   if (payload.version !== PAYLOAD_VERSION) {

@@ -1,5 +1,11 @@
 import { ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { ImportPreImage, programWorkoutKeys } from '@lifting-logbook/core';
+import {
+  ImportPreImage,
+  LiftRecordExportRow,
+  classifyLiftRecordRows,
+  liftRecordNaturalKey,
+  programWorkoutKeys,
+} from '@lifting-logbook/core';
 import { MacrocycleStatus, NON_CYCLE_PROGRAM, TrainingDataCounts } from '@lifting-logbook/types';
 import { ProgramNotFoundError } from '../ports/errors';
 import { RepositoryBundle } from '../ports/factory';
@@ -12,7 +18,12 @@ import {
   liftRecordRows,
   macrocycleRows,
 } from '../ports/ITrainingDataRepository';
-import { closingStatus, lockForAssignedImport } from '../programs/macrocycle-history.util';
+import {
+  LEGACY_ROW_KEY,
+  NON_CYCLE_ROW_KEY,
+  closingStatus,
+  lockForAssignedImport,
+} from '../programs/macrocycle-history.util';
 import { renumberPreImageKeys, renumberProgram } from '../programs/macrocycle-renumbering';
 import { NON_CYCLE_MACROCYCLE_NUM } from '../programs/non-cycle.util';
 
@@ -85,12 +96,99 @@ function moveRows(
   }
 }
 
+type SetRow = LiftRecordExportRow & TrainingRow;
+
+/** A lift-records batch's pre-image with only the keys `keep` accepts, or null when it keeps all. */
+function filterPreImage(batch: TrainingRow, keep: (key: string) => boolean): ImportPreImage | null {
+  // A lift-records batch's pre-image, as the import stored it.
+  const entries = Object.entries(batch['preImage'] as ImportPreImage);
+  const kept = entries.filter(([key]) => keep(key));
+  return kept.length === entries.length ? null : Object.fromEntries(kept);
+}
+
+function isLiftRecordsBatch(batch: TrainingRow): boolean {
+  return batch['destination'] === 'lift-records';
+}
+
+/**
+ * Leaves out the snapshot's sets that are stored again, by decision 13's rule (one date, one lift
+ * under any spelling, one set number, in any program), as when the lifter imported the clear's
+ * download before restoring. A cycle macrocycle left with no sets goes with all its rows, unless
+ * it's the current one and the program's dashboard comes back with it; a non-cycle workout left
+ * with no sets loses its rows, and the shared non-cycle macrocycle stays. Batch keys naming what
+ * went are dropped, and a batch left with none goes.
+ */
+async function skipStoredSets(repos: Repos, data: TrainingData): Promise<void> {
+  const sets: SetRow[] = liftRecordRows(data);
+  if (sets.length === 0) return;
+  const slots = new Map(sets.map((r) => [`${r.date.toISOString()}|${r.lift}`, { date: r.date, lift: r.lift }]));
+  const stored = await repos.liftRecord.findStoredSets([...slots.values()]);
+  if (stored.length === 0) return;
+  // Each program's macrocycle numbers read apart, so two programs' sets that look alike aren't
+  // taken for one set repeated.
+  const cycles = new Map<string, number>();
+  const cycleOf = (r: SetRow): number => {
+    const key = `${r.program}|${r.macrocycleNum}`;
+    const n = cycles.get(key) ?? cycles.size + 1;
+    cycles.set(key, n);
+    return n;
+  };
+  const classified = classifyLiftRecordRows(sets, (r) => ({ ...r, macrocycleNum: cycleOf(r) }), stored);
+  // Only a set paired with a stored one is left out: the snapshot's sets were stored together, so
+  // none of them repeats another, and each keeps its own occurrence.
+  const skipped = new Set(classified.filter((c) => c.kind === 'skip' && c.paired !== undefined).map((c) => c.row));
+  if (skipped.size === 0) return;
+  data.liftRecords = sets.filter((r) => !skipped.has(r));
+
+  const cycleKey = (program: string, num: number | undefined) => `${program}|${num}`;
+  const workoutKey = (row: TrainingRow) => `${row.macrocycleNum}|${row.workoutNum}`;
+  const left = liftRecordRows(data);
+  const keep = new Set(left.map((r) => cycleKey(r.program, r.macrocycleNum)));
+  for (const dashboard of data.macrocycleDashboards) {
+    if (!(await hasDashboard(repos, dashboard.program))) keep.add(cycleKey(dashboard.program, dashboard.macrocycleNum));
+  }
+  const emptied = new Set(
+    sets
+      .filter((r) => r.program !== NON_CYCLE_PROGRAM)
+      .map((r) => cycleKey(r.program, r.macrocycleNum))
+      .filter((key) => !keep.has(key)),
+  );
+  const nonCycleWorkouts = (rows: SetRow[]) =>
+    new Set(rows.filter((r) => r.program === NON_CYCLE_PROGRAM).map(workoutKey));
+  const workoutsLeft = nonCycleWorkouts(left);
+  const emptiedWorkouts = new Set([...nonCycleWorkouts(sets)].filter((key) => !workoutsLeft.has(key)));
+  for (const table of NUMBERED_TRAINING_TABLES) {
+    data[table] = data[table].filter(
+      (row) =>
+        !emptied.has(cycleKey(row.program, row.macrocycleNum)) &&
+        !(row.program === NON_CYCLE_PROGRAM && row.workoutNum !== undefined && emptiedWorkouts.has(workoutKey(row))),
+    );
+  }
+
+  const skippedKeys = new Set([...skipped].map((r) => `${r.program}|${liftRecordNaturalKey(r)}`));
+  const dropsKey = (program: string, key: string): boolean => {
+    if (key.startsWith(NON_CYCLE_ROW_KEY)) return skippedKeys.has(`${NON_CYCLE_PROGRAM}|${key.slice(NON_CYCLE_ROW_KEY.length)}`);
+    if (key.startsWith(LEGACY_ROW_KEY)) return emptied.has(`${program}|${key.slice(LEGACY_ROW_KEY.length)}`);
+    return skippedKeys.has(`${program}|${key}`);
+  };
+  data.importBatches = data.importBatches.flatMap((batch) => {
+    if (!isLiftRecordsBatch(batch)) return [batch];
+    const preImage = filterPreImage(batch, (key) => !dropsKey(batch.program, key));
+    if (!preImage) return [batch];
+    // A batch with nothing left to undo goes, unless it chose a macrocycle's status.
+    if (Object.keys(preImage).length === 0 && batch['macrocycles'] == null) return [];
+    return [{ ...batch, preImage }];
+  });
+}
+
 /**
  * Puts a snapshot's macrocycles past every number `program` holds now, so none lands on a
- * macrocycle started since the clear. Renumbering afterwards orders them all by date.
+ * macrocycle started since the clear. Renumbering afterwards orders them all by date. A batch
+ * imported since names only numbers in use: deleting a macrocycle drops its keys
+ * (`forgetBatchKeys`, #1199).
  */
 async function placeAfterStored(repos: Repos, data: TrainingData, program: string): Promise<void> {
-  const offset = Math.max(0, ...(await repos.macrocycle.numbersInUse(program)));
+  const offset = [...(await repos.macrocycle.numbersInUse(program))].reduce((n, m) => Math.max(n, m), 0);
   if (offset === 0) return;
   const numbers = NUMBERED_TRAINING_TABLES.flatMap((table) => data[table])
     .filter((row) => row.program === program)
@@ -107,13 +205,43 @@ async function placeAfterStored(repos: Repos, data: TrainingData, program: strin
 
 /**
  * Non-cycle workouts share one macrocycle that is never renumbered (decision 23), so a
- * snapshot's workouts take numbers past the ones logged since the clear instead.
+ * snapshot's workouts take numbers past the ones logged since the clear instead, and so do the
+ * keys its import batches hold for them, which any program's batch can (#1184). The restored
+ * workouts aren't put back in date order with the ones logged since.
  */
 async function placeNonCycleAfterStored(repos: Repos, data: TrainingData): Promise<void> {
   const logged = await repos.liftRecord.getLoggedWorkoutNums(NON_CYCLE_PROGRAM, NON_CYCLE_MACROCYCLE_NUM);
-  const offset = Math.max(0, ...logged);
+  const offset = [...logged].reduce((n, w) => Math.max(n, w), 0);
   if (offset === 0) return;
   moveRows(data, NON_CYCLE_PROGRAM, (row) => (row.workoutNum === undefined ? {} : { workoutNum: row.workoutNum + offset }));
+  data.importBatches = data.importBatches.map((batch) => {
+    if (!isLiftRecordsBatch(batch)) return batch;
+    const entries = Object.entries(batch['preImage'] as ImportPreImage);
+    if (!entries.some(([key]) => key.startsWith(NON_CYCLE_ROW_KEY))) return batch;
+    const preImage = Object.fromEntries(entries.map(([key, entry]) => [shiftNonCycleKey(key, offset), entry]));
+    return { ...batch, preImage };
+  });
+}
+
+/** A `non-cycle:<macrocycle>:<workout>:…` key with its workout number moved by `offset`; other keys as they are. */
+export function shiftNonCycleKey(key: string, offset: number): string {
+  if (!key.startsWith(NON_CYCLE_ROW_KEY)) return key;
+  const [macrocycleNum, workoutNum, ...rest] = key.slice(NON_CYCLE_ROW_KEY.length).split(':');
+  return `${NON_CYCLE_ROW_KEY}${[macrocycleNum, Number(workoutNum) + offset, ...rest].join(':')}`;
+}
+
+/**
+ * The non-cycle macrocycle starts at its first set, so when restored sets predate the one stored
+ * since the clear, it moves back to the earliest of them.
+ */
+async function startNonCycleAtEarliestSet(repos: Repos, data: TrainingData): Promise<void> {
+  const dates = liftRecordRows(data)
+    .filter((r) => r.program === NON_CYCLE_PROGRAM)
+    .map((r) => r.date);
+  if (dates.length === 0) return;
+  const earliest = dates.reduce((a, b) => (b < a ? b : a));
+  const row = await repos.macrocycle.findByNumber(NON_CYCLE_PROGRAM, NON_CYCLE_MACROCYCLE_NUM);
+  if (row && earliest < row.startDate) await repos.macrocycle.update(row.id, { startDate: earliest });
 }
 
 /**
@@ -159,13 +287,15 @@ async function programWorkouts(repos: Repos, program: string): Promise<number> {
  * macrocycles go past every stored number and are then renumbered by start date with the rest,
  * so a macrocycle started since stays separate. A program's dashboard, a lift's training max and
  * a modification's own max stored since are kept, and where the dashboard is kept the snapshot's
- * current macrocycle comes back closed. An expired or unknown snapshot is a 404.
+ * current macrocycle comes back closed. A set stored again since, as by importing the clear's
+ * download, isn't restored twice (decision 21). An expired or unknown snapshot is a 404.
  */
 export async function restoreSnapshot(repos: Repos, id: string, now: Date): Promise<TrainingDataCounts> {
   await lockForAssignedImport(repos);
   const snapshot = await repos.dataSnapshot.get(id, now);
   if (!snapshot) throw new NotFoundException('This backup has expired or was deleted, so it can’t be restored.');
   const data = snapshot.data;
+  await skipStoredSets(repos, data);
   const programs = programsIn(data);
   for (const program of programs) {
     if (program === NON_CYCLE_PROGRAM) {
@@ -176,6 +306,7 @@ export async function restoreSnapshot(repos: Repos, id: string, now: Date): Prom
     }
   }
   const restored = await repos.trainingData.insertMissing(data);
+  await startNonCycleAtEarliestSet(repos, data);
   await repos.dataSnapshot.delete(id);
   for (const program of programs) {
     if (program !== NON_CYCLE_PROGRAM) await renumberProgram(repos, program);

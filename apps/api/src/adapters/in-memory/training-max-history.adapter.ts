@@ -20,13 +20,19 @@ export class InMemoryTrainingMaxHistoryRepository implements ITrainingMaxHistory
 
   restoreTraining(rows: readonly TrainingRow[]): number {
     const held = new Set(this.trainingRows().map((r) => r.id));
-    let added = 0;
+    const added = new Map<string, TrainingMaxHistoryEntry[]>();
     for (const { program, ...entry } of rows) {
       if (held.has(entry.id)) continue;
-      this.entriesByProgram.set(program, [...(this.entriesByProgram.get(program) ?? []), entry as unknown as TrainingMaxHistoryEntry]);
-      added++;
+      const list = added.get(program) ?? [];
+      list.push(entry as unknown as TrainingMaxHistoryEntry);
+      added.set(program, list);
     }
-    return added;
+    let count = 0;
+    for (const [program, entries] of added) {
+      this.entriesByProgram.set(program, [...(this.entriesByProgram.get(program) ?? []), ...entries]);
+      count += entries.length;
+    }
+    return count;
   }
 
   async getHistory(program: string, filters?: TrainingMaxHistoryFilters): Promise<TrainingMaxHistoryEntry[]> {

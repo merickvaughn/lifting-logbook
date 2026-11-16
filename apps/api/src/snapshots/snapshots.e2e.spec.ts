@@ -6,7 +6,7 @@ import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { LIFT_RECORD_EXPORT_HEADERS, LiftRecord, parseCsvText } from '@lifting-logbook/core';
+import { LIFT_RECORD_EXPORT_HEADERS, LiftRecord, liftRecordNaturalKey, parseCsvText } from '@lifting-logbook/core';
 import type {
   ClearTrainingDataResponse,
   DataSnapshotSummary,
@@ -23,6 +23,7 @@ import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
 import { TRAINING_TABLES, TrainingData } from '../ports/ITrainingDataRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { DomainConflictFilter } from '../programs/conflict.filter';
+import { LEGACY_ROW_KEY, NON_CYCLE_ROW_KEY } from '../programs/macrocycle-history.util';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
 import { NON_CYCLE_MACROCYCLE_NUM } from '../programs/non-cycle.util';
 import { injectPage } from '../testing/macrocycle-id';
@@ -277,6 +278,16 @@ describe('Clear data and snapshots (#1309, e2e, in-memory adapters)', () => {
       { program: NON_CYCLE_PROGRAM, macrocycleNum: NON_CYCLE_MACROCYCLE_NUM, startDate: day('2025-03-01'), status: 'unknown', origin: 'non-cycle' },
     ]);
     await bundle.liftRecord.appendLiftRecords(NON_CYCLE_PROGRAM, [nonCycle(1, '2025-03-01'), nonCycle(2, '2025-03-08')]);
+    // Any program's batch can hold a non-cycle set's key (#1184).
+    const key = (workoutNum: number) => `${NON_CYCLE_ROW_KEY}${liftRecordNaturalKey(nonCycle(workoutNum, '2025-03-08'))}`;
+    await bundle.importBatch.save({
+      id: 'batch-non-cycle',
+      userId: u.user,
+      program: PROGRAM,
+      destination: 'lift-records',
+      preImage: { [key(2)]: { kind: 'created', wrote: { weight: 200, reps: 5, notes: '' } } },
+      createdAt: day('2025-03-09'),
+    });
     const snapshot = await u.clear();
     await bundle.macrocycle.ensure([
       { program: NON_CYCLE_PROGRAM, macrocycleNum: NON_CYCLE_MACROCYCLE_NUM, startDate: day('2026-01-02'), status: 'unknown', origin: 'non-cycle' },
@@ -291,7 +302,46 @@ describe('Clear data and snapshots (#1309, e2e, in-memory adapters)', () => {
       [2, day('2025-03-01')],
       [3, day('2025-03-08')],
     ]);
-    expect((await bundle.macrocycle.listAll()).filter((m) => m.program === NON_CYCLE_PROGRAM)).toHaveLength(1);
+    // The batch's key moves with its set, so undoing it still finds the set.
+    expect(Object.keys((await bundle.trainingData.read()).importBatches[0]?.['preImage'] ?? {})).toEqual([key(3)]);
+    // One non-cycle macrocycle, starting at its earliest set again.
+    const nonCycleRows = (await bundle.macrocycle.listAll()).filter((m) => m.program === NON_CYCLE_PROGRAM);
+    expect(nonCycleRows.map((m) => m.startDate)).toEqual([day('2025-03-01')]);
+  });
+
+  it('leaves out sets stored again since the clear, with a macrocycle and batch left with none (decision 21)', async () => {
+    const u = as();
+    await u.seedImported(1, '2025-01-06', '2025-02-17');
+    await u.initialize('2025-06-02', 300);
+    await u.log(2, '2025-06-02', 1);
+    await u.log(2, '2025-06-09', 4);
+    const bundle = await u.repos();
+    await bundle.importBatch.save({
+      id: 'batch-1',
+      userId: u.user,
+      program: PROGRAM,
+      destination: 'lift-records',
+      preImage: {
+        [liftRecordNaturalKey(u.set(1, '2025-01-06'))]: { kind: 'created', wrote: { weight: 999 } },
+        [`${LEGACY_ROW_KEY}1`]: { kind: 'created', wrote: { macrocycleNum: 1 } },
+      },
+      createdAt: day('2025-02-18'),
+    });
+    const snapshot = await u.clear();
+    // The clear's download imported again, in part: macrocycle 1's set and one of macrocycle 2's.
+    await u.seedImported(1, '2025-01-06', '2025-06-30');
+    await bundle.liftRecord.appendLiftRecords(PROGRAM, [u.set(1, '2025-06-02', { weight: 225 })]);
+
+    expect((await u.restore(snapshot.id)).statusCode).toBe(200);
+
+    // The snapshot's imported macrocycle had only the set stored again, so it isn't restored.
+    expect((await u.list()).map((m) => [m.macrocycleNum, m.startDate, m.origin, m.current])).toEqual([
+      [1, '2025-01-06', 'imported', false],
+      [2, '2025-06-02', 'live', true],
+    ]);
+    expect((await bundle.liftRecord.getLiftRecords(PROGRAM, 1)).map((r) => r.date)).toEqual([day('2025-01-06'), day('2025-06-02')]);
+    expect((await bundle.liftRecord.getLiftRecords(PROGRAM, 2)).map((r) => r.date)).toEqual([day('2025-06-09')]);
+    expect((await bundle.trainingData.read()).importBatches).toEqual([]);
   });
 
   it('refuses a clear whose confirmed counts no longer match, and changes nothing', async () => {
