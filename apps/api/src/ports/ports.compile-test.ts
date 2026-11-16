@@ -342,7 +342,8 @@ const _repositoryBundle: RepositoryBundle = {
   trainingData: {
     read: () => Promise.reject(new Error('not implemented')),
     counts: () => Promise.reject(new Error('not implemented')),
-    clear: (): Promise<void> => Promise.resolve(),
+    lockRows: () => Promise.reject(new Error('not implemented')),
+    clear: () => Promise.reject(new Error('not implemented')),
     insertMissing: () => Promise.reject(new Error('not implemented')),
   },
   dataSnapshot: {
