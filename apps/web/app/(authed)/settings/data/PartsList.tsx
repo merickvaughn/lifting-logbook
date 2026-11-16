@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { liftRecordExportFileName } from '@lifting-logbook/core';
 import type { LiftRecordExportPartsResponse } from '@lifting-logbook/types';
 import { localToday } from '@/lib/calendarDay';
 import { logClientError } from '@/lib/log-client-error';
+import BusyButton from './BusyButton';
 import { failureMessage, saveFile } from './saveFile';
 
 /**
@@ -33,15 +34,22 @@ export default function PartsList({
     setShown(listing);
     setError(null);
   }
+  const latest = useRef(listing);
+  useEffect(() => {
+    latest.current = listing;
+  }, [listing]);
   const { parts } = listing;
 
   async function handleDownload(part: number) {
+    const started = listing;
     setError(null);
     setDownloading(part);
     try {
       saveFile(await download(part), fileNamePrefix + liftRecordExportFileName(localToday(), part, parts.length));
     } catch (err) {
       logClientError(op, err, { ...context, part: String(part) });
+      // Listed again while this downloaded: the error is about the old listing.
+      if (latest.current !== started) return;
       setError(
         failureMessage(
           err,
@@ -70,13 +78,13 @@ export default function PartsList({
       <ol>
         {parts.map((p) => (
           <li key={p.part}>
-            <button type="button" onClick={() => handleDownload(p.part)} disabled={downloading !== null}>
+            <BusyButton onClick={() => handleDownload(p.part)} busy={downloading !== null}>
               {downloading === p.part
                 ? 'Downloading…'
                 : parts.length > 1
                   ? `Download part ${p.part} of ${parts.length}`
                   : 'Download sets'}
-            </button>{' '}
+            </BusyButton>{' '}
             {p.from} to {p.to}, {p.rows.toLocaleString()} {p.rows === 1 ? 'set' : 'sets'}
           </li>
         ))}

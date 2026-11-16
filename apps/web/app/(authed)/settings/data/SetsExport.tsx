@@ -6,6 +6,7 @@ import type { LiftRecordExportPartsResponse, LiftRecordExportQuery, MacrocycleSu
 import { downloadLiftRecordExport, fetchLiftRecordExportParts, fetchMacrocycles } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import type { UserProgram } from '@/lib/user-programs';
+import BusyButton from './BusyButton';
 import PartsList from './PartsList';
 import { failureMessage } from './saveFile';
 
@@ -133,9 +134,9 @@ export default function SetsExport({ programs }: { programs: UserProgram[] }) {
           To <input type="date" value={to} min={from || undefined} onChange={(e) => change(setTo)(e.target.value)} />
         </label>
       </div>
-      <button type="button" onClick={handleFind} disabled={finding}>
+      <BusyButton onClick={handleFind} busy={finding}>
         {finding ? 'Finding sets…' : 'Find sets'}
-      </button>
+      </BusyButton>
       {error && <p role="alert">{error}</p>}
       {listing && (
         <PartsList

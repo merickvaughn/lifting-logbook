@@ -220,6 +220,8 @@ function createInitialState() {
     // What Clear data would remove, and the backups it leaves (#1310).
     trainingDataCounts: { ...NO_TRAINING_DATA, liftRecords: 42, macrocycles: 2, trainingMaxes: 4 },
     snapshots: [],
+    // /__reset?withClearError=true makes the clear fail with a 500.
+    clearError: false,
     trainingMaxes: structuredClone(INITIAL_TRAINING_MAXES),
     // Lifts with logged sets and no training max (#1246); /__reset?withMissingMax=true seeds one.
     missingMaxes: [],
@@ -777,6 +779,9 @@ const server = createServer(async (req, res) => {
     if (url.searchParams.get('withFocusError') === 'true') {
       state.focusError = true;
     }
+    if (url.searchParams.get('withClearError') === 'true') {
+      state.clearError = true;
+    }
     if (url.searchParams.get('withMissingMax') === 'true') {
       state.missingMaxes = [
         {
@@ -1106,6 +1111,10 @@ const server = createServer(async (req, res) => {
   if (method === 'POST' && url.pathname === '/users/me/training-data/clear') {
     const body = await readBody(req);
     if (rejectIfInvalidBody(res, body)) return;
+    if (state.clearError) {
+      json(res, { statusCode: 500, message: 'Couldn’t clear your training data.' }, 500);
+      return;
+    }
     if (JSON.stringify(body.counts) !== JSON.stringify(state.trainingDataCounts)) {
       json(res, { statusCode: 409, code: 'counts-changed', message: 'Your data has changed.', counts: state.trainingDataCounts }, 409);
       return;

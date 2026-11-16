@@ -362,8 +362,6 @@ export function createApiClient(config: ApiClientConfig) {
     return { ok: true, data: (await res.json()) as T };
   }
 
-  // Void request that treats 404 as success — for idempotent deletes, where an
-  // already-absent resource is the desired end state.
   // A file the browser saves: throws the API's error on !ok, otherwise returns the body.
   async function requestBlob(path: string, timeoutMs: number): Promise<Blob> {
     const res = await rawFetch(path, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
@@ -371,6 +369,8 @@ export function createApiClient(config: ApiClientConfig) {
     return res.blob();
   }
 
+  // Void request that treats 404 as success — for idempotent deletes, where an
+  // already-absent resource is the desired end state.
   async function requestVoidIdempotent(path: string, init?: FetchInit): Promise<void> {
     const res = await rawFetch(path, init);
     if (!res.ok && res.status !== 404) {

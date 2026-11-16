@@ -121,6 +121,72 @@ describe('Settings → Data → Clear data and backups', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Clear training data…' })).toHaveFocus());
   });
 
+  // jsdom keeps focus on a disabled button, so these assert the button is never disabled: a
+  // browser would move focus to the page's body. e2e/settings.spec.ts checks focus in Chromium.
+  it('keeps the confirm button focusable while a clear runs, and focused after it fails', async () => {
+    const user = userEvent.setup();
+    let fail: (err: Error) => void = () => {};
+    (clearTrainingData as jest.Mock).mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    render(<TrainingData />);
+
+    await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+    await user.click(await screen.findByRole('button', { name: 'Clear 1,204 rows' }));
+    const clearing = screen.getByRole('button', { name: 'Clearing…' });
+    expect(clearing).toHaveAttribute('aria-disabled', 'true');
+    expect(clearing).not.toBeDisabled();
+    await user.click(clearing);
+    expect(clearTrainingData).toHaveBeenCalledTimes(1);
+
+    fail(new Error('Couldn’t clear your training data.'));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear 1,204 rows' })).toHaveFocus();
+  });
+
+  it('keeps the Clear button focusable while counting, and says a slow count cleared nothing', async () => {
+    const user = userEvent.setup();
+    let fail: (err: Error) => void = () => {};
+    (fetchTrainingDataCounts as jest.Mock).mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    render(<TrainingData />);
+
+    await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+    expect(screen.getByRole('button', { name: 'Counting…' })).not.toBeDisabled();
+
+    fail(new DOMException('The operation timed out.', 'TimeoutError'));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('nothing was cleared');
+    expect(alert).not.toHaveTextContent('may or may not');
+    expect(screen.getByRole('button', { name: 'Clear training data…' })).toHaveFocus();
+  });
+
+  it('ignores the other backup buttons while one is running', async () => {
+    const user = userEvent.setup();
+    (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
+    (restoreSnapshot as jest.Mock).mockReturnValue(new Promise(() => {}));
+    render(<TrainingData />);
+
+    await user.click(await screen.findByRole('button', { name: 'Restore' }));
+    expect(screen.getByRole('button', { name: 'Restoring…' })).not.toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await user.click(screen.getByRole('button', { name: 'Download sets' }));
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(deleteSnapshot).not.toHaveBeenCalled();
+    expect(fetchSnapshotLiftRecordParts).not.toHaveBeenCalled();
+  });
+
+  it('says a backup’s sets that took too long to read changed nothing', async () => {
+    const user = userEvent.setup();
+    (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
+    (fetchSnapshotLiftRecordParts as jest.Mock).mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError'));
+    render(<TrainingData />);
+
+    await user.click(await screen.findByRole('button', { name: 'Download sets' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Reading this backup’s sets took too long');
+    expect(alert).not.toHaveTextContent('may or may not');
+  });
+
   it('says a clear the browser stopped waiting for may have finished, and re-reads the backups', async () => {
     const user = userEvent.setup();
     (clearTrainingData as jest.Mock).mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError'));

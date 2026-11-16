@@ -13,6 +13,7 @@ import {
   restoreSnapshot,
 } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
+import BusyButton from './BusyButton';
 import PartsList from './PartsList';
 import { failureMessage } from './saveFile';
 
@@ -98,8 +99,8 @@ export default function TrainingData() {
   }, [loadSnapshots]);
 
   // Focus follows the confirmation: onto its heading when it opens or its counts change, and back
-  // to the button that opened it once it has closed and the clear has finished (a disabled button
-  // can't take focus), so focus isn't left on the page's body.
+  // to the button that opened it once it has closed and the clear has finished, so focus isn't
+  // left on the page's body.
   useEffect(() => {
     if (!confirming) return;
     confirmOpen.current = true;
@@ -128,7 +129,13 @@ export default function TrainingData() {
         setConfirming(await fetchTrainingDataCounts());
       } catch (err) {
         logClientError('fetchTrainingDataCounts', err);
-        setError(writeFailure(err, 'Couldn’t count your training data. Please try again.'));
+        setError(
+          failureMessage(
+            err,
+            'Counting your training data took too long, so nothing was cleared. Please try again in a moment.',
+            'Couldn’t count your training data. Please try again.',
+          ),
+        );
       }
     });
 
@@ -183,7 +190,13 @@ export default function TrainingData() {
         setDownloads((d) => ({ ...d, [snapshot.id]: listing }));
       } catch (err) {
         logClientError('fetchSnapshotLiftRecordParts', err, { snapshot: snapshot.id });
-        setError(writeFailure(err, 'Couldn’t read this backup’s sets. Please try again.'));
+        setError(
+          failureMessage(
+            err,
+            'Reading this backup’s sets took too long. Please try again in a moment.',
+            'Couldn’t read this backup’s sets. Please try again.',
+          ),
+        );
       }
     });
 
@@ -197,9 +210,9 @@ export default function TrainingData() {
           settings and modifications, body weight, strength goals, focus blocks and settings.
         </p>
         {!confirming && (
-          <button type="button" ref={clearButton} onClick={openClear} disabled={busy !== null}>
+          <BusyButton ref={clearButton} onClick={openClear} busy={busy !== null}>
             {busy === 'counts' ? 'Counting…' : 'Clear training data…'}
-          </button>
+          </BusyButton>
         )}
         {confirming && (
           <div role="group" aria-labelledby="clear-confirm-heading">
@@ -214,9 +227,9 @@ export default function TrainingData() {
                   A backup is saved first and kept for 30 days. Until then you can restore it or
                   download its sets under Backups below. After 30 days it&apos;s deleted for good.
                 </p>
-                <button type="button" onClick={() => confirmClear(confirming)} disabled={busy !== null}>
+                <BusyButton onClick={() => confirmClear(confirming)} busy={busy !== null}>
                   {busy === 'clear' ? 'Clearing…' : `Clear ${rows(total(confirming))}`}
-                </button>{' '}
+                </BusyButton>{' '}
               </>
             )}
             <button type="button" onClick={() => setConfirming(null)} disabled={busy === 'clear'}>
@@ -242,15 +255,15 @@ export default function TrainingData() {
                   From clearing your data on {day(s.createdAt)}: {rows(total(s.counts))}. Kept until{' '}
                   {day(s.expiresAt)}.
                 </p>
-                <button type="button" onClick={() => restore(s)} disabled={busy !== null}>
+                <BusyButton onClick={() => restore(s)} busy={busy !== null}>
                   {busy === `restore:${s.id}` ? 'Restoring…' : 'Restore'}
-                </button>{' '}
-                <button type="button" onClick={() => listParts(s)} disabled={busy !== null}>
+                </BusyButton>{' '}
+                <BusyButton onClick={() => listParts(s)} busy={busy !== null}>
                   {busy === `parts:${s.id}` ? 'Reading sets…' : 'Download sets'}
-                </button>{' '}
-                <button type="button" onClick={() => remove(s)} disabled={busy !== null}>
+                </BusyButton>{' '}
+                <BusyButton onClick={() => remove(s)} busy={busy !== null}>
                   {busy === `delete:${s.id}` ? 'Deleting…' : 'Delete'}
-                </button>
+                </BusyButton>
                 {listing && (
                   <PartsList
                     listing={listing}

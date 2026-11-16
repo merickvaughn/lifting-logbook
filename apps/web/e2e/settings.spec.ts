@@ -174,6 +174,21 @@ test('clear data asks first, and its confirm button works from the keyboard', as
   await expect(page.getByRole('button', { name: 'Restore' })).toBeVisible();
 });
 
+test('a clear that fails leaves focus on its confirm button', async ({ page, request }) => {
+  await request.get(`${MOCK_API}/__reset?withClearError=true`);
+  await page.goto('/settings/data');
+  await expect(page.getByText('No backups.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Clear training data…' }).click();
+  await expect(page.getByRole('heading', { name: 'Clear 48 rows?' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter');
+
+  await expect(page.getByRole('alert')).toContainText('Couldn’t clear your training data.');
+  // A disabled button would have lost focus to the page's body while the clear ran.
+  await expect(page.getByRole('button', { name: 'Clear 48 rows' })).toBeFocused();
+});
+
 // ---------------------------------------------------------------------------
 // Settings hub: the previously-orphaned /import wizard is reachable by link.
 // ---------------------------------------------------------------------------

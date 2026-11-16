@@ -1,0 +1,5 @@
+/* aria-disabled rather than disabled, so the button that started the work keeps focus. */
+.button[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
