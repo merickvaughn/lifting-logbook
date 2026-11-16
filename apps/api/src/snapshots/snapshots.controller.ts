@@ -35,14 +35,17 @@ import { StoredSnapshotSummary } from '../ports/IDataSnapshotRepository';
 import { TRAINING_TABLES, liftRecordRows, macrocycleRows } from '../ports/ITrainingDataRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { ClearTrainingDataDto, SnapshotLiftRecordsQueryDto } from './training-data.dto';
-import { clearTrainingData, dataChanged, restoreSnapshot } from './training-data.service';
+import { DATA_CHANGED, clearTrainingData, dataChanged, restoreSnapshot } from './training-data.service';
+
+/** Every failed clear, restore or download logs this, a collision with `reason: 'data-changed'`. */
+const FAILURE_LOG = 'Training data action failed (#1309)';
 
 /**
  * How long clear, restore and a snapshot download may take. Measured on 2026-11-15 against a local
  * Postgres 16 with 78,000 sets, a heavy lifter's ten years: clear took 2.4 s, its row locks
  * included, and restore 15.7 s, about 10 s of it inserting and 4 s renumbering. 60 s leaves about
- * four times that for a slower
- * database; past it the transaction rolls back and the request is a 503.
+ * four times that for a slower database; past it the transaction rolls back and the request is a
+ * 503.
  */
 export const TRAINING_DATA_TX_TIMEOUT_MS = 60_000;
 
@@ -182,13 +185,19 @@ export class SnapshotsController {
       return await this.rlsContext.withUserContext(fn, TRAINING_DATA_TX_TIMEOUT_MS);
     } catch (err) {
       if (err instanceof HttpException && err.getStatus() < 500) {
-        // A collision the service found itself, logged like the ones Postgres reports below.
-        if (isDataChanged(err)) this.logger.warn({ action, durationMs: Date.now() - started }, 'Training data changed while it ran (#1309)');
+        // A collision the service found itself, logged as the ones Postgres reports below are.
+        if (isDataChanged(err)) {
+          this.logger.error({ action, reason: DATA_CHANGED, durationMs: Date.now() - started }, FAILURE_LOG);
+        }
         throw err;
       }
       const failure = describeFailure(err instanceof HttpException && err.cause !== undefined ? err.cause : err);
-      this.logger.error({ action, ...failure, durationMs: Date.now() - started }, 'Training data action failed (#1309)');
-      if (isConcurrentWrite(failure)) throw dataChanged();
+      const collided = isConcurrentWrite(failure);
+      this.logger.error(
+        { action, ...failure, ...(collided ? { reason: DATA_CHANGED } : {}), durationMs: Date.now() - started },
+        FAILURE_LOG,
+      );
+      if (collided) throw dataChanged();
       if (failure.code === 'P2028') {
         throw new ServiceUnavailableException('This took too long, so nothing changed. Please try again in a moment.');
       }
@@ -219,7 +228,7 @@ function isConcurrentWrite(failure: Failure): boolean {
 
 function isDataChanged(err: HttpException): boolean {
   const response = err.getResponse();
-  return typeof response === 'object' && 'code' in response && response.code === 'data-changed';
+  return typeof response === 'object' && 'code' in response && response.code === DATA_CHANGED;
 }
 
 /**

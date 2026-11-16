@@ -4,8 +4,10 @@ import { RlsContextService } from '../adapters/prisma/rls-context.service';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { SnapshotsController, TRAINING_DATA_TX_TIMEOUT_MS } from './snapshots.controller';
+import { DATA_CHANGED, dataChanged } from './training-data.service';
 
-const USER: AuthUser = { id: 'snapshots-controller-spec', email: 'spec@example.com', provider: 'dev' };
+const FAILURE_LOG = 'Training data action failed (#1309)';
+const USER: AuthUser ={ id: 'snapshots-controller-spec', email: 'spec@example.com', provider: 'dev' };
 const prismaError = (code: string, dbCode?: string) =>
   new PrismaClientKnownRequestError('Unique constraint failed on notes "row contents"', {
     code,
@@ -51,8 +53,11 @@ describe('SnapshotsController failures (#1309)', () => {
     const err = await controller.restore(USER, 'id').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ConflictException);
-    expect((err as ConflictException).getResponse()).toMatchObject({ statusCode: 409, code: 'data-changed' });
-    expect(logged).toHaveBeenCalledWith(expect.objectContaining({ code, ...(dbCode ? { dbCode } : {}) }), expect.any(String));
+    expect((err as ConflictException).getResponse()).toMatchObject({ statusCode: 409, code: DATA_CHANGED });
+    expect(logged).toHaveBeenCalledWith(
+      expect.objectContaining({ code, reason: DATA_CHANGED, ...(dbCode ? { dbCode } : {}) }),
+      FAILURE_LOG,
+    );
   });
 
   it('leaves another raw-query failure a 500, and logs its code but not its message', async () => {
@@ -64,18 +69,17 @@ describe('SnapshotsController failures (#1309)', () => {
     expect(JSON.stringify(logged.mock.calls)).not.toContain('row contents');
   });
 
-  it('logs a 409 the service raised because data changed, and not one for confirmed counts that changed', async () => {
-    const warned = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const changed = new ConflictException({ statusCode: 409, code: 'data-changed' });
-    const { controller } = failingWith(changed);
+  it('logs a data-changed 409 the service raised as it logs the ones Postgres reports, and not a counts-changed one', async () => {
+    const changed = dataChanged();
+    const { controller, logged } = failingWith(changed);
 
     await expect(controller.clear(USER, { counts: {} as never })).rejects.toBe(changed);
-    expect(warned).toHaveBeenCalledWith(expect.objectContaining({ action: 'clear' }), expect.any(String));
+    expect(logged).toHaveBeenCalledWith(expect.objectContaining({ action: 'clear', reason: DATA_CHANGED }), FAILURE_LOG);
 
-    warned.mockClear();
+    logged.mockClear();
     const countsChanged = new ConflictException({ statusCode: 409, code: 'counts-changed' });
     await expect(failingWith(countsChanged).controller.clear(USER, { counts: {} as never })).rejects.toBe(countsChanged);
-    expect(warned).not.toHaveBeenCalled();
+    expect(logged).not.toHaveBeenCalled();
   });
 
   it('turns a timeout into a 503', async () => {

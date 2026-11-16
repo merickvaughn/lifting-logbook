@@ -100,11 +100,14 @@ function countRows(data: TrainingData): TrainingDataCounts {
   return counts as TrainingDataCounts;
 }
 
+/** The 409's code, and the failure log's `reason`, for a write committed alongside (#1309). */
+export const DATA_CHANGED = 'data-changed';
+
 /** A write committed while clear or restore ran, which rolls it back (#1309). */
 export function dataChanged(): ConflictException {
   return new ConflictException({
     statusCode: 409,
-    code: 'data-changed',
+    code: DATA_CHANGED,
     message: 'Your data changed while this ran, so nothing changed. Please try again.',
     error: 'Conflict',
   });

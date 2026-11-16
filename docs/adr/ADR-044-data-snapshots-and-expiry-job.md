@@ -64,8 +64,10 @@ success.
      macrocycle locks, so it sees every set a page write holding the lock committed while it
      waited. It then locks each cleared table's rows with `SELECT ... FOR UPDATE`, so a write that
      takes neither lock, such as a training-max edit, can't change one between the snapshot and
-     the delete. When the delete removes more rows than the snapshot holds, a row was added in
-     between, and the transaction rolls back with a 409. A write that still collides with clear or
+     the delete. A row added between the lock and the read would be saved unlocked, so when the
+     rows read differ from the rows locked, it rolls back with a 409 before saving. When the
+     delete removes more rows than the snapshot holds, a row was added after the read, and the
+     transaction rolls back with a 409 too. A write that still collides with clear or
      restore (a modification deleted under restore, a deadlock) also rolls it back with a 409
      rather than being deleted unsaved or breaking a foreign key. Their transaction may take 60
      seconds: on 2026-11-15 a local Postgres 16 cleared
