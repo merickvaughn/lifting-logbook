@@ -286,6 +286,65 @@ describe('Settings → Data → Clear data and backups', () => {
     expect(screen.getByRole('heading', { name: 'Backups' })).toHaveFocus();
   });
 
+  it('leaves focus where the lifter moved it while a restore ran', async () => {
+    const user = userEvent.setup();
+    let finish: (value: { restored: TrainingDataCounts }) => void = () => {};
+    (fetchSnapshots as jest.Mock).mockResolvedValueOnce([snapshot]).mockResolvedValueOnce([]);
+    (restoreSnapshot as jest.Mock).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    render(<TrainingData />);
+
+    await user.click(await screen.findByRole('button', { name: 'Restore' }));
+    const clear = screen.getByRole('button', { name: 'Clear training data…' });
+    clear.focus();
+    finish({ restored: counts });
+
+    expect(await screen.findByText(/No backups/)).toBeInTheDocument();
+    expect(clear).toHaveFocus();
+  });
+
+  it('leaves focus where the lifter moved it while a clear ran', async () => {
+    const user = userEvent.setup();
+    let finish: (value: { snapshot: DataSnapshotSummary }) => void = () => {};
+    (clearTrainingData as jest.Mock).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
+    render(<TrainingData />);
+
+    await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+    await user.click(await screen.findByRole('button', { name: 'Clear 1,204 rows' }));
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    // A control outside the confirmation, which a lifter could tab to while the clear runs.
+    const restore = screen.getByRole('button', { name: 'Restore' });
+    restore.focus();
+    finish({ snapshot });
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Cleared');
+    expect(cancel).not.toBeInTheDocument();
+    expect(restore).toHaveFocus();
+  });
+
+  it('starts a backup’s new listing without the old listing’s part error', async () => {
+    const user = userEvent.setup();
+    (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
+    (fetchSnapshotLiftRecordParts as jest.Mock).mockResolvedValue({
+      rows: 1_200,
+      split: 'fedcba9876543210',
+      parts: [{ part: 1, rows: 1_200, from: '2024-01-01', to: '2026-10-30' }],
+    });
+    (downloadSnapshotLiftRecords as jest.Mock).mockRejectedValue(new Error('List the parts again and download each one.'));
+    render(<TrainingData />);
+
+    await user.click(await screen.findByRole('button', { name: 'Download sets' }));
+    const buttons = await screen.findAllByRole('button', { name: 'Download sets' });
+    await user.click(buttons[buttons.length - 1] as HTMLElement);
+    expect(await screen.findByRole('alert')).toHaveTextContent('List the parts again');
+
+    // The backup's own button lists the parts again.
+    await user.click(screen.getAllByRole('button', { name: 'Download sets' })[0] as HTMLElement);
+
+    await waitFor(() => expect(fetchSnapshotLiftRecordParts).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  });
+
   it('keeps focus on a backup’s button when a failed restore leaves it in the list', async () => {
     const user = userEvent.setup();
     (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);

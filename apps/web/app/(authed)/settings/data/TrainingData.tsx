@@ -102,10 +102,13 @@ export default function TrainingData() {
   }, []);
 
   // A restored, deleted or expired backup leaves the list, taking its focused button with it, so
-  // focus moves to the Backups heading rather than the page's body.
+  // focus moves to the Backups heading rather than the page's body. Focus the lifter has moved
+  // elsewhere while it ran stays where it is.
   async function reloadAfter(snapshot: DataSnapshotSummary) {
+    const focusInRow =
+      document.activeElement?.closest('[data-snapshot]')?.getAttribute('data-snapshot') === snapshot.id;
     const list = await loadSnapshots();
-    if (list && !list.some((s) => s.id === snapshot.id)) backupsHeading.current?.focus();
+    if (focusInRow && list && !list.some((s) => s.id === snapshot.id)) backupsHeading.current?.focus();
   }
 
   useEffect(() => {
@@ -113,15 +116,17 @@ export default function TrainingData() {
   }, [loadSnapshots]);
 
   // Focus follows the confirmation: onto its heading when it opens or its counts change, and back
-  // to the button that opened it as soon as it closes (a busy button can still take focus), so
-  // focus isn't left on the page's body.
+  // to the button that opened it as soon as it closes (a busy button can still take focus), if
+  // closing it left focus on the page's body rather than somewhere the lifter moved it.
   useEffect(() => {
     if (confirming) {
       confirmOpen.current = true;
       confirmHeading.current?.focus();
     } else if (confirmOpen.current) {
       confirmOpen.current = false;
-      clearButton.current?.focus();
+      if (document.activeElement === null || document.activeElement === document.body) {
+        clearButton.current?.focus();
+      }
     }
   }, [confirming]);
 
@@ -266,7 +271,7 @@ export default function TrainingData() {
             {snapshots.map((s) => {
               const download = downloads[s.id];
               return (
-              <li key={s.id}>
+              <li key={s.id} data-snapshot={s.id}>
                 <p>
                   From clearing your data on {day(s.createdAt)}: {rows(total(s.counts))}. Kept until{' '}
                   {day(s.expiresAt)}.
