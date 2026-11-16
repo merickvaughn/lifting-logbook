@@ -3,12 +3,41 @@ import {
   IWorkoutLiftOverrideRepository,
   sameKindActions,
 } from '../../ports/IWorkoutLiftOverrideRepository';
+import { TrainingRow } from '../../ports/ITrainingDataRepository';
 import { NumberedStore, dropFromMap, nulKey, numbersInMap, rekeyMap } from './renumber';
+import { TrainingStore, numberOf } from './training-data.adapter';
 
 export class InMemoryWorkoutLiftOverrideRepository
-  implements IWorkoutLiftOverrideRepository, NumberedStore
+  implements IWorkoutLiftOverrideRepository, NumberedStore, TrainingStore
 {
   private readonly store = new Map<string, LiftOverride[]>();
+
+  readonly trainingTable = 'workoutLiftOverrides';
+
+  trainingRows(): TrainingRow[] {
+    return [...this.store].flatMap(([key, overrides]) => {
+      const [program = '', macrocycleNum, workoutNum] = key.split('\0');
+      return overrides.map((o) => ({ ...o, program, macrocycleNum: Number(macrocycleNum), workoutNum: Number(workoutNum) }));
+    });
+  }
+
+  clearTraining(): void {
+    this.store.clear();
+  }
+
+  restoreTraining(rows: readonly TrainingRow[]): number {
+    let added = 0;
+    for (const row of rows) {
+      const { program, macrocycleNum: _macrocycleNum, workoutNum: _workoutNum, ...rest } = row;
+      const override = rest as unknown as LiftOverride;
+      const key = this.key(program, numberOf(row, 'macrocycleNum'), numberOf(row, 'workoutNum'));
+      const stored = this.store.get(key) ?? [];
+      if (stored.some((o) => o.lift === override.lift && o.action === override.action)) continue;
+      this.store.set(key, [...stored, override]);
+      added++;
+    }
+    return added;
+  }
 
   rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
     return rekeyMap(this.store, program, changes, nulKey.numberOf, nulKey.keyWith);

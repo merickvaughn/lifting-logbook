@@ -2,12 +2,34 @@ import { MacrocycleDashboard } from '@lifting-logbook/core';
 import { IMacrocycleDashboardRepository } from '../../ports/IMacrocycleDashboardRepository';
 import { ProgramNotFoundError } from '../../ports/errors';
 import { SEED_PROGRAM, seedMacrocycleDashboard } from './fixtures';
+import { TrainingRow } from '../../ports/ITrainingDataRepository';
 import { NumberedStore } from './renumber';
+import { TrainingStore } from './training-data.adapter';
 
 export class InMemoryMacrocycleDashboardRepository
-  implements IMacrocycleDashboardRepository, NumberedStore
+  implements IMacrocycleDashboardRepository, NumberedStore, TrainingStore
 {
   private dashboards: Map<string, MacrocycleDashboard>;
+
+  readonly trainingTable = 'macrocycleDashboards';
+
+  trainingRows(): TrainingRow[] {
+    return [...this.dashboards.values()].map((d) => ({ ...d }));
+  }
+
+  clearTraining(): void {
+    this.dashboards.clear();
+  }
+
+  restoreTraining(rows: readonly TrainingRow[]): number {
+    let added = 0;
+    for (const row of rows) {
+      if (this.dashboards.has(row.program)) continue;
+      this.dashboards.set(row.program, row as unknown as MacrocycleDashboard);
+      added++;
+    }
+    return added;
+  }
 
   rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
     const dashboard = this.dashboards.get(program);

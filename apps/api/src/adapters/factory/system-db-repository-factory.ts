@@ -44,6 +44,10 @@ import { InMemoryWorkoutSkipOverrideRepository } from '../in-memory/workout-skip
 import { PrismaUserDataExportRepository } from '../prisma/user-data-export.repository';
 import { InMemoryUserDataExportRepository } from '../in-memory/user-data-export.adapter';
 import { numberedStoresIn } from '../in-memory/renumber';
+import { InMemoryDataSnapshotRepository } from '../in-memory/data-snapshot.adapter';
+import { InMemoryTrainingDataRepository, trainingStoresIn } from '../in-memory/training-data.adapter';
+import { PrismaDataSnapshotRepository } from '../prisma/data-snapshot.repository';
+import { PrismaTrainingDataRepository } from '../prisma/training-data.repository';
 import { PrismaUserSettingsRepository } from '../prisma/user-settings.repository';
 
 interface UserDataSourceRow {
@@ -114,6 +118,8 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
         strengthGoal: new PrismaStrengthGoalRepository(prisma, userId),
         trainingMax: new PrismaTrainingMaxRepository(prisma, userId),
         trainingMaxHistory: new PrismaTrainingMaxHistoryRepository(prisma, userId),
+        trainingData: new PrismaTrainingDataRepository(prisma, userId),
+        dataSnapshot: new PrismaDataSnapshotRepository(prisma, userId),
         userDataExport: new PrismaUserDataExportRepository(prisma, userId),
         userSettings: new PrismaUserSettingsRepository(prisma, userId),
         workout: new PrismaWorkoutRepository(prisma, userId),
@@ -133,7 +139,10 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     const trainingMax = new InMemoryTrainingMaxRepository();
     const userSettings = new InMemoryUserSettingsRepository();
     const macrocycle = new InMemoryMacrocycleRepository();
+    const trainingData = new InMemoryTrainingDataRepository();
     const bundle: RepositoryBundle = {
+      dataSnapshot: new InMemoryDataSnapshotRepository(),
+      trainingData,
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift,
       focus: new InMemoryFocusRepository(),
@@ -164,6 +173,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     };
     // Every other store that holds a number, so a renumbering or delete reaches them all (#1199).
     macrocycle.attachNumbered(numberedStoresIn(bundle));
+    trainingData.attach(trainingStoresIn(bundle));
     return bundle;
   }
 

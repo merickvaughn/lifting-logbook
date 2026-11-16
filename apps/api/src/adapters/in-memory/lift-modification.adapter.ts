@@ -7,10 +7,37 @@ import {
   UpdateLiftModificationPatch,
 } from '../../ports/ILiftModificationRepository';
 import { LiftModificationConflictError, LiftModificationNotFoundError } from '../../ports/errors';
+import { TrainingRow } from '../../ports/ITrainingDataRepository';
+import { TrainingStore } from './training-data.adapter';
 
-export class InMemoryLiftModificationRepository implements ILiftModificationRepository {
+export class InMemoryLiftModificationRepository implements ILiftModificationRepository, TrainingStore {
   private readonly store = new Map<string, LiftModification>();
   private readonly maxesByProgram = new Map<string, Map<string, ModificationMax>>();
+
+  /** Own maxes are training data; the modifications themselves are setup, which Clear data keeps. */
+  readonly trainingTable = 'liftModificationMaxes';
+
+  trainingRows(): TrainingRow[] {
+    return [...this.maxesByProgram].flatMap(([program, maxes]) => [...maxes.values()].map((m) => ({ ...m, program })));
+  }
+
+  clearTraining(): void {
+    this.maxesByProgram.clear();
+  }
+
+  /** Skips an own max whose modification was deleted since, as the foreign key does in Postgres. */
+  restoreTraining(rows: readonly TrainingRow[]): number {
+    let added = 0;
+    for (const { program, ...row } of rows) {
+      const max = row as unknown as ModificationMax;
+      const maxes = this.maxesByProgram.get(program) ?? new Map<string, ModificationMax>();
+      if (!this.store.has(max.modificationId) || maxes.has(max.modificationId)) continue;
+      maxes.set(max.modificationId, max);
+      this.maxesByProgram.set(program, maxes);
+      added++;
+    }
+    return added;
+  }
 
   /** `records` is the store the user's lift record repository writes, for the delete rule. */
   constructor(

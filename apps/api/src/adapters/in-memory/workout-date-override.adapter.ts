@@ -1,10 +1,36 @@
 import { IWorkoutDateOverrideRepository } from '../../ports/IWorkoutDateOverrideRepository';
+import { TrainingRow } from '../../ports/ITrainingDataRepository';
 import { NumberedStore, dropFromMap, nulKey, numbersInMap, rekeyMap } from './renumber';
+import { TrainingStore, numberOf } from './training-data.adapter';
 
 export class InMemoryWorkoutDateOverrideRepository
-  implements IWorkoutDateOverrideRepository, NumberedStore
+  implements IWorkoutDateOverrideRepository, NumberedStore, TrainingStore
 {
   private readonly store = new Map<string, Date>();
+
+  readonly trainingTable = 'workoutDateOverrides';
+
+  trainingRows(): TrainingRow[] {
+    return [...this.store].map(([key, newDate]) => {
+      const [program = '', macrocycleNum, workoutNum] = key.split('\0');
+      return { program, macrocycleNum: Number(macrocycleNum), workoutNum: Number(workoutNum), newDate };
+    });
+  }
+
+  clearTraining(): void {
+    this.store.clear();
+  }
+
+  restoreTraining(rows: readonly TrainingRow[]): number {
+    let added = 0;
+    for (const row of rows) {
+      const key = this.key(row.program, numberOf(row, 'macrocycleNum'), numberOf(row, 'workoutNum'));
+      if (this.store.has(key)) continue;
+      this.store.set(key, row.newDate as Date);
+      added++;
+    }
+    return added;
+  }
 
   rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
     return rekeyMap(this.store, program, changes, nulKey.numberOf, nulKey.keyWith);

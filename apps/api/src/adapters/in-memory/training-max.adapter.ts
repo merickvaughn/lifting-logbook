@@ -1,10 +1,34 @@
 import { TrainingMax, classifyAndCount, latestTrainingMaxFirst, trainingMaxRowKind } from '@lifting-logbook/core';
 import { ImportWriteResult } from '@lifting-logbook/types';
 import { ITrainingMaxRepository } from '../../ports/ITrainingMaxRepository';
+import { TrainingRow } from '../../ports/ITrainingDataRepository';
 import { SEED_PROGRAM, seedTrainingMaxes } from './fixtures';
+import { TrainingStore } from './training-data.adapter';
 
-export class InMemoryTrainingMaxRepository implements ITrainingMaxRepository {
+export class InMemoryTrainingMaxRepository implements ITrainingMaxRepository, TrainingStore {
   private maxesByProgram: Map<string, TrainingMax[]>;
+
+  /** Maxes are training data; missing-max answers are setup, which Clear data keeps. */
+  readonly trainingTable = 'trainingMaxes';
+
+  trainingRows(): TrainingRow[] {
+    return this.allByProgram().map((max) => ({ ...max }));
+  }
+
+  clearTraining(): void {
+    this.maxesByProgram.clear();
+  }
+
+  restoreTraining(rows: readonly TrainingRow[]): number {
+    let added = 0;
+    for (const { program, ...max } of rows) {
+      const stored = this.maxesByProgram.get(program) ?? [];
+      if (stored.some((m) => m.lift === max.lift)) continue;
+      this.maxesByProgram.set(program, [...stored, max as unknown as TrainingMax]);
+      added++;
+    }
+    return added;
+  }
 
   constructor(preSeed = false) {
     this.maxesByProgram = preSeed

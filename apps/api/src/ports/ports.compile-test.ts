@@ -339,6 +339,18 @@ const _repositoryBundle: RepositoryBundle = {
   strengthGoal: _strengthGoalRepo,
   trainingMax: _trainingMaxRepo,
   trainingMaxHistory: _trainingMaxHistoryRepo,
+  trainingData: {
+    read: () => Promise.reject(new Error('not implemented')),
+    counts: () => Promise.reject(new Error('not implemented')),
+    clear: (): Promise<void> => Promise.resolve(),
+    insertMissing: () => Promise.reject(new Error('not implemented')),
+  },
+  dataSnapshot: {
+    create: () => Promise.reject(new Error('not implemented')),
+    list: () => Promise.resolve([]),
+    get: () => Promise.resolve(null),
+    delete: () => Promise.resolve(false),
+  },
   userDataExport: {
     readAll: () => Promise.reject(new Error('not implemented')),
     readLiftRecords: () => Promise.reject(new Error('not implemented')),

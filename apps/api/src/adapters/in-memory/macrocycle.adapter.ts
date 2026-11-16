@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { MacrocycleStatus } from '@lifting-logbook/types';
 import { MacrocycleNumberConflictError } from '../../ports/errors';
 import { IMacrocycleRepository, MacrocycleChanges, MacrocycleRow, NewMacrocycle } from '../../ports/IMacrocycleRepository';
+import { TrainingRow } from '../../ports/ITrainingDataRepository';
 import { NumberedStore } from './renumber';
+import { TrainingStore } from './training-data.adapter';
 
 /**
  * A stored row for tests: a `live`, `in-progress` 5-3-1 macrocycle starting on the first of
@@ -24,7 +26,7 @@ export function macrocycleRowFixture(macrocycleNum: number, overrides: Partial<M
   };
 }
 
-export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
+export class InMemoryMacrocycleRepository implements IMacrocycleRepository, TrainingStore {
   private readonly rows: MacrocycleRow[] = [];
 
   /**
@@ -47,6 +49,26 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository {
   /** Wires in the bundle's other numbered stores; the factories pass `numberedStoresIn(bundle)`. */
   attachNumbered(stores: readonly NumberedStore[]): void {
     this.numbered = stores;
+  }
+
+  readonly trainingTable = 'macrocycles';
+
+  trainingRows(): TrainingRow[] {
+    return this.rows.map((row) => ({ ...row }));
+  }
+
+  clearTraining(): void {
+    this.rows.length = 0;
+  }
+
+  restoreTraining(rows: readonly TrainingRow[]): number {
+    let added = 0;
+    for (const row of rows as unknown as MacrocycleRow[]) {
+      if (this.rows.some((r) => r.id === row.id || (r.program === row.program && r.macrocycleNum === row.macrocycleNum))) continue;
+      this.rows.push({ ...row });
+      added++;
+    }
+    return added;
   }
 
   private numbersHeld(program: string): Set<number> {

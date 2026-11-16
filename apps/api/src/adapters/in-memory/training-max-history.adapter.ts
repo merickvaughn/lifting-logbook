@@ -1,10 +1,33 @@
 import { TrainingMaxHistoryEntry, liftSpellings } from '@lifting-logbook/core';
 import { ITrainingMaxHistoryRepository, TrainingMaxHistoryFilters } from '../../ports/ITrainingMaxHistoryRepository';
 import { HistoryEntryNotFoundError } from '../../ports/errors';
+import { TrainingRow } from '../../ports/ITrainingDataRepository';
+import { TrainingStore } from './training-data.adapter';
 
-export class InMemoryTrainingMaxHistoryRepository implements ITrainingMaxHistoryRepository {
+export class InMemoryTrainingMaxHistoryRepository implements ITrainingMaxHistoryRepository, TrainingStore {
   private entriesByProgram: Map<string, TrainingMaxHistoryEntry[]> = new Map();
   private nextId = 1;
+
+  readonly trainingTable = 'trainingMaxHistory';
+
+  trainingRows(): TrainingRow[] {
+    return [...this.entriesByProgram].flatMap(([program, entries]) => entries.map((e) => ({ ...e, program })));
+  }
+
+  clearTraining(): void {
+    this.entriesByProgram.clear();
+  }
+
+  restoreTraining(rows: readonly TrainingRow[]): number {
+    const held = new Set(this.trainingRows().map((r) => r.id));
+    let added = 0;
+    for (const { program, ...entry } of rows) {
+      if (held.has(entry.id)) continue;
+      this.entriesByProgram.set(program, [...(this.entriesByProgram.get(program) ?? []), entry as unknown as TrainingMaxHistoryEntry]);
+      added++;
+    }
+    return added;
+  }
 
   async getHistory(program: string, filters?: TrainingMaxHistoryFilters): Promise<TrainingMaxHistoryEntry[]> {
     // A modification's own-max entries aren't the lift's history (#1153).

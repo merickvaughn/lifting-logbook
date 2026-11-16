@@ -1136,6 +1136,63 @@ export interface LiftRecordExportPartsResponse {
   split: string;
 }
 
+/**
+ * The rows Clear data removes, per table (#1309, proposal decision 20). Setup stays: custom
+ * programs and lifts, lift metadata, lift modifications, body weight, strength goals, focus
+ * blocks, settings, missing-max answers and the account.
+ */
+export interface TrainingDataCounts {
+  liftRecords: number;
+  macrocycles: number;
+  macrocycleDashboards: number;
+  macrocycleScheduledWorkouts: number;
+  trainingMaxes: number;
+  trainingMaxHistory: number;
+  /** Own maxes of lift modifications (#1153). */
+  liftModificationMaxes: number;
+  workoutDateOverrides: number;
+  workoutSkipOverrides: number;
+  workoutLiftOverrides: number;
+  focusDayStates: number;
+  importBatches: number;
+}
+
+/**
+ * Body of `POST /users/me/training-data/clear`: the counts the lifter confirmed, from
+ * `GET /users/me/training-data/counts`. If any differs from what's stored when the request runs,
+ * nothing is cleared and the response is a 409.
+ */
+export interface ClearTrainingDataRequest {
+  counts: TrainingDataCounts;
+}
+
+/** A saved copy of cleared training data, which Restore puts back (#1309, decision 21). */
+export interface DataSnapshotSummary {
+  id: string;
+  /** What took it. */
+  kind: 'clear';
+  /** ISO timestamps. Nothing can read the snapshot once `expiresAt` has passed. */
+  createdAt: string;
+  expiresAt: string;
+  counts: TrainingDataCounts;
+}
+
+/** Response for `POST /users/me/training-data/clear`. */
+export interface ClearTrainingDataResponse {
+  /** The snapshot saved before anything was cleared. */
+  snapshot: DataSnapshotSummary;
+}
+
+/**
+ * Response for `POST /users/me/snapshots/:id/restore`: the rows put back per table. A row whose
+ * place is taken by something stored since the clear stays out, such as a program's dashboard or
+ * a lift's training max, so these can be lower than the snapshot's counts. The snapshot is gone
+ * once restored.
+ */
+export interface RestoreSnapshotResponse {
+  restored: TrainingDataCounts;
+}
+
 /** What an import with an Assign breakdown does beyond the row counts (#1254). */
 export interface ImportAssignedCounts {
   /** Macrocycles created: one per stretch with a new row that joins no stored macrocycle. */

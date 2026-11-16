@@ -7,6 +7,8 @@ import { PrismaService } from './prisma.service';
 import { RLS_TX_CLIENT } from './rls-context';
 import { PrismaBodyWeightRepository } from './body-weight.repository';
 import { PrismaCustomLiftRepository } from './custom-lift.repository';
+import { PrismaDataSnapshotRepository } from './data-snapshot.repository';
+import { PrismaTrainingDataRepository } from './training-data.repository';
 import { PrismaFocusRepository } from './focus.repository';
 import { PrismaMacrocycleDashboardRepository } from './macrocycle-dashboard.repository';
 import { PrismaMacrocycleRepository } from './macrocycle.repository';
@@ -59,6 +61,7 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
     return {
       bodyWeight: new PrismaBodyWeightRepository(db, user.id),
       customLift: new PrismaCustomLiftRepository(db, user.id),
+      dataSnapshot: new PrismaDataSnapshotRepository(db, user.id),
       focus: new PrismaFocusRepository(db, user.id),
       macrocycle: new PrismaMacrocycleRepository(db, user.id),
       macrocycleDashboard: new PrismaMacrocycleDashboardRepository(db, user.id),
@@ -71,6 +74,7 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
       strengthGoal: new PrismaStrengthGoalRepository(db, user.id),
       trainingMax: new PrismaTrainingMaxRepository(db, user.id),
       trainingMaxHistory: new PrismaTrainingMaxHistoryRepository(db, user.id),
+      trainingData: new PrismaTrainingDataRepository(db, user.id),
       userDataExport: new PrismaUserDataExportRepository(db, user.id),
       userSettings: new PrismaUserSettingsRepository(db, user.id),
       workout: new PrismaWorkoutRepository(db, user.id),
