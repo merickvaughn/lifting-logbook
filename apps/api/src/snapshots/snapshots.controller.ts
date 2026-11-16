@@ -39,8 +39,9 @@ import { clearTrainingData, dataChanged, restoreSnapshot } from './training-data
 
 /**
  * How long clear, restore and a snapshot download may take. Measured on 2026-11-15 against a local
- * Postgres 16 with 78,000 sets, a heavy lifter's ten years: clear took 2.0 s and restore 15.2 s,
- * 9.9 s of it inserting and 3.9 s renumbering. 60 s leaves about four times that for a slower
+ * Postgres 16 with 78,000 sets, a heavy lifter's ten years: clear took 2.4 s, its row locks
+ * included, and restore 15.7 s, about 10 s of it inserting and 4 s renumbering. 60 s leaves about
+ * four times that for a slower
  * database; past it the transaction rolls back and the request is a 503.
  */
 export const TRAINING_DATA_TX_TIMEOUT_MS = 60_000;

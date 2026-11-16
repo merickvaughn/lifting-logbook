@@ -69,7 +69,8 @@ success.
      restore (a modification deleted under restore, a deadlock) also rolls it back with a 409
      rather than being deleted unsaved or breaking a foreign key. Their transaction may take 60
      seconds: on 2026-11-15 a local Postgres 16 cleared
-     78,000 sets, a heavy lifter's ten years, in 2.0 s and restored them in 15.2 s.
+     78,000 sets, a heavy lifter's ten years, in 2.4 s, row locks included, and restored them in
+     15.7 s.
 4. **Every read treats an expired snapshot as gone.** List, restore and download filter on
    `expiresAt > now`, so a late or failed job never extends retention.
 5. **The expiry job reaches expired rows through two owner-only policies.** `data_snapshot` has a
