@@ -132,6 +132,14 @@ export function serializeLiftRecords(records: readonly LiftRecordExportRow[]): s
 }
 
 /**
+ * A sets download's file name, dated `day` (`YYYY-MM-DD`). A download in parts names its part.
+ * The API sends it in `Content-Disposition` and the web app saves under it (#1308, #1310).
+ */
+export function liftRecordExportFileName(day: string, part: number, parts: number): string {
+  return `lift-records-${day}${parts > 1 ? `-part-${part}-of-${parts}` : ''}.csv`;
+}
+
+/**
  * Splits records into parts of at most `maxRows`, oldest macrocycle first, so each part can be
  * uploaded in turn. Parts are cut between macrocycles. One macrocycle over the limit can't stay
  * whole, so it's cut in date order: its rows still carry their macrocycle number. Non-cycle

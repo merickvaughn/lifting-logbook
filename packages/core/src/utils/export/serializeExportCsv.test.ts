@@ -14,6 +14,7 @@ import {
   serializeProgramSpec,
   serializeStrengthGoals,
   serializeTrainingMaxes,
+  liftRecordExportFileName,
   splitLiftRecordsForImport,
   unescapeCsvFormula,
 } from './serializeExportCsv';
@@ -154,6 +155,13 @@ describe('serializeLiftRecords', () => {
   it('is classified as lift records when no lift name is recognized', () => {
     const table = parseCsvText(serializeLiftRecords([record({ lift: 'Zercher Squat' })]));
     expect(classifyImport(table).type).toBe('lift-records');
+  });
+});
+
+describe('liftRecordExportFileName', () => {
+  it('dates the file, and names the part only when there is more than one', () => {
+    expect(liftRecordExportFileName('2026-11-15', 1, 1)).toBe('lift-records-2026-11-15.csv');
+    expect(liftRecordExportFileName('2026-11-15', 2, 3)).toBe('lift-records-2026-11-15-part-2-of-3.csv');
   });
 });
 

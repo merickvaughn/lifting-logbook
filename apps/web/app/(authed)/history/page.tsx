@@ -1,19 +1,16 @@
 import Link from 'next/link';
 import { storedIdListing } from '@lifting-logbook/core';
 import {
-  fetchCustomPrograms,
   fetchImportBatches,
   fetchLiftRecords,
   fetchMacrocycles,
   fetchNonCycleRecords,
   fetchTrainingMaxHistory,
 } from '@/lib/api';
-import { getUserSettings } from '@/lib/active-program';
 import { getPreferredUnit } from '@/lib/preferences';
-import { userPrograms } from '@/lib/user-programs';
+import { readUserPrograms } from '@/lib/read-user-programs';
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
-  CustomProgramSummaryResponse,
   ImportBatchSummary,
   LiftRecordResponse,
   MacrocycleSummaryResponse,
@@ -41,27 +38,13 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
   let importsFailed = false;
 
   // Any of the lifter's programs, not only the active one, since an import can go into any of
-  // them (#1300). Read from settings rather than getActiveProgram(), whose fallback names a
-  // template the account may not have.
-  const [{ program: requested }, activeProgram, customPrograms] = await Promise.all([
+  // them (#1300).
+  const [{ program: requested }, { activeProgram, programs, failed: programsFailed }] = await Promise.all([
     searchParams,
     // fallback-covered-by: apps/web/app/(authed)/history/page.test.tsx
-    getUserSettings().then(
-      (settings) => settings.activeProgram,
-      (e: unknown): string | null => {
-        console.error('HistoryPage: user settings fetch failed, choosing from the custom programs', e);
-        loadFailed = true;
-        return null;
-      },
-    ),
-    // fallback-covered-by: apps/web/app/(authed)/history/page.test.tsx
-    fetchCustomPrograms().catch((e: unknown): CustomProgramSummaryResponse[] => {
-      console.error('HistoryPage: custom programs fetch failed, offering the active program only', e);
-      loadFailed = true;
-      return [];
-    }),
+    readUserPrograms('HistoryPage'),
   ]);
-  const programs = userPrograms(customPrograms, activeProgram);
+  if (programsFailed) loadFailed = true;
   // The program asked for, if it's one of the lifter's; else the active one, else their first.
   // None for an account with no program, whose history is only its non-cycle workouts.
   const program = programs.find((p) => p.id === requested)?.id ?? activeProgram ?? programs[0]?.id;

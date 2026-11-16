@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
-import { LiftRecordExportRow, splitLiftRecordsForImport } from '@lifting-logbook/core';
+import {
+  LiftRecordExportRow,
+  liftRecordExportFileName as coreLiftRecordExportFileName,
+  splitLiftRecordsForImport,
+} from '@lifting-logbook/core';
 import { LiftRecordExportPart, NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import { MAX_IMPORT_ROWS } from '../programs/import-file.util';
 
@@ -72,7 +76,7 @@ export function describeParts(parts: readonly (readonly LiftRecordExportRow[])[]
 
 /** For `Content-Disposition`. A download in parts names its part. */
 export function liftRecordExportFileName(now: Date, part: number, parts: number): string {
-  return `lift-records-${ymd(now)}${parts > 1 ? `-part-${part}-of-${parts}` : ''}.csv`;
+  return coreLiftRecordExportFileName(ymd(now), part, parts);
 }
 
 /** A `YYYY-MM-DD` query value as UTC midnight, or null when it isn't a real calendar day. */

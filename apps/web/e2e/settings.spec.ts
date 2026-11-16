@@ -126,7 +126,7 @@ test('data section downloads the logbook as a dated zip', async ({ page }) => {
     .getByRole('link', { name: 'Data' })
     .click();
   await expect(page).toHaveURL(/\/settings\/data$/);
-  await expect(page.getByRole('heading', { name: 'Data' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Data', exact: true })).toBeVisible();
 
   const downloadStarted = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download my data' }).click();
@@ -134,6 +134,60 @@ test('data section downloads the logbook as a dated zip', async ({ page }) => {
 
   expect(download.suggestedFilename()).toMatch(/^lifting-logbook-export-\d{4}-\d{2}-\d{2}\.zip$/);
   expect(await download.failure()).toBeNull();
+});
+
+// ---------------------------------------------------------------------------
+// Settings → Data: Clear data shows what it removes and the 30-day backup, changes nothing until
+// confirmed, and the confirm control works from the keyboard (#1310).
+// ---------------------------------------------------------------------------
+
+test('clear data asks first, and its confirm button works from the keyboard', async ({ page }) => {
+  const clears: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().endsWith('/users/me/training-data/clear')) {
+      clears.push(request.postData() ?? '');
+    }
+  });
+  await page.goto('/settings/data');
+  await expect(page.getByText('No backups.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Clear training data…' }).click();
+
+  const confirm = page.getByRole('group', { name: 'Clear 48 rows?' });
+  await expect(confirm.getByText('42 logged sets')).toBeVisible();
+  await expect(confirm.getByText('2 macrocycles')).toBeVisible();
+  await expect(confirm.getByText('4 training maxes')).toBeVisible();
+  await expect(confirm).toContainText('kept for 30 days');
+  await expect(page.getByRole('heading', { name: 'Clear 48 rows?' })).toBeFocused();
+  expect(clears).toEqual([]);
+
+  // From the focused heading, the first Tab reaches the confirm button.
+  await page.keyboard.press('Tab');
+  await expect(confirm.getByRole('button', { name: 'Clear 48 rows' })).toBeFocused();
+  expect(clears).toEqual([]);
+  await page.keyboard.press('Enter');
+
+  await expect(page.getByRole('status')).toContainText('Cleared 48 rows. The backup is kept until');
+  expect(clears).toHaveLength(1);
+  expect(JSON.parse(clears[0] ?? '{}')).toMatchObject({ counts: { liftRecords: 42, macrocycles: 2, trainingMaxes: 4 } });
+  await expect(page.getByText(/From clearing your data on .*: 48 rows\./)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Restore' })).toBeVisible();
+});
+
+test('a clear that fails leaves focus on its confirm button', async ({ page, request }) => {
+  await request.get(`${MOCK_API}/__reset?withClearError=true`);
+  await page.goto('/settings/data');
+  await expect(page.getByText('No backups.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Clear training data…' }).click();
+  await expect(page.getByRole('heading', { name: 'Clear 48 rows?' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter');
+
+  // Not getByRole('alert') alone: Next's route announcer is an empty alert too.
+  await expect(page.getByRole('alert').filter({ hasText: 'Couldn’t clear your training data.' })).toBeVisible();
+  // A disabled button would have lost focus to the page's body while the clear ran.
+  await expect(page.getByRole('button', { name: 'Clear 48 rows' })).toBeFocused();
 });
 
 // ---------------------------------------------------------------------------

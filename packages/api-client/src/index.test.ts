@@ -433,6 +433,102 @@ describe('createApiClient', () => {
     });
   });
 
+  describe('sets export and snapshots (#1310)', () => {
+    const counts = {
+      liftRecords: 3,
+      macrocycles: 1,
+      macrocycleDashboards: 1,
+      macrocycleScheduledWorkouts: 0,
+      trainingMaxes: 2,
+      trainingMaxHistory: 0,
+      liftModificationMaxes: 0,
+      workoutDateOverrides: 0,
+      workoutSkipOverrides: 0,
+      workoutLiftOverrides: 0,
+      focusDayStates: 0,
+      importBatches: 0,
+    };
+
+    it('lists a filter’s parts, sending only the filters that are set', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ rows: 0, parts: [], split: 'a' }), { status: 200 }));
+
+      await makeClient().fetchLiftRecordExportParts({ program: '5-3-1', from: '2024-01-01', to: '' });
+
+      expect(lastCall()[0]).toBe('http://api.test/users/me/export/lift-records/parts?program=5-3-1&from=2024-01-01');
+    });
+
+    it('lists every set when no filter is set', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ rows: 0, parts: [], split: 'a' }), { status: 200 }));
+
+      await makeClient().fetchLiftRecordExportParts({});
+
+      expect(lastCall()[0]).toBe('http://api.test/users/me/export/lift-records/parts');
+    });
+
+    it('downloads one part with its split, and surfaces a changed split as a 409', async () => {
+      mockFetch.mockResolvedValueOnce(new Response('Date,Lift', { status: 200 }));
+      const blob = await makeClient().downloadLiftRecordExport({ macrocycle: 'm 1', part: 2, split: '0123456789abcdef' });
+      expect(lastCall()[0]).toBe(
+        'http://api.test/users/me/export/lift-records?macrocycle=m+1&part=2&split=0123456789abcdef',
+      );
+      expect(await blob.text()).toBe('Date,Lift');
+
+      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ message: 'List the parts again' }), { status: 409 }));
+      await expect(
+        makeClient().downloadLiftRecordExport({ part: 1, split: '0123456789abcdef' }),
+      ).rejects.toMatchObject({ status: 409, message: 'List the parts again' });
+    });
+
+    it('clears with the confirmed counts and its own timeout, and keeps the current counts of a 409', async () => {
+      const timeout = jest.spyOn(AbortSignal, 'timeout');
+      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ snapshot: { id: 's1' } }), { status: 200 }));
+
+      await expect(makeClient().clearTrainingData(counts)).resolves.toEqual({ snapshot: { id: 's1' } });
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/users/me/training-data/clear');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body as string)).toEqual({ counts });
+      expect(timeout).toHaveBeenCalledWith(90_000);
+      timeout.mockRestore();
+
+      const now = { ...counts, liftRecords: 4 };
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: 'counts-changed', message: 'Check the counts', counts: now }), { status: 409 }),
+      );
+      await expect(makeClient().clearTrainingData(counts)).rejects.toMatchObject({
+        status: 409,
+        code: 'counts-changed',
+        body: expect.objectContaining({ counts: now }),
+      });
+    });
+
+    it('restores, deletes and downloads a snapshot by its encoded id', async () => {
+      const timeout = jest.spyOn(AbortSignal, 'timeout');
+      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ restored: counts }), { status: 200 }));
+      await expect(makeClient().restoreSnapshot('a/b')).resolves.toEqual({ restored: counts });
+      expect(lastCall()[0]).toBe('http://api.test/users/me/snapshots/a%2Fb/restore');
+      expect(lastCall()[1].method).toBe('POST');
+      expect(timeout).toHaveBeenCalledWith(90_000);
+      timeout.mockRestore();
+
+      mockFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+      await makeClient().deleteSnapshot('s1');
+      expect(lastCall()[0]).toBe('http://api.test/users/me/snapshots/s1');
+      expect(lastCall()[1].method).toBe('DELETE');
+
+      mockFetch.mockResolvedValueOnce(new Response('csv', { status: 200 }));
+      const blob = await makeClient().downloadSnapshotLiftRecords('s1', 1, 'fedcba9876543210');
+      expect(lastCall()[0]).toBe('http://api.test/users/me/snapshots/s1/lift-records?part=1&split=fedcba9876543210');
+      expect(await blob.text()).toBe('csv');
+    });
+
+    it('treats deleting a snapshot that’s already gone as deleted', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'No backup with that id.' }), { status: 404 }));
+
+      await expect(makeClient().deleteSnapshot('gone')).resolves.toBeUndefined();
+    });
+  });
+
   describe('switchProgram', () => {
     it('sends a JSON body alongside the JSON content-type header (issue #665)', async () => {
       mockFetch.mockResolvedValue(

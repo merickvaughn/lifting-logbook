@@ -10,6 +10,8 @@ import type {
   CustomLiftResponse,
   CustomProgramResponse,
   CustomProgramSummaryResponse,
+  ClearTrainingDataResponse,
+  DataSnapshotSummary,
   FocusBlockResponse,
   FocusBlockSummaryResponse,
   FocusDayPlanResponse,
@@ -35,6 +37,8 @@ import type {
   LiftModificationsByLiftResponse,
   LiftOverrideResponse,
   LiftingProgramSpecResponse,
+  LiftRecordExportPartsResponse,
+  LiftRecordExportQuery,
   LiftRecordResponse,
   MacrocycleSummaryResponse,
   ModificationMaxResponse,
@@ -45,9 +49,11 @@ import type {
   RecordBodyWeightRequest,
   RedateMacrocycleResponse,
   RescheduleRequest,
+  RestoreSnapshotResponse,
   StrengthGoalResponse,
   SwitchProgramResponse,
   MissingTrainingMaxResponse,
+  TrainingDataCounts,
   TrainingMaxHistoryResponse,
   TrainingMaxResponse,
   UpdateCustomProgramRequest,
@@ -133,6 +139,19 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 // the reply. Shorter than that, the client could give up on a request the server has counted.
 const SUGGEST_TIMEOUT_MS = IMPORT_SUGGESTION_DEADLINE_MS + 60_000;
 const DATA_EXPORT_TIMEOUT_MS = 60_000;
+// Clear, restore and a snapshot's sets run in a 60 s transaction on the server (#1309), which
+// includes waiting up to 5 s for an import's lock. The rest covers getting a connection and the reply.
+const TRAINING_DATA_TIMEOUT_MS = 90_000;
+
+/** A sets download's filter as query values, leaving out the ones not set. */
+function exportQuery(filter: LiftRecordExportQuery & { part?: number; split?: string }): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filter)) {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
 
 // The import query options every smart-import route takes.
 function importQuery(
@@ -279,10 +298,9 @@ export function createApiClient(config: ApiClientConfig) {
       // auth-wins: spread auth headers last so a call site's init.headers can
       // never override Authorization / X-Clerk-Authorization.
       headers: { ...(init.headers as Record<string, string> | undefined), ...authHeaders },
-      // Bound every request that doesn't already carry its own signal (#922) — no
-      // call site passes one today, so this always applies in practice, but a
-      // future call site's own signal (e.g. a per-row Cancel affordance) takes
-      // precedence rather than being silently clobbered.
+      // Bound every request that doesn't already carry its own signal (#922). A call
+      // site's own signal takes precedence rather than being silently clobbered: the
+      // downloads, clear and restore pass a longer timeout of their own.
       signal: init.signal ?? AbortSignal.timeout(requestTimeoutMs),
     };
     return fetch(`${resolveBaseUrl()}${path}`, finalInit as RequestInit);
@@ -342,6 +360,13 @@ export function createApiClient(config: ApiClientConfig) {
     if (res.status === 204) return { ok: true, data: undefined as T };
     if (!res.ok) throw await readError(res, path);
     return { ok: true, data: (await res.json()) as T };
+  }
+
+  // A file the browser saves: throws the API's error on !ok, otherwise returns the body.
+  async function requestBlob(path: string, timeoutMs: number): Promise<Blob> {
+    const res = await rawFetch(path, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) throw await readError(res, path);
+    return res.blob();
   }
 
   // Void request that treats 404 as success — for idempotent deletes, where an
@@ -985,14 +1010,67 @@ export function createApiClient(config: ApiClientConfig) {
      * Download My Data (#947): the whole logbook as one zip. The server allows its reads 30s and
      * then builds the archive outside that, so this outlasts the default bound.
      */
-    async downloadDataExport(): Promise<Blob> {
-      const path = '/users/me/export';
-      const res = await rawFetch(path, {
+    downloadDataExport(): Promise<Blob> {
+      return requestBlob('/users/me/export', DATA_EXPORT_TIMEOUT_MS);
+    },
+    /** How the sets a filter takes split into parts, for one download per part (#1308). */
+    fetchLiftRecordExportParts(filter: LiftRecordExportQuery): Promise<LiftRecordExportPartsResponse> {
+      return request(`/users/me/export/lift-records/parts${exportQuery(filter)}`, {
         cache: 'no-store',
         signal: AbortSignal.timeout(DATA_EXPORT_TIMEOUT_MS),
       });
-      if (!res.ok) throw await readError(res, path);
-      return res.blob();
+    },
+    /** One part of a filtered sets download as CSV. A `split` that has changed since is a 409. */
+    downloadLiftRecordExport(filter: LiftRecordExportQuery & { part: number; split: string }): Promise<Blob> {
+      return requestBlob(`/users/me/export/lift-records${exportQuery(filter)}`, DATA_EXPORT_TIMEOUT_MS);
+    },
+    /** What Clear data would remove (#1309). */
+    fetchTrainingDataCounts(): Promise<TrainingDataCounts> {
+      return request('/users/me/training-data/counts', { cache: 'no-store' });
+    },
+    /**
+     * Saves a snapshot, then clears the training data. `counts` are the ones the lifter
+     * confirmed: if any has changed, nothing is cleared and the 409 (`counts-changed`) carries
+     * the current ones in its body.
+     */
+    clearTrainingData(counts: TrainingDataCounts): Promise<ClearTrainingDataResponse> {
+      return request('/users/me/training-data/clear', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ counts }),
+        cache: 'no-store',
+        signal: AbortSignal.timeout(TRAINING_DATA_TIMEOUT_MS),
+      });
+    },
+    /** The snapshots that haven't expired, newest first. */
+    fetchSnapshots(): Promise<DataSnapshotSummary[]> {
+      return request('/users/me/snapshots', { cache: 'no-store' });
+    },
+    /** Puts a snapshot's rows back without overwriting newer ones, then deletes it. */
+    restoreSnapshot(id: string): Promise<RestoreSnapshotResponse> {
+      return request(`/users/me/snapshots/${enc(id)}/restore`, {
+        method: 'POST',
+        cache: 'no-store',
+        signal: AbortSignal.timeout(TRAINING_DATA_TIMEOUT_MS),
+      });
+    },
+    /** Deletes a snapshot now. One that's already gone counts as deleted. */
+    deleteSnapshot(id: string): Promise<void> {
+      return requestVoidIdempotent(`/users/me/snapshots/${enc(id)}`, { method: 'DELETE', cache: 'no-store' });
+    },
+    /** How a snapshot's sets split into parts, as `fetchLiftRecordExportParts` lists them. */
+    fetchSnapshotLiftRecordParts(id: string): Promise<LiftRecordExportPartsResponse> {
+      return request(`/users/me/snapshots/${enc(id)}/lift-records/parts`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(TRAINING_DATA_TIMEOUT_MS),
+      });
+    },
+    /** One part of a snapshot's sets as CSV. */
+    downloadSnapshotLiftRecords(id: string, part: number, split: string): Promise<Blob> {
+      return requestBlob(
+        `/users/me/snapshots/${enc(id)}/lift-records${exportQuery({ part, split })}`,
+        TRAINING_DATA_TIMEOUT_MS,
+      );
     },
     fetchUserSettings(): Promise<UserSettingsResponse> {
       return request('/users/me/settings', { cache: 'no-store' });

@@ -204,6 +204,21 @@ const SHEET_LIFT_RECORD_MAPPINGS = [
 // In-memory state (reset between tests via GET /__reset)
 // ---------------------------------------------------------------------------
 
+const NO_TRAINING_DATA = {
+  liftRecords: 0,
+  macrocycles: 0,
+  macrocycleDashboards: 0,
+  macrocycleScheduledWorkouts: 0,
+  trainingMaxes: 0,
+  trainingMaxHistory: 0,
+  liftModificationMaxes: 0,
+  workoutDateOverrides: 0,
+  workoutSkipOverrides: 0,
+  workoutLiftOverrides: 0,
+  focusDayStates: 0,
+  importBatches: 0,
+};
+
 const CUSTOM_PROGRAM = {
   id: 'cust-1',
   name: 'My Custom Program',
@@ -215,6 +230,11 @@ const CUSTOM_PROGRAM = {
 function createInitialState() {
   return {
     noCurrentMacrocycle: false,
+    // What Clear data would remove, and the backups it leaves (#1310).
+    trainingDataCounts: { ...NO_TRAINING_DATA, liftRecords: 42, macrocycles: 2, trainingMaxes: 4 },
+    snapshots: [],
+    // /__reset?withClearError=true makes the clear fail with a 500.
+    clearError: false,
     trainingMaxes: structuredClone(INITIAL_TRAINING_MAXES),
     // Lifts with logged sets and no training max (#1246); /__reset?withMissingMax=true seeds one.
     missingMaxes: [],
@@ -777,6 +797,9 @@ const server = createServer(async (req, res) => {
     if (url.searchParams.get('withFocusError') === 'true') {
       state.focusError = true;
     }
+    if (url.searchParams.get('withClearError') === 'true') {
+      state.clearError = true;
+    }
     if (url.searchParams.get('withMissingMax') === 'true') {
       state.missingMaxes = [
         {
@@ -1092,6 +1115,43 @@ const server = createServer(async (req, res) => {
       'Access-Control-Allow-Origin': '*',
     });
     res.end(emptyZip);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // Clear data and its backups (#1310). Clear refuses counts that differ from the stored ones,
+  // as the API does, and leaves a 30-day backup.
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && url.pathname === '/users/me/training-data/counts') {
+    json(res, state.trainingDataCounts);
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/users/me/training-data/clear') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    if (state.clearError) {
+      json(res, { statusCode: 500, message: 'Couldn’t clear your training data.' }, 500);
+      return;
+    }
+    if (JSON.stringify(body.counts) !== JSON.stringify(state.trainingDataCounts)) {
+      json(res, { statusCode: 409, code: 'counts-changed', message: 'Your data has changed.', counts: state.trainingDataCounts }, 409);
+      return;
+    }
+    const now = Date.now();
+    const snapshot = {
+      id: `snap-${state.snapshots.length + 1}`,
+      kind: 'clear',
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      counts: state.trainingDataCounts,
+    };
+    state.snapshots.unshift(snapshot);
+    state.trainingDataCounts = { ...NO_TRAINING_DATA };
+    json(res, { snapshot });
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/users/me/snapshots') {
+    json(res, state.snapshots);
     return;
   }
 
