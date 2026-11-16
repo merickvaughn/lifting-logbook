@@ -39,6 +39,7 @@ export class PrismaDataSnapshotRepository implements IDataSnapshotRepository {
         scope: snapshot.scope as unknown as Prisma.InputJsonObject,
         counts: snapshot.counts as unknown as Prisma.InputJsonObject,
         rows: encodeSnapshotRows(snapshot.data),
+        createdAt: snapshot.createdAt,
         expiresAt: snapshot.expiresAt,
       },
       select: SUMMARY,

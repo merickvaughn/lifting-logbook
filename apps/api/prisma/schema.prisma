@@ -70,7 +70,7 @@ model DataSnapshot {
   userId    String
   /// What took it: `clear`.
   kind      String
-  /// What the action covered, and each program's highest macrocycle number at the time.
+  /// What the action covered: the programs it held rows for.
   scope     Json
   /// Rows per table, as `TrainingDataCounts`.
   counts    Json

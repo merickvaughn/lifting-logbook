@@ -23,7 +23,7 @@ export class InMemoryDataSnapshotRepository implements IDataSnapshotRepository {
       throw new Error('snapshot could not be saved');
     }
     const { data, ...rest } = snapshot;
-    const stored = { ...structuredClone(rest), id: randomUUID(), createdAt: new Date(), rows: encodeSnapshotRows(data) };
+    const stored = { ...structuredClone(rest), id: randomUUID(), rows: encodeSnapshotRows(data) };
     this.snapshots.set(stored.id, stored);
     return this.summary(stored);
   }

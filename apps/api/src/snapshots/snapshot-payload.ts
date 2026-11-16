@@ -1,3 +1,4 @@
+import { isDate } from 'node:util/types';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { TrainingData } from '../ports/ITrainingDataRepository';
 
@@ -24,10 +25,12 @@ function isDateMarker(value: unknown): value is { $date: string } {
 
 export function encodeSnapshotRows(data: TrainingData): Buffer {
   const payload: Payload = { version: PAYLOAD_VERSION, data };
-  // `this[key]` is the value before `Date.prototype.toJSON` turned it into a string.
+  // `this[key]` is the value before `Date.prototype.toJSON` turned it into a string. `isDate`
+  // rather than `instanceof`, which misses a Date made in another realm (`structuredClone` under
+  // Jest's sandbox, as the in-memory store's reads are).
   const json = JSON.stringify(payload, function (this: Record<string, unknown>, key: string, value: unknown) {
     const raw = this[key];
-    return raw instanceof Date ? { $date: raw.toISOString() } : value;
+    return isDate(raw) ? { $date: raw.toISOString() } : value;
   });
   return gzipSync(Buffer.from(json, 'utf8'));
 }

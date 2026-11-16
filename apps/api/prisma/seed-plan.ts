@@ -243,4 +243,5 @@ export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void>
   await tx.macrocycle.deleteMany({ where });
   await tx.customProgram.deleteMany({ where });
   await tx.importBatch.deleteMany({ where });
+  await tx.dataSnapshot.deleteMany({ where });
 }

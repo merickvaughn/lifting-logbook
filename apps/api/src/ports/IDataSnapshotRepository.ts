@@ -19,7 +19,7 @@ export interface StoredSnapshot extends StoredSnapshotSummary {
   data: TrainingData;
 }
 
-export type NewSnapshot = Omit<StoredSnapshot, 'id' | 'createdAt'>;
+export type NewSnapshot = Omit<StoredSnapshot, 'id'>;
 
 /**
  * Snapshots of a user's training data (#1309, proposal decision 21). Every read treats a

@@ -1,0 +1,65 @@
+name: Expire snapshots
+
+# Deletes data snapshots past their 30-day expiry (#1309, proposal decision 21,
+# ADR-044). The API has no scheduler, so this executes the Cloud Run job
+# `lifting-logbook-<env>-expire-snapshots` (infra/terraform/cloud-run.tf) once a
+# day, the way deploy.yml executes the migrate job. The job runs under the
+# migration role, the only one row-level security lets see expired rows, and
+# exits non-zero when it can't delete them all, which fails this run.
+#
+# Reads already treat an expired snapshot as gone, so a late or failed run never
+# extends how long a lifter's cleared data stays restorable. It does leave the
+# rows on the server until a run succeeds, so a failure here needs a look.
+#
+# Uses the same repository secrets and variables as deploy.yml. Staging runs only
+# when it's configured (GCP_STAGING_PROJECT_ID set).
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: expire-snapshots
+  cancel-in-progress: false
+
+env:
+  REGION: us-central1
+
+jobs:
+  staging:
+    name: Expire snapshots (staging)
+    if: vars.GCP_STAGING_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
+      - name: Run the expiry job
+        run: |
+          gcloud run jobs execute lifting-logbook-stg-expire-snapshots \
+            --region="${{ env.REGION }}" \
+            --project="${{ vars.GCP_STAGING_PROJECT_ID }}" \
+            --wait
+
+  production:
+    name: Expire snapshots (production)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_PROD_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_PROD_SERVICE_ACCOUNT }}
+      - name: Run the expiry job
+        run: |
+          gcloud run jobs execute lifting-logbook-prod-expire-snapshots \
+            --region="${{ env.REGION }}" \
+            --project="${{ vars.GCP_PROD_PROJECT_ID }}" \
+            --wait

@@ -63,6 +63,11 @@ output "migrate_job_name" {
   value       = google_cloud_run_v2_job.migrate.name
 }
 
+output "expire_snapshots_job_name" {
+  description = "Cloud Run Job that deletes expired data snapshots (#1309, ADR-044). Executed daily by .github/workflows/expire-snapshots.yml."
+  value       = google_cloud_run_v2_job.expire_snapshots.name
+}
+
 output "kms_key_name" {
   description = "Cloud KMS crypto key name for credential encryption (ADR-014)"
   value       = google_kms_crypto_key.user_data_source.id

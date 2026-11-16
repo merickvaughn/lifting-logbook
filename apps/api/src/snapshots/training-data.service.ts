@@ -61,6 +61,7 @@ export async function clearTrainingData(
       scope: { programs: programsIn(data) },
       counts,
       data,
+      createdAt: now,
       expiresAt: new Date(now.getTime() + SNAPSHOT_RETENTION_DAYS * DAY_MS),
     });
   } catch (err) {
