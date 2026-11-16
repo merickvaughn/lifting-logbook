@@ -23,6 +23,7 @@ import {
   setProgram,
   setStatus,
   splitAtLargestGap,
+  withoutWithdrawnContinue,
 } from './assignDraft';
 
 const session = (date: string, lifts = ['Squat'], sets = 3) => ({ date, workoutNum: null, lifts, sets });
@@ -368,5 +369,17 @@ describe('continuing the last run as current (#1180)', () => {
     const changed = setProgram(on, 's1', '5-3-1');
     expect(buildBreakdown(changed, r).continue).toBeUndefined();
     expect(buildBreakdown(changed, r).stretches[1]).toMatchObject({ status: 'completed' });
+  });
+
+  it('forgets a withdrawn choice, so changing the run back does not bring it back unasked', () => {
+    const r = offered();
+    const on = setMaxChoice(setContinuing(initialDraft(r), true), 'Bench Press', { kind: 'value', weight: 100 });
+    expect(withoutWithdrawnContinue(on, r)).toBe(on);
+    const away = withoutWithdrawnContinue(setProgram(on, 's1', '5-3-1'), r);
+    expect(away.continued).toBeNull();
+    const back = withoutWithdrawnContinue(setProgram(away, 's1', 'rpt'), r);
+    expect(continueTarget(back, r)?.id).toBe('s1');
+    expect(back.continued).toBeNull();
+    expect(buildBreakdown(back, r).continue).toBeUndefined();
   });
 });

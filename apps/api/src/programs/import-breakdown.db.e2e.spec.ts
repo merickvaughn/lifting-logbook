@@ -10,7 +10,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Prisma, PrismaClient } from '@prisma/client';
 import multipart from '@fastify/multipart';
-import type { ImportBreakdown } from '@lifting-logbook/types';
+import { MACROCYCLE_ID_HEADER, NON_CYCLE_PROGRAM, type ImportAssignResponse, type ImportBreakdown } from '@lifting-logbook/types';
 import { LiftRecord, buildLiftRecordsPreImage, liftRecordNaturalKey } from '@lifting-logbook/core';
 import { AppModule } from '../app.module';
 import { PrismaImportBatchRepository } from '../adapters/prisma/import-batch.repository';
@@ -40,7 +40,9 @@ const USER_ROW_LIMIT = 'import-breakdown-db-row-limit';
 const USER_GROWN = 'import-breakdown-db-grown';
 const USER_LIST_A = 'import-breakdown-db-list-a';
 const USER_LIST_B = 'import-breakdown-db-list-b';
+const USER_CONTINUE = 'import-breakdown-db-continue';
 const USERS = [
+  USER_CONTINUE,
   USER_RACE,
   USER_MACROCYCLE_FAILS,
   USER_BATCH_FAILS,
@@ -61,6 +63,10 @@ async function cleanup(owner: PrismaClient): Promise<void> {
   await owner.importBatch.deleteMany({ where });
   await owner.trainingMax.deleteMany({ where });
   await owner.macrocycleDashboard.deleteMany({ where });
+  // A continued run (#1180) also writes these.
+  await owner.trainingMaxHistory.deleteMany({ where });
+  await owner.macrocycleScheduledWorkout.deleteMany({ where });
+  await owner.userSettings.deleteMany({ where });
 }
 
 const DAY_MS = 86_400_000;
@@ -392,6 +398,87 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     ]);
     expect((await undo(ids(firstRes))).statusCode).toBe(200);
     expect(await written(USER_GROWN)).toEqual({ sets: 0, macrocycles: 0, batches: 0 });
+  });
+
+  it('continues a run as current and undoes it, moving a set logged since to non-cycle workouts (#1180)', async () => {
+    const server = app.getHttpAdapter().getInstance();
+    const post = (query: string, csv: string, fields: Record<string, string>) => {
+      const boundary = '----ContinueDbBoundary';
+      return server.inject({
+        method: 'POST',
+        url: `/programs/rpt/import${query}`,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization: `Bearer ${USER_CONTINUE}` },
+        payload: [
+          ...Object.entries(fields).flatMap(([name, value]) => [`--${boundary}`, `Content-Disposition: form-data; name="${name}"`, '', value]),
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+          'Content-Type: text/csv',
+          '',
+          csv,
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+    };
+    const today = ymd(new Date());
+    // Four RPT sessions, the last six days ago: workouts left, and recent enough to continue.
+    const start = ymd(new Date(Date.now() - 12 * DAY_MS));
+    const dates = [0, 2, 4, 6].map((n) => dayFrom(start, n));
+    const days = [
+      ['Bench Press', 'Barbell Row', 'Overhead Press'],
+      ['Squat', 'Romanian Deadlift', 'Calf Raises'],
+      ['Deadlift', 'Weighted Pull-ups', 'Dips'],
+    ];
+    const csv = [
+      'Program,Date,Lift,Set #,Weight,Reps,Notes',
+      ...dates.flatMap((date, i) => (days[i % 3] ?? []).map((lift) => `rpt,${date},${lift},1,100,8,`)),
+    ].join('\n');
+
+    const assigned = await post('?mode=assign&destination=lift-records', csv, { today });
+    expect(assigned.statusCode).toBe(200);
+    const offer = assigned.json<ImportAssignResponse>().continue;
+    if (!offer) throw new Error('expected a continue offer');
+    const breakdown: ImportBreakdown = {
+      ...oneStretch(dates),
+      continue: { stretch: 0, maxes: offer.maxes.map((m) => ({ lift: m.lift, weight: m.computed ?? 100 })) },
+    };
+    const committed = await post('?mode=commit&destination=lift-records', csv, { today, breakdown: JSON.stringify(breakdown) });
+    expect(committed.statusCode).toBe(200);
+    const batchId = committed.json<{ batchId: string }>().batchId;
+
+    const [run, ...others] = await owner.macrocycle.findMany({ where: { userId: USER_CONTINUE } });
+    expect(others).toEqual([]);
+    expect(run).toMatchObject({ origin: 'live', status: 'in-progress', importedThrough: new Date(`${dayFrom(start, 6)}T00:00:00Z`) });
+    expect((await owner.importBatch.findUnique({ where: { id: batchId } }))?.macrocycles).toMatchObject({
+      continued: { id: run?.id, ended: null, dashboard: null, activeProgram: null },
+    });
+    expect(await owner.userSettings.findUnique({ where: { userId: USER_CONTINUE } })).toMatchObject({ activeProgram: 'rpt' });
+
+    const logged = await server.inject({
+      method: 'POST',
+      url: '/programs/rpt/lift-records',
+      headers: {
+        'content-type': 'application/json',
+        [MACROCYCLE_ID_HEADER]: run?.id ?? '',
+        authorization: `Bearer ${USER_CONTINUE}`,
+      },
+      payload: JSON.stringify({ lift: 'Bench Press', setNum: 1, weight: 140, reps: 6, macrocycleNum: run?.macrocycleNum, workoutNum: 5, date: today }),
+    });
+    expect(logged.statusCode).toBe(201);
+
+    const undone = await server.inject({
+      method: 'POST',
+      url: `/programs/rpt/import/${batchId}/undo`,
+      headers: { authorization: `Bearer ${USER_CONTINUE}` },
+    });
+    expect(undone.statusCode).toBe(200);
+    expect(await owner.liftRecord.findMany({ where: { userId: USER_CONTINUE } })).toEqual([
+      expect.objectContaining({ program: NON_CYCLE_PROGRAM, weight: 140, reps: 6 }),
+    ]);
+    expect(await owner.macrocycle.count({ where: { userId: USER_CONTINUE, program: 'rpt' } })).toBe(0);
+    expect(await owner.macrocycleScheduledWorkout.count({ where: { userId: USER_CONTINUE } })).toBe(0);
+    expect(await owner.trainingMax.count({ where: { userId: USER_CONTINUE } })).toBe(0);
+    expect(await owner.macrocycleDashboard.count({ where: { userId: USER_CONTINUE } })).toBe(0);
+    expect(await owner.userSettings.findUnique({ where: { userId: USER_CONTINUE } })).toMatchObject({ activeProgram: null });
   });
 
   it("lists only the lifter's own imports, as the restricted role (#1257)", async () => {

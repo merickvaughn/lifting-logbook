@@ -4863,4 +4863,35 @@ describe('ImportWizard Assign: continue the last run as current (#1180)', () => 
       expect.objectContaining({ breakdown: expect.not.objectContaining({ continue: expect.anything() }) }),
     );
   });
+
+  it('marks an empty max value invalid and says what it needs', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(assignRes({ continue: offer() }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(continueBox());
+
+    const input = screen.getByRole('spinbutton', { name: 'New training max for Deadlift' });
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAccessibleDescription('Enter a training max above 0.');
+    await user.click(input);
+    await user.paste('315');
+    expect(input).toHaveAttribute('aria-invalid', 'false');
+  });
+
+  it('groups again when the server refuses the continue, saying why', async () => {
+    const user = userEvent.setup();
+    mockAssign.mockResolvedValue(assignRes({ continue: offer({ maxes: [{ lift: 'Squat', name: 'Squat', current: 200, computed: null }] }) }));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(continueBox());
+
+    mockDryRun.mockRejectedValueOnce(new ApiClientError('A set was logged since', 400, 'continue-refused'));
+    await user.click(nextButton());
+
+    expect(await screen.findByTestId('assign-notice')).toHaveTextContent(/continuing your last run was checked again/);
+    expect(screen.getByText('Step 6 of 8 · Assign')).toBeInTheDocument();
+    expect(mockAssign).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Assign your history to macrocycles' })).toHaveFocus());
+  });
 });
