@@ -1,0 +1,125 @@
+name: Expire snapshots
+
+# Deletes data snapshots past their 30-day expiry (#1309, proposal decision 21,
+# ADR-044). The API has no scheduler, so this executes the Cloud Run job
+# `lifting-logbook-<env>-expire-snapshots` (infra/terraform/cloud-run.tf) once a
+# day, the way deploy.yml executes the migrate job. The job runs under the
+# migration role, the only one row-level security lets see expired rows, and
+# exits non-zero when it can't delete them all, which fails this run.
+#
+# Reads already treat an expired snapshot as gone, so a late or failed run never
+# extends how long a lifter's cleared data stays restorable. It does leave the
+# rows on the server until a run succeeds, so a failed run opens an issue
+# labelled `snapshot-expiry-failed`, or comments on the open one.
+#
+# Uses the same repository secrets and variables as deploy.yml. Staging runs only
+# when it's configured (GCP_STAGING_PROJECT_ID set).
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: expire-snapshots
+  cancel-in-progress: false
+
+env:
+  REGION: us-central1
+
+jobs:
+  staging:
+    name: Expire snapshots (staging)
+    # deploy.yml decides staging from a secret, but a job-level `if` can't read
+    # secrets, so the staging project variable stands in. Unset, it reads as ''
+    # and this job is skipped rather than failed.
+    if: vars.GCP_STAGING_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_STAGING_SERVICE_ACCOUNT }}
+      - name: Run the expiry job
+        env:
+          JOB: lifting-logbook-stg-expire-snapshots
+          PROJECT: ${{ vars.GCP_STAGING_PROJECT_ID }}
+        run: |
+          # Until the first deploy after #1309 applies Terraform, the job doesn't
+          # exist yet and there is nothing to expire. gcloud's run/jobs/describe.py
+          # says exactly "Cannot find job [<name>]." when the project has no such
+          # job; any other describe failure (a wrong project, auth, permissions)
+          # still fails the run.
+          if ! out=$(gcloud run jobs describe "$JOB" --region="$REGION" --project="$PROJECT" --format='value(name)' 2>&1); then
+            if grep -qF "Cannot find job [$JOB]." <<<"$out"; then
+              echo "::warning::$JOB doesn't exist in $PROJECT, so no snapshots expired. Expected only until the first deploy after #1309; after that, check that Terraform still defines the job."
+              exit 0
+            fi
+            echo "$out" >&2
+            exit 1
+          fi
+          gcloud run jobs execute "$JOB" --region="$REGION" --project="$PROJECT" --wait
+
+  production:
+    name: Expire snapshots (production)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_PROD_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_PROD_SERVICE_ACCOUNT }}
+      - name: Run the expiry job
+        env:
+          JOB: lifting-logbook-prod-expire-snapshots
+          PROJECT: ${{ vars.GCP_PROD_PROJECT_ID }}
+        run: |
+          # See the staging job: nothing to run until a deploy creates the job.
+          # Any other describe failure (a wrong project, auth, permissions) still
+          # fails the run.
+          if ! out=$(gcloud run jobs describe "$JOB" --region="$REGION" --project="$PROJECT" --format='value(name)' 2>&1); then
+            if grep -qF "Cannot find job [$JOB]." <<<"$out"; then
+              echo "::warning::$JOB doesn't exist in $PROJECT, so no snapshots expired. Expected only until the first deploy after #1309; after that, check that Terraform still defines the job."
+              exit 0
+            fi
+            echo "$out" >&2
+            exit 1
+          fi
+          gcloud run jobs execute "$JOB" --region="$REGION" --project="$PROJECT" --wait
+
+  report-failure:
+    name: Report a failed expiry run
+    needs: [staging, production]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create snapshot-expiry-failed \
+            --description "The daily snapshot expiry job failed (#1309)" \
+            --color B60205 \
+            --force
+          {
+            echo "The daily snapshot expiry run failed: $RUN_URL"
+            echo
+            echo "Expired snapshots stay on the server until a run succeeds. Reads already treat them as gone, so no lifter can restore one. The job's log in Cloud Logging says whether it couldn't connect, ran as the wrong role, or left rows behind (ADR-044)."
+          } > body.md
+          mapfile -t EXISTING < <(gh issue list --label snapshot-expiry-failed --state open --json number --jq '.[].number')
+          if [ "${#EXISTING[@]}" -gt 0 ]; then
+            for N in "${EXISTING[@]}"; do gh issue comment "$N" --body-file body.md; done
+          else
+            gh issue create --label snapshot-expiry-failed --title "Snapshot expiry run failed" --body-file body.md
+          fi

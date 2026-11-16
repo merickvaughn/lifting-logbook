@@ -1,7 +1,9 @@
 import { DEFAULT_FOCUS_BUDGET, FocusBlock, FocusBudget, FocusDayState, StoredFocusBlock } from '@lifting-logbook/types';
 import { FocusBlockPatch, IFocusRepository } from '../../ports/IFocusRepository';
 import { FocusBlockConflictError, FocusBlockNotFoundError } from '../../ports/errors';
+import { TrainingRow } from '../../ports/ITrainingDataRepository';
 import { NumberedStore, dropFromMap, numbersInMap, rekeyMap } from './renumber';
+import { TrainingStore, numberOf } from './training-data.adapter';
 
 function dayKeyNumber(key: string): { program: string; macrocycleNum: number } {
   const [program, macrocycleNum] = JSON.parse(key) as [string, number, number];
@@ -9,10 +11,35 @@ function dayKeyNumber(key: string): { program: string; macrocycleNum: number } {
 }
 
 /** Mirrors PrismaFocusRepository, including its (series, start) uniqueness. */
-export class InMemoryFocusRepository implements IFocusRepository, NumberedStore {
+export class InMemoryFocusRepository implements IFocusRepository, NumberedStore, TrainingStore {
   private readonly blocks = new Map<string, StoredFocusBlock>();
   private readonly dayStates = new Map<string, FocusDayState>();
   private budget: FocusBudget = { ...DEFAULT_FOCUS_BUDGET };
+
+  /** Day states are training data; focus blocks are setup, which Clear data keeps (decision 20). */
+  readonly trainingTable = 'focusDayStates';
+
+  trainingRows(): TrainingRow[] {
+    return [...this.dayStates].map(([key, state]) => {
+      const [program, macrocycleNum, workoutNum] = JSON.parse(key) as [string, number, number];
+      return { program, macrocycleNum, workoutNum, state };
+    });
+  }
+
+  clearTraining(): void {
+    this.dayStates.clear();
+  }
+
+  restoreTraining(rows: readonly TrainingRow[]): number {
+    let added = 0;
+    for (const row of rows) {
+      const key = dayKey(row.program, numberOf(row, 'macrocycleNum'), numberOf(row, 'workoutNum'));
+      if (this.dayStates.has(key)) continue;
+      this.dayStates.set(key, row.state as FocusDayState);
+      added++;
+    }
+    return added;
+  }
 
   rewriteNumbers(program: string, changes: ReadonlyMap<number, number>): number {
     return rekeyMap(this.dayStates, program, changes, dayKeyNumber, (key, macrocycleNum) => {

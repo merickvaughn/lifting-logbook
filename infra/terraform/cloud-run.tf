@@ -458,3 +458,71 @@ resource "google_cloud_run_v2_job" "migrate" {
 
   depends_on = [google_project_service.required_apis]
 }
+
+# ─── Snapshot expiry job (#1309, ADR-044) ─────────────────────────────────────
+#
+# Deletes data_snapshot rows past their 30-day expiry. The API has no scheduler,
+# so .github/workflows/expire-snapshots.yml executes this job daily, the way the
+# deploy pipeline executes the migrate job. It reuses the API image and that
+# job's VPC access, service account and migrator connection: row-level security
+# lets only the table's owner, the migrator, see and delete expired rows (see
+# the data_snapshot migration). The script refuses to run as any other role and
+# fails if an expired row is left, so a failed run shows in the workflow.
+resource "google_cloud_run_v2_job" "expire_snapshots" {
+  name     = "${local.name_prefix}-expire-snapshots"
+  location = var.region
+
+  template {
+    template {
+      service_account = google_service_account.api_workload.email
+
+      # Deleting expired rows is idempotent, so a transient failure (a dropped
+      # connection) retries once; past that the run fails and the next day's
+      # tries again. Reads already treat expired rows as gone.
+      max_retries = 1
+
+      vpc_access {
+        connector = google_vpc_access_connector.main.id
+        egress    = "PRIVATE_RANGES_ONLY"
+      }
+
+      containers {
+        image = local.api_image
+
+        # The API image WORKDIR is /app/apps/api; nest build emits the script
+        # from src/snapshots into dist/snapshots.
+        command = ["node"]
+        args    = ["dist/snapshots/expire-snapshots.job.js"]
+
+        env {
+          name = "DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.migrator_database_url.secret_id
+              version = "latest"
+            }
+          }
+        }
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+
+  # As for the migrate job: the deploy pipeline sets the image with
+  # `gcloud run jobs update --image`, and everything else stays under Terraform.
+  lifecycle {
+    ignore_changes = [
+      template[0].template[0].containers[0].image,
+      client,
+      client_version,
+    ]
+  }
+
+  depends_on = [google_project_service.required_apis]
+}

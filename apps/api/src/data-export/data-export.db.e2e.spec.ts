@@ -63,8 +63,9 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
   CustomProgramSpec: 'customProgramSpecs',
 };
 // Internal undo state for an import, and the hourly count of import suggestion requests (#1174):
-// not the user's data.
-const NOT_EXPORTED = ['ImportBatch', 'ImportSuggestionUsage'];
+// not the user's data. A Clear data snapshot (#1309) holds rows the lifter cleared, and its sets
+// download from the snapshot itself.
+const NOT_EXPORTED = ['DataSnapshot', 'ImportBatch', 'ImportSuggestionUsage'];
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
 const OWNER_DATABASE_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;

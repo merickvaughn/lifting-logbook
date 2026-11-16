@@ -1,6 +1,7 @@
 import { AuthUser } from './auth';
 import { IBodyWeightRepository } from './IBodyWeightRepository';
 import { ICustomLiftRepository } from './ICustomLiftRepository';
+import { IDataSnapshotRepository } from './IDataSnapshotRepository';
 import { IFocusRepository } from './IFocusRepository';
 import { IMacrocycleDashboardRepository } from './IMacrocycleDashboardRepository';
 import { IMacrocycleRepository } from './IMacrocycleRepository';
@@ -14,6 +15,7 @@ import { IProgramPhilosophyRepository } from './IProgramPhilosophyRepository';
 import { IStrengthGoalRepository } from './IStrengthGoalRepository';
 import { ITrainingMaxHistoryRepository } from './ITrainingMaxHistoryRepository';
 import { ITrainingMaxRepository } from './ITrainingMaxRepository';
+import { ITrainingDataRepository } from './ITrainingDataRepository';
 import { IUserDataExportRepository } from './IUserDataExportRepository';
 import { IUserSettingsRepository } from './IUserSettingsRepository';
 import { IWorkoutDateOverrideRepository } from './IWorkoutDateOverrideRepository';
@@ -24,6 +26,7 @@ import { IWorkoutSkipOverrideRepository } from './IWorkoutSkipOverrideRepository
 export interface RepositoryBundle {
   bodyWeight: IBodyWeightRepository;
   customLift: ICustomLiftRepository;
+  dataSnapshot: IDataSnapshotRepository;
   focus: IFocusRepository;
   macrocycle: IMacrocycleRepository;
   macrocycleDashboard: IMacrocycleDashboardRepository;
@@ -37,6 +40,7 @@ export interface RepositoryBundle {
   strengthGoal: IStrengthGoalRepository;
   trainingMax: ITrainingMaxRepository;
   trainingMaxHistory: ITrainingMaxHistoryRepository;
+  trainingData: ITrainingDataRepository;
   userDataExport: IUserDataExportRepository;
   userSettings: IUserSettingsRepository;
   workout: IWorkoutRepository;

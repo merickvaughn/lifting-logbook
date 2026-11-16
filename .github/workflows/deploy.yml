@@ -365,6 +365,20 @@ jobs:
             --project="${{ vars.GCP_STAGING_PROJECT_ID }}" \
             --wait
 
+      # The daily snapshot expiry job (#1309, ADR-044) runs a script from the API
+      # image, so it takes the image this deploy ships. Not executed here:
+      # expire-snapshots.yml runs it on its schedule. A failed update only leaves
+      # the job on the previous image, so it warns rather than failing the deploy.
+      - name: Update snapshot expiry job image (staging)
+        run: |
+          if ! gcloud run jobs update lifting-logbook-stg-expire-snapshots \
+            --image="${{ needs.build-images.outputs.ar_repo }}/api:${{ github.sha }}" \
+            --region="${{ env.REGION }}" \
+            --project="${{ vars.GCP_STAGING_PROJECT_ID }}" \
+            --quiet; then
+            echo "::warning::The snapshot expiry job's image wasn't updated, so it keeps running the previous API image."
+          fi
+
       # GKE-only steps below are skipped when terraform var enable_gke = false
       # (single-user / Cloud-Run-only deployments).
       - name: Set up GKE credentials
@@ -1021,6 +1035,17 @@ jobs:
             --region="${{ env.REGION }}" \
             --project="${{ vars.GCP_PROD_PROJECT_ID }}" \
             --wait
+
+      # See the staging step: the expiry job takes this deploy's API image.
+      - name: Update snapshot expiry job image (production)
+        run: |
+          if ! gcloud run jobs update lifting-logbook-prod-expire-snapshots \
+            --image="${{ steps.tf-prod.outputs.ar_repo }}/api:${{ github.sha }}" \
+            --region="${{ env.REGION }}" \
+            --project="${{ vars.GCP_PROD_PROJECT_ID }}" \
+            --quiet; then
+            echo "::warning::The snapshot expiry job's image wasn't updated, so it keeps running the previous API image."
+          fi
 
       # GKE-only steps below are skipped when terraform var enable_gke = false
       # (single-user / Cloud-Run-only deployments).

@@ -9,9 +9,31 @@ import {
   createdNumberedKeys,
   preImageKeyNumber,
 } from '../../ports/IImportBatchRepository';
+import { TrainingRow } from '../../ports/ITrainingDataRepository';
+import { TrainingStore } from './training-data.adapter';
 
-export class InMemoryImportBatchRepository implements IImportBatchRepository {
+export class InMemoryImportBatchRepository implements IImportBatchRepository, TrainingStore {
   private readonly store = new Map<string, ImportBatchRecord>();
+
+  readonly trainingTable = 'importBatches';
+
+  trainingRows(): TrainingRow[] {
+    return [...this.store.values()].map((b) => ({ ...b }));
+  }
+
+  clearTraining(): void {
+    this.store.clear();
+  }
+
+  restoreTraining(rows: readonly TrainingRow[]): number {
+    let added = 0;
+    for (const row of rows as unknown as ImportBatchRecord[]) {
+      if (this.store.has(row.id)) continue;
+      this.store.set(row.id, row);
+      added++;
+    }
+    return added;
+  }
 
   async save(batch: ImportBatchRecord): Promise<void> {
     this.store.set(batch.id, batch);

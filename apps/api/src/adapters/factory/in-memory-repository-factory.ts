@@ -25,6 +25,8 @@ import { InMemoryWorkoutRepository } from '../in-memory/workout.adapter';
 import { InMemoryWorkoutSkipOverrideRepository } from '../in-memory/workout-skip-override.adapter';
 import { SEED_PROGRAM, seedLiftRecords, seedMacrocycleRow } from '../in-memory/fixtures';
 import { numberedStoresIn } from '../in-memory/renumber';
+import { InMemoryDataSnapshotRepository } from '../in-memory/data-snapshot.adapter';
+import { InMemoryTrainingDataRepository, trainingStoresIn } from '../in-memory/training-data.adapter';
 
 // The dev seed user gets pre-populated training maxes so existing tests that
 // rely on seeded data continue to work without additional setup.
@@ -47,7 +49,10 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       const trainingMax = new InMemoryTrainingMaxRepository(preSeed);
       const userSettings = new InMemoryUserSettingsRepository();
       const macrocycle = new InMemoryMacrocycleRepository(preSeed ? [seedMacrocycleRow()] : []);
+      const trainingData = new InMemoryTrainingDataRepository();
       const bundle: RepositoryBundle = {
+        dataSnapshot: new InMemoryDataSnapshotRepository(),
+        trainingData,
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift,
         focus: new InMemoryFocusRepository(),
@@ -78,6 +83,8 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       };
       // Every other store that holds a number, so a renumbering or delete reaches them all (#1199).
       macrocycle.attachNumbered(numberedStoresIn(bundle));
+      // Every store holding a table Clear data removes (#1309).
+      trainingData.attach(trainingStoresIn(bundle));
       this.bundles.set(user.id, bundle);
     }
     return this.bundles.get(user.id)!;

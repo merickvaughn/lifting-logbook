@@ -918,6 +918,29 @@ The non-Prisma `user_data_source` table (managed outside Prisma) lives in
 `infra/migrations/`; both scripts apply `infra/migrations/001_create_user_data_source.sql`
 after the Prisma migrations.
 
+### Snapshot expiry job
+
+Clear data saves the lifter's training data to `data_snapshot` first, and a snapshot can be
+restored or downloaded for 30 days ([#1309](https://github.com/merickvaughn/lifting-logbook/issues/1309),
+[ADR-044](adr/ADR-044-data-snapshots-and-expiry-job.md)). The Cloud Run job
+`lifting-logbook-<env>-expire-snapshots` deletes the rows past their expiry. It runs
+`node dist/snapshots/expire-snapshots.job.js` from the API image, inside the VPC, with the migrator
+connection the migrate job uses. Row-level security lets only the table's owner, the migrator, see
+expired rows, so the script refuses to run as any other role.
+
+- **Schedule:** [`.github/workflows/expire-snapshots.yml`](../.github/workflows/expire-snapshots.yml)
+  executes it daily at 07:17 UTC in staging (when configured) and production. Run it by hand from
+  the workflow's **Run workflow** button, or with
+  `gcloud run jobs execute lifting-logbook-prod-expire-snapshots --region=us-central1 --project=<project> --wait`.
+- **Image:** `deploy.yml` points the job at each deploy's API image, after the migrate job runs.
+- **Logs:** one JSON line per run, with `deleted` and `remaining`. In Cloud Logging, filter
+  `resource.type="cloud_run_job" resource.labels.job_name="lifting-logbook-prod-expire-snapshots"`.
+- **A failed run** means expired rows are still stored (`remaining` above 0), the job ran as a role
+  that isn't the table's owner, or it couldn't connect. Reads already treat an expired snapshot as
+  gone, so nobody can restore one, but the cleared data stays on the server until a run succeeds.
+  If the table's owner changed, the expiry policies follow it, since they read the owner from the
+  catalog, but the migrator secret must then connect as the new owner.
+
 ### Row-Level Security cutover — two-role split (#517)
 
 The app database enforces per-tenant isolation with Postgres Row-Level Security (migration
