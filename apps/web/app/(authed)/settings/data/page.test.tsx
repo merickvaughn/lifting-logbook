@@ -1,85 +1,62 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+
+jest.mock('@/lib/api', () => ({
+  fetchCustomPrograms: jest.fn(),
+  // Read through the real lib/active-program, as the page reads it.
+  fetchUserSettings: jest.fn(),
+}));
+jest.mock('./DownloadAll', () => ({ __esModule: true, default: () => <div data-download-all /> }));
+jest.mock('./TrainingData', () => ({ __esModule: true, default: () => <div data-training-data /> }));
+jest.mock('./SetsExport', () => ({
+  __esModule: true,
+  default: ({ programs }: { programs: unknown }) => <div data-programs={JSON.stringify(programs)} />,
+}));
+
+import { fetchCustomPrograms, fetchUserSettings } from '@/lib/api';
 import DataSettingsPage from './page';
-import { downloadDataExport } from '@/lib/client-api';
-import { logClientError } from '@/lib/log-client-error';
 
-jest.mock('@/lib/client-api', () => ({ downloadDataExport: jest.fn() }));
-jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
+const custom = { id: '0b5e4c1e-3f43-4a0e-9a8c-1d2e3f405162', name: 'My plan' };
 
-const download = downloadDataExport as jest.Mock;
+async function renderPrograms(): Promise<{ id: string; name: string }[]> {
+  const html = renderToStaticMarkup((await DataSettingsPage()) as ReactElement);
+  expect(html).toContain('data-download-all');
+  expect(html).toContain('data-training-data');
+  const encoded = html.match(/data-programs="([^"]*)"/)?.[1];
+  if (encoded === undefined) throw new Error('data-programs attribute not found in rendered output');
+  return JSON.parse(encoded.replace(/&quot;/g, '"')) as { id: string; name: string }[];
+}
 
-describe('Settings → Data', () => {
-  const saved: { href: string; download: string }[] = [];
-  let click: jest.SpyInstance;
+describe('Settings → Data page', () => {
+  let consoleError: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    saved.length = 0;
-    URL.createObjectURL = jest.fn(() => 'blob:export');
-    URL.revokeObjectURL = jest.fn();
-    click = jest
-      .spyOn(HTMLAnchorElement.prototype, 'click')
-      .mockImplementation(function (this: HTMLAnchorElement) {
-        saved.push({ href: this.href, download: this.download });
-      });
+    consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  afterEach(() => click.mockRestore());
+  afterEach(() => consoleError.mockRestore());
 
-  it('saves the archive under a dated name, then releases its URL once the browser has had time', async () => {
-    const archive = new Blob(['zip']);
-    download.mockResolvedValue(archive);
-    const later = jest.spyOn(global, 'setTimeout');
-    render(<DataSettingsPage />);
+  it('offers the active template and the custom programs to the sets filter', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '5-3-1' });
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([custom]);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
-    expect(screen.getByRole('button', { name: 'Preparing…' })).toBeDisabled();
-
-    await screen.findByRole('button', { name: 'Download my data' });
-    expect(URL.createObjectURL).toHaveBeenCalledWith(archive);
-    expect(saved).toEqual([
-      {
-        href: 'blob:export',
-        download: expect.stringMatching(/^lifting-logbook-export-\d{4}-\d{2}-\d{2}\.zip$/),
-      },
-    ]);
-    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
-
-    const revoke = later.mock.calls.find(([, delay]) => delay === 40_000);
-    later.mockRestore();
-    (revoke![0] as () => void)();
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:export');
+    expect((await renderPrograms()).map((p) => p.id)).toEqual(['5-3-1', custom.id]);
   });
 
-  it('explains a download that timed out in its own words', async () => {
-    download.mockRejectedValue(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
-    render(<DataSettingsPage />);
+  it('still offers the custom programs when settings can’t be read', async () => {
+    (fetchUserSettings as jest.Mock).mockRejectedValue(new Error('settings down'));
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([custom]);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Your download took too long');
+    expect((await renderPrograms()).map((p) => p.id)).toEqual([custom.id]);
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('user settings fetch failed'), expect.any(Error));
   });
 
-  it('shows and reports a failed download, and lets the user try again', async () => {
-    const failure = new Error('Server said no');
-    download.mockRejectedValue(failure);
-    render(<DataSettingsPage />);
+  it('still offers the active program when the custom programs can’t be read', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '5-3-1' });
+    (fetchCustomPrograms as jest.Mock).mockRejectedValue(new Error('customs down'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Server said no');
-    expect(logClientError).toHaveBeenCalledWith('downloadDataExport', failure);
-    expect(saved).toEqual([]);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Download my data' })).toBeEnabled());
-  });
-
-  it('says what the archive holds and links to import', () => {
-    render(<DataSettingsPage />);
-
-    expect(screen.getByRole('link', { name: 'Import' })).toHaveAttribute('href', '/import');
-    for (const file of ['lift-records.csv', 'training-maxes.csv', 'strength-goals.csv', 'program-spec.csv', 'logbook.json']) {
-      expect(screen.getByText(file)).toBeInTheDocument();
-    }
-    expect(screen.getByText('logbook.json').parentElement).toHaveTextContent('logbook.json is the complete record');
+    expect((await renderPrograms()).map((p) => p.id)).toEqual(['5-3-1']);
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('custom programs fetch failed'), expect.any(Error));
   });
 });

@@ -1,0 +1,224 @@
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { ApiClientError } from '@lifting-logbook/api-client';
+import type { DataSnapshotSummary, TrainingDataCounts } from '@lifting-logbook/types';
+import TrainingData from './TrainingData';
+import {
+  clearTrainingData,
+  deleteSnapshot,
+  downloadSnapshotLiftRecords,
+  fetchSnapshotLiftRecordParts,
+  fetchSnapshots,
+  fetchTrainingDataCounts,
+  restoreSnapshot,
+} from '@/lib/client-api';
+import { logClientError } from '@/lib/log-client-error';
+
+jest.mock('@/lib/client-api', () => ({
+  clearTrainingData: jest.fn(),
+  deleteSnapshot: jest.fn(),
+  downloadSnapshotLiftRecords: jest.fn(),
+  fetchSnapshotLiftRecordParts: jest.fn(),
+  fetchSnapshots: jest.fn(),
+  fetchTrainingDataCounts: jest.fn(),
+  restoreSnapshot: jest.fn(),
+}));
+jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
+
+const NONE: TrainingDataCounts = {
+  liftRecords: 0,
+  macrocycles: 0,
+  macrocycleDashboards: 0,
+  macrocycleScheduledWorkouts: 0,
+  trainingMaxes: 0,
+  trainingMaxHistory: 0,
+  liftModificationMaxes: 0,
+  workoutDateOverrides: 0,
+  workoutSkipOverrides: 0,
+  workoutLiftOverrides: 0,
+  focusDayStates: 0,
+  importBatches: 0,
+};
+const counts: TrainingDataCounts = { ...NONE, liftRecords: 1_200, macrocycles: 3, trainingMaxes: 1 };
+const snapshot: DataSnapshotSummary = {
+  id: 'snap-1',
+  kind: 'clear',
+  createdAt: '2026-11-01T12:00:00.000Z',
+  expiresAt: '2026-12-01T12:00:00.000Z',
+  counts,
+};
+
+describe('Settings → Data → Clear data and backups', () => {
+  let confirm: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (fetchSnapshots as jest.Mock).mockResolvedValue([]);
+    (fetchTrainingDataCounts as jest.Mock).mockResolvedValue(counts);
+    confirm = jest.spyOn(window, 'confirm').mockReturnValue(true);
+  });
+
+  afterEach(() => confirm.mockRestore());
+
+  it('shows the counts and the 30-day notice, and clears only once confirmed', async () => {
+    const user = userEvent.setup();
+    (clearTrainingData as jest.Mock).mockResolvedValue({ snapshot });
+    render(<TrainingData />);
+
+    await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+
+    const panel = await screen.findByRole('group', { name: 'Clear 1,204 rows?' });
+    expect(within(panel).getByText('1,200 logged sets')).toBeInTheDocument();
+    expect(within(panel).getByText('3 macrocycles')).toBeInTheDocument();
+    expect(within(panel).getByText('1 training max')).toBeInTheDocument();
+    expect(within(panel).queryByText(/program dashboard/)).not.toBeInTheDocument();
+    expect(panel).toHaveTextContent('kept for 30 days');
+    expect(screen.getByRole('heading', { name: 'Clear 1,204 rows?' })).toHaveFocus();
+    expect(clearTrainingData).not.toHaveBeenCalled();
+
+    (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
+    await user.click(within(panel).getByRole('button', { name: 'Clear 1,204 rows' }));
+
+    expect(clearTrainingData).toHaveBeenCalledWith(counts);
+    expect(await screen.findByRole('status')).toHaveTextContent('Cleared 1,204 rows. The backup is kept until');
+    expect(screen.queryByRole('group')).not.toBeInTheDocument();
+    expect(await screen.findByText(/From clearing your data on/)).toBeInTheDocument();
+  });
+
+  it('changes nothing when cancelled', async () => {
+    const user = userEvent.setup();
+    render(<TrainingData />);
+
+    await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    expect(clearTrainingData).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Clear training data…' })).toBeInTheDocument();
+  });
+
+  it('says there’s nothing to clear when every count is zero', async () => {
+    const user = userEvent.setup();
+    (fetchTrainingDataCounts as jest.Mock).mockResolvedValue(NONE);
+    render(<TrainingData />);
+
+    await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+
+    expect(await screen.findByRole('heading', { name: 'There’s nothing to clear' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Clear \d/ })).not.toBeInTheDocument();
+  });
+
+  it('shows the current counts when they changed before the clear ran', async () => {
+    const user = userEvent.setup();
+    const now = { ...counts, liftRecords: 1_201 };
+    const changed = new ApiClientError('Your data has changed since you confirmed what to clear.', 409, 'counts-changed', {
+      code: 'counts-changed',
+      counts: now,
+    });
+    (clearTrainingData as jest.Mock).mockRejectedValue(changed);
+    render(<TrainingData />);
+    await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+
+    await user.click(await screen.findByRole('button', { name: 'Clear 1,204 rows' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your data has changed');
+    expect(screen.getByRole('button', { name: 'Clear 1,205 rows' })).toBeInTheDocument();
+    expect(logClientError).toHaveBeenCalledTimes(1);
+    expect(logClientError).toHaveBeenCalledWith('clearTrainingData', changed);
+  });
+
+  it.each([
+    ['clear', 'clearTrainingData', clearTrainingData, async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+      await user.click(await screen.findByRole('button', { name: 'Clear 1,204 rows' }));
+    }, undefined],
+    ['restore', 'restoreSnapshot', restoreSnapshot, async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(await screen.findByRole('button', { name: 'Restore' }));
+    }, { snapshot: 'snap-1' }],
+    ['delete', 'deleteSnapshot', deleteSnapshot, async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(await screen.findByRole('button', { name: 'Delete' }));
+    }, { snapshot: 'snap-1' }],
+  ])('shows and logs once a failed %s', async (_name, op, endpoint, act, context) => {
+    const user = userEvent.setup();
+    const failure = new Error('Server said no');
+    (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
+    (endpoint as jest.Mock).mockRejectedValue(failure);
+    render(<TrainingData />);
+
+    await act(user);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Server said no');
+    expect(logClientError).toHaveBeenCalledTimes(1);
+    expect(logClientError).toHaveBeenCalledWith(op, failure, ...(context ? [context] : []));
+  });
+
+  it('restores a backup and re-reads the list', async () => {
+    const user = userEvent.setup();
+    (fetchSnapshots as jest.Mock).mockResolvedValueOnce([snapshot]).mockResolvedValueOnce([]);
+    (restoreSnapshot as jest.Mock).mockResolvedValue({ restored: { ...counts, liftRecords: 1_100 } });
+    render(<TrainingData />);
+
+    await user.click(await screen.findByRole('button', { name: 'Restore' }));
+
+    expect(restoreSnapshot).toHaveBeenCalledWith('snap-1');
+    expect(await screen.findByRole('status')).toHaveTextContent('Restored 1,104 rows.');
+    expect(await screen.findByText(/No backups/)).toBeInTheDocument();
+  });
+
+  it('downloads a backup’s sets', async () => {
+    const user = userEvent.setup();
+    URL.createObjectURL = jest.fn(() => 'blob:backup');
+    URL.revokeObjectURL = jest.fn();
+    const saved: string[] = [];
+    const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push(this.download);
+    });
+    (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
+    (fetchSnapshotLiftRecordParts as jest.Mock).mockResolvedValue({
+      rows: 1_200,
+      split: 'fedcba9876543210',
+      parts: [{ part: 1, rows: 1_200, from: '2024-01-01', to: '2026-10-30' }],
+    });
+    (downloadSnapshotLiftRecords as jest.Mock).mockResolvedValue(new Blob(['csv']));
+    render(<TrainingData />);
+
+    await user.click(await screen.findByRole('button', { name: 'Download sets' }));
+    expect(fetchSnapshotLiftRecordParts).toHaveBeenCalledWith('snap-1');
+    // The part list's own button, under the backup.
+    const buttons = await screen.findAllByRole('button', { name: 'Download sets' });
+    await user.click(buttons[buttons.length - 1] as HTMLElement);
+
+    expect(downloadSnapshotLiftRecords).toHaveBeenCalledWith('snap-1', 1, 'fedcba9876543210');
+    expect(saved).toEqual([expect.stringMatching(/^backup-lift-records-\d{4}-\d{2}-\d{2}\.csv$/)]);
+    click.mockRestore();
+  });
+
+  it('asks before deleting a backup, says it can’t be undone, and deletes nothing if declined', async () => {
+    const user = userEvent.setup();
+    (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
+    confirm.mockReturnValue(false);
+    render(<TrainingData />);
+
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('can’t be undone'));
+    expect(deleteSnapshot).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    (deleteSnapshot as jest.Mock).mockResolvedValue(undefined);
+    (fetchSnapshots as jest.Mock).mockResolvedValue([]);
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    expect(deleteSnapshot).toHaveBeenCalledWith('snap-1');
+    expect(await screen.findByRole('status')).toHaveTextContent('Backup deleted.');
+    await waitFor(() => expect(screen.getByText(/No backups/)).toBeInTheDocument());
+  });
+
+  it('shows and reports a backup list that couldn’t be read', async () => {
+    const failure = new Error('API down');
+    (fetchSnapshots as jest.Mock).mockRejectedValue(failure);
+    render(<TrainingData />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t load your backups');
+    expect(logClientError).toHaveBeenCalledWith('fetchSnapshots', failure);
+  });
+});

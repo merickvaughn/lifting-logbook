@@ -91,6 +91,19 @@ export const {
   fetchGoogleSheetWorkbook,
   // A read, but the browser has to receive it to save it (#947).
   downloadDataExport,
+  // Settings > Data (#1310): the filtered sets download, whose macrocycle filter follows the
+  // program picked on the page, and Clear data with its backups, which the page re-reads after
+  // each change.
+  fetchMacrocycles,
+  fetchLiftRecordExportParts,
+  downloadLiftRecordExport,
+  fetchTrainingDataCounts,
+  clearTrainingData,
+  fetchSnapshots,
+  restoreSnapshot,
+  deleteSnapshot,
+  fetchSnapshotLiftRecordParts,
+  downloadSnapshotLiftRecords,
   createCustomLift,
   // Read, not just a write — but the 409 self-heal path needs to refetch the
   // live custom-lift list client-side (a stale/absent local copy otherwise
