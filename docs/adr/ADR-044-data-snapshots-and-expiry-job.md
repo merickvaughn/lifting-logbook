@@ -60,9 +60,15 @@ success.
      snapshot's current macrocycle comes back closed, as starting the next macrocycle closes one.
      Each program is then renumbered by start date (ADR-042), and the snapshot is deleted. A
      restore can't run twice.
-   - **Clear and restore run at `REPEATABLE READ`**, so a write committed while they run, such as
-     a training-max edit, fails them with a 409 rather than being deleted unsaved or breaking a
-     foreign key. Their transaction may take 60 seconds: on 2026-11-15 a local Postgres 16 cleared
+   - **Clear locks the rows it saves.** It runs at `READ COMMITTED` and waits for the import and
+     macrocycle locks, so it sees every set a page write holding the lock committed while it
+     waited. It then locks each cleared table's rows with `SELECT ... FOR UPDATE`, so a write that
+     takes neither lock, such as a training-max edit, can't change one between the snapshot and
+     the delete. When the delete removes more rows than the snapshot holds, a row was added in
+     between, and the transaction rolls back with a 409. A write that still collides with clear or
+     restore (a modification deleted under restore, a deadlock) also rolls it back with a 409
+     rather than being deleted unsaved or breaking a foreign key. Their transaction may take 60
+     seconds: on 2026-11-15 a local Postgres 16 cleared
      78,000 sets, a heavy lifter's ten years, in 2.0 s and restored them in 15.2 s.
 4. **Every read treats an expired snapshot as gone.** List, restore and download filter on
    `expiresAt > now`, so a late or failed job never extends retention.
@@ -96,6 +102,11 @@ success.
   reader of the old version instead, and the column pin says when.
 - **Restore by overwriting.** Rejected by decision 21's own wording: restore must not lose anything
   saved since the clear.
+- **Run clear and restore at `REPEATABLE READ`.** Rejected: that level fixes what a transaction
+  sees at its first statement, which is setting the row-level-security user, before the wait for
+  the macrocycle lock. A set a page write added and committed during the wait would be invisible
+  to clear: neither saved nor deleted, and left on a macrocycle clear had removed. Postgres can't
+  take an advisory lock before that first view.
 - **Restore every snapshot set, beside any stored again since.** Rejected by the owner: after
   importing the clear's download and then restoring, every set would be stored twice under
   different macrocycles.
@@ -124,5 +135,5 @@ success.
 5. Prisma documentation, [`createMany`](https://www.prisma.io/docs/orm/reference/prisma-client-reference#createmany) — `skipDuplicates` inserts with `ON CONFLICT DO NOTHING`.
 6. Google Cloud documentation, [Execute jobs](https://cloud.google.com/run/docs/execute/jobs) — `gcloud run jobs execute --wait` returns the execution's result.
 7. Node.js documentation, [`zlib`](https://nodejs.org/api/zlib.html) — `gzip` and `gunzip`, which run on the thread pool rather than blocking the event loop.
-8. PostgreSQL 16 documentation, [§13.2.2 Repeatable Read Isolation Level](https://www.postgresql.org/docs/16/transaction-iso.html#XACT-REPEATABLE-READ) — a transaction that updates or deletes a row changed by a concurrent commit fails with a serialization error.
+8. PostgreSQL 16 documentation, [§13.2.2 Repeatable Read Isolation Level](https://www.postgresql.org/docs/16/transaction-iso.html#XACT-REPEATABLE-READ) — the transaction sees a snapshot taken at its first statement, the rejected alternative's flaw; and [§13.3.2 Row-Level Locks](https://www.postgresql.org/docs/16/explicit-locking.html#LOCKING-ROWS) — `FOR UPDATE` blocks other transactions' `UPDATE` and `DELETE` of the locked rows until it ends.
 9. PostgreSQL 16 documentation, [§9.9.4 `AT TIME ZONE`](https://www.postgresql.org/docs/16/functions-datetime.html#FUNCTIONS-DATETIME-ZONECONVERT) — converting `timestamp with time zone` to the wall-clock `timestamp` of a zone.

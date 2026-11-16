@@ -58,8 +58,15 @@ export class InMemoryTrainingDataRepository implements ITrainingDataRepository {
     return counts as unknown as TrainingDataCounts;
   }
 
-  async clear(): Promise<void> {
+  /** One request runs at a time here, so there is nothing to lock. */
+  async lockRows(): Promise<TrainingDataCounts> {
+    return this.counts();
+  }
+
+  async clear(): Promise<TrainingDataCounts> {
+    const counts = await this.counts();
     for (const store of this.stores) store.clearTraining();
+    return counts;
   }
 
   async insertMissing(data: TrainingData): Promise<TrainingDataCounts> {

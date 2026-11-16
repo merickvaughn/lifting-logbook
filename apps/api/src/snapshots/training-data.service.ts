@@ -44,7 +44,10 @@ function programsIn(data: TrainingData): string[] {
 /**
  * Clear data (proposal decision 20, #1309): saves a snapshot of every cleared table, then clears
  * them, in the caller's transaction. Takes the import and macrocycle locks first, so no import or
- * page write runs alongside it. When the stored counts differ from `confirmed`, what the lifter
+ * page write runs alongside it, then locks the rows themselves, so a write that takes neither
+ * lock (a training-max edit) can't change one between the snapshot and the delete. The
+ * transaction is `READ COMMITTED`, so each statement sees what the writes it waited for
+ * committed. When the stored counts differ from `confirmed`, what the lifter
  * agreed to clear isn't what's there, so nothing changes and it's a 409. When the snapshot can't
  * be saved, nothing is cleared and it's a 503.
  */
@@ -54,7 +57,7 @@ export async function clearTrainingData(
   now: Date,
 ): Promise<StoredSnapshotSummary> {
   await lockForAssignedImport(repos);
-  const counts = await repos.trainingData.counts();
+  const counts = await repos.trainingData.lockRows();
   if (TRAINING_TABLES.some((table) => counts[table] !== confirmed[table])) {
     throw new ConflictException({
       statusCode: 409,
@@ -70,7 +73,7 @@ export async function clearTrainingData(
     snapshot = await repos.dataSnapshot.create({
       kind: 'clear',
       scope: { programs: programsIn(data) },
-      counts,
+      counts: countRows(data),
       data,
       createdAt: now,
       expiresAt: new Date(now.getTime() + SNAPSHOT_RETENTION_DAYS * DAY_MS),
@@ -81,8 +84,27 @@ export async function clearTrainingData(
       { cause: err },
     );
   }
-  await repos.trainingData.clear();
+  // The rows read are locked, so only a row added since can make a count differ. It isn't in
+  // the snapshot, so it's a 409 and the transaction rolls back rather than deleting it unsaved.
+  const cleared = await repos.trainingData.clear();
+  if (TRAINING_TABLES.some((table) => cleared[table] !== data[table].length)) throw dataChanged();
   return snapshot;
+}
+
+function countRows(data: TrainingData): TrainingDataCounts {
+  const counts: Partial<TrainingDataCounts> = {};
+  for (const table of TRAINING_TABLES) counts[table] = data[table].length;
+  return counts as TrainingDataCounts;
+}
+
+/** A write committed while clear or restore ran, which rolls it back (#1309). */
+export function dataChanged(): ConflictException {
+  return new ConflictException({
+    statusCode: 409,
+    code: 'data-changed',
+    message: 'Your data changed while this ran, so nothing changed. Please try again.',
+    error: 'Conflict',
+  });
 }
 
 /** Moves every numbered row of `program` by `move`, which returns the row's new numbers. */

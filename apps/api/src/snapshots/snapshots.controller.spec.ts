@@ -1,5 +1,4 @@
 import { ConflictException, Logger, ServiceUnavailableException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError, PrismaClientValidationError } from '@prisma/client/runtime/library';
 import { RlsContextService } from '../adapters/prisma/rls-context.service';
 import { AuthUser } from '../ports/auth';
@@ -7,11 +6,11 @@ import { IRepositoryFactory } from '../ports/factory';
 import { SnapshotsController, TRAINING_DATA_TX_TIMEOUT_MS } from './snapshots.controller';
 
 const USER: AuthUser = { id: 'snapshots-controller-spec', email: 'spec@example.com', provider: 'dev' };
-const prismaError = (code: string) =>
+const prismaError = (code: string, dbCode?: string) =>
   new PrismaClientKnownRequestError('Unique constraint failed on notes "row contents"', {
     code,
     clientVersion: '5.22.0',
-    meta: { target: ['userId'] },
+    meta: dbCode === undefined ? { target: ['userId'] } : { code: dbCode, message: 'row contents' },
   });
 
 /** The controller with a user context that fails with `failure`, and the error log it writes. */
@@ -25,27 +24,44 @@ function failingWith(failure: unknown) {
 describe('SnapshotsController failures (#1309)', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it('runs clear and restore at REPEATABLE READ, and a download at the default level', async () => {
+  it('runs clear, restore and a download at the default level, READ COMMITTED, with the long timeout', async () => {
     const { controller, withUserContext } = failingWith(prismaError('P2034'));
 
     await expect(controller.clear(USER, { counts: {} as never })).rejects.toBeInstanceOf(ConflictException);
     await expect(controller.restore(USER, 'id')).rejects.toBeInstanceOf(ConflictException);
     await expect(controller.liftRecordParts(USER, 'id')).rejects.toBeInstanceOf(ConflictException);
 
+    // A REPEATABLE READ snapshot would be fixed before the macrocycle lock's wait, and miss what
+    // the writes it waited for added.
     expect(withUserContext.mock.calls.map((call) => call.slice(1))).toEqual([
-      [TRAINING_DATA_TX_TIMEOUT_MS, Prisma.TransactionIsolationLevel.RepeatableRead],
-      [TRAINING_DATA_TX_TIMEOUT_MS, Prisma.TransactionIsolationLevel.RepeatableRead],
-      [TRAINING_DATA_TX_TIMEOUT_MS, undefined],
+      [TRAINING_DATA_TX_TIMEOUT_MS],
+      [TRAINING_DATA_TX_TIMEOUT_MS],
+      [TRAINING_DATA_TX_TIMEOUT_MS],
     ]);
   });
 
-  it.each(['P2034', 'P2003'])('turns %s, a write committed alongside, into a 409 that says nothing changed', async (code) => {
-    const { controller } = failingWith(prismaError(code));
+  it.each([
+    ['P2034', undefined],
+    ['P2003', undefined],
+    ['P2010', '40P01'],
+    ['P2010', '40001'],
+  ])('turns %s %s, a write committed alongside, into a 409 that says nothing changed', async (code, dbCode) => {
+    const { controller, logged } = failingWith(prismaError(code, dbCode));
 
     const err = await controller.restore(USER, 'id').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ConflictException);
     expect((err as ConflictException).getResponse()).toMatchObject({ statusCode: 409, code: 'data-changed' });
+    expect(logged).toHaveBeenCalledWith(expect.objectContaining({ code, ...(dbCode ? { dbCode } : {}) }), expect.any(String));
+  });
+
+  it('leaves another raw-query failure a 500, and logs its code but not its message', async () => {
+    const failure = prismaError('P2010', '23505');
+    const { controller, logged } = failingWith(failure);
+
+    await expect(controller.restore(USER, 'id')).rejects.toBe(failure);
+    expect(logged).toHaveBeenCalledWith(expect.objectContaining({ code: 'P2010', dbCode: '23505' }), expect.any(String));
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('row contents');
   });
 
   it('turns a timeout into a 503', async () => {

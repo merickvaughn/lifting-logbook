@@ -10,6 +10,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
 import { LIFT_RECORD_EXPORT_HEADERS, parseCsvText } from '@lifting-logbook/core';
 import type { ClearTrainingDataResponse, LiftRecordExportPartsResponse, TrainingDataCounts } from '@lifting-logbook/types';
+import { MACROCYCLE_LOCK_NAMESPACE } from '../adapters/prisma/macrocycle.repository';
 import { PrismaService } from '../adapters/prisma/prisma.service';
 import { AppModule } from '../app.module';
 import { DomainConflictFilter } from '../programs/conflict.filter';
@@ -30,7 +31,9 @@ const USER_NEWER = 'db-e2e-snapshots-newer';
 const USER_NO_BACKUP = 'db-e2e-snapshots-no-backup';
 const USER_ISOLATED = 'db-e2e-snapshots-isolated';
 const USER_LONG = 'db-e2e-snapshots-long';
-const USERS = [USER_CLEARED, USER_OTHER, USER_NEWER, USER_NO_BACKUP, USER_ISOLATED, USER_LONG];
+const USER_PAGE_WRITE = 'db-e2e-snapshots-page-write';
+const USER_ROW_WRITE = 'db-e2e-snapshots-row-write';
+const USERS = [USER_CLEARED, USER_OTHER, USER_NEWER, USER_NO_BACKUP, USER_ISOLATED, USER_LONG, USER_PAGE_WRITE, USER_ROW_WRITE];
 const PROGRAM = '5-3-1';
 const CUSTOM_PROGRAM_IDS: Record<string, string> = {
   [USER_CLEARED]: '0e130900-0000-4000-8000-000000000001',
@@ -538,6 +541,73 @@ describeOrSkip('Clear data and snapshots (#1309, e2e, PrismaRepositoryFactory)',
 
     expect(status).toBe(503);
     expect(await countsOf(prisma, USER_NO_BACKUP)).toEqual(before);
+  });
+
+  describe('a write committed while clear runs', () => {
+    /**
+     * Opens a transaction as lifting_app and `userId`, runs `write` in it, starts a clear of
+     * `counts` and waits until the clear is blocked on that transaction, then commits it.
+     * Returns the clear's response.
+     */
+    async function clearDuring(userId: string, counts: TrainingDataCounts, write: (client: Client) => Promise<void>) {
+      const client = new Client({ connectionString: APP_ROLE_URL });
+      await client.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [userId]);
+        await write(client);
+        const { rows } = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+        const writer = rows[0]?.pid;
+        const response = inject(userId, 'POST', '/users/me/training-data/clear', { counts });
+        // The clear's wait shows as a backend blocked by the writer. The macrocycle lock gives up
+        // after 5 s, so this checks often.
+        const deadline = Date.now() + 4_000;
+        let blocked = 0;
+        while (blocked === 0 && Date.now() < deadline) {
+          const waiting = await prisma.$queryRaw<{ n: number }[]>`
+            SELECT count(*)::int AS n FROM pg_stat_activity WHERE ${writer}::int = ANY(pg_blocking_pids(pid))`;
+          blocked = waiting[0]?.n ?? 0;
+          if (blocked === 0) await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(blocked).toBe(1);
+        await client.query('COMMIT');
+        return await response;
+      } finally {
+        await client.end();
+      }
+    }
+
+    it('waits for a page write holding the macrocycle lock, then saves and clears the set it added', async () => {
+      const before = await apiCounts(USER_PAGE_WRITE);
+
+      const res = await clearDuring(USER_PAGE_WRITE, { ...before, liftRecords: before.liftRecords + 1 }, async (client) => {
+        await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1, $2))', [USER_PAGE_WRITE, MACROCYCLE_LOCK_NAMESPACE]);
+        await client.query(
+          `INSERT INTO "lift_record" ("id", "userId", "program", "macrocycleNum", "workoutNum", "date", "lift", "setNum", "weight", "reps")
+           VALUES ('db-e2e-page-write-set', $1, $2, 2, 3, '2025-06-09', 'Squat', 1, 235, 5)`,
+          [USER_PAGE_WRITE, PROGRAM],
+        );
+      });
+
+      // A REPEATABLE READ clear fixed its view before the wait, so it couldn't see this set.
+      expect(res.statusCode).toBe(201);
+      expect(res.json<ClearTrainingDataResponse>().snapshot.counts.liftRecords).toBe(before.liftRecords + 1);
+      expect(await prisma.liftRecord.count({ where: { userId: USER_PAGE_WRITE } })).toBe(0);
+    });
+
+    it('waits for a training-max edit holding its row, then saves the edited max', async () => {
+      const counts = await apiCounts(USER_ROW_WRITE);
+
+      const res = await clearDuring(USER_ROW_WRITE, counts, async (client) => {
+        await client.query(`UPDATE "training_max" SET "weight" = 310 WHERE "userId" = $1`, [USER_ROW_WRITE]);
+      });
+
+      // Without the row locks, clear reads 300, saves it, and then deletes the 310 row.
+      expect(res.statusCode).toBe(201);
+      const snapshot = res.json<ClearTrainingDataResponse>().snapshot;
+      expect((await inject(USER_ROW_WRITE, 'POST', `/users/me/snapshots/${snapshot.id}/restore`)).statusCode).toBe(200);
+      expect((await prisma.trainingMax.findMany({ where: { userId: USER_ROW_WRITE } })).map((m) => m.weight)).toEqual([310]);
+    });
   });
 
   it('keeps each user’s snapshots to themselves, and treats an expired one as gone', async () => {

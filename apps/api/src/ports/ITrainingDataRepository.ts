@@ -64,8 +64,14 @@ export interface ITrainingDataRepository {
   /** How many rows each cleared table holds for this user. */
   counts(): Promise<TrainingDataCounts>;
 
-  /** Deletes this user's rows from every cleared table. */
-  clear(): Promise<void>;
+  /**
+   * Locks this user's rows in every cleared table until the transaction ends, so no other write
+   * changes or deletes one before it does, and returns how many each table holds.
+   */
+  lockRows(): Promise<TrainingDataCounts>;
+
+  /** Deletes this user's rows from every cleared table, and returns how many each table lost. */
+  clear(): Promise<TrainingDataCounts>;
 
   /**
    * Inserts `data`'s rows, skipping any whose key a stored row holds: a program's dashboard, a

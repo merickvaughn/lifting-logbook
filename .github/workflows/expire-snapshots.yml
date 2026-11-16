@@ -51,10 +51,12 @@ jobs:
           PROJECT: ${{ vars.GCP_STAGING_PROJECT_ID }}
         run: |
           # Until the first deploy after #1309 applies Terraform, the job doesn't
-          # exist yet and there is nothing to expire.
-          # Any other describe failure (auth, permissions) still fails the run.
+          # exist yet and there is nothing to expire. gcloud's run/jobs/describe.py
+          # says exactly "Cannot find job [<name>]." when the project has no such
+          # job; any other describe failure (a wrong project, auth, permissions)
+          # still fails the run.
           if ! out=$(gcloud run jobs describe "$JOB" --region="$REGION" --project="$PROJECT" --format='value(name)' 2>&1); then
-            if grep -qiE 'cannot find|not found' <<<"$out"; then
+            if grep -qF "Cannot find job [$JOB]." <<<"$out"; then
               echo "::notice::$JOB doesn't exist yet in $PROJECT, so there is nothing to run."
               exit 0
             fi
@@ -78,9 +80,10 @@ jobs:
           PROJECT: ${{ vars.GCP_PROD_PROJECT_ID }}
         run: |
           # See the staging job: nothing to run until a deploy creates the job.
-          # Any other describe failure (auth, permissions) still fails the run.
+          # Any other describe failure (a wrong project, auth, permissions) still
+          # fails the run.
           if ! out=$(gcloud run jobs describe "$JOB" --region="$REGION" --project="$PROJECT" --format='value(name)' 2>&1); then
-            if grep -qiE 'cannot find|not found' <<<"$out"; then
+            if grep -qF "Cannot find job [$JOB]." <<<"$out"; then
               echo "::notice::$JOB doesn't exist yet in $PROJECT, so there is nothing to run."
               exit 0
             fi

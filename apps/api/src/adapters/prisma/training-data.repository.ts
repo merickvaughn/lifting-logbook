@@ -1,4 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { TrainingDataCounts } from '@lifting-logbook/types';
 import {
   ITrainingDataRepository,
@@ -37,6 +38,24 @@ function delegates(db: PrismaClient): Record<TrainingTable, TableDelegate> {
     importBatches: db.importBatch,
   };
 }
+
+const tracer = trace.getTracer('prisma-training-data-repository');
+
+/** Each cleared table's name in Postgres, from its model's `@@map`. */
+const TABLE_NAMES: Record<TrainingTable, string> = {
+  macrocycles: 'macrocycle',
+  liftRecords: 'lift_record',
+  macrocycleDashboards: 'macrocycle_dashboard',
+  macrocycleScheduledWorkouts: 'macrocycle_scheduled_workout',
+  trainingMaxes: 'training_max',
+  trainingMaxHistory: 'training_max_history',
+  liftModificationMaxes: 'lift_modification_max',
+  workoutDateOverrides: 'workout_date_override',
+  workoutSkipOverrides: 'workout_skip_override',
+  workoutLiftOverrides: 'workout_lift_override',
+  focusDayStates: 'focus_day_state',
+  importBatches: 'import_batch',
+};
 
 /**
  * A row as `createMany` takes it: with the user id, and without a null `import_batch.macrocycles`,
@@ -77,10 +96,39 @@ export class PrismaTrainingDataRepository implements ITrainingDataRepository {
     return counts as TrainingDataCounts;
   }
 
-  async clear(): Promise<void> {
+  /**
+   * `SELECT ... FOR UPDATE` on each table, which Prisma's client can't express. Raw SQL isn't
+   * traced (ADR-024), hence the span. A write already holding a row lock is waited for, so what
+   * `read` sees next is what `clear` deletes.
+   */
+  async lockRows(): Promise<TrainingDataCounts> {
+    return tracer.startActiveSpan('training_data.lock_rows', async (span) => {
+      try {
+        const counts: Partial<TrainingDataCounts> = {};
+        for (const table of TRAINING_TABLES) {
+          const rows = await this.prisma.$queryRaw<{ n: number }[]>`
+            SELECT count(*)::int AS n FROM (
+              SELECT 1 FROM ${Prisma.raw(`"${TABLE_NAMES[table]}"`)} WHERE "userId" = ${this.userId} FOR UPDATE
+            ) locked`;
+          counts[table] = rows[0]?.n ?? 0;
+        }
+        span.setAttribute('rows.locked', Object.values(counts).reduce((n, c) => n + (c ?? 0), 0));
+        return counts as TrainingDataCounts;
+      } catch (err) {
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
+  async clear(): Promise<TrainingDataCounts> {
+    const counts: Partial<TrainingDataCounts> = {};
     for (const table of [...TRAINING_TABLES].reverse()) {
-      await this.tables[table].deleteMany({ where: { userId: this.userId } });
+      counts[table] = (await this.tables[table].deleteMany({ where: { userId: this.userId } })).count;
     }
+    return counts as TrainingDataCounts;
   }
 
   async insertMissing(data: TrainingData): Promise<TrainingDataCounts> {

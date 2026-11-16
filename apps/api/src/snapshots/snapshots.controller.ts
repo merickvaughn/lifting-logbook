@@ -16,7 +16,6 @@ import {
   ServiceUnavailableException,
   StreamableFile,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { serializeLiftRecords } from '@lifting-logbook/core';
 import {
@@ -36,7 +35,7 @@ import { StoredSnapshotSummary } from '../ports/IDataSnapshotRepository';
 import { TRAINING_TABLES, liftRecordRows, macrocycleRows } from '../ports/ITrainingDataRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { ClearTrainingDataDto, SnapshotLiftRecordsQueryDto } from './training-data.dto';
-import { clearTrainingData, restoreSnapshot } from './training-data.service';
+import { clearTrainingData, dataChanged, restoreSnapshot } from './training-data.service';
 
 /**
  * How long clear, restore and a snapshot download may take. Measured on 2026-11-15 against a local
@@ -171,29 +170,20 @@ export class SnapshotsController {
 
   /**
    * Runs `fn` in the user's RLS transaction, logging a failure and turning a timeout into a 503.
-   * Clear and restore read rows and then write or delete them, so they run at `REPEATABLE READ`: a
-   * write committed in between (a training-max edit, a modification deleted) fails them with a
-   * 409 rather than being deleted unsaved or breaking a foreign key.
+   * The transaction is `READ COMMITTED`, not `REPEATABLE READ`: that level fixes what it sees at
+   * its first statement, before clear and restore wait for the macrocycle lock, so it couldn't
+   * see what the writes it waited for added. Clear locks the rows it deletes instead. A write
+   * committed alongside that still collides (a modification deleted under restore, a deadlock)
+   * rolls the transaction back and is a 409.
    */
   private async run<T>(action: 'clear' | 'restore' | 'download', started: number, fn: () => Promise<T>): Promise<T> {
     try {
-      return await this.rlsContext.withUserContext(
-        fn,
-        TRAINING_DATA_TX_TIMEOUT_MS,
-        action === 'download' ? undefined : Prisma.TransactionIsolationLevel.RepeatableRead,
-      );
+      return await this.rlsContext.withUserContext(fn, TRAINING_DATA_TX_TIMEOUT_MS);
     } catch (err) {
       if (err instanceof HttpException && err.getStatus() < 500) throw err;
       const failure = describeFailure(err instanceof HttpException && err.cause !== undefined ? err.cause : err);
       this.logger.error({ action, ...failure, durationMs: Date.now() - started }, 'Training data action failed (#1309)');
-      if (failure.code === 'P2034' || failure.code === 'P2003') {
-        throw new ConflictException({
-          statusCode: 409,
-          code: 'data-changed',
-          message: 'Your data changed while this ran, so nothing changed. Please try again.',
-          error: 'Conflict',
-        });
-      }
+      if (isConcurrentWrite(failure)) throw dataChanged();
       if (failure.code === 'P2028') {
         throw new ServiceUnavailableException('This took too long, so nothing changed. Please try again in a moment.');
       }
@@ -202,13 +192,37 @@ export class SnapshotsController {
   }
 }
 
+interface Failure {
+  error: string;
+  code?: string;
+  dbCode?: string;
+  target?: unknown;
+  message?: string;
+}
+
+/** Postgres's serialization failure and deadlock, which a raw query reports as P2010. */
+const CONCURRENT_WRITE_DB_CODES = new Set(['40001', '40P01']);
+
+/**
+ * A failure caused by a write committed alongside: Prisma's write conflict or deadlock (P2034),
+ * a row a foreign key needs deleted (P2003), or either Postgres code from a raw query.
+ */
+function isConcurrentWrite(failure: Failure): boolean {
+  if (failure.code === 'P2034' || failure.code === 'P2003') return true;
+  return failure.code === 'P2010' && failure.dbCode !== undefined && CONCURRENT_WRITE_DB_CODES.has(failure.dbCode);
+}
+
 /**
  * What a failure log may say about `err`: its name and Prisma code and target. A Prisma error's
  * message can quote the call's arguments, which here are the lifter's rows, so only other errors'
  * messages are logged.
  */
-function describeFailure(err: unknown): { error: string; code?: string; target?: unknown; message?: string } {
-  if (err instanceof PrismaClientKnownRequestError) return { error: err.name, code: err.code, target: err.meta?.['target'] };
+function describeFailure(err: unknown): Failure {
+  if (err instanceof PrismaClientKnownRequestError) {
+    // A raw query's failure (P2010) carries the Postgres error code; its message quotes the query.
+    const dbCode = err.meta?.['code'];
+    return { error: err.name, code: err.code, target: err.meta?.['target'], ...(typeof dbCode === 'string' ? { dbCode } : {}) };
+  }
   if (!(err instanceof Error)) return { error: typeof err };
   return err.name.startsWith('PrismaClient') ? { error: err.name } : { error: err.name, message: err.message };
 }
