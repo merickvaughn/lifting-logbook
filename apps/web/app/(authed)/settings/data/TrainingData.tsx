@@ -58,8 +58,16 @@ function CountList({ counts }: { counts: TrainingDataCounts }) {
   );
 }
 
+/**
+ * What a failed change shows. The server's own failures say whether anything changed. When the
+ * browser stops waiting, the server may still finish, so the lifter is told to check first.
+ */
 function writeFailure(err: unknown, fallback: string): string {
-  return failureMessage(err, 'This took too long, so nothing changed. Please try again in a moment.', fallback);
+  return failureMessage(
+    err,
+    'No answer came back in time, so this may or may not have finished. Check your backups below before trying again.',
+    fallback,
+  );
 }
 
 /** Clear data and the backups it leaves (#1309, decisions 20 and 21). */
@@ -72,6 +80,8 @@ export default function TrainingData() {
   const [done, setDone] = useState<string | null>(null);
   const [downloads, setDownloads] = useState<Record<string, LiftRecordExportPartsResponse>>({});
   const confirmHeading = useRef<HTMLHeadingElement>(null);
+  const clearButton = useRef<HTMLButtonElement>(null);
+  const confirmOpen = useRef(false);
 
   const loadSnapshots = useCallback(async () => {
     try {
@@ -87,9 +97,19 @@ export default function TrainingData() {
     void loadSnapshots();
   }, [loadSnapshots]);
 
+  // Focus follows the confirmation: onto its heading when it opens or its counts change, and back
+  // to the button that opened it once it has closed and the clear has finished (a disabled button
+  // can't take focus), so focus isn't left on the page's body.
   useEffect(() => {
-    if (confirming) confirmHeading.current?.focus();
+    if (!confirming) return;
+    confirmOpen.current = true;
+    confirmHeading.current?.focus();
   }, [confirming]);
+  useEffect(() => {
+    if (confirming || busy !== null || !confirmOpen.current) return;
+    confirmOpen.current = false;
+    clearButton.current?.focus();
+  }, [confirming, busy]);
 
   async function run(action: string, fn: () => Promise<void>) {
     setError(null);
@@ -124,7 +144,9 @@ export default function TrainingData() {
         // Something was stored or removed since the counts were read: show the current ones.
         const current = err instanceof ApiClientError && err.code === 'counts-changed' ? err.body?.['counts'] : undefined;
         if (current) setConfirming(current as TrainingDataCounts);
-        setError(writeFailure(err, 'Couldn’t clear your training data, so nothing changed. Please try again.'));
+        setError(writeFailure(err, 'Couldn’t clear your training data. Please try again.'));
+        // A clear the browser gave up on may still have saved a backup.
+        await loadSnapshots();
       }
     });
 
@@ -135,7 +157,7 @@ export default function TrainingData() {
         setDone(`Restored ${rows(total(restored))}.`);
       } catch (err) {
         logClientError('restoreSnapshot', err, { snapshot: snapshot.id });
-        setError(writeFailure(err, 'Couldn’t restore this backup, so nothing changed. Please try again.'));
+        setError(writeFailure(err, 'Couldn’t restore this backup. Please try again.'));
       }
       await loadSnapshots();
     });
@@ -175,7 +197,7 @@ export default function TrainingData() {
           settings and modifications, body weight, strength goals, focus blocks and settings.
         </p>
         {!confirming && (
-          <button type="button" onClick={openClear} disabled={busy !== null}>
+          <button type="button" ref={clearButton} onClick={openClear} disabled={busy !== null}>
             {busy === 'counts' ? 'Counting…' : 'Clear training data…'}
           </button>
         )}

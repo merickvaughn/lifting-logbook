@@ -50,15 +50,29 @@ const snapshot: DataSnapshotSummary = {
 
 describe('Settings → Data → Clear data and backups', () => {
   let confirm: jest.SpyInstance;
+  let click: jest.SpyInstance;
+  const saved: string[] = [];
+  const { createObjectURL, revokeObjectURL } = URL;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    saved.length = 0;
     (fetchSnapshots as jest.Mock).mockResolvedValue([]);
     (fetchTrainingDataCounts as jest.Mock).mockResolvedValue(counts);
     confirm = jest.spyOn(window, 'confirm').mockReturnValue(true);
+    URL.createObjectURL = jest.fn(() => 'blob:backup');
+    URL.revokeObjectURL = jest.fn();
+    click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push(this.download);
+    });
   });
 
-  afterEach(() => confirm.mockRestore());
+  afterEach(() => {
+    confirm.mockRestore();
+    click.mockRestore();
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+  });
 
   it('shows the counts and the 30-day notice, and clears only once confirmed', async () => {
     const user = userEvent.setup();
@@ -93,7 +107,33 @@ describe('Settings → Data → Clear data and backups', () => {
     await user.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     expect(clearTrainingData).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Clear training data…' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear training data…' })).toHaveFocus();
+  });
+
+  it('returns focus to the Clear button once a clear has finished', async () => {
+    const user = userEvent.setup();
+    (clearTrainingData as jest.Mock).mockResolvedValue({ snapshot });
+    render(<TrainingData />);
+
+    await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+    await user.click(await screen.findByRole('button', { name: 'Clear 1,204 rows' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Clear training data…' })).toHaveFocus());
+  });
+
+  it('says a clear the browser stopped waiting for may have finished, and re-reads the backups', async () => {
+    const user = userEvent.setup();
+    (clearTrainingData as jest.Mock).mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError'));
+    render(<TrainingData />);
+    await waitFor(() => expect(fetchSnapshots).toHaveBeenCalledTimes(1));
+    (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
+
+    await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+    await user.click(await screen.findByRole('button', { name: 'Clear 1,204 rows' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('may or may not have finished');
+    expect(fetchSnapshots).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText(/From clearing your data on/)).toBeInTheDocument();
   });
 
   it('says there’s nothing to clear when every count is zero', async () => {
@@ -166,12 +206,6 @@ describe('Settings → Data → Clear data and backups', () => {
 
   it('downloads a backup’s sets', async () => {
     const user = userEvent.setup();
-    URL.createObjectURL = jest.fn(() => 'blob:backup');
-    URL.revokeObjectURL = jest.fn();
-    const saved: string[] = [];
-    const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-      saved.push(this.download);
-    });
     (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
     (fetchSnapshotLiftRecordParts as jest.Mock).mockResolvedValue({
       rows: 1_200,
@@ -189,7 +223,6 @@ describe('Settings → Data → Clear data and backups', () => {
 
     expect(downloadSnapshotLiftRecords).toHaveBeenCalledWith('snap-1', 1, 'fedcba9876543210');
     expect(saved).toEqual([expect.stringMatching(/^backup-lift-records-\d{4}-\d{2}-\d{2}\.csv$/)]);
-    click.mockRestore();
   });
 
   it('asks before deleting a backup, says it can’t be undone, and deletes nothing if declined', async () => {

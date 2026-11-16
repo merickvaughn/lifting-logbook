@@ -1,7 +1,4 @@
-import type { CustomProgramSummaryResponse } from '@lifting-logbook/types';
-import { fetchCustomPrograms } from '@/lib/api';
-import { getUserSettings } from '@/lib/active-program';
-import { userPrograms } from '@/lib/user-programs';
+import { readUserPrograms } from '@/lib/read-user-programs';
 import DownloadAll from './DownloadAll';
 import SetsExport from './SetsExport';
 import TrainingData from './TrainingData';
@@ -12,26 +9,13 @@ import TrainingData from './TrainingData';
  * filter still offers all programs and non-cycle workouts.
  */
 export default async function DataSettingsPage() {
-  const [activeProgram, customPrograms] = await Promise.all([
-    // fallback-covered-by: apps/web/app/(authed)/settings/data/page.test.tsx
-    getUserSettings().then(
-      (settings) => settings.activeProgram,
-      (e: unknown): string | null => {
-        console.error('DataSettingsPage: user settings fetch failed, listing the custom programs only', e);
-        return null;
-      },
-    ),
-    // fallback-covered-by: apps/web/app/(authed)/settings/data/page.test.tsx
-    fetchCustomPrograms().catch((e: unknown): CustomProgramSummaryResponse[] => {
-      console.error('DataSettingsPage: custom programs fetch failed, listing the active program only', e);
-      return [];
-    }),
-  ]);
+  // fallback-covered-by: apps/web/app/(authed)/settings/data/page.test.tsx
+  const { programs } = await readUserPrograms('DataSettingsPage');
 
   return (
     <>
       <DownloadAll />
-      <SetsExport programs={userPrograms(customPrograms, activeProgram)} />
+      <SetsExport programs={programs} />
       <TrainingData />
     </>
   );

@@ -114,6 +114,36 @@ describe('Settings → Data → Download sets', () => {
     expect(screen.queryByLabelText('Macrocycle')).not.toBeInTheDocument();
   });
 
+  it('ignores a listing that arrives after its filter changed', async () => {
+    const user = userEvent.setup();
+    let answer: (value: typeof threeParts) => void = () => {};
+    listParts.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    render(<SetsExport programs={programs} />);
+
+    await user.click(screen.getByRole('button', { name: 'Find sets' }));
+    await user.type(screen.getByLabelText('From'), '2024-01-01');
+    answer(threeParts);
+
+    await screen.findByRole('button', { name: 'Find sets' });
+    expect(screen.queryByRole('button', { name: /^Download part/ })).not.toBeInTheDocument();
+  });
+
+  it('clears a part’s error once the parts are listed again', async () => {
+    const user = userEvent.setup();
+    listParts.mockResolvedValue(threeParts);
+    downloadPart.mockRejectedValue(new Error('List the parts again and download each one.'));
+    render(<SetsExport programs={programs} />);
+    await user.click(screen.getByRole('button', { name: 'Find sets' }));
+    await user.click(await screen.findByRole('button', { name: 'Download part 1 of 3' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('List the parts again');
+
+    listParts.mockResolvedValue({ ...threeParts, split: 'fedcba9876543210' });
+    await user.click(screen.getByRole('button', { name: 'Find sets' }));
+
+    await screen.findByRole('button', { name: 'Find sets' });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('shows and reports a part whose split changed, and keeps the other parts', async () => {
     const user = userEvent.setup();
     const changed = new Error('List the parts again and download each one.');

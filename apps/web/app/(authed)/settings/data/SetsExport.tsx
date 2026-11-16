@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type { LiftRecordExportPartsResponse, LiftRecordExportQuery, MacrocycleSummaryResponse } from '@lifting-logbook/types';
 import { downloadLiftRecordExport, fetchLiftRecordExportParts, fetchMacrocycles } from '@/lib/client-api';
@@ -43,10 +43,13 @@ export default function SetsExport({ programs }: { programs: UserProgram[] }) {
     };
   }, [program, hasMacrocycles]);
 
-  // A listing describes the filter it was made for.
+  // A listing describes the filter it was made for, so a filter change drops it, along with the
+  // answer to any listing still on its way.
+  const latestFind = useRef(0);
   function change(set: (value: string) => void) {
     return (value: string) => {
       set(value);
+      latestFind.current += 1;
       setListing(null);
       setError(null);
     };
@@ -59,11 +62,14 @@ export default function SetsExport({ programs }: { programs: UserProgram[] }) {
       ...(from && { from }),
       ...(to && { to }),
     };
+    const find = (latestFind.current += 1);
     setError(null);
     setFinding(true);
     try {
-      setListing({ filter, parts: await fetchLiftRecordExportParts(filter) });
+      const parts = await fetchLiftRecordExportParts(filter);
+      if (find === latestFind.current) setListing({ filter, parts });
     } catch (err) {
+      if (find !== latestFind.current) return;
       logClientError('fetchLiftRecordExportParts', err);
       setError(
         failureMessage(

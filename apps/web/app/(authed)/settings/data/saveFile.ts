@@ -1,6 +1,6 @@
 // A browser may start the download after the click returns, and iOS Safari fails if the URL is
 // gone by then. FileSaver.js waits this long for the same reason.
-export const REVOKE_DELAY_MS = 40_000;
+const REVOKE_DELAY_MS = 40_000;
 
 /** Hands the browser a file to save. */
 export function saveFile(blob: Blob, fileName: string) {

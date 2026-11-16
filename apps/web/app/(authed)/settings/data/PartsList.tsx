@@ -1,15 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import { liftRecordExportFileName } from '@lifting-logbook/core';
 import type { LiftRecordExportPartsResponse } from '@lifting-logbook/types';
 import { localToday } from '@/lib/calendarDay';
 import { logClientError } from '@/lib/log-client-error';
 import { failureMessage, saveFile } from './saveFile';
-
-/** The name the API gives a part, so a saved part matches one downloaded any other way (#1308). */
-export function partFileName(prefix: string, part: number, parts: number): string {
-  return `${prefix}lift-records-${localToday()}${parts > 1 ? `-part-${part}-of-${parts}` : ''}.csv`;
-}
 
 /**
  * One download per part of a sets download, oldest first (decision 22). `op` names the download
@@ -30,13 +26,20 @@ export default function PartsList({
 }) {
   const [downloading, setDownloading] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A new listing, such as the one a 409 asks for, starts without the old one's error.
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [shown, setShown] = useState(listing);
+  if (shown !== listing) {
+    setShown(listing);
+    setError(null);
+  }
   const { parts } = listing;
 
   async function handleDownload(part: number) {
     setError(null);
     setDownloading(part);
     try {
-      saveFile(await download(part), partFileName(fileNamePrefix, part, parts.length));
+      saveFile(await download(part), fileNamePrefix + liftRecordExportFileName(localToday(), part, parts.length));
     } catch (err) {
       logClientError(op, err, { ...context, part: String(part) });
       setError(
