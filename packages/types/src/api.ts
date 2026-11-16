@@ -1101,6 +1101,41 @@ export interface ImportDryRunResponse extends ImportWriteResult {
   assigned?: ImportAssignedCounts;
 }
 
+/**
+ * Query of `GET /users/me/export/lift-records` and its `/parts` (#1308, proposal decision 22).
+ * Every field narrows the sets; none means all of them. `macrocycle` is a macrocycle's stable id,
+ * so it names the program too. Dates are `YYYY-MM-DD`, and both ends are included.
+ */
+export interface LiftRecordExportQuery {
+  program?: string;
+  macrocycle?: string;
+  from?: string;
+  to?: string;
+}
+
+/** One file of a filtered sets download: at most the importer's row limit, cut between macrocycles. */
+export interface LiftRecordExportPart {
+  /** From 1, oldest first, the order to upload them in. */
+  part: number;
+  rows: number;
+  /** Its first and last set's dates, `YYYY-MM-DD`. */
+  from: string;
+  to: string;
+}
+
+/** Response for `GET /users/me/export/lift-records/parts` (#1308). */
+export interface LiftRecordExportPartsResponse {
+  /** Sets the filter takes, across every part. */
+  rows: number;
+  /** Empty when the filter takes no sets. */
+  parts: LiftRecordExportPart[];
+  /**
+   * Identifies this split. Pass it with each part's download: if a set was added or removed since,
+   * the parts may have moved, so the download is refused with a 409 rather than miss a macrocycle.
+   */
+  split: string;
+}
+
 /** What an import with an Assign breakdown does beyond the row counts (#1254). */
 export interface ImportAssignedCounts {
   /** Macrocycles created: one per stretch with a new row that joins no stored macrocycle. */
@@ -1117,6 +1152,13 @@ export interface ImportAssignedCounts {
   changed: number;
   /** One-rep-max rows split to training maxes and skipped as older than that program's current max. */
   splitOlderThanCurrent: number;
+  /**
+   * Modification ids an exported file's `Modifications` column named that its sets couldn't carry,
+   * one per id per row (decision 22, #1308). That's an id the account no longer has, another
+   * lift's modification, a repeat, a second one with its own max, or one past the per-set cap.
+   * It counts the file's rows, so a row skipped as a duplicate still counts what it named.
+   */
+  droppedModifications: number;
 }
 
 /**

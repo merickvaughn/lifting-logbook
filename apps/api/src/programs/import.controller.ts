@@ -77,6 +77,7 @@ import { randomUUID } from 'crypto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
+import { keepSetModifications } from '../lifts/lift-modification.util';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { BatchMacrocycles, createdNumberedKeys, preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
@@ -919,12 +920,21 @@ export class ImportController {
       }
     }
 
+    // An export's `Modifications` names ids. Any parse that read them, with or without a breakdown,
+    // keeps only those a logged set could carry (decision 22, #1308).
+    let droppedModifications = 0;
+    if (destination === 'lift-records') {
+      const kept = await keepSetModifications(repos, valid as LiftRecord[]);
+      valid = kept.records;
+      droppedModifications = kept.dropped;
+    }
+
     // For splitDest, partition before committing to avoid double-writing 1RM rows as lift-records
     if (destination === 'lift-records' && splitDest) {
       const { liftRecords, trainingMaxes } = splitLiftRecordsByDestination(valid as LiftRecord[]);
-      return { rows: liftRecords, splitMaxes: trainingMaxes, undated };
+      return { rows: liftRecords, splitMaxes: trainingMaxes, undated, droppedModifications };
     }
-    return { rows: valid, splitMaxes: [], undated };
+    return { rows: valid, splitMaxes: [], undated, droppedModifications };
   }
 
   /**
@@ -1054,7 +1064,7 @@ export class ImportController {
     },
   ): Promise<ImportCommitResponse | ImportDryRunResponse> {
     const started = Date.now();
-    const { rows, splitMaxes, undated } = await this.resolveCommitRows(
+    const { rows, splitMaxes, undated, droppedModifications } = await this.resolveCommitRows(
       'lift-records',
       table,
       repos,
@@ -1117,6 +1127,7 @@ export class ImportController {
       undatedRows: undated,
       changed: plan.changed,
       splitOlderThanCurrent: split.olderThanCurrent,
+      droppedModifications,
     };
 
     let created: number;
@@ -1349,8 +1360,10 @@ async function unrecognizedGoalOverrides(
 /**
  * The rows a commit writes: to its destination, and 1RM rows split off to training maxes.
  * `undated`: with `assign`, how many rows were left out for a blank date (#1253).
+ * `droppedModifications`: with `assign`, how many modification ids an export named that the
+ * account doesn't have, dropped from their sets (#1308).
  */
-type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[]; undated: number };
+type CommitRows = { rows: unknown[]; splitMaxes: TrainingMax[]; undated: number; droppedModifications: number };
 
 function previewCounts(preview: ImportPreview): ImportWriteResult {
   return { created: preview.creates, updated: preview.updates, skipped: preview.skips };

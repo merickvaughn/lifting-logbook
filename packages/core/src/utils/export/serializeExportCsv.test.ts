@@ -15,6 +15,7 @@ import {
   serializeStrengthGoals,
   serializeTrainingMaxes,
   splitLiftRecordsForImport,
+  unescapeCsvFormula,
 } from './serializeExportCsv';
 
 const date = (ymd: string) => new Date(`${ymd}T00:00:00.000Z`);
@@ -35,12 +36,30 @@ const record = (overrides: Partial<LiftRecordExportRow> = {}): LiftRecordExportR
 });
 
 describe('escapeCsvFormula', () => {
-  it.each(['=SUM(A1)', '+1', '-1', '@cmd', '\tx', '\rx', '\nx'])('prefixes %j', (text) => {
+  // Text that really starts with apostrophes before a trigger gets one more, so import can tell.
+  it.each(['=SUM(A1)', '+1', '-1', '@cmd', '\tx', '\rx', '\nx', "'=x", "''-ish"])('prefixes %j', (text) => {
     expect(escapeCsvFormula(text)).toBe(`'${text}`);
   });
 
-  it.each(['', 'Bench Press', "'=already", 'a=b'])('leaves %j alone', (text) => {
+  it.each(['', 'Bench Press', "'tis", "'", 'a=b'])('leaves %j alone', (text) => {
     expect(escapeCsvFormula(text)).toBe(text);
+  });
+});
+
+describe('unescapeCsvFormula', () => {
+  it.each(['=SUM(A1)', '+1', '-1', '@cmd', '\tx', '\rx', '\nx', "'=x", "''-ish", "'tis", "'", ''])(
+    'reverses the escape of %j',
+    (text) => {
+      expect(unescapeCsvFormula(escapeCsvFormula(text))).toBe(text);
+    },
+  );
+
+  it.each(['', "'", "'tis", "''tis", 'Bench Press'])('leaves %j alone', (text) => {
+    expect(unescapeCsvFormula(text)).toBe(text);
+  });
+
+  it('drops one apostrophe of several before a trigger', () => {
+    expect(unescapeCsvFormula("''=x")).toBe("'=x");
   });
 });
 
@@ -66,14 +85,54 @@ describe('serializeLiftRecords', () => {
     ]);
   });
 
-  it('writes occurrence, modification ids and an empty status', () => {
-    const [, row] = parseCsvText(
-      serializeLiftRecords([record({ occurrence: 1, modifications: ['id-a', 'id-b'] })]),
+  it('writes occurrence, modification ids and the status, empty when there is none', () => {
+    const [, row, unset] = parseCsvText(
+      serializeLiftRecords([
+        record({ occurrence: 1, modifications: ['id-a', 'id-b'], status: 'overran' }),
+        record({ setNum: 2, status: null }),
+      ]),
     );
-    const cell = (header: string) => row![LIFT_RECORD_EXPORT_HEADERS.indexOf(header)];
-    expect(cell('Occurrence')).toBe('1');
-    expect(cell('Modifications')).toBe('id-a;id-b');
-    expect(cell('Status')).toBe('');
+    const cell = (r: readonly unknown[] | undefined, header: string) => r?.[LIFT_RECORD_EXPORT_HEADERS.indexOf(header)];
+    expect(cell(row, 'Occurrence')).toBe('1');
+    expect(cell(row, 'Modifications')).toBe('id-a;id-b');
+    expect(cell(row, 'Status')).toBe('overran');
+    expect(cell(unset, 'Status')).toBe('');
+  });
+
+  it('reads its status, occurrence and modification ids back through an assign parse (#1308)', () => {
+    const table = parseCsvText(
+      serializeLiftRecords([record({ occurrence: 1, modifications: ['id-a', 'id-b'], status: 'overran' })]),
+    );
+    expect(parseLiftRecords(table, { assign: true })).toEqual([
+      expect.objectContaining({ occurrence: 1, modifications: ['id-a', 'id-b'], status: 'overran' }),
+    ]);
+    // A file that isn't an assign import doesn't read the export's own columns.
+    expect(parseLiftRecords(table)[0]).not.toHaveProperty('modifications');
+  });
+
+  // Decision 22: what the export escapes, the importer reads back as written.
+  it.each(['=SUM(A1)', '+1', '-1', '@cmd', '\tx', '\rx', '\nx'])(
+    'reads a lift and note starting with %j back without the apostrophe',
+    (text) => {
+      const table = parseCsvText(serializeLiftRecords([record({ program: text, lift: text, notes: text })]));
+      const [, row] = table;
+      expect(row?.[LIFT_RECORD_EXPORT_HEADERS.indexOf('Lift')]).toBe(`'${text}`);
+      for (const assign of [true, false]) {
+        expect(parseLiftRecords(table, { assign })[0]).toMatchObject({ program: text, lift: text, notes: text });
+      }
+    },
+  );
+
+  it("keeps a note that really starts with an apostrophe, and a negative weight, as written", () => {
+    const table = parseCsvText(serializeLiftRecords([record({ notes: "'tis heavy", weight: -10 })]));
+    expect(parseLiftRecords(table, { assign: true })[0]).toMatchObject({ notes: "'tis heavy", weight: -10 });
+  });
+
+  it("leaves an apostrophe alone in a file that isn't an export", () => {
+    const table = parseCsvText(
+      'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes\nrpt,1,1,2026-01-05,Bench Press,1,100,5,\'=x',
+    );
+    expect(parseLiftRecords(table)[0]).toMatchObject({ notes: "'=x" });
   });
 
   it('escapes program, lift and notes, but never a negative weight', () => {

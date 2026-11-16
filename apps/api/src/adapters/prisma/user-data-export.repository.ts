@@ -1,9 +1,23 @@
-import { PrismaClient } from '@prisma/client';
-import { IUserDataExportRepository, UserDataRows } from '../../ports/IUserDataExportRepository';
+import { Prisma, PrismaClient } from '@prisma/client';
+import {
+  IUserDataExportRepository,
+  LiftRecordExportFilter,
+  UserDataRows,
+} from '../../ports/IUserDataExportRepository';
 
 function withoutUserId<T extends { userId: string }>(rows: T[]): Omit<T, 'userId'>[] {
   return rows.map(({ userId: _userId, ...row }) => row);
 }
+
+const LIFT_RECORD_ORDER: Prisma.LiftRecordOrderByWithRelationInput[] = [
+  { program: 'asc' },
+  { macrocycleNum: 'asc' },
+  { date: 'asc' },
+  { workoutNum: 'asc' },
+  { lift: 'asc' },
+  { occurrence: 'asc' },
+  { setNum: 'asc' },
+];
 
 export class PrismaUserDataExportRepository implements IUserDataExportRepository {
   constructor(
@@ -16,20 +30,7 @@ export class PrismaUserDataExportRepository implements IUserDataExportRepository
     const where = { userId: this.userId };
     const [settings = null] = withoutUserId(await this.prisma.userSettings.findMany({ where }));
     return {
-      liftRecords: withoutUserId(
-        await this.prisma.liftRecord.findMany({
-          where,
-          orderBy: [
-            { program: 'asc' },
-            { macrocycleNum: 'asc' },
-            { date: 'asc' },
-            { workoutNum: 'asc' },
-            { lift: 'asc' },
-            { occurrence: 'asc' },
-            { setNum: 'asc' },
-          ],
-        }),
-      ),
+      liftRecords: withoutUserId(await this.prisma.liftRecord.findMany({ where, orderBy: LIFT_RECORD_ORDER })),
       trainingMaxes: withoutUserId(
         await this.prisma.trainingMax.findMany({ where, orderBy: [{ program: 'asc' }, { lift: 'asc' }] }),
       ),
@@ -62,5 +63,20 @@ export class PrismaUserDataExportRepository implements IUserDataExportRepository
       focusBlocks: withoutUserId(await this.prisma.focusBlock.findMany({ where })),
       focusDayStates: withoutUserId(await this.prisma.focusDayState.findMany({ where })),
     };
+  }
+
+  async readLiftRecords(filter: LiftRecordExportFilter) {
+    const where: Prisma.LiftRecordWhereInput = { userId: this.userId };
+    if (filter.program !== undefined) where.program = filter.program;
+    if (filter.macrocycleNum !== undefined) where.macrocycleNum = filter.macrocycleNum;
+    if (filter.from || filter.to) {
+      where.date = { ...(filter.from && { gte: filter.from }), ...(filter.to && { lte: filter.to }) };
+    }
+    return withoutUserId(
+      await this.prisma.liftRecord.findMany({
+        where,
+        orderBy: LIFT_RECORD_ORDER,
+      }),
+    );
   }
 }

@@ -21,7 +21,8 @@ export interface UserDataRows {
   customLifts: { id: string; name: string }[];
   /** Null until the user changes a setting. */
   userSettings: { activeProgram: string | null } | null;
-  macrocycles: StoredRow[];
+  /** Typed where the lift-record CSV reads each set's status (#1308). */
+  macrocycles: (StoredRow & { program: string; macrocycleNum: number; status: string; statusChosen: boolean })[];
   macrocycleDashboards: StoredRow[];
   macrocycleScheduledWorkouts: StoredRow[];
   trainingMaxHistory: StoredRow[];
@@ -39,7 +40,22 @@ export interface UserDataRows {
   focusDayStates: StoredRow[];
 }
 
+/**
+ * Which sets a filtered export takes (#1308, decision 22). Every field narrows it; none means all
+ * of them. `macrocycleNum` needs `program`, since numbers are per program. Dates are UTC midnights
+ * and both ends are included.
+ */
+export interface LiftRecordExportFilter {
+  program?: string;
+  macrocycleNum?: number;
+  from?: Date;
+  to?: Date;
+}
+
 export interface IUserDataExportRepository {
   /** Reads every table for this user, across all programs. */
   readAll(): Promise<UserDataRows>;
+
+  /** This user's sets that `filter` takes, in `readAll`'s order. */
+  readLiftRecords(filter: LiftRecordExportFilter): Promise<LiftRecordExportRow[]>;
 }

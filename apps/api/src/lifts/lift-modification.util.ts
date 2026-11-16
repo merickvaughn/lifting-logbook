@@ -1,7 +1,8 @@
 import { BadRequestException, Logger } from '@nestjs/common';
-import { LiftRecord, ModificationMax, NamedLift, lookupLift } from '@lifting-logbook/core';
+import { LiftRecord, ModificationMax, NamedLift, lookupLift, withModifications } from '@lifting-logbook/core';
 import { LiftModificationMaxMode } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
+import { MAX_SET_MODIFICATIONS } from '../programs/lift-record.limits';
 
 const logger = new Logger('LiftModification');
 
@@ -64,6 +65,52 @@ export async function assertSetModifications(
     });
   }
   return new Map(modifications.map((m) => [m.id, m.name]));
+}
+
+/**
+ * {@link assertSetModifications}'s rule for an import (#1308), whose rows can carry an export's
+ * `Modifications` ids. A file isn't refused for them: each id that breaks the rule is dropped and
+ * counted (decision 22). That's an id the account doesn't have, a modification of another lift, a
+ * repeat, a second `own`, or one past the per-set cap. Costs no query when no row has any.
+ */
+export async function keepSetModifications<R extends LiftRecord>(
+  repos: Pick<RepositoryBundle, 'customLift' | 'liftModification'>,
+  records: readonly R[],
+): Promise<{ records: R[]; dropped: number }> {
+  if (!records.some((r) => r.modifications?.length)) return { records: [...records], dropped: 0 };
+  const customLifts = await repos.customLift.list();
+  const byId = new Map((await repos.liftModification.list()).map((m) => [m.id, m]));
+  const liftIdsByName = new Map<string, ReadonlySet<string>>();
+  let dropped = 0;
+  const kept = records.map((r) => {
+    if (!r.modifications?.length) return r;
+    let liftIds = liftIdsByName.get(r.lift);
+    if (!liftIds) {
+      liftIds = modificationLiftIds(r.lift, customLifts);
+      liftIdsByName.set(r.lift, liftIds);
+    }
+    const ids: string[] = [];
+    let hasOwn = false;
+    for (const id of r.modifications) {
+      const modification = byId.get(id);
+      const own = modification?.maxMode === 'own';
+      if (
+        !modification ||
+        !liftIds.has(modification.lift) ||
+        ids.includes(id) ||
+        (own && hasOwn) ||
+        ids.length >= MAX_SET_MODIFICATIONS
+      ) {
+        dropped += 1;
+        continue;
+      }
+      hasOwn ||= own;
+      ids.push(id);
+    }
+    const { modifications: _named, ...rest } = r;
+    return { ...rest, ...withModifications(ids) } as R;
+  });
+  return { records: kept, dropped };
 }
 
 /** What `updateMaxes` and {@link saveOwnMaxes} need to know of the user's modifications. */

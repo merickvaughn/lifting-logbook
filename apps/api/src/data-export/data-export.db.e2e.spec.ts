@@ -9,6 +9,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import multipart from '@fastify/multipart';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { strFromU8, unzipSync } from 'fflate';
+import { parseCsvText } from '@lifting-logbook/core';
 import type { ImportCommitResponse, ImportKind, ImportPreviewResponse } from '@lifting-logbook/types';
 import { PrismaService } from '../adapters/prisma/prisma.service';
 import { AppModule } from '../app.module';
@@ -357,6 +358,44 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(files[path]).not.toContain(USER_OTHER);
     }
     expect(files['logbook.json']).toContain('owner-marker');
+  });
+
+  // The filtered sets download (#1308) reads through the same forced row-level security.
+  describe('filtered sets download', () => {
+    const get = (url: string, user = USER_OWNER) =>
+      app.getHttpAdapter().getInstance().inject({ method: 'GET', url, headers: { authorization: `Bearer ${user}` } });
+
+    it("holds only the owner's sets, under every filter, with no status the lifter didn't choose", async () => {
+      for (const filter of ['', `?program=${ACTIVE_PROGRAM}`, '?from=2026-01-01&to=2026-01-31']) {
+        const res = await get(`/users/me/export/lift-records${filter}`);
+        expect(res.statusCode).toBe(200);
+        expect(res.body).not.toContain(OTHER_MARK);
+        expect(res.body).toContain('owner-marker');
+      }
+      const owned = await prisma.liftRecord.count({ where: { userId: USER_OWNER } });
+      const parts = (await get('/users/me/export/lift-records/parts')).json<{ rows: number }>();
+      expect(parts.rows).toBe(owned);
+      // The live run's `in-progress` was never chosen, so it isn't written: re-uploaded, it would
+      // come back locked on an imported macrocycle (decision 22).
+      const [header = [], ...active] = parseCsvText(
+        (await get(`/users/me/export/lift-records?program=${ACTIVE_PROGRAM}`)).body,
+      );
+      const status = header.indexOf('Status');
+      expect(status).toBeGreaterThan(-1);
+      expect(active.length).toBeGreaterThan(0);
+      expect(active.map((row) => String(row[status] ?? ''))).toEqual(active.map(() => ''));
+    });
+
+    it("404s another user's macrocycle, which row-level security hides", async () => {
+      const theirs = await prisma.macrocycle.findFirstOrThrow({ where: { userId: USER_OTHER } });
+      expect((await get(`/users/me/export/lift-records?macrocycle=${theirs.id}`)).statusCode).toBe(404);
+      const mine = await prisma.macrocycle.findFirstOrThrow({ where: { userId: USER_OWNER, program: ACTIVE_PROGRAM } });
+      const res = await get(`/users/me/export/lift-records?macrocycle=${mine.id}`);
+      expect(res.statusCode).toBe(200);
+      expect(res.body.split('\n').slice(1).filter((line) => line.trim() !== '')).toHaveLength(
+        await prisma.liftRecord.count({ where: { userId: USER_OWNER, program: ACTIVE_PROGRAM, macrocycleNum: mine.macrocycleNum } }),
+      );
+    });
   });
 
   it('leaves the user id out of logbook.json', () => {
