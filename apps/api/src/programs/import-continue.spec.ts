@@ -93,10 +93,16 @@ describe('continueRefusal (#1180, decision 2)', () => {
   const program = BUILT_IN_KNOWN_PROGRAMS.find((p) => p.id === '5-3-1');
   if (!program) throw new Error('5-3-1 is a built-in program');
   const context = { programs: BUILT_IN_KNOWN_PROGRAMS, importDate: new Date('2026-03-20T00:00:00Z') };
-  const run = { program: '5-3-1', endDate: new Date('2026-03-10T00:00:00Z'), completedWorkouts: 3 };
+  const run = { program: '5-3-1', endDate: new Date('2026-03-10T00:00:00Z'), completedWorkouts: 3, placement: 'new' as const };
 
   it('lets the last run of a known program continue with workouts left and a recent last session', () => {
     expect(continueRefusal(run, [new Date('2026-02-01T00:00:00Z')], context)).toBeNull();
+  });
+
+  it('refuses a run with stored rows, or overlapping a stored macrocycle', () => {
+    expect(continueRefusal({ ...run, placement: 'already-imported' }, [], context)).toBe('already-stored');
+    expect(continueRefusal({ ...run, placement: 'joins' }, [], context)).toBe('already-stored');
+    expect(continueRefusal({ ...run, placement: 'overlaps' }, [], context)).toBe('overlaps');
   });
 
   it('refuses a run another stretch ends after', () => {

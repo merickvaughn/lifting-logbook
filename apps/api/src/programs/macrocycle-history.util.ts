@@ -585,6 +585,22 @@ export function closingStatus(loggedWorkoutNums: ReadonlySet<number>, programWor
 }
 
 /**
+ * How a live macrocycle closes when another becomes current (decision 1): it ends on its last
+ * set, or its start with none, and keeps a status the lifter chose, else {@link closingStatus}.
+ */
+export function closingEnd(
+  row: Pick<MacrocycleRow, 'startDate' | 'status' | 'statusChosen'>,
+  lastSet: Date | undefined,
+  loggedWorkoutNums: ReadonlySet<number>,
+  programWorkouts: number,
+): { endDate: Date; status: MacrocycleStatus } {
+  return {
+    endDate: lastSet ?? row.startDate,
+    status: row.statusChosen ? row.status : closingStatus(loggedWorkoutNums, programWorkouts),
+  };
+}
+
+/**
  * A row's dates as the list shows them: widened to cover its sets, since a set logged into a
  * closed macrocycle, or uploaded into a legacy one, doesn't move the stored dates. A missing
  * end date stays missing.

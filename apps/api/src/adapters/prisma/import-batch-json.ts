@@ -1,4 +1,5 @@
 import { MACROCYCLE_STATUSES, MacrocycleStatus } from '@lifting-logbook/types';
+import { Weekday } from '@lifting-logbook/core';
 import { Prisma } from '@prisma/client';
 import { BatchMacrocycles, ContinuedRun, StatusChoice } from '../../ports/IImportBatchRepository';
 
@@ -24,6 +25,8 @@ function statusChoice(value: Prisma.JsonValue): StatusChoice | null {
 
 const isString = (value: Prisma.JsonValue | undefined): value is string => typeof value === 'string';
 const isStringOrNull = (value: Prisma.JsonValue | undefined): value is string | null => value === null || isString(value);
+const isWeekday = (value: Prisma.JsonValue | undefined): value is Weekday =>
+  isString(value) && (Object.values(Weekday) as string[]).includes(value);
 
 /** A continued run (#1180), or null when any part of it is unreadable. */
 function continuedRun(value: Prisma.JsonValue | undefined): ContinuedRun | null {
@@ -39,16 +42,16 @@ function continuedRun(value: Prisma.JsonValue | undefined): ContinuedRun | null 
   if (dashboard !== null) {
     if (!isObject(dashboard)) return null;
     const { macrocycleUnit, macrocycleDate, sheetName, macrocycleStartWeekday, programType } = dashboard;
-    if (![macrocycleUnit, macrocycleDate, sheetName, macrocycleStartWeekday].every(isString) || !isStringOrNull(programType)) {
+    if (
+      !isString(macrocycleUnit) ||
+      !isString(macrocycleDate) ||
+      !isString(sheetName) ||
+      !isWeekday(macrocycleStartWeekday) ||
+      !isStringOrNull(programType)
+    ) {
       return null;
     }
-    before = {
-      macrocycleUnit: macrocycleUnit as string,
-      macrocycleDate: macrocycleDate as string,
-      sheetName: sheetName as string,
-      macrocycleStartWeekday: macrocycleStartWeekday as string,
-      programType,
-    };
+    before = { macrocycleUnit, macrocycleDate, sheetName, macrocycleStartWeekday, programType };
   }
   return { id, ended: endedRun, dashboard: before, activeProgram };
 }

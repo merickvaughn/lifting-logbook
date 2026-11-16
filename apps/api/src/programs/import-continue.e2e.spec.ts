@@ -62,10 +62,11 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
     app.get<IRepositoryFactory>(REPOSITORY_FACTORY).forUser({ id: user, email: `${user}@example.com`, provider: 'dev' });
   const server = () => app.getHttpAdapter().getInstance();
 
+  // `today` pins the import date to the test's, so a run crossing midnight UTC can't move it.
   const importCsv = (csv: string, query: string, fields: Record<string, string> = {}) => {
     const boundary = '----ContinueBoundary';
     const parts = [
-      ...Object.entries(fields).flatMap(([name, value]) => [`--${boundary}`, `Content-Disposition: form-data; name="${name}"`, '', value]),
+      ...Object.entries({ today: day(0), ...fields }).flatMap(([name, value]) => [`--${boundary}`, `Content-Disposition: form-data; name="${name}"`, '', value]),
       `--${boundary}`,
       'Content-Disposition: form-data; name="file"; filename="upload.csv"',
       'Content-Type: text/csv',
@@ -260,6 +261,28 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       expect((await assign(run(-26, 7))).continue).not.toBeNull();
     });
 
+    it("isn't made on a run overlapping a stored macrocycle, and a commit continuing one is refused", async () => {
+      // A live macrocycle started during the run, with a set logged in it.
+      await liveWithASet(-10);
+      const assigned = await assign(RECENT);
+      expect(assigned.stretches.map((s) => s.stored.kind)).toEqual(['overlaps']);
+      expect(assigned.continue).toBeNull();
+      const res = await send(RECENT, breakdownOf([stretch(RECENT)], { stretch: 0, maxes: [] }));
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'continue-refused', reason: 'overlaps' });
+    });
+
+    it("isn't made on a run that ends before a stored macrocycle of its program, and a commit continuing one is refused", async () => {
+      // A live macrocycle started after the run's last session.
+      await liveWithASet(-2);
+      const assigned = await assign(RECENT);
+      expect(assigned.stretches.map((s) => s.stored.kind)).toEqual(['new']);
+      expect(assigned.continue).toBeNull();
+      const res = await send(RECENT, breakdownOf([stretch(RECENT)], { stretch: 0, maxes: [] }));
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'continue-refused', reason: 'not-last' });
+    });
+
     it('names the live macrocycle it would end, with its set count', async () => {
       const live = await liveWithASet(-40);
       expect((await assign(RECENT)).continue?.live).toEqual({ id: live.id, macrocycleNum: live.macrocycleNum, sets: 1 });
@@ -340,6 +363,35 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       expect(maxes.find((m) => m.lift === 'Bench Press')).toMatchObject({ weight: 180, dateUpdated: old });
       expect(maxes.find((m) => m.lift === 'Squat')).toMatchObject({ weight: squatValue });
       for (const { lift, weight } of unstored) expect(maxes.find((m) => m.lift === lift)?.weight).toBe(weight);
+    });
+
+    it("dates an overwritten max at the run's last session, and leaves one entered at its current weight alone", async () => {
+      const bundle = await repos();
+      const old = new Date('2020-01-01T00:00:00Z');
+      await bundle.trainingMax.saveTrainingMaxes('rpt', [
+        { lift: 'Bench Press', weight: 180, dateUpdated: old },
+        { lift: 'Squat', weight: 200, dateUpdated: old },
+      ]);
+      const offer = (await assign(RECENT)).continue;
+      if (!offer) throw new Error('expected an offer');
+      const unstored = offer.maxes.filter((m) => m.current === null).map((m) => ({ lift: m.lift, weight: m.computed ?? 95 }));
+      const { batchId } = await commit(
+        RECENT,
+        breakdownOf([stretch(RECENT)], {
+          stretch: 0,
+          maxes: [{ lift: 'Bench Press', weight: 180 }, { lift: 'Squat', weight: 210 }, ...unstored],
+        }),
+      );
+      const maxes = await bundle.trainingMax.getTrainingMaxes('rpt');
+      expect(maxes.find((m) => m.lift === 'Bench Press')).toMatchObject({ weight: 180, dateUpdated: old });
+      // RECENT's last session is four days ago.
+      expect(maxes.find((m) => m.lift === 'Squat')).toMatchObject({ weight: 210, dateUpdated: utc(-4) });
+
+      const result = await undo(batchId);
+      expect(result.flagged).toEqual([]);
+      const after = await bundle.trainingMax.getTrainingMaxes('rpt');
+      expect(after.find((m) => m.lift === 'Bench Press')).toMatchObject({ weight: 180, dateUpdated: old });
+      expect(after.find((m) => m.lift === 'Squat')).toMatchObject({ weight: 200, dateUpdated: old });
     });
 
     it('refuses a continue on a run that may not continue', async () => {
@@ -444,6 +496,24 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       const res = await undoRequest(body.batchId);
       expect(res.statusCode).toBe(409);
       expect(res.json<{ message: string }>().message).toContain('deleted');
+    });
+
+    it('is refused once another import adds sets to the run', async () => {
+      const { body } = await continueRun(RECENT);
+      const [runRow] = await macrocycles();
+      // A file-number import joins the current macrocycle while its run is open.
+      const csv = ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes', `rpt,1,8,${day(0)},Bench Press,1,140,6,`].join('\n');
+      expect((await importCsv(csv, '?mode=commit&destination=lift-records')).statusCode).toBe(200);
+      const bundle = await repos();
+      expect(await bundle.liftRecord.getLiftRecords('rpt', runRow?.macrocycleNum ?? -1)).toHaveLength(RECENT.length + 1);
+
+      const res = await undoRequest(body.batchId);
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'import-undo-refused' });
+      expect(res.json<{ message: string }>().message).toContain('Another import');
+      // Nothing changed: the run is current, with every set.
+      expect((await current())?.macrocycleNum).toBe(runRow?.macrocycleNum);
+      expect(await bundle.liftRecord.getLiftRecords('rpt', runRow?.macrocycleNum ?? -1)).toHaveLength(RECENT.length + 1);
     });
 
     it('skips and flags a max changed since the import', async () => {

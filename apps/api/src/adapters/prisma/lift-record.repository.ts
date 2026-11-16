@@ -44,6 +44,10 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     return new Set(rows.map((r) => r.workoutNum));
   }
 
+  async countLiftRecords(program: string, macrocycleNum: number): Promise<number> {
+    return this.prisma.liftRecord.count({ where: { userId: this.userId, program, macrocycleNum } });
+  }
+
   async getLastSessions(
     program: string,
     macrocycleNum: number,

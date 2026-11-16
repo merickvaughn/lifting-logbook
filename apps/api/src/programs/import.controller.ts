@@ -102,6 +102,7 @@ import {
   ContinuePlan,
   ContinueRefusedException,
   ContinueRun,
+  ContinuedUndoRefusedException,
   applyContinue,
   continueOffer,
   continuedRunToUndo,
@@ -553,9 +554,11 @@ export class ImportController {
         const continued = part.macrocycles?.continued;
         if (!continued) continue;
         try {
-          continuedRuns.set(part.id, await continuedRunToUndo(repos, part.program, continued));
+          continuedRuns.set(part.id, await continuedRunToUndo(repos, part.id, part.program, continued));
         } catch (err) {
-          if (err instanceof ConflictException) this.logger.warn({ parts: parts.length }, 'Import undo refused: continued run is no longer current (#1180)');
+          if (err instanceof ContinuedUndoRefusedException) {
+            this.logger.warn({ parts: parts.length, reason: err.reason }, 'Import undo refused: continued run (#1180)');
+          }
           throw err;
         }
       }
@@ -1245,12 +1248,13 @@ export class ImportController {
       }
       if (continuePlan) {
         if (!written.continuedId) throw new Error('The continued run was not created');
-        const batch = batches.get(continuePlan.program) ?? { preImage: {}, macrocycles: { created: [], extended: [], chosen: [] } };
+        // The run's rows were written under its program, so its batch is there.
+        const batch = batches.get(continuePlan.program);
+        if (!batch) throw new Error(`No batch for the continued run's program ${continuePlan.program}`);
         batch.macrocycles.continued = await applyContinue(repos, continuePlan, written.continuedId, {
           importDate: choices.importDate,
           preImage: batch.preImage,
         });
-        batches.set(continuePlan.program, batch);
       }
       batchId = await saveBatchGroup(repos, userId, program, batches);
     }

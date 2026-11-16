@@ -29,7 +29,7 @@ import {
   dashboardOrNull,
   lockForMacrocycleWrite,
   lockForRenumbering,
-  closingStatus,
+  closingEnd,
   ensureCurrentRow,
   forgetBatchKeys,
   nextMacrocycleNumber,
@@ -366,12 +366,16 @@ export class MacrocycleGenerationService {
     });
     // The closing macrocycle ends on its last session, or its start with none (decision 1). A
     // status the lifter chose stays.
-    await repos.macrocycle.close(program, dashboard.macrocycleNum, {
-      endDate: closingRange.get(dashboard.macrocycleNum)?.last ?? closingRow.startDate,
-      status: closingRow.statusChosen
-        ? closingRow.status
-        : closingStatus(closingWorkoutNums, programWorkoutKeys(program, programSpec).length),
-    });
+    await repos.macrocycle.close(
+      program,
+      dashboard.macrocycleNum,
+      closingEnd(
+        closingRow,
+        closingRange.get(dashboard.macrocycleNum)?.last,
+        closingWorkoutNums,
+        programWorkoutKeys(program, programSpec).length,
+      ),
+    );
 
     // Write order: maxes → scheduled dates → dashboard. If dashboard write fails,
     // macrocycleNum hasn't advanced in the dashboard so a retry is safe. Scheduled date

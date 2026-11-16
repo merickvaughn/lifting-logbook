@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ComponentProps } from 'react';
+import { useEffect, useId, useState, type ComponentProps } from 'react';
 import { LIFT_PROGRESSION_TYPES, MACROCYCLE_STATUSES } from '@lifting-logbook/types';
 import type {
   AssignContinueMax,
@@ -46,6 +46,7 @@ import {
   startOf,
   stretchName,
   withMember,
+  withoutWithdrawnContinue,
   type AssignDraft,
   type ContinueMaxChoice,
   type SessionChoice,
@@ -204,6 +205,8 @@ function ContinueMaxRow({
 }) {
   const choice = maxChoice(draft, max);
   const groupName = `continue-max-${max.lift}`;
+  const noteId = useId();
+  const missing = choice.kind === 'value' && (choice.weight === null || choice.weight <= 0);
   const radio = (kind: ContinueMaxChoice['kind'], text: string, disabled: boolean) => (
     <label>
       <input
@@ -219,25 +222,35 @@ function ContinueMaxRow({
     </label>
   );
   return (
-    <li className={styles.fields} role="radiogroup" aria-label={`Training max for ${max.name}`}>
-      <span>{max.name}</span>
-      {radio('keep', `Keep current (${weightText(max.current)})`, max.current === null)}
-      {radio('computed', `Use computed (${max.computed === null ? 'no change' : max.computed})`, max.computed === null)}
-      {radio('value', 'Enter a value', false)}
-      {choice.kind === 'value' && (
-        <input
-          type="number"
-          min={0}
-          step="any"
-          inputMode="decimal"
-          aria-label={`New training max for ${max.name}`}
-          value={choice.weight ?? ''}
-          onChange={(e) => {
-            const weight = e.target.value === '' ? null : Number(e.target.value);
-            onChange(setMaxChoice(draft, max.lift, { kind: 'value', weight: Number.isFinite(weight) ? weight : null }));
-          }}
-        />
-      )}
+    <li>
+      <div className={styles.fields} role="radiogroup" aria-label={`Training max for ${max.name}`}>
+        <span>{max.name}</span>
+        {radio('keep', `Keep current (${weightText(max.current)})`, max.current === null)}
+        {radio('computed', `Use computed (${max.computed === null ? 'no change' : max.computed})`, max.computed === null)}
+        {radio('value', 'Enter a value', false)}
+        {choice.kind === 'value' && (
+          <input
+            type="number"
+            min={0.01}
+            step="any"
+            inputMode="decimal"
+            required
+            aria-label={`New training max for ${max.name}`}
+            aria-invalid={missing}
+            aria-describedby={missing ? noteId : undefined}
+            value={choice.weight ?? ''}
+            onChange={(e) => {
+              const weight = e.target.value === '' ? null : Number(e.target.value);
+              onChange(setMaxChoice(draft, max.lift, { kind: 'value', weight: Number.isFinite(weight) ? weight : null }));
+            }}
+          />
+        )}
+        {missing && (
+          <span className={styles.reason} id={noteId}>
+            Enter a training max above 0.
+          </span>
+        )}
+      </div>
     </li>
   );
 }
@@ -249,7 +262,7 @@ function ContinueMaxRow({
 export default function AssignStep({
   res,
   draft,
-  onChange,
+  onChange: reportChange,
   onConfirmLift,
   liftSaves,
   failedLiftSaves,
@@ -280,12 +293,15 @@ export default function AssignStep({
   suggestions?: Omit<ComponentProps<typeof AssignSuggestions>, 'res' | 'draft' | 'onChange' | 'programName'>;
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  // An edit that withdraws the continue offer drops the lifter's choices for it (#1180).
+  const onChange = (next: AssignDraft) => reportChange(withoutWithdrawnContinue(next, res));
   const name = programNamer(res);
-  const offered = continueTarget(draft, res);
-  const continued = continuing(draft, res);
+  const effective = effectiveStretches(draft, res);
+  const offered = continueTarget(draft, res, effective);
+  const continued = continuing(draft, res, effective);
   // A continued run is in progress whatever status it was given (#1180).
-  const stretches = effectiveStretches(draft, res).map((s) =>
-    s === continued ? { ...s, status: 'in-progress' as const, statusChosen: false } : s,
+  const stretches = effective.map((s) =>
+    s.id === continued?.id ? { ...s, status: 'in-progress' as const, statusChosen: false } : s,
   );
   const pairs = overlaps(stretches);
   const overlapping = new Set(res.exported ? [] : pairs.flatMap(([a, b]) => [a.id, b.id]));

@@ -360,21 +360,45 @@ function unconfirmedLifts(draft: AssignDraft, stretches: readonly DraftStretch[]
 // ---------------------------------------------------------------------------
 
 /**
- * The stretch the server offered to continue, while the offer still holds: it's the last
- * stretch, with the offer's sessions and program. An edit that changes any of that withdraws the
- * offer, since the server's checks and computed maxes were for that run.
+ * Where the stretch the server offered to continue is among `stretches` (the effective ones),
+ * while the offer still holds, else -1: it's the last stretch, with the offer's sessions and
+ * program. An edit that changes any of that withdraws the offer, since the server's checks and
+ * computed maxes were for that run.
  */
-export function continueTarget(draft: AssignDraft, res: ImportAssignResponse): DraftStretch | null {
+function continueIndex(stretches: readonly DraftStretch[], res: ImportAssignResponse): number {
   const offer = res.continue;
   const source = offer ? res.stretches[offer.stretch] : undefined;
-  const last = effectiveStretches(draft, res).at(-1);
-  if (!source || !last || last.source !== source || last.program !== source.program) return null;
-  return last.sessions.length === source.sessions.length ? last : null;
+  const index = stretches.length - 1;
+  const last = stretches[index];
+  if (!source || !last || last.source !== source || last.program !== source.program) return -1;
+  return last.sessions.length === source.sessions.length ? index : -1;
+}
+
+/** The stretch the server offered to continue, while the offer still holds ({@link continueIndex}). */
+export function continueTarget(
+  draft: AssignDraft,
+  res: ImportAssignResponse,
+  stretches: readonly DraftStretch[] = effectiveStretches(draft, res),
+): DraftStretch | null {
+  return stretches[continueIndex(stretches, res)] ?? null;
 }
 
 /** The run being continued, or null when it isn't (or the offer no longer holds). */
-export function continuing(draft: AssignDraft, res: ImportAssignResponse): DraftStretch | null {
-  return draft.continued ? continueTarget(draft, res) : null;
+export function continuing(
+  draft: AssignDraft,
+  res: ImportAssignResponse,
+  stretches: readonly DraftStretch[] = effectiveStretches(draft, res),
+): DraftStretch | null {
+  return draft.continued ? continueTarget(draft, res, stretches) : null;
+}
+
+/**
+ * The draft after an edit, without a continue its edit withdrew. Its choices, among them the
+ * agreement to end a live macrocycle, were for that offer, so they don't come back on their own
+ * if a later edit makes the run match the offer again.
+ */
+export function withoutWithdrawnContinue(draft: AssignDraft, res: ImportAssignResponse): AssignDraft {
+  return draft.continued && !continueTarget(draft, res) ? { ...draft, continued: null } : draft;
 }
 
 /**
@@ -420,9 +444,9 @@ function chosenWeight(choice: ContinueMaxChoice, max: AssignContinueMax): number
 }
 
 /** The continue decisions left: agreeing to end the live macrocycle, and each max with no value. */
-function openContinueDecisions(draft: AssignDraft, res: ImportAssignResponse): number {
+function openContinueDecisions(draft: AssignDraft, res: ImportAssignResponse, continued: DraftStretch | null): number {
   const offer = res.continue;
-  if (!offer || !draft.continued || !continueTarget(draft, res)) return 0;
+  if (!offer || !draft.continued || !continued) return 0;
   const agreement = offer.live && !draft.continued.endLive ? 1 : 0;
   return agreement + offer.maxes.filter((m) => chosenWeight(maxChoice(draft, m), m) === undefined).length;
 }
@@ -434,17 +458,17 @@ function openContinueDecisions(draft: AssignDraft, res: ImportAssignResponse): n
 export function openDecisions(draft: AssignDraft, res: ImportAssignResponse): number {
   const unfiled = pendingSessions(res).filter((p) => draft.filed[p.session.date] === undefined).length;
   const stretches = effectiveStretches(draft, res);
-  const continued = continuing(draft, res);
+  const continued = continuing(draft, res, stretches);
   // A continued run is in progress whatever status it was given.
-  const unset = stretches.filter((s) => s.status === null && s !== continued).length;
+  const unset = stretches.filter((s) => s.status === null && s.id !== continued?.id).length;
   const lifts = unconfirmedLifts(draft, stretches, res).size;
-  return unfiled + unset + lifts + (res.exported ? 0 : overlaps(stretches).length) + openContinueDecisions(draft, res);
+  return unfiled + unset + lifts + (res.exported ? 0 : overlaps(stretches).length) + openContinueDecisions(draft, res, continued);
 }
 
-/** The breakdown's `continue`, or undefined when the run isn't continued. */
+/** The breakdown's `continue` for the run at `index`, which the lifter continues. */
 function breakdownContinue(draft: AssignDraft, res: ImportAssignResponse, index: number): ImportBreakdownContinue | undefined {
   const offer = res.continue;
-  if (!offer || !draft.continued || !continueTarget(draft, res)) return undefined;
+  if (!offer || !draft.continued) return undefined;
   const maxes = offer.maxes.flatMap((m) => {
     const weight = chosenWeight(maxChoice(draft, m), m);
     return typeof weight === 'number' ? [{ lift: m.lift, weight }] : [];
@@ -460,13 +484,13 @@ export function buildBreakdown(draft: AssignDraft, res: ImportAssignResponse): I
       .map(([date]) => date)
       .sort();
   const stretches = effectiveStretches(draft, res);
-  const continued = continuing(draft, res);
-  const continueChoice = continued ? breakdownContinue(draft, res, stretches.indexOf(continued)) : undefined;
+  const index = draft.continued ? continueIndex(stretches, res) : -1;
+  const continueChoice = index >= 0 ? breakdownContinue(draft, res, index) : undefined;
   return {
-    stretches: stretches.map((s) => ({
+    stretches: stretches.map((s, i) => ({
       program: s.program,
       // The server stores a continued run in progress whatever it's sent.
-      ...(s === continued
+      ...(i === index
         ? { status: 'in-progress' as const, statusChosen: false }
         : { status: s.status ?? 'unknown', statusChosen: s.statusChosen }),
       ...(s.file ? { file: s.file } : { dates: s.sessions.map((x) => x.date) }),

@@ -98,6 +98,10 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
     );
   }
 
+  async countLiftRecords(program: string, macrocycleNum: number): Promise<number> {
+    return (this.store.get(program) ?? []).filter((r) => r.macrocycleNum === macrocycleNum).length;
+  }
+
   async getLastSessions(
     program: string,
     macrocycleNum: number,

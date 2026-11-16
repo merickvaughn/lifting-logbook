@@ -66,6 +66,9 @@ export interface ILiftRecordRepository {
    */
   getLoggedWorkoutNums(program: string, macrocycleNum: number): Promise<Set<number>>;
 
+  /** How many records the macrocycle holds, counted without reading them (#1180). */
+  countLiftRecords(program: string, macrocycleNum: number): Promise<number>;
+
   /**
    * Each of `lifts`' last session before a workout, keyed by `liftIdFor` ({@link setsByLift}): the
    * sets of the latest other workout in the macrocycle dated on or before `before.through`

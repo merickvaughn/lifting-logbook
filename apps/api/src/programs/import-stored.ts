@@ -54,7 +54,7 @@ export interface StretchToPlace {
 const DAY_MS = 86_400_000;
 
 /** A stored macrocycle with the days it covers: its stored dates, widened by its sets' dates. */
-interface StoredSpan {
+export interface StoredSpan {
   macrocycle: MacrocycleRow;
   start: number;
   /** Its end date or, with none (a `live` or just-started one), its last set, else its start. */
@@ -66,7 +66,7 @@ interface StoredSpan {
  * outside its stored dates, and a `live` one has no end date until it closes, so both are read
  * from their sets: one grouped query per program.
  */
-async function storedSpans(repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>): Promise<StoredSpan[]> {
+export async function storedSpans(repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>): Promise<StoredSpan[]> {
   const stored = (await repos.macrocycle.listAll()).filter((m) => m.program !== NON_CYCLE_PROGRAM);
   const programs = [...new Set(stored.map((m) => m.program))];
   const ranges = new Map(

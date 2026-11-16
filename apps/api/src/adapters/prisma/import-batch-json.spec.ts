@@ -1,3 +1,4 @@
+import { Weekday } from '@lifting-logbook/core';
 import { Prisma } from '@prisma/client';
 import { BatchMacrocycles } from '../../ports/IImportBatchRepository';
 import { batchMacrocyclesJson, parseBatchMacrocycles } from './import-batch-json';
@@ -48,7 +49,7 @@ describe('parseBatchMacrocycles (#1255)', () => {
         macrocycleUnit: 'week',
         macrocycleDate: '2026-03-02T00:00:00.000Z',
         sheetName: '5-3-1_Cycle_4_20260302',
-        macrocycleStartWeekday: 'Monday',
+        macrocycleStartWeekday: Weekday.Monday,
         programType: null,
       },
       activeProgram: '5-3-1',
@@ -64,7 +65,13 @@ describe('parseBatchMacrocycles (#1255)', () => {
     });
 
     it('reads an unreadable one as a run with no id, so undo refuses', () => {
-      for (const bad of ['m-5', { ...continued, id: 5 }, { ...continued, ended: { id: 'm-4' } }, { ...continued, dashboard: { sheetName: 1 } }]) {
+      for (const bad of [
+        'm-5',
+        { ...continued, id: 5 },
+        { ...continued, ended: { id: 'm-4' } },
+        { ...continued, dashboard: { sheetName: 1 } },
+        { ...continued, dashboard: { ...continued.dashboard, macrocycleStartWeekday: 'Someday' } },
+      ]) {
         expect(parseBatchMacrocycles({ created: [], extended: [], chosen: [], continued: bad })?.continued?.id).toBe('');
       }
     });

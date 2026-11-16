@@ -1,4 +1,4 @@
-import { ImportPreImage } from '@lifting-logbook/core';
+import { ImportPreImage, Weekday } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
 import { MacrocycleStatus } from '@lifting-logbook/types';
 
@@ -46,8 +46,9 @@ export interface BatchMacrocycles {
 
 /**
  * What continuing a run as current changed besides its sets and training maxes (#1180, decision
- * 2), as undo puts it back. Macrocycles are kept by stable id, since their numbers can change, and
- * dates as `YYYY-MM-DD`, since this is stored as JSON.
+ * 2), as undo puts it back. Macrocycles are kept by stable id, since their numbers can change. It's
+ * stored as JSON, so the ended macrocycle's end date is a `YYYY-MM-DD` string and the dashboard's
+ * date an ISO timestamp.
  */
 export interface ContinuedRun {
   /** The run's macrocycle, created `live`. */
@@ -62,7 +63,7 @@ export interface ContinuedRun {
     macrocycleUnit: string;
     macrocycleDate: string;
     sheetName: string;
-    macrocycleStartWeekday: string;
+    macrocycleStartWeekday: Weekday;
     programType: string | null;
   } | null;
   /** The active program before. */
