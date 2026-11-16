@@ -93,33 +93,56 @@ describe('continueRefusal (#1180, decision 2)', () => {
   const program = BUILT_IN_KNOWN_PROGRAMS.find((p) => p.id === '5-3-1');
   if (!program) throw new Error('5-3-1 is a built-in program');
   const context = { programs: BUILT_IN_KNOWN_PROGRAMS, importDate: new Date('2026-03-20T00:00:00Z') };
-  const run = { program: '5-3-1', endDate: new Date('2026-03-10T00:00:00Z'), completedWorkouts: 3, placement: 'new' as const };
+  const run = {
+    program: '5-3-1',
+    startDate: new Date('2026-03-02T00:00:00Z'),
+    endDate: new Date('2026-03-10T00:00:00Z'),
+    completedWorkouts: 3,
+    placement: 'new' as const,
+    someStored: false,
+  };
+  const stretch = (program: string, start: string, end: string) => ({
+    program,
+    startDate: new Date(`${start}T00:00:00Z`),
+    endDate: new Date(`${end}T00:00:00Z`),
+  });
 
   it('lets the last run of a known program continue with workouts left and a recent last session', () => {
-    expect(continueRefusal(run, [new Date('2026-02-01T00:00:00Z')], context)).toBeNull();
+    expect(continueRefusal(run, [stretch('5-3-1', '2026-01-05', '2026-02-01')], [new Date('2026-02-01T00:00:00Z')], context)).toBeNull();
   });
 
   it('refuses a run with stored rows, or overlapping a stored macrocycle', () => {
-    expect(continueRefusal({ ...run, placement: 'already-imported' }, [], context)).toBe('already-stored');
-    expect(continueRefusal({ ...run, placement: 'joins' }, [], context)).toBe('already-stored');
-    expect(continueRefusal({ ...run, placement: 'overlaps' }, [], context)).toBe('overlaps');
+    expect(continueRefusal({ ...run, placement: 'already-imported' }, [], [], context)).toBe('already-stored');
+    expect(continueRefusal({ ...run, placement: 'joins' }, [], [], context)).toBe('already-stored');
+    expect(continueRefusal({ ...run, placement: 'overlaps' }, [], [], context)).toBe('overlaps');
   });
 
-  it('refuses a run another stretch ends after', () => {
-    expect(continueRefusal(run, [new Date('2026-03-11T00:00:00Z')], context)).toBe('not-last');
+  it('refuses a run some of whose sets are stored, as non-cycle workouts or anywhere else', () => {
+    expect(continueRefusal({ ...run, someStored: true }, [], [], context)).toBe('already-stored');
+  });
+
+  it("refuses a run overlapping another of the file's stretches in its program, though that one ends first", () => {
+    expect(continueRefusal(run, [stretch('5-3-1', '2026-02-20', '2026-03-03')], [], context)).toBe('overlaps');
+    // Another program's stretch on the same days numbers apart, so it doesn't interleave.
+    expect(continueRefusal(run, [stretch('rpt', '2026-02-20', '2026-03-03')], [], context)).toBeNull();
+  });
+
+  it('refuses a run another stretch or a stored macrocycle ends after', () => {
+    expect(continueRefusal(run, [stretch('rpt', '2026-03-11', '2026-03-11')], [], context)).toBe('not-last');
+    expect(continueRefusal(run, [], [new Date('2026-03-11T00:00:00Z')], context)).toBe('not-last');
   });
 
   it('refuses a program with no known length', () => {
-    expect(continueRefusal({ ...run, program: 'Custom' }, [], context)).toBe('unknown-program');
+    expect(continueRefusal({ ...run, program: 'Custom' }, [], [], context)).toBe('unknown-program');
   });
 
   it('refuses a finished run', () => {
-    expect(continueRefusal({ ...run, completedWorkouts: program.workoutCount }, [], context)).toBe('finished');
+    expect(continueRefusal({ ...run, completedWorkouts: program.workoutCount }, [], [], context)).toBe('finished');
   });
 
   it('refuses a run whose last session is over 14 days old', () => {
-    expect(continueRefusal(run, [], { ...context, importDate: new Date('2026-03-25T00:00:00Z') })).toBe('stale');
-    expect(continueRefusal(run, [], { ...context, importDate: new Date('2026-03-24T00:00:00Z') })).toBeNull();
+    expect(continueRefusal(run, [], [], { ...context, importDate: new Date('2026-03-25T00:00:00Z') })).toBe('stale');
+    expect(continueRefusal(run, [], [], { ...context, importDate: new Date('2026-03-24T00:00:00Z') })).toBeNull();
   });
 });
 

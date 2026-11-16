@@ -18,9 +18,8 @@ import {
   ProgressionSettings,
   TrainingMax,
   UpdateMaxesOptions,
-  WEEKDAY_MAP,
-  Weekday,
   buildTrainingMaxPreImage,
+  classifyLiftRecordRows,
   formatDateYYYYMMDD,
   isOpenEnded,
   liftIdFor,
@@ -33,7 +32,7 @@ import { RepositoryBundle } from '../ports/factory';
 import { ContinuedRun, preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { modificationModesFor } from '../lifts/lift-modification.util';
-import { closingEnd, dashboardOrNull, macrocycleIdFor } from './macrocycle-history.util';
+import { closingEnd, dashboardOrNull, macrocycleIdFor, weekdayOf } from './macrocycle-history.util';
 import { PROGRAM_DEFAULTS, redatedScheduledWorkouts } from './macrocycle-generation.service';
 import { placeNonCycleRows } from './import-handlers';
 import { storedSpans } from './import-stored';
@@ -121,21 +120,37 @@ function continuableProgram(programs: readonly KnownProgram[], id: string): Know
 /**
  * Why a run can't continue as current, or null when it can (decision 2):
  *
- * - It forms a macrocycle of its own, overlapping nothing stored (placement `new`). A run some of
- *   whose sessions are stored, or whose dates overlap a stored macrocycle, stays history: its
- *   macrocycle would hold only some of its workouts, or interleave with another.
- * - It ends last among the file's stretches and its program's stored macrocycles (`otherEnds`).
+ * - It forms a macrocycle of its own, overlapping nothing stored (placement `new`), and none of its
+ *   sets is stored already, in any program, non-cycle workouts included (`someStored`). A run some
+ *   of whose sets are stored, or whose dates overlap a stored macrocycle or another of the file's
+ *   stretches in its program, stays history: its macrocycle would hold only some of its workouts,
+ *   or interleave with another.
+ * - It ends last among the file's stretches (`others`) and its program's stored macrocycles
+ *   (`storedEnds`).
  * - It's under a program with a known length, with workouts left.
  * - Its last session is no more than 14 days before the import date.
  */
 export function continueRefusal(
-  run: { program: string; endDate: Date; completedWorkouts: number; placement: AssignStoredPlacement['kind'] },
-  otherEnds: readonly Date[],
+  run: {
+    program: string;
+    startDate: Date;
+    endDate: Date;
+    completedWorkouts: number;
+    placement: AssignStoredPlacement['kind'];
+    someStored: boolean;
+  },
+  others: ReadonlyArray<{ program: string; startDate: Date; endDate: Date }>,
+  storedEnds: readonly Date[],
   context: { programs: readonly KnownProgram[]; importDate: Date },
 ): ContinueRefusal | null {
   if (run.placement === 'already-imported' || run.placement === 'joins') return 'already-stored';
-  if (run.placement === 'overlaps') return 'overlaps';
-  if (otherEnds.some((end) => end.getTime() > run.endDate.getTime())) return 'not-last';
+  const start = run.startDate.getTime();
+  const end = run.endDate.getTime();
+  const overlapsRun = (o: { program: string; startDate: Date; endDate: Date }) =>
+    o.program === run.program && o.startDate.getTime() <= end && o.endDate.getTime() >= start;
+  if (run.placement === 'overlaps' || others.some(overlapsRun)) return 'overlaps';
+  if (run.someStored) return 'already-stored';
+  if ([...others.map((o) => o.endDate), ...storedEnds].some((e) => e.getTime() > end)) return 'not-last';
   const program = continuableProgram(context.programs, run.program);
   if (!program) return 'unknown-program';
   if (run.completedWorkouts >= program.workoutCount) return 'finished';
@@ -177,7 +192,7 @@ async function liveMacrocycle(
 
 /** Where each of the program's stored macrocycles ends, its sets included, as a run must end after. */
 async function storedEnds(repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>, program: string): Promise<Date[]> {
-  return (await storedSpans(repos)).filter((s) => s.macrocycle.program === program).map((s) => new Date(s.end));
+  return (await storedSpans(repos, program)).map((s) => new Date(s.end));
 }
 
 /**
@@ -199,15 +214,19 @@ export async function continueOffer(
   const last = stretches[index];
   const placement = stored[index];
   if (!last || !placement || !last.matched || placement.kind !== 'new') return null;
+  const records = runRecords(last);
+  const someStored = classifyLiftRecordRows(records, (r) => r, await repos.liftRecord.findStoredSets(records)).some(
+    (c) => c.kind === 'skip',
+  );
   const refusal = continueRefusal(
-    { program: last.program, endDate: last.endDate, completedWorkouts: last.completedWorkouts, placement: placement.kind },
-    [...stretches.slice(0, index).map((s) => s.endDate), ...(await storedEnds(repos, last.program))],
+    { ...last, placement: placement.kind, someStored },
+    stretches.slice(0, index),
+    await storedEnds(repos, last.program),
     context,
   );
   if (refusal) return null;
 
   const program = last.program;
-  const records = runRecords(last);
   const computed = computeContinueMaxes(
     await repos.liftingProgramSpec.getProgramSpec(program),
     await repos.trainingMax.getTrainingMaxes(program),
@@ -273,6 +292,8 @@ export interface ContinueRun {
   workoutNums: readonly number[];
   /** How the commit places it among the stored macrocycles. */
   placement: 'new' | 'overlaps' | 'joins' | 'already-imported';
+  /** Whether any of its rows is stored already, in any program, so the commit skips it. */
+  someStored: boolean;
 }
 
 /** What a checked continue will write. */
@@ -294,13 +315,14 @@ export async function planContinue(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'liftRecord' | 'liftingProgramSpec' | 'trainingMax'>,
   choice: ImportBreakdownContinue,
   run: ContinueRun | undefined,
-  others: readonly Date[],
+  others: ReadonlyArray<{ program: string; startDate: Date; endDate: Date }>,
   context: { programs: readonly KnownProgram[]; importDate: Date },
 ): Promise<ContinuePlan> {
   if (!run) throw new ContinueRefusedException('bad-stretch', `Stretch ${choice.stretch + 1} isn't one of the breakdown's.`);
   const refusal = continueRefusal(
-    { program: run.program, endDate: run.endDate, completedWorkouts: new Set(run.workoutNums).size, placement: run.placement },
-    [...others, ...(await storedEnds(repos, run.program))],
+    { ...run, completedWorkouts: new Set(run.workoutNums).size },
+    others,
+    await storedEnds(repos, run.program),
     context,
   );
   if (refusal) throw new ContinueRefusedException(refusal, refusalMessage(refusal));
@@ -330,13 +352,11 @@ export async function planContinue(
     );
   }
   // A max is dated at the run's last session: its value covers the run's sets through then, and a set
-  // logged on the run after that, even on the import date, counts at the next recalculation. One
-  // chosen at its current weight isn't written, so its date stays and undo has nothing to put back.
+  // logged on the run after that, even on the import date, counts at the next recalculation.
   const maxes = planned.flatMap((lift): TrainingMax[] => {
     const weight = chosen.get(liftIdFor(lift));
     const stored = current.find((m) => liftIdFor(m.lift) === liftIdFor(lift));
-    if (weight === undefined || weight === stored?.weight) return [];
-    return [{ lift: stored?.lift ?? lift, weight, dateUpdated: toUTCMidnight(run.endDate) }];
+    return weight === undefined ? [] : [{ lift: stored?.lift ?? lift, weight, dateUpdated: toUTCMidnight(run.endDate) }];
   });
   return { program: run.program, live: live ? { id: live.id } : null, maxes };
 }
@@ -346,7 +366,7 @@ function refusalMessage(reason: ContinueRefusal): string {
     case 'not-last':
       return 'Only the run that ends last, in the file and among your macrocycles in its program, can continue as your current macrocycle.';
     case 'overlaps':
-      return "The run's dates overlap a macrocycle you already have, so it stays history.";
+      return "The run's dates overlap a macrocycle you already have, or another of the file's in its program, so it stays history.";
     case 'unknown-program':
       return "The run's program has no known length, so it can't continue as your current macrocycle.";
     case 'finished':
@@ -354,15 +374,8 @@ function refusalMessage(reason: ContinueRefusal): string {
     case 'stale':
       return `The run's last session is more than ${BREAK_DAYS} days old, so it stays history.`;
     case 'already-stored':
-      return 'The run to continue is already stored, so it stays history. Undo that import first to continue it.';
+      return 'Some of the run to continue is already stored, so it stays history. Undo the import that stored it, or delete those sets, to continue it.';
   }
-}
-
-/** The weekday a dashboard starts on, as the enum spells it. */
-function weekdayOf(date: Date): Weekday {
-  const day = Object.values(Weekday).find((v) => WEEKDAY_MAP[v.toLowerCase()] === date.getUTCDay());
-  if (!day) throw new Error(`No Weekday mapping for UTC day index ${date.getUTCDay()}`);
-  return day;
 }
 
 const ymd = (date: Date) => date.toISOString().slice(0, 10);
@@ -420,13 +433,16 @@ export async function applyContinue(
     );
   }
 
-  if (plan.maxes.length > 0) {
-    const existing = await repos.trainingMax.getTrainingMaxes(program);
-    for (const [lift, entry] of Object.entries(buildTrainingMaxPreImage(plan.maxes, existing))) {
+  // Read after this import's split rows are written, so the lifter's value wins over theirs. A max
+  // chosen at the weight it has now isn't written, so its date stays and undo has nothing to put back.
+  const existing = await repos.trainingMax.getTrainingMaxes(program);
+  const maxes = plan.maxes.filter((m) => existing.find((e) => liftIdFor(e.lift) === liftIdFor(m.lift))?.weight !== m.weight);
+  if (maxes.length > 0) {
+    for (const [lift, entry] of Object.entries(buildTrainingMaxPreImage(maxes, existing))) {
       const prior = context.preImage[lift];
       context.preImage[lift] = prior ? { ...prior, wrote: entry.wrote } : entry;
     }
-    await repos.trainingMax.saveTrainingMaxes(program, plan.maxes);
+    await repos.trainingMax.saveTrainingMaxes(program, maxes);
   }
 
   const defaults = PROGRAM_DEFAULTS[program];
@@ -534,15 +550,15 @@ export async function continuedRunToUndo(
  * (decision 23), one per workout, with their dates, weights, reps, notes and modifications. Then its
  * number goes from every table: the imported sets, its schedule, overrides and focus state, the
  * dashboard pointing at it, and its row. {@link continuedRunToUndo} has checked no other batch holds
- * keys on it. Returns the batch's created keys left to delete, and how many of its sets went with
- * the run.
+ * keys on it. Returns the batch's created keys left to delete, how many of its sets went with the
+ * run, and how many were already gone.
  */
 export async function releaseContinuedRun(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>,
   program: string,
   run: MacrocycleRow,
   createdKeys: readonly string[],
-): Promise<{ keysLeft: string[]; removed: number; moved: number }> {
+): Promise<{ keysLeft: string[]; removed: number; missing: number; moved: number }> {
   const created = new Set(createdKeys);
   const records = await repos.liftRecord.getLiftRecords(program, run.macrocycleNum);
   const loggedSince = records.filter((r) => !created.has(liftRecordNaturalKey(r)));
@@ -554,9 +570,13 @@ export async function releaseContinuedRun(
     }
   }
   await repos.macrocycle.delete(program, [run.macrocycleNum]);
+  const removed = records.length - loggedSince.length;
+  const onRun = createdKeys.filter((k) => preImageKeyNumber(k) === run.macrocycleNum).length;
   return {
     keysLeft: createdKeys.filter((k) => preImageKeyNumber(k) !== run.macrocycleNum),
-    removed: records.length - loggedSince.length,
+    removed,
+    // The batch's sets on the run deleted since the import, which undo reports as not found.
+    missing: onRun - removed,
     moved: loggedSince.length,
   };
 }

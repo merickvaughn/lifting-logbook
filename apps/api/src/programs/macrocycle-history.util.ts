@@ -7,6 +7,8 @@ import {
   MacrocycleDashboard,
   MAX_FILE_MACROCYCLE_NUM,
   toUTCMidnight,
+  WEEKDAY_MAP,
+  Weekday,
 } from '@lifting-logbook/core';
 import { MacrocycleStatus, NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
@@ -598,6 +600,17 @@ export function closingEnd(
     endDate: lastSet ?? row.startDate,
     status: row.statusChosen ? row.status : closingStatus(loggedWorkoutNums, programWorkouts),
   };
+}
+
+/**
+ * The weekday a macrocycle starting on `date` starts on, as the `Weekday` enum spells it: the value
+ * a dashboard stores, and what reading one back checks for.
+ */
+export function weekdayOf(date: Date): Weekday {
+  // Search enum values (PascalCase) rather than WEEKDAY_MAP keys (lowercase).
+  const day = Object.values(Weekday).find((v) => WEEKDAY_MAP[v.toLowerCase()] === date.getUTCDay());
+  if (!day) throw new Error(`No Weekday mapping for UTC day index ${date.getUTCDay()}`);
+  return day;
 }
 
 /**

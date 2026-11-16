@@ -15,8 +15,6 @@ import {
   toUTCMidnight,
   updateMaxes,
   weekTypeForDate,
-  WEEKDAY_MAP,
-  Weekday,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
@@ -30,6 +28,7 @@ import {
   lockForMacrocycleWrite,
   lockForRenumbering,
   closingEnd,
+  weekdayOf,
   ensureCurrentRow,
   forgetBatchKeys,
   nextMacrocycleNumber,
@@ -431,14 +430,7 @@ export class MacrocycleGenerationService {
     }
 
     const macrocycleDate = dto.macrocycleDate ? new Date(dto.macrocycleDate) : new Date();
-    // Search enum values (PascalCase) rather than WEEKDAY_MAP keys (lowercase)
-    // to ensure the stored value matches the Weekday enum contract.
-    const weekdayName = Object.values(Weekday).find(
-      (v) => WEEKDAY_MAP[v.toLowerCase()] === macrocycleDate.getUTCDay(),
-    );
-    if (!weekdayName) {
-      throw new Error(`No Weekday mapping for UTC day index ${macrocycleDate.getUTCDay()}`);
-    }
+    const weekdayName = weekdayOf(macrocycleDate);
 
     // 1 for a program with no history; after imported history, the number past it (ADR-042).
     const macrocycleNum = await nextMacrocycleNumber(repos, program, null);

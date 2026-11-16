@@ -3,8 +3,8 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import multipart from '@fastify/multipart';
-import type { LiftRecord } from '@lifting-logbook/core';
-import { MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
+import { liftRecordNaturalKey, type LiftRecord } from '@lifting-logbook/core';
+import { MACROCYCLE_ID_HEADER, NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
   AssignContinueOffer,
   ImportAssignResponse,
@@ -22,6 +22,7 @@ import { injectPage } from '../testing/macrocycle-id';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
+import { placeNonCycleRows } from './import-handlers';
 import { dispatchTool } from '../adapters/llm/agent-tools';
 
 /**
@@ -283,6 +284,31 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       expect(res.json()).toMatchObject({ code: 'continue-refused', reason: 'not-last' });
     });
 
+    it("isn't made on a run one of whose sets is stored as a non-cycle workout, and a commit continuing one is refused", async () => {
+      const bundle = await repos();
+      const [first] = RECENT;
+      if (!first) throw new Error('RECENT has rows');
+      const stored: LiftRecord = {
+        program: NON_CYCLE_PROGRAM,
+        macrocycleNum: 0,
+        workoutNum: 0,
+        date: utc(first.day),
+        lift: first.lift,
+        setNum: 1,
+        weight: 100,
+        reps: 8,
+        notes: '',
+      };
+      await bundle.liftRecord.appendLiftRecords(NON_CYCLE_PROGRAM, await placeNonCycleRows(bundle, [stored]));
+      const assigned = await assign(RECENT);
+      // Non-cycle workouts aren't a macrocycle to place against, so the run alone says it's stored.
+      expect(assigned.stretches.map((s) => s.stored.kind)).toEqual(['new']);
+      expect(assigned.continue).toBeNull();
+      const res = await send(RECENT, breakdownOf([stretch(RECENT)], { stretch: 0, maxes: [] }));
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'continue-refused', reason: 'already-stored' });
+    });
+
     it('names the live macrocycle it would end, with its set count', async () => {
       const live = await liveWithASet(-40);
       expect((await assign(RECENT)).continue?.live).toEqual({ id: live.id, macrocycleNum: live.macrocycleNum, sets: 1 });
@@ -394,6 +420,37 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       expect(after.find((m) => m.lift === 'Squat')).toMatchObject({ weight: 200, dateUpdated: old });
     });
 
+    it("writes a max the lifter chose over this import's split row for its lift, and undo puts the old one back", async () => {
+      const bundle = await repos();
+      const old = new Date('2020-01-01T00:00:00Z');
+      // Under the spelling the split destination writes, so both writes land on one row.
+      await bundle.trainingMax.saveTrainingMaxes('rpt', [{ lift: 'back-squat', weight: 200, dateUpdated: old }]);
+      // A 1RM test in the run, which the split destination writes as the program's squat max.
+      const rows: Row[] = [...RECENT, { day: -6, lift: 'Squat', notes: '1RM test', weight: 300 }];
+      const offer = (await assign(rows)).continue;
+      if (!offer) throw new Error('expected an offer');
+      const maxes = offer.maxes.map((m) => ({ lift: m.lift, weight: m.lift === 'back-squat' ? 200 : (m.computed ?? 95) }));
+      const res = await importCsv(csvOf(rows), '?mode=commit&destination=lift-records&splitDest=1', {
+        breakdown: JSON.stringify(breakdownOf([stretch(rows)], { stretch: 0, maxes })),
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json<ImportCommitResponse>();
+      expect(body.split).toMatchObject({ updated: 1 });
+      // The lifter kept 200 by entering it, so the split row's value doesn't stand.
+      const squat = () => bundle.trainingMax.getTrainingMaxes('rpt').then((all) => all.filter((m) => m.lift === 'back-squat'));
+      expect(await squat()).toEqual([expect.objectContaining({ weight: 200, dateUpdated: utc(-4) })]);
+
+      expect((await undo(body.batchId)).flagged).toEqual([]);
+      expect(await squat()).toEqual([expect.objectContaining({ weight: 200, dateUpdated: old })]);
+    });
+
+    it('refuses to continue a run an earlier import stored as history', async () => {
+      await commit(RECENT, breakdownOf([stretch(RECENT)]));
+      const res = await send(RECENT, breakdownOf([stretch(RECENT)], { stretch: 0, maxes: [] }));
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'continue-refused', reason: 'already-stored' });
+    });
+
     it('refuses a continue on a run that may not continue', async () => {
       const stale = run(-40, 7);
       const res = await send(stale, breakdownOf([stretch(stale)], { stretch: 0, maxes: [] }));
@@ -436,6 +493,20 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
         [1, 'imported'],
         [2, 'live'],
       ]);
+    });
+
+    it('reports an imported set deleted from the run since as not found, as for any other import', async () => {
+      const { body } = await continueRun(RECENT);
+      const [runRow] = await macrocycles();
+      if (!runRow) throw new Error('no run');
+      const bundle = await repos();
+      const [first] = await bundle.liftRecord.getLiftRecords('rpt', runRow.macrocycleNum);
+      if (!first) throw new Error('no imported set');
+      expect(await bundle.liftRecord.deleteLiftRecordsByNaturalKeys('rpt', [liftRecordNaturalKey(first)])).toBe(1);
+
+      const result = await undo(body.batchId);
+      expect(result.skipped).toBe(1);
+      expect(result.flagged).toEqual([{ key: '*', reason: '1 row(s) not found (already deleted?)' }]);
     });
 
     it('keeps a set logged since the import as a non-cycle workout, and removes the rest of the run', async () => {

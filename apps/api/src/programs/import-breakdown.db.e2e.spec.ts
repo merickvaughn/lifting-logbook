@@ -64,7 +64,6 @@ async function cleanup(owner: PrismaClient): Promise<void> {
   await owner.trainingMax.deleteMany({ where });
   await owner.macrocycleDashboard.deleteMany({ where });
   // A continued run (#1180) also writes these.
-  await owner.trainingMaxHistory.deleteMany({ where });
   await owner.macrocycleScheduledWorkout.deleteMany({ where });
   await owner.userSettings.deleteMany({ where });
 }

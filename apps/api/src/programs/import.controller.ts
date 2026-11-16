@@ -534,15 +534,16 @@ export class ImportController {
       // batch, and its keys predate that undo's renumbering (#1257).
       const current = await repos.importBatch.findById(batchId, user.id);
       if (!current) throw new NotFoundException(`Import batch ${batchId} not found`);
+      const notFound = (missing: number) => {
+        if (missing <= 0) return;
+        skipped += missing;
+        flagged.push({ key: '*', reason: `${missing} row(s) not found (already deleted?)` });
+      };
       const deleteCreated = async (from: string, keys: string[]) => {
         if (keys.length === 0) return;
         const deleted = await repos.liftRecord.deleteLiftRecordsByNaturalKeys(from, keys);
         restored += deleted;
-        if (deleted < keys.length) {
-          const missing = keys.length - deleted;
-          skipped += missing;
-          flagged.push({ key: '*', reason: `${missing} row(s) not found (already deleted?)` });
-        }
+        notFound(keys.length - deleted);
       };
       // An import through the Assign step saved one batch per program it wrote to, grouped under
       // this one (#1254). Each one's keys are read under its own program.
@@ -594,6 +595,7 @@ export class ImportController {
           const released = await releaseContinuedRun(repos, part.program, continuedRun, createdKeys);
           createdKeys = released.keysLeft;
           restored += released.removed;
+          notFound(released.missing);
           movedToNonCycle += released.moved;
         }
         await deleteCreated(part.program, createdKeys);
@@ -1190,9 +1192,13 @@ export class ImportController {
             ...placedRun.span,
             workoutNums: planned?.creating.map((r) => r.workoutNum) ?? [],
             placement: planned?.stored.kind ?? 'already-imported',
+            // A row the plan doesn't create is stored already, in some program.
+            someStored: (planned?.creating.length ?? 0) < placedRun.rows.length,
           }
         : undefined;
-      const others = placed.stretches.flatMap((s, i) => (i !== continueChoice.stretch && s.span ? [s.span.endDate] : []));
+      const others = placed.stretches.flatMap((s, i) =>
+        i !== continueChoice.stretch && s.span ? [{ program: s.spec.program, ...s.span }] : [],
+      );
       try {
         continuePlan = await planContinue(repos, continueChoice, run, others, { programs, importDate: choices.importDate });
       } catch (err) {
