@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  AssignContinueOffer,
   AssignLift,
   AssignProgramOption,
   AssignSession,
@@ -270,6 +271,8 @@ export function assignResponse(
     stored: readonly AssignStoredPlacement[];
     /** Who LLM suggestions would go to, or null when they're off (#1174). */
     suggestionsProvider: string | null;
+    /** The offer to continue the last stretch as current (#1180), or null. */
+    continueOffer: AssignContinueOffer | null;
   },
   liftNames: ReadonlyMap<string, string>,
 ): ImportAssignResponse {
@@ -301,5 +304,6 @@ export function assignResponse(
     lifts: extra.lifts,
     ...(extra.split ? { split: extra.split } : {}),
     suggestions: extra.suggestionsProvider === null ? null : { provider: extra.suggestionsProvider },
+    continue: extra.continueOffer,
   };
 }

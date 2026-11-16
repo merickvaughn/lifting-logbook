@@ -40,6 +40,33 @@ export interface BatchMacrocycles {
   extended: string[];
   /** The statuses this batch chose, one per macrocycle. Undo orders choices across batches by `createdAt`, then `id`. */
   chosen: StatusChoice[];
+  /** The run this batch continued as its program's current macrocycle (#1180). Absent on every other batch. */
+  continued?: ContinuedRun;
+}
+
+/**
+ * What continuing a run as current changed besides its sets and training maxes (#1180, decision
+ * 2), as undo puts it back. Macrocycles are kept by stable id, since their numbers can change, and
+ * dates as `YYYY-MM-DD`, since this is stored as JSON.
+ */
+export interface ContinuedRun {
+  /** The run's macrocycle, created `live`. */
+  id: string;
+  /** The live macrocycle continuing ended, with its end date and status before, or null with none. */
+  ended: { id: string; endDate: string | null; status: MacrocycleStatus } | null;
+  /**
+   * The program's dashboard before, which pointed at `ended`, without its number, which undo reads
+   * from `ended` again. Null when the program had none.
+   */
+  dashboard: {
+    macrocycleUnit: string;
+    macrocycleDate: string;
+    sheetName: string;
+    macrocycleStartWeekday: string;
+    programType: string | null;
+  } | null;
+  /** The active program before. */
+  activeProgram: string | null;
 }
 
 /**

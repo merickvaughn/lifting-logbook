@@ -175,7 +175,7 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository, Trai
       statusChosen: macrocycle.statusChosen ?? false,
       origin: macrocycle.origin,
       unmatched: macrocycle.unmatched ?? false,
-      importedThrough: null,
+      importedThrough: macrocycle.importedThrough ?? null,
     };
     this.rows.push(row);
     return { ...row };

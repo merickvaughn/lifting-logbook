@@ -39,4 +39,34 @@ describe('parseBatchMacrocycles (#1255)', () => {
     ).toEqual({ created: ['m-1'], extended: ['m-2'], chosen: [{ id: 'm-2', chose: 'overran', before: { statusChosen: true } }] });
     expect(parseBatchMacrocycles({ created: 'm-1' })).toEqual({ created: [], extended: [], chosen: [] });
   });
+
+  describe('a continued run (#1180)', () => {
+    const continued = {
+      id: 'm-5',
+      ended: { id: 'm-4', endDate: null, status: 'in-progress' as const },
+      dashboard: {
+        macrocycleUnit: 'week',
+        macrocycleDate: '2026-03-02T00:00:00.000Z',
+        sheetName: '5-3-1_Cycle_4_20260302',
+        macrocycleStartWeekday: 'Monday',
+        programType: null,
+      },
+      activeProgram: '5-3-1',
+    };
+    const roundTrip = (macrocycles: BatchMacrocycles) =>
+      parseBatchMacrocycles(JSON.parse(JSON.stringify(batchMacrocyclesJson(macrocycles))) as Prisma.JsonValue);
+
+    it('reads back as save writes it', () => {
+      const macrocycles: BatchMacrocycles = { created: ['m-5'], extended: [], chosen: [], continued };
+      expect(roundTrip(macrocycles)).toEqual(macrocycles);
+      const nothingEnded: BatchMacrocycles = { ...macrocycles, continued: { ...continued, ended: null, dashboard: null, activeProgram: null } };
+      expect(roundTrip(nothingEnded)).toEqual(nothingEnded);
+    });
+
+    it('reads an unreadable one as a run with no id, so undo refuses', () => {
+      for (const bad of ['m-5', { ...continued, id: 5 }, { ...continued, ended: { id: 'm-4' } }, { ...continued, dashboard: { sheetName: 1 } }]) {
+        expect(parseBatchMacrocycles({ created: [], extended: [], chosen: [], continued: bad })?.continued?.id).toBe('');
+      }
+    });
+  });
 });

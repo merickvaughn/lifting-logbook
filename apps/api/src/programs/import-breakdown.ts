@@ -29,6 +29,7 @@ import { renumberProgram } from './macrocycle-renumbering';
 import { placeNonCycleRows } from './import-handlers';
 import { programCoveringDate } from './import-assign';
 import { StoredPlacement, continuedWorkoutNum, placeOnStored, recomputeMacrocycles } from './import-stored';
+import { parseContinue } from './import-continue';
 
 /**
  * An import through the Assign step (#1254, proposal decisions 3, 5, 13, 15 and 17): the lifter's
@@ -118,10 +119,15 @@ export function parseBreakdown(field: string | undefined): ImportBreakdown | nul
     }
     return { ...common, file: { group: file.group, macrocycleNum: file.macrocycleNum } };
   });
+  const continued = parseContinue(value.continue);
+  if (continued && continued.stretch >= stretches.length) {
+    throw new BadRequestException(`breakdown.continue names stretch ${continued.stretch + 1} of ${stretches.length}`);
+  }
   return {
     stretches,
     excludedDates: dates(value.excludedDates, 'excludedDates'),
     nonCycleDates: dates(value.nonCycleDates, 'nonCycleDates'),
+    ...(continued ? { continue: continued } : {}),
   };
 }
 
@@ -288,7 +294,7 @@ export function programCovering(stretches: readonly PlacedStretch[], fallback: s
 type Classified = ClassifiedLiftRecordRow<{ r: PlacedBreakdown['rows'][number]; row: number }, LiftRecord>;
 
 /** A stretch's rows to create, as the plan places them. */
-interface PlannedStretch {
+export interface PlannedStretch {
   spec: ImportBreakdownStretch;
   /**
    * Rows to create, with their workout number and occurrence. A joining stretch's carry its
@@ -423,6 +429,8 @@ export interface BreakdownWrite {
   created: number;
   /** Each program's batch, the Source program's always among them. */
   batches: Map<string, BreakdownBatch>;
+  /** The id of the `live` macrocycle the continued stretch became (#1180), or null with none. */
+  continuedId: string | null;
 }
 
 /**
@@ -436,13 +444,18 @@ export interface BreakdownWrite {
  * under any program. Then each program renumbers by date (decision 3), so a stretch's file number
  * never names a stored macrocycle. The pre-image keys carry the numbers as stored after that; the
  * macrocycles are kept by id, which doesn't change.
+ *
+ * The stretch the lifter continues as current (`context.continued`, #1180) becomes a `live`
+ * macrocycle, `in-progress` with no end date whatever its stretch's status says, and its sets up to
+ * its last session are marked as the file's (`importedThrough`). The caller makes it current.
  */
 export async function writeBreakdown(
   repos: Pick<RepositoryBundle, 'liftRecord' | 'macrocycle' | 'macrocycleDashboard' | 'importBatch'>,
   sourceProgram: string,
   plan: BreakdownPlan,
-  context: { programs: readonly KnownProgram[]; importDate: Date },
+  context: { programs: readonly KnownProgram[]; importDate: Date; continued?: ImportBreakdownStretch },
 ): Promise<BreakdownWrite> {
+  let continuedId: string | null = null;
   const batches = new Map<string, BreakdownBatch>();
   const batchOf = (program: string): BreakdownBatch => {
     let batch = batches.get(program);
@@ -467,16 +480,28 @@ export async function writeBreakdown(
     const first = Math.max(0, ...storedNums) + 1;
     const joining = planned.flatMap((s) => (s.stored.kind === 'joins' ? [{ s, macrocycle: s.stored.macrocycle }] : []));
     const ordered = planned.filter((s) => s.stored.kind !== 'joins').sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
-    const rows: NewMacrocycle[] = ordered.map((s, i) => ({
-      program,
-      macrocycleNum: first + i,
-      startDate: s.startDate,
-      endDate: s.endDate,
-      status: s.spec.status,
-      statusChosen: s.spec.statusChosen,
-      origin: 'imported',
-      unmatched: s.unmatched,
-    }));
+    const rows: NewMacrocycle[] = ordered.map((s, i) =>
+      s.spec === context.continued
+        ? {
+            program,
+            macrocycleNum: first + i,
+            startDate: s.startDate,
+            status: 'in-progress',
+            origin: 'live',
+            unmatched: s.unmatched,
+            importedThrough: s.endDate,
+          }
+        : {
+            program,
+            macrocycleNum: first + i,
+            startDate: s.startDate,
+            endDate: s.endDate,
+            status: s.spec.status,
+            statusChosen: s.spec.statusChosen,
+            origin: 'imported',
+            unmatched: s.unmatched,
+          },
+    );
     if (rows.length > 0) {
       // Rows a page wrote on these numbers before they had a macrocycle move past them first.
       await moveUnstartedRows(repos, program, storedNums, first - 1, first + rows.length - 1);
@@ -486,6 +511,10 @@ export async function writeBreakdown(
         const id = ids.get(first + i);
         if (id === undefined) throw new Error(`Macrocycle ${first + i} of ${program} was not created`);
         batch.macrocycles.created.push(id);
+        if (s.spec === context.continued) {
+          continuedId = id;
+          continue;
+        }
         // A new macrocycle had no status of its own, so the batch found it unchosen.
         if (s.spec.statusChosen) batch.macrocycles.chosen.push({ id, chose: s.spec.status, before: { statusChosen: false } });
       }
@@ -531,5 +560,5 @@ export async function writeBreakdown(
     Object.assign(batchOf(sourceProgram).preImage, nonCycleRowsPreImage(nonCycle));
   }
 
-  return { created, batches };
+  return { created, batches, continuedId };
 }
