@@ -21,7 +21,11 @@ export default function SetsExport({ programs }: { programs: UserProgram[] }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [macrocycles, setMacrocycles] = useState<MacrocycleSummaryResponse[]>([]);
-  const [listing, setListing] = useState<{ filter: LiftRecordExportQuery; parts: LiftRecordExportPartsResponse } | null>(null);
+  const [listing, setListing] = useState<{
+    find: number;
+    filter: LiftRecordExportQuery;
+    parts: LiftRecordExportPartsResponse;
+  } | null>(null);
   const [finding, setFinding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +56,7 @@ export default function SetsExport({ programs }: { programs: UserProgram[] }) {
       set(value);
       latestFind.current += 1;
       setListing(null);
+      setFinding(false);
       setError(null);
     };
   }
@@ -68,7 +73,7 @@ export default function SetsExport({ programs }: { programs: UserProgram[] }) {
     setFinding(true);
     try {
       const parts = await fetchLiftRecordExportParts(filter);
-      if (find === latestFind.current) setListing({ filter, parts });
+      if (find === latestFind.current) setListing({ find, filter, parts });
     } catch (err) {
       if (find !== latestFind.current) return;
       logClientError('fetchLiftRecordExportParts', err);
@@ -80,7 +85,7 @@ export default function SetsExport({ programs }: { programs: UserProgram[] }) {
         ),
       );
     } finally {
-      setFinding(false);
+      if (find === latestFind.current) setFinding(false);
     }
   }
 
@@ -139,7 +144,9 @@ export default function SetsExport({ programs }: { programs: UserProgram[] }) {
       </BusyButton>
       {error && <p role="alert">{error}</p>}
       {listing && (
+        // A new instance per listing, so an old listing's download state doesn't carry over.
         <PartsList
+          key={listing.find}
           listing={listing.parts}
           download={(part) => downloadLiftRecordExport({ ...listing.filter, part, split: listing.parts.split })}
           op="downloadLiftRecordExport"

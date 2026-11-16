@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { downloadDataExport } from '@/lib/client-api';
 import { localToday } from '@/lib/calendarDay';
 import { logClientError } from '@/lib/log-client-error';
+import BusyButton from './BusyButton';
 import { failureMessage, saveFile } from './saveFile';
 
 /** The whole logbook as one zip (#947). */
@@ -56,9 +57,9 @@ export default function DownloadAll() {
         </li>
       </ul>
       <div>
-        <button type="button" onClick={handleDownload} disabled={downloading}>
+        <BusyButton onClick={handleDownload} busy={downloading}>
           {downloading ? 'Preparing…' : 'Download my data'}
-        </button>
+        </BusyButton>
         {error && <p role="alert">{error}</p>}
       </div>
     </section>

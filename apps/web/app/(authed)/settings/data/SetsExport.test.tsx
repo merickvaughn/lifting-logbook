@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import SetsExport from './SetsExport';
 import { downloadLiftRecordExport, fetchLiftRecordExportParts, fetchMacrocycles } from '@/lib/client-api';
@@ -122,9 +122,16 @@ describe('Settings → Data → Download sets', () => {
 
     await user.click(screen.getByRole('button', { name: 'Find sets' }));
     await user.type(screen.getByLabelText('From'), '2024-01-01');
-    answer(threeParts);
+    // The old Find no longer counts, so the button is ready again before it answers.
+    const find = screen.getByRole('button', { name: 'Find sets' });
+    expect(find).not.toHaveAttribute('aria-disabled');
+    listParts.mockReturnValue(new Promise(() => {}));
+    await user.click(find);
+    expect(listParts).toHaveBeenCalledTimes(2);
+    await act(async () => answer(threeParts));
 
-    await screen.findByRole('button', { name: 'Find sets' });
+    // The old answer neither lists parts nor ends the new Find's wait.
+    expect(screen.getByRole('button', { name: 'Finding sets…' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Download part/ })).not.toBeInTheDocument();
   });
 

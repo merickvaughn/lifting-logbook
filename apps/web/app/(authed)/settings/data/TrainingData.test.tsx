@@ -121,6 +121,20 @@ describe('Settings → Data → Clear data and backups', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Clear training data…' })).toHaveFocus());
   });
 
+  it('returns focus to the Clear button while the backups are still being re-read', async () => {
+    const user = userEvent.setup();
+    (clearTrainingData as jest.Mock).mockResolvedValue({ snapshot });
+    render(<TrainingData />);
+    await waitFor(() => expect(fetchSnapshots).toHaveBeenCalledTimes(1));
+    (fetchSnapshots as jest.Mock).mockReturnValue(new Promise(() => {}));
+
+    await user.click(screen.getByRole('button', { name: 'Clear training data…' }));
+    await user.click(await screen.findByRole('button', { name: 'Clear 1,204 rows' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Clear training data…' })).toHaveFocus());
+    expect(fetchSnapshots).toHaveBeenCalledTimes(2);
+  });
+
   // jsdom keeps focus on a disabled button, so these assert the button is never disabled: a
   // browser would move focus to the page's body. e2e/settings.spec.ts checks focus in Chromium.
   it('keeps the confirm button focusable while a clear runs, and focused after it fails', async () => {
@@ -268,6 +282,20 @@ describe('Settings → Data → Clear data and backups', () => {
     expect(restoreSnapshot).toHaveBeenCalledWith('snap-1');
     expect(await screen.findByRole('status')).toHaveTextContent('Restored 1,104 rows.');
     expect(await screen.findByText(/No backups/)).toBeInTheDocument();
+    // The Restore button left with its backup.
+    expect(screen.getByRole('heading', { name: 'Backups' })).toHaveFocus();
+  });
+
+  it('keeps focus on a backup’s button when a failed restore leaves it in the list', async () => {
+    const user = userEvent.setup();
+    (fetchSnapshots as jest.Mock).mockResolvedValue([snapshot]);
+    (restoreSnapshot as jest.Mock).mockRejectedValue(new Error('Couldn’t restore this backup.'));
+    render(<TrainingData />);
+
+    await user.click(await screen.findByRole('button', { name: 'Restore' }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore' })).toHaveFocus());
   });
 
   it('downloads a backup’s sets', async () => {
@@ -310,6 +338,7 @@ describe('Settings → Data → Clear data and backups', () => {
     expect(deleteSnapshot).toHaveBeenCalledWith('snap-1');
     expect(await screen.findByRole('status')).toHaveTextContent('Backup deleted.');
     await waitFor(() => expect(screen.getByText(/No backups/)).toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: 'Backups' })).toHaveFocus();
   });
 
   it('shows and reports a backup list that couldn’t be read', async () => {

@@ -79,38 +79,51 @@ export default function TrainingData() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  const [downloads, setDownloads] = useState<Record<string, LiftRecordExportPartsResponse>>({});
+  // Each listing gets its own number, so listing again starts a fresh PartsList.
+  const [downloads, setDownloads] = useState<Record<string, { key: number; listing: LiftRecordExportPartsResponse }>>({});
+  const listings = useRef(0);
   const confirmHeading = useRef<HTMLHeadingElement>(null);
   const clearButton = useRef<HTMLButtonElement>(null);
+  const backupsHeading = useRef<HTMLHeadingElement>(null);
   const confirmOpen = useRef(false);
 
-  const loadSnapshots = useCallback(async () => {
+  /** Re-reads the backups. Returns them, or null if the read failed. */
+  const loadSnapshots = useCallback(async (): Promise<DataSnapshotSummary[] | null> => {
     try {
-      setSnapshots(await fetchSnapshots());
+      const list = await fetchSnapshots();
+      setSnapshots(list);
       setListError(null);
+      return list;
     } catch (err) {
       logClientError('fetchSnapshots', err);
       setListError('Couldn’t load your backups. Reload the page to try again.');
+      return null;
     }
   }, []);
+
+  // A restored, deleted or expired backup leaves the list, taking its focused button with it, so
+  // focus moves to the Backups heading rather than the page's body.
+  async function reloadAfter(snapshot: DataSnapshotSummary) {
+    const list = await loadSnapshots();
+    if (list && !list.some((s) => s.id === snapshot.id)) backupsHeading.current?.focus();
+  }
 
   useEffect(() => {
     void loadSnapshots();
   }, [loadSnapshots]);
 
   // Focus follows the confirmation: onto its heading when it opens or its counts change, and back
-  // to the button that opened it once it has closed and the clear has finished, so focus isn't
-  // left on the page's body.
+  // to the button that opened it as soon as it closes (a busy button can still take focus), so
+  // focus isn't left on the page's body.
   useEffect(() => {
-    if (!confirming) return;
-    confirmOpen.current = true;
-    confirmHeading.current?.focus();
+    if (confirming) {
+      confirmOpen.current = true;
+      confirmHeading.current?.focus();
+    } else if (confirmOpen.current) {
+      confirmOpen.current = false;
+      clearButton.current?.focus();
+    }
   }, [confirming]);
-  useEffect(() => {
-    if (confirming || busy !== null || !confirmOpen.current) return;
-    confirmOpen.current = false;
-    clearButton.current?.focus();
-  }, [confirming, busy]);
 
   async function run(action: string, fn: () => Promise<void>) {
     setError(null);
@@ -166,7 +179,7 @@ export default function TrainingData() {
         logClientError('restoreSnapshot', err, { snapshot: snapshot.id });
         setError(writeFailure(err, 'Couldn’t restore this backup. Please try again.'));
       }
-      await loadSnapshots();
+      await reloadAfter(snapshot);
     });
 
   const remove = (snapshot: DataSnapshotSummary) => {
@@ -179,7 +192,7 @@ export default function TrainingData() {
         logClientError('deleteSnapshot', err, { snapshot: snapshot.id });
         setError(writeFailure(err, 'Couldn’t delete this backup. Please try again.'));
       }
-      await loadSnapshots();
+      await reloadAfter(snapshot);
     });
   };
 
@@ -187,7 +200,8 @@ export default function TrainingData() {
     run(`parts:${snapshot.id}`, async () => {
       try {
         const listing = await fetchSnapshotLiftRecordParts(snapshot.id);
-        setDownloads((d) => ({ ...d, [snapshot.id]: listing }));
+        const key = (listings.current += 1);
+        setDownloads((d) => ({ ...d, [snapshot.id]: { key, listing } }));
       } catch (err) {
         logClientError('fetchSnapshotLiftRecordParts', err, { snapshot: snapshot.id });
         setError(
@@ -242,13 +256,15 @@ export default function TrainingData() {
       </section>
 
       <section aria-labelledby="backups-heading">
-        <h2 id="backups-heading">Backups</h2>
+        <h2 id="backups-heading" ref={backupsHeading} tabIndex={-1}>
+          Backups
+        </h2>
         {listError && <p role="alert">{listError}</p>}
         {snapshots?.length === 0 && <p>No backups. Clearing your training data saves one here for 30 days.</p>}
         {snapshots && snapshots.length > 0 && (
           <ul>
             {snapshots.map((s) => {
-              const listing = downloads[s.id];
+              const download = downloads[s.id];
               return (
               <li key={s.id}>
                 <p>
@@ -264,10 +280,11 @@ export default function TrainingData() {
                 <BusyButton onClick={() => remove(s)} busy={busy !== null}>
                   {busy === `delete:${s.id}` ? 'Deleting…' : 'Delete'}
                 </BusyButton>
-                {listing && (
+                {download && (
                   <PartsList
-                    listing={listing}
-                    download={(part) => downloadSnapshotLiftRecords(s.id, part, listing.split)}
+                    key={download.key}
+                    listing={download.listing}
+                    download={(part) => downloadSnapshotLiftRecords(s.id, part, download.listing.split)}
                     fileNamePrefix="backup-"
                     op="downloadSnapshotLiftRecords"
                     context={{ snapshot: s.id }}

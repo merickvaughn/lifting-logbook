@@ -30,18 +30,19 @@ describe('Settings → Data → a sets download’s parts', () => {
     expect(download).toHaveBeenCalledTimes(1);
   });
 
-  it('doesn’t show an old listing’s download error beside a new listing', async () => {
+  // Callers key PartsList by listing, as SetsExport and TrainingData do.
+  it('starts a new listing ready, without the old listing’s download or its error', async () => {
     const user = userEvent.setup();
     let fail: (err: Error) => void = () => {};
     const download = jest.fn(() => new Promise<Blob>((_, reject) => (fail = reject)));
-    const { rerender } = render(<PartsList listing={listing('a')} download={download} op="downloadLiftRecordExport" />);
+    const { rerender } = render(<PartsList key="a" listing={listing('a')} download={download} op="downloadLiftRecordExport" />);
 
     await user.click(screen.getByRole('button', { name: 'Download part 1 of 2' }));
-    rerender(<PartsList listing={listing('b')} download={download} op="downloadLiftRecordExport" />);
-    fail(new Error('These parts have changed. List the parts again.'));
+    rerender(<PartsList key="b" listing={listing('b')} download={download} op="downloadLiftRecordExport" />);
+    expect(screen.getByRole('button', { name: 'Download part 1 of 2' })).not.toHaveAttribute('aria-disabled');
 
+    fail(new Error('These parts have changed. List the parts again.'));
     await waitFor(() => expect(logClientError).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Download part 1 of 2' })).toBeInTheDocument());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

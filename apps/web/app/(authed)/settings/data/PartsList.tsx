@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { liftRecordExportFileName } from '@lifting-logbook/core';
 import type { LiftRecordExportPartsResponse } from '@lifting-logbook/types';
 import { localToday } from '@/lib/calendarDay';
@@ -10,7 +10,8 @@ import { failureMessage, saveFile } from './saveFile';
 
 /**
  * One download per part of a sets download, oldest first (decision 22). `op` names the download
- * in a failure log, and `context` says which one.
+ * in a failure log, and `context` says which one. Callers key it by listing, so listing again
+ * starts a fresh one: an old listing's download state and error don't carry over.
  */
 export default function PartsList({
   listing,
@@ -27,29 +28,15 @@ export default function PartsList({
 }) {
   const [downloading, setDownloading] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // A new listing, such as the one a 409 asks for, starts without the old one's error.
-  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
-  const [shown, setShown] = useState(listing);
-  if (shown !== listing) {
-    setShown(listing);
-    setError(null);
-  }
-  const latest = useRef(listing);
-  useEffect(() => {
-    latest.current = listing;
-  }, [listing]);
   const { parts } = listing;
 
   async function handleDownload(part: number) {
-    const started = listing;
     setError(null);
     setDownloading(part);
     try {
       saveFile(await download(part), fileNamePrefix + liftRecordExportFileName(localToday(), part, parts.length));
     } catch (err) {
       logClientError(op, err, { ...context, part: String(part) });
-      // Listed again while this downloaded: the error is about the old listing.
-      if (latest.current !== started) return;
       setError(
         failureMessage(
           err,

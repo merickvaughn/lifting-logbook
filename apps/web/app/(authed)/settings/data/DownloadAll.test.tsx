@@ -33,7 +33,12 @@ describe('Settings → Data', () => {
     render(<DownloadAll />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Download my data' }));
-    expect(screen.getByRole('button', { name: 'Preparing…' })).toBeDisabled();
+    // Busy but not disabled, so a browser keeps focus on it.
+    const preparing = screen.getByRole('button', { name: 'Preparing…' });
+    expect(preparing).toHaveAttribute('aria-disabled', 'true');
+    expect(preparing).not.toBeDisabled();
+    fireEvent.click(preparing);
+    expect(download).toHaveBeenCalledTimes(1);
 
     await screen.findByRole('button', { name: 'Download my data' });
     expect(URL.createObjectURL).toHaveBeenCalledWith(archive);
