@@ -1,7 +1,7 @@
-import { MACROCYCLE_STATUSES, MacrocycleStatus } from '@lifting-logbook/types';
+import { MACROCYCLE_ORIGINS, MACROCYCLE_STATUSES, MacrocycleOrigin, MacrocycleStatus } from '@lifting-logbook/types';
 import { Weekday } from '@lifting-logbook/core';
 import { Prisma } from '@prisma/client';
-import { BatchMacrocycles, ContinuedRun, StatusChoice } from '../../ports/IImportBatchRepository';
+import { BatchMacrocycles, ContinuedRun, RemovedMacrocycle, StatusChoice } from '../../ports/IImportBatchRepository';
 
 type JsonObject = Prisma.JsonObject;
 
@@ -28,11 +28,57 @@ const isStringOrNull = (value: Prisma.JsonValue | undefined): value is string | 
 const isWeekday = (value: Prisma.JsonValue | undefined): value is Weekday =>
   isString(value) && (Object.values(Weekday) as string[]).includes(value);
 
+const isOrigin = (value: Prisma.JsonValue | undefined): value is MacrocycleOrigin =>
+  typeof value === 'string' && (MACROCYCLE_ORIGINS as readonly string[]).includes(value);
+
+const isWholeNumber = (value: Prisma.JsonValue | undefined): value is number => typeof value === 'number' && Number.isInteger(value);
+
+/** A scheduled workout of a removed macrocycle, or null when it's unreadable. */
+function scheduledWorkout(value: Prisma.JsonValue): RemovedMacrocycle['schedule'][number] | null {
+  if (!isObject(value)) return null;
+  const { workoutNum, weekNum, scheduledDate } = value;
+  return isWholeNumber(workoutNum) && isWholeNumber(weekNum) && isString(scheduledDate) ? { workoutNum, weekNum, scheduledDate } : null;
+}
+
+/** A removed macrocycle (#1354), or null when any part of it is unreadable. */
+function removedMacrocycle(value: Prisma.JsonValue): RemovedMacrocycle | null {
+  if (!isObject(value)) return null;
+  const { id, startDate, endDate, status, statusChosen, origin, unmatched, importedThrough, schedule } = value;
+  if (
+    !isString(id) ||
+    !isString(startDate) ||
+    !isStringOrNull(endDate) ||
+    !isStatus(status) ||
+    typeof statusChosen !== 'boolean' ||
+    !isOrigin(origin) ||
+    typeof unmatched !== 'boolean' ||
+    !isStringOrNull(importedThrough) ||
+    !Array.isArray(schedule)
+  ) {
+    return null;
+  }
+  const workouts = schedule.map(scheduledWorkout);
+  if (workouts.some((w) => w === null)) return null;
+  return {
+    id,
+    startDate,
+    endDate,
+    status,
+    statusChosen,
+    origin,
+    unmatched,
+    importedThrough,
+    schedule: workouts.filter((w): w is RemovedMacrocycle['schedule'][number] => w !== null),
+  };
+}
+
 /** A continued run (#1180), or null when any part of it is unreadable. */
 function continuedRun(value: Prisma.JsonValue | undefined): ContinuedRun | null {
   if (!isObject(value)) return null;
-  const { id, ended, dashboard, activeProgram } = value;
+  const { id, ended, removed, dashboard, activeProgram } = value;
   if (!isString(id) || !isStringOrNull(activeProgram)) return null;
+  const removedRow = removed === undefined ? undefined : removedMacrocycle(removed);
+  if (removedRow === null) return null;
   let endedRun: ContinuedRun['ended'] = null;
   if (ended !== null) {
     if (!isObject(ended) || !isString(ended['id']) || !isStringOrNull(ended['endDate']) || !isStatus(ended['status'])) return null;
@@ -53,7 +99,7 @@ function continuedRun(value: Prisma.JsonValue | undefined): ContinuedRun | null 
     }
     before = { macrocycleUnit, macrocycleDate, sheetName, macrocycleStartWeekday, programType };
   }
-  return { id, ended: endedRun, dashboard: before, activeProgram };
+  return { id, ended: endedRun, ...(removedRow ? { removed: removedRow } : {}), dashboard: before, activeProgram };
 }
 
 /** `macrocycles` as the column stores it, which {@link parseBatchMacrocycles} reads back. */

@@ -1261,9 +1261,14 @@ export interface ImportBreakdownContinue {
   stretch: number;
   /**
    * The id of the program's live macrocycle the lifter agreed to end ({@link AssignContinueOffer.live}).
-   * Required when the program has one: without it the commit is refused.
+   * Required when the program has one with sets: without it the commit is refused.
    */
   endLive?: string;
+  /**
+   * The id of the program's live macrocycle with no sets, which the lifter agreed to remove (#1354),
+   * in place of `endLive`. Required when the program has one.
+   */
+  removeLive?: string;
   /**
    * The training maxes to overwrite, each with the weight to store: the computed value or one the
    * lifter entered. A lift left out keeps its max. Each lift with no max must be here.

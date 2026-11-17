@@ -64,14 +64,16 @@ export interface StoredSpan {
 /**
  * Every stored macrocycle but the non-cycle one, with its span. A `legacy` macrocycle can hold sets
  * outside its stored dates, and a `live` one has no end date until it closes, so both are read
- * from their sets: one grouped query per program. With `program`, only that program's.
+ * from their sets: one grouped query per program. With `program`, only that program's. The
+ * macrocycle with id `ignore` is left out: an empty live one a continue removes (#1354).
  */
 export async function storedSpans(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>,
   program?: string,
+  ignore?: string,
 ): Promise<StoredSpan[]> {
   const all = program === undefined ? await repos.macrocycle.listAll() : await repos.macrocycle.list(program);
-  const stored = all.filter((m) => m.program !== NON_CYCLE_PROGRAM);
+  const stored = all.filter((m) => m.program !== NON_CYCLE_PROGRAM && m.id !== ignore);
   const programs = [...new Set(stored.map((m) => m.program))];
   const ranges = new Map(
     await Promise.all(programs.map(async (p) => [p, await repos.liftRecord.getMacrocycleDateRanges(p)] as const)),
@@ -116,13 +118,16 @@ async function heldWorkouts(repos: Pick<RepositoryBundle, 'liftRecord'>, m: Macr
  * program wins, then the later start, then the greater id, so every adapter places alike.
  *
  * A stretch overlapping anything else forms its own macrocycle and says what it overlaps. The
- * non-cycle macrocycle is never one of these. Returns each stretch with its placement, in the
- * order given.
+ * non-cycle macrocycle is never one of these, nor the one with id `ignore`, an empty live
+ * macrocycle a continue removes (#1354). That one still counts as a boundary when it ends before
+ * the stretch, so ignoring it never joins a stretch to the macrocycle before it. Returns each
+ * stretch with its placement, in the order given.
  */
 export async function placeOnStored<T extends StretchToPlace>(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>,
   stretches: readonly T[],
   programs: readonly KnownProgram[],
+  ignore?: string,
 ): Promise<Array<{ stretch: T; placement: StoredPlacement }>> {
   const stored = await storedSpans(repos);
   const joined = new Set<string>();
@@ -145,7 +150,9 @@ export async function placeOnStored<T extends StretchToPlace>(
       return { kind: 'joins', macrocycle, held };
     };
 
-    const overlapping = stored.filter((s) => s.start <= end && s.end >= start).map((s) => s.macrocycle);
+    const overlapping = stored
+      .filter((s) => s.macrocycle.id !== ignore && s.start <= end && s.end >= start)
+      .map((s) => s.macrocycle);
     const [only] = overlapping;
     if (overlapping.length === 1 && only && joinable(only)) return join(only, await heldWorkouts(repos, only));
     if (overlapping.length > 0) return { kind: 'overlaps', macrocycles: overlapping };
@@ -176,12 +183,14 @@ function laterFirst(a: StoredSpan, b: StoredSpan, program: string): number {
 
 /**
  * `mode=assign`'s placements for the rules' stretches, in their order: their rows classified
- * against what's stored, under any program (decision 13), then placed as a commit of them would be.
+ * against what's stored, under any program (decision 13), then placed as a commit of them would be,
+ * leaving out the macrocycle with id `ignore` ({@link placeOnStored}).
  */
 export async function placeSuggestedStretches(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>,
   stretches: ReadonlyArray<HistoryStretch<LiftHistoryRecord>>,
   programs: readonly KnownProgram[],
+  ignore?: string,
 ): Promise<AssignStoredPlacement[]> {
   const toPlace = stretches.map((source): StretchToPlace & { source: typeof source; creating: Creating } => ({
     source,
@@ -201,7 +210,7 @@ export async function placeSuggestedStretches(
   for (const { kind, row } of classified) {
     if (kind === 'create') row.target.creating.push({ date: row.r.date, workoutNum: Number.isFinite(row.r.workoutNum) ? row.r.workoutNum : null });
   }
-  return (await placeOnStored(repos, toPlace, programs)).map(({ stretch, placement }) => assignStoredPlacement(placement, stretch.creating));
+  return (await placeOnStored(repos, toPlace, programs, ignore)).map(({ stretch, placement }) => assignStoredPlacement(placement, stretch.creating));
 }
 
 /** A placement as `mode=assign` reports it, with the stretch's rows to create. */

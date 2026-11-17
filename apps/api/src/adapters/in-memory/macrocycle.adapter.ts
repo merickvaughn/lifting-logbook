@@ -161,12 +161,12 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository, Trai
     return this.rows.filter((r) => r.program === program).reduce((max, r) => Math.max(max, r.macrocycleNum), 0);
   }
 
-  async create(macrocycle: NewMacrocycle): Promise<MacrocycleRow> {
+  async create(macrocycle: NewMacrocycle & { id?: string }): Promise<MacrocycleRow> {
     if (await this.findByNumber(macrocycle.program, macrocycle.macrocycleNum)) {
       throw new MacrocycleNumberConflictError(macrocycle.program, macrocycle.macrocycleNum);
     }
     const row: MacrocycleRow = {
-      id: randomUUID(),
+      id: macrocycle.id ?? randomUUID(),
       program: macrocycle.program,
       macrocycleNum: macrocycle.macrocycleNum,
       startDate: macrocycle.startDate,

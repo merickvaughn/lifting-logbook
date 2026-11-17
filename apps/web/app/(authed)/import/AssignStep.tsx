@@ -139,7 +139,8 @@ const weightText = (weight: number | null) => (weight === null ? 'none' : `${wei
 
 /**
  * The offer to continue the file's last run as the current macrocycle (#1180, decisions 2 and
- * 10). Continuing ends the program's live macrocycle, which needs the lifter's agreement, and
+ * 10). Continuing ends the program's live macrocycle, or removes it when it holds no sets (#1354),
+ * which needs the lifter's agreement, and
  * sets each lift's training max as the lifter chooses: keep the current one (the default), take
  * the value the run's sets compute, or enter one. A lift with no max needs a value.
  */
@@ -176,8 +177,17 @@ function ContinuePanel({
             checked={draft.continued?.endLive ?? false}
             onChange={(e) => onChange(setEndLive(draft, e.target.checked))}
           />
-          End macrocycle {live.macrocycleNum}, your current one in this program, which holds {live.sets} set
-          {live.sets === 1 ? '' : 's'}. Its sets stay in its history.
+          {live.sets === 0 ? (
+            <>
+              Remove macrocycle {live.macrocycleNum}, your current one in this program, which holds no sets. Undoing the
+              import brings it back.
+            </>
+          ) : (
+            <>
+              End macrocycle {live.macrocycleNum}, your current one in this program, which holds {live.sets} set
+              {live.sets === 1 ? '' : 's'}. Its sets stay in its history.
+            </>
+          )}
         </label>
       )}
       {on && (

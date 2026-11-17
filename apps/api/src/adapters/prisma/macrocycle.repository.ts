@@ -168,10 +168,11 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     return _max.macrocycleNum ?? 0;
   }
 
-  async create(macrocycle: NewMacrocycle): Promise<MacrocycleRow> {
+  async create(macrocycle: NewMacrocycle & { id?: string }): Promise<MacrocycleRow> {
     try {
       const row = await this.prisma.macrocycle.create({
         data: {
+          ...(macrocycle.id !== undefined ? { id: macrocycle.id } : {}),
           userId: this.userId,
           program: macrocycle.program,
           macrocycleNum: macrocycle.macrocycleNum,

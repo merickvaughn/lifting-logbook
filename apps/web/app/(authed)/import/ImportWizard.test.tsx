@@ -4846,6 +4846,31 @@ describe('ImportWizard Assign: continue the last run as current (#1180)', () => 
     );
   });
 
+  it('asks to remove a live macrocycle with no sets, rather than end it (#1354)', async () => {
+    const user = userEvent.setup();
+    const live = { id: 'm-empty', macrocycleNum: 4, sets: 0 };
+    mockAssign.mockResolvedValue(
+      assignRes({ continue: offer({ live, maxes: [{ lift: 'Squat', name: 'Squat', current: 200, computed: null }] }) }),
+    );
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(continueBox());
+
+    expect(screen.queryByRole('checkbox', { name: /End macrocycle 4/ })).not.toBeInTheDocument();
+    const agree = screen.getByRole('checkbox', {
+      name: /Remove macrocycle 4, your current one in this program, which holds no sets\. Undoing the import brings it back\./,
+    });
+    expect(nextButton()).toBeDisabled();
+    await user.click(agree);
+    await user.click(nextButton());
+    await screen.findByRole('heading', { name: 'Preview changes' });
+    expect(mockDryRun.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({
+        breakdown: expect.objectContaining({ continue: { stretch: 1, removeLive: 'm-empty', maxes: [] } }),
+      }),
+    );
+  });
+
   it('withdraws the offer once the run it was for changes', async () => {
     const user = userEvent.setup();
     mockAssign.mockResolvedValue(assignRes({ continue: offer() }));
