@@ -220,7 +220,10 @@ rejected head-based ratio sampling for discarding most errors and slow traces.
 
 - Every API request is now recorded, which is the premise the collector's tail-sampling sizing
   already assumed. Span volume reaching the collector rises from the sampled minority to the API's full
-  request rate; the `probabilistic` policy and the collector's memory limits bound what's forwarded.
+  request rate. The `probabilistic` policy bounds what's forwarded to Grafana Cloud, but the collector
+  still buffers every trace for `decision_wait`, and its config sets no `memory_limiter`; revisit that
+  if traffic grows (the Cloud Run sidecar's CPU throttling is already tracked in
+  [#787](https://github.com/merickvaughn/lifting-logbook/issues/787)).
 - Tests: `apps/api/src/otel.sampler.spec.ts` starts the SDK through `startOtel()` and asserts a
   not-sampled `traceparent` yields a recording span that reaches the exporter flagged sampled, and a
   sampled `traceparent` keeps its trace ID and parent span.

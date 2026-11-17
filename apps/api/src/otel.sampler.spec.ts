@@ -9,7 +9,10 @@
 // or changed back — not merely if a helper still exists.
 process.env.OTEL_SDK_AUTOSTART = 'false';
 delete process.env.OTEL_SDK_DISABLED;
-delete process.env.OTEL_TRACES_SAMPLER;
+// A blank value (for example an unset Helm value rendered as "") must count as
+// unset: with `??=` it would survive and the SDK would fall back to its
+// parent-based default.
+process.env.OTEL_TRACES_SAMPLER = '';
 delete process.env.OTEL_TRACES_SAMPLER_ARG;
 // No collector runs under test; keep the exporters from doing anything noisy.
 process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://127.0.0.1:1';

@@ -102,8 +102,9 @@ export function startOtel(): NodeSDK | undefined {
   // probabilistic) never saw them (#1343). always_on still joins the caller's
   // trace (same trace ID, caller's span as parent); it only ignores the
   // caller's keep/drop verdict, which belongs to the collector. An operator who
-  // sets OTEL_TRACES_SAMPLER explicitly keeps that choice.
-  process.env.OTEL_TRACES_SAMPLER ??= DEFAULT_TRACES_SAMPLER;
+  // sets OTEL_TRACES_SAMPLER explicitly keeps that choice; a blank value counts
+  // as unset, since the SDK would otherwise fall back to its parent-based default.
+  process.env.OTEL_TRACES_SAMPLER ||= DEFAULT_TRACES_SAMPLER;
 
   sdk = new NodeSDK({
     serviceName: process.env.OTEL_SERVICE_NAME ?? 'lifting-logbook-api',
