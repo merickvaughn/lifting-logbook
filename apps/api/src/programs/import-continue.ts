@@ -737,10 +737,7 @@ export async function restoreAroundContinuedRun(
       pointedAt = ended;
     }
   }
-  if (continued.removed) {
-    pointedAt = await repos.macrocycle.findById(continued.removed.id);
-    if (!pointedAt) flagged.push({ key: 'macrocycle', reason: 'the macrocycle the import removed could not be recreated' });
-  }
+  if (continued.removed) pointedAt = await repos.macrocycle.findById(continued.removed.id);
   if (pointedAt && continued.dashboard) {
     await repos.macrocycleDashboard.saveMacrocycleDashboard({
       program,
