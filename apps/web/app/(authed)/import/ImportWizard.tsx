@@ -8,6 +8,7 @@ import type {
   CustomLiftResponse,
   GoogleSheetTab,
   ImportAssignResponse,
+  ImportOverwriteCounts,
   ImportCommitResponse,
   ImportDelta,
   ImportDryRunResponse,
@@ -35,6 +36,7 @@ import {
   createCustomLift,
   dryRunImport,
   fetchCustomLifts,
+  fetchOverwriteCounts,
   fetchGoogleSheetWorkbook,
   patchLiftMetadata,
   previewImport,
@@ -55,6 +57,8 @@ import {
   initialDraft,
   openDecisions,
   withMember,
+  withChangedCounts,
+  withRangeCounts,
   type AssignDraft,
 } from './assignDraft';
 import {
@@ -124,6 +128,28 @@ function regroupFor(e: unknown): { code: string; notice: string } | null {
   if (e.code === BREAKDOWN_MISMATCH) return { code: BREAKDOWN_MISMATCH, notice: MISMATCH_NOTICE };
   if (e.code === CONTINUE_REFUSED) return { code: CONTINUE_REFUSED, notice: CONTINUE_NOTICE };
   return null;
+}
+
+// What the lifter confirmed replacing no longer matches what's stored (#1182): a set logged or a
+// macrocycle started since. The grouping still fits the file, so Assign keeps it and asks again.
+const OVERWRITE_COUNTS_CHANGED = 'overwrite-counts-changed';
+const COUNTS_NOTICE =
+  'Your stored history changed since you confirmed what to replace, so nothing was imported. Check the new counts and confirm again.';
+const COUNT_FIELDS = ['sets', 'macrocycles', 'current', 'shortened'] as const;
+/** The scope's counts now, from a dry run or commit refused because they changed. */
+function changedCounts(e: unknown): ImportOverwriteCounts | null {
+  if (!(e instanceof ApiClientError) || e.code !== OVERWRITE_COUNTS_CHANGED) return null;
+  const counts: unknown = e.body?.['counts'];
+  if (typeof counts !== 'object' || counts === null) return null;
+  const read = new Map(Object.entries(counts));
+  const field = (name: (typeof COUNT_FIELDS)[number]) => read.get(name);
+  if (!COUNT_FIELDS.every((name) => typeof field(name) === 'number')) return null;
+  return {
+    sets: Number(field('sets')),
+    macrocycles: Number(field('macrocycles')),
+    current: Number(field('current')),
+    shortened: Number(field('shortened')),
+  };
 }
 
 // The server's position key leaves a same-keyed row alone (#1123). An API rolled back to
@@ -281,6 +307,31 @@ export function ImportWizard({
   const [assignDraft, setAssignDraft] = useState<AssignDraft | null>(null);
   const assignKey = useRef<string | null>(null);
   const [assignNotice, setAssignNotice] = useState<string | null>(null);
+  // Reading a replace range's counts (#1182): the range being read, and whether that read failed.
+  // A read for a range the lifter has since changed is dropped.
+  const [rangeLoad, setRangeLoad] = useState<{ key: string; failed: boolean } | null>(null);
+  const rangeKey = useRef<string | null>(null);
+  const loadRangeCounts = useCallback(
+    (from: string, to: string) => {
+      const key = `${from}|${to}`;
+      rangeKey.current = key;
+      setRangeLoad({ key, failed: false });
+      void (async () => {
+        try {
+          const { range } = await fetchOverwriteCounts(programId, from, to);
+          if (rangeKey.current !== key) return;
+          if (!range) throw new Error('The counts had no range');
+          setAssignDraft((d) => d && withRangeCounts(d, from, to, range));
+          setRangeLoad(null);
+        } catch (e) {
+          if (rangeKey.current !== key) return;
+          logClientError('fetchOverwriteCounts', e, { programId });
+          setRangeLoad({ key, failed: true });
+        }
+      })();
+    },
+    [programId],
+  );
   /** How many groupings have loaded, which keys the step so each one starts it afresh. */
   const [assignLoads, setAssignLoads] = useState(0);
   // A changed lift progression is saved to the lift before it counts as confirmed (#1212). The
@@ -616,6 +667,8 @@ export function ImportWizard({
     setFailedLiftSaves(new Set());
     assignKey.current = null;
     setAssignNotice(null);
+    rangeKey.current = null;
+    setRangeLoad(null);
     resetSuggestions();
     suggestCache.current.clear();
   }
@@ -1467,6 +1520,17 @@ export function ImportWizard({
     await loadAssign(refused.notice);
   }
 
+  // What the lifter confirmed replacing changed before the dry run or commit (#1182). Assign keeps
+  // their grouping, shows the new counts and asks them to confirm again.
+  function onCountsChanged(op: 'dryRunImport' | 'commitImport', counts: ImportOverwriteCounts) {
+    logClientError(op, new Error(OVERWRITE_COUNTS_CHANGED), { programId, destination });
+    setPlannedCommit(null);
+    setCommitErrors(null);
+    setAssignDraft((d) => d && withChangedCounts(d, counts));
+    setAssignNotice(COUNTS_NOTICE);
+    setStep(Step.ASSIGN);
+  }
+
   // Asks the server what this commit would do, so the Preview tiles report the result of
   // the user's excludes, remaps and edits rather than the file as uploaded (#1123).
   async function enterPreview() {
@@ -1490,6 +1554,11 @@ export function ImportWizard({
         await refreshCustomLiftsAfterRejection();
       }
     } catch (e) {
+      const changed = changedCounts(e);
+      if (changed) {
+        onCountsChanged('dryRunImport', changed);
+        return;
+      }
       const refused = regroupFor(e);
       if (refused) {
         await onBreakdownRefused('dryRunImport', refused);
@@ -1523,6 +1592,11 @@ export function ImportWizard({
         }
       }
     } catch (e) {
+      const changed = changedCounts(e);
+      if (changed) {
+        onCountsChanged('commitImport', changed);
+        return;
+      }
       const refused = regroupFor(e);
       if (refused) {
         await onBreakdownRefused('commitImport', refused);
@@ -2469,7 +2543,7 @@ export function ImportWizard({
                   liftSaves={liftSaves}
                   failedLiftSaves={failedLiftSaves}
                   onSaveLift={(lift, progression) => void saveLiftProgression(lift, progression)}
-                  focusHeading={REGROUP_NOTICES.has(assignNotice)}
+                  focusHeading={REGROUP_NOTICES.has(assignNotice) || assignNotice === COUNTS_NOTICE}
                   suggestions={{
                     state: suggestState,
                     notes: suggestNotes,
@@ -2478,6 +2552,11 @@ export function ImportWizard({
                     answers: suggestAnswers,
                     onAnswerSuggestion: (index, answer) => setSuggestAnswers((prev) => ({ ...prev, [index]: answer })),
                     focusYes: suggestFocus,
+                  }}
+                  rangeCounts={{
+                    load: loadRangeCounts,
+                    loading: rangeLoad?.failed === false,
+                    failed: rangeLoad?.failed === true,
                   }}
                 />
               ) : (

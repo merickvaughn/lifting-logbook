@@ -9,6 +9,7 @@ import type {
   AssignStartReason,
   AssignStatusReason,
   ImportAssignResponse,
+  ImportOverwriteCounts,
   LiftProgressionType,
   MacrocycleStatus,
 } from '@lifting-logbook/types';
@@ -18,6 +19,7 @@ import { STATUS_LABEL, STATUS_MARK } from '@/lib/macrocycleStatus';
 import {
   canFile,
   canMoveStart,
+  confirmOverwrite,
   choicesFor,
   continueTarget,
   continuing,
@@ -37,10 +39,14 @@ import {
   overlaps,
   pendingSessions,
   previousStretchId,
+  rangeReady,
   setContinuing,
   setEndLive,
   setMaxChoice,
+  setOverwriteKind,
+  setOverwriteRange,
   setProgram,
+  setReplacing,
   setStatus,
   splitAtLargestGap,
   startOf,
@@ -49,6 +55,7 @@ import {
   withoutWithdrawnContinue,
   type AssignDraft,
   type ContinueMaxChoice,
+  type OverwriteDraft,
   type SessionChoice,
 } from './assignDraft';
 import AssignSuggestions from './AssignSuggestions';
@@ -265,6 +272,168 @@ function ContinueMaxRow({
   );
 }
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** What a replace removes and shortens, in a sentence. */
+export function overwriteSummary(c: ImportOverwriteCounts): string {
+  if (c.sets === 0 && c.macrocycles === 0 && c.shortened === 0) return 'Nothing stored is in this scope.';
+  const current = c.current > 0 ? `, ${c.current === 1 ? 'one of them your current macrocycle' : `${c.current} of them current`}` : '';
+  const removes = `Removes ${plural(c.sets, 'set')} and ${plural(c.macrocycles, 'macrocycle')}${current}.`;
+  return c.shortened > 0 ? `${removes} Shortens ${plural(c.shortened, 'macrocycle')} at the range’s edges.` : removes;
+}
+
+const OVERWRITE_ID = 'assign-overwrite';
+
+const SCOPES: Array<{ kind: OverwriteDraft['kind']; label: string; detail: string }> = [
+  {
+    kind: 'all',
+    label: 'All history',
+    detail: 'Every macrocycle and set in every program, current macrocycles and non-cycle workouts included.',
+  },
+  {
+    kind: 'imported',
+    label: 'All imported history',
+    detail: 'Keeps the macrocycles you started in the app and the workouts you recorded by hand.',
+  },
+  {
+    kind: 'range',
+    label: 'A date range',
+    detail: 'The sets between two days. A macrocycle that runs past either day is shortened, not removed.',
+  },
+];
+
+/** Reading a date range's counts from the server, which the wizard does. */
+export interface RangeCounts {
+  load: (from: string, to: string) => void;
+  loading: boolean;
+  failed: boolean;
+}
+
+/**
+ * Adding this import to stored history, the default, or replacing some of it (#1182, decision 19):
+ * all of it, all imported history, or a date range. The lifter sees what the scope removes and
+ * confirms it before Preview. A backup of what's replaced is kept, and undoing the import puts it back.
+ */
+function OverwritePanel({
+  res,
+  draft,
+  onChange,
+  rangeCounts,
+}: {
+  res: ImportAssignResponse;
+  draft: AssignDraft;
+  onChange: (next: AssignDraft) => void;
+  rangeCounts: RangeCounts;
+}) {
+  const overwrite = draft.overwrite;
+  const summaryId = useId();
+  const ready = overwrite?.kind === 'range' && rangeReady(overwrite);
+  const { load } = rangeCounts;
+  const from = overwrite?.from ?? '';
+  const to = overwrite?.to ?? '';
+  const uncounted = ready && overwrite.counts === null;
+  // A range is counted once both days are entered; a failure waits for the lifter's retry.
+  useEffect(() => {
+    if (uncounted) load(from, to);
+  }, [uncounted, from, to, load]);
+
+  return (
+    <section className={styles.decide} aria-labelledby={OVERWRITE_ID}>
+      <p className={styles.eyebrow} id={OVERWRITE_ID}>
+        YOUR STORED HISTORY
+      </p>
+      <div className={styles.fields} role="radiogroup" aria-label="Add to or replace your stored history">
+        <label>
+          <input type="radio" name="overwrite" checked={!overwrite} onChange={() => onChange(setReplacing(draft, res, false))} />
+          Add this import to my stored history
+        </label>
+        <label>
+          <input type="radio" name="overwrite" checked={!!overwrite} onChange={() => onChange(setReplacing(draft, res, true))} />
+          Replace stored history with this import
+        </label>
+      </div>
+      {overwrite && (
+        <>
+          <p className={styles.reason}>
+            A backup of what’s replaced is kept for 30 days. Undoing this import removes it and puts the backup back.
+          </p>
+          <fieldset className={styles.lifts}>
+            <legend className={styles.reason}>What to replace</legend>
+            <ul className={styles.list}>
+              {SCOPES.map((scope) => (
+                <li key={scope.kind}>
+                  <label className={styles.fields}>
+                    <input
+                      type="radio"
+                      name="overwrite-scope"
+                      checked={overwrite.kind === scope.kind}
+                      onChange={() => onChange(setOverwriteKind(draft, res, scope.kind))}
+                    />
+                    {scope.label}
+                    {scope.kind !== 'range' && `: ${overwriteSummary(res.overwrite[scope.kind])}`}
+                  </label>
+                  <p className={styles.reason}>{scope.detail}</p>
+                </li>
+              ))}
+            </ul>
+          </fieldset>
+          {overwrite.kind === 'range' && (
+            <div className={styles.fields}>
+              <label>
+                From
+                <input
+                  type="date"
+                  value={overwrite.from}
+                  max={overwrite.to || undefined}
+                  onChange={(e) => onChange(setOverwriteRange(draft, e.target.value, overwrite.to))}
+                />
+              </label>
+              <label>
+                To
+                <input
+                  type="date"
+                  value={overwrite.to}
+                  min={overwrite.from || undefined}
+                  onChange={(e) => onChange(setOverwriteRange(draft, overwrite.from, e.target.value))}
+                />
+              </label>
+            </div>
+          )}
+          <p className={styles.summary} role="status" id={summaryId} data-testid="overwrite-counts">
+            {overwrite.counts
+              ? overwriteSummary(overwrite.counts)
+              : overwrite.kind !== 'range'
+                ? null
+                : !rangeReady(overwrite)
+                  ? 'Enter the first and last day to replace.'
+                  : rangeCounts.loading
+                    ? 'Counting what this range holds…'
+                    : rangeCounts.failed
+                      ? 'We couldn’t count what this range holds.'
+                      : null}
+          </p>
+          {overwrite.kind === 'range' && ready && !overwrite.counts && rangeCounts.failed && !rangeCounts.loading && (
+            <button type="button" className={styles.btn} onClick={() => load(overwrite.from, overwrite.to)}>
+              Count again
+            </button>
+          )}
+          {overwrite.counts && (
+            <label className={styles.fields}>
+              <input
+                type="checkbox"
+                checked={overwrite.confirmed}
+                aria-describedby={summaryId}
+                onChange={(e) => onChange(confirmOverwrite(draft, e.target.checked))}
+              />
+              Replace this stored history
+            </label>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 /**
  * The Assign step (#1256): the rules' grouping of a lift-records file into macrocycles, for the
  * lifter to edit before the dry run. The wizard owns the draft; this renders it and reports edits.
@@ -279,6 +448,7 @@ export default function AssignStep({
   onSaveLift,
   focusHeading = false,
   suggestions,
+  rangeCounts,
 }: {
   res: ImportAssignResponse;
   draft: AssignDraft;
@@ -301,6 +471,8 @@ export default function AssignStep({
   focusHeading?: boolean;
   /** The LLM suggestions' state and handlers (#1174), which the wizard owns. */
   suggestions?: Omit<ComponentProps<typeof AssignSuggestions>, 'res' | 'draft' | 'onChange' | 'programName'>;
+  /** Reads a replace range's counts (#1182). The wizard owns the request. */
+  rangeCounts: RangeCounts;
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   // An edit that withdraws the continue offer drops the lifter's choices for it (#1180).
@@ -688,6 +860,8 @@ export default function AssignStep({
           );
         })}
       </ol>
+
+      <OverwritePanel res={res} draft={draft} onChange={onChange} rangeCounts={rangeCounts} />
 
       <p className={styles.summary} role="status" id={DECISIONS_ID} tabIndex={-1} data-testid="assign-decisions">
         {left === 0

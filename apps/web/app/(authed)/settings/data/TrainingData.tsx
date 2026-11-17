@@ -188,7 +188,11 @@ export default function TrainingData() {
     });
 
   const remove = (snapshot: DataSnapshotSummary) => {
-    if (!window.confirm(`Delete the backup from ${day(snapshot.createdAt)}? This can’t be undone.`)) return;
+    const ask =
+      snapshot.kind === 'overwrite'
+        ? `Delete the backup from ${day(snapshot.createdAt)}? The import that replaced this history can’t be undone after that, and this can’t be undone.`
+        : `Delete the backup from ${day(snapshot.createdAt)}? This can’t be undone.`;
+    if (!window.confirm(ask)) return;
     return run(`delete:${snapshot.id}`, async () => {
       try {
         await deleteSnapshot(snapshot.id);
@@ -272,13 +276,26 @@ export default function TrainingData() {
               const download = downloads[s.id];
               return (
               <li key={s.id} data-snapshot={s.id}>
-                <p>
-                  From clearing your data on {day(s.createdAt)}: {rows(total(s.counts))}. Kept until{' '}
-                  {day(s.expiresAt)}.
-                </p>
-                <BusyButton onClick={() => restore(s)} busy={busy !== null}>
-                  {busy === `restore:${s.id}` ? 'Restoring…' : 'Restore'}
-                </BusyButton>{' '}
+                {s.kind === 'overwrite' ? (
+                  // Restoring it here would put the history back beside the import that replaced it,
+                  // so undoing that import is how it comes back (#1182).
+                  <p>
+                    From an import that replaced stored history on {day(s.createdAt)}: {rows(total(s.counts))}.
+                    Undo that import to put it back. Kept until {day(s.expiresAt)}.
+                  </p>
+                ) : (
+                  <p>
+                    From clearing your data on {day(s.createdAt)}: {rows(total(s.counts))}. Kept until{' '}
+                    {day(s.expiresAt)}.
+                  </p>
+                )}
+                {s.kind !== 'overwrite' && (
+                  <>
+                    <BusyButton onClick={() => restore(s)} busy={busy !== null}>
+                      {busy === `restore:${s.id}` ? 'Restoring…' : 'Restore'}
+                    </BusyButton>{' '}
+                  </>
+                )}
                 <BusyButton onClick={() => listParts(s)} busy={busy !== null}>
                   {busy === `parts:${s.id}` ? 'Reading sets…' : 'Download sets'}
                 </BusyButton>{' '}

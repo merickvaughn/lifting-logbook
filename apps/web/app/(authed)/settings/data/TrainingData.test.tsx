@@ -408,4 +408,22 @@ describe('Settings → Data → Clear data and backups', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t load your backups');
     expect(logClientError).toHaveBeenCalledWith('fetchSnapshots', failure);
   });
+
+  it('shows an import’s backup without Restore, and warns that deleting it ends that import’s undo (#1182)', async () => {
+    const user = userEvent.setup();
+    const replaced: DataSnapshotSummary = { ...snapshot, id: 'snap-2', kind: 'overwrite' };
+    (fetchSnapshots as jest.Mock).mockResolvedValue([replaced]);
+    confirm.mockReturnValue(false);
+    render(<TrainingData />);
+
+    const row = (await screen.findByText(/From an import that replaced stored history/)).closest('li');
+    if (!row) throw new Error('expected the backup in a list item');
+    expect(row).toHaveTextContent('Undo that import to put it back.');
+    expect(within(row).queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Download sets' })).toBeInTheDocument();
+
+    await user.click(within(row).getByRole('button', { name: 'Delete' }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('can’t be undone after that'));
+    expect(deleteSnapshot).not.toHaveBeenCalled();
+  });
 });

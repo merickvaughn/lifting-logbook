@@ -6,6 +6,8 @@ import type {
   ImportAssignResponse,
   ImportBreakdown,
   ImportBreakdownContinue,
+  ImportOverwriteCounts,
+  ImportOverwriteScope,
   LiftProgressionType,
   MacrocycleStatus,
 } from '@lifting-logbook/types';
@@ -44,6 +46,8 @@ export interface AssignDraft {
   confirmedLifts: Record<string, LiftProgressionType>;
   /** Continuing the offer's run as the current macrocycle (#1180), or null to keep it as history. */
   continued: ContinueDraft | null;
+  /** Replacing stored history with this import (#1182, decision 19), or null to add to it, the default. */
+  overwrite: OverwriteDraft | null;
   /** Whether the lifter changed anything, so discarding the draft is worth saying. */
   edited: boolean;
   /** The next stretch id's number, so a split never reuses one. */
@@ -62,6 +66,21 @@ export interface ContinueDraft {
   endLive: boolean;
   /** Each lift's choice, by its stored spelling (`AssignContinueMax.lift`). */
   maxes: Record<string, ContinueMaxChoice>;
+}
+
+/** What the lifter replaces: all history, all imported history, or a date range. */
+export interface OverwriteDraft {
+  kind: ImportOverwriteScope['kind'];
+  /** The range's first and last days, `YYYY-MM-DD`, or '' until entered. */
+  from: string;
+  to: string;
+  /**
+   * What the scope removes: the Assign response's for all or imported history, the server's
+   * count for a range once it's read, or a commit's newer count. Null until there is one.
+   */
+  counts: ImportOverwriteCounts | null;
+  /** The lifter confirmed these counts. Any change to the scope or its counts asks again. */
+  confirmed: boolean;
 }
 
 /** A session the lifter has to file: a lone session in a break, or one with no file number. */
@@ -91,6 +110,7 @@ export function initialDraft(res: ImportAssignResponse): AssignDraft {
     filed: {},
     confirmedLifts: {},
     continued: null,
+    overwrite: null,
     edited: false,
     nextId: res.stretches.length,
   };
@@ -451,9 +471,60 @@ function openContinueDecisions(draft: AssignDraft, res: ImportAssignResponse, co
   return agreement + offer.maxes.filter((m) => chosenWeight(maxChoice(draft, m), m) === undefined).length;
 }
 
+/** Replacing stored history instead of adding to it, starting with all of it (#1182). */
+export function setReplacing(draft: AssignDraft, res: ImportAssignResponse, on: boolean): AssignDraft {
+  const overwrite: OverwriteDraft | null = on
+    ? { kind: 'all', from: '', to: '', counts: res.overwrite.all, confirmed: false }
+    : null;
+  return { ...draft, overwrite, edited: true };
+}
+
+/** The scope to replace. All and imported history take Assign's counts; a range waits for its own. */
+export function setOverwriteKind(draft: AssignDraft, res: ImportAssignResponse, kind: OverwriteDraft['kind']): AssignDraft {
+  if (!draft.overwrite) return draft;
+  const counts = kind === 'range' ? null : res.overwrite[kind];
+  return { ...draft, overwrite: { ...draft.overwrite, kind, counts, confirmed: false }, edited: true };
+}
+
+/** The range's days. Its counts are read again for them. */
+export function setOverwriteRange(draft: AssignDraft, from: string, to: string): AssignDraft {
+  if (!draft.overwrite) return draft;
+  return { ...draft, overwrite: { ...draft.overwrite, from, to, counts: null, confirmed: false }, edited: true };
+}
+
+/** A range is ready to count once both days are entered, the first not after the last. */
+export function rangeReady(overwrite: OverwriteDraft): boolean {
+  return overwrite.from !== '' && overwrite.to !== '' && overwrite.from <= overwrite.to;
+}
+
+/** The counts the server read for `from`–`to`, unless the lifter has changed the range since. */
+export function withRangeCounts(draft: AssignDraft, from: string, to: string, counts: ImportOverwriteCounts): AssignDraft {
+  const o = draft.overwrite;
+  if (!o || o.kind !== 'range' || o.from !== from || o.to !== to) return draft;
+  return { ...draft, overwrite: { ...o, counts, confirmed: false } };
+}
+
+/** Counts a commit found, which differ from those confirmed, so the lifter confirms again. */
+export function withChangedCounts(draft: AssignDraft, counts: ImportOverwriteCounts): AssignDraft {
+  return draft.overwrite ? { ...draft, overwrite: { ...draft.overwrite, counts, confirmed: false } } : draft;
+}
+
+export function confirmOverwrite(draft: AssignDraft, confirmed: boolean): AssignDraft {
+  return draft.overwrite ? { ...draft, overwrite: { ...draft.overwrite, confirmed }, edited: true } : draft;
+}
+
+/** The breakdown's `overwrite`, once there are counts to send. */
+function breakdownOverwrite(overwrite: OverwriteDraft | null): ImportBreakdown['overwrite'] {
+  if (!overwrite?.counts) return undefined;
+  const scope: ImportOverwriteScope =
+    overwrite.kind === 'range' ? { kind: 'range', from: overwrite.from, to: overwrite.to } : { kind: overwrite.kind };
+  return { scope, counts: overwrite.counts };
+}
+
 /**
  * What the lifter still has to decide before Preview: sessions to file, statuses, overlaps, the
- * progression of each lift outside its stretch's program, and a continued run's choices.
+ * progression of each lift outside its stretch's program, a continued run's choices, and
+ * confirming what a replace removes.
  */
 export function openDecisions(draft: AssignDraft, res: ImportAssignResponse): number {
   const unfiled = pendingSessions(res).filter((p) => draft.filed[p.session.date] === undefined).length;
@@ -462,7 +533,15 @@ export function openDecisions(draft: AssignDraft, res: ImportAssignResponse): nu
   // A continued run is in progress whatever status it was given.
   const unset = stretches.filter((s) => s.status === null && s.id !== continued?.id).length;
   const lifts = unconfirmedLifts(draft, stretches, res).size;
-  return unfiled + unset + lifts + (res.exported ? 0 : overlaps(stretches).length) + openContinueDecisions(draft, res, continued);
+  const replace = draft.overwrite && !(draft.overwrite.counts && draft.overwrite.confirmed) ? 1 : 0;
+  return (
+    unfiled +
+    unset +
+    lifts +
+    (res.exported ? 0 : overlaps(stretches).length) +
+    openContinueDecisions(draft, res, continued) +
+    replace
+  );
 }
 
 /** The breakdown's `continue` for the run at `index`, which the lifter continues. */
@@ -489,6 +568,7 @@ export function buildBreakdown(draft: AssignDraft, res: ImportAssignResponse): I
   const stretches = effectiveStretches(draft, res);
   const index = draft.continued ? continueIndex(stretches, res) : -1;
   const continueChoice = index >= 0 ? breakdownContinue(draft, res, index) : undefined;
+  const overwrite = breakdownOverwrite(draft.overwrite);
   return {
     stretches: stretches.map((s, i) => ({
       program: s.program,
@@ -501,6 +581,7 @@ export function buildBreakdown(draft: AssignDraft, res: ImportAssignResponse): I
     excludedDates: datesFiled('exclude'),
     nonCycleDates: datesFiled('non-cycle'),
     ...(continueChoice ? { continue: continueChoice } : {}),
+    ...(overwrite ? { overwrite } : {}),
   };
 }
 
