@@ -473,7 +473,10 @@ function breakdownContinue(draft: AssignDraft, res: ImportAssignResponse, index:
     const weight = chosenWeight(maxChoice(draft, m), m);
     return typeof weight === 'number' ? [{ lift: m.lift, weight }] : [];
   });
-  return { stretch: index, ...(offer.live && draft.continued.endLive ? { endLive: offer.live.id } : {}), maxes };
+  // An empty live macrocycle is removed rather than ended (#1354), and the agreement says which.
+  const live = draft.continued.endLive ? offer.live : null;
+  const agreed = !live ? {} : live.sets === 0 ? { removeLive: live.id } : { endLive: live.id };
+  return { stretch: index, ...agreed, maxes };
 }
 
 /** The confirmed breakdown, once nothing is left to decide. */

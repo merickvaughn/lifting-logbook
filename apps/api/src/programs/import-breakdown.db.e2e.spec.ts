@@ -555,7 +555,7 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     expect(offer?.live).toEqual({ id: live.id, macrocycleNum: 1, sets: 0 });
     const breakdown: ImportBreakdown = {
       ...oneStretch(dates),
-      continue: { stretch: 0, endLive: live.id, maxes: (offer?.maxes ?? []).map((m) => ({ lift: m.lift, weight: m.computed ?? 100 })) },
+      continue: { stretch: 0, removeLive: live.id, maxes: (offer?.maxes ?? []).map((m) => ({ lift: m.lift, weight: m.computed ?? 100 })) },
     };
     const committed = await post('?mode=commit&destination=lift-records', csv, { today, breakdown: JSON.stringify(breakdown) });
     expect(committed.statusCode).toBe(200);

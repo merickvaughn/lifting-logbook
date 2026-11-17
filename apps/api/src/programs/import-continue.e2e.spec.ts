@@ -359,6 +359,9 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       expect(refused.json()).toMatchObject({ code: 'continue-refused', reason: 'needs-agreement' });
       expect(refused.json<{ message: string }>().message).toContain('1 set');
       expect((await send(RECENT, breakdown('some-other-id'))).statusCode).toBe(400);
+      // Agreeing to remove it, as for an empty one, isn't agreeing to end one with sets.
+      const remove = breakdownOf([stretch(RECENT)], { stretch: 0, maxes: everyMax(offer), removeLive: live.id });
+      expect((await send(RECENT, remove)).json()).toMatchObject({ reason: 'needs-agreement' });
       expect(await macrocycles()).toHaveLength(1);
 
       await commit(RECENT, breakdown(live.id));
@@ -469,8 +472,8 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
     // Two stretches: older history, then RECENT, the run to continue.
     const OLDER = run(-120, 6);
     const ROWS = [...OLDER, ...RECENT];
-    const breakdown = (offer: AssignContinueOffer, endLive?: string) =>
-      breakdownOf([stretch(OLDER), stretch(RECENT)], { stretch: 1, maxes: everyMax(offer), ...(endLive ? { endLive } : {}) });
+    const breakdown = (offer: AssignContinueOffer, agreed: Partial<ImportBreakdownContinue> = {}) =>
+      breakdownOf([stretch(OLDER), stretch(RECENT)], { stretch: 1, maxes: everyMax(offer), ...agreed });
     const numbered = async () => (await macrocycles()).map((m) => [m.macrocycleNum, m.origin, ymd(m.startDate)]);
 
     /**
@@ -487,9 +490,11 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       expect(refused.statusCode).toBe(400);
       expect(refused.json()).toMatchObject({ code: 'continue-refused', reason: 'needs-agreement' });
       expect(refused.json<{ message: string }>().message).toContain(`removes macrocycle ${live.macrocycleNum}`);
+      // Agreeing to end it isn't agreeing to remove it.
+      expect((await send(ROWS, breakdown(offer, { endLive: live.id }))).json()).toMatchObject({ reason: 'needs-agreement' });
       expect((await macrocycles()).some((m) => m.id === live.id)).toBe(true);
 
-      const body = await commit(ROWS, breakdown(offer, live.id));
+      const body = await commit(ROWS, breakdown(offer, { removeLive: live.id }));
       const rows = await macrocycles();
       expect(rows.some((m) => m.id === live.id)).toBe(false);
       const runRow = rows.find((m) => m.origin === 'live');
@@ -528,6 +533,24 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       await continueOver(live);
       expect(await numbered()).toEqual([
         [1, 'imported', day(-120)],
+        [2, 'live', day(-16)],
+      ]);
+    });
+
+    it("started between an earlier import and the run: still a boundary, so the run doesn't join the import", async () => {
+      // Stored by an earlier import, with workouts left, ending eight days before the run starts.
+      const earlier = run(-34, 6);
+      await commit(earlier, breakdownOf([stretch(earlier, { status: 'in-progress', statusChosen: true })]));
+      expect((await page('POST', '/programs/rpt/macrocycles/initialize', { macrocycleDate: day(-20) })).statusCode).toBe(201);
+      const live = (await macrocycles()).find((m) => m.origin === 'live');
+      if (!live) throw new Error('no live macrocycle');
+
+      const res = await assign(RECENT);
+      expect(res.stretches.map((s) => s.stored.kind)).toEqual(['new']);
+      expect(res.continue).toMatchObject({ stretch: 0, live: { id: live.id, sets: 0 } });
+      await continueRun(RECENT, { removeLive: live.id });
+      expect(await numbered()).toEqual([
+        [1, 'imported', day(-34)],
         [2, 'live', day(-16)],
       ]);
     });

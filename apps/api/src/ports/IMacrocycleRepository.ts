@@ -21,11 +21,6 @@ export interface MacrocycleRow {
 export type MacrocycleChanges = Partial<Pick<MacrocycleRow, 'startDate' | 'endDate' | 'status' | 'statusChosen' | 'unmatched'>>;
 
 export interface NewMacrocycle {
-  /**
-   * Absent means a new one. Undo recreating a removed macrocycle gives its old id back (#1354).
-   * Only {@link IMacrocycleRepository.create} reads it.
-   */
-  id?: string;
   program: string;
   macrocycleNum: number;
   startDate: Date;
@@ -97,9 +92,10 @@ export interface IMacrocycleRepository {
 
   /**
    * Inserts a row. Throws `MacrocycleNumberConflictError` when the program already has a
-   * macrocycle with that number, such as one a concurrent request just created.
+   * macrocycle with that number, such as one a concurrent request just created. `id` is absent for
+   * a new one; undo recreating a removed macrocycle gives its old id back (#1354).
    */
-  create(macrocycle: NewMacrocycle): Promise<MacrocycleRow>;
+  create(macrocycle: NewMacrocycle & { id?: string }): Promise<MacrocycleRow>;
 
   /** Inserts rows in one statement, throwing as {@link create} does when a number is taken. */
   createMany(macrocycles: readonly NewMacrocycle[]): Promise<void>;

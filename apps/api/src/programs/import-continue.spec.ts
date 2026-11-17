@@ -1,5 +1,7 @@
 import { BUILT_IN_KNOWN_PROGRAMS, LiftingProgramSpec, LiftRecord, TrainingMax } from '@lifting-logbook/core';
-import { computeContinueMaxes, continueRefusal, parseContinue, plannedLifts } from './import-continue';
+import { emptyFocusDayState } from '@lifting-logbook/types';
+import { InMemoryRepositoryFactory } from '../adapters/factory/in-memory-repository-factory';
+import { computeContinueMaxes, continueRefusal, parseContinue, plannedLifts, recreateRemovedLive } from './import-continue';
 
 // The computed maxes a continued run offers (#1180, proposal decision 10), and which runs may
 // continue (decision 2).
@@ -154,10 +156,12 @@ describe('parseContinue', () => {
       maxes: [{ lift: 'Back Squat', weight: 230 }],
     });
     expect(parseContinue(undefined)).toBeUndefined();
+    expect(parseContinue({ stretch: 0, removeLive: 'm2', maxes: [] })).toEqual({ stretch: 0, removeLive: 'm2', maxes: [] });
   });
 
   it.each([
     ['a non-object', 'x'],
+    ['a removeLive that is no id', { stretch: 0, removeLive: 2, maxes: [] }],
     ['no stretch', { maxes: [] }],
     ['a negative stretch', { stretch: -1, maxes: [] }],
     ['no maxes', { stretch: 0 }],
@@ -165,5 +169,35 @@ describe('parseContinue', () => {
     ['a non-numeric weight', { stretch: 0, maxes: [{ lift: 'Back Squat', weight: '230' }] }],
   ])('rejects %s', (_label, value) => {
     expect(() => parseContinue(value)).toThrow();
+  });
+});
+
+describe('recreateRemovedLive (#1354)', () => {
+  it('takes the number after the highest macrocycle, moving a row there with no macrocycle past it', async () => {
+    const repos = await new InMemoryRepositoryFactory().forUser({ id: 'recreate-removed', email: 'r@example.com', provider: 'dev' });
+    const day = (d: string) => new Date(`${d}T00:00:00Z`);
+    for (const [num, start] of [[1, '2025-01-06'], [2, '2025-03-03']] as const) {
+      await repos.macrocycle.create({ program: 'rpt', macrocycleNum: num, startDate: day(start), status: 'completed', origin: 'imported' });
+    }
+    // A focus state saved before the next macrocycle starts, on the number after the highest.
+    await repos.focus.saveDayState('rpt', 3, 1, { ...emptyFocusDayState(), dismissed: true });
+
+    await recreateRemovedLive(repos, 'rpt', {
+      id: 'removed-live',
+      startDate: '2025-05-05',
+      endDate: null,
+      status: 'in-progress',
+      statusChosen: false,
+      origin: 'live',
+      unmatched: false,
+      importedThrough: null,
+      schedule: [{ workoutNum: 1, weekNum: 1, scheduledDate: '2025-05-05T00:00:00.000Z' }],
+    });
+
+    expect(await repos.macrocycle.findById('removed-live')).toMatchObject({ macrocycleNum: 3, startDate: day('2025-05-05') });
+    expect(await repos.macrocycleScheduledWorkout.getScheduledWorkouts('rpt', 3)).toHaveLength(1);
+    // The focus state still belongs to the next macrocycle to start, not the recreated one.
+    expect(await repos.focus.getDayState('rpt', 3, 1)).toBeNull();
+    expect(await repos.focus.getDayState('rpt', 4, 1)).toMatchObject({ dismissed: true });
   });
 });

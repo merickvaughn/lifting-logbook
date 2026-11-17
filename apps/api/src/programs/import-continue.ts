@@ -32,11 +32,10 @@ import { RepositoryBundle } from '../ports/factory';
 import { ContinuedRun, RemovedMacrocycle, preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { modificationModesFor } from '../lifts/lift-modification.util';
-import { closingEnd, dashboardOrNull, macrocycleIdFor, weekdayOf } from './macrocycle-history.util';
+import { closingEnd, dashboardOrNull, macrocycleIdFor, moveUnstartedRows, weekdayOf } from './macrocycle-history.util';
 import { PROGRAM_DEFAULTS, redatedScheduledWorkouts } from './macrocycle-generation.service';
 import { placeNonCycleRows } from './import-handlers';
 import { placeSuggestedStretches, storedSpans } from './import-stored';
-import { renumberProgram } from './macrocycle-renumbering';
 
 /**
  * Continuing the file's latest run as the current macrocycle (#1180, proposal decisions 2 and 10).
@@ -152,6 +151,14 @@ export function continueRefusal(
   if (run.placement === 'overlaps' || others.some(overlapsRun)) return 'overlaps';
   if (run.someStored) return 'already-stored';
   if ([...others.map((o) => o.endDate), ...storedEnds].some((e) => e.getTime() > end)) return 'not-last';
+  return runRefusal(run, context);
+}
+
+/** {@link continueRefusal}'s checks of the run alone, which need nothing stored. */
+function runRefusal(
+  run: { program: string; endDate: Date; completedWorkouts: number },
+  context: { programs: readonly KnownProgram[]; importDate: Date },
+): ContinueRefusal | null {
   const program = continuableProgram(context.programs, run.program);
   if (!program) return 'unknown-program';
   if (run.completedWorkouts >= program.workoutCount) return 'finished';
@@ -177,7 +184,7 @@ type OfferRepos = Pick<
 >;
 
 /** The program's live macrocycle (its dashboard's), with its row and its sets, or null with none. */
-async function liveMacrocycle(
+export async function liveMacrocycle(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'liftRecord'>,
   program: string,
 ): Promise<AssignContinueOffer['live']> {
@@ -204,18 +211,11 @@ async function storedEnds(
 }
 
 /**
- * The id of the program's live macrocycle when it holds no sets, else undefined (#1354).
- * Continuing a run removes it rather than ending it, so where it starts can't stand in the run's
- * way: placing the run and checking it ends last both leave it out.
+ * The id of a live macrocycle ({@link liveMacrocycle}) when it holds no sets, else undefined
+ * (#1354). Continuing a run removes it rather than ending it, so where it starts can't stand in the
+ * run's way: placing the run and checking it ends last both leave it out.
  */
-export async function removableLive(
-  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'liftRecord'>,
-  program: string,
-): Promise<string | undefined> {
-  return removableId(await liveMacrocycle(repos, program));
-}
-
-const removableId = (live: AssignContinueOffer['live']): string | undefined => (live?.sets === 0 ? live.id : undefined);
+export const removableId = (live: AssignContinueOffer['live']): string | undefined => (live?.sets === 0 ? live.id : undefined);
 
 /**
  * `mode=assign`'s continue offer (decision 2): on the last stretch, when it's matched to a program
@@ -239,6 +239,8 @@ export async function continueOffer(
   const storedKind = stored[index]?.kind;
   // A stretch joining or already stored is refused whatever the live macrocycle holds.
   if (!last || !last.matched || (storedKind !== 'new' && storedKind !== 'overlaps')) return null;
+  // Checked first, so a run refused for itself reads nothing more.
+  if (runRefusal(last, context)) return null;
   const live = await liveMacrocycle(repos, last.program);
   const ignore = removableId(live);
   const placement = ignore ? (await placeSuggestedStretches(repos, stretches, context.programs, ignore))[index] : stored[index];
@@ -291,9 +293,10 @@ export function parseContinue(value: unknown): ImportBreakdownContinue | undefin
   if (value === undefined) return undefined;
   const bad = (what: string) => new BadRequestException(`breakdown.continue ${what}`);
   if (typeof value !== 'object' || value === null) throw bad('must be an object');
-  const { stretch, endLive, maxes } = value as Record<string, unknown>;
+  const { stretch, endLive, removeLive, maxes } = value as Record<string, unknown>;
   if (typeof stretch !== 'number' || !Number.isInteger(stretch) || stretch < 0) throw bad('must name a stretch by index');
   if (endLive !== undefined && typeof endLive !== 'string') throw bad('endLive must be a macrocycle id');
+  if (removeLive !== undefined && typeof removeLive !== 'string') throw bad('removeLive must be a macrocycle id');
   if (!Array.isArray(maxes)) throw bad('must list the maxes to overwrite');
   const parsed = maxes.map((m: unknown) => {
     const entry = m as Record<string, unknown> | null;
@@ -309,7 +312,12 @@ export function parseContinue(value: unknown): ImportBreakdownContinue | undefin
     }
     return { lift: entry.lift, weight: entry.weight };
   });
-  return { stretch, ...(endLive !== undefined ? { endLive } : {}), maxes: parsed };
+  return {
+    stretch,
+    ...(endLive !== undefined ? { endLive } : {}),
+    ...(removeLive !== undefined ? { removeLive } : {}),
+    maxes: parsed,
+  };
 }
 
 /** The stretch a breakdown continues, as the commit reads it. */
@@ -339,20 +347,21 @@ export interface ContinuePlan {
 
 /**
  * Checks a breakdown's continue against the committed rows (decision 2): the run must still be one
- * that may continue ({@link continueRefusal}); the lifter must have agreed to end the program's
- * live macrocycle, by its id; and each lift the program plans with no max needs a value (decision
- * 10). Runs before anything is written. `run.placement` leaves out an empty live macrocycle, as
- * {@link removableLive} names it, and so does the check that the run ends last.
+ * that may continue ({@link continueRefusal}); the lifter must have agreed, by its id, to end the
+ * program's live macrocycle (`live`, as {@link liveMacrocycle} read it), or to remove it when it
+ * holds no sets; and each lift the program plans with no max needs a value (decision 10). Runs
+ * before anything is written. `run.placement` leaves out an empty live macrocycle
+ * ({@link removableId}), and so does the check that the run ends last.
  */
 export async function planContinue(
-  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'liftRecord' | 'liftingProgramSpec' | 'trainingMax'>,
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord' | 'liftingProgramSpec' | 'trainingMax'>,
   choice: ImportBreakdownContinue,
   run: ContinueRun | undefined,
   others: ReadonlyArray<{ program: string; startDate: Date; endDate: Date }>,
+  live: AssignContinueOffer['live'],
   context: { programs: readonly KnownProgram[]; importDate: Date },
 ): Promise<ContinuePlan> {
   if (!run) throw new ContinueRefusedException('bad-stretch', `Stretch ${choice.stretch + 1} isn't one of the breakdown's.`);
-  const live = await liveMacrocycle(repos, run.program);
   const refusal = continueRefusal(
     { ...run, completedWorkouts: new Set(run.workoutNums).size },
     others,
@@ -361,7 +370,9 @@ export async function planContinue(
   );
   if (refusal) throw new ContinueRefusedException(refusal, refusalMessage(refusal));
 
-  if (live && choice.endLive !== live.id) {
+  // The agreement names what the lifter was shown: ending one with sets, or removing an empty one.
+  // Its sets can change after the offer, and then the other agreement is needed.
+  if (live && (live.sets === 0 ? choice.removeLive : choice.endLive) !== live.id) {
     throw new ContinueRefusedException(
       'needs-agreement',
       live.sets === 0
@@ -664,15 +675,49 @@ export async function releaseContinuedRun(
 }
 
 /**
+ * Recreates the empty live macrocycle a continue removed (#1354), under its id, with its schedule,
+ * once the run is gone and before the program is renumbered, so the renumbering puts it in its
+ * place by date. It takes the number after the highest macrocycle, and rows there with no
+ * macrocycle row, such as a focus state saved before initializing, move past it first.
+ */
+export async function recreateRemovedLive(
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleScheduledWorkout'>,
+  program: string,
+  removed: RemovedMacrocycle,
+): Promise<void> {
+  const day = (date: string) => new Date(`${date}T00:00:00Z`);
+  const stored = new Set((await repos.macrocycle.list(program)).map((m) => m.macrocycleNum));
+  const highest = Math.max(0, ...stored);
+  const num = highest + 1;
+  await moveUnstartedRows(repos, program, stored, highest, num);
+  await repos.macrocycle.create({
+    id: removed.id,
+    program,
+    macrocycleNum: num,
+    startDate: day(removed.startDate),
+    ...(removed.endDate ? { endDate: day(removed.endDate) } : {}),
+    status: removed.status,
+    statusChosen: removed.statusChosen,
+    origin: removed.origin,
+    unmatched: removed.unmatched,
+    ...(removed.importedThrough ? { importedThrough: day(removed.importedThrough) } : {}),
+  });
+  await repos.macrocycleScheduledWorkout.saveScheduledWorkouts(
+    program,
+    num,
+    removed.schedule.map((s) => ({ workoutNum: s.workoutNum, weekNum: s.weekNum, scheduledDate: new Date(s.scheduledDate) })),
+  );
+}
+
+/**
  * Puts back what continuing changed besides sets and maxes (decision 2), once the run is gone and
- * the program renumbered: the ended macrocycle's end date and status, or the removed one's row and
- * schedule (#1354), the dashboard pointing at it, and the active program, unless the lifter has
- * switched since. The ended macrocycle is read by id, since an import of older history can have
- * renumbered it. The removed one is recreated under its id past every number, then the program
- * is renumbered, so it takes its place by date. Returns flags for what it couldn't put back.
+ * the program renumbered: the ended macrocycle's end date and status, the dashboard pointing at it
+ * or at the removed one {@link recreateRemovedLive} brought back (#1354), and the active program,
+ * unless the lifter has switched since. Both are read by id, since renumbering can have moved
+ * them. Returns flags for what it couldn't put back.
  */
 export async function restoreAroundContinuedRun(
-  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'macrocycleScheduledWorkout' | 'userSettings' | 'importBatch'>,
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'userSettings'>,
   program: string,
   continued: ContinuedRun,
 ): Promise<Array<{ key: string; reason: string }>> {
@@ -692,28 +737,9 @@ export async function restoreAroundContinuedRun(
       pointedAt = ended;
     }
   }
-  const { removed } = continued;
-  if (removed) {
-    const num = Math.max(0, ...(await repos.macrocycle.numbersInUse(program))) + 1;
-    await repos.macrocycle.create({
-      id: removed.id,
-      program,
-      macrocycleNum: num,
-      startDate: day(removed.startDate),
-      ...(removed.endDate ? { endDate: day(removed.endDate) } : {}),
-      status: removed.status,
-      statusChosen: removed.statusChosen,
-      origin: removed.origin,
-      unmatched: removed.unmatched,
-      ...(removed.importedThrough ? { importedThrough: day(removed.importedThrough) } : {}),
-    });
-    await repos.macrocycleScheduledWorkout.saveScheduledWorkouts(
-      program,
-      num,
-      removed.schedule.map((s) => ({ workoutNum: s.workoutNum, weekNum: s.weekNum, scheduledDate: new Date(s.scheduledDate) })),
-    );
-    await renumberProgram(repos, program);
-    pointedAt = await repos.macrocycle.findById(removed.id);
+  if (continued.removed) {
+    pointedAt = await repos.macrocycle.findById(continued.removed.id);
+    if (!pointedAt) flagged.push({ key: 'macrocycle', reason: 'the macrocycle the import removed could not be recreated' });
   }
   if (pointedAt && continued.dashboard) {
     await repos.macrocycleDashboard.saveMacrocycleDashboard({

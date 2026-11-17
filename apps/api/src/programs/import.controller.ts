@@ -106,9 +106,11 @@ import {
   applyContinue,
   continueOffer,
   continuedRunToUndo,
+  liveMacrocycle,
   planContinue,
+  recreateRemovedLive,
   releaseContinuedRun,
-  removableLive,
+  removableId,
   removeLive,
   restoreAroundContinuedRun,
 } from './import-continue';
@@ -623,6 +625,11 @@ export class ImportController {
             asOf,
           )
         : 0;
+      // An empty live macrocycle a continue removed comes back first, so it's numbered by date (#1354).
+      for (const part of parts) {
+        const removedLive = part.macrocycles?.continued?.removed;
+        if (removedLive && continuedRuns.has(part.id)) await recreateRemovedLive(repos, part.program, removedLive);
+      }
       // And the numbers close up.
       for (const { program: p } of touched) await renumberProgram(repos, p);
       // Then what continuing changed around the run is put back, the ended macrocycle read by id.
@@ -1183,9 +1190,10 @@ export class ImportController {
     // The run the lifter continues as current (#1180), checked before anything is written.
     const continueChoice = choices.breakdown.continue;
     const continuedSpec = continueChoice ? placed.stretches[continueChoice.stretch]?.spec : undefined;
-    // An empty live macrocycle in the run's program, which continuing removes, isn't placed against (#1354).
-    const removable = continuedSpec ? await removableLive(repos, continuedSpec.program) : undefined;
-    const plan = await planBreakdown(repos, placed, programs, removable);
+    // The run's program's live macrocycle, read once, so placing and planning the continue agree. An
+    // empty one, which continuing removes, isn't placed against (#1354).
+    const live = continuedSpec ? await liveMacrocycle(repos, continuedSpec.program) : null;
+    const plan = await planBreakdown(repos, placed, programs, removableId(live));
     let continuePlan: ContinuePlan | null = null;
     if (continueChoice) {
       const placedRun = placed.stretches[continueChoice.stretch];
@@ -1204,7 +1212,7 @@ export class ImportController {
         i !== continueChoice.stretch && s.span ? [{ program: s.spec.program, ...s.span }] : [],
       );
       try {
-        continuePlan = await planContinue(repos, continueChoice, run, others, { programs, importDate: choices.importDate });
+        continuePlan = await planContinue(repos, continueChoice, run, others, live, { programs, importDate: choices.importDate });
       } catch (err) {
         if (err instanceof ContinueRefusedException) {
           this.logger.warn({ mode, reason: err.reason }, 'Import breakdown continue refused (#1180)');
@@ -1290,7 +1298,8 @@ export class ImportController {
         splitChanges: split.changes,
         exported: choices.exported,
         continued: continuePlan !== null,
-        continueEndedLive: Boolean(continuePlan?.live),
+        // Exclusive: an empty live macrocycle is removed, not ended (#1354).
+        continueEndedLive: (continuePlan?.live?.sets ?? 0) > 0,
         continueRemovedLive: continuePlan?.live?.sets === 0,
         continueMaxesWritten: continuePlan?.maxes.length ?? 0,
         durationMs: Date.now() - started,

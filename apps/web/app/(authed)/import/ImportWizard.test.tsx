@@ -4866,7 +4866,7 @@ describe('ImportWizard Assign: continue the last run as current (#1180)', () => 
     await screen.findByRole('heading', { name: 'Preview changes' });
     expect(mockDryRun.mock.calls[0]?.[3]).toEqual(
       expect.objectContaining({
-        breakdown: expect.objectContaining({ continue: { stretch: 1, endLive: 'm-empty', maxes: [] } }),
+        breakdown: expect.objectContaining({ continue: { stretch: 1, removeLive: 'm-empty', maxes: [] } }),
       }),
     );
   });

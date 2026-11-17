@@ -119,8 +119,9 @@ async function heldWorkouts(repos: Pick<RepositoryBundle, 'liftRecord'>, m: Macr
  *
  * A stretch overlapping anything else forms its own macrocycle and says what it overlaps. The
  * non-cycle macrocycle is never one of these, nor the one with id `ignore`, an empty live
- * macrocycle a continue removes (#1354). Returns each stretch with its placement, in the order
- * given.
+ * macrocycle a continue removes (#1354). That one still counts as a boundary when it ends before
+ * the stretch, so ignoring it never joins a stretch to the macrocycle before it. Returns each
+ * stretch with its placement, in the order given.
  */
 export async function placeOnStored<T extends StretchToPlace>(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>,
@@ -128,7 +129,7 @@ export async function placeOnStored<T extends StretchToPlace>(
   programs: readonly KnownProgram[],
   ignore?: string,
 ): Promise<Array<{ stretch: T; placement: StoredPlacement }>> {
-  const stored = await storedSpans(repos, undefined, ignore);
+  const stored = await storedSpans(repos);
   const joined = new Set<string>();
   const placed = new Map<T, StoredPlacement>();
   const byStart = [...stretches].sort((a, b) => a.span.startDate.getTime() - b.span.startDate.getTime());
@@ -149,7 +150,9 @@ export async function placeOnStored<T extends StretchToPlace>(
       return { kind: 'joins', macrocycle, held };
     };
 
-    const overlapping = stored.filter((s) => s.start <= end && s.end >= start).map((s) => s.macrocycle);
+    const overlapping = stored
+      .filter((s) => s.macrocycle.id !== ignore && s.start <= end && s.end >= start)
+      .map((s) => s.macrocycle);
     const [only] = overlapping;
     if (overlapping.length === 1 && only && joinable(only)) return join(only, await heldWorkouts(repos, only));
     if (overlapping.length > 0) return { kind: 'overlaps', macrocycles: overlapping };
