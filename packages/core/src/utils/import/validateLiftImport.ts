@@ -64,7 +64,7 @@ export function liftDateRangeError(row: number, date: Date, importDate: Date): I
     row,
     field: 'date',
     code: 'DATE_INVALID',
-    message: `Row ${row}: date ${isoDay(date)} must be after 1970-01-01 and no later than ${isoDay(new Date(latest))}`,
+    message: `Date ${isoDay(date)} must be after 1970-01-01 and no later than ${isoDay(new Date(latest))}`,
   };
 }
 

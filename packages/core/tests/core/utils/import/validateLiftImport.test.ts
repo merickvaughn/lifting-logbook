@@ -95,7 +95,6 @@ describe("validateLiftImport", () => {
       expect(valid).toHaveLength(1);
       expect(errors).toHaveLength(1);
       expect(errors[0]).toMatchObject({ row: 2, field: "date", code: "DATE_INVALID" });
-      expect(errors[0]!.message).toMatch(/Row 2/);
       expect(errors[0]!.message).toMatch(/1969-12-31/);
     });
 
@@ -105,7 +104,6 @@ describe("validateLiftImport", () => {
       expect(valid).toHaveLength(0);
       expect(errors).toHaveLength(1);
       expect(errors[0]).toMatchObject({ row: 1, field: "date", code: "DATE_INVALID" });
-      expect(errors[0]!.message).toMatch(/Row 1/);
       expect(errors[0]!.message).toMatch(/2026-11-18/);
     });
 
