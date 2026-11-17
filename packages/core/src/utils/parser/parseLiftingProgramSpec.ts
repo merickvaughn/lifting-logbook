@@ -10,7 +10,7 @@ import { tableToObjects } from "./tableToObjects";
  */
 function decrementFromWeightPct(raw: unknown): number {
   const pcts = String(raw ?? "").split(",").map((p) => Number(p.trim()));
-  if (pcts.some((p) => isNaN(p) || String(p) === "")) return NaN;
+  if (pcts.some((p) => isNaN(p))) return NaN;
   if (pcts.length < 2) return 0;
   const step = (pcts[0]! - pcts[pcts.length - 1]!) / (pcts.length - 1);
   const even = pcts.every((p, i) => Math.abs(pcts[0]! - i * step - p) < 1e-9);
