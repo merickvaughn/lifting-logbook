@@ -1,5 +1,6 @@
 import { Weekday } from '@lifting-logbook/core';
 import { ImportOverwriteScope, TrainingDataCounts } from '@lifting-logbook/types';
+import { MacrocycleRow } from './IMacrocycleRepository';
 import { TrainingData, TrainingRow } from './ITrainingDataRepository';
 
 /**
@@ -17,7 +18,7 @@ export interface DataSnapshotScope {
  */
 export interface OverwriteChanges {
   /** The macrocycles that lost sets in a date range and stayed, as they were before, with their ids. */
-  macrocycles: TrainingRow[];
+  macrocycles: Array<MacrocycleRow & TrainingRow>;
   /** The current macrocycles whose start a date range cut, with their dashboard's date before. */
   dashboards: Array<{ program: string; macrocycleId: string; macrocycleDate: Date; macrocycleStartWeekday: Weekday }>;
 }

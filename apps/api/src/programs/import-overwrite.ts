@@ -97,8 +97,8 @@ function emptyData(): TrainingData {
   return Object.fromEntries(TRAINING_TABLES.map((table) => [table, []])) as unknown as TrainingData;
 }
 
-function groupBy<T>(items: Iterable<T>, key: (item: T) => string, value: (item: T) => number | string) {
-  const groups = new Map<string, Array<ReturnType<typeof value>>>();
+function groupBy<T, V>(items: Iterable<T>, key: (item: T) => string, value: (item: T) => V) {
+  const groups = new Map<string, V[]>();
   for (const item of items) {
     const list = groups.get(key(item)) ?? [];
     list.push(value(item));
@@ -193,8 +193,8 @@ export function planOverwrite(data: TrainingData, scope: ImportOverwriteScope): 
     removedCycles,
     (key) => key.slice(0, key.lastIndexOf('|')),
     (key) => Number(key.slice(key.lastIndexOf('|') + 1)),
-  ) as Map<string, number[]>;
-  const removedSetKeys = groupBy(loose, (r) => r.program, (r) => liftRecordNaturalKey(r)) as Map<string, string[]>;
+  );
+  const removedSetKeys = groupBy(loose, (r) => r.program, (r) => liftRecordNaturalKey(r));
 
   const dashboards: OverwritePlan['dashboards'] = [];
   for (const s of shortened) {
@@ -295,12 +295,12 @@ export function parseOverwrite(value: unknown): { scope: ImportOverwriteScope; c
   if (kind === 'all' || kind === 'imported') scope = { kind };
   else if (kind === 'range') scope = { kind, ...parseOverwriteRange(value.scope.from, value.scope.to) };
   else throw new BadRequestException('breakdown.overwrite.scope.kind must be all, imported or range');
-  const raw = value.counts;
-  if (!COUNT_FIELDS.every((field) => Number.isInteger(raw[field]) && (raw[field] as number) >= 0)) {
+  const { sets, macrocycles, current, shortened } = value.counts;
+  const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+  if (!isCount(sets) || !isCount(macrocycles) || !isCount(current) || !isCount(shortened)) {
     throw new BadRequestException(`breakdown.overwrite.counts must give ${COUNT_FIELDS.join(', ')} as whole numbers`);
   }
-  const counts = Object.fromEntries(COUNT_FIELDS.map((field) => [field, raw[field]])) as unknown as ImportOverwriteCounts;
-  return { scope, counts };
+  return { scope, counts: { sets, macrocycles, current, shortened } };
 }
 
 /**
@@ -481,9 +481,8 @@ export async function restoreOverwrite(repos: Repos, snapshot: StoredSnapshot, u
   await skipStoredSets(repos, data);
   const kept = new Map<string, MacrocycleRow>();
   for (const before of changes.macrocycles) {
-    const id = String(before['id']);
-    const now = await repos.macrocycle.findById(id);
-    if (now && now.program === before.program) kept.set(id, now);
+    const now = await repos.macrocycle.findById(before.id);
+    if (now && now.program === before.program) kept.set(before.id, now);
     // Deleted since, so it comes back as a removed one.
     else data.macrocycles.push(before);
   }
@@ -496,8 +495,8 @@ export async function restoreOverwrite(repos: Repos, snapshot: StoredSnapshot, u
     const offset = (await repos.macrocycle.numbersInUse(program)).reduce((n, m) => Math.max(n, m), 0);
     const onKept = new Map(
       changes.macrocycles.flatMap((m) => {
-        const now = kept.get(String(m['id']));
-        return m.program === program && now ? [[m.macrocycleNum as number, now.macrocycleNum] as const] : [];
+        const now = kept.get(m.id);
+        return m.program === program && now ? [[m.macrocycleNum, now.macrocycleNum] as const] : [];
       }),
     );
     const to = (n: number) => onKept.get(n) ?? n + offset;
@@ -517,13 +516,13 @@ export async function restoreOverwrite(repos: Repos, snapshot: StoredSnapshot, u
   const fragments = data.importBatches;
   const restored = await repos.trainingData.insertMissing({ ...data, importBatches: [] });
   for (const before of changes.macrocycles) {
-    const now = kept.get(String(before['id']));
+    const now = kept.get(before.id);
     if (!now) continue;
     await repos.macrocycle.update(now.id, {
-      startDate: before.startDate as Date,
-      endDate: (before.endDate as Date | null) ?? null,
-      status: before['status'] as MacrocycleRow['status'],
-      statusChosen: Boolean(before['statusChosen']),
+      startDate: before.startDate,
+      endDate: before.endDate,
+      status: before.status,
+      statusChosen: before.statusChosen,
     });
   }
   for (const d of changes.dashboards) {

@@ -4966,7 +4966,7 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     expect(decisions()).toHaveTextContent('Nothing left to decide.');
     await user.click(nextButton());
     await screen.findByRole('heading', { name: 'Preview changes' });
-    expect(mockDryRun.mock.calls[0]![3]?.breakdown).not.toHaveProperty('overwrite');
+    expect(mockDryRun.mock.calls[0]?.[3]?.breakdown).not.toHaveProperty('overwrite');
   });
 
   it('shows what each scope removes, reading a range’s counts once both days are entered', async () => {
@@ -5009,7 +5009,7 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
 
     await user.click(nextButton());
     await screen.findByRole('heading', { name: 'Preview changes' });
-    expect(mockDryRun.mock.calls[0]![3]).toEqual(
+    expect(mockDryRun.mock.calls[0]?.[3]).toEqual(
       expect.objectContaining({
         breakdown: expect.objectContaining({ overwrite: { scope: { kind: 'imported' }, counts: IMPORTED } }),
       }),
@@ -5028,7 +5028,7 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
 
     await user.click(nextButton());
     await screen.findByRole('heading', { name: 'Preview changes' });
-    expect(mockDryRun.mock.calls[0]![3]).toEqual(
+    expect(mockDryRun.mock.calls[0]?.[3]).toEqual(
       expect.objectContaining({
         breakdown: expect.objectContaining({
           overwrite: { scope: { kind: 'range', from: '2026-01-01', to: '2026-02-28' }, counts: RANGE },
@@ -5060,7 +5060,7 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     await user.click(confirmBox());
     await user.click(nextButton());
     await screen.findByRole('heading', { name: 'Preview changes' });
-    expect(mockDryRun.mock.calls[1]![3]).toEqual(
+    expect(mockDryRun.mock.calls[1]?.[3]).toEqual(
       expect.objectContaining({ breakdown: expect.objectContaining({ overwrite: { scope: { kind: 'all' }, counts: now } }) }),
     );
   });
