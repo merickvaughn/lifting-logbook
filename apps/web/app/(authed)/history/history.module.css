@@ -193,6 +193,16 @@
   color: var(--color-text, #111827);
 }
 
+/* Imports with no macrocycle in the table, each with its Undo (#1182). */
+.otherImports {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 .srOnly {
   position: absolute;
   width: 1px;

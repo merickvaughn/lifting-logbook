@@ -31,6 +31,7 @@ import {
   ImportError,
   ImportKind,
   ImportOverwriteCountsResponse,
+  ImportOverwriteRangeCountsResponse,
   ImportPreview,
   ImportPreviewResponse,
   ImportSuggestionsResponse,
@@ -138,6 +139,7 @@ import { renumberProgram } from './macrocycle-renumbering';
 import {
   OverwriteUndoRefusedException,
   overwriteCounts,
+  rangeOverwriteCounts,
   overwriteToUndo,
   parseOverwriteRange,
   replaceStoredHistory,
@@ -498,20 +500,22 @@ export class ImportController {
   }
 
   /**
-   * What replacing stored history would remove in each scope (#1182, decision 16), and a date
-   * range's when `from` and `to` are given. Assign reads a range's counts here as the lifter edits
-   * it, rather than reloading the grouping and losing their edits. Nothing is written.
+   * What replacing stored history would remove (#1182, decision 16): in all and all imported
+   * history, or, when `from` and `to` are given, in that date range alone. Assign reads these when
+   * the lifter picks Replace and as they edit the range, so loading the grouping reads no history
+   * for a lifter adding to it, and editing a range loses no edits. Nothing is written.
    */
   @Get('import/overwrite-counts')
   async importOverwriteCounts(
     @CurrentUser() user: AuthUser,
     @Query('from') from?: string,
     @Query('to') to?: string,
-  ): Promise<ImportOverwriteCountsResponse> {
+  ): Promise<ImportOverwriteCountsResponse | ImportOverwriteRangeCountsResponse> {
     // With the flag off the Assign step, and so Replace, doesn't exist.
     if (!importAssignEnabled()) throw new NotFoundException();
-    const range = from === undefined && to === undefined ? undefined : parseOverwriteRange(from, to);
-    return overwriteCounts(await this.factory.forUser(user), range);
+    const repos = await this.factory.forUser(user);
+    if (from === undefined && to === undefined) return overwriteCounts(repos);
+    return rangeOverwriteCounts(repos, parseOverwriteRange(from, to));
   }
 
   @Post('import/:batchId/undo')
@@ -1083,7 +1087,6 @@ export class ImportController {
           progression,
           liftNames,
         }),
-        overwrite: await overwriteCounts(repos),
       },
       liftNames,
     );

@@ -112,7 +112,7 @@ function MacrocyclesTab({
   /** The macrocycle whose Undo is asking to confirm. */
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<{ macrocycleId: string; message: string } | null>(null);
+  const [error, setError] = useState<{ row: string; message: string } | null>(null);
   /** The last undo's outcome, kept across the refresh that removes its rows. */
   const [result, setResult] = useState<string | null>(null);
   const [focusTarget, setFocusTarget] = useState<{ kind: 'confirm' | 'trigger'; id: string } | 'result' | null>(null);
@@ -137,8 +137,11 @@ function MacrocyclesTab({
     }
     return byMacrocycle;
   }, [imports]);
+  // Imports with no macrocycle in the table, such as one that replaced stored history with only
+  // non-cycle sets (#1182). Undoing one puts back what it replaced, so it gets its own Undo.
+  const withoutMacrocycle = useMemo(() => imports.filter((b) => b.macrocycleIds.length === 0), [imports]);
 
-  async function handleUndo(batch: ImportBatchSummary, macrocycleId: string) {
+  async function handleUndo(batch: ImportBatchSummary, row: string) {
     setBusy(true);
     setError(null);
     try {
@@ -149,13 +152,89 @@ function MacrocyclesTab({
       router.refresh();
     } catch (e) {
       logClientError('undoImport', e, { programId: batch.program, batchId: batch.id });
-      setError({ macrocycleId, message: e instanceof Error ? e.message : 'Undo failed' });
+      setError({ row, message: e instanceof Error ? e.message : 'Undo failed' });
       // The confirm button was disabled while the undo ran, which drops its focus: hand it back.
-      setFocusTarget({ kind: 'confirm', id: macrocycleId });
+      setFocusTarget({ kind: 'confirm', id: row });
     } finally {
       setBusy(false);
     }
   }
+
+  /** An import's Undo, asking first. `key` names the row it's on: a macrocycle id, or the batch's. */
+  function undoControl(key: string, batch: ImportBatchSummary, triggerLabel: string) {
+    const question = `undo-question-${key}`;
+    return (
+      <div className={styles.undoImport}>
+        {confirming === key ? (
+          <>
+            <span id={question}>
+              Undo this import? Every set it added goes, from every program and macrocycle it wrote to.
+            </span>
+            <button
+              ref={confirmButton}
+              type="button"
+              className={styles.undoButton}
+              aria-describedby={question}
+              onClick={() => handleUndo(batch, key)}
+              disabled={busy}
+            >
+              {busy ? 'Undoing…' : 'Undo import'}
+            </button>
+            <button
+              type="button"
+              className={styles.undoButton}
+              onClick={() => {
+                setConfirming(null);
+                setFocusTarget({ kind: 'trigger', id: key });
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            ref={(el) => {
+              if (el) triggers.current.set(key, el);
+              else triggers.current.delete(key);
+            }}
+            type="button"
+            className={styles.undoButton}
+            aria-label={triggerLabel}
+            onClick={() => {
+              setConfirming(key);
+              setError(null);
+              setResult(null);
+              setFocusTarget({ kind: 'confirm', id: key });
+            }}
+            disabled={busy}
+          >
+            Undo import
+          </button>
+        )}
+        {error?.row === key && (
+          <p role="alert" className={styles.undoError}>
+            {error.message}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const otherImports =
+    withoutMacrocycle.length > 0 ? (
+      <ul className={styles.otherImports} aria-label="Imports with no macrocycle here">
+        {withoutMacrocycle.map((batch) => {
+          const day = batch.createdAt.slice(0, 10);
+          return (
+            <li key={batch.id}>
+              Import of {day}, which replaced stored history and added no macrocycle here
+              {undoControl(`batch-${batch.id}`, batch, `Undo import of ${day}`)}
+            </li>
+          );
+        })}
+      </ul>
+    ) : null;
 
   // Both branches render the outcome as the first child of a `div`, so undoing the last import
   // keeps the same element, with its focus and announcement, when the table gives way.
@@ -163,6 +242,7 @@ function MacrocyclesTab({
     return (
       <div>
         <UndoResult result={result} resultRef={resultRef} />
+        {otherImports}
         <p className={styles.empty}>No macrocycles yet.</p>
       </div>
     );
@@ -170,6 +250,7 @@ function MacrocyclesTab({
   return (
     <div>
       <UndoResult result={result} resultRef={resultRef} />
+      {otherImports}
       <div className={styles.tableWrapper}>
         <table className={styles.table}>
           <thead>
@@ -190,7 +271,6 @@ function MacrocyclesTab({
               .reverse()
               .map((m) => {
                 const batch = importOf.get(m.id);
-                const question = `undo-question-${m.id}`;
                 return (
                   <tr key={m.id}>
                     <td>
@@ -202,63 +282,7 @@ function MacrocyclesTab({
                     <td>{STATUS_LABEL[m.status]}</td>
                     <td>{ORIGIN_LABEL[m.origin]}</td>
                     <td>
-                      {batch && (
-                        <div className={styles.undoImport}>
-                          {confirming === m.id ? (
-                            <>
-                              <span id={question}>
-                                Undo this import? Every set it added goes, from every program and macrocycle it
-                                wrote to.
-                              </span>
-                              <button
-                                ref={confirmButton}
-                                type="button"
-                                className={styles.undoButton}
-                                aria-describedby={question}
-                                onClick={() => handleUndo(batch, m.id)}
-                                disabled={busy}
-                              >
-                                {busy ? 'Undoing…' : 'Undo import'}
-                              </button>
-                              <button
-                                type="button"
-                                className={styles.undoButton}
-                                onClick={() => {
-                                  setConfirming(null);
-                                  setFocusTarget({ kind: 'trigger', id: m.id });
-                                }}
-                                disabled={busy}
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              ref={(el) => {
-                                if (el) triggers.current.set(m.id, el);
-                                else triggers.current.delete(m.id);
-                              }}
-                              type="button"
-                              className={styles.undoButton}
-                              aria-label={`Undo import of macrocycle ${m.macrocycleNum}`}
-                              onClick={() => {
-                                setConfirming(m.id);
-                                setError(null);
-                                setResult(null);
-                                setFocusTarget({ kind: 'confirm', id: m.id });
-                              }}
-                              disabled={busy}
-                            >
-                              Undo import
-                            </button>
-                          )}
-                          {error?.macrocycleId === m.id && (
-                            <p role="alert" className={styles.undoError}>
-                              {error.message}
-                            </p>
-                          )}
-                        </div>
-                      )}
+                      {batch && undoControl(m.id, batch, `Undo import of macrocycle ${m.macrocycleNum}`)}
                     </td>
                   </tr>
                 );

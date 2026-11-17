@@ -174,7 +174,6 @@ const ASSIGN_RESPONSE = {
   suggestions: null,
   // No run to continue as current unless withContinue (#1180).
   continue: null,
-  overwrite: { all: { sets: 0, macrocycles: 0, current: 0, shortened: 0 }, imported: { sets: 0, macrocycles: 0, current: 0, shortened: 0 } },
 };
 
 // withContinue's offer (#1180): the last stretch continues as current, ending a live macrocycle

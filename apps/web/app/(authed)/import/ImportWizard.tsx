@@ -37,6 +37,7 @@ import {
   dryRunImport,
   fetchCustomLifts,
   fetchOverwriteCounts,
+  fetchOverwriteRangeCounts,
   fetchGoogleSheetWorkbook,
   patchLiftMetadata,
   previewImport,
@@ -49,7 +50,7 @@ import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/imp
 import { LIFT_CLASSIFICATIONS } from './liftClassifications';
 import { KIND_LABEL, kindsForTarget, previousStep, Step, STEP_LABELS, visibleSteps } from './steps';
 import type { ImportTarget, StepValue } from './steps';
-import AssignStep from './AssignStep';
+import AssignStep, { type CountsRead } from './AssignStep';
 import type { SuggestState, SuggestionAnswer } from './AssignSuggestions';
 import {
   buildBreakdown,
@@ -59,6 +60,7 @@ import {
   withMember,
   withChangedCounts,
   withRangeCounts,
+  withScopeCounts,
   type AssignDraft,
 } from './assignDraft';
 import {
@@ -307,26 +309,44 @@ export function ImportWizard({
   const [assignDraft, setAssignDraft] = useState<AssignDraft | null>(null);
   const assignKey = useRef<string | null>(null);
   const [assignNotice, setAssignNotice] = useState<string | null>(null);
-  // Reading a replace range's counts (#1182): the range being read, and whether that read failed.
-  // A read for a range the lifter has since changed is dropped.
-  const [rangeLoad, setRangeLoad] = useState<{ key: string; failed: boolean } | null>(null);
+  // Reading what replacing would remove (#1182): all and imported history once Replace is picked,
+  // and a range as the lifter sets it. Each read's state, and the read in flight: a read the
+  // lifter has since moved on from is dropped.
+  const [scopesRead, setScopesRead] = useState<CountsRead>(null);
+  const scopesGeneration = useRef(0);
+  const loadScopeCounts = useCallback(() => {
+    const generation = ++scopesGeneration.current;
+    setScopesRead('reading');
+    void (async () => {
+      try {
+        const scopes = await fetchOverwriteCounts(programId);
+        if (scopesGeneration.current !== generation) return;
+        setAssignDraft((d) => d && withScopeCounts(d, scopes));
+        setScopesRead(null);
+      } catch (e) {
+        if (scopesGeneration.current !== generation) return;
+        logClientError('fetchOverwriteCounts', e, { programId });
+        setScopesRead('failed');
+      }
+    })();
+  }, [programId]);
+  const [rangeRead, setRangeRead] = useState<CountsRead>(null);
   const rangeKey = useRef<string | null>(null);
   const loadRangeCounts = useCallback(
     (from: string, to: string) => {
       const key = `${from}|${to}`;
       rangeKey.current = key;
-      setRangeLoad({ key, failed: false });
+      setRangeRead('reading');
       void (async () => {
         try {
-          const { range } = await fetchOverwriteCounts(programId, from, to);
+          const range = await fetchOverwriteRangeCounts(programId, from, to);
           if (rangeKey.current !== key) return;
-          if (!range) throw new Error('The counts had no range');
           setAssignDraft((d) => d && withRangeCounts(d, from, to, range));
-          setRangeLoad(null);
+          setRangeRead(null);
         } catch (e) {
           if (rangeKey.current !== key) return;
-          logClientError('fetchOverwriteCounts', e, { programId });
-          setRangeLoad({ key, failed: true });
+          logClientError('fetchOverwriteRangeCounts', e, { programId });
+          setRangeRead('failed');
         }
       })();
     },
@@ -668,7 +688,9 @@ export function ImportWizard({
     assignKey.current = null;
     setAssignNotice(null);
     rangeKey.current = null;
-    setRangeLoad(null);
+    setRangeRead(null);
+    scopesGeneration.current++;
+    setScopesRead(null);
     resetSuggestions();
     suggestCache.current.clear();
   }
@@ -2553,10 +2575,11 @@ export function ImportWizard({
                     onAnswerSuggestion: (index, answer) => setSuggestAnswers((prev) => ({ ...prev, [index]: answer })),
                     focusYes: suggestFocus,
                   }}
-                  rangeCounts={{
-                    load: loadRangeCounts,
-                    loading: rangeLoad?.failed === false,
-                    failed: rangeLoad?.failed === true,
+                  overwriteCounts={{
+                    loadScopes: loadScopeCounts,
+                    loadRange: loadRangeCounts,
+                    scopes: scopesRead,
+                    range: rangeRead,
                   }}
                 />
               ) : (

@@ -12,7 +12,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { PrismaClient } from '@prisma/client';
 import multipart from '@fastify/multipart';
-import type { ImportAssignResponse, ImportBreakdown, ImportCommitResponse, ImportDryRunResponse } from '@lifting-logbook/types';
+import type { ImportBreakdown, ImportCommitResponse, ImportDryRunResponse, ImportOverwriteCountsResponse } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { injectPage } from '../testing/macrocycle-id';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
@@ -174,10 +174,14 @@ describeOrSkip('import overwrite (#1182, e2e, lifting_app role)', () => {
     return res.json<ImportCommitResponse>();
   };
 
-  const allCounts = async (user: string, file: ReturnType<typeof run>) => {
-    const res = await importCsv(user, file.csv, '?mode=assign&destination=lift-records');
+  const allCounts = async (user: string) => {
+    const res = await server().inject({
+      method: 'GET',
+      url: '/programs/rpt/import/overwrite-counts',
+      headers: { authorization: `Bearer ${user}` },
+    });
     expect(res.statusCode).toBe(200);
-    return res.json<ImportAssignResponse>().overwrite.all;
+    return res.json<ImportOverwriteCountsResponse>().all;
   };
 
   const page = (user: string, method: 'POST' | 'PATCH', url: string, body: unknown) =>
@@ -203,7 +207,7 @@ describeOrSkip('import overwrite (#1182, e2e, lifting_app role)', () => {
   it('replaces nothing and imports nothing when the backup can’t be saved', async () => {
     await seedHistory(USER_NO_BACKUP);
     const file = run(-150, 6, 200);
-    const counts = await allCounts(USER_NO_BACKUP, file);
+    const counts = await allCounts(USER_NO_BACKUP);
     const before = await rowsOf(owner, USER_NO_BACKUP);
     expectSeeded(before);
 
@@ -234,7 +238,7 @@ describeOrSkip('import overwrite (#1182, e2e, lifting_app role)', () => {
   it('rolls a dry run’s removal back, and counts every row of the file as new', async () => {
     await seedHistory(USER_DRY_RUN);
     const file = run(-200, 6, 100);
-    const counts = await allCounts(USER_DRY_RUN, file);
+    const counts = await allCounts(USER_DRY_RUN);
     const before = await rowsOf(owner, USER_DRY_RUN);
     expectSeeded(before);
 
@@ -255,7 +259,7 @@ describeOrSkip('import overwrite (#1182, e2e, lifting_app role)', () => {
     const [earlier] = await owner.importBatch.findMany({ where: { userId: USER_UNDO } });
 
     const file = run(-150, 6, 200);
-    const { batchId } = await commit(USER_UNDO, file, { scope: { kind: 'all' }, counts: await allCounts(USER_UNDO, file) });
+    const { batchId } = await commit(USER_UNDO, file, { scope: { kind: 'all' }, counts: await allCounts(USER_UNDO) });
     expect(await owner.liftRecord.count({ where: { userId: USER_UNDO, weight: 100 } })).toBe(0);
     expect(await owner.workoutSkipOverride.count({ where: { userId: USER_UNDO } })).toBe(0);
     expect(await owner.dataSnapshot.count({ where: { userId: USER_UNDO, kind: 'overwrite' } })).toBe(1);

@@ -9,6 +9,7 @@ import {
 import {
   ImportOverwriteCounts,
   ImportOverwriteCountsResponse,
+  ImportOverwriteRangeCountsResponse,
   ImportOverwriteScope,
   NON_CYCLE_PROGRAM,
   TrainingDataCounts,
@@ -248,17 +249,21 @@ export function planOverwrite(data: TrainingData, scope: ImportOverwriteScope): 
   };
 }
 
-/** What each scope would remove, for Assign (#1182, decision 16). */
-export async function overwriteCounts(
-  repos: Pick<RepositoryBundle, 'trainingData'>,
-  range?: { from: string; to: string },
-): Promise<ImportOverwriteCountsResponse> {
+/** What all and all imported history would remove, for Assign (#1182, decision 16). */
+export async function overwriteCounts(repos: Pick<RepositoryBundle, 'trainingData'>): Promise<ImportOverwriteCountsResponse> {
   const data = await repos.trainingData.read();
   return {
     all: planOverwrite(data, { kind: 'all' }).counts,
     imported: planOverwrite(data, { kind: 'imported' }).counts,
-    ...(range ? { range: planOverwrite(data, { kind: 'range', ...range }).counts } : {}),
   };
+}
+
+/** What a date range would remove, for Assign (#1182). Plans the range alone. */
+export async function rangeOverwriteCounts(
+  repos: Pick<RepositoryBundle, 'trainingData'>,
+  range: { from: string; to: string },
+): Promise<ImportOverwriteRangeCountsResponse> {
+  return { range: planOverwrite(await repos.trainingData.read(), { kind: 'range', ...range }).counts };
 }
 
 /** A `YYYY-MM-DD` day that exists, as the breakdown's dates are checked. */
@@ -345,6 +350,11 @@ function hasChanges(plan: OverwritePlan): boolean {
  * snapshot can't be saved it's a 503, and the request transaction rolls the removal back, so
  * nothing is replaced without a backup. Returns the snapshot, or null when the scope holds nothing
  * or this is a dry run.
+ *
+ * The in-memory adapters have no transactions, for this or any other write. There, a commit refused
+ * after this runs (a continue choice that no longer holds, a breakdown that no longer fits) leaves
+ * the history replaced and a backup no import points at. Postgres rolls both back. The in-memory
+ * adapters serve local development and the Playwright mock only.
  */
 export async function replaceStoredHistory(
   repos: Repos,

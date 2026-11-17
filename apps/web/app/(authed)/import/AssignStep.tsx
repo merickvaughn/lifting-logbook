@@ -302,12 +302,23 @@ const SCOPES: Array<{ kind: OverwriteDraft['kind']; label: string; detail: strin
   },
 ];
 
-/** Reading a date range's counts from the server, which the wizard does. */
-export interface RangeCounts {
-  load: (from: string, to: string) => void;
-  loading: boolean;
-  failed: boolean;
+/** Where a read of counts stands: under way, failed, or neither (not started, or done). */
+export type CountsRead = 'reading' | 'failed' | null;
+
+/** Reading what the scopes hold from the server, which the wizard does. */
+export interface OverwriteCountsLoader {
+  /** Reads what all and all imported history hold. */
+  loadScopes: () => void;
+  loadRange: (from: string, to: string) => void;
+  scopes: CountsRead;
+  range: CountsRead;
 }
+
+/**
+ * How long a range's days must stay put before it's counted, so typing a year into a date field
+ * reads the history once rather than once per valid date along the way.
+ */
+export const RANGE_COUNT_DELAY_MS = 400;
 
 /**
  * Adding this import to stored history, the default, or replacing some of it (#1182, decision 19):
@@ -315,27 +326,39 @@ export interface RangeCounts {
  * confirms it before Preview. A backup of what's replaced is kept, and undoing the import puts it back.
  */
 function OverwritePanel({
-  res,
   draft,
   onChange,
-  rangeCounts,
+  counts,
 }: {
-  res: ImportAssignResponse;
   draft: AssignDraft;
   onChange: (next: AssignDraft) => void;
-  rangeCounts: RangeCounts;
+  counts: OverwriteCountsLoader;
 }) {
   const overwrite = draft.overwrite;
   const summaryId = useId();
   const ready = overwrite?.kind === 'range' && rangeReady(overwrite);
-  const { load } = rangeCounts;
+  const { loadScopes, loadRange } = counts;
   const from = overwrite?.from ?? '';
   const to = overwrite?.to ?? '';
   const uncounted = ready && overwrite.counts === null;
-  // A range is counted once both days are entered; a failure waits for the lifter's retry.
+  const unread = !!overwrite && overwrite.scopes === null;
+  // The scopes are counted once Replace is picked, and again after a commit found newer counts.
+  // A failure waits for the lifter's retry.
   useEffect(() => {
-    if (uncounted) load(from, to);
-  }, [uncounted, from, to, load]);
+    if (unread) loadScopes();
+  }, [unread, loadScopes]);
+  // A range is counted once both days are entered and have stayed put a moment.
+  useEffect(() => {
+    if (!uncounted) return;
+    const timer = setTimeout(() => loadRange(from, to), RANGE_COUNT_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [uncounted, from, to, loadRange]);
+  const retry =
+    counts.scopes === 'failed'
+      ? loadScopes
+      : uncounted && counts.range === 'failed'
+        ? () => loadRange(from, to)
+        : null;
 
   return (
     <section className={styles.decide} aria-labelledby={OVERWRITE_ID}>
@@ -344,11 +367,11 @@ function OverwritePanel({
       </p>
       <div className={styles.fields} role="radiogroup" aria-label="Add to or replace your stored history">
         <label>
-          <input type="radio" name="overwrite" checked={!overwrite} onChange={() => onChange(setReplacing(draft, res, false))} />
+          <input type="radio" name="overwrite" checked={!overwrite} onChange={() => onChange(setReplacing(draft, false))} />
           Add this import to my stored history
         </label>
         <label>
-          <input type="radio" name="overwrite" checked={!!overwrite} onChange={() => onChange(setReplacing(draft, res, true))} />
+          <input type="radio" name="overwrite" checked={!!overwrite} onChange={() => onChange(setReplacing(draft, true))} />
           Replace stored history with this import
         </label>
       </div>
@@ -367,10 +390,10 @@ function OverwritePanel({
                       type="radio"
                       name="overwrite-scope"
                       checked={overwrite.kind === scope.kind}
-                      onChange={() => onChange(setOverwriteKind(draft, res, scope.kind))}
+                      onChange={() => onChange(setOverwriteKind(draft, scope.kind))}
                     />
                     {scope.label}
-                    {scope.kind !== 'range' && `: ${overwriteSummary(res.overwrite[scope.kind])}`}
+                    {scope.kind !== 'range' && overwrite.scopes && `: ${overwriteSummary(overwrite.scopes[scope.kind])}`}
                   </label>
                   <p className={styles.reason}>{scope.detail}</p>
                 </li>
@@ -403,17 +426,17 @@ function OverwritePanel({
             {overwrite.counts
               ? overwriteSummary(overwrite.counts)
               : overwrite.kind !== 'range'
-                ? null
+                ? counts.scopes === 'failed'
+                  ? 'We couldn’t count what your stored history holds.'
+                  : 'Counting what your stored history holds…'
                 : !rangeReady(overwrite)
                   ? 'Enter the first and last day to replace.'
-                  : rangeCounts.loading
-                    ? 'Counting what this range holds…'
-                    : rangeCounts.failed
-                      ? 'We couldn’t count what this range holds.'
-                      : null}
+                  : counts.range === 'failed'
+                    ? 'We couldn’t count what this range holds.'
+                    : 'Counting what this range holds…'}
           </p>
-          {overwrite.kind === 'range' && ready && !overwrite.counts && rangeCounts.failed && !rangeCounts.loading && (
-            <button type="button" className={styles.btn} onClick={() => load(overwrite.from, overwrite.to)}>
+          {retry && (
+            <button type="button" className={styles.btn} onClick={retry}>
               Count again
             </button>
           )}
@@ -448,7 +471,7 @@ export default function AssignStep({
   onSaveLift,
   focusHeading = false,
   suggestions,
-  rangeCounts,
+  overwriteCounts,
 }: {
   res: ImportAssignResponse;
   draft: AssignDraft;
@@ -471,8 +494,8 @@ export default function AssignStep({
   focusHeading?: boolean;
   /** The LLM suggestions' state and handlers (#1174), which the wizard owns. */
   suggestions?: Omit<ComponentProps<typeof AssignSuggestions>, 'res' | 'draft' | 'onChange' | 'programName'>;
-  /** Reads a replace range's counts (#1182). The wizard owns the request. */
-  rangeCounts: RangeCounts;
+  /** Reads what replacing would remove (#1182). The wizard owns the requests. */
+  overwriteCounts: OverwriteCountsLoader;
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   // An edit that withdraws the continue offer drops the lifter's choices for it (#1180).
@@ -861,7 +884,7 @@ export default function AssignStep({
         })}
       </ol>
 
-      <OverwritePanel res={res} draft={draft} onChange={onChange} rangeCounts={rangeCounts} />
+      <OverwritePanel draft={draft} onChange={onChange} counts={overwriteCounts} />
 
       <p className={styles.summary} role="status" id={DECISIONS_ID} tabIndex={-1} data-testid="assign-decisions">
         {left === 0

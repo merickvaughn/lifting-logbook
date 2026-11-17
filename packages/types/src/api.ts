@@ -1289,13 +1289,17 @@ export interface ImportOverwriteCounts {
 }
 
 /**
- * Response for `GET /programs/:program/import/overwrite-counts` (#1182): what each scope would
- * remove. `range` is present when the request names `from` and `to`.
+ * Response for `GET /programs/:program/import/overwrite-counts` (#1182): what the scopes that need
+ * no input would remove. Assign reads it when the lifter picks Replace.
  */
 export interface ImportOverwriteCountsResponse {
   all: ImportOverwriteCounts;
   imported: ImportOverwriteCounts;
-  range?: ImportOverwriteCounts;
+}
+
+/** Response for `GET /programs/:program/import/overwrite-counts?from=&to=` (#1182): a date range's counts. */
+export interface ImportOverwriteRangeCountsResponse {
+  range: ImportOverwriteCounts;
 }
 
 /**
@@ -1493,11 +1497,6 @@ export interface ImportAssignResponse {
    * 14 days before `importDate`, and none of its rows may already be stored. Off until chosen.
    */
   continue: AssignContinueOffer | null;
-  /**
-   * What replacing stored history would remove, for the scopes that need no input (#1182,
-   * decision 19). A date range's counts come from `GET import/overwrite-counts`.
-   */
-  overwrite: Pick<ImportOverwriteCountsResponse, 'all' | 'imported'>;
 }
 
 /** See {@link ImportAssignResponse.continue}. */

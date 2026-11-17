@@ -33,6 +33,7 @@ import {
   dryRunImport,
   fetchCustomLifts,
   fetchOverwriteCounts,
+  fetchOverwriteRangeCounts,
   fetchMissingTrainingMaxes,
   patchLiftMetadata,
   previewImport,
@@ -62,6 +63,7 @@ jest.mock('@/lib/client-api', () => ({
   createCustomLift: jest.fn(),
   fetchCustomLifts: jest.fn(),
   fetchOverwriteCounts: jest.fn(),
+  fetchOverwriteRangeCounts: jest.fn(),
   undoImport: jest.fn(),
   fetchMissingTrainingMaxes: jest.fn(),
   updateTrainingMaxes: jest.fn(),
@@ -78,6 +80,7 @@ const mockSuggest = suggestImport as jest.MockedFunction<typeof suggestImport>;
 const mockCreateCustomLift = createCustomLift as jest.MockedFunction<typeof createCustomLift>;
 const mockFetchCustomLifts = fetchCustomLifts as jest.MockedFunction<typeof fetchCustomLifts>;
 const mockOverwriteCounts = fetchOverwriteCounts as jest.MockedFunction<typeof fetchOverwriteCounts>;
+const mockRangeCounts = fetchOverwriteRangeCounts as jest.MockedFunction<typeof fetchOverwriteRangeCounts>;
 const mockUndo = undoImport as jest.MockedFunction<typeof undoImport>;
 const mockFetchMissing = fetchMissingTrainingMaxes as jest.MockedFunction<typeof fetchMissingTrainingMaxes>;
 const mockUpdateMaxes = updateTrainingMaxes as jest.MockedFunction<typeof updateTrainingMaxes>;
@@ -3980,7 +3983,6 @@ function assignRes(over: Partial<ImportAssignResponse> = {}): ImportAssignRespon
     split: { changes: 2, olderThanCurrent: 1 },
     suggestions: null,
     continue: null,
-    overwrite: { all: { sets: 0, macrocycles: 0, current: 0, shortened: 0 }, imported: { sets: 0, macrocycles: 0, current: 0, shortened: 0 } },
     ...over,
   };
 }
@@ -4946,16 +4948,17 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPreview.mockResolvedValue(ASSIGN_PREVIEW);
-    mockAssign.mockResolvedValue(assignRes({ overwrite: { all: ALL, imported: IMPORTED } }));
+    mockAssign.mockResolvedValue(assignRes());
     mockDryRun.mockResolvedValue(DRY_RUN_OK);
-    mockOverwriteCounts.mockResolvedValue({ all: ALL, imported: IMPORTED, range: RANGE });
+    mockOverwriteCounts.mockResolvedValue({ all: ALL, imported: IMPORTED });
+    mockRangeCounts.mockResolvedValue(RANGE);
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  it('adds to stored history by default, and sends no overwrite', async () => {
+  it('adds to stored history by default, reads no counts, and sends no overwrite', async () => {
     const user = userEvent.setup();
     render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
     await toAssign(user);
@@ -4967,27 +4970,49 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     await user.click(nextButton());
     await screen.findByRole('heading', { name: 'Preview changes' });
     expect(mockDryRun.mock.calls[0]?.[3]?.breakdown).not.toHaveProperty('overwrite');
+    expect(mockOverwriteCounts).not.toHaveBeenCalled();
+    expect(mockRangeCounts).not.toHaveBeenCalled();
   });
 
-  it('shows what each scope removes, reading a range’s counts once both days are entered', async () => {
+  it('shows what each scope removes once Replace is picked, and counts a range once its days settle', async () => {
     const user = userEvent.setup();
     render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
     await toAssign(user);
     await user.click(replaceRadio());
 
     expect(scope('All history')).toBeChecked();
+    await waitFor(() => expect(counts()).toHaveTextContent(ALL_TEXT));
+    expect(mockOverwriteCounts).toHaveBeenCalledWith('prog-1');
     expect(scope('All history')).toHaveAccessibleName(`All history: ${ALL_TEXT}`);
     expect(scope('All imported history')).toHaveAccessibleName(`All imported history: ${IMPORTED_TEXT}`);
-    expect(counts()).toHaveTextContent(ALL_TEXT);
 
     await user.click(scope('A date range'));
     expect(counts()).toHaveTextContent('Enter the first and last day to replace.');
     fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-01-01' } });
-    expect(mockOverwriteCounts).not.toHaveBeenCalled();
+    // Two valid days in quick succession, as typing a year gives: only the last is counted.
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-02-02' } });
     fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-02-28' } });
+    expect(mockRangeCounts).not.toHaveBeenCalled();
     await waitFor(() => expect(counts()).toHaveTextContent(RANGE_TEXT));
+    expect(mockRangeCounts).toHaveBeenCalledTimes(1);
+    expect(mockRangeCounts).toHaveBeenCalledWith('prog-1', '2026-01-01', '2026-02-28');
     expect(mockOverwriteCounts).toHaveBeenCalledTimes(1);
-    expect(mockOverwriteCounts).toHaveBeenCalledWith('prog-1', '2026-01-01', '2026-02-28');
+  });
+
+  it('says when the scopes can’t be counted, reports it, and counts them again on request', async () => {
+    const user = userEvent.setup();
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Counting is unavailable');
+    mockOverwriteCounts.mockRejectedValueOnce(failure);
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(replaceRadio());
+
+    await waitFor(() => expect(counts()).toHaveTextContent('We couldn’t count what your stored history holds.'));
+    expect(errorSpy).toHaveBeenCalledWith('[client-mutation] fetchOverwriteCounts failed', failure, { programId: 'prog-1' });
+    expect(nextButton()).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Count again' }));
+    await waitFor(() => expect(counts()).toHaveTextContent(ALL_TEXT));
   });
 
   it('holds Preview until the lifter confirms the counts, asks again when the scope changes, and sends both', async () => {
@@ -4998,7 +5023,7 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
 
     expect(decisions()).toHaveTextContent('1 decision left before Preview.');
     expect(nextButton()).toBeDisabled();
-    await user.click(confirmBox());
+    await user.click(await screen.findByRole('checkbox', { name: 'Replace this stored history' }));
     expect(decisions()).toHaveTextContent('Nothing left to decide.');
 
     // A different scope removes something else, so it's confirmed afresh.
@@ -5037,14 +5062,16 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     );
   });
 
-  it('keeps the grouping and asks again with the new counts when stored history changed', async () => {
+  it('keeps the grouping and asks again with the new counts, in the scope labels too, when stored history changed', async () => {
     const user = userEvent.setup();
     render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
     await toAssign(user);
     await user.click(replaceRadio());
-    await user.click(confirmBox());
+    await user.click(await screen.findByRole('checkbox', { name: 'Replace this stored history' }));
 
     const now = { ...ALL, sets: 41 };
+    const importedNow = { ...IMPORTED, sets: 31 };
+    mockOverwriteCounts.mockResolvedValue({ all: now, imported: importedNow });
     mockDryRun.mockRejectedValueOnce(
       new ApiClientError('Your stored history has changed', 409, 'overwrite-counts-changed', { counts: now }),
     );
@@ -5054,6 +5081,9 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     expect(screen.getByText('Step 6 of 8 · Assign')).toBeInTheDocument();
     expect(mockAssign).toHaveBeenCalledTimes(1);
     expect(counts()).toHaveTextContent('Removes 41 sets and 3 macrocycles');
+    // The labels are read again, so switching scope shows what's stored now.
+    await waitFor(() => expect(scope('All imported history')).toHaveAccessibleName(/Removes 31 sets/));
+    expect(scope('All history')).toHaveAccessibleName(/Removes 41 sets/);
     expect(confirmBox()).not.toBeChecked();
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Assign your history to macrocycles' })).toHaveFocus());
 
@@ -5065,10 +5095,11 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     );
   });
 
-  it('says when a range can’t be counted, and counts it again on request', async () => {
+  it('says when a range can’t be counted, reports it, and counts it again on request', async () => {
     const user = userEvent.setup();
-    jest.spyOn(console, 'error').mockImplementation(() => undefined);
-    mockOverwriteCounts.mockRejectedValueOnce(new Error('Counting is unavailable'));
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Counting is unavailable');
+    mockRangeCounts.mockRejectedValueOnce(failure);
     render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
     await toAssign(user);
     await user.click(replaceRadio());
@@ -5076,10 +5107,11 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     enterRange('2026-01-01', '2026-02-28');
 
     await waitFor(() => expect(counts()).toHaveTextContent('We couldn’t count what this range holds.'));
+    expect(errorSpy).toHaveBeenCalledWith('[client-mutation] fetchOverwriteRangeCounts failed', failure, { programId: 'prog-1' });
     expect(screen.queryByRole('checkbox', { name: 'Replace this stored history' })).not.toBeInTheDocument();
     expect(nextButton()).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Count again' }));
     await waitFor(() => expect(counts()).toHaveTextContent(RANGE_TEXT));
-    expect(mockOverwriteCounts).toHaveBeenCalledTimes(2);
+    expect(mockRangeCounts).toHaveBeenCalledTimes(2);
   });
 });

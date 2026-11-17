@@ -281,7 +281,7 @@ export default function TrainingData() {
                   // so undoing that import is how it comes back (#1182).
                   <p>
                     From an import that replaced stored history on {day(s.createdAt)}: {rows(total(s.counts))}.
-                    Undo that import to put it back. Kept until {day(s.expiresAt)}.
+                    Undo that import from History’s Macrocycles tab to put it back. Kept until {day(s.expiresAt)}.
                   </p>
                 ) : (
                   <p>

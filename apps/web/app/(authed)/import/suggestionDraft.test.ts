@@ -44,7 +44,6 @@ function res(over: Partial<ImportAssignResponse> = {}): ImportAssignResponse {
     lifts: [],
     suggestions: { provider: 'Test model' },
     continue: null,
-    overwrite: { all: { sets: 0, macrocycles: 0, current: 0, shortened: 0 }, imported: { sets: 0, macrocycles: 0, current: 0, shortened: 0 } },
     ...over,
   };
 }

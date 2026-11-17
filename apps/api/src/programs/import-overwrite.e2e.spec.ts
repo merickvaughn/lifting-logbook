@@ -13,6 +13,7 @@ import type {
   ImportDryRunResponse,
   ImportOverwriteCounts,
   ImportOverwriteCountsResponse,
+  ImportOverwriteRangeCountsResponse,
   ImportOverwriteScope,
   MacrocycleDashboardResponse,
 } from '@lifting-logbook/types';
@@ -167,27 +168,30 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
       headers: auth(),
     });
     expect(res.statusCode).toBe(200);
+    return res.json<ImportOverwriteRangeCountsResponse>();
+  };
+
+  /** What all and all imported history would remove, as Assign reads them when Replace is picked. */
+  const scopeCounts = async () => {
+    const res = await server().inject({ method: 'GET', url: '/programs/rpt/import/overwrite-counts', headers: auth() });
+    expect(res.statusCode).toBe(200);
     return res.json<ImportOverwriteCountsResponse>();
   };
 
-  /** Overwrites `scope` with `runs`, confirming the counts Assign or the counts route gives. */
+  /** Overwrites `scope` with `runs`, confirming the counts the counts route gives. */
   const overwrite = async (runs: Row[][], scope: ImportOverwriteScope) => {
-    const counts = await countsFor(runs, scope);
+    const counts = await countsFor(scope);
     return commit(runs, { scope, counts });
   };
 
-  const countsFor = async (runs: Row[][], scope: ImportOverwriteScope): Promise<ImportOverwriteCounts> => {
-    if (scope.kind === 'range') {
-      const res = await server().inject({
-        method: 'GET',
-        url: `/programs/rpt/import/overwrite-counts?from=${scope.from}&to=${scope.to}`,
-        headers: auth(),
-      });
-      const range = res.json<ImportOverwriteCountsResponse>().range;
-      if (!range) throw new Error('no range counts');
-      return range;
-    }
-    return (await assign(runs.flat())).overwrite[scope.kind];
+  const countsFor = async (scope: ImportOverwriteScope): Promise<ImportOverwriteCounts> => {
+    if (scope.kind !== 'range') return (await scopeCounts())[scope.kind];
+    const res = await server().inject({
+      method: 'GET',
+      url: `/programs/rpt/import/overwrite-counts?from=${scope.from}&to=${scope.to}`,
+      headers: auth(),
+    });
+    return res.json<ImportOverwriteRangeCountsResponse>().range;
   };
 
   const undoRequest = (batchId: string | null) =>
@@ -264,7 +268,7 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
       const bundle = await repos();
       expect(await bundle.macrocycleScheduledWorkout.getScheduledWorkouts('rpt', live.macrocycleNum)).not.toHaveLength(0);
 
-      const counts = (await assign(NEW)).overwrite.all;
+      const counts = (await scopeCounts()).all;
       expect(counts).toEqual({ sets: OLD.length + 2, macrocycles: 2, current: 1, shortened: 0 });
       const body = await commit([NEW], { scope: { kind: 'all' }, counts });
       expect(body.created).toBe(NEW.length);
@@ -287,7 +291,7 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
 
     it('reimports the same file in full once what it duplicated is gone', async () => {
       await commit([OLD]);
-      const counts = (await assign(OLD)).overwrite.all;
+      const counts = (await scopeCounts()).all;
       const dry = await send([OLD], { scope: { kind: 'all' }, counts }, 'dry-run');
       expect(dry.statusCode).toBe(200);
       // Added on top, every row is a duplicate; replacing, every row is new.
@@ -313,7 +317,7 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
       await handNonCycle(-100);
       const live = await liveWithOverrides(-30);
 
-      const counts = (await assign(NEW)).overwrite.imported;
+      const counts = (await scopeCounts()).imported;
       expect(counts).toEqual({ sets: OLD.length + 1, macrocycles: 1, current: 0, shortened: 0 });
       await commit([NEW], { scope: { kind: 'imported' }, counts });
 
@@ -348,7 +352,7 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
       // -94, -92 and -90's three sets each, and the live macrocycle's first.
       expect(counts).toEqual({ sets: 10, macrocycles: 0, current: 0, shortened: 2 });
       const inside = run(-80, 3, 200);
-      await commit([inside], { scope, counts: counts as ImportOverwriteCounts });
+      await commit([inside], { scope, counts });
 
       const rows = await macrocycles();
       expect(rows.map((m) => [m.origin, m.startDate, m.endDate])).toEqual([
@@ -374,7 +378,7 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
       const counts = (await rangeCounts(-35, -20)).range;
       expect(counts).toEqual({ sets: 2, macrocycles: 1, current: 1, shortened: 0 });
       const inside = run(-34, 3, 200);
-      await commit([inside], { scope: { kind: 'range', from: day(-35), to: day(-20) }, counts: counts as ImportOverwriteCounts });
+      await commit([inside], { scope: { kind: 'range', from: day(-35), to: day(-20) }, counts });
 
       expect((await macrocycles()).map((m) => m.origin)).toEqual(['imported']);
       expect(await current()).toBeNull();
@@ -392,12 +396,18 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
       });
       expect(res.statusCode).toBe(400);
     });
+
+    it('counts the range alone, and Assign counts nothing until Replace is picked', async () => {
+      await commit([OLD]);
+      expect(Object.keys(await rangeCounts(-210, -195))).toEqual(['range']);
+      expect(await assign(NEW)).not.toHaveProperty('overwrite');
+    });
   });
 
   describe('confirming the counts', () => {
     it('rejects a commit whose confirmed counts no longer match, and changes nothing', async () => {
       await commit([OLD]);
-      const counts = (await assign(NEW)).overwrite.all;
+      const counts = (await scopeCounts()).all;
       // A set logged since the lifter confirmed.
       await handNonCycle(-10);
       const before = await state();
@@ -412,7 +422,7 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
       await commit([OLD]);
       await liveWithOverrides(-30);
       const before = await state();
-      const counts = (await assign(NEW)).overwrite.all;
+      const counts = (await scopeCounts()).all;
       const res = await send([NEW], { scope: { kind: 'all' }, counts }, 'dry-run');
       expect(res.statusCode).toBe(200);
       expect(res.json<ImportDryRunResponse>()).toMatchObject({ created: NEW.length });
@@ -588,7 +598,8 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
         await undo(batchId);
 
         const nonCycle = await sets(NON_CYCLE_PROGRAM);
-        expect(nonCycle.map((r) => r.date).sort((a, b) => a.getTime() - b.getTime())).toEqual([utc(-100), utc(-50)]);
+        expect(nonCycle).toHaveLength(2);
+        expect(nonCycle.map((r) => r.date)).toEqual(expect.arrayContaining([utc(-100), utc(-50)]));
         expect(new Set(nonCycle.map((r) => r.workoutNum)).size).toBe(2);
       });
     });
@@ -604,9 +615,8 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
 
     it('stays listed for undo though it created no macrocycle', async () => {
       await commit([OLD]);
-      // Replacing imported history with a file of only non-cycle sets.
-      const file: Row[] = [{ day: -10, lift: 'Bench Press', weight: 70, program: NON_CYCLE_PROGRAM }];
-      const counts = (await assign(file)).overwrite.imported;
+      // Replacing imported history with a file that creates no macrocycle.
+      const counts = (await scopeCounts()).imported;
       const { batchId } = await commit([], { scope: { kind: 'imported' }, counts });
       const res = await server().inject({ method: 'GET', url: '/programs/rpt/import/batches', headers: auth() });
       expect(res.json<Array<{ id: string }>>().map((b) => b.id)).toEqual([batchId]);

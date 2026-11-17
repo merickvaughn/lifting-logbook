@@ -85,6 +85,7 @@ export const {
   assignImport,
   // What overwriting stored history would remove, for the Assign step (#1182).
   fetchOverwriteCounts,
+  fetchOverwriteRangeCounts,
   // Sends the file the user is importing to the LLM suggestions route, once they say yes (#1174).
   suggestImport,
   commitImport,

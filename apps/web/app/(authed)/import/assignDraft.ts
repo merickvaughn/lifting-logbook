@@ -7,6 +7,7 @@ import type {
   ImportBreakdown,
   ImportBreakdownContinue,
   ImportOverwriteCounts,
+  ImportOverwriteCountsResponse,
   ImportOverwriteScope,
   LiftProgressionType,
   MacrocycleStatus,
@@ -75,8 +76,13 @@ export interface OverwriteDraft {
   from: string;
   to: string;
   /**
-   * What the scope removes: the Assign response's for all or imported history, the server's
-   * count for a range once it's read, or a commit's newer count. Null until there is one.
+   * What all and all imported history hold, read when the lifter picks Replace, with any newer
+   * count a commit found. Null until read.
+   */
+  scopes: ImportOverwriteCountsResponse | null;
+  /**
+   * What the chosen scope removes: from `scopes` for all or imported history, the server's count
+   * for a range once it's read, or a commit's newer count. Null until there is one.
    */
   counts: ImportOverwriteCounts | null;
   /** The lifter confirmed these counts. Any change to the scope or its counts asks again. */
@@ -471,19 +477,31 @@ function openContinueDecisions(draft: AssignDraft, res: ImportAssignResponse, co
   return agreement + offer.maxes.filter((m) => chosenWeight(maxChoice(draft, m), m) === undefined).length;
 }
 
-/** Replacing stored history instead of adding to it, starting with all of it (#1182). */
-export function setReplacing(draft: AssignDraft, res: ImportAssignResponse, on: boolean): AssignDraft {
+/**
+ * Replacing stored history instead of adding to it, starting with all of it (#1182). The scopes'
+ * counts are read once Replace is picked, so a lifter adding to their history costs no read.
+ */
+export function setReplacing(draft: AssignDraft, on: boolean): AssignDraft {
   const overwrite: OverwriteDraft | null = on
-    ? { kind: 'all', from: '', to: '', counts: res.overwrite.all, confirmed: false }
+    ? { kind: 'all', from: '', to: '', scopes: null, counts: null, confirmed: false }
     : null;
   return { ...draft, overwrite, edited: true };
 }
 
-/** The scope to replace. All and imported history take Assign's counts; a range waits for its own. */
-export function setOverwriteKind(draft: AssignDraft, res: ImportAssignResponse, kind: OverwriteDraft['kind']): AssignDraft {
-  if (!draft.overwrite) return draft;
-  const counts = kind === 'range' ? null : res.overwrite[kind];
-  return { ...draft, overwrite: { ...draft.overwrite, kind, counts, confirmed: false }, edited: true };
+/** The scope to replace. All and imported history take the counts read for them; a range waits for its own. */
+export function setOverwriteKind(draft: AssignDraft, kind: OverwriteDraft['kind']): AssignDraft {
+  const o = draft.overwrite;
+  if (!o) return draft;
+  const counts = kind === 'range' ? null : (o.scopes?.[kind] ?? null);
+  return { ...draft, overwrite: { ...o, kind, counts, confirmed: false }, edited: true };
+}
+
+/** The counts read for all and imported history, and the chosen scope's when it's one of those. */
+export function withScopeCounts(draft: AssignDraft, scopes: ImportOverwriteCountsResponse): AssignDraft {
+  const o = draft.overwrite;
+  if (!o) return draft;
+  const counts = o.kind === 'range' ? o.counts : scopes[o.kind];
+  return { ...draft, overwrite: { ...o, scopes, counts, confirmed: false } };
 }
 
 /** The range's days. Its counts are read again for them. */
@@ -504,9 +522,12 @@ export function withRangeCounts(draft: AssignDraft, from: string, to: string, co
   return { ...draft, overwrite: { ...o, counts, confirmed: false } };
 }
 
-/** Counts a commit found, which differ from those confirmed, so the lifter confirms again. */
+/**
+ * Counts a commit found, which differ from those confirmed, so the lifter confirms again. What the
+ * scopes' labels show may have changed too, so those are dropped and read again.
+ */
 export function withChangedCounts(draft: AssignDraft, counts: ImportOverwriteCounts): AssignDraft {
-  return draft.overwrite ? { ...draft, overwrite: { ...draft.overwrite, counts, confirmed: false } } : draft;
+  return draft.overwrite ? { ...draft, overwrite: { ...draft.overwrite, scopes: null, counts, confirmed: false } } : draft;
 }
 
 export function confirmOverwrite(draft: AssignDraft, confirmed: boolean): AssignDraft {

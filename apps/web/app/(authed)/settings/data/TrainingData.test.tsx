@@ -418,7 +418,7 @@ describe('Settings → Data → Clear data and backups', () => {
 
     const row = (await screen.findByText(/From an import that replaced stored history/)).closest('li');
     if (!row) throw new Error('expected the backup in a list item');
-    expect(row).toHaveTextContent('Undo that import to put it back.');
+    expect(row).toHaveTextContent('Undo that import from History’s Macrocycles tab to put it back.');
     expect(within(row).queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument();
     expect(within(row).getByRole('button', { name: 'Download sets' })).toBeInTheDocument();
 
