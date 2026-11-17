@@ -38,8 +38,8 @@ function isDateMarker(value: unknown): value is { $date: string } {
 export async function encodeSnapshotRows({ data, overwrite }: SnapshotContents): Promise<Buffer> {
   const payload: Payload = { version: PAYLOAD_VERSION, data, ...(overwrite ? { overwrite } : {}) };
   // `this[key]` is the value before `Date.prototype.toJSON` turned it into a string. `isDate`
-  // rather than `instanceof`, which misses a Date made in another realm (`structuredClone` under
-  // Jest's sandbox, as the in-memory store's reads are).
+  // rather than `instanceof`, which misses a Date made in another realm, such as one a Jest
+  // sandbox's caller passed in.
   const json = JSON.stringify(payload, function (this: Record<string, unknown>, key: string, value: unknown) {
     const raw = this[key];
     return isDate(raw) ? { $date: raw.toISOString() } : value;

@@ -511,6 +511,88 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
       expect(await snapshots()).toEqual([]);
     });
 
+    it('undoes an earlier overwrite once a later one can no longer be undone', async () => {
+      await commit([OLD]);
+      const first = await overwrite([NEW], { kind: 'all' });
+      await overwrite([run(-120, 6, 300)], { kind: 'all' });
+      // Newest first, so this is the later overwrite's backup.
+      const [later] = await snapshots();
+      expect((await server().inject({ method: 'DELETE', url: `/users/me/snapshots/${later?.id}`, headers: auth() })).statusCode).toBe(204);
+
+      await undo(first.batchId);
+      expect((await sets()).filter((r) => r.weight === 100)).toHaveLength(OLD.length);
+      expect((await sets()).filter((r) => r.weight === 300)).toHaveLength(OLD.length);
+    });
+
+    describe('after the history changed since', () => {
+      /** An imported run, then a live macrocycle from day -40 with a set on day -10, then a range cutting its start. */
+      const shortenLive = async () => {
+        await commit([run(-100, 6)]);
+        const live = await liveWithOverrides(-40);
+        await logOn(live.macrocycleNum, 2, -10);
+        const { batchId } = await overwrite([run(-44, 2, 200)], { kind: 'range', from: day(-45), to: day(-38) });
+        const shortened = (await macrocycles()).find((m) => m.id === live.id);
+        expect(shortened?.startDate).toEqual(utc(-10));
+        return { live, batchId };
+      };
+
+      it('keeps a close made since, and the dashboard of the macrocycle that replaced the current one', async () => {
+        const { live, batchId } = await shortenLive();
+        expect((await page('POST', '/programs/rpt/macrocycles', { macrocycleDate: day(-5) })).statusCode).toBe(201);
+        const closed = (await macrocycles()).find((m) => m.id === live.id);
+        expect(closed?.status).not.toBe('in-progress');
+        const dashboard = await current();
+
+        await undo(batchId);
+
+        const after = (await macrocycles()).find((m) => m.id === live.id);
+        // The start the overwrite moved goes back; the close stays.
+        expect(after).toMatchObject({ startDate: utc(-40), status: closed?.status, endDate: closed?.endDate });
+        // Still the next macrocycle's, renumbered once the import's own macrocycle went.
+        const next = (await macrocycles()).find((m) => m.startDate.getTime() === utc(-5).getTime());
+        expect(await current()).toEqual({ ...dashboard, macrocycleNum: next?.macrocycleNum });
+        expect((await sets()).filter((r) => r.macrocycleNum === after?.macrocycleNum).map((r) => r.date)).toContainEqual(utc(-40));
+      });
+
+      it('puts back a shortened macrocycle deleted since', async () => {
+        const { live, batchId } = await shortenLive();
+        expect((await page('DELETE', '/programs/rpt/macrocycles/current')).statusCode).toBe(204);
+        expect((await macrocycles()).find((m) => m.id === live.id)).toBeUndefined();
+
+        await undo(batchId);
+
+        const back = (await macrocycles()).find((m) => m.id === live.id);
+        expect(back).toMatchObject({ startDate: utc(-40), origin: 'live' });
+        expect((await sets()).filter((r) => r.macrocycleNum === back?.macrocycleNum).map((r) => r.date)).toEqual([utc(-40)]);
+        await expectDenseInDateOrder();
+      });
+
+      it('leaves out the sets of an import undone since', async () => {
+        const older = await commit([OLD]);
+        const { batchId } = await overwrite([NEW], { kind: 'all' });
+        await undo(older.batchId);
+
+        await undo(batchId);
+
+        expect(await sets()).toEqual([]);
+        expect(await snapshots()).toEqual([]);
+      });
+
+      it('moves a restored non-cycle workout past a number logged since on another day', async () => {
+        await commit([OLD]);
+        await handNonCycle(-100);
+        const { batchId } = await overwrite([run(-60, 1, 200)], { kind: 'range', from: day(-101), to: day(-99) });
+        expect(await sets(NON_CYCLE_PROGRAM)).toEqual([]);
+        await handNonCycle(-50);
+
+        await undo(batchId);
+
+        const nonCycle = await sets(NON_CYCLE_PROGRAM);
+        expect(nonCycle.map((r) => r.date).sort((a, b) => a.getTime() - b.getTime())).toEqual([utc(-100), utc(-50)]);
+        expect(new Set(nonCycle.map((r) => r.workoutNum)).size).toBe(2);
+      });
+    });
+
     it("isn't restored from Settings, which would put the history back beside the import", async () => {
       await commit([OLD]);
       await overwrite([NEW], { kind: 'all' });

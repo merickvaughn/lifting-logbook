@@ -140,13 +140,26 @@ export class PrismaTrainingDataRepository implements ITrainingDataRepository {
     return tracer.startActiveSpan('training_data.discard_changes', async (span) => {
       try {
         await this.prisma.$executeRaw`SAVEPOINT discard_training_changes`;
-        try {
-          return await fn();
-        } finally {
-          // Also clears an error `fn` left the transaction in, so the caller's error reaches it.
+        const rollBack = async () => {
           await this.prisma.$executeRaw`ROLLBACK TO SAVEPOINT discard_training_changes`;
           await this.prisma.$executeRaw`RELEASE SAVEPOINT discard_training_changes`;
+        };
+        let result: T;
+        try {
+          result = await fn();
+        } catch (err) {
+          // Also clears an error `fn` left the transaction in, so the caller's error reaches it.
+          // When the transaction itself is gone (a timeout, a dropped connection), the rollback
+          // fails too, and `fn`'s error is the one that says why.
+          try {
+            await rollBack();
+          } catch (rollbackErr) {
+            span.recordException(rollbackErr instanceof Error ? rollbackErr : String(rollbackErr));
+          }
+          throw err;
         }
+        await rollBack();
+        return result;
       } catch (err) {
         span.setStatus({ code: SpanStatusCode.ERROR });
         throw err;

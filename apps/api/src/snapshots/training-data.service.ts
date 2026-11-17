@@ -10,6 +10,7 @@ import { MacrocycleStatus, NON_CYCLE_PROGRAM, TrainingDataCounts } from '@liftin
 import { ProgramNotFoundError } from '../ports/errors';
 import { RepositoryBundle } from '../ports/factory';
 import { StoredSnapshotSummary } from '../ports/IDataSnapshotRepository';
+import { preImageKeyNumber } from '../ports/IImportBatchRepository';
 import {
   NUMBERED_TRAINING_TABLES,
   TRAINING_TABLES,
@@ -165,7 +166,18 @@ export async function skipStoredSets(repos: Repos, data: TrainingData): Promise<
   // Only a set paired with a stored one is left out: the snapshot's sets were stored together, so
   // none of them repeats another, and each keeps its own occurrence.
   const skipped = new Set(classified.filter((c) => c.kind === 'skip' && c.paired !== undefined).map((c) => c.row));
+  await leaveOutSets(repos, data, skipped);
+}
+
+/**
+ * Leaves `skipped`, some of `data`'s sets, out of it. A cycle macrocycle left with no sets goes
+ * with all its rows, unless it's the current one and the program's dashboard comes back with it;
+ * a non-cycle workout left with no sets loses its rows. Batch keys naming what went are dropped,
+ * and a batch left with none goes.
+ */
+export async function leaveOutSets(repos: Repos, data: TrainingData, skipped: ReadonlySet<TrainingRow>): Promise<void> {
   if (skipped.size === 0) return;
+  const sets: SetRow[] = liftRecordRows(data);
   data.liftRecords = sets.filter((r) => !skipped.has(r));
 
   const cycleKey = (program: string, num: number | undefined) => `${program}|${num}`;
@@ -193,7 +205,7 @@ export async function skipStoredSets(repos: Repos, data: TrainingData): Promise<
     );
   }
 
-  const skippedKeys = new Set([...skipped].map((r) => `${r.program}|${liftRecordNaturalKey(r)}`));
+  const skippedKeys = new Set(sets.filter((r) => skipped.has(r)).map((r) => `${r.program}|${liftRecordNaturalKey(r)}`));
   const dropsKey = (program: string, key: string): boolean => {
     if (key.startsWith(NON_CYCLE_ROW_KEY)) return skippedKeys.has(`${NON_CYCLE_PROGRAM}|${key.slice(NON_CYCLE_ROW_KEY.length)}`);
     if (key.startsWith(LEGACY_ROW_KEY)) return emptied.has(`${program}|${key.slice(LEGACY_ROW_KEY.length)}`);
@@ -213,20 +225,32 @@ export async function skipStoredSets(repos: Repos, data: TrainingData): Promise<
  * Puts a snapshot's macrocycles past every number `program` holds now, so none lands on a
  * macrocycle started since the clear. Renumbering afterwards orders them all by date. A batch
  * imported since names only numbers in use: deleting a macrocycle drops its keys
- * (`forgetBatchKeys`, #1199).
+ * (`forgetBatchKeys`, #1199). A number in `keep` goes to the number it maps to instead: an
+ * overwrite's undo puts a shortened macrocycle's sets back onto it where it is now (#1182).
  */
-async function placeAfterStored(repos: Repos, data: TrainingData, program: string): Promise<void> {
+export async function placeAfterStored(
+  repos: Repos,
+  data: TrainingData,
+  program: string,
+  keep: ReadonlyMap<number, number> = new Map(),
+): Promise<void> {
   const offset = [...(await repos.macrocycle.numbersInUse(program))].reduce((n, m) => Math.max(n, m), 0);
-  if (offset === 0) return;
-  const numbers = NUMBERED_TRAINING_TABLES.flatMap((table) => data[table])
-    .filter((row) => row.program === program)
-    .flatMap((row) => row.macrocycleNum ?? []);
-  const changes = new Map(numbers.map((n) => [n, n + offset]));
-  moveRows(data, program, (row) => (row.macrocycleNum === undefined ? {} : { macrocycleNum: row.macrocycleNum + offset }));
+  const to = (n: number) => keep.get(n) ?? n + offset;
+  const batches = data.importBatches.filter((batch) => batch.program === program && isLiftRecordsBatch(batch));
+  // A lift-records batch's pre-image, as the import stored it.
+  const preImageOf = (batch: TrainingRow) => batch['preImage'] as ImportPreImage;
+  const numbers = [
+    ...NUMBERED_TRAINING_TABLES.flatMap((table) => data[table])
+      .filter((row) => row.program === program)
+      .flatMap((row) => row.macrocycleNum ?? []),
+    ...batches.flatMap((batch) => Object.keys(preImageOf(batch)).flatMap((key) => preImageKeyNumber(key) ?? [])),
+  ];
+  const changes = new Map(numbers.filter((n) => to(n) !== n).map((n) => [n, to(n)]));
+  if (changes.size === 0) return;
+  moveRows(data, program, (row) => (row.macrocycleNum === undefined ? {} : { macrocycleNum: to(row.macrocycleNum) }));
   data.importBatches = data.importBatches.map((batch) => {
-    if (batch.program !== program || batch.destination !== 'lift-records') return batch;
-    // A lift-records batch's pre-image, as the import stored it.
-    const preImage = renumberPreImageKeys(batch.preImage as ImportPreImage, changes);
+    if (!batches.includes(batch)) return batch;
+    const preImage = renumberPreImageKeys(preImageOf(batch), changes);
     return preImage ? { ...batch, preImage } : batch;
   });
 }

@@ -324,6 +324,7 @@ const _importBatchRepo: IImportBatchRepository = {
   listChoosing: () => Promise.resolve([]),
   updateMacrocycles: (): Promise<void> => Promise.resolve(),
   listOverwrites: () => Promise.resolve([]),
+  listByIds: () => Promise.resolve([]),
 };
 
 const _repositoryBundle: RepositoryBundle = {

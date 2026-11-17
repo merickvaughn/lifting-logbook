@@ -177,8 +177,10 @@ export interface IImportBatchRepository {
   updateMacrocycles(id: string, macrocycles: BatchMacrocycles): Promise<void>;
   /**
    * The user's batches, under any program, that replaced stored history (#1182): those whose
-   * `macrocycles` names a snapshot, filtered in the database. Undo refuses an overwrite while a
-   * later one is here.
+   * `macrocycles` names a snapshot, filtered in the database, with that snapshot's id. Undo
+   * refuses an overwrite while a later one that can still be undone is here.
    */
-  listOverwrites(): Promise<Array<{ id: string; createdAt: Date }>>;
+  listOverwrites(): Promise<Array<{ id: string; createdAt: Date; snapshotId: string }>>;
+  /** Those of `ids` that are the user's batches, in one read. */
+  listByIds(ids: readonly string[]): Promise<ImportBatchRecord[]>;
 }

@@ -14,7 +14,7 @@ import {
   TrainingDataCounts,
 } from '@lifting-logbook/types';
 import { RepositoryBundle } from '../ports/factory';
-import { OverwriteChanges, StoredSnapshot, StoredSnapshotSummary } from '../ports/IDataSnapshotRepository';
+import { OverwriteChanges, ShortenedMacrocycle, StoredSnapshot, StoredSnapshotSummary } from '../ports/IDataSnapshotRepository';
 import { ImportBatchRecord, preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import {
@@ -30,7 +30,8 @@ import {
   closeReplacedCurrent,
   countRows,
   isLiftRecordsBatch,
-  moveRows,
+  leaveOutSets,
+  placeAfterStored,
   placeNonCycleAfterStored,
   programsIn,
   skipStoredSets,
@@ -38,7 +39,7 @@ import {
 } from '../snapshots/training-data.service';
 import { recomputeMacrocycles } from './import-stored';
 import { NON_CYCLE_ROW_KEY, dashboardOrNull, weekdayOf } from './macrocycle-history.util';
-import { renumberPreImageKeys, renumberProgram } from './macrocycle-renumbering';
+import { renumberProgram } from './macrocycle-renumbering';
 import { NON_CYCLE_MACROCYCLE_NUM } from './non-cycle.util';
 
 /**
@@ -64,13 +65,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 type SetRow = LiftRecordExportRow & TrainingRow;
 type MacrocycleTrainingRow = MacrocycleRow & TrainingRow;
 
-/** A macrocycle that loses sets in a date range and stays, with the dates it keeps. */
-interface ShortenedMacrocycle {
-  before: MacrocycleTrainingRow;
-  startDate: Date;
-  endDate: Date | null;
-}
-
 /** What an overwrite removes and changes, worked out from the stored rows before anything is written. */
 export interface OverwritePlan {
   /** Every removed row, by table, and the batch keys dropped (each batch with only those keys). */
@@ -79,9 +73,10 @@ export interface OverwritePlan {
   removedNums: Map<string, number[]>;
   /** The natural keys of sets removed from macrocycles and non-cycle workouts that stay, by program. */
   removedSetKeys: Map<string, string[]>;
-  shortened: ShortenedMacrocycle[];
+  /** Macrocycles that keep sets, with the dates they're left with. */
+  shortened: Array<Omit<ShortenedMacrocycle, 'status'>>;
   /** Current macrocycles whose start a range cut: the dashboard's date before and after. */
-  dashboards: Array<OverwriteChanges['dashboards'][number] & { to: Date }>;
+  dashboards: OverwriteChanges['dashboards'];
   /** Each lift-records batch's pre-image without the keys naming what's removed. */
   batchUpdates: Array<{ id: string; preImage: ImportPreImage }>;
   counts: ImportOverwriteCounts;
@@ -130,7 +125,7 @@ export function planOverwrite(data: TrainingData, scope: ImportOverwriteScope): 
   const macrocycles: MacrocycleTrainingRow[] = macrocycleRows(data);
   const removedCycles = new Set<string>();
   const removedSets = new Set<SetRow>();
-  const shortened: ShortenedMacrocycle[] = [];
+  const shortened: OverwritePlan['shortened'] = [];
 
   if (scope.kind === 'all') {
     for (const table of NUMBERED_TRAINING_TABLES) {
@@ -161,7 +156,9 @@ export function planOverwrite(data: TrainingData, scope: ImportOverwriteScope): 
         removedSets.add(r);
         lost.add(key);
       } else {
-        left.set(key, [...(left.get(key) ?? []), r]);
+        const kept = left.get(key) ?? [];
+        kept.push(r);
+        left.set(key, kept);
       }
     }
     for (const m of macrocycles) {
@@ -343,9 +340,11 @@ function hasChanges(plan: OverwritePlan): boolean {
 /**
  * Replaces stored history for an import (#1182), in the caller's transaction, which holds the
  * import lock. Reads what's stored, and when the scope's counts differ from `confirmed`, changes
- * nothing and is a 409. Otherwise, unless `dryRun`, it saves a snapshot of what it removes and
- * changes, a 503 when it can't, so nothing is replaced without a backup. Then it removes it.
- * Returns the snapshot, or null when the scope holds nothing or this is a dry run.
+ * nothing and is a 409. Otherwise it removes and changes what the scope holds, then, unless
+ * `dryRun`, saves a snapshot of it, with what the shortened macrocycles were left with. When the
+ * snapshot can't be saved it's a 503, and the request transaction rolls the removal back, so
+ * nothing is replaced without a backup. Returns the snapshot, or null when the scope holds nothing
+ * or this is a dry run.
  */
 export async function replaceStoredHistory(
   repos: Repos,
@@ -364,8 +363,16 @@ export async function replaceStoredHistory(
     });
   }
   if (!hasChanges(plan)) return { snapshot: null, counts: plan.counts };
+  await applyOverwrite(repos, plan, context);
   let snapshot: StoredSnapshotSummary | null = null;
   if (!context.dryRun) {
+    // What each shortened macrocycle was left with, read once the overwrite has read its status
+    // again, so undo can tell whether it changed since.
+    const after = new Map((await repos.macrocycle.listAll()).map((m) => [m.id, m]));
+    const shortened = plan.shortened.map((s) => {
+      const m = after.get(s.before.id);
+      return m ? { ...s, startDate: m.startDate, endDate: m.endDate, status: m.status } : { ...s, status: s.before.status };
+    });
     try {
       snapshot = await repos.dataSnapshot.create({
         kind: 'overwrite',
@@ -376,8 +383,8 @@ export async function replaceStoredHistory(
         counts: countRows(plan.removed),
         data: plan.removed,
         overwrite: {
-          macrocycles: plan.shortened.map((s) => s.before),
-          dashboards: plan.dashboards.map(({ to: _to, ...before }) => before),
+          macrocycles: shortened,
+          dashboards: plan.dashboards,
         },
         createdAt: context.now,
         expiresAt: new Date(context.now.getTime() + SNAPSHOT_RETENTION_DAYS * DAY_MS),
@@ -394,7 +401,6 @@ export async function replaceStoredHistory(
       );
     }
   }
-  await applyOverwrite(repos, plan, context);
   return { snapshot, counts: plan.counts };
 }
 
@@ -413,9 +419,10 @@ export class OverwriteUndoRefusedException extends ConflictException {
 
 /**
  * The snapshot undoing an overwrite batch restores, checked before anything changes (#1182,
- * decision 19). Undo is refused while a later overwrite's batch exists, so overwrites undo newest
- * first. It's refused too once the snapshot has expired or been deleted: undoing would then
- * remove the imported rows and restore nothing.
+ * decision 19). Undo is refused while a later overwrite's batch exists that can still be undone,
+ * so overwrites undo newest first. A later one whose backup is gone can never be undone, so it
+ * doesn't hold this one back. Undo is refused too once this one's snapshot has expired or been
+ * deleted: undoing would then remove the imported rows and restore nothing.
  */
 export async function overwriteToUndo(
   repos: Pick<RepositoryBundle, 'importBatch' | 'dataSnapshot'>,
@@ -428,7 +435,8 @@ export async function overwriteToUndo(
       b.id !== batch.id &&
       (b.createdAt.getTime() > batch.createdAt.getTime() || (b.createdAt.getTime() === batch.createdAt.getTime() && b.id > batch.id)),
   );
-  if (later.length > 0) {
+  const backups = later.length > 0 ? new Set((await repos.dataSnapshot.list(now)).filter((s) => s.kind === 'overwrite').map((s) => s.id)) : new Set();
+  if (later.some((b) => backups.has(b.snapshotId))) {
     throw new OverwriteUndoRefusedException(
       'later-overwrite',
       'A later import replaced your history too. Undo that import first, then this one.',
@@ -467,68 +475,99 @@ async function placeNonCycleWorkouts(repos: Repos, data: TrainingData): Promise<
 }
 
 /**
+ * The sets in `data` that a batch undone since the overwrite created: the overwrite removed them
+ * and kept that batch's keys for them, and the batch can't take them back now.
+ */
+function setsOfUndoneBatches(data: TrainingData, undone: readonly TrainingRow[]): Set<TrainingRow> {
+  const keys = new Set(
+    undone.flatMap((batch) =>
+      Object.keys(preImageOf(batch)).map((key) =>
+        key.startsWith(NON_CYCLE_ROW_KEY) ? `${NON_CYCLE_PROGRAM}|${key.slice(NON_CYCLE_ROW_KEY.length)}` : `${batch.program}|${key}`,
+      ),
+    ),
+  );
+  return new Set(liftRecordRows(data).filter((r) => keys.has(`${r.program}|${liftRecordNaturalKey(r)}`)));
+}
+
+const sameTime = (a: Date | null, b: Date | null) => (a?.getTime() ?? null) === (b?.getTime() ?? null);
+
+/**
  * Puts back what an overwrite removed and changed (#1182), after its import's own rows are
  * undone, then deletes the snapshot, in the caller's transaction. A set stored again since isn't
- * restored twice, as in a restore (ADR-044). A shortened macrocycle that still exists keeps its
- * current number, and its sets go back onto it with its dates and status as they were; the
- * removed macrocycles go past every stored number. A current macrocycle's dashboard date goes back
- * while the dashboard still points at it. The batch keys the overwrite dropped go back to the
- * batches still stored. Then each program is renumbered by start date. Returns the rows inserted.
+ * restored twice, as in a restore (ADR-044), and a set a batch undone since created stays undone.
+ * A shortened macrocycle that still exists keeps its current number and its sets go back onto
+ * it; the removed macrocycles go past every stored number. A shortened `imported` macrocycle's
+ * dates are read again from its sets, as the overwrite read them; another keeps any date changed
+ * since, and gets back each date the overwrite moved. An `imported` one gets back its status while
+ * it still has the one the overwrite left; the overwrite changes no other's. A current macrocycle's dashboard
+ * date goes back while the dashboard still points at it. The batch keys the overwrite dropped go
+ * back to the batches still stored. Then each program is renumbered by start date. Returns the
+ * rows inserted.
  */
-export async function restoreOverwrite(repos: Repos, snapshot: StoredSnapshot, userId: string): Promise<TrainingDataCounts> {
+export async function restoreOverwrite(
+  repos: Repos,
+  snapshot: StoredSnapshot,
+  context: { programs: readonly KnownProgram[]; asOf: Date },
+): Promise<TrainingDataCounts> {
   const data = snapshot.data;
   const changes: OverwriteChanges = snapshot.overwrite ?? { macrocycles: [], dashboards: [] };
+  const fragmentIds = data.importBatches.map((f) => String(f['id']));
+  const storedBatches = new Map((await repos.importBatch.listByIds(fragmentIds)).map((b) => [b.id, b]));
+  const undone = data.importBatches.filter((f) => !storedBatches.has(String(f['id'])));
+  await leaveOutSets(repos, data, setsOfUndoneBatches(data, undone));
+  data.importBatches = data.importBatches.filter((f) => storedBatches.has(String(f['id'])));
   await skipStoredSets(repos, data);
-  const kept = new Map<string, MacrocycleRow>();
-  for (const before of changes.macrocycles) {
-    const now = await repos.macrocycle.findById(before.id);
-    if (now && now.program === before.program) kept.set(before.id, now);
+
+  const byId = new Map((await repos.macrocycle.listAll()).map((m) => [m.id, m]));
+  const kept = new Map<string, { change: ShortenedMacrocycle; now: MacrocycleRow }>();
+  for (const change of changes.macrocycles) {
+    const now = byId.get(change.before.id);
+    if (now && now.program === change.before.program) kept.set(now.id, { change, now });
     // Deleted since, so it comes back as a removed one.
-    else data.macrocycles.push(before);
+    else data.macrocycles.push(change.before);
   }
-  const programs = [...new Set([...programsIn(data), ...changes.macrocycles.map((m) => m.program)])].sort();
+  const programs = [...new Set([...programsIn(data), ...changes.macrocycles.map((m) => m.before.program)])].sort();
   for (const program of programs) {
     if (program === NON_CYCLE_PROGRAM) {
       await placeNonCycleWorkouts(repos, data);
       continue;
     }
-    const offset = (await repos.macrocycle.numbersInUse(program)).reduce((n, m) => Math.max(n, m), 0);
     const onKept = new Map(
-      changes.macrocycles.flatMap((m) => {
-        const now = kept.get(m.id);
-        return m.program === program && now ? [[m.macrocycleNum, now.macrocycleNum] as const] : [];
-      }),
+      [...kept.values()]
+        .filter(({ now }) => now.program === program)
+        .map(({ change, now }) => [change.before.macrocycleNum, now.macrocycleNum] as const),
     );
-    const to = (n: number) => onKept.get(n) ?? n + offset;
-    const batches = data.importBatches.filter((b) => b.program === program && isLiftRecordsBatch(b));
-    const numbers = [
-      ...NUMBERED_TRAINING_TABLES.flatMap((table) => data[table]).filter((row) => row.program === program).flatMap((row) => row.macrocycleNum ?? []),
-      ...batches.flatMap((b) => Object.keys(preImageOf(b)).flatMap((key) => preImageKeyNumber(key) ?? [])),
-    ];
-    const moves = new Map(numbers.map((n) => [n, to(n)]));
-    moveRows(data, program, (row) => (row.macrocycleNum === undefined ? {} : { macrocycleNum: to(row.macrocycleNum) }));
-    data.importBatches = data.importBatches.map((b) =>
-      batches.includes(b) ? { ...b, preImage: renumberPreImageKeys(preImageOf(b), moves) ?? preImageOf(b) } : b,
-    );
+    await placeAfterStored(repos, data, program, onKept);
     await closeReplacedCurrent(repos, data, program);
   }
 
   const fragments = data.importBatches;
   const restored = await repos.trainingData.insertMissing({ ...data, importBatches: [] });
-  for (const before of changes.macrocycles) {
-    const now = kept.get(before.id);
-    if (!now) continue;
-    await repos.macrocycle.update(now.id, {
-      startDate: before.startDate,
-      endDate: before.endDate,
-      status: before.status,
-      statusChosen: before.statusChosen,
-    });
+  const imported = [...kept.values()].filter(({ now }) => now.origin === 'imported');
+  for (const { change, now } of kept.values()) {
+    if (now.origin === 'imported') continue;
+    const { before } = change;
+    const startDate = !sameTime(change.startDate, before.startDate) && sameTime(now.startDate, change.startDate) ? before.startDate : now.startDate;
+    const endDate = !sameTime(change.endDate, before.endDate) && sameTime(now.endDate, change.endDate) ? before.endDate : now.endDate;
+    if (!sameTime(startDate, now.startDate) || !sameTime(endDate, now.endDate)) await repos.macrocycle.update(now.id, { startDate, endDate });
+  }
+  await recomputeMacrocycles(
+    repos,
+    imported.map(({ now }) => now.id),
+    context.programs,
+    context.asOf,
+  );
+  // The dates come from the sets, but the status goes back to the one before the overwrite while
+  // it's still the one the overwrite left; a status set since, by a choice or a close, stays.
+  for (const { change, now } of imported) {
+    const unchanged = now.status === change.status && now.statusChosen === change.before.statusChosen;
+    await repos.macrocycle.update(now.id, { status: unchanged ? change.before.status : now.status });
   }
   for (const d of changes.dashboards) {
     const dashboard = await dashboardOrNull(repos, d.program);
-    const macrocycle = kept.get(d.macrocycleId);
-    if (!dashboard || !macrocycle || dashboard.macrocycleNum !== macrocycle.macrocycleNum) continue;
+    const macrocycle = kept.get(d.macrocycleId)?.now;
+    // Left alone once it points elsewhere or its date was changed since.
+    if (!dashboard || !macrocycle || dashboard.macrocycleNum !== macrocycle.macrocycleNum || !sameTime(dashboard.macrocycleDate, d.to)) continue;
     await repos.macrocycleDashboard.saveMacrocycleDashboard({
       ...dashboard,
       macrocycleDate: d.macrocycleDate,
@@ -538,8 +577,7 @@ export async function restoreOverwrite(repos: Repos, snapshot: StoredSnapshot, u
   await startNonCycleAtEarliestSet(repos, data);
   const updates = [];
   for (const fragment of fragments) {
-    // A batch undone since stays undone.
-    const batch = await repos.importBatch.findById(String(fragment['id']), userId);
+    const batch = storedBatches.get(String(fragment['id']));
     if (batch) updates.push({ id: batch.id, preImage: { ...batch.preImage, ...preImageOf(fragment) } });
   }
   await repos.importBatch.updatePreImages(updates);

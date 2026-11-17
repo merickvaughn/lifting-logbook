@@ -61,6 +61,15 @@ export async function runBatch(
 export const IMPORT_TX_TIMEOUT_MS = 30_000;
 
 /**
+ * Transaction budget for the import and undo routes, which can replace stored history with an
+ * import and restore it on undo (#1182). Those do a restore's work on top of an import's: clear
+ * and restore measured 15.7 s for a 78,000-set history on 2026-11-15 and get 60 s
+ * (`TRAINING_DATA_TX_TIMEOUT_MS`), so these routes get the same. A budget is a ceiling, so an
+ * import that replaces nothing takes no longer for it.
+ */
+export const IMPORT_REPLACE_TX_TIMEOUT_MS = 60_000;
+
+/**
  * `runInteractive` options for the self-opened-tx path. `timeout` matches
  * {@link IMPORT_TX_TIMEOUT_MS}; `maxWait` is raised in step so a busy pool does not
  * P2028 while acquiring the connection.

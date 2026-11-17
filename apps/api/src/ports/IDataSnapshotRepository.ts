@@ -13,14 +13,31 @@ export interface DataSnapshotScope {
 }
 
 /**
+ * A macrocycle a date range shortened (#1182): as it was, and the dates and status it was left
+ * with, so undo can tell what changed since.
+ */
+export interface ShortenedMacrocycle {
+  before: MacrocycleRow & TrainingRow;
+  startDate: Date;
+  endDate: Date | null;
+  status: MacrocycleRow['status'];
+}
+
+/**
  * What an overwrite changed rather than removed (#1182), which its undo puts back beside the
  * removed rows. Stored with the rows, so dates are `Date`s.
  */
 export interface OverwriteChanges {
-  /** The macrocycles that lost sets in a date range and stayed, as they were before, with their ids. */
-  macrocycles: Array<MacrocycleRow & TrainingRow>;
-  /** The current macrocycles whose start a date range cut, with their dashboard's date before. */
-  dashboards: Array<{ program: string; macrocycleId: string; macrocycleDate: Date; macrocycleStartWeekday: Weekday }>;
+  /**
+   * The macrocycles that lost sets in a date range and stayed: each as it was before, with its id,
+   * and the dates and status the overwrite left it with.
+   */
+  macrocycles: ShortenedMacrocycle[];
+  /**
+   * The current macrocycles whose start a date range cut, with their dashboard's date before and
+   * the date the overwrite moved it `to`.
+   */
+  dashboards: Array<{ program: string; macrocycleId: string; macrocycleDate: Date; macrocycleStartWeekday: Weekday; to: Date }>;
 }
 
 /**
@@ -54,7 +71,10 @@ export type NewSnapshot = Omit<StoredSnapshot, 'id'>;
  * listed, restored or downloaded.
  */
 export interface IDataSnapshotRepository {
-  /** Saves a snapshot. Throws when it can't be stored, before the caller clears anything. */
+  /**
+   * Saves a snapshot. Throws when it can't be stored: a clear calls it before clearing anything,
+   * and an overwrite within the transaction that then rolls its removal back.
+   */
   create(snapshot: NewSnapshot): Promise<StoredSnapshotSummary>;
 
   /** This user's unexpired snapshots, newest first. */

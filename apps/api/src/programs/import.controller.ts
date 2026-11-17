@@ -86,7 +86,7 @@ import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { StoredSnapshot } from '../ports/IDataSnapshotRepository';
 import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { PrismaService } from '../adapters/prisma/prisma.service';
-import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
+import { IMPORT_REPLACE_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { ImportSuggestionsService } from '../import-suggestions/import-suggestions.service';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
 import { CustomProgramsRepository } from '../custom-programs/custom-programs.repository';
@@ -143,6 +143,7 @@ import {
   replaceStoredHistory,
   restoreOverwrite,
 } from './import-overwrite';
+import { describeFailure } from '../snapshots/snapshots.controller';
 import { liftNamesFor, liftNamesOf, effectiveSlotMapFor, progressionSettingsFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
 import {
@@ -178,7 +179,7 @@ export class ImportController {
 
   @Post('import')
   @HttpCode(HttpStatus.OK)
-  @RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)
+  @RlsTxTimeout(IMPORT_REPLACE_TX_TIMEOUT_MS)
   async import(
     @Param('program') program: string,
     @Req() req: FastifyRequest,
@@ -515,7 +516,7 @@ export class ImportController {
 
   @Post('import/:batchId/undo')
   @HttpCode(HttpStatus.OK)
-  @RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)
+  @RlsTxTimeout(IMPORT_REPLACE_TX_TIMEOUT_MS)
   async undoImport(
     @Param('program') program: string,
     @Param('batchId') batchId: string,
@@ -663,14 +664,8 @@ export class ImportController {
       // The `imported` macrocycles left are recomputed from the sets on them, which a later import
       // may have added to, rather than restored (#1255, decision 14).
       const ids = touched.flatMap((t) => t.ids);
-      const recomputed = ids.length > 0
-        ? await recomputeMacrocycles(
-            repos,
-            ids,
-            [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(user.id))],
-            asOf,
-          )
-        : 0;
+      const knownPrograms = async () => [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(user.id))];
+      const recomputed = ids.length > 0 ? await recomputeMacrocycles(repos, ids, await knownPrograms(), asOf) : 0;
       // An empty live macrocycle a continue removed comes back first, so it's numbered by date (#1354).
       for (const part of parts) {
         const removedLive = part.macrocycles?.continued?.removed;
@@ -686,7 +681,7 @@ export class ImportController {
         }
       }
       // Last, what the import replaced, onto what its undo left (#1182).
-      const putBack = replaced ? await restoreOverwrite(repos, replaced, user.id) : null;
+      const putBack = replaced ? await restoreOverwrite(repos, replaced, { programs: await knownPrograms(), asOf }) : null;
       if (putBack) restored += putBack.liftRecords;
       // Counts only: dates and statuses are the lifter's data.
       this.logger.log(
@@ -1238,8 +1233,10 @@ export class ImportController {
       throw err;
     }
     // A commit reads what's stored and writes under the import lock, so a second commit of the
-    // same file gets a 409 rather than writing it twice (decision 13).
-    if (mode === 'commit') {
+    // same file gets a 409 rather than writing it twice (decision 13). An overwrite's dry run
+    // deletes and renumbers before rolling back, so it takes the lock too, in the commit's order,
+    // rather than meet a page write's lock the other way round (#1182).
+    if (mode === 'commit' || choices.breakdown.overwrite) {
       try {
         await lockForAssignedImport(repos);
       } catch (err) {
@@ -1261,7 +1258,14 @@ export class ImportController {
         });
       } catch (err) {
         // Counts only: what was stored is the lifter's data (proposal Observability).
-        if (err instanceof HttpException) {
+        if (err instanceof HttpException && err.getStatus() >= 500) {
+          // Nest doesn't log an HttpException, so why the backup failed is logged here, without
+          // a Prisma error's message, which can quote the lifter's rows.
+          this.logger.error(
+            { mode, scope: overwrite.scope.kind, status: err.getStatus(), ...describeFailure(err.cause) },
+            'Import overwrite failed (#1182)',
+          );
+        } else if (err instanceof HttpException) {
           this.logger.warn({ mode, scope: overwrite.scope.kind, status: err.getStatus() }, 'Import overwrite refused (#1182)');
         }
         throw err;

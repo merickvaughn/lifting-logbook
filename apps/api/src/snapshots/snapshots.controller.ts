@@ -209,7 +209,7 @@ export class SnapshotsController {
   }
 }
 
-interface Failure {
+export interface Failure {
   error: string;
   code?: string;
   dbCode?: string;
@@ -239,7 +239,7 @@ function isDataChanged(err: HttpException): boolean {
  * message can quote the call's arguments, which here are the lifter's rows, so only other errors'
  * messages are logged.
  */
-function describeFailure(err: unknown): Failure {
+export function describeFailure(err: unknown): Failure {
   if (err instanceof PrismaClientKnownRequestError) {
     // A raw query's failure (P2010) carries the Postgres error code; its message quotes the query.
     const dbCode = err.meta?.['code'];

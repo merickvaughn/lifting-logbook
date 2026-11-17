@@ -207,12 +207,23 @@ describeOrSkip('import overwrite (#1182, e2e, lifting_app role)', () => {
     const before = await rowsOf(owner, USER_NO_BACKUP);
     expectSeeded(before);
 
-    await owner.$executeRawUnsafe('REVOKE INSERT ON "data_snapshot" FROM lifting_app');
+    // Refused for this test's user only: revoking the insert from lifting_app would also fail a
+    // suite running beside this one that saves a snapshot.
+    await owner.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION import_overwrite_e2e_refuse_backup() RETURNS trigger AS $$
+      BEGIN
+        IF NEW."userId" = '${USER_NO_BACKUP}' THEN RAISE EXCEPTION 'backup refused by the test'; END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql`);
+    await owner.$executeRawUnsafe(
+      'CREATE TRIGGER import_overwrite_e2e_refuse_backup BEFORE INSERT ON "data_snapshot" FOR EACH ROW EXECUTE FUNCTION import_overwrite_e2e_refuse_backup()',
+    );
     let res: Awaited<ReturnType<typeof importCsv>>;
     try {
       res = await importCsv(USER_NO_BACKUP, file.csv, '?mode=commit&destination=lift-records', breakdownOf(file.dates, { scope: { kind: 'all' }, counts }));
     } finally {
-      await owner.$executeRawUnsafe('GRANT INSERT ON "data_snapshot" TO lifting_app');
+      await owner.$executeRawUnsafe('DROP TRIGGER IF EXISTS import_overwrite_e2e_refuse_backup ON "data_snapshot"');
+      await owner.$executeRawUnsafe('DROP FUNCTION IF EXISTS import_overwrite_e2e_refuse_backup()');
     }
 
     expect(res.statusCode).toBe(503);
