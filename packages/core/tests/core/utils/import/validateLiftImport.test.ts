@@ -86,6 +86,38 @@ describe("validateLiftImport", () => {
     expect(errors[0]).toMatchObject({ row: 1, field: "date", code: "DATE_INVALID" });
   });
 
+  describe("date range (#1316)", () => {
+    const importDate = new Date("2026-11-17T15:00:00Z");
+
+    it("rejects a row dated 1969-12-31, naming the row and the date", () => {
+      const records = [makeRecord(), makeRecord({ date: new Date(Date.UTC(1969, 11, 31)) })];
+      const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP, { importDate });
+      expect(valid).toHaveLength(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ row: 2, field: "date", code: "DATE_INVALID" });
+      expect(errors[0]!.message).toMatch(/1969-12-31/);
+    });
+
+    it("rejects a row dated the day after the import date, naming the row and the date", () => {
+      const records = [makeRecord({ date: new Date(Date.UTC(2026, 10, 18)) })];
+      const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP, { importDate });
+      expect(valid).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ row: 1, field: "date", code: "DATE_INVALID" });
+      expect(errors[0]!.message).toMatch(/2026-11-18/);
+    });
+
+    it("accepts a row dated 1970-01-02 and one dated the import date", () => {
+      const records = [
+        makeRecord({ date: new Date(Date.UTC(1970, 0, 2)) }),
+        makeRecord({ date: new Date(Date.UTC(2026, 10, 17)) }),
+      ];
+      const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP, { importDate });
+      expect(errors).toHaveLength(0);
+      expect(valid).toHaveLength(2);
+    });
+  });
+
   it("flags a macrocycle number outside 0 to 1000 on its row, and accepts both ends", () => {
     const records = [
       makeRecord({ macrocycleNum: -1 }),

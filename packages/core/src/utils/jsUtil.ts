@@ -108,7 +108,11 @@ export function formatDateYYYYMMDD(date: string | Date): string {
  */
 export function parseDateStringUTC(value: string): Date {
   const isIso = value.includes("-");
-  const parts = isIso ? value.split("-") : value.split("/");
+  // A sheet cell like `12/31/1969 19:00:00` carries a time part. Drop it so
+  // the date is read as `M/D/YYYY` in UTC; `new Date(value)` would read it in
+  // the host's time zone and can land on the neighbouring day (#1316).
+  const datePart = isIso ? value : (/^\s*(\d+\/\d+\/\d+)\s+\d{1,2}:\d{2}(?::\d{2})?\s*$/.exec(value)?.[1] ?? value);
+  const parts = isIso ? value.split("-") : datePart.split("/");
   if (parts.length === 3) {
     const [first, second, third] = parts;
     const yyyy = Number(isIso ? first : third);
