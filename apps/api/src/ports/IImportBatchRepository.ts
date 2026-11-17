@@ -1,6 +1,6 @@
 import { ImportPreImage, Weekday } from '@lifting-logbook/core';
 import { ImportKind } from '@lifting-logbook/types';
-import { MacrocycleStatus } from '@lifting-logbook/types';
+import { MacrocycleOrigin, MacrocycleStatus } from '@lifting-logbook/types';
 
 export interface ImportBatchRecord {
   id: string;
@@ -56,8 +56,13 @@ export interface ContinuedRun {
   /** The live macrocycle continuing ended, with its end date and status before, or null with none. */
   ended: { id: string; endDate: string | null; status: MacrocycleStatus } | null;
   /**
-   * The program's dashboard before, which pointed at `ended`, without its number, which undo reads
-   * from `ended` again. Null when the program had none.
+   * The live macrocycle continuing removed rather than ended, since it held no sets (#1354). Absent
+   * otherwise, and on every batch from before #1354. `ended` is then null.
+   */
+  removed?: RemovedMacrocycle;
+  /**
+   * The program's dashboard before, which pointed at `ended` or `removed`, without its number,
+   * which undo reads from that macrocycle again. Null when the program had none.
    */
   dashboard: {
     macrocycleUnit: string;
@@ -69,6 +74,24 @@ export interface ContinuedRun {
   /** The active program before. */
   activeProgram: string | null;
 }
+
+/**
+ * A live macrocycle with no sets that continuing a run removed (#1354), as undo recreates it: its
+ * row, under the same id, and its schedule. Its number isn't kept, since undo numbers it by date.
+ * Its dates are `YYYY-MM-DD` strings, and its scheduled workouts' ISO timestamps. A type rather
+ * than an interface, so it's assignable to the JSON column's type.
+ */
+export type RemovedMacrocycle = {
+  id: string;
+  startDate: string;
+  endDate: string | null;
+  status: MacrocycleStatus;
+  statusChosen: boolean;
+  origin: MacrocycleOrigin;
+  unmatched: boolean;
+  importedThrough: string | null;
+  schedule: Array<{ workoutNum: number; weekNum: number; scheduledDate: string }>;
+};
 
 /**
  * How a lift-records pre-image key's macrocycle number is read: the leading number of a set key

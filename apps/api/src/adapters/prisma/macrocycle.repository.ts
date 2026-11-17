@@ -172,6 +172,7 @@ export class PrismaMacrocycleRepository implements IMacrocycleRepository {
     try {
       const row = await this.prisma.macrocycle.create({
         data: {
+          ...(macrocycle.id !== undefined ? { id: macrocycle.id } : {}),
           userId: this.userId,
           program: macrocycle.program,
           macrocycleNum: macrocycle.macrocycleNum,

@@ -185,11 +185,17 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
     return res.statusCode === 200 ? res.json<MacrocycleDashboardResponse>() : null;
   };
 
-  /** Starts a live RPT macrocycle on `start` and logs one set on it. */
-  const liveWithASet = async (start: number) => {
+  /** Starts a live RPT macrocycle on `start`, the program's first, and logs nothing on it. */
+  const emptyLive = async (start: number) => {
     expect((await page('POST', '/programs/rpt/macrocycles/initialize', { macrocycleDate: day(start) })).statusCode).toBe(201);
     const [live] = await macrocycles();
     if (!live) throw new Error('no live macrocycle');
+    return live;
+  };
+
+  /** Starts a live RPT macrocycle on `start` and logs one set on it. */
+  const liveWithASet = async (start: number) => {
+    const live = await emptyLive(start);
     const set = { lift: 'Bench Press', setNum: 1, weight: 135, reps: 5, macrocycleNum: live.macrocycleNum, workoutNum: 1, date: day(start) };
     expect((await page('POST', '/programs/rpt/lift-records', set)).statusCode).toBe(201);
     return live;
@@ -456,6 +462,111 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       const res = await send(stale, breakdownOf([stretch(stale)], { stretch: 0, maxes: [] }));
       expect(res.statusCode).toBe(400);
       expect(res.json()).toMatchObject({ code: 'continue-refused', reason: 'stale' });
+    });
+  });
+
+  describe('over an empty live macrocycle (#1354)', () => {
+    // Two stretches: older history, then RECENT, the run to continue.
+    const OLDER = run(-120, 6);
+    const ROWS = [...OLDER, ...RECENT];
+    const breakdown = (offer: AssignContinueOffer, endLive?: string) =>
+      breakdownOf([stretch(OLDER), stretch(RECENT)], { stretch: 1, maxes: everyMax(offer), ...(endLive ? { endLive } : {}) });
+    const numbered = async () => (await macrocycles()).map((m) => [m.macrocycleNum, m.origin, ymd(m.startDate)]);
+
+    /**
+     * Continues RECENT over `live`, an empty live macrocycle: it's offered, naming `live` with no
+     * sets, and refused without agreement. With it, `live` goes and the run is current. Returns the
+     * commit's response.
+     */
+    const continueOver = async (live: { id: string; macrocycleNum: number }) => {
+      const offer = (await assign(ROWS)).continue;
+      expect(offer).toMatchObject({ stretch: 1, live: { id: live.id, macrocycleNum: live.macrocycleNum, sets: 0 } });
+      if (!offer) throw new Error('expected an offer');
+
+      const refused = await send(ROWS, breakdown(offer));
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json()).toMatchObject({ code: 'continue-refused', reason: 'needs-agreement' });
+      expect(refused.json<{ message: string }>().message).toContain(`removes macrocycle ${live.macrocycleNum}`);
+      expect((await macrocycles()).some((m) => m.id === live.id)).toBe(true);
+
+      const body = await commit(ROWS, breakdown(offer, live.id));
+      const rows = await macrocycles();
+      expect(rows.some((m) => m.id === live.id)).toBe(false);
+      const runRow = rows.find((m) => m.origin === 'live');
+      expect(runRow).toMatchObject({ startDate: utc(-16), status: 'in-progress', importedThrough: utc(-4) });
+      // The run is current, and numbered last.
+      expect((await current())?.macrocycleNum).toBe(runRow?.macrocycleNum);
+      expect(runRow?.macrocycleNum).toBe(Math.max(...rows.map((m) => m.macrocycleNum)));
+      expect((await (await repos()).userSettings.getSettings()).activeProgram).toBe('rpt');
+      return body;
+    };
+
+    it('started after the run ends: is offered, and continuing removes it and numbers by date', async () => {
+      const live = await emptyLive(-2);
+      // Without continuing, the run would stay history before it.
+      expect((await assign(ROWS)).stretches.map((s) => s.stored.kind)).toEqual(['new', 'new']);
+      await continueOver(live);
+      expect(await numbered()).toEqual([
+        [1, 'imported', day(-120)],
+        [2, 'live', day(-16)],
+      ]);
+    });
+
+    it('started during the run: is offered, and continuing removes it and numbers by date', async () => {
+      const live = await emptyLive(-10);
+      // Without continuing, the run would overlap it.
+      expect((await assign(ROWS)).stretches.map((s) => s.stored.kind)).toEqual(['new', 'overlaps']);
+      await continueOver(live);
+      expect(await numbered()).toEqual([
+        [1, 'imported', day(-120)],
+        [2, 'live', day(-16)],
+      ]);
+    });
+
+    it('started before the run: continuing removes it rather than leave it empty in history', async () => {
+      const live = await emptyLive(-40);
+      await continueOver(live);
+      expect(await numbered()).toEqual([
+        [1, 'imported', day(-120)],
+        [2, 'live', day(-16)],
+      ]);
+    });
+
+    it('undo recreates it, its schedule and the dashboard pointing at it, numbered by date, and the active program', async () => {
+      const live = await emptyLive(-10);
+      // Older history imported since starts first, so the live macrocycle is second.
+      const oldest = run(-200, 6);
+      await commit(oldest, breakdownOf([stretch(oldest)]));
+      const bundle = await repos();
+      // Another program active, which continuing switches from.
+      await bundle.userSettings.upsertSettings({ activeProgram: '531' });
+      const before = {
+        live: await bundle.macrocycle.findById(live.id),
+        dashboard: await bundle.macrocycleDashboard.getMacrocycleDashboard('rpt'),
+        activeProgram: (await bundle.userSettings.getSettings()).activeProgram,
+        schedule: await bundle.macrocycleScheduledWorkout.getScheduledWorkouts('rpt', 2),
+      };
+      expect(before.live?.macrocycleNum).toBe(2);
+      expect(before.dashboard?.macrocycleNum).toBe(2);
+      expect(before.schedule.length).toBeGreaterThan(0);
+
+      const body = await continueOver({ id: live.id, macrocycleNum: 2 });
+      expect(await numbered()).toEqual([
+        [1, 'imported', day(-200)],
+        [2, 'imported', day(-120)],
+        [3, 'live', day(-16)],
+      ]);
+
+      expect((await undo(body.batchId)).flagged).toEqual([]);
+      expect(await bundle.macrocycle.findById(live.id)).toEqual(before.live);
+      expect(await bundle.macrocycleDashboard.getMacrocycleDashboard('rpt')).toEqual(before.dashboard);
+      expect(await bundle.macrocycleScheduledWorkout.getScheduledWorkouts('rpt', 2)).toEqual(before.schedule);
+      expect((await bundle.userSettings.getSettings()).activeProgram).toBe(before.activeProgram);
+      expect(await numbered()).toEqual([
+        [1, 'imported', day(-200)],
+        [2, 'live', day(-10)],
+      ]);
+      expect((await current())?.macrocycleNum).toBe(2);
     });
   });
 

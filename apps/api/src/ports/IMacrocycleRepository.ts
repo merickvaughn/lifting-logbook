@@ -21,6 +21,11 @@ export interface MacrocycleRow {
 export type MacrocycleChanges = Partial<Pick<MacrocycleRow, 'startDate' | 'endDate' | 'status' | 'statusChosen' | 'unmatched'>>;
 
 export interface NewMacrocycle {
+  /**
+   * Absent means a new one. Undo recreating a removed macrocycle gives its old id back (#1354).
+   * Only {@link IMacrocycleRepository.create} reads it.
+   */
+  id?: string;
   program: string;
   macrocycleNum: number;
   startDate: Date;

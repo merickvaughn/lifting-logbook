@@ -324,12 +324,14 @@ export interface BreakdownPlan {
  * places each stretch's new rows among the stored macrocycles (decision 14, {@link placeOnStored}).
  * Each row to create gets its workout number: the file's, else the session's position in the
  * stretch, or for a stretch joining a stored macrocycle, continuing from its highest (decision 9).
- * A stretch with nothing new writes nothing.
+ * A stretch with nothing new writes nothing. The macrocycle with id `ignore`, an empty live one
+ * the breakdown's continue removes (#1354), isn't placed against.
  */
 export async function planBreakdown(
   repos: Pick<RepositoryBundle, 'liftRecord' | 'macrocycle'>,
   placed: PlacedBreakdown,
   programs: readonly KnownProgram[],
+  ignore?: string,
 ): Promise<BreakdownPlan> {
   const records = placed.rows.map(({ r }) => r);
   const classified = classifyLiftRecordRows(
@@ -359,7 +361,7 @@ export async function planBreakdown(
   });
 
   const stretches: PlannedStretch[] = [];
-  for (const { stretch, placement: stored } of await placeOnStored(repos, withRows, programs)) {
+  for (const { stretch, placement: stored } of await placeOnStored(repos, withRows, programs, ignore)) {
     const { spec, span, rows, raw } = stretch;
     if (raw.length === 0) continue;
     const sessionOf = new Map([...new Set(rows.map((r) => r.date.getTime()))].sort((a, b) => a - b).map((t, i) => [t, i + 1]));

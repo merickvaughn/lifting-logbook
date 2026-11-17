@@ -166,7 +166,7 @@ export class InMemoryMacrocycleRepository implements IMacrocycleRepository, Trai
       throw new MacrocycleNumberConflictError(macrocycle.program, macrocycle.macrocycleNum);
     }
     const row: MacrocycleRow = {
-      id: randomUUID(),
+      id: macrocycle.id ?? randomUUID(),
       program: macrocycle.program,
       macrocycleNum: macrocycle.macrocycleNum,
       startDate: macrocycle.startDate,

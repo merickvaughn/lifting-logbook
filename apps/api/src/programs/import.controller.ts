@@ -108,6 +108,8 @@ import {
   continuedRunToUndo,
   planContinue,
   releaseContinuedRun,
+  removableLive,
+  removeLive,
   restoreAroundContinuedRun,
 } from './import-continue';
 import {
@@ -1178,10 +1180,12 @@ export class ImportController {
         throw err;
       }
     }
-    const plan = await planBreakdown(repos, placed, programs);
     // The run the lifter continues as current (#1180), checked before anything is written.
     const continueChoice = choices.breakdown.continue;
     const continuedSpec = continueChoice ? placed.stretches[continueChoice.stretch]?.spec : undefined;
+    // An empty live macrocycle in the run's program, which continuing removes, isn't placed against (#1354).
+    const removable = continuedSpec ? await removableLive(repos, continuedSpec.program) : undefined;
+    const plan = await planBreakdown(repos, placed, programs, removable);
     let continuePlan: ContinuePlan | null = null;
     if (continueChoice) {
       const placedRun = placed.stretches[continueChoice.stretch];
@@ -1234,6 +1238,8 @@ export class ImportController {
         );
       }
     } else {
+      // An empty live macrocycle goes before the run is written, so the run is numbered by date.
+      const removedLive = continuePlan ? await removeLive(repos, continuePlan) : null;
       const written = await writeBreakdown(repos, program, plan, {
         programs,
         importDate: choices.importDate,
@@ -1260,6 +1266,7 @@ export class ImportController {
         batch.macrocycles.continued = await applyContinue(repos, continuePlan, written.continuedId, {
           importDate: choices.importDate,
           preImage: batch.preImage,
+          removed: removedLive,
         });
       }
       batchId = await saveBatchGroup(repos, userId, program, batches);
@@ -1284,6 +1291,7 @@ export class ImportController {
         exported: choices.exported,
         continued: continuePlan !== null,
         continueEndedLive: Boolean(continuePlan?.live),
+        continueRemovedLive: continuePlan?.live?.sets === 0,
         continueMaxesWritten: continuePlan?.maxes.length ?? 0,
         durationMs: Date.now() - started,
       },

@@ -29,13 +29,14 @@ import {
   updateMaxes,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
-import { ContinuedRun, preImageKeyNumber } from '../ports/IImportBatchRepository';
+import { ContinuedRun, RemovedMacrocycle, preImageKeyNumber } from '../ports/IImportBatchRepository';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { modificationModesFor } from '../lifts/lift-modification.util';
 import { closingEnd, dashboardOrNull, macrocycleIdFor, weekdayOf } from './macrocycle-history.util';
 import { PROGRAM_DEFAULTS, redatedScheduledWorkouts } from './macrocycle-generation.service';
 import { placeNonCycleRows } from './import-handlers';
-import { storedSpans } from './import-stored';
+import { placeSuggestedStretches, storedSpans } from './import-stored';
+import { renumberProgram } from './macrocycle-renumbering';
 
 /**
  * Continuing the file's latest run as the current macrocycle (#1180, proposal decisions 2 and 10).
@@ -190,14 +191,37 @@ async function liveMacrocycle(
   return { id, macrocycleNum: dashboard.macrocycleNum, sets };
 }
 
-/** Where each of the program's stored macrocycles ends, its sets included, as a run must end after. */
-async function storedEnds(repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>, program: string): Promise<Date[]> {
-  return (await storedSpans(repos, program)).map((s) => new Date(s.end));
+/**
+ * Where each of the program's stored macrocycles ends, its sets included, as a run must end after,
+ * leaving out the one with id `ignore`.
+ */
+async function storedEnds(
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'liftRecord'>,
+  program: string,
+  ignore: string | undefined,
+): Promise<Date[]> {
+  return (await storedSpans(repos, program, ignore)).map((s) => new Date(s.end));
 }
 
 /**
+ * The id of the program's live macrocycle when it holds no sets, else undefined (#1354).
+ * Continuing a run removes it rather than ending it, so where it starts can't stand in the run's
+ * way: placing the run and checking it ends last both leave it out.
+ */
+export async function removableLive(
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'liftRecord'>,
+  program: string,
+): Promise<string | undefined> {
+  return removableId(await liveMacrocycle(repos, program));
+}
+
+const removableId = (live: AssignContinueOffer['live']): string | undefined => (live?.sets === 0 ? live.id : undefined);
+
+/**
  * `mode=assign`'s continue offer (decision 2): on the last stretch, when it's matched to a program
- * and may continue under it ({@link continueRefusal}).
+ * and may continue under it ({@link continueRefusal}). An empty live macrocycle, which continuing
+ * removes, is left out of the run's placement ({@link removableLive}), so the stretch is placed
+ * again without it.
  */
 export async function continueOffer(
   repos: OfferRepos,
@@ -212,8 +236,13 @@ export async function continueOffer(
 ): Promise<AssignContinueOffer | null> {
   const index = stretches.length - 1;
   const last = stretches[index];
-  const placement = stored[index];
-  if (!last || !placement || !last.matched || placement.kind !== 'new') return null;
+  const storedKind = stored[index]?.kind;
+  // A stretch joining or already stored is refused whatever the live macrocycle holds.
+  if (!last || !last.matched || (storedKind !== 'new' && storedKind !== 'overlaps')) return null;
+  const live = await liveMacrocycle(repos, last.program);
+  const ignore = removableId(live);
+  const placement = ignore ? (await placeSuggestedStretches(repos, stretches, context.programs, ignore))[index] : stored[index];
+  if (!placement || placement.kind !== 'new') return null;
   const records = runRecords(last);
   const someStored = classifyLiftRecordRows(records, (r) => r, await repos.liftRecord.findStoredSets(records)).some(
     (c) => c.kind === 'skip',
@@ -221,7 +250,7 @@ export async function continueOffer(
   const refusal = continueRefusal(
     { ...last, placement: placement.kind, someStored },
     stretches.slice(0, index),
-    await storedEnds(repos, last.program),
+    await storedEnds(repos, last.program, ignore),
     context,
   );
   if (refusal) return null;
@@ -240,7 +269,7 @@ export async function continueOffer(
     },
   );
   const maxes: AssignContinueMax[] = computed.map((m) => ({ ...m, name: context.liftNames.get(m.lift) ?? m.lift }));
-  return { stretch: index, live: await liveMacrocycle(repos, program), maxes };
+  return { stretch: index, live, maxes };
 }
 
 // ---------------------------------------------------------------------------
@@ -299,8 +328,11 @@ export interface ContinueRun {
 /** What a checked continue will write. */
 export interface ContinuePlan {
   program: string;
-  /** The live macrocycle it ends, by id, with the agreement checked. */
-  live: { id: string } | null;
+  /**
+   * The live macrocycle it ends, by id, with the agreement checked, and its set count. One with no
+   * sets is removed rather than ended (#1354, {@link removeLive}).
+   */
+  live: { id: string; sets: number } | null;
   /** The maxes to write, under the lift spelling each is stored as. */
   maxes: TrainingMax[];
 }
@@ -309,7 +341,8 @@ export interface ContinuePlan {
  * Checks a breakdown's continue against the committed rows (decision 2): the run must still be one
  * that may continue ({@link continueRefusal}); the lifter must have agreed to end the program's
  * live macrocycle, by its id; and each lift the program plans with no max needs a value (decision
- * 10). Runs before anything is written.
+ * 10). Runs before anything is written. `run.placement` leaves out an empty live macrocycle, as
+ * {@link removableLive} names it, and so does the check that the run ends last.
  */
 export async function planContinue(
   repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'liftRecord' | 'liftingProgramSpec' | 'trainingMax'>,
@@ -319,19 +352,21 @@ export async function planContinue(
   context: { programs: readonly KnownProgram[]; importDate: Date },
 ): Promise<ContinuePlan> {
   if (!run) throw new ContinueRefusedException('bad-stretch', `Stretch ${choice.stretch + 1} isn't one of the breakdown's.`);
+  const live = await liveMacrocycle(repos, run.program);
   const refusal = continueRefusal(
     { ...run, completedWorkouts: new Set(run.workoutNums).size },
     others,
-    await storedEnds(repos, run.program),
+    await storedEnds(repos, run.program, removableId(live)),
     context,
   );
   if (refusal) throw new ContinueRefusedException(refusal, refusalMessage(refusal));
 
-  const live = await liveMacrocycle(repos, run.program);
   if (live && choice.endLive !== live.id) {
     throw new ContinueRefusedException(
       'needs-agreement',
-      `Continuing ends macrocycle ${live.macrocycleNum}, your current one in this program, which holds ${live.sets} set${live.sets === 1 ? '' : 's'}. Agree to end it to continue.`,
+      live.sets === 0
+        ? `Continuing removes macrocycle ${live.macrocycleNum}, your current one in this program, which holds no sets. Agree to remove it to continue.`
+        : `Continuing ends macrocycle ${live.macrocycleNum}, your current one in this program, which holds ${live.sets} set${live.sets === 1 ? '' : 's'}. Agree to end it to continue.`,
     );
   }
 
@@ -358,7 +393,50 @@ export async function planContinue(
     const stored = current.find((m) => liftIdFor(m.lift) === liftIdFor(lift));
     return weight === undefined ? [] : [{ lift: stored?.lift ?? lift, weight, dateUpdated: toUTCMidnight(run.endDate) }];
   });
-  return { program: run.program, live: live ? { id: live.id } : null, maxes };
+  return { program: run.program, live: live ? { id: live.id, sets: live.sets } : null, maxes };
+}
+
+/** An empty live macrocycle {@link removeLive} removed, and the dashboard that pointed at it. */
+export interface RemovedLive {
+  removed: RemovedMacrocycle;
+  dashboard: MacrocycleDashboard | null;
+}
+
+/**
+ * Removes the live macrocycle a continue ends when it holds no sets (#1354, decision 2), before the
+ * breakdown is written, so the run is numbered by date as though it had never been started. Its
+ * number goes from every table, as a delete does: its row, schedule and the dashboard pointing at
+ * it. Returns its row and schedule, and that dashboard, for undo to recreate, or null when the plan
+ * ends no live macrocycle or one with sets, which {@link applyContinue} closes instead.
+ */
+export async function removeLive(
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'macrocycleScheduledWorkout'>,
+  plan: ContinuePlan,
+): Promise<RemovedLive | null> {
+  if (!plan.live || plan.live.sets > 0) return null;
+  const row = await repos.macrocycle.findById(plan.live.id);
+  if (!row) throw new Error(`The live macrocycle ${plan.live.id} is gone`);
+  const dashboard = await dashboardOrNull(repos, row.program);
+  const schedule = await repos.macrocycleScheduledWorkout.getScheduledWorkouts(row.program, row.macrocycleNum);
+  await repos.macrocycle.delete(row.program, [row.macrocycleNum]);
+  return {
+    dashboard,
+    removed: {
+      id: row.id,
+      startDate: ymd(row.startDate),
+      endDate: row.endDate ? ymd(row.endDate) : null,
+      status: row.status,
+      statusChosen: row.statusChosen,
+      origin: row.origin,
+      unmatched: row.unmatched,
+      importedThrough: row.importedThrough ? ymd(row.importedThrough) : null,
+      schedule: schedule.map((s) => ({
+        workoutNum: s.workoutNum,
+        weekNum: s.weekNum,
+        scheduledDate: new Date(s.scheduledDate).toISOString(),
+      })),
+    },
+  };
 }
 
 function refusalMessage(reason: ContinueRefusal): string {
@@ -384,7 +462,8 @@ const ymd = (date: Date) => date.toISOString().slice(0, 10);
  * Makes the run, already written as its `live` macrocycle `runId`, the program's current one
  * (decision 2), after the breakdown's rows and maxes are written and its programs renumbered:
  *
- * - The live macrocycle it ends closes as starting the next one closes it (decision 1).
+ * - The live macrocycle it ends closes as starting the next one closes it (decision 1), unless it
+ *   held no sets and {@link removeLive} has removed it (`context.removed`, #1354).
  * - The lifter's max choices are written (decision 10). Their pre-image joins `preImage`, keyed by
  *   lift as a split row's is, so undo restores them, or skips and flags one changed since. A lift a
  *   split row also wrote keeps the split's `before`, which is what the import found.
@@ -407,17 +486,19 @@ export async function applyContinue(
   >,
   plan: ContinuePlan,
   runId: string,
-  context: { importDate: Date; preImage: ImportPreImage },
+  context: { importDate: Date; preImage: ImportPreImage; removed: RemovedLive | null },
 ): Promise<ContinuedRun> {
   const { program } = plan;
+  const { removed } = context;
   const run = await repos.macrocycle.findById(runId);
   if (!run) throw new Error(`The continued macrocycle ${runId} was not created`);
   const spec = await repos.liftingProgramSpec.getProgramSpec(program);
 
   // The live macrocycle ends, read by id: the renumbering may have moved it.
   let ended: ContinuedRun['ended'] = null;
-  const before = await dashboardOrNull(repos, program);
-  if (plan.live) {
+  // A removed one took the dashboard pointing at it with it.
+  const before = removed ? removed.dashboard : await dashboardOrNull(repos, program);
+  if (plan.live && !removed) {
     const live = await repos.macrocycle.findById(plan.live.id);
     if (!live) throw new Error(`The live macrocycle ${plan.live.id} is gone`);
     ended = { id: live.id, endDate: live.endDate ? ymd(live.endDate) : null, status: live.status };
@@ -481,6 +562,7 @@ export async function applyContinue(
   return {
     id: run.id,
     ended,
+    ...(removed ? { removed: removed.removed } : {}),
     dashboard: before
       ? {
           macrocycleUnit: before.macrocycleUnit,
@@ -583,38 +665,66 @@ export async function releaseContinuedRun(
 
 /**
  * Puts back what continuing changed besides sets and maxes (decision 2), once the run is gone and
- * the program renumbered: the ended macrocycle's end date and status, the dashboard pointing at it,
- * and the active program, unless the lifter has switched since. The ended macrocycle is read by
- * id, since an import of older history can have renumbered it. Returns flags for what it couldn't
- * put back.
+ * the program renumbered: the ended macrocycle's end date and status, or the removed one's row and
+ * schedule (#1354), the dashboard pointing at it, and the active program, unless the lifter has
+ * switched since. The ended macrocycle is read by id, since an import of older history can have
+ * renumbered it. The removed one is recreated under its id past every number, then the program
+ * is renumbered, so it takes its place by date. Returns flags for what it couldn't put back.
  */
 export async function restoreAroundContinuedRun(
-  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'userSettings'>,
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'macrocycleScheduledWorkout' | 'userSettings' | 'importBatch'>,
   program: string,
   continued: ContinuedRun,
 ): Promise<Array<{ key: string; reason: string }>> {
   const flagged: Array<{ key: string; reason: string }> = [];
+  const day = (date: string) => new Date(`${date}T00:00:00Z`);
+  // The macrocycle the dashboard pointed at, as it's back.
+  let pointedAt: MacrocycleRow | null = null;
   if (continued.ended) {
     const ended = await repos.macrocycle.findById(continued.ended.id);
     if (!ended) {
       flagged.push({ key: 'macrocycle', reason: 'the macrocycle the import ended no longer exists' });
     } else {
       await repos.macrocycle.update(ended.id, {
-        endDate: continued.ended.endDate ? new Date(`${continued.ended.endDate}T00:00:00Z`) : null,
+        endDate: continued.ended.endDate ? day(continued.ended.endDate) : null,
         status: continued.ended.status,
       });
-      if (continued.dashboard) {
-        await repos.macrocycleDashboard.saveMacrocycleDashboard({
-          program,
-          macrocycleUnit: continued.dashboard.macrocycleUnit,
-          macrocycleNum: ended.macrocycleNum,
-          macrocycleDate: new Date(continued.dashboard.macrocycleDate),
-          sheetName: continued.dashboard.sheetName,
-          macrocycleStartWeekday: continued.dashboard.macrocycleStartWeekday,
-          ...(continued.dashboard.programType !== null ? { programType: continued.dashboard.programType } : {}),
-        });
-      }
+      pointedAt = ended;
     }
+  }
+  const { removed } = continued;
+  if (removed) {
+    const num = Math.max(0, ...(await repos.macrocycle.numbersInUse(program))) + 1;
+    await repos.macrocycle.create({
+      id: removed.id,
+      program,
+      macrocycleNum: num,
+      startDate: day(removed.startDate),
+      ...(removed.endDate ? { endDate: day(removed.endDate) } : {}),
+      status: removed.status,
+      statusChosen: removed.statusChosen,
+      origin: removed.origin,
+      unmatched: removed.unmatched,
+      ...(removed.importedThrough ? { importedThrough: day(removed.importedThrough) } : {}),
+    });
+    await repos.macrocycleScheduledWorkout.saveScheduledWorkouts(
+      program,
+      num,
+      removed.schedule.map((s) => ({ workoutNum: s.workoutNum, weekNum: s.weekNum, scheduledDate: new Date(s.scheduledDate) })),
+    );
+    await renumberProgram(repos, program);
+    pointedAt = await repos.macrocycle.findById(removed.id);
+  }
+  if (pointedAt && continued.dashboard) {
+    await repos.macrocycleDashboard.saveMacrocycleDashboard({
+      program,
+      macrocycleUnit: continued.dashboard.macrocycleUnit,
+      macrocycleNum: pointedAt.macrocycleNum,
+      macrocycleDate: new Date(continued.dashboard.macrocycleDate),
+      sheetName: continued.dashboard.sheetName,
+      macrocycleStartWeekday: continued.dashboard.macrocycleStartWeekday,
+      ...(continued.dashboard.programType !== null ? { programType: continued.dashboard.programType } : {}),
+    });
   }
   const settings = await repos.userSettings.getSettings();
   if (settings.activeProgram === program && continued.activeProgram !== program) {

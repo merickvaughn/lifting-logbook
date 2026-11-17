@@ -16,6 +16,7 @@ import { AppModule } from '../app.module';
 import { PrismaImportBatchRepository } from '../adapters/prisma/import-batch.repository';
 import { PrismaLiftRecordRepository } from '../adapters/prisma/lift-record.repository';
 import { PrismaMacrocycleRepository } from '../adapters/prisma/macrocycle.repository';
+import { injectPage } from '../testing/macrocycle-id';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
 import { DomainNotFoundFilter } from './not-found.filter';
@@ -41,8 +42,10 @@ const USER_GROWN = 'import-breakdown-db-grown';
 const USER_LIST_A = 'import-breakdown-db-list-a';
 const USER_LIST_B = 'import-breakdown-db-list-b';
 const USER_CONTINUE = 'import-breakdown-db-continue';
+const USER_CONTINUE_EMPTY = 'import-breakdown-db-continue-empty';
 const USERS = [
   USER_CONTINUE,
+  USER_CONTINUE_EMPTY,
   USER_RACE,
   USER_MACROCYCLE_FAILS,
   USER_BATCH_FAILS,
@@ -478,6 +481,97 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     expect(await owner.trainingMax.count({ where: { userId: USER_CONTINUE } })).toBe(0);
     expect(await owner.macrocycleDashboard.count({ where: { userId: USER_CONTINUE } })).toBe(0);
     expect(await owner.userSettings.findUnique({ where: { userId: USER_CONTINUE } })).toMatchObject({ activeProgram: null });
+  });
+
+  it('continues a run over an empty live macrocycle, removing it, and undo recreates it with its id (#1354)', async () => {
+    const server = app.getHttpAdapter().getInstance();
+    const authorization = `Bearer ${USER_CONTINUE_EMPTY}`;
+    const where = { userId: USER_CONTINUE_EMPTY };
+    const today = ymd(new Date());
+    // Every day, so the live macrocycle has a schedule for undo to restore.
+    const scheduled = await server.inject({
+      method: 'PATCH',
+      url: '/users/me/settings',
+      headers: { 'content-type': 'application/json', authorization },
+      payload: JSON.stringify({ workoutSchedule: { type: 'fixed', days: [0, 1, 2, 3, 4, 5, 6] } }),
+    });
+    expect(scheduled.statusCode).toBe(200);
+    // An empty live macrocycle started two days ago, after the run below ends.
+    const initialized = await injectPage(app, {
+      method: 'POST',
+      url: '/programs/rpt/macrocycles/initialize',
+      headers: { 'content-type': 'application/json', authorization },
+      payload: JSON.stringify({ macrocycleDate: ymd(new Date(Date.now() - 2 * DAY_MS)) }),
+    });
+    expect(initialized.statusCode).toBe(201);
+    const stored = async () => ({
+      macrocycles: await owner.macrocycle.findMany({
+        where,
+        select: { id: true, macrocycleNum: true, startDate: true, endDate: true, status: true, origin: true, importedThrough: true },
+      }),
+      schedule: await owner.macrocycleScheduledWorkout.findMany({
+        where,
+        select: { macrocycleNum: true, workoutNum: true, weekNum: true, scheduledDate: true },
+        orderBy: { workoutNum: 'asc' },
+      }),
+      dashboard: await owner.macrocycleDashboard.findMany({
+        where,
+        select: { macrocycleNum: true, macrocycleUnit: true, macrocycleDate: true, sheetName: true, macrocycleStartWeekday: true, programType: true },
+      }),
+    });
+    const before = await stored();
+    const [live] = before.macrocycles;
+    if (!live) throw new Error('expected the live macrocycle');
+    expect(before.schedule.length).toBeGreaterThan(0);
+
+    const post = (query: string, csv: string, fields: Record<string, string>) => {
+      const boundary = '----ContinueEmptyDbBoundary';
+      return server.inject({
+        method: 'POST',
+        url: `/programs/rpt/import${query}`,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, authorization },
+        payload: [
+          ...Object.entries(fields).flatMap(([name, value]) => [`--${boundary}`, `Content-Disposition: form-data; name="${name}"`, '', value]),
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+          'Content-Type: text/csv',
+          '',
+          csv,
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+    };
+    // Four RPT sessions, the last six days ago.
+    const start = ymd(new Date(Date.now() - 12 * DAY_MS));
+    const dates = [0, 2, 4, 6].map((n) => dayFrom(start, n));
+    const csv = [
+      'Program,Date,Lift,Set #,Weight,Reps,Notes',
+      ...dates.map((date) => `rpt,${date},Bench Press,1,100,8,`),
+    ].join('\n');
+
+    const assigned = await post('?mode=assign&destination=lift-records', csv, { today });
+    expect(assigned.statusCode).toBe(200);
+    const offer = assigned.json<ImportAssignResponse>().continue;
+    expect(offer?.live).toEqual({ id: live.id, macrocycleNum: 1, sets: 0 });
+    const breakdown: ImportBreakdown = {
+      ...oneStretch(dates),
+      continue: { stretch: 0, endLive: live.id, maxes: (offer?.maxes ?? []).map((m) => ({ lift: m.lift, weight: m.computed ?? 100 })) },
+    };
+    const committed = await post('?mode=commit&destination=lift-records', csv, { today, breakdown: JSON.stringify(breakdown) });
+    expect(committed.statusCode).toBe(200);
+    const batchId = committed.json<{ batchId: string }>().batchId;
+
+    const [run, ...others] = (await stored()).macrocycles;
+    expect(others).toEqual([]);
+    expect(run).toMatchObject({ macrocycleNum: 1, origin: 'live', startDate: new Date(`${start}T00:00:00Z`) });
+    expect(run?.id).not.toBe(live.id);
+    expect((await owner.importBatch.findUnique({ where: { id: batchId } }))?.macrocycles).toMatchObject({
+      continued: { id: run?.id, ended: null, removed: { id: live.id, schedule: expect.any(Array) } },
+    });
+
+    const undone = await server.inject({ method: 'POST', url: `/programs/rpt/import/${batchId}/undo`, headers: { authorization } });
+    expect(undone.statusCode).toBe(200);
+    expect(await stored()).toEqual(before);
   });
 
   it("lists only the lifter's own imports, as the restricted role (#1257)", async () => {

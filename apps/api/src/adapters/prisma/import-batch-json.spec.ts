@@ -75,5 +75,40 @@ describe('parseBatchMacrocycles (#1255)', () => {
         expect(parseBatchMacrocycles({ created: [], extended: [], chosen: [], continued: bad })?.continued?.id).toBe('');
       }
     });
+
+    describe('with the empty live macrocycle it removed (#1354)', () => {
+      const removed = {
+        id: 'm-4',
+        startDate: '2026-03-02',
+        endDate: null,
+        status: 'in-progress' as const,
+        statusChosen: false,
+        origin: 'live' as const,
+        unmatched: false,
+        importedThrough: null,
+        schedule: [{ workoutNum: 1, weekNum: 1, scheduledDate: '2026-03-02T00:00:00.000Z' }],
+      };
+      const withRemoved = { ...continued, ended: null, removed };
+
+      it('reads back as save writes it', () => {
+        const macrocycles: BatchMacrocycles = { created: ['m-5'], extended: [], chosen: [], continued: withRemoved };
+        expect(roundTrip(macrocycles)).toEqual(macrocycles);
+        const dated = { ...removed, endDate: '2026-03-20', importedThrough: '2026-03-01', schedule: [] };
+        const other: BatchMacrocycles = { ...macrocycles, continued: { ...withRemoved, removed: dated } };
+        expect(roundTrip(other)).toEqual(other);
+      });
+
+      it('reads an unreadable one as a run with no id, so undo refuses', () => {
+        for (const bad of [
+          { ...withRemoved, removed: 'm-4' },
+          { ...withRemoved, removed: { ...removed, origin: 'elsewhere' } },
+          { ...withRemoved, removed: { ...removed, startDate: null } },
+          { ...withRemoved, removed: { ...removed, schedule: [{ workoutNum: 1.5, weekNum: 1, scheduledDate: '2026-03-02' }] } },
+          { ...withRemoved, removed: { ...removed, schedule: null } },
+        ]) {
+          expect(parseBatchMacrocycles({ created: [], extended: [], chosen: [], continued: bad })?.continued?.id).toBe('');
+        }
+      });
+    });
   });
 });
