@@ -1,6 +1,6 @@
 # Proposal: Assign Imported Lift History to Macrocycles
 
-**Status:** `accepted`
+**Status:** `shipped`
 **Date:** 2026-11-06
 **Issue:** [#1170](https://github.com/merickvaughn/lifting-logbook/issues/1170)
 
