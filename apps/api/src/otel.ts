@@ -53,6 +53,10 @@ export function buildResourceAttributesEnv(
   return existing && existing.trim() !== '' ? `${existing},${pair}` : pair;
 }
 
+// Value of OTEL_TRACES_SAMPLER the API runs with unless the environment sets one.
+// See the comment in startOtel() and ADR-020's #1343 amendment.
+const DEFAULT_TRACES_SAMPLER = 'always_on';
+
 let sdk: NodeSDK | undefined;
 
 /**
@@ -85,12 +89,22 @@ export function startOtel(): NodeSDK | undefined {
 
   // Exporters env-resolve OTEL_EXPORTER_OTLP_ENDPOINT (base) per the OTLP spec
   // and append /v1/traces or /v1/metrics; OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or
-  // OTEL_EXPORTER_OTLP_METRICS_ENDPOINT (full URL) override per-signal. Sampling
-  // is controlled by OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG (defaults to
-  // parentbased_always_on); ADR-018 covers the production sampling decision.
+  // OTEL_EXPORTER_OTLP_METRICS_ENDPOINT (full URL) override per-signal.
   // Set deployment.environment.name before constructing the SDK so the default
   // env-based resource detector picks it up (see buildResourceAttributesEnv).
   process.env.OTEL_RESOURCE_ATTRIBUTES = buildResourceAttributesEnv();
+
+  // Sampler: record every request and let the collector decide what to keep.
+  // The SDK default, parentbased_always_on, obeys the caller's `traceparent`
+  // flag, and Cloud Run's front end stamps browser-originated requests with
+  // "not sampled" (-00) — so the API recorded nothing for imports or client
+  // writes and the collector's tail-sampling policies (ADR-020: errors, slow,
+  // probabilistic) never saw them (#1343). always_on still joins the caller's
+  // trace (same trace ID, caller's span as parent); it only ignores the
+  // caller's keep/drop verdict, which belongs to the collector. An operator who
+  // sets OTEL_TRACES_SAMPLER explicitly keeps that choice; a blank value counts
+  // as unset, since the SDK would otherwise fall back to its parent-based default.
+  process.env.OTEL_TRACES_SAMPLER ||= DEFAULT_TRACES_SAMPLER;
 
   sdk = new NodeSDK({
     serviceName: process.env.OTEL_SERVICE_NAME ?? 'lifting-logbook-api',

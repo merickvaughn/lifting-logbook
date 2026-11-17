@@ -190,6 +190,50 @@ insufficient it should be reconsidered specifically for the client-error span so
 
 ---
 
+## Addendum — 2026-11-16 (#1343): the API runs the `always_on` sampler, so a not-sampled parent can't drop a request
+
+**What went wrong.** The Decision above puts the keep/drop verdict at the collector and assumes the
+SDK exports every span. It didn't: `apps/api/src/otel.ts` left `OTEL_TRACES_SAMPLER` unset, and the
+SDK's default is `parentbased_always_on`, which follows the caller's `traceparent` sampled flag.
+Requests sent straight from the browser (imports, every client-side write in
+`apps/web/lib/client-api.ts`) reach the API with a `traceparent` whose flags are `-00`. The browser
+sends none, so it is added in front of the service, most likely by Cloud Run's front end. The API
+therefore created a non-recording span, exported nothing, and the `errors`, `slow_traces` and
+`probabilistic` policies never saw the request. On staging on 2026-11-15, 1848 API log lines carried
+`trace_flags: "00"` against 83 with `"01"`; eleven import requests, three over 1000 ms, left no span
+in Tempo. Requests from the Next.js server (which `@vercel/otel` gives a sampled `traceparent`) were
+traced, so server-rendered reads were visible and browser writes weren't.
+
+**Decision.** `startOtel()` sets `OTEL_TRACES_SAMPLER=always_on` unless the environment already sets
+one. `always_on` still joins the caller's trace — same trace ID, the caller's span as parent — and
+only ignores the caller's keep/drop flag. Whether a trace is kept stays with the collector, as this
+ADR decided. A not-sampled flag put on the request by infrastructure in front of the API isn't a
+retention decision made by anyone who knows whether the request was slow or failed, so it can't
+decide retention here. The collector's `probabilistic` policy (20% of clean traces) now does that for
+every request alike.
+
+**Why not keep `parentbased_always_on`.** It would only work if everything upstream of the API sampled
+everything, and Cloud Run's front end doesn't. **Why not `parentbased_traceidratio`:** this ADR already
+rejected head-based ratio sampling for discarding most errors and slow traces.
+
+**Consequences.**
+
+- Every API request is now recorded, which is the premise the collector's tail-sampling sizing
+  already assumed. Span volume reaching the collector rises from the sampled minority to the API's full
+  request rate. The `probabilistic` policy bounds what's forwarded to Grafana Cloud, but the collector
+  still buffers every trace for `decision_wait`, and its config sets no `memory_limiter`; revisit that
+  if traffic grows (the Cloud Run sidecar's CPU throttling is already tracked in
+  [#787](https://github.com/merickvaughn/lifting-logbook/issues/787)).
+- Tests: `apps/api/src/otel.sampler.spec.ts` starts the SDK through `startOtel()` and asserts a
+  not-sampled `traceparent` yields a recording span that reaches the exporter flagged sampled, and a
+  sampled `traceparent` keeps its trace ID and parent span.
+- An operator who sets `OTEL_TRACES_SAMPLER` explicitly (for example back to a `parentbased_*`
+  sampler) overrides this default and reopens the gap.
+- **Not changed:** `apps/web` (`@vercel/otel`) keeps its own sampler. It sees browser requests to the
+  Next.js server, which this change doesn't cover.
+
+---
+
 ## References
 
 | Source | Relevance |
@@ -197,6 +241,8 @@ insufficient it should be reconsidered specifically for the client-error span so
 | [OpenTelemetry Collector contrib — `tail_sampling` processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/tailsamplingprocessor) | Authoritative documentation for the processor used in this ADR; covers all policy types, `decision_wait` semantics, and known limitations. |
 | [OpenTelemetry — Sampling](https://opentelemetry.io/docs/concepts/sampling/) | Conceptual overview of head-based vs. tail-based sampling; the basis for the Rationale section's framing. |
 | [ADR-018 — Observability Stack](ADR-018-observability-stack.md) | The prior ADR this decision supersedes in part; documents the original 100% head-based sampling stance and the trigger conditions for revisiting it. |
+| [W3C Trace Context — `traceparent` and the sampled flag](https://www.w3.org/TR/trace-context/#sampled-flag) | Primary spec for the #1343 addendum: defines the `-00`/`-01` flag as the caller's *recording hint*, not a binding retention decision. |
+| [OpenTelemetry — SDK specification: built-in samplers](https://opentelemetry.io/docs/specs/otel/trace/sdk/#built-in-samplers) | Defines `AlwaysOn` and `ParentBased`, and the `OTEL_TRACES_SAMPLER` values (`always_on`, `parentbased_always_on`) the #1343 addendum chooses between. |
 | [ADR-019 — SLO Methodology](ADR-019-slo-methodology.md) | The burn-rate alerting framework built on top of the metrics pipeline; notes the interaction between sampling and metric accuracy referenced in the Consequences section. |
 | [WHATWG Fetch Standard — CORS protocol & the `Origin` header](https://fetch.spec.whatwg.org/#origin-header) | Primary spec for the #806 addendum: defines when browsers attach `Origin` and which requests are CORS-"simple" (no preflight) — the basis for why `sendBeacon` reaches this endpoint cross-origin and why the same-origin guard keys on `Origin`. |
 | [MDN — `Navigator.sendBeacon()`](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/sendBeacon) | The browser API `apps/web` uses to post client errors; documents its fire-and-forget, unload-surviving, CORS-simple semantics referenced by the #806 addendum. |
