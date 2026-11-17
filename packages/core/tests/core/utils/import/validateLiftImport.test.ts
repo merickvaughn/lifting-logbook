@@ -1,4 +1,4 @@
-import { LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, validateLiftImport } from "@src/core";
+import { LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, parseLiftRecords, validateLiftImport } from "@src/core";
 import { LiftRecord } from "@src/core/models";
 
 /** Minimal slot map covering the fixture abbreviations we test against. */
@@ -284,7 +284,6 @@ describe("validateLiftImport", () => {
 });
 
 describe("validateLiftImport — blank Reps cell (#1317)", () => {
-  const { parseLiftRecords } = require("@src/core") as typeof import("@src/core");
   const table = (reps: string) => [
     ["Program", "Cycle #", "Workout #", "Date", "Lift", "Set #", "Weight", "Reps", "Notes"],
     ["RPT", "1", "1", "2025-01-01", "Squat", "1", "200", reps, ""],
