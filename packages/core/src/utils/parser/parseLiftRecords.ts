@@ -81,7 +81,9 @@ export function parseLiftRecords(
       const assignBlank = options.assign === true && blank && ASSIGN_BLANK_FIELDS.has(key);
       if (assignBlank) blankFields.push(key as AssignBlankField);
       if (type === "number") {
-        value = assignBlank ? NaN : Number(value);
+        // A blank Reps cell is a set never logged, not 0 reps, so it reads as NaN and fails
+        // validation; an explicit 0 is a missed set and stays (#1317).
+        value = assignBlank || (blank && key === "reps") ? NaN : Number(value);
       }
       if (key === "date") {
         // Non-ISO date strings (the common case here -- CSV cells like
