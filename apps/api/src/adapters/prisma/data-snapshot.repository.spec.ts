@@ -31,8 +31,9 @@ function makeRepo(delegate: Record<string, jest.Mock>) {
 
 describe('PrismaDataSnapshotRepository kinds (#1351)', () => {
   it('throws when `create` gets back a row of a kind this release does not read', async () => {
-    const create = jest.fn().mockResolvedValue(row('overwrite'));
-    await expect(makeRepo({ create }).create(newSnapshot)).rejects.toThrow('snapshot kind overwrite');
+    // A kind no release writes yet; `overwrite` is read since #1182.
+    const create = jest.fn().mockResolvedValue(row('merge'));
+    await expect(makeRepo({ create }).create(newSnapshot)).rejects.toThrow('snapshot kind merge');
   });
 
   it('asks the database for known kinds only, in `list` and in `get`', async () => {

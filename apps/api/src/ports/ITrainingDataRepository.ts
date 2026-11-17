@@ -80,4 +80,11 @@ export interface ITrainingDataRepository {
    * Returns how many rows each table took.
    */
   insertMissing(data: TrainingData): Promise<TrainingDataCounts>;
+
+  /**
+   * Runs `fn`, then undoes every write it made to this user's cleared tables, whether it returned
+   * or threw, and returns or rethrows what it did. An overwrite's dry run (#1182) removes the
+   * scope's rows this way, so it counts what the commit would write against what would be left.
+   */
+  discardChanges<T>(fn: () => Promise<T>): Promise<T>;
 }

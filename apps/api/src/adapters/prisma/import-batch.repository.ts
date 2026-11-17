@@ -208,6 +208,32 @@ export class PrismaImportBatchRepository implements IImportBatchRepository {
       data: { macrocycles: batchMacrocyclesJson(macrocycles) },
     });
   }
+
+  async listByIds(ids: readonly string[]): Promise<ImportBatchRecord[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.prisma.importBatch.findMany({ where: { userId: this.userId, id: { in: [...ids] } } });
+    return rows.map(toRecord);
+  }
+
+  async listOverwrites(): Promise<Array<{ id: string; createdAt: Date; snapshotId: string }>> {
+    // Raw SQL isn't auto-traced (ADR-024), so the filter gets a span.
+    return tracer.startActiveSpan('import_batch.list_overwrites', async (span) => {
+      try {
+        const rows = await this.prisma.$queryRaw<Array<{ id: string; createdAt: Date; snapshotId: string }>>`
+          SELECT b."id", b."createdAt", COALESCE(b."macrocycles"->'overwrite'->>'snapshotId', '') AS "snapshotId"
+          FROM "import_batch" b
+          WHERE b."userId" = ${this.userId} AND jsonb_typeof(b."macrocycles"->'overwrite') = 'object'`;
+        span.setAttribute('import_batch.count', rows.length);
+        return rows;
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  }
 }
 
 function toRecord(row: ImportBatch): ImportBatchRecord {

@@ -254,5 +254,26 @@ describe('HistoryTabs — Macrocycles', () => {
       expect(mockLog).toHaveBeenCalledWith('undoImport', failure, { programId: '5-3-1', batchId: 'b-old' });
       expect(refresh).not.toHaveBeenCalled();
     });
+
+    // #1182: an import that replaced stored history may have added no macrocycle, and undoing it
+    // is the only way to put back what it replaced.
+    it('offers Undo for an import with no macrocycle here, and shows why one is refused', async () => {
+      const user = userEvent.setup();
+      const replacing: ImportBatchSummary = { id: 'b-replace', program: 'rpt', createdAt: '2026-11-10T09:00:00.000Z', macrocycleIds: [] };
+      render(<HistoryTabs records={[]} tmEntries={[]} macrocycles={[]} imports={[replacing]} unit="lbs" />);
+      await user.click(screen.getByRole('tab', { name: 'Macrocycles' }));
+      const message = 'A later import replaced your history too. Undo that import first, then this one.';
+      mockUndo.mockRejectedValueOnce(new Error(message));
+
+      await user.click(screen.getByRole('button', { name: 'Undo import of 2026-11-10' }));
+      await user.click(screen.getByRole('button', { name: 'Undo import' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(message);
+
+      mockUndo.mockResolvedValueOnce({ batchId: 'b-replace', restored: 5, skipped: 0, flagged: [] });
+      await user.click(screen.getByRole('button', { name: 'Undo import' }));
+      expect(await screen.findByText('Undo complete: 5 restored.')).toHaveFocus();
+      expect(mockUndo).toHaveBeenCalledWith('rpt', 'b-replace', expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+      expect(refresh).toHaveBeenCalled();
+    });
   });
 });

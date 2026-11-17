@@ -51,7 +51,7 @@ export class PrismaDataSnapshotRepository implements IDataSnapshotRepository {
         kind: snapshot.kind,
         scope: snapshot.scope as unknown as Prisma.InputJsonObject,
         counts: snapshot.counts as unknown as Prisma.InputJsonObject,
-        rows: await encodeSnapshotRows(snapshot.data),
+        rows: await encodeSnapshotRows(snapshot),
         createdAt: snapshot.createdAt,
         expiresAt: snapshot.expiresAt,
       },
@@ -74,7 +74,7 @@ export class PrismaDataSnapshotRepository implements IDataSnapshotRepository {
       where: { id, userId: this.userId, ...KNOWN_KINDS, expiresAt: { gt: now } },
       select: { ...SUMMARY, rows: true },
     });
-    return row ? { ...summary(row), data: await decodeSnapshotRows(row.rows) } : null;
+    return row ? { ...summary(row), ...(await decodeSnapshotRows(row.rows)) } : null;
   }
 
   async delete(id: string): Promise<boolean> {

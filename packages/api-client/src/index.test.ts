@@ -679,6 +679,20 @@ describe('createApiClient', () => {
       });
     });
 
+    it.each([
+      ['overwrite-undo-later-overwrite', 'A later import replaced your history too. Undo that import first, then this one.'],
+      ['overwrite-undo-backup-gone', 'The backup of the history this import replaced has expired or was deleted.'],
+      ['import-in-progress', 'An import is changing your macrocycles. Try again in a moment.'],
+    ])('undoImport throws the message and code of a 409 %s (#1182)', async (code, message) => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ statusCode: 409, code, message }), { status: 409 }));
+      await expect(makeClient().undoImport('5-3-1', 'b-1', '2026-11-13')).rejects.toMatchObject({
+        name: 'ApiClientError',
+        status: 409,
+        code,
+        message,
+      });
+    });
+
     it('undoImport sends the user day with the undo (#1257)', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ batchId: 'b-1', restored: 1, skipped: 0, flagged: [] })));
       await makeClient().undoImport('5-3-1', 'b-1', '2026-11-13');
@@ -894,6 +908,41 @@ describe('createApiClient', () => {
       await expect(makeClient().commitImport('5-3-1', file, 'lift-records', { breakdown })).rejects.toMatchObject(mismatch);
       expect(JSON.parse(sent().get('breakdown') as string)).toEqual(breakdown);
       await expect(makeClient().dryRunImport('5-3-1', file, 'lift-records', { breakdown })).rejects.toMatchObject(mismatch);
+    });
+
+    it('commitImport throws changed overwrite counts with their code and counts (#1182)', async () => {
+      const counts = { sets: 3, macrocycles: 1, current: 0, shortened: 0 };
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ statusCode: 409, code: 'overwrite-counts-changed', message: 'changed', counts }), { status: 409 }),
+      );
+      await expect(makeClient().commitImport('5-3-1', file, 'lift-records')).rejects.toMatchObject({
+        name: 'ApiClientError',
+        status: 409,
+        code: 'overwrite-counts-changed',
+        body: { counts },
+      });
+    });
+
+    it('commitImport shows the message of a 503 overwrite-backup-failed (#1182)', async () => {
+      const message = 'Your history couldn’t be backed up, so nothing was replaced or imported. Please try again in a moment.';
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ statusCode: 503, code: 'overwrite-backup-failed', message }), { status: 503 }),
+      );
+      await expect(makeClient().commitImport('5-3-1', file, 'lift-records')).resolves.toEqual({
+        ok: false,
+        errors: [{ row: 0, code: 'UNEXPECTED_ERROR', message }],
+      });
+    });
+
+    it('reads the overwrite counts for all and imported history, and for a date range alone (#1182)', async () => {
+      const counts = { sets: 3, macrocycles: 1, current: 0, shortened: 1 };
+      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ all: counts, imported: counts }), { status: 200 }));
+      await expect(makeClient().fetchOverwriteCounts('5-3-1')).resolves.toEqual({ all: counts, imported: counts });
+      expect(lastCall()[0]).toBe('http://api.test/programs/5-3-1/import/overwrite-counts');
+
+      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ range: counts }), { status: 200 }));
+      await expect(makeClient().fetchOverwriteRangeCounts('5-3-1', '2026-01-01', '2026-02-01')).resolves.toEqual(counts);
+      expect(lastCall()[0]).toBe('http://api.test/programs/5-3-1/import/overwrite-counts?from=2026-01-01&to=2026-02-01');
     });
 
     it('commitImport sends neither field when there is nothing to exclude or remap', async () => {

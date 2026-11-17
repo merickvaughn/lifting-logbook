@@ -68,7 +68,7 @@ model MissingMaxDismissal {
 model DataSnapshot {
   id        String   @id @default(uuid())
   userId    String
-  /// What took it: `clear`.
+  /// What took it: `clear`, or `overwrite` for an import that replaced stored history (#1182).
   kind      String
   /// What the action covered: the programs it held rows for.
   scope     Json

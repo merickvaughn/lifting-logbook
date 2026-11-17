@@ -1169,8 +1169,11 @@ export interface ClearTrainingDataRequest {
 /** A saved copy of cleared training data, which Restore puts back (#1309, decision 21). */
 export interface DataSnapshotSummary {
   id: string;
-  /** What took it. */
-  kind: 'clear';
+  /**
+   * What took it: Clear data, or an import that replaced stored history (#1182). An overwrite's
+   * backup is restored by undoing that import, so deleting it ends that undo.
+   */
+  kind: 'clear' | 'overwrite';
   /** ISO timestamps. Nothing can read the snapshot once `expiresAt` has passed. */
   createdAt: string;
   expiresAt: string;
@@ -1250,6 +1253,53 @@ export interface ImportBreakdown {
   nonCycleDates: string[];
   /** The run to continue as the current macrocycle, when the lifter chose to (#1180). */
   continue?: ImportBreakdownContinue;
+  /**
+   * Replace stored history instead of adding to it (#1182, proposal decision 19), with the counts
+   * the lifter confirmed. When what's stored no longer gives these counts, nothing is written and
+   * the response is a 409 `overwrite-counts-changed`.
+   */
+  overwrite?: { scope: ImportOverwriteScope; counts: ImportOverwriteCounts };
+}
+
+/**
+ * What an overwrite replaces (#1182, proposal decision 19).
+ *
+ * - `all`: every set and macrocycle in every program, current ones with their schedules and
+ *   overrides, and every non-cycle workout.
+ * - `imported`: `imported` macrocycles and their sets, and the non-cycle sets an import created.
+ *   `live` and `legacy` macrocycles and non-cycle sets recorded by hand stay.
+ * - `range`: every set dated `from` to `to` (`YYYY-MM-DD`, both included), whatever its origin. A
+ *   macrocycle left with no sets goes; one that keeps some is shortened.
+ */
+export type ImportOverwriteScope =
+  | { kind: 'all' }
+  | { kind: 'imported' }
+  | { kind: 'range'; from: string; to: string };
+
+/** What an overwrite would remove, which the lifter confirms before it runs (#1182). */
+export interface ImportOverwriteCounts {
+  /** Sets removed, non-cycle sets among them. */
+  sets: number;
+  /** Macrocycles removed. */
+  macrocycles: number;
+  /** Of those, current macrocycles, which go with their schedules and overrides. */
+  current: number;
+  /** Macrocycles that lose sets in a date range and stay, with their dates recomputed. */
+  shortened: number;
+}
+
+/**
+ * Response for `GET /programs/:program/import/overwrite-counts` (#1182): what the scopes that need
+ * no input would remove. Assign reads it when the lifter picks Replace.
+ */
+export interface ImportOverwriteCountsResponse {
+  all: ImportOverwriteCounts;
+  imported: ImportOverwriteCounts;
+}
+
+/** Response for `GET /programs/:program/import/overwrite-counts?from=&to=` (#1182): a date range's counts. */
+export interface ImportOverwriteRangeCountsResponse {
+  range: ImportOverwriteCounts;
 }
 
 /**

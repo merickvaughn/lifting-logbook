@@ -20,6 +20,9 @@ import type {
   ReorderFocusBlocksRequest,
   MacrocycleDashboardResponse,
   ImportAssignResponse,
+  ImportOverwriteCounts,
+  ImportOverwriteCountsResponse,
+  ImportOverwriteRangeCountsResponse,
   ImportBreakdown,
   ImportSuggestionsResponse,
   ImportCommitResponse,
@@ -268,8 +271,8 @@ async function readError(res: Response, path: string): Promise<ApiClientError> {
  */
 function importFailureErrors(status: number, body: { errors?: ImportError[]; code?: unknown; message?: unknown }): ImportError[] {
   if (body.errors) return body.errors;
-  const message =
-    body.code === 'macrocycle-busy' && typeof body.message === 'string' ? body.message : `Unexpected error (HTTP ${status})`;
+  const shown = body.code === 'macrocycle-busy' || body.code === 'overwrite-backup-failed';
+  const message = shown && typeof body.message === 'string' ? body.message : `Unexpected error (HTTP ${status})`;
   return [{ row: 0, code: 'UNEXPECTED_ERROR', message }];
 }
 
@@ -411,6 +414,19 @@ export function createApiClient(config: ApiClientConfig) {
     /** The imports that touched the program's past macrocycles, newest first, each undoable (#1257). */
     fetchImportBatches(program: string): Promise<ImportBatchSummary[]> {
       return request(`/programs/${enc(program)}/import/batches`, { cache: 'no-store' });
+    },
+    /** What overwriting all or all imported history would remove, for Assign (#1182). */
+    fetchOverwriteCounts(program: string): Promise<ImportOverwriteCountsResponse> {
+      return request(`/programs/${enc(program)}/import/overwrite-counts`, { cache: 'no-store' });
+    },
+    /** What overwriting the date range `from`–`to` would remove, for Assign (#1182). */
+    async fetchOverwriteRangeCounts(program: string, from: string, to: string): Promise<ImportOverwriteCounts> {
+      const query = new URLSearchParams({ from, to });
+      const res = await request<ImportOverwriteRangeCountsResponse>(
+        `/programs/${enc(program)}/import/overwrite-counts?${query.toString()}`,
+        { cache: 'no-store' },
+      );
+      return res.range;
     },
     // Idempotent delete: a 404 (no existing macrocycle) is treated as success, matching
     // deleteStrengthGoal/deleteCustomProgram below.
@@ -669,8 +685,10 @@ export function createApiClient(config: ApiClientConfig) {
       }
       const body = (await res.clone().json().catch(() => ({}))) as { errors?: ImportError[]; code?: unknown; message?: unknown };
       // A request the server refused with a code, such as a breakdown that no longer matches the
-      // file (#1256), isn't a problem with the file: it's thrown with its code, as `dryRunImport` throws it.
-      if (res.status === 400 && !body.errors && typeof body.code === 'string') throw await readError(res, path);
+      // file (#1256), or overwrite counts the stored history no longer matches (#1182), isn't a
+      // problem with the file: it's thrown with its code, as `dryRunImport` throws it.
+      const refused = res.status === 400 || body.code === 'overwrite-counts-changed';
+      if (refused && !body.errors && typeof body.code === 'string') throw await readError(res, path);
       return { ok: false, errors: importFailureErrors(res.status, body) };
     },
     /**
@@ -757,11 +775,13 @@ export function createApiClient(config: ApiClientConfig) {
         cache: 'no-store',
       });
       if (!res.ok) {
-        // A 409 macrocycle-busy (#1198) carries a message asking to try again, and a 400 says what
-        // to fix, such as a device clock too far from the server's (#1257). Anything else keeps
-        // the generic message the import wizard shows, with the status, code and body.
+        // A 409 macrocycle-busy (#1198) or import-in-progress (an overwrite's undo waits for no
+        // other import) carries a message asking to try again, an overwrite's refusal (#1182) says
+        // why it can't be undone or what to undo first, and a 400 says what to fix, such as a
+        // device clock too far from the server's (#1257). Anything else keeps the generic message
+        // the import wizard shows, with the status, code and body.
         const err = await readError(res, path);
-        if (err.code === 'macrocycle-busy') throw err;
+        if (err.code === 'macrocycle-busy' || err.code === 'import-in-progress' || err.code?.startsWith('overwrite-undo-')) throw err;
         if (res.status === 400 && typeof err.body?.message === 'string') throw err;
         throw new ApiClientError(`Undo import failed (HTTP ${res.status})`, err.status, err.code, err.body);
       }

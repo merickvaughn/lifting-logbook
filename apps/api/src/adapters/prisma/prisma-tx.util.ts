@@ -43,10 +43,12 @@ export async function runBatch(
  * import can exceed Prisma's 5s default interactive-tx timeout and throw P2028, so
  * imports get a wider window than the {@link DEFAULT_RLS_TX_TIMEOUT_MS} default.
  *
- * This single value governs **both** import paths so they can't drift:
+ * It governs both import paths, with one exception:
  * - **Request path** (the production HTTP import): `runInteractive` reuses the RLS
  *   request transaction and ignores the options below, so every HTTP import handler
- *   carries `@RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)` to widen that enclosing transaction.
+ *   carries `@RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)` to widen that enclosing transaction,
+ *   except the import wizard's import and undo routes, which can replace or restore stored
+ *   history and carry {@link IMPORT_REPLACE_TX_TIMEOUT_MS} instead (#1182).
  *   Current carriers are asserted individually by `import.controller.spec.ts` and
  *   `lift-records.controller.spec.ts` — check those specs, not this comment, for the
  *   up-to-date set (a prose list here already went stale once, #911 review, ninth pass).
@@ -59,6 +61,15 @@ export async function runBatch(
  * too, not just DB work (#925).
  */
 export const IMPORT_TX_TIMEOUT_MS = 30_000;
+
+/**
+ * Transaction budget for the import and undo routes, which can replace stored history with an
+ * import and restore it on undo (#1182). Those do a restore's work on top of an import's: clear
+ * and restore measured 15.7 s for a 78,000-set history on 2026-11-15 and get 60 s
+ * (`TRAINING_DATA_TX_TIMEOUT_MS`), so these routes get the same. A budget is a ceiling, so an
+ * import that replaces nothing takes no longer for it.
+ */
+export const IMPORT_REPLACE_TX_TIMEOUT_MS = 60_000;
 
 /**
  * `runInteractive` options for the self-opened-tx path. `timeout` matches

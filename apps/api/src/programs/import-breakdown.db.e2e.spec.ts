@@ -55,8 +55,9 @@ const USERS = [
   USER_LIST_A,
   USER_LIST_B,
 ];
-// The import transaction allows 30 s (IMPORT_TX_TIMEOUT_MS); the row-limit commit and its undo
-// must each finish well inside it. CI measured the commit at 1.7 s.
+// Other import routes allow 30 s (IMPORT_TX_TIMEOUT_MS); this one allows 60 s
+// (IMPORT_REPLACE_TX_TIMEOUT_MS), but an import that replaces nothing, like the row-limit commit
+// and its undo, should still finish well inside 30 s. CI measured the commit at 1.7 s.
 const ROW_LIMIT_BUDGET_MS = 15_000;
 
 async function cleanup(owner: PrismaClient): Promise<void> {

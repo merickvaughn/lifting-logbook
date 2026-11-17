@@ -106,4 +106,14 @@ export class InMemoryImportBatchRepository implements IImportBatchRepository, Tr
     const record = this.store.get(id);
     if (record) this.store.set(id, { ...record, macrocycles });
   }
+
+  async listByIds(ids: readonly string[]): Promise<ImportBatchRecord[]> {
+    return ids.flatMap((id) => this.store.get(id) ?? []);
+  }
+
+  async listOverwrites(): Promise<Array<{ id: string; createdAt: Date; snapshotId: string }>> {
+    return [...this.store.values()].flatMap(({ id, createdAt, macrocycles }) =>
+      macrocycles?.overwrite ? [{ id, createdAt, snapshotId: macrocycles.overwrite.snapshotId }] : [],
+    );
+  }
 }
