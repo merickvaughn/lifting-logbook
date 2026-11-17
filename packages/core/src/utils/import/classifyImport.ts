@@ -79,7 +79,9 @@ const PROFILES: readonly KindProfile[] = [
     kind: 'training-maxes',
     signatureTokens: ['date updated', 'date', 'lift', 'weight'],
     distinctiveTokens: ['date updated'],
-    antiTokens: ['cycle', 'workout', 'set', 'program', 'amrap', 'warm-up'],
+    // Not 'workout': the source Sheet's 2024/2025 training-max tabs carry a 'Workout #'
+    // column (#1314). Lift records still carry 'cycle', 'set' and 'program'.
+    antiTokens: ['cycle', 'set', 'program', 'amrap', 'warm-up'],
     expectedCols: 3,
     usesLiftColumn: true,
     transposed: false,

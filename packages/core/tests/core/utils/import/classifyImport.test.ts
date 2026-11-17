@@ -1,4 +1,4 @@
-import { classifyImport } from "@src/core";
+import { classifyImport, clearsAutoAccept } from "@src/core";
 import { loadCsvFixture } from "../../../testUtils";
 
 describe("classifyImport", () => {
@@ -69,5 +69,21 @@ describe("classifyImport", () => {
     const slotMapName = classifyImport(tableOf("Bench Press"));
     expect(catalogOnly.confidence).toBe(slotMapName.confidence);
     expect(catalogOnly.reasons).toEqual(slotMapName.reasons);
+  });
+
+  // #1314: the 2024 and 2025 TRAINING_MAXES tabs carry a fourth `Workout #` column.
+  // It must not count against training maxes the way set/cycle/program columns do.
+  it("routes a training-max table with an extra Workout # column to training-maxes", () => {
+    const lifts = [
+      "Deadlift", "OH Press", "Lat Raise", "CBL Curls", "Bench P.", "BB Row",
+      "Calf Raise", "Squat", "Chin-up", "Dip", "Deadlift",
+    ];
+    const table = [
+      ["Date Updated", "Lift", "Weight", "Workout #"],
+      ...lifts.map((lift, i) => ["1/8/2024", lift, String(100 + i * 5), "1"]),
+    ];
+    const result = classifyImport(table);
+    expect(result.type).toBe("training-maxes");
+    expect(clearsAutoAccept("training-maxes", result.confidence)).toBe(true);
   });
 });
