@@ -134,12 +134,13 @@ success.
 [#1182](https://github.com/merickvaughn/lifting-logbook/issues/1182) built decision 19, replacing
 stored history with an import, on this table, as the consequence above expected.
 
-1. **A second kind, `overwrite`.** Before an import replaces history, it saves one snapshot of
-   kind `overwrite` in the same transaction. Its scope names the programs it touches and the
-   lifter's choice: all history, all imported history, or a date range. The rows are what the
-   overwrite removes, in the same payload format. A date range can also shorten a macrocycle or
-   move a current macrocycle's dashboard date without removing it, so the payload has an
-   `overwrite` field holding those rows as they were. A clear's payload has no such field. It
+1. **A second kind, `overwrite`.** When an import replaces history, it saves one snapshot of
+   kind `overwrite` in the same transaction, after the removal so it can record what the removal
+   left. Its scope names the programs it touches and the lifter's choice: all history, all
+   imported history, or a date range. The rows are what the overwrite removes, in the same payload
+   format. A date range can also shorten a macrocycle or move a current macrocycle's dashboard date
+   without removing it, so the payload has an `overwrite` field holding those rows as they were and
+   the dates and status the overwrite left them with. A clear's payload has no such field. It
    expires after the same 30 days and the same job deletes it.
 2. **No backup, no overwrite.** If the snapshot can't be saved, the transaction rolls back,
    nothing is removed or imported, and the response is a 503 with code `overwrite-backup-failed`.
@@ -149,12 +150,15 @@ stored history with an import, on this table, as the consequence above expected.
    snapshot is refused with a 409 `overwrite-backup`: it would put the replaced history back beside
    the import that replaced it. Undoing the import removes its rows first, then puts the snapshot
    back with decision 3's rules, except that a shortened macrocycle still stored keeps its number
-   and gets its dates, status and sets back. Then the snapshot is deleted.
+   and gets its sets back, and gets each date, its status and the dashboard date back only while
+   they still hold what the overwrite left, so a close or a status chosen since stays. Sets that
+   an import undone since had created stay out. Then the snapshot is deleted.
 4. **Undo needs its backup, and goes newest first.** Undo is refused with a 409
    `overwrite-undo-backup-gone` once the snapshot has expired or been deleted, since it would remove
    the import and restore nothing. Settings warns of this before a delete. It's refused with
-   `overwrite-undo-later-overwrite` while a later overwrite's import is still stored, so two
-   overwrites can't restore over each other.
+   `overwrite-undo-later-overwrite` while a later overwrite's import is still stored and its backup
+   still exists, so two overwrites can't restore over each other. A later overwrite whose backup is
+   gone can't be undone at all, so it doesn't block undoing an earlier one.
 
 ## References
 

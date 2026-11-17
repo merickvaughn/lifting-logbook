@@ -29,11 +29,13 @@ import {
 import {
   SNAPSHOT_RETENTION_DAYS,
   closeReplacedCurrent,
+  closeRestoredMacrocycle,
   countRows,
   isLiftRecordsBatch,
   leaveOutSets,
   placeAfterStored,
   placeNonCycleAfterStored,
+  preImageOf,
   programsIn,
   skipStoredSets,
   startNonCycleAtEarliestSet,
@@ -102,9 +104,6 @@ function groupBy<T, V>(items: Iterable<T>, key: (item: T) => string, value: (ite
   }
   return groups;
 }
-
-/** A lift-records batch's pre-image, as the import stored it. */
-const preImageOf = (batch: TrainingRow) => batch['preImage'] as ImportPreImage;
 
 /**
  * What `scope` removes from `data` (#1182, decision 19), without writing anything.
@@ -378,7 +377,7 @@ export async function replaceStoredHistory(
   if (!context.dryRun) {
     // What each shortened macrocycle was left with, read once the overwrite has read its status
     // again, so undo can tell whether it changed since.
-    const after = new Map((await repos.macrocycle.listAll()).map((m) => [m.id, m]));
+    const after = new Map(plan.shortened.length > 0 ? (await repos.macrocycle.listAll()).map((m) => [m.id, m]) : []);
     const shortened = plan.shortened.map((s) => {
       const m = after.get(s.before.id);
       return m ? { ...s, startDate: m.startDate, endDate: m.endDate, status: m.status } : { ...s, status: s.before.status };
@@ -524,17 +523,27 @@ export async function restoreOverwrite(
   const fragmentIds = data.importBatches.map((f) => String(f['id']));
   const storedBatches = new Map((await repos.importBatch.listByIds(fragmentIds)).map((b) => [b.id, b]));
   const undone = data.importBatches.filter((f) => !storedBatches.has(String(f['id'])));
-  await leaveOutSets(repos, data, setsOfUndoneBatches(data, undone));
-  data.importBatches = data.importBatches.filter((f) => storedBatches.has(String(f['id'])));
-  await skipStoredSets(repos, data);
 
   const byId = new Map((await repos.macrocycle.listAll()).map((m) => [m.id, m]));
   const kept = new Map<string, { change: ShortenedMacrocycle; now: MacrocycleRow }>();
+  const deletedSince: MacrocycleRow[] = [];
   for (const change of changes.macrocycles) {
     const now = byId.get(change.before.id);
     if (now && now.program === change.before.program) kept.set(now.id, { change, now });
-    // Deleted since, so it comes back as a removed one.
-    else data.macrocycles.push(change.before);
+    else {
+      // Deleted since, so it comes back as a removed one, before the sets left out below, so it
+      // goes too if none of its sets come back.
+      data.macrocycles.push(change.before);
+      deletedSince.push(change.before);
+    }
+  }
+  await leaveOutSets(repos, data, setsOfUndoneBatches(data, undone));
+  data.importBatches = data.importBatches.filter((f) => storedBatches.has(String(f['id'])));
+  await skipStoredSets(repos, data);
+  // Its dashboard went with it, so one that was open comes back closed, as a restore closes the
+  // current macrocycle another has replaced.
+  for (const m of deletedSince) {
+    if (!m.endDate) await closeRestoredMacrocycle(repos, data, m.program, m.macrocycleNum);
   }
   const programs = [...new Set([...programsIn(data), ...changes.macrocycles.map((m) => m.before.program)])].sort();
   for (const program of programs) {

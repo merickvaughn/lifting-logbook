@@ -572,8 +572,44 @@ describe('Import: overwrite stored history (#1182, e2e, in-memory adapters)', ()
         await undo(batchId);
 
         const back = (await macrocycles()).find((m) => m.id === live.id);
-        expect(back).toMatchObject({ startDate: utc(-40), origin: 'live' });
+        // Its dashboard went with it, so it comes back closed on its last restored set.
+        expect(back).toMatchObject({ startDate: utc(-40), endDate: utc(-40), origin: 'live' });
+        expect(back?.status).not.toBe('in-progress');
+        expect(await current()).toBeNull();
         expect((await sets()).filter((r) => r.macrocycleNum === back?.macrocycleNum).map((r) => r.date)).toEqual([utc(-40)]);
+        await expectDenseInDateOrder();
+      });
+
+      it('puts back a shortened macrocycle deleted since closed, beside the one started since', async () => {
+        const { live, batchId } = await shortenLive();
+        expect((await page('DELETE', '/programs/rpt/macrocycles/current')).statusCode).toBe(204);
+        expect((await page('POST', '/programs/rpt/macrocycles/initialize', { macrocycleDate: day(-5) })).statusCode).toBe(201);
+        const dashboard = await current();
+
+        await undo(batchId);
+
+        const rows = await macrocycles();
+        expect(rows.filter((m) => m.endDate === null)).toHaveLength(1);
+        expect(rows.find((m) => m.id === live.id)).toMatchObject({ startDate: utc(-40), endDate: utc(-40) });
+        const started = rows.find((m) => m.startDate.getTime() === utc(-5).getTime());
+        expect(started?.endDate).toBeNull();
+        expect(await current()).toEqual({ ...dashboard, macrocycleNum: started?.macrocycleNum });
+        await expectDenseInDateOrder();
+      });
+
+      it('leaves out a shortened macrocycle deleted since when none of its sets come back', async () => {
+        const { live, batchId } = await shortenLive();
+        expect((await page('DELETE', '/programs/rpt/macrocycles/current')).statusCode).toBe(204);
+        // The same set logged again since, on a macrocycle started since, so the backup's copy stays out.
+        expect((await page('POST', '/programs/rpt/macrocycles/initialize', { macrocycleDate: day(-41) })).statusCode).toBe(201);
+        const started = (await macrocycles()).find((m) => m.origin === 'live');
+        const set = { lift: 'Bench Press', setNum: 1, weight: 135, reps: 5, macrocycleNum: started?.macrocycleNum, workoutNum: 1, date: day(-40) };
+        expect((await page('POST', '/programs/rpt/lift-records', set)).statusCode).toBe(201);
+
+        await undo(batchId);
+
+        expect((await macrocycles()).find((m) => m.id === live.id)).toBeUndefined();
+        expect((await sets()).filter((r) => r.date.getTime() === utc(-40).getTime())).toHaveLength(1);
         await expectDenseInDateOrder();
       });
 

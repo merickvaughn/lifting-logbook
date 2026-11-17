@@ -114,7 +114,8 @@ const writeLogger = new Logger('MacrocycleWrite');
 /**
  * How long an import waits for the page writes holding the macrocycle lock to finish. They're
  * short, so an import rarely waits at all; the request's transaction budget
- * (`IMPORT_TX_TIMEOUT_MS`) leaves room for it.
+ * (`IMPORT_TX_TIMEOUT_MS`, or `IMPORT_REPLACE_TX_TIMEOUT_MS` on the import wizard's routes)
+ * leaves room for it.
  */
 export const IMPORT_LOCK_WAIT_MS = 5_000;
 

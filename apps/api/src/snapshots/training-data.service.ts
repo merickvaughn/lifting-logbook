@@ -139,6 +139,9 @@ export function isLiftRecordsBatch(batch: TrainingRow): boolean {
   return batch['destination'] === 'lift-records';
 }
 
+/** A lift-records batch's pre-image, as the import stored it. */
+export const preImageOf = (batch: TrainingRow) => batch['preImage'] as ImportPreImage;
+
 /**
  * Leaves out the snapshot's sets that are stored again, by decision 13's rule (one date, one lift
  * under any spelling, one set number, in any program), as when the lifter imported the clear's
@@ -237,8 +240,6 @@ export async function placeAfterStored(
   const offset = [...(await repos.macrocycle.numbersInUse(program))].reduce((n, m) => Math.max(n, m), 0);
   const to = (n: number) => keep.get(n) ?? n + offset;
   const batches = data.importBatches.filter((batch) => batch.program === program && isLiftRecordsBatch(batch));
-  // A lift-records batch's pre-image, as the import stored it.
-  const preImageOf = (batch: TrainingRow) => batch['preImage'] as ImportPreImage;
   const numbers = [
     ...NUMBERED_TRAINING_TABLES.flatMap((table) => data[table])
       .filter((row) => row.program === program)
@@ -304,8 +305,21 @@ export async function startNonCycleAtEarliestSet(repos: Repos, data: TrainingDat
 export async function closeReplacedCurrent(repos: Repos, data: TrainingData, program: string): Promise<void> {
   const dashboard = data.macrocycleDashboards.find((d) => d.program === program);
   if (!dashboard || !(await hasDashboard(repos, program))) return;
+  await closeRestoredMacrocycle(repos, data, program, dashboard.macrocycleNum);
+}
+
+/**
+ * Closes a macrocycle being put back open, on its last restored set (on its start with none), with
+ * the status a close gives unless the lifter chose one.
+ */
+export async function closeRestoredMacrocycle(
+  repos: Repos,
+  data: TrainingData,
+  program: string,
+  macrocycleNum: number | undefined,
+): Promise<void> {
   const macrocycles = macrocycleRows(data);
-  const index = macrocycles.findIndex((m) => m.program === program && m.macrocycleNum === dashboard.macrocycleNum);
+  const index = macrocycles.findIndex((m) => m.program === program && m.macrocycleNum === macrocycleNum);
   const row = macrocycles[index];
   if (!row || row.endDate) return;
   const sets = liftRecordRows(data).filter((r) => r.program === program && r.macrocycleNum === row.macrocycleNum);

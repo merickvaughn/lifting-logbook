@@ -25,6 +25,7 @@ import {
 } from '@lifting-logbook/core';
 import { ApiClientError } from '@lifting-logbook/api-client';
 import { ImportWizard } from './ImportWizard';
+import { RANGE_COUNT_DELAY_MS } from './AssignStep';
 import {
   assignImport,
   commitImport,
@@ -4944,6 +4945,8 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     fireEvent.change(screen.getByLabelText('From'), { target: { value: from } });
     fireEvent.change(screen.getByLabelText('To'), { target: { value: to } });
   };
+  // A range is read once its days settle, so its waits allow for that delay and a slow re-render.
+  const afterRangeDelay = { timeout: RANGE_COUNT_DELAY_MS + 5000 };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -4993,7 +4996,7 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-02-02' } });
     fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-02-28' } });
     expect(mockRangeCounts).not.toHaveBeenCalled();
-    await waitFor(() => expect(counts()).toHaveTextContent(RANGE_TEXT));
+    await waitFor(() => expect(counts()).toHaveTextContent(RANGE_TEXT), afterRangeDelay);
     expect(mockRangeCounts).toHaveBeenCalledTimes(1);
     expect(mockRangeCounts).toHaveBeenCalledWith('prog-1', '2026-01-01', '2026-02-28');
     expect(mockOverwriteCounts).toHaveBeenCalledTimes(1);
@@ -5048,7 +5051,7 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     await user.click(replaceRadio());
     await user.click(scope('A date range'));
     enterRange('2026-01-01', '2026-02-28');
-    await waitFor(() => expect(counts()).toHaveTextContent(RANGE_TEXT));
+    await waitFor(() => expect(counts()).toHaveTextContent(RANGE_TEXT), afterRangeDelay);
     await user.click(confirmBox());
 
     await user.click(nextButton());
@@ -5106,12 +5109,56 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     await user.click(scope('A date range'));
     enterRange('2026-01-01', '2026-02-28');
 
-    await waitFor(() => expect(counts()).toHaveTextContent('We couldn’t count what this range holds.'));
+    await waitFor(() => expect(counts()).toHaveTextContent('We couldn’t count what this range holds.'), afterRangeDelay);
     expect(errorSpy).toHaveBeenCalledWith('[client-mutation] fetchOverwriteRangeCounts failed', failure, { programId: 'prog-1' });
     expect(screen.queryByRole('checkbox', { name: 'Replace this stored history' })).not.toBeInTheDocument();
     expect(nextButton()).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Count again' }));
     await waitFor(() => expect(counts()).toHaveTextContent(RANGE_TEXT));
     expect(mockRangeCounts).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops a range’s failure once its days change, and counts the new days once', async () => {
+    const user = userEvent.setup();
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockRangeCounts.mockRejectedValueOnce(new Error('Counting is unavailable'));
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(replaceRadio());
+    await user.click(scope('A date range'));
+    enterRange('2026-01-01', '2026-02-28');
+    await waitFor(() => expect(counts()).toHaveTextContent('We couldn’t count what this range holds.'), afterRangeDelay);
+
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-03-31' } });
+    expect(counts()).toHaveTextContent('Counting what this range holds…');
+    expect(screen.queryByRole('button', { name: 'Count again' })).not.toBeInTheDocument();
+    await waitFor(() => expect(counts()).toHaveTextContent(RANGE_TEXT), afterRangeDelay);
+    expect(mockRangeCounts).toHaveBeenCalledTimes(2);
+    expect(mockRangeCounts).toHaveBeenLastCalledWith('prog-1', '2026-01-01', '2026-03-31');
+  });
+
+  it('keeps a confirmation made while the scopes are read again, when their counts match it', async () => {
+    const user = userEvent.setup();
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+    await user.click(replaceRadio());
+    await user.click(await screen.findByRole('checkbox', { name: 'Replace this stored history' }));
+
+    const now = { ...ALL, sets: 41 };
+    let answer: (value: { all: typeof now; imported: typeof IMPORTED }) => void = () => undefined;
+    mockOverwriteCounts.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    mockDryRun.mockRejectedValueOnce(
+      new ApiClientError('Your stored history has changed', 409, 'overwrite-counts-changed', { counts: now }),
+    );
+    await user.click(nextButton());
+    await screen.findByTestId('assign-notice');
+    await waitFor(() => expect(mockOverwriteCounts).toHaveBeenCalledTimes(2));
+
+    // Confirmed before the labels come back, which then agree with what was confirmed.
+    await user.click(confirmBox());
+    await act(async () => answer({ all: now, imported: IMPORTED }));
+    expect(scope('All history')).toHaveAccessibleName(/Removes 41 sets/);
+    expect(confirmBox()).toBeChecked();
+    expect(nextButton()).toBeEnabled();
   });
 });

@@ -682,6 +682,7 @@ describe('createApiClient', () => {
     it.each([
       ['overwrite-undo-later-overwrite', 'A later import replaced your history too. Undo that import first, then this one.'],
       ['overwrite-undo-backup-gone', 'The backup of the history this import replaced has expired or was deleted.'],
+      ['import-in-progress', 'An import is changing your macrocycles. Try again in a moment.'],
     ])('undoImport throws the message and code of a 409 %s (#1182)', async (code, message) => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ statusCode: 409, code, message }), { status: 409 }));
       await expect(makeClient().undoImport('5-3-1', 'b-1', '2026-11-13')).rejects.toMatchObject({

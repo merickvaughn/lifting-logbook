@@ -330,13 +330,14 @@ export function ImportWizard({
       }
     })();
   }, [programId]);
-  const [rangeRead, setRangeRead] = useState<CountsRead>(null);
+  // A range read's state belongs to the days it read, so a failure isn't shown for days entered since.
+  const [rangeRead, setRangeRead] = useState<{ key: string; read: CountsRead } | null>(null);
   const rangeKey = useRef<string | null>(null);
   const loadRangeCounts = useCallback(
     (from: string, to: string) => {
       const key = `${from}|${to}`;
       rangeKey.current = key;
-      setRangeRead('reading');
+      setRangeRead({ key, read: 'reading' });
       void (async () => {
         try {
           const range = await fetchOverwriteRangeCounts(programId, from, to);
@@ -346,12 +347,14 @@ export function ImportWizard({
         } catch (e) {
           if (rangeKey.current !== key) return;
           logClientError('fetchOverwriteRangeCounts', e, { programId });
-          setRangeRead('failed');
+          setRangeRead({ key, read: 'failed' });
         }
       })();
     },
     [programId],
   );
+  const shownRange = assignDraft?.overwrite ? `${assignDraft.overwrite.from}|${assignDraft.overwrite.to}` : null;
+  const shownRangeRead = rangeRead && rangeRead.key === shownRange ? rangeRead.read : null;
   /** How many groupings have loaded, which keys the step so each one starts it afresh. */
   const [assignLoads, setAssignLoads] = useState(0);
   // A changed lift progression is saved to the lift before it counts as confirmed (#1212). The
@@ -2579,7 +2582,7 @@ export function ImportWizard({
                     loadScopes: loadScopeCounts,
                     loadRange: loadRangeCounts,
                     scopes: scopesRead,
-                    range: rangeRead,
+                    range: shownRangeRead,
                   }}
                 />
               ) : (

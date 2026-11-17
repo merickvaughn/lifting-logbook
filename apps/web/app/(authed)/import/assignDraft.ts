@@ -496,12 +496,28 @@ export function setOverwriteKind(draft: AssignDraft, kind: OverwriteDraft['kind'
   return { ...draft, overwrite: { ...o, kind, counts, confirmed: false }, edited: true };
 }
 
-/** The counts read for all and imported history, and the chosen scope's when it's one of those. */
+/**
+ * The counts read for all and imported history, and the chosen scope's when it's one of those. A
+ * confirmation stands while the counts it confirmed are unchanged, such as a tick made while the
+ * labels were read again after a commit found newer counts.
+ */
 export function withScopeCounts(draft: AssignDraft, scopes: ImportOverwriteCountsResponse): AssignDraft {
   const o = draft.overwrite;
   if (!o) return draft;
   const counts = o.kind === 'range' ? o.counts : scopes[o.kind];
-  return { ...draft, overwrite: { ...o, scopes, counts, confirmed: false } };
+  const confirmed = o.confirmed && sameCounts(o.counts, counts);
+  return { ...draft, overwrite: { ...o, scopes, counts, confirmed } };
+}
+
+function sameCounts(a: ImportOverwriteCounts | null, b: ImportOverwriteCounts | null): boolean {
+  return (
+    !!a &&
+    !!b &&
+    a.sets === b.sets &&
+    a.macrocycles === b.macrocycles &&
+    a.current === b.current &&
+    a.shortened === b.shortened
+  );
 }
 
 /** The range's days. Its counts are read again for them. */

@@ -16,7 +16,6 @@ import {
   ServiceUnavailableException,
   StreamableFile,
 } from '@nestjs/common';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { serializeLiftRecords } from '@lifting-logbook/core';
 import {
   ClearTrainingDataResponse,
@@ -26,6 +25,7 @@ import {
   TrainingDataCounts,
 } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { Failure, describeFailure } from '../observability/describe-failure';
 import { SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { RlsContextService } from '../adapters/prisma/rls-context.service';
 import { describeParts, exportParts, liftRecordExportFileName, splitFingerprint } from '../data-export/lift-record-export';
@@ -209,14 +209,6 @@ export class SnapshotsController {
   }
 }
 
-export interface Failure {
-  error: string;
-  code?: string;
-  dbCode?: string;
-  target?: unknown;
-  message?: string;
-}
-
 /** Postgres's serialization failure and deadlock, which a raw query reports as P2010. */
 const CONCURRENT_WRITE_DB_CODES = new Set(['40001', '40P01']);
 
@@ -232,19 +224,4 @@ function isConcurrentWrite(failure: Failure): boolean {
 function isDataChanged(err: HttpException): boolean {
   const response = err.getResponse();
   return typeof response === 'object' && 'code' in response && response.code === DATA_CHANGED;
-}
-
-/**
- * What a failure log may say about `err`: its name and Prisma code and target. A Prisma error's
- * message can quote the call's arguments, which here are the lifter's rows, so only other errors'
- * messages are logged.
- */
-export function describeFailure(err: unknown): Failure {
-  if (err instanceof PrismaClientKnownRequestError) {
-    // A raw query's failure (P2010) carries the Postgres error code; its message quotes the query.
-    const dbCode = err.meta?.['code'];
-    return { error: err.name, code: err.code, target: err.meta?.['target'], ...(typeof dbCode === 'string' ? { dbCode } : {}) };
-  }
-  if (!(err instanceof Error)) return { error: typeof err };
-  return err.name.startsWith('PrismaClient') ? { error: err.name } : { error: err.name, message: err.message };
 }

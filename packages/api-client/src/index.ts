@@ -775,12 +775,13 @@ export function createApiClient(config: ApiClientConfig) {
         cache: 'no-store',
       });
       if (!res.ok) {
-        // A 409 macrocycle-busy (#1198) carries a message asking to try again, an overwrite's
-        // refusal (#1182) says why it can't be undone or what to undo first, and a 400 says what
-        // to fix, such as a device clock too far from the server's (#1257). Anything else keeps
-        // the generic message the import wizard shows, with the status, code and body.
+        // A 409 macrocycle-busy (#1198) or import-in-progress (an overwrite's undo waits for no
+        // other import) carries a message asking to try again, an overwrite's refusal (#1182) says
+        // why it can't be undone or what to undo first, and a 400 says what to fix, such as a
+        // device clock too far from the server's (#1257). Anything else keeps the generic message
+        // the import wizard shows, with the status, code and body.
         const err = await readError(res, path);
-        if (err.code === 'macrocycle-busy' || err.code?.startsWith('overwrite-undo-')) throw err;
+        if (err.code === 'macrocycle-busy' || err.code === 'import-in-progress' || err.code?.startsWith('overwrite-undo-')) throw err;
         if (res.status === 400 && typeof err.body?.message === 'string') throw err;
         throw new ApiClientError(`Undo import failed (HTTP ${res.status})`, err.status, err.code, err.body);
       }

@@ -43,10 +43,12 @@ export async function runBatch(
  * import can exceed Prisma's 5s default interactive-tx timeout and throw P2028, so
  * imports get a wider window than the {@link DEFAULT_RLS_TX_TIMEOUT_MS} default.
  *
- * This single value governs **both** import paths so they can't drift:
+ * It governs both import paths, with one exception:
  * - **Request path** (the production HTTP import): `runInteractive` reuses the RLS
  *   request transaction and ignores the options below, so every HTTP import handler
- *   carries `@RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)` to widen that enclosing transaction.
+ *   carries `@RlsTxTimeout(IMPORT_TX_TIMEOUT_MS)` to widen that enclosing transaction,
+ *   except the import wizard's import and undo routes, which can replace or restore stored
+ *   history and carry {@link IMPORT_REPLACE_TX_TIMEOUT_MS} instead (#1182).
  *   Current carriers are asserted individually by `import.controller.spec.ts` and
  *   `lift-records.controller.spec.ts` — check those specs, not this comment, for the
  *   up-to-date set (a prose list here already went stale once, #911 review, ninth pass).

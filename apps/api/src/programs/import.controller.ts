@@ -145,7 +145,7 @@ import {
   replaceStoredHistory,
   restoreOverwrite,
 } from './import-overwrite';
-import { describeFailure } from '../snapshots/snapshots.controller';
+import { describeFailure } from '../observability/describe-failure';
 import { liftNamesFor, liftNamesOf, effectiveSlotMapFor, progressionSettingsFor } from './effective-slot-map.util';
 import { GoogleSheetImportDto } from './google-sheet-import.dto';
 import {
@@ -668,7 +668,12 @@ export class ImportController {
       // The `imported` macrocycles left are recomputed from the sets on them, which a later import
       // may have added to, rather than restored (#1255, decision 14).
       const ids = touched.flatMap((t) => t.ids);
-      const knownPrograms = async () => [...BUILT_IN_KNOWN_PROGRAMS, ...(await this.customPrograms(user.id))];
+      // Read once, and only when something needs it.
+      let knownProgramsRead: Promise<KnownProgram[]> | undefined;
+      const knownPrograms = () => {
+        knownProgramsRead ??= this.customPrograms(user.id).then((custom) => [...BUILT_IN_KNOWN_PROGRAMS, ...custom]);
+        return knownProgramsRead;
+      };
       const recomputed = ids.length > 0 ? await recomputeMacrocycles(repos, ids, await knownPrograms(), asOf) : 0;
       // An empty live macrocycle a continue removed comes back first, so it's numbered by date (#1354).
       for (const part of parts) {
