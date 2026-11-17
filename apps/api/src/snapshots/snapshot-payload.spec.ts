@@ -11,7 +11,7 @@ describe('snapshot payload (#1309)', () => {
     const data = empty();
     data.liftRecords.push({ program: '5-3-1', date: new Date('2025-06-02T00:00:00.000Z'), notes: '2025-06-02T00:00:00.000Z' });
 
-    const [row] = (await decodeSnapshotRows(await encodeSnapshotRows(data))).liftRecords;
+    const [row] = (await decodeSnapshotRows(await encodeSnapshotRows({ data }))).data.liftRecords;
 
     expect(row?.['date']).toEqual(new Date('2025-06-02T00:00:00.000Z'));
     expect(row?.['notes']).toBe('2025-06-02T00:00:00.000Z');
@@ -21,7 +21,7 @@ describe('snapshot payload (#1309)', () => {
     const data = empty();
     data.macrocycles.push({ program: '5-3-1', startDate: runInNewContext('new Date("2025-01-06T00:00:00.000Z")') as Date });
 
-    const decoded = await decodeSnapshotRows(await encodeSnapshotRows(data));
+    const decoded = (await decodeSnapshotRows(await encodeSnapshotRows({ data }))).data;
 
     expect(decoded.macrocycles[0]?.['startDate']).toEqual(new Date('2025-01-06T00:00:00.000Z'));
   });

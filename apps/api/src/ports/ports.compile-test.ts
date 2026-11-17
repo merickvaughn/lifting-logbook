@@ -323,6 +323,7 @@ const _importBatchRepo: IImportBatchRepository = {
   listSummaries: () => Promise.resolve([]),
   listChoosing: () => Promise.resolve([]),
   updateMacrocycles: (): Promise<void> => Promise.resolve(),
+  listOverwrites: () => Promise.resolve([]),
 };
 
 const _repositoryBundle: RepositoryBundle = {
@@ -346,6 +347,7 @@ const _repositoryBundle: RepositoryBundle = {
     lockRows: () => Promise.reject(new Error('not implemented')),
     clear: () => Promise.reject(new Error('not implemented')),
     insertMissing: () => Promise.reject(new Error('not implemented')),
+    discardChanges: () => Promise.reject(new Error('not implemented')),
   },
   dataSnapshot: {
     create: () => Promise.reject(new Error('not implemented')),

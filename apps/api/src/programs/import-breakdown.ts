@@ -30,6 +30,7 @@ import { placeNonCycleRows } from './import-handlers';
 import { programCoveringDate } from './import-assign';
 import { StoredPlacement, continuedWorkoutNum, placeOnStored, recomputeMacrocycles } from './import-stored';
 import { parseContinue } from './import-continue';
+import { parseOverwrite } from './import-overwrite';
 
 /**
  * An import through the Assign step (#1254, proposal decisions 3, 5, 13, 15 and 17): the lifter's
@@ -120,6 +121,7 @@ export function parseBreakdown(field: string | undefined): ImportBreakdown | nul
     return { ...common, file: { group: file.group, macrocycleNum: file.macrocycleNum } };
   });
   const continued = parseContinue(value.continue);
+  const overwrite = parseOverwrite(value.overwrite);
   if (continued && continued.stretch >= stretches.length) {
     throw new BadRequestException(`breakdown.continue names stretch ${continued.stretch + 1} of ${stretches.length}`);
   }
@@ -128,6 +130,7 @@ export function parseBreakdown(field: string | undefined): ImportBreakdown | nul
     excludedDates: dates(value.excludedDates, 'excludedDates'),
     nonCycleDates: dates(value.nonCycleDates, 'nonCycleDates'),
     ...(continued ? { continue: continued } : {}),
+    ...(overwrite ? { overwrite } : {}),
   };
 }
 

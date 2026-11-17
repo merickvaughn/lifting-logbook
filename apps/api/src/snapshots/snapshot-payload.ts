@@ -1,6 +1,7 @@
 import { promisify } from 'node:util';
 import { isDate } from 'node:util/types';
 import { gunzip as gunzipCallback, gzip as gzipCallback } from 'node:zlib';
+import { OverwriteChanges, StoredSnapshot } from '../ports/IDataSnapshotRepository';
 import { TrainingData } from '../ports/ITrainingDataRepository';
 
 // The async calls, so compressing a long history doesn't block the event loop while its
@@ -18,7 +19,12 @@ const PAYLOAD_VERSION = 1;
 interface Payload {
   version: number;
   data: TrainingData;
+  /** An overwrite's changes (#1182). A clear's payload has none. */
+  overwrite?: OverwriteChanges;
 }
+
+/** A snapshot's rows, and an overwrite's changes beside them. */
+export type SnapshotContents = Pick<StoredSnapshot, 'data' | 'overwrite'>;
 
 function isDateMarker(value: unknown): value is { $date: string } {
   return (
@@ -29,8 +35,8 @@ function isDateMarker(value: unknown): value is { $date: string } {
   );
 }
 
-export async function encodeSnapshotRows(data: TrainingData): Promise<Buffer> {
-  const payload: Payload = { version: PAYLOAD_VERSION, data };
+export async function encodeSnapshotRows({ data, overwrite }: SnapshotContents): Promise<Buffer> {
+  const payload: Payload = { version: PAYLOAD_VERSION, data, ...(overwrite ? { overwrite } : {}) };
   // `this[key]` is the value before `Date.prototype.toJSON` turned it into a string. `isDate`
   // rather than `instanceof`, which misses a Date made in another realm (`structuredClone` under
   // Jest's sandbox, as the in-memory store's reads are).
@@ -41,12 +47,12 @@ export async function encodeSnapshotRows(data: TrainingData): Promise<Buffer> {
   return gzip(Buffer.from(json, 'utf8'));
 }
 
-export async function decodeSnapshotRows(rows: Buffer): Promise<TrainingData> {
+export async function decodeSnapshotRows(rows: Buffer): Promise<SnapshotContents> {
   const payload = JSON.parse((await gunzip(rows)).toString('utf8'), (_key, value: unknown) =>
     isDateMarker(value) ? new Date(value.$date) : value,
   ) as Payload;
   if (payload.version !== PAYLOAD_VERSION) {
     throw new Error(`snapshot payload version ${payload.version} is not one this release reads`);
   }
-  return payload.data;
+  return { data: payload.data, ...(payload.overwrite ? { overwrite: payload.overwrite } : {}) };
 }

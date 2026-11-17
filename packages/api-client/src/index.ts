@@ -20,6 +20,7 @@ import type {
   ReorderFocusBlocksRequest,
   MacrocycleDashboardResponse,
   ImportAssignResponse,
+  ImportOverwriteCountsResponse,
   ImportBreakdown,
   ImportSuggestionsResponse,
   ImportCommitResponse,
@@ -268,8 +269,8 @@ async function readError(res: Response, path: string): Promise<ApiClientError> {
  */
 function importFailureErrors(status: number, body: { errors?: ImportError[]; code?: unknown; message?: unknown }): ImportError[] {
   if (body.errors) return body.errors;
-  const message =
-    body.code === 'macrocycle-busy' && typeof body.message === 'string' ? body.message : `Unexpected error (HTTP ${status})`;
+  const shown = body.code === 'macrocycle-busy' || body.code === 'overwrite-backup-failed';
+  const message = shown && typeof body.message === 'string' ? body.message : `Unexpected error (HTTP ${status})`;
   return [{ row: 0, code: 'UNEXPECTED_ERROR', message }];
 }
 
@@ -411,6 +412,11 @@ export function createApiClient(config: ApiClientConfig) {
     /** The imports that touched the program's past macrocycles, newest first, each undoable (#1257). */
     fetchImportBatches(program: string): Promise<ImportBatchSummary[]> {
       return request(`/programs/${enc(program)}/import/batches`, { cache: 'no-store' });
+    },
+    /** What overwriting each scope would remove, the range `from`–`to` included, for Assign (#1182). */
+    fetchOverwriteCounts(program: string, from: string, to: string): Promise<ImportOverwriteCountsResponse> {
+      const query = new URLSearchParams({ from, to });
+      return request(`/programs/${enc(program)}/import/overwrite-counts?${query.toString()}`, { cache: 'no-store' });
     },
     // Idempotent delete: a 404 (no existing macrocycle) is treated as success, matching
     // deleteStrengthGoal/deleteCustomProgram below.
@@ -669,8 +675,10 @@ export function createApiClient(config: ApiClientConfig) {
       }
       const body = (await res.clone().json().catch(() => ({}))) as { errors?: ImportError[]; code?: unknown; message?: unknown };
       // A request the server refused with a code, such as a breakdown that no longer matches the
-      // file (#1256), isn't a problem with the file: it's thrown with its code, as `dryRunImport` throws it.
-      if (res.status === 400 && !body.errors && typeof body.code === 'string') throw await readError(res, path);
+      // file (#1256), or overwrite counts the stored history no longer matches (#1182), isn't a
+      // problem with the file: it's thrown with its code, as `dryRunImport` throws it.
+      const refused = res.status === 400 || body.code === 'overwrite-counts-changed';
+      if (refused && !body.errors && typeof body.code === 'string') throw await readError(res, path);
       return { ok: false, errors: importFailureErrors(res.status, body) };
     },
     /**

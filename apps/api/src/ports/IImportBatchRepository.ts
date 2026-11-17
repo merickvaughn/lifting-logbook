@@ -42,6 +42,11 @@ export interface BatchMacrocycles {
   chosen: StatusChoice[];
   /** The run this batch continued as its program's current macrocycle (#1180). Absent on every other batch. */
   continued?: ContinuedRun;
+  /**
+   * The backup of what this import replaced (#1182, decision 19), which undo restores. On the
+   * Source program's batch of an overwrite only.
+   */
+  overwrite?: { snapshotId: string };
 }
 
 /**
@@ -170,4 +175,10 @@ export interface IImportBatchRepository {
   listChoosing(macrocycleId: string): Promise<ImportBatchRecord[]>;
   /** Replaces one of the user's batches' `macrocycles`, as undo does to hand a choice's `before` on. */
   updateMacrocycles(id: string, macrocycles: BatchMacrocycles): Promise<void>;
+  /**
+   * The user's batches, under any program, that replaced stored history (#1182): those whose
+   * `macrocycles` names a snapshot, filtered in the database. Undo refuses an overwrite while a
+   * later one is here.
+   */
+  listOverwrites(): Promise<Array<{ id: string; createdAt: Date }>>;
 }

@@ -273,6 +273,8 @@ export function assignResponse(
     suggestionsProvider: string | null;
     /** The offer to continue the last stretch as current (#1180), or null. */
     continueOffer: AssignContinueOffer | null;
+    /** What replacing stored history would remove (#1182). */
+    overwrite: ImportAssignResponse['overwrite'];
   },
   liftNames: ReadonlyMap<string, string>,
 ): ImportAssignResponse {
@@ -305,5 +307,6 @@ export function assignResponse(
     ...(extra.split ? { split: extra.split } : {}),
     suggestions: extra.suggestionsProvider === null ? null : { provider: extra.suggestionsProvider },
     continue: extra.continueOffer,
+    overwrite: extra.overwrite,
   };
 }

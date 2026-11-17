@@ -651,7 +651,8 @@ describeOrSkip('Clear data and snapshots (#1309, e2e, PrismaRepositoryFactory)',
     const unknown = await prisma.dataSnapshot.create({
       data: {
         userId: USER_UNKNOWN_KIND,
-        kind: 'overwrite',
+        // A kind no release writes yet; `overwrite` is read since #1182.
+        kind: 'merge',
         scope: { programs: [] },
         counts: {},
         rows: Buffer.from([0]),

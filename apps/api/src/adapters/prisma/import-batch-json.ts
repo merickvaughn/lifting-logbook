@@ -103,7 +103,7 @@ function continuedRun(value: Prisma.JsonValue | undefined): ContinuedRun | null 
 }
 
 /** `macrocycles` as the column stores it, which {@link parseBatchMacrocycles} reads back. */
-export function batchMacrocyclesJson({ created, extended, chosen, continued }: BatchMacrocycles): Prisma.InputJsonObject {
+export function batchMacrocyclesJson({ created, extended, chosen, continued, overwrite }: BatchMacrocycles): Prisma.InputJsonObject {
   return {
     created,
     extended,
@@ -113,6 +113,7 @@ export function batchMacrocyclesJson({ created, extended, chosen, continued }: B
       before: before.status ? { status: before.status, statusChosen: before.statusChosen } : { statusChosen: before.statusChosen },
     })),
     ...(continued ? { continued: { ...continued } } : {}),
+    ...(overwrite ? { overwrite: { snapshotId: overwrite.snapshotId } } : {}),
   };
 }
 
@@ -126,13 +127,17 @@ export function batchMacrocyclesJson({ created, extended, chosen, continued }: B
  */
 export function parseBatchMacrocycles(value: Prisma.JsonValue): BatchMacrocycles | null {
   if (!isObject(value)) return null;
-  const { created, extended, chosen, continued } = value;
+  const { created, extended, chosen, continued, overwrite } = value;
   const run = continued === undefined ? undefined : (continuedRun(continued) ?? UNREADABLE_RUN);
   return {
     created: ids(created),
     extended: ids(extended),
     chosen: Array.isArray(chosen) ? chosen.flatMap((c) => statusChoice(c) ?? []) : [],
     ...(run ? { continued: run } : {}),
+    // An unreadable one names no snapshot, so undo refuses it as one whose backup is gone (#1182).
+    ...(overwrite === undefined
+      ? {}
+      : { overwrite: { snapshotId: isObject(overwrite) && isString(overwrite['snapshotId']) ? overwrite['snapshotId'] : '' } }),
   };
 }
 

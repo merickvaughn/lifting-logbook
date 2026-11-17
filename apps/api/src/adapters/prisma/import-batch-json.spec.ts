@@ -111,4 +111,17 @@ describe('parseBatchMacrocycles (#1255)', () => {
       });
     });
   });
+
+  describe('an overwrite (#1182)', () => {
+    it('reads back as save writes it', () => {
+      const macrocycles: BatchMacrocycles = { created: ['m-1'], extended: [], chosen: [], overwrite: { snapshotId: 's-1' } };
+      expect(parseBatchMacrocycles(batchMacrocyclesJson(macrocycles) as Prisma.JsonValue)).toEqual(macrocycles);
+    });
+
+    it('reads an unreadable one as naming no snapshot, so undo refuses it', () => {
+      for (const bad of [null, 's-1', {}, { snapshotId: 7 }]) {
+        expect(parseBatchMacrocycles({ created: [], extended: [], chosen: [], overwrite: bad })?.overwrite).toEqual({ snapshotId: '' });
+      }
+    });
+  });
 });

@@ -34,6 +34,20 @@ export function numberOf(row: TrainingRow, field: 'macrocycleNum' | 'workoutNum'
   return value;
 }
 
+/**
+ * A deep copy of rows. Not `structuredClone`, whose dates come from the global realm: under Jest
+ * that isn't the test's, so `instanceof Date` fails on them and a natural key built from one, as
+ * an import's duplicate check builds, names no stored set.
+ */
+function cloneRows<T>(value: T): T {
+  if (Object.prototype.toString.call(value) === '[object Date]') return new Date((value as Date).getTime()) as T;
+  if (Array.isArray(value)) return value.map(cloneRows) as T;
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cloneRows(v)])) as T;
+  }
+  return value;
+}
+
 export class InMemoryTrainingDataRepository implements ITrainingDataRepository {
   private stores: readonly TrainingStore[] = [];
 
@@ -48,7 +62,7 @@ export class InMemoryTrainingDataRepository implements ITrainingDataRepository {
 
   async read(): Promise<TrainingData> {
     const data = Object.fromEntries(
-      TRAINING_TABLES.map((table) => [table, structuredClone(this.store(table)?.trainingRows() ?? [])]),
+      TRAINING_TABLES.map((table) => [table, cloneRows(this.store(table)?.trainingRows() ?? [])]),
     );
     return data as TrainingData;
   }
@@ -69,9 +83,20 @@ export class InMemoryTrainingDataRepository implements ITrainingDataRepository {
     return counts;
   }
 
+  /** Puts back the rows as they were read before `fn`, as a rolled-back savepoint does in Postgres. */
+  async discardChanges<T>(fn: () => Promise<T>): Promise<T> {
+    const before = await this.read();
+    try {
+      return await fn();
+    } finally {
+      await this.clear();
+      await this.insertMissing(before);
+    }
+  }
+
   async insertMissing(data: TrainingData): Promise<TrainingDataCounts> {
     const counts = Object.fromEntries(
-      TRAINING_TABLES.map((table) => [table, this.store(table)?.restoreTraining(structuredClone(data[table])) ?? 0]),
+      TRAINING_TABLES.map((table) => [table, this.store(table)?.restoreTraining(cloneRows(data[table])) ?? 0]),
     );
     return counts as unknown as TrainingDataCounts;
   }
