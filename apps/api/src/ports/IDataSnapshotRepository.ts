@@ -6,9 +6,17 @@ export interface DataSnapshotScope {
   programs: string[];
 }
 
+/**
+ * The snapshot kinds this release reads. The column is plain text, so a later release may write
+ * another kind (ADR-044); a reverted release must then skip that row, not fail on it (#1351).
+ */
+export const SNAPSHOT_KINDS = ['clear'] as const;
+
+export type SnapshotKind = (typeof SNAPSHOT_KINDS)[number];
+
 export interface StoredSnapshotSummary {
   id: string;
-  kind: 'clear';
+  kind: SnapshotKind;
   scope: DataSnapshotScope;
   counts: TrainingDataCounts;
   createdAt: Date;

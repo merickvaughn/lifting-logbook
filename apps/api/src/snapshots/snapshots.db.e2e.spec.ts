@@ -33,7 +33,8 @@ const USER_ISOLATED = 'db-e2e-snapshots-isolated';
 const USER_LONG = 'db-e2e-snapshots-long';
 const USER_PAGE_WRITE = 'db-e2e-snapshots-page-write';
 const USER_ROW_WRITE = 'db-e2e-snapshots-row-write';
-const USERS = [USER_CLEARED, USER_OTHER, USER_NEWER, USER_NO_BACKUP, USER_ISOLATED, USER_LONG, USER_PAGE_WRITE, USER_ROW_WRITE];
+const USER_UNKNOWN_KIND = 'db-e2e-snapshots-unknown-kind';
+const USERS = [USER_CLEARED, USER_OTHER, USER_NEWER, USER_NO_BACKUP, USER_ISOLATED, USER_LONG, USER_PAGE_WRITE, USER_ROW_WRITE, USER_UNKNOWN_KIND];
 const PROGRAM = '5-3-1';
 const CUSTOM_PROGRAM_IDS: Record<string, string> = {
   [USER_CLEARED]: '0e130900-0000-4000-8000-000000000001',
@@ -642,6 +643,35 @@ describeOrSkip('Clear data and snapshots (#1309, e2e, PrismaRepositoryFactory)',
     await prisma.dataSnapshot.update({ where: { id: snapshot.id }, data: { expiresAt: day('2099-01-01') } });
     expect((await inject(USER_ISOLATED, 'DELETE', url)).statusCode).toBe(204);
     expect(await prisma.dataSnapshot.count({ where: { id: snapshot.id } })).toBe(0);
+  });
+
+  it('keeps a snapshot of a kind this release doesn’t know from breaking the others (#1351)', async () => {
+    // A later release writes a second kind (ADR-044) and is reverted: this code then reads its row.
+    const known = await clear(USER_UNKNOWN_KIND);
+    const unknown = await prisma.dataSnapshot.create({
+      data: {
+        userId: USER_UNKNOWN_KIND,
+        kind: 'overwrite',
+        scope: { programs: [] },
+        counts: {},
+        rows: Buffer.from([0]),
+        expiresAt: day('2099-01-01'),
+      },
+    });
+
+    const list = await inject(USER_UNKNOWN_KIND, 'GET', '/users/me/snapshots');
+    expect(list.statusCode).toBe(200);
+    expect(list.json<{ id: string }[]>().map((s) => s.id)).toEqual([known.id]);
+
+    // The unknown row is never reached: restore and download answer as for a snapshot that isn't there.
+    const unknownUrl = `/users/me/snapshots/${unknown.id}`;
+    expect((await inject(USER_UNKNOWN_KIND, 'POST', `${unknownUrl}/restore`)).statusCode).toBe(404);
+    expect((await inject(USER_UNKNOWN_KIND, 'GET', `${unknownUrl}/lift-records/parts`)).statusCode).toBe(404);
+    expect((await inject(USER_UNKNOWN_KIND, 'GET', `${unknownUrl}/lift-records?part=1`)).statusCode).toBe(404);
+
+    // The known snapshot still restores, and the unknown row is left as it was.
+    expect((await inject(USER_UNKNOWN_KIND, 'POST', `/users/me/snapshots/${known.id}/restore`)).statusCode).toBe(200);
+    expect(await prisma.dataSnapshot.count({ where: { id: unknown.id } })).toBe(1);
   });
 
   describe('the expiry job', () => {

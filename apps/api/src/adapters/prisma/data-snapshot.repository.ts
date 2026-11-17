@@ -4,6 +4,8 @@ import {
   DataSnapshotScope,
   IDataSnapshotRepository,
   NewSnapshot,
+  SNAPSHOT_KINDS,
+  SnapshotKind,
   StoredSnapshot,
   StoredSnapshotSummary,
 } from '../../ports/IDataSnapshotRepository';
@@ -13,9 +15,14 @@ const SUMMARY = { id: true, kind: true, scope: true, counts: true, createdAt: tr
 
 type SummaryRow = Prisma.DataSnapshotGetPayload<{ select: typeof SUMMARY }>;
 
+/** Reads and downloads see only the kinds this release knows; `create` still checks what it gets back. */
+const KNOWN_KINDS = { kind: { in: [...SNAPSHOT_KINDS] } };
+
+const isKnownKind = (kind: string): kind is SnapshotKind => (SNAPSHOT_KINDS as readonly string[]).includes(kind);
+
 /** A stored kind this release knows; the column is plain text. */
-function snapshotKind(kind: string): StoredSnapshotSummary['kind'] {
-  if (kind !== 'clear') throw new Error(`snapshot kind ${kind} is not one this release reads`);
+function snapshotKind(kind: string): SnapshotKind {
+  if (!isKnownKind(kind)) throw new Error(`snapshot kind ${kind} is not one this release reads`);
   return kind;
 }
 
@@ -55,7 +62,7 @@ export class PrismaDataSnapshotRepository implements IDataSnapshotRepository {
 
   async list(now: Date): Promise<StoredSnapshotSummary[]> {
     const rows = await this.prisma.dataSnapshot.findMany({
-      where: { userId: this.userId, expiresAt: { gt: now } },
+      where: { userId: this.userId, ...KNOWN_KINDS, expiresAt: { gt: now } },
       orderBy: { createdAt: 'desc' },
       select: SUMMARY,
     });
@@ -64,7 +71,7 @@ export class PrismaDataSnapshotRepository implements IDataSnapshotRepository {
 
   async get(id: string, now: Date): Promise<StoredSnapshot | null> {
     const row = await this.prisma.dataSnapshot.findFirst({
-      where: { id, userId: this.userId, expiresAt: { gt: now } },
+      where: { id, userId: this.userId, ...KNOWN_KINDS, expiresAt: { gt: now } },
       select: { ...SUMMARY, rows: true },
     });
     return row ? { ...summary(row), data: await decodeSnapshotRows(row.rows) } : null;
