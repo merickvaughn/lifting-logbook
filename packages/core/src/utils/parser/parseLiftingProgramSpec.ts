@@ -4,6 +4,20 @@ import { LiftingProgramSpec, SpreadsheetCell } from "@src/core/models";
 import { tableToObjects } from "./tableToObjects";
 
 /**
+ * Reads a `Weight %` list (each set's weight as a share of the top set) as the single
+ * decrement it implies. `1,.95,.9` is 0.05. NaN when the steps aren't even (or the list
+ * isn't numbers), since one decrement can't represent it. A one-set list has no step: 0.
+ */
+function decrementFromWeightPct(raw: unknown): number {
+  const pcts = String(raw ?? "").split(",").map((p) => Number(p.trim()));
+  if (pcts.some((p) => isNaN(p) || String(p) === "")) return NaN;
+  if (pcts.length < 2) return 0;
+  const step = (pcts[0]! - pcts[pcts.length - 1]!) / (pcts.length - 1);
+  const even = pcts.every((p, i) => Math.abs(pcts[0]! - i * step - p) < 1e-9);
+  return even ? Math.round(step * 1e6) / 1e6 : NaN;
+}
+
+/**
  * Converts a 2D array to an array of LiftingProgramSpec objects.
  * @param {SpreadsheetCell[][]} data
  * @returns {LiftingProgramSpec[]}
@@ -16,6 +30,8 @@ export function parseLiftingProgramSpec(data: SpreadsheetCell[][]): LiftingProgr
   const rawObjects = tableToObjects(data, undefined);
   // A one-week program repeats a single block, so its sheet has no Week column: every row is week 1.
   const hasWeekColumn = (data[0] ?? []).some((h) => String(h) === "Week");
+  const headers = (data[0] ?? []).map((h) => String(h));
+  const useWeightPct = !headers.includes("WT Decrement %") && headers.includes("Weight %");
   const parsed = rawObjects.map((obj) => {
     const result: Record<string, unknown> = {};
     for (const header in headerMap) {
@@ -29,6 +45,10 @@ export function parseLiftingProgramSpec(data: SpreadsheetCell[][]): LiftingProgr
         // else leave as string
       }
       result[key] = value;
+    }
+    if (useWeightPct) {
+      result.weightPct = String(obj["Weight %"] ?? "");
+      result.wtDecrementPct = decrementFromWeightPct(obj["Weight %"]);
     }
     return result as unknown as LiftingProgramSpec;
   });

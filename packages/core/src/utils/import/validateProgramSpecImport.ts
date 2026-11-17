@@ -35,7 +35,14 @@ export function validateProgramSpecImport(
     if (!isNum(r.order)) rowErrors.push({ row, field: 'order', code: 'ORDER_INVALID', message: 'Order is not a number' });
     if (!isNum(r.sets)) rowErrors.push({ row, field: 'sets', code: 'SETS_INVALID', message: 'Sets is not a number' });
     if (!isNum(r.reps)) rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
-    if (!isNum(r.wtDecrementPct))
+    if (!isNum(r.wtDecrementPct) && r.weightPct !== undefined)
+      rowErrors.push({
+        row,
+        field: 'weightPct',
+        code: 'WT_DECREMENT_PCT_INVALID',
+        message: `Weight % "${r.weightPct}" must step evenly (like 1,.95,.9) to be read as one decrement`,
+      });
+    else if (!isNum(r.wtDecrementPct))
       rowErrors.push({ row, field: 'wtDecrementPct', code: 'WT_DECREMENT_PCT_INVALID', message: 'WT Decrement % is not a number' });
     if (r.weekType !== undefined && !['training', 'test', 'deload'].includes(r.weekType))
       rowErrors.push({ row, field: 'weekType', code: 'WEEK_TYPE_INVALID', message: 'Week Type must be training, test, or deload' });
