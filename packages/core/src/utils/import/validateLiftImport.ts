@@ -42,6 +42,30 @@ export interface LiftImportOptions {
    * and a row with no date is left out and counted rather than failing the file.
    */
   assign?: boolean;
+  /** The day the import runs: a row dated after it is an error. Defaults to now. */
+  importDate?: Date;
+}
+
+/** The first day a lift record may carry: the day after Unix time 0, a spreadsheet's blank-date artefact (#1316). */
+const EARLIEST_LIFT_DATE_MS = Date.UTC(1970, 0, 2);
+
+/** A UTC `YYYY-MM-DD` label for a date. */
+const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
+
+/**
+ * The row error for a date on or before 1970-01-01 or after the import date's UTC day, or null.
+ * Lift record dates are UTC midnight of the day the file names.
+ */
+export function liftDateRangeError(row: number, date: Date, importDate: Date): ImportError | null {
+  const latest = Date.UTC(importDate.getUTCFullYear(), importDate.getUTCMonth(), importDate.getUTCDate());
+  const t = date.getTime();
+  if (t >= EARLIEST_LIFT_DATE_MS && t < latest + 24 * 60 * 60 * 1000) return null;
+  return {
+    row,
+    field: 'date',
+    code: 'DATE_INVALID',
+    message: `Row ${row}: date ${isoDay(date)} must be after 1970-01-01 and no later than ${isoDay(new Date(latest))}`,
+  };
 }
 
 /**
@@ -90,6 +114,7 @@ export function validateLiftImport(
   const valid: LiftRecord[] = [];
   const errors: ImportError[] = [];
   const undated: LiftRecord[] = [];
+  const importDate = options.importDate ?? new Date();
 
   records.forEach((r, i) => {
     const row = i + 1;
@@ -113,6 +138,10 @@ export function validateLiftImport(
       rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
     if (!r.date || isNaN(r.date.getTime()))
       rowErrors.push({ row, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
+    else {
+      const outOfDateRange = liftDateRangeError(row, r.date, importDate);
+      if (outOfDateRange) rowErrors.push(outOfDateRange);
+    }
     rowErrors.push(...exportColumnErrors(r, row));
 
     // String(r.lift ?? ''), not a bare `as unknown as string` cast: r.lift is
