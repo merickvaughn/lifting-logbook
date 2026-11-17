@@ -12,6 +12,12 @@ export interface LiftingProgramSpec {
   amrap: string | boolean;
   warmUpPct: string;
   wtDecrementPct: number;
+  /**
+   * The raw `Weight %` list (`1,.95,.9`) of a spec that has that column instead of
+   * `WT Decrement %`. Kept so the validator can name the field when the list's steps
+   * aren't even and `wtDecrementPct` is therefore NaN.
+   */
+  weightPct?: string;
   activation: string;
   weekType?: WeekType;
   /**

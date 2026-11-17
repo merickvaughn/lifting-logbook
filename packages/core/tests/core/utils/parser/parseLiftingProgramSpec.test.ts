@@ -44,3 +44,25 @@ describe("parseLiftingProgramSpec + validateProgramSpecImport: a spec with no We
     ]);
   });
 });
+
+describe("parseLiftingProgramSpec: a Weight % column in place of WT Decrement %", () => {
+  const header = ["Week", "Offset", "Lift", "Increment", "Order", "Sets", "Reps", "AMRAP?", "Warm-Up %", "Weight %", "Activation"];
+  const specOf = (...lists: string[]) => [
+    header,
+    ...lists.map((l) => [1, 0, "Squat", 5, 1, 3, 5, "FALSE", "0.5", l, ""]),
+  ];
+
+  it("reads an evenly stepped list as the matching decrement", () => {
+    const rows = parseLiftingProgramSpec(specOf("1,.95,.9", "1,.9", "1,.9,.8"));
+    expect(rows.map((r) => r.wtDecrementPct)).toEqual([0.05, 0.1, 0.1]);
+    expect(validateProgramSpecImport(rows).errors).toEqual([]);
+  });
+
+  it("gives an unevenly stepped list one row error naming the row and the field", () => {
+    const rows = parseLiftingProgramSpec(specOf("1,.9", "1,.95,.8"));
+    const { errors } = validateProgramSpecImport(rows);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ row: 2, field: "weightPct" });
+    expect(errors[0]!.message).toContain("Weight %");
+  });
+});
