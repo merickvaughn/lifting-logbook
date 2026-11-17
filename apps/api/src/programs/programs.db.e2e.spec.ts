@@ -1003,6 +1003,15 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       __dirname,
       '../../../../packages/core/tests/fixtures/lift_records.csv',
     );
+    // The fixture is real Sheet data, and 7 of its rows carry the `12/31/1969 19:00:00`
+    // blank-date artefact. Import rejects those as row errors (#1316), so these whole-file
+    // tests read the fixture without them.
+    const readFixture = (): string =>
+      fs
+        .readFileSync(FIXTURE_PATH, 'utf8')
+        .split('\n')
+        .filter((line) => !line.includes(',12/31/1969 '))
+        .join('\n');
 
     beforeEach(async () => {
       // Start each import test with a clean slate for this user's lift records
@@ -1010,7 +1019,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     it('happy path — imports the full fixture CSV and returns a written count', async () => {
-      const csvContent = fs.readFileSync(FIXTURE_PATH, 'utf8');
+      const csvContent = readFixture();
 
       const res = await postCsv(IMPORT_URL, csvContent);
       expect(res.statusCode).toBe(201);
@@ -1032,7 +1041,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     // physically impossible to store both; this test fails on the pre-fix schema
     // and passes once `date` joins the constraint.
     it('imports both sides of a real same-key-different-date collision', async () => {
-      const csvContent = fs.readFileSync(FIXTURE_PATH, 'utf8');
+      const csvContent = readFixture();
 
       const res = await postCsv(IMPORT_URL, csvContent);
       expect(res.statusCode).toBe(201);
@@ -1060,7 +1069,7 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
 
     it('re-import returns written=0 and skipped=all rows from first import', async () => {
-      const csvContent = fs.readFileSync(FIXTURE_PATH, 'utf8');
+      const csvContent = readFixture();
 
       // First import
       const first = await postCsv(IMPORT_URL, csvContent);
