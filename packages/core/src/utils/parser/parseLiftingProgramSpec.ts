@@ -14,11 +14,13 @@ export function parseLiftingProgramSpec(data: SpreadsheetCell[][]): LiftingProgr
   const headerMap = LIFTING_PROGRAM_SPEC_HEADER_MAP;
   // Convert using tableToObjects, then cast/convert types
   const rawObjects = tableToObjects(data, undefined);
+  // A one-week program repeats a single block, so its sheet has no Week column: every row is week 1.
+  const hasWeekColumn = (data[0] ?? []).some((h) => String(h) === "Week");
   const parsed = rawObjects.map((obj) => {
     const result: Record<string, unknown> = {};
     for (const header in headerMap) {
       const { key, type } = headerMap[header]!;
-      let value: unknown = obj[header];
+      let value: unknown = key === "week" && !hasWeekColumn ? 1 : obj[header];
       if (type === "number") {
         value = Number(value);
       } else if (type === "boolean|string") {
