@@ -1,4 +1,4 @@
-import { LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, validateLiftImport } from "@src/core";
+import { LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, parseLiftRecords, validateLiftImport } from "@src/core";
 import { LiftRecord } from "@src/core/models";
 
 /** Minimal slot map covering the fixture abbreviations we test against. */
@@ -280,5 +280,24 @@ describe("validateLiftImport", () => {
         expect(validateLiftImport(records, importMap).valid[0]!.lift).toBe(id);
       }
     });
+  });
+});
+
+describe("validateLiftImport — blank Reps cell (#1317)", () => {
+  const table = (reps: string) => [
+    ["Program", "Cycle #", "Workout #", "Date", "Lift", "Set #", "Weight", "Reps", "Notes"],
+    ["RPT", "1", "1", "2025-01-01", "Squat", "1", "200", reps, ""],
+  ];
+
+  it("flags a blank Reps cell as a row error on the reps field", () => {
+    const { valid, errors } = validateLiftImport(parseLiftRecords(table("")), TEST_SLOT_MAP);
+    expect(valid).toHaveLength(0);
+    expect(errors).toEqual([expect.objectContaining({ row: 1, field: "reps" })]);
+  });
+
+  it("keeps an explicit 0 reps as a valid missed set", () => {
+    const { valid, errors } = validateLiftImport(parseLiftRecords(table("0")), TEST_SLOT_MAP);
+    expect(errors).toHaveLength(0);
+    expect(valid).toEqual([expect.objectContaining({ reps: 0 })]);
   });
 });
