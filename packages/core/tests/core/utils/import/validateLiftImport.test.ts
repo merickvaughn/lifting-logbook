@@ -298,6 +298,6 @@ describe("validateLiftImport — blank Reps cell (#1317)", () => {
   it("keeps an explicit 0 reps as a valid missed set", () => {
     const { valid, errors } = validateLiftImport(parseLiftRecords(table("0")), TEST_SLOT_MAP);
     expect(errors).toHaveLength(0);
-    expect(valid[0]!.reps).toBe(0);
+    expect(valid).toEqual([expect.objectContaining({ reps: 0 })]);
   });
 });

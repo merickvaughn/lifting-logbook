@@ -48,6 +48,9 @@ const ASSIGN_BLANK_FIELDS: ReadonlySet<string> = new Set<AssignBlankField>(["mac
  * missing column, rather than `Number("")`'s 0: the Assign step reads either as "the file
  * doesn't say" (#1253), while 0 is a number a file can really use. Those fields and a blank
  * date are named in `blankFields`.
+ *
+ * In either mode, a blank `Reps` cell reads as `NaN`, so validation rejects the row: it's a set
+ * never logged. An explicit 0 stays 0, a missed set (#1317).
  * @param {SpreadsheetCell[][]} data
  * @returns {ParsedLiftRecord[]}
  */
