@@ -806,6 +806,23 @@ describe('segmentLiftHistory', () => {
       ]);
     });
 
+    it('splits a number reused a year later when other numbers fall between', () => {
+      const rows = [
+        ...session(0, ['Squat'], { macrocycleNum: 36 }),
+        ...session(3, ['Squat'], { macrocycleNum: 36 }),
+        ...session(6, ['Squat'], { macrocycleNum: 37 }),
+        ...session(9, ['Squat'], { macrocycleNum: 38 }),
+        ...session(12, ['Squat'], { macrocycleNum: 0 }),
+        ...session(15, ['Squat'], { macrocycleNum: 1 }),
+        ...session(400, ['Squat'], { macrocycleNum: 36 }),
+        ...session(403, ['Squat'], { macrocycleNum: 36 }),
+      ];
+      const result = segment(rows);
+      const nums = result.stretches.filter((s) => s.fileMacrocycleNum === 36);
+      expect(nums).toHaveLength(2);
+      expect(result.conflicts).toEqual([]);
+    });
+
     it('gives a blank number the one above it, and leaves rows with none to take unnumbered', () => {
       // Numbers only on each group's first row, as a sheet often has them.
       const lead = session(0, ['Squat']);

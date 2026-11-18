@@ -844,6 +844,37 @@ class Segmenter<T extends LiftHistoryRow> {
       groups.set(id, group);
     }
 
+    // A number reused later in the file (a sheet restarting at 0) is a new stretch once another
+    // number of the same program has sessions between its days, across a break of more than
+    // BREAK_DAYS. A gap alone doesn't split it, nor do numbers whose dates alternate closely.
+    const daysByKey = new Map<string, { num: number; day: number }[]>();
+    for (const group of groups.values()) {
+      const days = daysByKey.get(group.key) ?? [];
+      for (const row of group.rows) days.push({ num: group.num, day: toUTCMidnight(row.date).getTime() });
+      daysByKey.set(group.key, days);
+    }
+    const split = new Map<string, { num: number; key: string; rows: Dated<T>[] }>();
+    for (const [id, group] of groups) {
+      const others = (daysByKey.get(group.key) ?? []).filter((d) => d.num !== group.num);
+      const own = [...new Set(group.rows.map((row) => toUTCMidnight(row.date).getTime()))].sort((a, b) => a - b);
+      const chunkOf = new Map<number, number>();
+      let chunk = 0;
+      own.forEach((day, n) => {
+        const prev = own[n - 1];
+        if (prev !== undefined && (day - prev) / DAY_MS > BREAK_DAYS && others.some((o) => o.day > prev && o.day < day)) chunk++;
+        chunkOf.set(day, chunk);
+      });
+      for (const row of group.rows) {
+        const n = chunkOf.get(toUTCMidnight(row.date).getTime()) ?? 0;
+        const key = `${id}|${n}`;
+        const part = split.get(key) ?? { num: group.num, key: group.key, rows: [] };
+        part.rows.push(row);
+        split.set(key, part);
+      }
+    }
+    groups.clear();
+    for (const [key, group] of split) groups.set(key, group);
+
     // Placed by date, an unnumbered row on a macrocycle's day is part of it, in file order. Its
     // own `Program` cell doesn't name the macrocycle's program: it joined by its date alone.
     let left = unnumbered;
