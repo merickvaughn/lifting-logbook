@@ -381,8 +381,8 @@ it deliberately, after sanity-checking staging.
 [`deploy-approval-notifier.py`](https://github.com/brownm09/dev-env/blob/main/claude/scripts/deploy-approval-notifier.py)
 shows a Windows notification within about 2 minutes of a run starting to wait here
 ([dev-env ADR-163](https://github.com/brownm09/dev-env/blob/main/docs/adr/163-production-deploy-approval-notifications.md)).
-Turn it on once per machine, from a normal terminal rather than a Claude desktop session:
-`powershell -ExecutionPolicy Bypass -File ~/.claude/scripts/register-deploy-approval-notifier.ps1`.
+Turn it on once per machine from PowerShell or Git Bash, not from a Claude desktop session:
+`powershell -ExecutionPolicy Bypass -File "$HOME/.claude/scripts/register-deploy-approval-notifier.ps1"`.
 The notification's **Review** button opens the run. Its **Approve** button approves at once,
 without showing the `plan-production` summary below, so use Review whenever the release
 includes `infra/terraform` or `apps/api/prisma/migrations` changes.
