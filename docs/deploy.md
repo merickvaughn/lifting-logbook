@@ -377,6 +377,16 @@ pending Prisma migrations to prod — it sits in front of the in-VPC migrate job
 DB-backed `/readyz` smoke ([ADR-027](adr/ADR-027-deploy-pipeline-migrations.md)) — so approve
 it deliberately, after sanity-checking staging.
 
+**Getting told when it's waiting (Windows).** dev-env's
+[`deploy-approval-notifier.py`](https://github.com/brownm09/dev-env/blob/main/claude/scripts/deploy-approval-notifier.py)
+shows a Windows notification within about 2 minutes of a run starting to wait here
+([dev-env ADR-163](https://github.com/brownm09/dev-env/blob/main/docs/adr/163-production-deploy-approval-notifications.md)).
+Turn it on once per machine, from a normal terminal rather than a Claude desktop session:
+`powershell -ExecutionPolicy Bypass -File ~/.claude/scripts/register-deploy-approval-notifier.ps1`.
+The notification's **Review** button opens the run. Its **Approve** button approves at once,
+without showing the `plan-production` summary below, so use Review whenever the release
+includes `infra/terraform` or `apps/api/prisma/migrations` changes.
+
 **Read the production plan before approving.** Open the **`plan-production`** job in the run
 and read its job summary — a read-only `terraform plan` against the production workspace,
 finished before the gate prompts. The summary shows either **`No changes`** or a non-empty
