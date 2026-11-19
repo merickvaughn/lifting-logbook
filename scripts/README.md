@@ -39,6 +39,8 @@ Repository automation scripts. Grouped by lifecycle.
 | [`clean-index.js`](clean-index.js) | Removes `dist/**/index.js` files after bundling — part of the Apps Script build chain. |
 | [`flatten-dist.js`](flatten-dist.js) | Moves all `dist/**/*.js` files into a flat `dist/` for GAS upload. |
 | [`mkdir-dist.js`](mkdir-dist.js) | Ensures `dist/` exists before a build. |
+| [`prune-turbo-cache.mjs`](prune-turbo-cache.mjs) | Deletes every `.turbo/cache` file whose hash no task of this job's turbo runs used, read from the `turbo run --summarize` output in `.turbo/runs`, then deletes the summaries. CI restores `.turbo` by key prefix and saves it whole, so without this every old task hash stayed in the archive; the e2e archive on `main` reached 459 MB ([#1095](https://github.com/merickvaughn/lifting-logbook/issues/1095)). Fails without deleting anything if it finds no summary or no task hashes. Runs in CI (`ci.yml`'s `lint-and-test` and `e2e` jobs, before the cache is saved); don't run it in a local checkout, where it would delete the local turbo cache. |
+| [`prune-turbo-cache.test.mjs`](prune-turbo-cache.test.mjs) | `node --test` coverage for `prune-turbo-cache.mjs`: task-hash extraction from a run summary, the hash of each of turbo 2.9's three cache file names, the keep/remove split, a prune that removes stale entries and keeps every run's own, and the two fail-closed cases (no summary, no task hashes). Runs in CI (`ci.yml`). |
 | [`watch.js`](watch.js) | esbuild watch mode for `src/{core,api}/*/index.ts` entry points. |
 
 ## Observability / alert calibration
