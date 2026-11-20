@@ -25,9 +25,6 @@ import { PrismaRepositoryFactory } from './prisma-repository-factory';
 import { RlsInterceptor } from './rls.interceptor';
 import { RLS_TX_CLIENT } from './rls-context';
 import { runBatch } from './prisma-tx.util';
-import { PrismaSupplementRepository } from './supplement.repository';
-import { SupplementWriteConflictError } from '../../ports/errors';
-import type { SupplementItem } from '@lifting-logbook/types';
 import { injectPage } from '../../testing/macrocycle-id';
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
@@ -264,13 +261,13 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
   });
 
   // Every supplement table (#1374), reached by name so a table left out of this list is noticed.
+  // The change log is append-only for lifting_app (ADR-046), so it has its own test below.
   const SUPPLEMENT_TABLES = [
     // [delegate, an update, the key a new row of Bob's needs so only WITH CHECK can stop it]
     ['supplementDayType', { name: 'Changed' }, { id: 'new' }],
     ['supplementItem', { name: 'Changed' }, { id: `${USER_BOB}-new` }],
     ['supplementDose', { amount: 'Changed' }, { id: `${USER_BOB}-new-dose` }],
     ['supplementMixPart', { name: 'Changed' }, { id: `${USER_BOB}-new-part` }],
-    ['supplementChange', { type: 'restored' }, { seq: 2 }],
   ] as const;
   type SupplementDelegate = {
     findMany(): Promise<{ userId: string }[]>;
@@ -299,38 +296,31 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     ).rejects.toThrow(/row-level security/);
   });
 
-  it('a supplement write that fails stores neither its rows nor its change-log entry (#1374)', async () => {
-    const item: SupplementItem = {
-      id: 'rls-e2e-atomic',
-      name: 'Atomic',
-      keyCompound: '',
-      timing: '',
-      shortNote: '',
-      longNote: '',
-      status: 'active',
-      unverified: false,
-      links: [],
-      ingredients: [{ key: 'caffeine', amount: 100, unit: 'mg' }],
-      doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: [] }],
-    };
-    const save = (nextSeq: number) =>
-      asUser(appDb, USER_ALICE, async (tx) => {
-        const repo = new PrismaSupplementRepository(tx, USER_ALICE);
-        const state = await repo.load();
-        // A stale nextSeq stands for another write appending first: its change takes the seq.
-        await repo.save({ ...state, items: [...state.items, item], nextSeq }, [{ type: 'added', date: '2026-11-20', item }]);
-      });
+  it("isolates supplement_change reads and inserts, and lifting_app can't update or delete a change (#1374)", async () => {
+    const rows = await asUser(appDb, USER_ALICE, (tx) => tx.supplementChange.findMany());
+    expect(rows.map((row) => row.userId)).toEqual([USER_ALICE]);
+    expect(await asUser(appDb, null, (tx) => tx.supplementChange.count())).toBe(0);
 
-    await expect(save(1)).rejects.toThrow(SupplementWriteConflictError);
-    expect(await owner.supplementItem.count({ where: { id: item.id } })).toBe(0);
-    expect(await owner.supplementDose.count({ where: { itemId: item.id } })).toBe(0);
-    expect(await owner.supplementChange.count({ where: { userId: USER_ALICE } })).toBe(1);
+    // Append-only: UPDATE and DELETE are revoked, even on the user's own rows.
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) => tx.supplementChange.updateMany({ data: { type: 'restored' } })),
+    ).rejects.toThrow(/permission denied for table supplement_change/);
+    await expect(asUser(appDb, USER_ALICE, (tx) => tx.supplementChange.deleteMany())).rejects.toThrow(
+      /permission denied for table supplement_change/,
+    );
+    expect(await owner.supplementChange.count({ where: { userId: USER_ALICE, type: 'mix_split' } })).toBe(1);
 
-    await save(2);
-    const stored = await asUser(appDb, USER_ALICE, (tx) => new PrismaSupplementRepository(tx, USER_ALICE).load());
-    expect(stored.items.map((i) => i.id)).toEqual([`${USER_ALICE}-mix`, item.id]);
-    expect(stored.items[1]).toEqual(item);
-    expect(stored.nextSeq).toBe(3);
+    // Alice may append her own change, but WITH CHECK stops her appending one of Bob's.
+    const appended = await asUser(appDb, USER_ALICE, (tx) =>
+      tx.supplementChange.create({ data: { userId: USER_ALICE, seq: 2, date: new Date('2026-11-20'), type: 'mix_split', payload: { mixId: 'm' } } }),
+    );
+    expect(appended.seq).toBe(2);
+    const bobRow = await owner.supplementChange.findFirstOrThrow({ where: { userId: USER_BOB } });
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) =>
+        tx.supplementChange.create({ data: { ...bobRow, seq: 2, payload: { mixId: bobRow.userId } } }),
+      ),
+    ).rejects.toThrow(/row-level security/);
   });
 
   it('isolates lift_modification reads by GUC on an unscoped query, and fails closed (#1151)', async () => {

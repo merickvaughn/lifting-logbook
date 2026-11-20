@@ -1,5 +1,22 @@
 -- Supplements (#1372, #1374): day types, items, doses, mix parts and an append-only change log,
 -- plus the caffeine cutoff on user_settings. See docs/adr/ADR-046-supplement-storage.md.
+-- 20261120000001 follows it: user-scoped keys, the append-only grant and two change types.
+--
+-- Additive only: five new tables, and a nullable column with no default on user_settings, which
+-- Postgres adds without rewriting the table. The ALTER still takes an ACCESS EXCLUSIVE lock on a
+-- table every request reads, hence the lock timeout: the migration fails rather than queue
+-- requests behind it, and can be re-run.
+--
+-- RLS: every new table is ENABLE and FORCE ROW LEVEL SECURITY with the usual userId isolation
+-- policy, below. lifting_app gets its grants from the default privileges in 20260611000000.
+--
+-- Deploy ordering: this runs in the Cloud Run migration job ahead of the new API revision
+-- (ADR-027). The old API neither reads nor writes the new tables or column.
+--
+-- Rollback: the old API ignores them, so the database needs no change. Dropping the tables and
+-- the column loses every supplement stack and its history.
+
+SET LOCAL lock_timeout = '5s';
 
 -- AlterTable
 ALTER TABLE "user_settings" ADD COLUMN     "supplementCaffeineCutoff" TEXT;
