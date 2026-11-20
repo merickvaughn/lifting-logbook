@@ -29,30 +29,52 @@ Store **both**, in one transaction per write:
   folded into a mix stays in `supplement_item` with `foldedInto` set to the mix's id, so a split
   brings it back; it isn't part of the stack.
 - **An append-only change log**, `supplement_change`: one row per `SupplementChange`, keyed by
-  `(userId, seq)`, with the change's own fields in a `payload` column. The app inserts rows and
-  never updates or deletes them.
+  `(userId, seq)`, with the change's own fields in a `payload` column. The database enforces
+  append-only: `lifting_app`, the role the API connects as, has only `SELECT` and `INSERT` on it
+  (migration `20261120000001`).
 
-Every write reads the current state, applies the change, validates the result with
-`validateStack`, and saves the new state and its log entries in the request's transaction, the log
-entries last. If anything fails, neither the rows nor the log entries are stored.
+Every write that changes anything logs it. Item changes have their change types, and the day-type
+list and the caffeine cutoff have `day_types_set` and `caffeine_cutoff_set`. A request that changes
+nothing, such as a `PATCH` repeating the stored values, saves and logs nothing.
+
+**One function applies a change.** `applyChange` in `packages/core/src/supplements/apply.ts`
+turns a change into a new state. A write builds its changes, applies them with `applyChange`,
+validates the result with `validateStack`, and saves the new state with the changes, in one
+transaction, writing only the tables whose part of the state changed, and the log entries last.
+`stackAsOf` replays the log with the same function, so `GET /supplements/as-of/<today>` returns the
+stack `GET /supplements` does. If anything fails, neither the rows nor the log entries are stored.
 
 The current-state tables are the source of truth for the stack now. The log is the source of
 truth for history: `GET /supplements/as-of/:date` replays it with `stackAsOf`, and restoring a
-removed item reads the item from its `removed` entry.
+removed item reads the item from its latest `removed` entry. The repository parses each payload
+with defaults for the fields an older entry lacks, so restoring an item removed before a later
+version added fields still gives a whole item.
 
-The `seq` primary key also serializes writes. A write numbers its entries from the `seq` it read,
-so when another write appends first, the insert hits the key, the transaction rolls back, and the
-API answers 409.
+### Serializing writes
+
+A write first takes a per-user transaction lock,
+`pg_advisory_xact_lock(hashtextextended(userId, 1374))`, as the macrocycle writes do with their
+own key, then loads the state. Writes for one user therefore run one after another, each from the
+state the previous one saved, so none saves over another. The lock is held to the end of the
+request's transaction.
+
+The `(userId, seq)` key stays as a backstop for a writer that skips the lock, such as a script.
+A write numbers its entries from the `seq` it read, so a collision there, or on any other key,
+rolls the transaction back and the API answers 409 with the code `supplement-stale`.
+
+### Dates
+
+Every write takes the lifter's local date as `today`, which is required, and dates its changes
+with it. It can't be earlier than the date of the user's last change, or the write is a 400. Dates
+never go backwards in `seq` order, so replaying in `(date, seq)` order applies changes in the order
+they were made, and a removal can't replay before the restore that followed it.
+
+### Isolation
 
 Every table carries `userId` with `ENABLE` and `FORCE ROW LEVEL SECURITY` and the usual isolation
-policy, like the other per-user tables.
-
-### Writes that don't log
-
-`SupplementChange` records changes to items. Changing the day types logs a `moved` entry for each
-item whose doses lose a day type, but the day-type list and the caffeine cutoff themselves have no
-change type, so a write that changes only those appends nothing. Adding change types for them is
-left to the history UI that would read them.
+policy, like the other per-user tables. Items are keyed by `(userId, id)`, and the dose and mix-part
+foreign keys name both columns, because foreign-key and unique checks bypass RLS: a key on `id`
+alone would let a client-chosen id, from an import say, find or cascade into another user's item.
 
 ## Alternatives considered
 
@@ -76,8 +98,27 @@ per-row RLS, and the per-table rows Download My Data exports.
   keeps the save one code path for every kind of change.
 - The log only grows. It's a few hundred bytes per change; nothing prunes it.
 - The two can disagree if a write path forgets to log. Every write goes through one controller
-  method that saves state and changes together, and the e2e tests assert the log after each write.
+  method that saves state and changes together, the repository refuses a write that changes the
+  state without a change, and the e2e tests assert that `as-of/<today>` equals `GET /` after each
+  kind of write.
+- Writes for one user wait for each other. A write takes milliseconds, so the wait is short.
+- An item folded into a mix keeps its own doses, and removing a day type takes it off those too,
+  so splitting the mix later brings them back valid. Restoring a part of a mix is a 409 naming the
+  mix: the part comes back by splitting it, or by restoring a removed mix first.
 - Download My Data includes all five tables in `logbook.json`; Clear data keeps them, as setup.
+
+## Known follow-ups
+
+The API shape later sub-issues need, not built here:
+
+- **Stable dose ids.** Doses and mix parts get new row ids on every save of the stack, and a dose
+  has no id in the API, so a change can't name one dose. Wanted by editing and bulk actions,
+  [#1377](https://github.com/merickvaughn/lifting-logbook/issues/1377).
+- **Batch writes.** Each request is one write; a client making many edits sends many requests,
+  each taking the lock. [#1377](https://github.com/merickvaughn/lifting-logbook/issues/1377) and
+  [#1379](https://github.com/merickvaughn/lifting-logbook/issues/1379).
+- **An `imported` change type**, so an import is one entry the history can show and undo rather
+  than one `added` per row. [#1379](https://github.com/merickvaughn/lifting-logbook/issues/1379).
 
 ## References
 
@@ -88,6 +129,11 @@ per-row RLS, and the per-table rows Download My Data exports.
 - [PostgreSQL 16 — Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html):
   forced RLS and an isolation policy on every supplement table.
 - [PostgreSQL 16 — Unique constraints and primary keys](https://www.postgresql.org/docs/16/ddl-constraints.html#DDL-CONSTRAINTS-PRIMARY-KEYS):
-  the `(userId, seq)` key that stops two writes appending the same change.
+  the `(userId, seq)` key, the backstop against a writer that skips the lock.
+- [PostgreSQL 16 — Advisory lock functions](https://www.postgresql.org/docs/16/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS):
+  `pg_advisory_xact_lock`, the per-user write lock held to the end of the transaction.
+- [PostgreSQL 16 — GRANT](https://www.postgresql.org/docs/16/sql-grant.html) and
+  [REVOKE](https://www.postgresql.org/docs/16/sql-revoke.html): `lifting_app` may only read and
+  insert change-log rows.
 - [Prisma — Interactive transactions](https://www.prisma.io/docs/orm/prisma-client/queries/transactions#interactive-transactions):
   the transaction a save runs in when no request transaction encloses it.
