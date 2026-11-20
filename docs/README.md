@@ -176,6 +176,7 @@ monorepo/
 | [ADR-042](adr/ADR-042-macrocycle-table-and-numbering.md) | Every Macrocycle Gets a Row, and a New One Takes the Next Free Number | Accepted |
 | [ADR-043](adr/ADR-043-lift-progression-resolution-and-storage.md) | A Lift's Progression Resolves Row, Lift, Default, Catalog, and Is Stored Beside Each | Accepted |
 | [ADR-044](adr/ADR-044-data-snapshots-and-expiry-job.md) | Clear Data Saves a Compressed Snapshot, and Its Expiry Job Reaches Expired Rows Through an Owner-Only Policy | Accepted |
+| [ADR-045](adr/ADR-045-monitoring-source-of-truth.md) | Terraform Is the Only Source of Truth for Grafana Cloud Monitoring Resources | Accepted |
 
 ---
 

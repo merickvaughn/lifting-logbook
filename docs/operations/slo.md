@@ -310,7 +310,10 @@ fire; a route above the floor at 100% 5xx must). After changing the rule, apply 
 
 The rule and routing config are kept as code in `infra/observability/`. They are applied to the
 Grafana Cloud Mimir ruler + Alertmanager with [`mimirtool`](https://grafana.com/docs/mimir/latest/manage/tools/mimirtool/)
-(set `MIMIR_ADDRESS` / `MIMIR_API_USER` / `MIMIR_API_KEY` from the Grafana Cloud portal):
+(set `MIMIR_ADDRESS` / `MIMIR_API_USER` / `MIMIR_API_KEY` from the Grafana Cloud portal).
+This manual load is an interim step: [ADR-045](../adr/ADR-045-monitoring-source-of-truth.md)
+makes Terraform the only writer of these resources, and the procedure is retired for each one
+when Terraform takes it over. Don't add it to a workflow:
 
 ```bash
 # Alert rules (Mimir ruler)
