@@ -19,6 +19,7 @@ import {
   SupplementChangeBody,
   applyChange,
   isSameData,
+  isWorkoutSlot,
   stackAsOf,
   validateStack,
 } from '@lifting-logbook/core';
@@ -75,14 +76,29 @@ function find(state: SupplementState, id: string): { index: number; item: Supple
 
 /**
  * The parts folded into a mix in the stack, each named `Mix (Part)` so a 400 names the mix the
- * user can see. Parts of a removed mix are left out, like removed items: they're checked when
- * the mix is restored, which brings them back into this list.
+ * user can see. Parts of a removed mix are left out, like removed items: they're reconciled with
+ * the day types when the mix is restored, which brings them back into this list.
  */
 function liveParts(state: SupplementState): SupplementItem[] {
   return state.folded.flatMap(({ item, mixId }) => {
     const mix = state.items.find((i) => i.id === mixId);
     return mix ? [{ ...item, name: `${mix.name} (${item.name})` }] : [];
   });
+}
+
+/**
+ * What restoring `item` changes, given the day types there are now (ADR-046). A day type removed
+ * since is taken off its doses. A workout-slot dose left with none is dropped, and the item comes
+ * back pending, so a restore never fails and never strands an item: one `moved` change logs the
+ * doses as they are now, and `moved_to_pending` the status.
+ */
+function reconcileRestored(item: SupplementItem, known: ReadonlySet<string>): SupplementChangeBody[] {
+  const filtered = item.doses.map((d) => ({ ...d, dayTypes: d.dayTypes.filter((t) => known.has(t)) }));
+  const doses = filtered.filter((d) => !(isWorkoutSlot(d.slot) && d.dayTypes.length === 0));
+  const changes: SupplementChangeBody[] = [];
+  if (!isSameData(doses, item.doses)) changes.push({ type: 'moved', itemId: item.id, doses });
+  if (doses.length < filtered.length && item.status !== 'pending') changes.push({ type: 'moved_to_pending', itemId: item.id });
+  return changes;
 }
 
 /** `value` as a whole number from `min` to `max`, `fallback` when absent, or a 400. */
@@ -216,9 +232,11 @@ export class SupplementsController {
   }
 
   /**
-   * Brings back a removed item as it was removed, to the end of the stack. A day type removed
-   * since is taken off its doses, as a `moved` change, and a workout-slot dose left with none is
-   * a 400. A 409 when the item is in the stack, or is part of a mix, which the 409 names.
+   * Brings back a removed item as it was removed, to the end of the stack, with a mix's parts.
+   * A day type removed since is taken off its doses and its parts', as a `moved` change for each
+   * that changed; an item or part whose workout-slot dose is left with none loses that dose and
+   * comes back pending (`reconcileRestored`). A 409 when the item is in the stack, or is part of
+   * a mix, which the 409 names.
    */
   @Post('items/:id/restore')
   async restore(
@@ -238,19 +256,17 @@ export class SupplementsController {
       if (!item) throw new NotFoundException(`No removed supplement item ${id}`);
       state.removed = [item];
       const known = new Set(state.dayTypes.map((d) => d.id));
-      const doses = item.doses.map((d) => ({ ...d, dayTypes: d.dayTypes.filter((t) => known.has(t)) }));
-      const changes: SupplementChangeBody[] = [{ type: 'restored', itemId: id }];
-      if (!isSameData(doses, item.doses)) changes.push({ type: 'moved', itemId: id, doses });
-      return changes;
+      const parts = state.folded.filter((f) => f.mixId === id).map((f) => f.item);
+      return [{ type: 'restored', itemId: id }, ...[item, ...parts].flatMap((i) => reconcileRestored(i, known))];
     });
     return view(state);
   }
 
   /**
    * Replaces the day types and sets the caffeine cutoff. A day type left out is taken off every
-   * dose, including those of items folded into a mix, as a `moved` change; a workout-slot dose
-   * left with none is a 400, naming the mix for a part of one. A part of a removed mix, like a
-   * removed item, is cleaned but not checked until the mix is restored.
+   * dose in the stack, including those of the parts of a mix in it, as a `moved` change; a
+   * workout-slot dose left with none is a 400, naming the mix for a part of one. A removed item
+   * and the parts of a removed mix are left as they are, and reconciled when restored.
    */
   @Put('settings')
   async settings(
@@ -267,7 +283,8 @@ export class SupplementsController {
       const known = new Set(body.dayTypes.map((d) => d.id));
       if (known.size !== body.dayTypes.length) throw new BadRequestException('Day type ids must be unique');
       if (!isSameData(body.dayTypes, state.dayTypes)) changes.push({ type: 'day_types_set', dayTypes: body.dayTypes });
-      for (const item of [...state.items, ...state.folded.map((f) => f.item)]) {
+      const partsInStack = state.folded.filter((f) => state.items.some((i) => i.id === f.mixId)).map((f) => f.item);
+      for (const item of [...state.items, ...partsInStack]) {
         const doses = item.doses.map((d) => ({ ...d, dayTypes: d.dayTypes.filter((t) => known.has(t)) }));
         if (!isSameData(doses, item.doses)) changes.push({ type: 'moved', itemId: item.id, doses });
       }

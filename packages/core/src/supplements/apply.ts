@@ -56,9 +56,9 @@ const partOf = (item: SupplementItem): SupplementPart => ({
 
 /**
  * Applies one change to `state`, in place, and returns what it couldn't act on. A change that
- * names an item not in the stack changes nothing for that item, except a `moved` change, which
- * also reaches an item folded into a mix: taking a day type off every dose includes those
- * (ADR-046).
+ * names an item not in the stack changes nothing for that item, except a `moved` or
+ * `moved_to_pending` change, which also reaches an item folded into a mix: taking a day type off
+ * a mix's parts includes those, and restoring a mix can leave a part pending (ADR-046).
  *
  * A mix takes the place of its first part, and a split puts the parts back where the mix was.
  * A restored item goes to the end of the stack.
@@ -78,6 +78,13 @@ export function applyChange(state: SupplementStackState, change: SupplementChang
     const found = live(id);
     if (found) state.items[found.index] = { ...found.item, ...changes };
   };
+  /** Like `patch`, but also reaches an item folded into a mix. */
+  const patchHeld = (id: string, changes: Partial<SupplementItem>) => {
+    const folded = state.folded.findIndex((f) => f.item.id === id);
+    const entry = state.folded[folded];
+    if (entry) state.folded[folded] = { ...entry, item: { ...entry.item, ...changes } };
+    else patch(id, changes);
+  };
 
   switch (change.type) {
     case 'added': {
@@ -95,18 +102,14 @@ export function applyChange(state: SupplementStackState, change: SupplementChang
     case 'edited':
       patch(change.itemId, change.changes);
       break;
-    case 'moved': {
-      const folded = state.folded.findIndex((f) => f.item.id === change.itemId);
-      const entry = state.folded[folded];
-      if (entry) state.folded[folded] = { ...entry, item: { ...entry.item, doses: change.doses } };
-      else patch(change.itemId, { doses: change.doses });
+    case 'moved':
+      patchHeld(change.itemId, { doses: change.doses });
       break;
-    }
     case 'started':
       patch(change.itemId, { status: 'active' });
       break;
     case 'moved_to_pending':
-      patch(change.itemId, { status: 'pending' });
+      patchHeld(change.itemId, { status: 'pending' });
       break;
     case 'confirmed':
       patch(change.itemId, { unverified: false });

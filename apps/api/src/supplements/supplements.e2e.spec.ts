@@ -272,29 +272,41 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
   });
 
   it('restores an item after one of its day types was removed, taking it off the doses', async () => {
-    const { ok, add, inject, changes, setDayTypes } = newUser();
+    const { ok, add, changes, setDayTypes } = newUser();
     await setDayTypes();
     const kept = await add('Creatine', {
       doses: [{ slot: 'post', amount: '1', servings: 1, dayTypes: ['lift', 'rest'] }],
     });
-    const stranded = await add('Caffeine', { doses: [{ slot: 'pre', amount: '1', servings: 1, dayTypes: ['rest'] }] });
     await ok('DELETE', `/supplements/items/${kept.id}?today=${TODAY}`);
-    await ok('DELETE', `/supplements/items/${stranded.id}?today=${TODAY}`);
     await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[0]] });
 
     const stack = await ok('POST', `/supplements/items/${kept.id}/restore?today=${TODAY}`);
     const cleaned = [{ slot: 'post', amount: '1', servings: 1, dayTypes: ['lift'] }];
     expect(stack.items).toEqual([{ ...kept, doses: cleaned }]);
     expect((await changes()).slice(-2)).toEqual([
-      { type: 'restored', date: TODAY, seq: 7, itemId: kept.id },
-      { type: 'moved', date: TODAY, seq: 8, itemId: kept.id, doses: cleaned },
+      { type: 'restored', date: TODAY, seq: 5, itemId: kept.id },
+      { type: 'moved', date: TODAY, seq: 6, itemId: kept.id, doses: cleaned },
     ]);
+  });
 
-    // Its only day type gone, the pre dose would have none.
-    const res = await inject('POST', `/supplements/items/${stranded.id}/restore?today=${TODAY}`);
-    expect(res.statusCode).toBe(400);
-    expect(res.json().message).toEqual(['Caffeine: a pre dose needs at least one day type']);
-    expect(await changes()).toHaveLength(8);
+  it('restores an item pending, without the workout dose a removed day type left with none', async () => {
+    const { ok, add, get, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    const anytime = { slot: 'am', amount: '1', servings: 1, dayTypes: [] };
+    const item = await add('Caffeine', { doses: [{ slot: 'pre', amount: '1', servings: 1, dayTypes: ['rest'] }, anytime] });
+    await ok('DELETE', `/supplements/items/${item.id}?today=${TODAY}`);
+    // Removing its only workout day type doesn't touch the removed item.
+    await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[0]] });
+    expect((await changes()).at(-1)?.type).toBe('day_types_set');
+
+    const stack = await ok('POST', `/supplements/items/${item.id}/restore?today=${TODAY}`);
+    expect(stack.items).toEqual([{ ...item, status: 'pending', doses: [anytime] }]);
+    expect((await changes()).slice(-3)).toEqual([
+      { type: 'restored', date: TODAY, seq: 5, itemId: item.id },
+      { type: 'moved', date: TODAY, seq: 6, itemId: item.id, doses: [anytime] },
+      { type: 'moved_to_pending', date: TODAY, seq: 7, itemId: item.id },
+    ]);
+    expect((await get()).items).toEqual(stack.items);
   });
 
   it('splits a mix after a day type was removed, bringing its parts back without it', async () => {
@@ -330,26 +342,29 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     expect(res.json().message).toContain('Stim (Caffeine): a pre dose needs at least one day type');
   });
 
-  it('cleans the parts of a removed mix without checking them, and checks them when the mix is restored', async () => {
-    const { ok, add, inject, changes, setDayTypes } = newUser();
+  it('leaves the parts of a removed mix alone, and restores a part a removed day type emptied as pending', async () => {
+    const { ok, add, changes, setDayTypes } = newUser();
     await setDayTypes();
     const c = await add('Caffeine', { doses: [{ slot: 'pre', amount: '1', servings: 1, dayTypes: ['lift'] }] });
-    const d = await add('Taurine');
+    const d = await add('Taurine', { doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: ['rest'] }] });
     const mix = await ok<SupplementCreatedResponse>('POST', `/supplements/mixes?today=${TODAY}`, { name: 'Stim', itemIds: [d.id, c.id] });
     await ok('DELETE', `/supplements/items/${mix.id}?today=${TODAY}`);
 
-    // Caffeine, folded into a removed mix, can't block removing its only day type.
+    // Caffeine, folded into a removed mix, can't block removing its only day type, and isn't moved.
     await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[1]] });
-    expect((await changes()).slice(-2)).toEqual([
-      { type: 'day_types_set', date: TODAY, seq: 6, dayTypes: [DAY_TYPES[1]] },
-      { type: 'moved', date: TODAY, seq: 7, itemId: c.id, doses: [{ slot: 'pre', amount: '1', servings: 1, dayTypes: [] }] },
+    expect((await changes()).slice(-1)).toEqual([{ type: 'day_types_set', date: TODAY, seq: 6, dayTypes: [DAY_TYPES[1]] }]);
+
+    // Restoring the mix drops Caffeine's emptied pre dose and leaves it pending; Taurine is as it was.
+    const restored = await ok('POST', `/supplements/items/${mix.id}/restore?today=${TODAY}`);
+    expect(restored.items.map((i) => i.id)).toEqual([mix.id]);
+    expect((await changes()).slice(-3)).toEqual([
+      { type: 'restored', date: TODAY, seq: 7, itemId: mix.id },
+      { type: 'moved', date: TODAY, seq: 8, itemId: c.id, doses: [] },
+      { type: 'moved_to_pending', date: TODAY, seq: 9, itemId: c.id },
     ]);
 
-    // Restoring the mix brings the part back into the stack's checks, and the 400 names the mix.
-    const res = await inject('POST', `/supplements/items/${mix.id}/restore?today=${TODAY}`);
-    expect(res.statusCode).toBe(400);
-    expect(res.json().message).toEqual(['Stim (Caffeine): a pre dose needs at least one day type']);
-    expect(await changes()).toHaveLength(7);
+    const split = await ok('POST', `/supplements/mixes/${mix.id}/split?today=${TODAY}`);
+    expect(split.items).toEqual([d, { ...c, status: 'pending', doses: [] }]);
   });
 
   it('409s restoring a part of a mix, naming the mix, and brings it back through the mix', async () => {

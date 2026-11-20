@@ -59,6 +59,19 @@ describe('applyChange', () => {
     expect(state.items[0]?.doses).toEqual([dose({ dayTypes: ['lift'] })]);
   });
 
+  it('marks an item folded into a mix pending, so a split brings it back pending', () => {
+    const state = emptyStackState();
+    applyChange(state, { type: 'added', item: item('a') });
+    applyChange(state, { type: 'added', item: item('b') });
+    applyChange(state, { type: 'mix_created', mix: item('mix'), partIds: ['a', 'b'] });
+    expect(applyChange(state, { type: 'moved_to_pending', itemId: 'b' })).toEqual([]);
+    applyChange(state, { type: 'mix_split', mixId: 'mix' });
+    expect(state.items.map((i) => [i.id, i.status])).toEqual([
+      ['a', 'active'],
+      ['b', 'pending'],
+    ]);
+  });
+
   it('sets the day types and the caffeine cutoff', () => {
     const state = emptyStackState();
     applyChange(state, { type: 'day_types_set', dayTypes: [LIFT, REST] });

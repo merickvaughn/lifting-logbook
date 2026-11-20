@@ -85,6 +85,25 @@ would still hold, but a change could be dated a day later than the lifter's own 
 exactness, because the as-of view is read by date; a client that hits the 400 can retry with the
 date the error names.
 
+### Restoring after a day type is removed
+
+Removing a day type takes it off every dose in the stack, including the parts of a mix in the
+stack, and a workout-slot dose left with none makes the change a 400. A removed item, and the parts
+of a removed mix, are left as they were removed. Restoring one reconciles it with the day types
+there are then: a removed day type is taken off its doses, and off the doses of a restored mix's
+parts, so a later split can't bring a deleted day type back. A workout-slot dose left with no day
+type is dropped, and that item, part or mix comes back `pending`. Each change is logged through
+`applyChange`: a `moved` for the doses and a `moved_to_pending` for the status, which reach a part
+folded into a mix as well as an item in the stack. A restore is never a 400 for a missing day type.
+
+The owner chose this on 2026-11-20, over keeping the restore a 400. A 400 kept the workout-dose
+rule exact, but its only fix was re-creating a day type with the same id, which a client that mints
+new ids can't do, so such an item could never come back; and a removed mix's parts, once cleaned
+while removed, stranded the whole mix. The trade-off is that the restored item isn't exactly what
+was removed: it's missing the dropped dose and is pending, and the lifter has to place it again
+before starting it. The change log keeps the item as it was removed, so nothing is lost from the
+history.
+
 ### Isolation
 
 Every table carries `userId` with `ENABLE` and `FORCE ROW LEVEL SECURITY` and the usual isolation
@@ -118,11 +137,12 @@ per-row RLS, and the per-table rows Download My Data exports.
   state without a change, and the e2e tests assert that `as-of/<today>` equals `GET /` after each
   kind of write.
 - Writes for one user wait for each other. A write takes milliseconds, so the wait is short.
-- An item folded into a mix keeps its own doses, and removing a day type takes it off those too,
-  so splitting the mix later brings them back valid. A part of a mix in the stack is checked with
-  it, and a 400 names it as `Mix (Part)`. A part of a removed mix is cleaned but not checked, like
-  a removed item, until the mix is restored. Restoring a part of a mix is a 409 naming the
-  mix: the part comes back by splitting it, or by restoring a removed mix first.
+- An item folded into a mix keeps its own doses, and removing a day type takes it off those too
+  while the mix is in the stack, so splitting the mix later brings them back valid. A part of a mix
+  in the stack is checked with it, and a 400 names it as `Mix (Part)`. A part of a removed mix is
+  left alone, like a removed item, until the mix is restored (see *Restoring after a day type is
+  removed*). Restoring a part of a mix is a 409 naming the mix: the part comes back by splitting
+  it, or by restoring a removed mix first.
 - Download My Data includes all five tables in `logbook.json`; Clear data keeps them, as setup.
   The staging seed's reset keeps them too, and the caffeine cutoff on `user_settings`, whichever
   role runs it. The app role can't delete the log, and deleting the stack without its log would
