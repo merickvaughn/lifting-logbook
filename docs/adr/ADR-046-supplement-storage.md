@@ -106,6 +106,7 @@ per-row RLS, and the per-table rows Download My Data exports.
   so splitting the mix later brings them back valid. Restoring a part of a mix is a 409 naming the
   mix: the part comes back by splitting it, or by restoring a removed mix first.
 - Download My Data includes all five tables in `logbook.json`; Clear data keeps them, as setup.
+  The staging seed's reset keeps them too: it runs as the app role, which can't delete the log.
 
 ## Known follow-ups
 

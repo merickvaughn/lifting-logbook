@@ -256,8 +256,11 @@ from core's compiled `dist`, so seeding from a stale build would write an old sp
 (the stale-`dist` hazard behind #944).
 
 **Re-running it** resets the seed user: in one transaction, it deletes every row the seed user
-has in every table with a `userId` column, then writes the data above again, dated from the day
-it runs. No other user's rows are touched. This also clears the rows earlier versions of the seed
+has in every table with a `userId` column except the five supplement tables, then writes the data
+above again, dated from the day it runs. The seed writes no supplement rows, and the app role
+can't delete from the append-only `supplement_change` log
+([ADR-046](adr/ADR-046-supplement-storage.md)), so any supplement stack the seed user has, and its
+history, stays as it is. No other user's rows are touched. This also clears the rows earlier versions of the seed
 wrote under program `531` and lift names like `squat`, so re-running the seed is the cleanup for
 an existing staging database.
 

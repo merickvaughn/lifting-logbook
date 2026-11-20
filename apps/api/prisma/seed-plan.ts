@@ -212,12 +212,26 @@ export async function writeSeedPlan(prisma: PrismaClient, plan: SeedPlan): Promi
   );
 }
 
+/** Supplement tables the seed reset leaves alone; see `resetSeedUser`. */
+export const SEED_KEPT_TABLES = [
+  'supplementChange',
+  'supplementDayType',
+  'supplementDose',
+  'supplementItem',
+  'supplementMixPart',
+] as const;
+
 /**
  * Deletes every row the seed user has, so each run writes the plan from scratch (#1022).
  * The user is synthetic and no Clerk token reaches it, so nothing else writes these rows.
  * `seed-plan.spec.ts` fails if a model with a `userId` field is missing here. That covers every
  * user-scoped table as long as each one names its owner `userId`, as all do today; the one child
  * table without it (`custom_program_spec`) cascades from `custom_program`.
+ *
+ * The supplement tables are the exception, in `SEED_KEPT_TABLES`. The seed writes none of them,
+ * and the role it runs as can't delete from `supplement_change`, which is append-only (ADR-046).
+ * Deleting the stack but not its log would leave a history that replays to a different stack, so
+ * all five stay as they are.
  */
 export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void> {
   const where = { userId: SEED_USER_ID };
@@ -239,11 +253,6 @@ export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void>
   await tx.userSettings.deleteMany({ where });
   await tx.focusBlock.deleteMany({ where });
   await tx.focusDayState.deleteMany({ where });
-  await tx.supplementDose.deleteMany({ where });
-  await tx.supplementMixPart.deleteMany({ where });
-  await tx.supplementItem.deleteMany({ where });
-  await tx.supplementDayType.deleteMany({ where });
-  await tx.supplementChange.deleteMany({ where });
   await tx.macrocycleScheduledWorkout.deleteMany({ where });
   await tx.macrocycle.deleteMany({ where });
   await tx.customProgram.deleteMany({ where });
