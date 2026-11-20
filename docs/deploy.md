@@ -255,9 +255,15 @@ DATABASE_URL="postgresql://lifting-logbook-app:<password>@127.0.0.1:5434/lifting
 from core's compiled `dist`, so seeding from a stale build would write an old spec's lift names
 (the stale-`dist` hazard behind #944).
 
-**Re-running it** resets the seed user: in one transaction, it deletes every row the seed user
-has in every table with a `userId` column, then writes the data above again, dated from the day
-it runs. No other user's rows are touched. This also clears the rows earlier versions of the seed
+**Re-running it** resets the seed user's training data, not its supplements: in one transaction,
+it deletes every row the seed user has in every table with a `userId` column except the five
+supplement tables, then writes the data above again, dated from the day it runs, keeping the
+caffeine cutoff from the old `user_settings` row. It does this whichever role runs it. The seed
+writes no supplement rows, and the app role can't delete from the append-only `supplement_change`
+log ([ADR-046](adr/ADR-046-supplement-storage.md)), so the reset keeps the seed user's supplement
+stack, its history and its cutoff together, for every role. Supplement rows the seed user gets
+from elsewhere, such as a local API using its bearer token, therefore build up across re-seeds;
+clearing them takes a `DELETE` as the owner. No other user's rows are touched. This also clears the rows earlier versions of the seed
 wrote under program `531` and lift names like `squat`, so re-running the seed is the cleanup for
 an existing staging database.
 

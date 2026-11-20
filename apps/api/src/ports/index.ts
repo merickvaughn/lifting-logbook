@@ -4,6 +4,7 @@ export * from './factory';
 export * from './tokens';
 export * from './IBodyWeightRepository';
 export * from './IFocusRepository';
+export * from './ISupplementRepository';
 export * from './IMacrocycleDashboardRepository';
 export * from './IMacrocycleRepository';
 export * from './IMacrocyclePlanningAgent';

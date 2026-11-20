@@ -5,7 +5,7 @@
  * (queue workers, CLI tools, alternate transports).
  */
 
-import { FOCUS_BLOCK_STALE_CODE } from '@lifting-logbook/types';
+import { FOCUS_BLOCK_STALE_CODE, SUPPLEMENT_NOT_REMOVED_CODE, SUPPLEMENT_STALE_CODE } from '@lifting-logbook/types';
 
 export class ProgramNotFoundError extends Error {
   constructor(public readonly program: string) {
@@ -142,5 +142,41 @@ export class ReservedLiftNameConflictError extends Error {
   constructor(public readonly liftName: string) {
     super(`'${liftName}' is a reserved lift name and cannot be used for a custom lift`);
     this.name = 'ReservedLiftNameConflictError';
+  }
+}
+
+/**
+ * Another write to the supplement stack landed while this one was saving (#1374). Writes take a
+ * per-user lock, so this is the backstop for a writer that doesn't, such as a migration or a
+ * script; nothing is written (ADR-046).
+ */
+export class SupplementWriteConflictError extends Error {
+  readonly code = SUPPLEMENT_STALE_CODE;
+
+  constructor() {
+    super('The supplement stack changed while saving; reload and try again');
+    this.name = 'SupplementWriteConflictError';
+  }
+}
+
+/**
+ * Restoring a supplement item that isn't removed: it's in the stack, or folded into a mix,
+ * which `mix` names along with whether the mix itself is removed (#1374).
+ */
+export class SupplementNotRemovedError extends Error {
+  readonly code = SUPPLEMENT_NOT_REMOVED_CODE;
+
+  constructor(
+    public readonly itemId: string,
+    public readonly mix?: { id: string; name: string; removed: boolean },
+  ) {
+    super(
+      mix === undefined
+        ? `Supplement item ${itemId} is in the stack, not removed`
+        : mix.removed
+          ? `Supplement item ${itemId} is part of the mix "${mix.name}", which is removed: restore the mix, then split it`
+          : `Supplement item ${itemId} is part of the mix "${mix.name}": split the mix to bring it back`,
+    );
+    this.name = 'SupplementNotRemovedError';
   }
 }

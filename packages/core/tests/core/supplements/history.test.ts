@@ -98,7 +98,8 @@ describe('stackAsOf', () => {
         { date: '2026-01-04', type: 'restored', itemId: 'na' },
       );
       expect(ids(l, '2026-01-01')).toEqual(['na', 'k', 'cl']);
-      expect(ids(l, '2026-01-02')).toEqual(['cl', 'mix']);
+      // The mix takes its first part's place, as the API puts it (applyChange).
+      expect(ids(l, '2026-01-02')).toEqual(['mix', 'cl']);
       const end = stackAsOf(l, '2026-01-04').stack;
       expect(end.map((i) => i.id)).toEqual(['mix']);
       expect(end[0]?.parts?.map((p) => [p.itemId, p.name])).toEqual([

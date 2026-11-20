@@ -30,6 +30,7 @@ describeOrSkip('Staging seed write (#1022, e2e, lifting_app role)', () => {
     await owner.strengthGoal.deleteMany({ where: { userId: SEED_USER_ID } });
     await owner.macrocycle.deleteMany({ where: { userId: SEED_USER_ID } });
     await owner.macrocycleDashboard.deleteMany({ where: { userId: SEED_USER_ID } });
+    await owner.supplementChange.deleteMany({ where: { userId: SEED_USER_ID } });
   };
 
   beforeAll(async () => {
@@ -82,6 +83,26 @@ describeOrSkip('Staging seed write (#1022, e2e, lifting_app role)', () => {
       expect(await owner.macrocycleDashboard.count({ where })).toBe(1);
       expect(await owner.strengthGoal.count({ where })).toBe(plan.strengthGoals.length);
       expect(await owner.trainingMax.count({ where: { userId: OTHER } })).toBe(1);
+    },
+    DB_E2E_TIMEOUT_MS,
+  );
+
+  it(
+    'keeps the supplement log and the caffeine cutoff it records across a re-seed (#1374)',
+    async () => {
+      await writeSeedPlan(app, buildSeedPlan(new Date()));
+      await owner.userSettings.update({ where: { userId: SEED_USER_ID }, data: { supplementCaffeineCutoff: '12:00' } });
+      await owner.supplementChange.create({
+        data: { userId: SEED_USER_ID, seq: 1, date: new Date('2026-11-20'), type: 'caffeine_cutoff_set', payload: { caffeineCutoff: '12:00' } },
+      });
+
+      const plan = buildSeedPlan(new Date());
+      await writeSeedPlan(app, plan);
+      await writeSeedPlan(app, plan);
+
+      const where = { userId: SEED_USER_ID };
+      expect(await owner.userSettings.findUnique({ where })).toMatchObject({ activeProgram: PROGRAM, supplementCaffeineCutoff: '12:00' });
+      expect((await owner.supplementChange.findMany({ where })).map((c) => c.type)).toEqual(['caffeine_cutoff_set']);
     },
     DB_E2E_TIMEOUT_MS,
   );

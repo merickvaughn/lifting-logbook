@@ -76,6 +76,10 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     await owner.liftMetadata.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.missingMaxDismissal.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.importSuggestionUsage.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
+    // Doses and mix parts cascade from their item.
+    await owner.supplementItem.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
+    await owner.supplementDayType.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
+    await owner.supplementChange.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
   };
 
   beforeAll(async () => {
@@ -122,6 +126,37 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
         state: { modes: {}, picks: {}, trims: {}, placement: 'after', order: null, dismissed: false },
       })),
     });
+
+    // Seed a row of every supplement table for both users (#1374).
+    for (const userId of [USER_ALICE, USER_BOB]) {
+      await owner.supplementDayType.create({ data: { userId, id: 'lift', name: 'Lift', position: 0 } });
+      await owner.supplementItem.create({
+        data: {
+          id: `${userId}-mix`,
+          userId,
+          name: 'Mix',
+          keyCompound: '',
+          timing: '',
+          shortNote: '',
+          longNote: '',
+          status: 'active',
+          unverified: false,
+          links: [],
+          ingredients: [],
+          isMix: true,
+          position: 0,
+        },
+      });
+      await owner.supplementDose.create({
+        data: { userId, itemId: `${userId}-mix`, position: 0, slot: 'pre', amount: '1', servings: 1, dayTypes: ['lift'] },
+      });
+      await owner.supplementMixPart.create({
+        data: { userId, mixId: `${userId}-mix`, position: 0, partItemId: `${userId}-part`, name: 'Part', ingredients: [] },
+      });
+      await owner.supplementChange.create({
+        data: { userId, seq: 1, date: new Date('2026-11-20'), type: 'mix_split', payload: { mixId: `${userId}-mix` } },
+      });
+    }
 
     // Seed both users' lift modifications (#1151).
     await owner.liftModification.createMany({
@@ -223,6 +258,69 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     const bobBlock = await owner.focusBlock.findFirst({ where: { userId: USER_BOB } });
     expect(bobBlock?.priority).toBe(1);
     expect(await owner.focusDayState.count({ where: { userId: USER_BOB } })).toBe(1);
+  });
+
+  // Every supplement table (#1374), reached by name so a table left out of this list is noticed.
+  // The change log is append-only for lifting_app (ADR-046), so it has its own test below.
+  const SUPPLEMENT_TABLES = [
+    // [delegate, an update, the key a new row of Bob's needs so only WITH CHECK can stop it]
+    ['supplementDayType', { name: 'Changed' }, { id: 'new' }],
+    ['supplementItem', { name: 'Changed' }, { id: `${USER_BOB}-new` }],
+    ['supplementDose', { amount: 'Changed' }, { id: `${USER_BOB}-new-dose` }],
+    ['supplementMixPart', { name: 'Changed' }, { id: `${USER_BOB}-new-part` }],
+  ] as const;
+  type SupplementDelegate = {
+    findMany(): Promise<{ userId: string }[]>;
+    count(): Promise<number>;
+    updateMany(args: { data: Record<string, string> }): Promise<{ count: number }>;
+    create(args: { data: Record<string, unknown> }): Promise<unknown>;
+  };
+  // The delegates differ only in their row types, which these checks don't read.
+  const supplementTable = (db: PrismaClient, name: string) =>
+    (db as unknown as Record<string, SupplementDelegate>)[name] as SupplementDelegate;
+
+  it.each(SUPPLEMENT_TABLES)("cannot read or write another user's %s rows, and fails closed (#1374)", async (table, data, key) => {
+    const rows = await asUser(appDb, USER_ALICE, (tx) => supplementTable(tx, table).findMany());
+    expect(rows.map((row) => row.userId)).toEqual([USER_ALICE]);
+    expect(await asUser(appDb, null, (tx) => supplementTable(tx, table).count())).toBe(0);
+
+    // An unscoped update reaches only Alice's own row.
+    const updated = await asUser(appDb, USER_ALICE, (tx) => supplementTable(tx, table).updateMany({ data }));
+    expect(updated.count).toBe(1);
+    const bobRows = (await supplementTable(owner, table).findMany()).filter((row) => row.userId === USER_BOB);
+    expect(bobRows).toEqual([expect.not.objectContaining(data)]);
+
+    // A copy of Bob's row under a new key: only WITH CHECK stops Alice writing it.
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) => supplementTable(tx, table).create({ data: { ...bobRows[0], ...key } })),
+    ).rejects.toThrow(/row-level security/);
+  });
+
+  it("isolates supplement_change reads and inserts, and lifting_app can't update or delete a change (#1374)", async () => {
+    const rows = await asUser(appDb, USER_ALICE, (tx) => tx.supplementChange.findMany());
+    expect(rows.map((row) => row.userId)).toEqual([USER_ALICE]);
+    expect(await asUser(appDb, null, (tx) => tx.supplementChange.count())).toBe(0);
+
+    // Append-only: UPDATE and DELETE are revoked, even on the user's own rows.
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) => tx.supplementChange.updateMany({ data: { type: 'restored' } })),
+    ).rejects.toThrow(/permission denied for table supplement_change/);
+    await expect(asUser(appDb, USER_ALICE, (tx) => tx.supplementChange.deleteMany())).rejects.toThrow(
+      /permission denied for table supplement_change/,
+    );
+    expect(await owner.supplementChange.count({ where: { userId: USER_ALICE, type: 'mix_split' } })).toBe(1);
+
+    // Alice may append her own change, but WITH CHECK stops her appending one of Bob's.
+    const appended = await asUser(appDb, USER_ALICE, (tx) =>
+      tx.supplementChange.create({ data: { userId: USER_ALICE, seq: 2, date: new Date('2026-11-20'), type: 'mix_split', payload: { mixId: 'm' } } }),
+    );
+    expect(appended.seq).toBe(2);
+    const bobRow = await owner.supplementChange.findFirstOrThrow({ where: { userId: USER_BOB } });
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) =>
+        tx.supplementChange.create({ data: { ...bobRow, seq: 2, payload: { mixId: bobRow.userId } } }),
+      ),
+    ).rejects.toThrow(/row-level security/);
   });
 
   it('isolates lift_modification reads by GUC on an unscoped query, and fails closed (#1151)', async () => {

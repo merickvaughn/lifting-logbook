@@ -340,6 +340,14 @@ const _repositoryBundle: RepositoryBundle = {
   liftRecord: _liftRecordRepo,
   programPhilosophy: _programPhilosophyRepo,
   strengthGoal: _strengthGoalRepo,
+  supplement: {
+    load: () => Promise.reject(new Error('not implemented')),
+    changes: () => Promise.resolve([]),
+    changesThrough: () => Promise.resolve([]),
+    firstChangeDate: () => Promise.resolve(null),
+    lastRemoved: () => Promise.resolve(undefined),
+    write: () => Promise.reject(new Error('not implemented')),
+  },
   trainingMax: _trainingMaxRepo,
   trainingMaxHistory: _trainingMaxHistoryRepo,
   trainingData: {
