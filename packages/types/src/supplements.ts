@@ -33,6 +33,8 @@ export interface Ingredient {
 
 /** One component of a mix, kept so the mix's totals still include it. */
 export interface SupplementPart {
+  /** The item the part came from, so splitting the mix can bring it back. */
+  itemId: string;
   name: string;
   ingredients: Ingredient[];
 }
@@ -65,24 +67,57 @@ export interface SupplementItem {
   doses: SupplementDose[];
 }
 
-/** Append-only history entry; `date` is `YYYY-MM-DD`. */
-export type SupplementChange = { date: string } & (
+/**
+ * The fields an `edited` change may set. Status, doses, verification and parts each have
+ * their own change, so an edit can't move, start, confirm or re-mix an item.
+ */
+export type SupplementItemDetails = Pick<
+  SupplementItem,
+  'name' | 'keyCompound' | 'timing' | 'shortNote' | 'longNote' | 'links' | 'ingredients'
+>;
+
+/**
+ * Append-only history entry. `date` is `YYYY-MM-DD`; `seq` increases with every change
+ * appended, and orders changes made on the same date.
+ */
+export type SupplementChange = { date: string; seq: number } & (
   | { type: 'added'; item: SupplementItem }
-  | { type: 'edited'; itemId: string; changes: Partial<Omit<SupplementItem, 'id'>> }
+  | { type: 'edited'; itemId: string; changes: Partial<SupplementItemDetails> }
   | { type: 'moved'; itemId: string; doses: SupplementDose[] }
   | { type: 'started'; itemId: string }
   | { type: 'moved_to_pending'; itemId: string }
-  | { type: 'removed'; itemId: string }
+  /** `item` is the item as it stood when removed, so restoring it doesn't need a replay. */
+  | { type: 'removed'; item: SupplementItem }
   | { type: 'restored'; itemId: string }
   | { type: 'confirmed'; itemId: string }
   | { type: 'mix_created'; mix: SupplementItem; partIds: string[] }
   | { type: 'folded_into_mix'; mixId: string; itemId: string }
+  /** Brings a mix's parts back as separate items; the mix goes, or reverts to its own ingredients. */
+  | { type: 'mix_split'; mixId: string }
 );
 
+export const SUPPLEMENT_ADVISORY_RULES = [
+  'lateStimulant',
+  'highCaffeine',
+  'highPotassium',
+  'adaptogenAtNight',
+  'missingAmount',
+] as const;
+export type SupplementAdvisoryRule = (typeof SUPPLEMENT_ADVISORY_RULES)[number];
+
+/** Keys of the references the advisory rules cite. */
+export const SUPPLEMENT_ADVISORY_SOURCES = [
+  'fda-caffeine',
+  'nih-ods-potassium',
+  'adaptogen-timing',
+  'stack-data',
+] as const;
+export type SupplementAdvisorySource = (typeof SUPPLEMENT_ADVISORY_SOURCES)[number];
+
 export interface SupplementAdvisory {
-  rule: string;
+  rule: SupplementAdvisoryRule;
   itemIds: string[];
   message: string;
   /** Key of the reference the rule cites. */
-  source: string;
+  source: SupplementAdvisorySource;
 }

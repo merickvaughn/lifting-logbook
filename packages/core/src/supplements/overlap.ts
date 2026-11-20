@@ -1,6 +1,6 @@
 import type { SupplementDose, SupplementItem } from '@lifting-logbook/types';
 import { isWorkoutSlot } from './placements';
-import { convertAmount, itemIngredients } from './totals';
+import { itemIngredients, toNanograms } from './totals';
 
 export interface Overlap {
   item: SupplementItem;
@@ -11,16 +11,16 @@ export interface Overlap {
   preselect: boolean;
 }
 
-/** Amount (mg) of one ingredient the item supplies in a slot, summed over its matching doses. */
-function slotAmountMg(
+/** Whole nanograms of one ingredient the item supplies in a slot, summed over its matching doses. */
+function slotAmountNg(
   item: SupplementItem,
   key: string,
   match: (dose: SupplementDose) => boolean,
 ): number {
   const perServing = itemIngredients(item)
     .filter((i) => i.key === key)
-    .reduce((sum, i) => sum + convertAmount(i.amount, i.unit, 'mg'), 0);
-  return item.doses.filter(match).reduce((sum, d) => sum + perServing * d.servings, 0);
+    .reduce((sum, i) => sum + toNanograms(i.amount, i.unit), 0);
+  return item.doses.filter(match).reduce((sum, d) => sum + Math.round(perServing * d.servings), 0);
 }
 
 /**
@@ -50,7 +50,7 @@ export function findOverlaps(
       sameSlot &&
       shared.every(
         (key) =>
-          slotAmountMg(candidate, key, candidateInSlot) >= slotAmountMg(item, key, itemInSlot),
+          slotAmountNg(candidate, key, candidateInSlot) >= slotAmountNg(item, key, itemInSlot),
       );
     out.push({ item, sharedIngredients: shared, sameSlot, preselect });
   }

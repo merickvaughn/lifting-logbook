@@ -1,8 +1,9 @@
 import type {
+  Ingredient,
+  SupplementChange,
   SupplementDayType,
   SupplementDose,
   SupplementItem,
-  Ingredient,
 } from '@lifting-logbook/types';
 
 export const LIFT: SupplementDayType = { id: 'lift', name: 'Lift day', sessionTime: '07:00' };
@@ -38,3 +39,9 @@ export function item(id: string, p: Partial<SupplementItem> = {}): SupplementIte
     ...p,
   };
 }
+
+type WithoutSeq<C> = C extends unknown ? Omit<C, 'seq'> : never;
+
+/** A change log whose `seq` follows the order the changes are written in. */
+export const changeLog = (...changes: WithoutSeq<SupplementChange>[]): SupplementChange[] =>
+  changes.map((c, seq) => ({ ...c, seq }));

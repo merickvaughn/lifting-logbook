@@ -1,23 +1,33 @@
 import type { Ingredient, IngredientUnit, SupplementItem } from '@lifting-logbook/types';
-import { placements, type Placement } from './placements';
+import { hasAmount, placements } from './placements';
 
-const MG_PER_UNIT: Record<IngredientUnit, number> = { mg: 1, g: 1000, mcg: 0.001 };
+/**
+ * Amounts are summed as whole nanograms. Every unit is a whole number of them, and each
+ * contribution is rounded once, so a sum is exact and a total compares exactly against a
+ * threshold: 1.2 g + 2.2 g of potassium is 3,400 mg, not 3,400.0000000000005.
+ */
+const NG_PER_UNIT: Record<IngredientUnit, number> = { mcg: 1_000, mg: 1_000_000, g: 1_000_000_000 };
 
-export function convertAmount(amount: number, from: IngredientUnit, to: IngredientUnit): number {
-  return (amount * MG_PER_UNIT[from]) / MG_PER_UNIT[to];
+/** `amount` of `unit` as whole nanograms. */
+export function toNanograms(amount: number, unit: IngredientUnit): number {
+  return Math.round(amount * NG_PER_UNIT[unit]);
+}
+
+/** Whole nanograms in `unit`. */
+export function fromNanograms(ng: number, unit: IngredientUnit): number {
+  return ng / NG_PER_UNIT[unit];
 }
 
 export interface IngredientShare {
   itemId: string;
-  /** In the total's unit. */
-  amount: number;
+  /** Whole nanograms. */
+  ng: number;
 }
 
 export interface IngredientTotal {
   key: string;
-  /** The unit of the first contribution seen; later ones are converted to it. */
-  unit: IngredientUnit;
-  total: number;
+  /** Whole nanograms; `totalOf` reads it in a unit. */
+  ng: number;
   shares: IngredientShare[];
 }
 
@@ -26,12 +36,7 @@ export function itemIngredients(item: SupplementItem): Ingredient[] {
   return item.parts ? item.parts.flatMap((p) => p.ingredients) : item.ingredients;
 }
 
-/** A dose with a blank amount contributes nothing. */
-export function servingsTaken(p: Placement): number {
-  return p.dose.amount.trim() === '' ? 0 : p.dose.servings;
-}
-
-/** Sums each ingredient as amount × servings across counted placements. */
+/** Sums each ingredient as amount × servings across counted placements; a blank amount adds 0. */
 export function ingredientTotals(
   stack: readonly SupplementItem[],
   dayTypeId: string,
@@ -39,21 +44,26 @@ export function ingredientTotals(
   const totals = new Map<string, IngredientTotal>();
   for (const p of placements(stack, dayTypeId)) {
     if (!p.counted) continue;
-    const servings = servingsTaken(p);
+    const servings = hasAmount(p.dose) ? p.dose.servings : 0;
     for (const ing of itemIngredients(p.item)) {
       let t = totals.get(ing.key);
       if (!t) {
-        t = { key: ing.key, unit: ing.unit, total: 0, shares: [] };
+        t = { key: ing.key, ng: 0, shares: [] };
         totals.set(ing.key, t);
       }
-      const amount = convertAmount(ing.amount, ing.unit, t.unit) * servings;
-      t.total += amount;
+      const ng = Math.round(toNanograms(ing.amount, ing.unit) * servings);
+      t.ng += ng;
       const share = t.shares.find((s) => s.itemId === p.item.id);
-      if (share) share.amount += amount;
-      else t.shares.push({ itemId: p.item.id, amount });
+      if (share) share.ng += ng;
+      else t.shares.push({ itemId: p.item.id, ng });
     }
   }
   return [...totals.values()];
+}
+
+/** Whole nanograms of one ingredient on the day; 0 when absent. */
+export function totalNanograms(totals: readonly IngredientTotal[], key: string): number {
+  return totals.find((x) => x.key === key)?.ng ?? 0;
 }
 
 /** The day's total of one ingredient in `unit`; 0 when absent. */
@@ -62,8 +72,7 @@ export function totalOf(
   key: string,
   unit: IngredientUnit,
 ): number {
-  const t = totals.find((x) => x.key === key);
-  return t ? convertAmount(t.total, t.unit, unit) : 0;
+  return fromNanograms(totalNanograms(totals, key), unit);
 }
 
 /**
