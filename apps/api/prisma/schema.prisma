@@ -113,17 +113,17 @@ model MacrocycleDashboard {
 }
 
 model TrainingMaxHistory {
-  id             String   @id @default(cuid())
-  userId         String
-  program        String
-  lift           String
-  weight         Float
-  reps           Int      @default(1)
-  date           DateTime
-  isPR           Boolean  @default(false)
-  source         String
-  goalMet        Boolean  @default(false)
-  createdAt      DateTime @default(now())
+  id        String   @id @default(cuid())
+  userId    String
+  program   String
+  lift      String
+  weight    Float
+  reps      Int      @default(1)
+  date      DateTime
+  isPR      Boolean  @default(false)
+  source    String
+  goalMet   Boolean  @default(false)
+  createdAt DateTime @default(now())
   // Set on a modification's own-max entry (#1153). Null is the lift's own history, and the
   // history reads filter to it.
   modificationId String?
@@ -211,21 +211,21 @@ model WorkoutLiftOverride {
 }
 
 model LiftMetadata {
-  id                    String   @id @default(uuid())
-  userId                String
-  lift                  String
-  muscleGroups          String[]
+  id            String   @id @default(uuid())
+  userId        String
+  lift          String
+  muscleGroups  String[]
   // Muscles a set counts ½ toward (#1017, ADR-036). Both lists empty means the built-in
   // defaults apply.
   secondaryMuscleGroups String[] @default([])
-  substitutions         String[]
-  foundational          Boolean  @default(false)
+  substitutions String[]
+  foundational  Boolean  @default(false)
   // The lift's own progression (#1210, ADR-043). Null falls through to the lifter's default,
   // then the catalog's. `progression` is one of LIFT_PROGRESSION_TYPES, checked by the DTO.
-  progression           String?
-  progressionIncrement  Float?
-  repsLow               Int?
-  repsHigh              Int?
+  progression          String?
+  progressionIncrement Float?
+  repsLow              Int?
+  repsHigh             Int?
 
   @@unique([userId, lift])
   @@index([userId])
@@ -253,22 +253,22 @@ model CustomLift {
 
 // A change to how a lift is performed, linked to that lift (#1151, ADR-041).
 model LiftModification {
-  id               String                @id @default(uuid())
+  id               String    @id @default(uuid())
   userId           String
   // The lift's id: a catalog id or a custom lift's uuid, written through lookupLift. No foreign
   // key, because catalog lifts are not rows.
   lift             String
   name             String
-  description      String                @default("")
+  description      String    @default("")
   // 'none' | 'lift' | 'own', with a CHECK constraint
-  maxMode          String                @default("none")
+  maxMode          String    @default("none")
   // Sheet spellings that mean this lift with this modification on. Nothing writes them until
   // import does (#1154).
-  alternativeNames String[]              @default([])
+  alternativeNames String[]  @default([])
   // Set when a delete finds a logged set still naming it: hidden from the list, still named on
   // those sets.
   archivedAt       DateTime?
-  createdAt        DateTime              @default(now())
+  createdAt        DateTime  @default(now())
   maxes            LiftModificationMax[]
 
   @@unique([userId, lift, name])
@@ -292,14 +292,14 @@ model LiftModificationMax {
 }
 
 model UserSettings {
-  userId                      String  @id
-  activeProgram               String?
-  workoutSchedule             Json?
-  defaultWeightIncrement      Float?
-  unit                        String?
+  userId                 String  @id
+  activeProgram          String?
+  workoutSchedule        Json?
+  defaultWeightIncrement Float?
+  unit                   String?
   // The daily focus guide (#1056). Null falls back to DEFAULT_FOCUS_BUDGET.
-  focusBudgetSets             Int?
-  focusBudgetMinutes          Int?
+  focusBudgetSets        Int?
+  focusBudgetMinutes     Int?
   // The lifter's default progression (#1210, ADR-043). Null `defaultProgression` means each
   // lift's catalog default applies; the other three are meaningful only when it is set.
   defaultProgression          String?
@@ -381,28 +381,28 @@ model MacrocycleScheduledWorkout {
 // focus_day_state, macrocycle_scheduled_workout) key on (userId, program, macrocycleNum),
 // so this row's `id` is the macrocycle's only stable identity once numbers follow dates.
 model Macrocycle {
-  id               String    @id @default(uuid())
-  userId           String
-  program          String
-  macrocycleNum    Int
-  startDate        DateTime  @db.Date
+  id              String    @id @default(uuid())
+  userId          String
+  program         String
+  macrocycleNum   Int
+  startDate       DateTime  @db.Date
   // Null while the macrocycle is current, or when nothing dates its end.
-  endDate          DateTime? @db.Date
+  endDate         DateTime? @db.Date
   // completed | abandoned | overran | in-progress | unknown
-  status           String
+  status          String
   // The lifter set `status` themselves, so no rule may change it.
-  statusChosen     Boolean   @default(false)
+  statusChosen    Boolean   @default(false)
   // imported | live | legacy | non-cycle
-  origin           String
+  origin          String
   // Its lifts don't all belong to a known program (proposal decision 9).
-  unmatched        Boolean   @default(false)
+  unmatched       Boolean   @default(false)
   // A continued imported run's sets dated up to here came from the file (#1180).
-  importedThrough  DateTime? @db.Date
-  createdAt        DateTime  @default(now())
+  importedThrough DateTime? @db.Date
+  createdAt       DateTime  @default(now())
   // Its number before #1200's migration numbered history by start date, and when that ran, for
   // `macrocycle_renumber_reverse()`. Null on a macrocycle created after it.
-  backfillNumber   Int?
-  backfilledAt     DateTime?
+  backfillNumber  Int?
+  backfilledAt    DateTime?
   // When that migration closed it: the old revision had left it open on a number the dashboard
   // no longer showed. The reversal leaves it closed.
   backfillClosedAt DateTime?
