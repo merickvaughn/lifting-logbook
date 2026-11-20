@@ -213,12 +213,12 @@ async function seedUser(
     isMix: true,
     position: 0,
   };
-  await prisma.supplementItem.create({ data: { ...supplement, id: `${userId}-mix` } });
+  await prisma.supplementItem.create({ data: { ...supplement, id: `${mark}-mix` } });
   await prisma.supplementDose.create({
-    data: { userId, itemId: `${userId}-mix`, position: 0, slot: 'pre', amount: '1 scoop', servings: 1, dayTypes: ['lift'] },
+    data: { userId, itemId: `${mark}-mix`, position: 0, slot: 'pre', amount: '1 scoop', servings: 1, dayTypes: ['lift'] },
   });
   await prisma.supplementMixPart.create({
-    data: { userId, mixId: `${userId}-mix`, position: 0, partItemId: `${userId}-part`, name: mark, ingredients: [] },
+    data: { userId, mixId: `${mark}-mix`, position: 0, partItemId: `${mark}-part`, name: mark, ingredients: [] },
   });
   await prisma.supplementChange.create({ data: { userId, seq: 1, date: DAY, type: 'mix_split', payload: { mixId: mark } } });
   await prisma.macrocycleScheduledWorkout.create({ data: { ...workout, weekNum: 1, scheduledDate: DAY } });
