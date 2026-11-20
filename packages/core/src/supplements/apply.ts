@@ -192,6 +192,23 @@ export function applyChange(state: SupplementStackState, change: SupplementChang
   return anomalies;
 }
 
+/**
+ * Whether two JSON-shaped values hold the same data, whatever their key order or prototypes. A
+ * property set to `undefined` counts as absent, as it does once stored. Writes use it to tell
+ * what a request changed (ADR-046).
+ */
+export function isSameData(a: unknown, b: unknown): boolean {
+  return canonicalJson(a) === canonicalJson(b);
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)))
+      : v,
+  );
+}
+
 /** Why `id` isn't in the stack. */
 function absence(state: SupplementStackState, id: string): SupplementReplayAnomalyReason {
   if (state.items.some((i) => i.id === id)) return 'not-removed';

@@ -1,21 +1,18 @@
 import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
-import { parseIsoDate, toIsoDate } from '@lifting-logbook/core';
-import {
-  Ingredient,
-  SupplementChange,
-  SupplementDayType,
-  SupplementItem,
-  SupplementSlot,
-  SupplementStatus,
-} from '@lifting-logbook/types';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
+import { isSameData, parseIsoDate, toIsoDate } from '@lifting-logbook/core';
+import { SupplementChange, SupplementDayType, SupplementItem } from '@lifting-logbook/types';
 import {
   ISupplementRepository,
   NewSupplementChange,
+  SupplementChangePage,
   SupplementState,
+  SupplementWritePlan,
 } from '../../ports/ISupplementRepository';
 import { SupplementWriteConflictError } from '../../ports/errors';
 import { PrismaExecutor, runInteractive } from './prisma-tx.util';
+import { parseChange, parseIngredients, parseSlot, parseStatus, toJson } from './supplement-payload';
 
 const itemInclude = {
   doses: { orderBy: { position: 'asc' } },
@@ -23,10 +20,16 @@ const itemInclude = {
 } satisfies Prisma.SupplementItemInclude;
 type ItemRow = Prisma.SupplementItemGetPayload<{ include: typeof itemInclude }>;
 
-// The DTOs validate ingredients, and the slot and status columns carry CHECK constraints
-// (migration 20261120000000_add_supplements), so the casts below only restate those.
-const ingredientsOf = (json: Prisma.JsonValue) => json as unknown as Ingredient[];
+/**
+ * The seed of the write lock's key, `hashtextextended(userId, 1374)`, so it's a different lock
+ * from another feature's on the same user (see MACROCYCLE_LOCK_NAMESPACE). Arbitrary, but fixed.
+ */
+export const SUPPLEMENT_LOCK_NAMESPACE = 1374;
 
+const tracer = trace.getTracer('prisma-supplement-repository');
+
+// The slot and status columns carry CHECK constraints (migration 20261120000000_add_supplements),
+// so the parsers below only throw on a row the database shouldn't hold.
 function toItem(row: ItemRow): SupplementItem {
   return {
     id: row.id,
@@ -35,21 +38,21 @@ function toItem(row: ItemRow): SupplementItem {
     timing: row.timing,
     shortNote: row.shortNote,
     longNote: row.longNote,
-    status: row.status as SupplementStatus,
+    status: parseStatus(row.status),
     unverified: row.unverified,
     links: row.links,
-    ingredients: ingredientsOf(row.ingredients),
+    ingredients: parseIngredients(row.ingredients),
     ...(row.isMix
-      ? { parts: row.parts.map((p) => ({ itemId: p.partItemId, name: p.name, ingredients: ingredientsOf(p.ingredients) })) }
+      ? { parts: row.parts.map((p) => ({ itemId: p.partItemId, name: p.name, ingredients: parseIngredients(p.ingredients) })) }
       : {}),
-    doses: row.doses.map((d) => ({
-      slot: d.slot as SupplementSlot,
-      amount: d.amount,
-      servings: d.servings,
-      dayTypes: d.dayTypes,
-    })),
+    doses: row.doses.map((d) => ({ slot: parseSlot(d.slot), amount: d.amount, servings: d.servings, dayTypes: d.dayTypes })),
   };
 }
+
+const toChange = (row: { type: string; date: Date; seq: number; payload: Prisma.JsonValue }): SupplementChange =>
+  parseChange({ ...row, date: toIsoDate(row.date) });
+
+const isUniqueViolation = (err: unknown) => err instanceof PrismaClientKnownRequestError && err.code === 'P2002';
 
 export class PrismaSupplementRepository implements ISupplementRepository {
   constructor(
@@ -58,43 +61,117 @@ export class PrismaSupplementRepository implements ISupplementRepository {
   ) {}
 
   async load(): Promise<SupplementState> {
+    return this.loadWith(this.prisma);
+  }
+
+  async changes(page: SupplementChangePage): Promise<SupplementChange[]> {
+    const rows = await this.prisma.supplementChange.findMany({
+      where: { userId: this.userId, ...(page.beforeSeq === undefined ? {} : { seq: { lt: page.beforeSeq } }) },
+      orderBy: { seq: 'desc' },
+      take: page.limit,
+    });
+    return rows.reverse().map(toChange);
+  }
+
+  async changesThrough(date: string): Promise<SupplementChange[]> {
+    const rows = await this.prisma.supplementChange.findMany({
+      where: { userId: this.userId, date: { lte: parseIsoDate(date) } },
+      orderBy: { seq: 'asc' },
+    });
+    return rows.map(toChange);
+  }
+
+  async firstChangeDate(): Promise<string | null> {
+    const first = await this.prisma.supplementChange.aggregate({ where: { userId: this.userId }, _min: { date: true } });
+    return first._min.date === null ? null : toIsoDate(first._min.date);
+  }
+
+  async lastRemoved(itemId: string): Promise<SupplementItem | undefined> {
+    const row = await this.prisma.supplementChange.findFirst({
+      where: { userId: this.userId, type: 'removed', payload: { path: ['item', 'id'], equals: itemId } },
+      orderBy: { seq: 'desc' },
+    });
+    if (row === null) return undefined;
+    const change = toChange(row);
+    return change.type === 'removed' ? change.item : undefined;
+  }
+
+  async write(plan: SupplementWritePlan): Promise<SupplementState> {
+    try {
+      return await runInteractive(this.prisma, async (tx) => {
+        await this.lock(tx);
+        const state = await this.loadWith(tx);
+        const before = structuredClone(state);
+        const changes = await plan(state);
+        await this.save(tx, before, state, changes);
+        return { ...state, removed: [], nextSeq: state.nextSeq + changes.length, lastChangeDate: changes[0]?.date ?? state.lastChangeDate };
+      });
+    } catch (err) {
+      // With the lock, only a writer that skips it can collide with this one; whichever key it
+      // hit, the transaction rolls back and nothing is stored.
+      if (isUniqueViolation(err)) throw new SupplementWriteConflictError();
+      throw err;
+    }
+  }
+
+  /**
+   * Waits for the user's supplement write lock, held to the end of the transaction: the
+   * request's, which RlsInterceptor opens, or the one `write` opens on the base client. Raw SQL
+   * isn't auto-traced (ADR-024), hence the span.
+   */
+  private async lock(tx: PrismaExecutor): Promise<void> {
+    await tracer.startActiveSpan('supplement.lock', async (span) => {
+      try {
+        // void doesn't deserialize, hence the cast to text.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${this.userId}, ${SUPPLEMENT_LOCK_NAMESPACE}))::text`;
+        span.setAttribute('lock.acquired', true);
+      } catch (err) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: err instanceof Error ? err.message : String(err) });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
+  private async loadWith(db: PrismaExecutor): Promise<SupplementState> {
     const where = { userId: this.userId };
-    const rows = await this.prisma.supplementItem.findMany({ where, include: itemInclude, orderBy: { position: 'asc' } });
-    const dayTypes = await this.prisma.supplementDayType.findMany({ where, orderBy: { position: 'asc' } });
-    const settings = await this.prisma.userSettings.findUnique({ where });
-    const last = await this.prisma.supplementChange.aggregate({ where, _max: { seq: true } });
+    const rows = await db.supplementItem.findMany({ where, include: itemInclude, orderBy: { position: 'asc' } });
+    const dayTypes = await db.supplementDayType.findMany({ where, orderBy: { position: 'asc' } });
+    const settings = await db.userSettings.findUnique({ where });
+    const last = await db.supplementChange.aggregate({ where, _max: { seq: true, date: true } });
     return {
       items: rows.filter((r) => r.foldedInto === null).map(toItem),
       folded: rows.flatMap((r) => (r.foldedInto === null ? [] : [{ item: toItem(r), mixId: r.foldedInto }])),
+      removed: [],
       dayTypes: dayTypes.map(
         (d): SupplementDayType => ({ id: d.id, name: d.name, ...(d.sessionTime === null ? {} : { sessionTime: d.sessionTime }) }),
       ),
       caffeineCutoff: settings?.supplementCaffeineCutoff ?? null,
       nextSeq: (last._max.seq ?? 0) + 1,
+      lastChangeDate: last._max.date === null ? null : toIsoDate(last._max.date),
     };
   }
 
-  async changes(): Promise<SupplementChange[]> {
-    const rows = await this.prisma.supplementChange.findMany({ where: { userId: this.userId }, orderBy: { seq: 'asc' } });
-    // `payload` is the change without date, seq and type, as save() wrote it.
-    return rows.map(
-      (r) => ({ ...(r.payload as Prisma.JsonObject), type: r.type, date: toIsoDate(r.date), seq: r.seq }) as unknown as SupplementChange,
-    );
-  }
-
-  async save(next: SupplementState, changes: readonly NewSupplementChange[]): Promise<void> {
+  /** Writes the parts of `next` that differ from `before`, then appends `changes`. */
+  private async save(
+    tx: PrismaExecutor,
+    before: SupplementState,
+    next: SupplementState,
+    changes: readonly NewSupplementChange[],
+  ): Promise<void> {
     const userId = this.userId;
-    const stored = [
-      ...next.items.map((item) => ({ item, mixId: null as string | null })),
-      ...next.folded,
-    ];
-    await runInteractive(this.prisma, async (tx) => {
+    const stackChanged = !isSameData([before.items, before.folded], [next.items, next.folded]);
+    const dayTypesChanged = !isSameData(before.dayTypes, next.dayTypes);
+    const cutoffChanged = before.caffeineCutoff !== next.caffeineCutoff;
+    if ((stackChanged || dayTypesChanged || cutoffChanged) && changes.length === 0) {
+      throw new Error('A supplement write changed the stack without logging a change');
+    }
+
+    if (stackChanged) {
+      const stored: { item: SupplementItem; mixId: string | null }[] = [...next.items.map((item) => ({ item, mixId: null })), ...next.folded];
       // Doses and mix parts go with their item (ON DELETE CASCADE).
       await tx.supplementItem.deleteMany({ where: { userId } });
-      await tx.supplementDayType.deleteMany({ where: { userId } });
-      await tx.supplementDayType.createMany({
-        data: next.dayTypes.map((d, position) => ({ userId, id: d.id, name: d.name, sessionTime: d.sessionTime ?? null, position })),
-      });
       await tx.supplementItem.createMany({
         data: stored.map(({ item, mixId }, position) => ({
           id: item.id,
@@ -107,7 +184,7 @@ export class PrismaSupplementRepository implements ISupplementRepository {
           status: item.status,
           unverified: item.unverified,
           links: item.links,
-          ingredients: item.ingredients as unknown as Prisma.InputJsonValue,
+          ingredients: toJson(item.ingredients),
           isMix: item.parts !== undefined,
           foldedInto: mixId,
           position,
@@ -124,34 +201,36 @@ export class PrismaSupplementRepository implements ISupplementRepository {
             position,
             partItemId: p.itemId,
             name: p.name,
-            ingredients: p.ingredients as unknown as Prisma.InputJsonValue,
+            ingredients: toJson(p.ingredients),
           })),
         ),
       });
-      if (next.caffeineCutoff !== null) {
-        const supplementCaffeineCutoff = next.caffeineCutoff;
-        await tx.userSettings.upsert({
-          where: { userId },
-          create: { userId, supplementCaffeineCutoff },
-          update: { supplementCaffeineCutoff },
-        });
-      }
-      // Last, so a write that loses the race on `seq` has stored nothing once the transaction
-      // rolls back.
-      try {
-        await tx.supplementChange.createMany({
-          data: changes.map(({ date, type, ...payload }, i) => ({
-            userId,
-            seq: next.nextSeq + i,
-            date: parseIsoDate(date),
-            type,
-            payload: payload as unknown as Prisma.InputJsonValue,
-          })),
-        });
-      } catch (err) {
-        if (err instanceof PrismaClientKnownRequestError && err.code === 'P2002') throw new SupplementWriteConflictError();
-        throw err;
-      }
-    });
+    }
+    if (dayTypesChanged) {
+      await tx.supplementDayType.deleteMany({ where: { userId } });
+      await tx.supplementDayType.createMany({
+        data: next.dayTypes.map((d, position) => ({ userId, id: d.id, name: d.name, sessionTime: d.sessionTime ?? null, position })),
+      });
+    }
+    // Only when it changed, so a write can't put back a cutoff it read before another write.
+    if (cutoffChanged && next.caffeineCutoff !== null) {
+      const supplementCaffeineCutoff = next.caffeineCutoff;
+      await tx.userSettings.upsert({
+        where: { userId },
+        create: { userId, supplementCaffeineCutoff },
+        update: { supplementCaffeineCutoff },
+      });
+    }
+    if (changes.length > 0) {
+      await tx.supplementChange.createMany({
+        data: changes.map(({ date, type, ...payload }, i) => ({
+          userId,
+          seq: next.nextSeq + i,
+          date: parseIsoDate(date),
+          type,
+          payload: toJson(payload),
+        })),
+      });
+    }
   }
 }

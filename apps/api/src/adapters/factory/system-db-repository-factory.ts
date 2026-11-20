@@ -143,13 +143,14 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     const userSettings = new InMemoryUserSettingsRepository();
     const macrocycle = new InMemoryMacrocycleRepository();
     const trainingData = new InMemoryTrainingDataRepository();
+    const supplement = new InMemorySupplementRepository();
     const bundle: RepositoryBundle = {
       dataSnapshot: new InMemoryDataSnapshotRepository(),
       trainingData,
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift,
       focus: new InMemoryFocusRepository(),
-      supplement: new InMemorySupplementRepository(),
+      supplement,
       macrocycle,
       macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(),
       macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
@@ -168,6 +169,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
         strengthGoal,
         customLift,
         userSettings,
+        supplement,
       ),
       userSettings,
       workout: new InMemoryWorkoutRepository(sharedRecords),

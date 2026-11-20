@@ -51,6 +51,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       const userSettings = new InMemoryUserSettingsRepository();
       const macrocycle = new InMemoryMacrocycleRepository(preSeed ? [seedMacrocycleRow()] : []);
       const trainingData = new InMemoryTrainingDataRepository();
+      const supplement = new InMemorySupplementRepository();
       const bundle: RepositoryBundle = {
         dataSnapshot: new InMemoryDataSnapshotRepository(),
         trainingData,
@@ -67,7 +68,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
         liftRecord: new InMemoryLiftRecordRepository(sharedRecords),
         programPhilosophy: new InMemoryProgramPhilosophyRepository(),
         strengthGoal,
-        supplement: new InMemorySupplementRepository(),
+        supplement,
         trainingMax,
         trainingMaxHistory: new InMemoryTrainingMaxHistoryRepository(),
         userDataExport: new InMemoryUserDataExportRepository(
@@ -76,6 +77,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
           strengthGoal,
           customLift,
           userSettings,
+          supplement,
         ),
         userSettings,
         workout: new InMemoryWorkoutRepository(sharedRecords),

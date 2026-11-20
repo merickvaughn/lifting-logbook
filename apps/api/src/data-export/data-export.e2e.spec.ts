@@ -99,6 +99,36 @@ describe('Download My Data HTTP (e2e, in-memory adapters)', () => {
     }
   });
 
+  it('includes the supplement stack and its change log in logbook.json (#1374)', async () => {
+    const user = 'export-supplements';
+    const write = (method: 'POST' | 'PUT', url: string, body: unknown) =>
+      inject({ method, url, headers: { ...auth(user), 'content-type': 'application/json' }, payload: JSON.stringify(body) });
+    expect((await write('PUT', '/supplements/settings?today=2026-11-20', { dayTypes: [{ id: 'lift', name: 'Lift' }] })).statusCode).toBe(200);
+    for (const name of ['Citrulline', 'Beta-alanine']) {
+      const res = await write('POST', '/supplements/items?today=2026-11-20', {
+        name,
+        doses: [{ slot: 'pre', amount: '1', servings: 1, dayTypes: ['lift'] }],
+      });
+      expect(res.statusCode).toBe(201);
+    }
+    const ids = (await inject({ method: 'GET', url: '/supplements', headers: auth(user) }))
+      .json<{ items: { id: string }[] }>()
+      .items.map((i) => i.id);
+    expect((await write('POST', '/supplements/mixes?today=2026-11-20', { name: 'Pump', itemIds: ids })).statusCode).toBe(201);
+
+    const { tables } = JSON.parse(unzip((await exportFor(user)).rawPayload)['logbook.json']!);
+    expect(tables.supplementDayTypes).toEqual([{ id: 'lift', name: 'Lift', sessionTime: null, position: 0 }]);
+    // The mix, then the two items folded into it.
+    expect(tables.supplementItems.map((i: { name: string; foldedInto: string | null }) => [i.name, i.foldedInto !== null])).toEqual([
+      ['Pump', false],
+      ['Citrulline', true],
+      ['Beta-alanine', true],
+    ]);
+    expect(tables.supplementDoses).toHaveLength(3);
+    expect(tables.supplementMixParts).toHaveLength(2);
+    expect(tables.supplementChanges.map((c: { type: string }) => c.type)).toEqual(['day_types_set', 'added', 'added', 'mix_created']);
+  });
+
   it('logs row counts, never row contents', async () => {
     const user = 'export-logging';
     const seeded = await upload(

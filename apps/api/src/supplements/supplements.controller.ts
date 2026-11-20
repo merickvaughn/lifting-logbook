@@ -2,11 +2,11 @@ import { randomUUID } from 'crypto';
 import {
   BadRequestException,
   Body,
-  ConflictException,
   Controller,
   Delete,
   Get,
   Inject,
+  Logger,
   NotFoundException,
   Param,
   Patch,
@@ -14,20 +14,29 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { DEFAULT_CAFFEINE_CUTOFF, stackAsOf, toIsoDate, validateStack } from '@lifting-logbook/core';
 import {
+  DEFAULT_CAFFEINE_CUTOFF,
+  SupplementChangeBody,
+  applyChange,
+  isSameData,
+  stackAsOf,
+  validateStack,
+} from '@lifting-logbook/core';
+import {
+  SupplementAsOfResponse,
   SupplementChange,
+  SupplementCreatedResponse,
   SupplementItem,
   SupplementItemDetails,
   SupplementStackResponse,
 } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
-import { SupplementWriteConflictError } from '../ports/errors';
+import { SupplementNotRemovedError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
-import { NewSupplementChange, SupplementState } from '../ports/ISupplementRepository';
+import { ISupplementRepository, SupplementState } from '../ports/ISupplementRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { parseIsoDateParam } from '../focus/focus.util';
+import { parseIsoDateParam, parseToday } from '../iso-date-param';
 import {
   CreateMixDto,
   CreateSupplementItemDto,
@@ -39,58 +48,99 @@ import {
 
 const DETAIL_KEYS = ['name', 'keyCompound', 'timing', 'shortNote', 'longNote', 'links', 'ingredients'] as const;
 
-/** A change's mutation of the stack, returning the changes it appends to the log. */
-type Plan = (state: SupplementState, date: string) => NewSupplementChange[];
+/** `GET /changes` page size: the default, and the most one request may ask for. */
+const CHANGES_PAGE = 200;
+const CHANGES_PAGE_MAX = 1000;
+
+/**
+ * What a write does: reads the state as loaded, checks the request against it, and returns the
+ * changes that carry it out. `write` applies them with `applyChange`, so a plan never changes
+ * the state itself, except that a restore puts the item it restores in `state.removed`.
+ */
+type Plan<B> = (state: SupplementState, body: B, repo: ISupplementRepository) => Promise<SupplementChangeBody[]> | SupplementChangeBody[];
 
 function view(state: SupplementState): SupplementStackResponse {
   return { items: state.items, dayTypes: state.dayTypes, caffeineCutoff: state.caffeineCutoff ?? DEFAULT_CAFFEINE_CUTOFF };
 }
 
-function indexOf(state: SupplementState, id: string): number {
+/** The item with this id in the stack, and where it is, or a 404. */
+function find(state: SupplementState, id: string): { index: number; item: SupplementItem } {
   const index = state.items.findIndex((item) => item.id === id);
-  if (index < 0) throw new NotFoundException(`No supplement item ${id}`);
-  return index;
+  const item = state.items[index];
+  if (!item) throw new NotFoundException(`No supplement item ${id}`);
+  return { index, item };
 }
 
-/** A DTO as plain data, so it stores and compares like any other value. */
-const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+/** `value` as a whole number from `min` to `max`, `fallback` when absent, or a 400. */
+function intParam(name: string, value: string | undefined, min: number, max: number, fallback?: number): number | undefined {
+  if (value === undefined) return fallback;
+  const n = Number(value);
+  if (!/^\d+$/.test(value) || n < min || n > max) throw new BadRequestException(`${name} must be a whole number from ${min} to ${max}`);
+  return n;
+}
 
 /**
- * The supplement stack, its day types and its change log (#1374). Every write reads the stored
- * state, applies one plan to it, validates the result, and saves it with the plan's changes in
- * one transaction (ADR-046). `today` (`YYYY-MM-DD`, the lifter's local date) dates the changes;
- * without it they take today's UTC date.
+ * The supplement stack, its day types and its change log (#1374). Every write takes the user's
+ * write lock, reads the stored state, applies one plan's changes to it with `applyChange`,
+ * validates the result, and saves it with those changes in one transaction (ADR-046). `today`
+ * (`YYYY-MM-DD`, the lifter's local date) is required and dates the changes; it can't be earlier
+ * than the last change's date, so the log's dates and its `seq` agree on the order.
  */
 @Controller('supplements')
 export class SupplementsController {
+  private readonly logger = new Logger(SupplementsController.name);
+
   constructor(@Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory) {}
 
   /** The stack and its day types. */
   @Get()
   async get(@CurrentUser() user: AuthUser): Promise<SupplementStackResponse> {
-    return view(await (await this.factory.forUser(user)).supplement.load());
+    return view(await (await this.repo(user)).load());
   }
 
-  /** Every change, oldest first. */
+  /**
+   * A page of the change log, oldest first: the latest `limit` changes (200 by default, at most
+   * 1000) before `beforeSeq`, or before the end. The next page back is `beforeSeq` = the first
+   * change's `seq`.
+   */
   @Get('changes')
-  async changes(@CurrentUser() user: AuthUser): Promise<SupplementChange[]> {
-    return (await this.factory.forUser(user)).supplement.changes();
+  async changes(
+    @Query('beforeSeq') beforeSeq: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementChange[]> {
+    const before = intParam('beforeSeq', beforeSeq, 1, Number.MAX_SAFE_INTEGER);
+    const take = intParam('limit', limit, 1, CHANGES_PAGE_MAX, CHANGES_PAGE) ?? CHANGES_PAGE;
+    return (await this.repo(user)).changes({ ...(before === undefined ? {} : { beforeSeq: before }), limit: take });
   }
 
-  /** The stack at the end of `date`, replayed from the change log. */
+  /**
+   * The stack at the end of `date`, replayed from the change log, with the date the log starts
+   * and any changes replay skipped, which are also logged as a warning.
+   */
   @Get('as-of/:date')
-  async asOf(@Param('date') date: string, @CurrentUser() user: AuthUser): Promise<{ items: SupplementItem[] }> {
+  async asOf(@Param('date') date: string, @CurrentUser() user: AuthUser): Promise<SupplementAsOfResponse> {
     parseIsoDateParam('date', date);
-    const log = await (await this.factory.forUser(user)).supplement.changes();
-    return { items: stackAsOf(log, date).stack };
+    const repo = await this.repo(user);
+    const replay = stackAsOf(await repo.changesThrough(date), date);
+    const anomalies = replay.anomalies.map(({ change, itemId, reason }) => ({ seq: change.seq, type: change.type, itemId, reason }));
+    if (anomalies.length > 0) {
+      // Ids, types and reasons only: no item names or notes.
+      this.logger.warn({ date, count: anomalies.length, anomalies }, 'Supplement change log replay skipped changes (#1374)');
+    }
+    return { items: replay.stack, firstChangeDate: await repo.firstChangeDate(), anomalies };
   }
 
   @Post('items')
-  async create(@Body() dto: CreateSupplementItemDto, @Query('today') today: string | undefined, @CurrentUser() user: AuthUser) {
-    return this.write(user, today, (state, date) => {
-      const body = plain(dto);
+  async create(
+    @Body() dto: CreateSupplementItemDto,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementCreatedResponse> {
+    const id = randomUUID();
+    const state = await this.write(user, today, dto, (_state, body) => {
       const item: SupplementItem = {
-        id: randomUUID(),
+        id,
         name: body.name,
         keyCompound: body.keyCompound ?? '',
         timing: body.timing ?? '',
@@ -102,127 +152,151 @@ export class SupplementsController {
         ingredients: body.ingredients ?? [],
         doses: body.doses ?? [],
       };
-      state.items.push(item);
-      return [{ type: 'added', date, item }];
+      return [{ type: 'added', item }];
     });
+    return { ...view(state), id };
   }
 
-  /** Edits details, replaces doses, starts or pends, or confirms an item; one change for each. */
+  /**
+   * Edits details, replaces doses, starts or pends, or confirms an item: one change for each
+   * kind, logging only the fields that differ from what's stored.
+   */
   @Patch('items/:id')
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateSupplementItemDto,
     @Query('today') today: string | undefined,
     @CurrentUser() user: AuthUser,
-  ) {
-    return this.write(user, today, (state, date) => {
-      const body = plain(dto);
-      const index = indexOf(state, id);
-      const current = state.items[index] as SupplementItem;
-      const changes: NewSupplementChange[] = [];
+  ): Promise<SupplementStackResponse> {
+    const state = await this.write(user, today, dto, (state, body) => {
+      const { item } = find(state, id);
+      const changes: SupplementChangeBody[] = [];
       const details: Partial<SupplementItemDetails> = {};
       for (const key of DETAIL_KEYS) {
-        if (body[key] !== undefined) Object.assign(details, { [key]: body[key] });
+        const value = body[key];
+        if (value !== undefined && !isSameData(value, item[key])) Object.assign(details, { [key]: value });
       }
-      if (Object.keys(details).length > 0) changes.push({ type: 'edited', date, itemId: id, changes: details });
-      if (body.doses !== undefined) changes.push({ type: 'moved', date, itemId: id, doses: body.doses });
-      if (body.status !== undefined && body.status !== current.status) {
-        changes.push({ type: body.status === 'active' ? 'started' : 'moved_to_pending', date, itemId: id });
+      if (Object.keys(details).length > 0) changes.push({ type: 'edited', itemId: id, changes: details });
+      if (body.doses !== undefined && !isSameData(body.doses, item.doses)) {
+        changes.push({ type: 'moved', itemId: id, doses: body.doses });
       }
-      if (body.unverified === false && current.unverified) changes.push({ type: 'confirmed', date, itemId: id });
-      state.items[index] = {
-        ...current,
-        ...details,
-        ...(body.doses !== undefined ? { doses: body.doses } : {}),
-        ...(body.status !== undefined ? { status: body.status } : {}),
-        ...(body.unverified === false ? { unverified: false } : {}),
-      };
+      if (body.status !== undefined && body.status !== item.status) {
+        changes.push({ type: body.status === 'active' ? 'started' : 'moved_to_pending', itemId: id });
+      }
+      if (body.unverified === false && item.unverified) changes.push({ type: 'confirmed', itemId: id });
       return changes;
     });
+    return view(state);
   }
 
   /** Removes an item; its `removed` change keeps the whole item so it can be restored. */
   @Delete('items/:id')
-  async remove(@Param('id') id: string, @Query('today') today: string | undefined, @CurrentUser() user: AuthUser) {
-    return this.write(user, today, (state, date) => {
-      const [item] = state.items.splice(indexOf(state, id), 1) as [SupplementItem];
-      return [{ type: 'removed', date, item }];
-    });
+  async remove(
+    @Param('id') id: string,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementStackResponse> {
+    const state = await this.write(user, today, undefined, (state) => [{ type: 'removed', item: find(state, id).item }]);
+    return view(state);
   }
 
-  /** Brings back a removed item as it was removed. A 409 when it's already in the stack. */
+  /**
+   * Brings back a removed item as it was removed, to the end of the stack. A day type removed
+   * since is taken off its doses, as a `moved` change, and a workout-slot dose left with none is
+   * a 400. A 409 when the item is in the stack, or is part of a mix, which the 409 names.
+   */
   @Post('items/:id/restore')
-  async restore(@Param('id') id: string, @Query('today') today: string | undefined, @CurrentUser() user: AuthUser) {
-    const log = await (await this.factory.forUser(user)).supplement.changes();
-    return this.write(user, today, (state, date) => {
-      if (state.items.some((i) => i.id === id) || state.folded.some((f) => f.item.id === id)) {
-        throw new ConflictException(`Supplement item ${id} is not removed`);
+  async restore(
+    @Param('id') id: string,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementStackResponse> {
+    const state = await this.write(user, today, undefined, async (state, _body, repo) => {
+      if (state.items.some((i) => i.id === id)) throw new SupplementNotRemovedError(id);
+      const folded = state.folded.find((f) => f.item.id === id);
+      if (folded) {
+        const mix = state.items.find((i) => i.id === folded.mixId) ?? (await repo.lastRemoved(folded.mixId));
+        const removed = !state.items.some((i) => i.id === folded.mixId);
+        throw new SupplementNotRemovedError(id, { id: folded.mixId, name: mix?.name ?? folded.mixId, removed });
       }
-      const removed = log.filter((c) => c.type === 'removed' && c.item.id === id).pop();
-      if (removed?.type !== 'removed') throw new NotFoundException(`No removed supplement item ${id}`);
-      state.items.push(removed.item);
-      return [{ type: 'restored', date, itemId: id }];
+      const item = await repo.lastRemoved(id);
+      if (!item) throw new NotFoundException(`No removed supplement item ${id}`);
+      state.removed = [item];
+      const known = new Set(state.dayTypes.map((d) => d.id));
+      const doses = item.doses.map((d) => ({ ...d, dayTypes: d.dayTypes.filter((t) => known.has(t)) }));
+      const changes: SupplementChangeBody[] = [{ type: 'restored', itemId: id }];
+      if (!isSameData(doses, item.doses)) changes.push({ type: 'moved', itemId: id, doses });
+      return changes;
     });
+    return view(state);
   }
 
   /**
    * Replaces the day types and sets the caffeine cutoff. A day type left out is taken off every
-   * dose, as a `moved` change; a workout-slot dose left with none is a 400.
+   * dose, including those of items folded into a mix, as a `moved` change; a workout-slot dose
+   * left with none is a 400.
    */
   @Put('settings')
-  async settings(@Body() dto: SupplementSettingsDto, @Query('today') today: string | undefined, @CurrentUser() user: AuthUser) {
-    return this.write(user, today, (state, date) => {
-      const body = plain(dto);
-      if (body.caffeineCutoff !== undefined) state.caffeineCutoff = body.caffeineCutoff;
-      if (body.dayTypes === undefined) return [];
+  async settings(
+    @Body() dto: SupplementSettingsDto,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementStackResponse> {
+    const state = await this.write(user, today, dto, (state, body) => {
+      const changes: SupplementChangeBody[] = [];
+      if (body.caffeineCutoff !== undefined && body.caffeineCutoff !== state.caffeineCutoff) {
+        changes.push({ type: 'caffeine_cutoff_set', caffeineCutoff: body.caffeineCutoff });
+      }
+      if (body.dayTypes === undefined) return changes;
       const known = new Set(body.dayTypes.map((d) => d.id));
       if (known.size !== body.dayTypes.length) throw new BadRequestException('Day type ids must be unique');
-      state.dayTypes = body.dayTypes;
-      const changes: NewSupplementChange[] = [];
-      state.items = state.items.map((item) => {
-        const doses = item.doses.map((d) => ({ ...d, dayTypes: d.dayTypes.filter((id) => known.has(id)) }));
-        if (doses.every((d, i) => d.dayTypes.length === item.doses[i]?.dayTypes.length)) return item;
-        changes.push({ type: 'moved', date, itemId: item.id, doses });
-        return { ...item, doses };
-      });
+      if (!isSameData(body.dayTypes, state.dayTypes)) changes.push({ type: 'day_types_set', dayTypes: body.dayTypes });
+      for (const item of [...state.items, ...state.folded.map((f) => f.item)]) {
+        const doses = item.doses.map((d) => ({ ...d, dayTypes: d.dayTypes.filter((t) => known.has(t)) }));
+        if (!isSameData(doses, item.doses)) changes.push({ type: 'moved', itemId: item.id, doses });
+      }
       return changes;
     });
+    return view(state);
   }
 
   /** Moves the listed items' doses in one slot to another, optionally onto other day types. */
   @Post('doses/move')
-  async moveDoses(@Body() dto: MoveDosesDto, @Query('today') today: string | undefined, @CurrentUser() user: AuthUser) {
-    return this.write(user, today, (state, date) => {
-      const body = plain(dto);
-      const changes: NewSupplementChange[] = [];
+  async moveDoses(
+    @Body() dto: MoveDosesDto,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementStackResponse> {
+    const state = await this.write(user, today, dto, (state, body) => {
+      const changes: SupplementChangeBody[] = [];
       for (const id of new Set(body.itemIds)) {
-        const index = indexOf(state, id);
-        const item = state.items[index] as SupplementItem;
-        if (!item.doses.some((d) => d.slot === body.from)) continue;
+        const { item } = find(state, id);
         const doses = item.doses.map((d) =>
           d.slot === body.from ? { ...d, slot: body.to, dayTypes: body.dayTypes ?? d.dayTypes } : d,
         );
-        state.items[index] = { ...item, doses };
-        changes.push({ type: 'moved', date, itemId: id, doses });
+        if (!isSameData(doses, item.doses)) changes.push({ type: 'moved', itemId: id, doses });
       }
       return changes;
     });
+    return view(state);
   }
 
   /** Marks the listed items active or pending. */
   @Post('items/status')
-  async setStatus(@Body() dto: SetStatusDto, @Query('today') today: string | undefined, @CurrentUser() user: AuthUser) {
-    return this.write(user, today, (state, date) => {
-      const changes: NewSupplementChange[] = [];
-      for (const id of new Set(dto.itemIds)) {
-        const index = indexOf(state, id);
-        const item = state.items[index] as SupplementItem;
-        if (item.status === dto.status) continue;
-        state.items[index] = { ...item, status: dto.status };
-        changes.push({ type: dto.status === 'active' ? 'started' : 'moved_to_pending', date, itemId: id });
+  async setStatus(
+    @Body() dto: SetStatusDto,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementStackResponse> {
+    const state = await this.write(user, today, dto, (state, body) => {
+      const changes: SupplementChangeBody[] = [];
+      for (const id of new Set(body.itemIds)) {
+        if (find(state, id).item.status === body.status) continue;
+        changes.push({ type: body.status === 'active' ? 'started' : 'moved_to_pending', itemId: id });
       }
       return changes;
     });
+    return view(state);
   }
 
   /**
@@ -230,17 +304,23 @@ export class SupplementsController {
    * kept, so splitting the mix brings them back. The mix takes the first part's doses.
    */
   @Post('mixes')
-  async createMix(@Body() dto: CreateMixDto, @Query('today') today: string | undefined, @CurrentUser() user: AuthUser) {
-    return this.write(user, today, (state, date) => {
-      const partIds = [...new Set(dto.itemIds)];
-      if (partIds.length < 2) throw new BadRequestException('A mix needs at least two different items');
-      const parts = partIds.map((id) => state.items[indexOf(state, id)] as SupplementItem);
+  async createMix(
+    @Body() dto: CreateMixDto,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementCreatedResponse> {
+    const id = randomUUID();
+    const state = await this.write(user, today, dto, (state, body) => {
+      const partIds = [...new Set(body.itemIds)];
+      const [firstId, ...otherIds] = partIds;
+      if (firstId === undefined || otherIds.length === 0) throw new BadRequestException('A mix needs at least two different items');
+      const first = find(state, firstId).item;
+      const parts = [first, ...otherIds.map((partId) => find(state, partId).item)];
       const nested = parts.find((p) => p.parts !== undefined);
       if (nested) throw new BadRequestException(`${nested.name} is already a mix; split it first`);
-      const [first] = parts as [SupplementItem];
       const mix: SupplementItem = {
-        id: randomUUID(),
-        name: dto.name,
+        id,
+        name: body.name,
         keyCompound: '',
         timing: first.timing,
         shortNote: '',
@@ -252,45 +332,55 @@ export class SupplementsController {
         parts: parts.map((p) => ({ itemId: p.id, name: p.name, ingredients: p.ingredients })),
         doses: first.doses,
       };
-      state.items.splice(indexOf(state, first.id), 0, mix);
-      state.items = state.items.filter((i) => !partIds.includes(i.id));
-      state.folded.push(...parts.map((item) => ({ item, mixId: mix.id })));
-      return [{ type: 'mix_created', date, mix, partIds }];
+      return [{ type: 'mix_created', mix, partIds }];
     });
+    return { ...view(state), id };
+  }
+
+  /** Splits a mix back into its parts, in its place; the mix goes. */
+  @Post('mixes/:id/split')
+  async splitMix(
+    @Param('id') id: string,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementStackResponse> {
+    const state = await this.write(user, today, undefined, (state) => {
+      const { item } = find(state, id);
+      if (item.parts === undefined) throw new BadRequestException(`${item.name} is not a mix`);
+      return [{ type: 'mix_split', mixId: id }];
+    });
+    return view(state);
+  }
+
+  private async repo(user: AuthUser): Promise<ISupplementRepository> {
+    return (await this.factory.forUser(user)).supplement;
   }
 
   /**
-   * Splits a mix back into its parts, in its place. The mix goes, unless it was an item others
-   * were folded into, which goes back to being itself.
+   * Runs `plan` under the user's write lock and saves its changes, dated `today`. The body is
+   * copied to plain data first, so it stores and compares like any other value.
    */
-  @Post('mixes/:id/split')
-  async splitMix(@Param('id') id: string, @Query('today') today: string | undefined, @CurrentUser() user: AuthUser) {
-    return this.write(user, today, (state, date) => {
-      const index = indexOf(state, id);
-      const mix = state.items[index] as SupplementItem;
-      if (mix.parts === undefined) throw new BadRequestException(`${mix.name} is not a mix`);
-      const back = state.folded.filter((f) => f.mixId === id).map((f) => f.item);
-      state.folded = state.folded.filter((f) => f.mixId !== id);
-      const { parts, ...own } = mix;
-      const keep = parts.some((p) => p.itemId === id) ? [own] : [];
-      state.items.splice(index, 1, ...keep, ...back);
-      return [{ type: 'mix_split', date, mixId: id }];
+  private async write<B>(user: AuthUser, todayParam: string | undefined, dto: B, plan: Plan<B>): Promise<SupplementState> {
+    const today = parseToday(todayParam);
+    const body = structuredClone(dto);
+    const repo = await this.repo(user);
+    return repo.write(async (state) => {
+      if (state.lastChangeDate !== null && today < state.lastChangeDate) {
+        throw new BadRequestException(
+          `today (${today}) is before the stack's last change (${state.lastChangeDate}); changes can't be dated earlier`,
+        );
+      }
+      const changes = await plan(state, body, repo);
+      for (const change of changes) {
+        const anomalies = applyChange(state, change);
+        // The plan checked the request against the state, so this is a bug, not a bad request.
+        if (anomalies.length > 0) {
+          throw new Error(`Supplement ${change.type} change didn't apply: ${anomalies.map((a) => `${a.itemId} ${a.reason}`).join(', ')}`);
+        }
+      }
+      const errors = validateStack([...state.items, ...state.folded.map((f) => f.item)], state.dayTypes);
+      if (errors.length > 0) throw new BadRequestException(errors);
+      return changes.map((change) => ({ ...change, date: today }));
     });
-  }
-
-  private async write(user: AuthUser, todayParam: string | undefined, plan: Plan): Promise<SupplementStackResponse> {
-    const date = todayParam === undefined ? toIsoDate(new Date()) : parseIsoDateParam('today', todayParam);
-    const repo = (await this.factory.forUser(user)).supplement;
-    const state = await repo.load();
-    const changes = plan(state, date);
-    const errors = validateStack(state.items, state.dayTypes);
-    if (errors.length > 0) throw new BadRequestException(errors);
-    try {
-      await repo.save(state, changes);
-    } catch (err) {
-      if (err instanceof SupplementWriteConflictError) throw new ConflictException(err.message);
-      throw err;
-    }
-    return view(state);
   }
 }

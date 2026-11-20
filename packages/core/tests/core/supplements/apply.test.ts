@@ -1,4 +1,4 @@
-import { applyChange, emptyStackState, stackAsOf } from '@src/core';
+import { applyChange, emptyStackState, isSameData, stackAsOf } from '@src/core';
 import { LIFT, REST, changeLog, dose, item } from './supplementFixtures';
 
 describe('applyChange', () => {
@@ -64,6 +64,16 @@ describe('applyChange', () => {
     applyChange(state, { type: 'day_types_set', dayTypes: [LIFT, REST] });
     applyChange(state, { type: 'caffeine_cutoff_set', caffeineCutoff: '13:00' });
     expect(state).toMatchObject({ dayTypes: [LIFT, REST], caffeineCutoff: '13:00' });
+  });
+
+  it('isSameData compares data, not key order, prototypes or undefined properties', () => {
+    class Dose {
+      slot = 'am';
+      dayTypes = ['lift'];
+    }
+    expect(isSameData(new Dose(), { dayTypes: ['lift'], slot: 'am', note: undefined })).toBe(true);
+    expect(isSameData({ dayTypes: ['lift'] }, { dayTypes: ['rest'] })).toBe(false);
+    expect(isSameData(['a', 'b'], ['b', 'a'])).toBe(false);
   });
 
   it('is what stackAsOf replays with', () => {

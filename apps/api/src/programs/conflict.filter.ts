@@ -12,6 +12,8 @@ import {
   LiftModificationConflictError,
   MacrocycleNumberConflictError,
   ReservedLiftNameConflictError,
+  SupplementNotRemovedError,
+  SupplementWriteConflictError,
 } from '../ports/errors';
 
 type DomainConflict =
@@ -20,7 +22,9 @@ type DomainConflict =
   | FocusBlockConflictError
   | FocusBlockStaleError
   | LiftModificationConflictError
-  | MacrocycleNumberConflictError;
+  | MacrocycleNumberConflictError
+  | SupplementNotRemovedError
+  | SupplementWriteConflictError;
 
 /**
  * Translates framework-agnostic domain "conflict" errors raised by port
@@ -34,6 +38,8 @@ type DomainConflict =
   FocusBlockStaleError,
   LiftModificationConflictError,
   MacrocycleNumberConflictError,
+  SupplementNotRemovedError,
+  SupplementWriteConflictError,
 )
 export class DomainConflictFilter implements ExceptionFilter {
   catch(err: DomainConflict, host: ArgumentsHost): void {
