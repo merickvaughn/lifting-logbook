@@ -71,6 +71,11 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
       missingMaxDismissals: [],
       focusBlocks: [],
       focusDayStates: [],
+      supplementDayTypes: [],
+      supplementItems: [],
+      supplementDoses: [],
+      supplementMixParts: [],
+      supplementChanges: [],
     };
   }
 }

@@ -144,3 +144,11 @@ export class ReservedLiftNameConflictError extends Error {
     this.name = 'ReservedLiftNameConflictError';
   }
 }
+
+/** Another write appended to the supplement change log since this one read it (#1374). */
+export class SupplementWriteConflictError extends Error {
+  constructor() {
+    super('The supplement stack changed while saving; reload and try again');
+    this.name = 'SupplementWriteConflictError';
+  }
+}

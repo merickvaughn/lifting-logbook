@@ -10,6 +10,7 @@ import { CustomProgramsModule } from './custom-programs/custom-programs.module';
 import { DataExportModule } from './data-export/data-export.module';
 import { SnapshotsModule } from './snapshots/snapshots.module';
 import { FocusModule } from './focus/focus.module';
+import { SupplementsModule } from './supplements/supplements.module';
 import { HealthModule } from './health/health.module';
 import { LiftsModule } from './lifts/lifts.module';
 import { ProgramsModule } from './programs/programs.module';
@@ -135,6 +136,7 @@ export const pinoHttpOptions: PinoHttpOptions = {
     ProgramsModule,
     RepositoryFactoryModule,
     SnapshotsModule,
+    SupplementsModule,
     UserSettingsModule,
   ],
 })

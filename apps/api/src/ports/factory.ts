@@ -13,6 +13,7 @@ import { ILiftModificationRepository } from './ILiftModificationRepository';
 import { ILiftRecordRepository } from './ILiftRecordRepository';
 import { IProgramPhilosophyRepository } from './IProgramPhilosophyRepository';
 import { IStrengthGoalRepository } from './IStrengthGoalRepository';
+import { ISupplementRepository } from './ISupplementRepository';
 import { ITrainingMaxHistoryRepository } from './ITrainingMaxHistoryRepository';
 import { ITrainingMaxRepository } from './ITrainingMaxRepository';
 import { ITrainingDataRepository } from './ITrainingDataRepository';
@@ -38,6 +39,7 @@ export interface RepositoryBundle {
   liftRecord: ILiftRecordRepository;
   programPhilosophy: IProgramPhilosophyRepository;
   strengthGoal: IStrengthGoalRepository;
+  supplement: ISupplementRepository;
   trainingMax: ITrainingMaxRepository;
   trainingMaxHistory: ITrainingMaxHistoryRepository;
   trainingData: ITrainingDataRepository;

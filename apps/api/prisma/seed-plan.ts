@@ -239,6 +239,11 @@ export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void>
   await tx.userSettings.deleteMany({ where });
   await tx.focusBlock.deleteMany({ where });
   await tx.focusDayState.deleteMany({ where });
+  await tx.supplementDose.deleteMany({ where });
+  await tx.supplementMixPart.deleteMany({ where });
+  await tx.supplementItem.deleteMany({ where });
+  await tx.supplementDayType.deleteMany({ where });
+  await tx.supplementChange.deleteMany({ where });
   await tx.macrocycleScheduledWorkout.deleteMany({ where });
   await tx.macrocycle.deleteMany({ where });
   await tx.customProgram.deleteMany({ where });

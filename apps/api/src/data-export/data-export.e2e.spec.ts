@@ -94,6 +94,9 @@ describe('Download My Data HTTP (e2e, in-memory adapters)', () => {
     expect(Number.isNaN(Date.parse(logbook.exportedAt))).toBe(false);
     expect(logbook.tables.liftRecords).toEqual([]);
     expect(logbook.tables.focusBlocks).toEqual([]);
+    for (const table of ['supplementDayTypes', 'supplementItems', 'supplementDoses', 'supplementMixParts', 'supplementChanges']) {
+      expect(logbook.tables[table]).toEqual([]);
+    }
   });
 
   it('logs row counts, never row contents', async () => {

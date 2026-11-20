@@ -121,3 +121,11 @@ export interface SupplementAdvisory {
   /** Key of the reference the rule cites. */
   source: SupplementAdvisorySource;
 }
+
+/** The stored stack (#1374), returned by `GET /supplements` and by every write to it. */
+export interface SupplementStackResponse {
+  items: SupplementItem[];
+  dayTypes: SupplementDayType[];
+  /** 24-hour `HH:MM`. */
+  caffeineCutoff: string;
+}

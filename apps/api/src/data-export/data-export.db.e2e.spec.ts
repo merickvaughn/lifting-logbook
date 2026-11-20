@@ -58,6 +58,11 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
   UserSettings: 'userSettings',
   FocusBlock: 'focusBlocks',
   FocusDayState: 'focusDayStates',
+  SupplementDayType: 'supplementDayTypes',
+  SupplementItem: 'supplementItems',
+  SupplementDose: 'supplementDoses',
+  SupplementMixPart: 'supplementMixParts',
+  SupplementChange: 'supplementChanges',
   MacrocycleScheduledWorkout: 'macrocycleScheduledWorkouts',
   CustomProgram: 'customPrograms',
   CustomProgramSpec: 'customProgramSpecs',
@@ -94,6 +99,9 @@ async function cleanUsers(prisma: PrismaClient): Promise<void> {
   await prisma.userSettings.deleteMany({ where });
   await prisma.focusBlock.deleteMany({ where });
   await prisma.focusDayState.deleteMany({ where });
+  await prisma.supplementItem.deleteMany({ where }); // Doses and mix parts cascade.
+  await prisma.supplementDayType.deleteMany({ where });
+  await prisma.supplementChange.deleteMany({ where });
   await prisma.macrocycleScheduledWorkout.deleteMany({ where });
   await prisma.customProgram.deleteMany({ where });
   await prisma.importBatch.deleteMany({ where });
@@ -190,6 +198,29 @@ async function seedUser(
     },
   });
   await prisma.focusDayState.create({ data: { ...workout, state: { mark } } });
+  await prisma.supplementDayType.create({ data: { userId, id: 'lift', name: mark, position: 0 } });
+  const supplement = {
+    userId,
+    name: mark,
+    keyCompound: '',
+    timing: '',
+    shortNote: '',
+    longNote: '',
+    status: 'active',
+    unverified: false,
+    links: [],
+    ingredients: [],
+    isMix: true,
+    position: 0,
+  };
+  await prisma.supplementItem.create({ data: { ...supplement, id: `${userId}-mix` } });
+  await prisma.supplementDose.create({
+    data: { userId, itemId: `${userId}-mix`, position: 0, slot: 'pre', amount: '1 scoop', servings: 1, dayTypes: ['lift'] },
+  });
+  await prisma.supplementMixPart.create({
+    data: { userId, mixId: `${userId}-mix`, position: 0, partItemId: `${userId}-part`, name: mark, ingredients: [] },
+  });
+  await prisma.supplementChange.create({ data: { userId, seq: 1, date: DAY, type: 'mix_split', payload: { mixId: mark } } });
   await prisma.macrocycleScheduledWorkout.create({ data: { ...workout, weekNum: 1, scheduledDate: DAY } });
   await prisma.customProgram.create({
     data: {
