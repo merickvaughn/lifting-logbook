@@ -17,6 +17,11 @@ const OWNER_URL = OWNER_TC_URL ?? '';
 const APP_DB_URL = APP_ROLE_URL ?? '';
 // See rls.db.e2e.spec.ts: a contended Windows run can pass Jest's 5s default hook timeout (#567).
 const DB_E2E_HOOK_TIMEOUT_MS = 30_000;
+// The tests that hold the lock wait on other transactions, so they get the same budget. Each
+// transaction has the request's 15 s, and polling for a queued write gives up after 10 s.
+const TEST_TIMEOUT_MS = 30_000;
+const TX_TIMEOUT_MS = 15_000;
+const QUEUE_WAIT_MS = 10_000;
 const TODAY = '2026-11-20';
 
 const item = (id: string, p: Partial<SupplementItem> = {}): SupplementItem => ({
@@ -54,12 +59,32 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
   let userCount = 0;
   let userId = '';
 
-  /** Runs `body` with a repository on a transaction scoped to this test's user, as a request does. */
-  const asUser = <T>(body: (repo: PrismaSupplementRepository) => Promise<T>): Promise<T> =>
-    appDb.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
-      return body(new PrismaSupplementRepository(tx, userId));
-    });
+  /**
+   * Runs `body` with a repository on a transaction scoped to this test's user, as a request does,
+   * with the request transaction's 15 s budget. `lockWaitMs` shortens the write lock's wait.
+   */
+  const asUser = <T>(body: (repo: PrismaSupplementRepository) => Promise<T>, lockWaitMs?: number): Promise<T> =>
+    appDb.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+        return body(new PrismaSupplementRepository(tx, userId, lockWaitMs));
+      },
+      { maxWait: 10_000, timeout: TX_TIMEOUT_MS },
+    );
+
+  /** Polls until another transaction waits on this test's user's write lock, for up to `withinMs`. */
+  async function lockQueued(withinMs: number): Promise<boolean> {
+    const deadline = Date.now() + withinMs;
+    while (Date.now() < deadline) {
+      const [waiting] = await owner.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM pg_locks
+        WHERE locktype = 'advisory' AND NOT granted
+          AND ((classid::bigint << 32) | objid::bigint) = hashtextextended(${userId}, ${SUPPLEMENT_LOCK_NAMESPACE})`;
+      if ((waiting?.n ?? 0) > 0) return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  }
 
   beforeAll(async () => {
     owner = new PrismaClient({ datasources: { db: { url: OWNER_URL } } });
@@ -104,19 +129,14 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
     // first, so the cutoff write then fails on its seq.
     let queued = false;
     try {
-      for (let i = 0; i < 60 && !queued; i++) {
-        const [waiting] = await owner.$queryRaw<{ n: number }[]>`
-          SELECT count(*)::int AS n FROM pg_locks
-          WHERE locktype = 'advisory' AND NOT granted
-            AND ((classid::bigint << 32) | objid::bigint) = hashtextextended(${userId}, ${SUPPLEMENT_LOCK_NAMESPACE})`;
-        queued = (waiting?.n ?? 0) > 0;
-        if (!queued) await new Promise((r) => setTimeout(r, 50));
-      }
+      queued = await lockQueued(QUEUE_WAIT_MS);
     } finally {
       release.resolve();
     }
-    await Promise.all([cutoff, add]);
+    const settled = await Promise.allSettled([cutoff, add]);
+    // Checked before the writes' outcomes, so a failure here names the missing wait.
     expect(queued).toBe(true);
+    expect(settled.map((s) => s.status)).toEqual(['fulfilled', 'fulfilled']);
 
     const stored = await asUser((repo) => repo.load());
     expect(stored.items.map((i) => i.id)).toEqual(['a']);
@@ -126,6 +146,41 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
       [1, 'caffeine_cutoff_set'],
       [2, 'added'],
     ]);
+  }, TEST_TIMEOUT_MS);
+
+  it('answers a write that waits too long for the lock as a conflict, and stores nothing for it', async () => {
+    const entered = deferred();
+    const release = deferred();
+    const holder = asUser((repo) =>
+      repo.write(async (state) => {
+        entered.resolve();
+        await release.promise;
+        return apply(state, [{ type: 'added', item: item('held') }]);
+      }),
+    );
+    await entered.promise;
+    // A 200 ms wait stands in for the 5 s one, which a stuck holder would run out. Unbounded, the
+    // write would wait until its transaction's 15 s timeout and fail as a P2028 instead.
+    const late = asUser((repo) => repo.write(async (state) => apply(state, [{ type: 'added', item: item('late') }])), 200);
+    try {
+      await expect(late).rejects.toBeInstanceOf(SupplementWriteConflictError);
+    } finally {
+      release.resolve();
+    }
+    await holder;
+
+    expect(await owner.supplementItem.findMany({ where: { userId }, select: { id: true } })).toEqual([{ id: 'held' }]);
+    expect(await owner.supplementChange.count({ where: { userId } })).toBe(1);
+  }, TEST_TIMEOUT_MS);
+
+  it('puts lock_timeout back once the lock is taken, so the rest of the request keeps its own', async () => {
+    const timeouts = await appDb.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+      await tx.$executeRaw`SELECT set_config('lock_timeout', '7s', true)`;
+      await new PrismaSupplementRepository(tx, userId).write(async (state) => apply(state, [{ type: 'added', item: item('a') }]));
+      return tx.$queryRaw<{ value: string }[]>`SELECT current_setting('lock_timeout') AS value`;
+    });
+    expect(timeouts).toEqual([{ value: '7s' }]);
   });
 
   it('stores neither the rows nor the log entry of a write a lock-skipping writer beat to its seq', async () => {

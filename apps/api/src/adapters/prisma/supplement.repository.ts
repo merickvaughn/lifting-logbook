@@ -11,7 +11,7 @@ import {
   SupplementWritePlan,
 } from '../../ports/ISupplementRepository';
 import { SupplementWriteConflictError } from '../../ports/errors';
-import { PrismaExecutor, runInteractive } from './prisma-tx.util';
+import { PrismaExecutor, canStartTransaction, runInteractive } from './prisma-tx.util';
 import { parseChange, parseIngredients, parseSlot, parseStatus, toJson } from './supplement-payload';
 
 const itemInclude = {
@@ -25,6 +25,19 @@ type ItemRow = Prisma.SupplementItemGetPayload<{ include: typeof itemInclude }>;
  * from another feature's on the same user (see MACROCYCLE_LOCK_NAMESPACE). Arbitrary, but fixed.
  */
 export const SUPPLEMENT_LOCK_NAMESPACE = 1374;
+
+/**
+ * How long a write waits for the user's write lock before it's a `supplement-stale` 409. Well
+ * inside the request transaction's 15 s (`DEFAULT_RLS_TX_TIMEOUT_MS`), so a write stuck behind a
+ * slow holder gets the 409 ADR-046 promises, not Prisma's transaction timeout as a 500.
+ */
+export const SUPPLEMENT_LOCK_WAIT_MS = 5_000;
+
+/** Postgres's `lock_not_available`, raised when a lock wait reaches `lock_timeout`. */
+const LOCK_NOT_AVAILABLE = '55P03';
+
+const isLockTimeout = (err: unknown) =>
+  err instanceof PrismaClientKnownRequestError && (err.meta?.code === LOCK_NOT_AVAILABLE || err.message.includes(LOCK_NOT_AVAILABLE));
 
 const tracer = trace.getTracer('prisma-supplement-repository');
 
@@ -58,6 +71,7 @@ export class PrismaSupplementRepository implements ISupplementRepository {
   constructor(
     private readonly prisma: PrismaExecutor,
     private readonly userId: string,
+    private readonly lockWaitMs: number = SUPPLEMENT_LOCK_WAIT_MS,
   ) {}
 
   async load(): Promise<SupplementState> {
@@ -116,14 +130,29 @@ export class PrismaSupplementRepository implements ISupplementRepository {
 
   /**
    * Waits for the user's supplement write lock, held to the end of the transaction: the
-   * request's, which RlsInterceptor opens, or the one `write` opens on the base client. Raw SQL
-   * isn't auto-traced (ADR-024), hence the span.
+   * request's, which RlsInterceptor opens, or the one `write` opens on the base client. A wait
+   * past `lockWaitMs` is a SupplementWriteConflictError, as macrocycle.repository.ts bounds its
+   * own. Raw SQL isn't auto-traced (ADR-024), hence the span.
    */
   private async lock(tx: PrismaExecutor): Promise<void> {
     await tracer.startActiveSpan('supplement.lock', async (span) => {
       try {
-        // void doesn't deserialize, hence the cast to text.
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${this.userId}, ${SUPPLEMENT_LOCK_NAMESPACE}))::text`;
+        span.setAttribute('lock.in_transaction', !canStartTransaction(this.prisma));
+        span.setAttribute('lock.wait_ms', this.lockWaitMs);
+        const [setting] = await tx.$queryRaw<{ previous: string }[]>`SELECT current_setting('lock_timeout') AS previous`;
+        // current_setting always returns a row; restoring a guess could turn the timeout off.
+        if (setting === undefined) throw new Error('current_setting(lock_timeout) returned no row');
+        await tx.$queryRaw`SELECT set_config('lock_timeout', ${`${this.lockWaitMs}ms`}, true)`;
+        try {
+          // void doesn't deserialize, hence the cast to text.
+          await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${this.userId}, ${SUPPLEMENT_LOCK_NAMESPACE}))::text`;
+        } catch (err) {
+          if (!isLockTimeout(err)) throw err;
+          // The failed statement aborts the transaction, which the 409 rolls back.
+          span.setAttribute('lock.acquired', false);
+          throw new SupplementWriteConflictError();
+        }
+        await tx.$queryRaw`SELECT set_config('lock_timeout', ${setting.previous}, true)`;
         span.setAttribute('lock.acquired', true);
       } catch (err) {
         span.setStatus({ code: SpanStatusCode.ERROR, message: err instanceof Error ? err.message : String(err) });

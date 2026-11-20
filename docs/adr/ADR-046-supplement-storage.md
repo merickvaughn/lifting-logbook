@@ -56,7 +56,9 @@ A write first takes a per-user transaction lock,
 `pg_advisory_xact_lock(hashtextextended(userId, 1374))`, as the macrocycle writes do with their
 own key, then loads the state. Writes for one user therefore run one after another, each from the
 state the previous one saved, so none saves over another. The lock is held to the end of the
-request's transaction.
+request's transaction. A write waits for it for at most 5 s (`lock_timeout`, as the macrocycle
+lock bounds its wait), well inside the request transaction's 15 s, so a write stuck behind a slow
+holder is a 409 with the code `supplement-stale`, not a transaction timeout answered as a 500.
 
 The `(userId, seq)` key stays as a backstop for a writer that skips the lock, such as a script.
 A write numbers its entries from the `seq` it read, so a collision there, or on any other key,
