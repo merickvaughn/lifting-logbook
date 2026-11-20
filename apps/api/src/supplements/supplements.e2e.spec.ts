@@ -156,6 +156,22 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     await ok('DELETE', `/supplements/items/${item.id}?today=2026-11-21`);
   });
 
+  it('refuses a today more than a day past the server date, so it can’t block the writes after it', async () => {
+    const { inject, ok, add, changes } = newUser();
+    const daysFromNow = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+    for (const future of ['2099-01-01', daysFromNow(2)]) {
+      const res = await inject('POST', `/supplements/items?today=${future}`, { name: 'Typo' });
+      expect([future, res.statusCode]).toEqual([future, 400]);
+      expect(res.json().message).toMatch(/more than a day past the server's date/);
+    }
+    expect(await changes()).toEqual([]);
+
+    // Writes dated from now on still succeed, up to a day ahead for a lifter east of UTC.
+    await add('Zinc');
+    await ok('POST', `/supplements/items?today=${daysFromNow(1)}`, { name: 'Magnesium' });
+    expect((await changes()).map((c) => c.type)).toEqual(['added', 'added']);
+  });
+
   it('updates an item, one change per kind of edit', async () => {
     const { ok, add, changes } = newUser();
     const item = await add('Magnesium', { unverified: true });

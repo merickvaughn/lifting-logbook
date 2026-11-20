@@ -71,6 +71,20 @@ with it. It can't be earlier than the date of the user's last change, or the wri
 never go backwards in `seq` order, so replaying in `(date, seq)` order applies changes in the order
 they were made, and a removal can't replay before the restore that followed it.
 
+`today` also can't be more than a day past the server's UTC date. Every time zone, UTC−12 to
+UTC+14, is within a day of UTC, so no lifter's real date is refused. Without the bound, one write
+dated in the future, from a wrong device clock or a typo, would make every later write a 400 until
+that date came, and the app role can't correct the log, which is append-only for it.
+
+A `today` earlier than the last change is rejected, not moved forward to the last change's date.
+Rejecting keeps every logged date exactly what the client sent, so the history shows the day the
+lifter made the change. The cost is that some honest writes fail: a lifter with two devices in
+different time zones, or one who travels west, gets a 400 around midnight until their local date
+catches up, and has to retry. Moving the date forward would never fail a write, and replay order
+would still hold, but a change could be dated a day later than the lifter's own date. We chose
+exactness, because the as-of view is read by date; a client that hits the 400 can retry with the
+date the error names.
+
 ### Isolation
 
 Every table carries `userId` with `ENABLE` and `FORCE ROW LEVEL SECURITY` and the usual isolation

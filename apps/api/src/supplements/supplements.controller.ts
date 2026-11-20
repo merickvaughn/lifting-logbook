@@ -36,7 +36,7 @@ import { SupplementNotRemovedError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
 import { ISupplementRepository, SupplementState } from '../ports/ISupplementRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { parseIsoDateParam, parseToday } from '../iso-date-param';
+import { parseIsoDateParam, parseWriteToday } from '../iso-date-param';
 import {
   CreateMixDto,
   CreateSupplementItemDto,
@@ -84,7 +84,8 @@ function intParam(name: string, value: string | undefined, min: number, max: num
  * write lock, reads the stored state, applies one plan's changes to it with `applyChange`,
  * validates the result, and saves it with those changes in one transaction (ADR-046). `today`
  * (`YYYY-MM-DD`, the lifter's local date) is required and dates the changes; it can't be earlier
- * than the last change's date, so the log's dates and its `seq` agree on the order.
+ * than the last change's date, so the log's dates and its `seq` agree on the order, or more than
+ * a day past the server's UTC date, so one wrong date can't block every later write.
  */
 @Controller('supplements')
 export class SupplementsController {
@@ -361,7 +362,7 @@ export class SupplementsController {
    * copied to plain data first, so it stores and compares like any other value.
    */
   private async write<B>(user: AuthUser, todayParam: string | undefined, dto: B, plan: Plan<B>): Promise<SupplementState> {
-    const today = parseToday(todayParam);
+    const today = parseWriteToday(todayParam);
     const body = structuredClone(dto);
     const repo = await this.repo(user);
     return repo.write(async (state) => {
