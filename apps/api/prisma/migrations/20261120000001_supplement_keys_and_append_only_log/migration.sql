@@ -1,13 +1,16 @@
 -- Supplements (#1374), after review: user-scoped keys, an append-only change log enforced by the
 -- grants, two more change types, and an index for the as-of read. See
--- docs/adr/ADR-046-supplement-storage.md. A migration of its own rather than an edit to
--- 20261120000000, which staging may already have applied.
+-- docs/adr/ADR-046-supplement-storage.md. The review's schema changes are kept separate from
+-- 20261120000000, whose own fixes (its lock timeout and header) were edited into it before it
+-- merged, so production gets them. A local database that applied an earlier version of either
+-- migration needs `prisma migrate reset`.
 --
 -- 1. supplement_item is keyed by ("userId", "id"), and the dose and mix-part foreign keys name
 --    both columns. Foreign-key and unique checks bypass RLS, so a key on "id" alone would let a
 --    later client-chosen id find, or cascade into, another user's item.
 -- 2. lifting_app loses UPDATE and DELETE on supplement_change: the log is append-only in the
---    database, not only in code. The owner role, which runs migrations and the seed, keeps them.
+--    database, not only in code. The owner role, which runs migrations, keeps them. The staging
+--    seed's reset keeps every supplement table whichever role runs it (ADR-046).
 -- 3. day_types_set and caffeine_cutoff_set join the change types, so every write to the stack is
 --    logged.
 -- 4. ("userId", "date") on supplement_change, for GET /supplements/as-of/:date.

@@ -199,8 +199,11 @@ export async function writeSeedPlan(prisma: PrismaClient, plan: SeedPlan): Promi
       // Row-level security admits only this user's rows, for a role it applies to (issue #511).
       // A role that bypasses it, like the migrator's, ignores the setting.
       await tx.$queryRaw`SELECT set_config('app.current_user_id', ${SEED_USER_ID}, true)`;
+      // The reset keeps the supplement stack and its log; the caffeine cutoff, which their log
+      // records, lives on user_settings, so it's carried over to the recreated row.
+      const kept = await tx.userSettings.findUnique({ where: { userId: SEED_USER_ID }, select: { supplementCaffeineCutoff: true } });
       await resetSeedUser(tx);
-      await tx.userSettings.create({ data: plan.userSettings });
+      await tx.userSettings.create({ data: { ...plan.userSettings, ...kept } });
       await tx.macrocycle.createMany({ data: plan.macrocycles });
       await tx.macrocycleDashboard.create({ data: plan.dashboard });
       await tx.trainingMax.createMany({ data: plan.trainingMaxes });
@@ -228,10 +231,14 @@ export const SEED_KEPT_TABLES = [
  * user-scoped table as long as each one names its owner `userId`, as all do today; the one child
  * table without it (`custom_program_spec`) cascades from `custom_program`.
  *
- * The supplement tables are the exception, in `SEED_KEPT_TABLES`. The seed writes none of them,
- * and the role it runs as can't delete from `supplement_change`, which is append-only (ADR-046).
- * Deleting the stack but not its log would leave a history that replays to a different stack, so
- * all five stay as they are.
+ * The supplement tables are the exception, in `SEED_KEPT_TABLES`, and the reset keeps them
+ * whichever role runs it. The seed writes none of them. The app role can't delete from
+ * `supplement_change`, which is append-only for it (ADR-046), and deleting the stack but not its
+ * log would leave a history that replays to a different stack. The owner role, which the
+ * documented staging command uses, could delete all five, but a reset that behaved differently by
+ * role would be one more thing to get wrong, so all five stay as they are for both.
+ * `writeSeedPlan` carries the caffeine cutoff, which the log also records, across the
+ * `user_settings` row this deletes.
  */
 export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void> {
   const where = { userId: SEED_USER_ID };
