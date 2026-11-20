@@ -160,7 +160,7 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
     );
     await entered.promise;
     // A 200 ms wait stands in for the 5 s one, which a stuck holder would run out. Unbounded, the
-    // write would wait until its transaction's 15 s timeout and fail as a P2028 instead.
+    // write would wait for as long as the holder holds the lock, and this test would time out.
     const late = asUser((repo) => repo.write(async (state) => apply(state, [{ type: 'added', item: item('late') }])), 200);
     try {
       await expect(late).rejects.toBeInstanceOf(SupplementWriteConflictError);
