@@ -1,4 +1,4 @@
-import type { SupplementItem } from '@lifting-logbook/types';
+import type { SupplementDose, SupplementItem } from '@lifting-logbook/types';
 import { isWorkoutSlot } from './placements';
 import { convertAmount, itemIngredients } from './totals';
 
@@ -15,7 +15,7 @@ export interface Overlap {
 function slotAmountMg(
   item: SupplementItem,
   key: string,
-  match: (dose: SupplementItem['doses'][number]) => boolean,
+  match: (dose: SupplementDose) => boolean,
 ): number {
   const perServing = itemIngredients(item)
     .filter((i) => i.key === key)
@@ -40,26 +40,18 @@ export function findOverlaps(
     );
     if (shared.length === 0) continue;
 
-    const sameSlotDoses = (c: SupplementItem['doses'][number]) =>
-      item.doses.some(
-        (d) =>
-          d.slot === c.slot &&
-          (!isWorkoutSlot(c.slot) || d.dayTypes.some((t) => c.dayTypes.includes(t))),
-      );
-    const sameSlot = candidate.doses.some(sameSlotDoses);
+    const sharesSlot = (a: SupplementDose, b: SupplementDose) =>
+      a.slot === b.slot &&
+      (!isWorkoutSlot(a.slot) || a.dayTypes.some((t) => b.dayTypes.includes(t)));
+    const candidateInSlot = (c: SupplementDose) => item.doses.some((d) => sharesSlot(c, d));
+    const itemInSlot = (d: SupplementDose) => candidate.doses.some((c) => sharesSlot(c, d));
+    const sameSlot = candidate.doses.some(candidateInSlot);
     const preselect =
       sameSlot &&
-      shared.every((key) => {
-        const mine = slotAmountMg(candidate, key, sameSlotDoses);
-        const theirs = slotAmountMg(item, key, (d) =>
-          candidate.doses.some(
-            (c) =>
-              c.slot === d.slot &&
-              (!isWorkoutSlot(c.slot) || d.dayTypes.some((t) => c.dayTypes.includes(t))),
-          ),
-        );
-        return mine >= theirs;
-      });
+      shared.every(
+        (key) =>
+          slotAmountMg(candidate, key, candidateInSlot) >= slotAmountMg(item, key, itemInSlot),
+      );
     out.push({ item, sharedIngredients: shared, sameSlot, preselect });
   }
   return out;
