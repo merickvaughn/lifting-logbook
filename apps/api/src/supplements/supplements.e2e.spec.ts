@@ -450,8 +450,10 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     expect(await page('?limit=2')).toEqual([4, 5]);
     expect(await page('?limit=2&beforeSeq=4')).toEqual([2, 3]);
     expect(await page('?limit=2&beforeSeq=2')).toEqual([1]);
-    for (const bad of ['?limit=0', '?limit=1001', '?limit=x', '?beforeSeq=0', '?beforeSeq=-1']) {
+    for (const bad of ['?limit=0', '?limit=1001', '?limit=x', '?beforeSeq=0', '?beforeSeq=-1', '?beforeSeq=2147483648']) {
       expect([bad, (await inject('GET', `/supplements/changes${bad}`)).statusCode]).toEqual([bad, 400]);
     }
+    // The largest seq the log's integer column holds is still a page boundary.
+    expect(await page('?beforeSeq=2147483647')).toEqual([1, 2, 3, 4, 5]);
   });
 });

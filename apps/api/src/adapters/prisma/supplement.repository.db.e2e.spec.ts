@@ -256,5 +256,7 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
     expect(await asUser((repo) => repo.lastRemoved('c'))).toEqual(item('c', { name: 'As removed' }));
     expect(await asUser((repo) => repo.lastRemoved('a'))).toBeUndefined();
     expect(await asUser((repo) => repo.firstChangeDate())).toBe(TODAY);
+    // The largest beforeSeq the API accepts is the largest the integer column holds.
+    expect((await asUser((repo) => repo.changes({ beforeSeq: 2_147_483_647, limit: 10 }))).map((c) => c.seq)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 });

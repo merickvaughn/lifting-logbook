@@ -51,6 +51,8 @@ const DETAIL_KEYS = ['name', 'keyCompound', 'timing', 'shortNote', 'longNote', '
 /** `GET /changes` page size: the default, and the most one request may ask for. */
 const CHANGES_PAGE = 200;
 const CHANGES_PAGE_MAX = 1000;
+/** The largest `seq` there can be: `supplement_change.seq` is a Postgres `integer`. */
+const SEQ_MAX = 2_147_483_647;
 
 /**
  * What a write does: reads the state as loaded, checks the request against it, and returns the
@@ -122,7 +124,7 @@ export class SupplementsController {
     @Query('limit') limit: string | undefined,
     @CurrentUser() user: AuthUser,
   ): Promise<SupplementChange[]> {
-    const before = intParam('beforeSeq', beforeSeq, 1, Number.MAX_SAFE_INTEGER);
+    const before = intParam('beforeSeq', beforeSeq, 1, SEQ_MAX);
     const take = intParam('limit', limit, 1, CHANGES_PAGE_MAX, CHANGES_PAGE) ?? CHANGES_PAGE;
     return (await this.repo(user)).changes({ ...(before === undefined ? {} : { beforeSeq: before }), limit: take });
   }
