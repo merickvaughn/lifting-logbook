@@ -116,8 +116,8 @@ describe('Download My Data HTTP (e2e, in-memory adapters)', () => {
       .items.map((i) => i.id);
     expect((await write('POST', '/supplements/mixes?today=2026-11-20', { name: 'Pump', itemIds: ids })).statusCode).toBe(201);
 
-    const { tables } = JSON.parse(unzip((await exportFor(user)).rawPayload)['logbook.json']!);
-    expect(tables.supplementDayTypes).toEqual([{ id: 'lift', name: 'Lift', sessionTime: null, position: 0 }]);
+    const { tables } = JSON.parse(String(unzip((await exportFor(user)).rawPayload)['logbook.json']));
+    expect(tables.supplementDayTypes).toEqual([{ id: 'lift', name: 'Lift', position: 0 }]);
     // The mix, then the two items folded into it.
     expect(tables.supplementItems.map((i: { name: string; foldedInto: string | null }) => [i.name, i.foldedInto !== null])).toEqual([
       ['Pump', false],

@@ -88,7 +88,7 @@ export class InMemorySupplementRepository implements ISupplementRepository {
       ...this.state.folded.map(({ item, mixId }) => ({ item, foldedInto: mixId })),
     ];
     return structuredClone({
-      supplementDayTypes: this.state.dayTypes.map((d, position) => ({ ...d, sessionTime: d.sessionTime ?? null, position })),
+      supplementDayTypes: this.state.dayTypes.map((d, position) => ({ ...d, position })),
       supplementItems: stored.map(({ item, foldedInto }, position) => {
         const { doses: _doses, parts, ...columns } = item;
         return { ...columns, isMix: parts !== undefined, foldedInto, position };
