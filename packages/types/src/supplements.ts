@@ -94,7 +94,19 @@ export type SupplementChange = { date: string; seq: number } & (
   | { type: 'folded_into_mix'; mixId: string; itemId: string }
   /** Brings a mix's parts back as separate items; the mix goes, or reverts to its own ingredients. */
   | { type: 'mix_split'; mixId: string }
+  /** Replaces the day types (#1374). */
+  | { type: 'day_types_set'; dayTypes: SupplementDayType[] }
+  /** Sets the caffeine cutoff, 24-hour `HH:MM` (#1374). */
+  | { type: 'caffeine_cutoff_set'; caffeineCutoff: string }
 );
+
+/**
+ * Why replaying the change log skipped a change, or part of one: it named an item the log hasn't
+ * added (`unknown-item`), an item folded into a mix (`folded-item`), an item that's removed
+ * (`removed-item`), restored an item that isn't removed (`not-removed`), or split an item that
+ * isn't a mix (`not-a-mix`).
+ */
+export type SupplementReplayAnomalyReason = 'unknown-item' | 'folded-item' | 'removed-item' | 'not-removed' | 'not-a-mix';
 
 export const SUPPLEMENT_ADVISORY_RULES = [
   'lateStimulant',
@@ -129,3 +141,30 @@ export interface SupplementStackResponse {
   /** 24-hour `HH:MM`. */
   caffeineCutoff: string;
 }
+
+/** What creating an item or a mix returns: the stack, and the new item's id. */
+export interface SupplementCreatedResponse extends SupplementStackResponse {
+  id: string;
+}
+
+/** A change, or part of one, that replay couldn't act on. */
+export interface SupplementReplayAnomaly {
+  seq: number;
+  type: SupplementChange['type'];
+  itemId: string;
+  reason: SupplementReplayAnomalyReason;
+}
+
+/** `GET /supplements/as-of/:date`: the stack at the end of the date, replayed from the change log. */
+export interface SupplementAsOfResponse {
+  items: SupplementItem[];
+  /** The date of the earliest change, or null with none: before it, the log has no record. */
+  firstChangeDate: string | null;
+  /** Changes replay skipped. Empty for a complete, well-ordered log. */
+  anomalies: SupplementReplayAnomaly[];
+}
+
+/** The 409 code for a write that lost a race with another write to the stack (ADR-046). */
+export const SUPPLEMENT_STALE_CODE = 'supplement-stale';
+/** The 409 code for restoring an item that isn't removed, or is folded into a mix. */
+export const SUPPLEMENT_NOT_REMOVED_CODE = 'supplement-not-removed';
