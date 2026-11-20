@@ -6,3 +6,4 @@ export * from './services';
 export * from './timer';
 export * from './utils';
 export * from './focus';
+export * from './supplements';
