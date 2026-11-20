@@ -312,6 +312,9 @@ References from [`docs/security-review-checklist.md`](security-review-checklist.
 | [pino-std-serializers — README](https://github.com/pinojs/pino-std-serializers#readme) | [ADR-033](adr/ADR-033-log-header-allowlist.md) | `pino.stdSerializers.req` / `.res`, the standard serializers the config runs first and then post-processes to replace `headers` while preserving method / url / statusCode. |
 | [pino-http — Custom serializers](https://github.com/pinojs/pino-http#custom-serializers) | [ADR-033](adr/ADR-033-log-header-allowlist.md) | Default wrapping of custom serializers around the standard ones, and the `wrapSerializers: false` option the config sets (#1127). |
 | [OWASP — Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html) | [ADR-033](adr/ADR-033-log-header-allowlist.md) | Normative guidance that access tokens, session identifiers, and authorization headers must never be written to logs — the rule ADR-033 enforces by default. |
+| [Terraform provider `grafana/grafana`](https://registry.terraform.io/providers/grafana/grafana/latest/docs), [Grafana Cloud — Infrastructure as code with Terraform](https://grafana.com/docs/grafana-cloud/developer-resources/infrastructure-as-code/terraform/) | [ADR-045](adr/ADR-045-monitoring-source-of-truth.md) | The chosen single writer of Grafana Cloud alert rules, Alertmanager config and dashboards (#843). |
+| [Grafana Mimir — `mimirtool`](https://grafana.com/docs/mimir/latest/manage/tools/mimirtool/) | [ADR-045](adr/ADR-045-monitoring-source-of-truth.md) | `rules load` / `alertmanager load`: the interim manual procedure, and the rejected deploy-step option (#843). |
+| [Terraform — `terraform plan`](https://developer.hashicorp.com/terraform/cli/commands/plan) | [ADR-045](adr/ADR-045-monitoring-source-of-truth.md) | A plan reports drift between state, real infrastructure and configuration, the reason option B was chosen (#843). |
 
 ---
 
