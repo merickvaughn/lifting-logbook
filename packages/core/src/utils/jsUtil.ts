@@ -4,26 +4,29 @@
  * @param prevDate Date to start from
  * @param targetWeekday Optional target weekday (0=Sunday, 1=Monday, ... 6=Saturday)
  * @returns Date object for the next Monday (at least 7 days after prevDate), or most recent target weekday if specified
+ *
+ * Weekdays are compared and stepped in UTC calendar days: macrocycle dates are
+ * UTC midnight, so local-time weekdays are a day off on a host west of UTC (#1102).
  */
 export function getNextDate(
   prevDate: Date,
-  targetWeekday: number = prevDate.getDay(),
+  targetWeekday: number = prevDate.getUTCDay(),
   today: Date | null = null,
 ): Date {
-  const prevDay = prevDate.getDay();
+  const prevDay = prevDate.getUTCDay();
   const weekday = typeof targetWeekday === "number" ? targetWeekday : prevDay;
   const now = today ? new Date(today) : new Date();
   // 1. Use today if it matches the target weekday and is at least 7 days after prevDate
   if (
-    now.getDay() === weekday &&
+    now.getUTCDay() === weekday &&
     now.getTime() - prevDate.getTime() >= 7 * 24 * 60 * 60 * 1000
   ) {
     return now;
   }
   // 2. Use the most recent occurrence of the target weekday if at least 7 days after prevDate
-  const offset = (now.getDay() - weekday + 7) % 7;
+  const offset = (now.getUTCDay() - weekday + 7) % 7;
   const mostRecent = new Date(now);
-  mostRecent.setDate(now.getDate() - offset);
+  mostRecent.setUTCDate(now.getUTCDate() - offset);
   if (mostRecent.getTime() - prevDate.getTime() >= 7 * 24 * 60 * 60 * 1000) {
     return mostRecent;
   }
@@ -31,9 +34,9 @@ export function getNextDate(
   const macrocycleDate = new Date(prevDate);
   // Find the next occurrence of the target weekday after prevDate
   const daysToNext = (weekday - prevDay + 7) % 7 || 7;
-  macrocycleDate.setDate(prevDate.getDate() + daysToNext);
+  macrocycleDate.setUTCDate(prevDate.getUTCDate() + daysToNext);
   while (macrocycleDate.getTime() - prevDate.getTime() < 7 * 24 * 60 * 60 * 1000) {
-    macrocycleDate.setDate(macrocycleDate.getDate() + 7);
+    macrocycleDate.setUTCDate(macrocycleDate.getUTCDate() + 7);
   }
   return macrocycleDate;
 }
