@@ -71,6 +71,18 @@ function find(state: SupplementState, id: string): { index: number; item: Supple
   return { index, item };
 }
 
+/**
+ * The parts folded into a mix in the stack, each named `Mix (Part)` so a 400 names the mix the
+ * user can see. Parts of a removed mix are left out, like removed items: they're checked when
+ * the mix is restored, which brings them back into this list.
+ */
+function liveParts(state: SupplementState): SupplementItem[] {
+  return state.folded.flatMap(({ item, mixId }) => {
+    const mix = state.items.find((i) => i.id === mixId);
+    return mix ? [{ ...item, name: `${mix.name} (${item.name})` }] : [];
+  });
+}
+
 /** `value` as a whole number from `min` to `max`, `fallback` when absent, or a 400. */
 function intParam(name: string, value: string | undefined, min: number, max: number, fallback?: number): number | undefined {
   if (value === undefined) return fallback;
@@ -235,7 +247,8 @@ export class SupplementsController {
   /**
    * Replaces the day types and sets the caffeine cutoff. A day type left out is taken off every
    * dose, including those of items folded into a mix, as a `moved` change; a workout-slot dose
-   * left with none is a 400.
+   * left with none is a 400, naming the mix for a part of one. A part of a removed mix, like a
+   * removed item, is cleaned but not checked until the mix is restored.
    */
   @Put('settings')
   async settings(
@@ -379,7 +392,7 @@ export class SupplementsController {
           throw new Error(`Supplement ${change.type} change didn't apply: ${anomalies.map((a) => `${a.itemId} ${a.reason}`).join(', ')}`);
         }
       }
-      const errors = validateStack([...state.items, ...state.folded.map((f) => f.item)], state.dayTypes);
+      const errors = validateStack([...state.items, ...liveParts(state)], state.dayTypes);
       if (errors.length > 0) throw new BadRequestException(errors);
       return changes.map((change) => ({ ...change, date: today }));
     });

@@ -320,13 +320,36 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
       { ...b, doses: cleaned },
     ]);
 
-    // A folded part whose workout dose would be left with no day type blocks the removal.
+    // A folded part whose workout dose would be left with no day type blocks the removal, and
+    // the 400 names the mix it's in.
     const c = await add('Caffeine', { doses: [{ ...dose, dayTypes: ['lift'] }] });
     const d = await add('Taurine');
     await ok('POST', `/supplements/mixes?today=${TODAY}`, { name: 'Stim', itemIds: [d.id, c.id] });
     const res = await inject('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [] });
     expect(res.statusCode).toBe(400);
-    expect(res.json().message).toContain('Caffeine: a pre dose needs at least one day type');
+    expect(res.json().message).toContain('Stim (Caffeine): a pre dose needs at least one day type');
+  });
+
+  it('cleans the parts of a removed mix without checking them, and checks them when the mix is restored', async () => {
+    const { ok, add, inject, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    const c = await add('Caffeine', { doses: [{ slot: 'pre', amount: '1', servings: 1, dayTypes: ['lift'] }] });
+    const d = await add('Taurine');
+    const mix = await ok<SupplementCreatedResponse>('POST', `/supplements/mixes?today=${TODAY}`, { name: 'Stim', itemIds: [d.id, c.id] });
+    await ok('DELETE', `/supplements/items/${mix.id}?today=${TODAY}`);
+
+    // Caffeine, folded into a removed mix, can't block removing its only day type.
+    await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[1]] });
+    expect((await changes()).slice(-2)).toEqual([
+      { type: 'day_types_set', date: TODAY, seq: 6, dayTypes: [DAY_TYPES[1]] },
+      { type: 'moved', date: TODAY, seq: 7, itemId: c.id, doses: [{ slot: 'pre', amount: '1', servings: 1, dayTypes: [] }] },
+    ]);
+
+    // Restoring the mix brings the part back into the stack's checks, and the 400 names the mix.
+    const res = await inject('POST', `/supplements/items/${mix.id}/restore?today=${TODAY}`);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toEqual(['Stim (Caffeine): a pre dose needs at least one day type']);
+    expect(await changes()).toHaveLength(7);
   });
 
   it('409s restoring a part of a mix, naming the mix, and brings it back through the mix', async () => {

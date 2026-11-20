@@ -119,7 +119,9 @@ per-row RLS, and the per-table rows Download My Data exports.
   kind of write.
 - Writes for one user wait for each other. A write takes milliseconds, so the wait is short.
 - An item folded into a mix keeps its own doses, and removing a day type takes it off those too,
-  so splitting the mix later brings them back valid. Restoring a part of a mix is a 409 naming the
+  so splitting the mix later brings them back valid. A part of a mix in the stack is checked with
+  it, and a 400 names it as `Mix (Part)`. A part of a removed mix is cleaned but not checked, like
+  a removed item, until the mix is restored. Restoring a part of a mix is a 409 naming the
   mix: the part comes back by splitting it, or by restoring a removed mix first.
 - Download My Data includes all five tables in `logbook.json`; Clear data keeps them, as setup.
   The staging seed's reset keeps them too, and the caffeine cutoff on `user_settings`, whichever
