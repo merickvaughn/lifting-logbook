@@ -135,6 +135,7 @@ export function StepImport({ onImported }: Props) {
           <Link
             href="/import"
             target="_blank"
+            prefetch={false}
             rel="noopener noreferrer"
             className={styles.inlineLinkBtn}
           >
