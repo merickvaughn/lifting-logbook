@@ -105,6 +105,9 @@ jobs:
       - name: Unit test board-ID sync parsing
         run: node --test scripts/check-board-id-sync.test.mjs
 
+      - name: Unit test the project-board Epic label mapping
+        run: node --test scripts/project-board-epic.test.mjs
+
       - name: Verify turbo dev task builds workspace libraries
         run: node scripts/check-turbo-dev-build-dep.mjs
 

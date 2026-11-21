@@ -177,6 +177,19 @@ If a mutation runs without a prior snapshot commit, stop and recover from the la
 
 **Workflow — run after `gh issue create`:**
 
+Set the milestone (step 1 below) and add exactly one `epic:<slug>` label, for example
+`gh issue create … --milestone "v0.4 — Alpha Release" --label epic:api-implementation`.
+[`.github/workflows/project-board.yml`](.github/workflows/project-board.yml) then does steps 2–3
+on GitHub's side: it adds every opened issue to project 2, and sets the Epic from the label using
+the option IDs in `.claude/hook-config.json`. The slug is the Epic name in lower case with `&` as
+`and` and other punctuation as `-`; `node scripts/project-board-epic.mjs --list` prints all ten
+labels. With no `epic:` label the issue lands on the board with no Epic, and the run carries an
+"Epic not set" notice. An unknown label or two `epic:` labels fail the run, which lists the valid
+labels. This works from sessions whose GitHub access can't reach the board ([#1385](https://github.com/merickvaughn/lifting-logbook/issues/1385)).
+Token: [`docs/operations/project-board-token.md`](docs/operations/project-board-token.md).
+
+The commands below are the fallback, for when the workflow fails or the token has expired:
+
 ```bash
 # Requires project scope — add once if needed: gh auth refresh -s project
 
@@ -483,6 +496,8 @@ The skill handles the full flow: clarifying questions → proposal doc → GitHu
 
 Do not create `docs/proposals/` files or ROADMAP entries manually unless `/propose` is
 unavailable. The skill ensures the issue, epic, and milestone are assigned consistently.
+It sets the Epic by following *Workflow — run after `gh issue create`* above, so the issue it
+creates needs one `epic:<slug>` label (`.claude/propose.json` → `github_project.epic_label`).
 
 ### docs/proposals/ convention
 

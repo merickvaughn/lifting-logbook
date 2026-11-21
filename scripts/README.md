@@ -30,6 +30,8 @@ Repository automation scripts. Grouped by lifecycle.
 |---|---|
 | [`create-github-project.sh`](create-github-project.sh) | Creates and configures the GitHub Project (v2) — fields, options, links repo, seeds Foundation issues. Run once per fresh fork. |
 | [`create-foundation-issues.sh`](create-foundation-issues.sh) | Creates labels, the `v0.1 — Foundation` milestone, and the 17 Foundation issues. Run from the target repo root. |
+| [`project-board-epic.mjs`](project-board-epic.mjs) | Maps an issue's `epic:<slug>` label to the project board's Epic option ID for [`project-board.yml`](../.github/workflows/project-board.yml) ([#1385](https://github.com/merickvaughn/lifting-logbook/issues/1385)). Reads the IDs from [`../.claude/hook-config.json`](../.claude/hook-config.json) and derives each slug from the Epic name. Fails on an unknown slug (listing the valid ones) or two `epic:` labels; annotates the run when there is none. `--list` prints the ten labels. |
+| [`project-board-epic.test.mjs`](project-board-epic.test.mjs) | `node --test` coverage for `project-board-epic.mjs`, read against the real `hook-config.json`: every Epic gets a distinct slug that resolves to its own option ID; no `epic:` label, an unknown slug (with every valid label named) and two labels; the CLI's `$GITHUB_OUTPUT` lines and exit codes; a newline in a label not starting a second workflow command. Runs in CI (`ci.yml`). |
 
 ## Build helpers (Apps Script legacy / build pipeline)
 

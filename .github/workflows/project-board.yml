@@ -1,0 +1,73 @@
+name: Project board
+
+# Adds every new issue to the Lifting Logbook project (project 2) and sets its Epic from an
+# `epic:<slug>` label, so a session that can create issues but can't reach the organization's
+# board only has to add the label (#1385). The Epic option IDs come from .claude/hook-config.json via
+# scripts/project-board-epic.mjs; `node scripts/project-board-epic.mjs --list` prints the labels.
+# Token scope and rotation: docs/operations/project-board-token.md.
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions: {}
+
+# `gh issue create --label` fires `opened` and `labeled` together; run them one at a time per issue.
+concurrency:
+  group: project-board-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  add-to-board:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .claude/hook-config.json
+            scripts/project-board-epic.mjs
+          sparse-checkout-cone-mode: false
+
+      # Fails on an unknown or duplicate `epic:` label, after writing the board coordinates, so
+      # the next step still puts the issue on the board.
+      - name: Resolve the Epic from the epic label
+        id: epic
+        env:
+          ISSUE_LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
+        run: node scripts/project-board-epic.mjs
+
+      # A no-op for an issue already on the board.
+      - name: Add the issue to the project
+        if: ${{ !cancelled() && steps.epic.outputs.project_url != '' }}
+        uses: actions/add-to-project@f2c1f1fa649a891be84948ea89b5dfba1526ef05  # v2.0.1
+        with:
+          project-url: ${{ steps.epic.outputs.project_url }}
+          github-token: ${{ secrets.PROJECT_BOARD_TOKEN }}
+
+      # add-to-project's itemId output is empty when the issue was already on the board, so look
+      # the item up instead.
+      - name: Set the Epic field
+        if: ${{ steps.epic.outputs.option_id != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_BOARD_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          PROJECT_ID: ${{ steps.epic.outputs.project_id }}
+          FIELD_ID: ${{ steps.epic.outputs.field_id }}
+          OPTION_ID: ${{ steps.epic.outputs.option_id }}
+        run: |
+          ITEM_ID=$(gh api graphql \
+            -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){issue(number:$number){projectItems(first:20){nodes{id project{id}}}}}}' \
+            -f owner="${GITHUB_REPOSITORY_OWNER}" -f repo="${GITHUB_REPOSITORY#*/}" -F number="$ISSUE_NUMBER" \
+            --jq ".data.repository.issue.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id")
+          if [ -z "$ITEM_ID" ]; then
+            echo "::error title=Issue not on the board::#$ISSUE_NUMBER has no item in project $PROJECT_ID, so its Epic can't be set."
+            exit 1
+          fi
+          gh api graphql \
+            -f query='mutation($project:ID!,$item:ID!,$field:ID!,$option:String!){updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:{singleSelectOptionId:$option}}){projectV2Item{id}}}' \
+            -f project="$PROJECT_ID" -f item="$ITEM_ID" -f field="$FIELD_ID" -f option="$OPTION_ID" > /dev/null
+          echo "Set the Epic on #$ISSUE_NUMBER (item $ITEM_ID) to option $OPTION_ID."

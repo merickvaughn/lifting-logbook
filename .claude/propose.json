@@ -25,6 +25,7 @@
     "number": 2,
     "owner": "merickvaughn",
     "node_id": "PVT_kwDOEecHO84BeFl_",
-    "epic_field_id": "PVTSSF_lADOEecHO84BeFl_zhYiZmg"
+    "epic_field_id": "PVTSSF_lADOEecHO84BeFl_zhYiZmg",
+    "epic_label": "Create the issue with one epic:<slug> label (node scripts/project-board-epic.mjs --list prints them); .github/workflows/project-board.yml then adds it to the board and sets this Epic. See CLAUDE.md → Workflow — run after gh issue create."
   }
 }
