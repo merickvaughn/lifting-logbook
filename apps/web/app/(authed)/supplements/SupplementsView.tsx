@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { logClientError } from '@/lib/log-client-error';
 import { SLOT_LABEL, buildView, type RowModel, type Stack } from '@/lib/supplementsView';
 import SupplementDetail from './SupplementDetail';
+import SupplementForm, { type FormMode } from './SupplementForm';
 import styles from './supplements.module.css';
 
 function Row({ row, onOpen }: { row: RowModel; onOpen: (row: RowModel, opener: HTMLElement) => void }) {
@@ -58,11 +59,12 @@ function ColumnHeader() {
 
 const plural = (n: number) => `${n} item${n === 1 ? '' : 's'}`;
 
-/** The read-only Supplements page: day-type switcher, protein total, the Workout and Every day cards, Pending, and the detail panel. */
+/** The Supplements page: day-type switcher, protein total, the Workout and Every day cards, Pending, and the detail panel. */
 export default function SupplementsView({ stack }: { stack: Stack }) {
   const [dayTypeId, setDayTypeId] = useState(stack.dayTypes[0]?.id ?? '');
   const [openId, setOpenId] = useState<string | null>(null);
   const [pendingOpen, setPendingOpen] = useState(false);
+  const [form, setForm] = useState<FormMode | null>(null);
   const opener = useRef<HTMLElement | null>(null);
   const view = useMemo(() => buildView(stack, dayTypeId), [stack, dayTypeId]);
 
@@ -148,6 +150,11 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
             ))}
           </>
         )}
+        {hasDayTypes && (
+          <button type="button" className={styles.addLink} onClick={() => setForm({ kind: 'add', preset: 'workout' })}>
+            + Add to this day
+          </button>
+        )}
       </section>
 
       <section className={styles.card} aria-labelledby="supp-daily">
@@ -173,6 +180,9 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
               </ul>
             </div>
           ))}
+        <button type="button" className={styles.addLink} onClick={() => setForm({ kind: 'add', preset: 'daily' })}>
+          + Add daily item
+        </button>
       </section>
 
       {view.unscheduled.length > 0 && (
@@ -195,8 +205,8 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
         </section>
       )}
 
-      {view.pending.length > 0 && (
-        <section className={styles.card} aria-label="Pending">
+      <section className={styles.card} aria-label="Pending">
+        {view.pending.length > 0 && (
           <button
             type="button"
             className={styles.pendingToggle}
@@ -205,18 +215,21 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
           >
             <span aria-hidden="true">{pendingOpen ? '▼' : '▶'}</span> Pending · {view.pending.length}
           </button>
-          {pendingOpen && (
-            <>
-              <ColumnHeader />
-              <ul className={styles.list}>
-                {view.pending.map((r) => (
-                  <Row key={r.key} row={r} onOpen={open} />
-                ))}
-              </ul>
-            </>
-          )}
-        </section>
-      )}
+        )}
+        {pendingOpen && view.pending.length > 0 && (
+          <>
+            <ColumnHeader />
+            <ul className={styles.list}>
+              {view.pending.map((r) => (
+                <Row key={r.key} row={r} onOpen={open} />
+              ))}
+            </ul>
+          </>
+        )}
+        <button type="button" className={styles.addLink} onClick={() => setForm({ kind: 'add', preset: 'pending' })}>
+          + Add a pending item
+        </button>
+      </section>
 
       <p className={styles.muted}>Not medical advice.</p>
 
@@ -229,6 +242,20 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
           onClose={() => {
             setOpenId(null);
             opener.current?.focus();
+          }}
+          onEdit={() => setForm({ kind: 'edit', item: openItem })}
+        />
+      )}
+
+      {form && (
+        <SupplementForm
+          stack={stack}
+          mode={form}
+          dayTypeId={view.dayType.id}
+          onCancel={() => setForm(null)}
+          onDismiss={() => {
+            setForm(null);
+            setOpenId(null);
           }}
         />
       )}

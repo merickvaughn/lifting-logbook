@@ -24,6 +24,8 @@ const log: SupplementChange[] = [
       status: 'active',
       unverified: false,
       links: [],
+      category: '',
+      typicalRange: '',
       ingredients: [],
       doses: [],
     },

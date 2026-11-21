@@ -52,7 +52,7 @@ import {
   UpdateSupplementItemDto,
 } from './supplements.dto';
 
-const DETAIL_KEYS = ['name', 'keyCompound', 'timing', 'shortNote', 'longNote', 'links', 'ingredients'] as const;
+const DETAIL_KEYS = ['name', 'keyCompound', 'timing', 'shortNote', 'longNote', 'links', 'ingredients', 'category', 'typicalRange'] as const;
 
 /** `GET /changes` page size: the default, and the most one request may ask for. */
 const CHANGES_PAGE = 200;
@@ -200,6 +200,8 @@ export class SupplementsController {
             shortNote: body.shortNote ?? '',
             longNote: body.longNote ?? '',
             links: body.links ?? [],
+            category: body.category ?? '',
+            typicalRange: body.typicalRange ?? '',
             ingredients: body.ingredients ?? [],
           };
       const item: SupplementItem = {
@@ -387,6 +389,8 @@ export class SupplementsController {
         status: first.status,
         unverified: parts.some((p) => p.unverified),
         links: [],
+        category: '',
+        typicalRange: '',
         ingredients: [],
         parts: parts.map((p) => ({ itemId: p.id, name: p.name, ingredients: p.ingredients })),
         doses: first.doses,

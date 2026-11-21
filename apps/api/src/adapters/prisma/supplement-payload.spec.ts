@@ -10,7 +10,9 @@ const item: SupplementItem = {
   longNote: 'l',
   status: 'pending',
   unverified: true,
-  links: ['https://example.com/a'],
+  links: [{ label: 'Amazon', url: 'https://example.com/a' }],
+  category: 'Pre-workout',
+  typicalRange: '3-5 g',
   ingredients: [{ key: 'citrulline', amount: 6, unit: 'g' }],
   parts: [{ itemId: 'a', name: 'A', ingredients: [{ key: 'caffeine', amount: 100, unit: 'mg' }] }],
   doses: [{ slot: 'pre', amount: '1 scoop', servings: 1.5, dayTypes: ['lift'] }],
@@ -60,9 +62,31 @@ describe('supplement change payloads', () => {
         status: 'active',
         unverified: false,
         links: [],
+        category: '',
+        typicalRange: '',
         ingredients: [],
         doses: [{ slot: 'am', amount: '', servings: 1, dayTypes: [] }],
       },
+    });
+  });
+
+  it('reads an old-format `added` entry, whose links are plain URL strings, as unlabelled links', () => {
+    const added = parseChange({ ...base, type: 'added', payload: { item: { id: 'old', name: 'Old', links: ['https://a.example/x', 'https://b.example/y'] } } });
+    expect(added).toMatchObject({
+      type: 'added',
+      item: { links: [{ label: '', url: 'https://a.example/x' }, { label: '', url: 'https://b.example/y' }], category: '', typicalRange: '' },
+    });
+  });
+
+  it('reads an old-format `edited` entry, and a new one that sets category and typical range', () => {
+    expect(parseChange({ ...base, type: 'edited', payload: { itemId: 'a', changes: { links: ['https://a.example/x'] } } })).toEqual({
+      ...base,
+      type: 'edited',
+      itemId: 'a',
+      changes: { links: [{ label: '', url: 'https://a.example/x' }] },
+    });
+    expect(parseChange({ ...base, type: 'edited', payload: { itemId: 'a', changes: { category: 'Recovery', typicalRange: '1-2 g' } } })).toMatchObject({
+      changes: { category: 'Recovery', typicalRange: '1-2 g' },
     });
   });
 

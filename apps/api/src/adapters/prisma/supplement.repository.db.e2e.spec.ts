@@ -2,6 +2,8 @@
 // all-or-nothing save, and the reads that only Postgres can answer (the JSON-path restore lookup,
 // the as-of filter). Runs as the restricted lifting_app role, inside a transaction with the RLS
 // user set, as a request does. Each test has its own user, so no test depends on another's rows.
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { PrismaClient } from '@prisma/client';
 import { SupplementChangeBody, applyChange, stackAsOf } from '@lifting-logbook/core';
 import { SupplementItem } from '@lifting-logbook/types';
@@ -34,6 +36,8 @@ const item = (id: string, p: Partial<SupplementItem> = {}): SupplementItem => ({
   status: 'active',
   unverified: false,
   links: [],
+  category: '',
+  typicalRange: '',
   ingredients: [{ key: 'caffeine', amount: 100, unit: 'mg' }],
   doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: [] }],
   ...p,
@@ -278,5 +282,39 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
     expect(byId('plain')).not.toHaveProperty('reference');
     const log = await asUser((repo) => repo.changesThrough(TODAY));
     expect(stackAsOf(log, TODAY).stack).toEqual(stored.items);
+  });
+  it('round-trips category, typical range and labelled links, as lifting_app (#1409)', async () => {
+    const links = [{ label: 'Amazon', url: 'https://www.amazon.com/dp/B1' }, { label: '', url: 'https://example.com/b' }];
+    await asUser((repo) =>
+      repo.write(async (state) => apply(state, [{ type: 'added', item: item('a', { links, category: 'Recovery', typicalRange: '3-5 g' }) }])),
+    );
+    const [stored] = (await asUser((repo) => repo.load())).items;
+    expect(stored).toMatchObject({ links, category: 'Recovery', typicalRange: '3-5 g' });
+  });
+
+  it('converts text[] links to labelled JSON links in place, keeping every URL in order (#1409)', async () => {
+    // Runs the real migration file against a scratch table in its own schema, shaped as the
+    // table was before it, so a row written under the old column type is converted.
+    const sql = readFileSync(join(__dirname, '../../../prisma/migrations/20261121100000_supplement_item_category_range_links/migration.sql'), 'utf8');
+    const statements = sql.replace(/^--.*$/gm, '').split(';').map((s) => s.trim()).filter(Boolean);
+    await owner.$executeRawUnsafe('DROP SCHEMA IF EXISTS mig_1409 CASCADE');
+    await owner.$executeRawUnsafe('CREATE SCHEMA mig_1409');
+    try {
+      await owner.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe('SET LOCAL search_path TO mig_1409');
+        await tx.$executeRawUnsafe('CREATE TABLE supplement_item (id text primary key, links text[] NOT NULL)');
+        await tx.$executeRawUnsafe(`INSERT INTO supplement_item VALUES ('two', ARRAY['https://b.example/2','https://a.example/1']), ('none', ARRAY[]::text[])`);
+        for (const statement of statements) await tx.$executeRawUnsafe(statement);
+        const rows = await tx.$queryRawUnsafe<{ id: string; links: unknown; category: string; typicalRange: string }[]>(
+          'SELECT id, links, category, "typicalRange" FROM supplement_item ORDER BY id',
+        );
+        expect(rows).toEqual([
+          { id: 'none', links: [], category: '', typicalRange: '' },
+          { id: 'two', links: [{ label: '', url: 'https://b.example/2' }, { label: '', url: 'https://a.example/1' }], category: '', typicalRange: '' },
+        ]);
+      });
+    } finally {
+      await owner.$executeRawUnsafe('DROP SCHEMA mig_1409 CASCADE');
+    }
   });
 });

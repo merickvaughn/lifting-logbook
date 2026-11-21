@@ -30,10 +30,12 @@ interface Props {
   dayTypeId: string;
   notes: AdvisoryNote[];
   onClose: () => void;
+  /** Opens the item's Edit form above this panel. */
+  onEdit: () => void;
 }
 
 /** The detail panel: a native modal `<dialog>`, so the browser traps focus and closes it on Esc. */
-export default function SupplementDetail({ stack, item, dayTypeId, notes, onClose }: Props) {
+export default function SupplementDetail({ stack, item, dayTypeId, notes, onClose, onEdit }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -58,7 +60,7 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
     setSaving(true);
     setSaveFailed(false);
     try {
-      await updateSupplementItem(item.id, { links: [suggestion.url] }, localToday());
+      await updateSupplementItem(item.id, { links: [{ label: '', url: suggestion.url }] }, localToday());
       router.refresh();
     } catch (err) {
       logClientError('supplements.keepLink', err, { itemId: item.id });
@@ -79,11 +81,16 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
       <header className={styles.dialogHeader}>
         <div>
           <h2 id="supp-detail-title">{item.name}</h2>
-          {slots && <p className={styles.muted}>{slots}</p>}
+          {(item.category || slots) && <p className={styles.muted}>{item.category || slots}</p>}
         </div>
-        <button type="button" className={styles.close} aria-label="Close" onClick={() => ref.current?.close()}>
-          ×
-        </button>
+        <div>
+          <button type="button" onClick={onEdit}>
+            Edit
+          </button>
+          <button type="button" className={styles.close} aria-label="Close" onClick={() => ref.current?.close()}>
+            ×
+          </button>
+        </div>
       </header>
 
       {notes.length > 0 && (
@@ -134,18 +141,18 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
 
       <section>
         <h3 className={styles.sectionHeading}>Where to buy</h3>
-        {item.links.map((link) => {
-          const host = linkHost(link);
+        {item.links.map((link, n) => {
+          const host = linkHost(link.url);
           return host ? (
-            <p key={link} className={styles.buyRow}>
-              <a href={link} target="_blank" rel="noopener noreferrer">
-                {storeName(host)} ↗
+            <p key={n} className={styles.buyRow}>
+              <a href={link.url} target="_blank" rel="noopener noreferrer">
+                {link.label || storeName(host)} ↗
               </a>
               <span className={styles.muted}>{host}</span>
             </p>
           ) : (
-            <p key={link} className={styles.buyRow}>
-              {link}
+            <p key={n} className={styles.buyRow}>
+              {link.url}
             </p>
           );
         })}

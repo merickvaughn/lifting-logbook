@@ -85,9 +85,19 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     const item = await add('Creatine', {
       ingredients: [{ key: 'creatine', amount: 5, unit: 'g' }],
       doses: [{ slot: 'post', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }],
-      links: ['https://examine.com/supplements/creatine/'],
+      links: [{ label: 'Examine', url: 'https://examine.com/supplements/creatine/' }],
+      category: 'Performance',
+      typicalRange: '3-5 g',
     });
-    expect(item).toMatchObject({ name: 'Creatine', status: 'active', unverified: false, doses: [{ slot: 'post' }] });
+    expect(item).toMatchObject({
+      name: 'Creatine',
+      status: 'active',
+      unverified: false,
+      doses: [{ slot: 'post' }],
+      links: [{ label: 'Examine', url: 'https://examine.com/supplements/creatine/' }],
+      category: 'Performance',
+      typicalRange: '3-5 g',
+    });
     expect((await changes()).slice(-1)).toEqual([{ type: 'added', date: TODAY, seq: 2, item }]);
 
     // Names can repeat; the returned id tells the two apart.
@@ -109,7 +119,12 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
 
   it('rejects a link that is not an http or https URL', async () => {
     const { inject, changes } = newUser();
-    for (const link of ['javascript:alert(1)', 'examine.com', 'ftp://example.com/x']) {
+    for (const url of ['javascript:alert(1)', 'examine.com', 'ftp://example.com/x']) {
+      const res = await inject('POST', `/supplements/items?today=${TODAY}`, { name: 'Bad link', links: [{ label: '', url }] });
+      expect(res.statusCode).toBe(400);
+    }
+    // A plain string is the old form, which a write no longer takes; a label is at most 60 characters.
+    for (const link of ['https://example.com/x', { label: 'x'.repeat(61), url: 'https://example.com/x' }]) {
       const res = await inject('POST', `/supplements/items?today=${TODAY}`, { name: 'Bad link', links: [link] });
       expect(res.statusCode).toBe(400);
     }
@@ -119,7 +134,7 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
   it('rejects an explicit null rather than storing it or failing on it', async () => {
     const { inject, add, changes, get } = newUser();
     const item = await add('Magnesium');
-    for (const field of ['name', 'status', 'doses', 'ingredients', 'links', 'keyCompound', 'unverified']) {
+    for (const field of ['name', 'status', 'doses', 'ingredients', 'links', 'keyCompound', 'unverified', 'category', 'typicalRange']) {
       const res = await inject('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, { [field]: null });
       expect([field, res.statusCode]).toEqual([field, 400]);
     }
@@ -190,6 +205,17 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
       { type: 'moved', date: TODAY, seq: 3, itemId: item.id, doses },
       { type: 'moved_to_pending', date: TODAY, seq: 4, itemId: item.id },
       { type: 'confirmed', date: TODAY, seq: 5, itemId: item.id },
+    ]);
+  });
+
+  it('edits category, typical range and labelled links as one `edited` change', async () => {
+    const { ok, add, changes } = newUser();
+    const item = await add('Magnesium');
+    const links = [{ label: 'Amazon', url: 'https://www.amazon.com/dp/B1' }];
+    const stack = await ok('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, { category: 'Sleep', typicalRange: '200-400 mg', links });
+    expect(stack.items[0]).toMatchObject({ category: 'Sleep', typicalRange: '200-400 mg', links });
+    expect((await changes()).slice(1)).toEqual([
+      { type: 'edited', date: TODAY, seq: 2, itemId: item.id, changes: { links, category: 'Sleep', typicalRange: '200-400 mg' } },
     ]);
   });
 

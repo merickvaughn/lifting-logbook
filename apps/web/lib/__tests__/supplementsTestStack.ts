@@ -19,6 +19,8 @@ export const item = (id: string, name: string, over: Partial<SupplementItem> = {
   status: 'active',
   unverified: false,
   links: [],
+  category: '',
+  typicalRange: '',
   ingredients: [],
   doses: [],
   ...over,
@@ -75,7 +77,7 @@ export const STACK: Stack = {
       ],
       doses: [dose('am', '½ dose (1 capsule)')],
     }),
-    item('fish-oil', 'Fish oil', { links: ['https://www.amazon.com/dp/B000'], doses: [dose('am', '1,000 mg')] }),
+    item('fish-oil', 'Fish oil', { links: [{ label: '', url: 'https://www.amazon.com/dp/B000' }], doses: [dose('am', '1,000 mg')] }),
     item('glycine', 'Glycine', { keyCompound: 'Glycine', timing: 'With food', doses: [dose('am', '')] }),
     item('mag', 'Magnesium glycinate', { reference: { ...REFERENCE, typicalRange: '100–400 mg' }, doses: [dose('pm', '200 mg')] }),
     item('ashwagandha', 'Ashwagandha', {

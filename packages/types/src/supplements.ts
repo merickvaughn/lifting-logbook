@@ -71,6 +71,12 @@ export interface SupplementReference {
   sources: string[];
 }
 
+/** A product link: where the lifter buys the item. An empty `label` shows the store name instead. */
+export interface SupplementLink {
+  label: string;
+  url: string;
+}
+
 export interface SupplementItem {
   id: string;
   name: string;
@@ -81,7 +87,11 @@ export interface SupplementItem {
   status: SupplementStatus;
   /** Not yet confirmed against its label; shown but not counted. */
   unverified: boolean;
-  links: string[];
+  links: SupplementLink[];
+  /** The lifter's own free-text category, e.g. "Pre-workout". Empty when unset. */
+  category: string;
+  /** The lifter's own typical range. When set it is shown instead of `reference.typicalRange`. */
+  typicalRange: string;
   /** Per serving. */
   ingredients: Ingredient[];
   /** Present on a mix: its ingredients come from the parts instead of `ingredients`. */
@@ -99,7 +109,7 @@ export interface SupplementItem {
  */
 export type SupplementItemDetails = Pick<
   SupplementItem,
-  'name' | 'keyCompound' | 'timing' | 'shortNote' | 'longNote' | 'links' | 'ingredients'
+  'name' | 'keyCompound' | 'timing' | 'shortNote' | 'longNote' | 'links' | 'ingredients' | 'category' | 'typicalRange'
 >;
 
 /**

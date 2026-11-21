@@ -459,7 +459,7 @@ export function toCatalogEntry(e: CatalogSupplement): SupplementCatalogEntry {
 
 /** The fields of a new item the lifter may have typed, which autofill must not overwrite. */
 export type TypedItemFields = Partial<
-  Pick<SupplementItem, 'name' | 'keyCompound' | 'timing' | 'shortNote' | 'longNote' | 'ingredients' | 'links'>
+  Pick<SupplementItem, 'name' | 'keyCompound' | 'timing' | 'shortNote' | 'longNote' | 'ingredients' | 'links' | 'category' | 'typicalRange'>
 >;
 
 /**
@@ -471,7 +471,7 @@ export type TypedItemFields = Partial<
 export function itemFromCatalog(
   e: CatalogSupplement,
   typed: TypedItemFields = {},
-): Pick<SupplementItem, 'name' | 'keyCompound' | 'timing' | 'shortNote' | 'longNote' | 'links' | 'ingredients' | 'catalogKey' | 'reference'> {
+): Pick<SupplementItem, 'name' | 'keyCompound' | 'timing' | 'shortNote' | 'longNote' | 'links' | 'category' | 'typicalRange' | 'ingredients' | 'catalogKey' | 'reference'> {
   const text = (value: string | undefined, fallback: string) => (value !== undefined && value.trim() !== '' ? value : fallback);
   const list = <T>(value: T[] | undefined, fallback: T[]) => (value !== undefined && value.length > 0 ? value : fallback);
   return {
@@ -481,6 +481,8 @@ export function itemFromCatalog(
     shortNote: text(typed.shortNote, ''),
     longNote: text(typed.longNote, ''),
     links: typed.links ?? [],
+    category: typed.category ?? '',
+    typicalRange: typed.typicalRange ?? '',
     ingredients: list(typed.ingredients, e.ingredients.map((i) => ({ ...i }))),
     catalogKey: e.key,
     reference: catalogReference(e),

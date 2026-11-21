@@ -15,7 +15,7 @@ jest.mock('@/lib/calendarDay', () => ({ localToday: () => '2026-11-21' }));
 import { updateSupplementItem } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 
-function open(id: string, stack: Stack = STACK, onClose = jest.fn()) {
+function open(id: string, stack: Stack = STACK, onClose = jest.fn(), onEdit = jest.fn()) {
   const item = stack.items.find((i) => i.id === id) as SupplementItem;
   render(
     <SupplementDetail
@@ -24,9 +24,10 @@ function open(id: string, stack: Stack = STACK, onClose = jest.fn()) {
       dayTypeId="lift"
       notes={buildView(stack, 'lift').notesByItem.get(id) ?? []}
       onClose={onClose}
+      onEdit={onEdit}
     />,
   );
-  return { dialog: screen.getByRole('dialog', { name: item.name }), onClose };
+  return { dialog: screen.getByRole('dialog', { name: item.name }), onClose, onEdit };
 }
 
 const withItem = (id: string, over: Partial<SupplementItem>): Stack => ({
@@ -117,7 +118,7 @@ describe('SupplementDetail with no day types', () => {
     const stack: Stack = { ...STACK, dayTypes: [] };
     const item = stack.items.find((i) => i.id === 'trans4orm') as SupplementItem;
     const withB6 = { ...stack, items: [...stack.items, { ...item, id: 'b6', name: 'B6 tab', ingredients: [{ key: 'vitamin-b6', amount: 2, unit: 'mg' as const }] }] };
-    render(<SupplementDetail stack={withB6} item={item} dayTypeId="" notes={[]} onClose={jest.fn()} />);
+    render(<SupplementDetail stack={withB6} item={item} dayTypeId="" notes={[]} onClose={jest.fn()} onEdit={jest.fn()} />);
     const dialog = screen.getByRole('dialog', { name: 'EVL Trans4orm' });
     expect(within(dialog).getByRole('heading', { name: 'Overlaps · Every day' })).toBeInTheDocument();
     expect(dialog).toHaveTextContent('Day total = everything you take in a day.');
@@ -144,8 +145,28 @@ describe('SupplementDetail where to buy', () => {
     expect(within(dialog).queryByRole('button', { name: 'Keep' })).toBeNull();
   });
 
+  it('shows a link’s label when it has one, and the store name when it doesn’t', () => {
+    const stack = withItem('fish-oil', { links: [{ label: 'Costco bulk', url: 'https://www.costco.com/x' }, { label: '', url: 'https://www.iherb.com/y' }] });
+    const { dialog } = open('fish-oil', stack);
+    expect(within(dialog).getByRole('link', { name: 'Costco bulk ↗' })).toHaveAttribute('href', 'https://www.costco.com/x');
+    expect(within(dialog).getByRole('link', { name: 'iHerb ↗' })).toBeInTheDocument();
+  });
+
+  it('shows the item’s category as the sub-line when set, and its slots otherwise', () => {
+    const subLine = (d: HTMLElement) => within(d).getByRole('heading', { level: 2 }).parentElement?.textContent;
+    expect(subLine(open('glycine').dialog)).toBe('GlycineMorning');
+    document.body.innerHTML = '';
+    expect(subLine(open('glycine', withItem('glycine', { category: 'Sleep' })).dialog)).toBe('GlycineSleep');
+  });
+
+  it('Edit asks the page to open the form', async () => {
+    const { dialog, onEdit } = open('glycine');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Edit' }));
+    expect(onEdit).toHaveBeenCalled();
+  });
+
   it('never makes a link of a non-http address', () => {
-    const { dialog } = open('fish-oil', withItem('fish-oil', { links: ['javascript:alert(1)'] }));
+    const { dialog } = open('fish-oil', withItem('fish-oil', { links: [{ label: '', url: 'javascript:alert(1)' }] }));
     expect(within(dialog).queryByRole('link')).toBeNull();
   });
 
@@ -156,12 +177,12 @@ describe('SupplementDetail where to buy', () => {
     expect(within(dialog).getByText('suggested')).toBeInTheDocument();
     (updateSupplementItem as jest.Mock).mockResolvedValue({});
     await userEvent.click(within(dialog).getByRole('button', { name: 'Keep' }));
-    expect(updateSupplementItem).toHaveBeenCalledWith('glycine', { links: ['https://www.amazon.com/s?k=Glycine'] }, '2026-11-21');
+    expect(updateSupplementItem).toHaveBeenCalledWith('glycine', { links: [{ label: '', url: 'https://www.amazon.com/s?k=Glycine' }] }, '2026-11-21');
     expect(refresh).toHaveBeenCalled();
   });
 
   it('suggests the store the lifter links to most', () => {
-    const stack = withItem('fish-oil', { links: ['https://www.iherb.com/pr/a', 'https://iherb.com/pr/b'] });
+    const stack = withItem('fish-oil', { links: [{ label: '', url: 'https://www.iherb.com/pr/a' }, { label: '', url: 'https://iherb.com/pr/b' }] });
     const { dialog } = open('glycine', stack);
     expect(within(dialog).getByRole('link', { name: 'Search iHerb ↗' })).toHaveAttribute('href', 'https://www.iherb.com/search?kw=Glycine');
   });

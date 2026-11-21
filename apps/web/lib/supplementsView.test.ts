@@ -1,4 +1,4 @@
-import { STACK, dose, item } from './__tests__/supplementsTestStack';
+import { REFERENCE, STACK, dose, item } from './__tests__/supplementsTestStack';
 import { buildView, clock12, linkHost, num, placementText, storeName, type Stack } from './supplementsView';
 
 describe('supplementsView helpers', () => {
@@ -41,6 +41,16 @@ describe('supplementsView helpers', () => {
 
 const stackOf = (over: Partial<Stack>): Stack => ({ ...STACK, ...over });
 const rowsOf = (v: ReturnType<typeof buildView>) => [...v.workout.slots, ...v.daily.slots].flatMap((s) => s.rows);
+
+describe('typical range on a row', () => {
+  it('uses the item’s own typical range first, then the catalog reference’s', () => {
+    const find = (stack: Stack, id: string) => buildView(stack, 'lift').daily.slots.flatMap((s) => s.rows).find((r) => r.item.id === id);
+    const own = { ...STACK, items: STACK.items.map((i) => (i.id === 'glycine' ? { ...i, typicalRange: '1-2 g', reference: { ...(i.reference ?? REFERENCE), typicalRange: '9 g' } } : i)) };
+    expect(find(own, 'glycine')?.range).toBe('1-2 g');
+    const catalogOnly = { ...own, items: own.items.map((i) => (i.id === 'glycine' ? { ...i, typicalRange: '' } : i)) };
+    expect(find(catalogOnly, 'glycine')?.range).toBe('9 g');
+  });
+});
 
 describe('buildView', () => {
   it('with no day types, still places every-day doses and lists pending items', () => {

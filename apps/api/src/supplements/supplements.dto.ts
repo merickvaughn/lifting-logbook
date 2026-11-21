@@ -45,15 +45,21 @@ export class DoseDto {
   @IsArray() @ArrayMaxSize(LIST) @IsString({ each: true }) dayTypes!: string[];
 }
 
+export class LinkDto {
+  @IsString() @MaxLength(60) label!: string;
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true }) @MaxLength(TEXT) url!: string;
+}
+
 /** The fields an `edited` change sets, besides the name. */
 class ItemDetailsDto {
   @Optional() @IsString() @MaxLength(NAME) keyCompound?: string;
   @Optional() @IsString() @MaxLength(NAME) timing?: string;
   @Optional() @IsString() @MaxLength(TEXT) shortNote?: string;
   @Optional() @IsString() @MaxLength(TEXT) longNote?: string;
-  @Optional() @IsArray() @ArrayMaxSize(LIST) @IsUrl({ protocols: ['http', 'https'], require_protocol: true }, { each: true })
-  @MaxLength(TEXT, { each: true })
-  links?: string[];
+  @Optional() @IsString() @MaxLength(NAME) category?: string;
+  @Optional() @IsString() @MaxLength(NAME) typicalRange?: string;
+  @Optional() @IsArray() @ArrayMaxSize(LIST) @ValidateNested({ each: true }) @Type(() => LinkDto)
+  links?: LinkDto[];
   @Optional() @IsArray() @ArrayMaxSize(LIST) @ValidateNested({ each: true }) @Type(() => IngredientDto)
   ingredients?: IngredientDto[];
 }

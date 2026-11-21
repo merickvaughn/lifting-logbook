@@ -176,6 +176,26 @@ the rest of the `supplement_item` row. The catalog itself is a code-level refere
 `packages/core` (Registry, Fowler,
 [PoEAA](https://martinfowler.com/eaaCatalog/registry.html)), not a database table.
 
+## Addendum: category, typical range and labelled links (#1409)
+
+The item form needs three things the table lacked. `supplement_item` gains two text columns,
+`category` and `typicalRange`, both `NOT NULL DEFAULT ''`: the lifter's own free-text category
+(the detail panel's sub-line) and the lifter's own typical range, which the page shows instead of
+`reference.typicalRange` when set. `links` changes from `text[]` to `jsonb`, an array of
+`{ label, url }`, so a product link can be named. The migration converts in place, keeping every
+URL in order, each with an empty label; an empty label shows the store name from the host, as a
+bare URL did before. Row-level security is per table, so it is unchanged and no policy is added.
+`SupplementItem` and `SupplementItemDetails` carry `category` and `typicalRange`, so an `edited`
+change can set them.
+
+**Old change-log entries are read in both forms, not rewritten.** `parseItem` and `parseDetails`
+read a link that is a plain string as `{ label: '', url }`, and default the two new fields to
+`''` for an entry that lacks them. The change log is append-only (see Decision), and its value as
+an audit record depends on an entry staying what it was when written; rewriting every old
+`added`, `edited` and `removed` payload to the new shape would break that, and a restore of an
+item removed before this change must still give a whole item. New entries are written in the new
+form only, and the write DTOs no longer take a plain-string link.
+
 ## Known follow-ups
 
 The API shape later sub-issues need, not built here:

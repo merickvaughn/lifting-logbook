@@ -499,7 +499,10 @@ model SupplementItem {
   longNote    String
   status      String
   unverified  Boolean
-  links       String[]
+  links       Json   @default("[]")
+  // The lifter's own category and typical range (#1409); the typical range wins over reference.typicalRange.
+  category    String @default("")
+  typicalRange String @default("")
   // Ingredient[] per serving, validated by the DTOs on write.
   ingredients Json
   // True when the item is a mix; its parts are in supplement_mix_part.

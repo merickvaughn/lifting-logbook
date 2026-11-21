@@ -69,8 +69,12 @@ import type {
   UpsertStrengthGoalRequest,
   UserSettingsResponse,
   WorkoutResponse,
+  SupplementCatalogEntry,
+  SupplementCreatedResponse,
+  SupplementDose,
   SupplementItemDetails,
   SupplementStackResponse,
+  SupplementStatus,
 } from '@lifting-logbook/types';
 import { IMPORT_SUGGESTION_DEADLINE_MS, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 
@@ -87,6 +91,14 @@ import { IMPORT_SUGGESTION_DEADLINE_MS, MACROCYCLE_ID_HEADER } from '@lifting-lo
 // Consolidates apps/web/lib/api.ts (server) and lib/client-api.ts (browser).
 // See issue #466 / flag 3 of the 2026-06-08 architecture review (#464).
 // ---------------------------------------------------------------------------
+
+/** The body of `POST /supplements/items` and `PATCH /supplements/items/:id` (#1409). */
+export type SupplementItemBody = Partial<SupplementItemDetails> & {
+  status?: SupplementStatus;
+  doses?: SupplementDose[];
+  /** Create only: the catalog entry to copy blanks and reference content from. */
+  catalogKey?: string;
+};
 
 export interface ApiClientConfig {
   /**
@@ -811,12 +823,25 @@ export function createApiClient(config: ApiClientConfig) {
     fetchSupplements(): Promise<SupplementStackResponse> {
       return request('/supplements', { cache: 'no-store' });
     },
-    /** Edits an item's details, such as the links Keep saves. `today` is the lifter's local date (YYYY-MM-DD). */
-    updateSupplementItem(
-      id: string,
-      body: Partial<Pick<SupplementItemDetails, 'links'>>,
-      today: string,
-    ): Promise<SupplementStackResponse> {
+    /** Catalog entries whose name or alias contains `q`, for autofill (#1409). */
+    fetchSupplementCatalog(q: string): Promise<SupplementCatalogEntry[]> {
+      return request(`/supplements/catalog?q=${enc(q)}`, { cache: 'no-store' });
+    },
+    /** Adds an item. With `catalogKey`, the API fills blanks from that entry and attaches its reference content. */
+    createSupplementItem(body: SupplementItemBody, today: string): Promise<SupplementCreatedResponse> {
+      return request(`/supplements/items?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    /** Removes an item; the API keeps it in the change log so it can be restored. */
+    removeSupplementItem(id: string, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/items/${enc(id)}?today=${enc(today)}`, { method: 'DELETE', cache: 'no-store' });
+    },
+    /** Edits an item, such as the links Keep saves. `today` is the lifter's local date (YYYY-MM-DD). */
+    updateSupplementItem(id: string, body: SupplementItemBody, today: string): Promise<SupplementStackResponse> {
       return request(`/supplements/items/${enc(id)}?today=${enc(today)}`, {
         method: 'PATCH',
         headers: JSON_HEADERS,
