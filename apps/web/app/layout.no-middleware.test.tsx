@@ -113,7 +113,7 @@ describe('root layout without clerkMiddleware() (#1388)', () => {
   });
 
   it.each(['ClerkApiInitializer', 'SignedInUserButton', 'PublicConfigProvider'])(
-    'components/%s.tsx is a Client Component, so its Clerk calls stay out of the server render',
+    'components/%s.tsx is a Client Component, as the server render above assumes',
     (name) => {
       const source = fs.readFileSync(
         path.join(__dirname, '..', 'components', `${name}.tsx`),
