@@ -12,7 +12,8 @@ import type { Ingredient, SupplementCatalogEntry, SupplementItem, SupplementRefe
  * Evidence levels follow the AIS Supplement Framework, https://www.ausport.gov.au/ais/nutrition/supplements:
  * group A (strong evidence for the use) is `strong`, group B (emerging evidence, or a use for
  * specific cases) is `moderate`, and group C (little or no evidence of benefit) is `limited`.
- * Where an entry's evidence comes from an ISSN position stand or a NIH fact sheet instead, the
+ * A substance in group D (not recommended: banned, or a high contamination risk), or in no group
+ * at all, is `limited`, and its `reason` says which. Where an entry's evidence comes from an ISSN position stand or a NIH fact sheet instead, the
  * `reason` says which. Every dose range and caution cites only the sources in `SUPPLEMENT_SOURCES`:
  * NIH ODS, NCCIH, ISSN position stands, the AIS framework and peer-reviewed position stands.
  * Never retailer copy; a product's label facts may cite its manufacturer's product page.
@@ -79,7 +80,7 @@ const entry = (s: Seed): CatalogSupplement => ({ aliases: [], kind: 'compound', 
 
 const ASK = 'Check with a clinician before starting if you take medication, are pregnant or have a medical condition.';
 const AIS_B = 'AIS Supplement Framework group B (emerging evidence).';
-const AIS_C = 'AIS Supplement Framework group C (little evidence of benefit for performance).';
+const AIS_UNLISTED = 'Not in any AIS Supplement Framework group, so it has no sports-evidence rating there.';
 
 export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
   entry({
@@ -207,7 +208,7 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     key: 'apple-cider-vinegar', name: 'Apple cider vinegar', aliases: ['acv'], keyCompound: 'Acetic acid', suggestedDose: '15 mL diluted', typicalRange: '15-30 mL/day diluted',
     timing: 'Diluted, before a meal', suggestedSlot: 'noon', ingredients: [],
     uses: ['Used for blood sugar and appetite'],
-    evidence: { level: 'limited', reason: `${AIS_C} No NIH fact sheet.` },
+    evidence: { level: 'limited', reason: `${AIS_UNLISTED} No NIH fact sheet.` },
     cautions: ['Undiluted vinegar can damage tooth enamel and the throat.'],
     sources: ['ais'],
   }),
@@ -215,7 +216,7 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     key: 'anthocyanins', name: 'Anthocyanins (blueberry extract)', aliases: ['blueberry extract', 'anthocyanin'], keyCompound: 'Anthocyanins', suggestedDose: 'Per the label', typicalRange: 'Studies used roughly 300-600 mg/day',
     timing: 'With food', suggestedSlot: 'am', ingredients: [],
     uses: ['Used for exercise recovery and antioxidant support'],
-    evidence: { level: 'limited', reason: `${AIS_C}` },
+    evidence: { level: 'moderate', reason: `${AIS_B} The framework lists fruit-derived polyphenols, from berries among others.` },
     cautions: ['Extract strength varies by product; set the amount from the label.'],
     sources: ['ais'],
   }),
@@ -231,8 +232,8 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     key: 'maca', name: 'Maca', keyCompound: 'Maca', suggestedDose: '1.5 g', typicalRange: 'Studies used 1.5-3 g/day',
     timing: 'Morning or midday', suggestedSlot: 'am', ingredients: [g('maca', 1.5)],
     uses: ['Used for energy and libido'],
-    evidence: { level: 'limited', reason: `${AIS_C}` },
-    cautions: ['Usually taken earlier in the day; at night it may disturb sleep.', ASK],
+    evidence: { level: 'limited', reason: 'AIS Supplement Framework group D: not recommended, because maca products are often mixed with banned ingredients.' },
+    cautions: ['Tested athletes: maca products carry a risk of banned ingredients, which is why the AIS lists maca in group D.', 'Usually taken earlier in the day; at night it may disturb sleep.', ASK],
     sources: ['ais'],
   }),
   entry({
@@ -241,13 +242,13 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     uses: ['Used for testosterone and blood sugar'],
     evidence: { level: 'limited', reason: 'NCCIH: little reliable evidence for these uses.' },
     cautions: ['Can cause stomach upset and a maple-syrup odor.', 'Can lower blood sugar; avoid in pregnancy.', ASK],
-    sources: ['nccih-fenugreek', 'ais'],
+    sources: ['nccih-fenugreek'],
   }),
   entry({
     key: 'cocoa-flavanols', name: 'Cocoa flavanols', aliases: ['cocoa extract', 'flavanols'], keyCompound: 'Cocoa flavanols', suggestedDose: 'Per the label', typicalRange: 'Studies used roughly 400-900 mg/day flavanols',
     timing: 'With food', suggestedSlot: 'am', ingredients: [],
     uses: ['Used for blood flow and exercise recovery'],
-    evidence: { level: 'limited', reason: `${AIS_C}` },
+    evidence: { level: 'limited', reason: `${AIS_UNLISTED}` },
     cautions: ['Cocoa products can contain caffeine and heavy metals.'],
     sources: ['ais'],
   }),
@@ -271,7 +272,7 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     key: 'agmatine-sulfate', name: 'Agmatine sulfate', aliases: ['agmatine'], keyCompound: 'Agmatine', suggestedDose: '1 g', typicalRange: 'Commonly 1-2 g/day',
     timing: 'Before training', suggestedSlot: 'pre', ingredients: [g('agmatine sulfate', 1)],
     uses: ['Used for pump and training focus'],
-    evidence: { level: 'limited', reason: `${AIS_C} Few human trials on performance.` },
+    evidence: { level: 'limited', reason: `${AIS_UNLISTED} Few human trials on performance.` },
     cautions: ['Little human safety data; avoid in pregnancy.', ASK],
     sources: ['ais'],
   }),
@@ -303,7 +304,7 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     key: 'taurine', name: 'Taurine', keyCompound: 'Taurine', suggestedDose: '1 g', typicalRange: 'Studies used 1-3 g/day',
     timing: 'Before training', suggestedSlot: 'pre', ingredients: [g('taurine', 1)],
     uses: ['Used for endurance and recovery'],
-    evidence: { level: 'limited', reason: `${AIS_C}` },
+    evidence: { level: 'limited', reason: `${AIS_UNLISTED}` },
     cautions: ['Often combined with caffeine in energy products; count that caffeine too.'],
     sources: ['ais'],
   }),
@@ -311,7 +312,7 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     key: 'coq10', name: 'CoQ10', aliases: ['coenzyme q10', 'ubiquinone', 'ubiquinol'], keyCompound: 'Coenzyme Q10', suggestedDose: '100 mg', typicalRange: 'Studies used 100-300 mg/day',
     timing: 'With a meal that has fat', suggestedSlot: 'am', ingredients: [mg('coq10', 100)],
     uses: ['Used for energy and statin-related muscle symptoms'],
-    evidence: { level: 'limited', reason: `${AIS_C}` },
+    evidence: { level: 'limited', reason: `${AIS_UNLISTED}` },
     cautions: ['May interact with warfarin and blood pressure drugs.', ASK],
     sources: ['ais'],
   }),
@@ -319,7 +320,7 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     key: 'l-theanine', name: 'L-theanine', aliases: ['theanine'], keyCompound: 'L-theanine', suggestedDose: '200 mg', typicalRange: 'Studies used 100-400 mg/day',
     timing: 'With caffeine, or in the evening', suggestedSlot: 'pre', ingredients: [mg('l-theanine', 200)],
     uses: ['Calm focus, often with caffeine'],
-    evidence: { level: 'limited', reason: `${AIS_C}` },
+    evidence: { level: 'limited', reason: `${AIS_UNLISTED}` },
     cautions: ['May lower blood pressure.'],
     sources: ['ais'],
   }),
@@ -351,7 +352,7 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     key: 'polypodium-leucotomos', name: 'Polypodium leucotomos', aliases: ['polypodium', 'fernblock'], keyCompound: 'Polypodium leucotomos extract', suggestedDose: '240 mg', typicalRange: 'Studies used 240-480 mg/day',
     timing: 'Morning, before sun exposure', suggestedSlot: 'am', ingredients: [mg('polypodium leucotomos', 240)],
     uses: ['Used for sun-sensitivity support'],
-    evidence: { level: 'limited', reason: `${AIS_C} Not a sports supplement.` },
+    evidence: { level: 'limited', reason: `${AIS_UNLISTED} Not a sports supplement.` },
     cautions: ['It does not replace sunscreen.', ASK],
     sources: ['ais'],
   }),
@@ -391,7 +392,7 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     key: 'evl-pump-mode', name: 'EVL Pump Mode', aliases: ['pump mode', 'evlution pump mode'], kind: 'product', keyCompound: 'Stimulant-free pump formula', suggestedDose: '1 serving', typicalRange: 'Per the label',
     timing: '30 minutes before training', suggestedSlot: 'pre', ingredients: [],
     uses: ['Stimulant-free pre-workout'],
-    evidence: { level: 'limited', reason: `${AIS_C} The product's own ingredients are not rated here.` },
+    evidence: { level: 'limited', reason: 'The AIS Supplement Framework rates ingredients, not this product, and its ingredients are not rated here.' },
     cautions: ['Stimulant-free: no caffeine counts toward your daily total.', 'Ingredient amounts are not filled in; read them from your label.'],
     sources: ['label-evl-pump-mode', 'ais'],
   }),
