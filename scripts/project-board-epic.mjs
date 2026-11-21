@@ -91,10 +91,11 @@ function main() {
   const result = resolveEpic(labels, config.epic_options);
 
   // The board coordinates are written whatever the label says, so the workflow can still add the
-  // issue to the board when this step fails on a bad label. The project is user-owned, hence /users/.
+  // issue to the board when this step fails on a bad label. The owner is an organization, hence
+  // /orgs/: add-to-project reads the owner type from this path.
   const write = (lines) => process.env.GITHUB_OUTPUT && appendFileSync(process.env.GITHUB_OUTPUT, lines);
   write(
-    `project_url=https://github.com/users/${config.project_owner}/projects/${config.project_number}\n` +
+    `project_url=https://github.com/orgs/${config.project_owner}/projects/${config.project_number}\n` +
       `project_id=${config.project_node_id}\nfield_id=${config.epic_field_id}\n`,
   );
 

@@ -80,8 +80,10 @@ function runCli(labels) {
 }
 
 // Written on every run, so the workflow can add the issue to the board even when the label is bad.
+// The URL is the project's own, as GitHub reports it: merickvaughn is an organization, and
+// add-to-project fails on a /users/ URL for it.
 const BOARD_OUTPUT =
-  `project_url=https://github.com/users/${HOOK_CONFIG.project_owner}/projects/${HOOK_CONFIG.project_number}\n` +
+  'project_url=https://github.com/orgs/merickvaughn/projects/2\n' +
   `project_id=${HOOK_CONFIG.project_node_id}\nfield_id=${HOOK_CONFIG.epic_field_id}\n`;
 
 test('CLI: a known label writes the board coordinates and the option ID', () => {

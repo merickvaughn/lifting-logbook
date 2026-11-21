@@ -496,6 +496,8 @@ The skill handles the full flow: clarifying questions → proposal doc → GitHu
 
 Do not create `docs/proposals/` files or ROADMAP entries manually unless `/propose` is
 unavailable. The skill ensures the issue, epic, and milestone are assigned consistently.
+It sets the Epic by following *Workflow — run after `gh issue create`* above, so the issue it
+creates needs one `epic:<slug>` label (`.claude/propose.json` → `github_project.epic_label`).
 
 ### docs/proposals/ convention
 

@@ -1,8 +1,8 @@
 name: Project board
 
 # Adds every new issue to the Lifting Logbook project (project 2) and sets its Epic from an
-# `epic:<slug>` label, so a session that can create issues but can't reach the user-owned board
-# only has to add the label (#1385). The Epic option IDs come from .claude/hook-config.json via
+# `epic:<slug>` label, so a session that can create issues but can't reach the organization's
+# board only has to add the label (#1385). The Epic option IDs come from .claude/hook-config.json via
 # scripts/project-board-epic.mjs; `node scripts/project-board-epic.mjs --list` prints the labels.
 # Token scope and rotation: docs/operations/project-board-token.md.
 
@@ -67,6 +67,7 @@ jobs:
             echo "::error title=Issue not on the board::#$ISSUE_NUMBER has no item in project $PROJECT_ID, so its Epic can't be set."
             exit 1
           fi
-          gh project item-edit --project-id "$PROJECT_ID" --id "$ITEM_ID" \
-            --field-id "$FIELD_ID" --single-select-option-id "$OPTION_ID"
+          gh api graphql \
+            -f query='mutation($project:ID!,$item:ID!,$field:ID!,$option:String!){updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:{singleSelectOptionId:$option}}){projectV2Item{id}}}' \
+            -f project="$PROJECT_ID" -f item="$ITEM_ID" -f field="$FIELD_ID" -f option="$OPTION_ID" > /dev/null
           echo "Set the Epic on #$ISSUE_NUMBER (item $ITEM_ID) to option $OPTION_ID."
