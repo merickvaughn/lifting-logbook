@@ -72,6 +72,33 @@ const contributors = (ctx: AdvisoryContext, key: string): string[] =>
 const hasIngredient = (item: SupplementItem, ...keys: string[]): boolean =>
   itemIngredients(item).some((i) => keys.includes(i.key));
 
+/** The ingredients each rule reads. The rules use these, so a view that points at them can't drift. */
+export const ADVISORY_INGREDIENTS: Readonly<Record<SupplementAdvisoryRule, readonly string[]>> = {
+  lateStimulant: ['caffeine'],
+  highCaffeine: ['caffeine'],
+  highPotassium: ['potassium'],
+  adaptogenAtNight: ['ashwagandha', 'maca'],
+  missingAmount: [],
+};
+
+/**
+ * Which of a flagged item's doses the rule is about. A rule flags items; a view showing one row
+ * per dose puts the advisory on the rows this returns true for.
+ */
+export function advisoryCoversDose(rule: SupplementAdvisoryRule, p: Placement): boolean {
+  switch (rule) {
+    case 'lateStimulant':
+      return isWorkoutSlot(p.dose.slot);
+    case 'adaptogenAtNight':
+      return p.dose.slot === 'pm';
+    case 'missingAmount':
+      return !hasAmount(p.dose);
+    case 'highCaffeine':
+    case 'highPotassium':
+      return true;
+  }
+}
+
 const flagged = (
   rule: SupplementAdvisoryRule,
   ids: readonly string[],
@@ -83,7 +110,7 @@ export const lateStimulant: AdvisoryRule = {
     const time = ctx.dayType.sessionTime;
     if (time === undefined || minutesOfDay(time) <= minutesOfDay(ctx.caffeineCutoff)) return null;
     const ids = ctx.placements
-      .filter((p) => isWorkoutSlot(p.dose.slot) && hasIngredient(p.item, 'caffeine'))
+      .filter((p) => advisoryCoversDose('lateStimulant', p) && hasIngredient(p.item, ...ADVISORY_INGREDIENTS.lateStimulant))
       .map((p) => p.item.id);
     return flagged('lateStimulant', ids, {
       message: `Caffeine around a ${time} session (cutoff ${ctx.caffeineCutoff}) can cut into sleep.`,
@@ -95,7 +122,7 @@ export const lateStimulant: AdvisoryRule = {
 export const highCaffeine: AdvisoryRule = {
   evaluate(ctx) {
     if (totalNanograms(ctx.totals, 'caffeine') < toNanograms(CAFFEINE_ADVISORY_MG, 'mg')) return null;
-    return flagged('highCaffeine', contributors(ctx, 'caffeine'), {
+    return flagged('highCaffeine', ADVISORY_INGREDIENTS.highCaffeine.flatMap((k) => contributors(ctx, k)), {
       message: `Caffeine totals ${CAFFEINE_ADVISORY_MG} mg or more; FDA cites about 400 mg/day as the reference.`,
       source: 'fda-caffeine',
     });
@@ -105,7 +132,7 @@ export const highCaffeine: AdvisoryRule = {
 export const highPotassium: AdvisoryRule = {
   evaluate(ctx) {
     if (totalNanograms(ctx.totals, 'potassium') <= toNanograms(POTASSIUM_ADVISORY_MG, 'mg')) return null;
-    return flagged('highPotassium', contributors(ctx, 'potassium'), {
+    return flagged('highPotassium', ADVISORY_INGREDIENTS.highPotassium.flatMap((k) => contributors(ctx, k)), {
       message: `Supplemental potassium is above ${POTASSIUM_ADVISORY_MG} mg (NIH ODS adequate intake); spreading it through the day is fine.`,
       source: 'nih-ods-potassium',
     });
@@ -116,7 +143,7 @@ export const highPotassium: AdvisoryRule = {
 export const adaptogenAtNight: AdvisoryRule = {
   evaluate(ctx) {
     const ids = ctx.placements
-      .filter((p) => p.dose.slot === 'pm' && hasIngredient(p.item, 'ashwagandha', 'maca'))
+      .filter((p) => advisoryCoversDose('adaptogenAtNight', p) && hasIngredient(p.item, ...ADVISORY_INGREDIENTS.adaptogenAtNight))
       .map((p) => p.item.id);
     return flagged('adaptogenAtNight', ids, {
       message: 'Ashwagandha and maca are usually taken earlier in the day; at night they may disturb sleep.',
@@ -127,7 +154,7 @@ export const adaptogenAtNight: AdvisoryRule = {
 
 export const missingAmount: AdvisoryRule = {
   evaluate(ctx) {
-    const ids = ctx.placements.filter((p) => !hasAmount(p.dose)).map((p) => p.item.id);
+    const ids = ctx.placements.filter((p) => advisoryCoversDose('missingAmount', p)).map((p) => p.item.id);
     return flagged('missingAmount', ids, {
       message: 'A dose has no amount, so it adds nothing to the totals.',
       source: 'stack-data',

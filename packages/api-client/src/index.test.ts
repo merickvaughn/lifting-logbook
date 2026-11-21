@@ -1079,3 +1079,28 @@ describe('createApiClient', () => {
     });
   });
 });
+
+describe('supplements', () => {
+  it('fetchSupplements reads GET /supplements uncached', async () => {
+    const stack = { items: [], dayTypes: [], caffeineCutoff: '15:00' };
+    mockFetch.mockResolvedValue(new Response(JSON.stringify(stack), { status: 200 }));
+    await expect(makeClient().fetchSupplements()).resolves.toEqual(stack);
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements');
+    expect(init.cache).toBe('no-store');
+  });
+
+  it('updateSupplementItem PATCHes the links with the lifter\'s date, escaping the id', async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    await makeClient().updateSupplementItem('a b', { links: ['https://www.amazon.com/s?k=Glycine'] }, '2026-11-21');
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items/a%20b?today=2026-11-21');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(String(init.body))).toEqual({ links: ['https://www.amazon.com/s?k=Glycine'] });
+  });
+
+  it('updateSupplementItem throws the server message on failure', async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'stale' }), { status: 409 }));
+    await expect(makeClient().updateSupplementItem('x', { links: [] }, '2026-11-21')).rejects.toThrow('stale');
+  });
+});

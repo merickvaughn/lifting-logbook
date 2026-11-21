@@ -1156,6 +1156,48 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
+  // GET /supplements (#1376): a small stack, product names and amounts only
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && url.pathname === '/supplements') {
+    const item = (id, name, over = {}) => ({
+      id, name, keyCompound: '', timing: '', shortNote: '', longNote: '', status: 'active',
+      unverified: false, links: [], ingredients: [], doses: [], ...over,
+    });
+    json(res, {
+      caffeineCutoff: '15:00',
+      dayTypes: [
+        { id: 'lift', name: 'Lift day', sessionTime: '16:30' },
+        { id: 'rest', name: 'Rest day' },
+      ],
+      items: [
+        item('pre-x', 'Nutricost Pre-X', {
+          keyCompound: '300 mg caffeine', timing: '30–60 min before',
+          ingredients: [{ key: 'caffeine', amount: 300, unit: 'mg' }],
+          doses: [{ slot: 'pre', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }],
+          reference: {
+            uses: ['Alertness and focus before a hard session'],
+            evidence: { level: 'strong', reason: 'Caffeine reliably improves performance.' },
+            cautions: ['Can disturb sleep when taken late'],
+            typicalRange: '3-6 mg/kg', sources: ['issn-caffeine'],
+          },
+        }),
+        item('quest', 'Quest protein (vanilla milkshake)', {
+          ingredients: [{ key: 'protein', amount: 24, unit: 'g' }],
+          doses: [{ slot: 'post', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }],
+        }),
+        item('glycine', 'Glycine', {
+          doses: [{ slot: 'am', amount: '3 g', servings: 1, dayTypes: [] }],
+        }),
+        item('collagen', 'Hydrolyzed collagen peptides', {
+          status: 'pending',
+          doses: [{ slot: 'am', amount: '10 g', servings: 1, dayTypes: [] }],
+        }),
+      ],
+    });
+    return;
+  }
+
+  // -------------------------------------------------------------------------
   // GET /users/me/settings
   // -------------------------------------------------------------------------
   if (method === 'GET' && url.pathname === '/users/me/settings') {
