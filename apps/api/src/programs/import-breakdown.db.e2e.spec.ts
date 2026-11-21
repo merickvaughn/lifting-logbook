@@ -57,8 +57,11 @@ const USERS = [
 ];
 // Other import routes allow 30 s (IMPORT_TX_TIMEOUT_MS); this one allows 60 s
 // (IMPORT_REPLACE_TX_TIMEOUT_MS), but an import that replaces nothing, like the row-limit commit
-// and its undo, should still finish well inside 30 s. CI measured the commit at 1.7 s.
-const ROW_LIMIT_BUDGET_MS = 15_000;
+// and its undo, should still finish well inside 30 s. CI measured the commit at 1.7 s, so the
+// 15 s CI bound (under 10x that) still fails a real slowdown there. A loaded local Windows run
+// took 15.45 s with no code change (#1397), so win32 gets the 30 s import transaction timeout
+// instead, like the other Windows-only allowances in CLAUDE.md → Platform & Environment.
+const ROW_LIMIT_BUDGET_MS = process.platform === 'win32' ? 30_000 : 15_000;
 
 async function cleanup(owner: PrismaClient): Promise<void> {
   const where = { userId: { in: USERS } };
