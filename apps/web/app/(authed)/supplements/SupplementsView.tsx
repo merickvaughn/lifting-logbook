@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { logClientError } from '@/lib/log-client-error';
 import { SLOT_LABEL, buildView, type RowModel, type Stack } from '@/lib/supplementsView';
 import SupplementDetail from './SupplementDetail';
 import styles from './supplements.module.css';
@@ -15,6 +16,7 @@ function Row({ row, onOpen }: { row: RowModel; onOpen: (row: RowModel, opener: H
             <span className={styles.name}>
               {row.item.name}
               {row.also.length > 0 && <span className={styles.pill}>also {row.also.join(', ').toLowerCase()}</span>}
+              {!row.counted && row.item.status === 'active' && <span className={styles.pill}>unverified, not counted</span>}
             </span>
             <span className={styles.dose}>
               {row.amount ? (
@@ -62,11 +64,13 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [pendingOpen, setPendingOpen] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
+  const view = useMemo(() => buildView(stack, dayTypeId), [stack, dayTypeId]);
 
-  if (stack.dayTypes.length === 0) {
-    return <p role="status">No day types are set up yet.</p>;
-  }
-  const view = buildView(stack, dayTypeId);
+  useEffect(() => {
+    if (view.advisoryError) logClientError('supplements.advisories', view.advisoryError, { dayTypeId: view.dayType.id });
+  }, [view]);
+
+  const hasDayTypes = stack.dayTypes.length > 0;
   const open = (row: RowModel, el: HTMLElement) => {
     opener.current = el;
     setOpenId(row.item.id);
@@ -81,19 +85,25 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
         {view.activeCount} active · {flagged} item{flagged === 1 ? ' has' : 's have'} a note worth a look · tap any item for details
       </p>
 
-      <div role="group" aria-label="Day type" className={styles.switcher}>
-        {stack.dayTypes.map((d) => (
-          <button
-            key={d.id}
-            type="button"
-            aria-pressed={d.id === view.dayType.id}
-            className={d.id === view.dayType.id ? `${styles.segment} ${styles.segmentOn}` : styles.segment}
-            onClick={() => setDayTypeId(d.id)}
-          >
-            {d.name}
-          </button>
-        ))}
-      </div>
+      {hasDayTypes && (
+        <div role="group" aria-label="Day type" className={styles.switcher}>
+          {stack.dayTypes.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              aria-pressed={d.id === view.dayType.id}
+              className={d.id === view.dayType.id ? `${styles.segment} ${styles.segmentOn}` : styles.segment}
+              onClick={() => setDayTypeId(d.id)}
+            >
+              {d.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {view.advisoryError !== undefined && (
+        <p className={styles.muted}>Notes worth a look couldn’t be worked out for this day, so none are shown.</p>
+      )}
 
       <section className={styles.card} aria-label="Supplemental protein">
         <h2 className={styles.cardTitle}>Supplemental protein</h2>
@@ -109,13 +119,15 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
         <header className={styles.cardHeader}>
           <div>
             <h2 id="supp-workout" className={styles.cardTitle}>
-              Workout · {view.dayType.name}
+              {hasDayTypes ? `Workout · ${view.dayType.name}` : 'Workout'}
             </h2>
-            <p className={styles.muted}>{view.workout.sessionLine}</p>
+            {hasDayTypes && <p className={styles.muted}>{view.workout.sessionLine}</p>}
           </div>
           <span className={styles.muted}>{plural(view.workout.count)}</span>
         </header>
-        {noWorkout ? (
+        {!hasDayTypes ? (
+          <p className={styles.empty}>No day types set up yet, so workout doses aren’t shown.</p>
+        ) : noWorkout ? (
           <p className={styles.empty}>Nothing workout-specific on rest days.</p>
         ) : (
           <>
@@ -162,6 +174,26 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
             </div>
           ))}
       </section>
+
+      {view.unscheduled.length > 0 && (
+        <section className={styles.card} aria-labelledby="supp-unscheduled">
+          <header className={styles.cardHeader}>
+            <div>
+              <h2 id="supp-unscheduled" className={styles.cardTitle}>
+                Not scheduled
+              </h2>
+              <p className={styles.muted}>Active, but no dose applies on any day yet</p>
+            </div>
+            <span className={styles.muted}>{plural(view.unscheduled.length)}</span>
+          </header>
+          <ColumnHeader />
+          <ul className={styles.list}>
+            {view.unscheduled.map((r) => (
+              <Row key={r.key} row={r} onOpen={open} />
+            ))}
+          </ul>
+        </section>
+      )}
 
       {view.pending.length > 0 && (
         <section className={styles.card} aria-label="Pending">

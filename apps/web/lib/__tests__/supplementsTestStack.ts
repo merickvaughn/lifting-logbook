@@ -1,15 +1,15 @@
 import type { SupplementDose, SupplementItem } from '@lifting-logbook/types';
-import type { Stack } from './supplementsView';
+import type { Stack } from '../supplementsView';
 
 // Test-only fixture: product names and amounts only. Lift day at 16:30, caffeine cutoff 15:00.
-const dose = (slot: SupplementDose['slot'], amount: string, dayTypes: string[] = []): SupplementDose => ({
+export const dose = (slot: SupplementDose['slot'], amount: string, dayTypes: string[] = []): SupplementDose => ({
   slot,
   amount,
   servings: 1,
   dayTypes,
 });
 
-const item = (id: string, name: string, over: Partial<SupplementItem> = {}): SupplementItem => ({
+export const item = (id: string, name: string, over: Partial<SupplementItem> = {}): SupplementItem => ({
   id,
   name,
   keyCompound: '',

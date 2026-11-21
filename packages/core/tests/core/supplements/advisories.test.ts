@@ -1,12 +1,15 @@
 import {
+  ADVISORY_INGREDIENTS,
   adaptogenAtNight,
   advisories,
   advisoryContext,
+  advisoryCoversDose,
   highCaffeine,
   highPotassium,
   lateStimulant,
   missingAmount,
   type AdvisoryOptions,
+  type Placement,
 } from '@src/core';
 import type { SupplementDayType, SupplementItem } from '@lifting-logbook/types';
 import { LIFT, dose, ing, item } from './supplementFixtures';
@@ -106,5 +109,34 @@ describe('advisories', () => {
   it('passes the cutoff through', () => {
     expect(advisories([caffeinated(100)], at('14:30')).map((a) => a.rule)).toEqual(['lateStimulant']);
     expect(advisories([caffeinated(100)], at('14:30'), { caffeineCutoff: '15:00' })).toEqual([]);
+  });
+});
+
+describe('advisoryCoversDose', () => {
+  const p = (d: Partial<Parameters<typeof dose>[0]> = {}): Placement => ({ item: item('x'), dose: dose(d), counted: true });
+  it('puts each rule on the doses it is about', () => {
+    expect(advisoryCoversDose('lateStimulant', p({ slot: 'pre' }))).toBe(true);
+    expect(advisoryCoversDose('lateStimulant', p({ slot: 'am', dayTypes: [] }))).toBe(false);
+    expect(advisoryCoversDose('adaptogenAtNight', p({ slot: 'pm', dayTypes: [] }))).toBe(true);
+    expect(advisoryCoversDose('adaptogenAtNight', p({ slot: 'am', dayTypes: [] }))).toBe(false);
+    expect(advisoryCoversDose('missingAmount', p({ amount: ' ' }))).toBe(true);
+    expect(advisoryCoversDose('missingAmount', p())).toBe(false);
+    expect(advisoryCoversDose('highCaffeine', p({ slot: 'am', dayTypes: [] }))).toBe(true);
+  });
+});
+
+describe('ADVISORY_INGREDIENTS', () => {
+  it('names the ingredients that make each rule fire', () => {
+    const night = dose({ slot: 'pm', dayTypes: [] });
+    for (const key of ADVISORY_INGREDIENTS.adaptogenAtNight) {
+      expect(adaptogenAtNight.evaluate(ctx([item('a', { ingredients: [ing(key, 300)], doses: [night] })]))).not.toBeNull();
+    }
+    for (const key of ADVISORY_INGREDIENTS.highCaffeine) {
+      expect(highCaffeine.evaluate(ctx([item('c', { ingredients: [ing(key, 400)] })]))).not.toBeNull();
+    }
+    for (const key of ADVISORY_INGREDIENTS.highPotassium) {
+      expect(highPotassium.evaluate(ctx([item('k', { ingredients: [ing(key, 3500)] })]))).not.toBeNull();
+    }
+    expect(adaptogenAtNight.evaluate(ctx([item('g', { ingredients: [ing('glycine', 3000)], doses: [night] })]))).toBeNull();
   });
 });

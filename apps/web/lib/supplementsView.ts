@@ -1,5 +1,7 @@
 import {
   advisories,
+  advisoryCoversDose,
+  doseAppliesOn,
   fromNanograms,
   hasAmount,
   ingredientTotals,
@@ -35,8 +37,9 @@ export const SLOT_LABEL: Record<SupplementSlot, string> = {
 export const WORKOUT_ORDER: SupplementSlot[] = ['pre', 'intra', 'post'];
 export const DAILY_ORDER: SupplementSlot[] = ['all', 'am', 'noon', 'pm'];
 
-/** `16:30` as `4:30 PM`. */
+/** `16:30` as `4:30 PM`; anything that isn't 24-hour `HH:MM` is shown as it is. */
 export function clock12(hhmm: string): string {
+  if (!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(hhmm)) return hhmm;
   const [h, m] = hhmm.split(':').map(Number);
   return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
 }
@@ -63,15 +66,6 @@ export interface AdvisoryNote {
   explanation: string;
 }
 
-/** The rows a rule's advisory belongs on, among an item's doses. Core flags items; the rule says which dose. */
-const RULE_APPLIES: Record<SupplementAdvisoryRule, (p: Placement) => boolean> = {
-  lateStimulant: (p) => isWorkoutSlot(p.dose.slot),
-  highCaffeine: () => true,
-  highPotassium: () => true,
-  adaptogenAtNight: (p) => p.dose.slot === 'pm',
-  missingAmount: (p) => !hasAmount(p.dose),
-};
-
 export interface RowModel {
   key: string;
   item: SupplementItem;
@@ -84,11 +78,13 @@ export interface RowModel {
   note: string;
   /** The other slots the item is dosed in on this day type. */
   also: string[];
+  /** False for unverified items: shown, but left out of totals, so the row says so. */
   counted: boolean;
   advisories: AdvisoryNote[];
 }
 
 export interface SupplementsView {
+  /** The selected day type, or `NO_DAY_TYPE` when the lifter has none yet. */
   dayType: SupplementDayType;
   activeCount: number;
   flaggedCount: number;
@@ -96,9 +92,16 @@ export interface SupplementsView {
   workout: { sessionLine: string; count: number; slots: { slot: SupplementSlot; rows: RowModel[] }[] };
   daily: { count: number; slots: { slot: SupplementSlot; rows: RowModel[] }[] };
   pending: RowModel[];
+  /** Active items with no dose that applies on any day type, so they'd show nowhere else. */
+  unscheduled: RowModel[];
   /** Per item, for the detail panel. */
   notesByItem: Map<string, AdvisoryNote[]>;
+  /** Set when core couldn't work out the advisories (a malformed time); the page shows the rest. */
+  advisoryError?: unknown;
 }
+
+/** Stands in for a day type when the lifter has none: only daily doses with no day types apply. */
+export const NO_DAY_TYPE: SupplementDayType = { id: '', name: 'Every day' };
 
 function proteinGrams(item: SupplementItem, servings: number): number {
   const ng = itemIngredients(item)
@@ -107,12 +110,15 @@ function proteinGrams(item: SupplementItem, servings: number): number {
   return fromNanograms(Math.round(ng * servings), 'g');
 }
 
-/** `Pre-workout (Lift day)`, or `Morning` for a daily dose. */
-export function placementText(dose: SupplementItem['doses'][number], dayTypes: readonly SupplementDayType[]): string {
-  const names = dose.dayTypes.map((id) => dayTypes.find((d) => d.id === id)?.name ?? id);
-  return isWorkoutSlot(dose.slot) && names.length > 0
-    ? `${SLOT_LABEL[dose.slot]} (${names.join(', ')})`
-    : SLOT_LABEL[dose.slot];
+type Dose = SupplementItem['doses'][number];
+
+const dayTypeNames = (dose: Dose, dayTypes: readonly SupplementDayType[]): string[] =>
+  dose.dayTypes.map((id) => dayTypes.find((d) => d.id === id)?.name ?? id);
+
+/** `Pre-workout (Lift day)`, `Morning (Rest day)` for a daily dose limited to a day type, or `Morning`. */
+export function placementText(dose: Dose, dayTypes: readonly SupplementDayType[]): string {
+  const names = dayTypeNames(dose, dayTypes);
+  return names.length > 0 ? `${SLOT_LABEL[dose.slot]} (${names.join(', ')})` : SLOT_LABEL[dose.slot];
 }
 
 /** Line 2 without the placement: the compound is left out when it only repeats the name. */
@@ -160,24 +166,32 @@ function notesFor(stack: Stack, dayType: SupplementDayType): Map<string, Advisor
 }
 
 export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
-  const dayType = stack.dayTypes.find((d) => d.id === dayTypeId) ?? stack.dayTypes[0];
-  const notesByItem = notesFor(stack, dayType);
+  const dayType = stack.dayTypes.find((d) => d.id === dayTypeId) ?? stack.dayTypes[0] ?? NO_DAY_TYPE;
+  let notesByItem = new Map<string, AdvisoryNote[]>();
+  let advisoryError: unknown;
+  try {
+    notesByItem = notesFor(stack, dayType);
+  } catch (err) {
+    advisoryError = err;
+  }
   const all = placements(stack.items, dayType.id);
 
   const rowOf = (p: Placement): RowModel => {
-    const slotsOfItem = all.filter((q) => q.item.id === p.item.id && q.dose !== p.dose);
-    const protein = hasAmount(p.dose) ? proteinGrams(p.item, p.dose.servings) : 0;
+    const otherSlots = all.filter((q) => q.item.id === p.item.id && q.dose.slot !== p.dose.slot);
+    const protein = p.counted && hasAmount(p.dose) ? proteinGrams(p.item, p.dose.servings) : 0;
+    // A daily dose limited to some day types says so, since the Every day card otherwise means every day.
+    const only = isWorkoutSlot(p.dose.slot) ? [] : dayTypeNames(p.dose, stack.dayTypes);
     return {
-      key: `${p.item.id}:${p.dose.slot}`,
+      key: `${p.item.id}:${p.item.doses.indexOf(p.dose)}`,
       item: p.item,
       amount: p.dose.amount.trim(),
       range: p.item.doses.length === 1 ? p.item.reference?.typicalRange : undefined,
       protein: protein > 0 ? `${num(protein)} g protein` : undefined,
-      detail: detailLine(p.item).join(' · '),
+      detail: [only.length > 0 ? `${only.join(', ')} only` : '', ...detailLine(p.item)].filter(Boolean).join(' · '),
       note: p.item.shortNote.trim(),
-      also: slotsOfItem.map((q) => SLOT_LABEL[q.dose.slot]),
+      also: [...new Set(otherSlots.map((q) => SLOT_LABEL[q.dose.slot]))],
       counted: p.counted,
-      advisories: (notesByItem.get(p.item.id) ?? []).filter(() => p.counted).filter((n) => RULE_APPLIES[n.rule](p)),
+      advisories: (notesByItem.get(p.item.id) ?? []).filter((n) => advisoryCoversDose(n.rule, p)),
     };
   };
 
@@ -207,6 +221,22 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
       };
     });
 
+  const dayTypeIds = stack.dayTypes.length > 0 ? stack.dayTypes.map((d) => d.id) : [NO_DAY_TYPE.id];
+  const unscheduled = stack.items
+    .filter((i) => i.status === 'active' && !i.doses.some((d) => dayTypeIds.some((id) => doseAppliesOn(d, id))))
+    .map(
+      (item): RowModel => ({
+        key: item.id,
+        item,
+        amount: item.doses[0]?.amount.trim() ?? '',
+        detail: [item.doses.length === 0 ? 'No dose yet' : 'Not set for any day type', ...detailLine(item)].join(' · '),
+        note: item.shortNote.trim(),
+        also: [],
+        counted: !item.unverified,
+        advisories: [],
+      }),
+    );
+
   const totals = ingredientTotals(stack.items, dayType.id);
   const proteinShares = totals.find((t) => t.key === 'protein')?.shares.filter((s) => s.ng > 0) ?? [];
   const contributors = proteinShares
@@ -231,7 +261,9 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
     },
     daily: { count: count(daily), slots: daily },
     pending,
+    unscheduled,
     notesByItem,
+    advisoryError,
   };
 }
 

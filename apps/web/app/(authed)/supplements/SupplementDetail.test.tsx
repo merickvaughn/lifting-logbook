@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { SupplementItem } from '@lifting-logbook/types';
 import { supplementSourceUrl } from '@lifting-logbook/core';
-import { STACK } from '@/lib/supplementsTestStack';
+import { STACK } from '@/lib/__tests__/supplementsTestStack';
 import { buildView, type Stack } from '@/lib/supplementsView';
 import SupplementDetail from './SupplementDetail';
 
@@ -96,6 +96,19 @@ describe('SupplementDetail for Pre-X on a lift day', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('SupplementDetail facts', () => {
+  it('tints the ingredients the item’s advisories read, ashwagandha at night included', () => {
+    const { dialog } = open('ashwagandha');
+    expect(within(dialog).getByRole('cell', { name: 'Ashwagandha' }).closest('tr')).toHaveClass('flaggedCell');
+  });
+
+  it('tints caffeine on Pre-X but not an ingredient no advisory reads', () => {
+    const { dialog } = open('pre-x');
+    expect(within(dialog).getByRole('cell', { name: 'Caffeine' }).closest('tr')).toHaveClass('flaggedCell');
+    expect(within(dialog).getByRole('cell', { name: 'L citrulline' }).closest('tr')).not.toHaveClass('flaggedCell');
   });
 });
 

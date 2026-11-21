@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { itemIngredients, supplementSourceUrl } from '@lifting-logbook/core';
+import { ADVISORY_INGREDIENTS, itemIngredients, supplementSourceUrl } from '@lifting-logbook/core';
 import type { SupplementItem } from '@lifting-logbook/types';
 import { localToday } from '@/lib/calendarDay';
 import { updateSupplementItem } from '@/lib/client-api';
@@ -21,12 +21,6 @@ import {
 } from '@/lib/supplementsView';
 import styles from './supplements.module.css';
 
-/** Ingredients whose amounts feed an advisory, so the facts table tints them. */
-const ADVISORY_INGREDIENT: Record<string, string[]> = {
-  caffeine: ['lateStimulant', 'highCaffeine'],
-  potassium: ['highPotassium'],
-};
-
 const EVIDENCE_LABEL = { strong: 'Strong evidence', moderate: 'Moderate evidence', limited: 'Limited evidence' } as const;
 
 interface Props {
@@ -37,10 +31,7 @@ interface Props {
   onClose: () => void;
 }
 
-/**
- * The detail panel: a native modal `<dialog>`, so the browser traps focus and closes it on Esc.
- * Jest's jsdom has no `showModal`, so there the `open` attribute stands in.
- */
+/** The detail panel: a native modal `<dialog>`, so the browser traps focus and closes it on Esc. */
 export default function SupplementDetail({ stack, item, dayTypeId, notes, onClose }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const router = useRouter();
@@ -49,9 +40,7 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
 
   useEffect(() => {
     const dialog = ref.current;
-    if (!dialog || dialog.open) return;
-    if (typeof dialog.showModal === 'function') dialog.showModal();
-    else dialog.setAttribute('open', '');
+    if (dialog && !dialog.open) dialog.showModal();
   }, []);
 
   const dayType = stack.dayTypes.find((d) => d.id === dayTypeId);
@@ -62,11 +51,6 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
   const overlaps = overlapRows(stack, item, dayTypeId);
   const protein = ingredients.filter((i) => i.key === 'protein').reduce((n, i) => n + i.amount, 0);
 
-  // A native close fires `close`, which calls onClose; without `close()` (jsdom) call it directly.
-  function closeDialog() {
-    if (typeof ref.current?.close === 'function') ref.current.close();
-    else onClose();
-  }
 
   async function keep() {
     if (!suggestion) return;
@@ -96,7 +80,7 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
           <h2 id="supp-detail-title">{item.name}</h2>
           {slots && <p className={styles.muted}>{slots}</p>}
         </div>
-        <button type="button" className={styles.close} aria-label="Close" onClick={closeDialog}>
+        <button type="button" className={styles.close} aria-label="Close" onClick={() => ref.current?.close()}>
           ×
         </button>
       </header>
@@ -201,7 +185,8 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
               </thead>
               <tbody>
                 {ingredients.map((i, n) => {
-                  const feeds = (ADVISORY_INGREDIENT[i.key] ?? []).some((rule) => notes.some((x) => x.rule === rule));
+                  // Tint the ingredients an advisory on this item reads.
+                  const feeds = notes.some((n) => ADVISORY_INGREDIENTS[n.rule].includes(i.key));
                   return (
                     <tr key={n} className={feeds ? styles.flaggedCell : undefined}>
                       <td>{ingredientName(i.key)}</td>

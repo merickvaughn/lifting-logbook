@@ -1,11 +1,13 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { STACK } from '@/lib/supplementsTestStack';
+import { STACK } from '@/lib/__tests__/supplementsTestStack';
 import SupplementsView from './SupplementsView';
 
 jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh: jest.fn() }) }));
 jest.mock('@/lib/client-api', () => ({ updateSupplementItem: jest.fn() }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
+
+import { logClientError } from '@/lib/log-client-error';
 
 const row = (name: RegExp) => screen.getByRole('button', { name });
 
@@ -101,6 +103,41 @@ describe('SupplementsView on a lift day', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(row(/Nutricost Pre-X/)).toHaveFocus();
+  });
+});
+
+describe('SupplementsView for a new stack', () => {
+  it('with no day types, shows every-day doses, the items no day places, and Pending', async () => {
+    render(<SupplementsView stack={{ ...STACK, dayTypes: [] }} />);
+    expect(screen.queryByRole('group', { name: 'Day type' })).not.toBeInTheDocument();
+    const workout = screen.getByRole('region', { name: 'Workout' });
+    expect(workout).toHaveTextContent('No day types set up yet, so workout doses aren’t shown.');
+    expect(within(screen.getByRole('region', { name: 'Every day' })).getByRole('button', { name: /Creatine monohydrate/ })).toBeInTheDocument();
+    const unscheduled = screen.getByRole('region', { name: 'Not scheduled' });
+    expect(within(unscheduled).getByRole('button', { name: /Nutricost Pre-X/ })).toHaveTextContent('Not set for any day type');
+    await userEvent.click(screen.getByRole('button', { name: /Pending · 1/ }));
+    expect(row(/Hydrolyzed collagen peptides/)).toBeInTheDocument();
+  });
+
+  it('shows an active item with no doses under Not scheduled', () => {
+    const fresh = { id: 'new', name: 'New powder', keyCompound: '', timing: '', shortNote: '', longNote: '', status: 'active' as const, unverified: false, links: [], ingredients: [], doses: [] };
+    render(<SupplementsView stack={{ ...STACK, items: [fresh] }} />);
+    const unscheduled = screen.getByRole('region', { name: 'Not scheduled' });
+    expect(within(unscheduled).getByRole('button', { name: /New powder/ })).toHaveTextContent('dose?No dose yet');
+  });
+
+  it('marks an unverified item as not counted', () => {
+    const items = STACK.items.map((i) => (i.id === 'fish-oil' ? { ...i, unverified: true } : i));
+    render(<SupplementsView stack={{ ...STACK, items }} />);
+    expect(row(/Fish oil/)).toHaveTextContent('unverified, not counted');
+    expect(row(/Magnesium glycinate/)).not.toHaveTextContent('not counted');
+  });
+
+  it('shows the stack without notes, and reports it, when a stored time is malformed', () => {
+    render(<SupplementsView stack={{ ...STACK, caffeineCutoff: '3pm' }} />);
+    expect(screen.getByText('Notes worth a look couldn’t be worked out for this day, so none are shown.')).toBeInTheDocument();
+    expect(row(/Nutricost Pre-X/)).not.toHaveTextContent('•');
+    expect(logClientError).toHaveBeenCalledWith('supplements.advisories', expect.any(RangeError), { dayTypeId: 'lift' });
   });
 });
 

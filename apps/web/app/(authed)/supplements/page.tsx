@@ -13,9 +13,12 @@ export const metadata: Metadata = { title: 'Supplements — Lifting Logbook' };
 export default async function SupplementsPage() {
   const result = await fetchSupplements().then(
     (stack) => ({ stack }),
-    // The error state below reports it through logClientError, which needs the browser.
+    // Logged here for the server's logs; the error state below also reports it from the browser.
     // fallback-covered-by: apps/web/app/(authed)/supplements/page.test.tsx
-    (err: unknown) => ({ error: err instanceof Error ? err.message : 'Request failed' }),
+    (err: unknown) => {
+      console.error('[SupplementsPage] supplements fetch failed', err);
+      return { error: err instanceof Error ? err.message : 'Request failed' };
+    },
   );
   return (
     <main className={styles.page}>
