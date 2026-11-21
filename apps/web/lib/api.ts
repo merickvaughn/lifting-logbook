@@ -116,4 +116,5 @@ export const {
   fetchFocusPlan,
   fetchNonCycleRecords,
   fetchNonCycleWorkout,
+  fetchSupplements,
 } = createApiClient({ baseUrl: API_URL, getAuthHeaders });

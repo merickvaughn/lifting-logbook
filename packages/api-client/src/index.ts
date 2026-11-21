@@ -69,6 +69,8 @@ import type {
   UpsertStrengthGoalRequest,
   UserSettingsResponse,
   WorkoutResponse,
+  SupplementItemDetails,
+  SupplementStackResponse,
 } from '@lifting-logbook/types';
 import { IMPORT_SUGGESTION_DEADLINE_MS, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 
@@ -798,6 +800,25 @@ export function createApiClient(config: ApiClientConfig) {
       const body: GoogleSheetImportRequest = { url };
       return request(`/programs/${enc(program)}/import/google-sheet`, {
         method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+
+    // -- Supplements (#1376) ------------------------------------------------
+    /** The lifter's stack, day types and caffeine cutoff. */
+    fetchSupplements(): Promise<SupplementStackResponse> {
+      return request('/supplements', { cache: 'no-store' });
+    },
+    /** Edits an item's details, such as the links Keep saves. `today` is the lifter's local date (YYYY-MM-DD). */
+    updateSupplementItem(
+      id: string,
+      body: Partial<Pick<SupplementItemDetails, 'links'>>,
+      today: string,
+    ): Promise<SupplementStackResponse> {
+      return request(`/supplements/items/${enc(id)}?today=${enc(today)}`, {
+        method: 'PATCH',
         headers: JSON_HEADERS,
         body: JSON.stringify(body),
         cache: 'no-store',
