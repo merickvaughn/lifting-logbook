@@ -259,4 +259,24 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
     // The largest beforeSeq the API accepts is the largest the integer column holds.
     expect((await asUser((repo) => repo.changes({ beforeSeq: 2_147_483_647, limit: 10 }))).map((c) => c.seq)).toEqual([1, 2, 3, 4, 5, 6]);
   });
+  it('stores an item\u2019s catalog key and reference in the two nullable columns, and reads them back (#1375)', async () => {
+    const reference = {
+      uses: ['Strength'],
+      evidence: { level: 'strong' as const, reason: 'ISSN position stand' },
+      cautions: ['Take with fluid'],
+      typicalRange: '3-5 g/day',
+      sources: ['issn-creatine'],
+    };
+    const write = (changes: SupplementChangeBody[]) => asUser((repo) => repo.write(async (state) => apply(state, changes)));
+    await write([{ type: 'added', item: item('plain') }]);
+    await write([{ type: 'added', item: item('catalog', { catalogKey: 'creatine-monohydrate', reference }) }]);
+
+    const stored = await asUser((repo) => repo.load());
+    const byId = (id: string) => stored.items.find((i) => i.id === id);
+    expect(byId('catalog')).toMatchObject({ catalogKey: 'creatine-monohydrate', reference });
+    expect(byId('plain')).not.toHaveProperty('catalogKey');
+    expect(byId('plain')).not.toHaveProperty('reference');
+    const log = await asUser((repo) => repo.changesThrough(TODAY));
+    expect(stackAsOf(log, TODAY).stack).toEqual(stored.items);
+  });
 });

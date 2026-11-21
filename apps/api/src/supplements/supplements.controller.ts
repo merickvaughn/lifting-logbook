@@ -20,11 +20,16 @@ import {
   applyChange,
   isSameData,
   isWorkoutSlot,
+  itemFromCatalog,
+  searchSupplements,
   stackAsOf,
+  supplementByKey,
+  toCatalogEntry,
   validateStack,
 } from '@lifting-logbook/core';
 import {
   SupplementAsOfResponse,
+  SupplementCatalogEntry,
   SupplementChange,
   SupplementCreatedResponse,
   SupplementItem,
@@ -162,6 +167,20 @@ export class SupplementsController {
     return { items: replay.stack, firstChangeDate: await repo.firstChangeDate(), anomalies };
   }
 
+  /**
+   * Catalog entries whose name or an alias contains `q`, for autofill. The catalog is the same for
+   * every user (#1375). Fastify reads a repeated `q` as an array, which is a 400.
+   */
+  @Get('catalog')
+  catalog(@Query('q') q: string | string[] | undefined): SupplementCatalogEntry[] {
+    if (Array.isArray(q)) throw new BadRequestException('q must be given once');
+    return searchSupplements(q ?? '').map(toCatalogEntry);
+  }
+
+  /**
+   * Creates an item. With `catalogKey`, a field left blank takes the catalog entry's value, and
+   * the entry's reference content is copied onto the item (`itemFromCatalog`); an unknown key is a 400.
+   */
   @Post('items')
   async create(
     @Body() dto: CreateSupplementItemDto,
@@ -170,17 +189,24 @@ export class SupplementsController {
   ): Promise<SupplementCreatedResponse> {
     const id = randomUUID();
     const state = await this.write(user, today, dto, (_state, body) => {
+      const entry = body.catalogKey === undefined ? undefined : supplementByKey(body.catalogKey);
+      if (body.catalogKey !== undefined && !entry) throw new BadRequestException(`No catalog entry ${body.catalogKey}`);
+      const fields = entry
+        ? itemFromCatalog(entry, body)
+        : {
+            name: body.name,
+            keyCompound: body.keyCompound ?? '',
+            timing: body.timing ?? '',
+            shortNote: body.shortNote ?? '',
+            longNote: body.longNote ?? '',
+            links: body.links ?? [],
+            ingredients: body.ingredients ?? [],
+          };
       const item: SupplementItem = {
         id,
-        name: body.name,
-        keyCompound: body.keyCompound ?? '',
-        timing: body.timing ?? '',
-        shortNote: body.shortNote ?? '',
-        longNote: body.longNote ?? '',
+        ...fields,
         status: body.status ?? 'active',
         unverified: body.unverified ?? false,
-        links: body.links ?? [],
-        ingredients: body.ingredients ?? [],
         doses: body.doses ?? [],
       };
       return [{ type: 'added', item }];

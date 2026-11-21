@@ -508,6 +508,11 @@ model SupplementItem {
   // brings it back, and is not part of the stack.
   foldedInto  String?
   position    Int
+  // The catalog entry the item was created from, and a snapshot of that entry's read-only
+  // reference content (SupplementReference), copied at creation (#1375, ADR-046 addendum).
+  // Null on items not created from the catalog.
+  catalogKey  String?
+  reference   Json?
   doses       SupplementDose[]
   parts       SupplementMixPart[]
 

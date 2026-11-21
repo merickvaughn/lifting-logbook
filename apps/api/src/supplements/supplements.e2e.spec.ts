@@ -5,10 +5,12 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import {
   SUPPLEMENT_NOT_REMOVED_CODE,
   SupplementAsOfResponse,
+  SupplementCatalogEntry,
   SupplementChange,
   SupplementCreatedResponse,
   SupplementStackResponse,
 } from '@lifting-logbook/types';
+import { supplementSourceUrl } from '@lifting-logbook/core';
 import { AppModule } from '../app.module';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
@@ -470,5 +472,56 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     }
     // The largest seq the log's integer column holds is still a page boundary.
     expect(await page('?beforeSeq=2147483647')).toEqual([1, 2, 3, 4, 5]);
+  });
+  describe('catalog (#1375)', () => {
+    it('returns matches for q by name or alias, ignoring case, with reference content', async () => {
+      const { inject } = newUser();
+      const find = async (q: string) => (await inject('GET', `/supplements/catalog?q=${q}`)).json<SupplementCatalogEntry[]>();
+      const [first] = await find('CREATINE');
+      expect(first).toMatchObject({ key: 'creatine-monohydrate', name: 'Creatine monohydrate', kind: 'compound', suggestedSlot: 'all' });
+      expect(first?.reference.evidence.level).toBe('strong');
+      expect(first?.reference.sources.length).toBeGreaterThan(0);
+      expect(first?.reference.sources.every((key) => supplementSourceUrl(key)?.startsWith('https://'))).toBe(true);
+      expect((await find('magnes')).map((e) => e.key)).toEqual(expect.arrayContaining(['magnesium', 'magnesium-glycinate', 'magnesium-citrate']));
+      expect(await find('zzz-not-a-supplement')).toEqual([]);
+      expect((await inject('GET', '/supplements/catalog')).json()).toEqual([]);
+    });
+
+    it('refuses a repeated q with a 400, not a 500', async () => {
+      const { inject } = newUser();
+      expect((await inject('GET', '/supplements/catalog?q=zinc&q=iron')).statusCode).toBe(400);
+    });
+
+    it('copies reference content onto an item created from a catalog entry, and keeps typed fields', async () => {
+      const { add, get } = newUser();
+      const item = await add('My creatine', { catalogKey: 'creatine-monohydrate', timing: 'With breakfast' });
+      expect(item).toMatchObject({ name: 'My creatine', timing: 'With breakfast', keyCompound: 'Creatine', catalogKey: 'creatine-monohydrate' });
+      expect(item.ingredients).toEqual([{ key: 'creatine', amount: 5, unit: 'g' }]);
+      expect(item.reference?.typicalRange).toBe('3-5 g/day');
+      expect((await get()).items).toEqual([item]);
+    });
+
+    it('rejects an unknown catalog key', async () => {
+      const { inject } = newUser();
+      expect((await inject('POST', `/supplements/items?today=${TODAY}`, { name: 'X', catalogKey: 'nope' })).statusCode).toBe(400);
+    });
+
+    it('leaves reference content read-only: a PATCH cannot set it, and editing details keeps it', async () => {
+      const { add, inject, ok } = newUser();
+      const item = await add('Creatine', { catalogKey: 'creatine-monohydrate' });
+      for (const body of [{ reference: { uses: [] } }, { catalogKey: 'caffeine' }]) {
+        expect((await inject('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, body)).statusCode).toBe(400);
+      }
+      const after = await ok('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, { shortNote: 'Daily', ingredients: [{ key: 'creatine', amount: 3, unit: 'g' }] });
+      expect(after.items[0]).toMatchObject({ shortNote: 'Daily', catalogKey: 'creatine-monohydrate', reference: item.reference });
+      expect(after.items[0]?.ingredients).toEqual([{ key: 'creatine', amount: 3, unit: 'g' }]);
+    });
+
+    it('keeps an item without a catalog entry free of both fields', async () => {
+      const { add } = newUser();
+      const item = await add('Homemade');
+      expect(item).not.toHaveProperty('catalogKey');
+      expect(item).not.toHaveProperty('reference');
+    });
   });
 });

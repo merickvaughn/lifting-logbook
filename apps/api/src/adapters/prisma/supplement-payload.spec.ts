@@ -1,5 +1,5 @@
 import { SupplementChange, SupplementItem } from '@lifting-logbook/types';
-import { MalformedSupplementDataError, parseChange, parseItem, toJson } from './supplement-payload';
+import { MalformedSupplementDataError, parseChange, parseItem, parseReference, toJson } from './supplement-payload';
 
 const item: SupplementItem = {
   id: 'mix',
@@ -80,5 +80,32 @@ describe('supplement change payloads', () => {
     expect(() => toJson({ a: null })).toThrow(MalformedSupplementDataError);
     expect(() => toJson(Number.NaN)).toThrow(MalformedSupplementDataError);
     expect(() => toJson(() => 1)).toThrow(MalformedSupplementDataError);
+  });
+  it('keeps an item\u2019s catalog key and reference, and leaves both off an entry that lacks them (#1375)', () => {
+    const withReference: SupplementItem = {
+      ...item,
+      catalogKey: 'creatine-monohydrate',
+      reference: {
+        uses: ['Strength'],
+        evidence: { level: 'strong', reason: 'ISSN' },
+        cautions: ['Take with fluid'],
+        typicalRange: '3-5 g/day',
+        sources: ['ais'],
+      },
+    };
+    expect(roundTrip({ date: '2026-11-20', seq: 1, type: 'added', item: withReference })).toEqual({
+      date: '2026-11-20', seq: 1, type: 'added', item: withReference,
+    });
+    const old = parseItem({ id: 'a', name: 'A' });
+    expect(old).not.toHaveProperty('catalogKey');
+    expect(old).not.toHaveProperty('reference');
+    expect(() => parseItem({ id: 'a', reference: { uses: [], evidence: { level: 'huge', reason: '' } } })).toThrow(MalformedSupplementDataError);
+  });
+  it('fills a reference field an older entry lacks with its default, and refuses one of the wrong type (#1375)', () => {
+    expect(parseReference({ evidence: { level: 'limited' } })).toEqual({
+      uses: [], evidence: { level: 'limited', reason: '' }, cautions: [], typicalRange: '', sources: [],
+    });
+    expect(() => parseReference({ evidence: { level: 'strong', reason: '' }, sources: [{ key: 'ais' }] })).toThrow(MalformedSupplementDataError);
+    expect(() => parseReference({ evidence: { level: 'strong', reason: '' }, typicalRange: 5 })).toThrow(MalformedSupplementDataError);
   });
 });

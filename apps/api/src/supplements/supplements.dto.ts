@@ -60,6 +60,8 @@ class ItemDetailsDto {
 
 export class CreateSupplementItemDto extends ItemDetailsDto {
   @IsString() @MinLength(1) @MaxLength(NAME) name!: string;
+  /** The catalog entry to copy reference content and blank fields from. Not settable on a PATCH. */
+  @Optional() @IsString() @MaxLength(NAME) catalogKey?: string;
   @Optional() @IsIn(STATUSES) status?: SupplementStatus;
   @Optional() @IsBoolean() unverified?: boolean;
   @Optional() @IsArray() @ArrayMaxSize(LIST) @ValidateNested({ each: true }) @Type(() => DoseDto) doses?: DoseDto[];

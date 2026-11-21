@@ -6,3 +6,4 @@ export * from './muscles';
 export * from './patterns';
 export * from './resolve';
 export * from './slotMaps';
+export * from './supplements';
