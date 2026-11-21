@@ -150,6 +150,26 @@ per-row RLS, and the per-table rows Download My Data exports.
   command uses, could delete all of it, but a reset that behaved differently by role would be
   harder to reason about, so it keeps them for both.
 
+## Addendum: catalog reference content (#1375)
+
+Items created from the shared catalog carry the catalog entry's read-only reference content. The
+owner decided (2026-11-21) to store it on the item, with **one migration adding exactly two
+nullable columns to `supplement_item`**:
+
+- `catalogKey TEXT NULL`: the catalog entry the item was created from.
+- `reference JSONB NULL`: a snapshot of that entry's reference content (uses, evidence level and
+  reason, cautions, typical range, source keys and URLs), copied when the item is created.
+
+Existing rows keep both as `NULL`, and RLS already covers the table. The copy is made once at
+creation (`itemFromCatalog`), not a live link, so a later catalog edit never changes a saved
+item, which is the same trade the lifter's own typed values rely on: autofill writes only fields
+the lifter hasn't typed. The `added` change carries both fields, so replaying the log
+(`stackAsOf`) gives the stack `GET /supplements` returns. The fields are read-only through the
+API: no `PATCH` field sets them and no change type edits them. They are in Download My Data with
+the rest of the `supplement_item` row. The catalog itself is a code-level reference table in
+`packages/core` (Registry, Fowler,
+[PoEAA](https://martinfowler.com/eaaCatalog/registry.html)), not a database table.
+
 ## Known follow-ups
 
 The API shape later sub-issues need, not built here:

@@ -9,7 +9,9 @@ import {
   SupplementItem,
   SupplementItemDetails,
   SupplementPart,
+  SupplementReference,
   SupplementStatus,
+  EVIDENCE_LEVELS,
 } from '@lifting-logbook/types';
 
 /*
@@ -115,6 +117,22 @@ function parseParts(value: Json | undefined): SupplementPart[] {
   });
 }
 
+/** An item's catalog reference snapshot (#1375). */
+export function parseReference(value: Json | undefined): SupplementReference {
+  const o = object(value, 'reference');
+  const evidence = object(o.evidence, 'evidence');
+  return {
+    uses: strings(o.uses, 'uses'),
+    evidence: { level: oneOf(EVIDENCE_LEVELS, evidence.level, 'evidence level'), reason: string(evidence, 'reason') },
+    cautions: strings(o.cautions, 'cautions'),
+    typicalRange: string(o, 'typicalRange'),
+    sources: array(o.sources, 'sources').map((entry) => {
+      const s = object(entry, 'a source');
+      return { key: string(s, 'key'), url: string(s, 'url') };
+    }),
+  };
+}
+
 /** An item as a change recorded it, with every field an older entry lacks at its default. */
 export function parseItem(value: Json | undefined): SupplementItem {
   const o = object(value, 'item');
@@ -130,6 +148,8 @@ export function parseItem(value: Json | undefined): SupplementItem {
     links: o.links === undefined ? [] : strings(o.links, 'links'),
     ingredients: o.ingredients === undefined ? [] : parseIngredients(o.ingredients),
     ...(o.parts === undefined ? {} : { parts: parseParts(o.parts) }),
+    ...(o.catalogKey === undefined ? {} : { catalogKey: string(o, 'catalogKey') }),
+    ...(o.reference === undefined ? {} : { reference: parseReference(o.reference) }),
     doses: o.doses === undefined ? [] : parseDoses(o.doses),
   };
 }

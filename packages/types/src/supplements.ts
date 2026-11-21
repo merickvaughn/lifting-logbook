@@ -49,6 +49,24 @@ export interface SupplementDose {
   dayTypes: string[];
 }
 
+/** AIS Supplement Framework group A / B / C, as strong / moderate / limited. */
+export const EVIDENCE_LEVELS = ['strong', 'moderate', 'limited'] as const;
+export type EvidenceLevel = (typeof EVIDENCE_LEVELS)[number];
+
+/**
+ * The read-only reference content of the catalog entry an item was created from (#1375). It is
+ * copied onto the item when created, so a later catalog edit never changes a saved item.
+ */
+export interface SupplementReference {
+  uses: string[];
+  evidence: { level: EvidenceLevel; reason: string };
+  cautions: string[];
+  /** The usual daily range, as written, e.g. "3-5 g/day". */
+  typicalRange: string;
+  /** The catalog's source keys, with the https URL each resolves to. */
+  sources: { key: string; url: string }[];
+}
+
 export interface SupplementItem {
   id: string;
   name: string;
@@ -65,6 +83,10 @@ export interface SupplementItem {
   /** Present on a mix: its ingredients come from the parts instead of `ingredients`. */
   parts?: SupplementPart[];
   doses: SupplementDose[];
+  /** The catalog entry the item was created from (#1375). Never changes after creation. */
+  catalogKey?: string;
+  /** Snapshot of that entry's reference content. Read-only: no change edits it. */
+  reference?: SupplementReference;
 }
 
 /**
@@ -132,6 +154,22 @@ export interface SupplementAdvisory {
   message: string;
   /** Key of the reference the rule cites. */
   source: SupplementAdvisorySource;
+}
+
+/** One match from `GET /supplements/catalog?q=`: what autofill fills in, plus the reference content (#1375). */
+export interface SupplementCatalogEntry {
+  key: string;
+  name: string;
+  aliases: string[];
+  kind: 'compound' | 'product';
+  keyCompound: string;
+  /** Free text such as "5 g". */
+  suggestedDose: string;
+  timing: string;
+  suggestedSlot: SupplementSlot;
+  /** Per serving. */
+  ingredients: Ingredient[];
+  reference: SupplementReference;
 }
 
 /** The stored stack (#1374), returned by `GET /supplements` and by every write to it. */

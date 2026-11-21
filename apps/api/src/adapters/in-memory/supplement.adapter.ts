@@ -91,7 +91,7 @@ export class InMemorySupplementRepository implements ISupplementRepository {
       supplementDayTypes: this.state.dayTypes.map((d, position) => ({ ...d, position })),
       supplementItems: stored.map(({ item, foldedInto }, position) => {
         const { doses: _doses, parts, ...columns } = item;
-        return { ...columns, isMix: parts !== undefined, foldedInto, position };
+        return { ...columns, catalogKey: item.catalogKey ?? null, reference: item.reference ?? null, isMix: parts !== undefined, foldedInto, position };
       }),
       supplementDoses: stored.flatMap(({ item }) => item.doses.map((d, position) => ({ itemId: item.id, position, ...d }))),
       supplementMixParts: stored.flatMap(({ item }) =>

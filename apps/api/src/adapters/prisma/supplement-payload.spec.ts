@@ -81,4 +81,24 @@ describe('supplement change payloads', () => {
     expect(() => toJson(Number.NaN)).toThrow(MalformedSupplementDataError);
     expect(() => toJson(() => 1)).toThrow(MalformedSupplementDataError);
   });
+  it('keeps an item\u2019s catalog key and reference, and leaves both off an entry that lacks them (#1375)', () => {
+    const withReference: SupplementItem = {
+      ...item,
+      catalogKey: 'creatine-monohydrate',
+      reference: {
+        uses: ['Strength'],
+        evidence: { level: 'strong', reason: 'ISSN' },
+        cautions: ['Take with fluid'],
+        typicalRange: '3-5 g/day',
+        sources: [{ key: 'ais', url: 'https://www.ais.gov.au/nutrition/supplements' }],
+      },
+    };
+    expect(roundTrip({ date: '2026-11-20', seq: 1, type: 'added', item: withReference })).toEqual({
+      date: '2026-11-20', seq: 1, type: 'added', item: withReference,
+    });
+    const old = parseItem({ id: 'a', name: 'A' });
+    expect(old).not.toHaveProperty('catalogKey');
+    expect(old).not.toHaveProperty('reference');
+    expect(() => parseItem({ id: 'a', reference: { uses: [], evidence: { level: 'huge', reason: '' } } })).toThrow(MalformedSupplementDataError);
+  });
 });
