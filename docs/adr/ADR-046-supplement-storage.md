@@ -158,7 +158,13 @@ nullable columns to `supplement_item`**:
 
 - `catalogKey TEXT NULL`: the catalog entry the item was created from.
 - `reference JSONB NULL`: a snapshot of that entry's reference content (uses, evidence level and
-  reason, cautions, typical range, source keys and URLs), copied when the item is created.
+  reason, cautions, typical range and source keys), copied when the item is created.
+
+The snapshot keeps each source's key, not its URL, as an advisory's `source` already does. A key
+never changes; a URL is only where the source lives, and `supplementSourceUrl` in
+`packages/core` gives the current one. A URL corrected in the catalog then reaches items already
+saved, which a stored URL couldn't: `supplement_change` is append-only and no change edits
+`reference`, so a wrong URL would stay in the log for good.
 
 Existing rows keep both as `NULL`, and RLS already covers the table. The copy is made once at
 creation (`itemFromCatalog`), not a live link, so a later catalog edit never changes a saved

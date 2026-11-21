@@ -1,11 +1,4 @@
-import type {
-  EvidenceLevel,
-  Ingredient,
-  SupplementCatalogEntry,
-  SupplementItem,
-  SupplementReference,
-  SupplementSlot,
-} from '@lifting-logbook/types';
+import type { Ingredient, SupplementCatalogEntry, SupplementItem, SupplementReference } from '@lifting-logbook/types';
 
 /*
  * The shared supplement catalog (#1375, suggestion tier 1 of #1372). It is a read-only reference
@@ -16,7 +9,7 @@ import type {
  * writes the entry's values onto a new item, and nothing later reads the catalog back, so a
  * catalog edit never changes a saved item.
  *
- * Evidence levels follow the AIS Supplement Framework, https://www.ais.gov.au/nutrition/supplements:
+ * Evidence levels follow the AIS Supplement Framework, https://www.ausport.gov.au/ais/nutrition/supplements:
  * group A (strong evidence for the use) is `strong`, group B (emerging evidence, or a use for
  * specific cases) is `moderate`, and group C (little or no evidence of benefit) is `limited`.
  * Where an entry's evidence comes from an ISSN position stand or a NIH fact sheet instead, the
@@ -25,9 +18,12 @@ import type {
  * Never retailer copy; a product's label facts may cite its manufacturer's product page.
  */
 
-/** Source key → https URL. Every entry's `sources` keys must be here (the catalog test checks). */
-export const SUPPLEMENT_SOURCES: Readonly<Record<string, string>> = {
-  ais: 'https://www.ais.gov.au/nutrition/supplements',
+/**
+ * Source key → https URL. A key is stable and is what an item's `reference` keeps; the URL may be
+ * corrected here, and `supplementSourceUrl` gives the current one.
+ */
+export const SUPPLEMENT_SOURCES = {
+  ais: 'https://www.ausport.gov.au/ais/nutrition/supplements',
   'issn-creatine': 'https://doi.org/10.1186/s12970-017-0173-z',
   'issn-caffeine': 'https://doi.org/10.1186/s12970-020-00383-4',
   'issn-beta-alanine': 'https://doi.org/10.1186/s12970-015-0090-y',
@@ -50,33 +46,29 @@ export const SUPPLEMENT_SOURCES: Readonly<Record<string, string>> = {
   'nccih-melatonin': 'https://www.nccih.nih.gov/health/melatonin-what-you-need-to-know',
   'nccih-turmeric': 'https://www.nccih.nih.gov/health/turmeric',
   'nccih-fenugreek': 'https://www.nccih.nih.gov/health/fenugreek',
-  'label-nutricost-pre-x': 'https://nutricost.com/products/pre-x-pre-workout',
-  'label-evl-trans4orm': 'https://evlnutrition.com/products/trans4orm',
-  'label-evl-pump-mode': 'https://evlnutrition.com/products/pump-mode',
-  'label-quest-protein': 'https://www.questnutrition.com/products/quest-protein-powder',
-};
+  'label-nutricost-pre-x': 'https://nutricost.com/products/nutricost-pre-workout-complex-powder-30-servings',
+  'label-evl-trans4orm': 'https://www.evlnutrition.com/products/trans4orm',
+  'label-evl-pump-mode': 'https://www.evlnutrition.com/products/pumpmode-non-stimulant-pump-accelerator',
+  'label-quest-protein': 'https://www.questnutrition.com/products/vanilla-milkshake-protein-powder',
+} as const satisfies Readonly<Record<string, `https://${string}`>>;
 
-export interface CatalogSupplement {
-  /** Stable id, stored on an item as `catalogKey`. Never reused or renamed. */
-  key: string;
-  name: string;
-  aliases: string[];
-  kind: 'compound' | 'product';
-  keyCompound: string;
-  /** Free text such as "5 g". */
-  suggestedDose: string;
-  /** The usual daily range, as written. */
-  typicalRange: string;
-  timing: string;
-  suggestedSlot: SupplementSlot;
-  /** Per serving. */
-  ingredients: Ingredient[];
-  uses: string[];
-  evidence: { level: EvidenceLevel; reason: string };
-  cautions: string[];
-  /** Keys of `SUPPLEMENT_SOURCES`; at least one. */
-  sources: string[];
+export type SupplementSourceKey = keyof typeof SUPPLEMENT_SOURCES;
+
+export function isSupplementSourceKey(key: string): key is SupplementSourceKey {
+  return Object.prototype.hasOwnProperty.call(SUPPLEMENT_SOURCES, key);
 }
+
+/** The current URL of a source key from an item's `reference`, or undefined for a key the catalog no longer has. */
+export function supplementSourceUrl(key: string): string | undefined {
+  return isSupplementSourceKey(key) ? SUPPLEMENT_SOURCES[key] : undefined;
+}
+
+/** A catalog entry: what the API returns, with its reference content in place of `reference`. */
+export type CatalogSupplement = Omit<SupplementCatalogEntry, 'reference'> &
+  Omit<SupplementReference, 'sources'> & {
+    /** Keys of `SUPPLEMENT_SOURCES`; at least one. */
+    sources: SupplementSourceKey[];
+  };
 
 const mg = (key: string, amount: number): Ingredient => ({ key, amount, unit: 'mg' });
 const g = (key: string, amount: number): Ingredient => ({ key, amount, unit: 'g' });
@@ -437,14 +429,14 @@ export function searchSupplements(q: string): CatalogSupplement[] {
   return [...hits.filter(starts), ...hits.filter((e) => !starts(e))];
 }
 
-/** The entry's read-only reference content, with each source key resolved to its URL. */
+/** The entry's read-only reference content. */
 export function catalogReference(e: CatalogSupplement): SupplementReference {
   return {
     uses: [...e.uses],
     evidence: { ...e.evidence },
     cautions: [...e.cautions],
     typicalRange: e.typicalRange,
-    sources: e.sources.map((key) => ({ key, url: SUPPLEMENT_SOURCES[key] ?? '' })),
+    sources: [...e.sources],
   };
 }
 

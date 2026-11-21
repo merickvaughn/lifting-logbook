@@ -10,6 +10,7 @@ import {
   SupplementCreatedResponse,
   SupplementStackResponse,
 } from '@lifting-logbook/types';
+import { supplementSourceUrl } from '@lifting-logbook/core';
 import { AppModule } from '../app.module';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
@@ -479,15 +480,16 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
       const [first] = await find('CREATINE');
       expect(first).toMatchObject({ key: 'creatine-monohydrate', name: 'Creatine monohydrate', kind: 'compound', suggestedSlot: 'all' });
       expect(first?.reference.evidence.level).toBe('strong');
-      expect(first?.reference.sources.every((src) => src.url.startsWith('https://'))).toBe(true);
+      expect(first?.reference.sources.length).toBeGreaterThan(0);
+      expect(first?.reference.sources.every((key) => supplementSourceUrl(key)?.startsWith('https://'))).toBe(true);
       expect((await find('magnes')).map((e) => e.key)).toEqual(expect.arrayContaining(['magnesium', 'magnesium-glycinate', 'magnesium-citrate']));
       expect(await find('zzz-not-a-supplement')).toEqual([]);
       expect((await inject('GET', '/supplements/catalog')).json()).toEqual([]);
     });
 
-    it('is not read as an item id', async () => {
+    it('refuses a repeated q with a 400, not a 500', async () => {
       const { inject } = newUser();
-      expect((await inject('GET', '/supplements/catalog?q=zinc')).statusCode).toBe(200);
+      expect((await inject('GET', '/supplements/catalog?q=zinc&q=iron')).statusCode).toBe(400);
     });
 
     it('copies reference content onto an item created from a catalog entry, and keeps typed fields', async () => {

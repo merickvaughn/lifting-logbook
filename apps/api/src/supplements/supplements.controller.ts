@@ -168,11 +168,12 @@ export class SupplementsController {
   }
 
   /**
-   * Catalog entries whose name or an alias contains `q`, for autofill. Declared before the `:id`
-   * routes so it isn't read as an id. The catalog is the same for every user (#1375).
+   * Catalog entries whose name or an alias contains `q`, for autofill. The catalog is the same for
+   * every user (#1375). Fastify reads a repeated `q` as an array, which is a 400.
    */
   @Get('catalog')
-  catalog(@Query('q') q: string | undefined): SupplementCatalogEntry[] {
+  catalog(@Query('q') q: string | string[] | undefined): SupplementCatalogEntry[] {
+    if (Array.isArray(q)) throw new BadRequestException('q must be given once');
     return searchSupplements(q ?? '').map(toCatalogEntry);
   }
 

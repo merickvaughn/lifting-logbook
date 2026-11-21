@@ -117,19 +117,19 @@ function parseParts(value: Json | undefined): SupplementPart[] {
   });
 }
 
-/** An item's catalog reference snapshot (#1375). */
+/**
+ * An item's catalog reference snapshot (#1375). Like an item, it's kept in the change log for good,
+ * so every field but `evidence` falls back to its default, and a field added later must too.
+ */
 export function parseReference(value: Json | undefined): SupplementReference {
   const o = object(value, 'reference');
   const evidence = object(o.evidence, 'evidence');
   return {
-    uses: strings(o.uses, 'uses'),
-    evidence: { level: oneOf(EVIDENCE_LEVELS, evidence.level, 'evidence level'), reason: string(evidence, 'reason') },
-    cautions: strings(o.cautions, 'cautions'),
-    typicalRange: string(o, 'typicalRange'),
-    sources: array(o.sources, 'sources').map((entry) => {
-      const s = object(entry, 'a source');
-      return { key: string(s, 'key'), url: string(s, 'url') };
-    }),
+    uses: o.uses === undefined ? [] : strings(o.uses, 'uses'),
+    evidence: { level: oneOf(EVIDENCE_LEVELS, evidence.level, 'evidence level'), reason: string(evidence, 'reason', '') },
+    cautions: o.cautions === undefined ? [] : strings(o.cautions, 'cautions'),
+    typicalRange: string(o, 'typicalRange', ''),
+    sources: o.sources === undefined ? [] : strings(o.sources, 'sources'),
   };
 }
 

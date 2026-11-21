@@ -63,8 +63,12 @@ export interface SupplementReference {
   cautions: string[];
   /** The usual daily range, as written, e.g. "3-5 g/day". */
   typicalRange: string;
-  /** The catalog's source keys, with the https URL each resolves to. */
-  sources: { key: string; url: string }[];
+  /**
+   * The catalog's source keys. Only the key is kept, as for an advisory's `source`: a key never
+   * changes, and `supplementSourceUrl` in `@lifting-logbook/core` gives its current https URL, so a
+   * corrected URL reaches items already saved.
+   */
+  sources: string[];
 }
 
 export interface SupplementItem {
@@ -156,12 +160,16 @@ export interface SupplementAdvisory {
   source: SupplementAdvisorySource;
 }
 
+export const SUPPLEMENT_CATALOG_KINDS = ['compound', 'product'] as const;
+export type SupplementCatalogKind = (typeof SUPPLEMENT_CATALOG_KINDS)[number];
+
 /** One match from `GET /supplements/catalog?q=`: what autofill fills in, plus the reference content (#1375). */
 export interface SupplementCatalogEntry {
+  /** Stable id, stored on an item as `catalogKey`. Never reused or renamed. */
   key: string;
   name: string;
   aliases: string[];
-  kind: 'compound' | 'product';
+  kind: SupplementCatalogKind;
   keyCompound: string;
   /** Free text such as "5 g". */
   suggestedDose: string;

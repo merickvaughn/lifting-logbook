@@ -7,6 +7,7 @@ import {
   searchSupplements,
   stackAsOf,
   supplementByKey,
+  supplementSourceUrl,
   toCatalogEntry,
 } from '@src/core';
 
@@ -38,6 +39,12 @@ describe('supplement catalog', () => {
       for (const s of e.sources) expect({ key: e.key, url: SUPPLEMENT_SOURCES[s] }).toEqual({ key: e.key, url: expect.stringMatching(/^https:\/\/[^\s]+$/) });
     }
     for (const url of Object.values(SUPPLEMENT_SOURCES)) expect(() => new URL(url)).not.toThrow();
+  });
+
+  it('resolves a saved source key to its current URL, and an unknown one to undefined', () => {
+    expect(supplementSourceUrl('issn-creatine')).toBe(SUPPLEMENT_SOURCES['issn-creatine']);
+    expect(supplementSourceUrl('no-such-source')).toBeUndefined();
+    expect(supplementSourceUrl('toString')).toBeUndefined();
   });
 
   it('fills every reference field of every entry', () => {
@@ -87,7 +94,7 @@ describe('itemFromCatalog', () => {
     const item = itemFromCatalog(creatine(), { name: 'Creatine' });
     expect(item.catalogKey).toBe('creatine-monohydrate');
     expect(item.reference).toEqual(catalogReference(creatine()));
-    expect(item.reference?.sources.every((s) => s.url.startsWith('https://'))).toBe(true);
+    expect(item.reference?.sources).toEqual(creatine().sources);
     expect(item.ingredients).toEqual([{ key: 'creatine', amount: 5, unit: 'g' }]);
     expect(item.keyCompound).toBe('Creatine');
   });
@@ -100,7 +107,7 @@ describe('itemFromCatalog', () => {
   });
 
   it('is a copy: editing the item or the catalog later does not reach the other', () => {
-    const entry = { ...creatine(), uses: ['x'], cautions: ['c'], sources: ['ais'], ingredients: [{ key: 'creatine', amount: 5, unit: 'g' as const }] };
+    const entry = { ...creatine(), uses: ['x'], cautions: ['c'], sources: ['ais' as const], ingredients: [{ key: 'creatine', amount: 5, unit: 'g' as const }] };
     const item = itemFromCatalog(entry);
     item.reference!.uses.push('added by user');
     item.ingredients[0]!.amount = 99;

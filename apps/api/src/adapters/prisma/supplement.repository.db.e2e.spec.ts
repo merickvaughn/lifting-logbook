@@ -265,7 +265,7 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
       evidence: { level: 'strong' as const, reason: 'ISSN position stand' },
       cautions: ['Take with fluid'],
       typicalRange: '3-5 g/day',
-      sources: [{ key: 'issn-creatine', url: 'https://doi.org/10.1186/s12970-017-0173-z' }],
+      sources: ['issn-creatine'],
     };
     const write = (changes: SupplementChangeBody[]) => asUser((repo) => repo.write(async (state) => apply(state, changes)));
     await write([{ type: 'added', item: item('plain') }]);
