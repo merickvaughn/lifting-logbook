@@ -306,6 +306,9 @@ model UserSettings {
   defaultProgressionIncrement Float?
   defaultProgressionRepsLow   Int?
   defaultProgressionRepsHigh  Int?
+  // Supplements (#1374): a stimulant dose after this 24-hour HH:MM is flagged. Null falls back
+  // to DEFAULT_CAFFEINE_CUTOFF.
+  supplementCaffeineCutoff    String?
 
   @@map("user_settings")
 }
@@ -467,4 +470,95 @@ model ImportBatch {
   @@index([userId, program])
   @@index([userId, groupId])
   @@map("import_batch")
+}
+
+// Supplements (#1372, #1374): the current stack in normalized tables, beside an append-only
+// change log of every write to it. See docs/adr/ADR-046-supplement-storage.md.
+model SupplementDayType {
+  userId      String
+  // Chosen by the client, unique per user.
+  id          String
+  name        String
+  // Session start, 24-hour HH:MM. Null on a rest day.
+  sessionTime String?
+  position    Int
+
+  @@id([userId, id])
+  @@map("supplement_day_type")
+}
+
+// Keyed by (userId, id), so a foreign key or unique check, which bypasses RLS, can't reach or
+// tell about another user's item, even if a later client chooses ids (#1374 review, S1).
+model SupplementItem {
+  id          String
+  userId      String
+  name        String
+  keyCompound String
+  timing      String
+  shortNote   String
+  longNote    String
+  status      String
+  unverified  Boolean
+  links       String[]
+  // Ingredient[] per serving, validated by the DTOs on write.
+  ingredients Json
+  // True when the item is a mix; its parts are in supplement_mix_part.
+  isMix       Boolean
+  // The mix this item is folded into, or null. A folded item is kept so splitting the mix
+  // brings it back, and is not part of the stack.
+  foldedInto  String?
+  position    Int
+  doses       SupplementDose[]
+  parts       SupplementMixPart[]
+
+  @@id([userId, id])
+  @@map("supplement_item")
+}
+
+model SupplementDose {
+  id       String         @id @default(uuid())
+  userId   String
+  itemId   String
+  position Int
+  slot     String
+  amount   String
+  servings Float
+  dayTypes String[]
+  item     SupplementItem @relation(fields: [userId, itemId], references: [userId, id], onDelete: Cascade)
+
+  @@index([userId, itemId])
+  @@map("supplement_dose")
+}
+
+model SupplementMixPart {
+  id          String         @id @default(uuid())
+  userId      String
+  mixId       String
+  position    Int
+  // The item the part came from, so splitting the mix can bring it back.
+  partItemId  String
+  name        String
+  ingredients Json
+  mix         SupplementItem @relation(fields: [userId, mixId], references: [userId, id], onDelete: Cascade)
+
+  @@index([userId, mixId])
+  @@map("supplement_mix_part")
+}
+
+// Append-only: lifting_app may only insert and read rows (UPDATE and DELETE are revoked in
+// migration 20261120000001). `seq` numbers a user's changes from 1, and the primary key stops two
+// writes from appending the same one.
+model SupplementChange {
+  userId    String
+  seq       Int
+  date      DateTime @db.Date
+  type      String
+  // The SupplementChange without date, seq and type.
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@id([userId, seq])
+  // GET /supplements/as-of/:date reads the changes through a date.
+  @@index([userId, date])
+  @@map("supplement_change")
 }

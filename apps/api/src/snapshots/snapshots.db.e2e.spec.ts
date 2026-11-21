@@ -66,6 +66,11 @@ const KEPT = [
   'MissingMaxDismissal',
   'UserSettings',
   'FocusBlock',
+  'SupplementDayType',
+  'SupplementItem',
+  'SupplementDose',
+  'SupplementMixPart',
+  'SupplementChange',
   'CustomProgram',
   'CustomProgramSpec',
   'ImportSuggestionUsage',
@@ -293,6 +298,31 @@ async function seedUser(prisma: PrismaClient, userId: string): Promise<void> {
       pool: [],
     },
   });
+  await prisma.supplementDayType.create({ data: { userId, id: 'lift', name: 'Lift', position: 0 } });
+  await prisma.supplementItem.create({
+    data: {
+      id: `${userId}-mix`,
+      userId,
+      name: 'Pre-workout',
+      keyCompound: '',
+      timing: '',
+      shortNote: '',
+      longNote: '',
+      status: 'active',
+      unverified: false,
+      links: [],
+      ingredients: [],
+      isMix: true,
+      position: 0,
+    },
+  });
+  await prisma.supplementDose.create({
+    data: { userId, itemId: `${userId}-mix`, position: 0, slot: 'pre', amount: '1 scoop', servings: 1, dayTypes: ['lift'] },
+  });
+  await prisma.supplementMixPart.create({
+    data: { userId, mixId: `${userId}-mix`, position: 0, partItemId: `${userId}-part`, name: 'Creatine', ingredients: [] },
+  });
+  await prisma.supplementChange.create({ data: { userId, seq: 1, date: day('2025-06-01'), type: 'mix_split', payload: {} } });
   const customProgramId = CUSTOM_PROGRAM_IDS[userId];
   if (customProgramId) {
     await prisma.customProgram.create({

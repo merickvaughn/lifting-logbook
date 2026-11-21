@@ -11,7 +11,7 @@ import {
 } from '@lifting-logbook/core';
 import { InMemoryRepositoryFactory } from '../src/adapters/factory/in-memory-repository-factory';
 import { MacrocycleGenerationService, PROGRAM_DEFAULTS } from '../src/programs/macrocycle-generation.service';
-import { PROGRAM, SEED_USER_ID, buildSeedPlan, resetSeedUser } from './seed-plan';
+import { PROGRAM, SEED_KEPT_TABLES, SEED_USER_ID, buildSeedPlan, resetSeedUser } from './seed-plan';
 
 // The staging seed user must be a user the app can plan for (#1022): an earlier seed wrote
 // program '531' and lift names like 'squat', which nothing resolves.
@@ -182,7 +182,7 @@ describe('buildSeedPlan', () => {
 });
 
 describe('resetSeedUser', () => {
-  it("deletes the seed user's rows from every table with a userId, LiftMetadata included", async () => {
+  it("deletes the seed user's rows from every table with a userId but the supplement ones, LiftMetadata included", async () => {
     const deleted = new Map<string, unknown>();
     const tx = new Proxy(
       {},
@@ -201,7 +201,10 @@ describe('resetSeedUser', () => {
       .filter((model) => model.fields.some((field) => field.name === 'userId'))
       .map((model) => model.name.charAt(0).toLowerCase() + model.name.slice(1));
     expect(userTables).toContain('liftMetadata');
-    expect([...deleted.keys()].sort()).toEqual(userTables.sort());
+    // Every kept table is a real one, so a rename can't turn the exemption into a no-op.
+    for (const kept of SEED_KEPT_TABLES) expect(userTables).toContain(kept);
+    const kept: readonly string[] = SEED_KEPT_TABLES;
+    expect([...deleted.keys()].sort()).toEqual(userTables.filter((t) => !kept.includes(t)).sort());
     for (const args of deleted.values()) expect(args).toEqual({ where: { userId: SEED_USER_ID } });
   });
 });

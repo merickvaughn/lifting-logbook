@@ -27,6 +27,11 @@ const emptyRows = (): UserDataRows => ({
   missingMaxDismissals: [],
   focusBlocks: [],
   focusDayStates: [],
+  supplementDayTypes: [],
+  supplementItems: [],
+  supplementDoses: [],
+  supplementMixParts: [],
+  supplementChanges: [],
 });
 
 const record = (overrides: Partial<LiftRecordExportRow> = {}): LiftRecordExportRow => ({
