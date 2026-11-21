@@ -160,8 +160,7 @@ export interface SupplementAdvisory {
   source: SupplementAdvisorySource;
 }
 
-export const SUPPLEMENT_CATALOG_KINDS = ['compound', 'product'] as const;
-export type SupplementCatalogKind = (typeof SUPPLEMENT_CATALOG_KINDS)[number];
+export type SupplementCatalogKind = 'compound' | 'product';
 
 /** One match from `GET /supplements/catalog?q=`: what autofill fills in, plus the reference content (#1375). */
 export interface SupplementCatalogEntry {
