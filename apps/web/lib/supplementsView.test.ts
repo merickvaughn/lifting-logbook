@@ -71,10 +71,23 @@ describe('buildView', () => {
     expect(rows.map((r) => r.also)).toEqual([['Night'], ['Night'], ['Morning']]);
   });
 
-  it('says on an every-day row which day types it is limited to', () => {
+  it('says on an every-day row which day types it is limited to, and nothing when it lists them all', () => {
     const restOnly = item('zma', 'ZMA', { timing: 'Before bed', doses: [dose('pm', '1 serving', ['rest'])] });
-    const rows = rowsOf(buildView(stackOf({ items: [restOnly] }), 'rest'));
-    expect(rows[0]?.detail).toBe('Rest day only · Before bed');
+    expect(rowsOf(buildView(stackOf({ items: [restOnly] }), 'rest'))[0]?.detail).toBe('Rest day only · Before bed');
+    const both = item('zma', 'ZMA', { timing: 'Before bed', doses: [dose('pm', '1 serving', ['lift', 'rest'])] });
+    expect(rowsOf(buildView(stackOf({ items: [both] }), 'rest'))[0]?.detail).toBe('Before bed');
+  });
+
+  it('with no day types, words the caffeine total per day', () => {
+    const coffee = item('c', 'Caffeine pill', { ingredients: [{ key: 'caffeine', amount: 400, unit: 'mg' }], doses: [dose('am', '1')] });
+    const notes = buildView(stackOf({ dayTypes: [], items: [coffee] }), '').notesByItem.get('c');
+    expect(notes?.map((n) => n.line)).toEqual(['~400 mg caffeine from supplements a day']);
+  });
+
+  it('lets an error other than a malformed time surface', () => {
+    // A day type with no name breaks only the advisory copy, so the catch is the one thing deciding.
+    const broken = { ...STACK, dayTypes: [{ id: 'lift', sessionTime: '16:30' }] } as unknown as Stack;
+    expect(() => buildView(broken, 'lift')).toThrow(TypeError);
   });
 
   it('marks an unverified item as not counted and leaves its protein off the row', () => {

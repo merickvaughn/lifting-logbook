@@ -112,6 +112,18 @@ describe('SupplementDetail facts', () => {
   });
 });
 
+describe('SupplementDetail with no day types', () => {
+  it('still shows overlaps for every-day doses, with a per-day caption', () => {
+    const stack: Stack = { ...STACK, dayTypes: [] };
+    const item = stack.items.find((i) => i.id === 'trans4orm') as SupplementItem;
+    const withB6 = { ...stack, items: [...stack.items, { ...item, id: 'b6', name: 'B6 tab', ingredients: [{ key: 'vitamin-b6', amount: 2, unit: 'mg' as const }] }] };
+    render(<SupplementDetail stack={withB6} item={item} dayTypeId="" notes={[]} onClose={jest.fn()} />);
+    const dialog = screen.getByRole('dialog', { name: 'EVL Trans4orm' });
+    expect(within(dialog).getByRole('heading', { name: 'Overlaps · Every day' })).toBeInTheDocument();
+    expect(dialog).toHaveTextContent('Day total = everything you take in a day.');
+  });
+});
+
 describe('SupplementDetail without reference content', () => {
   it('skips why, evidence, good to know and sources, and says when there is no label', () => {
     const { dialog } = open('glycine');

@@ -10,6 +10,7 @@ import { logClientError } from '@/lib/log-client-error';
 import {
   ingredientName,
   linkHost,
+  NO_DAY_TYPE,
   overlapRows,
   placementText,
   storeName,
@@ -43,7 +44,7 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
     if (dialog && !dialog.open) dialog.showModal();
   }, []);
 
-  const dayType = stack.dayTypes.find((d) => d.id === dayTypeId);
+  const dayType = stack.dayTypes.find((d) => d.id === dayTypeId) ?? (stack.dayTypes.length === 0 ? NO_DAY_TYPE : undefined);
   const reference = item.reference;
   const suggestion = suggestedSearch(stack, item);
   const slots = [...new Set(item.doses.map((d) => SLOT_LABEL[d.slot]))].join(' · ');
@@ -208,7 +209,9 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
       {overlaps.length > 0 && dayType && (
         <section>
           <h3 className={styles.sectionHeading}>Overlaps · {dayType.name}</h3>
-          <p className={styles.muted}>Day total = everything you take on a {dayType.name.toLowerCase()}.</p>
+          <p className={styles.muted}>
+            Day total = everything you take {dayType === NO_DAY_TYPE ? 'in a day' : `on a ${dayType.name.toLowerCase()}`}.
+          </p>
           <table className={styles.table}>
             <thead>
               <tr>

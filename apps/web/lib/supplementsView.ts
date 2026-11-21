@@ -138,7 +138,7 @@ function notesFor(stack: Stack, dayType: SupplementDayType): Map<string, Advisor
         'This lands late enough to affect sleep. If falling asleep slips, a stim-free pre-workout on late sessions is the easy swap.',
     },
     highCaffeine: {
-      line: `~${Math.round(totalOf(totals, 'caffeine', 'mg'))} mg caffeine from supplements on ${lc(dayType.name)}s`,
+      line: `~${Math.round(totalOf(totals, 'caffeine', 'mg'))} mg caffeine from supplements ${dayType === NO_DAY_TYPE ? 'a day' : `on ${lc(dayType.name)}s`}`,
       explanation:
         'FDA uses ~400 mg/day as the amount not generally linked to negative effects in healthy adults. Any coffee you don’t track here comes on top.',
     },
@@ -172,6 +172,8 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
   try {
     notesByItem = notesFor(stack, dayType);
   } catch (err) {
+    // Core throws RangeError for a malformed stored time; anything else is a bug and should surface.
+    if (!(err instanceof RangeError)) throw err;
     advisoryError = err;
   }
   const all = placements(stack.items, dayType.id);
@@ -180,7 +182,8 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
     const otherSlots = all.filter((q) => q.item.id === p.item.id && q.dose.slot !== p.dose.slot);
     const protein = p.counted && hasAmount(p.dose) ? proteinGrams(p.item, p.dose.servings) : 0;
     // A daily dose limited to some day types says so, since the Every day card otherwise means every day.
-    const only = isWorkoutSlot(p.dose.slot) ? [] : dayTypeNames(p.dose, stack.dayTypes);
+    const covers = stack.dayTypes.every((d) => p.dose.dayTypes.includes(d.id));
+    const only = isWorkoutSlot(p.dose.slot) || covers ? [] : dayTypeNames(p.dose, stack.dayTypes);
     return {
       key: `${p.item.id}:${p.item.doses.indexOf(p.dose)}`,
       item: p.item,
