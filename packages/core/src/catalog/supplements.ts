@@ -277,7 +277,7 @@ export const SUPPLEMENT_CATALOG: readonly CatalogSupplement[] = [
     sources: ['ais'],
   }),
   entry({
-    key: 'beta-alanine', name: 'Beta-alanine', keyCompound: 'Beta-alanine', suggestedDose: '3.2 g', typicalRange: '3.2-6.4 g/day, split into doses of 1.6 g or less',
+    key: 'beta-alanine', name: 'Beta-alanine', keyCompound: 'Beta-alanine', suggestedDose: '3.2 g', typicalRange: '4-6 g/day for at least 2-4 weeks, split into doses of 2 g or less',
     timing: 'Split through the day; the effect builds over weeks', suggestedSlot: 'all', ingredients: [g('beta-alanine', 3.2)],
     uses: ['Better performance in efforts of 1-4 minutes'],
     evidence: { level: 'strong', reason: 'ISSN position stand: improves high-intensity exercise of 1-4 minutes.' },
