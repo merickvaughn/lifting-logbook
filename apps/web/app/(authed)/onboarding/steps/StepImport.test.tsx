@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StepImport } from './StepImport';
 
@@ -153,6 +153,27 @@ describe('StepImport', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     expect(onImported).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(/import tool/i);
+  });
+
+  it('links the rejection message to /import in a new tab, so onboarding progress is kept', async () => {
+    const user = userEvent.setup();
+    render(<StepImport onImported={jest.fn()} />);
+
+    const csv = [
+      'Date,Lift,Weight,Reps,Set',
+      '2026-01-01,Squat,300,5,1',
+      '2026-01-08,Bench Press,225,5,1',
+    ].join('\n');
+
+    await user.upload(screen.getByLabelText(/training-maxes csv/i), csvFile(csv));
+
+    const alert = await screen.findByRole('alert');
+    const link = within(alert).getByRole('link', { name: /import tool/i });
+    expect(link).toHaveAttribute('href', '/import');
+    // A same-tab link would leave onboarding and drop the lifter's progress (#1391).
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(alert).toHaveTextContent(/finish setup/i);
   });
 
   it('shows a file-level error when a training-maxes file has an unreadable row', async () => {
