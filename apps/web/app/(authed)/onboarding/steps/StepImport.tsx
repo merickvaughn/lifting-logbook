@@ -1,6 +1,7 @@
 'use client';
 
-import { useId, useRef, useState } from 'react';
+import { useId, useRef, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import {
   parseCsvText,
   classifyImport,
@@ -73,7 +74,7 @@ function latestPerLift(maxes: TrainingMax[]): LiftRow[] {
 
 export function StepImport({ onImported }: Props) {
   const inputId = useId();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ReactNode>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [rows, setRows] = useState<LiftRow[] | null>(null);
   // Always-current ref so event handlers never capture a stale rows snapshot.
@@ -126,8 +127,21 @@ export function StepImport({ onImported }: Props) {
       const label =
         (classification.type && KIND_LABEL[classification.type]) ??
         'something other than training maxes';
+      // The link opens in a new tab so this onboarding tab keeps its progress
+      // (#1391). /import needs a program, so the copy still says to finish setup.
       setError(
-        `This looks like ${label}. Finish setup, then use the full Import tool to bring it in.`,
+        <>
+          This looks like {label}. Finish setup, then use the{' '}
+          <Link
+            href="/import"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.inlineLinkBtn}
+          >
+            full Import tool
+          </Link>{' '}
+          (opens in a new tab) to bring it in.
+        </>,
       );
       return;
     }
