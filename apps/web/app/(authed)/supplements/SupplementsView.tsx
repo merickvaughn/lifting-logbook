@@ -1,13 +1,25 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { localToday } from '@/lib/calendarDay';
+import { removeSupplementItem, setSupplementStatus } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import { SLOT_LABEL, buildView, type RowModel, type Stack } from '@/lib/supplementsView';
+import { CombineDialog, MoveDialog } from './BulkDialogs';
 import SupplementDetail from './SupplementDetail';
 import SupplementForm, { type FormMode } from './SupplementForm';
 import styles from './supplements.module.css';
 
-function Row({ row, onOpen }: { row: RowModel; onOpen: (row: RowModel, opener: HTMLElement) => void }) {
+/** What a row does in Edit stack mode: a checkbox, Edit, and Start on a pending row. */
+interface EditControls {
+  selected: boolean;
+  busy: boolean;
+  onToggle: () => void;
+  onStart?: () => void;
+}
+
+function Row({ row, onOpen, edit }: { row: RowModel; onOpen: (row: RowModel, opener: HTMLElement) => void; edit?: EditControls }) {
   const flagged = row.advisories.length > 0;
   return (
     <li className={flagged ? `${styles.row} ${styles.flagged}` : styles.row}>
@@ -40,10 +52,25 @@ function Row({ row, onOpen }: { row: RowModel; onOpen: (row: RowModel, opener: H
             </span>
           ))}
         </span>
-        <span aria-hidden="true" className={styles.chevron}>
-          ›
-        </span>
+        {!edit && (
+          <span aria-hidden="true" className={styles.chevron}>
+            ›
+          </span>
+        )}
       </button>
+      {edit && (
+        <span className={styles.rowControls}>
+          <input type="checkbox" aria-label={`Select ${row.item.name}`} checked={edit.selected} onChange={edit.onToggle} />
+          {edit.onStart && (
+            <button type="button" className={styles.startButton} disabled={edit.busy} onClick={edit.onStart} aria-label={`Start ${row.item.name}`}>
+              Start
+            </button>
+          )}
+          <button type="button" className={styles.editButton} aria-label={`Edit ${row.item.name}`} onClick={(e) => onOpen(row, e.currentTarget)}>
+            Edit
+          </button>
+        </span>
+      )}
     </li>
   );
 }
@@ -65,6 +92,14 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [pendingOpen, setPendingOpen] = useState(false);
   const [form, setForm] = useState<FormMode | null>(null);
+  // Edit stack mode: row keys ticked, the open bulk dialog, the Remove count awaiting its second tap, and the last write's error.
+  const [editing, setEditing] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [dialog, setDialog] = useState<'move' | 'combine' | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
+  const [writing, setWriting] = useState(false);
+  const [writeError, setWriteError] = useState<string | undefined>();
+  const router = useRouter();
   const opener = useRef<HTMLElement | null>(null);
   // What opened the form, to take focus back when it's saved or closed with ×.
   const formOpener = useRef<HTMLElement | null>(null);
@@ -81,7 +116,60 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
   const hasDayTypes = stack.dayTypes.length > 0;
   const open = (row: RowModel, el: HTMLElement) => {
     opener.current = el;
-    setOpenId(row.item.id);
+    // In Edit stack mode a tap goes straight to the form.
+    if (editing) openForm({ kind: 'edit', item: row.item }, el);
+    else setOpenId(row.item.id);
+  };
+  // Selected rows among the ones on screen; one hidden by a day-type switch or a refresh isn't counted.
+  const shown = [...view.workout.slots, ...view.daily.slots].flatMap((s) => s.rows).concat(view.unscheduled, view.pending);
+  const selectedRows = shown.filter((r) => selected.has(r.key));
+  const clearSelection = () => {
+    setSelected(new Set());
+    setConfirmRemove(null);
+  };
+  const controls = (r: RowModel): EditControls | undefined =>
+    editing
+      ? {
+          selected: selected.has(r.key),
+          busy: writing,
+          onToggle: () => {
+            setConfirmRemove(null);
+            setSelected((prev) => {
+              const next = new Set(prev);
+              if (!next.delete(r.key)) next.add(r.key);
+              return next;
+            });
+          },
+          onStart: r.item.status === 'pending' ? () => void write('supplements.start', { itemId: r.item.id }, () => setSupplementStatus([r.item.id], 'active', localToday()), false) : undefined,
+        }
+      : undefined;
+
+  /** Runs a write, then refreshes; on failure reports it and leaves the selection as it was. */
+  async function write(op: string, ctx: Record<string, unknown>, run: () => Promise<unknown>, clear = true) {
+    setWriting(true);
+    setWriteError(undefined);
+    try {
+      await run();
+      router.refresh();
+      if (clear) clearSelection();
+    } catch (err) {
+      logClientError(op, err, ctx);
+      setWriteError('Couldn’t save that. Your selection is kept; try again.');
+      // A removal can have gone through for some items before it failed.
+      if (op === 'supplements.bulkRemove') router.refresh();
+    } finally {
+      setWriting(false);
+    }
+  }
+  const itemIds = [...new Set(selectedRows.map((r) => r.item.id))];
+  const markAll = (status: 'active' | 'pending') =>
+    write('supplements.bulkStatus', { status, items: itemIds.length }, () => setSupplementStatus(itemIds, status, localToday()));
+  const removeAll = () => {
+    if (confirmRemove !== itemIds.length) return setConfirmRemove(itemIds.length);
+    setConfirmRemove(null);
+    return write('supplements.bulkRemove', { items: itemIds.length }, async () => {
+      for (const id of itemIds) await removeSupplementItem(id, localToday());
+    });
   };
   const openItem = stack.items.find((i) => i.id === openId);
   const noWorkout = !view.dayType.sessionTime && view.workout.count === 0;
@@ -89,6 +177,19 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
 
   return (
     <div>
+      <div className={styles.toolbar}>
+        <button
+          type="button"
+          className={editing ? styles.primary : undefined}
+          onClick={() => {
+            setEditing((e) => !e);
+            clearSelection();
+            setWriteError(undefined);
+          }}
+        >
+          {editing ? 'Done' : 'Edit stack'}
+        </button>
+      </div>
       <p className={styles.subtitle}>
         {view.activeCount} active · {flagged} item{flagged === 1 ? ' has' : 's have'} a note worth a look · tap any item for details
       </p>
@@ -107,6 +208,13 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
             </button>
           ))}
         </div>
+      )}
+
+      {editing && (
+        <p className={styles.infoBanner} role="status">
+          Editing: tap any item to change it, or tick several to move, combine into a mix, or remove them. <strong>Start</strong> moves a
+          pending item into your stack.
+        </p>
       )}
 
       {view.advisoryError !== undefined && (
@@ -148,7 +256,7 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
                 ) : (
                   <ul className={styles.list}>
                     {rows.map((r) => (
-                      <Row key={r.key} row={r} onOpen={open} />
+                      <Row key={r.key} row={r} onOpen={open} edit={controls(r)} />
                     ))}
                   </ul>
                 )}
@@ -181,7 +289,7 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
               <h3 className={styles.slotHeading}>{SLOT_LABEL[slot]}</h3>
               <ul className={styles.list}>
                 {rows.map((r) => (
-                  <Row key={r.key} row={r} onOpen={open} />
+                  <Row key={r.key} row={r} onOpen={open} edit={controls(r)} />
                 ))}
               </ul>
             </div>
@@ -205,7 +313,7 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
           <ColumnHeader />
           <ul className={styles.list}>
             {view.unscheduled.map((r) => (
-              <Row key={r.key} row={r} onOpen={open} />
+              <Row key={r.key} row={r} onOpen={open} edit={controls(r)} />
             ))}
           </ul>
         </section>
@@ -216,18 +324,18 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
           <button
             type="button"
             className={styles.pendingToggle}
-            aria-expanded={pendingOpen}
+            aria-expanded={pendingOpen || editing}
             onClick={() => setPendingOpen((o) => !o)}
           >
-            <span aria-hidden="true">{pendingOpen ? '▼' : '▶'}</span> Pending · {view.pending.length}
+            <span aria-hidden="true">{pendingOpen || editing ? '▼' : '▶'}</span> Pending · {view.pending.length}
           </button>
         )}
-        {pendingOpen && view.pending.length > 0 && (
+        {(pendingOpen || editing) && view.pending.length > 0 && (
           <>
             <ColumnHeader />
             <ul className={styles.list}>
               {view.pending.map((r) => (
-                <Row key={r.key} row={r} onOpen={open} />
+                <Row key={r.key} row={r} onOpen={open} edit={controls(r)} />
               ))}
             </ul>
           </>
@@ -238,6 +346,57 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
       </section>
 
       <p className={styles.muted}>Not medical advice.</p>
+
+      {editing && (writeError || selectedRows.length > 0) && (
+        <div className={styles.bulkBar} role="region" aria-label="Selected items">
+          <span>{selectedRows.length} selected</span>
+          {writeError && <span role="alert">{writeError}</span>}
+          {selectedRows.length > 0 && (
+            <span className={styles.bulkButtons}>
+              <button type="button" disabled={writing} onClick={() => setDialog('move')}>
+                Move to…
+              </button>
+              <button type="button" disabled={writing} onClick={() => setDialog('combine')}>
+                Combine into mix…
+              </button>
+              <button type="button" disabled={writing} onClick={() => void markAll('active')}>
+                Mark active
+              </button>
+              <button type="button" disabled={writing} onClick={() => void markAll('pending')}>
+                Mark pending
+              </button>
+              <button type="button" className={styles.removeButton} disabled={writing} onClick={() => void removeAll()}>
+                {confirmRemove === itemIds.length ? `Tap again to remove ${itemIds.length}` : 'Remove'}
+              </button>
+              <button type="button" disabled={writing} onClick={clearSelection}>
+                Clear
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+
+      {dialog === 'move' && (
+        <MoveDialog
+          stack={stack}
+          rows={selectedRows}
+          onCancel={() => setDialog(null)}
+          onDone={() => {
+            setDialog(null);
+            clearSelection();
+          }}
+        />
+      )}
+      {dialog === 'combine' && (
+        <CombineDialog
+          rows={selectedRows}
+          onCancel={() => setDialog(null)}
+          onDone={() => {
+            setDialog(null);
+            clearSelection();
+          }}
+        />
+      )}
 
       {openItem && (
         <SupplementDetail

@@ -114,6 +114,10 @@ export const {
   createSupplementItem,
   removeSupplementItem,
   fetchSupplementCatalog,
+  // Edit stack mode's bulk bar and Start (#1410).
+  moveSupplementDoses,
+  setSupplementStatus,
+  createSupplementMix,
   // Read, not just a write — but the 409 self-heal path needs to refetch the
   // live custom-lift list client-side (a stale/absent local copy otherwise
   // dead-ends the user with no way to recover short of a page reload; #911).

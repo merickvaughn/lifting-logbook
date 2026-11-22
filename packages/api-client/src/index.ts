@@ -73,6 +73,7 @@ import type {
   SupplementCreatedResponse,
   SupplementDose,
   SupplementItemDetails,
+  SupplementSlot,
   SupplementStackResponse,
   SupplementStatus,
 } from '@lifting-logbook/types';
@@ -91,6 +92,15 @@ import { IMPORT_SUGGESTION_DEADLINE_MS, MACROCYCLE_ID_HEADER } from '@lifting-lo
 // Consolidates apps/web/lib/api.ts (server) and lib/client-api.ts (browser).
 // See issue #466 / flag 3 of the 2026-06-08 architecture review (#464).
 // ---------------------------------------------------------------------------
+
+/** The body of `POST /supplements/doses/move` (#1410): moves the items' doses in `from` to `to`. */
+export interface MoveSupplementDosesBody {
+  itemIds: string[];
+  from: SupplementSlot;
+  to: SupplementSlot;
+  /** Replaces the moved doses' day types when given; `[]` means every day. */
+  dayTypes?: string[];
+}
 
 /** The body of `POST /supplements/items` and `PATCH /supplements/items/:id` (#1409). */
 export type SupplementItemBody = Partial<SupplementItemDetails> & {
@@ -846,6 +856,34 @@ export function createApiClient(config: ApiClientConfig) {
         method: 'PATCH',
         headers: JSON_HEADERS,
         body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+
+    /** Moves the listed items' doses from one slot to another (#1410). */
+    moveSupplementDoses(body: MoveSupplementDosesBody, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/doses/move?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    /** Marks the listed items active or pending (#1410). */
+    setSupplementStatus(itemIds: string[], status: SupplementStatus, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/items/status?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ itemIds, status }),
+        cache: 'no-store',
+      });
+    },
+    /** Combines two or more items into a new mix (#1410). */
+    createSupplementMix(name: string, itemIds: string[], today: string): Promise<SupplementCreatedResponse> {
+      return request(`/supplements/mixes?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ name, itemIds }),
         cache: 'no-store',
       });
     },

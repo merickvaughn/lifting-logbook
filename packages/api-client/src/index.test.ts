@@ -1122,6 +1122,24 @@ describe('supplements', () => {
     expect(init.cache).toBe('no-store');
   });
 
+  it('moveSupplementDoses, setSupplementStatus and createSupplementMix POST their bodies with the lifter\'s date', async () => {
+    mockFetch.mockImplementation(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    const client = makeClient();
+    await client.moveSupplementDoses({ itemIds: ['a'], from: 'pre', to: 'pm', dayTypes: [] }, '2026-11-21');
+    let [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/doses/move?today=2026-11-21');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ itemIds: ['a'], from: 'pre', to: 'pm', dayTypes: [] });
+    await client.setSupplementStatus(['a', 'b'], 'active', '2026-11-21');
+    [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items/status?today=2026-11-21');
+    expect(JSON.parse(String(init.body))).toEqual({ itemIds: ['a', 'b'], status: 'active' });
+    await client.createSupplementMix('Broth', ['a', 'b'], '2026-11-21');
+    [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/mixes?today=2026-11-21');
+    expect(JSON.parse(String(init.body))).toEqual({ name: 'Broth', itemIds: ['a', 'b'] });
+  });
+
   it('updateSupplementItem throws the server message on failure', async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'stale' }), { status: 409 }));
     await expect(makeClient().updateSupplementItem('x', { links: [] }, '2026-11-21')).rejects.toThrow('stale');

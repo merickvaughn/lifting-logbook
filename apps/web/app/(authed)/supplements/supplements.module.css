@@ -64,3 +64,15 @@
 .formButtons { display: flex; gap: 0.5rem; }
 .danger { margin-left: auto; color: var(--color-error-text); background: none; border: 0; cursor: pointer; }
 .addLink { background: none; border: 0; padding: 0.5rem 0 0; cursor: pointer; color: var(--color-accent); font: inherit; }
+
+/* Edit stack mode (#1410) */
+.toolbar { display: flex; justify-content: flex-end; margin-bottom: 0.5rem; }
+.primary { background: var(--color-accent); color: var(--color-on-accent); }
+.rowControls { display: flex; align-items: center; gap: 0.5rem; padding-right: 0.25rem; }
+.startButton { background: var(--color-accent); color: var(--color-on-accent); border: 0; border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; font: inherit; }
+.editButton { border: 1px solid var(--color-border-strong); background: none; color: inherit; border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; font: inherit; }
+.row:has(.rowControls) { display: flex; align-items: center; }
+.bulkBar { position: sticky; bottom: 0.5rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; padding: 0.6rem 0.75rem; border-radius: 10px; background: var(--color-text-heading); color: var(--color-bg); }
+.bulkButtons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.bulkBar button { background: none; color: inherit; border: 1px solid currentColor; border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; font: inherit; }
+.bulkBar .removeButton { color: var(--color-error-text); background: var(--color-bg); }

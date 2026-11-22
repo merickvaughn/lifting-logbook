@@ -69,6 +69,8 @@ export interface AdvisoryNote {
 export interface RowModel {
   key: string;
   item: SupplementItem;
+  /** The slot of the dose this row shows (a pending row shows its first dose); none for an item with no dose. */
+  slot?: SupplementSlot;
   amount: string;
   /** The typical range, shown after the dose when the item has one dose. */
   range?: string;
@@ -187,6 +189,7 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
     return {
       key: `${p.item.id}:${p.item.doses.indexOf(p.dose)}`,
       item: p.item,
+      slot: p.dose.slot,
       amount: p.dose.amount.trim(),
       range: p.item.doses.length === 1 ? (p.item.typicalRange.trim() || p.item.reference?.typicalRange) : undefined,
       protein: protein > 0 ? `${num(protein)} g protein` : undefined,
@@ -213,6 +216,7 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
       return {
         key: item.id,
         item,
+        slot: dose?.slot,
         amount: dose?.amount.trim() ?? '',
         range: item.doses.length === 1 ? (item.typicalRange.trim() || item.reference?.typicalRange) : undefined,
         protein: protein > 0 ? `${num(protein)} g protein` : undefined,
@@ -231,6 +235,7 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
       (item): RowModel => ({
         key: item.id,
         item,
+        slot: item.doses[0]?.slot,
         amount: item.doses[0]?.amount.trim() ?? '',
         detail: [item.doses.length === 0 ? 'No dose yet' : 'Not set for any day type', ...detailLine(item)].join(' · '),
         note: item.shortNote.trim(),
