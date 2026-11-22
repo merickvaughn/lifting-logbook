@@ -58,6 +58,47 @@ describe('validateLiftImportSoft', () => {
     );
   });
 
+  // #1402: the strict validator has rejected these dates since #1316, but the soft validator
+  // checked only that the date parsed, so Review listed a 1969 row as an ordinary create and the
+  // Assign step was the first thing to refuse it — with a bare "Validation failed".
+  describe('date range (#1402)', () => {
+    const importDate = new Date('2026-11-22T15:00:00Z');
+
+    it.each([
+      ['an epoch-artefact date', '1969-12-31', '1969-12-31'],
+      ['a date after the import day', '2026-11-23', '2026-11-23'],
+    ])('puts a row with %s in the incomplete bucket', (_label, date, isoDay) => {
+      const result = validateLiftImportSoft([record({ lift: KNOWN_LIFT, date: new Date(date) })], SLOT_MAP, {
+        importDate,
+      });
+      expect(result.validRows).toHaveLength(0);
+      expect(result.incomplete.map((r) => [r.rowIndex, r.errors])).toEqual([
+        [
+          1,
+          [
+            {
+              row: 1,
+              field: 'date',
+              code: 'DATE_INVALID',
+              message: `Date ${isoDay} must be after 1970-01-01 and no later than 2026-11-22`,
+            },
+          ],
+        ],
+      ]);
+    });
+
+    it.each([
+      ['the earliest allowed day', '1970-01-02'],
+      ['the import day itself', '2026-11-22'],
+    ])('keeps a row dated %s valid', (_label, date) => {
+      const result = validateLiftImportSoft([record({ lift: KNOWN_LIFT, date: new Date(date) })], SLOT_MAP, {
+        importDate,
+      });
+      expect(result.incomplete).toHaveLength(0);
+      expect(result.validRows).toHaveLength(1);
+    });
+  });
+
   it('puts a row with unknown lift in the ambiguous bucket', () => {
     const r = record({ lift: UNKNOWN_LIFT });
     const result = validateLiftImportSoft([r], SLOT_MAP);

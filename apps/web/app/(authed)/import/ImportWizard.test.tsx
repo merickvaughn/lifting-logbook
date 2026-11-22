@@ -2035,7 +2035,7 @@ describe('ImportWizard', () => {
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
 
-      expect(screen.getByText(/1 row is missing a required value/)).toBeInTheDocument();
+      expect(screen.getByText(/1 row can't be imported as it stands/)).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
       expect(tileValue('Unresolved')).toBe('1');
       expect(screen.getByRole('button', { name: 'Commit import' })).toBeDisabled();
@@ -2045,6 +2045,31 @@ describe('ImportWizard', () => {
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
       await user.click(screen.getByRole('button', { name: 'Commit import' }));
       await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+    });
+
+    // #1402: an incomplete row has no value to show, so its cell was blank and the only hint was
+    // the word "incomplete" — the same for a 1969 date as for a missing weight.
+    it("shows an incomplete row's reason in place of its missing value", async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(
+        withDeltas([
+          {
+            key: '__incomplete_1',
+            label: 'Row 1 (incomplete)',
+            kind: 'create',
+            status: 'incomplete',
+            rowIndex: 1,
+            message: 'Date 1969-12-31 must be after 1970-01-01 and no later than 2026-11-22',
+          },
+        ]),
+      );
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      expect(
+        screen.getByText('Date 1969-12-31 must be after 1970-01-01 and no later than 2026-11-22'),
+      ).toBeInTheDocument();
     });
 
     it("shows a remapped row's lift name, not its id, and counts it as a create", async () => {
@@ -4048,7 +4073,7 @@ describe('ImportWizard Assign step (#1256)', () => {
     await navigateToLiftRecordsReview(user, ASSIGN_FILE());
 
     // No number errors at Review, and the undated row doesn't hold the incomplete-row gate.
-    expect(screen.queryByText(/missing a required value/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/can't be imported as it stands/)).not.toBeInTheDocument();
     expect(nextButton()).toBeEnabled();
     await user.click(nextButton());
 
@@ -4308,6 +4333,42 @@ describe('ImportWizard Assign step (#1256)', () => {
       expect(errorSpy).toHaveBeenCalledWith('[client-mutation] assignImport failed', failure, { programId: 'prog-1' }),
     );
     expect(await screen.findByText(failure.message)).toBeInTheDocument();
+    expect(screen.getByText('Step 5 of 8 · Review')).toBeInTheDocument();
+  });
+
+  // #1402: the owner's 2024 and 2025 logbooks hit this with rows dated 1969. The wizard showed
+  // only "Validation failed" under the Review table, and the only way through was reading the raw
+  // API response to learn which rows to exclude.
+  it('lists the rows a refused mode=assign call named, instead of only its message', async () => {
+    const user = userEvent.setup();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockAssign.mockRejectedValueOnce(
+      new ApiClientError('Validation failed', 400, undefined, {
+        message: 'Validation failed',
+        errors: [
+          {
+            row: 565,
+            field: 'date',
+            code: 'DATE_INVALID',
+            message: 'Date 1969-12-31 must be after 1970-01-01 and no later than 2026-11-22',
+          },
+          { row: 566, field: 'date', code: 'DATE_INVALID', message: 'Date 1969-12-31 must be after 1970-01-01 and no later than 2026-11-22' },
+        ],
+      }),
+    );
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await navigateToLiftRecordsReview(user, ASSIGN_FILE());
+    await user.click(nextButton());
+
+    expect(
+      await screen.findByText(
+        /Row 565: Date 1969-12-31 must be after 1970-01-01 and no later than 2026-11-22/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Row 566: Date 1969-12-31/)).toBeInTheDocument();
+    expect(screen.getByText(/These rows can't be grouped into macrocycles/)).toBeInTheDocument();
+    // The top-level message adds nothing the list doesn't, so it isn't shown as well.
+    expect(screen.queryByText('Validation failed')).not.toBeInTheDocument();
     expect(screen.getByText('Step 5 of 8 · Review')).toBeInTheDocument();
   });
 });

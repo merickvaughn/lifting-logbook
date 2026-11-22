@@ -904,6 +904,12 @@ export interface ImportDelta {
   /** Phase 3: row health; undefined means 'ok'. */
   status?: ImportRowStatus;
   /**
+   * Why the row is not 'ok', from the first of its validation errors. An incomplete row has no
+   * `after` to show, so without this the Review table says only "incomplete" and the lifter can't
+   * tell a bad date from a missing weight (#1402).
+   */
+  message?: string;
+  /**
    * Phase 3: 1-based position among the parsed rows (used by liftOverrides and
    * `__row_<rowIndex>` excludeKeys on commit). It is the CSV data row for lift records. It
    * isn't for program specs, which parse sorted, or strength goals, which skip non-lift
