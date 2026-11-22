@@ -4371,6 +4371,49 @@ describe('ImportWizard Assign step (#1256)', () => {
     expect(screen.queryByText('Validation failed')).not.toBeInTheDocument();
     expect(screen.getByText('Step 5 of 8 · Review')).toBeInTheDocument();
   });
+
+  // #1402 review: the list is keyed to the preview that produced it, and it tells the lifter to
+  // exclude those rows "above" — so clearPreviewRowState/resetFileState, which exist to drop
+  // row-keyed state when the rows change, have to drop it too. Otherwise the next file (or the
+  // next Google Sheets tab, via resetFileState) opens Review still naming the previous one's rows.
+  it("drops a refused mode=assign call's rows once a new preview replaces the rows", async () => {
+    const user = userEvent.setup();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockAssign.mockRejectedValueOnce(
+      new ApiClientError('Validation failed', 400, undefined, {
+        message: 'Validation failed',
+        errors: [
+          {
+            row: 565,
+            field: 'date',
+            code: 'DATE_INVALID',
+            message: 'Date 1969-12-31 must be after 1970-01-01 and no later than 2026-11-22',
+          },
+        ],
+      }),
+    );
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await navigateToLiftRecordsReview(user, ASSIGN_FILE());
+    await user.click(nextButton());
+    expect(await screen.findByText(/Row 565: Date 1969-12-31/)).toBeInTheDocument();
+
+    // Back to Source and on with a different file, which re-analyzes (#920's path).
+    await user.click(screen.getByRole('button', { name: 'Back' })); // Review → Map columns
+    await user.click(screen.getByRole('button', { name: 'Back' })); // Map columns → Classify
+    await user.click(screen.getByRole('button', { name: 'Back' })); // Classify → Source
+    await user.upload(
+      screen.getByLabelText('CSV file'),
+      new File(['Date,Lift,Set #,Weight,Reps\n2026-02-02,Squat,1,210,5\n'], 'next.csv', { type: 'text/csv' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Analyze' }));
+    await screen.findByText('Lift History');
+    await user.click(nextButton()); // Classify → Map columns
+    await user.click(nextButton()); // Map columns → Review
+
+    expect(screen.getByText('Step 5 of 8 · Review')).toBeInTheDocument();
+    expect(screen.queryByText(/Row 565: Date 1969-12-31/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/These rows can't be grouped into macrocycles/)).not.toBeInTheDocument();
+  });
 });
 
 // ── Assign step: progressions of lifts outside a stretch's program (#1212) ───────

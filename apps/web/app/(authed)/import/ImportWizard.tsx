@@ -703,6 +703,9 @@ export function ImportWizard({
     setKeptSpellings(new Set());
     setPlannedCommit(null);
     setCommitErrors(null);
+    // Keyed to the previous preview's row numbers, and the list tells the lifter to exclude those
+    // rows "above" — pointing at a table where they now mean different rows (#1402 review).
+    setAssignErrors(null);
     clearAssign();
   }
 
@@ -1700,6 +1703,7 @@ export function ImportWizard({
     setPreview(null);
     setCommitResult(null);
     setCommitErrors(null);
+    setAssignErrors(null);
     setError(null);
     setReviewMaxes(null);
     setKeptSpellings(new Set());
@@ -2570,7 +2574,9 @@ export function ImportWizard({
                 </p>
               )}
               {assignErrors && (
-                <div className={styles.errorBox}>
+                // role="alert": the list appears after the Next click resolves, with focus still on
+                // Next, so without it the button just stops advancing silently (#1402 review).
+                <div className={styles.errorBox} role="alert">
                   <strong>
                     These rows can&apos;t be grouped into macrocycles. Exclude them above, or fix
                     the file and upload it again:
