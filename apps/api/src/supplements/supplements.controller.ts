@@ -164,7 +164,7 @@ export class SupplementsController {
       // Ids, types and reasons only: no item names or notes.
       this.logger.warn({ date, count: anomalies.length, anomalies }, 'Supplement change log replay skipped changes (#1374)');
     }
-    return { items: replay.stack, firstChangeDate: await repo.firstChangeDate(), anomalies };
+    return { items: replay.stack, dayTypes: replay.dayTypes, firstChangeDate: await repo.firstChangeDate(), anomalies };
   }
 
   /**

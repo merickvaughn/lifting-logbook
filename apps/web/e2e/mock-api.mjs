@@ -1203,6 +1203,45 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // GET /supplements/changes, GET /supplements/as-of/:date and POST /supplements/items/:id/restore
+  // (#1378): a change log kept in the mock's state, seeded with the stack's items added on Nov 18.
+  // As-of is simplified: the current stack when the date is on or after the first change.
+  const supplementChanges = () =>
+    (state.supplementChanges ??= supplementSeed().map((item, i) => ({ seq: i + 1, date: '2026-11-18', type: 'added', item })));
+  function supplementLog(type, body, date) {
+    const log = supplementChanges();
+    log.push({ seq: log.length + 1, date: date ?? '2026-11-21', type, ...body });
+  }
+  if (method === 'GET' && url.pathname === '/supplements/changes') {
+    json(res, supplementChanges());
+    return;
+  }
+  const asOfPath = url.pathname.match(/^\/supplements\/as-of\/(\d{4}-\d{2}-\d{2})$/);
+  if (method === 'GET' && asOfPath) {
+    const first = supplementChanges()[0].date;
+    json(res, {
+      items: asOfPath[1] < first ? [] : supplementStack().items,
+      dayTypes: supplementStack().dayTypes,
+      firstChangeDate: first,
+      anomalies: [],
+    });
+    return;
+  }
+  const restorePath = url.pathname.match(/^\/supplements\/items\/([^/]+)\/restore$/);
+  if (method === 'POST' && restorePath) {
+    const id = decodeURIComponent(restorePath[1]);
+    const removed = supplementChanges().filter((c) => c.type === 'removed' && c.item.id === id).pop();
+    if (!removed) {
+      json(res, { statusCode: 404, message: `No removed supplement item ${id}` }, 404);
+      return;
+    }
+    const stack = supplementStack();
+    stack.items.push(removed.item);
+    supplementLog('restored', { itemId: id }, url.searchParams.get('today'));
+    json(res, stack);
+    return;
+  }
+
   // GET /supplements/catalog (#1409): one entry, enough to autofill a name typed as "creatine".
   if (method === 'GET' && url.pathname === '/supplements/catalog') {
     const q = (url.searchParams.get('q') ?? '').toLowerCase();
@@ -1233,7 +1272,10 @@ const server = createServer(async (req, res) => {
       json(res, { statusCode: 404, message: 'No such item' }, 404);
       return;
     }
-    if (method === 'DELETE') stack.items.splice(index, 1);
+    if (method === 'DELETE') {
+      const [removed] = stack.items.splice(index, 1);
+      supplementLog('removed', { item: removed }, url.searchParams.get('today'));
+    }
     else {
       const body = await readBody(req);
       if (rejectIfInvalidBody(res, body)) return;

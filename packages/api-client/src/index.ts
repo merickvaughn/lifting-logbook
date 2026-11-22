@@ -69,7 +69,9 @@ import type {
   UpsertStrengthGoalRequest,
   UserSettingsResponse,
   WorkoutResponse,
+  SupplementAsOfResponse,
   SupplementCatalogEntry,
+  SupplementChange,
   SupplementCreatedResponse,
   SupplementDayType,
   SupplementDose,
@@ -907,6 +909,24 @@ export function createApiClient(config: ApiClientConfig) {
         body: JSON.stringify(body),
         cache: 'no-store',
       });
+    },
+
+    // -- Supplement history (#1378) -----------------------------------------
+    /** A page of the change log, oldest first. The next page back is `beforeSeq` = the first change's `seq`. */
+    fetchSupplementChanges(opts: { beforeSeq?: number; limit?: number } = {}): Promise<SupplementChange[]> {
+      const q = new URLSearchParams();
+      if (opts.beforeSeq !== undefined) q.set('beforeSeq', String(opts.beforeSeq));
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request(`/supplements/changes${qs ? `?${qs}` : ''}`, { cache: 'no-store' });
+    },
+    /** The stack and day types at the end of `date` (`YYYY-MM-DD`), replayed from the change log. */
+    fetchSupplementsAsOf(date: string): Promise<SupplementAsOfResponse> {
+      return request(`/supplements/as-of/${enc(date)}`, { cache: 'no-store' });
+    },
+    /** Brings a removed item back with its doses and status. `today` is the lifter's local date. */
+    restoreSupplementItem(id: string, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/items/${enc(id)}/restore?today=${enc(today)}`, { method: 'POST', cache: 'no-store' });
     },
 
     // -- Body weight -------------------------------------------------------

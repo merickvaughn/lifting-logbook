@@ -122,3 +122,31 @@ test('replaces an item into Pending: the new item is added and the replaced one 
   await page.getByRole('button', { name: /Pending · 2/ }).click();
   await expect(page.getByRole('button', { name: /Nutricost Pre-X/ })).toBeVisible();
 });
+
+test('History: restores a removed item, which returns to the stack', async ({ page }) => {
+  await page.goto('/supplements');
+  await page.getByRole('button', { name: 'Edit stack' }).click();
+  await page.getByRole('checkbox', { name: 'Select Glycine' }).check();
+  const bar = page.getByRole('region', { name: 'Selected items' });
+  // The first tap asks, the second removes.
+  await bar.getByRole('button', { name: 'Remove' }).click();
+  await bar.getByRole('button', { name: /Tap again to remove/ }).click();
+  await expect(page.getByRole('button', { name: /Glycine/ })).toBeHidden();
+
+  await page.getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('link', { name: 'History' }).click();
+  await expect(page).toHaveURL(/\/supplements\/history/);
+  await expect(page.getByText('Removed Glycine')).toBeVisible();
+  await page.getByRole('button', { name: 'Restore Glycine' }).click();
+  await expect(page.getByTestId('supp-announcement')).toHaveText('Restored Glycine');
+  await expect(page.getByText('Restored Glycine').nth(1)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Restore Glycine' })).toBeHidden();
+
+  await page.getByRole('link', { name: 'Back to what I’m on' }).click();
+  await expect(page.getByRole('button', { name: /Glycine/ })).toBeVisible();
+});
+
+test('History: a date before the log starts says so', async ({ page }) => {
+  await page.goto('/supplements/history?date=2026-11-01');
+  await expect(page.getByText('History starts on Nov 18, 2026; nothing was logged before then.')).toBeVisible();
+});

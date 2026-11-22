@@ -16,6 +16,7 @@ import type {
 import { undoImport } from '@/lib/client-api';
 import { localToday } from '@/lib/calendarDay';
 import { logClientError } from '@/lib/log-client-error';
+import { supplementsOnHref } from '@/lib/supplementHistory';
 import { STATUS_LABEL } from '@/lib/macrocycleStatus';
 import type { EnrichedRecord } from './page';
 import styles from './history.module.css';
@@ -406,6 +407,7 @@ function LiftHistoryTab({ records, unit }: { records: EnrichedRecord[]; unit: We
                   <td>{r.notes || '—'}</td>
                   <td>
                     {r.isPR && <span className={styles.prBadge}>PR</span>}
+                    <SupplementsLink date={r.date} />
                   </td>
                 </tr>
               ))}
@@ -415,6 +417,16 @@ function LiftHistoryTab({ records, unit }: { records: EnrichedRecord[]; unit: We
       )}
     </div>
   );
+}
+
+/** The stack the lifter was on that day (#1378). Nothing for a date that isn't `YYYY-MM-DD`. */
+function SupplementsLink({ date }: { date: string }) {
+  const href = supplementsOnHref(date);
+  return href ? (
+    <Link href={href} aria-label={`Supplements on ${date}`} className={styles.supplementsLink}>
+      Supplements
+    </Link>
+  ) : null;
 }
 
 function TmTimelineTab({
@@ -495,7 +507,10 @@ function TmTimelineTab({
                       </td>
                       <td>
                         {e.isPR && (
-                          <span className={styles.prBadge}>PR</span>
+                          <>
+                            <span className={styles.prBadge}>PR</span>
+                            <SupplementsLink date={e.date} />
+                          </>
                         )}
                       </td>
                     </tr>

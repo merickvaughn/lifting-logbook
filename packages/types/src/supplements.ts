@@ -213,6 +213,8 @@ export interface SupplementReplayAnomaly {
 /** `GET /supplements/as-of/:date`: the stack at the end of the date, replayed from the change log. */
 export interface SupplementAsOfResponse {
   items: SupplementItem[];
+  /** The day types as they were on the date; a dose may name one the stack no longer has. */
+  dayTypes: SupplementDayType[];
   /** The date of the earliest change, or null with none: before it, the log has no record. */
   firstChangeDate: string | null;
   /** Changes replay skipped. Empty for a complete, well-ordered log. */

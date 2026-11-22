@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { localToday } from '@/lib/calendarDay';
 import { removeSupplementItem, setSupplementStatus } from '@/lib/client-api';
@@ -261,6 +262,9 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
   return (
     <div>
       <div className={styles.toolbar}>
+        <Link href="/supplements/history" className={styles.historyLink}>
+          History
+        </Link>
         <button
           ref={modeToggle}
           type="button"

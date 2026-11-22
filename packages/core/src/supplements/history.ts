@@ -1,4 +1,4 @@
-import type { SupplementChange, SupplementItem, SupplementReplayAnomalyReason } from '@lifting-logbook/types';
+import type { SupplementChange, SupplementDayType, SupplementItem, SupplementReplayAnomalyReason } from '@lifting-logbook/types';
 import { parseIsoDate } from '../focus/dates';
 import { applyChange, emptyStackState } from './apply';
 
@@ -13,6 +13,10 @@ export interface ReplayAnomaly {
 
 export interface StackReplay {
   stack: SupplementItem[];
+  /** The day types as they stood at the end of the date, so a past dose is named as it was then. */
+  dayTypes: SupplementDayType[];
+  /** Null until a change sets one. */
+  caffeineCutoff: string | null;
   /** Changes, or parts of changes, that had no effect. Empty for a complete, well-ordered log. */
   anomalies: ReplayAnomaly[];
 }
@@ -37,5 +41,5 @@ export function stackAsOf(changeLog: readonly SupplementChange[], date: string):
   for (const change of ordered) {
     for (const anomaly of applyChange(state, change)) anomalies.push({ change, ...anomaly });
   }
-  return { stack: state.items, anomalies };
+  return { stack: state.items, dayTypes: state.dayTypes, caffeineCutoff: state.caffeineCutoff, anomalies };
 }

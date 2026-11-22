@@ -17,6 +17,15 @@ describe('stackAsOf', () => {
     expect(ids(log, '2026-01-05')).toEqual(['a']);
     expect(stackAsOf(log, '2026-01-05').anomalies).toEqual([]);
   });
+  it('replays the day types as they were on the date, through a rename and a delete', () => {
+    const l = changeLog(
+      { date: '2026-01-01', type: 'day_types_set', dayTypes: [{ id: 'lift', name: 'Lift day' }, { id: 'rest', name: 'Rest day' }] },
+      { date: '2026-01-05', type: 'day_types_set', dayTypes: [{ id: 'lift', name: 'Push day' }] },
+    );
+    expect(stackAsOf(l, '2025-12-31').dayTypes).toEqual([]);
+    expect(stackAsOf(l, '2026-01-04').dayTypes.map((d) => d.name)).toEqual(['Lift day', 'Rest day']);
+    expect(stackAsOf(l, '2026-01-05').dayTypes).toEqual([{ id: 'lift', name: 'Push day' }]);
+  });
   it('applies edits, moves, pending, started and confirmed', () => {
     const l = changeLog(
       { date: '2026-01-01', type: 'added', item: item('a', { unverified: true }) },

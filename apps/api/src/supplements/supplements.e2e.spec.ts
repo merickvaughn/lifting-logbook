@@ -538,8 +538,18 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     expect(await names('2026-10-31')).toEqual([]);
     expect(await names('2026-11-10')).toEqual(['Old', 'New']);
     expect(await names('2026-11-15')).toEqual(['Old']);
-    expect(await asOf('2026-10-31')).toEqual({ items: [], firstChangeDate: '2026-11-01', anomalies: [] });
+    expect(await asOf('2026-10-31')).toEqual({ items: [], dayTypes: [], firstChangeDate: '2026-11-01', anomalies: [] });
     expect((await inject('GET', '/supplements/as-of/2026-02-30')).statusCode).toBe(400);
+  });
+
+  it('returns the day types as they were on the date, not as they are now', async () => {
+    const { ok, asOf } = newUser();
+    await ok('PUT', '/supplements/settings?today=2026-11-01', { dayTypes: DAY_TYPES });
+    await ok('PUT', '/supplements/settings?today=2026-11-10', { dayTypes: [{ id: 'lift', name: 'Push day' }] });
+
+    expect((await asOf('2026-11-05')).dayTypes).toEqual(DAY_TYPES);
+    expect((await asOf('2026-11-10')).dayTypes).toEqual([{ id: 'lift', name: 'Push day' }]);
+    expect((await asOf('2026-10-31')).dayTypes).toEqual([]);
   });
 
   it('pages the change log back from a seq', async () => {

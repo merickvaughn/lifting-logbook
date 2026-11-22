@@ -22,6 +22,10 @@ const row = (name: RegExp) => screen.getByRole('button', { name });
 describe('SupplementsView on a lift day', () => {
   beforeEach(() => render(<SupplementsView stack={STACK} />));
 
+  it('links to the History view', () => {
+    expect(screen.getByRole('link', { name: 'History' })).toHaveAttribute('href', '/supplements/history');
+  });
+
   it('shows the subtitle counts, the switcher and the protein card with the other day type', () => {
     // Flagged: Pre-X, Trans4orm, Potassium, Creatine, Glycine, Ashwagandha.
     expect(screen.getByText('10 active · 6 items have a note worth a look · tap any item for details')).toBeInTheDocument();
