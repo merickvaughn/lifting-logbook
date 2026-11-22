@@ -87,7 +87,7 @@ describe('mapSupplementSheet (Nutrition_2026 › Supplements layout)', () => {
   );
 
   it('maps a row: name, amount and timing into a first dose, purpose, notes, link', () => {
-    const mag = rows[0]!;
+    const mag = rows[0];
     expect(mag).toMatchObject({
       name: 'Magnesium glycinate',
       timing: 'bedtime',
@@ -129,12 +129,12 @@ describe('mapSupplementSheet (Nutrition_2026 › Supplements layout)', () => {
     expect(noDot).toMatchObject({ name: 'Zinc', links: [] });
   });
   it('takes the first recognisable timing phrase and uses the catalog by name or alias', () => {
-    const creatine = rows[4]!;
-    expect(creatine.doses[0]?.slot).toBe('pre');
-    expect(creatine.catalogKey).toBeDefined();
+    const creatine = rows[4];
+    expect(creatine?.doses[0]?.slot).toBe('pre');
+    expect(creatine?.catalogKey).toBeDefined();
     // The catalog has uses for it, so the sheet's Purpose is not copied.
-    expect(creatine.shortNote).toBe('');
-    expect(creatine.longNote).toBe('');
+    expect(creatine?.shortNote).toBe('');
+    expect(creatine?.longNote).toBe('');
   });
   it('puts Purpose in the short note when the item has no catalog entry', () => {
     expect(rows[3]?.catalogKey).toBeUndefined();
