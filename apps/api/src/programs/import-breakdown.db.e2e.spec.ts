@@ -5,6 +5,7 @@
 // restricted lifting_app role) and LIFTING_TC_OWNER_DATABASE_URL (the owner). Seeding, cleanup
 // and the row counts use the owner; every request runs as lifting_app.
 import 'reflect-metadata';
+import { freemem, totalmem } from 'node:os';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -16,7 +17,6 @@ import { AppModule } from '../app.module';
 import { PrismaImportBatchRepository } from '../adapters/prisma/import-batch.repository';
 import { PrismaLiftRecordRepository } from '../adapters/prisma/lift-record.repository';
 import { PrismaMacrocycleRepository } from '../adapters/prisma/macrocycle.repository';
-import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { injectPage } from '../testing/macrocycle-id';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DomainConflictFilter } from './conflict.filter';
@@ -59,10 +59,25 @@ const USERS = [
 // Other import routes allow 30 s (IMPORT_TX_TIMEOUT_MS); this one allows 60 s
 // (IMPORT_REPLACE_TX_TIMEOUT_MS), but an import that replaces nothing, like the row-limit commit
 // and its undo, should still finish well inside 30 s. CI measured the commit at 1.7 s, so the
-// 15 s CI bound (under 10x that) still fails a real slowdown there. A loaded local Windows run
-// took 15.45 s with no code change (#1397), so win32 gets the 30 s import transaction timeout
-// (IMPORT_TX_TIMEOUT_MS) instead, like the other Windows-only allowances in CLAUDE.md → Platform & Environment.
-const ROW_LIMIT_BUDGET_MS = process.platform === 'win32' ? IMPORT_TX_TIMEOUT_MS : 15_000;
+// 15 s CI bound (under 10x that) still fails a real slowdown there.
+const ROW_LIMIT_BUDGET_MS = 15_000;
+// On win32 the timing is logged, not asserted (#1397). With no code change, local Windows runs took
+// 3.3-3.9 s alone, 9.8 s idle, 15.45 s under CPU load and 37.2 s with 2.7 GB of 15.3 GB memory free.
+// A bound that catches what CI's catches would sit below those, and one above them adds nothing:
+// past the route's 60 s transaction timeout the request fails, and the status check catches that.
+// Free memory is logged with the timing as data for any later memory-keyed bound.
+const ASSERT_ROW_LIMIT_BUDGET = process.platform !== 'win32';
+
+function expectWithinRowLimitBudget(what: string, ms: number): void {
+  if (ASSERT_ROW_LIMIT_BUDGET) {
+    expect(ms).toBeLessThan(ROW_LIMIT_BUDGET_MS);
+    return;
+  }
+  const freeGb = (freemem() / 1024 ** 3).toFixed(1);
+  const totalGb = (totalmem() / 1024 ** 3).toFixed(1);
+  const verdict = ms < ROW_LIMIT_BUDGET_MS ? 'within' : 'OVER';
+  console.log(`[#1397] ${what}: ${ms} ms, ${verdict} the ${ROW_LIMIT_BUDGET_MS} ms CI budget (not asserted on win32; ${freeGb} of ${totalGb} GB free)`);
+}
 
 async function cleanup(owner: PrismaClient): Promise<void> {
   const where = { userId: { in: USERS } };
@@ -314,7 +329,7 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json()).toMatchObject({ created: 5_000 });
-      expect(durationMs).toBeLessThan(ROW_LIMIT_BUDGET_MS);
+      expectWithinRowLimitBudget('the commit', durationMs);
       // The first stored import's keys now name macrocycle 2.
       expect((await keysOf(1)).sort()).toEqual(firstKeys(2).sort());
       const macrocycles = await owner.macrocycle.findMany({
@@ -339,7 +354,7 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
       const undoMs = Date.now() - undoStarted;
       console.log(`[#1254] undoing it took ${undoMs} ms`);
       expect(undone.statusCode).toBe(200);
-      expect(undoMs).toBeLessThan(ROW_LIMIT_BUDGET_MS);
+      expectWithinRowLimitBudget('the undo', undoMs);
       expect(await written(USER_ROW_LIMIT)).toEqual({ sets: 20_000, macrocycles: STORED_MACROCYCLES, batches: STORED_MACROCYCLES });
       expect((await keysOf(1)).sort()).toEqual(firstKeys(1).sort());
     },
