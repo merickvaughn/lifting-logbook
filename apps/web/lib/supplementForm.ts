@@ -1,4 +1,4 @@
-import { isWorkoutSlot } from '@lifting-logbook/core';
+import { findOverlaps, isWorkoutSlot, itemIngredients, type Overlap } from '@lifting-logbook/core';
 import type { SupplementItemBody } from '@lifting-logbook/api-client';
 import type { SupplementCatalogEntry, SupplementItem, SupplementSlot, SupplementStatus } from '@lifting-logbook/types';
 import { linkHost, searchFor, type Stack } from './supplementsView';
@@ -70,6 +70,16 @@ export function presetValues(preset: Preset, dayTypeId: string): FormValues {
   return preset === 'workout'
     ? { ...base, doses: [newDose(dayTypeId)] }
     : { ...base, status: preset === 'pending' ? 'pending' : 'active', doses: [{ slot: 'am', amount: '', servings: '1', dayTypes: [] }] };
+}
+
+/**
+ * The form `Replace with…` opens: an Add form whose first dose starts in the replaced item's first
+ * dose slot and day types (the mockup's preset). An item with no dose falls back to the daily preset.
+ */
+export function replaceValues(item: SupplementItem, dayTypeId: string): FormValues {
+  const first = item.doses[0];
+  const base = presetValues(first && isWorkoutSlot(first.slot) ? 'workout' : 'daily', dayTypeId);
+  return first ? { ...base, doses: [{ slot: first.slot, amount: '', servings: '1', dayTypes: [...first.dayTypes] }] } : base;
 }
 
 export function itemValues(item: SupplementItem): FormValues {
@@ -198,3 +208,43 @@ export function toBody(values: FormValues, opts: { item?: SupplementItem; entry?
   }
   return body;
 }
+
+
+/** What the form would add, as a stack item, so the same overlap rule as the API's core can compare it. */
+export function candidateItem(values: FormValues, entry?: SupplementCatalogEntry): SupplementItem {
+  const body = toBody(values, { entry });
+  return {
+    id: '',
+    name: body.name ?? '',
+    keyCompound: '',
+    timing: '',
+    shortNote: '',
+    longNote: '',
+    category: '',
+    typicalRange: '',
+    links: [],
+    status: values.status,
+    unverified: false,
+    ingredients: body.ingredients ?? entry?.ingredients ?? [],
+    doses: (body.doses ?? []).map((d) => ({ ...d, servings: Number.isFinite(d.servings) ? d.servings : 0 })),
+  };
+}
+
+/** Stack items the candidate shares an ingredient with, same-slot ones first (stable otherwise). */
+export const overlapsFor = (candidate: SupplementItem, items: readonly SupplementItem[]): Overlap[] =>
+  findOverlaps(candidate, items).sort((a, b) => Number(b.sameSlot) - Number(a.sameSlot));
+
+const perDay = (item: SupplementItem, key: string): string => {
+  const parts = itemIngredients(item).filter((i) => i.key === key);
+  const total = parts.reduce((n, i) => n + i.amount * item.doses.reduce((m, d) => m + d.servings, 0), 0);
+  return `${Math.round(total * 100) / 100} ${parts[0]?.unit ?? ''}`.trim();
+};
+
+/** `Shares creatine (5 g now; 5 g in this)`: the daily amount of each shared ingredient, in the stack and in the candidate. */
+export const sharesLine = (o: Overlap, candidate: SupplementItem): string =>
+  `Shares ${o.sharedIngredients.join(', ')} (${o.sharedIngredients.map((k) => perDay(o.item, k)).join(', ')} now; ${o.sharedIngredients
+    .map((k) => perDay(candidate, k))
+    .join(', ')} in this)`;
+
+/** How the lifter wants the items a new one replaces dealt with. */
+export type ReplaceHow = 'pending' | 'remove';

@@ -7,6 +7,7 @@ import { removeSupplementItem, setSupplementStatus } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import { SLOT_LABEL, buildView, type RowModel, type Stack } from '@/lib/supplementsView';
 import { CombineDialog, MoveDialog } from './BulkDialogs';
+import { DayTypesDialog } from './DayTypesDialog';
 import SupplementDetail from './SupplementDetail';
 import SupplementForm, { type FormMode } from './SupplementForm';
 import styles from './supplements.module.css';
@@ -106,6 +107,8 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [dialog, setDialog] = useState<'move' | 'combine' | null>(null);
+  const [daysOpen, setDaysOpen] = useState(false);
+  const daysOpener = useRef<HTMLButtonElement>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
   const [writeError, setWriteError] = useState<string | undefined>();
@@ -273,6 +276,7 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
         {view.activeCount} active · {flagged} item{flagged === 1 ? ' has' : 's have'} a note worth a look · tap any item for details
       </p>
 
+      <div className={styles.dayBar}>
       {hasDayTypes && (
         <div role="group" aria-label="Day type" className={styles.switcher}>
           {stack.dayTypes.map((d) => (
@@ -288,6 +292,10 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
           ))}
         </div>
       )}
+        <button ref={daysOpener} type="button" onClick={() => setDaysOpen(true)}>
+          Edit days
+        </button>
+      </div>
 
       {editing && (
         <p className={styles.infoBanner} role="status">
@@ -490,6 +498,22 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
         <CombineDialog rows={selectedRows} onCancel={closeDialog} onDone={() => dialogDone(`Combined ${plural(itemIds.length)} into a mix.`)} />
       )}
 
+      {daysOpen && (
+        <DayTypesDialog
+          stack={stack}
+          onCancel={() => {
+            setDaysOpen(false);
+            daysOpener.current?.focus();
+          }}
+          onDone={(ids) => {
+            setDaysOpen(false);
+            // A day type that was removed can't stay selected.
+            if (!ids.includes(dayTypeId)) setDayTypeId(ids[0] ?? '');
+            daysOpener.current?.focus();
+          }}
+        />
+      )}
+
       {openItem && (
         <SupplementDetail
           stack={stack}
@@ -501,6 +525,7 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
             opener.current?.focus();
           }}
           onEdit={() => openForm({ kind: 'edit', item: openItem }, opener.current)}
+          onReplace={() => openForm({ kind: 'replace', item: openItem }, opener.current)}
         />
       )}
 

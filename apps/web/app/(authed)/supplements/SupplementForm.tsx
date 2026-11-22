@@ -1,31 +1,37 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isWorkoutSlot } from '@lifting-logbook/core';
 import { SUPPLEMENT_SLOTS, SUPPLEMENT_TEXT_MAX } from '@lifting-logbook/types';
 import type { SupplementCatalogEntry, SupplementItem } from '@lifting-logbook/types';
 import { localToday } from '@/lib/calendarDay';
-import { createSupplementItem, fetchSupplementCatalog, removeSupplementItem, updateSupplementItem } from '@/lib/client-api';
+import { createSupplementItem, fetchSupplementCatalog, removeSupplementItem, setSupplementStatus, updateSupplementItem } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import {
   SHORT_NOTE_MAX,
   SLOT_OPTION_LABEL,
   autofill,
+  candidateItem,
   itemValues,
   newDose,
+  overlapsFor,
   presetValues,
+  replaceValues,
+  sharesLine,
   toBody,
   trackName,
   validate,
   type AutofillField,
   type FormValues,
   type Preset,
+  type ReplaceHow,
 } from '@/lib/supplementForm';
 import type { Stack } from '@/lib/supplementsView';
 import styles from './supplements.module.css';
 
-export type FormMode = { kind: 'add'; preset: Preset } | { kind: 'edit'; item: SupplementItem };
+/** `replace` is an Add that starts from `item`'s slot and day types and offers to replace it (#1411). */
+export type FormMode = { kind: 'add'; preset: Preset } | { kind: 'edit'; item: SupplementItem } | { kind: 'replace'; item: SupplementItem };
 
 interface Props {
   stack: Stack;
@@ -63,13 +69,14 @@ const Suggested = ({ show }: { show: boolean }) => (show ? <span className={styl
  */
 export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDismiss }: Props) {
   const editing = mode.kind === 'edit' ? mode.item : undefined;
+  const replacing = mode.kind === 'replace' ? mode.item : undefined;
   const ref = useRef<HTMLDialogElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const amountRefs = useRef<(HTMLInputElement | null)[]>([]);
   const router = useRouter();
   // Values, their SUGGESTED tags and the last lookup are one state, so an autofill is one pure update.
   const [form, setForm] = useState<FormState>(() => ({
-    values: editing ? itemValues(editing) : presetValues(mode.kind === 'add' ? mode.preset : 'daily', dayTypeId),
+    values: editing ? itemValues(editing) : replacing ? replaceValues(replacing, dayTypeId) : presetValues(mode.kind === 'add' ? mode.preset : 'daily', dayTypeId),
     suggested: new Set(),
   }));
   const { values, suggested, lookup } = form;
@@ -111,7 +118,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
       const entry = entries[0];
       if (!entry) return setLookup({ name, filled: 0 });
       setForm((f) => {
-        const result = autofill(f.values, typed.current, entry, mode.kind, stack, dayTypeId);
+        const result = autofill(f.values, typed.current, entry, editing ? 'edit' : 'add', stack, dayTypeId);
         return {
           values: result.values,
           lookup: { name, entry, filled: result.filled.length },
@@ -140,10 +147,28 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
       current = false;
       clearTimeout(timer);
     };
-  }, [name, editingName, mode.kind, stack, dayTypeId]);
+  }, [name, editingName, editing, stack, dayTypeId]);
 
   // The entry matched for the name as it is now; a match for an earlier name is never saved.
   const matched = lookup?.name === name ? lookup.entry : undefined;
+
+  // Replace what you already take? (#1411) The item being replaced is always listed first, ticked.
+  // The rest are active items sharing an ingredient with what's being added; only same-slot ones
+  // it supplies at least as much of start ticked (core's `findOverlaps`). A tick the lifter has
+  // changed is kept in `ticks`; every other row follows the rule as the form changes.
+  const candidate = useMemo(() => candidateItem(values, matched), [values, matched]);
+  const overlaps = useMemo(
+    () => (editing ? [] : overlapsFor(candidate, stack.items).filter((o) => o.item.id !== replacing?.id)),
+    [candidate, stack.items, editing, replacing?.id],
+  );
+  const [ticks, setTicks] = useState<Record<string, boolean>>({});
+  const [how, setHow] = useState<ReplaceHow>('pending');
+  const replaceRows = [
+    ...(replacing ? [{ item: replacing, chosen: true, sameSlot: true, line: 'You chose to replace this', on: ticks[replacing.id] ?? true }] : []),
+    ...overlaps.map((o) => ({ item: o.item, chosen: false, sameSlot: o.sameSlot, line: sharesLine(o, candidate), on: ticks[o.item.id] ?? o.preselect })),
+  ];
+  // The add went through but dealing with the replaced items didn't: the form can't add again.
+  const [added, setAdded] = useState<{ ids: string[]; how: ReplaceHow } | undefined>();
 
   const typedIn = (field: AutofillField) => {
     typed.current.add(field);
@@ -169,15 +194,36 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
     setBusy(true);
     setError(undefined);
     const op = editing ? 'supplements.editItem' : 'supplements.addItem';
+    const ids = replaceRows.filter((r) => r.on).map((r) => r.item.id);
     try {
       const body = toBody(values, { item: editing, entry: matched });
       if (editing) await updateSupplementItem(editing.id, body, localToday());
       else await createSupplementItem(body, localToday());
-      router.refresh();
-      onDismiss();
     } catch (err) {
       logClientError(op, err, editing ? { itemId: editing.id } : undefined);
       setError(`Couldn’t ${editing ? 'save' : 'add'} the supplement. What you entered is still here; try again.`);
+      setBusy(false);
+      return;
+    }
+    router.refresh();
+    if (ids.length === 0) return onDismiss();
+    await replaceThem(ids, how);
+  }
+
+  /** The second step of a replace: the items it replaces go to Pending, or are removed (restorable from History). */
+  async function replaceThem(ids: string[], choice: ReplaceHow) {
+    setBusy(true);
+    setError(undefined);
+    try {
+      if (choice === 'pending') await setSupplementStatus(ids, 'pending', localToday());
+      else for (const id of ids) await removeSupplementItem(id, localToday());
+      router.refresh();
+      onDismiss();
+    } catch (err) {
+      logClientError('supplements.replaceItems', err, { items: ids.length, how: choice });
+      // A remove can fail part-way, so the page re-reads the stack either way.
+      router.refresh();
+      setAdded({ ids, how: choice });
       setBusy(false);
     }
   }
@@ -214,6 +260,23 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
         </button>
       </header>
 
+      {added && (
+        <div className={styles.form}>
+          <p role="alert">
+            Added {values.name.trim()}, but couldn’t {added.how === 'pending' ? 'move' : 'remove'} the items it replaces. Check the page for which
+            are still active; you can try again.
+          </p>
+          <div className={styles.formButtons}>
+            <button type="button" disabled={busy} onClick={() => void replaceThem(added.ids, added.how)}>
+              Try again
+            </button>
+            <button type="button" disabled={busy} onClick={onDismiss}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+      {!added && (
       <form className={styles.form} onSubmit={submit}>
         <label>
           Name
@@ -376,6 +439,32 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
           </button>
         </fieldset>
 
+        {replaceRows.length > 0 && (
+          <fieldset className={styles.replaceGroup}>
+            <legend>Replace what you already take?</legend>
+            {replaceRows.map((r) => (
+              <label key={r.item.id} className={styles.replaceRow}>
+                <input type="checkbox" checked={r.on} onChange={(e) => setTicks((t) => ({ ...t, [r.item.id]: e.target.checked }))} />
+                <span>
+                  <strong>{r.item.name}</strong>
+                  {r.sameSlot && <span className={`${styles.pill} ${styles.pillStrong}`}>SAME SLOT</span>}
+                  <span className={styles.line2}>{r.line}</span>
+                </span>
+              </label>
+            ))}
+            <div className={styles.replaceHow} role="radiogroup" aria-label="What to do with them">
+              <label>
+                <input type="radio" name="replace-how" checked={how === 'pending'} onChange={() => setHow('pending')} /> Move them to Pending{' '}
+                <span className={styles.muted}>(easy to switch back if this product disappears)</span>
+              </label>
+              <label>
+                <input type="radio" name="replace-how" checked={how === 'remove'} onChange={() => setHow('remove')} /> Remove them{' '}
+                <span className={styles.muted}>(restorable from History)</span>
+              </label>
+            </div>
+          </fieldset>
+        )}
+
         {error && <p role="alert">{error}</p>}
         <div className={styles.formButtons}>
           <button type="submit" disabled={busy}>
@@ -391,6 +480,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
           )}
         </div>
       </form>
+      )}
     </dialog>
   );
 }

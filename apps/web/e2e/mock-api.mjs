@@ -1258,6 +1258,16 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // POST /supplements/items/status (#1410, #1411): the listed items' status.
+  if (method === 'POST' && url.pathname === '/supplements/items/status') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const stack = supplementStack();
+    for (const item of stack.items.filter((i) => body.itemIds.includes(i.id))) item.status = body.status;
+    json(res, stack);
+    return;
+  }
+
   // -------------------------------------------------------------------------
   // GET /users/me/settings
   // -------------------------------------------------------------------------

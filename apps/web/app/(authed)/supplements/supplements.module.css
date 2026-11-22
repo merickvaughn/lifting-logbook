@@ -77,3 +77,11 @@
 .bulkBar button { background: none; color: inherit; border: 1px solid currentColor; border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; font: inherit; }
 .bulkBar .removeButton { color: var(--color-error-text); background: var(--color-bg); }
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
+
+/* Replace with… (#1411) */
+.replaceGroup .replaceRow { display: flex; gap: 0.5rem; align-items: flex-start; }
+.replaceRow .line2 { display: block; }
+.replaceHow { display: grid; gap: 0.25rem; border-top: 1px solid var(--color-border); padding-top: 0.5rem; }
+.dayRow { display: grid; grid-template-columns: 2fr 1fr auto; gap: 0.5rem; align-items: end; }
+.dayBar { display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap; margin-bottom: 1rem; }
+.dayBar .switcher { margin-bottom: 0; }

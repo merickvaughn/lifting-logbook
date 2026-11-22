@@ -15,7 +15,7 @@ jest.mock('@/lib/calendarDay', () => ({ localToday: () => '2026-11-21' }));
 import { updateSupplementItem } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 
-function open(id: string, stack: Stack = STACK, onClose = jest.fn(), onEdit = jest.fn()) {
+function open(id: string, stack: Stack = STACK, onClose = jest.fn(), onEdit = jest.fn(), onReplace = jest.fn()) {
   const item = stack.items.find((i) => i.id === id) as SupplementItem;
   render(
     <SupplementDetail
@@ -25,9 +25,10 @@ function open(id: string, stack: Stack = STACK, onClose = jest.fn(), onEdit = je
       notes={buildView(stack, 'lift').notesByItem.get(id) ?? []}
       onClose={onClose}
       onEdit={onEdit}
+      onReplace={onReplace}
     />,
   );
-  return { dialog: screen.getByRole('dialog', { name: item.name }), onClose, onEdit };
+  return { dialog: screen.getByRole('dialog', { name: item.name }), onClose, onEdit, onReplace };
 }
 
 const withItem = (id: string, over: Partial<SupplementItem>): Stack => ({
@@ -118,7 +119,7 @@ describe('SupplementDetail with no day types', () => {
     const stack: Stack = { ...STACK, dayTypes: [] };
     const item = stack.items.find((i) => i.id === 'trans4orm') as SupplementItem;
     const withB6 = { ...stack, items: [...stack.items, { ...item, id: 'b6', name: 'B6 tab', ingredients: [{ key: 'vitamin-b6', amount: 2, unit: 'mg' as const }] }] };
-    render(<SupplementDetail stack={withB6} item={item} dayTypeId="" notes={[]} onClose={jest.fn()} onEdit={jest.fn()} />);
+    render(<SupplementDetail stack={withB6} item={item} dayTypeId="" notes={[]} onClose={jest.fn()} onEdit={jest.fn()} onReplace={jest.fn()} />);
     const dialog = screen.getByRole('dialog', { name: 'EVL Trans4orm' });
     expect(within(dialog).getByRole('heading', { name: 'Overlaps · Every day' })).toBeInTheDocument();
     expect(dialog).toHaveTextContent('Day total = everything you take in a day.');
@@ -163,6 +164,12 @@ describe('SupplementDetail where to buy', () => {
     const { dialog, onEdit } = open('glycine');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Edit' }));
     expect(onEdit).toHaveBeenCalled();
+  });
+
+  it('Replace with… asks the page to open the form from this item', async () => {
+    const { dialog, onReplace } = open('glycine');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Replace with…' }));
+    expect(onReplace).toHaveBeenCalled();
   });
 
   it('never makes a link of a non-http address', () => {

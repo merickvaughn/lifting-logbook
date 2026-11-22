@@ -8,6 +8,8 @@ jest.mock('@/lib/client-api', () => ({
   updateSupplementItem: jest.fn(),
   createSupplementItem: jest.fn(),
   removeSupplementItem: jest.fn(),
+  setSupplementStatus: jest.fn(),
+  updateSupplementSettings: jest.fn(),
   fetchSupplementCatalog: jest.fn().mockResolvedValue([]),
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
@@ -207,5 +209,24 @@ describe('SupplementsView on a rest day', () => {
     expect(screen.queryByRole('button', { name: /Nutricost Pre-X/ })).not.toBeInTheDocument();
     expect(row(/EVL Trans4orm/)).not.toHaveTextContent('caffeine from supplements');
     expect(row(/Ashwagandha/)).toHaveTextContent('Can feel activating at night');
+  });
+});
+
+describe('Replace with… and Edit days', () => {
+  it('Replace with… in the detail panel opens the Add form listing that item', async () => {
+    render(<SupplementsView stack={STACK} />);
+    await userEvent.click(row(/Nutricost Pre-X/));
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'Nutricost Pre-X' })).getByRole('button', { name: 'Replace with…' }));
+    const form = screen.getByRole('dialog', { name: 'Add supplement' });
+    expect(within(form).getByRole('group', { name: 'Replace what you already take?' })).toHaveTextContent('Nutricost Pre-XSAME SLOTYou chose to replace this');
+  });
+
+  it('Edit days opens the Day types dialog and Cancel returns focus to the button', async () => {
+    render(<SupplementsView stack={STACK} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit days' }));
+    expect(screen.getByRole('dialog', { name: 'Day types' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Day types' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit days' })).toHaveFocus();
   });
 });
