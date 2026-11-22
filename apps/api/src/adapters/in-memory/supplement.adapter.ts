@@ -45,7 +45,9 @@ export class InMemorySupplementRepository implements ISupplementRepository {
 
   async lastRemoved(itemId: string): Promise<SupplementItem | undefined> {
     const removed = this.log.filter((c) => c.type === 'removed' && c.item.id === itemId).pop();
-    return removed?.type === 'removed' ? structuredClone(removed.item) : undefined;
+    if (removed?.type !== 'removed') return undefined;
+    const undone = this.log.some((c) => c.seq > removed.seq && c.type === 'restored' && c.itemId === itemId);
+    return undone ? undefined : structuredClone(removed.item);
   }
 
   async write(plan: SupplementWritePlan): Promise<SupplementState> {

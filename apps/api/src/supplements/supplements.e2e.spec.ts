@@ -413,6 +413,12 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     await ok('POST', `/supplements/items/${mix.id}/restore?today=${TODAY}`);
     const split = await ok('POST', `/supplements/mixes/${mix.id}/split?today=${TODAY}`);
     expect(split.items).toEqual([a, b]);
+
+    // The split undid the mix's removal: restoring the mix again would bring its parts back a
+    // second time, beside the items the split returned.
+    const again = await inject('POST', `/supplements/items/${mix.id}/restore?today=${TODAY}`);
+    expect(again.statusCode).toBe(404);
+    expect((await ok('GET', '/supplements')).items).toEqual([a, b]);
   });
 
   it('bulk moves doses from one slot to another', async () => {

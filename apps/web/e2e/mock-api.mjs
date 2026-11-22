@@ -1213,30 +1213,38 @@ const server = createServer(async (req, res) => {
     log.push({ seq: log.length + 1, date: date ?? '2026-11-21', type, ...body });
   }
   if (method === 'GET' && url.pathname === '/supplements/changes') {
-    json(res, supplementChanges());
+    // The latest `limit` changes before `beforeSeq`, oldest first, as the API pages them.
+    const beforeSeq = Number(url.searchParams.get('beforeSeq') ?? Infinity);
+    const limit = Number(url.searchParams.get('limit') ?? 200);
+    const page = supplementChanges().filter((c) => c.seq < beforeSeq);
+    json(res, structuredClone(page.slice(Math.max(0, page.length - limit))));
     return;
   }
   const asOfPath = url.pathname.match(/^\/supplements\/as-of\/(\d{4}-\d{2}-\d{2})$/);
   if (method === 'GET' && asOfPath) {
     const first = supplementChanges()[0].date;
-    json(res, {
+    json(res, structuredClone({
       items: asOfPath[1] < first ? [] : supplementStack().items,
       dayTypes: supplementStack().dayTypes,
       firstChangeDate: first,
       anomalies: [],
-    });
+    }));
     return;
   }
   const restorePath = url.pathname.match(/^\/supplements\/items\/([^/]+)\/restore$/);
   if (method === 'POST' && restorePath) {
     const id = decodeURIComponent(restorePath[1]);
+    const stack = supplementStack();
+    if (stack.items.some((i) => i.id === id)) {
+      json(res, { statusCode: 409, message: `Supplement item ${id} is in the stack` }, 409);
+      return;
+    }
     const removed = supplementChanges().filter((c) => c.type === 'removed' && c.item.id === id).pop();
     if (!removed) {
       json(res, { statusCode: 404, message: `No removed supplement item ${id}` }, 404);
       return;
     }
-    const stack = supplementStack();
-    stack.items.push(removed.item);
+    stack.items.push(structuredClone(removed.item));
     supplementLog('restored', { itemId: id }, url.searchParams.get('today'));
     json(res, stack);
     return;

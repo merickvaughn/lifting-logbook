@@ -117,6 +117,4 @@ export const {
   fetchNonCycleRecords,
   fetchNonCycleWorkout,
   fetchSupplements,
-  fetchSupplementChanges,
-  fetchSupplementsAsOf,
 } = createApiClient({ baseUrl: API_URL, getAuthHeaders });

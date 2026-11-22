@@ -120,9 +120,10 @@ export const {
   createSupplementMix,
   // Replace with… and Edit days (#1411).
   updateSupplementSettings,
-  // The History view's Restore (#1378).
+  // The History dialog reads the log and the stack as of a date, and restores (#1378).
   restoreSupplementItem,
   fetchSupplementChanges,
+  fetchSupplementsAsOf,
   // Read, not just a write — but the 409 self-heal path needs to refetch the
   // live custom-lift list client-side (a stale/absent local copy otherwise
   // dead-ends the user with no way to recover short of a page reload; #911).

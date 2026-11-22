@@ -67,7 +67,6 @@
 
 /* Edit stack mode (#1410) */
 .toolbar { display: flex; justify-content: flex-end; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; }
-.historyLink { color: var(--color-accent); }
 .primary { background: var(--color-accent); color: var(--color-on-accent); }
 .rowControls { display: flex; align-items: center; gap: 0.5rem; padding-right: 0.25rem; }
 .startButton { background: var(--color-accent); color: var(--color-on-accent); border: 0; border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; font: inherit; }
@@ -87,3 +86,11 @@
 .dayBar { display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap; margin-bottom: 1rem; }
 .dayBar .switcher { margin-bottom: 0; }
 .removeDay:hover, .removeDay:focus-visible { color: var(--color-error-text); }
+
+/* Supplement history (#1378) */
+.historyField { display: grid; gap: 0.25rem; justify-items: start; font-size: 0.85rem; margin-bottom: 0.5rem; }
+.historyField input { font: inherit; padding: 0.35rem 0.5rem; }
+.historyItems { margin: 0.25rem 0; padding-left: 1.25rem; }
+.change { display: flex; align-items: baseline; gap: 0.75rem; padding: 0.4rem 0; border-top: 1px solid var(--color-border); }
+.changeDate { flex: 0 0 5.5rem; font-size: 0.85rem; color: var(--color-text-muted); }
+.changeText { flex: 1; }

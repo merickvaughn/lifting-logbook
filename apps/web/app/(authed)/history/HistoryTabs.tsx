@@ -16,7 +16,7 @@ import type {
 import { undoImport } from '@/lib/client-api';
 import { localToday } from '@/lib/calendarDay';
 import { logClientError } from '@/lib/log-client-error';
-import { supplementsOnHref } from '@/lib/supplementHistory';
+import { formatDay, supplementsOnHref } from '@/lib/supplementHistory';
 import { STATUS_LABEL } from '@/lib/macrocycleStatus';
 import type { EnrichedRecord } from './page';
 import styles from './history.module.css';
@@ -423,7 +423,7 @@ function LiftHistoryTab({ records, unit }: { records: EnrichedRecord[]; unit: We
 function SupplementsLink({ date }: { date: string }) {
   const href = supplementsOnHref(date);
   return href ? (
-    <Link href={href} aria-label={`Supplements on ${date}`} className={styles.supplementsLink}>
+    <Link href={href} aria-label={`Supplements on ${formatDay(date)}`} className={styles.supplementsLink}>
       Supplements
     </Link>
   ) : null;

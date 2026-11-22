@@ -116,12 +116,15 @@ function proteinGrams(item: SupplementItem, servings: number): number {
 
 type Dose = SupplementItem['doses'][number];
 
-const dayTypeNames = (dose: Dose, dayTypes: readonly SupplementDayType[]): string[] =>
-  dose.dayTypes.map((id) => dayTypes.find((d) => d.id === id)?.name ?? id);
+const dayTypeNames = (dose: Dose, dayTypes: readonly SupplementDayType[], missing?: string): string[] =>
+  dose.dayTypes.map((id) => dayTypes.find((d) => d.id === id)?.name ?? missing ?? id);
 
-/** `Pre-workout (Lift day)`, `Morning (Rest day)` for a daily dose limited to a day type, or `Morning`. */
-export function placementText(dose: Dose, dayTypes: readonly SupplementDayType[]): string {
-  const names = dayTypeNames(dose, dayTypes);
+/**
+ * `Pre-workout (Lift day)`, `Morning (Rest day)` for a daily dose limited to a day type, or
+ * `Morning`. A day type `dayTypes` lacks is named `missing`, or by its id.
+ */
+export function placementText(dose: Dose, dayTypes: readonly SupplementDayType[], missing?: string): string {
+  const names = dayTypeNames(dose, dayTypes, missing);
   return names.length > 0 ? `${SLOT_LABEL[dose.slot]} (${names.join(', ')})` : SLOT_LABEL[dose.slot];
 }
 
