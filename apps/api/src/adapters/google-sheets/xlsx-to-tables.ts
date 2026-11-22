@@ -7,6 +7,8 @@ export interface WorkbookTable {
   rows: string[][];
   /** Set when the tab was cut short at a cap, so the caller can mark it not importable. */
   overflow?: 'rows' | 'columns';
+  /** Each cell's hyperlink, '' when none, shaped like `rows`. Present only when the tab has any (#1379). */
+  links?: string[][];
 }
 
 export type XlsxReadErrorCode = 'too-large' | 'malformed';
@@ -69,7 +71,7 @@ export function xlsxToTables(buffer: Uint8Array, { maxRows }: { maxRows: number 
   try {
     files = unzipSync(buffer, {
       filter: (file) => {
-        if (!/^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/[^/]+\.xml)$/.test(file.name)) {
+        if (!/^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/(_rels\/)?[^/]+\.xml(\.rels)?)$/.test(file.name)) {
           return false;
         }
         totalBytes += file.originalSize;
@@ -119,7 +121,10 @@ export function xlsxToTables(buffer: Uint8Array, { maxRows }: { maxRows: number 
       const name = sheetEl.getAttribute('name') ?? '';
       const path = targets.get(sheetEl.getAttributeNS(REL_NS, 'id') ?? '');
       const sheet = path ? text(path) : null;
-      return sheet ? { name, ...readRows(sheet, { sharedStrings, dateStyles, date1904, maxRows }) } : { name, rows: [] };
+      if (!sheet) return { name, rows: [] };
+      const read = readRows(sheet, { sharedStrings, dateStyles, date1904, maxRows });
+      const links = readLinks(sheet, text(path?.replace(/([^/]+)$/, '_rels/$1.rels') ?? ''), read.sourceRows, read.rows);
+      return { name, rows: read.rows, ...(read.overflow ? { overflow: read.overflow } : {}), ...(links ? { links } : {}) };
     });
 }
 
@@ -219,8 +224,9 @@ function decodeXml(source: string): string {
 function readRows(
   sheet: string,
   ctx: { sharedStrings: string[]; dateStyles: Set<number>; date1904: boolean; maxRows: number },
-): Pick<WorkbookTable, 'rows' | 'overflow'> {
+): Pick<WorkbookTable, 'rows' | 'overflow'> & { sourceRows: number[] } {
   const rows: string[][] = [];
+  const sourceRows: number[] = [];
   let overflow: WorkbookTable['overflow'];
   rowLoop: for (const row of scan(sheet, 'row')) {
     const cells: string[] = [];
@@ -244,12 +250,40 @@ function readRows(
       break;
     }
     rows.push(Array.from(cells, (v) => v ?? ''));
+    sourceRows.push(Number(attributes(row.attrs).get('r')) || rows.length);
   }
 
   // The rows read before a cap still go back, so the tab can be classified and named.
   const width = Math.max(0, ...rows.map((row) => row.length));
   const padded = rows.map((row) => Array.from({ length: width }, (_, i) => row[i] ?? ''));
-  return overflow ? { rows: padded, overflow } : { rows: padded };
+  return overflow ? { rows: padded, overflow, sourceRows } : { rows: padded, sourceRows };
+}
+
+/**
+ * The hyperlink of each cell, from the sheet's `<hyperlink ref=… r:id=…>` elements and the targets
+ * in its relationships part, aligned to the rows `readRows` kept. Undefined when there are none.
+ */
+function readLinks(sheet: string, relsSource: string | null, sourceRows: number[], rows: string[][]): string[][] | undefined {
+  if (!relsSource || !sheet.includes('hyperlink')) return undefined;
+  const targets = new Map<string, string>();
+  for (const rel of scan(relsSource, 'Relationship')) {
+    const a = attributes(rel.attrs);
+    if (a.get('TargetMode') === 'External') targets.set(a.get('Id') ?? '', a.get('Target') ?? '');
+  }
+  const rowIndex = new Map(sourceRows.map((r, i) => [r, i]));
+  const links = rows.map((r) => r.map(() => ''));
+  let any = false;
+  for (const h of scan(sheet, 'hyperlink')) {
+    const a = attributes(h.attrs);
+    const ref = /^([A-Z]+)(\d+)$/.exec(a.get('ref') ?? '');
+    const url = targets.get(a.get('r:id') ?? '');
+    const row = ref ? rowIndex.get(Number(ref[2])) : undefined;
+    const rowLinks = row === undefined ? undefined : links[row];
+    if (!ref || !url || !rowLinks) continue;
+    rowLinks[columnIndex(`${ref[1]}1`)] = url;
+    any = true;
+  }
+  return any ? links : undefined;
 }
 
 function cellValue(

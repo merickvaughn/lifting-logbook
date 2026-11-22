@@ -76,7 +76,9 @@ import type {
   SupplementCreatedResponse,
   SupplementDayType,
   SupplementDose,
+  SupplementImportBody,
   SupplementItemDetails,
+  SupplementSheetResponse,
   SupplementSlot,
   SupplementStackResponse,
   SupplementStatus,
@@ -850,6 +852,24 @@ export function createApiClient(config: ApiClientConfig) {
     /** The lifter's stack, day types and caffeine cutoff. */
     fetchSupplements(): Promise<SupplementStackResponse> {
       return request('/supplements', { cache: 'no-store' });
+    },
+    /** Reads a link-shared Google Sheet for the supplement import: each tab's rows and hyperlinks (#1379). */
+    fetchSupplementSheet(url: string): Promise<SupplementSheetResponse> {
+      return request('/supplements/import/google-sheet', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ url }),
+        cache: 'no-store',
+      });
+    },
+    /** Saves the reviewed rows as items in one write, each logged as "Imported from <source>" (#1379). */
+    importSupplements(body: SupplementImportBody, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/import?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
     },
     /** Catalog entries whose name or alias contains `q`, for autofill (#1409). */
     fetchSupplementCatalog(q: string): Promise<SupplementCatalogEntry[]> {

@@ -168,6 +168,16 @@ describe('HistoryDialog', () => {
     expect(document.body.textContent).not.toContain('ghost-id');
   });
 
+  it('shows an import’s note under its row, and none on a plain addition', async () => {
+    changes.mockResolvedValue([
+      { seq: 1, date: '2026-11-18', type: 'added', item: glycine, note: 'Imported from Supplements' },
+      { seq: 2, date: '2026-11-19', type: 'added', item: creatine },
+    ]);
+    setup();
+    expect(await screen.findByText('Imported from Supplements')).toBeInTheDocument();
+    expect(screen.getAllByText(/^Imported from/)).toHaveLength(1);
+  });
+
   it('offers Restore on a removal it can undo, and none for an item folded into a mix or in the stack', async () => {
     setup();
     expect(await screen.findByRole('button', { name: 'Restore Glycine' })).toBeInTheDocument();

@@ -5,14 +5,19 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Inject,
   Logger,
   NotFoundException,
   Param,
   Patch,
+  PayloadTooLargeException,
   Post,
   Put,
   Query,
+  UnprocessableEntityException,
+  BadGatewayException,
 } from '@nestjs/common';
 import {
   DEFAULT_CAFFEINE_CUTOFF,
@@ -20,6 +25,7 @@ import {
   applyChange,
   isSameData,
   isWorkoutSlot,
+  parseGoogleSheetUrl,
   itemFromCatalog,
   searchSupplements,
   stackAsOf,
@@ -34,6 +40,7 @@ import {
   SupplementCreatedResponse,
   SupplementItem,
   SupplementItemDetails,
+  SupplementSheetResponse,
   SupplementStackResponse,
 } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -42,14 +49,19 @@ import { SupplementNotRemovedError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
 import { ISupplementRepository, SupplementState } from '../ports/ISupplementRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { SkipRlsTransaction } from '../adapters/prisma/rls-context';
+import { GoogleSheetFetchError, downloadGoogleSheetXlsx } from '../adapters/google-sheets/google-sheet-export.client';
+import { XlsxReadError, xlsxToTables } from '../adapters/google-sheets/xlsx-to-tables';
 import { parseIsoDateParam, parseWriteToday } from '../iso-date-param';
 import {
   CreateMixDto,
   CreateSupplementItemDto,
+  ImportSupplementsDto,
   MoveDosesDto,
   RemoveItemsDto,
   SetStatusDto,
   SupplementSettingsDto,
+  SupplementSheetDto,
   UpdateSupplementItemDto,
 } from './supplements.dto';
 
@@ -216,6 +228,82 @@ export class SupplementsController {
       return [{ type: 'added', item }];
     });
     return { ...view(state), id };
+  }
+
+  /**
+   * Reads a shared Google Sheet for the supplement import (#1379): every tab as rows plus each
+   * cell's hyperlink. Reuses ADR-040's client; counts are logged, never cell contents or the URL.
+   * `@SkipRlsTransaction()` so no connection is held during the Google download.
+   */
+  @Post('import/google-sheet')
+  @HttpCode(HttpStatus.OK)
+  @SkipRlsTransaction()
+  async fetchSheet(@Body() dto: SupplementSheetDto): Promise<SupplementSheetResponse> {
+    const parsed = parseGoogleSheetUrl(dto.url);
+    if (!parsed.ok) throw new BadRequestException(parsed.message);
+    let buffer: Buffer;
+    try {
+      buffer = await downloadGoogleSheetXlsx(parsed.spreadsheetId);
+    } catch (err) {
+      if (!(err instanceof GoogleSheetFetchError)) throw err;
+      this.logger.warn({ code: err.code }, 'Supplement sheet fetch failed (#1379)');
+      if (err.code === 'not-shared') throw new UnprocessableEntityException(err.message);
+      if (err.code === 'not-found') throw new NotFoundException(err.message);
+      if (err.code === 'too-large') throw new PayloadTooLargeException(err.message);
+      throw new BadGatewayException(err.message);
+    }
+    try {
+      const tabs = xlsxToTables(buffer, { maxRows: 501 })
+        .filter((t) => t.rows.length > 0 && t.overflow === undefined)
+        .map((t) => ({ name: t.name, rows: t.rows, links: t.links ?? t.rows.map((r) => r.map(() => '')) }));
+      this.logger.log({ tabs: tabs.length, rows: tabs.reduce((n, t) => n + t.rows.length, 0) }, 'Supplement sheet read (#1379)');
+      return { tabs };
+    } catch (err) {
+      if (!(err instanceof XlsxReadError)) throw err;
+      if (err.code === 'too-large') throw new PayloadTooLargeException(err.message);
+      throw new BadGatewayException('Google Sheets returned a workbook that could not be read.');
+    }
+  }
+
+  /**
+   * Imports the reviewed rows in one write: one `added` change per item, noted
+   * "Imported from <source>", so History starts at the import and the import is all or nothing
+   * (Fowler, Event Sourcing, https://martinfowler.com/eaaDev/EventSourcing.html). A row with a
+   * catalog key takes the entry's reference content (`itemFromCatalog`). A workout-slot dose
+   * takes every day type there is, and is dropped when there are none (the timing text stays).
+   * Counts are logged, never contents.
+   */
+  @Post('import')
+  async importItems(
+    @Body() dto: ImportSupplementsDto,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementStackResponse> {
+    const state = await this.write(user, today, dto, (state, body) => {
+      const allDayTypes = state.dayTypes.map((d) => d.id);
+      return body.rows.map((row): SupplementChangeBody => {
+        const entry = row.catalogKey === undefined ? undefined : supplementByKey(row.catalogKey);
+        if (row.catalogKey !== undefined && !entry) throw new BadRequestException(`No catalog entry ${row.catalogKey}`);
+        const typed = {
+          name: row.name,
+          ...(row.timing === '' ? {} : { timing: row.timing }),
+          shortNote: row.shortNote,
+          longNote: row.longNote,
+          links: row.links,
+        };
+        const fields = entry
+          ? itemFromCatalog(entry, typed)
+          : { keyCompound: '', category: '', typicalRange: '', ingredients: [], timing: '', ...typed };
+        const doses = row.doses.flatMap((d) => {
+          if (!isWorkoutSlot(d.slot) || d.dayTypes.length > 0) return [d];
+          return allDayTypes.length > 0 ? [{ ...d, dayTypes: allDayTypes }] : [];
+        });
+        const item: SupplementItem = { id: randomUUID(), ...fields, status: row.status, unverified: false, doses };
+        return { type: 'added', item, note: `Imported from ${body.source}` };
+      });
+    });
+    this.logger.log({ imported: dto.rows.length, pending: dto.rows.filter((r) => r.status === 'pending').length }, 'Supplements imported (#1379)');
+    return view(state);
   }
 
   /**

@@ -242,3 +242,30 @@ describe('serialToDate', () => {
     expect(serialToDate(0, true)).toBe('1/1/1904');
   });
 });
+
+describe('xlsxToTables hyperlinks (#1379)', () => {
+  it('reads each cell hyperlink, aligned to the rows kept after empty rows are dropped', () => {
+    const [table] = read(
+      buildXlsx([
+        {
+          name: 'Supplements',
+          rows: [['Compound', 'Amount'], [null, null], ['Creatine', '5g']],
+          links: { A3: 'https://www.amazon.com/gp/product/B000GZSJEM/ref=x?th=1' },
+        },
+      ]),
+    );
+    expect(table?.rows).toEqual([
+      ['Compound', 'Amount'],
+      ['Creatine', '5g'],
+    ]);
+    expect(table?.links).toEqual([
+      ['', ''],
+      ['https://www.amazon.com/gp/product/B000GZSJEM/ref=x?th=1', ''],
+    ]);
+  });
+
+  it('leaves links off a tab with none', () => {
+    const [table] = read(buildXlsx([{ name: 'A', rows: [['x']] }]));
+    expect(table).not.toHaveProperty('links');
+  });
+});

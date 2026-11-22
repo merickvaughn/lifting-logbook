@@ -17,6 +17,8 @@ export interface FixtureSheet {
   name: string;
   rows: FixtureCell[][];
   state?: 'hidden' | 'veryHidden';
+  /** Hyperlinks by cell reference, e.g. `{ A2: 'https://…' }`. */
+  links?: Record<string, string>;
 }
 
 export interface FixtureOptions {
@@ -49,6 +51,7 @@ export function buildXlsx(sheets: FixtureSheet[], options: FixtureOptions = {}):
 
   const files: Record<string, Uint8Array> = {};
   sheets.forEach((sheet, si) => {
+    const links = Object.entries(sheet.links ?? {});
     const rows = sheet.rows
       .map((row, ri) => {
         const cells = row
@@ -66,8 +69,13 @@ export function buildXlsx(sheets: FixtureSheet[], options: FixtureOptions = {}):
       })
       .join('');
     files[`xl/worksheets/sheet${si + 1}.xml`] = strToU8(
-      `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`,
+      `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData>${rows}</sheetData>${links.length ? `<hyperlinks>${links.map(([ref], i) => `<hyperlink ref="${ref}" r:id="rId${i + 1}"/>`).join('')}</hyperlinks>` : ''}</worksheet>`,
     );
+    if (links.length) {
+      files[`xl/worksheets/_rels/sheet${si + 1}.xml.rels`] = strToU8(
+        `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${links.map(([, url], i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${esc(url)}" TargetMode="External"/>`).join('')}</Relationships>`,
+      );
+    }
   });
 
   files['xl/workbook.xml'] = strToU8(

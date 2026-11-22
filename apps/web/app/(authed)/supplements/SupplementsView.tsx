@@ -9,6 +9,7 @@ import { SLOT_LABEL, buildView, type RowModel, type Stack } from '@/lib/suppleme
 import { CombineDialog, MoveDialog } from './BulkDialogs';
 import { DayTypesDialog, type DaySettings } from './DayTypesDialog';
 import HistoryDialog from './HistoryDialog';
+import ImportDialog from './ImportDialog';
 import SupplementDetail from './SupplementDetail';
 import SupplementForm, { type FormMode } from './SupplementForm';
 import styles from './supplements.module.css';
@@ -114,6 +115,7 @@ export default function SupplementsView({ stack, historyDate }: { stack: Stack; 
   const [daysOpen, setDaysOpen] = useState(false);
   const daysOpener = useRef<HTMLButtonElement>(null);
   const [historyOpen, setHistoryOpen] = useState(historyDate !== undefined);
+  const [importOpen, setImportOpen] = useState(false);
   const historyOpener = useRef<HTMLButtonElement>(null);
   // The day types just saved, until the refresh brings a stack that has them: reopening Edit days
   // before then must start from what was saved, or a second Save would write the old ones back.
@@ -300,6 +302,9 @@ export default function SupplementsView({ stack, historyDate }: { stack: Stack; 
         )}
         <button ref={daysOpener} type="button" onClick={() => setDaysOpen(true)}>
           Edit days
+        </button>
+        <button type="button" onClick={() => setImportOpen(true)}>
+          Import from Google Sheets
         </button>
       </div>
 
@@ -523,6 +528,7 @@ export default function SupplementsView({ stack, historyDate }: { stack: Stack; 
         />
       )}
 
+      {importOpen && <ImportDialog onClose={() => setImportOpen(false)} />}
       {historyOpen && (
         <HistoryDialog
           stack={stack}

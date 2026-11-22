@@ -656,4 +656,56 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
       expect(item).not.toHaveProperty('reference');
     });
   });
+
+  describe('POST /supplements/import (#1379)', () => {
+    const row = (name: string, extra: Record<string, unknown> = {}) => ({
+      name,
+      timing: '',
+      shortNote: '',
+      longNote: '',
+      links: [],
+      doses: [],
+      status: 'active',
+      ...extra,
+    });
+
+    it('saves every item in one write, one noted added change each, and History starts there', async () => {
+      const { ok, setDayTypes, get, changes } = newUser();
+      await setDayTypes();
+      const stack = await ok('POST', `/supplements/import?today=${TODAY}`, {
+        source: 'Supplements',
+        rows: [
+          row('Creatine', { catalogKey: 'creatine-monohydrate', timing: 'preworkout', doses: [{ slot: 'pre', amount: '3-5g', servings: 1, dayTypes: [] }] }),
+          row('Probiotic', { status: 'pending', links: [{ label: '', url: 'https://www.amazon.com/dp/B000GZSJEM' }] }),
+        ],
+      });
+      expect(stack.items.map((i) => [i.name, i.status])).toEqual([
+        ['Creatine', 'active'],
+        ['Probiotic', 'pending'],
+      ]);
+      // The pre-workout dose took the day types there are.
+      expect(stack.items[0]?.doses[0]?.dayTypes).toEqual(['lift', 'rest']);
+      expect(stack.items[0]?.catalogKey).toBe('creatine-monohydrate');
+      const added = (await changes()).filter((c) => c.type === 'added');
+      expect(added.map((c) => ('note' in c ? c.note : undefined))).toEqual(['Imported from Supplements', 'Imported from Supplements']);
+      expect((await get()).items).toHaveLength(2);
+    });
+
+    it('drops a workout-slot dose when there are no day types, keeping the timing text', async () => {
+      const { ok } = newUser();
+      const stack = await ok('POST', `/supplements/import?today=${TODAY}`, {
+        source: 'S',
+        rows: [row('Creatine', { timing: 'preworkout', doses: [{ slot: 'pre', amount: '', servings: 1, dayTypes: [] }] })],
+      });
+      expect(stack.items[0]).toMatchObject({ timing: 'preworkout', doses: [] });
+    });
+
+    it('is all or nothing: an unknown catalog key imports no item', async () => {
+      const { inject, get, changes } = newUser();
+      const res = await inject('POST', `/supplements/import?today=${TODAY}`, { source: 'S', rows: [row('A'), row('B', { catalogKey: 'nope' })] });
+      expect(res.statusCode).toBe(400);
+      expect((await get()).items).toEqual([]);
+      expect(await changes()).toEqual([]);
+    });
+  });
 });

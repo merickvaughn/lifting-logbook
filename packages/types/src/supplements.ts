@@ -117,7 +117,8 @@ export type SupplementItemDetails = Pick<
  * appended, and orders changes made on the same date.
  */
 export type SupplementChange = { date: string; seq: number } & (
-  | { type: 'added'; item: SupplementItem }
+  /** `note` says where the item came from, e.g. "Imported from Supplements" (#1379); replay ignores it. */
+  | { type: 'added'; item: SupplementItem; note?: string }
   | { type: 'edited'; itemId: string; changes: Partial<SupplementItemDetails> }
   | { type: 'moved'; itemId: string; doses: SupplementDose[] }
   | { type: 'started'; itemId: string }
@@ -233,3 +234,35 @@ export const SUPPLEMENT_TEXT_MAX = { name: 200, text: 2000, linkLabel: 60 } as c
 export const SUPPLEMENT_STALE_CODE = 'supplement-stale';
 /** The 409 code for restoring an item that isn't removed, or is folded into a mix. */
 export const SUPPLEMENT_NOT_REMOVED_CODE = 'supplement-not-removed';
+
+/** One tab of a shared Google Sheet, for the supplement import (#1379). */
+export interface SupplementSheetTab {
+  name: string;
+  /** The first row is the header. */
+  rows: string[][];
+  /** Hyperlink of each cell, '' when none; the same shape as `rows`. */
+  links: string[][];
+}
+
+/** `POST /supplements/import/google-sheet`. */
+export interface SupplementSheetResponse {
+  tabs: SupplementSheetTab[];
+}
+
+/** One reviewed row of `POST /supplements/import`. */
+export interface SupplementImportRowBody {
+  name: string;
+  catalogKey?: string;
+  timing: string;
+  shortNote: string;
+  longNote: string;
+  links: SupplementLink[];
+  doses: SupplementDose[];
+  status: SupplementStatus;
+}
+
+export interface SupplementImportBody {
+  /** Names the sheet in each item's `added` change: "Imported from <source>". */
+  source: string;
+  rows: SupplementImportRowBody[];
+}
