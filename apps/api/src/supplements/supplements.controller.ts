@@ -52,7 +52,7 @@ import {
   UpdateSupplementItemDto,
 } from './supplements.dto';
 
-const DETAIL_KEYS = ['name', 'keyCompound', 'timing', 'shortNote', 'longNote', 'links', 'ingredients'] as const;
+const DETAIL_KEYS = ['name', 'keyCompound', 'timing', 'shortNote', 'longNote', 'links', 'ingredients', 'category', 'typicalRange'] as const;
 
 /** `GET /changes` page size: the default, and the most one request may ask for. */
 const CHANGES_PAGE = 200;
@@ -178,7 +178,8 @@ export class SupplementsController {
   }
 
   /**
-   * Creates an item. With `catalogKey`, a field left blank takes the catalog entry's value, and
+   * Creates an item. With `catalogKey`, a field left out takes the catalog entry's value (one sent
+   * blank is kept), and
    * the entry's reference content is copied onto the item (`itemFromCatalog`); an unknown key is a 400.
    */
   @Post('items')
@@ -200,6 +201,8 @@ export class SupplementsController {
             shortNote: body.shortNote ?? '',
             longNote: body.longNote ?? '',
             links: body.links ?? [],
+            category: body.category ?? '',
+            typicalRange: body.typicalRange ?? '',
             ingredients: body.ingredients ?? [],
           };
       const item: SupplementItem = {
@@ -387,6 +390,8 @@ export class SupplementsController {
         status: first.status,
         unverified: parts.some((p) => p.unverified),
         links: [],
+        category: '',
+        typicalRange: '',
         ingredients: [],
         parts: parts.map((p) => ({ itemId: p.id, name: p.name, ingredients: p.ingredients })),
         doses: first.doses,

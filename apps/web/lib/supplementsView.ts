@@ -188,7 +188,7 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
       key: `${p.item.id}:${p.item.doses.indexOf(p.dose)}`,
       item: p.item,
       amount: p.dose.amount.trim(),
-      range: p.item.doses.length === 1 ? p.item.reference?.typicalRange : undefined,
+      range: p.item.doses.length === 1 ? (p.item.typicalRange.trim() || p.item.reference?.typicalRange) : undefined,
       protein: protein > 0 ? `${num(protein)} g protein` : undefined,
       detail: [only.length > 0 ? `${only.join(', ')} only` : '', ...detailLine(p.item)].filter(Boolean).join(' · '),
       note: p.item.shortNote.trim(),
@@ -214,7 +214,7 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
         key: item.id,
         item,
         amount: dose?.amount.trim() ?? '',
-        range: item.doses.length === 1 ? item.reference?.typicalRange : undefined,
+        range: item.doses.length === 1 ? (item.typicalRange.trim() || item.reference?.typicalRange) : undefined,
         protein: protein > 0 ? `${num(protein)} g protein` : undefined,
         detail: [dose ? placementText(dose, stack.dayTypes) : '', ...detailLine(item)].filter(Boolean).join(' · '),
         note: item.shortNote.trim(),
@@ -344,13 +344,18 @@ export interface Suggestion {
  */
 export function suggestedSearch(stack: Stack, item: SupplementItem): Suggestion | undefined {
   if (item.links.length > 0 || item.parts) return undefined;
+  return searchFor(stack, item.name);
+}
+
+/** The store search for `name`, at the store the lifter links to most across the stack. */
+export function searchFor(stack: Stack, name: string): Suggestion {
   const counts = new Map<string, number>();
   for (const link of stack.items.flatMap((i) => i.links)) {
-    const host = linkHost(link);
+    const host = linkHost(link.url);
     const site = host && Object.keys(STORE_SEARCH).find((s) => host === s || host.endsWith(`.${s}`));
     if (site) counts.set(site, (counts.get(site) ?? 0) + 1);
   }
   const site = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? DEFAULT_STORE;
-  return { store: STORE_SEARCH[site].name, url: STORE_SEARCH[site].url(encodeURIComponent(item.name)) };
+  return { store: STORE_SEARCH[site].name, url: STORE_SEARCH[site].url(encodeURIComponent(name)) };
 }
 

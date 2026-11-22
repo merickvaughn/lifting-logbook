@@ -34,6 +34,8 @@ export function item(id: string, p: Partial<SupplementItem> = {}): SupplementIte
     status: 'active',
     unverified: false,
     links: [],
+    category: '',
+    typicalRange: '',
     ingredients: [],
     doses: [dose()],
     ...p,

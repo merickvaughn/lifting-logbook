@@ -1158,42 +1158,88 @@ const server = createServer(async (req, res) => {
   // -------------------------------------------------------------------------
   // GET /supplements (#1376): a small stack, product names and amounts only
   // -------------------------------------------------------------------------
+  const supplementItem = (id, name, over = {}) => ({
+    id, name, keyCompound: '', timing: '', shortNote: '', longNote: '', status: 'active',
+    unverified: false, links: [], category: '', typicalRange: '', ingredients: [], doses: [], ...over,
+  });
+  const supplementStack = () => ({
+    caffeineCutoff: '15:00',
+    dayTypes: [
+      { id: 'lift', name: 'Lift day', sessionTime: '16:30' },
+      { id: 'rest', name: 'Rest day' },
+    ],
+    items: (state.supplementItems ??= supplementSeed()),
+  });
+  function supplementSeed() {
+    const item = supplementItem;
+    return [
+      item('pre-x', 'Nutricost Pre-X', {
+        keyCompound: '300 mg caffeine', timing: '30–60 min before',
+        ingredients: [{ key: 'caffeine', amount: 300, unit: 'mg' }],
+        doses: [{ slot: 'pre', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }],
+        reference: {
+          uses: ['Alertness and focus before a hard session'],
+          evidence: { level: 'strong', reason: 'Caffeine reliably improves performance.' },
+          cautions: ['Can disturb sleep when taken late'],
+          typicalRange: '3-6 mg/kg', sources: ['issn-caffeine'],
+        },
+      }),
+      item('quest', 'Quest protein (vanilla milkshake)', {
+        ingredients: [{ key: 'protein', amount: 24, unit: 'g' }],
+        doses: [{ slot: 'post', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }],
+      }),
+      item('glycine', 'Glycine', {
+        doses: [{ slot: 'am', amount: '3 g', servings: 1, dayTypes: [] }],
+      }),
+      item('collagen', 'Hydrolyzed collagen peptides', {
+        status: 'pending',
+        doses: [{ slot: 'am', amount: '10 g', servings: 1, dayTypes: [] }],
+      }),
+    ];
+  }
+
   if (method === 'GET' && url.pathname === '/supplements') {
-    const item = (id, name, over = {}) => ({
-      id, name, keyCompound: '', timing: '', shortNote: '', longNote: '', status: 'active',
-      unverified: false, links: [], ingredients: [], doses: [], ...over,
-    });
-    json(res, {
-      caffeineCutoff: '15:00',
-      dayTypes: [
-        { id: 'lift', name: 'Lift day', sessionTime: '16:30' },
-        { id: 'rest', name: 'Rest day' },
-      ],
-      items: [
-        item('pre-x', 'Nutricost Pre-X', {
-          keyCompound: '300 mg caffeine', timing: '30–60 min before',
-          ingredients: [{ key: 'caffeine', amount: 300, unit: 'mg' }],
-          doses: [{ slot: 'pre', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }],
-          reference: {
-            uses: ['Alertness and focus before a hard session'],
-            evidence: { level: 'strong', reason: 'Caffeine reliably improves performance.' },
-            cautions: ['Can disturb sleep when taken late'],
-            typicalRange: '3-6 mg/kg', sources: ['issn-caffeine'],
-          },
-        }),
-        item('quest', 'Quest protein (vanilla milkshake)', {
-          ingredients: [{ key: 'protein', amount: 24, unit: 'g' }],
-          doses: [{ slot: 'post', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }],
-        }),
-        item('glycine', 'Glycine', {
-          doses: [{ slot: 'am', amount: '3 g', servings: 1, dayTypes: [] }],
-        }),
-        item('collagen', 'Hydrolyzed collagen peptides', {
-          status: 'pending',
-          doses: [{ slot: 'am', amount: '10 g', servings: 1, dayTypes: [] }],
-        }),
-      ],
-    });
+    json(res, supplementStack());
+    return;
+  }
+
+  // GET /supplements/catalog (#1409): one entry, enough to autofill a name typed as "creatine".
+  if (method === 'GET' && url.pathname === '/supplements/catalog') {
+    const q = (url.searchParams.get('q') ?? '').toLowerCase();
+    json(res, q !== '' && 'creatine monohydrate'.includes(q) ? [{
+      key: 'creatine-monohydrate', name: 'Creatine monohydrate', aliases: ['creatine'], kind: 'compound',
+      keyCompound: 'Creatine monohydrate', suggestedDose: '5 g', timing: 'Anytime or pre-workout', suggestedSlot: 'am',
+      ingredients: [{ key: 'creatine', amount: 5, unit: 'g' }],
+      reference: { uses: ['Strength'], evidence: { level: 'strong', reason: 'Well studied.' }, cautions: [], typicalRange: '3-5 g', sources: [] },
+    }] : []);
+    return;
+  }
+
+  // POST /supplements/items, PATCH and DELETE /supplements/items/:id (#1409): kept in the mock's state.
+  if (method === 'POST' && url.pathname === '/supplements/items') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const stack = supplementStack();
+    const created = supplementItem(`supp-new-${(state.supplementNextId = (state.supplementNextId ?? 0) + 1)}`, body.name, body);
+    stack.items.push(created);
+    json(res, { ...stack, id: created.id }, 201);
+    return;
+  }
+  const supplementPath = url.pathname.match(/^\/supplements\/items\/([^/]+)$/);
+  if (supplementPath && (method === 'PATCH' || method === 'DELETE')) {
+    const stack = supplementStack();
+    const index = stack.items.findIndex((i) => i.id === decodeURIComponent(supplementPath[1]));
+    if (index < 0) {
+      json(res, { statusCode: 404, message: 'No such item' }, 404);
+      return;
+    }
+    if (method === 'DELETE') stack.items.splice(index, 1);
+    else {
+      const body = await readBody(req);
+      if (rejectIfInvalidBody(res, body)) return;
+      Object.assign(stack.items[index], body);
+    }
+    json(res, stack);
     return;
   }
 

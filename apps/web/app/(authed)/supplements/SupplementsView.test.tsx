@@ -4,7 +4,12 @@ import { STACK } from '@/lib/__tests__/supplementsTestStack';
 import SupplementsView from './SupplementsView';
 
 jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh: jest.fn() }) }));
-jest.mock('@/lib/client-api', () => ({ updateSupplementItem: jest.fn() }));
+jest.mock('@/lib/client-api', () => ({
+  updateSupplementItem: jest.fn(),
+  createSupplementItem: jest.fn(),
+  removeSupplementItem: jest.fn(),
+  fetchSupplementCatalog: jest.fn().mockResolvedValue([]),
+}));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
 
 import { logClientError } from '@/lib/log-client-error';
@@ -106,6 +111,46 @@ describe('SupplementsView on a lift day', () => {
   });
 });
 
+describe('SupplementsView add and edit entry points', () => {
+  beforeEach(() => render(<SupplementsView stack={STACK} />));
+
+  it.each([
+    ['+ Add to this day', 'pre', 'active'],
+    ['+ Add daily item', 'am', 'active'],
+    ['+ Add a pending item', 'am', 'pending'],
+  ])('%s opens Add supplement with its preset', async (button, slot, status) => {
+    await userEvent.click(screen.getByRole('button', { name: button }));
+    const dialog = screen.getByRole('dialog', { name: 'Add supplement' });
+    expect(within(dialog).getByLabelText(/^Slot/)).toHaveValue(slot);
+    expect(within(dialog).getByLabelText('Status')).toHaveValue(status);
+  });
+
+  it('the detail panel’s Edit opens Edit <name> above it, and Cancel returns to the panel', async () => {
+    await userEvent.click(row(/Nutricost Pre-X/));
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByRole('dialog', { name: 'Edit Nutricost Pre-X' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Edit Nutricost Pre-X' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Nutricost Pre-X' })).toBeInTheDocument();
+  });
+
+  it('× on the form closes the panel too, and focus goes back to the row', async () => {
+    await userEvent.click(row(/Nutricost Pre-X/));
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'Edit Nutricost Pre-X' })).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(row(/Nutricost Pre-X/)).toHaveFocus();
+  });
+
+  it('× on an Add form sends focus back to the button that opened it', async () => {
+    const opener = screen.getByRole('button', { name: '+ Add daily item' });
+    await userEvent.click(opener);
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'Add supplement' })).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(opener).toHaveFocus();
+  });
+});
+
 describe('SupplementsView for a new stack', () => {
   it('with no day types, shows every-day doses, the items no day places, and Pending', async () => {
     render(<SupplementsView stack={{ ...STACK, dayTypes: [] }} />);
@@ -120,7 +165,7 @@ describe('SupplementsView for a new stack', () => {
   });
 
   it('shows an active item with no doses under Not scheduled', () => {
-    const fresh = { id: 'new', name: 'New powder', keyCompound: '', timing: '', shortNote: '', longNote: '', status: 'active' as const, unverified: false, links: [], ingredients: [], doses: [] };
+    const fresh = { id: 'new', name: 'New powder', keyCompound: '', timing: '', shortNote: '', longNote: '', status: 'active' as const, unverified: false, links: [], category: '', typicalRange: '', ingredients: [], doses: [] };
     render(<SupplementsView stack={{ ...STACK, items: [fresh] }} />);
     const unscheduled = screen.getByRole('region', { name: 'Not scheduled' });
     expect(within(unscheduled).getByRole('button', { name: /New powder/ })).toHaveTextContent('dose?No dose yet');

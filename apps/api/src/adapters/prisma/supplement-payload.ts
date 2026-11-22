@@ -8,6 +8,7 @@ import {
   SupplementDose,
   SupplementItem,
   SupplementItemDetails,
+  SupplementLink,
   SupplementPart,
   SupplementReference,
   SupplementStatus,
@@ -68,6 +69,18 @@ function boolean(o: JsonObject, key: string, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   if (typeof value !== 'boolean') throw new MalformedSupplementDataError(`${key} is not a boolean`);
   return value;
+}
+
+/**
+ * Links as a change recorded them: `{label, url}` objects, or, before #1409, plain URL strings,
+ * read as an empty label. The change log is append-only, so old entries are read, never rewritten.
+ */
+export function parseLinks(value: Json | undefined): SupplementLink[] {
+  return array(value, 'links').map((entry) => {
+    if (typeof entry === 'string') return { label: '', url: entry };
+    const o = object(entry, 'a link');
+    return { label: string(o, 'label', ''), url: string(o, 'url') };
+  });
 }
 
 function strings(value: Json | undefined, what: string): string[] {
@@ -145,7 +158,9 @@ export function parseItem(value: Json | undefined): SupplementItem {
     longNote: string(o, 'longNote', ''),
     status: o.status === undefined ? 'active' : parseStatus(o.status),
     unverified: boolean(o, 'unverified', false),
-    links: o.links === undefined ? [] : strings(o.links, 'links'),
+    links: o.links === undefined ? [] : parseLinks(o.links),
+    category: string(o, 'category', ''),
+    typicalRange: string(o, 'typicalRange', ''),
     ingredients: o.ingredients === undefined ? [] : parseIngredients(o.ingredients),
     ...(o.parts === undefined ? {} : { parts: parseParts(o.parts) }),
     ...(o.catalogKey === undefined ? {} : { catalogKey: string(o, 'catalogKey') }),
@@ -154,13 +169,13 @@ export function parseItem(value: Json | undefined): SupplementItem {
   };
 }
 
-const DETAIL_KEYS = ['name', 'keyCompound', 'timing', 'shortNote', 'longNote'] as const;
+const DETAIL_KEYS = ['name', 'keyCompound', 'timing', 'shortNote', 'longNote', 'category', 'typicalRange'] as const;
 
 function parseDetails(value: Json | undefined): Partial<SupplementItemDetails> {
   const o = object(value, 'changes');
   const details: Partial<SupplementItemDetails> = {};
   for (const key of DETAIL_KEYS) if (o[key] !== undefined) details[key] = string(o, key);
-  if (o.links !== undefined) details.links = strings(o.links, 'links');
+  if (o.links !== undefined) details.links = parseLinks(o.links);
   if (o.ingredients !== undefined) details.ingredients = parseIngredients(o.ingredients);
   return details;
 }

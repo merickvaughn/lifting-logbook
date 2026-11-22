@@ -176,6 +176,42 @@ the rest of the `supplement_item` row. The catalog itself is a code-level refere
 `packages/core` (Registry, Fowler,
 [PoEAA](https://martinfowler.com/eaaCatalog/registry.html)), not a database table.
 
+## Addendum: category, typical range and labelled links (#1409)
+
+The item form needs three things the table lacked. `supplement_item` gains two text columns,
+`category` and `typicalRange`, both `NOT NULL DEFAULT ''`: the lifter's own free-text category
+(the detail panel's sub-line) and the lifter's own typical range, which the page shows instead of
+`reference.typicalRange` when set. `links` changes from `text[]` to `jsonb`, an array of
+`{ label, url }`, so a product link can be named. The migration converts in place, keeping every
+URL in order, each with an empty label; an empty label shows the store name from the host, as a
+bare URL did before. Row-level security is per table, so it is unchanged and no policy is added.
+`SupplementItem` and `SupplementItemDetails` carry `category` and `typicalRange`, so an `edited`
+change can set them.
+
+**Old change-log entries are read in both forms, not rewritten.** `parseItem` and `parseDetails`
+read a link that is a plain string as `{ label: '', url }`, and default the two new fields to
+`''` for an entry that lacks them. The change log is append-only (see Decision), and its value as
+an audit record depends on an entry staying what it was when written; rewriting every old
+`added`, `edited` and `removed` payload to the new shape would break that, and a restore of an
+item removed before this change must still give a whole item. New entries are written in the new
+form only, and the write DTOs no longer take a plain-string link.
+
+**A catalog add keeps a field sent blank.** Before the form, `itemFromCatalog` gave a blank key
+compound, timing or note the entry's value. The form sends every field, already filled from the
+entry, so a blank there is a suggestion the lifter cleared, and refilling it on save would undo
+what they did. Now only a field left out of the request takes the entry's value. A blank name and
+an empty ingredient list still do, since a name is required and an item's ingredients are what the
+catalog link is for.
+
+**Deploying this migration.** `migrate deploy` runs before the new API revision takes traffic, so
+for the minutes of the rollout the old revision reads `links` as `jsonb` where it expects `text[]`,
+and its supplement reads and writes can fail. That is accepted rather than split into an
+expand-and-contract migration: the supplement tables and page are new (#1374, #1376), and the
+failure is a visible error the lifter can retry, not a silent bad write, since the old revision
+can't write a `text[]` into a `jsonb` column.
+A later column change to a table with real data should add the new column, write both, and drop
+the old one in a second release.
+
 ## Known follow-ups
 
 The API shape later sub-issues need, not built here:

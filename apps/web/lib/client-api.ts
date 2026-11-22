@@ -110,6 +110,10 @@ export const {
   createCustomLift,
   // Keep on the Supplements detail panel saves a suggested store search as the item's link (#1376).
   updateSupplementItem,
+  // The Add/Edit supplement form (#1409).
+  createSupplementItem,
+  removeSupplementItem,
+  fetchSupplementCatalog,
   // Read, not just a write — but the 409 self-heal path needs to refetch the
   // live custom-lift list client-side (a stale/absent local copy otherwise
   // dead-ends the user with no way to recover short of a page reload; #911).

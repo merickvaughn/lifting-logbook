@@ -71,6 +71,12 @@ export interface SupplementReference {
   sources: string[];
 }
 
+/** A product link: where the lifter buys the item. An empty `label` shows the store name instead. */
+export interface SupplementLink {
+  label: string;
+  url: string;
+}
+
 export interface SupplementItem {
   id: string;
   name: string;
@@ -81,7 +87,11 @@ export interface SupplementItem {
   status: SupplementStatus;
   /** Not yet confirmed against its label; shown but not counted. */
   unverified: boolean;
-  links: string[];
+  links: SupplementLink[];
+  /** The lifter's own free-text category, e.g. "Pre-workout". Empty when unset. */
+  category: string;
+  /** The lifter's own typical range. When set it is shown instead of `reference.typicalRange`. */
+  typicalRange: string;
   /** Per serving. */
   ingredients: Ingredient[];
   /** Present on a mix: its ingredients come from the parts instead of `ingredients`. */
@@ -99,7 +109,7 @@ export interface SupplementItem {
  */
 export type SupplementItemDetails = Pick<
   SupplementItem,
-  'name' | 'keyCompound' | 'timing' | 'shortNote' | 'longNote' | 'links' | 'ingredients'
+  'name' | 'keyCompound' | 'timing' | 'shortNote' | 'longNote' | 'links' | 'ingredients' | 'category' | 'typicalRange'
 >;
 
 /**
@@ -208,6 +218,14 @@ export interface SupplementAsOfResponse {
   /** Changes replay skipped. Empty for a complete, well-ordered log. */
   anomalies: SupplementReplayAnomaly[];
 }
+
+/**
+ * The longest text the supplement write endpoints accept: `name` for names and other short fields,
+ * `text` for notes and URLs, `linkLabel` for a product link's label. The item form caps its
+ * inputs to match, so an over-long field is stopped before the request rather than coming back as
+ * an unexplained 400.
+ */
+export const SUPPLEMENT_TEXT_MAX = { name: 200, text: 2000, linkLabel: 60 } as const;
 
 /** The 409 code for a write that lost a race with another write to the stack (ADR-046). */
 export const SUPPLEMENT_STALE_CODE = 'supplement-stale';

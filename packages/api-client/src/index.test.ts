@@ -1092,11 +1092,34 @@ describe('supplements', () => {
 
   it('updateSupplementItem PATCHes the links with the lifter\'s date, escaping the id', async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
-    await makeClient().updateSupplementItem('a b', { links: ['https://www.amazon.com/s?k=Glycine'] }, '2026-11-21');
+    await makeClient().updateSupplementItem('a b', { links: [{ label: '', url: 'https://www.amazon.com/s?k=Glycine' }] }, '2026-11-21');
     const [url, init] = lastCall();
     expect(url).toBe('http://api.test/supplements/items/a%20b?today=2026-11-21');
     expect(init.method).toBe('PATCH');
-    expect(JSON.parse(String(init.body))).toEqual({ links: ['https://www.amazon.com/s?k=Glycine'] });
+    expect(JSON.parse(String(init.body))).toEqual({ links: [{ label: '', url: 'https://www.amazon.com/s?k=Glycine' }] });
+  });
+
+  it('createSupplementItem POSTs the item with the lifter\'s date, and removeSupplementItem DELETEs it', async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ items: [], id: 'n' }), { status: 201 }));
+    await expect(makeClient().createSupplementItem({ name: 'Creatine', catalogKey: 'creatine' }, '2026-11-21')).resolves.toEqual({ items: [], id: 'n' });
+    let [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items?today=2026-11-21');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ name: 'Creatine', catalogKey: 'creatine' });
+
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    await makeClient().removeSupplementItem('a b', '2026-11-21');
+    [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items/a%20b?today=2026-11-21');
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('fetchSupplementCatalog reads GET /supplements/catalog with the escaped query, uncached', async () => {
+    mockFetch.mockResolvedValue(new Response('[]', { status: 200 }));
+    await makeClient().fetchSupplementCatalog('vitamin d&k');
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/catalog?q=vitamin%20d%26k');
+    expect(init.cache).toBe('no-store');
   });
 
   it('updateSupplementItem throws the server message on failure', async () => {

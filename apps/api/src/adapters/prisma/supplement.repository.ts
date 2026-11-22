@@ -12,7 +12,7 @@ import {
 } from '../../ports/ISupplementRepository';
 import { SupplementWriteConflictError } from '../../ports/errors';
 import { PrismaExecutor, canStartTransaction, runInteractive } from './prisma-tx.util';
-import { parseChange, parseIngredients, parseReference, parseSlot, parseStatus, toJson } from './supplement-payload';
+import { parseChange, parseIngredients, parseLinks, parseReference, parseSlot, parseStatus, toJson } from './supplement-payload';
 
 const itemInclude = {
   doses: { orderBy: { position: 'asc' } },
@@ -53,7 +53,9 @@ function toItem(row: ItemRow): SupplementItem {
     longNote: row.longNote,
     status: parseStatus(row.status),
     unverified: row.unverified,
-    links: row.links,
+    links: parseLinks(row.links),
+    category: row.category,
+    typicalRange: row.typicalRange,
     ingredients: parseIngredients(row.ingredients),
     ...(row.catalogKey === null ? {} : { catalogKey: row.catalogKey }),
     ...(row.reference === null ? {} : { reference: parseReference(row.reference) }),
@@ -214,7 +216,9 @@ export class PrismaSupplementRepository implements ISupplementRepository {
           longNote: item.longNote,
           status: item.status,
           unverified: item.unverified,
-          links: item.links,
+          links: toJson(item.links),
+          category: item.category,
+          typicalRange: item.typicalRange,
           ingredients: toJson(item.ingredients),
           isMix: item.parts !== undefined,
           foldedInto: mixId,
