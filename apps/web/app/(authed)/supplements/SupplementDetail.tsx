@@ -32,10 +32,12 @@ interface Props {
   onClose: () => void;
   /** Opens the item's Edit form above this panel. */
   onEdit: () => void;
+  /** Opens the Add form preset from this item, offering to replace it (#1411). */
+  onReplace: () => void;
 }
 
 /** The detail panel: a native modal `<dialog>`, so the browser traps focus and closes it on Esc. */
-export default function SupplementDetail({ stack, item, dayTypeId, notes, onClose, onEdit }: Props) {
+export default function SupplementDetail({ stack, item, dayTypeId, notes, onClose, onEdit, onReplace }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -84,6 +86,9 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
           {(item.category || slots) && <p className={styles.muted}>{item.category || slots}</p>}
         </div>
         <div>
+          <button type="button" onClick={onReplace}>
+            Replace with…
+          </button>
           <button type="button" onClick={onEdit}>
             Edit
           </button>

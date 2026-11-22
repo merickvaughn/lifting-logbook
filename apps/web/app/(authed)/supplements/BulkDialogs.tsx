@@ -26,7 +26,7 @@ interface Props {
  * A native modal `<dialog>` with a title, subtitle and ×, closed by Esc like the Add/Edit form.
  * While a write is in flight neither × nor Esc closes it, so the page can't lose track of the write.
  */
-function BulkDialog({
+export function BulkDialog({
   id,
   title,
   subtitle,

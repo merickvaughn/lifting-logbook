@@ -1,5 +1,17 @@
-import { findOverlaps } from '@src/core';
+import { dosesShareSlot, findOverlaps } from '@src/core';
 import { dose, ing, item } from './supplementFixtures';
+
+describe('dosesShareSlot', () => {
+  it('needs the same slot', () => {
+    expect(dosesShareSlot(dose({ slot: 'am', dayTypes: [] }), dose({ slot: 'am', dayTypes: [] }))).toBe(true);
+    expect(dosesShareSlot(dose({ slot: 'am', dayTypes: [] }), dose({ slot: 'pm', dayTypes: [] }))).toBe(false);
+  });
+  it('needs a shared day type in a workout slot, but not in a time-of-day one', () => {
+    expect(dosesShareSlot(dose({ dayTypes: ['lift'] }), dose({ dayTypes: ['lift', 'rest'] }))).toBe(true);
+    expect(dosesShareSlot(dose({ dayTypes: ['lift'] }), dose({ dayTypes: ['rest'] }))).toBe(false);
+    expect(dosesShareSlot(dose({ slot: 'am', dayTypes: ['lift'] }), dose({ slot: 'am', dayTypes: ['rest'] }))).toBe(true);
+  });
+});
 
 describe('findOverlaps', () => {
   const taurinePre = item('taurinePre', { ingredients: [ing('taurine', 1, 'g')] });

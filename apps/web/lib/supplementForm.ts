@@ -1,7 +1,16 @@
-import { isWorkoutSlot } from '@lifting-logbook/core';
+import {
+  dosesShareSlot,
+  findOverlaps,
+  fromNanograms,
+  ingredientTotals,
+  isWorkoutSlot,
+  itemIngredients,
+  totalNanograms,
+  type Overlap,
+} from '@lifting-logbook/core';
 import type { SupplementItemBody } from '@lifting-logbook/api-client';
-import type { SupplementCatalogEntry, SupplementItem, SupplementSlot, SupplementStatus } from '@lifting-logbook/types';
-import { linkHost, searchFor, type Stack } from './supplementsView';
+import type { Ingredient, SupplementCatalogEntry, SupplementItem, SupplementSlot, SupplementStatus } from '@lifting-logbook/types';
+import { linkHost, num, searchFor, type Stack } from './supplementsView';
 
 /*
  * The Add/Edit supplement form's state and the rules that turn it into a request (#1409).
@@ -70,6 +79,16 @@ export function presetValues(preset: Preset, dayTypeId: string): FormValues {
   return preset === 'workout'
     ? { ...base, doses: [newDose(dayTypeId)] }
     : { ...base, status: preset === 'pending' ? 'pending' : 'active', doses: [{ slot: 'am', amount: '', servings: '1', dayTypes: [] }] };
+}
+
+/**
+ * The form `Replace with…` opens: an Add form whose first dose starts in the replaced item's first
+ * dose slot and day types (the mockup's preset). An item with no dose falls back to the daily preset.
+ */
+export function replaceValues(item: SupplementItem, dayTypeId: string): FormValues {
+  const first = item.doses[0];
+  const base = presetValues(first && isWorkoutSlot(first.slot) ? 'workout' : 'daily', dayTypeId);
+  return first ? { ...base, doses: [{ slot: first.slot, amount: '', servings: '1', dayTypes: [...first.dayTypes] }] } : base;
 }
 
 export function itemValues(item: SupplementItem): FormValues {
@@ -193,8 +212,65 @@ export function toBody(values: FormValues, opts: { item?: SupplementItem; entry?
   const protein = Number(values.protein.trim() || 0);
   const base = item ? item.ingredients : entry?.ingredients ?? [];
   const changed = item ? protein !== Number(proteinOf(item) || 0) : values.protein.trim() !== '';
-  if (!item?.parts && changed) {
-    body.ingredients = [...base.filter((i) => i.key !== 'protein'), ...(protein > 0 ? [{ key: 'protein', amount: protein, unit: 'g' as const }] : [])];
-  }
+  if (!item?.parts && changed) body.ingredients = withProtein(base, protein);
   return body;
 }
+
+/** `base` with its protein replaced by `grams` per serving (none at 0). */
+const withProtein = (base: readonly Ingredient[], grams: number): Ingredient[] => [
+  ...base.filter((i) => i.key !== 'protein'),
+  ...(grams > 0 ? [{ key: 'protein', amount: grams, unit: 'g' as const }] : []),
+];
+
+/** What the form would add, as a stack item, so the same overlap rule as the API's core can compare it. */
+export function candidateItem(values: Pick<FormValues, 'doses' | 'status' | 'protein'>, entry?: SupplementCatalogEntry): SupplementItem {
+  // The ingredients an add would send (see `toBody`): the entry's, with protein from the field when it has a value.
+  const base = entry?.ingredients ?? [];
+  const protein = values.protein.trim();
+  return {
+    id: '',
+    name: '',
+    keyCompound: '',
+    timing: '',
+    shortNote: '',
+    longNote: '',
+    category: '',
+    typicalRange: '',
+    links: [],
+    status: values.status,
+    unverified: false,
+    ingredients: protein === '' ? base : withProtein(base, Number(protein) || 0),
+    doses: values.doses.map((d) => {
+      const servings = Number(d.servings);
+      return { slot: d.slot, amount: d.amount.trim(), servings: Number.isFinite(servings) ? servings : 0, dayTypes: d.dayTypes };
+    }),
+  };
+}
+
+/** Stack items the candidate shares an ingredient with, same-slot ones first (stable otherwise). */
+export const overlapsFor = (candidate: SupplementItem, items: readonly SupplementItem[]): Overlap[] =>
+  findOverlaps(candidate, items).sort((a, b) => Number(b.sameSlot) - Number(a.sameSlot));
+
+/** Whether the candidate takes a dose in a slot `item` also takes one in: core's rule for `SAME SLOT`. */
+export const sharesSlotWith = (candidate: SupplementItem, item: SupplementItem): boolean =>
+  candidate.doses.some((c) => item.doses.some((d) => dosesShareSlot(c, d)));
+
+/**
+ * How much of one ingredient the item gives on the day type, counted as the page's day totals are:
+ * doses that apply that day and have an amount, summed in nanograms across units. It's shown in
+ * the unit the item lists it in.
+ */
+const onDay = (item: SupplementItem, key: string, dayTypeId: string): string => {
+  const unit = itemIngredients(item).find((i) => i.key === key)?.unit ?? 'mg';
+  const ng = totalNanograms(ingredientTotals([{ ...item, status: 'active', unverified: false }], dayTypeId), key);
+  return `${num(fromNanograms(ng, unit))} ${unit}`;
+};
+
+/** `Shares creatine (5 g now; 5 g in this)`: each shared ingredient on the day type, in the stack and in the candidate. */
+export const sharesLine = (o: Overlap, candidate: SupplementItem, dayTypeId: string): string => {
+  const amounts = (item: SupplementItem) => o.sharedIngredients.map((k) => onDay(item, k, dayTypeId)).join(', ');
+  return `Shares ${o.sharedIngredients.join(', ')} (${amounts(o.item)} now; ${amounts(candidate)} in this)`;
+};
+
+/** How the lifter wants the items a new one replaces dealt with. */
+export type ReplaceHow = 'pending' | 'remove';

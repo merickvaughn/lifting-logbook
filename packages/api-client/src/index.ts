@@ -71,6 +71,7 @@ import type {
   WorkoutResponse,
   SupplementCatalogEntry,
   SupplementCreatedResponse,
+  SupplementDayType,
   SupplementDose,
   SupplementItemDetails,
   SupplementSlot,
@@ -104,6 +105,12 @@ export interface MoveSupplementDosesBody {
   to: SupplementSlot;
   /** Replaces the moved doses' day types when given; `[]` means every day. */
   dayTypes?: string[];
+}
+
+/** The body of `PUT /supplements/settings` (#1411): the day types, and/or the caffeine cutoff, both 24-hour `HH:MM`. */
+export interface SupplementSettingsBody {
+  dayTypes?: SupplementDayType[];
+  caffeineCutoff?: string;
 }
 
 /** The body of `POST /supplements/items` and `PATCH /supplements/items/:id` (#1409). */
@@ -888,6 +895,16 @@ export function createApiClient(config: ApiClientConfig) {
         method: 'POST',
         headers: JSON_HEADERS,
         body: JSON.stringify({ name, itemIds }),
+        cache: 'no-store',
+      });
+    },
+
+    /** Replaces the day types and/or sets the caffeine cutoff (#1411). A 400 names a workout dose left with no day type. */
+    updateSupplementSettings(body: SupplementSettingsBody, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/settings?today=${enc(today)}`, {
+        method: 'PUT',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
         cache: 'no-store',
       });
     },

@@ -103,3 +103,22 @@ test('Edit stack: ticking a row and moving it with the bulk bar puts it in the n
   await expect(night).toBeVisible();
   await expect(daily.getByRole('heading', { name: 'Morning' })).toHaveCount(0);
 });
+
+test('replaces an item into Pending: the new item is added and the replaced one moves to Pending', async ({ page }) => {
+  await page.goto('/supplements');
+  await page.getByRole('button', { name: /Nutricost Pre-X/ }).click();
+  await page.getByRole('dialog', { name: 'Nutricost Pre-X' }).getByRole('button', { name: 'Replace with…' }).click();
+  const form = page.getByRole('dialog', { name: 'Add supplement' });
+  const group = form.getByRole('group', { name: 'Replace what you already take?' });
+  await expect(group.getByText('You chose to replace this')).toBeVisible();
+  await expect(group.getByRole('radio', { name: /Move them to Pending/ })).toBeChecked();
+
+  await form.getByLabel('Name').fill('Pre-Y');
+  await form.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(form).toBeHidden();
+
+  await expect(page.getByRole('button', { name: /Pre-Y/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Nutricost Pre-X/ })).toBeHidden();
+  await page.getByRole('button', { name: /Pending · 2/ }).click();
+  await expect(page.getByRole('button', { name: /Nutricost Pre-X/ })).toBeVisible();
+});
