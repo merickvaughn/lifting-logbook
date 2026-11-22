@@ -6,7 +6,14 @@ import { isWorkoutSlot } from '@lifting-logbook/core';
 import { SUPPLEMENT_SLOTS, SUPPLEMENT_TEXT_MAX } from '@lifting-logbook/types';
 import type { SupplementCatalogEntry, SupplementItem } from '@lifting-logbook/types';
 import { localToday } from '@/lib/calendarDay';
-import { createSupplementItem, fetchSupplementCatalog, removeSupplementItem, setSupplementStatus, updateSupplementItem } from '@/lib/client-api';
+import {
+  createSupplementItem,
+  fetchSupplementCatalog,
+  removeSupplementItem,
+  removeSupplementItems,
+  setSupplementStatus,
+  updateSupplementItem,
+} from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import {
   SHORT_NOTE_MAX,
@@ -240,27 +247,22 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
 
   /**
    * The second step of a replace: the items it replaces go to Pending, or are removed (restorable
-   * from History). Removal is one call per item, so a failure part-way leaves only the rest to retry.
+   * from History). Either is one write that changes all of them or none, so a retry sends them all again.
    */
   async function replaceThem(ids: string[], choice: ReplaceHow) {
     setBusy(true);
     setError(undefined);
-    let left = ids;
     try {
       if (choice === 'pending') await setSupplementStatus(ids, 'pending', localToday());
-      else
-        for (const id of ids) {
-          await removeSupplementItem(id, localToday());
-          left = left.filter((x) => x !== id);
-        }
+      else await removeSupplementItems(ids, localToday());
       router.refresh();
       const n = `${ids.length} item${ids.length === 1 ? '' : 's'}`;
       onDismiss(`Added ${values.name.trim()}; ${choice === 'pending' ? `moved ${n} to Pending` : `removed ${n}`}.`);
     } catch (err) {
-      logClientError('supplements.replaceItems', err, { items: ids.length, left: left.length, how: choice });
-      // The add went through, and a remove can have gone through for some, so the page re-reads the stack.
+      logClientError('supplements.replaceItems', err, { items: ids.length, how: choice });
+      // The add went through, so the page re-reads the stack.
       router.refresh();
-      setAdded({ ids: left, how: choice });
+      setAdded({ ids, how: choice });
       setBusy(false);
     }
   }
