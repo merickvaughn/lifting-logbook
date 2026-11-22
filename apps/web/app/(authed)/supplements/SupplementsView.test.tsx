@@ -13,10 +13,18 @@ jest.mock('@/lib/client-api', () => ({
   fetchSupplementCatalog: jest.fn().mockResolvedValue([]),
   fetchSupplementChanges: jest.fn().mockResolvedValue([]),
   fetchSupplementsAsOf: jest.fn().mockResolvedValue({ items: [], dayTypes: [], firstChangeDate: null, anomalies: [] }),
+  fetchSupplementSheet: jest.fn(),
+  importSupplements: jest.fn(),
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
 
-import { createSupplementItem, setSupplementStatus, updateSupplementSettings } from '@/lib/client-api';
+import {
+  createSupplementItem,
+  fetchSupplementSheet,
+  importSupplements,
+  setSupplementStatus,
+  updateSupplementSettings,
+} from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 
 const row = (name: RegExp) => screen.getByRole('button', { name });
@@ -291,5 +299,46 @@ describe('Replace with… and Edit days', () => {
     const days = screen.getByRole('dialog', { name: 'Day types' });
     expect(within(days).getByLabelText('Name of day type 1')).toHaveValue('Rest day');
     expect(within(days).queryByLabelText('Name of day type 2')).not.toBeInTheDocument();
+  });
+});
+
+describe('Import from Google Sheets', () => {
+  const sheetRows = [
+    ['Compound', 'Amount', 'Timing'],
+    ['Potassium', '1000mg', 'TID'],
+    ['Iron', '18mg', 'bedtime'],
+  ];
+  const SHEET = { tabs: [{ name: 'Supplements', rows: sheetRows, links: sheetRows.map((r) => r.map(() => '')), skipReason: null }] };
+
+  async function openImport() {
+    render(<SupplementsView stack={STACK} />);
+    const button = screen.getByRole('button', { name: 'Import from Google Sheets' });
+    await userEvent.click(button);
+    return { button, dialog: screen.getByRole('dialog', { name: 'Import from Google Sheets' }) };
+  }
+
+  it('the page’s button opens the dialog, and closing it returns focus to the button', async () => {
+    const { button, dialog } = await openImport();
+    expect(within(dialog).getByRole('heading', { name: 'Paste a link' })).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'Import from Google Sheets' })).not.toBeInTheDocument();
+    expect(button).toHaveFocus();
+    expect(importSupplements).not.toHaveBeenCalled();
+  });
+
+  it('an import announces how many items it added, and returns focus to the button', async () => {
+    (fetchSupplementSheet as jest.Mock).mockResolvedValue(SHEET);
+    (importSupplements as jest.Mock).mockResolvedValue({});
+    const { button, dialog } = await openImport();
+    await userEvent.click(within(dialog).getByLabelText('Google Sheets link'));
+    await userEvent.paste('https://docs.google.com/spreadsheets/d/abc/edit');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Read sheet' }));
+    await userEvent.click(await within(dialog).findByRole('button', { name: 'Supplements' }));
+    // Potassium is in the stack already, so it starts as skipped and only Iron is imported.
+    expect(within(dialog).getByLabelText('Potassium (row 2)')).toHaveValue('skip');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Import 1 item' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Import from Google Sheets' })).not.toBeInTheDocument());
+    expect(screen.getByTestId('supp-announcement')).toHaveTextContent('Imported 1 item.');
+    expect(button).toHaveFocus();
   });
 });

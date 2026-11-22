@@ -217,7 +217,7 @@ export default function HistoryDialog({ stack, initialDate, onClose }: { stack: 
                   <span className={styles.changeDate}>{shortDay(c.date, today)}</span>
                   <span className={styles.changeText}>
                     <strong>{w?.verb}</strong> {w?.object}
-                    {c.type === 'added' && c.note && <span className={styles.line2} style={{ display: 'block' }}>{c.note}</span>}
+                    {c.type === 'added' && c.note && <span className={styles.line2}>{c.note}</span>}
                   </span>
                   {c.type === 'removed' && restorable.has(c.seq) && (
                     <button type="button" disabled={restoring !== null} aria-label={`Restore ${c.item.name}`} onClick={() => restore(c)}>

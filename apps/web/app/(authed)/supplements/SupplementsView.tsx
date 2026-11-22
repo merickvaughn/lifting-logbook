@@ -116,6 +116,8 @@ export default function SupplementsView({ stack, historyDate }: { stack: Stack; 
   const daysOpener = useRef<HTMLButtonElement>(null);
   const [historyOpen, setHistoryOpen] = useState(historyDate !== undefined);
   const [importOpen, setImportOpen] = useState(false);
+  const importOpener = useRef<HTMLButtonElement>(null);
+  const importWasOpen = useRef(false);
   const historyOpener = useRef<HTMLButtonElement>(null);
   // The day types just saved, until the refresh brings a stack that has them: reopening Edit days
   // before then must start from what was saved, or a second Save would write the old ones back.
@@ -146,6 +148,13 @@ export default function SupplementsView({ stack, historyDate }: { stack: Stack; 
   useEffect(() => {
     if (view.advisoryError) logClientError('supplements.advisories', view.advisoryError, { dayTypeId: view.dayType.id });
   }, [view]);
+
+  // Focus goes back to Import once its dialog has gone, cancelled or done: until the dialog leaves
+  // the page, a modal dialog makes everything behind it inert, so focusing the button would fail.
+  useEffect(() => {
+    if (importWasOpen.current && !importOpen) importOpener.current?.focus();
+    importWasOpen.current = importOpen;
+  }, [importOpen]);
 
   // A tick belongs to a row as it was: after a day-type switch, a refresh, Start or an edit, a row
   // that's gone or now shows another slot or status is unticked rather than left selected unseen.
@@ -303,7 +312,7 @@ export default function SupplementsView({ stack, historyDate }: { stack: Stack; 
         <button ref={daysOpener} type="button" onClick={() => setDaysOpen(true)}>
           Edit days
         </button>
-        <button type="button" onClick={() => setImportOpen(true)}>
+        <button ref={importOpener} type="button" onClick={() => setImportOpen(true)}>
           Import from Google Sheets
         </button>
       </div>
@@ -528,7 +537,16 @@ export default function SupplementsView({ stack, historyDate }: { stack: Stack; 
         />
       )}
 
-      {importOpen && <ImportDialog onClose={() => setImportOpen(false)} />}
+      {importOpen && (
+        <ImportDialog
+          items={stack.items}
+          onCancel={() => setImportOpen(false)}
+          onDone={(count) => {
+            setImportOpen(false);
+            setAnnouncement(`Imported ${plural(count)}.`);
+          }}
+        />
+      )}
       {historyOpen && (
         <HistoryDialog
           stack={stack}

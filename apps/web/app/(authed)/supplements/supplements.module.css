@@ -94,3 +94,9 @@
 .change { display: flex; align-items: baseline; gap: 0.75rem; padding: 0.4rem 0; border-top: 1px solid var(--color-border); }
 .changeDate { flex: 0 0 5.5rem; font-size: 0.85rem; color: var(--color-text-muted); }
 .changeText { flex: 1; }
+/* A change's note, such as "Imported from …" (#1379), on its own line under the row. */
+.changeText .line2 { display: block; }
+
+/* Import from Google Sheets (#1379) */
+.importRow { display: grid; gap: 0.25rem; justify-items: start; padding: 0.5rem 0; border-top: 1px solid var(--color-border); }
+.importRow p { margin: 0; }

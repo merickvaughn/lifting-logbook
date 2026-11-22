@@ -1338,6 +1338,47 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // POST /supplements/import/google-sheet (#1379): a canned sheet, whatever the link. One tab has no
+  // Compound column, as a lifter's workbook often does.
+  if (method === 'POST' && url.pathname === '/supplements/import/google-sheet') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const tab = (name, rows) => ({ name, rows, links: rows.map((r) => r.map(() => '')), skipReason: null });
+    json(res, {
+      tabs: [
+        tab('Notes', [['Date', 'Text'], ['11/1/2026', 'Started the stack']]),
+        tab('Supplements', [
+          ['Compound', 'Amount', 'Timing', 'Purpose', 'Notes'],
+          ['Melatonin', '1-10mg', 'bedtime', 'sleep induction', 'more doesn’t induce sleep faster'],
+          ['Iron', '18mg', 'anytime', 'red blood cells', ''],
+          ['Nitrates', '???', '???', 'exercise agonist', ''],
+        ]),
+      ],
+    });
+    return;
+  }
+
+  // POST /supplements/import (#1379): the reviewed rows become items in one write, each logged as an
+  // `added` change noted "Imported from <source>", as the API does, so History shows where they came from.
+  if (method === 'POST' && url.pathname === '/supplements/import') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const stack = supplementStack();
+    const dayTypeIds = stack.dayTypes.map((d) => d.id);
+    for (const row of body.rows) {
+      const created = supplementItem(`supp-new-${(state.supplementNextId = (state.supplementNextId ?? 0) + 1)}`, row.name, {
+        timing: row.timing, shortNote: row.shortNote, longNote: row.longNote, links: row.links, status: row.status,
+        ...(row.catalogKey === undefined ? {} : { catalogKey: row.catalogKey }),
+        // A workout-slot dose takes every day type, as the API does.
+        doses: row.doses.map((d) => (['pre', 'intra', 'post'].includes(d.slot) && d.dayTypes.length === 0 ? { ...d, dayTypes: dayTypeIds } : d)),
+      });
+      stack.items.push(created);
+      supplementLog('added', { item: structuredClone(created), note: `Imported from ${body.source}` }, url.searchParams.get('today'));
+    }
+    json(res, supplementStack());
+    return;
+  }
+
   // POST /supplements/items/status (#1410, #1411): the listed items' status.
   if (method === 'POST' && url.pathname === '/supplements/items/status') {
     const body = await readBody(req);

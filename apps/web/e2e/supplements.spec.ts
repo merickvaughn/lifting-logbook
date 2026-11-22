@@ -174,6 +174,37 @@ test('History: restores a removed item, which returns to the stack', async ({ pa
   await expect(page.getByRole('button', { name: /^Glycine/ })).toBeVisible();
 });
 
+test('Import from Google Sheets: reviewed rows are added, focus returns to Import, and History notes the import', async ({ page }) => {
+  await page.goto('/supplements');
+  const importButton = page.getByRole('button', { name: 'Import from Google Sheets' });
+  await importButton.click();
+  const dialog = page.getByRole('dialog', { name: 'Import from Google Sheets' });
+  await dialog.getByLabel('Google Sheets link').fill('https://docs.google.com/spreadsheets/d/abc/edit');
+  await dialog.getByRole('button', { name: 'Read sheet' }).click();
+
+  await expect(dialog.getByRole('heading', { name: 'Pick a tab' })).toBeFocused();
+  await expect(dialog.getByRole('listitem').filter({ hasText: 'Supplements' })).toContainText('3 rows');
+  await dialog.getByRole('button', { name: 'Supplements' }).click();
+
+  await expect(dialog.getByRole('heading', { name: 'Review rows' })).toBeFocused();
+  await expect(dialog.getByLabel('Melatonin (row 2)')).toHaveValue('active');
+  await dialog.getByLabel('Nitrates (row 4)').selectOption('skip');
+  await dialog.getByRole('button', { name: 'Import 2 items' }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(importButton).toBeFocused();
+  await expect(page.getByTestId('supp-announcement')).toHaveText('Imported 2 items.');
+  const daily = page.getByRole('region', { name: 'Every day' });
+  await expect(daily.getByRole('button', { name: /^Melatonin/ })).toBeVisible();
+  await expect(daily.getByRole('button', { name: /^Iron/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Nitrates/ })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'History' }).click();
+  const history = page.getByRole('dialog', { name: 'Supplement history' });
+  const added = history.getByRole('region', { name: 'Changes' }).getByRole('listitem').filter({ hasText: 'Added Melatonin' });
+  await expect(added).toContainText('Imported from Supplements');
+});
+
 test('History: a Lift History link opens it at the date, which before the log starts says so', async ({ page }) => {
   await page.goto('/supplements?history=2026-11-01');
   const dialog = page.getByRole('dialog', { name: 'Supplement history' });
