@@ -1153,6 +1153,31 @@ describe('supplements', () => {
     expect(JSON.parse(String(init.body))).toEqual({ name: 'Broth', itemIds: ['a', 'b'] });
   });
 
+  it('fetchSupplementChanges reads GET /supplements/changes, with the paging params only when given, uncached', async () => {
+    mockFetch.mockImplementation(async () => new Response('[]', { status: 200 }));
+    const client = makeClient();
+    await client.fetchSupplementChanges();
+    expect(lastCall()[0]).toBe('http://api.test/supplements/changes');
+    await client.fetchSupplementChanges({ beforeSeq: 40, limit: 25 });
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/changes?beforeSeq=40&limit=25');
+    expect(init.cache).toBe('no-store');
+  });
+
+  it('fetchSupplementsAsOf reads GET /supplements/as-of/:date uncached, and restoreSupplementItem POSTs the restore with the lifter\'s date', async () => {
+    const asOf = { items: [], dayTypes: [], firstChangeDate: null, anomalies: [] };
+    mockFetch.mockResolvedValue(new Response(JSON.stringify(asOf), { status: 200 }));
+    await expect(makeClient().fetchSupplementsAsOf('2026-11-20')).resolves.toEqual(asOf);
+    expect(lastCall()[0]).toBe('http://api.test/supplements/as-of/2026-11-20');
+    expect(lastCall()[1].cache).toBe('no-store');
+
+    mockFetch.mockResolvedValue(new Response('{"items":[]}', { status: 200 }));
+    await makeClient().restoreSupplementItem('a b', '2026-11-21');
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items/a%20b/restore?today=2026-11-21');
+    expect(init.method).toBe('POST');
+  });
+
   it('updateSupplementSettings PUTs the day types and cutoff with the lifter\'s date, and throws a 400\'s reason', async () => {
     mockFetch.mockImplementation(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
     const client = makeClient();

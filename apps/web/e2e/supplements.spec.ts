@@ -141,3 +141,45 @@ test('replaces an item into Pending: the new item is added and the replaced one 
   await page.getByRole('button', { name: /Pending · 2/ }).click();
   await expect(page.getByRole('button', { name: /Nutricost Pre-X/ })).toBeVisible();
 });
+
+test('History: restores a removed item, which returns to the stack', async ({ page }) => {
+  await page.goto('/supplements');
+  await page.getByRole('button', { name: 'Edit stack' }).click();
+  await page.getByRole('checkbox', { name: 'Select Glycine' }).check();
+  const bar = page.getByRole('region', { name: 'Selected items' });
+  // The first tap asks, the second removes.
+  await bar.getByRole('button', { name: 'Remove' }).click();
+  await bar.getByRole('button', { name: /Tap again to remove/ }).click();
+  await expect(page.getByRole('checkbox', { name: 'Select Glycine' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Done' }).click();
+
+  const history = page.getByRole('button', { name: 'History' });
+  await history.click();
+  const dialog = page.getByRole('dialog', { name: 'Supplement history' });
+  const onThen = dialog.getByRole('region', { name: 'What was I on?' }).getByRole('listitem');
+  const changes = dialog.getByRole('region', { name: 'Changes' }).getByRole('listitem');
+  await expect(onThen.filter({ hasText: /^Glycine — / })).toHaveCount(0);
+  const removed = changes.filter({ hasText: 'Removed Glycine' });
+  await removed.getByRole('button', { name: 'Restore Glycine' }).click();
+
+  await expect(dialog.getByTestId('history-announcement')).toHaveText('Restored Glycine.');
+  await expect(changes.first()).toContainText('Restored Glycine');
+  await expect(dialog.getByRole('button', { name: 'Restore Glycine' })).toHaveCount(0);
+  // Today's stack, read again, has it back.
+  await expect(onThen.filter({ hasText: /^Glycine — 3 g · Morning$/ })).toHaveCount(1);
+
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(history).toBeFocused();
+  await expect(page.getByRole('button', { name: /^Glycine/ })).toBeVisible();
+});
+
+test('History: a Lift History link opens it at the date, which before the log starts says so', async ({ page }) => {
+  await page.goto('/supplements?history=2026-11-01');
+  const dialog = page.getByRole('dialog', { name: 'Supplement history' });
+  await expect(dialog.getByLabel('Date')).toHaveValue('2026-11-01');
+  await expect(dialog.getByText('0 items active at the end of that day. History starts on Nov 18, 2026.')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(page).toHaveURL(/\/supplements$/);
+  await expect(page.getByRole('button', { name: 'History' })).toBeFocused();
+});

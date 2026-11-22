@@ -414,6 +414,12 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     await ok('POST', `/supplements/items/${mix.id}/restore?today=${TODAY}`);
     const split = await ok('POST', `/supplements/mixes/${mix.id}/split?today=${TODAY}`);
     expect(split.items).toEqual([a, b]);
+
+    // The split undid the mix's removal: restoring the mix again would bring its parts back a
+    // second time, beside the items the split returned.
+    const again = await inject('POST', `/supplements/items/${mix.id}/restore?today=${TODAY}`);
+    expect(again.statusCode).toBe(404);
+    expect((await ok('GET', '/supplements')).items).toEqual([a, b]);
   });
 
   it('bulk moves doses from one slot to another', async () => {
@@ -570,8 +576,18 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     expect(await names('2026-10-31')).toEqual([]);
     expect(await names('2026-11-10')).toEqual(['Old', 'New']);
     expect(await names('2026-11-15')).toEqual(['Old']);
-    expect(await asOf('2026-10-31')).toEqual({ items: [], firstChangeDate: '2026-11-01', anomalies: [] });
+    expect(await asOf('2026-10-31')).toEqual({ items: [], dayTypes: [], firstChangeDate: '2026-11-01', anomalies: [] });
     expect((await inject('GET', '/supplements/as-of/2026-02-30')).statusCode).toBe(400);
+  });
+
+  it('returns the day types as they were on the date, not as they are now', async () => {
+    const { ok, asOf } = newUser();
+    await ok('PUT', '/supplements/settings?today=2026-11-01', { dayTypes: DAY_TYPES });
+    await ok('PUT', '/supplements/settings?today=2026-11-10', { dayTypes: [{ id: 'lift', name: 'Push day' }] });
+
+    expect((await asOf('2026-11-05')).dayTypes).toEqual(DAY_TYPES);
+    expect((await asOf('2026-11-10')).dayTypes).toEqual([{ id: 'lift', name: 'Push day' }]);
+    expect((await asOf('2026-10-31')).dayTypes).toEqual([]);
   });
 
   it('pages the change log back from a seq', async () => {

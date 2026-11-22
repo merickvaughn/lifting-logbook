@@ -41,7 +41,11 @@ export interface ISupplementRepository {
   changesThrough(date: string): Promise<SupplementChange[]>;
   /** The earliest change's date, or null with none. */
   firstChangeDate(): Promise<string | null>;
-  /** The item as its latest `removed` change recorded it, or undefined if it never was. */
+  /**
+   * The item as its latest `removed` change recorded it. Undefined if it was never removed, or a
+   * later `restored` undid that removal: since, it may have been split as a mix, which brought its
+   * parts back as items of their own, and restoring the old mix would count them twice.
+   */
   lastRemoved(itemId: string): Promise<SupplementItem | undefined>;
   /**
    * Takes the user's supplement write lock, loads the state, runs `plan`, and saves what it

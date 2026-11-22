@@ -11,6 +11,8 @@ jest.mock('@/lib/client-api', () => ({
   setSupplementStatus: jest.fn(),
   updateSupplementSettings: jest.fn(),
   fetchSupplementCatalog: jest.fn().mockResolvedValue([]),
+  fetchSupplementChanges: jest.fn().mockResolvedValue([]),
+  fetchSupplementsAsOf: jest.fn().mockResolvedValue({ items: [], dayTypes: [], firstChangeDate: null, anomalies: [] }),
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
 
@@ -19,8 +21,35 @@ import { logClientError } from '@/lib/log-client-error';
 
 const row = (name: RegExp) => screen.getByRole('button', { name });
 
+const replaceState = jest.spyOn(window.history, 'replaceState');
+beforeEach(() => replaceState.mockClear());
+
+describe('SupplementsView opened from a Lift History link', () => {
+  it('opens History at the date, and drops the date from the address when it closes', async () => {
+    render(<SupplementsView stack={STACK} historyDate="2026-06-01" />);
+    const dialog = screen.getByRole('dialog', { name: 'Supplement history' });
+    expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-06-01');
+    await within(dialog).findByText('No changes yet.');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(replaceState).toHaveBeenCalledWith(null, '', '/supplements');
+    expect(screen.getByRole('button', { name: 'History' })).toHaveFocus();
+  });
+});
+
 describe('SupplementsView on a lift day', () => {
   beforeEach(() => render(<SupplementsView stack={STACK} />));
+
+  it('opens History as a dialog, and takes focus back to History when it closes', async () => {
+    const history = screen.getByRole('button', { name: 'History' });
+    await userEvent.click(history);
+    const dialog = screen.getByRole('dialog', { name: 'Supplement history' });
+    await within(dialog).findByText('No changes yet.');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(history).toHaveFocus();
+    // Opened from the page, so there's no date in the address to drop.
+    expect(replaceState).not.toHaveBeenCalled();
+  });
 
   it('shows the subtitle counts, the switcher and the protein card with the other day type', () => {
     // Flagged: Pre-X, Trans4orm, Potassium, Creatine, Glycine, Ashwagandha.

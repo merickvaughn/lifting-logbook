@@ -62,7 +62,8 @@ export function BulkDialog({
           <h2 id={id}>{title}</h2>
           <p className={styles.muted}>{subtitle}</p>
         </div>
-        <button type="button" className={styles.close} aria-label="Close" disabled={busy} onClick={onCancel}>
+        {/* Closed first, so the page isn't inert when `onCancel` (through the close event) moves focus back to it. */}
+        <button type="button" className={styles.close} aria-label="Close" disabled={busy} onClick={() => ref.current?.close()}>
           ×
         </button>
       </header>

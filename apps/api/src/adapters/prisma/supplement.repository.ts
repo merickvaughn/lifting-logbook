@@ -110,6 +110,11 @@ export class PrismaSupplementRepository implements ISupplementRepository {
       orderBy: { seq: 'desc' },
     });
     if (row === null) return undefined;
+    const undone = await this.prisma.supplementChange.findFirst({
+      where: { userId: this.userId, type: 'restored', seq: { gt: row.seq }, payload: { path: ['itemId'], equals: itemId } },
+      select: { seq: true },
+    });
+    if (undone !== null) return undefined;
     const change = toChange(row);
     return change.type === 'removed' ? change.item : undefined;
   }

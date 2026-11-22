@@ -8,6 +8,7 @@ import { logClientError } from '@/lib/log-client-error';
 import { SLOT_LABEL, buildView, type RowModel, type Stack } from '@/lib/supplementsView';
 import { CombineDialog, MoveDialog } from './BulkDialogs';
 import { DayTypesDialog, type DaySettings } from './DayTypesDialog';
+import HistoryDialog from './HistoryDialog';
 import SupplementDetail from './SupplementDetail';
 import SupplementForm, { type FormMode } from './SupplementForm';
 import styles from './supplements.module.css';
@@ -96,8 +97,11 @@ const plural = (n: number) => `${n} item${n === 1 ? '' : 's'}`;
 /** A row's identity for a tick: the row, plus the slot and status it showed when ticked. */
 const selectionKey = (r: RowModel) => `${r.key}|${r.slot ?? ''}|${r.item.status}`;
 
-/** The Supplements page: day-type switcher, protein total, the Workout and Every day cards, Pending, and the detail panel. */
-export default function SupplementsView({ stack }: { stack: Stack }) {
+/**
+ * The Supplements page: day-type switcher, protein total, the Workout and Every day cards, Pending,
+ * and the detail panel. `historyDate` opens History at that date, from a Lift History link.
+ */
+export default function SupplementsView({ stack, historyDate }: { stack: Stack; historyDate?: string }) {
   const [dayTypeId, setDayTypeId] = useState(stack.dayTypes[0]?.id ?? '');
   const [openId, setOpenId] = useState<string | null>(null);
   const [pendingOpen, setPendingOpen] = useState(false);
@@ -109,6 +113,8 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
   const [dialog, setDialog] = useState<'move' | 'combine' | null>(null);
   const [daysOpen, setDaysOpen] = useState(false);
   const daysOpener = useRef<HTMLButtonElement>(null);
+  const [historyOpen, setHistoryOpen] = useState(historyDate !== undefined);
+  const historyOpener = useRef<HTMLButtonElement>(null);
   // The day types just saved, until the refresh brings a stack that has them: reopening Edit days
   // before then must start from what was saved, or a second Save would write the old ones back.
   const [savedDays, setSavedDays] = useState<{ against: Stack; settings: DaySettings }>();
@@ -254,6 +260,9 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
   return (
     <div>
       <div className={styles.toolbar}>
+        <button ref={historyOpener} type="button" onClick={() => setHistoryOpen(true)}>
+          History
+        </button>
         <button
           ref={modeToggle}
           type="button"
@@ -510,6 +519,21 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
             if (!ids.includes(view.dayType.id)) setDayTypeId(ids[0] ?? '');
             setAnnouncement('Saved day types.');
             daysOpener.current?.focus();
+          }}
+        />
+      )}
+
+      {historyOpen && (
+        <HistoryDialog
+          stack={stack}
+          initialDate={historyDate}
+          onClose={() => {
+            setHistoryOpen(false);
+            // Opened from a link: drop the date from the address, so a reload doesn't reopen it.
+            // The native call, which Next.js syncs with its router: `router.replace` would render the
+            // page again for the new search params, remounting it and losing focus.
+            if (historyDate !== undefined) window.history.replaceState(null, '', '/supplements');
+            historyOpener.current?.focus();
           }}
         />
       )}

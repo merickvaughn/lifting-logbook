@@ -71,6 +71,31 @@ describe('HistoryTabs — unit conversion', () => {
 });
 
 // #1197: past macrocycles, newest first, with their dates, status and source.
+describe('HistoryTabs — supplements link (#1378)', () => {
+  it('links a Lift History row, PR or not, to the stack for its date', () => {
+    const pr: EnrichedRecord = { ...RECORD, id: 'rec-2', date: '2026-06-08', isPR: true };
+    render(<HistoryTabs records={[RECORD, pr]} tmEntries={[]} macrocycles={[]} unit="lbs" />);
+    expect(screen.getByRole('link', { name: 'Supplements on Jun 1, 2026' })).toHaveAttribute('href', '/supplements?history=2026-06-01');
+    // The PR row shows its badge and the same kind of link.
+    const prRow = screen.getByText('PR').closest('tr') as HTMLElement;
+    expect(within(prRow).getByRole('link', { name: 'Supplements on Jun 8, 2026' })).toHaveAttribute('href', '/supplements?history=2026-06-08');
+  });
+
+  it('links a PR on the TM Timeline to the stack for its date, and a non-PR entry to none', async () => {
+    const user = userEvent.setup();
+    const prEntry: TrainingMaxHistoryEntryResponse = { ...TM_ENTRY, id: 'tm-2', date: '2026-07-06', isPR: true };
+    render(<HistoryTabs records={[]} tmEntries={[TM_ENTRY, prEntry]} macrocycles={[]} unit="lbs" />);
+    await user.click(screen.getByRole('tab', { name: 'TM Timeline' }));
+    expect(screen.getByRole('link', { name: 'Supplements on Jul 6, 2026' })).toHaveAttribute('href', '/supplements?history=2026-07-06');
+    expect(screen.queryByRole('link', { name: 'Supplements on Jun 1, 2026' })).toBeNull();
+  });
+
+  it('shows no link for a date that is not YYYY-MM-DD', () => {
+    render(<HistoryTabs records={[{ ...RECORD, date: '06/01/2026' }]} tmEntries={[]} macrocycles={[]} unit="lbs" />);
+    expect(screen.queryByRole('link', { name: /Supplements on/ })).toBeNull();
+  });
+});
+
 describe('HistoryTabs — Macrocycles', () => {
   const macrocycle = (overrides: Partial<MacrocycleSummaryResponse>): MacrocycleSummaryResponse => ({
     id: 'm',

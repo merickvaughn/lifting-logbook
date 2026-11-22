@@ -262,6 +262,31 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
     expect(await asUser((repo) => repo.firstChangeDate())).toBe(TODAY);
     // The largest beforeSeq the API accepts is the largest the integer column holds.
     expect((await asUser((repo) => repo.changes({ beforeSeq: 2_147_483_647, limit: 10 }))).map((c) => c.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+
+    // A later restore undoes a removal, including that of a mix split since.
+    const restore = async (id: string) => {
+      const removed = await asUser((repo) => repo.lastRemoved(id));
+      await asUser((repo) =>
+        repo.write(async (state) => {
+          state.removed = removed ? [removed] : [];
+          return apply(state, [{ type: 'restored', itemId: id }]);
+        }),
+      );
+    };
+    await restore('c');
+    expect(await asUser((repo) => repo.lastRemoved('c'))).toBeUndefined();
+    const mix = (await asUser((repo) => repo.load())).items.find((i) => i.id === 'mix');
+    if (!mix) throw new Error('the mix is in the stack');
+    await write([{ type: 'removed', item: mix }]);
+    expect(await asUser((repo) => repo.lastRemoved('mix'))).toEqual(mix);
+    await restore('mix');
+    await write([{ type: 'mix_split', mixId: 'mix' }]);
+    expect(await asUser((repo) => repo.lastRemoved('mix'))).toBeUndefined();
+    // Neither undoes the removal of another item.
+    await write([{ type: 'removed', item: item('a', { name: 'Removed again' }) }]);
+    await write([{ type: 'removed', item: item('c') }]);
+    await restore('c');
+    expect(await asUser((repo) => repo.lastRemoved('a'))).toEqual(item('a', { name: 'Removed again' }));
   });
   it('stores an item\u2019s catalog key and reference in the two nullable columns, and reads them back (#1375)', async () => {
     const reference = {

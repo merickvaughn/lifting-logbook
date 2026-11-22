@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { fetchSupplements } from '@/lib/api';
+import { isIsoDay } from '@/lib/supplementHistory';
 import SupplementsView from './SupplementsView';
 import LoadError from './LoadError';
 import styles from './supplements.module.css';
@@ -7,10 +8,13 @@ import styles from './supplements.module.css';
 export const metadata: Metadata = { title: 'Supplements — Lifting Logbook' };
 
 /**
- * `/supplements`: what the lifter takes, by day type. Read-only; editing is a later change.
+ * `/supplements`: what the lifter takes, by day type. `?history=YYYY-MM-DD`, from a Lift History
+ * link, opens the History dialog at that date; any other value is ignored.
  * The fetch is uncached (`no-store`, set in the api-client), so a saved link shows on the next load.
  */
-export default async function SupplementsPage() {
+export default async function SupplementsPage({ searchParams }: { searchParams: Promise<{ history?: string | string[] }> }) {
+  const { history } = await searchParams;
+  const historyDate = typeof history === 'string' && isIsoDay(history) ? history : undefined;
   const result = await fetchSupplements().then(
     (stack) => ({ stack }),
     // Logged here for the server's logs; the error state below also reports it from the browser.
@@ -23,7 +27,7 @@ export default async function SupplementsPage() {
   return (
     <main className={styles.page}>
       <h1 className={styles.title}>What I’m on</h1>
-      {'stack' in result ? <SupplementsView stack={result.stack} /> : <LoadError message={result.error} />}
+      {'stack' in result ? <SupplementsView stack={result.stack} historyDate={historyDate} /> : <LoadError message={result.error} />}
     </main>
   );
 }
