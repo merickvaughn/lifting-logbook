@@ -464,8 +464,9 @@ export type TypedItemFields = Partial<
 
 /**
  * The detail fields and reference of a new item created from `e` (ADR-046 addendum). A field the
- * lifter typed (a non-blank string, a non-empty list) is kept; a blank or absent one takes the
- * entry's value. `catalogKey` and `reference` are always the entry's, and are a copy: later
+ * lifter sent is kept, even blank: the item form sends every field, already filled from the entry,
+ * so a blank one is a suggestion the lifter cleared (#1409). An absent field, a blank name or an
+ * empty ingredient list takes the entry's value. `catalogKey` and `reference` are always the entry's, and are a copy: later
  * edits to the catalog or to the returned item don't reach each other.
  */
 export function itemFromCatalog(
@@ -476,10 +477,10 @@ export function itemFromCatalog(
   const list = <T>(value: T[] | undefined, fallback: T[]) => (value !== undefined && value.length > 0 ? value : fallback);
   return {
     name: text(typed.name, e.name),
-    keyCompound: text(typed.keyCompound, e.keyCompound),
-    timing: text(typed.timing, e.timing),
-    shortNote: text(typed.shortNote, ''),
-    longNote: text(typed.longNote, ''),
+    keyCompound: typed.keyCompound ?? e.keyCompound,
+    timing: typed.timing ?? e.timing,
+    shortNote: typed.shortNote ?? '',
+    longNote: typed.longNote ?? '',
     links: typed.links ?? [],
     category: typed.category ?? '',
     typicalRange: typed.typicalRange ?? '',

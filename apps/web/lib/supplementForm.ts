@@ -105,9 +105,18 @@ export interface Autofilled {
 
 /**
  * Fills the fields the lifter hasn't typed in from a catalog match. Adding may re-slot the first
- * dose; editing fills only what is empty and never re-slots (ADR-046).
+ * dose; editing fills only what is empty and never re-slots (ADR-046). A dose re-slotted into a
+ * workout slot with no day type gets `dayTypeId`, the day the page shows, so the form stays
+ * saveable; one moved out of a workout slot keeps its day types, as the mockup does.
  */
-export function autofill(values: FormValues, typed: ReadonlySet<string>, entry: SupplementCatalogEntry, mode: 'add' | 'edit', stack: Stack): Autofilled {
+export function autofill(
+  values: FormValues,
+  typed: ReadonlySet<string>,
+  entry: SupplementCatalogEntry,
+  mode: 'add' | 'edit',
+  stack: Stack,
+  dayTypeId = '',
+): Autofilled {
   const filled: AutofillField[] = [];
   const next: FormValues = { ...values, doses: values.doses.map((d) => ({ ...d })), links: [...values.links] };
   const canFill = (field: AutofillField, current: string) => !typed.has(field) && (mode === 'add' || current.trim() === '');
@@ -124,6 +133,7 @@ export function autofill(values: FormValues, typed: ReadonlySet<string>, entry: 
   if (first) {
     if (mode === 'add' && !typed.has('slot') && first.slot !== entry.suggestedSlot) {
       first.slot = entry.suggestedSlot;
+      if (isWorkoutSlot(first.slot) && first.dayTypes.length === 0 && dayTypeId !== '') first.dayTypes = [dayTypeId];
       filled.push('slot');
     }
     if (entry.suggestedDose !== '' && entry.suggestedDose !== first.amount && canFill('amount', first.amount)) {
@@ -146,8 +156,12 @@ export function validate(values: FormValues): string | undefined {
     if (d.servings.trim() === '' || !Number.isFinite(servings) || servings < 0) return 'Servings must be a number, 0 or more.';
     if (isWorkoutSlot(d.slot) && d.dayTypes.length === 0) return `Pick at least one day type for ${SLOT_OPTION_LABEL[d.slot]}.`;
   }
-  const bad = values.links.find((l) => l.url.trim() !== '' && !linkHost(l.url.trim()));
-  if (bad) return 'A product link must start with http:// or https://.';
+  // The API's `@IsUrl` also wants a dotted host name, so `https://localhost` is refused here too.
+  const bad = values.links.find((l) => {
+    const url = l.url.trim();
+    return url !== '' && (/\s/.test(url) || !linkHost(url)?.includes('.'));
+  });
+  if (bad) return 'A product link must be a web address starting with http:// or https://.';
   const protein = values.protein.trim();
   if (protein !== '' && !(Number.isFinite(Number(protein)) && Number(protein) >= 0)) return 'Protein per serving must be a number, 0 or more.';
   return undefined;
@@ -155,8 +169,10 @@ export function validate(values: FormValues): string | undefined {
 
 /**
  * The request for `values`. Protein becomes the item's `protein` ingredient, alongside the
- * ingredients it already has (an edit) or the catalog entry's (an add); it's left out when it
- * hasn't changed, and always for a mix, whose ingredients come from its parts.
+ * ingredients it already has (an edit) or the catalog entry's (an add). An edit sends it only when
+ * it changed. An add sends it whenever the field has a value, so a typed 0 removes the catalog
+ * entry's protein, while a blank field keeps it. A mix never sends it: its ingredients come from
+ * its parts.
  */
 export function toBody(values: FormValues, opts: { item?: SupplementItem; entry?: SupplementCatalogEntry }): SupplementItemBody {
   const { item, entry } = opts;
@@ -172,10 +188,12 @@ export function toBody(values: FormValues, opts: { item?: SupplementItem; entry?
     status: values.status,
     doses: values.doses.map((d) => ({ slot: d.slot, amount: d.amount.trim(), servings: Number(d.servings), dayTypes: d.dayTypes })),
   };
-  if (entry) body.catalogKey = entry.key;
+  // Only an add links the catalog entry: the edit endpoint doesn't take `catalogKey`, and rejects it.
+  if (entry && !item) body.catalogKey = entry.key;
   const protein = Number(values.protein.trim() || 0);
   const base = item ? item.ingredients : entry?.ingredients ?? [];
-  if (!item?.parts && protein !== (item ? Number(proteinOf(item) || 0) : 0)) {
+  const changed = item ? protein !== Number(proteinOf(item) || 0) : values.protein.trim() !== '';
+  if (!item?.parts && changed) {
     body.ingredients = [...base.filter((i) => i.key !== 'protein'), ...(protein > 0 ? [{ key: 'protein', amount: protein, unit: 'g' as const }] : [])];
   }
   return body;

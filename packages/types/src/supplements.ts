@@ -219,6 +219,14 @@ export interface SupplementAsOfResponse {
   anomalies: SupplementReplayAnomaly[];
 }
 
+/**
+ * The longest text the supplement write endpoints accept: `name` for names and other short fields,
+ * `text` for notes and URLs, `linkLabel` for a product link's label. The item form caps its
+ * inputs to match, so an over-long field is stopped before the request rather than coming back as
+ * an unexplained 400.
+ */
+export const SUPPLEMENT_TEXT_MAX = { name: 200, text: 2000, linkLabel: 60 } as const;
+
 /** The 409 code for a write that lost a race with another write to the stack (ADR-046). */
 export const SUPPLEMENT_STALE_CODE = 'supplement-stale';
 /** The 409 code for restoring an item that isn't removed, or is folded into a mix. */

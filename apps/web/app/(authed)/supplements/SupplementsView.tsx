@@ -66,6 +66,12 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
   const [pendingOpen, setPendingOpen] = useState(false);
   const [form, setForm] = useState<FormMode | null>(null);
   const opener = useRef<HTMLElement | null>(null);
+  // What opened the form, to take focus back when it's saved or closed with ×.
+  const formOpener = useRef<HTMLElement | null>(null);
+  const openForm = (mode: FormMode, el: HTMLElement | null) => {
+    formOpener.current = el;
+    setForm(mode);
+  };
   const view = useMemo(() => buildView(stack, dayTypeId), [stack, dayTypeId]);
 
   useEffect(() => {
@@ -151,7 +157,7 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
           </>
         )}
         {hasDayTypes && (
-          <button type="button" className={styles.addLink} onClick={() => setForm({ kind: 'add', preset: 'workout' })}>
+          <button type="button" className={styles.addLink} onClick={(e) => openForm({ kind: 'add', preset: 'workout' }, e.currentTarget)}>
             + Add to this day
           </button>
         )}
@@ -180,7 +186,7 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
               </ul>
             </div>
           ))}
-        <button type="button" className={styles.addLink} onClick={() => setForm({ kind: 'add', preset: 'daily' })}>
+        <button type="button" className={styles.addLink} onClick={(e) => openForm({ kind: 'add', preset: 'daily' }, e.currentTarget)}>
           + Add daily item
         </button>
       </section>
@@ -226,7 +232,7 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
             </ul>
           </>
         )}
-        <button type="button" className={styles.addLink} onClick={() => setForm({ kind: 'add', preset: 'pending' })}>
+        <button type="button" className={styles.addLink} onClick={(e) => openForm({ kind: 'add', preset: 'pending' }, e.currentTarget)}>
           + Add a pending item
         </button>
       </section>
@@ -243,7 +249,7 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
             setOpenId(null);
             opener.current?.focus();
           }}
-          onEdit={() => setForm({ kind: 'edit', item: openItem })}
+          onEdit={() => openForm({ kind: 'edit', item: openItem }, opener.current)}
         />
       )}
 
@@ -256,6 +262,8 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
           onDismiss={() => {
             setForm(null);
             setOpenId(null);
+            // The add button, or for an edit the row whose panel it came from.
+            formOpener.current?.focus();
           }}
         />
       )}

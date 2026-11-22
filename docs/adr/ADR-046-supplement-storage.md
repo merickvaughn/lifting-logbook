@@ -196,6 +196,22 @@ an audit record depends on an entry staying what it was when written; rewriting 
 item removed before this change must still give a whole item. New entries are written in the new
 form only, and the write DTOs no longer take a plain-string link.
 
+**A catalog add keeps a field sent blank.** Before the form, `itemFromCatalog` gave a blank key
+compound, timing or note the entry's value. The form sends every field, already filled from the
+entry, so a blank there is a suggestion the lifter cleared, and refilling it on save would undo
+what they did. Now only a field left out of the request takes the entry's value. A blank name and
+an empty ingredient list still do, since a name is required and an item's ingredients are what the
+catalog link is for.
+
+**Deploying this migration.** `migrate deploy` runs before the new API revision takes traffic, so
+for the minutes of the rollout the old revision reads `links` as `jsonb` where it expects `text[]`,
+and its supplement reads and writes can fail. That is accepted rather than split into an
+expand-and-contract migration: the supplement tables and page are new (#1374, #1376), and the
+failure is a visible error the lifter can retry, not a silent bad write, since the old revision
+can't write a `text[]` into a `jsonb` column.
+A later column change to a table with real data should add the new column, write both, and drop
+the old one in a second release.
+
 ## Known follow-ups
 
 The API shape later sub-issues need, not built here:

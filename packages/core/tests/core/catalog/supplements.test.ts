@@ -99,11 +99,18 @@ describe('itemFromCatalog', () => {
     expect(item.keyCompound).toBe('Creatine');
   });
 
-  it('writes only fields the lifter has not typed', () => {
-    const typed = { name: 'My creatine', keyCompound: 'Creatine HCl', timing: '', shortNote: 'with breakfast', ingredients: [{ key: 'creatine', amount: 3, unit: 'g' as const }] };
+  it('writes only fields the lifter has not sent', () => {
+    const typed = { name: 'My creatine', keyCompound: 'Creatine HCl', shortNote: 'with breakfast', ingredients: [{ key: 'creatine', amount: 3, unit: 'g' as const }] };
     const item = itemFromCatalog(creatine(), typed);
     expect(item).toMatchObject({ name: 'My creatine', keyCompound: 'Creatine HCl', shortNote: 'with breakfast', ingredients: typed.ingredients });
     expect(item.timing).toBe(creatine().timing);
+  });
+
+  it('keeps a field sent blank, a suggestion the lifter cleared (#1409)', () => {
+    const item = itemFromCatalog(creatine(), { name: 'Creatine', keyCompound: '', timing: '' });
+    expect(item.keyCompound).toBe('');
+    expect(item.timing).toBe('');
+    expect(itemFromCatalog(creatine(), { name: ' ' }).name).toBe(creatine().name);
   });
 
   it('is a copy: editing the item or the catalog later does not reach the other', () => {

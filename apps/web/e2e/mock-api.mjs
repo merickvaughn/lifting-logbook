@@ -1220,7 +1220,7 @@ const server = createServer(async (req, res) => {
     const body = await readBody(req);
     if (rejectIfInvalidBody(res, body)) return;
     const stack = supplementStack();
-    const created = supplementItem(`supp-${stack.items.length + 1}`, body.name, body);
+    const created = supplementItem(`supp-new-${(state.supplementNextId = (state.supplementNextId ?? 0) + 1)}`, body.name, body);
     stack.items.push(created);
     json(res, { ...stack, id: created.id }, 201);
     return;

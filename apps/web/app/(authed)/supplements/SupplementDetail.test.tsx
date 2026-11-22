@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { SupplementItem } from '@lifting-logbook/types';
 import { supplementSourceUrl } from '@lifting-logbook/core';
@@ -155,7 +155,7 @@ describe('SupplementDetail where to buy', () => {
   it('shows the item’s category as the sub-line when set, and its slots otherwise', () => {
     const subLine = (d: HTMLElement) => within(d).getByRole('heading', { level: 2 }).parentElement?.textContent;
     expect(subLine(open('glycine').dialog)).toBe('GlycineMorning');
-    document.body.innerHTML = '';
+    cleanup();
     expect(subLine(open('glycine', withItem('glycine', { category: 'Sleep' })).dialog)).toBe('GlycineSleep');
   });
 

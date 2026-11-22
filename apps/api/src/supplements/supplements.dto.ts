@@ -15,14 +15,14 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { INGREDIENT_UNITS, SUPPLEMENT_SLOTS } from '@lifting-logbook/types';
+import { INGREDIENT_UNITS, SUPPLEMENT_SLOTS, SUPPLEMENT_TEXT_MAX } from '@lifting-logbook/types';
 import type { IngredientUnit, SupplementSlot, SupplementStatus } from '@lifting-logbook/types';
 
 /** 24-hour `HH:MM`. */
 const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const STATUSES: SupplementStatus[] = ['active', 'pending'];
-const TEXT = 2000;
-const NAME = 200;
+const TEXT = SUPPLEMENT_TEXT_MAX.text;
+const NAME = SUPPLEMENT_TEXT_MAX.name;
 const LIST = 100;
 
 /**
@@ -46,7 +46,7 @@ export class DoseDto {
 }
 
 export class LinkDto {
-  @IsString() @MaxLength(60) label!: string;
+  @IsString() @MaxLength(SUPPLEMENT_TEXT_MAX.linkLabel) label!: string;
   @IsUrl({ protocols: ['http', 'https'], require_protocol: true }) @MaxLength(TEXT) url!: string;
 }
 

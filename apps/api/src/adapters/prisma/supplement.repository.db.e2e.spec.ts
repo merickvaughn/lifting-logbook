@@ -296,6 +296,8 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
     // Runs the real migration file against a scratch table in its own schema, shaped as the
     // table was before it, so a row written under the old column type is converted.
     const sql = readFileSync(join(__dirname, '../../../prisma/migrations/20261121100000_supplement_item_category_range_links/migration.sql'), 'utf8');
+    // A plain split on `;`: the file has no `;` inside a literal or a `DO $$` block. If it ever
+    // does, this splits it wrongly and the test fails loudly at that statement.
     const statements = sql.replace(/^--.*$/gm, '').split(';').map((s) => s.trim()).filter(Boolean);
     await owner.$executeRawUnsafe('DROP SCHEMA IF EXISTS mig_1409 CASCADE');
     await owner.$executeRawUnsafe('CREATE SCHEMA mig_1409');

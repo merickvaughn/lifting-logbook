@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { SupplementCatalogEntry, SupplementItem } from '@lifting-logbook/types';
 import { STACK } from '@/lib/__tests__/supplementsTestStack';
@@ -110,7 +110,7 @@ describe('catalog autofill', () => {
     expect(field(/^Key compound/)).toHaveValue('Creatine monohydrate');
     expect(field(/^Slot/)).toHaveValue('am');
     expect(field(/^Amount/)).toHaveValue('5 g');
-    expect(field(/^Typical range/)).toHaveValue('3–5 g'.replace('–', '-'));
+    expect(field(/^Typical range/)).toHaveValue('3-5 g');
     expect(field(/^Timing/)).toHaveValue('Anytime or pre-workout');
     expect(within(dialog).getAllByText('SUGGESTED')).toHaveLength(6);
     expect(screen.getByLabelText('Link 1 label')).toHaveValue('Search Amazon');
@@ -166,6 +166,54 @@ describe('catalog autofill', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Filled 3 fields');
     expect(screen.getByRole('status')).not.toHaveTextContent('label facts');
   });
+
+  it('drops a field’s SUGGESTED tag once the lifter changes it', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([CREATINE]);
+    const { dialog } = add('workout');
+    await userEvent.type(field('Name'), 'creatine');
+    await screen.findByRole('status');
+    await userEvent.type(field(/^Timing/), '!');
+    expect(within(dialog).getAllByText('SUGGESTED')).toHaveLength(5);
+    expect(field(/^Timing/).closest('label')).not.toHaveTextContent('SUGGESTED');
+  });
+
+  it('re-slotting into a workout slot ticks the shown day type, so the form can still be saved', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([{ ...CREATINE, suggestedSlot: 'post' }]);
+    add('daily');
+    await userEvent.type(field('Name'), 'creatine');
+    await screen.findByRole('status');
+    expect(field(/^Slot/)).toHaveValue('post');
+    expect(screen.getByRole('checkbox', { name: 'Lift day' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Rest day' })).not.toBeChecked();
+  });
+
+  it('looks a name up once, however often the lifter comes back to it', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockImplementation(async (q: string) => (q === 'creatine' ? [CREATINE] : []));
+    add('daily');
+    await userEvent.type(field('Name'), 'creatine');
+    await screen.findByText(/^Filled/);
+    await userEvent.type(field('Name'), 'x');
+    await screen.findByText('Not in the shared catalog.');
+    await userEvent.type(field('Name'), '{Backspace}');
+    // Wait out the lookup delay, so a second request would have been made by now.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+    expect((fetchSupplementCatalog as jest.Mock).mock.calls.filter(([q]) => q === 'creatine')).toHaveLength(1);
+  });
+
+  it('reports a failed lookup once, shows no suggestion, and still saves', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockRejectedValue(new Error('API 503'));
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    add('daily');
+    await userEvent.type(field('Name'), 'creatine');
+    await waitFor(() => expect(logClientError).toHaveBeenCalledWith('supplements.catalogLookup', expect.any(Error)));
+    expect(logClientError).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText('SUGGESTED')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(createSupplementItem).toHaveBeenCalled());
+    expect((createSupplementItem as jest.Mock).mock.calls[0][0]).toMatchObject({ name: 'creatine', keyCompound: '' });
+    expect((createSupplementItem as jest.Mock).mock.calls[0][0]).not.toHaveProperty('catalogKey');
+  });
 });
 
 describe('saving', () => {
@@ -202,6 +250,85 @@ describe('saving', () => {
       expect.objectContaining({ category: 'Recovery', ingredients: [{ key: 'protein', amount: 24, unit: 'g' }] }),
       '2026-11-21',
     );
+  });
+
+  it('an edit never sends a catalog key, even after a name that matches the catalog', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([CREATINE]);
+    (updateSupplementItem as jest.Mock).mockResolvedValue({});
+    const { onDismiss } = editItem('glycine');
+    await userEvent.clear(field('Name'));
+    await userEvent.type(field('Name'), 'creatine');
+    await screen.findByRole('status');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
+    expect((updateSupplementItem as jest.Mock).mock.calls[0][1]).toMatchObject({ name: 'creatine' });
+    expect((updateSupplementItem as jest.Mock).mock.calls[0][1]).not.toHaveProperty('catalogKey');
+  });
+
+  it('doesn’t save a match made for an earlier name', async () => {
+    // The lookup for the new name never answers, so only the old match could be sent.
+    (fetchSupplementCatalog as jest.Mock).mockImplementation((q: string) => (q === 'creatine' ? Promise.resolve([CREATINE]) : new Promise(() => {})));
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    add('daily');
+    await userEvent.type(field('Name'), 'creatine');
+    await screen.findByRole('status');
+    await userEvent.type(field('Name'), ' blend');
+    expect(screen.queryByRole('status')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(createSupplementItem).toHaveBeenCalled());
+    expect((createSupplementItem as jest.Mock).mock.calls[0][0]).toMatchObject({ name: 'creatine blend' });
+    expect((createSupplementItem as jest.Mock).mock.calls[0][0]).not.toHaveProperty('catalogKey');
+  });
+
+  it('a mix’s protein comes from its parts, so it can’t be edited', () => {
+    const glycine = STACK.items.find((i) => i.id === 'glycine') as SupplementItem;
+    setup({ kind: 'edit', item: { ...glycine, parts: [{ itemId: 'a', name: 'A', ingredients: [] }] } });
+    expect(field(/^Protein/)).toBeDisabled();
+    expect(screen.getByText('(from its parts)')).toBeInTheDocument();
+  });
+
+  it('on an add, a blank protein keeps the catalog entry’s ingredients', async () => {
+    const whey = { ...CREATINE, key: 'whey', name: 'Whey', aliases: [], ingredients: [{ key: 'protein', amount: 25, unit: 'g' as const }] };
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([whey]);
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    add('daily');
+    await userEvent.type(field('Name'), 'whey');
+    await screen.findByRole('status');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(createSupplementItem).toHaveBeenCalledTimes(1));
+    expect((createSupplementItem as jest.Mock).mock.calls[0][0]).not.toHaveProperty('ingredients');
+  });
+
+  it('a typed 0 protein on an add sends no protein', async () => {
+    const whey = { ...CREATINE, key: 'whey', name: 'Whey', aliases: [], ingredients: [{ key: 'protein', amount: 25, unit: 'g' as const }] };
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([whey]);
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    add('daily');
+    await userEvent.type(field('Name'), 'whey');
+    await screen.findByRole('status');
+    await userEvent.type(field(/^Protein/), '0');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(createSupplementItem).toHaveBeenCalled());
+    expect((createSupplementItem as jest.Mock).mock.calls[0][0]).toMatchObject({ ingredients: [] });
+  });
+
+  it.each([
+    ['a host with no dot', 'https://localhost/x'],
+    ['a space', 'https://example.com/my product'],
+  ])('won’t send a product link with %s, which the API refuses', async (_what, url) => {
+    add('daily');
+    await userEvent.type(field('Name'), 'X');
+    await userEvent.click(screen.getByRole('button', { name: '+ Add link' }));
+    await userEvent.type(screen.getByLabelText('Link 1 URL'), url);
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('A product link must be a web address');
+    expect(createSupplementItem).not.toHaveBeenCalled();
+  });
+
+  it('caps each field at what the API takes', () => {
+    add('daily');
+    expect(field(/^Category/)).toHaveAttribute('maxLength', '200');
+    expect(field(/^Typical range/)).toHaveAttribute('maxLength', '200');
   });
 
   it('won’t send a workout dose with no day type', async () => {

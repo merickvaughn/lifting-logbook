@@ -178,7 +178,8 @@ export class SupplementsController {
   }
 
   /**
-   * Creates an item. With `catalogKey`, a field left blank takes the catalog entry's value, and
+   * Creates an item. With `catalogKey`, a field left out takes the catalog entry's value (one sent
+   * blank is kept), and
    * the entry's reference content is copied onto the item (`itemFromCatalog`); an unknown key is a 400.
    */
   @Post('items')

@@ -134,11 +134,20 @@ describe('SupplementsView add and edit entry points', () => {
     expect(screen.getByRole('dialog', { name: 'Nutricost Pre-X' })).toBeInTheDocument();
   });
 
-  it('× on the form closes the panel too', async () => {
+  it('× on the form closes the panel too, and focus goes back to the row', async () => {
     await userEvent.click(row(/Nutricost Pre-X/));
     await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
     await userEvent.click(within(screen.getByRole('dialog', { name: 'Edit Nutricost Pre-X' })).getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(row(/Nutricost Pre-X/)).toHaveFocus();
+  });
+
+  it('× on an Add form sends focus back to the button that opened it', async () => {
+    const opener = screen.getByRole('button', { name: '+ Add daily item' });
+    await userEvent.click(opener);
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'Add supplement' })).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(opener).toHaveFocus();
   });
 });
 

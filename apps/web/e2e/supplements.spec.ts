@@ -21,9 +21,21 @@ test('supplements page shows the lift day, and its detail panel opens, traps foc
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('heading', { name: 'Worth a look' })).toBeVisible();
 
-  // Tab never leaves a modal dialog.
-  for (let i = 0; i < 6; i++) await page.keyboard.press('Tab');
-  await expect(dialog.locator(':focus')).toHaveCount(1);
+  // Tab never reaches the page behind a modal dialog. Past the dialog's last control Chromium moves
+  // focus to the browser itself (nothing focused in the document), so check every stop rather than
+  // counting Tabs to one control, which breaks whenever the panel gains a button.
+  let insideStops = 0;
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press('Tab');
+    const where = await page.evaluate(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body) return 'none';
+      return document.querySelector('dialog[open]')?.contains(active) ? 'inside' : 'outside';
+    });
+    expect(where).not.toBe('outside');
+    if (where === 'inside') insideStops++;
+  }
+  expect(insideStops).toBeGreaterThan(0);
 
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
@@ -39,7 +51,9 @@ test('supplements page switches to the rest day', async ({ page }) => {
 
 test('adds a supplement from the shared catalog: autofill, suggested fields, and the new row', async ({ page }) => {
   await page.goto('/supplements');
-  await page.getByRole('button', { name: '+ Add daily item' }).click();
+  // The mockup's entry point: the Workout card's add starts on pre-workout, so a daily catalog
+  // entry re-slots it, and the slot is the sixth filled field.
+  await page.getByRole('button', { name: '+ Add to this day' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add supplement' });
   await expect(dialog.getByLabel('Name')).toBeFocused();
 

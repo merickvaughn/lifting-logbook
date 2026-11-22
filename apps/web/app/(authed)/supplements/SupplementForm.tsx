@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isWorkoutSlot } from '@lifting-logbook/core';
-import { SUPPLEMENT_SLOTS } from '@lifting-logbook/types';
+import { SUPPLEMENT_SLOTS, SUPPLEMENT_TEXT_MAX } from '@lifting-logbook/types';
 import type { SupplementCatalogEntry, SupplementItem } from '@lifting-logbook/types';
 import { localToday } from '@/lib/calendarDay';
 import { createSupplementItem, fetchSupplementCatalog, removeSupplementItem, updateSupplementItem } from '@/lib/client-api';
@@ -40,6 +40,21 @@ interface Props {
 
 const LOOKUP_DELAY_MS = 250;
 
+/** A finished lookup: the entry matched (none when the name isn't in the catalog), for which name. */
+interface Lookup {
+  name: string;
+  entry?: SupplementCatalogEntry;
+  filled: number;
+}
+
+interface FormState {
+  values: FormValues;
+  suggested: ReadonlySet<AutofillField>;
+  lookup?: Lookup;
+}
+
+const without = (set: ReadonlySet<AutofillField>, field: AutofillField) => (set.has(field) ? new Set([...set].filter((f) => f !== field)) : set);
+
 const Suggested = ({ show }: { show: boolean }) => (show ? <span className={styles.suggestedTag}>SUGGESTED</span> : null);
 
 /**
@@ -52,11 +67,18 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
   const nameRef = useRef<HTMLInputElement>(null);
   const amountRefs = useRef<(HTMLInputElement | null)[]>([]);
   const router = useRouter();
-  const [values, setValues] = useState<FormValues>(() => (editing ? itemValues(editing) : presetValues(mode.kind === 'add' ? mode.preset : 'daily', dayTypeId)));
+  // Values, their SUGGESTED tags and the last lookup are one state, so an autofill is one pure update.
+  const [form, setForm] = useState<FormState>(() => ({
+    values: editing ? itemValues(editing) : presetValues(mode.kind === 'add' ? mode.preset : 'daily', dayTypeId),
+    suggested: new Set(),
+  }));
+  const { values, suggested, lookup } = form;
+  const setValues = (update: (v: FormValues) => FormValues) => setForm((f) => ({ ...f, values: update(f.values) }));
+  const setLookup = (next: Lookup | undefined) => setForm((f) => ({ ...f, lookup: next }));
   // Fields the lifter has typed in; autofill leaves these alone.
   const typed = useRef(new Set<string>());
-  const [suggested, setSuggested] = useState<ReadonlySet<AutofillField>>(new Set());
-  const [lookup, setLookup] = useState<{ entry?: SupplementCatalogEntry; filled: number } | undefined>();
+  // Lookups already answered, by name: the catalog doesn't change while the form is open.
+  const answers = useRef(new Map<string, SupplementCatalogEntry[]>());
   const [focusRow, setFocusRow] = useState<number | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
@@ -69,34 +91,48 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
   }, []);
 
   useEffect(() => {
-    if (focusRow !== undefined) amountRefs.current[focusRow]?.focus();
+    if (focusRow === undefined) return;
+    amountRefs.current[focusRow]?.focus();
+    // Once only: a later change in the number of rows must not move focus again.
+    setFocusRow(undefined);
   }, [focusRow, values.doses.length]);
 
   // Look the name up once the lifter pauses. An edit looks nothing up until the name changes.
   const name = values.name.trim();
+  const editingName = editing?.name;
   useEffect(() => {
-    if (name === '' || name === editing?.name) {
+    if (name === '' || name === editingName) {
       setLookup(undefined);
       return;
     }
     let current = true;
+    const answered = (entries: SupplementCatalogEntry[]) => {
+      if (!current) return;
+      const entry = entries[0];
+      if (!entry) return setLookup({ name, filled: 0 });
+      setForm((f) => {
+        const result = autofill(f.values, typed.current, entry, mode.kind, stack, dayTypeId);
+        return {
+          values: result.values,
+          lookup: { name, entry, filled: result.filled.length },
+          suggested: new Set([...[...f.suggested].filter((field) => !typed.current.has(field)), ...result.filled]),
+        };
+      });
+    };
     const timer = setTimeout(() => {
+      const known = answers.current.get(name);
+      if (known) return answered(known);
       fetchSupplementCatalog(name).then(
         (entries) => {
-          if (!current) return;
-          const entry = entries[0];
-          if (!entry) return setLookup({ filled: 0 });
-          setValues((prev) => {
-            const result = autofill(prev, typed.current, entry, mode.kind, stack);
-            setLookup({ entry, filled: result.filled.length });
-            setSuggested((was) => new Set([...[...was].filter((f) => !typed.current.has(f)), ...result.filled]));
-            return result.values;
-          });
+          answers.current.set(name, entries);
+          answered(entries);
         },
         (err: unknown) => {
           // A failed lookup only means no autofill; the lifter can still fill the form in.
+          // A lookup the lifter has already typed past isn't worth an error report.
+          if (!current) return;
           logClientError('supplements.catalogLookup', err);
-          if (current) setLookup(undefined);
+          setLookup(undefined);
         },
       );
     }, LOOKUP_DELAY_MS);
@@ -104,19 +140,25 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
       current = false;
       clearTimeout(timer);
     };
-    // The lookup follows the name only: `stack` and `mode` don't change while the form is open.
-  }, [name]);
+  }, [name, editingName, mode.kind, stack, dayTypeId]);
 
+  // The entry matched for the name as it is now; a match for an earlier name is never saved.
+  const matched = lookup?.name === name ? lookup.entry : undefined;
+
+  const typedIn = (field: AutofillField) => {
+    typed.current.add(field);
+    setForm((f) => ({ ...f, suggested: without(f.suggested, field) }));
+  };
   const set = <K extends keyof FormValues>(key: K, value: FormValues[K], field?: AutofillField) => {
-    if (field) typed.current.add(field);
+    if (field) typedIn(field);
     setValues((v) => ({ ...v, [key]: value }));
   };
   const setDose = (i: number, patch: Partial<FormValues['doses'][number]>, field?: AutofillField) => {
-    if (field && i === 0) typed.current.add(field);
+    if (field && i === 0) typedIn(field);
     setValues((v) => ({ ...v, doses: v.doses.map((d, n) => (n === i ? { ...d, ...patch } : d)) }));
   };
   const setLink = (i: number, patch: Partial<FormValues['links'][number]>) => {
-    typed.current.add('links');
+    typedIn('links');
     setValues((v) => ({ ...v, links: v.links.map((l, n) => (n === i ? { ...l, ...patch, auto: false } : l)) }));
   };
 
@@ -128,7 +170,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
     setError(undefined);
     const op = editing ? 'supplements.editItem' : 'supplements.addItem';
     try {
-      const body = toBody(values, { item: editing, entry: lookup?.entry });
+      const body = toBody(values, { item: editing, entry: matched });
       if (editing) await updateSupplementItem(editing.id, body, localToday());
       else await createSupplementItem(body, localToday());
       router.refresh();
@@ -175,18 +217,18 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
       <form className={styles.form} onSubmit={submit}>
         <label>
           Name
-          <input ref={nameRef} required placeholder="e.g. Creatine monohydrate" value={values.name} onChange={(e) => {
+          <input ref={nameRef} required maxLength={SUPPLEMENT_TEXT_MAX.name} placeholder="e.g. Creatine monohydrate" value={values.name} onChange={(e) => {
             const next = e.target.value;
             setValues((v) => ({ ...v, name: next, links: trackName(stack, v.links, next) }));
           }} />
         </label>
-        {lookup?.entry && lookup.filled > 0 && (
+        {matched && lookup && lookup.filled > 0 && (
           <p className={styles.infoBanner} role="status">
             Filled {lookup.filled} field{lookup.filled === 1 ? '' : 's'} from the shared catalog
             {editing ? '' : '; label facts, uses and sources will be attached'}. Blue fields are suggestions; change anything.
           </p>
         )}
-        {name !== '' && name !== editing?.name && lookup && !lookup.entry && (
+        {name !== '' && lookup?.name === name && !lookup.entry && (
           <p className={styles.noMatchBanner} role="status">
             Not in the shared catalog.
           </p>
@@ -194,7 +236,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
 
         <label>
           Key compound <Suggested show={suggested.has('keyCompound')} />
-          <input placeholder="e.g. Anthocyanins, 300 mg caffeine" value={values.keyCompound} onChange={(e) => set('keyCompound', e.target.value, 'keyCompound')} />
+          <input maxLength={SUPPLEMENT_TEXT_MAX.name} placeholder="e.g. Anthocyanins, 300 mg caffeine" value={values.keyCompound} onChange={(e) => set('keyCompound', e.target.value, 'keyCompound')} />
         </label>
 
         <fieldset className={styles.doses}>
@@ -215,7 +257,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
               </label>
               <label>
                 Amount <Suggested show={i === 0 && suggested.has('amount')} />
-                <input ref={(el) => { amountRefs.current[i] = el; }} placeholder="e.g. 5 g" value={d.amount} onChange={(e) => setDose(i, { amount: e.target.value }, 'amount')} />
+                <input ref={(el) => { amountRefs.current[i] = el; }} maxLength={SUPPLEMENT_TEXT_MAX.name} placeholder="e.g. 5 g" value={d.amount} onChange={(e) => setDose(i, { amount: e.target.value }, 'amount')} />
               </label>
               <label>
                 Servings
@@ -258,7 +300,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
         <div className={styles.twoCol}>
           <label>
             Typical range <Suggested show={suggested.has('typicalRange')} />
-            <input placeholder="e.g. 3–5 g" value={values.typicalRange} onChange={(e) => set('typicalRange', e.target.value, 'typicalRange')} />
+            <input maxLength={SUPPLEMENT_TEXT_MAX.name} placeholder="e.g. 3–5 g" value={values.typicalRange} onChange={(e) => set('typicalRange', e.target.value, 'typicalRange')} />
           </label>
           <label>
             Status
@@ -271,7 +313,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
 
         <label>
           Timing <Suggested show={suggested.has('timing')} />
-          <input value={values.timing} onChange={(e) => set('timing', e.target.value, 'timing')} />
+          <input maxLength={SUPPLEMENT_TEXT_MAX.name} value={values.timing} onChange={(e) => set('timing', e.target.value, 'timing')} />
         </label>
         <label>
           Short note <span className={styles.muted}>(your words, shown in the list)</span>
@@ -279,17 +321,26 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
         </label>
         <div className={styles.twoCol}>
           <label>
-            Protein per serving (g)
-            <input type="number" inputMode="decimal" min="0" step="any" placeholder="0" value={values.protein} onChange={(e) => set('protein', e.target.value)} />
+            Protein per serving (g){editing?.parts && <span className={styles.muted}> (from its parts)</span>}
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              placeholder="0"
+              disabled={editing?.parts !== undefined}
+              value={values.protein}
+              onChange={(e) => set('protein', e.target.value)}
+            />
           </label>
           <label>
             Category
-            <input value={values.category} onChange={(e) => set('category', e.target.value)} />
+            <input maxLength={SUPPLEMENT_TEXT_MAX.name} value={values.category} onChange={(e) => set('category', e.target.value)} />
           </label>
         </div>
         <label>
           Long note <span className={styles.muted}>(shown in the detail panel)</span>
-          <textarea placeholder="Why you take it, what you’ve noticed, brand to rebuy..." value={values.longNote} onChange={(e) => set('longNote', e.target.value)} />
+          <textarea maxLength={SUPPLEMENT_TEXT_MAX.text} placeholder="Why you take it, what you’ve noticed, brand to rebuy..." value={values.longNote} onChange={(e) => set('longNote', e.target.value)} />
         </label>
 
         <fieldset className={styles.links}>
@@ -300,13 +351,13 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
           {values.links.length === 0 && <p className={styles.muted}>No links yet.</p>}
           {values.links.map((l, i) => (
             <div key={i} className={styles.linkRow}>
-              <input aria-label={`Link ${i + 1} label`} placeholder="Amazon" maxLength={60} value={l.label} onChange={(e) => setLink(i, { label: e.target.value })} />
-              <input aria-label={`Link ${i + 1} URL`} placeholder="https://www.amazon.com/dp/…" value={l.url} onChange={(e) => setLink(i, { url: e.target.value })} />
+              <input aria-label={`Link ${i + 1} label`} placeholder="Amazon" maxLength={SUPPLEMENT_TEXT_MAX.linkLabel} value={l.label} onChange={(e) => setLink(i, { label: e.target.value })} />
+              <input aria-label={`Link ${i + 1} URL`} maxLength={SUPPLEMENT_TEXT_MAX.text} placeholder="https://www.amazon.com/dp/…" value={l.url} onChange={(e) => setLink(i, { url: e.target.value })} />
               <button
                 type="button"
                 aria-label={`Remove link ${i + 1}`}
                 onClick={() => {
-                  typed.current.add('links');
+                  typedIn('links');
                   setValues((v) => ({ ...v, links: v.links.filter((_, n) => n !== i) }));
                 }}
               >
@@ -317,7 +368,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
           <button
             type="button"
             onClick={() => {
-              typed.current.add('links');
+              typedIn('links');
               setValues((v) => ({ ...v, links: [...v.links, { label: '', url: '', auto: false }] }));
             }}
           >

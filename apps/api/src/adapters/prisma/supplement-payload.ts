@@ -75,7 +75,7 @@ function boolean(o: JsonObject, key: string, fallback: boolean): boolean {
  * Links as a change recorded them: `{label, url}` objects, or, before #1409, plain URL strings,
  * read as an empty label. The change log is append-only, so old entries are read, never rewritten.
  */
-function links(value: Json | undefined): SupplementLink[] {
+export function parseLinks(value: Json | undefined): SupplementLink[] {
   return array(value, 'links').map((entry) => {
     if (typeof entry === 'string') return { label: '', url: entry };
     const o = object(entry, 'a link');
@@ -96,8 +96,6 @@ function oneOf<T extends string>(allowed: readonly T[], value: unknown, what: st
   if (found === undefined) throw new MalformedSupplementDataError(`${what} "${String(value)}" is not one of ${allowed.join(', ')}`);
   return found;
 }
-
-export const parseLinks = links;
 
 export const parseStatus = (value: unknown): SupplementStatus => oneOf(STATUSES, value, 'status');
 export const parseSlot = (value: unknown): SupplementDose['slot'] => oneOf(SUPPLEMENT_SLOTS, value, 'slot');
@@ -160,7 +158,7 @@ export function parseItem(value: Json | undefined): SupplementItem {
     longNote: string(o, 'longNote', ''),
     status: o.status === undefined ? 'active' : parseStatus(o.status),
     unverified: boolean(o, 'unverified', false),
-    links: o.links === undefined ? [] : links(o.links),
+    links: o.links === undefined ? [] : parseLinks(o.links),
     category: string(o, 'category', ''),
     typicalRange: string(o, 'typicalRange', ''),
     ingredients: o.ingredients === undefined ? [] : parseIngredients(o.ingredients),
@@ -177,7 +175,7 @@ function parseDetails(value: Json | undefined): Partial<SupplementItemDetails> {
   const o = object(value, 'changes');
   const details: Partial<SupplementItemDetails> = {};
   for (const key of DETAIL_KEYS) if (o[key] !== undefined) details[key] = string(o, key);
-  if (o.links !== undefined) details.links = links(o.links);
+  if (o.links !== undefined) details.links = parseLinks(o.links);
   if (o.ingredients !== undefined) details.ingredients = parseIngredients(o.ingredients);
   return details;
 }
