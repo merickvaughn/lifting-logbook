@@ -120,6 +120,17 @@ how issue [#644](https://github.com/merickvaughn/lifting-logbook/issues/644) shi
 for 3+ weeks: `RlsInterceptor` silently never set the `app.current_user_id` GUC, and no suite
 besides `rls.db.e2e.spec.ts` ran with RLS actually capable of rejecting anything.
 
+## DB E2E suites share one database
+
+Jest runs the DB E2E suites in parallel workers against the same Postgres. A test that changes
+something for every user, such as a `REVOKE` from `lifting_app` or a committed `ALTER TABLE`,
+also changes it for whichever suite is running at that moment. To make a write fail, refuse it
+for the test's own user with a `BEFORE INSERT` trigger. Create it with `OR REPLACE` and drop it in
+`finally`, as the "can't be saved" tests in `import-overwrite.db.e2e.spec.ts` and
+`snapshots.db.e2e.spec.ts` do. Schema changes a test needs belong in a transaction it rolls back.
+A database-wide `REVOKE` in the snapshots suite once failed an overwrite's backup in another
+worker with a 503 ([#1408](https://github.com/merickvaughn/lifting-logbook/issues/1408)).
+
 ## Running locally when Docker is unavailable
 
 The default behavior is **hard-fail with an actionable message** when Docker is

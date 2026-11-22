@@ -562,12 +562,24 @@ describeOrSkip('Clear data and snapshots (#1309, e2e, PrismaRepositoryFactory)',
   it('clears nothing when the snapshot can’t be saved', async () => {
     const before = await countsOf(prisma, USER_NO_BACKUP);
     const counts = await apiCounts(USER_NO_BACKUP);
-    await prisma.$executeRawUnsafe('REVOKE INSERT ON "data_snapshot" FROM lifting_app');
+    // Refused for this test's user only. Revoking the insert from lifting_app also failed an
+    // import-overwrite suite saving its backup in another worker at the same moment (#1408).
+    // Created with OR REPLACE, so a run killed before the cleanup doesn't fail the next one.
     let status: number;
     try {
+      await prisma.$executeRawUnsafe(`
+        CREATE OR REPLACE FUNCTION snapshots_e2e_refuse_backup() RETURNS trigger AS $$
+        BEGIN
+          IF NEW."userId" = '${USER_NO_BACKUP}' THEN RAISE EXCEPTION 'backup refused by the test'; END IF;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql`);
+      await prisma.$executeRawUnsafe(
+        'CREATE OR REPLACE TRIGGER snapshots_e2e_refuse_backup BEFORE INSERT ON "data_snapshot" FOR EACH ROW EXECUTE FUNCTION snapshots_e2e_refuse_backup()',
+      );
       status = (await inject(USER_NO_BACKUP, 'POST', '/users/me/training-data/clear', { counts })).statusCode;
     } finally {
-      await prisma.$executeRawUnsafe('GRANT INSERT ON "data_snapshot" TO lifting_app');
+      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS snapshots_e2e_refuse_backup ON "data_snapshot"');
+      await prisma.$executeRawUnsafe('DROP FUNCTION IF EXISTS snapshots_e2e_refuse_backup()');
     }
 
     expect(status).toBe(503);
