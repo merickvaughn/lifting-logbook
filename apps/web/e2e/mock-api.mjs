@@ -1318,6 +1318,10 @@ const server = createServer(async (req, res) => {
       json(res, { statusCode: 404, message: `No supplement item ${unknown}` }, 404);
       return;
     }
+    // Each one is logged as removed, for History's Restore (#1378).
+    for (const item of stack.items.filter((i) => body.itemIds.includes(i.id))) {
+      supplementLog('removed', { item }, url.searchParams.get('today'));
+    }
     state.supplementItems = stack.items.filter((i) => !body.itemIds.includes(i.id));
     json(res, supplementStack());
     return;
