@@ -274,6 +274,9 @@ function createInitialState() {
     assignedMacrocycles: [],
     assignedProgram: null,
     importBatches: [],
+    // A training-maxes import Settings lists and undoes (#1405): /__reset?withTrainingMaxImport=true
+    // seeds one that raised bench-press from 200 to 210.
+    trainingMaxImport: null,
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
     // GET/POST /lifts/modifications (#1152) — the user's lift modifications, for every lift.
@@ -799,6 +802,14 @@ const server = createServer(async (req, res) => {
     }
     if (url.searchParams.get('withClearError') === 'true') {
       state.clearError = true;
+    }
+    if (url.searchParams.get('withTrainingMaxImport') === 'true') {
+      state.trainingMaxImport = {
+        batch: { id: 'tm-import-1', program: '5-3-1', createdAt: '2026-11-21T18:04:09.000Z' },
+        lift: 'bench-press',
+        before: 200,
+      };
+      state.trainingMaxes.find((m) => m.lift === 'bench-press').weight = 210;
     }
     if (url.searchParams.get('withMissingMax') === 'true') {
       state.missingMaxes = [
@@ -1443,11 +1454,12 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // GET /programs/:p/import/batches (#1257): the imports History offers Undo for. The mock keeps
-    // lift-records batches only, so the training-maxes list (#1405) is empty.
+    // GET /programs/:p/import/batches (#1257): the imports History offers Undo for, or with
+    // destination=training-maxes the one Settings offers Undo for (#1405).
     if (method === 'GET' && rest[0] === 'import' && rest[1] === 'batches' && rest.length === 2) {
       if (url.searchParams.get('destination') === 'training-maxes') {
-        json(res, []);
+        const tm = state.trainingMaxImport;
+        json(res, tm && tm.batch.program === decodeURIComponent(parts[1]) ? [tm.batch] : []);
         return;
       }
       json(res, state.importBatches.filter((b) => b.program === decodeURIComponent(parts[1])));
@@ -2059,6 +2071,14 @@ const server = createServer(async (req, res) => {
     }
     // POST /programs/:p/import/:batchId/undo — Phase 3 undo
     if (method === 'POST' && rest[0] === 'import' && rest.length === 3 && rest[2] === 'undo') {
+      // Undoing the seeded training-maxes import puts back the max it raised (#1405).
+      const tm = state.trainingMaxImport;
+      if (tm && tm.batch.id === rest[1]) {
+        state.trainingMaxes.find((m) => m.lift === tm.lift).weight = tm.before;
+        state.trainingMaxImport = null;
+        json(res, { batchId: rest[1], restored: 1, skipped: 0, flagged: [] });
+        return;
+      }
       // Undoing a recorded batch removes its macrocycles (#1257).
       const batch = state.importBatches.find((b) => b.id === rest[1]);
       if (batch) {

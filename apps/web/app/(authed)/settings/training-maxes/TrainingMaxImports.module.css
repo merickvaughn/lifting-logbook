@@ -55,6 +55,11 @@
   color: var(--color-error-text);
 }
 
+.failed {
+  margin: var(--space-2) 0 var(--space-3);
+  color: var(--color-error-text);
+}
+
 .result {
   margin: 0 0 var(--space-3);
   color: var(--color-text);

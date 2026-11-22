@@ -14,7 +14,6 @@ import MissingTrainingMaxes from './MissingTrainingMaxes';
 import { resolveStepIncrements } from './increments';
 import MaxHistory from './MaxHistory';
 import TrainingMaxImports from './TrainingMaxImports';
-import styles from './TrainingMaxImports.module.css';
 
 export default async function TrainingMaxesPage() {
   const program = await getActiveProgram();
@@ -38,24 +37,26 @@ export default async function TrainingMaxesPage() {
   const defaultIncrement =
     settings.defaultWeightIncrement ?? DEFAULT_WEIGHT_INCREMENT;
   const increments = resolveStepIncrements(lifts, specs, defaultIncrement);
+  // The components below copy the maxes into their own state, so a refresh alone leaves them
+  // showing the old values. An undo removes its import from the list, so keying them on the list
+  // remounts them with the restored maxes; otherwise the form's next Save would write the undone
+  // values back (#1405). A refresh that only adds a max keeps the form's unsaved edits. Each key
+  // is prefixed, since siblings sharing a key leave the old copy on the page.
+  const importsKey = imports.map((b) => b.id).join(',');
 
   return (
     <>
-      <MissingTrainingMaxes program={program} preferredUnit={unit} step={defaultIncrement} />
+      <MissingTrainingMaxes key={`missing:${importsKey}`} program={program} preferredUnit={unit} step={defaultIncrement} />
       <TrainingMaxesForm
+        key={`form:${importsKey}`}
         program={program}
         lifts={lifts}
         maxes={maxes}
         increments={increments}
         unit={unit}
       />
-      {importsFailed && (
-        <p role="status" className={styles.error}>
-          Undoing a training-max import isn’t available right now. Refresh the page in a moment to try again.
-        </p>
-      )}
-      <TrainingMaxImports imports={imports} />
-      <MaxHistory initialEntries={history.entries} program={program} unit={unit} />
+      <TrainingMaxImports imports={imports} failed={importsFailed} />
+      <MaxHistory key={`history:${importsKey}`} initialEntries={history.entries} program={program} unit={unit} />
       <RepMaxCalculator unit={unit} />
     </>
   );

@@ -105,5 +105,27 @@ describe('TrainingMaxImports (#1405)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Undo import failed (HTTP 500)');
     expect(mockLog).toHaveBeenCalledWith('undoImport', failure, { programId: '5-3-1', batchId: 'tm-new' });
     expect(refresh).not.toHaveBeenCalled();
+    // The confirm button was disabled while the undo ran; focus comes back to it for a retry.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Undo import' })).toHaveFocus());
+  });
+
+  it('says Undo is unavailable when the list could not be read', () => {
+    render(<TrainingMaxImports imports={[]} failed />);
+    expect(screen.getByRole('heading', { name: 'Imported training maxes' })).toBeInTheDocument();
+    expect(screen.getByText(/Undoing a training-max import isn’t available right now/)).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('announces the outcome in a status region mounted before it appears', async () => {
+    const user = userEvent.setup();
+    mockUndo.mockResolvedValue({ batchId: 'tm-new', restored: 2, skipped: 0, flagged: [] });
+    render(<TrainingMaxImports imports={[NEWER]} />);
+    const status = screen.getByRole('status');
+    expect(status).toBeEmptyDOMElement();
+
+    await user.click(screen.getByRole('button', { name: 'Undo the import of 2026-11-21 18:04 UTC' }));
+    await user.click(screen.getByRole('button', { name: 'Undo import' }));
+
+    await waitFor(() => expect(status).toHaveTextContent('Undo complete: 2 restored.'));
   });
 });

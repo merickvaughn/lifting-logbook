@@ -80,6 +80,23 @@ test('training maxes offers setup for a lift with logged sets and no max', async
   await expect(page.getByLabel('romanian-deadlift training max', { exact: true })).toHaveValue('100');
 });
 
+// #1405: a training-maxes import can be undone once the wizard is gone, and the form then shows
+// the restored max rather than the one the import wrote.
+test('training maxes lists an import and undoes it, showing the restored max', async ({ page, request }) => {
+  await request.get(`${MOCK_API}/__reset?withTrainingMaxImport=true`);
+  await page.goto('/settings/training-maxes');
+
+  const bench = page.getByLabel('bench-press training max', { exact: true });
+  await expect(bench).toHaveValue('210');
+  const section = page.getByRole('region', { name: 'Imported training maxes' });
+  await section.getByRole('button', { name: 'Undo the import of 2026-11-21 18:04 UTC' }).click();
+  await section.getByRole('button', { name: 'Undo import', exact: true }).click();
+
+  await expect(section.getByText('Undo complete: 1 restored.')).toBeFocused();
+  await expect(bench).toHaveValue('200');
+  await expect(section.getByRole('button', { name: /Undo the import of/ })).toHaveCount(0);
+});
+
 test('units section saves the selected weight unit', async ({ page }) => {
   await page.goto('/settings/units');
 
