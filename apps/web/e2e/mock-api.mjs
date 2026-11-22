@@ -1243,6 +1243,21 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // POST /supplements/doses/move (#1410): the doses `doses` names, or the listed items' doses in
+  // `from`, go to `to`.
+  if (method === 'POST' && url.pathname === '/supplements/doses/move') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const stack = supplementStack();
+    for (const item of stack.items.filter((i) => body.itemIds.includes(i.id))) {
+      const named = body.doses?.filter((r) => r.itemId === item.id);
+      const moves = (d, i) => (named ? named.some((r) => r.index === i && r.slot === d.slot) : d.slot === body.from);
+      item.doses = item.doses.map((d, i) => (moves(d, i) ? { ...d, slot: body.to, dayTypes: body.dayTypes ?? d.dayTypes } : d));
+    }
+    json(res, stack);
+    return;
+  }
+
   // -------------------------------------------------------------------------
   // GET /users/me/settings
   // -------------------------------------------------------------------------

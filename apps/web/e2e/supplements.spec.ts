@@ -79,3 +79,27 @@ test('a name that is not in the shared catalog says so, and fills nothing', asyn
   await expect(dialog.getByText('Not in the shared catalog.')).toBeVisible();
   await expect(dialog.getByLabel(/^Key compound/)).toHaveValue('');
 });
+
+test('Edit stack: ticking a row and moving it with the bulk bar puts it in the new slot', async ({ page }) => {
+  await page.goto('/supplements');
+  const daily = page.getByRole('region', { name: 'Every day' });
+  await expect(daily.getByRole('heading', { name: 'Morning' })).toBeVisible();
+  await expect(daily.getByRole('heading', { name: 'Night' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Edit stack' }).click();
+  await expect(page.getByRole('button', { name: 'Done' })).toBeVisible();
+  await page.getByRole('checkbox', { name: 'Select Glycine' }).check();
+  const bar = page.getByRole('region', { name: 'Selected items' });
+  await expect(bar).toContainText('1 selected');
+
+  await bar.getByRole('button', { name: 'Move to…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Move 1 row' });
+  await dialog.getByLabel('Slot').selectOption('pm');
+  await dialog.getByRole('button', { name: 'Move' }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(bar).toBeHidden();
+  const night = daily.getByRole('heading', { name: 'Night' });
+  await expect(night).toBeVisible();
+  await expect(daily.getByRole('heading', { name: 'Morning' })).toHaveCount(0);
+});
