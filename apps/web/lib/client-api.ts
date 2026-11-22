@@ -118,6 +118,8 @@ export const {
   moveSupplementDoses,
   setSupplementStatus,
   createSupplementMix,
+  // The bulk bar's Remove, in one write (#1414).
+  removeSupplementItems,
   // Replace with… and Edit days (#1411).
   updateSupplementSettings,
   // The History dialog reads the log and the stack as of a date, and restores (#1378).

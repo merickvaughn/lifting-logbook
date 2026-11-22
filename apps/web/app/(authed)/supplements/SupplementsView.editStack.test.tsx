@@ -10,6 +10,7 @@ jest.mock('@/lib/client-api', () => ({
   updateSupplementItem: jest.fn(),
   createSupplementItem: jest.fn(),
   removeSupplementItem: jest.fn().mockResolvedValue({}),
+  removeSupplementItems: jest.fn().mockResolvedValue({}),
   fetchSupplementCatalog: jest.fn().mockResolvedValue([]),
   moveSupplementDoses: jest.fn().mockResolvedValue({}),
   setSupplementStatus: jest.fn().mockResolvedValue({}),
@@ -17,7 +18,7 @@ jest.mock('@/lib/client-api', () => ({
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
 
-import { createSupplementMix, moveSupplementDoses, removeSupplementItem, setSupplementStatus } from '@/lib/client-api';
+import { createSupplementMix, moveSupplementDoses, removeSupplementItem, removeSupplementItems, setSupplementStatus } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 
 const DATE = expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/);
@@ -217,13 +218,13 @@ describe('bulk actions', () => {
     expect(setSupplementStatus).toHaveBeenLastCalledWith(['pre-x'], 'active', DATE);
   });
 
-  it('Remove asks twice, reading Tap again to remove N items, then removes each item', async () => {
+  it('Remove asks twice, reading Tap again to remove N items, then removes them in one call', async () => {
     await userEvent.click(within(bar()).getByRole('button', { name: 'Remove' }));
-    expect(removeSupplementItem).not.toHaveBeenCalled();
+    expect(removeSupplementItems).not.toHaveBeenCalled();
     await userEvent.click(within(bar()).getByRole('button', { name: 'Tap again to remove 2 items' }));
-    expect(removeSupplementItem).toHaveBeenCalledTimes(2);
-    expect(removeSupplementItem).toHaveBeenCalledWith('pre-x', DATE);
-    expect(removeSupplementItem).toHaveBeenCalledWith('quest', DATE);
+    expect(removeSupplementItems).toHaveBeenCalledTimes(1);
+    expect(removeSupplementItems).toHaveBeenCalledWith(['pre-x', 'quest'], DATE);
+    expect(removeSupplementItem).not.toHaveBeenCalled();
     expect(announcement()).toHaveTextContent('Removed 2 items.');
   });
 
@@ -233,17 +234,17 @@ describe('bulk actions', () => {
     await tick('Fish oil');
     // Still two items, but not the two the first tap was for.
     await userEvent.click(within(bar()).getByRole('button', { name: 'Remove' }));
-    expect(removeSupplementItem).not.toHaveBeenCalled();
+    expect(removeSupplementItems).not.toHaveBeenCalled();
     await userEvent.click(within(bar()).getByRole('button', { name: 'Clear' }));
     expect(screen.queryByRole('region', { name: 'Selected items' })).toBeNull();
-    expect(removeSupplementItem).not.toHaveBeenCalled();
+    expect(removeSupplementItems).not.toHaveBeenCalled();
   });
 
   it('a double-click on Remove doesn’t confirm it', async () => {
     const remove = within(bar()).getByRole('button', { name: 'Remove' });
     fireEvent.click(remove, { detail: 1 });
     fireEvent.click(within(bar()).getByRole('button', { name: 'Tap again to remove 2 items' }), { detail: 2 });
-    expect(removeSupplementItem).not.toHaveBeenCalled();
+    expect(removeSupplementItems).not.toHaveBeenCalled();
   });
 });
 
@@ -380,15 +381,18 @@ describe('a failed write', () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it('Remove failure is logged, the selection kept, and the stack re-read since some can have gone', async () => {
-    (removeSupplementItem as jest.Mock).mockRejectedValueOnce(new Error('down'));
+  it('Remove failure makes one call, is logged, keeps the selection, and doesn’t re-read the stack', async () => {
+    (removeSupplementItems as jest.Mock).mockRejectedValueOnce(new Error('down'));
     await enterEditMode();
     await tick('Nutricost Pre-X');
+    await tick('Quest protein (vanilla milkshake)');
     await userEvent.click(within(bar()).getByRole('button', { name: 'Remove' }));
-    await userEvent.click(within(bar()).getByRole('button', { name: 'Tap again to remove 1 item' }));
-    expect(logClientError).toHaveBeenCalledWith('supplements.bulkRemove', expect.any(Error), { items: 1 });
-    expect(refresh).toHaveBeenCalledTimes(1);
-    expect(bar()).toHaveTextContent('1 selected');
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Tap again to remove 2 items' }));
+    expect(removeSupplementItems).toHaveBeenCalledTimes(1);
+    expect(logClientError).toHaveBeenCalledWith('supplements.bulkRemove', expect.any(Error), { items: 2 });
+    expect(within(bar()).getByRole('alert')).toHaveTextContent('Couldn’t save that');
+    expect(refresh).not.toHaveBeenCalled();
+    expect(bar()).toHaveTextContent('2 selected');
   });
 
   it('a later success clears the error, and so does Clear', async () => {

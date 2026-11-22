@@ -1308,6 +1308,21 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // POST /supplements/items/remove (#1414): the listed items go in one write, or a 404 removes none.
+  if (method === 'POST' && url.pathname === '/supplements/items/remove') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const stack = supplementStack();
+    const unknown = body.itemIds.find((id) => !stack.items.some((i) => i.id === id));
+    if (unknown !== undefined) {
+      json(res, { statusCode: 404, message: `No supplement item ${unknown}` }, 404);
+      return;
+    }
+    state.supplementItems = stack.items.filter((i) => !body.itemIds.includes(i.id));
+    json(res, supplementStack());
+    return;
+  }
+
   // POST /supplements/items/status (#1410, #1411): the listed items' status.
   if (method === 'POST' && url.pathname === '/supplements/items/status') {
     const body = await readBody(req);

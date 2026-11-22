@@ -47,6 +47,7 @@ import {
   CreateMixDto,
   CreateSupplementItemDto,
   MoveDosesDto,
+  RemoveItemsDto,
   SetStatusDto,
   SupplementSettingsDto,
   UpdateSupplementItemDto,
@@ -257,6 +258,22 @@ export class SupplementsController {
     @CurrentUser() user: AuthUser,
   ): Promise<SupplementStackResponse> {
     const state = await this.write(user, today, undefined, (state) => [{ type: 'removed', item: find(state, id).item }]);
+    return view(state);
+  }
+
+  /**
+   * Removes the listed items in one write, one `removed` change each, so they all go or none do
+   * (#1414). An unknown id is a 404 and removes nothing.
+   */
+  @Post('items/remove')
+  async removeMany(
+    @Body() dto: RemoveItemsDto,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementStackResponse> {
+    const state = await this.write(user, today, dto, (state, body) =>
+      [...new Set(body.itemIds)].map((id): SupplementChangeBody => ({ type: 'removed', item: find(state, id).item })),
+    );
     return view(state);
   }
 

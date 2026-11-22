@@ -120,6 +120,10 @@ export class SetStatusDto {
   @IsIn(STATUSES) status!: SupplementStatus;
 }
 
+export class RemoveItemsDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(LIST) @IsString({ each: true }) itemIds!: string[];
+}
+
 export class CreateMixDto {
   @IsString() @MinLength(1) @MaxLength(NAME) name!: string;
   @IsArray() @ArrayMinSize(2) @ArrayMaxSize(LIST) @IsString({ each: true }) itemIds!: string[];
