@@ -7,7 +7,7 @@ import { removeSupplementItem, setSupplementStatus } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import { SLOT_LABEL, buildView, type RowModel, type Stack } from '@/lib/supplementsView';
 import { CombineDialog, MoveDialog } from './BulkDialogs';
-import { DayTypesDialog } from './DayTypesDialog';
+import { DayTypesDialog, type DaySettings } from './DayTypesDialog';
 import SupplementDetail from './SupplementDetail';
 import SupplementForm, { type FormMode } from './SupplementForm';
 import styles from './supplements.module.css';
@@ -109,6 +109,10 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
   const [dialog, setDialog] = useState<'move' | 'combine' | null>(null);
   const [daysOpen, setDaysOpen] = useState(false);
   const daysOpener = useRef<HTMLButtonElement>(null);
+  // The day types just saved, until the refresh brings a stack that has them: reopening Edit days
+  // before then must start from what was saved, or a second Save would write the old ones back.
+  const [savedDays, setSavedDays] = useState<{ against: Stack; settings: DaySettings }>();
+  const daysStack = savedDays?.against === stack ? { ...stack, ...savedDays.settings } : stack;
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
   const [writeError, setWriteError] = useState<string | undefined>();
@@ -277,21 +281,21 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
       </p>
 
       <div className={styles.dayBar}>
-      {hasDayTypes && (
-        <div role="group" aria-label="Day type" className={styles.switcher}>
-          {stack.dayTypes.map((d) => (
-            <button
-              key={d.id}
-              type="button"
-              aria-pressed={d.id === view.dayType.id}
-              className={d.id === view.dayType.id ? `${styles.segment} ${styles.segmentOn}` : styles.segment}
-              onClick={() => setDayTypeId(d.id)}
-            >
-              {d.name}
-            </button>
-          ))}
-        </div>
-      )}
+        {hasDayTypes && (
+          <div role="group" aria-label="Day type" className={styles.switcher}>
+            {stack.dayTypes.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                aria-pressed={d.id === view.dayType.id}
+                className={d.id === view.dayType.id ? `${styles.segment} ${styles.segmentOn}` : styles.segment}
+                onClick={() => setDayTypeId(d.id)}
+              >
+                {d.name}
+              </button>
+            ))}
+          </div>
+        )}
         <button ref={daysOpener} type="button" onClick={() => setDaysOpen(true)}>
           Edit days
         </button>
@@ -500,15 +504,18 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
 
       {daysOpen && (
         <DayTypesDialog
-          stack={stack}
+          stack={daysStack}
           onCancel={() => {
             setDaysOpen(false);
             daysOpener.current?.focus();
           }}
-          onDone={(ids) => {
+          onDone={(saved) => {
             setDaysOpen(false);
+            setSavedDays({ against: stack, settings: saved });
             // A day type that was removed can't stay selected.
-            if (!ids.includes(dayTypeId)) setDayTypeId(ids[0] ?? '');
+            const ids = saved.dayTypes.map((d) => d.id);
+            if (!ids.includes(view.dayType.id)) setDayTypeId(ids[0] ?? '');
+            setAnnouncement('Saved day types.');
             daysOpener.current?.focus();
           }}
         />
@@ -539,11 +546,13 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
             // Cancel returns to the detail panel when the form came from one; from Edit stack mode there's none, so back to the row.
             if (!openItem) formOpener.current?.focus();
           }}
-          onDismiss={() => {
+          onDismiss={(done) => {
             setForm(null);
             setOpenId(null);
-            // The add button, or for an edit the row whose panel it came from.
-            formOpener.current?.focus();
+            if (done) setAnnouncement(done);
+            // The add button, or for an edit the row whose panel it came from. A replace moves or
+            // removes that row, so focus goes to the Edit stack toggle, which stays.
+            (form.kind === 'replace' ? modeToggle.current : formOpener.current)?.focus();
           }}
         />
       )}

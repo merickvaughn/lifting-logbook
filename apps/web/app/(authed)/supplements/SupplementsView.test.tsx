@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { STACK } from '@/lib/__tests__/supplementsTestStack';
 import SupplementsView from './SupplementsView';
@@ -14,6 +14,7 @@ jest.mock('@/lib/client-api', () => ({
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
 
+import { createSupplementItem, setSupplementStatus, updateSupplementSettings } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 
 const row = (name: RegExp) => screen.getByRole('button', { name });
@@ -228,5 +229,38 @@ describe('Replace with… and Edit days', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog', { name: 'Day types' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit days' })).toHaveFocus();
+  });
+
+  it('a Replace with… add says what it did and focuses Edit stack, since the replaced row moves', async () => {
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    (setSupplementStatus as jest.Mock).mockResolvedValue({});
+    render(<SupplementsView stack={STACK} />);
+    await userEvent.click(row(/Nutricost Pre-X/));
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'Nutricost Pre-X' })).getByRole('button', { name: 'Replace with…' }));
+    await userEvent.click(screen.getByLabelText('Name'));
+    await userEvent.paste('Pre-Y');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(screen.getByTestId('supp-announcement')).toHaveTextContent('Added Pre-Y; moved 1 item to Pending.'));
+    expect(screen.queryByRole('dialog', { name: 'Add supplement' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit stack' })).toHaveFocus();
+  });
+
+  it('saving Edit days announces it, falls back from a removed day type, and reopens with what was saved', async () => {
+    (updateSupplementSettings as jest.Mock).mockResolvedValue({});
+    render(<SupplementsView stack={STACK} />);
+    expect(screen.getByRole('button', { name: 'Lift day' })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(screen.getByRole('button', { name: 'Edit days' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Lift day' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Day types' })).not.toBeInTheDocument());
+    expect(screen.getByTestId('supp-announcement')).toHaveTextContent('Saved day types.');
+    expect(screen.getByRole('button', { name: 'Edit days' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Rest day' })).toHaveAttribute('aria-pressed', 'true');
+    // The refresh hasn't brought the new stack yet: reopening starts from what was saved, so a
+    // second Save can't write Lift day back.
+    await userEvent.click(screen.getByRole('button', { name: 'Edit days' }));
+    const days = screen.getByRole('dialog', { name: 'Day types' });
+    expect(within(days).getByLabelText('Name of day type 1')).toHaveValue('Rest day');
+    expect(within(days).queryByLabelText('Name of day type 2')).not.toBeInTheDocument();
   });
 });

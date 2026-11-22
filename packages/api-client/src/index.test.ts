@@ -1144,6 +1144,20 @@ describe('supplements', () => {
     expect(JSON.parse(String(init.body))).toEqual({ name: 'Broth', itemIds: ['a', 'b'] });
   });
 
+  it('updateSupplementSettings PUTs the day types and cutoff with the lifter\'s date, and throws a 400\'s reason', async () => {
+    mockFetch.mockImplementation(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    const client = makeClient();
+    const body = { dayTypes: [{ id: 'lift', name: 'Lift day', sessionTime: '16:30' }], caffeineCutoff: '15:00' };
+    await client.updateSupplementSettings(body, '2026-11-21');
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/settings?today=2026-11-21');
+    expect(init.method).toBe('PUT');
+    expect(init.cache).toBe('no-store');
+    expect(JSON.parse(String(init.body))).toEqual(body);
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'leaves Creatine on no day' }), { status: 400 }));
+    await expect(client.updateSupplementSettings(body, '2026-11-21')).rejects.toThrow('leaves Creatine on no day');
+  });
+
   it('updateSupplementItem throws the server message on failure', async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'stale' }), { status: 409 }));
     await expect(makeClient().updateSupplementItem('x', { links: [] }, '2026-11-21')).rejects.toThrow('stale');

@@ -522,11 +522,138 @@ describe('Replace with… (#1411)', () => {
     await userEvent.paste('Pre-Y');
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Added Pre-Y, but couldn’t move the items it replaces');
-    expect(logClientError).toHaveBeenCalledWith('supplements.replaceItems', expect.any(Error), { items: 1, how: 'pending' });
+    expect(logClientError).toHaveBeenCalledWith('supplements.replaceItems', expect.any(Error), { items: 1, left: 1, how: 'pending' });
     expect(onDismiss).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Try again' })).toHaveFocus();
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('Added Pre-Y; moved 1 item to Pending.'));
     expect(createSupplementItem).toHaveBeenCalledTimes(1);
     expect(setSupplementStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('Remove them with two ticked removes both, and says how many', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([caffeine(400)]);
+    const { onDismiss } = replace('pre-x');
+    await typeName('Caffeine');
+    await userEvent.click(row('EVL Trans4orm'));
+    await userEvent.click(screen.getByRole('radio', { name: /Remove them/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('Added Caffeine; removed 2 items.'));
+    expect((removeSupplementItem as jest.Mock).mock.calls).toEqual([
+      ['pre-x', '2026-11-21'],
+      ['trans4orm', '2026-11-21'],
+    ]);
+  });
+
+  it('after a remove fails part-way, Try again removes only the items still left', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([caffeine(400)]);
+    (removeSupplementItem as jest.Mock).mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('down'));
+    const { onDismiss } = replace('pre-x');
+    await typeName('Caffeine');
+    await userEvent.click(row('EVL Trans4orm'));
+    await userEvent.click(screen.getByRole('radio', { name: /Remove them/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('couldn’t remove the items it replaces');
+    expect(logClientError).toHaveBeenCalledWith('supplements.replaceItems', expect.any(Error), { items: 2, left: 1, how: 'remove' });
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('Added Caffeine; removed 1 item.'));
+    expect((removeSupplementItem as jest.Mock).mock.calls.map((c) => c[0])).toEqual(['pre-x', 'trans4orm', 'trans4orm']);
+    expect(createSupplementItem).toHaveBeenCalledTimes(1);
+  });
+
+  it('locks Close and Esc while the add and its replacement are in flight', async () => {
+    let finish: (v: unknown) => void = () => {};
+    (createSupplementItem as jest.Mock).mockReturnValue(new Promise((r) => (finish = r)));
+    const { onDismiss, onCancel, dialog } = replace('pre-x');
+    await userEvent.click(field('Name'));
+    await userEvent.paste('Pre-Y');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect(dialog).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+    const esc = new Event('cancel', { cancelable: true });
+    dialog.dispatchEvent(esc);
+    expect(esc.defaultPrevented).toBe(true);
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+    await act(async () => finish({}));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
+  });
+
+  it('keeps the replaced item’s slot when a catalog match suggests another', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([CREATINE]);
+    replace('pre-x');
+    await typeName('Creatine');
+    expect(field(/^Slot/)).toHaveValue('pre');
+  });
+
+  it('marks the replaced item SAME SLOT only while the new one shares its slot', async () => {
+    replace('trans4orm');
+    expect(field(/^Slot/)).toHaveValue('am');
+    expect(within(group()).getByText('SAME SLOT')).toBeInTheDocument();
+    await userEvent.selectOptions(field(/^Slot/), 'pm');
+    expect(within(group()).queryByText('SAME SLOT')).not.toBeInTheDocument();
+    expect(row('EVL Trans4orm')).toBeChecked();
+  });
+
+  it('ticks nothing for an item added as pending, though it would replace a same-slot one', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([caffeine(400)]);
+    add('workout');
+    await userEvent.selectOptions(field(/^Status/), 'pending');
+    await typeName('Caffeine');
+    expect(row('Nutricost Pre-X')).not.toBeChecked();
+    expect(within(group()).getAllByText('SAME SLOT')).toHaveLength(1);
+  });
+
+  it('lists same-slot overlaps first whatever order the stack is in', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([caffeine(400)]);
+    const reordered = { ...STACK, items: [...STACK.items].reverse() };
+    render(<SupplementForm stack={reordered} mode={{ kind: 'add', preset: 'workout' }} dayTypeId="lift" onCancel={jest.fn()} onDismiss={jest.fn()} />);
+    await typeName('Caffeine');
+    const boxes = within(group()).getAllByRole('checkbox');
+    expect(boxes.map((b) => b.closest('label')?.querySelector('strong')?.textContent)).toEqual(['Nutricost Pre-X', 'EVL Trans4orm']);
+  });
+
+  it('never offers to replace an item that arrived on the stack after the form opened', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([caffeine(400)]);
+    const mode: FormMode = { kind: 'add', preset: 'workout' };
+    const props = { mode, dayTypeId: 'lift', onCancel: jest.fn(), onDismiss: jest.fn() };
+    const { rerender } = render(<SupplementForm stack={STACK} {...props} />);
+    await typeName('Caffeine');
+    const arrived = { ...(STACK.items[0] as SupplementItem), id: 'just-added', name: 'Caffeine (just added)' };
+    rerender(<SupplementForm stack={{ ...STACK, items: [...STACK.items, arrived] }} {...props} />);
+    expect(within(group()).queryByRole('checkbox', { name: /^Caffeine \(just added\)/ })).not.toBeInTheDocument();
+    expect(row('Nutricost Pre-X')).toBeInTheDocument();
+  });
+});
+
+describe('what closing the form announces', () => {
+  it('an add says what was added', async () => {
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    const { onDismiss } = add('daily');
+    await userEvent.click(field('Name'));
+    await userEvent.paste('Glycine 2');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('Added Glycine 2.'));
+  });
+
+  it('an edit says it saved', async () => {
+    (updateSupplementItem as jest.Mock).mockResolvedValue({});
+    const { onDismiss } = editItem('glycine');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('Saved Glycine.'));
+  });
+
+  it('a remove says it removed', async () => {
+    (removeSupplementItem as jest.Mock).mockResolvedValue({});
+    const { onDismiss } = editItem('glycine');
+    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Tap again to remove' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('Removed Glycine.'));
+  });
+
+  it('× says nothing', async () => {
+    const { onDismiss } = editItem('glycine');
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onDismiss).toHaveBeenCalledWith();
   });
 });

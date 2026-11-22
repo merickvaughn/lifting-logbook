@@ -85,3 +85,4 @@
 .dayRow { display: grid; grid-template-columns: 2fr 1fr auto; gap: 0.5rem; align-items: end; }
 .dayBar { display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap; margin-bottom: 1rem; }
 .dayBar .switcher { margin-bottom: 0; }
+.removeDay:hover, .removeDay:focus-visible { color: var(--color-error-text); }

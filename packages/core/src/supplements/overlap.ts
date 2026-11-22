@@ -11,6 +11,11 @@ export interface Overlap {
   preselect: boolean;
 }
 
+/** Two doses in the same slot and, for a workout slot, on a shared day type. */
+export function dosesShareSlot(a: SupplementDose, b: SupplementDose): boolean {
+  return a.slot === b.slot && (!isWorkoutSlot(a.slot) || a.dayTypes.some((t) => b.dayTypes.includes(t)));
+}
+
 /** Whole nanograms of one ingredient the item supplies in a slot, summed over its matching doses. */
 function slotAmountNg(
   item: SupplementItem,
@@ -40,11 +45,8 @@ export function findOverlaps(
     );
     if (shared.length === 0) continue;
 
-    const sharesSlot = (a: SupplementDose, b: SupplementDose) =>
-      a.slot === b.slot &&
-      (!isWorkoutSlot(a.slot) || a.dayTypes.some((t) => b.dayTypes.includes(t)));
-    const candidateInSlot = (c: SupplementDose) => item.doses.some((d) => sharesSlot(c, d));
-    const itemInSlot = (d: SupplementDose) => candidate.doses.some((c) => sharesSlot(c, d));
+    const candidateInSlot = (c: SupplementDose) => item.doses.some((d) => dosesShareSlot(c, d));
+    const itemInSlot = (d: SupplementDose) => candidate.doses.some((c) => dosesShareSlot(c, d));
     const sameSlot = candidate.doses.some(candidateInSlot);
     const preselect =
       sameSlot &&
