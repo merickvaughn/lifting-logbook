@@ -1,7 +1,13 @@
 import { ImportError } from '@lifting-logbook/types';
 import { LiftRecord } from '../../models';
 import type { ParsedLiftRecord } from '../parser/parseLiftRecords';
-import { assignBlank, exportColumnErrors, fileMacrocycleNumError, LiftImportOptions } from './validateLiftImport';
+import {
+  assignBlank,
+  exportColumnErrors,
+  fileMacrocycleNumError,
+  liftDateRangeError,
+  LiftImportOptions,
+} from './validateLiftImport';
 
 /**
  * Soft variant of the lift-records validator (Phase 3 — interactive REVIEW step).
@@ -9,7 +15,8 @@ import { assignBlank, exportColumnErrors, fileMacrocycleNumError, LiftImportOpti
  * Rather than a single valid/errors split, rows are classified into four buckets:
  *   - validRows:   fully valid; can be committed as-is
  *   - incomplete:  missing a numeric required field (macrocycleNum, workoutNum, setNum,
- *                  weight, reps, or date); can be committed after a bulk-edit fix
+ *                  weight, reps, or date), or carrying a date the commit would reject;
+ *                  can be committed after a bulk-edit fix, or excluded
  *   - ambiguous:   all numeric fields OK but lift name not in slotMap; user can
  *                  pick a canonical name via the lift-catalog autocomplete
  *   - hardErrors:  completely malformed rows that cannot be recovered (reserved for
@@ -44,6 +51,7 @@ export function validateLiftImportSoft(
   const ambiguous: LiftImportSoftResult['ambiguous'] = [];
   const hardErrors: ImportError[] = [];
   const undated: LiftImportSoftResult['undated'] = [];
+  const importDate = options.importDate ?? new Date();
 
   records.forEach((r, i) => {
     const rowIndex = i + 1;
@@ -67,6 +75,13 @@ export function validateLiftImportSoft(
       numericErrors.push({ row: rowIndex, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
     if (!r.date || isNaN(r.date.getTime()))
       numericErrors.push({ row: rowIndex, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
+    else {
+      // Same bounds as the strict validator, from the same helper: a row the commit would reject
+      // for its date has to be flagged here, or Review shows it as an ordinary create and the
+      // Assign step is the first thing to refuse it (#1402).
+      const outOfDateRange = liftDateRangeError(rowIndex, r.date, importDate);
+      if (outOfDateRange) numericErrors.push(outOfDateRange);
+    }
     numericErrors.push(...exportColumnErrors(r, rowIndex));
 
     if (numericErrors.length > 0) {

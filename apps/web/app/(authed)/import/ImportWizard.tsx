@@ -154,6 +154,26 @@ function changedCounts(e: unknown): ImportOverwriteCounts | null {
   };
 }
 
+/**
+ * The per-row errors behind a refused request, or null when it carries none. The Assign step is
+ * the first strict check a file meets, and its 400 names the rows with their positions in the
+ * uploaded file. Showing only the top-level message leaves the lifter a bare "Validation failed"
+ * with no row, field or reason to act on (#1402).
+ */
+function rowErrorsFrom(e: unknown): ImportError[] | null {
+  if (!(e instanceof ApiClientError)) return null;
+  const errors: unknown = e.body?.['errors'];
+  if (!Array.isArray(errors)) return null;
+  const rows = errors.filter(
+    (r): r is ImportError =>
+      typeof r === 'object' &&
+      r !== null &&
+      typeof (r as ImportError).row === 'number' &&
+      typeof (r as ImportError).message === 'string',
+  );
+  return rows.length > 0 ? rows : null;
+}
+
 // The server's position key leaves a same-keyed row alone (#1123). An API rolled back to
 // before that has no rowIndex and matches the bare natural key.
 function excludeKeyFor(delta: ImportDelta): string {
@@ -259,6 +279,8 @@ export function ImportWizard({
   const [preview, setPreview] = useState<ImportPreviewResponse | null>(null);
   const [commitResult, setCommitResult] = useState<ImportCommitResponse | null>(null);
   const [commitErrors, setCommitErrors] = useState<ImportError[] | null>(null);
+  /** Rows the Assign step refused, shown on Review so they can be excluded there (#1402). */
+  const [assignErrors, setAssignErrors] = useState<ImportError[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -681,6 +703,9 @@ export function ImportWizard({
     setKeptSpellings(new Set());
     setPlannedCommit(null);
     setCommitErrors(null);
+    // Keyed to the previous preview's row numbers, and the list tells the lifter to exclude those
+    // rows "above" — pointing at a table where they now mean different rows (#1402 review).
+    setAssignErrors(null);
     clearAssign();
   }
 
@@ -1448,6 +1473,7 @@ export function ImportWizard({
     const request = reviewRequest(file);
     const startGeneration = previewGeneration.current;
     setError(null);
+    setAssignErrors(null);
     setBusy(true);
     try {
       const res = await assignImport(programId, request.file, { ...request.opts, today: localToday() });
@@ -1464,7 +1490,11 @@ export function ImportWizard({
       return true;
     } catch (e) {
       logClientError('assignImport', e, { programId });
-      setError(e instanceof Error ? e.message : 'Grouping your workouts failed');
+      // Per-row errors stand on their own; the top-level message with them is just
+      // "Validation failed", which says nothing the list doesn't (#1402).
+      const rows = rowErrorsFrom(e);
+      setAssignErrors(rows);
+      if (!rows) setError(e instanceof Error ? e.message : 'Grouping your workouts failed');
       return false;
     } finally {
       setBusy(false);
@@ -1673,6 +1703,7 @@ export function ImportWizard({
     setPreview(null);
     setCommitResult(null);
     setCommitErrors(null);
+    setAssignErrors(null);
     setError(null);
     setReviewMaxes(null);
     setKeptSpellings(new Set());
@@ -2187,9 +2218,12 @@ export function ImportWizard({
                       {reviewCounts.incomplete > 0 && (
                         <div className={styles.infoBox}>
                           <p>
+                            {/* Not "missing a required value": a row is also flagged for a value
+                                the import won't accept, such as a date before 1970 (#1402). Each
+                                row's own reason is in its Value cell. */}
                             {reviewCounts.incomplete === 1
-                              ? '1 row is missing a required value'
-                              : `${reviewCounts.incomplete} rows are missing a required value`}
+                              ? "1 row can't be imported as it stands"
+                              : `${reviewCounts.incomplete} rows can't be imported as they stand`}
                             . Exclude {reviewCounts.incomplete === 1 ? 'it' : 'them'}, or correct
                             the file and upload it again.
                           </p>
@@ -2487,7 +2521,9 @@ export function ImportWizard({
                                   {d.kind === 'update'
                                     ? `${d.before} → ${d.after}`
                                     : d.kind === 'create'
-                                      ? d.after
+                                      ? // An incomplete row has no value to show, so its reason
+                                        // goes here instead of an empty cell (#1402).
+                                        (d.after ?? d.message)
                                       : 'unchanged'}
                                 </td>
                                 <td>
@@ -2536,6 +2572,29 @@ export function ImportWizard({
                   {destination && `Destination: ${KIND_LABEL[destination]}. `}
                   No problems found — continue to preview the changes.
                 </p>
+              )}
+              {assignErrors && (
+                // role="alert": the list appears after the Next click resolves, with focus still on
+                // Next, so without it the button just stops advancing silently (#1402 review).
+                <div className={styles.errorBox} role="alert">
+                  <strong>
+                    These rows can&apos;t be grouped into macrocycles. Exclude them above, or fix
+                    the file and upload it again:
+                  </strong>
+                  <ul className={styles.errorList}>
+                    {assignErrors.slice(0, MAX_RENDERED_IMPORT_ERRORS).map((e, i) => (
+                      <li key={`${e.row}-${i}`}>
+                        Row {e.row}: {e.message}
+                      </li>
+                    ))}
+                  </ul>
+                  {assignErrors.length > MAX_RENDERED_IMPORT_ERRORS && (
+                    <p className={styles.errorOverflowNote}>
+                      …and {assignErrors.length - MAX_RENDERED_IMPORT_ERRORS} more error(s) not
+                      shown.
+                    </p>
+                  )}
+                </div>
               )}
               {error && <p className={styles.errorNote}>{error}</p>}
             </fieldset>
