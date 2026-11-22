@@ -8,9 +8,13 @@ import {
   SupplementCatalogEntry,
   SupplementChange,
   SupplementCreatedResponse,
+  SupplementSheetResponse,
   SupplementStackResponse,
 } from '@lifting-logbook/types';
 import { supplementSourceUrl } from '@lifting-logbook/core';
+import { MAX_WORKBOOK_BYTES } from '../adapters/google-sheets/google-sheet-export.client';
+import { buildXlsx, zipFixture } from '../adapters/google-sheets/xlsx.fixture';
+import { MAX_XLSX_PART_BYTES } from '../adapters/google-sheets/xlsx-to-tables';
 import { AppModule } from '../app.module';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
@@ -654,6 +658,170 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
       const item = await add('Homemade');
       expect(item).not.toHaveProperty('catalogKey');
       expect(item).not.toHaveProperty('reference');
+    });
+  });
+
+  describe('POST /supplements/import (#1379)', () => {
+    const row = (name: string, extra: Record<string, unknown> = {}) => ({
+      name,
+      amount: '',
+      timing: '',
+      shortNote: '',
+      longNote: '',
+      links: [],
+      doses: [],
+      status: 'active',
+      ...extra,
+    });
+
+    it('saves every item in one write, one noted added change each, and History starts there', async () => {
+      const { ok, setDayTypes, get, changes } = newUser();
+      await setDayTypes();
+      const stack = await ok('POST', `/supplements/import?today=${TODAY}`, {
+        source: 'Supplements',
+        rows: [
+          row('Creatine', { catalogKey: 'creatine-monohydrate', timing: 'preworkout', doses: [{ slot: 'pre', amount: '3-5g', servings: 1, dayTypes: [] }] }),
+          row('Probiotic', { status: 'pending', links: [{ label: '', url: 'https://www.amazon.com/dp/B000GZSJEM' }] }),
+        ],
+      });
+      expect(stack.items.map((i) => [i.name, i.status])).toEqual([
+        ['Creatine', 'active'],
+        ['Probiotic', 'pending'],
+      ]);
+      // The pre-workout dose took the day types there are.
+      expect(stack.items[0]?.doses[0]?.dayTypes).toEqual(['lift', 'rest']);
+      expect(stack.items[0]?.catalogKey).toBe('creatine-monohydrate');
+      const added = (await changes()).filter((c) => c.type === 'added');
+      expect(added.map((c) => ('note' in c ? c.note : undefined))).toEqual(['Imported from Supplements', 'Imported from Supplements']);
+      expect((await get()).items).toHaveLength(2);
+    });
+
+    it('drops a workout-slot dose when there are no day types, keeping its amount in front of the timing text', async () => {
+      const { ok } = newUser();
+      const stack = await ok('POST', `/supplements/import?today=${TODAY}`, {
+        source: 'S',
+        rows: [
+          row('Creatine', { amount: '3-5g', timing: 'preworkout', doses: [{ slot: 'pre', amount: '3-5g', servings: 1, dayTypes: [] }] }),
+          // A kept dose has the dropped one's amount, so the timing is left as it was.
+          row('Citrulline', {
+            amount: '6g',
+            timing: 'anytime; preworkout',
+            doses: [
+              { slot: 'all', amount: '6g', servings: 1, dayTypes: [] },
+              { slot: 'pre', amount: '6g', servings: 1, dayTypes: [] },
+            ],
+          }),
+        ],
+        skipped: 3,
+      });
+      expect(stack.items[0]).toMatchObject({ timing: '3-5g preworkout', doses: [] });
+      expect(stack.items[1]).toMatchObject({ timing: 'anytime; preworkout', doses: [{ slot: 'all', amount: '6g' }] });
+    });
+
+    it('refuses a skipped count outside 0-500', async () => {
+      const { inject } = newUser();
+      const res = await inject('POST', `/supplements/import?today=${TODAY}`, { source: 'S', rows: [row('A')], skipped: 501 });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('is all or nothing: an unknown catalog key imports no item', async () => {
+      const { inject, get, changes } = newUser();
+      const res = await inject('POST', `/supplements/import?today=${TODAY}`, { source: 'S', rows: [row('A'), row('B', { catalogKey: 'nope' })] });
+      expect(res.statusCode).toBe(400);
+      expect((await get()).items).toEqual([]);
+      expect(await changes()).toEqual([]);
+    });
+  });
+
+  describe('POST /supplements/import/google-sheet (#1379)', () => {
+    const SHEET_URL = 'https://docs.google.com/spreadsheets/d/15s6_k614x9FzQtHxQDxh82CjDKYqHaS-VZtmS0he-8Q/edit#gid=0';
+    const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    type ResponseArgs = ConstructorParameters<typeof Response>;
+    const serve = (body: ResponseArgs[0], init: ResponseArgs[1] = { headers: { 'content-type': XLSX_TYPE } }) =>
+      jest.spyOn(global, 'fetch').mockResolvedValue(new Response(body, init));
+    const fetchSheet = (url = SHEET_URL) => newUser().inject('POST', '/supplements/import/google-sheet', { url });
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it('returns each tab with its rows, sheet row numbers and web links only', async () => {
+      const fetchSpy = serve(
+        buildXlsx([
+          {
+            name: 'Supplements',
+            rows: [['Compound', 'Amount'], [null, null], ['Creatine', '5g'], ['Iron', '18mg']],
+            links: { A3: 'https://www.amazon.com/dp/B000GZSJEM', A4: 'javascript:alert(1)' },
+          },
+          { name: 'Empty', rows: [] },
+        ]),
+      );
+
+      const res = await fetchSheet();
+
+      expect(res.statusCode).toBe(200);
+      expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
+        'https://docs.google.com/spreadsheets/d/15s6_k614x9FzQtHxQDxh82CjDKYqHaS-VZtmS0he-8Q/export?format=xlsx',
+      );
+      expect(res.json<SupplementSheetResponse>().tabs).toEqual([
+        {
+          name: 'Supplements',
+          rows: [
+            ['Compound', 'Amount'],
+            ['Creatine', '5g'],
+            ['Iron', '18mg'],
+          ],
+          links: [
+            ['', ''],
+            ['https://www.amazon.com/dp/B000GZSJEM', ''],
+            ['', ''],
+          ],
+          rowNumbers: [1, 3, 4],
+          skipReason: null,
+        },
+      ]);
+    });
+
+    it('returns a tab over 500 rows with no rows and a reason it cannot be imported', async () => {
+      const rows = [['Compound'], ...Array.from({ length: 501 }, (_, i) => [`Item ${i}`])];
+      serve(buildXlsx([{ name: 'BIG', rows }]));
+
+      const res = await fetchSheet();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json<SupplementSheetResponse>().tabs).toEqual([
+        { name: 'BIG', rows: [], links: [], skipReason: 'More than 500 rows, the per-import limit.' },
+      ]);
+    });
+
+    it('returns 422 with sharing instructions when the sheet is private', async () => {
+      serve(null, { status: 307, headers: { location: 'https://accounts.google.com/ServiceLogin' } });
+      const res = await fetchSheet();
+      expect(res.statusCode).toBe(422);
+      expect(res.json().message).toContain('Anyone with the link');
+    });
+
+    it('returns 404 when there is no sheet at the link', async () => {
+      serve(null, { status: 404 });
+      expect((await fetchSheet()).statusCode).toBe(404);
+    });
+
+    it('returns 413 when the download or the workbook is too large', async () => {
+      serve(null, { headers: { 'content-type': XLSX_TYPE, 'content-length': String(MAX_WORKBOOK_BYTES + 1) } });
+      expect((await fetchSheet()).statusCode).toBe(413);
+      jest.restoreAllMocks();
+      serve(zipFixture({ 'xl/worksheets/sheet1.xml': new Uint8Array(MAX_XLSX_PART_BYTES + 1) }));
+      expect((await fetchSheet()).statusCode).toBe(413);
+    });
+
+    it('returns 502 when Google sends something that is not a workbook', async () => {
+      serve('not a zip');
+      expect((await fetchSheet()).statusCode).toBe(502);
+    });
+
+    it('returns 400 and fetches nothing for a link that is not a Google Sheet', async () => {
+      const fetchSpy = jest.spyOn(global, 'fetch');
+      const res = await fetchSheet('https://example.com/spreadsheets/d/15s6_k614x9FzQtHxQDxh82CjDKYqHaS-VZtmS0he-8Q');
+      expect(res.statusCode).toBe(400);
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 });

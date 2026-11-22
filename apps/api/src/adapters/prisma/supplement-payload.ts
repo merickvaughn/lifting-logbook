@@ -194,7 +194,7 @@ export function parseChange(row: { type: string; date: string; seq: number; payl
   const p = object(row.payload, `change ${seq}'s payload`);
   switch (row.type) {
     case 'added':
-      return { date, seq, type: 'added', item: parseItem(p.item) };
+      return { date, seq, type: 'added', item: parseItem(p.item), ...(p.note === undefined ? {} : { note: string(p, 'note') }) };
     case 'edited':
       return { date, seq, type: 'edited', itemId: string(p, 'itemId'), changes: parseDetails(p.changes) };
     case 'moved':

@@ -5,10 +5,12 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsNumber,
   IsString,
   IsUrl,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -127,4 +129,28 @@ export class RemoveItemsDto {
 export class CreateMixDto {
   @IsString() @MinLength(1) @MaxLength(NAME) name!: string;
   @IsArray() @ArrayMinSize(2) @ArrayMaxSize(LIST) @IsString({ each: true }) itemIds!: string[];
+}
+
+export class SupplementSheetDto {
+  /** A Google Sheets link or bare spreadsheet ID; shape is checked by `parseGoogleSheetUrl`. */
+  @IsString() @MaxLength(2048) url!: string;
+}
+
+export class ImportRowDto {
+  @IsString() @MinLength(1) @MaxLength(NAME) name!: string;
+  @Optional() @IsString() @MaxLength(NAME) catalogKey?: string;
+  @IsString() @MaxLength(NAME) amount!: string;
+  @IsString() @MaxLength(NAME) timing!: string;
+  @IsString() @MaxLength(TEXT) shortNote!: string;
+  @IsString() @MaxLength(TEXT) longNote!: string;
+  @IsArray() @ArrayMaxSize(LIST) @ValidateNested({ each: true }) @Type(() => LinkDto) links!: LinkDto[];
+  @IsArray() @ArrayMaxSize(LIST) @ValidateNested({ each: true }) @Type(() => DoseDto) doses!: DoseDto[];
+  @IsIn(STATUSES) status!: SupplementStatus;
+}
+
+export class ImportSupplementsDto {
+  @IsString() @MinLength(1) @MaxLength(NAME) source!: string;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => ImportRowDto) rows!: ImportRowDto[];
+  /** Sheet rows the lifter skipped; logged, never stored. */
+  @Optional() @IsInt() @Min(0) @Max(500) skipped?: number;
 }

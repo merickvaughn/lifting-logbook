@@ -117,7 +117,8 @@ export type SupplementItemDetails = Pick<
  * appended, and orders changes made on the same date.
  */
 export type SupplementChange = { date: string; seq: number } & (
-  | { type: 'added'; item: SupplementItem }
+  /** `note` says where the item came from, e.g. "Imported from Supplements" (#1379); replay ignores it. */
+  | { type: 'added'; item: SupplementItem; note?: string }
   | { type: 'edited'; itemId: string; changes: Partial<SupplementItemDetails> }
   | { type: 'moved'; itemId: string; doses: SupplementDose[] }
   | { type: 'started'; itemId: string }
@@ -233,3 +234,49 @@ export const SUPPLEMENT_TEXT_MAX = { name: 200, text: 2000, linkLabel: 60 } as c
 export const SUPPLEMENT_STALE_CODE = 'supplement-stale';
 /** The 409 code for restoring an item that isn't removed, or is folded into a mix. */
 export const SUPPLEMENT_NOT_REMOVED_CODE = 'supplement-not-removed';
+
+/** One tab of a shared Google Sheet, for the supplement import (#1379). */
+export interface SupplementSheetTab {
+  name: string;
+  /** The first row is the header. Empty when the tab can't be imported. */
+  rows: string[][];
+  /** Hyperlink of each cell, '' when none; the same shape as `rows`. */
+  links: string[][];
+  /**
+   * The sheet's own 1-based number of each row. Absent when row `i` is sheet row `i + 1`, as it is
+   * unless a blank row above it was dropped.
+   */
+  rowNumbers?: number[];
+  /** Why the tab can't be imported, such as too many rows; null when it can. */
+  skipReason: string | null;
+}
+
+/** `POST /supplements/import/google-sheet`. */
+export interface SupplementSheetResponse {
+  tabs: SupplementSheetTab[];
+}
+
+/** One reviewed row of `POST /supplements/import`. */
+export interface SupplementImportRowBody {
+  name: string;
+  catalogKey?: string;
+  /**
+   * The sheet's Amount, '' when blank. A dose carries it too; when the saved item ends up with no
+   * dose holding it, it goes in front of the timing text, so it isn't lost.
+   */
+  amount: string;
+  timing: string;
+  shortNote: string;
+  longNote: string;
+  links: SupplementLink[];
+  doses: SupplementDose[];
+  status: SupplementStatus;
+}
+
+export interface SupplementImportBody {
+  /** Names the sheet in each item's `added` change: "Imported from <source>". */
+  source: string;
+  rows: SupplementImportRowBody[];
+  /** How many sheet rows the lifter skipped, for the import's log line only. */
+  skipped?: number;
+}

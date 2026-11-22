@@ -1,13 +1,14 @@
-import { strToU8, zipSync } from 'fflate';
+import { strToU8, unzipSync, zipSync } from 'fflate';
 import {
   MAX_TABLE_COLUMNS,
+  MAX_XLSX_PARTS,
   MAX_XLSX_PART_BYTES,
   XlsxReadError,
   isDateFormat,
   serialToDate,
   xlsxToTables,
 } from './xlsx-to-tables';
-import { buildXlsx, dateSerial } from './xlsx.fixture';
+import { buildXlsx, dateSerial, zipFixture } from './xlsx.fixture';
 
 const read = (buffer: Uint8Array, maxRows = 100) => xlsxToTables(buffer, { maxRows });
 
@@ -240,5 +241,70 @@ describe('serialToDate', () => {
     expect(serialToDate(dateSerial(2026, 11, 4))).toBe('11/4/2026');
     expect(serialToDate(dateSerial(2024, 2, 29) + 0.75)).toBe('2/29/2024');
     expect(serialToDate(0, true)).toBe('1/1/1904');
+  });
+});
+
+describe('xlsxToTables hyperlinks (#1379)', () => {
+  it('reads each cell hyperlink, aligned to the rows kept after empty rows are dropped', () => {
+    const [table] = read(
+      buildXlsx([
+        {
+          name: 'Supplements',
+          rows: [['Compound', 'Amount'], [null, null], ['Creatine', '5g']],
+          links: { A3: 'https://www.amazon.com/gp/product/B000GZSJEM/ref=x?th=1' },
+        },
+      ]),
+    );
+    expect(table?.rows).toEqual([
+      ['Compound', 'Amount'],
+      ['Creatine', '5g'],
+    ]);
+    expect(table?.links).toEqual([
+      ['', ''],
+      ['https://www.amazon.com/gp/product/B000GZSJEM/ref=x?th=1', ''],
+    ]);
+  });
+
+  it('leaves links off a tab with none', () => {
+    const [table] = read(buildXlsx([{ name: 'A', rows: [['x']] }]));
+    expect(table).not.toHaveProperty('links');
+  });
+
+  it('reads a link over a range from its first cell', () => {
+    const [table] = read(
+      buildXlsx([{ name: 'S', rows: [['Compound'], ['Creatine'], ['Iron']], links: { 'A2:A3': 'https://example.com/c' } }]),
+    );
+    expect(table?.links).toEqual([[''], ['https://example.com/c'], ['']]);
+  });
+
+  it('numbers a row with no r attribute after the row before it, blank rows included', () => {
+    const cell = (t: string) => `<c t="inlineStr"><is><t>${t}</t></is></c>`;
+    const sheet =
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+      `<sheetData><row>${cell('Compound')}</row><row/><row>${cell('Creatine')}</row></sheetData>` +
+      '<hyperlinks><hyperlink ref="A3" r:id="rId1"/></hyperlinks></worksheet>';
+    const files = unzipSync(buildXlsx([{ name: 'S', rows: [['x']] }]));
+    files['xl/worksheets/sheet1.xml'] = strToU8(sheet);
+    files['xl/worksheets/_rels/sheet1.xml.rels'] = strToU8(
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="hyperlink" Target="https://example.com/c" TargetMode="External"/></Relationships>',
+    );
+    const [table] = read(zipFixture(files));
+    expect(table?.rows).toEqual([['Compound'], ['Creatine']]);
+    expect(table?.links).toEqual([[''], ['https://example.com/c']]);
+    expect(table?.rowNumbers).toEqual([1, 3]);
+  });
+
+  it('gives row numbers only when a dropped blank row shifts them', () => {
+    expect(read(buildXlsx([{ name: 'S', rows: [['a'], ['b'], [null]] }]))[0]).not.toHaveProperty('rowNumbers');
+    expect(read(buildXlsx([{ name: 'S', rows: [['a'], [null], ['b']] }]))[0]?.rowNumbers).toEqual([1, 3]);
+  });
+
+  it('reads no part outside the worksheets and their relationships, so stray files do not count against the cap', () => {
+    const files = unzipSync(buildXlsx([{ name: 'S', rows: [['a']] }]));
+    for (let i = 0; i <= MAX_XLSX_PARTS; i++) {
+      files[`xl/worksheets/_rels/stray${i}.xml`] = strToU8('<x/>');
+      files[`xl/worksheets/stray${i}.xml.rels`] = strToU8('<x/>');
+    }
+    expect(read(zipFixture(files))).toEqual([{ name: 'S', rows: [['a']] }]);
   });
 });

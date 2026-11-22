@@ -5,14 +5,19 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Inject,
   Logger,
   NotFoundException,
   Param,
   Patch,
+  PayloadTooLargeException,
   Post,
   Put,
   Query,
+  UnprocessableEntityException,
+  BadGatewayException,
 } from '@nestjs/common';
 import {
   DEFAULT_CAFFEINE_CUTOFF,
@@ -20,6 +25,7 @@ import {
   applyChange,
   isSameData,
   isWorkoutSlot,
+  parseGoogleSheetUrl,
   itemFromCatalog,
   searchSupplements,
   stackAsOf,
@@ -28,12 +34,16 @@ import {
   validateStack,
 } from '@lifting-logbook/core';
 import {
+  SUPPLEMENT_TEXT_MAX,
   SupplementAsOfResponse,
   SupplementCatalogEntry,
   SupplementChange,
   SupplementCreatedResponse,
+  SupplementDose,
   SupplementItem,
   SupplementItemDetails,
+  SupplementSheetResponse,
+  SupplementSheetTab,
   SupplementStackResponse,
 } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -42,14 +52,19 @@ import { SupplementNotRemovedError } from '../ports/errors';
 import { IRepositoryFactory } from '../ports/factory';
 import { ISupplementRepository, SupplementState } from '../ports/ISupplementRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { SkipRlsTransaction } from '../adapters/prisma/rls-context';
+import { GoogleSheetFetchError, downloadGoogleSheetXlsx } from '../adapters/google-sheets/google-sheet-export.client';
+import { MAX_TABLE_COLUMNS, WorkbookTable, XlsxReadError, xlsxToTables } from '../adapters/google-sheets/xlsx-to-tables';
 import { parseIsoDateParam, parseWriteToday } from '../iso-date-param';
 import {
   CreateMixDto,
   CreateSupplementItemDto,
+  ImportSupplementsDto,
   MoveDosesDto,
   RemoveItemsDto,
   SetStatusDto,
   SupplementSettingsDto,
+  SupplementSheetDto,
   UpdateSupplementItemDto,
 } from './supplements.dto';
 
@@ -60,6 +75,11 @@ const CHANGES_PAGE = 200;
 const CHANGES_PAGE_MAX = 1000;
 /** The largest `seq` there can be: `supplement_change.seq` is a Postgres `integer`. */
 const SEQ_MAX = 2_147_483_647;
+/** The most rows a supplement import reads from one tab; `ImportSupplementsDto` takes as many. */
+const MAX_IMPORT_ROWS = 500;
+
+/** The link if it's a web link, else '': only http(s) targets go back to the client. */
+const webLink = (href: string) => (/^https?:\/\//i.test(href.trim()) ? href : '');
 
 /**
  * What a write does: reads the state as loaded, checks the request against it, and returns the
@@ -216,6 +236,120 @@ export class SupplementsController {
       return [{ type: 'added', item }];
     });
     return { ...view(state), id };
+  }
+
+  /**
+   * Reads a shared Google Sheet for the supplement import (#1379): every tab as rows plus each
+   * cell's hyperlink. Reuses ADR-040's client; counts are logged, never cell contents or the URL.
+   * `@SkipRlsTransaction()` so no connection is held during the Google download.
+   */
+  @Post('import/google-sheet')
+  @HttpCode(HttpStatus.OK)
+  @SkipRlsTransaction()
+  async fetchSheet(@Body() dto: SupplementSheetDto): Promise<SupplementSheetResponse> {
+    const parsed = parseGoogleSheetUrl(dto.url);
+    if (!parsed.ok) throw new BadRequestException(parsed.message);
+    const started = Date.now();
+    let buffer: Buffer;
+    try {
+      buffer = await downloadGoogleSheetXlsx(parsed.spreadsheetId);
+    } catch (err) {
+      if (!(err instanceof GoogleSheetFetchError)) throw err;
+      this.logger.warn({ code: err.code, durationMs: Date.now() - started }, 'Supplement sheet fetch failed (#1379)');
+      if (err.code === 'not-shared') throw new UnprocessableEntityException(err.message);
+      if (err.code === 'not-found') throw new NotFoundException(err.message);
+      if (err.code === 'too-large') throw new PayloadTooLargeException(err.message);
+      throw new BadGatewayException(err.message);
+    }
+    let tables: WorkbookTable[];
+    try {
+      // +1 for the header row.
+      tables = xlsxToTables(buffer, { maxRows: MAX_IMPORT_ROWS + 1 });
+    } catch (err) {
+      if (!(err instanceof XlsxReadError)) throw err;
+      this.logger.warn({ code: err.code, bytes: buffer.length }, 'Supplement sheet workbook could not be read (#1379)');
+      if (err.code === 'too-large') throw new PayloadTooLargeException(err.message);
+      throw new BadGatewayException('Google Sheets returned a workbook that could not be read.');
+    }
+    const tabs = tables
+      .filter((t) => t.rows.length > 0)
+      .map(({ name, rows, links, rowNumbers, overflow }): SupplementSheetTab => {
+        // Not sent: the lifter can't import any of it, and the reason says why.
+        if (overflow === 'rows') return { name, rows: [], links: [], skipReason: `More than ${MAX_IMPORT_ROWS} rows, the per-import limit.` };
+        if (overflow === 'columns') return { name, rows: [], links: [], skipReason: `Has data past column ${MAX_TABLE_COLUMNS}, too wide to import.` };
+        return {
+          name,
+          rows,
+          // Web links only: a `mailto:` or `javascript:` target is never passed on.
+          links: rows.map((row, r) => row.map((_, c) => webLink(links?.[r]?.[c] ?? ''))),
+          ...(rowNumbers ? { rowNumbers } : {}),
+          skipReason: null,
+        };
+      });
+    // Counts only: tab names, cell contents and the link are the lifter's data.
+    this.logger.log(
+      {
+        bytes: buffer.length,
+        tabs: tabs.length,
+        skippedTabs: tabs.filter((t) => t.skipReason !== null).length,
+        rows: tabs.reduce((n, t) => n + t.rows.length, 0),
+        durationMs: Date.now() - started,
+      },
+      'Supplement sheet read (#1379)',
+    );
+    return { tabs };
+  }
+
+  /**
+   * Imports the reviewed rows in one write: one `added` change per item, noted
+   * "Imported from <source>", so History starts at the import and the import is all or nothing
+   * (Fowler, Event Sourcing, https://martinfowler.com/eaaDev/EventSourcing.html). A row with a
+   * catalog key takes the entry's reference content (`itemFromCatalog`). A workout-slot dose
+   * takes every day type there is, and is dropped when there are none: the timing text stays, with
+   * the dropped dose's amount in front of it unless a kept dose has the same amount, so the amount
+   * isn't lost. Counts are logged, never contents; `skipped` is the client's count, for the log.
+   */
+  @Post('import')
+  async importItems(
+    @Body() dto: ImportSupplementsDto,
+    @Query('today') today: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SupplementStackResponse> {
+    const state = await this.write(user, today, dto, (state, body) => {
+      const allDayTypes = state.dayTypes.map((d) => d.id);
+      return body.rows.map((row): SupplementChangeBody => {
+        const entry = row.catalogKey === undefined ? undefined : supplementByKey(row.catalogKey);
+        if (row.catalogKey !== undefined && !entry) throw new BadRequestException(`No catalog entry ${row.catalogKey}`);
+        const needsDayType = (d: SupplementDose) => isWorkoutSlot(d.slot) && d.dayTypes.length === 0;
+        const dropped = allDayTypes.length > 0 ? [] : row.doses.filter(needsDayType);
+        const doses = row.doses
+          .filter((d) => !dropped.includes(d))
+          .map((d) => (needsDayType(d) ? { ...d, dayTypes: allDayTypes } : d));
+        const lost = [...new Set(dropped.map((d) => d.amount))].filter((a) => a !== '' && !doses.some((d) => d.amount === a));
+        const timing = [...lost, row.timing].filter((t) => t !== '').join(' ').slice(0, SUPPLEMENT_TEXT_MAX.name);
+        const typed = {
+          name: row.name,
+          ...(timing === '' ? {} : { timing }),
+          shortNote: row.shortNote,
+          longNote: row.longNote,
+          links: row.links,
+        };
+        const fields = entry
+          ? itemFromCatalog(entry, typed)
+          : { keyCompound: '', category: '', typicalRange: '', ingredients: [], timing: '', ...typed };
+        const item: SupplementItem = { id: randomUUID(), ...fields, status: row.status, unverified: false, doses };
+        return { type: 'added', item, note: `Imported from ${body.source}` };
+      });
+    });
+    this.logger.log(
+      {
+        imported: dto.rows.length,
+        pending: dto.rows.filter((r) => r.status === 'pending').length,
+        skipped: dto.skipped ?? 0,
+      },
+      'Supplements imported (#1379)',
+    );
+    return view(state);
   }
 
   /**

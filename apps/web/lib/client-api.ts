@@ -118,6 +118,9 @@ export const {
   moveSupplementDoses,
   setSupplementStatus,
   createSupplementMix,
+  // Import from Google Sheets (#1379).
+  fetchSupplementSheet,
+  importSupplements,
   // The bulk bar's Remove, in one write (#1414).
   removeSupplementItems,
   // Replace with… and Edit days (#1411).
