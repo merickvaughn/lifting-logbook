@@ -312,8 +312,8 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
       {added ? (
         <div className={styles.form}>
           <p role="alert">
-            Added {values.name.trim()}, but couldn’t {added.how === 'pending' ? 'move' : 'remove'} the items it replaces. Check the page for which
-            are still active; you can try again.
+            Added {values.name.trim()}, but couldn’t {added.how === 'pending' ? 'move' : 'remove'} the items it replaces. None of them changed; you
+            can try again.
           </p>
           <div className={styles.formButtons}>
             <button ref={tryAgainRef} type="button" disabled={busy} onClick={() => void replaceThem(added.ids, added.how)}>

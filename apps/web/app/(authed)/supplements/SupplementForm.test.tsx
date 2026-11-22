@@ -560,7 +560,7 @@ describe('Replace with… (#1411)', () => {
     await userEvent.click(row('EVL Trans4orm'));
     await userEvent.click(screen.getByRole('radio', { name: /Remove them/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('couldn’t remove the items it replaces');
+    expect(await screen.findByRole('alert')).toHaveTextContent('couldn’t remove the items it replaces. None of them changed');
     expect(logClientError).toHaveBeenCalledWith('supplements.replaceItems', expect.any(Error), { items: 2, how: 'remove' });
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('Added Caffeine; removed 2 items.'));
