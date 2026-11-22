@@ -71,6 +71,8 @@ export interface RowModel {
   item: SupplementItem;
   /** The slot of the dose this row shows (a pending row shows its first dose); none for an item with no dose. */
   slot?: SupplementSlot;
+  /** Where that dose sits in `item.doses`, so a bulk move names exactly this dose (#1410). */
+  doseIndex?: number;
   amount: string;
   /** The typical range, shown after the dose when the item has one dose. */
   range?: string;
@@ -186,10 +188,12 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
     // A daily dose limited to some day types says so, since the Every day card otherwise means every day.
     const covers = stack.dayTypes.every((d) => p.dose.dayTypes.includes(d.id));
     const only = isWorkoutSlot(p.dose.slot) || covers ? [] : dayTypeNames(p.dose, stack.dayTypes);
+    const doseIndex = p.item.doses.indexOf(p.dose);
     return {
-      key: `${p.item.id}:${p.item.doses.indexOf(p.dose)}`,
+      key: `${p.item.id}:${doseIndex}`,
       item: p.item,
       slot: p.dose.slot,
+      doseIndex,
       amount: p.dose.amount.trim(),
       range: p.item.doses.length === 1 ? (p.item.typicalRange.trim() || p.item.reference?.typicalRange) : undefined,
       protein: protein > 0 ? `${num(protein)} g protein` : undefined,
@@ -217,6 +221,7 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
         key: item.id,
         item,
         slot: dose?.slot,
+        doseIndex: dose ? 0 : undefined,
         amount: dose?.amount.trim() ?? '',
         range: item.doses.length === 1 ? (item.typicalRange.trim() || item.reference?.typicalRange) : undefined,
         protein: protein > 0 ? `${num(protein)} g protein` : undefined,
@@ -236,6 +241,7 @@ export function buildView(stack: Stack, dayTypeId: string): SupplementsView {
         key: item.id,
         item,
         slot: item.doses[0]?.slot,
+        doseIndex: item.doses[0] ? 0 : undefined,
         amount: item.doses[0]?.amount.trim() ?? '',
         detail: [item.doses.length === 0 ? 'No dose yet' : 'Not set for any day type', ...detailLine(item)].join(' · '),
         note: item.shortNote.trim(),

@@ -1130,6 +1130,10 @@ describe('supplements', () => {
     expect(url).toBe('http://api.test/supplements/doses/move?today=2026-11-21');
     expect(init.method).toBe('POST');
     expect(JSON.parse(String(init.body))).toEqual({ itemIds: ['a'], from: 'pre', to: 'pm', dayTypes: [] });
+    const doses = [{ itemId: 'a', index: 1, slot: 'pre' as const }];
+    await client.moveSupplementDoses({ itemIds: ['a'], doses, to: 'pm' }, '2026-11-21');
+    [url, init] = lastCall();
+    expect(JSON.parse(String(init.body))).toEqual({ itemIds: ['a'], doses, to: 'pm' });
     await client.setSupplementStatus(['a', 'b'], 'active', '2026-11-21');
     [url, init] = lastCall();
     expect(url).toBe('http://api.test/supplements/items/status?today=2026-11-21');

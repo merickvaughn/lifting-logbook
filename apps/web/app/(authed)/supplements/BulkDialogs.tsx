@@ -22,21 +22,47 @@ interface Props {
   onDone: () => void;
 }
 
-/** A native modal `<dialog>` with a title, subtitle and ×, closed by Esc like the Add/Edit form. */
-function BulkDialog({ id, title, subtitle, onCancel, children }: { id: string; title: string; subtitle: string; onCancel: () => void; children: React.ReactNode }) {
+/**
+ * A native modal `<dialog>` with a title, subtitle and ×, closed by Esc like the Add/Edit form.
+ * While a write is in flight neither × nor Esc closes it, so the page can't lose track of the write.
+ */
+function BulkDialog({
+  id,
+  title,
+  subtitle,
+  busy,
+  onCancel,
+  children,
+}: {
+  id: string;
+  title: string;
+  subtitle: string;
+  busy: boolean;
+  onCancel: () => void;
+  children: React.ReactNode;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const dialog = ref.current;
     if (dialog && !dialog.open) dialog.showModal();
   }, []);
   return (
-    <dialog ref={ref} className={styles.dialog} aria-labelledby={id} onClose={onCancel}>
+    <dialog
+      ref={ref}
+      className={styles.dialog}
+      aria-labelledby={id}
+      aria-busy={busy}
+      onCancel={(e) => {
+        if (busy) e.preventDefault();
+      }}
+      onClose={onCancel}
+    >
       <header className={styles.dialogHeader}>
         <div>
           <h2 id={id}>{title}</h2>
           <p className={styles.muted}>{subtitle}</p>
         </div>
-        <button type="button" className={styles.close} aria-label="Close" onClick={onCancel}>
+        <button type="button" className={styles.close} aria-label="Close" disabled={busy} onClick={onCancel}>
           ×
         </button>
       </header>
@@ -49,10 +75,14 @@ const itemsOf = (rows: RowModel[]) => [...new Map(rows.map((r) => [r.item.id, r.
 
 /**
  * `Move to…`: each selected row is one time an item is taken (a dose, after FHIR Dosage), so only
- * the doses in the rows' own slots move. One `doses/move` per source slot, since the endpoint takes one.
+ * those doses move, named by position in one `doses/move`. An item can have two doses in one slot
+ * on different day types; moving "the item's doses in that slot" would move both.
  */
 export function MoveDialog({ stack, rows, onCancel, onDone }: Props) {
   const router = useRouter();
+  const hasDayTypes = stack.dayTypes.length > 0;
+  // A workout dose needs a day type to show on, so a stack with none has only the daily slots.
+  const slots = hasDayTypes ? SUPPLEMENT_SLOTS : SUPPLEMENT_SLOTS.filter((s) => !isWorkoutSlot(s));
   const [slot, setSlot] = useState<SupplementSlot>('pm');
   const [dayTypes, setDayTypes] = useState<string[]>([]);
   const [error, setError] = useState<string | undefined>();
@@ -60,19 +90,21 @@ export function MoveDialog({ stack, rows, onCancel, onDone }: Props) {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     if (isWorkoutSlot(slot) && dayTypes.length === 0) return setError(`Pick at least one day type for ${SLOT_OPTION_LABEL[slot]}.`);
-    const bySlot = new Map<SupplementSlot, Set<string>>();
-    for (const r of rows) if (r.slot) bySlot.set(r.slot, (bySlot.get(r.slot) ?? new Set()).add(r.item.id));
-    if (bySlot.size === 0) return setError('None of the selected items has a time to move.');
+    const doses = rows.flatMap((r) =>
+      r.slot !== undefined && r.doseIndex !== undefined ? [{ itemId: r.item.id, index: r.doseIndex, slot: r.slot }] : [],
+    );
+    if (doses.length === 0) return setError('None of the selected items has a time to move.');
     setBusy(true);
     setError(undefined);
     try {
-      for (const [from, ids] of bySlot) await moveSupplementDoses({ itemIds: [...ids], from, to: slot, dayTypes }, localToday());
+      await moveSupplementDoses({ itemIds: [...new Set(doses.map((d) => d.itemId))], doses, to: slot, dayTypes }, localToday());
       router.refresh();
       onDone();
     } catch (err) {
       logClientError('supplements.bulkMove', err, { rows: rows.length, to: slot });
-      setError('Couldn’t move them. Your choices are still here; try again.');
+      setError('Couldn’t move them. Nothing was changed; your choices are still here, so try again.');
       setBusy(false);
     }
   }
@@ -82,35 +114,40 @@ export function MoveDialog({ stack, rows, onCancel, onDone }: Props) {
       id="supp-move-title"
       title={`Move ${rows.length} row${rows.length === 1 ? '' : 's'}`}
       subtitle="Each selected row is one time an item is taken; only those times move."
+      busy={busy}
       onCancel={onCancel}
     >
       <form className={styles.form} onSubmit={submit}>
         <label>
           Slot
-          <select value={slot} onChange={(e) => setSlot(SUPPLEMENT_SLOTS.find((s) => s === e.target.value) ?? slot)}>
-            {SUPPLEMENT_SLOTS.map((s) => (
+          <select value={slot} onChange={(e) => setSlot(slots.find((s) => s === e.target.value) ?? slot)}>
+            {slots.map((s) => (
               <option key={s} value={s}>
                 {SLOT_OPTION_LABEL[s]}
               </option>
             ))}
           </select>
         </label>
-        <fieldset>
-          <legend>Day types</legend>
-          <div className={styles.dayTypes}>
-            {stack.dayTypes.map((t) => (
-              <label key={t.id} className={styles.check}>
-                <input
-                  type="checkbox"
-                  checked={dayTypes.includes(t.id)}
-                  onChange={(e) => setDayTypes(e.target.checked ? [...dayTypes, t.id] : dayTypes.filter((x) => x !== t.id))}
-                />
-                {t.name}
-              </label>
-            ))}
-            <span className={styles.muted}>{isWorkoutSlot(slot) ? 'Pick at least one.' : 'None ticked = every day.'}</span>
-          </div>
-        </fieldset>
+        {hasDayTypes ? (
+          <fieldset>
+            <legend>Day types</legend>
+            <div className={styles.dayTypes}>
+              {stack.dayTypes.map((t) => (
+                <label key={t.id} className={styles.check}>
+                  <input
+                    type="checkbox"
+                    checked={dayTypes.includes(t.id)}
+                    onChange={(e) => setDayTypes(e.target.checked ? [...dayTypes, t.id] : dayTypes.filter((x) => x !== t.id))}
+                  />
+                  {t.name}
+                </label>
+              ))}
+              <span className={styles.muted}>{isWorkoutSlot(slot) ? 'Pick at least one.' : 'None ticked = every day.'}</span>
+            </div>
+          </fieldset>
+        ) : (
+          <p className={styles.muted}>Add day types in Settings to move items into a workout slot.</p>
+        )}
         {error && <p role="alert">{error}</p>}
         <div className={styles.formButtons}>
           <button type="submit" disabled={busy}>
@@ -139,9 +176,11 @@ export function CombineDialog({ rows, onCancel, onDone }: Omit<Props, 'stack'>) 
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     const mix = items.find((i) => i.parts !== undefined);
     if (items.length < 2) return setError('Pick two or more different items to combine.');
     if (mix) return setError(`${mix.name} is already a mix; split it first.`);
+    if (name.trim() === '') return setError('Give the mix a name.');
     setBusy(true);
     setError(undefined);
     try {
@@ -160,6 +199,7 @@ export function CombineDialog({ rows, onCancel, onDone }: Omit<Props, 'stack'>) 
       id="supp-combine-title"
       title="Combine into a mix"
       subtitle={`${items.map((i) => i.name).join(', ')} become one row; totals and overlaps still count each one.`}
+      busy={busy}
       onCancel={onCancel}
     >
       <form className={styles.form} onSubmit={submit}>

@@ -93,9 +93,23 @@ export class SupplementSettingsDto {
   @Optional() @Matches(CLOCK_TIME, { message: 'caffeineCutoff must be 24-hour HH:MM' }) caffeineCutoff?: string;
 }
 
+/** One dose, by its position in the item's doses and the slot the client saw it in. */
+export class DoseRefDto {
+  @IsString() itemId!: string;
+  @IsNumber({ maxDecimalPlaces: 0 }) @Min(0) index!: number;
+  @IsIn(SUPPLEMENT_SLOTS) slot!: SupplementSlot;
+}
+
 export class MoveDosesDto {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(LIST) @IsString({ each: true }) itemIds!: string[];
-  @IsIn(SUPPLEMENT_SLOTS) from!: SupplementSlot;
+  /** Moves every dose of the items in this slot. Required unless `doses` names the doses. */
+  @ValidateIf((o: MoveDosesDto) => o.doses === undefined) @IsIn(SUPPLEMENT_SLOTS) from?: SupplementSlot;
+  /**
+   * The exact doses to move, in any slots, in one write (#1410): an item can have two doses in one
+   * slot on different day types, and `from` would move both. Each must name one of `itemIds`.
+   */
+  @Optional() @IsArray() @ArrayMinSize(1) @ArrayMaxSize(LIST) @ValidateNested({ each: true }) @Type(() => DoseRefDto)
+  doses?: DoseRefDto[];
   @IsIn(SUPPLEMENT_SLOTS) to!: SupplementSlot;
   /** Replaces the moved doses' day types when given. */
   @Optional() @IsArray() @ArrayMaxSize(LIST) @IsString({ each: true }) dayTypes?: string[];

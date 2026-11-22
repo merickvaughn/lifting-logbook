@@ -435,6 +435,64 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     ]);
   });
 
+  it('bulk moves exactly the named doses, leaving an item’s other dose in the same slot', async () => {
+    const { ok, add, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    // Two pre-workout doses on different day types, and a second item with a dose in another slot.
+    const a = await add('A', {
+      doses: [
+        { slot: 'pre', amount: '3 g', servings: 1, dayTypes: ['lift'] },
+        { slot: 'pre', amount: '1 g', servings: 1, dayTypes: ['rest'] },
+      ],
+    });
+    const b = await add('B', { doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: [] }] });
+
+    const stack = await ok('POST', `/supplements/doses/move?today=${TODAY}`, {
+      itemIds: [a.id, b.id],
+      doses: [
+        { itemId: a.id, index: 1, slot: 'pre' },
+        { itemId: b.id, index: 0, slot: 'am' },
+      ],
+      to: 'pm',
+      dayTypes: [],
+    });
+    expect(stack.items.map((i) => i.doses.map((d) => [d.slot, d.amount, d.dayTypes]))).toEqual([
+      [
+        ['pre', '3 g', ['lift']],
+        ['pm', '1 g', []],
+      ],
+      [['pm', '1', []]],
+    ]);
+    expect((await changes()).slice(3).map((ch) => [ch.type, 'itemId' in ch && ch.itemId])).toEqual([
+      ['moved', a.id],
+      ['moved', b.id],
+    ]);
+  });
+
+  it('refuses a dose move that is stale, names an item not listed, or names neither from nor doses, changing nothing', async () => {
+    const { inject, ok, add, get, setDayTypes } = newUser();
+    await setDayTypes();
+    const a = await add('A', { doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: [] }] });
+    const b = await add('B', { doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: [] }] });
+    const before = await get();
+    const move = (body: unknown) => inject('POST', `/supplements/doses/move?today=${TODAY}`, body);
+
+    // The client saw A's dose 0 in the morning, but it's been moved to night since.
+    await ok('POST', `/supplements/doses/move?today=${TODAY}`, { itemIds: [a.id], from: 'am', to: 'pm' });
+    const moved = await get();
+    const stale = await move({ itemIds: [a.id, b.id], doses: [{ itemId: b.id, index: 0, slot: 'am' }, { itemId: a.id, index: 0, slot: 'am' }], to: 'noon' });
+    expect([stale.statusCode, stale.json().message]).toEqual([400, '"A" has no am dose at position 0; reload and try again']);
+    const outOfRange = await move({ itemIds: [b.id], doses: [{ itemId: b.id, index: 3, slot: 'am' }], to: 'noon' });
+    expect(outOfRange.statusCode).toBe(400);
+    const stray = await move({ itemIds: [a.id], doses: [{ itemId: b.id, index: 0, slot: 'am' }], to: 'noon' });
+    expect([stray.statusCode, stray.json().message]).toEqual([400, `doses names ${b.id}, which isn't in itemIds`]);
+    expect((await move({ itemIds: [a.id], to: 'noon' })).statusCode).toBe(400);
+    expect((await move({ itemIds: [a.id], doses: [{ itemId: a.id, index: -1, slot: 'pm' }], to: 'noon' })).statusCode).toBe(400);
+    // Nothing from the refused requests landed, B's valid ref included.
+    expect(await get()).toEqual(moved);
+    expect(moved.items[1]).toEqual(before.items[1]);
+  });
+
   it('bulk marks items pending and active', async () => {
     const { ok, add, changes } = newUser();
     const a = await add('A');

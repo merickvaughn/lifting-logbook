@@ -322,7 +322,11 @@ export class SupplementsController {
     return view(state);
   }
 
-  /** Moves the listed items' doses in one slot to another, optionally onto other day types. */
+  /**
+   * Moves doses to another slot, optionally onto other day types: the listed items' doses in
+   * `from`, or exactly the doses `doses` names. A named dose that isn't where the client saw it
+   * (the stack changed since) is a 400, so a stale page never moves a different dose.
+   */
   @Post('doses/move')
   async moveDoses(
     @Body() dto: MoveDosesDto,
@@ -330,11 +334,21 @@ export class SupplementsController {
     @CurrentUser() user: AuthUser,
   ): Promise<SupplementStackResponse> {
     const state = await this.write(user, today, dto, (state, body) => {
+      const ids = new Set(body.itemIds);
+      const stray = body.doses?.find((r) => !ids.has(r.itemId));
+      if (stray) throw new BadRequestException(`doses names ${stray.itemId}, which isn't in itemIds`);
       const changes: SupplementChangeBody[] = [];
-      for (const id of new Set(body.itemIds)) {
+      for (const id of ids) {
         const { item } = find(state, id);
-        const doses = item.doses.map((d) =>
-          d.slot === body.from ? { ...d, slot: body.to, dayTypes: body.dayTypes ?? d.dayTypes } : d,
+        const named = body.doses?.filter((r) => r.itemId === id);
+        for (const r of named ?? []) {
+          if (item.doses[r.index]?.slot !== r.slot) {
+            throw new BadRequestException(`"${item.name}" has no ${r.slot} dose at position ${r.index}; reload and try again`);
+          }
+        }
+        const moves = (d: SupplementItem['doses'][number], i: number) => (named ? named.some((r) => r.index === i) : d.slot === body.from);
+        const doses = item.doses.map((d, i) =>
+          moves(d, i) ? { ...d, slot: body.to, dayTypes: body.dayTypes ?? d.dayTypes } : d,
         );
         if (!isSameData(doses, item.doses)) changes.push({ type: 'moved', itemId: id, doses });
       }

@@ -76,3 +76,4 @@
 .bulkButtons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .bulkBar button { background: none; color: inherit; border: 1px solid currentColor; border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; font: inherit; }
 .bulkBar .removeButton { color: var(--color-error-text); background: var(--color-bg); }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }

@@ -93,10 +93,14 @@ import { IMPORT_SUGGESTION_DEADLINE_MS, MACROCYCLE_ID_HEADER } from '@lifting-lo
 // See issue #466 / flag 3 of the 2026-06-08 architecture review (#464).
 // ---------------------------------------------------------------------------
 
-/** The body of `POST /supplements/doses/move` (#1410): moves the items' doses in `from` to `to`. */
+/**
+ * The body of `POST /supplements/doses/move` (#1410): moves the items' doses in `from` to `to`, or
+ * exactly the doses `doses` names. A named dose no longer where the client saw it is a 400.
+ */
 export interface MoveSupplementDosesBody {
   itemIds: string[];
-  from: SupplementSlot;
+  from?: SupplementSlot;
+  doses?: { itemId: string; index: number; slot: SupplementSlot }[];
   to: SupplementSlot;
   /** Replaces the moved doses' day types when given; `[]` means every day. */
   dayTypes?: string[];
