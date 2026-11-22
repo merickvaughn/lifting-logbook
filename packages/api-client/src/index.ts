@@ -861,6 +861,15 @@ export function createApiClient(config: ApiClientConfig) {
     removeSupplementItem(id: string, today: string): Promise<SupplementStackResponse> {
       return request(`/supplements/items/${enc(id)}?today=${enc(today)}`, { method: 'DELETE', cache: 'no-store' });
     },
+    /** Removes the listed items in one write: all of them, or none if any is unknown (#1414). */
+    removeSupplementItems(itemIds: string[], today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/items/remove?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ itemIds }),
+        cache: 'no-store',
+      });
+    },
     /** Edits an item, such as the links Keep saves. `today` is the lifter's local date (YYYY-MM-DD). */
     updateSupplementItem(id: string, body: SupplementItemBody, today: string): Promise<SupplementStackResponse> {
       return request(`/supplements/items/${enc(id)}?today=${enc(today)}`, {

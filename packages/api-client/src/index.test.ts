@@ -1114,6 +1114,15 @@ describe('supplements', () => {
     expect(init.method).toBe('DELETE');
   });
 
+  it('removeSupplementItems POSTs the ids to the bulk remove endpoint with the lifter\'s date', async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    await makeClient().removeSupplementItems(['a', 'b'], '2026-11-21');
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items/remove?today=2026-11-21');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ itemIds: ['a', 'b'] });
+  });
+
   it('fetchSupplementCatalog reads GET /supplements/catalog with the escaped query, uncached', async () => {
     mockFetch.mockResolvedValue(new Response('[]', { status: 200 }));
     await makeClient().fetchSupplementCatalog('vitamin d&k');

@@ -104,6 +104,25 @@ test('Edit stack: ticking a row and moving it with the bulk bar puts it in the n
   await expect(daily.getByRole('heading', { name: 'Morning' })).toHaveCount(0);
 });
 
+test('Edit stack: Remove takes the ticked items off the page in one write', async ({ page }) => {
+  const removes: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && new URL(r.url()).pathname === '/supplements/items/remove') removes.push(r.postData() ?? '');
+  });
+  await page.goto('/supplements');
+  await page.getByRole('button', { name: 'Edit stack' }).click();
+  await page.getByRole('checkbox', { name: 'Select Glycine' }).check();
+  await page.getByRole('checkbox', { name: /^Select Nutricost Pre-X/ }).check();
+  const bar = page.getByRole('region', { name: 'Selected items' });
+  await bar.getByRole('button', { name: 'Remove' }).click();
+  await bar.getByRole('button', { name: 'Tap again to remove 2 items' }).click();
+
+  await expect(bar).toBeHidden();
+  await expect(page.getByRole('checkbox', { name: 'Select Glycine' })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: /^Select Nutricost Pre-X/ })).toHaveCount(0);
+  expect(removes).toHaveLength(1);
+});
+
 test('replaces an item into Pending: the new item is added and the replaced one moves to Pending', async ({ page }) => {
   await page.goto('/supplements');
   await page.getByRole('button', { name: /Nutricost Pre-X/ }).click();

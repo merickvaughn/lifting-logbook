@@ -156,6 +156,7 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
       ['PUT', '/supplements/settings', { caffeineCutoff: '12:00' }],
       ['POST', '/supplements/doses/move', { itemIds: [item.id], from: 'am', to: 'pm' }],
       ['POST', '/supplements/items/status', { itemIds: [item.id], status: 'pending' }],
+      ['POST', '/supplements/items/remove', { itemIds: [item.id] }],
       ['POST', '/supplements/mixes', { name: 'm', itemIds: [item.id, item.id] }],
       ['POST', `/supplements/mixes/${item.id}/split`],
     ];
@@ -501,6 +502,37 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     expect(stack.items.map((i) => i.status)).toEqual(['pending', 'pending']);
     await ok('POST', `/supplements/items/status?today=${TODAY}`, { itemIds: [a.id, b.id], status: 'active' });
     expect((await changes()).slice(2).map((ch) => ch.type)).toEqual(['moved_to_pending', 'started', 'started']);
+  });
+
+  it('bulk removes items in one write, one removed change each, and each can be restored', async () => {
+    const { ok, add, changes } = newUser();
+    const a = await add('A');
+    const b = await add('B');
+    const c = await add('C');
+    // A repeated id removes the item once.
+    const stack = await ok('POST', `/supplements/items/remove?today=${TODAY}`, { itemIds: [c.id, a.id, c.id] });
+    expect(stack.items.map((i) => i.id)).toEqual([b.id]);
+    expect((await changes()).slice(3)).toEqual([
+      { type: 'removed', date: TODAY, seq: 4, item: c },
+      { type: 'removed', date: TODAY, seq: 5, item: a },
+    ]);
+    const restored = await ok('POST', `/supplements/items/${a.id}/restore?today=${TODAY}`);
+    expect(restored.items.map((i) => i.id)).toEqual([b.id, a.id]);
+  });
+
+  it('refuses a bulk remove naming an unknown item, or none, or more than 100, removing nothing', async () => {
+    const { inject, add, get, changes } = newUser();
+    const a = await add('A');
+    const before = await get();
+    const remove = (itemIds: unknown) => inject('POST', `/supplements/items/remove?today=${TODAY}`, { itemIds });
+
+    const unknown = await remove([a.id, 'no-such-item']);
+    expect([unknown.statusCode, unknown.json().message]).toEqual([404, 'No supplement item no-such-item']);
+    expect((await remove([])).statusCode).toBe(400);
+    expect((await remove(Array.from({ length: 101 }, () => a.id))).statusCode).toBe(400);
+    expect((await remove(undefined)).statusCode).toBe(400);
+    expect(await get()).toEqual(before);
+    expect(await changes()).toHaveLength(1);
   });
 
   it('combines items into a mix in the first one’s place, returns its id, and splits it back', async () => {
