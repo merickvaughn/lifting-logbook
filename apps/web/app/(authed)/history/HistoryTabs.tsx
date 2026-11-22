@@ -7,7 +7,6 @@ import { formatWeight, liftIdFor, storedIdListing } from '@lifting-logbook/core'
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
   ImportBatchSummary,
-  ImportUndoResponse,
   MacrocycleOrigin,
   MacrocycleSummaryResponse,
   TrainingMaxHistoryEntryResponse,
@@ -15,6 +14,7 @@ import type {
 } from '@lifting-logbook/types';
 import { undoImport } from '@/lib/client-api';
 import { localToday } from '@/lib/calendarDay';
+import { undoSummary } from '@/lib/importUndo';
 import { logClientError } from '@/lib/log-client-error';
 import { formatDay, supplementsOnHref } from '@/lib/supplementHistory';
 import { STATUS_LABEL } from '@/lib/macrocycleStatus';
@@ -86,16 +86,6 @@ const ORIGIN_LABEL: Record<MacrocycleOrigin, string> = {
   legacy: 'Earlier records',
   'non-cycle': 'Outside a macrocycle',
 };
-
-/** An undo's outcome, worded as the import wizard words it. */
-function undoSummary(result: ImportUndoResponse): string {
-  return (
-    `Undo complete: ${result.restored} restored` +
-    (result.skipped > 0 ? `, ${result.skipped} skipped` : '') +
-    (result.flagged.length > 0 ? `, ${result.flagged.length} flagged (modified since import)` : '') +
-    '.'
-  );
-}
 
 /**
  * Every macrocycle of the program, newest first (ADR-042), each with an Undo for the newest import

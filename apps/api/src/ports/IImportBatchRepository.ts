@@ -132,7 +132,9 @@ export function createdNumberedKeys(preImage: ImportPreImage): string[] {
 
 /**
  * A lift-records batch as the import list reads it (#1257): the numbers its created keys hold
- * rather than its pre-image, which can run to thousands of keys.
+ * rather than its pre-image, which can run to thousands of keys. The training-maxes list (#1405)
+ * reads only `id`, `program` and `createdAt`: such a batch is never grouped, touches no
+ * macrocycle and holds no numbered key.
  */
 export interface ImportBatchSummaryRecord {
   id: string;
@@ -151,7 +153,7 @@ export interface IImportBatchRepository {
   findById(id: string, userId: string): Promise<ImportBatchRecord | null>;
   /** The user's batches whose `groupId` is `groupId`: the other programs' batches of that import. */
   listGroup(groupId: string): Promise<ImportBatchRecord[]>;
-  /** The user's batches of one program and destination, newest first, as summaries (#1257). */
+  /** The user's batches of one program and destination, newest first, as summaries (#1257, #1405). */
   listSummaries(program: string, destination: ImportKind): Promise<ImportBatchSummaryRecord[]>;
   deleteById(id: string, userId: string): Promise<void>;
   /**

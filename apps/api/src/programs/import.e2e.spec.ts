@@ -1443,6 +1443,62 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(byLift['bench-press']).toBe(182.5); // restored to the value before the update
     });
 
+    // #1405: once the wizard is gone, the import is found through the list and undone from there.
+    it('lists a training-maxes import and undoes it from the list, restoring the prior maxes', async () => {
+      const program = 'p1405-list-undo-tm';
+      const inject = (method: 'GET' | 'POST', url: string) =>
+        app.getHttpAdapter().getInstance().inject({ method, url, headers: AUTH });
+      const listTm = async () =>
+        (await inject('GET', `/programs/${program}/import/batches?destination=training-maxes`)).json() as Array<{
+          id: string;
+          program: string;
+          createdAt: string;
+        }>;
+      const readMaxes = async () =>
+        Object.fromEntries(
+          ((await inject('GET', `/programs/${program}/training-maxes`)).json() as Array<{ lift: string; weight: number }>).map(
+            (m) => [m.lift, m.weight],
+          ),
+        );
+
+      await importCsv(program, TM_CSV, '?mode=commit&destination=training-maxes');
+      const before = await readMaxes();
+      expect(before).toEqual({ 'bench-press': 182.5 });
+
+      const update = (
+        await importCsv(
+          program,
+          ['Date Updated,Lift,Weight', '1/2/2026,Bench P.,185', '1/2/2026,Squat,300'].join('\n'),
+          '?mode=commit&destination=training-maxes',
+        )
+      ).json();
+      expect(update).toMatchObject({ created: 1, updated: 1 });
+
+      // Both imports are listed. Their order isn't asserted: two commits can share a millisecond.
+      const listed = await listTm();
+      expect(listed).toHaveLength(2);
+      const listedUpdate = listed.find((b) => b.id === update.batchId);
+      expect(listedUpdate).toMatchObject({ program, createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
+      const earlier = listed.find((b) => b.id !== update.batchId);
+      // A training-maxes import touches no macrocycle, so the lift-records list doesn't show it.
+      expect((await inject('GET', `/programs/${program}/import/batches`)).json()).toEqual([]);
+
+      const undo = (await undoImport(program, listedUpdate?.id ?? '')).json();
+      expect(undo).toMatchObject({ batchId: update.batchId, restored: 2, skipped: 0, flagged: [] });
+      expect(await readMaxes()).toEqual(before);
+      // Undone, it leaves the list.
+      expect((await listTm()).map((b) => b.id)).toEqual([earlier?.id]);
+    });
+
+    it('refuses a list destination other than lift-records or training-maxes', async () => {
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'GET',
+        url: '/programs/p1405-bad-destination/import/batches?destination=strength-goals',
+        headers: AUTH,
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
     it('skips undo and flags when a training max was modified after the import', async () => {
       const program = 'p3-undo-tm-guard';
       // Step 1: create at 182.5
