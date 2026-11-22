@@ -170,7 +170,8 @@ describeOrSkip('import overwrite (#1182, e2e, lifting_app role)', () => {
 
   const commit = async (user: string, file: ReturnType<typeof run>, overwrite?: ImportBreakdown['overwrite']) => {
     const res = await importCsv(user, file.csv, '?mode=commit&destination=lift-records', breakdownOf(file.dates, overwrite));
-    expect(res.statusCode).toBe(200);
+    // With the body, a failure says which 503 it was: the backup-failed code or a timeout (#1408).
+    if (res.statusCode !== 200) throw new Error(`The commit returned ${res.statusCode}: ${res.body}`);
     return res.json<ImportCommitResponse>();
   };
 
