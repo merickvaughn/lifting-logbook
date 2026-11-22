@@ -10,13 +10,21 @@ jest.mock('@/lib/client-api', () => ({
   createSupplementItem: jest.fn(),
   updateSupplementItem: jest.fn(),
   removeSupplementItem: jest.fn(),
+  removeSupplementItems: jest.fn(),
   setSupplementStatus: jest.fn(),
   fetchSupplementCatalog: jest.fn(),
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
 jest.mock('@/lib/calendarDay', () => ({ localToday: () => '2026-11-21' }));
 
-import { createSupplementItem, fetchSupplementCatalog, removeSupplementItem, setSupplementStatus, updateSupplementItem } from '@/lib/client-api';
+import {
+  createSupplementItem,
+  fetchSupplementCatalog,
+  removeSupplementItem,
+  removeSupplementItems,
+  setSupplementStatus,
+  updateSupplementItem,
+} from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 
 const CREATINE: SupplementCatalogEntry = {
@@ -431,7 +439,7 @@ describe('Replace with… (#1411)', () => {
   beforeEach(() => {
     (createSupplementItem as jest.Mock).mockResolvedValue({});
     (setSupplementStatus as jest.Mock).mockResolvedValue({});
-    (removeSupplementItem as jest.Mock).mockResolvedValue({});
+    (removeSupplementItems as jest.Mock).mockResolvedValue({});
   });
 
   it('opens the Add form on the item’s first dose slot and day types, listing the item being replaced', () => {
@@ -477,17 +485,18 @@ describe('Replace with… (#1411)', () => {
     await waitFor(() => expect(onDismiss).toHaveBeenCalled());
     expect(createSupplementItem).toHaveBeenCalledTimes(1);
     expect(setSupplementStatus).toHaveBeenCalledWith(['pre-x', 'trans4orm'], 'pending', '2026-11-21');
-    expect(removeSupplementItem).not.toHaveBeenCalled();
+    expect(removeSupplementItems).not.toHaveBeenCalled();
   });
 
-  it('Remove them removes each ticked item instead', async () => {
+  it('Remove them removes the ticked item instead', async () => {
     const { onDismiss } = replace('pre-x');
     await userEvent.click(screen.getByRole('radio', { name: /Remove them/ }));
     await userEvent.click(field('Name'));
     await userEvent.paste('Pre-Y');
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(onDismiss).toHaveBeenCalled());
-    expect(removeSupplementItem).toHaveBeenCalledWith('pre-x', '2026-11-21');
+    expect(removeSupplementItems).toHaveBeenCalledWith(['pre-x'], '2026-11-21');
+    expect(removeSupplementItem).not.toHaveBeenCalled();
     expect(setSupplementStatus).not.toHaveBeenCalled();
   });
 
@@ -499,7 +508,7 @@ describe('Replace with… (#1411)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(onDismiss).toHaveBeenCalled());
     expect(setSupplementStatus).not.toHaveBeenCalled();
-    expect(removeSupplementItem).not.toHaveBeenCalled();
+    expect(removeSupplementItems).not.toHaveBeenCalled();
   });
 
   it('a failed add is logged, keeps the input, and replaces nothing', async () => {
@@ -522,7 +531,7 @@ describe('Replace with… (#1411)', () => {
     await userEvent.paste('Pre-Y');
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Added Pre-Y, but couldn’t move the items it replaces');
-    expect(logClientError).toHaveBeenCalledWith('supplements.replaceItems', expect.any(Error), { items: 1, left: 1, how: 'pending' });
+    expect(logClientError).toHaveBeenCalledWith('supplements.replaceItems', expect.any(Error), { items: 1, how: 'pending' });
     expect(onDismiss).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Try again' })).toHaveFocus();
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
@@ -531,7 +540,7 @@ describe('Replace with… (#1411)', () => {
     expect(setSupplementStatus).toHaveBeenCalledTimes(2);
   });
 
-  it('Remove them with two ticked removes both, and says how many', async () => {
+  it('Remove them with two ticked removes both in one call, and says how many', async () => {
     (fetchSupplementCatalog as jest.Mock).mockResolvedValue([caffeine(400)]);
     const { onDismiss } = replace('pre-x');
     await typeName('Caffeine');
@@ -539,25 +548,27 @@ describe('Replace with… (#1411)', () => {
     await userEvent.click(screen.getByRole('radio', { name: /Remove them/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('Added Caffeine; removed 2 items.'));
-    expect((removeSupplementItem as jest.Mock).mock.calls).toEqual([
-      ['pre-x', '2026-11-21'],
-      ['trans4orm', '2026-11-21'],
-    ]);
+    expect((removeSupplementItems as jest.Mock).mock.calls).toEqual([[['pre-x', 'trans4orm'], '2026-11-21']]);
+    expect(removeSupplementItem).not.toHaveBeenCalled();
   });
 
-  it('after a remove fails part-way, Try again removes only the items still left', async () => {
+  it('after a remove fails, Try again sends every replaced item again, since none were removed', async () => {
     (fetchSupplementCatalog as jest.Mock).mockResolvedValue([caffeine(400)]);
-    (removeSupplementItem as jest.Mock).mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('down'));
+    (removeSupplementItems as jest.Mock).mockRejectedValueOnce(new Error('down'));
     const { onDismiss } = replace('pre-x');
     await typeName('Caffeine');
     await userEvent.click(row('EVL Trans4orm'));
     await userEvent.click(screen.getByRole('radio', { name: /Remove them/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('couldn’t remove the items it replaces');
-    expect(logClientError).toHaveBeenCalledWith('supplements.replaceItems', expect.any(Error), { items: 2, left: 1, how: 'remove' });
+    expect(await screen.findByRole('alert')).toHaveTextContent('couldn’t remove the items it replaces. None of them changed');
+    expect(logClientError).toHaveBeenCalledWith('supplements.replaceItems', expect.any(Error), { items: 2, how: 'remove' });
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('Added Caffeine; removed 1 item.'));
-    expect((removeSupplementItem as jest.Mock).mock.calls.map((c) => c[0])).toEqual(['pre-x', 'trans4orm', 'trans4orm']);
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('Added Caffeine; removed 2 items.'));
+    expect((removeSupplementItems as jest.Mock).mock.calls).toEqual([
+      [['pre-x', 'trans4orm'], '2026-11-21'],
+      [['pre-x', 'trans4orm'], '2026-11-21'],
+    ]);
+    expect(removeSupplementItem).not.toHaveBeenCalled();
     expect(createSupplementItem).toHaveBeenCalledTimes(1);
   });
 
