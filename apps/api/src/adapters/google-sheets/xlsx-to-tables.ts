@@ -9,6 +9,11 @@ export interface WorkbookTable {
   overflow?: 'rows' | 'columns';
   /** Each cell's hyperlink, '' when none, shaped like `rows`. Present only when the tab has any (#1379). */
   links?: string[][];
+  /**
+   * The sheet's 1-based number of each row in `rows`. Present only when some row isn't at its
+   * index + 1, because a blank row above it was dropped (#1379).
+   */
+  rowNumbers?: number[];
 }
 
 export type XlsxReadErrorCode = 'too-large' | 'malformed';
@@ -71,7 +76,7 @@ export function xlsxToTables(buffer: Uint8Array, { maxRows }: { maxRows: number 
   try {
     files = unzipSync(buffer, {
       filter: (file) => {
-        if (!/^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/(_rels\/)?[^/]+\.xml(\.rels)?)$/.test(file.name)) {
+        if (!/^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/[^/]+\.xml|worksheets\/_rels\/[^/]+\.xml\.rels)$/.test(file.name)) {
           return false;
         }
         totalBytes += file.originalSize;
@@ -124,7 +129,14 @@ export function xlsxToTables(buffer: Uint8Array, { maxRows }: { maxRows: number 
       if (!sheet) return { name, rows: [] };
       const read = readRows(sheet, { sharedStrings, dateStyles, date1904, maxRows });
       const links = readLinks(sheet, text(path?.replace(/([^/]+)$/, '_rels/$1.rels') ?? ''), read.sourceRows, read.rows);
-      return { name, rows: read.rows, ...(read.overflow ? { overflow: read.overflow } : {}), ...(links ? { links } : {}) };
+      const shifted = read.sourceRows.some((r, i) => r !== i + 1);
+      return {
+        name,
+        rows: read.rows,
+        ...(read.overflow ? { overflow: read.overflow } : {}),
+        ...(links ? { links } : {}),
+        ...(shifted ? { rowNumbers: read.sourceRows } : {}),
+      };
     });
 }
 
@@ -228,7 +240,10 @@ function readRows(
   const rows: string[][] = [];
   const sourceRows: number[] = [];
   let overflow: WorkbookTable['overflow'];
+  // A `<row>` without `r` is the one after the row before it, counting blank rows, which are dropped.
+  let rowNumber = 0;
   rowLoop: for (const row of scan(sheet, 'row')) {
+    rowNumber = Number(attributes(row.attrs).get('r')) || rowNumber + 1;
     const cells: string[] = [];
     let nextCol = 0;
     for (const cell of scan(row.body, 'c')) {
@@ -250,7 +265,7 @@ function readRows(
       break;
     }
     rows.push(Array.from(cells, (v) => v ?? ''));
-    sourceRows.push(Number(attributes(row.attrs).get('r')) || rows.length);
+    sourceRows.push(rowNumber);
   }
 
   // The rows read before a cap still go back, so the tab can be classified and named.
@@ -275,7 +290,8 @@ function readLinks(sheet: string, relsSource: string | null, sourceRows: number[
   let any = false;
   for (const h of scan(sheet, 'hyperlink')) {
     const a = attributes(h.attrs);
-    const ref = /^([A-Z]+)(\d+)$/.exec(a.get('ref') ?? '');
+    // A link over a range (`A2:A3`) is read from its first cell.
+    const ref = /^([A-Z]+)(\d+)(?::[A-Z]+\d+)?$/.exec(a.get('ref') ?? '');
     const url = targets.get(a.get('r:id') ?? '');
     const row = ref ? rowIndex.get(Number(ref[2])) : undefined;
     const rowLinks = row === undefined ? undefined : links[row];

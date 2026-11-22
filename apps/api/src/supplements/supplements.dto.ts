@@ -5,10 +5,12 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsNumber,
   IsString,
   IsUrl,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -137,6 +139,7 @@ export class SupplementSheetDto {
 export class ImportRowDto {
   @IsString() @MinLength(1) @MaxLength(NAME) name!: string;
   @Optional() @IsString() @MaxLength(NAME) catalogKey?: string;
+  @IsString() @MaxLength(NAME) amount!: string;
   @IsString() @MaxLength(NAME) timing!: string;
   @IsString() @MaxLength(TEXT) shortNote!: string;
   @IsString() @MaxLength(TEXT) longNote!: string;
@@ -148,4 +151,6 @@ export class ImportRowDto {
 export class ImportSupplementsDto {
   @IsString() @MinLength(1) @MaxLength(NAME) source!: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => ImportRowDto) rows!: ImportRowDto[];
+  /** Sheet rows the lifter skipped; logged, never stored. */
+  @Optional() @IsInt() @Min(0) @Max(500) skipped?: number;
 }

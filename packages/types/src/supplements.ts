@@ -238,10 +238,17 @@ export const SUPPLEMENT_NOT_REMOVED_CODE = 'supplement-not-removed';
 /** One tab of a shared Google Sheet, for the supplement import (#1379). */
 export interface SupplementSheetTab {
   name: string;
-  /** The first row is the header. */
+  /** The first row is the header. Empty when the tab can't be imported. */
   rows: string[][];
   /** Hyperlink of each cell, '' when none; the same shape as `rows`. */
   links: string[][];
+  /**
+   * The sheet's own 1-based number of each row. Absent when row `i` is sheet row `i + 1`, as it is
+   * unless a blank row above it was dropped.
+   */
+  rowNumbers?: number[];
+  /** Why the tab can't be imported, such as too many rows; null when it can. */
+  skipReason: string | null;
 }
 
 /** `POST /supplements/import/google-sheet`. */
@@ -253,6 +260,11 @@ export interface SupplementSheetResponse {
 export interface SupplementImportRowBody {
   name: string;
   catalogKey?: string;
+  /**
+   * The sheet's Amount, '' when blank. A dose carries it too; when the saved item ends up with no
+   * dose holding it, it goes in front of the timing text, so it isn't lost.
+   */
+  amount: string;
   timing: string;
   shortNote: string;
   longNote: string;
@@ -265,4 +277,6 @@ export interface SupplementImportBody {
   /** Names the sheet in each item's `added` change: "Imported from <source>". */
   source: string;
   rows: SupplementImportRowBody[];
+  /** How many sheet rows the lifter skipped, for the import's log line only. */
+  skipped?: number;
 }

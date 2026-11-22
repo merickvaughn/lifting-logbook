@@ -47,6 +47,20 @@ describe('supplement change payloads', () => {
     expect(roundTrip(change)).toEqual(change);
   });
 
+  it('reads an `added` change with its note, and one without a note has none (#1379)', () => {
+    expect(roundTrip({ ...base, type: 'added', item, note: 'Imported from Supplements' })).toEqual({
+      ...base,
+      type: 'added',
+      item,
+      note: 'Imported from Supplements',
+    });
+    const plain = roundTrip({ ...base, type: 'added', item });
+    expect(plain).toEqual({ ...base, type: 'added', item });
+    expect(plain).not.toHaveProperty('note');
+    const payload = JSON.parse(JSON.stringify({ item, note: 7 }));
+    expect(() => parseChange({ ...base, type: 'added', payload })).toThrow(MalformedSupplementDataError);
+  });
+
   it('fills the fields an older entry lacks with their defaults, so a restore gets a whole item', () => {
     const restored = parseChange({ ...base, type: 'removed', payload: { item: { id: 'old', name: 'Old', doses: [{ slot: 'am', servings: 1 }] } } });
     expect(restored).toEqual({
