@@ -1614,6 +1614,19 @@ export interface ImportBatchSummary {
   macrocycleIds: string[];
 }
 
+/**
+ * One training-maxes import of a program, from
+ * `GET /programs/:program/import/batches?destination=training-maxes` (#1405), so it can be undone
+ * after leaving the wizard.
+ */
+export interface TrainingMaxImportBatchSummary {
+  /** The batch to undo: `POST /programs/{program}/import/{id}/undo`. */
+  id: string;
+  program: string;
+  /** When the import was committed, as an ISO 8601 timestamp. */
+  createdAt: string;
+}
+
 /** Request body for `POST /programs/:program/import/google-sheet` (#1111). */
 export interface GoogleSheetImportRequest {
   /** A Google Sheets link (any tab) or a bare spreadsheet ID. */

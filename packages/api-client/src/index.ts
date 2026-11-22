@@ -35,6 +35,7 @@ import type {
   ImportPreviewResponse,
   ImportBatchSummary,
   ImportUndoResponse,
+  TrainingMaxImportBatchSummary,
   LiftMetadataResponse,
   LiftModificationResponse,
   LiftModificationsByLiftResponse,
@@ -449,6 +450,10 @@ export function createApiClient(config: ApiClientConfig) {
     /** The imports that touched the program's past macrocycles, newest first, each undoable (#1257). */
     fetchImportBatches(program: string): Promise<ImportBatchSummary[]> {
       return request(`/programs/${enc(program)}/import/batches`, { cache: 'no-store' });
+    },
+    /** The program's training-maxes imports, newest first, each undoable (#1405). */
+    fetchTrainingMaxImportBatches(program: string): Promise<TrainingMaxImportBatchSummary[]> {
+      return request(`/programs/${enc(program)}/import/batches?destination=training-maxes`, { cache: 'no-store' });
     },
     /** What overwriting all or all imported history would remove, for Assign (#1182). */
     fetchOverwriteCounts(program: string): Promise<ImportOverwriteCountsResponse> {

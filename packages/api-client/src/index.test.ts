@@ -698,6 +698,13 @@ describe('createApiClient', () => {
       await makeClient().undoImport('5-3-1', 'b-1', '2026-11-13');
       expect(mockFetch.mock.calls[0]?.[0]).toBe('http://api.test/programs/5-3-1/import/b-1/undo?today=2026-11-13');
     });
+
+    it('fetchTrainingMaxImportBatches lists the training-maxes destination (#1405)', async () => {
+      const batch = { id: 'tm-1', program: '5-3-1', createdAt: '2026-11-21T18:04:09.000Z' };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify([batch])));
+      await expect(makeClient().fetchTrainingMaxImportBatches('5-3-1')).resolves.toEqual([batch]);
+      expect(mockFetch.mock.calls[0]?.[0]).toBe('http://api.test/programs/5-3-1/import/batches?destination=training-maxes');
+    });
   });
 
   describe('smart import (previewImport / commitImport)', () => {

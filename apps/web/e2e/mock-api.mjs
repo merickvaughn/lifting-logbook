@@ -1443,8 +1443,13 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // GET /programs/:p/import/batches (#1257): the imports History offers Undo for.
+    // GET /programs/:p/import/batches (#1257): the imports History offers Undo for. The mock keeps
+    // lift-records batches only, so the training-maxes list (#1405) is empty.
     if (method === 'GET' && rest[0] === 'import' && rest[1] === 'batches' && rest.length === 2) {
+      if (url.searchParams.get('destination') === 'training-maxes') {
+        json(res, []);
+        return;
+      }
       json(res, state.importBatches.filter((b) => b.program === decodeURIComponent(parts[1])));
       return;
     }

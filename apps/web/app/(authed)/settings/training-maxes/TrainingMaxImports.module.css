@@ -1,0 +1,61 @@
+/* Training-maxes imports, each with its Undo (#1405). */
+.section {
+  margin-top: var(--space-4);
+}
+
+.heading {
+  font-size: var(--font-size-lg);
+  margin: 0;
+}
+
+.intro {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.button {
+  min-height: 44px;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--color-surface-alt);
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-error-text);
+}
+
+.result {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text);
+}
