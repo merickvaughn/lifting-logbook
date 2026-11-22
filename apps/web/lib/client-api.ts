@@ -118,6 +118,8 @@ export const {
   moveSupplementDoses,
   setSupplementStatus,
   createSupplementMix,
+  // The bulk bar's Remove, in one write (#1414).
+  removeSupplementItems,
   // Replace with… and Edit days (#1411).
   updateSupplementSettings,
   // Read, not just a write — but the 409 self-heal path needs to refetch the

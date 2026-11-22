@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { localToday } from '@/lib/calendarDay';
-import { removeSupplementItem, setSupplementStatus } from '@/lib/client-api';
+import { removeSupplementItems, setSupplementStatus } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import { SLOT_LABEL, buildView, type RowModel, type Stack } from '@/lib/supplementsView';
 import { CombineDialog, MoveDialog } from './BulkDialogs';
@@ -193,14 +193,13 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
 
   /**
    * Runs a write, then refreshes; on failure reports it and leaves the selection as it was.
-   * `clear` empties the selection on success (Start keeps it); `refreshOnError` re-reads the stack
-   * after a failure that can have changed some of it.
+   * `clear` empties the selection on success (Start keeps it).
    */
   async function write(
     op: string,
     ctx: Record<string, unknown>,
     run: () => Promise<unknown>,
-    { done, clear = false, refreshOnError = false }: { done: string; clear?: boolean; refreshOnError?: boolean },
+    { done, clear = false }: { done: string; clear?: boolean },
   ) {
     setWriting(true);
     setWriteError(undefined);
@@ -216,7 +215,6 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
     } catch (err) {
       logClientError(op, err, ctx);
       setWriteError('Couldn’t save that. Your selection is kept; try again.');
-      if (refreshOnError) router.refresh();
     } finally {
       setWriting(false);
     }
@@ -232,16 +230,11 @@ export default function SupplementsView({ stack }: { stack: Stack }) {
   const removeAll = () => {
     if (confirmRemove !== removeKey) return setConfirmRemove(removeKey);
     setConfirmRemove(null);
-    // One call per item: there's no bulk remove endpoint yet, so a failure part-way can have removed
-    // some, and the page re-reads the stack to show which.
-    return write(
-      'supplements.bulkRemove',
-      { items: itemIds.length },
-      async () => {
-        for (const id of itemIds) await removeSupplementItem(id, localToday());
-      },
-      { done: `Removed ${plural(itemIds.length)}.`, clear: true, refreshOnError: true },
-    );
+    // One write removes them all or none (#1414), so a failure leaves the stack as the page shows it.
+    return write('supplements.bulkRemove', { items: itemIds.length }, () => removeSupplementItems(itemIds, localToday()), {
+      done: `Removed ${plural(itemIds.length)}.`,
+      clear: true,
+    });
   };
   const rowCount = selectedRows.length;
   const selectedText =
