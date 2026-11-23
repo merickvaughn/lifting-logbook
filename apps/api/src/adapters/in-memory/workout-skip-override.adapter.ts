@@ -6,14 +6,15 @@ import { TrainingStore, numberOf } from './training-data.adapter';
 export class InMemoryWorkoutSkipOverrideRepository
   implements IWorkoutSkipOverrideRepository, NumberedStore, TrainingStore
 {
-  private readonly store = new Map<string, Set<number>>();
+  /** Each macrocycle's skipped workouts, with the reason given, else null. */
+  private readonly store = new Map<string, Map<number, string | null>>();
 
   readonly trainingTable = 'workoutSkipOverrides';
 
   trainingRows(): TrainingRow[] {
-    return [...this.store].flatMap(([key, workoutNums]) => {
+    return [...this.store].flatMap(([key, skipped]) => {
       const { program, macrocycleNum } = colonKey.numberOf(key);
-      return [...workoutNums].map((workoutNum) => ({ program, macrocycleNum, workoutNum }));
+      return [...skipped].map(([workoutNum, reason]) => ({ program, macrocycleNum, workoutNum, reason }));
     });
   }
 
@@ -25,9 +26,9 @@ export class InMemoryWorkoutSkipOverrideRepository
     let added = 0;
     for (const row of rows) {
       const key = this.key(row.program, numberOf(row, 'macrocycleNum'));
-      const skipped = this.store.get(key) ?? new Set<number>();
+      const skipped = this.store.get(key) ?? new Map<number, string | null>();
       if (skipped.has(numberOf(row, 'workoutNum'))) continue;
-      skipped.add(numberOf(row, 'workoutNum'));
+      skipped.set(numberOf(row, 'workoutNum'), typeof row['reason'] === 'string' ? row['reason'] : null);
       this.store.set(key, skipped);
       added++;
     }
@@ -53,14 +54,18 @@ export class InMemoryWorkoutSkipOverrideRepository
   }
 
   async getSkipsForMacrocycle(program: string, macrocycleNum: number): Promise<Set<number>> {
-    return new Set(this.store.get(this.key(program, macrocycleNum)) ?? []);
+    return new Set(this.store.get(this.key(program, macrocycleNum))?.keys() ?? []);
   }
 
-  async skipWorkout(program: string, macrocycleNum: number, workoutNum: number, _reason?: string): Promise<void> {
+  async getSkipReasonsForMacrocycle(program: string, macrocycleNum: number): Promise<Map<number, string | null>> {
+    return new Map(this.store.get(this.key(program, macrocycleNum)) ?? []);
+  }
+
+  async skipWorkout(program: string, macrocycleNum: number, workoutNum: number, reason?: string): Promise<void> {
     const k = this.key(program, macrocycleNum);
-    const set = this.store.get(k) ?? new Set<number>();
-    set.add(workoutNum);
-    this.store.set(k, set);
+    const skipped = this.store.get(k) ?? new Map<number, string | null>();
+    skipped.set(workoutNum, reason ?? null);
+    this.store.set(k, skipped);
   }
 
   async unskipWorkout(program: string, macrocycleNum: number, workoutNum: number): Promise<void> {

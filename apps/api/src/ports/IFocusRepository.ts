@@ -51,6 +51,8 @@ export interface IFocusRepository {
 
   /** The workout's saved focus choices, or null when none are saved. */
   getDayState(program: string, macrocycleNum: number, workoutNum: number): Promise<FocusDayState | null>;
+  /** Every workout's saved focus choices in a macrocycle, keyed by `workoutNum`. */
+  getDayStatesForMacrocycle(program: string, macrocycleNum: number): Promise<Map<number, FocusDayState>>;
   saveDayState(
     program: string,
     macrocycleNum: number,

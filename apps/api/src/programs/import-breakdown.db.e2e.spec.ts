@@ -503,7 +503,7 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     expect(await owner.userSettings.findUnique({ where: { userId: USER_CONTINUE } })).toMatchObject({ activeProgram: null });
   });
 
-  it('continues a run over an empty live macrocycle, removing it, and undo recreates it with its id (#1354)', async () => {
+  it('continues a run over an empty live macrocycle, removing it, and undo recreates it with its id, overrides and focus state (#1354, #1359)', async () => {
     const server = app.getHttpAdapter().getInstance();
     const authorization = `Bearer ${USER_CONTINUE_EMPTY}`;
     const where = { userId: USER_CONTINUE_EMPTY };
@@ -524,7 +524,33 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
       payload: JSON.stringify({ macrocycleDate: ymd(new Date(Date.now() - 2 * DAY_MS)) }),
     });
     expect(initialized.statusCode).toBe(201);
+    // A rescheduled workout, a skipped one, a swapped lift and focus choices on it (#1359).
+    const write = async (method: 'PATCH' | 'POST' | 'PUT', url: string, body: unknown) =>
+      (
+        await injectPage(app, {
+          method,
+          url,
+          headers: { 'content-type': 'application/json', authorization },
+          payload: JSON.stringify(body),
+        })
+      ).statusCode;
+    const workout = (n: number) => `/programs/rpt/macrocycles/1/workouts/${n}`;
+    expect(await write('PATCH', `${workout(1)}/reschedule`, { newDate: ymd(new Date(Date.now() - DAY_MS)) })).toBe(204);
+    expect(await write('POST', `${workout(2)}/skip`, { reason: 'travelling' })).toBe(204);
+    expect(await write('POST', `${workout(3)}/lift-overrides`, { action: 'replace', lift: 'Deadlift', replacedBy: 'Trap Bar Deadlift' })).toBe(201);
+    expect(await write('POST', `${workout(3)}/lift-overrides`, { action: 'add', lift: 'Face Pull' })).toBe(201);
+    const focusState = { modes: { b1: 'pick' }, picks: { b1: ['Hammer Curl'] }, trims: {}, placement: 'after', order: null, dismissed: true };
+    expect(await write('PUT', '/programs/rpt/workouts/3/focus-state', focusState)).toBe(200);
     const stored = async () => ({
+      dateOverrides: await owner.workoutDateOverride.findMany({ where, select: { macrocycleNum: true, workoutNum: true, newDate: true } }),
+      skips: await owner.workoutSkipOverride.findMany({ where, select: { macrocycleNum: true, workoutNum: true, reason: true } }),
+      // In the order they apply, which is the order they were saved.
+      liftOverrides: await owner.workoutLiftOverride.findMany({
+        where,
+        select: { macrocycleNum: true, workoutNum: true, lift: true, action: true, replacedBy: true },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      }),
+      focus: await owner.focusDayState.findMany({ where, select: { macrocycleNum: true, workoutNum: true, state: true } }),
       macrocycles: await owner.macrocycle.findMany({
         where,
         select: { id: true, macrocycleNum: true, startDate: true, endDate: true, status: true, origin: true, importedThrough: true },
@@ -543,6 +569,10 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     const [live] = before.macrocycles;
     if (!live) throw new Error('expected the live macrocycle');
     expect(before.schedule.length).toBeGreaterThan(0);
+    expect(before.dateOverrides).toHaveLength(1);
+    expect(before.skips).toEqual([{ macrocycleNum: 1, workoutNum: 2, reason: 'travelling' }]);
+    expect(before.liftOverrides.map((o) => o.action)).toEqual(['replace', 'add']);
+    expect(before.focus).toEqual([{ macrocycleNum: 1, workoutNum: 3, state: focusState }]);
 
     const post = (query: string, csv: string, fields: Record<string, string>) => {
       const boundary = '----ContinueEmptyDbBoundary';
@@ -581,8 +611,11 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     expect(committed.statusCode).toBe(200);
     const batchId = committed.json<{ batchId: string }>().batchId;
 
-    const [run, ...others] = (await stored()).macrocycles;
+    const continued = await stored();
+    const [run, ...others] = continued.macrocycles;
     expect(others).toEqual([]);
+    // Removing it removed its overrides and focus state, so undo is what brings them back.
+    expect([continued.dateOverrides, continued.skips, continued.liftOverrides, continued.focus]).toEqual([[], [], [], []]);
     expect(run).toMatchObject({ macrocycleNum: 1, origin: 'live', startDate: new Date(`${start}T00:00:00Z`) });
     expect(run?.id).not.toBe(live.id);
     expect((await owner.importBatch.findUnique({ where: { id: batchId } }))?.macrocycles).toMatchObject({

@@ -555,7 +555,7 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       ]);
     });
 
-    it('undo recreates it, its schedule and the dashboard pointing at it, numbered by date, and the active program', async () => {
+    it('undo recreates it, its schedule, overrides and focus state, the dashboard pointing at it, numbered by date, and the active program', async () => {
       const live = await emptyLive(-10);
       // Older history imported since starts first, so the live macrocycle is second.
       const oldest = run(-200, 6);
@@ -563,15 +563,40 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
       const bundle = await repos();
       // Another program active, which continuing switches from.
       await bundle.userSettings.upsertSettings({ activeProgram: '531' });
+      // What a lifter can do on a macrocycle before logging a set (#1359): reschedule a workout,
+      // skip another, swap a lift in a third, and save focus choices on it.
+      const workout = (n: number) => `/programs/rpt/macrocycles/2/workouts/${n}`;
+      expect((await page('PATCH', `${workout(1)}/reschedule`, { newDate: day(-8) })).statusCode).toBe(204);
+      expect((await page('POST', `${workout(2)}/skip`, { reason: 'travelling' })).statusCode).toBe(204);
+      const swap = { action: 'replace', lift: 'Deadlift', replacedBy: 'Trap Bar Deadlift' };
+      expect((await page('POST', `${workout(3)}/lift-overrides`, swap)).statusCode).toBe(201);
+      expect((await page('POST', `${workout(3)}/lift-overrides`, { action: 'add', lift: 'Face Pull' })).statusCode).toBe(201);
+      const focusState = {
+        modes: { b1: 'pick' },
+        picks: { b1: ['Hammer Curl'] },
+        trims: { b2: ['Seated Calf Raise'] },
+        placement: 'interleave',
+        order: ['Squat', 'Hammer Curl'],
+        dismissed: true,
+      };
+      expect((await page('PUT', '/programs/rpt/workouts/3/focus-state', focusState)).statusCode).toBe(200);
       const before = {
         live: await bundle.macrocycle.findById(live.id),
         dashboard: await bundle.macrocycleDashboard.getMacrocycleDashboard('rpt'),
         activeProgram: (await bundle.userSettings.getSettings()).activeProgram,
         schedule: await bundle.macrocycleScheduledWorkout.getScheduledWorkouts('rpt', 2),
+        dates: await bundle.workoutDateOverride.getOverridesForMacrocycle('rpt', 2),
+        skips: await bundle.workoutSkipOverride.getSkipReasonsForMacrocycle('rpt', 2),
+        lifts: await bundle.workoutLiftOverride.getOverridesForMacrocycle('rpt', 2),
+        focus: await bundle.focus.getDayStatesForMacrocycle('rpt', 2),
       };
       expect(before.live?.macrocycleNum).toBe(2);
       expect(before.dashboard?.macrocycleNum).toBe(2);
       expect(before.schedule.length).toBeGreaterThan(0);
+      expect(before.dates).toEqual(new Map([[1, utc(-8)]]));
+      expect(before.skips).toEqual(new Map([[2, 'travelling']]));
+      expect(before.lifts).toEqual(new Map([[3, [swap, { action: 'add', lift: 'Face Pull' }]]]));
+      expect(before.focus).toEqual(new Map([[3, focusState]]));
 
       const body = await continueOver({ id: live.id, macrocycleNum: 2 });
       expect(await numbered()).toEqual([
@@ -579,11 +604,22 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
         [2, 'imported', day(-120)],
         [3, 'live', day(-16)],
       ]);
+      // Removing it removed its overrides and focus state, so undo is what brings them back.
+      for (const num of [1, 2, 3]) {
+        expect((await bundle.workoutDateOverride.getOverridesForMacrocycle('rpt', num)).size).toBe(0);
+        expect((await bundle.workoutSkipOverride.getSkipReasonsForMacrocycle('rpt', num)).size).toBe(0);
+        expect((await bundle.workoutLiftOverride.getOverridesForMacrocycle('rpt', num)).size).toBe(0);
+        expect((await bundle.focus.getDayStatesForMacrocycle('rpt', num)).size).toBe(0);
+      }
 
       expect((await undo(body.batchId)).flagged).toEqual([]);
       expect(await bundle.macrocycle.findById(live.id)).toEqual(before.live);
       expect(await bundle.macrocycleDashboard.getMacrocycleDashboard('rpt')).toEqual(before.dashboard);
       expect(await bundle.macrocycleScheduledWorkout.getScheduledWorkouts('rpt', 2)).toEqual(before.schedule);
+      expect(await bundle.workoutDateOverride.getOverridesForMacrocycle('rpt', 2)).toEqual(before.dates);
+      expect(await bundle.workoutSkipOverride.getSkipReasonsForMacrocycle('rpt', 2)).toEqual(before.skips);
+      expect(await bundle.workoutLiftOverride.getOverridesForMacrocycle('rpt', 2)).toEqual(before.lifts);
+      expect(await bundle.focus.getDayStatesForMacrocycle('rpt', 2)).toEqual(before.focus);
       expect((await bundle.userSettings.getSettings()).activeProgram).toBe(before.activeProgram);
       expect(await numbered()).toEqual([
         [1, 'imported', day(-200)],

@@ -1,4 +1,14 @@
-import { MACROCYCLE_ORIGINS, MACROCYCLE_STATUSES, MacrocycleOrigin, MacrocycleStatus } from '@lifting-logbook/types';
+import {
+  FOCUS_PLACEMENTS,
+  FOCUS_SELECTIONS,
+  FocusPlacement,
+  FocusSelection,
+  LiftOverrideAction,
+  MACROCYCLE_ORIGINS,
+  MACROCYCLE_STATUSES,
+  MacrocycleOrigin,
+  MacrocycleStatus,
+} from '@lifting-logbook/types';
 import { Weekday } from '@lifting-logbook/core';
 import { Prisma } from '@prisma/client';
 import { BatchMacrocycles, ContinuedRun, RemovedMacrocycle, StatusChoice } from '../../ports/IImportBatchRepository';
@@ -40,10 +50,89 @@ function scheduledWorkout(value: Prisma.JsonValue): RemovedMacrocycle['schedule'
   return isWholeNumber(workoutNum) && isWholeNumber(weekNum) && isString(scheduledDate) ? { workoutNum, weekNum, scheduledDate } : null;
 }
 
-/** A removed macrocycle (#1354), or null when any part of it is unreadable. */
+type Removed<K extends keyof RemovedMacrocycle> = RemovedMacrocycle[K][number];
+
+function dateOverride(value: Prisma.JsonValue): Removed<'dateOverrides'> | null {
+  if (!isObject(value)) return null;
+  const { workoutNum, newDate } = value;
+  return isWholeNumber(workoutNum) && isString(newDate) ? { workoutNum, newDate } : null;
+}
+
+function skip(value: Prisma.JsonValue): Removed<'skips'> | null {
+  if (!isObject(value)) return null;
+  const { workoutNum, reason } = value;
+  return isWholeNumber(workoutNum) && isStringOrNull(reason) ? { workoutNum, reason } : null;
+}
+
+function liftOverride(value: Prisma.JsonValue): Removed<'liftOverrides'>['overrides'][number] | null {
+  if (!isObject(value)) return null;
+  const { lift, action, replacedBy } = value;
+  if (!isString(lift) || !isLiftOverrideAction(action) || !(replacedBy === undefined || isString(replacedBy))) return null;
+  return { lift, action, ...(replacedBy !== undefined ? { replacedBy } : {}) };
+}
+
+function workoutLiftOverrides(value: Prisma.JsonValue): Removed<'liftOverrides'> | null {
+  if (!isObject(value) || !isWholeNumber(value['workoutNum'])) return null;
+  const overrides = everyOrNull(value['overrides'], liftOverride);
+  return overrides ? { workoutNum: value['workoutNum'], overrides } : null;
+}
+
+const isLiftOverrideAction = (value: Prisma.JsonValue | undefined): value is LiftOverrideAction =>
+  value === 'add' || value === 'remove' || value === 'replace';
+
+const isStringArray = (value: Prisma.JsonValue | undefined): value is string[] => Array.isArray(value) && value.every(isString);
+
+/** A record of `T`s, or null when it or any of its values is unreadable. */
+function recordOf<T extends Prisma.JsonValue>(value: Prisma.JsonValue | undefined, is: (item: Prisma.JsonValue) => item is T): Record<string, T> | null {
+  if (!isObject(value)) return null;
+  const entries = Object.entries(value);
+  return entries.every(([, item]) => item !== undefined && is(item)) ? (Object.fromEntries(entries) as Record<string, T>) : null;
+}
+
+/** A saved focus day state, read strictly: unlike `parseFocusDayState`, an unreadable field fails it. */
+function focusState(value: Prisma.JsonValue): Removed<'focus'> | null {
+  if (!isObject(value) || !isWholeNumber(value['workoutNum']) || !isObject(value['state'])) return null;
+  const { modes, picks, trims, placement, order, dismissed } = value['state'];
+  const modeRecord = recordOf(modes, (item): item is FocusSelection => isString(item) && (FOCUS_SELECTIONS as readonly string[]).includes(item));
+  const pickRecord = recordOf(picks, isStringArray);
+  const trimRecord = recordOf(trims, isStringArray);
+  if (
+    !modeRecord ||
+    !pickRecord ||
+    !trimRecord ||
+    !(isString(placement) && (FOCUS_PLACEMENTS as readonly string[]).includes(placement)) ||
+    !(order === null || isStringArray(order)) ||
+    typeof dismissed !== 'boolean'
+  ) {
+    return null;
+  }
+  return {
+    workoutNum: value['workoutNum'],
+    state: { modes: modeRecord, picks: pickRecord, trims: trimRecord, placement: placement as FocusPlacement, order, dismissed },
+  };
+}
+
+/** Every item read by `read`, or null when the value isn't an array or any item is unreadable. */
+function everyOrNull<T>(value: Prisma.JsonValue | undefined, read: (item: Prisma.JsonValue) => T | null): T[] | null {
+  if (!Array.isArray(value)) return null;
+  const items = value.map(read);
+  return items.every((item): item is T => item !== null) ? items : null;
+}
+
+/**
+ * A removed macrocycle (#1354), or null when any part of it is unreadable. A batch from before
+ * #1359 recorded no overrides or focus day states, and reads with none.
+ */
 function removedMacrocycle(value: Prisma.JsonValue): RemovedMacrocycle | null {
   if (!isObject(value)) return null;
   const { id, startDate, endDate, status, statusChosen, origin, unmatched, importedThrough, schedule } = value;
+  const absentOrEvery = <T>(field: Prisma.JsonValue | undefined, read: (item: Prisma.JsonValue) => T | null): T[] | null =>
+    field === undefined ? [] : everyOrNull(field, read);
+  const dateOverrides = absentOrEvery(value['dateOverrides'], dateOverride);
+  const skips = absentOrEvery(value['skips'], skip);
+  const liftOverrides = absentOrEvery(value['liftOverrides'], workoutLiftOverrides);
+  const focus = absentOrEvery(value['focus'], focusState);
+  if (!dateOverrides || !skips || !liftOverrides || !focus) return null;
   if (
     !isString(id) ||
     !isString(startDate) ||
@@ -60,6 +149,10 @@ function removedMacrocycle(value: Prisma.JsonValue): RemovedMacrocycle | null {
   const workouts = schedule.map(scheduledWorkout);
   if (workouts.some((w) => w === null)) return null;
   return {
+    dateOverrides,
+    skips,
+    liftOverrides,
+    focus,
     id,
     startDate,
     endDate,
