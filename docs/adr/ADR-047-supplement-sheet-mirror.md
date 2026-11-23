@@ -194,8 +194,13 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     runs the mirror with `app.current_user_id` set to the task's user, so RLS still confines the
     run to that user.
 19. **One run per user at a time, and atomic sheet writes.** A run first takes a lease in a short
-    transaction (`UPDATE … SET "mirrorLeaseUntil" = now() + 2 min WHERE "mirrorLeaseUntil" IS NULL
-    OR "mirrorLeaseUntil" < now()`). If the lease is held, it returns 409 and Cloud Tasks retries.
+    transaction (`UPDATE … SET "mirrorLeaseUntil" = now() + 5 min WHERE "mirrorLeaseUntil" IS NULL
+    OR "mirrorLeaseUntil" < now()`), by the database's clock. Five minutes is more than twice the
+    longest a run can hold it: 125 s for a 20 s change-log read, two 20 s KMS calls, three 20 s
+    Google calls and a 5 s record. If the lease is held, it returns 409 and Cloud Tasks retries.
+    Every later write of the run is conditional on the row still holding the lease it took, for
+    the same spreadsheet, and none creates a row: a run never recreates a link the lifter deleted
+    during it, or writes over a link to another sheet. Recording never lowers `lastMirroredSeq`.
     The run reads the stack and the change log, and the highest `seq`, in a second short
     transaction. It calls Google with no transaction open, so no pooled connection is held during
     network calls (ADR-040, decision 4). It writes both tabs in **one `spreadsheets.batchUpdate`**:

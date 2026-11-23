@@ -15,7 +15,7 @@ import {
 import { TokenCipher } from '../google-sheet/token-cipher';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
-import { GoogleSheetLinkRecord } from '../ports/IGoogleSheetLinkRepository';
+import { GoogleSheetLinkRecord, MirrorLease } from '../ports/IGoogleSheetLinkRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { ISheetMirrorQueue, SHEET_MIRROR_QUEUE } from './sheet-mirror-queue';
 import { HISTORY_TAB, SUPPLEMENTS_TAB, historyRows, mirrorRequests, supplementsRows } from './sheet-tabs';
@@ -29,6 +29,7 @@ type Outcome =
   | 'success'
   | 'no_link'
   | 'lease_held'
+  | 'lease_lost'
   | 'needs_relink'
   | 'sheet_missing'
   | 'retry_google'
@@ -117,7 +118,9 @@ export class SupplementSheetMirrorService {
       record.outcome = 'no_link';
       return;
     }
-    if (!(await this.db(user, (r) => r.googleSheetLink.takeMirrorLease()))) {
+    const token = link.token;
+    const lease = await this.db(user, (r) => r.googleSheetLink.takeMirrorLease(link.spreadsheetId));
+    if (!lease) {
       record.outcome = 'lease_held';
       throw fail(HttpStatus.CONFLICT, 'sheet-mirror-lease-held', 'Another run holds the lease.');
     }
@@ -134,7 +137,7 @@ export class SupplementSheetMirrorService {
       record.supplementRows = supplements.length - 1;
       record.historyRows = history.length - 1;
 
-      const refreshToken = await this.cipher.decrypt(user.id, link.token);
+      const refreshToken = await this.cipher.decrypt(user.id, token);
       const accessToken = await this.google.refreshAccessToken(this.credentials(), refreshToken);
       const tabs = await this.google.listTabs(accessToken, link.spreadsheetId);
       await this.google.batchUpdate(
@@ -146,14 +149,16 @@ export class SupplementSheetMirrorService {
         ]),
       );
 
-      const latest = await this.db(user, async (r) => {
-        await r.googleSheetLink.recordMirrored(seq);
-        return (await r.supplement.load()).nextSeq - 1;
-      });
-      record.outcome = 'success';
-      if (latest > seq) await this.enqueueFollowUp(user.id);
+      // Records only while the row still holds this run's lease: an unlink, a link to another
+      // sheet or an expired lease another run took since means this run's write is not the record.
+      const { recorded, latest } = await this.db(user, async (r) => ({
+        recorded: await r.googleSheetLink.recordMirrored(lease, seq),
+        latest: (await r.supplement.load()).nextSeq - 1,
+      }));
+      record.outcome = recorded ? 'success' : 'lease_lost';
+      if (recorded && latest > seq) await this.enqueueFollowUp(user.id);
     } catch (err) {
-      await this.handle(user, link, err, record);
+      await this.handle(user, link, lease, err, record);
     }
   }
 
@@ -179,7 +184,7 @@ export class SupplementSheetMirrorService {
    * Maps a failure to its outcome (decisions 11, 12, 21) and settles the lease. Returns for the
    * terminal states, which answer 204, and throws for the ones Cloud Tasks retries.
    */
-  private async handle(user: AuthUser, link: GoogleSheetLinkRecord, err: unknown, record: RunRecord): Promise<void> {
+  private async handle(user: AuthUser, link: GoogleSheetLinkRecord, lease: MirrorLease, err: unknown, record: RunRecord): Promise<void> {
     if (err instanceof GoogleApiError) {
       record.googleStatus = err.status;
       record.googleReason = err.reason;
@@ -188,11 +193,13 @@ export class SupplementSheetMirrorService {
 
     if (err instanceof GoogleApiError && !isTransientGoogleError(err)) {
       // The grant is gone: delete the ciphertext and ask the lifter to link again (decision 11).
-      if (err.reason === 'invalid_grant') {
+      // Conditional writes only, so an unlink or a new link made during the run stays as it is.
+      if (err.reason === 'invalid_grant' && link.token) {
+        const nonce = link.token.nonce;
         record.outcome = 'needs_relink';
         await this.db(user, async (r) => {
-          await r.googleSheetLink.saveLink({ ...link, status: 'needs_relink', token: null, lastErrorCode: 'invalid_grant' });
-          await r.googleSheetLink.releaseMirrorLease();
+          await r.googleSheetLink.markNeedsRelink(lease.spreadsheetId, nonce);
+          await r.googleSheetLink.releaseMirrorLease(lease);
         });
         this.logger.error({ operation: 'sheet_mirror.run', ...record }, 'Supplement sheet mirror: Google access was removed (#1443)');
         return;
@@ -201,8 +208,8 @@ export class SupplementSheetMirrorService {
       if (isSheetMissing(err)) {
         record.outcome = 'sheet_missing';
         await this.db(user, async (r) => {
-          await r.googleSheetLink.saveLink({ ...link, status: 'sheet_missing', lastErrorCode: 'sheet_missing' });
-          await r.googleSheetLink.releaseMirrorLease();
+          await r.googleSheetLink.markSheetMissing(lease.spreadsheetId);
+          await r.googleSheetLink.releaseMirrorLease(lease);
         });
         this.logger.error({ operation: 'sheet_mirror.run', ...record }, 'Supplement sheet mirror: the sheet is missing (#1443)');
         return;
@@ -212,8 +219,8 @@ export class SupplementSheetMirrorService {
     // A Google 429 or 5xx, a quota 403, a KMS or database failure or a timeout: Cloud Tasks retries.
     record.outcome = err instanceof GoogleApiError ? 'retry_google' : 'retry_internal';
     const code = err instanceof GoogleApiError ? `google_${err.status}` : 'mirror_failed';
-    // allow-skewed: best effort; the run's own error is what's thrown, and a lease that isn't released expires after two minutes.
-    await this.db(user, (r) => r.googleSheetLink.releaseMirrorLease(code)).catch(() => undefined);
+    // allow-skewed: best effort; the run's own error is what's thrown, and a lease that isn't released expires after five minutes.
+    await this.db(user, (r) => r.googleSheetLink.releaseMirrorLease(lease, code)).catch(() => undefined);
     throw fail(HttpStatus.SERVICE_UNAVAILABLE, 'sheet-mirror-failed', 'The mirror run failed and will be retried.');
   }
 }

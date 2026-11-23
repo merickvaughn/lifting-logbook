@@ -51,6 +51,8 @@ export class FakeGoogleSheetClient implements IGoogleSheetClient {
   failNextRefresh?: unknown;
   /** Runs just before a `batchUpdate` is applied, e.g. to change the stack while a run writes. */
   beforeBatch?: () => Promise<void>;
+  /** Runs just before a `refreshAccessToken` answers, e.g. to unlink while a run is under way. */
+  beforeRefresh?: () => Promise<void>;
 
   private record(method: keyof IGoogleSheetClient, args: unknown[]) {
     this.calls.push({ method, args });
@@ -69,6 +71,7 @@ export class FakeGoogleSheetClient implements IGoogleSheetClient {
 
   async refreshAccessToken(c: OAuthClientCredentials, refreshToken: string): Promise<string> {
     this.record('refreshAccessToken', [c, refreshToken]);
+    await this.beforeRefresh?.();
     if (this.failNextRefresh) {
       const err = this.failNextRefresh;
       this.failNextRefresh = undefined;

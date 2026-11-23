@@ -255,7 +255,7 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
 
     it('answers 409 while another run holds the lease, and calls Google not at all', async () => {
       const user = await linkedUser();
-      expect(await (await repos(user)).googleSheetLink.takeMirrorLease()).toBe(true);
+      expect(await (await repos(user)).googleSheetLink.takeMirrorLease('sheet-1')).not.toBeNull();
       expect((await run(user)).statusCode).toBe(409);
       expect(google.calls).toEqual([]);
     });
@@ -339,6 +339,72 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       google.failNextBatch = err;
       expect((await run(user)).statusCode).toBe(204);
       expect(await link(user)).toMatchObject({ status: 'sheet_missing', lastErrorCode: 'sheet_missing' });
+      expect((await link(user))?.token).not.toBeNull();
+    });
+  });
+
+  describe('a run writes only to the link it started with', () => {
+    const unlink = (user: string) => async () => (await repos(user)).googleSheetLink.deleteLink();
+    const relink = (user: string) => async () =>
+      (await repos(user)).googleSheetLink.saveLink({
+        status: 'linked',
+        spreadsheetId: 'sheet-2',
+        spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/sheet-2/edit',
+        grantedScope: 'drive.file',
+        token: await cipher.encrypt(user, FAKE_REFRESH_TOKEN),
+        lastErrorCode: null,
+      });
+    type Failure = 'invalid_grant' | 'sheet_missing' | 'retry' | 'none';
+    const fail = (failure: Failure) => {
+      if (failure === 'invalid_grant') google.failNextRefresh = new GoogleApiError(400, 'invalid_grant');
+      if (failure === 'sheet_missing') google.failNextBatch = new GoogleApiError(404, 'NOT_FOUND', { googleStatus: 'NOT_FOUND' });
+      if (failure === 'retry') google.failNextBatch = new GoogleApiError(503, 'UNAVAILABLE', { googleStatus: 'UNAVAILABLE' });
+    };
+    const during = (failure: Failure, change: () => Promise<void>) => {
+      const once = async () => {
+        google.beforeRefresh = undefined;
+        google.beforeBatch = undefined;
+        await change();
+      };
+      if (failure === 'invalid_grant') google.beforeRefresh = once;
+      else google.beforeBatch = once;
+    };
+
+    beforeEach(() => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    });
+
+    it.each(['invalid_grant', 'sheet_missing', 'retry', 'none'] as const)('leaves a link deleted during the run deleted (%s)', async (failure) => {
+      const user = await linkedUser();
+      fail(failure);
+      during(failure, unlink(user));
+      await run(user);
+      expect(await link(user)).toBeNull();
+    });
+
+    it.each(['invalid_grant', 'sheet_missing', 'retry', 'none'] as const)('leaves a link to another sheet made during the run as it is (%s)', async (failure) => {
+      const user = await linkedUser();
+      fail(failure);
+      during(failure, relink(user));
+      await run(user);
+      expect(await link(user)).toMatchObject({ status: 'linked', spreadsheetId: 'sheet-2', lastErrorCode: null, lastMirroredAt: null, lastMirroredSeq: null });
+      expect((await link(user))?.token).not.toBeNull();
+      // The new link's lease is free.
+      expect(await (await repos(user)).googleSheetLink.takeMirrorLease('sheet-2')).not.toBeNull();
+    });
+
+    it('keeps a new token for the same sheet when Google refused the old one', async () => {
+      const user = await linkedUser();
+      fail('invalid_grant');
+      during('invalid_grant', async () => {
+        const { googleSheetLink } = await repos(user);
+        const stored = await googleSheetLink.getLink();
+        if (!stored) throw new Error('no link');
+        await googleSheetLink.saveLink({ ...stored, token: await cipher.encrypt(user, `${FAKE_REFRESH_TOKEN}-2`) });
+      });
+      expect((await run(user)).statusCode).toBe(204);
+      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: null });
       expect((await link(user))?.token).not.toBeNull();
     });
   });
