@@ -5270,39 +5270,39 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
 
 // The owner's three yearly workbooks state a program spec with no Week column, and the 2024
 // one states its drop as a per-set `Weight %` list. Both got stuck at Map columns (#1401).
-// The mappings come from the real `fuzzyColumnMapper`, not a hand-written fixture, so this
-// test fails if the server's required set and the wizard's field list disagree again.
+// The mappings come from the real `fuzzyColumnMapper`, not a hand-written fixture, so the two
+// describes below fail if the server's required set and the wizard's field list disagree again.
+const SPEC_2024_HEADERS = ['Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
+  'AMRAP?', 'Warm-Up %', 'Weight %', 'Activation'];
+
+const specCsv = (headers: string[]): File =>
+  new File(
+    [`${headers.join(',')}\n0,Squat,5,1,3,5,FALSE,0.5,"1,.95,.9",\n`],
+    'spec.csv',
+    { type: 'text/csv' },
+  );
+
+const specPreview = (headers: string[]): ImportPreviewResponse => ({
+  classification: {
+    type: 'program-spec',
+    confidence: 0.95,
+    bucket: 'high',
+    reasons: ['Matched program-spec columns'],
+    alternatives: [],
+  },
+  destination: 'program-spec',
+  columnMappings: fuzzyColumnMapper(headers, 'program-spec'),
+  preview: {
+    creates: 1,
+    updates: 0,
+    skips: 0,
+    unresolved: 0,
+    deltas: [{ key: '1:0:squat', label: 'Squat', kind: 'create', after: '3x5' }],
+  },
+  errors: [],
+});
+
 describe('ImportWizard program-spec Map columns (#1401)', () => {
-  const SPEC_2024_HEADERS = ['Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
-    'AMRAP?', 'Warm-Up %', 'Weight %', 'Activation'];
-
-  const specCsv = (headers: string[]): File =>
-    new File(
-      [`${headers.join(',')}\n0,Squat,5,1,3,5,FALSE,0.5,"1,.95,.9",\n`],
-      'spec.csv',
-      { type: 'text/csv' },
-    );
-
-  const specPreview = (headers: string[]): ImportPreviewResponse => ({
-    classification: {
-      type: 'program-spec',
-      confidence: 0.95,
-      bucket: 'high',
-      reasons: ['Matched program-spec columns'],
-      alternatives: [],
-    },
-    destination: 'program-spec',
-    columnMappings: fuzzyColumnMapper(headers, 'program-spec'),
-    preview: {
-      creates: 1,
-      updates: 0,
-      skips: 0,
-      unresolved: 0,
-      deltas: [{ key: '1:0:squat', label: 'Squat', kind: 'create', after: '3x5' }],
-    },
-    errors: [],
-  });
-
   it('reaches Review with Next enabled for a spec with no Week column', async () => {
     const user = userEvent.setup();
     mockPreview.mockResolvedValue(specPreview(SPEC_2024_HEADERS));
@@ -5340,5 +5340,83 @@ describe('ImportWizard program-spec Map columns (#1401)', () => {
     const select = screen.getByLabelText('Map column Weight %') as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toContain('weightPct');
     expect(select.value).toBe('weightPct');
+  });
+});
+
+// A required field the file has no column for gets a row of its own, and that row used to
+// carry the same destination dropdown as every other: picking anything on it cleared the gate
+// without supplying the column, and the choice was then dropped before the commit (#1442).
+describe('ImportWizard Map columns: a required field the file has no column for (#1442)', () => {
+  // The drop is required as one of `WT Decrement %` / `Weight %`, and this spec states it in a
+  // column the mapper doesn't recognize — so saying which column holds it is the only way past.
+  const SPEC_NO_DROP_HEADERS = ['Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
+    'AMRAP?', 'Warm-Up %', 'Drop %', 'Activation'];
+
+  const UNMAPPED_ALERT = 'Some required fields are not yet mapped. Assign them before continuing.';
+
+  // These tests count `previewImport` calls, so each starts from a clean history.
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  async function reachMapColumns() {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(specPreview(SPEC_NO_DROP_HEADERS));
+
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await user.upload(screen.getByLabelText('CSV file'), specCsv(SPEC_NO_DROP_HEADERS));
+    await user.click(screen.getByRole('button', { name: 'Analyze' }));
+    await waitFor(() => expect(screen.getByText('Program')).toBeInTheDocument());
+    await user.click(nextButton()); // Classify → Map columns
+    await screen.findByRole('heading', { name: 'Map columns' });
+    return user;
+  }
+
+  /** The one control on the row standing for the column the file doesn't have. */
+  const missingFieldSelect = (): HTMLSelectElement =>
+    within(screen.getByText('(no match in CSV)').closest('tr') as HTMLElement)
+      .getByRole<HTMLSelectElement>('combobox');
+
+  it('offers the file’s own columns on that row, not destination fields', async () => {
+    await reachMapColumns();
+
+    expect(screen.getByText(UNMAPPED_ALERT)).toBeInTheDocument();
+    expect(nextButton()).toBeDisabled();
+    // A destination field picked here would supply no data and never reach the commit, so
+    // the row must not offer one at all.
+    expect([...missingFieldSelect().options].map((o) => o.value)).toEqual(['', ...SPEC_NO_DROP_HEADERS]);
+  });
+
+  it('enables Next once a column in the file is named for the field', async () => {
+    const user = await reachMapColumns();
+
+    await user.selectOptions(missingFieldSelect(), 'Drop %');
+
+    expect(screen.queryByText(UNMAPPED_ALERT)).not.toBeInTheDocument();
+    expect(nextButton()).toBeEnabled();
+  });
+
+  it('sends the named column to the server as a real override', async () => {
+    const user = await reachMapColumns();
+
+    await user.selectOptions(missingFieldSelect(), 'Drop %');
+    await user.click(nextButton()); // Map columns → Review
+    await screen.findByRole('heading', { name: 'Review' });
+
+    expect(mockPreview).toHaveBeenCalledTimes(2);
+    expect(mockPreview.mock.calls[1]![3]).toEqual(
+      expect.objectContaining({ overrides: { 'Drop %': 'wtDecrementPct' } }),
+    );
+  });
+
+  // Only `Weight %` reads a per-set list, so a lifter whose drop column holds one has to map it
+  // on the column's own row — which must clear the requirement the `WT Decrement %` row states.
+  it('accepts the drop mapped to Weight % on the column’s own row', async () => {
+    const user = await reachMapColumns();
+
+    await user.selectOptions(screen.getByLabelText('Map column Drop %'), 'weightPct');
+
+    expect(screen.queryByText(UNMAPPED_ALERT)).not.toBeInTheDocument();
+    expect(nextButton()).toBeEnabled();
   });
 });

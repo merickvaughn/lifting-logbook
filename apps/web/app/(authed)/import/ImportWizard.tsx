@@ -222,6 +222,11 @@ function getAllFieldsForKind(kind: ImportKind): FieldOption[] {
   return KIND_FIELDS[kind] ?? [];
 }
 
+/** A destination field as Map columns names it, for a row that has no source header to show. */
+function fieldLabel(kind: ImportKind, key: string): string {
+  return getAllFieldsForKind(kind).find((f) => f.key === key)?.label ?? key;
+}
+
 function bucketClass(bucket: 'high' | 'medium' | 'low'): string {
   return bucket === 'high'
     ? styles.bucketHigh ?? ''
@@ -487,27 +492,49 @@ export function ImportWizard({
     [previewBody],
   );
 
-  function mappingKey(m: ColumnMapping): string {
-    return m.sourceHeader || `__req__:${m.destinationField}`;
-  }
-
+  // Every override is keyed by the source column header it re-points, which is what the
+  // commit sends and what `applyColumnOverrides` renames. A required field the file has no
+  // column for is never a key: its row picks a source column instead (#1442).
   const effectiveMappings: ColumnMapping[] = (preview?.columnMappings ?? []).map((m) =>
-    columnOverrides.has(mappingKey(m))
-      ? { ...m, destinationField: columnOverrides.get(mappingKey(m)) ?? m.destinationField, confidence: 1 }
+    m.sourceHeader && columnOverrides.has(m.sourceHeader)
+      ? { ...m, destinationField: columnOverrides.get(m.sourceHeader) ?? m.destinationField, confidence: 1 }
       : m,
   );
 
-  const allRequiredMapped = effectiveMappings
-    .filter((m) => m.required)
-    .every((m) => m.destinationField !== '' && m.confidence > 0);
+  // The destination fields a real column in the file now feeds.
+  const suppliedFields = new Set(
+    effectiveMappings.filter((m) => m.sourceHeader && m.destinationField).map((m) => m.destinationField),
+  );
 
-  // Derived: column overrides as a plain Record for the commit call
-  const columnOverridesRecord: Record<string, string> = {};
-  for (const [src, dest] of columnOverrides.entries()) {
-    if (src && !src.startsWith('__req__:')) {
-      columnOverridesRecord[src] = dest;
-    }
+  // A required mapping naming a column of the file is met when that column feeds a field. A
+  // required field the file has no column for is met only once a real column is pointed at
+  // it — or at a field that stands in for it, a program spec's drop being either
+  // `WT Decrement %` or `Weight %`. Until #1442 that second kind was met by any choice at
+  // all on its row, which supplied nothing and was dropped again before the commit.
+  function requirementMet(m: ColumnMapping): boolean {
+    if (m.sourceHeader) return m.destinationField !== '' && m.confidence > 0;
+    return suppliedFields.has(m.destinationField) || (m.satisfiedBy ?? []).some((f) => suppliedFields.has(f));
   }
+
+  const allRequiredMapped = effectiveMappings.filter((m) => m.required).every(requirementMet);
+
+  // The file's own column headers, offered on a required field's row so the lifter can say
+  // which of them holds it. Deduplicated: a file may repeat a header.
+  const sourceHeaders = [
+    ...new Set((preview?.columnMappings ?? []).map((m) => m.sourceHeader).filter((h) => h !== '')),
+  ];
+
+  // The column now re-pointed at `field`, which is what that field's row shows as chosen.
+  function chosenSourceFor(field: string): string {
+    for (const [src, dest] of columnOverrides.entries()) {
+      if (dest === field) return src;
+    }
+    return '';
+  }
+
+  // Derived: column overrides as a plain Record for the commit call. Every key is a header
+  // of the file, so all of them are sent — there is no longer a kind to filter out (#1442).
+  const columnOverridesRecord: Record<string, string> = Object.fromEntries(columnOverrides);
 
   // REVIEW filter chips — only show incomplete/ambiguous when rows exist.
   // Memoized (not two independent .some() scans on every render): the remap
@@ -1973,7 +2000,8 @@ export function ImportWizard({
                   <p className={styles.stepHint}>
                     We matched your CSV columns to the expected fields. Required fields are
                     marked <span className={styles.requiredStar}>★</span>. Override any mapping
-                    using the dropdowns below.
+                    using the dropdowns below. A required field your file has no column for
+                    lists your columns instead — pick the one that holds it.
                   </p>
                   {!allRequiredMapped && (
                     <div className={styles.unmappedAlert}>
@@ -1999,7 +2027,10 @@ export function ImportWizard({
                             : m.confidence >= 0.4
                               ? styles.confMedium
                               : styles.confLow;
-                        const isUnmappedRequired = m.required && (m.destinationField === '' || m.confidence === 0);
+                        // The server's own mapping for this row, before an override of ours
+                        // re-pointed the column: picking it again clears the override.
+                        const original = preview.columnMappings?.[i] ?? m;
+                        const isUnmappedRequired = m.required && !requirementMet(m);
 
                         return (
                           <tr
@@ -2017,32 +2048,60 @@ export function ImportWizard({
                               )}
                             </td>
                             <td>
-                              <select
-                                className={styles.mappingSelect}
-                                aria-label={`Map column ${m.sourceHeader || '(unmapped)'}`}
-                                // A change while the preview runs would leave Review showing a
-                                // different mapping from the one the commit sends.
-                                disabled={busy}
-                                value={columnOverrides.get(mappingKey(m)) ?? m.destinationField}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  const key = mappingKey(m);
-                                  setColumnOverrides((prev) => {
-                                    const next = new Map(prev);
-                                    if (val === m.destinationField) {
-                                      next.delete(key);
-                                    } else {
-                                      next.set(key, val);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                              >
-                                <option value="">— unmapped —</option>
-                                {allFields.map(({ key, label }) => (
-                                  <option key={key} value={key}>{label}</option>
-                                ))}
-                              </select>
+                              {m.sourceHeader ? (
+                                <select
+                                  className={styles.mappingSelect}
+                                  aria-label={`Map column ${m.sourceHeader}`}
+                                  // A change while the preview runs would leave Review showing a
+                                  // different mapping from the one the commit sends.
+                                  disabled={busy}
+                                  value={m.destinationField}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setColumnOverrides((prev) => {
+                                      const next = new Map(prev);
+                                      if (val === original.destinationField) {
+                                        next.delete(m.sourceHeader);
+                                      } else {
+                                        next.set(m.sourceHeader, val);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <option value="">— unmapped —</option>
+                                  {allFields.map(({ key, label }) => (
+                                    <option key={key} value={key}>{label}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                // The file has no column for this required field, so the row
+                                // names a column rather than a field: a field picked here would
+                                // supply no data and never reach the commit (#1442).
+                                <select
+                                  className={styles.mappingSelect}
+                                  aria-label={`Column for ${fieldLabel(destination, m.destinationField)}`}
+                                  disabled={busy}
+                                  value={chosenSourceFor(m.destinationField)}
+                                  onChange={(e) => {
+                                    const header = e.target.value;
+                                    setColumnOverrides((prev) => {
+                                      const next = new Map(prev);
+                                      // One column per field: drop whichever was chosen before.
+                                      for (const [src, dest] of next.entries()) {
+                                        if (dest === m.destinationField) next.delete(src);
+                                      }
+                                      if (header) next.set(header, m.destinationField);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <option value="">— choose a column —</option>
+                                  {sourceHeaders.map((h) => (
+                                    <option key={h} value={h}>{h}</option>
+                                  ))}
+                                </select>
+                              )}
                             </td>
                             <td>
                               <span className={`${styles.confidencePct} ${confClass}`}>
