@@ -150,8 +150,8 @@ describe('fuzzyColumnMapper', () => {
         );
       });
 
-      // One row, not one per group member: the wizard clears a missing-field row by assigning
-      // a source column to it, so a second row for the same requirement could never clear.
+      // One row, not one per group member: the file needs either column, so two "missing" rows
+      // would misstate what it actually lacks.
       it('reports the drop missing once when the row has neither percent column', () => {
         const headers = ['Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
           'AMRAP?', 'Warm-Up %', 'Activation'];

@@ -240,10 +240,10 @@ export function fuzzyColumnMapper(
     }
   });
 
-  // Add unmapped required destination fields. A one-of group reports at most one row: none
-  // when a member is mapped, since the requirement is met; otherwise the group's first member
-  // alone, because the wizard clears a missing-field row by assigning a source column to it,
-  // and a second row for the same requirement could never be cleared.
+  // Add unmapped required destination fields. A one-of group reports at most one row: none when
+  // a member is mapped, since the requirement is met; otherwise the group's first member alone.
+  // One requirement, one row — a row per member would tell the lifter two columns are missing
+  // when the file needs either one.
   const eitherGroups = EITHER_FIELDS[kind] ?? [];
   const coveredByGroup = (fieldKey: string): boolean =>
     eitherGroups.some(
