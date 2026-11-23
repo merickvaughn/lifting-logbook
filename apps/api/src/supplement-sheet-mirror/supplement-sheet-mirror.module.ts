@@ -7,7 +7,7 @@ import {
   defaultOidcVerifier,
 } from './supplement-sheet-mirror.controller';
 import { SupplementSheetMirrorService } from './supplement-sheet-mirror.service';
-import { SheetMirrorAfterWriteInterceptor, SupplementSheetMirrorTrigger } from './supplement-sheet-mirror.trigger';
+import { SupplementSheetMirrorTrigger } from './supplement-sheet-mirror.trigger';
 import { SheetSyncController } from './sheet-sync.controller';
 import { CloudTasksSheetMirrorQueue, SHEET_MIRROR_QUEUE } from './sheet-mirror-queue';
 
@@ -17,12 +17,11 @@ import { CloudTasksSheetMirrorQueue, SHEET_MIRROR_QUEUE } from './sheet-mirror-q
   providers: [
     SupplementSheetMirrorService,
     SupplementSheetMirrorTrigger,
-    SheetMirrorAfterWriteInterceptor,
     SheetMirrorCallerGuard,
     { provide: OIDC_VERIFIER, useFactory: defaultOidcVerifier },
     { provide: SHEET_MIRROR_QUEUE, useValue: new CloudTasksSheetMirrorQueue() },
   ],
   // The supplement writes enqueue through the trigger (#1444).
-  exports: [SHEET_MIRROR_QUEUE, SupplementSheetMirrorTrigger, SheetMirrorAfterWriteInterceptor],
+  exports: [SHEET_MIRROR_QUEUE, SupplementSheetMirrorTrigger],
 })
 export class SupplementSheetMirrorModule {}

@@ -169,18 +169,23 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     at three writes per run. The backoff follows Google's advice for 429s: truncated exponential
     backoff, with the maximum raised from their typical 32 or 64 s to 10 minutes because nobody is waiting on a
     mirror.
-16. **Enqueued after commit, debounced by task name, never on the write's critical path.** After a
-    supplement write's transaction commits, and only if the user has a `linked` row, the service
-    creates a task named `<userId-hash>-<window>`, where `window` is the current 30-second window,
+16. **Enqueued after commit, debounced by task name, and never able to fail the write.** After a
+    supplement write's transaction commits, and only if the user has a `linked` row (read in the
+    write's own transaction), the service creates a task named `<userId-hash>-<window>`, where `window` is the current 30-second window,
     with `scheduleTime` at the end of that window. Cloud Tasks deduplicates named tasks, so every
     change in the window enqueues one run. Cloud Tasks answers `ALREADY_EXISTS` for every change
     after the first in a window, and the service counts that as success, not a failure. A name
     stays reserved for up to a day after its task finishes, which is why each name carries its
     window. **Sync now** names its task `<userId-hash>-sync-<window>` and schedules it at once, so
     repeated presses in one window enqueue one run; the follow-up run in decision 19 uses the
-    normal name for the window it falls in. The request doesn't await the enqueue: it's
-    fire-and-forget, with a 2 s timeout. A failure is logged and traced and the write still returns
-    its normal response. The next committed change enqueues again, and Settings shows the last
+    normal name for the window it falls in. The response doesn't depend on the enqueue's outcome,
+    and it waits at most 2 s for it: with request-based billing, Cloud Run gives an instance CPU
+    only while it processes a request, so an enqueue left running after the response could stall
+    or never run ([CPU allocation](https://docs.cloud.google.com/run/docs/configuring/cpu-allocation)).
+    The write registers the enqueue as after-commit work, and `RlsInterceptor`
+    runs it once the transaction has committed and before the response is sent; a rollback or an
+    error runs none. A failure or a timeout is logged and traced and the write still returns its
+    normal response. The next committed change enqueues again, and Settings shows the last
     mirror time with a **Sync now** button that enqueues a run. A write that changes nothing, which
     logs no change (ADR-046), enqueues nothing.
 17. **The task carries only the user ID.** Its body is `{ "userId": "<id>" }`. The run reads the
@@ -473,3 +478,4 @@ again, and the tokens left at Google would expire after six months unused.
 22. OWASP, [Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html) — centralized secret storage (§2.2), least privilege (§2.3), envelope encryption (§4.2), and that secrets are never logged.
 23. Clerk, [How Clerk works](https://clerk.com/docs/guides/how-clerk-works/overview) — the `__session` cookie is set on the app's own domain and not shared with subdomains (decision 5, #1436).
 24. Next.js, [`redirects`](https://nextjs.org/docs/app/api-reference/config/next-config-js/redirects) — `has` host matching and `permanent: true` returning 308 (decision 5, #1436).
+25. Google Cloud, [Configure CPU allocation](https://docs.cloud.google.com/run/docs/configuring/cpu-allocation) — with request-based billing an instance gets CPU only while it processes a request, so a write waits for its enqueue rather than leaving it to run after the response (decision 16, #1444).

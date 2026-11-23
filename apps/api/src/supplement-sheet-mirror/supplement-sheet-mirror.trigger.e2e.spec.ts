@@ -16,8 +16,8 @@ import { CloudTasksError, ISheetMirrorQueue, MirrorTaskKind, SHEET_MIRROR_QUEUE 
 
 /**
  * The triggers of the supplement sheet mirror (#1444, ADR-047 decisions 16, 17, 22, 24): a
- * supplement write enqueues a run once its response is on its way, and Sync now enqueues one at
- * once. The queue and Google are fakes.
+ * supplement write enqueues a run once its transaction commits and before its response, waiting
+ * at most 2 s for it, and Sync now enqueues one at once. The queue and Google are fakes.
  */
 
 const TODAY = '2026-11-23';
@@ -28,7 +28,12 @@ new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(spans)] }).reg
 class FakeQueue implements ISheetMirrorQueue {
   enqueued: { userId: string; kind: MirrorTaskKind }[] = [];
   failWith?: Error;
+  /** Never answers, as a Cloud Tasks call that hangs would. */
+  hang = false;
+  attempts = 0;
   async enqueue(userId: string, _now?: Date, kind: MirrorTaskKind = 'change') {
+    this.attempts += 1;
+    if (this.hang) return new Promise<void>(() => undefined);
     if (this.failWith) throw this.failWith;
     this.enqueued.push({ userId, kind });
   }
@@ -76,7 +81,7 @@ describe('Supplement sheet mirror triggers (e2e, in-memory)', () => {
   const addItem = (user: string, name = 'Creatine') =>
     call(user, 'POST', `/supplements/items?today=${TODAY}`, { name, doses: [{ slot: 'am', amount: '1 scoop', servings: 1, dayTypes: [] }] });
   const sync = (user: string) => call(user, 'POST', '/integrations/google-sheet/sync');
-  /** Lets the enqueue that follows a response finish. */
+  /** Gives anything that might still run after a response the time to show itself. */
   const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
   async function linkedUser() {
@@ -100,22 +105,39 @@ describe('Supplement sheet mirror triggers (e2e, in-memory)', () => {
       await start(queue);
     });
 
-    it('enqueues one change run for a linked user once the write has committed, carrying only the user', async () => {
+    it('enqueues one change run for a linked user before the write answers, carrying only the user', async () => {
       const user = await linkedUser();
       expect((await addItem(user)).statusCode).toBe(201);
-      await settle();
+      // No wait: the queue saw the call before the response was sent (decision 16).
       expect(queue.enqueued).toEqual([{ userId: user, kind: 'change' }]);
     });
 
     it.each([
-      ['a settings write that changes nothing', () => ['PUT', `/supplements/settings?today=${TODAY}`, {}] as const],
-      ['a write that is refused', () => ['POST', `/supplements/items?today=${TODAY}`, { name: '' }] as const],
-    ])('enqueues nothing for %s', async (_name, request) => {
+      ['a settings write that changes nothing', 200, () => ['PUT', `/supplements/settings?today=${TODAY}`, {}] as const],
+      ['a write that is refused', 400, () => ['POST', `/supplements/items?today=${TODAY}`, { name: '' }] as const],
+    ])('enqueues nothing for %s', async (_name, status, request) => {
       const user = await linkedUser();
       const [method, url, payload] = request();
-      expect((await call(user, method, url, payload)).statusCode).toBeLessThan(500);
+      expect((await call(user, method, url, payload)).statusCode).toBe(status);
       await settle();
-      expect(queue.enqueued).toEqual([]);
+      expect(queue.attempts).toBe(0);
+    });
+
+    it('answers within about 2 s when the queue never answers, having tried to enqueue', async () => {
+      const user = await linkedUser();
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      queue.hang = true;
+
+      const started = Date.now();
+      const res = await addItem(user);
+      const elapsed = Date.now() - started;
+
+      expect(res.statusCode).toBe(201);
+      expect(res.json().items).toHaveLength(1);
+      expect(queue.attempts).toBe(1);
+      // The wait is capped at 2 s; the upper bound leaves room for a loaded machine.
+      expect(elapsed).toBeGreaterThanOrEqual(1_900);
+      expect(elapsed).toBeLessThan(5_000);
     });
 
     it('returns the write’s normal response when the enqueue throws, and logs and traces the failure without secrets', async () => {
@@ -124,7 +146,6 @@ describe('Supplement sheet mirror triggers (e2e, in-memory)', () => {
       queue.failWith = Object.assign(new CloudTasksError(503), { message: `Cloud Tasks create: 503 Bearer ${SECRET}` });
 
       const res = await addItem(user);
-      await settle();
 
       expect(res.statusCode).toBe(201);
       expect(res.json().items).toHaveLength(1);
@@ -143,7 +164,6 @@ describe('Supplement sheet mirror triggers (e2e, in-memory)', () => {
     it('records a successful enqueue on a span with the outcome and the link status only', async () => {
       const user = await linkedUser();
       await addItem(user);
-      await settle();
       const span = spans.getFinishedSpans().find((s) => s.name === 'sheet_mirror.enqueue');
       expect(span?.attributes).toMatchObject({ 'sheet_mirror.outcome': 'enqueued', 'sheet_mirror.link_status': 'linked', 'sheet_mirror.kind': 'change' });
     });
