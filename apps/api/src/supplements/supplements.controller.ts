@@ -15,6 +15,7 @@ import {
   PayloadTooLargeException,
   Post,
   Put,
+  UseInterceptors,
   Query,
   UnprocessableEntityException,
   BadGatewayException,
@@ -53,6 +54,7 @@ import { IRepositoryFactory } from '../ports/factory';
 import { ISupplementRepository, SupplementState } from '../ports/ISupplementRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { SkipRlsTransaction } from '../adapters/prisma/rls-context';
+import { SheetMirrorAfterWriteInterceptor, SupplementSheetMirrorTrigger } from '../supplement-sheet-mirror/supplement-sheet-mirror.trigger';
 import { GoogleSheetFetchError, downloadGoogleSheetXlsx } from '../adapters/google-sheets/google-sheet-export.client';
 import { MAX_TABLE_COLUMNS, WorkbookTable, XlsxReadError, xlsxToTables } from '../adapters/google-sheets/xlsx-to-tables';
 import { parseIsoDateParam, parseWriteToday } from '../iso-date-param';
@@ -144,10 +146,14 @@ function intParam(name: string, value: string | undefined, min: number, max: num
  * a day past the server's UTC date, so one wrong date can't block every later write.
  */
 @Controller('supplements')
+@UseInterceptors(SheetMirrorAfterWriteInterceptor)
 export class SupplementsController {
   private readonly logger = new Logger(SupplementsController.name);
 
-  constructor(@Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory) {}
+  constructor(
+    @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
+    private readonly mirror: SupplementSheetMirrorTrigger,
+  ) {}
 
   /** The stack and its day types. */
   @Get()
@@ -593,7 +599,8 @@ export class SupplementsController {
     const today = parseWriteToday(todayParam);
     const body = structuredClone(dto);
     const repo = await this.repo(user);
-    return repo.write(async (state) => {
+    let logged = false;
+    const saved = await repo.write(async (state) => {
       if (state.lastChangeDate !== null && today < state.lastChangeDate) {
         throw new BadRequestException(
           `today (${today}) is before the stack's last change (${state.lastChangeDate}); changes can't be dated earlier`,
@@ -609,7 +616,11 @@ export class SupplementsController {
       }
       const errors = validateStack([...state.items, ...liveParts(state)], state.dayTypes);
       if (errors.length > 0) throw new BadRequestException(errors);
+      logged = changes.length > 0;
       return changes.map((change) => ({ ...change, date: today }));
     });
+    // The interceptor enqueues the mirror once the request's transaction has committed.
+    if (logged) this.mirror.noteWrite(user);
+    return saved;
   }
 }

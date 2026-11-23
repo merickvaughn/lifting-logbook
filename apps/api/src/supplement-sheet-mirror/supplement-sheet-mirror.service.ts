@@ -241,7 +241,8 @@ export class SupplementSheetMirrorService {
 
     // A Google 408, 429 or 5xx, a quota 403, a KMS or database failure or a timeout: Cloud Tasks retries.
     record.outcome = err instanceof GoogleApiError ? 'retry_google' : 'retry_internal';
-    const code = err instanceof GoogleApiError ? `google_${err.status}` : 'mirror_failed';
+    // The code is recorded once retries run out, which is when Settings shows "Last sync failed" (decision 21).
+    const code = record.attempt + 1 >= MAX_ATTEMPTS ? (err instanceof GoogleApiError ? `google_${err.status}` : 'mirror_failed') : undefined;
     // allow-skewed: best effort; the run's own error is what's thrown, and a lease that isn't released expires after five minutes.
     await this.db(user, (r) => r.googleSheetLink.releaseMirrorLease(lease, code)).catch(() => undefined);
     throw fail(HttpStatus.SERVICE_UNAVAILABLE, 'sheet-mirror-failed', 'The mirror run failed and will be retried.');

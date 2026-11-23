@@ -1,4 +1,4 @@
-import { CloudTasksSheetMirrorQueue, ENQUEUE_TIMEOUT_MS } from './sheet-mirror-queue';
+import { CloudTasksError, CloudTasksSheetMirrorQueue, ENQUEUE_TIMEOUT_MS, WINDOW_MS } from './sheet-mirror-queue';
 
 /** The Cloud Tasks enqueue (#1443, ADR-047 decision 16), against a fake metadata server and API. */
 
@@ -94,5 +94,45 @@ describe('CloudTasksSheetMirrorQueue', () => {
   it('counts ALREADY_EXISTS as success and throws any other failure with its status only', async () => {
     await expect(new CloudTasksSheetMirrorQueue(fakeFetch(0, 409).impl).enqueue('user-1')).resolves.toBeUndefined();
     await expect(new CloudTasksSheetMirrorQueue(fakeFetch(0, 403).impl).enqueue('user-1')).rejects.toThrow('Cloud Tasks create: 403');
+  });
+
+  describe('the task it creates', () => {
+    const NOW = new Date(Date.parse('2026-11-23T12:00:10Z'));
+    /** The task each Cloud Tasks call carried. */
+    async function created(kind: 'change' | 'sync') {
+      const tasks: { name: string; scheduleTime: string; httpRequest: { body: string } }[] = [];
+      const { impl } = fakeFetch(0);
+      const spy = ((input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).includes('cloudtasks')) tasks.push(JSON.parse(String(init?.body)).task);
+        return impl(input, init);
+      }) as typeof fetch;
+      await new CloudTasksSheetMirrorQueue(spy).enqueue('user-1', NOW, kind);
+      const [task] = tasks;
+      if (!task) throw new Error('no task was created');
+      return task;
+    }
+
+    it('names a change task for its window and schedules it at the end of that window', async () => {
+      const task = await created('change');
+      const window = Math.floor(NOW.getTime() / WINDOW_MS);
+      expect(task.name).toMatch(new RegExp(`/tasks/[0-9a-f]{32}-${window}$`));
+      expect(task.scheduleTime).toBe(new Date((window + 1) * WINDOW_MS).toISOString());
+      // Only the user ID, and not in the name.
+      expect(Buffer.from(task.httpRequest.body, 'base64').toString()).toBe('{"userId":"user-1"}');
+      expect(task.name).not.toContain('user-1');
+    });
+
+    it('names a Sync now task for its window and schedules it at once', async () => {
+      const task = await created('sync');
+      const window = Math.floor(NOW.getTime() / WINDOW_MS);
+      expect(task.name).toMatch(new RegExp(`/tasks/[0-9a-f]{32}-sync-${window}$`));
+      expect(task.scheduleTime).toBe(NOW.toISOString());
+    });
+  });
+
+  it('throws an error that carries the status and not the response', async () => {
+    const err = await new CloudTasksSheetMirrorQueue(fakeFetch(0, 503).impl).enqueue('user-1').catch((e) => e);
+    expect(err).toBeInstanceOf(CloudTasksError);
+    expect(err).toMatchObject({ name: 'CloudTasksError', status: 503 });
   });
 });

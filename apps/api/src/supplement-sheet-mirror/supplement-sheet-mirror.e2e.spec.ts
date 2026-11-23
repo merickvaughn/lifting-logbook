@@ -121,8 +121,14 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       lastErrorCode: null,
     });
     await addItem(user, 'Creatine', note);
+    // The write above enqueued its own run (#1444); these tests start from an empty queue.
+    await settle();
+    queue.enqueued = [];
     return user;
   }
+
+  /** Lets the post-response enqueue of a supplement write finish. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
   const addItem = (user: string, name: string, shortNote: string) =>
     app.getHttpAdapter().getInstance().inject({
@@ -212,6 +218,8 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       google.tabs = [{ sheetId: 0, title: 'Supplements' }];
       const user = await linkedUser('=HYPERLINK("https://evil.example")');
       await addItem(user, 'Magnesium', '');
+      await settle();
+      queue.enqueued = [];
 
       expect((await run(user)).statusCode).toBe(204);
 
@@ -305,7 +313,9 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
         await addItem(user, 'Zinc', '');
       };
       expect((await run(user)).statusCode).toBe(204);
-      expect(queue.enqueued).toEqual([user]);
+      // Zinc's own write enqueued a run, and the follow-up is the second.
+      await settle();
+      expect(queue.enqueued).toEqual([user, user]);
     });
 
     it('still answers 204 and records the run when the follow-up cannot be enqueued, and logs why', async () => {
@@ -389,7 +399,8 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       expect((await run(user)).statusCode).toBe(503);
       expect(warn).toHaveBeenCalled();
       expect((await link(user))?.status).toBe('linked');
-      expect((await link(user))?.lastErrorCode).toBe(`google_${(err as GoogleApiError).status}`);
+      // Retries remain, so Settings doesn't show "Last sync failed" yet (decision 21).
+      expect((await link(user))?.lastErrorCode).toBeNull();
 
       // The lease was released, so the retry gets in, writes, and clears the error.
       expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '1' })).statusCode).toBe(204);
@@ -406,7 +417,17 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
 
       expect(warn).toHaveBeenCalledWith(expect.objectContaining({ operation: 'sheet_mirror.run', outcome: 'retry_internal' }), expect.any(String));
       expect(google.calls).toEqual([]);
-      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: 'mirror_failed' });
+      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: null });
+    });
+
+    it('records the last error once retries run out, and the sync-failed flag follows', async () => {
+      const user = await linkedUser();
+      jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      google.failNextBatch = new GoogleApiError(503, 'UNAVAILABLE', { googleStatus: 'UNAVAILABLE' });
+
+      expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '7' })).statusCode).toBe(503);
+
+      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: 'google_503' });
     });
 
     it('answers 5xx for a KMS or database failure, not 204', async () => {

@@ -872,6 +872,10 @@ export function createApiClient(config: ApiClientConfig) {
     createGoogleSheetSpreadsheet(): Promise<GoogleSheetLinkView> {
       return request('/integrations/google-sheet/sheet', { method: 'POST', cache: 'no-store' });
     },
+    /** Sync now: enqueues a mirror run. 409 `google-sheet-not-linked`, 502 `sheet-mirror-enqueue-failed`. */
+    syncGoogleSheet(): Promise<{ queued: true }> {
+      return request('/integrations/google-sheet/sync', { method: 'POST', cache: 'no-store' });
+    },
     /** Deletes the link, revoking Google's grant if it can. */
     unlinkGoogleSheet(): Promise<GoogleSheetUnlinkResult> {
       return request('/integrations/google-sheet', { method: 'DELETE', cache: 'no-store' });

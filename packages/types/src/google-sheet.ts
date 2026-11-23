@@ -8,6 +8,8 @@ export interface GoogleSheetLinkView {
   status: GoogleSheetLinkStatus | 'unlinked';
   spreadsheetUrl: string | null;
   lastMirroredAt: string | null;
+  /** True once the mirror's retries ran out or Google rejected the write (decision 21); Settings shows "Last sync failed". */
+  syncFailed: boolean;
 }
 
 export interface GoogleSheetUnlinkResult {

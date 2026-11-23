@@ -6,6 +6,7 @@ import {
   authorizeGoogleSheet,
   createGoogleSheetSpreadsheet,
   fetchGoogleSheetLink,
+  syncGoogleSheet,
   unlinkGoogleSheet,
 } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
@@ -148,6 +149,17 @@ export default function GoogleSheet({ notice }: { notice?: GoogleSheetNoticeCode
       'Couldn’t create a new sheet. Please try again.',
     );
 
+  const syncNow = () =>
+    run(
+      'syncGoogleSheet',
+      async () => {
+        await syncGoogleSheet();
+        setMessage('Sync started. Your sheet updates in a minute or so.');
+        settleFocus();
+      },
+      'Couldn’t start a sync. Please try again.',
+    );
+
   const unlink = () =>
     run(
       'unlinkGoogleSheet',
@@ -170,6 +182,11 @@ export default function GoogleSheet({ notice }: { notice?: GoogleSheetNoticeCode
   const linkButton = (
     <BusyButton onClick={startLink} busy={anyBusy}>
       {busy === 'authorizeGoogleSheet' ? 'Opening Google…' : 'Link a Google Sheet'}
+    </BusyButton>
+  );
+  const syncButton = (
+    <BusyButton onClick={syncNow} busy={anyBusy}>
+      {busy === 'syncGoogleSheet' ? 'Starting sync…' : 'Sync now'}
     </BusyButton>
   );
   const unlinkButton = (
@@ -198,7 +215,8 @@ export default function GoogleSheet({ notice }: { notice?: GoogleSheetNoticeCode
                 </a>
               </p>
               <p>{link.lastMirroredAt ? `Last synced ${formatLastSynced(link.lastMirroredAt)}.` : 'Not synced yet.'}</p>
-              {unlinkButton}
+              {link.syncFailed && <p>Last sync failed.</p>}
+              {syncButton} {unlinkButton}
             </>
           )}
           {status === 'sheet_missing' && (

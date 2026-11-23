@@ -35,6 +35,8 @@ export interface GoogleSheetLinkView {
   status: GoogleSheetLinkStatus | 'unlinked';
   spreadsheetUrl: string | null;
   lastMirroredAt: string | null;
+  /** The last mirror run failed for good (decision 21): Settings shows "Last sync failed" with Sync now. */
+  syncFailed: boolean;
 }
 
 export interface UnlinkResult {
@@ -104,6 +106,8 @@ export class GoogleSheetService {
       status: link?.status ?? 'unlinked',
       spreadsheetUrl: link?.spreadsheetUrl ?? null,
       lastMirroredAt: link?.lastMirroredAt?.toISOString() ?? null,
+      // A code stays on a linked row only once retries ran out or Google rejected the write (decision 21).
+      syncFailed: link?.status === 'linked' && link.lastErrorCode !== null,
     };
   }
 
