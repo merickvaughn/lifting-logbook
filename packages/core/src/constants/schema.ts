@@ -45,6 +45,10 @@ export const LIFTING_PROGRAM_SPEC_HEADER_MAP: Record<
   "AMRAP?": { key: "amrap", type: "boolean|string" },
   "Warm-Up %": { key: "warmUpPct", type: "string" },
   "WT Decrement %": { key: "wtDecrementPct", type: "number" },
+  // A per-set list like `1,.95,.9`, not a single number — the parser reads it into
+  // `wtDecrementPct` itself (#1401). Here so the column mapper can match it and
+  // `applyColumnOverrides` can rename a differently-titled column back to it.
+  "Weight %": { key: "weightPct", type: "string" },
   Activation: { key: "activation", type: "string" },
   "Week Type": { key: "weekType", type: "string" },
 };

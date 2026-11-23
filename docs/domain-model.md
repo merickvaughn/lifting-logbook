@@ -49,7 +49,11 @@ still holds the original column headers verbatim:
 |---|---|
 | `LiftRecord` | `Program`, `Macrocycle #` (legacy `Cycle #` accepted), `Workout #`, `Date`, `Lift`, `Set #`, `Weight`, `Reps`, `Notes` |
 | `TrainingMax` | `Date Updated`, `Lift`, `Weight` |
-| `LiftingProgramSpec` | `Week`, `Offset`, `Lift`, `Increment`, `Order`, `Sets`, `Reps`, `AMRAP?`, `Warm-Up %`, `WT Decrement %`, `Activation`, `Week Type` |
+| `LiftingProgramSpec` | `Week`, `Offset`, `Lift`, `Increment`, `Order`, `Sets`, `Reps`, `AMRAP?`, `Warm-Up %`, `WT Decrement %`, `Weight %`, `Activation`, `Week Type` |
+
+A sheet states its per-set drop as **either** `WT Decrement %` (one number) or `Weight %`
+(a per-set list like `1,.95,.9`, which the parser reads as the decrement it implies); `Week`
+is optional, and a sheet without it is a one-week block repeated, so every row is week 1.
 
 That is the whole model: **one prescription table and one log table, joined by integer
 coordinates.** Reading the rest of this document with that in mind explains most of

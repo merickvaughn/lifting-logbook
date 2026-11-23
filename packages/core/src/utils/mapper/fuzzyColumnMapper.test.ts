@@ -116,10 +116,57 @@ describe('fuzzyColumnMapper', () => {
         'AMRAP?', 'Warm-Up %', 'WT Decrement %', 'Activation', 'Week Type'];
       const result = fuzzyColumnMapper(headers, 'program-spec');
 
-      expect(result.find((m) => m.sourceHeader === 'Week')?.required).toBe(true);
+      // Week is optional since #1364: the parser defaults a missing Week column to 1.
+      expect(result.find((m) => m.sourceHeader === 'Week')?.required).toBe(false);
       expect(result.find((m) => m.sourceHeader === 'Reps')?.required).toBe(true);
       expect(result.find((m) => m.sourceHeader === 'AMRAP?')?.required).toBe(false);
       expect(result.find((m) => m.sourceHeader === 'Activation')?.required).toBe(false);
+    });
+
+    describe('the yearly workbooks\' real header rows (#1401)', () => {
+      const unmappedRequired = (result: ReturnType<typeof fuzzyColumnMapper>): string[] =>
+        result.filter((m) => m.required && !m.sourceHeader).map((m) => m.destinationField);
+
+      it('leaves nothing required unmapped for the 2024 row, which has Weight % and no Week', () => {
+        const headers = ['Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
+          'AMRAP?', 'Warm-Up %', 'Weight %', 'Activation'];
+
+        const result = fuzzyColumnMapper(headers, 'program-spec');
+
+        expect(unmappedRequired(result)).toEqual([]);
+        expect(result.find((m) => m.sourceHeader === 'Weight %')?.destinationField).toBe('weightPct');
+        expect(result.find((m) => m.sourceHeader === 'Weight %')?.confidence).toBe(1);
+      });
+
+      it('leaves nothing required unmapped for the 2025/2026 row, which has WT Decrement % and no Week', () => {
+        const headers = ['Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
+          'AMRAP?', 'Warm-Up %', 'WT Decrement %', 'Activation'];
+
+        const result = fuzzyColumnMapper(headers, 'program-spec');
+
+        expect(unmappedRequired(result)).toEqual([]);
+        expect(result.find((m) => m.sourceHeader === 'WT Decrement %')?.destinationField).toBe(
+          'wtDecrementPct',
+        );
+      });
+
+      // One row, not one per group member: the file needs either column, so two "missing" rows
+      // would misstate what it actually lacks.
+      it('reports the drop missing once when the row has neither percent column', () => {
+        const headers = ['Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
+          'AMRAP?', 'Warm-Up %', 'Activation'];
+
+        const result = fuzzyColumnMapper(headers, 'program-spec');
+
+        expect(unmappedRequired(result)).toEqual(['wtDecrementPct']);
+      });
+
+      it('keeps the built-in rpt_program_spec header row mapped', () => {
+        const headers = ['Week', 'Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
+          'AMRAP?', 'Warm-Up %', 'WT Decrement %', 'Activation'];
+
+        expect(unmappedRequired(fuzzyColumnMapper(headers, 'program-spec'))).toEqual([]);
+      });
     });
   });
 

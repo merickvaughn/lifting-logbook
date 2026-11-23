@@ -212,6 +212,7 @@ const KIND_FIELDS: Record<ImportKind, FieldOption[]> = {
     { key: 'amrap', label: 'AMRAP?' },
     { key: 'warmUpPct', label: 'Warm-Up %' },
     { key: 'wtDecrementPct', label: 'WT Decrement %' },
+    { key: 'weightPct', label: 'Weight %' },
     { key: 'activation', label: 'Activation' },
     { key: 'weekType', label: 'Week Type' },
   ],
