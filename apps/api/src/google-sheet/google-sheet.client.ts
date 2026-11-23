@@ -88,6 +88,15 @@ export interface CreatedSpreadsheet {
   spreadsheetUrl: string;
 }
 
+/** A tab of the spreadsheet, as Google numbers it. */
+export interface SpreadsheetTab {
+  sheetId: number;
+  title: string;
+}
+
+/** One request of a `spreadsheets.batchUpdate` body, built by the mirror (ADR-047, decision 19). */
+export type SheetsRequest = Record<string, unknown>;
+
 export interface IGoogleSheetClient {
   exchangeCode(credentials: OAuthClientCredentials, code: string, codeVerifier: string): Promise<CodeExchangeResult>;
   refreshAccessToken(credentials: OAuthClientCredentials, refreshToken: string): Promise<string>;
@@ -96,6 +105,10 @@ export interface IGoogleSheetClient {
   createSpreadsheet(accessToken: string): Promise<CreatedSpreadsheet>;
   /** False when Google says the sheet is gone or out of the grant's reach (decision 12). */
   canOpenSpreadsheet(accessToken: string, spreadsheetId: string): Promise<boolean>;
+  /** The spreadsheet's tabs, for the mirror to find the ones it must add (decision 19). */
+  listTabs(accessToken: string, spreadsheetId: string): Promise<SpreadsheetTab[]>;
+  /** One atomic `spreadsheets.batchUpdate`. */
+  batchUpdate(accessToken: string, spreadsheetId: string, requests: SheetsRequest[]): Promise<void>;
 }
 
 const ERROR_INFO_TYPE = 'type.googleapis.com/google.rpc.ErrorInfo';
@@ -190,6 +203,22 @@ export class FetchGoogleSheetClient implements IGoogleSheetClient {
       }),
     });
     return { spreadsheetId: body.spreadsheetId, spreadsheetUrl: body.spreadsheetUrl };
+  }
+
+  async listTabs(accessToken: string, spreadsheetId: string): Promise<SpreadsheetTab[]> {
+    const body = await call<{ sheets?: { properties: SpreadsheetTab }[] }>(
+      `${SHEETS_ENDPOINT}/${encodeURIComponent(spreadsheetId)}?fields=sheets.properties(sheetId,title)`,
+      { headers: { authorization: `Bearer ${accessToken}` } },
+    );
+    return (body.sheets ?? []).map(({ properties }) => ({ sheetId: properties.sheetId, title: properties.title }));
+  }
+
+  async batchUpdate(accessToken: string, spreadsheetId: string, requests: SheetsRequest[]): Promise<void> {
+    await call(`${SHEETS_ENDPOINT}/${encodeURIComponent(spreadsheetId)}:batchUpdate`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ requests }),
+    });
   }
 
   async canOpenSpreadsheet(accessToken: string, spreadsheetId: string): Promise<boolean> {

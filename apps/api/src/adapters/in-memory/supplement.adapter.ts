@@ -35,6 +35,10 @@ export class InMemorySupplementRepository implements ISupplementRepository {
     return structuredClone(before.slice(Math.max(0, before.length - page.limit)));
   }
 
+  async allChanges(): Promise<SupplementChange[]> {
+    return structuredClone(this.log);
+  }
+
   async changesThrough(date: string): Promise<SupplementChange[]> {
     return structuredClone(this.log.filter((c) => c.date <= date));
   }

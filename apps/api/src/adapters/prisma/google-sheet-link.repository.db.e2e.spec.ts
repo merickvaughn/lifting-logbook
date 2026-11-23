@@ -128,6 +128,111 @@ describeOrSkip('PrismaGoogleSheetLinkRepository (e2e, lifting_app role)', () => 
     await owner.googleSheetLink.deleteMany({ where: { userId: USER_A } });
   });
 
+  describe('the mirror lease and run record (#1443, decision 19)', () => {
+    const SHEET = 'lease-sheet';
+    const stored = () => owner.googleSheetLink.findUnique({ where: { userId: USER_A } });
+    const take = () => asUser(USER_A, (repo) => repo.takeMirrorLease(SHEET));
+    const lease = async () => {
+      const taken = await take();
+      if (!taken) throw new Error('lease not taken');
+      return taken;
+    };
+
+    beforeEach(async () => {
+      await owner.googleSheetLink.deleteMany({ where: { userId: USER_A } });
+      await asUser(USER_A, (repo) => repo.saveLink(record(SHEET)));
+    });
+    afterAll(async () => {
+      await owner.googleSheetLink.deleteMany({ where: { userId: USER_A } });
+    });
+
+    it("is taken once, for five minutes by the database's clock, and stored as returned", async () => {
+      const [{ dbNow }] = await owner.$queryRaw<[{ dbNow: Date }]>`SELECT timezone('UTC', now()) AS "dbNow"`;
+      const taken = await lease();
+      expect(Math.abs(taken.until.getTime() - (dbNow.getTime() + 5 * 60_000))).toBeLessThan(10_000);
+      expect((await stored())?.mirrorLeaseUntil).toEqual(taken.until);
+      expect(await take()).toBeNull();
+    });
+
+    it('can be taken once it has expired', async () => {
+      await lease();
+      await owner.googleSheetLink.update({ where: { userId: USER_A }, data: { mirrorLeaseUntil: new Date(Date.now() - 60 * 60_000) } });
+      expect(await take()).not.toBeNull();
+    });
+
+    it("is released by its own run, and not by a run whose lease another run took", async () => {
+      const first = await lease();
+      await asUser(USER_A, (repo) => repo.releaseMirrorLease(first, 'google_503'));
+      expect(await stored()).toMatchObject({ mirrorLeaseUntil: null, lastErrorCode: 'google_503' });
+
+      const stale = await lease();
+      await owner.googleSheetLink.update({ where: { userId: USER_A }, data: { mirrorLeaseUntil: new Date(Date.now() - 60 * 60_000) } });
+      const current = await lease();
+      await asUser(USER_A, (repo) => repo.releaseMirrorLease(stale, 'google_500'));
+      expect(await asUser(USER_A, (repo) => repo.recordMirrored(stale, 3))).toBe(false);
+      expect(await stored()).toMatchObject({ mirrorLeaseUntil: current.until, lastErrorCode: 'google_503', lastMirroredSeq: null });
+    });
+
+    it('records the seq and when, and never lowers the seq', async () => {
+      const taken = await lease();
+      expect(await asUser(USER_A, (repo) => repo.recordMirrored(taken, 7))).toBe(true);
+      expect(await stored()).toMatchObject({ lastMirroredSeq: 7, lastErrorCode: null, mirrorLeaseUntil: null });
+      expect((await stored())?.lastMirroredAt).toBeInstanceOf(Date);
+      expect(await asUser(USER_A, (repo) => repo.getLink())).toMatchObject({ lastMirroredSeq: 7 });
+
+      const lower = await lease();
+      expect(await asUser(USER_A, (repo) => repo.recordMirrored(lower, 4))).toBe(true);
+      expect(await stored()).toMatchObject({ lastMirroredSeq: 7, mirrorLeaseUntil: null });
+    });
+
+    it('marks needs_relink or sheet_missing without creating a row', async () => {
+      await owner.googleSheetLink.deleteMany({ where: { userId: USER_A } });
+      await asUser(USER_A, async (repo) => {
+        await repo.markNeedsRelink(SHEET, token().nonce);
+        await repo.markSheetMissing(SHEET);
+        await repo.releaseMirrorLease({ spreadsheetId: SHEET, until: new Date() }, 'google_503');
+      });
+      expect(await stored()).toBeNull();
+    });
+
+    it('marks only the link to the same sheet, and needs_relink only while it holds the same token', async () => {
+      await asUser(USER_A, async (repo) => {
+        await repo.markNeedsRelink('another-sheet', token().nonce);
+        await repo.markSheetMissing('another-sheet');
+        await repo.markNeedsRelink(SHEET, Buffer.alloc(12, 9));
+      });
+      expect(await stored()).toMatchObject({ status: 'linked', lastErrorCode: null, refreshTokenNonce: token().nonce });
+
+      await asUser(USER_A, (repo) => repo.markNeedsRelink(SHEET, token().nonce));
+      expect(await stored()).toMatchObject({
+        status: 'needs_relink',
+        lastErrorCode: 'invalid_grant',
+        refreshTokenCiphertext: null,
+        refreshTokenDekCiphertext: null,
+        refreshTokenNonce: null,
+      });
+      // sheet_missing needs a token, so a needs_relink row is left alone rather than failing the check.
+      await asUser(USER_A, (repo) => repo.markSheetMissing(SHEET));
+      expect(await stored()).toMatchObject({ status: 'needs_relink' });
+    });
+
+    it("doesn't touch another user's row", async () => {
+      const sheetB = link(USER_B).spreadsheetId;
+      await asUser(USER_A, async (repo) => {
+        expect(await repo.takeMirrorLease(sheetB)).toBeNull();
+        await repo.markNeedsRelink(sheetB, link(USER_B).refreshTokenNonce);
+        await repo.markSheetMissing(sheetB);
+        await repo.releaseMirrorLease({ spreadsheetId: sheetB, until: new Date() }, 'google_503');
+      });
+      expect(await owner.googleSheetLink.findUnique({ where: { userId: USER_B } })).toMatchObject({
+        status: 'linked',
+        lastErrorCode: null,
+        mirrorLeaseUntil: null,
+        lastMirroredSeq: null,
+      });
+    });
+  });
+
   it('gives a state to only one of two callbacks taking it at once (decision 5)', async () => {
     await asUser(USER_A, (repo) =>
       repo.putOauthRequest({ stateHash: Buffer.alloc(32, 4), codeVerifier: 'once', expiresAt: new Date(Date.now() + 600_000) }),

@@ -194,13 +194,21 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     runs the mirror with `app.current_user_id` set to the task's user, so RLS still confines the
     run to that user.
 19. **One run per user at a time, and atomic sheet writes.** A run first takes a lease in a short
-    transaction (`UPDATE … SET "mirrorLeaseUntil" = now() + 2 min WHERE "mirrorLeaseUntil" IS NULL
-    OR "mirrorLeaseUntil" < now()`). If the lease is held, it returns 409 and Cloud Tasks retries.
+    transaction (`UPDATE … SET "mirrorLeaseUntil" = now() + 5 min WHERE "mirrorLeaseUntil" IS NULL
+    OR "mirrorLeaseUntil" < now()`), by the database's clock. Five minutes is more than twice the
+    longest a run can hold it: 125 s for a 20 s change-log read, two 20 s KMS calls, three 20 s
+    Google calls and a 5 s record. If the lease is held, it returns 409 and Cloud Tasks retries.
+    Every later write of the run is conditional on the row still holding the lease it took, for
+    the same spreadsheet, and none creates a row: a run never recreates a link the lifter deleted
+    during it, or writes over a link to another sheet. Recording never lowers `lastMirroredSeq`.
     The run reads the stack and the change log, and the highest `seq`, in a second short
     transaction. It calls Google with no transaction open, so no pooled connection is held during
     network calls (ADR-040, decision 4). It writes both tabs in **one `spreadsheets.batchUpdate`**:
-    an `addSheet` for any tab that's missing, then an `updateCells` over each tab's whole range,
-    which clears whatever the new rows don't cover. Google applies a `batchUpdate` atomically, so the
+    an `addSheet` for any tab that's missing, created with a grid the size of its rows, or an
+    `updateSheetProperties` that resizes an existing tab's grid to them, then an `updateCells` over
+    each tab's whole range, which clears whatever the new rows don't cover. A tab's grid is fixed
+    (1000 rows by 26 columns for a new one), so without the resize a History past it couldn't be
+    written and a shorter tab would keep blank rows below its data. Google applies a `batchUpdate` atomically, so the
     lifter never sees a half-cleared tab. Cells are written as `stringValue` and `numberValue`,
     never `formulaValue`, so a note beginning with `=` stays text. Last, it records
     `lastMirroredSeq` and `lastMirroredAt` and releases the lease. If the highest `seq` has moved on
@@ -213,6 +221,9 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     to 12; 409 for a held lease; 5xx for a Google 429 or 5xx, a KMS or database failure, or a
     timeout. Cloud Tasks retries those, and Google's calls get a 20 s timeout each. Once retries run
     out, the last error code stays on the row and Settings shows "Last sync failed" with Sync now.
+    Any other Google 4xx but a 408 (a 400, say) is terminal too, since a retry would send the same
+    request: the run stores `google_<status>` as the last error, releases the lease, logs at `error`
+    and answers 204. A 409 is expected contention, logged at `info` and never as a failure.
 
 ### What is sent to Google, and when
 

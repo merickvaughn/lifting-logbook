@@ -37,6 +37,8 @@ export interface ISupplementRepository {
   load(): Promise<SupplementState>;
   /** A page of the log, oldest first. */
   changes(page: SupplementChangePage): Promise<SupplementChange[]>;
+  /** The whole log, oldest first, for the sheet mirror's History tab (ADR-047, decision 20). */
+  allChanges(): Promise<SupplementChange[]>;
   /** Every change dated on or before `date` (`YYYY-MM-DD`), in `seq` order. */
   changesThrough(date: string): Promise<SupplementChange[]>;
   /** The earliest change's date, or null with none. */

@@ -16,5 +16,7 @@ import { CloudKmsKeyWrapper, TokenCipher } from './token-cipher';
       useFactory: () => new TokenCipher(new CloudKmsKeyWrapper(process.env.GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME ?? '')),
     },
   ],
+  // The supplement sheet mirror (#1443) refreshes tokens and writes sheets with the same two.
+  exports: [GOOGLE_SHEET_CLIENT, GOOGLE_TOKEN_CIPHER],
 })
 export class GoogleSheetModule {}

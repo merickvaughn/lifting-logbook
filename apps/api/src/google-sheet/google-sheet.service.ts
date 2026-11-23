@@ -5,6 +5,7 @@ import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import {
   EncryptedToken,
+  GoogleSheetLinkInput,
   GoogleSheetLinkRecord,
   GoogleSheetLinkStatus,
   IGoogleSheetLinkRepository,
@@ -107,7 +108,7 @@ export class GoogleSheetService {
   }
 
   /** Saves the link and reads it back in one transaction. */
-  private async save(user: AuthUser, link: Omit<GoogleSheetLinkRecord, 'lastMirroredAt'>): Promise<GoogleSheetLinkView> {
+  private async save(user: AuthUser, link: GoogleSheetLinkInput): Promise<GoogleSheetLinkView> {
     return this.view(
       await this.db(user, async (repo) => {
         await repo.saveLink(link);

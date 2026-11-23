@@ -91,6 +91,11 @@ export class PrismaSupplementRepository implements ISupplementRepository {
     return rows.reverse().map(toChange);
   }
 
+  async allChanges(): Promise<SupplementChange[]> {
+    const rows = await this.prisma.supplementChange.findMany({ where: { userId: this.userId }, orderBy: { seq: 'asc' } });
+    return rows.map(toChange);
+  }
+
   async changesThrough(date: string): Promise<SupplementChange[]> {
     const rows = await this.prisma.supplementChange.findMany({
       where: { userId: this.userId, date: { lte: parseIsoDate(date) } },
