@@ -6,6 +6,8 @@ const CERTS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 const ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.com']);
 const KEYS_TIMEOUT_MS = 5_000;
 const KEYS_TTL_MS = 60 * 60_000;
+/** The most often the keys are fetched again, whatever the requests ask for. */
+const MIN_REFETCH_INTERVAL_MS = 60_000;
 const CLOCK_SKEW_S = 60;
 
 export type FetchKeys = () => Promise<JsonWebKey[]>;
@@ -47,16 +49,52 @@ const decodeJson = (part: string): Record<string, unknown> | null => {
 export class GoogleOidcVerifier implements IOidcVerifier {
   private keys: JsonWebKey[] = [];
   private fetchedAt = 0;
+  /** When the last fetch started, whether it succeeded or not; 0 before the first. */
+  private attemptedAt = 0;
+  private inFlight: Promise<void> | undefined;
 
-  constructor(private readonly fetchKeys: FetchKeys = fetchGoogleKeys) {}
+  constructor(
+    private readonly fetchKeys: FetchKeys = fetchGoogleKeys,
+    private readonly clock: () => number = Date.now,
+  ) {}
 
-  private async keyFor(kid: string): Promise<JsonWebKey | undefined> {
-    const stale = Date.now() - this.fetchedAt > KEYS_TTL_MS;
-    if (stale || !this.keys.some((k) => k.kid === kid)) {
-      this.keys = await this.fetchKeys();
-      this.fetchedAt = Date.now();
+  /** One fetch at a time: concurrent callers share it. */
+  private refresh(): Promise<void> {
+    if (!this.inFlight) {
+      this.attemptedAt = this.clock();
+      this.inFlight = (async () => {
+        this.keys = await this.fetchKeys();
+        this.fetchedAt = this.clock();
+      })().finally(() => {
+        this.inFlight = undefined;
+      });
     }
-    return this.keys.find((k) => k.kid === kid);
+    return this.inFlight;
+  }
+
+  /**
+   * Fetches Google's keys when the cache is past its TTL or lacks `kid`, but at most once a
+   * minute: the route is public, so an unknown `kid` must not turn every request into a fetch.
+   * A failed refresh keeps the cached keys, and a token signed by one still verifies; it throws
+   * only when it leaves no key for `kid`, so the caller answers 5xx and Cloud Tasks retries.
+   */
+  private async keyFor(kid: string): Promise<JsonWebKey | undefined> {
+    const find = () => this.keys.find((k) => k.kid === kid);
+    const now = this.clock();
+    const due = now - this.fetchedAt > KEYS_TTL_MS || !find();
+    const allowed = this.attemptedAt === 0 || now - this.attemptedAt >= MIN_REFETCH_INTERVAL_MS;
+    if (due && (allowed || this.inFlight)) {
+      try {
+        await this.refresh();
+      } catch (err) {
+        // Stale keys still verify a token they signed; Google rotates keys over days, not minutes.
+        // fallback-covered-by: apps/api/src/supplement-sheet-mirror/oidc-verifier.spec.ts
+        if (!find()) throw err;
+      }
+    }
+    // No key has ever been fetched: not the caller's fault, so the caller answers 5xx, not 401.
+    if (this.fetchedAt === 0) throw new Error('Google signing keys have not been fetched');
+    return find();
   }
 
   async verify(token: string | undefined, expected: OidcExpectation): Promise<boolean> {
@@ -69,7 +107,8 @@ export class GoogleOidcVerifier implements IOidcVerifier {
     if (!header || !claims || header.alg !== 'RS256' || typeof header.kid !== 'string') return false;
 
     const jwk = await this.keyFor(header.kid);
-    if (!jwk) return false;
+    // RS256 needs an RSA key; anything else in the set can't have signed this token.
+    if (!jwk || jwk.kty !== 'RSA') return false;
     const signed = verify(
       'RSA-SHA256',
       Buffer.from(`${headerPart}.${payloadPart}`),
