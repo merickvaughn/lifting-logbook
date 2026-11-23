@@ -36,6 +36,12 @@ export function parseLiftingProgramSpec(data: SpreadsheetCell[][]): LiftingProgr
     const result: Record<string, unknown> = {};
     for (const header in headerMap) {
       const { key, type } = headerMap[header]!;
+      // `Weight %` is in the header map so the column mapper and `applyColumnOverrides`
+      // know it (#1401), but only the `useWeightPct` branch below may populate it: a
+      // sheet carrying both columns keeps `WT Decrement %` as its decrement, and an
+      // always-set `weightPct` would re-point that column's validation error at
+      // `weightPct` (validateProgramSpecImport).
+      if (key === "weightPct") continue;
       let value: unknown = key === "week" && !hasWeekColumn ? 1 : obj[header];
       if (type === "number") {
         value = Number(value);

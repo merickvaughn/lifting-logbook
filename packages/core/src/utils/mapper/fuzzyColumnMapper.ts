@@ -100,6 +100,16 @@ function calculateSimilarity(sourceHeader: string, canonicalField: string): numb
 }
 
 /**
+ * Required fields that are satisfied as a group: one mapped member covers the rest, so the
+ * others are not reported missing. A program spec states its per-set drop as either a single
+ * `WT Decrement %` or a `Weight %` list, and the parser reads a decrement from either (#1401).
+ * A file with neither still blocks, because no decrement can be derived from it at all.
+ */
+const EITHER_FIELDS: Partial<Record<ImportKind, readonly (readonly string[])[]>> = {
+  'program-spec': [['wtDecrementPct', 'weightPct']],
+};
+
+/**
  * Get the list of required fields for a given import kind. With `assign`, the Assign step
  * groups lift records into macrocycles, so the file needn't say program, macrocycle or
  * workout (proposal decision 9, #1253).
@@ -114,7 +124,10 @@ function getRequiredFields(kind: ImportKind, assign: boolean): Set<string> {
       ]),
     ],
     ['training-maxes', new Set(['lift', 'weight', 'dateUpdated'])],
-    ['program-spec', new Set(['week', 'offset', 'lift', 'increment', 'order', 'sets', 'reps', 'wtDecrementPct'])],
+    // No `week`: #1364 made the parser default a missing Week column to 1. Both percent
+    // columns are listed so the UI stars whichever the file has; EITHER_FIELDS below makes
+    // them one-of, since the parser reads a decrement from either (#1401).
+    ['program-spec', new Set(['offset', 'lift', 'increment', 'order', 'sets', 'reps', 'wtDecrementPct', 'weightPct'])],
     // Strength goals requires lift, goalType, unit, and either target or ratio
     // For now, mark lift, goalType, unit as required (target/ratio checked per-row)
     ['strength-goals', new Set<string>()],
@@ -227,9 +240,20 @@ export function fuzzyColumnMapper(
     }
   });
 
-  // Add unmapped required destination fields
+  // Add unmapped required destination fields. A one-of group reports at most one row: none
+  // when a member is mapped, since the requirement is met; otherwise the group's first member
+  // alone, because the wizard clears a missing-field row by assigning a source column to it,
+  // and a second row for the same requirement could never be cleared.
+  const eitherGroups = EITHER_FIELDS[kind] ?? [];
+  const coveredByGroup = (fieldKey: string): boolean =>
+    eitherGroups.some(
+      (group) =>
+        group.includes(fieldKey) &&
+        (group.some((member) => mappedDestinationFields.has(member)) || group[0] !== fieldKey),
+    );
+
   requiredFields.forEach((fieldKey) => {
-    if (!mappedDestinationFields.has(fieldKey)) {
+    if (!mappedDestinationFields.has(fieldKey) && !coveredByGroup(fieldKey)) {
       mappings.push({
         sourceHeader: '',
         destinationField: fieldKey,

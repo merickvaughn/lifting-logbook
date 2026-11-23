@@ -17,6 +17,7 @@ import {
   LIFT_CATALOG,
   buildTrainingMaxPreview,
   classifyAndCount,
+  fuzzyColumnMapper,
   latestTrainingMaxFirst,
   parseCsvText,
   parseTrainingMaxes,
@@ -5264,5 +5265,80 @@ describe('ImportWizard Assign: replace stored history (#1182)', () => {
     expect(scope('All history')).toHaveAccessibleName(/Removes 41 sets/);
     expect(confirmBox()).toBeChecked();
     expect(nextButton()).toBeEnabled();
+  });
+});
+
+// The owner's three yearly workbooks state a program spec with no Week column, and the 2024
+// one states its drop as a per-set `Weight %` list. Both got stuck at Map columns (#1401).
+// The mappings come from the real `fuzzyColumnMapper`, not a hand-written fixture, so this
+// test fails if the server's required set and the wizard's field list disagree again.
+describe('ImportWizard program-spec Map columns (#1401)', () => {
+  const SPEC_2024_HEADERS = ['Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
+    'AMRAP?', 'Warm-Up %', 'Weight %', 'Activation'];
+
+  const specCsv = (headers: string[]): File =>
+    new File(
+      [`${headers.join(',')}\n0,Squat,5,1,3,5,FALSE,0.5,"1,.95,.9",\n`],
+      'spec.csv',
+      { type: 'text/csv' },
+    );
+
+  const specPreview = (headers: string[]): ImportPreviewResponse => ({
+    classification: {
+      type: 'program-spec',
+      confidence: 0.95,
+      bucket: 'high',
+      reasons: ['Matched program-spec columns'],
+      alternatives: [],
+    },
+    destination: 'program-spec',
+    columnMappings: fuzzyColumnMapper(headers, 'program-spec'),
+    preview: {
+      creates: 1,
+      updates: 0,
+      skips: 0,
+      unresolved: 0,
+      deltas: [{ key: '1:0:squat', label: 'Squat', kind: 'create', after: '3x5' }],
+    },
+    errors: [],
+  });
+
+  it('reaches Review with Next enabled for a spec with no Week column', async () => {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(specPreview(SPEC_2024_HEADERS));
+
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await user.upload(screen.getByLabelText('CSV file'), specCsv(SPEC_2024_HEADERS));
+    await user.click(screen.getByRole('button', { name: 'Analyze' }));
+    await waitFor(() => expect(screen.getByText('Program')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map columns
+
+    await screen.findByRole('heading', { name: 'Map columns' });
+    expect(
+      screen.queryByText('Some required fields are not yet mapped. Assign them before continuing.'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Map columns → Review
+    await screen.findByRole('heading', { name: 'Review' });
+    expect(screen.getByText('Step 5 of 7 · Review')).toBeInTheDocument();
+  });
+
+  // The dropdown lists KIND_FIELDS, which had no Weight % entry, so the only drop a lifter
+  // could pick was WT Decrement % — and taking it renames the column, making the parser read
+  // `1,.95,.9` as a single number and error every row. Weight % has to be offered as itself.
+  it('offers Weight % as a destination for the drop column', async () => {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(specPreview(SPEC_2024_HEADERS));
+
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await user.upload(screen.getByLabelText('CSV file'), specCsv(SPEC_2024_HEADERS));
+    await user.click(screen.getByRole('button', { name: 'Analyze' }));
+    await waitFor(() => expect(screen.getByText('Program')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map columns
+
+    const select = screen.getByLabelText('Map column Weight %') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toContain('weightPct');
+    expect(select.value).toBe('weightPct');
   });
 });

@@ -66,3 +66,28 @@ describe("parseLiftingProgramSpec: a Weight % column in place of WT Decrement %"
     expect(errors[0]!.message).toContain("Weight %");
   });
 });
+
+// `Weight %` joined the header map in #1401 so the column mapper can match it. The parser's
+// generic header loop must still leave it alone: a sheet carrying both columns states its drop
+// in `WT Decrement %`, and a populated `weightPct` would re-point that column's validation
+// error at `weightPct` with a message about an evenly stepped list.
+describe("parseLiftingProgramSpec: a sheet carrying both percent columns", () => {
+  const header = ["Week", "Offset", "Lift", "Increment", "Order", "Sets", "Reps", "AMRAP?", "Warm-Up %", "WT Decrement %", "Weight %", "Activation"];
+  const specOf = (decrement: unknown) => [
+    header,
+    [1, 0, "Squat", 5, 1, 3, 5, "FALSE", "0.5", decrement, "1,.8,.7", ""],
+  ];
+
+  it("takes the decrement from WT Decrement % and leaves weightPct unset", () => {
+    const rows = parseLiftingProgramSpec(specOf(0.05));
+    expect(rows[0]!.wtDecrementPct).toBe(0.05);
+    expect(rows[0]!.weightPct).toBeUndefined();
+    expect(validateProgramSpecImport(rows).errors).toEqual([]);
+  });
+
+  it("reports a bad WT Decrement % under wtDecrementPct, not weightPct", () => {
+    const { errors } = validateProgramSpecImport(parseLiftingProgramSpec(specOf("n/a")));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ row: 1, field: "wtDecrementPct" });
+  });
+});
