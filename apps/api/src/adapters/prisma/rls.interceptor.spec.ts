@@ -137,10 +137,12 @@ describe('RlsInterceptor', () => {
       };
     }
 
-    it('runs the registered work once the transaction commits, before the response resolves', async () => {
+    it('runs the registered work once the transaction commits, and waits for it before the response resolves', async () => {
       const cls = makeCls();
       const events: string[] = [];
       const work = jest.fn(async () => {
+        // Takes a timer turn, as a network call would, so work that isn't awaited finishes after the response.
+        await new Promise((resolve) => setTimeout(resolve, 10));
         events.push('work');
       });
       const interceptor = new RlsInterceptor(cls, makeReflector(), makeModuleRef(makePrisma('commits')));
