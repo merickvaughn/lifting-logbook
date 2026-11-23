@@ -28,15 +28,27 @@ function failureOf(err: unknown): GoogleSheetNoticeCode {
   const name = googleSheetErrorName(err);
   if (name === 'google-sheet-state-invalid') return 'expired';
   if (name === 'google-sheet-scope-not-granted') return 'scope';
+  // No Clerk token reached the API, so the lifter's session is what to renew.
+  if (err instanceof ApiClientError && err.status === 401) return 'signin';
   return 'failed';
+}
+
+/** Google's `error` is only logged when it looks like one of its codes, such as `server_error`. */
+function loggableGoogleError(value: string): string {
+  return /^[a-z_]{1,40}$/.test(value) ? value : 'other';
 }
 
 export async function GET(request: Request): Promise<Response> {
   const params = new URL(request.url).searchParams;
   const code = params.get('code');
   const state = params.get('state');
-  // Google's `error` (such as access_denied) means the lifter said no, or Google refused.
-  if (params.has('error')) return back('denied');
+  // Google's `error`: access_denied means the lifter said no. Anything else is Google failing.
+  const googleError = params.get('error');
+  if (googleError !== null) {
+    if (googleError === 'access_denied') return back('denied');
+    console.error('[google-sheet-callback] Google returned an error', { error: loggableGoogleError(googleError) });
+    return back('failed');
+  }
   if (!code || !state) return back('expired');
   try {
     await completeGoogleSheetLink(code, state);

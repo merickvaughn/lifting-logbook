@@ -7,6 +7,7 @@ export const GOOGLE_SHEET_NOTICES = {
   denied: 'Google access wasn’t granted, so nothing was linked.',
   scope: 'Google access to the sheet wasn’t granted. Link again and allow access to files this app creates.',
   expired: 'That link attempt expired or isn’t yours. Link again.',
+  signin: 'Your session ended before linking finished. Sign in again, then link again.',
   failed: 'Google couldn’t finish linking your sheet. Try again in a moment.',
 } as const;
 
