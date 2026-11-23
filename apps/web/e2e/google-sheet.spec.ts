@@ -56,7 +56,7 @@ test('isn’t shown when the API has no Google client', async ({ page, request }
   await expect(page.getByRole('heading', { name: 'Google Sheet' })).toHaveCount(0);
 });
 
-test('Sync now enqueues a run, and a failed last sync shows until it succeeds', async ({ page, request }) => {
+test('Sync now enqueues a run, and a failed last sync shows until a reload reads the mock’s run, which succeeds at once', async ({ page, request }) => {
   await reset(request, '?googleSheet=failed');
   await page.goto('/settings/data');
 
@@ -65,6 +65,8 @@ test('Sync now enqueues a run, and a failed last sync shows until it succeeds', 
 
   await expect(page.getByText('Sync started.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Google Sheet' })).toBeFocused();
+  // Sync now only enqueues: the page keeps what it last read until it reads the link again.
+  await expect(page.getByText('Last sync failed.')).toBeVisible();
   await page.reload();
   await expect(page.getByText('Last sync failed.')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Sync now' })).toBeVisible();
