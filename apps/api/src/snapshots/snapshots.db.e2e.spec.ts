@@ -56,7 +56,10 @@ const CLEARED = [
   'FocusDayState',
   'ImportBatch',
 ];
-/** Setup Clear data keeps, plus the hourly count of import suggestion requests. */
+/**
+ * Setup Clear data keeps, plus the hourly count of import suggestion requests and the Google Sheet
+ * link, which Clear data leaves alone along with the stack it mirrors (ADR-047 decision 14).
+ */
 const KEPT = [
   'BodyWeight',
   'StrengthGoal',
@@ -74,6 +77,8 @@ const KEPT = [
   'CustomProgram',
   'CustomProgramSpec',
   'ImportSuggestionUsage',
+  'GoogleSheetLink',
+  'GoogleOauthRequest',
 ];
 
 /** Each cleared table's Prisma model. */
@@ -337,6 +342,21 @@ async function seedUser(prisma: PrismaClient, userId: string): Promise<void> {
     });
   }
   await prisma.importSuggestionUsage.create({ data: { userId } });
+  await prisma.googleSheetLink.create({
+    data: {
+      userId,
+      status: 'linked',
+      spreadsheetId: `sheet-${userId}`,
+      spreadsheetUrl: `https://docs.google.com/spreadsheets/d/sheet-${userId}`,
+      grantedScope: 'https://www.googleapis.com/auth/drive.file',
+      refreshTokenCiphertext: Buffer.from('ciphertext'),
+      refreshTokenDekCiphertext: Buffer.from('wrapped-key'),
+      refreshTokenNonce: Buffer.alloc(12),
+    },
+  });
+  await prisma.googleOauthRequest.create({
+    data: { userId, stateHash: Buffer.alloc(32), codeVerifier: 'verifier', expiresAt: new Date(Date.now() + 600_000) },
+  });
 }
 
 /** An exported CSV's rows as objects keyed by header. */
