@@ -63,10 +63,12 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
    access.** The authorization request carries `response_type=code`, `scope=drive.file`,
    `access_type=offline`, `prompt=consent` (so a re-link always returns a refresh token; Google
    returns one only on the first consent otherwise), `include_granted_scopes=false`, a `state`, and
-   a `code_challenge` with `code_challenge_method=S256`. Google documents PKCE on the same
-   authorization and token endpoints. RFC 9700 recommends it for confidential clients too. It also
-   means an authorization code that ends up in a log or trace can't be redeemed without the
-   verifier.
+   a `code_challenge` with `code_challenge_method=S256`. Google documents these parameters in its
+   guide for installed apps, on the same authorization and token endpoints a web client uses; its
+   web server guide doesn't mention them, so the first staging link confirms that the web client
+   accepts them. If it doesn't, the flow drops PKCE and relies on `state` and the client secret.
+   RFC 9700 recommends PKCE for confidential clients too. It also means an authorization code that
+   ends up in a log or trace can't be redeemed without the verifier.
 5. **The API owns the flow; the web app only relays it.**
    1. Settings → Data calls `POST /integrations/google-sheet/authorize` (Clerk-authenticated). The
       API generates 32 random bytes each for `state` and the PKCE verifier, upserts one
@@ -115,7 +117,8 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
 ### Revocation and unlinking
 
 10. **Unlink** (Settings → Data): in one request, the API decrypts the refresh token and revokes it
-    with a `POST` to `https://oauth2.googleapis.com/revoke`. The token goes in the form body, never
+    with a `POST` to `https://oauth2.googleapis.com/revoke`, as Google's web server guide describes
+    under "Token revocation". The token goes in the form body, never
     the query string, so the outbound HTTP span doesn't record it. RFC 7009 §2.1 says a server
     revoking a refresh token should also invalidate the access tokens issued from it, and no
     access token outlives the run that used it anyway (decision 6). The API then deletes the row whatever
@@ -130,21 +133,25 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     Tasks doesn't retry. Settings shows "Google access was removed. Link again." Linking again runs
     decision 5. If the lifter still has the spreadsheet and the app can still open it, the link
     keeps that spreadsheet. Otherwise it creates a new one.
-12. **The spreadsheet is gone.** A 404, or a 403 on the spreadsheet itself rather than on the
-    token, means the lifter deleted the sheet or can no longer reach it through `drive.file`. The
-    run sets `status = sheet_missing` and returns 204. Settings offers **Create a new sheet**, which
+12. **The spreadsheet is gone.** The adapter maps Google's errors by their status and reason, not
+    by the HTTP code alone. A `NOT_FOUND`, or a `PERMISSION_DENIED` on the spreadsheet itself rather
+    than on the token, means the lifter deleted the sheet or can no longer reach it through
+    `drive.file`. A 403 for a rate or quota reason (`rateLimitExceeded`, `userRateLimitExceeded`, or
+    another quota reason) is retried like a 429 and never means the sheet is gone. For a missing
+    sheet the run sets `status = sheet_missing` and returns 204. Settings offers **Create a new sheet**, which
     reuses the stored token.
-13. **Re-linking replaces the old grant.** Before storing a new refresh token over an existing one,
-    the API revokes the old one, which keeps the user well under the 100-token limit.
+13. **Re-linking replaces the stored token without revoking the old one.** Google's revocation
+    removes the project's whole grant for that Google account, so revoking the old token after the
+    new one was issued would kill the new one too. A re-link only follows `needs_relink` (the old
+    token is already dead) or an Unlink (already revoked), so there is rarely a live old token. If
+    the lifter links a different Google account, the old account's token is overwritten in the row
+    and never used again; its grant stays at Google until six months of disuse expire it, and the
+    lifter can remove it from that account's permissions page. The 100-token limit doesn't argue
+    for revoking either: Google invalidates the oldest token past the limit, never the newest.
 14. **Account deletion and Clear data.** When account deletion reaches this table, it revokes the
-    token and deletes the row, as Unlink does. Clear data keeps the link and empties the mirrored
-    sheet, but never without a backup: the first mirror run after Clear data copies the spreadsheet
-    with Drive `files.copy` (allowed under `drive.file`, since the app created the file) to a new
-    file named "Lifting Logbook — Supplements (backup YYYY-MM-DD)" in the lifter's Drive, and only
-    once the copy succeeds writes the empty tabs. If the copy fails, the run fails and Cloud Tasks
-    retries it; the sheet is not emptied. The backup file is the lifter's to keep or delete, and the
-    app writes to it no further. The link row records the pending clear (`clearPendingSeq`) so a
-    retry knows a backup is still owed.
+    token and deletes the row, as Unlink does. Clear data leaves the link and the sheet alone. It
+    keeps the supplement stack and its change log, as setup (ADR-046), and the sheet mirrors exactly
+    those, so the sheet still matches the app after Clear data.
 
 ### How the mirror runs
 
@@ -156,13 +163,18 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     `max-doublings 5`, `max-retry-duration 24h`. Rate settings: `max-dispatches-per-second 1` and
     `max-concurrent-dispatches 5`, which keeps the project under the Sheets API's 300 writes a minute
     at three writes per run. The backoff follows Google's advice for 429s: truncated exponential
-    backoff, with the maximum raised from their 64 s to 10 minutes because nobody is waiting on a
+    backoff, with the maximum raised from their typical 32 or 64 s to 10 minutes because nobody is waiting on a
     mirror.
 16. **Enqueued after commit, debounced by task name, never on the write's critical path.** After a
     supplement write's transaction commits, and only if the user has a `linked` row, the service
     creates a task named `<userId-hash>-<window>`, where `window` is the current 30-second window,
     with `scheduleTime` at the end of that window. Cloud Tasks deduplicates named tasks, so every
-    change in the window enqueues one run. The request doesn't await the enqueue: it's
+    change in the window enqueues one run. Cloud Tasks answers `ALREADY_EXISTS` for every change
+    after the first in a window, and the service counts that as success, not a failure. A name
+    stays reserved for up to a day after its task finishes, which is why each name carries its
+    window. **Sync now** names its task `<userId-hash>-sync-<window>` and schedules it at once, so
+    repeated presses in one window enqueue one run; the follow-up run in decision 19 uses the
+    normal name for the window it falls in. The request doesn't await the enqueue: it's
     fire-and-forget, with a 2 s timeout. A failure is logged and traced and the write still returns
     its normal response. The next committed change enqueues again, and Settings shows the last
     mirror time with a **Sync now** button that enqueues a run. A write that changes nothing, which
@@ -254,7 +266,6 @@ model GoogleSheetLink {
   refreshTokenNonce         Bytes?                // 12-byte GCM nonce
   lastMirroredSeq           Int?                  // highest supplement_change.seq written
   lastMirroredAt            DateTime?
-  clearPendingSeq           Int?                  // set by Clear data until the backup copy and empty write succeed
   lastErrorCode             String?               // a code only, e.g. invalid_grant, rate_limited
   mirrorLeaseUntil          DateTime?
   createdAt                 DateTime              @default(now())
@@ -272,8 +283,8 @@ model GoogleOauthRequest {
 }
 ```
 
-A check constraint requires the three ciphertext columns to be all set when `status = 'linked'`
-and all null when `status = 'needs_relink'`. Download My Data exports `status`, `spreadsheetUrl`,
+A check constraint requires the three ciphertext columns to be all set when `status` is `linked`
+or `sheet_missing` (decision 12 reuses the token) and all null when `status = 'needs_relink'`. Download My Data exports `status`, `spreadsheetUrl`,
 `lastMirroredAt` and `createdAt` from `google_sheet_link`, never the ciphertext columns, and
 nothing from `google_oauth_request`. Expired `google_oauth_request` rows are ignored when read and
 replaced by the user's next attempt, so no cleanup job is needed. The migration is reversible by
@@ -343,7 +354,7 @@ again, and the tokens left at Google would expire after six months unused.
   are added. KMS goes from configured to in use: each mirror run makes one KMS decrypt call and a
   Google token request, and adds about 5 to 10 ms of KMS latency per ADR-014's estimate. The
   mirror is never on a write's path.
-- A mirror lags a change by 30 to 60 seconds, longer during retries. The sheet can be stale for up
+- A mirror lags a change by up to 30 seconds (the rest of its window), longer during retries. The sheet can be stale for up
   to 24 hours of retries before Settings reports the failure.
 - Staging's OAuth client stays in Testing status, so staging links expire after seven days and only
   listed test users can link. That is expected there, not a bug.
@@ -379,9 +390,11 @@ again, and the tokens left at Google would expire after six months unused.
    API's deploy uses `gcloud run services replace` with Terraform ignoring the template, so the new
    env var and secret reference go into the deploy pipeline as well as `cloud-run.tf`.
 7. Approve the Terraform changes: the `google-oauth-token-kek` key, the secret, the
-   `supplement-sheet-mirror` queue, the `sheet-mirror-tasks` service account, `roles/cloudtasks.enqueuer`
-   and `iam.serviceAccountUser` on `sheet-mirror-tasks` for the API service account, and
-   Service Account User on `sheet-mirror-tasks` for the Cloud Tasks service agent.
+   `supplement-sheet-mirror` queue, the `sheet-mirror-tasks` service account, and
+   `roles/cloudtasks.enqueuer` plus `iam.serviceAccountUser` on `sheet-mirror-tasks` for the API
+   service account, which needs `actAs` to attach that account's OIDC token to a task. The Cloud
+   Tasks service agent's default role mints the token; the Terraform PR checks this against the
+   Cloud Tasks authentication docs and adds a grant only if they require one.
 
 ## Security and privacy
 
@@ -406,9 +419,9 @@ again, and the tokens left at Google would expire after six months unused.
 
 ## Questions the owner settled (2026-11-22)
 
-1. **Clear data and the sheet.** Clear data empties the mirrored sheet, but only after the app has
-   copied it to a dated backup file in the lifter's Drive (decision 14). A failed copy leaves the
-   sheet as it was and retries.
+1. **Clear data and the sheet.** Clear data leaves the link and the sheet alone (decision 14).
+   The owner first chose to empty the sheet after a dated backup, on the premise that Clear data
+   removes the stack; it doesn't (ADR-046), so on review the owner chose to leave the sheet as it is.
 2. **Showing the linked Google account.** No. Settings shows the sheet's link only, so the app asks
    for `drive.file` alone and stores no Google email address.
 3. **Staging's redirect URI.** The staging client registers today's `run.app` callback, and
@@ -431,7 +444,7 @@ again, and the tokens left at Google would expire after six months unused.
 11. Google Cloud, [Brand verification requirements](https://support.google.com/cloud/answer/13464321) and [OAuth app verification](https://support.google.com/cloud/answer/13463073) — verified authorized domains, homepage and privacy policy; full verification only for sensitive or restricted scopes.
 12. Google Workspace, [Google Picker API overview](https://developers.google.com/workspace/drive/picker/guides/overview) — the file picker considered for choosing an existing sheet.
 13. Google Cloud, [Billing settings for services](https://docs.cloud.google.com/run/docs/configuring/billing-settings) — with request-based billing, CPU is allocated only during request processing; Cloud Tasks suggested for background work.
-14. Google Cloud, [Create HTTP target tasks](https://docs.cloud.google.com/tasks/docs/creating-http-target-tasks) — OIDC tokens for Cloud Run handlers, `scheduleTime`, and deduplication by task name; and [Configure Cloud Tasks queues](https://docs.cloud.google.com/tasks/docs/configuring-queues) — retry and rate settings.
+14. Google Cloud, [Create HTTP target tasks](https://docs.cloud.google.com/tasks/docs/creating-http-target-tasks) — OIDC tokens for Cloud Run handlers and `scheduleTime`; [`projects.locations.queues.tasks.create`](https://docs.cloud.google.com/tasks/docs/reference/rest/v2/projects.locations.queues.tasks/create) — deduplication by task name, `ALREADY_EXISTS`, and how long a used name stays reserved; and [Configure Cloud Tasks queues](https://docs.cloud.google.com/tasks/docs/configuring-queues) — retry and rate settings.
 15. Google Cloud KMS, [Envelope encryption](https://cloud.google.com/kms/docs/envelope-encryption) — the data-key and key-encryption-key scheme from ADR-014.
 16. Clerk, [Google social connection](https://clerk.com/docs/authentication/social-connections/google) and [`getUserOauthAccessToken()`](https://clerk.com/docs/reference/backend/user/get-user-oauth-access-token) — token retrieval needs custom credentials; the alternative rejected above.
 17. IETF, [RFC 6749 — The OAuth 2.0 Authorization Framework](https://www.rfc-editor.org/rfc/rfc6749) — the authorization code grant (§4.1), refresh tokens (§6) and CSRF protection with `state` (§10.12).
@@ -439,4 +452,4 @@ again, and the tokens left at Google would expire after six months unused.
 19. IETF, [RFC 9700 — Best Current Practice for OAuth 2.0 Security](https://www.rfc-editor.org/rfc/rfc9700) — PKCE recommended for confidential clients (§2.1.1) and CSRF requirements (§4.7).
 20. IETF, [RFC 7009 — OAuth 2.0 Token Revocation](https://www.rfc-editor.org/rfc/rfc7009) — a server revoking a refresh token should also invalidate access tokens issued from it (§2.1).
 21. NIST, [SP 800-38D — GCM](https://csrc.nist.gov/publications/detail/sp/800-38d/final) — AES-GCM with additional authenticated data and 96-bit nonces.
-22. OWASP, [Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html) — centralized secret storage (§2.2), least privilege (§2.3), envelope encryption (§4.2), and secrets never logged (§8.3).
+22. OWASP, [Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html) — centralized secret storage (§2.2), least privilege (§2.3), envelope encryption (§4.2), and that secrets are never logged.
