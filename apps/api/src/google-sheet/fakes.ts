@@ -3,6 +3,7 @@ import {
   CodeExchangeResult,
   CreatedSpreadsheet,
   DRIVE_FILE_SCOPE,
+  GoogleApiError,
   IGoogleSheetClient,
   OAuthClientCredentials,
   SheetsRequest,
@@ -26,6 +27,58 @@ export const FAKE_ACCESS_TOKEN = 'ya29.fake-access-token-do-not-log';
 export const FAKE_CODE = '4/fake-authorization-code-do-not-log';
 
 type Call = { method: keyof IGoogleSheetClient; args: unknown[] };
+
+export interface GridSize {
+  rowCount: number;
+  columnCount: number;
+}
+
+/** A new tab's grid when `addSheet` sets none. */
+const DEFAULT_GRID: GridSize = { rowCount: 1000, columnCount: 26 };
+
+const invalid = (message: string) => new GoogleApiError(400, 'INVALID_ARGUMENT', { googleStatus: 'INVALID_ARGUMENT', legacy: [message] });
+
+type RequestBody = {
+  sheetId?: number;
+  title?: string;
+  gridProperties?: Partial<GridSize>;
+  properties?: { sheetId?: number; title?: string; gridProperties?: Partial<GridSize> };
+  range?: { sheetId?: number };
+  rows?: { values?: unknown[] }[];
+};
+
+/**
+ * Applies one request as Sheets does for the three the mirror sends, and throws Google's 400 where
+ * Sheets would: a duplicate tab, an unknown sheetId, or cells past the tab's grid.
+ */
+function applyRequest(request: SheetsRequest, tabs: SpreadsheetTab[], grids: Map<number, GridSize>) {
+  const [kind, value] = Object.entries(request)[0] ?? [];
+  const body = (value ?? {}) as RequestBody;
+  const gridOf = (sheetId: number | undefined) => {
+    const grid = sheetId === undefined ? undefined : grids.get(sheetId);
+    if (!grid) throw invalid(`No grid with id: ${sheetId}`);
+    return grid;
+  };
+  if (kind === 'addSheet') {
+    const { sheetId, title, gridProperties } = body.properties ?? {};
+    if (sheetId === undefined || title === undefined || tabs.some((t) => t.sheetId === sheetId || t.title === title)) {
+      throw invalid('addSheet: a sheet with this id or title already exists');
+    }
+    tabs.push({ sheetId, title });
+    grids.set(sheetId, { ...DEFAULT_GRID, ...gridProperties });
+  } else if (kind === 'updateSheetProperties') {
+    const sheetId = body.properties?.sheetId;
+    grids.set(sheetId ?? -1, { ...gridOf(sheetId), ...body.properties?.gridProperties });
+  } else if (kind === 'updateCells') {
+    const grid = gridOf(body.range?.sheetId);
+    const rows = body.rows ?? [];
+    if (rows.length > grid.rowCount || rows.some((row) => (row.values ?? []).length > grid.columnCount)) {
+      throw invalid('updateCells: Range exceeds grid limits');
+    }
+  } else {
+    throw invalid(`The fake does not apply ${kind}`);
+  }
+}
 
 /** Fails the test on any call (decision 22). */
 export const failingKeyWrapper = (): IKeyWrapper => {
@@ -97,6 +150,17 @@ export class FakeGoogleSheetClient implements IGoogleSheetClient {
     return this.tabs;
   }
 
+  /**
+   * Each tab's grid by sheetId. A tab in `tabs` with no entry has Google's default for a new tab,
+   * 1000 rows by 26 columns.
+   */
+  grids = new Map<number, GridSize>();
+
+  gridOf(title: string): GridSize | undefined {
+    const tab = this.tabs.find((t) => t.title === title);
+    return tab && (this.grids.get(tab.sheetId) ?? DEFAULT_GRID);
+  }
+
   async batchUpdate(accessToken: string, spreadsheetId: string, requests: SheetsRequest[]): Promise<void> {
     this.record('batchUpdate', [accessToken, spreadsheetId, requests]);
     await this.beforeBatch?.();
@@ -105,6 +169,12 @@ export class FakeGoogleSheetClient implements IGoogleSheetClient {
       this.failNextBatch = undefined;
       throw err;
     }
+    // Applied to copies and kept only if every request succeeds: Google applies a batch atomically.
+    const tabs = [...this.tabs];
+    const grids = new Map([...tabs.map((t): [number, GridSize] => [t.sheetId, DEFAULT_GRID]), ...this.grids]);
+    for (const request of requests) applyRequest(request, tabs, grids);
+    this.tabs = tabs;
+    this.grids = grids;
     this.batches.push(requests);
   }
 

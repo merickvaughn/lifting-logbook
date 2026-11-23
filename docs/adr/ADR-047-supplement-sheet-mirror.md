@@ -204,8 +204,11 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     The run reads the stack and the change log, and the highest `seq`, in a second short
     transaction. It calls Google with no transaction open, so no pooled connection is held during
     network calls (ADR-040, decision 4). It writes both tabs in **one `spreadsheets.batchUpdate`**:
-    an `addSheet` for any tab that's missing, then an `updateCells` over each tab's whole range,
-    which clears whatever the new rows don't cover. Google applies a `batchUpdate` atomically, so the
+    an `addSheet` for any tab that's missing, created with a grid the size of its rows, or an
+    `updateSheetProperties` that resizes an existing tab's grid to them, then an `updateCells` over
+    each tab's whole range, which clears whatever the new rows don't cover. A tab's grid is fixed
+    (1000 rows by 26 columns for a new one), so without the resize a History past it couldn't be
+    written and a shorter tab would keep blank rows below its data. Google applies a `batchUpdate` atomically, so the
     lifter never sees a half-cleared tab. Cells are written as `stringValue` and `numberValue`,
     never `formulaValue`, so a note beginning with `=` stays text. Last, it records
     `lastMirroredSeq` and `lastMirroredAt` and releases the lease. If the highest `seq` has moved on

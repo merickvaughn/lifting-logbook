@@ -3,7 +3,9 @@ import { generateKeyPairSync, KeyObject, sign } from 'node:crypto';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import { SupplementChange } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
+import { InMemorySupplementRepository } from '../adapters/in-memory/supplement.adapter';
 import { GoogleApiError } from '../google-sheet/google-sheet.client';
 import { GOOGLE_SHEET_CLIENT, GOOGLE_TOKEN_CIPHER } from '../google-sheet/google-sheet.service';
 import { TokenCipher } from '../google-sheet/token-cipher';
@@ -207,7 +209,9 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       expect(google.batches).toHaveLength(1);
       const batch = google.batches[0]!;
       // History is missing, so it's added in the same batch; Supplements exists and isn't.
-      expect(batch.filter((r) => 'addSheet' in r)).toEqual([{ addSheet: { properties: { sheetId: 1, title: 'History' } } }]);
+      expect(batch.filter((r) => 'addSheet' in r)).toEqual([
+        { addSheet: { properties: { sheetId: 1, title: 'History', gridProperties: { rowCount: 3, columnCount: 4 } } } },
+      ]);
       expect(batch.filter((r) => 'updateCells' in r).map((r) => (r.updateCells as { range: unknown }).range)).toEqual([
         { sheetId: 0 },
         { sheetId: 1 },
@@ -248,9 +252,32 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       google.tabs = [{ sheetId: 7, title: 'Notes' }];
       expect((await run(await linkedUser())).statusCode).toBe(204);
       expect(google.batches[0]!.filter((r) => 'addSheet' in r)).toEqual([
-        { addSheet: { properties: { sheetId: 8, title: 'Supplements' } } },
-        { addSheet: { properties: { sheetId: 9, title: 'History' } } },
+        { addSheet: { properties: { sheetId: 8, title: 'Supplements', gridProperties: { rowCount: 2, columnCount: 9 } } } },
+        { addSheet: { properties: { sheetId: 9, title: 'History', gridProperties: { rowCount: 2, columnCount: 4 } } } },
       ]);
+    });
+
+    it.each([
+      ['an existing History tab', [{ sheetId: 0, title: 'Supplements' }, { sheetId: 1, title: 'History' }]],
+      ['a missing History tab', [{ sheetId: 0, title: 'Supplements' }]],
+    ])("writes a History longer than a new tab's 1000 rows to %s", async (_name, tabs) => {
+      google.tabs = tabs;
+      const user = await linkedUser();
+      const many: SupplementChange[] = Array.from({ length: 1200 }, (_, i) => ({ type: 'confirmed', itemId: 'x', seq: i + 1, date: TODAY }));
+      jest.spyOn(InMemorySupplementRepository.prototype, 'changes').mockResolvedValue(many);
+
+      expect((await run(user)).statusCode).toBe(204);
+      expect(google.batches).toHaveLength(1);
+      expect(google.gridOf('History')).toEqual({ rowCount: 1201, columnCount: 4 });
+      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: null });
+    });
+
+    it("shrinks a tab's grid to the rows written, so no blank rows trail them", async () => {
+      google.tabs = [{ sheetId: 0, title: 'Supplements' }, { sheetId: 1, title: 'History' }];
+      google.grids.set(0, { rowCount: 50, columnCount: 30 });
+      expect((await run(await linkedUser())).statusCode).toBe(204);
+      expect(google.gridOf('Supplements')).toEqual({ rowCount: 2, columnCount: 9 });
+      expect(google.gridOf('History')).toEqual({ rowCount: 2, columnCount: 4 });
     });
 
     it('answers 409 while another run holds the lease, and calls Google not at all', async () => {

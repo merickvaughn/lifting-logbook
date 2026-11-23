@@ -114,19 +114,33 @@ const cell = (value: Cell) => ({
 });
 
 /**
- * One `batchUpdate` body that writes both tabs whole: an `addSheet` for each tab that's missing,
- * then an `updateCells` over each tab's whole range, which clears whatever the new rows don't
- * cover (decision 19). A new tab gets an ID of its own, chosen here, so the same batch can fill it.
+ * One `batchUpdate` body that writes both tabs whole (decision 19): an `addSheet` for each tab
+ * that's missing, then for each tab its grid sized to its rows and an `updateCells` over its whole
+ * range, which clears whatever the new rows don't cover. A tab's grid is fixed (a new one is
+ * 1000×26) and a write past it fails, so the grid is set first, in the same atomic batch: grown
+ * for a History longer than it, shrunk so no blank rows trail the data. A new tab gets an ID of
+ * its own, chosen here, so the same batch can fill it.
  */
 export function mirrorRequests(existing: SpreadsheetTab[], tabs: { title: string; rows: Cell[][] }[]): SheetsRequest[] {
   let nextId = existing.reduce((max, t) => Math.max(max, t.sheetId), 0) + 1;
   const adds: SheetsRequest[] = [];
   const writes: SheetsRequest[] = [];
   for (const tab of tabs) {
+    const gridProperties = {
+      rowCount: Math.max(tab.rows.length, 1),
+      columnCount: Math.max(1, ...tab.rows.map((row) => row.length)),
+    };
     let sheetId = existing.find((t) => t.title === tab.title)?.sheetId;
     if (sheetId === undefined) {
       sheetId = nextId++;
-      adds.push({ addSheet: { properties: { sheetId, title: tab.title } } });
+      adds.push({ addSheet: { properties: { sheetId, title: tab.title, gridProperties } } });
+    } else {
+      writes.push({
+        updateSheetProperties: {
+          properties: { sheetId, gridProperties },
+          fields: 'gridProperties.rowCount,gridProperties.columnCount',
+        },
+      });
     }
     writes.push({
       updateCells: {
