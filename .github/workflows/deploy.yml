@@ -556,6 +556,10 @@ jobs:
             GOOGLE_OAUTH_CLIENT_ID=${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
             GOOGLE_OAUTH_REDIRECT_URI=${{ steps.tf-outputs.outputs.cloud_run_web_url }}/settings/data/google-sheet/callback
             GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME=projects/${{ vars.GCP_STAGING_PROJECT_ID }}/locations/${{ env.REGION }}/keyRings/lifting-logbook-stg-keyring/cryptoKeys/google-oauth-token-kek
+            SHEET_MIRROR_QUEUE=supplement-sheet-mirror
+            SHEET_MIRROR_QUEUE_LOCATION=${{ env.REGION }}
+            SHEET_MIRROR_TASKS_SA_EMAIL=sheet-mirror-tasks@${{ vars.GCP_STAGING_PROJECT_ID }}.iam.gserviceaccount.com
+            SHEET_MIRROR_API_URL=${{ steps.tf-outputs.outputs.cloud_run_api_url }}
           ingress_secret_env: GOOGLE_OAUTH_CLIENT_SECRET=lifting-logbook-stg-google-oauth-client-secret
 
       # web sidecar via the shared composite action (see the api step above). web_sa
@@ -1166,6 +1170,10 @@ jobs:
             GOOGLE_OAUTH_CLIENT_ID=${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
             GOOGLE_OAUTH_REDIRECT_URI=https://liftinglogbook.com/settings/data/google-sheet/callback
             GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME=projects/${{ vars.GCP_PROD_PROJECT_ID }}/locations/${{ env.REGION }}/keyRings/lifting-logbook-prod-keyring/cryptoKeys/google-oauth-token-kek
+            SHEET_MIRROR_QUEUE=supplement-sheet-mirror
+            SHEET_MIRROR_QUEUE_LOCATION=${{ env.REGION }}
+            SHEET_MIRROR_TASKS_SA_EMAIL=sheet-mirror-tasks@${{ vars.GCP_PROD_PROJECT_ID }}.iam.gserviceaccount.com
+            SHEET_MIRROR_API_URL=${{ steps.tf-prod.outputs.cloud_run_api_url }}
           ingress_secret_env: GOOGLE_OAUTH_CLIENT_SECRET=lifting-logbook-prod-google-oauth-client-secret
 
       # ── Production DB-backed smoke test (#460) ─────────────────────────────
