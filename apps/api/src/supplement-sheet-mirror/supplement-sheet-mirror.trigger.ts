@@ -38,11 +38,19 @@ export class SupplementSheetMirrorTrigger {
    */
   private enqueue(user: AuthUser, kind: MirrorTaskKind, readLink: () => Promise<GoogleSheetLinkRecord | null>) {
     return this.tracer.startActiveSpan('sheet_mirror.enqueue', async (span) => {
-      const record: { outcome?: Outcome; kind: MirrorTaskKind; linkStatus?: string; seq?: number; status?: number; reason?: string } = { kind };
+      const record: {
+        outcome?: Outcome;
+        kind: MirrorTaskKind;
+        linkStatus?: string;
+        lastMirroredSeq?: number;
+        status?: number;
+        reason?: string;
+        error?: string;
+      } = { kind };
       try {
         const link = await readLink();
         record.linkStatus = link?.status ?? 'unlinked';
-        if (link?.lastMirroredSeq != null) record.seq = link.lastMirroredSeq;
+        if (link?.lastMirroredSeq != null) record.lastMirroredSeq = link.lastMirroredSeq;
         if (link?.status !== 'linked') {
           record.outcome = 'no_link';
           return record;
@@ -52,8 +60,12 @@ export class SupplementSheetMirrorTrigger {
         return record;
       } catch (err) {
         record.outcome = 'failed';
-        if (err instanceof CloudTasksError) record.status = err.status;
-        record.reason = err instanceof Error ? err.name : 'unknown';
+        if (err instanceof CloudTasksError) {
+          record.status = err.status;
+          // Google's `error.status` enum, never its message (decision 24).
+          if (err.reason !== undefined) record.reason = err.reason;
+        }
+        record.error = err instanceof Error ? err.name : 'unknown';
         // The write already committed and the next change, or Sync now, enqueues again.
         // fallback-covered-by: apps/api/src/supplement-sheet-mirror/supplement-sheet-mirror.trigger.e2e.spec.ts
         this.logger.warn({ operation: 'sheet_mirror.enqueue', ...record }, 'Supplement sheet mirror run not enqueued (#1444)');
@@ -64,9 +76,10 @@ export class SupplementSheetMirrorTrigger {
           'sheet_mirror.kind': record.kind,
           'sheet_mirror.outcome': record.outcome ?? 'unknown',
           ...(record.linkStatus !== undefined && { 'sheet_mirror.link_status': record.linkStatus }),
-          ...(record.seq !== undefined && { 'sheet_mirror.seq': record.seq }),
+          ...(record.lastMirroredSeq !== undefined && { 'sheet_mirror.last_mirrored_seq': record.lastMirroredSeq }),
           ...(record.status !== undefined && { 'sheet_mirror.google_status': record.status }),
           ...(record.reason !== undefined && { 'sheet_mirror.google_reason': record.reason }),
+          ...(record.error !== undefined && { 'sheet_mirror.error': record.error }),
         });
         span.end();
       }

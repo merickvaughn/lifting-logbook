@@ -143,17 +143,30 @@ describe('Supplement sheet mirror triggers (e2e, in-memory)', () => {
     it('returns the write’s normal response when the enqueue throws, and logs and traces the failure without secrets', async () => {
       const user = await linkedUser();
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
-      queue.failWith = Object.assign(new CloudTasksError(503), { message: `Cloud Tasks create: 503 Bearer ${SECRET}` });
+      queue.failWith = Object.assign(new CloudTasksError(503, 'UNAVAILABLE'), { message: `Cloud Tasks create: 503 Bearer ${SECRET}` });
 
       const res = await addItem(user);
 
       expect(res.statusCode).toBe(201);
       expect(res.json().items).toHaveLength(1);
       const [payload] = warn.mock.calls.find(([p]) => (p as { operation?: string }).operation === 'sheet_mirror.enqueue') ?? [];
-      expect(payload).toMatchObject({ operation: 'sheet_mirror.enqueue', outcome: 'failed', status: 503, reason: 'CloudTasksError', linkStatus: 'linked', kind: 'change' });
+      expect(payload).toMatchObject({
+        operation: 'sheet_mirror.enqueue',
+        outcome: 'failed',
+        status: 503,
+        reason: 'UNAVAILABLE',
+        error: 'CloudTasksError',
+        linkStatus: 'linked',
+        kind: 'change',
+      });
       const span = spans.getFinishedSpans().find((s) => s.name === 'sheet_mirror.enqueue');
       expect(span?.status.code).toBe(SpanStatusCode.ERROR);
-      expect(span?.attributes).toMatchObject({ 'sheet_mirror.outcome': 'failed', 'sheet_mirror.google_status': 503, 'sheet_mirror.link_status': 'linked' });
+      expect(span?.attributes).toMatchObject({
+        'sheet_mirror.outcome': 'failed',
+        'sheet_mirror.google_status': 503,
+        'sheet_mirror.google_reason': 'UNAVAILABLE',
+        'sheet_mirror.link_status': 'linked',
+      });
       // Decision 24: nothing secret reaches a log line or a span.
       const everything = JSON.stringify([warn.mock.calls, spans.getFinishedSpans().map((s) => [s.attributes, s.events])]);
       expect(everything).not.toContain(SECRET);
@@ -166,6 +179,20 @@ describe('Supplement sheet mirror triggers (e2e, in-memory)', () => {
       await addItem(user);
       const span = spans.getFinishedSpans().find((s) => s.name === 'sheet_mirror.enqueue');
       expect(span?.attributes).toMatchObject({ 'sheet_mirror.outcome': 'enqueued', 'sheet_mirror.link_status': 'linked', 'sheet_mirror.kind': 'change' });
+    });
+
+    it('records the last mirrored seq on the span under a name that says so', async () => {
+      const user = await linkedUser();
+      const repo = (await app.get<IRepositoryFactory>(REPOSITORY_FACTORY).forUser({ id: user } as never)).googleSheetLink;
+      const lease = await repo.takeMirrorLease('sheet-1');
+      if (!lease) throw new Error('no lease');
+      await repo.recordMirrored(lease, 4);
+
+      await addItem(user);
+
+      const span = spans.getFinishedSpans().find((s) => s.name === 'sheet_mirror.enqueue');
+      expect(span?.attributes['sheet_mirror.last_mirrored_seq']).toBe(4);
+      expect(span?.attributes).not.toHaveProperty('sheet_mirror.seq');
     });
   });
 

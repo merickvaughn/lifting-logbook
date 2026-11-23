@@ -224,8 +224,12 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     are rewritten whole on every run. Neither carries the app's user ID or internal IDs.
 21. **Outcomes Cloud Tasks acts on:** 2xx for success and for the terminal states in decisions 10
     to 12; 409 for a held lease; 5xx for a Google 429 or 5xx, a KMS or database failure, or a
-    timeout. Cloud Tasks retries those, and Google's calls get a 20 s timeout each. Once retries run
-    out, the last error code stays on the row and Settings shows "Last sync failed" with Sync now.
+    timeout. Cloud Tasks retries those, and Google's calls get a 20 s timeout each. Retries run out
+    at the eighth attempt (`X-CloudTasks-TaskRetryCount` 7): the run ends the task itself there,
+    since Cloud Tasks keeps retrying until both `max-attempts` and `max-retry-duration` are reached,
+    which would mean retries, each logged at `error`, for up to a day. On that attempt a failure
+    that would be retried instead stores its error code, releases the lease, logs once at `error`
+    and answers 204, and Settings shows "Last sync failed" with Sync now.
     Any other Google 4xx but a 408 (a 400, say) is terminal too, since a retry would send the same
     request: the run stores `google_<status>` as the last error, releases the lease, logs at `error`
     and answers 204. A 409 is expected contention, logged at `info` and never as a failure.

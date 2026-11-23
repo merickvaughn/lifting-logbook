@@ -243,11 +243,9 @@ function createInitialState() {
     snapshots: [],
     // /__reset?withClearError=true makes the clear fail with a 500.
     clearError: false,
-    // The linked Google Sheet (#1433; not `googleSheet`, the #1111 import flag below). /__reset?googleSheet=linked|unconfigured starts it linked,
-    // or as an API with no Google client.
+    // The linked Google Sheet (#1433; not `googleSheet`, the #1111 import flag below). /__reset?googleSheet=linked|failed|unconfigured
+    // starts it linked, linked with a failed last sync (#1444), or as an API with no Google client.
     sheetLink: { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null, syncFailed: false },
-    // Sync now presses the mock has seen; the spec reads it back.
-    sheetSyncs: 0,
     trainingMaxes: structuredClone(INITIAL_TRAINING_MAXES),
     // Lifts with logged sets and no training max (#1246); /__reset?withMissingMax=true seeds one.
     missingMaxes: [],
@@ -1186,7 +1184,6 @@ const server = createServer(async (req, res) => {
         json(res, { statusCode: 409, error: 'google-sheet-not-linked', message: 'No Google Sheet is linked.' }, 409);
         return;
       }
-      state.sheetSyncs += 1;
       // The run finishes at once here: the mirror time moves and a failure clears.
       state.sheetLink = { ...state.sheetLink, lastMirroredAt: '2026-11-23T09:00:00.000Z', syncFailed: false };
       json(res, { queued: true }, 202);

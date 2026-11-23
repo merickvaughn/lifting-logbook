@@ -20,8 +20,10 @@ import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { ISheetMirrorQueue, SHEET_MIRROR_QUEUE } from './sheet-mirror-queue';
 import { HISTORY_TAB, SUPPLEMENTS_TAB, historyRows, mirrorRequests, supplementsRows } from './sheet-tabs';
 
-/** The queue's `max-attempts` (decision 15): the attempt after this one is the last. */
+/** The queue's `max-attempts` (decision 15). */
 const MAX_ATTEMPTS = 8;
+/** `attempt` is `X-CloudTasks-TaskRetryCount`, 0 on the first attempt, so 7 is the eighth and last. */
+const isLastAttempt = (attempt: number) => attempt + 1 >= MAX_ATTEMPTS;
 /**
  * The transaction that reads the stack and the whole change log, which grows without bound (the
  * History tab holds one row per change, decision 20), so it gets longer than the 5 s default.
@@ -90,6 +92,10 @@ export class SupplementSheetMirrorService {
           this.logger.log({ operation: 'sheet_mirror.run', ...record }, 'Supplement sheet mirror: another run holds the lease (#1443)');
         } else {
           this.logFailure(record);
+          // The last attempt ends the task itself: Cloud Tasks keeps retrying until both
+          // `max-attempts` and `max-retry-duration` (24 h) are reached, so a 5xx here would bring
+          // retries, each logged at error, for hours after the code was stored (decision 21).
+          if (isLastAttempt(record.attempt) && record.outcome.startsWith('retry')) return;
         }
         throw err instanceof HttpException ? err : fail(HttpStatus.SERVICE_UNAVAILABLE, 'sheet-mirror-failed', 'The mirror run failed.');
       } finally {
@@ -115,8 +121,7 @@ export class SupplementSheetMirrorService {
 
   /** `warn` while Cloud Tasks will retry, `error` once retries run out (decision 24). */
   private logFailure(r: RunRecord) {
-    const last = r.attempt + 1 >= MAX_ATTEMPTS;
-    this.logger[last ? 'error' : 'warn']({ operation: 'sheet_mirror.run', ...r }, 'Supplement sheet mirror run failed (#1443)');
+    this.logger[isLastAttempt(r.attempt) ? 'error' : 'warn']({ operation: 'sheet_mirror.run', ...r }, 'Supplement sheet mirror run failed (#1443)');
   }
 
   private async mirror(user: AuthUser, record: RunRecord): Promise<void> {
@@ -241,8 +246,9 @@ export class SupplementSheetMirrorService {
 
     // A Google 408, 429 or 5xx, a quota 403, a KMS or database failure or a timeout: Cloud Tasks retries.
     record.outcome = err instanceof GoogleApiError ? 'retry_google' : 'retry_internal';
-    // The code is recorded once retries run out, which is when Settings shows "Last sync failed" (decision 21).
-    const code = record.attempt + 1 >= MAX_ATTEMPTS ? (err instanceof GoogleApiError ? `google_${err.status}` : 'mirror_failed') : undefined;
+    // The code is recorded on the last attempt, which answers 204 so Cloud Tasks stops, and Settings
+    // shows "Last sync failed" (decision 21).
+    const code = isLastAttempt(record.attempt) ? (err instanceof GoogleApiError ? `google_${err.status}` : 'mirror_failed') : undefined;
     // allow-skewed: best effort; the run's own error is what's thrown, and a lease that isn't released expires after five minutes.
     await this.db(user, (r) => r.googleSheetLink.releaseMirrorLease(lease, code)).catch(() => undefined);
     throw fail(HttpStatus.SERVICE_UNAVAILABLE, 'sheet-mirror-failed', 'The mirror run failed and will be retried.');

@@ -13,12 +13,24 @@ const METADATA = 'http://metadata.google.internal/computeMetadata/v1';
 /** `change` runs at the end of the window; `sync` is Sync now's own task, scheduled at once (decision 16). */
 export type MirrorTaskKind = 'change' | 'sync';
 
-/** A Cloud Tasks call that failed: the HTTP status only, since the response body could echo the request. */
+/**
+ * A Cloud Tasks call that failed: the HTTP status and Google's `error.status` reason (a fixed enum
+ * such as `PERMISSION_DENIED`), never the body's message, which could echo the request.
+ */
 export class CloudTasksError extends Error {
-  constructor(readonly status: number) {
+  constructor(
+    readonly status: number,
+    readonly reason?: string,
+  ) {
     super(`Cloud Tasks create: ${status}`);
     this.name = 'CloudTasksError';
   }
+}
+
+/** Google's `error.status` from an error body, only when it has the enum's shape. */
+export function cloudTasksReason(body: unknown): string | undefined {
+  const status = (body as { error?: { status?: unknown } } | null | undefined)?.error?.status;
+  return typeof status === 'string' && /^[A-Z][A-Z_]{0,63}$/.test(status) ? status : undefined;
 }
 
 export interface ISheetMirrorQueue {
@@ -105,6 +117,9 @@ export class CloudTasksSheetMirrorQueue implements ISheetMirrorQueue {
     });
     // 409 is ALREADY_EXISTS: another change in this window already enqueued the run.
     if (res.ok || res.status === 409) return;
-    throw new CloudTasksError(res.status);
+    // A body that isn't JSON carries no reason; the status alone is still thrown.
+    // fallback-covered-by: apps/api/src/supplement-sheet-mirror/sheet-mirror-queue.spec.ts
+    const body: unknown = await res.json().catch(() => undefined);
+    throw new CloudTasksError(res.status, cloudTasksReason(body));
   }
 }
