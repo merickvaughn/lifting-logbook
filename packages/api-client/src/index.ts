@@ -1,4 +1,6 @@
 import type {
+  GoogleSheetLinkView,
+  GoogleSheetUnlinkResult,
   BodyWeightResponse,
   CreateCustomLiftRequest,
   CreateFocusBlockRequest,
@@ -846,6 +848,33 @@ export function createApiClient(config: ApiClientConfig) {
         body: JSON.stringify(body),
         cache: 'no-store',
       });
+    },
+
+    // -- Link a Google Sheet (#1433, ADR-047) --------------------------------
+    /** The lifter's link; `configured: false` when this API has no Google client. */
+    fetchGoogleSheetLink(): Promise<GoogleSheetLinkView> {
+      return request('/integrations/google-sheet', { cache: 'no-store' });
+    },
+    /** Google's consent URL for the browser to go to. 503 `google-sheet-unconfigured` when not set up. */
+    authorizeGoogleSheet(): Promise<{ url: string }> {
+      return request('/integrations/google-sheet/authorize', { method: 'POST', cache: 'no-store' });
+    },
+    /** Completes the link from the `code` and `state` Google redirected back with. */
+    completeGoogleSheetLink(code: string, state: string): Promise<GoogleSheetLinkView> {
+      return request('/integrations/google-sheet/callback', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ code, state }),
+        cache: 'no-store',
+      });
+    },
+    /** Makes a new spreadsheet when the linked one is gone. */
+    createGoogleSheetSpreadsheet(): Promise<GoogleSheetLinkView> {
+      return request('/integrations/google-sheet/sheet', { method: 'POST', cache: 'no-store' });
+    },
+    /** Deletes the link, revoking Google's grant if it can. */
+    unlinkGoogleSheet(): Promise<GoogleSheetUnlinkResult> {
+      return request('/integrations/google-sheet', { method: 'DELETE', cache: 'no-store' });
     },
 
     // -- Supplements (#1376) ------------------------------------------------

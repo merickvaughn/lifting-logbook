@@ -1,4 +1,5 @@
 import { registerOTel } from '@vercel/otel';
+import { callbackSpanScrubber } from './lib/scrub-callback-span';
 
 // Tag web telemetry with the deployment environment so it is distinguishable
 // from production in the shared free-tier Grafana Cloud stack, mirroring the API
@@ -22,5 +23,7 @@ export function register() {
     attributes: {
       'deployment.environment.name': resolveDeploymentEnvironment(),
     },
+    // First, so the callback's query is gone before the exporter's processor sees the span (#1433).
+    spanProcessors: [callbackSpanScrubber, 'auto'],
   });
 }

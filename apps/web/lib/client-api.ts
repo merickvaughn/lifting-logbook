@@ -106,6 +106,11 @@ export const {
   restoreSnapshot,
   deleteSnapshot,
   fetchSnapshotLiftRecordParts,
+  // Settings > Data > Google Sheet (#1433).
+  fetchGoogleSheetLink,
+  authorizeGoogleSheet,
+  createGoogleSheetSpreadsheet,
+  unlinkGoogleSheet,
   downloadSnapshotLiftRecords,
   createCustomLift,
   // Keep on the Supplements detail panel saves a suggested store search as the item's link (#1376).

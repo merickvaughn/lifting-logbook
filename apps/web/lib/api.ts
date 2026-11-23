@@ -118,4 +118,5 @@ export const {
   fetchNonCycleRecords,
   fetchNonCycleWorkout,
   fetchSupplements,
+  completeGoogleSheetLink,
 } = createApiClient({ baseUrl: API_URL, getAuthHeaders });
