@@ -548,7 +548,15 @@ jobs:
           otel_mirror_repo: ${{ steps.tf-outputs.outputs.otel_mirror_repo }}
           # The importer's Assign step (#1173), on in staging first (#1295). Matches staging.yml.
           # To turn it off, set it to "false" here and there: removing the line keeps the live value.
-          ingress_env: IMPORT_ASSIGN_ENABLED=true
+          # Linking a Google Sheet (#1432, ADR-047 decisions 5, 8-9). Matches staging.yml. An empty
+          # GOOGLE_OAUTH_CLIENT_ID (the staging environment variable unset) leaves it off:
+          # 503 google-sheet-unconfigured.
+          ingress_env: |
+            IMPORT_ASSIGN_ENABLED=true
+            GOOGLE_OAUTH_CLIENT_ID=${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+            GOOGLE_OAUTH_REDIRECT_URI=${{ steps.tf-outputs.outputs.cloud_run_web_url }}/settings/data/google-sheet/callback
+            GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME=projects/${{ vars.GCP_STAGING_PROJECT_ID }}/locations/${{ env.REGION }}/keyRings/lifting-logbook-stg-keyring/cryptoKeys/google-oauth-token-kek
+          ingress_secret_env: GOOGLE_OAUTH_CLIENT_SECRET=lifting-logbook-stg-google-oauth-client-secret
 
       # web sidecar via the shared composite action (see the api step above). web_sa
       # triggers the least-privilege grant of the three otel secrets to the web workload
@@ -1149,7 +1157,16 @@ jobs:
           otel_mirror_repo: ${{ steps.tf-prod.outputs.otel_mirror_repo }}
           # The importer's Assign step (#1173), on in production after its staging run (#1295).
           # To turn it off, set it to "false": removing the line keeps the live value.
-          ingress_env: IMPORT_ASSIGN_ENABLED=true
+          # Linking a Google Sheet (#1432, ADR-047 decisions 5, 8-9). An empty
+          # GOOGLE_OAUTH_CLIENT_ID (the production environment variable unset) leaves it off:
+          # 503 google-sheet-unconfigured. The redirect URI is the domain lifters sign in on, not
+          # the run.app URL, and must match the production OAuth client's registered URI.
+          ingress_env: |
+            IMPORT_ASSIGN_ENABLED=true
+            GOOGLE_OAUTH_CLIENT_ID=${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+            GOOGLE_OAUTH_REDIRECT_URI=https://liftinglogbook.com/settings/data/google-sheet/callback
+            GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME=projects/${{ vars.GCP_PROD_PROJECT_ID }}/locations/${{ env.REGION }}/keyRings/lifting-logbook-prod-keyring/cryptoKeys/google-oauth-token-kek
+          ingress_secret_env: GOOGLE_OAUTH_CLIENT_SECRET=lifting-logbook-prod-google-oauth-client-secret
 
       # ── Production DB-backed smoke test (#460) ─────────────────────────────
       # The migrate guard above prevents shipping against an unmigrated schema;
