@@ -1,5 +1,8 @@
 import 'reflect-metadata';
 import { generateKeyPairSync, KeyObject, sign } from 'node:crypto';
+import { SpanStatusCode } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -30,6 +33,9 @@ const SECRET_NOTE = 'SECRET-CELL-VALUE-do-not-log';
 const TODAY = '2026-11-23';
 const saved: Record<string, string | undefined> = {};
 
+const spans = new InMemorySpanExporter();
+new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(spans)] }).register();
+
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const otherKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const publicJwk = { ...keys.publicKey.export({ format: 'jwk' }), kid: 'k1' };
@@ -49,7 +55,10 @@ function token(claims: Record<string, unknown> = {}, signer: KeyObject = keys.pr
 
 class FakeQueue implements ISheetMirrorQueue {
   enqueued: string[] = [];
+  /** Set to make every enqueue throw it. */
+  failWith?: Error;
   async enqueue(userId: string) {
+    if (this.failWith) throw this.failWith;
     this.enqueued.push(userId);
   }
 }
@@ -242,6 +251,8 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
 
       const stored = await link(user);
       expect(stored?.lastMirroredAt).toBeInstanceOf(Date);
+      // Two items added: the highest seq written is 2.
+      expect(stored?.lastMirroredSeq).toBe(2);
       expect(stored?.lastErrorCode).toBeNull();
       expect(queue.enqueued).toEqual([]);
       // The lease is released, so the next run isn't a 409.
@@ -297,6 +308,52 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       expect(queue.enqueued).toEqual([user]);
     });
 
+    it('still answers 204 and records the run when the follow-up cannot be enqueued, and logs why', async () => {
+      const user = await linkedUser();
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      queue.failWith = new Error('Cloud Tasks create: 503');
+      google.beforeBatch = async () => {
+        google.beforeBatch = undefined;
+        await addItem(user, 'Zinc', '');
+      };
+
+      expect((await run(user)).statusCode).toBe(204);
+
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({ operation: 'sheet_mirror.follow_up', reason: 'Error' }), expect.any(String));
+      expect(await link(user)).toMatchObject({ lastMirroredSeq: 1, lastErrorCode: null });
+      expect(queue.enqueued).toEqual([]);
+    });
+
+    it('sends no item or day-type ID from the stack to Google, anywhere in the request', async () => {
+      const user = await linkedUser();
+      const dayType = { id: 'dt-0c9f2b7e-training', name: 'Training day' };
+      const put = await app.getHttpAdapter().getInstance().inject({
+        method: 'PUT',
+        url: `/supplements/settings?today=${TODAY}`,
+        headers: { authorization: `Bearer ${user}` },
+        payload: { dayTypes: [dayType] },
+      });
+      expect(put.statusCode).toBe(200);
+      const added = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: `/supplements/items?today=${TODAY}`,
+        headers: { authorization: `Bearer ${user}` },
+        payload: { name: 'Magnesium', doses: [{ slot: 'am', amount: '200 mg', servings: 1, dayTypes: [dayType.id] }] },
+      });
+      expect(added.statusCode).toBe(201);
+      const state = await (await repos(user)).supplement.load();
+      const ids = [...state.items.map((i) => i.id), ...state.dayTypes.map((d) => d.id)];
+      expect(ids).toContain(dayType.id);
+      expect(state.items.flatMap((i) => i.doses.flatMap((d) => d.dayTypes))).toContain(dayType.id);
+
+      expect((await run(user)).statusCode).toBe(204);
+
+      const sent = JSON.stringify(google.batches);
+      // The day type is sent by its name, so the dose's day types did reach the request.
+      expect(sent).toContain(dayType.name);
+      for (const id of ids) expect(sent).not.toContain(id);
+    });
+
     it('names a window task by a hash of the user, never the user', () => {
       const name = taskName('user_abc', 57);
       expect(name).toMatch(/^[0-9a-f]{32}-57$/);
@@ -338,6 +395,18 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '1' })).statusCode).toBe(204);
       expect(google.batches).toHaveLength(1);
       expect((await link(user))?.lastErrorCode).toBeNull();
+    });
+
+    it('answers 503 and logs at warn when the database fails mid-run, and calls Google not at all', async () => {
+      const user = await linkedUser();
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      jest.spyOn(InMemorySupplementRepository.prototype, 'allChanges').mockRejectedValue(new Error('connection terminated'));
+
+      expect((await run(user)).statusCode).toBe(503);
+
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({ operation: 'sheet_mirror.run', outcome: 'retry_internal' }), expect.any(String));
+      expect(google.calls).toEqual([]);
+      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: 'mirror_failed' });
     });
 
     it('answers 5xx for a KMS or database failure, not 204', async () => {
@@ -494,6 +563,31 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       });
       for (const secret of [FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN, 'sheet-1', SECRET_NOTE, 'sheets.googleapis.com']) {
         expect(logged).not.toContain(secret);
+      }
+    });
+
+    it('records outcome and counts on the sheet_mirror.run span, and no token, sheet ID or cell value', async () => {
+      const user = await linkedUser();
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      spans.reset();
+      expect((await run(user)).statusCode).toBe(204);
+      google.failNextBatch = Object.assign(new Error(`${FAKE_ACCESS_TOKEN} ${FAKE_REFRESH_TOKEN} sheet-1 ${SECRET_NOTE}`), {
+        config: { headers: { authorization: `Bearer ${FAKE_ACCESS_TOKEN}` }, url: 'https://sheets.googleapis.com/v4/spreadsheets/sheet-1' },
+      });
+      expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '2' })).statusCode).toBe(503);
+
+      const runs = spans.getFinishedSpans().filter((s) => s.name === 'sheet_mirror.run');
+      const counts = { 'sheet_mirror.link_status': 'linked', 'sheet_mirror.rows.supplements': 1, 'sheet_mirror.rows.history': 1, 'sheet_mirror.seq': 1 };
+      expect(runs.map((s) => s.attributes)).toEqual([
+        { 'sheet_mirror.outcome': 'success', 'sheet_mirror.attempt': 0, ...counts },
+        { 'sheet_mirror.outcome': 'retry_internal', 'sheet_mirror.attempt': 2, ...counts },
+      ]);
+      expect(runs.map((s) => s.status.code)).toEqual([SpanStatusCode.UNSET, SpanStatusCode.ERROR]);
+      const recorded = JSON.stringify(
+        spans.getFinishedSpans().map((s) => ({ name: s.name, attributes: s.attributes, events: s.events, status: s.status })),
+      );
+      for (const secret of [FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN, 'sheet-1', SECRET_NOTE, 'Creatine', 'sheets.googleapis.com', user]) {
+        expect(recorded).not.toContain(secret);
       }
     });
 

@@ -189,6 +189,7 @@ export class SupplementSheetMirrorService {
       await this.queue.enqueue(userId);
     } catch (err) {
       // The run itself succeeded; the next change, or Sync now, enqueues again.
+      // fallback-covered-by: apps/api/src/supplement-sheet-mirror/supplement-sheet-mirror.e2e.spec.ts
       this.logger.warn({ operation: 'sheet_mirror.follow_up', reason: err instanceof Error ? err.name : 'unknown' }, 'Supplement sheet mirror follow-up not enqueued (#1443)');
     }
   }
