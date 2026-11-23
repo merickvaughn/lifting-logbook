@@ -88,7 +88,11 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
       says that access wasn't granted.
    5. It creates the spreadsheet, stores the link (decision 7), and enqueues the first mirror.
    The redirect URI is on the web origin because that is the address the lifter's browser already
-   has a Clerk session cookie for. The client secret stays in the API.
+   has a Clerk session cookie for. The client secret stays in the API. Clerk's session cookie is
+   set on the exact host, not shared with subdomains, so a session on `www.liftinglogbook.com`
+   isn't one on `liftinglogbook.com`. The web app therefore redirects every `www` request to the
+   bare domain with a 308 (`apps/web/next.config.ts`, #1436), so a lifter is only ever signed in
+   on the host the production callback uses, and production registers that one redirect URI.
 6. **Access tokens are never stored.** Each mirror run uses the refresh token to get an access
    token (valid about an hour), keeps it in memory for that run, and drops it. A run makes at most
    three Google calls, so caching an access token between runs would save one token request per
@@ -381,8 +385,8 @@ again, and the tokens left at Google would expire after six months unused.
    restricted-scope verification is needed.
 4. Staging: leave the publishing status at **Testing** and add the test accounts (up to 100).
 5. Create an OAuth client of type "Web application" per environment, with redirect URIs
-   `https://liftinglogbook.com/settings/data/google-sheet/callback` (plus `www` if it serves the
-   app) in production and the staging web service's `https://…run.app/settings/data/google-sheet/callback`
+   `https://liftinglogbook.com/settings/data/google-sheet/callback` only in production (`www`
+   redirects to the bare domain, decision 5) and the staging web service's `https://…run.app/settings/data/google-sheet/callback`
    in staging. Don't add `localhost` to either client; local development runs without a client
    (decision 9).
 6. Put each client secret into `${name_prefix}-google-oauth-client-secret` (after the Terraform
@@ -453,3 +457,5 @@ again, and the tokens left at Google would expire after six months unused.
 20. IETF, [RFC 7009 — OAuth 2.0 Token Revocation](https://www.rfc-editor.org/rfc/rfc7009) — a server revoking a refresh token should also invalidate access tokens issued from it (§2.1).
 21. NIST, [SP 800-38D — GCM](https://csrc.nist.gov/publications/detail/sp/800-38d/final) — AES-GCM with additional authenticated data and 96-bit nonces.
 22. OWASP, [Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html) — centralized secret storage (§2.2), least privilege (§2.3), envelope encryption (§4.2), and that secrets are never logged.
+23. Clerk, [How Clerk works](https://clerk.com/docs/guides/how-clerk-works/overview) — the `__session` cookie is set on the app's own domain and not shared with subdomains (decision 5, #1436).
+24. Next.js, [`redirects`](https://nextjs.org/docs/app/api-reference/config/next-config-js/redirects) — `has` host matching and `permanent: true` returning 308 (decision 5, #1436).

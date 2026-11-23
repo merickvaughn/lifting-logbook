@@ -16,6 +16,21 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname, "..", ".."),
   },
+  // Send www to the bare domain, keeping the path and query. Clerk's session
+  // cookie is host-only, so a lifter signed in on www isn't signed in on the
+  // bare domain, where the Google Sheet OAuth callback returns (ADR-047). It
+  // also gives every page one address. Only production has this host. See #1436.
+  // https://nextjs.org/docs/app/api-reference/config/next-config-js/redirects#header-cookie-and-query-matching
+  async redirects() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: "www.liftinglogbook.com" }],
+        destination: "https://liftinglogbook.com/:path*",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;
