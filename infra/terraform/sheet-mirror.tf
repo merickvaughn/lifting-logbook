@@ -47,5 +47,7 @@ resource "google_service_account_iam_member" "api_workload_acts_as_sheet_mirror_
 }
 
 # No grant for the Cloud Tasks service agent: its default role, roles/cloudtasks.serviceAgent,
-# is what mints the token (ADR-047, "Operational steps for the owner", step 7). The Cloud Tasks
-# authentication page was not reachable when this was written (#1443), so confirm it there.
+# includes iam.serviceAccounts.getOpenIdToken, which is what mints the task's OIDC token
+# (https://docs.cloud.google.com/iam/docs/roles-permissions/cloudtasks). actAs on
+# sheet-mirror-tasks is checked on whoever creates the task, which is the API's workload account,
+# granted above (https://docs.cloud.google.com/tasks/docs/creating-http-target-tasks).

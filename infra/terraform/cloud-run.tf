@@ -118,9 +118,11 @@ resource "google_cloud_run_v2_service" "api" {
         value = google_kms_crypto_key.google_oauth_token.id
       }
 
-      # The supplement sheet mirror (#1443, ADR-047 decisions 15-18). The deploy pipeline also
-      # sets SHEET_MIRROR_API_URL, the API's own URL, which is the OIDC audience: set here it
-      # would be a cycle.
+      # The supplement sheet mirror (#1443, ADR-047 decisions 15-18). These env blocks apply only
+      # when Terraform first creates the service: the template is in ignore_changes, so an
+      # existing service gets all four variables (these three and SHEET_MIRROR_API_URL, the API's
+      # own URL and the OIDC audience, which set here would be a cycle) only from the deploy
+      # pipeline's ingress_env.
       env {
         name  = "SHEET_MIRROR_QUEUE"
         value = google_cloud_tasks_queue.supplement_sheet_mirror.name
