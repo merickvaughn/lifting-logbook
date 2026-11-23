@@ -221,9 +221,19 @@ export function serializeStrengthGoals(goals: readonly StrengthGoalExportRow[], 
   ]);
 }
 
+/**
+ * The export's columns, in the order the value rows below emit them. Derived from the parser's
+ * header map so a column added there still flows through, minus `Weight %`: the map carries it
+ * as the alternative way a *sheet* may state its drop (#1401), and this export always writes a
+ * single `WT Decrement %`, so an export column would be empty in every row.
+ */
+const PROGRAM_SPEC_EXPORT_HEADERS = Object.entries(LIFTING_PROGRAM_SPEC_HEADER_MAP)
+  .filter(([, { key }]) => key !== 'weightPct')
+  .map(([header]) => header);
+
 export function serializeProgramSpec(rows: readonly ProgramSpecExportRow[]): string {
   return serializeCsvText([
-    Object.keys(LIFTING_PROGRAM_SPEC_HEADER_MAP),
+    PROGRAM_SPEC_EXPORT_HEADERS,
     ...rows.map((r) => [
       r.week,
       r.offset,

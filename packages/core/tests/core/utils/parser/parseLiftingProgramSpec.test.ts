@@ -1,4 +1,5 @@
 import { parseLiftingProgramSpec, validateProgramSpecImport } from "@src/core";
+import type { SpreadsheetCell } from "@src/core/models";
 import { loadCsvFixture } from "../../../testUtils";
 
 describe("parseLiftingProgramSpec", () => {
@@ -73,15 +74,15 @@ describe("parseLiftingProgramSpec: a Weight % column in place of WT Decrement %"
 // error at `weightPct` with a message about an evenly stepped list.
 describe("parseLiftingProgramSpec: a sheet carrying both percent columns", () => {
   const header = ["Week", "Offset", "Lift", "Increment", "Order", "Sets", "Reps", "AMRAP?", "Warm-Up %", "WT Decrement %", "Weight %", "Activation"];
-  const specOf = (decrement: unknown) => [
+  const specOf = (decrement: SpreadsheetCell): SpreadsheetCell[][] => [
     header,
     [1, 0, "Squat", 5, 1, 3, 5, "FALSE", "0.5", decrement, "1,.8,.7", ""],
   ];
 
   it("takes the decrement from WT Decrement % and leaves weightPct unset", () => {
     const rows = parseLiftingProgramSpec(specOf(0.05));
-    expect(rows[0]!.wtDecrementPct).toBe(0.05);
-    expect(rows[0]!.weightPct).toBeUndefined();
+    expect(rows).toEqual([expect.objectContaining({ wtDecrementPct: 0.05 })]);
+    expect(rows[0]).not.toHaveProperty("weightPct");
     expect(validateProgramSpecImport(rows).errors).toEqual([]);
   });
 
