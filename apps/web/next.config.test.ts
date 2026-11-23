@@ -37,7 +37,12 @@ test('www.liftinglogbook.com redirects every path permanently to the bare domain
   ]);
 });
 
-test('no redirect applies to the bare domain or other hosts', async () => {
+// The www rule sends lifters to the bare domain, so a redirect that also
+// caught the bare domain, or every host, would loop.
+test('every redirect is scoped to a host, and none to the bare domain', async () => {
   const redirects = (await nextConfig.redirects?.()) ?? [];
-  expect(redirects.every((r) => r.has?.some((h) => h.type === 'host'))).toBe(true);
+  const hosts = redirects.map((r) => r.has?.find((h) => h.type === 'host')?.value);
+
+  expect(hosts).not.toContain(undefined);
+  expect(hosts).not.toContain('liftinglogbook.com');
 });
