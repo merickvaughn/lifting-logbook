@@ -96,7 +96,8 @@ resource "google_cloud_run_v2_service" "api" {
 
       # Linking a Google Sheet (#1432, ADR-047 decisions 8-9). With no client ID the API answers
       # 503 google-sheet-unconfigured. The deploy pipeline sets these on the live service too, and
-      # GOOGLE_OAUTH_REDIRECT_URI from the web service's URL (set here, it would be a cycle).
+      # sets GOOGLE_OAUTH_REDIRECT_URI: from the web service's run.app URL in staging (set here, it
+      # would be a cycle), and from the custom domain, liftinglogbook.com, in production.
       env {
         name  = "GOOGLE_OAUTH_CLIENT_ID"
         value = var.google_oauth_client_id

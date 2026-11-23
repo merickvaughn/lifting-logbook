@@ -305,18 +305,51 @@ echo -n "pk_live_YOUR_KEY" | gcloud secrets versions add \
 ### Google OAuth client for linking a supplement sheet (#1432)
 
 Linking a Google Sheet ([ADR-047](adr/ADR-047-supplement-sheet-mirror.md)) needs a Google OAuth
-client of type **Web application** in each project, with the `drive.file` scope on its consent
-screen and the redirect URI `<web URL>/settings/data/google-sheet/callback`. Until it exists, the
-API answers 503 `google-sheet-unconfigured` and nothing else changes. Terraform creates
-`lifting-logbook-<env>-google-oauth-client-secret` with a `REPLACE_ME` version; store the client
-secret in it, and set the repository variable `GOOGLE_OAUTH_CLIENT_ID` (scoped to the `production`
-environment for production's client), which the deploy pipeline passes to the API:
+client of type **Web application** in each project, with only the `drive.file` scope on its
+consent screen. Until the client ID is set, the API answers 503 `google-sheet-unconfigured` and
+nothing else changes. In each project:
 
-```bash
-echo -n "GOCSPX-YOUR_SECRET" | gcloud secrets versions add \
-  lifting-logbook-stg-google-oauth-client-secret --data-file=- \
-  --project=lifting-logbook-staging
-```
+1. Enable the Google Sheets API (ADR-047, operational step 1). It isn't in Terraform:
+
+   ```bash
+   gcloud services enable sheets.googleapis.com --project=lifting-logbook-staging
+   gcloud services enable sheets.googleapis.com --project=lifting-logbook-prod
+   ```
+
+2. Create the OAuth client with this redirect URI, which the deploy pipeline also passes to the
+   API as `GOOGLE_OAUTH_REDIRECT_URI`. The two must match exactly.
+   - **Production:** `https://liftinglogbook.com/settings/data/google-sheet/callback`, the domain
+     lifters sign in on. Add the `www` form too only if `www` serves the app itself rather than
+     redirecting to the bare domain.
+   - **Staging:** the web service's `run.app` URL, from `terraform output cloud_run_web_url` in the
+     staging workspace, followed by `/settings/data/google-sheet/callback`. The deploy derives it
+     from the same output, so if that URL ever changes, update the staging client's registered
+     redirect URI to match (ADR-047, settled question 3).
+
+   Don't add `localhost` to either client: local development runs without one.
+
+3. Store the client secret. Terraform creates `lifting-logbook-<env>-google-oauth-client-secret`
+   with a `REPLACE_ME` version; add the real one:
+
+   ```bash
+   # Staging
+   echo -n "GOCSPX-YOUR_SECRET" | gcloud secrets versions add \
+     lifting-logbook-stg-google-oauth-client-secret --data-file=- \
+     --project=lifting-logbook-staging
+
+   # Production
+   echo -n "GOCSPX-YOUR_SECRET" | gcloud secrets versions add \
+     lifting-logbook-prod-google-oauth-client-secret --data-file=- \
+     --project=lifting-logbook-prod
+   ```
+
+4. Only then set `GOOGLE_OAUTH_CLIENT_ID`, as an **environment** variable on the `staging` and
+   `production` GitHub environments (Settings → Environments → `<env>` → Environment variables),
+   each holding that environment's client ID. Don't set a repository-level value: the deploy jobs
+   read `vars.GOOGLE_OAUTH_CLIENT_ID` under their environment, so a repository value would put
+   one environment's client ID on the other's API when its own is unset. Setting the client ID
+   is what turns linking on, so with the secret stored first, the API never offers Link with a
+   `REPLACE_ME` secret behind it.
 
 > **Staging test account.** The staging Clerk app also needs a dedicated test user for the
 > Playwright integration suite (`STAGING_CLERK_TEST_EMAIL`) — see
