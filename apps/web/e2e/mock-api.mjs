@@ -232,6 +232,7 @@ const GOOGLE_SHEET_LINKED = {
   status: 'linked',
   spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/mock-sheet/edit',
   lastMirroredAt: '2026-11-22T15:30:00.000Z',
+  syncFailed: false,
 };
 
 function createInitialState() {
@@ -242,9 +243,9 @@ function createInitialState() {
     snapshots: [],
     // /__reset?withClearError=true makes the clear fail with a 500.
     clearError: false,
-    // The linked Google Sheet (#1433; not `googleSheet`, the #1111 import flag below). /__reset?googleSheet=linked|unconfigured starts it linked,
-    // or as an API with no Google client.
-    sheetLink: { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null },
+    // The linked Google Sheet (#1433; not `googleSheet`, the #1111 import flag below). /__reset?googleSheet=linked|failed|unconfigured
+    // starts it linked, linked with a failed last sync (#1444), or as an API with no Google client.
+    sheetLink: { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null, syncFailed: false },
     trainingMaxes: structuredClone(INITIAL_TRAINING_MAXES),
     // Lifts with logged sets and no training max (#1246); /__reset?withMissingMax=true seeds one.
     missingMaxes: [],
@@ -815,6 +816,7 @@ const server = createServer(async (req, res) => {
     }
     const googleSheet = url.searchParams.get('googleSheet');
     if (googleSheet === 'linked') state.sheetLink = { ...GOOGLE_SHEET_LINKED };
+    if (googleSheet === 'failed') state.sheetLink = { ...GOOGLE_SHEET_LINKED, syncFailed: true };
     if (googleSheet === 'unconfigured') state.sheetLink.configured = false;
     if (url.searchParams.get('withTrainingMaxImport') === 'true') {
       state.trainingMaxImport = {
@@ -1173,8 +1175,27 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (method === 'DELETE' && sheet === '') {
-      state.sheetLink = { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null };
+      state.sheetLink = { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null, syncFailed: false };
       json(res, { revoked: true });
+      return;
+    }
+    if (method === 'POST' && sheet === '/sync') {
+      // The API's 409s name the link's state (#1444).
+      if (state.sheetLink.status === 'needs_relink') {
+        json(res, { statusCode: 409, error: 'google-sheet-needs-relink', message: 'Google access was removed. Link again.' }, 409);
+        return;
+      }
+      if (state.sheetLink.status === 'sheet_missing') {
+        json(res, { statusCode: 409, error: 'google-sheet-missing', message: 'The sheet was deleted or can’t be found.' }, 409);
+        return;
+      }
+      if (state.sheetLink.status !== 'linked') {
+        json(res, { statusCode: 409, error: 'google-sheet-not-linked', message: 'No Google Sheet is linked.' }, 409);
+        return;
+      }
+      // The run finishes at once here: the mirror time moves and a failure clears.
+      state.sheetLink = { ...state.sheetLink, lastMirroredAt: '2026-11-23T09:00:00.000Z', syncFailed: false };
+      json(res, { queued: true }, 202);
       return;
     }
   }

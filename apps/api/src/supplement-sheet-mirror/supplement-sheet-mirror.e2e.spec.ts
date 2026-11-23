@@ -8,6 +8,7 @@ import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { SupplementChange } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
+import { InMemoryGoogleSheetLinkRepository } from '../adapters/in-memory/google-sheet-link.adapter';
 import { InMemorySupplementRepository } from '../adapters/in-memory/supplement.adapter';
 import { GoogleApiError } from '../google-sheet/google-sheet.client';
 import { GOOGLE_SHEET_CLIENT, GOOGLE_TOKEN_CIPHER } from '../google-sheet/google-sheet.service';
@@ -121,8 +122,14 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       lastErrorCode: null,
     });
     await addItem(user, 'Creatine', note);
+    // The write above enqueued its own run (#1444); these tests start from an empty queue.
+    await settle();
+    queue.enqueued = [];
     return user;
   }
+
+  /** Lets the post-response enqueue of a supplement write finish. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
   const addItem = (user: string, name: string, shortNote: string) =>
     app.getHttpAdapter().getInstance().inject({
@@ -212,6 +219,8 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       google.tabs = [{ sheetId: 0, title: 'Supplements' }];
       const user = await linkedUser('=HYPERLINK("https://evil.example")');
       await addItem(user, 'Magnesium', '');
+      await settle();
+      queue.enqueued = [];
 
       expect((await run(user)).statusCode).toBe(204);
 
@@ -305,7 +314,9 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
         await addItem(user, 'Zinc', '');
       };
       expect((await run(user)).statusCode).toBe(204);
-      expect(queue.enqueued).toEqual([user]);
+      // Zinc's own write enqueued a run, and the follow-up is the second.
+      await settle();
+      expect(queue.enqueued).toEqual([user, user]);
     });
 
     it('still answers 204 and records the run when the follow-up cannot be enqueued, and logs why', async () => {
@@ -389,7 +400,8 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       expect((await run(user)).statusCode).toBe(503);
       expect(warn).toHaveBeenCalled();
       expect((await link(user))?.status).toBe('linked');
-      expect((await link(user))?.lastErrorCode).toBe(`google_${(err as GoogleApiError).status}`);
+      // Retries remain, so Settings doesn't show "Last sync failed" yet (decision 21).
+      expect((await link(user))?.lastErrorCode).toBeNull();
 
       // The lease was released, so the retry gets in, writes, and clears the error.
       expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '1' })).statusCode).toBe(204);
@@ -406,7 +418,53 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
 
       expect(warn).toHaveBeenCalledWith(expect.objectContaining({ operation: 'sheet_mirror.run', outcome: 'retry_internal' }), expect.any(String));
       expect(google.calls).toEqual([]);
-      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: 'mirror_failed' });
+      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: null });
+    });
+
+    it('ends the task on the last attempt: stores the code, logs once at error and answers 204, and a later success clears it', async () => {
+      const user = await linkedUser();
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      google.failNextBatch = new GoogleApiError(503, 'UNAVAILABLE', { googleStatus: 'UNAVAILABLE' });
+
+      // 204, not 5xx: Cloud Tasks would otherwise retry until max-retry-duration too (decision 21).
+      expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '7' })).statusCode).toBe(204);
+
+      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: 'google_503' });
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'retry_google', attempt: 7 }), expect.any(String));
+      // The lease was released: Sync now's run gets in, writes, and clears the code.
+      expect((await run(user)).statusCode).toBe(204);
+      expect(google.batches).toHaveLength(1);
+      expect((await link(user))?.lastErrorCode).toBeNull();
+    });
+
+    it('answers 503 on an earlier attempt, and stores no code', async () => {
+      const user = await linkedUser();
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      google.failNextBatch = new GoogleApiError(503, 'UNAVAILABLE', { googleStatus: 'UNAVAILABLE' });
+
+      expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '6' })).statusCode).toBe(503);
+
+      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: null });
+    });
+
+    it('answers 503 on the last attempt when the code could not be stored, so Cloud Tasks keeps retrying', async () => {
+      const user = await linkedUser();
+      jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      google.failNextBatch = new GoogleApiError(503, 'UNAVAILABLE', { googleStatus: 'UNAVAILABLE' });
+      jest.spyOn(InMemoryGoogleSheetLinkRepository.prototype, 'releaseMirrorLease').mockRejectedValueOnce(new Error('connection terminated'));
+
+      expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '7' })).statusCode).toBe(503);
+      expect((await link(user))?.lastErrorCode).toBeNull();
+    });
+
+    it('answers 503 on the last attempt when the database fails before the lease', async () => {
+      const user = await linkedUser();
+      jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      jest.spyOn(InMemoryGoogleSheetLinkRepository.prototype, 'getLink').mockRejectedValueOnce(new Error('connection terminated'));
+
+      expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '7' })).statusCode).toBe(503);
+      expect(google.calls).toEqual([]);
     });
 
     it('answers 5xx for a KMS or database failure, not 204', async () => {
@@ -591,11 +649,11 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       }
     });
 
-    it('logs a Google failure as its status and reason only, at error once retries run out', async () => {
+    it('logs a Google failure as its status and reason only, at error on the last attempt', async () => {
       const user = await linkedUser();
       const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
       google.failNextBatch = new GoogleApiError(503, 'UNAVAILABLE', { googleStatus: 'UNAVAILABLE' });
-      expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '7' })).statusCode).toBe(503);
+      expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '7' })).statusCode).toBe(204);
       expect(error.mock.calls[0]![0]).toMatchObject({ outcome: 'retry_google', attempt: 7, googleStatus: 503, googleReason: 'UNAVAILABLE' });
     });
   });

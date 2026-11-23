@@ -175,6 +175,7 @@ describe('Google Sheet link (e2e, in-memory)', () => {
         status: 'linked',
         spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/sheet-1/edit',
         lastMirroredAt: null,
+        syncFailed: false,
       });
       const exchange = google.calls.find((c) => c.method === 'exchangeCode')!;
       expect(exchange.args[0]).toMatchObject({ clientSecret: ENV.GOOGLE_OAUTH_CLIENT_SECRET });
@@ -281,7 +282,7 @@ describe('Google Sheet link (e2e, in-memory)', () => {
     it('GET never returns a token or the spreadsheet ID on its own', async () => {
       await link(app, 'gs-get');
       const body = (await call(app, 'GET', '', 'gs-get')).json();
-      expect(Object.keys(body).sort()).toEqual(['configured', 'lastMirroredAt', 'spreadsheetUrl', 'status']);
+      expect(Object.keys(body).sort()).toEqual(['configured', 'lastMirroredAt', 'spreadsheetUrl', 'status', 'syncFailed']);
       expect(JSON.stringify(body)).not.toContain(FAKE_REFRESH_TOKEN);
     });
 

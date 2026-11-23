@@ -111,6 +111,7 @@ export const {
   authorizeGoogleSheet,
   createGoogleSheetSpreadsheet,
   unlinkGoogleSheet,
+  syncGoogleSheet,
   downloadSnapshotLiftRecords,
   createCustomLift,
   // Keep on the Supplements detail panel saves a suggested store search as the item's link (#1376).
