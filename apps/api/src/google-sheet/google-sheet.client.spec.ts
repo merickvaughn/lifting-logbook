@@ -1,4 +1,10 @@
-import { FetchGoogleSheetClient, GoogleApiError, SPREADSHEET_TABS, SPREADSHEET_TITLE } from './google-sheet.client';
+import {
+  FetchGoogleSheetClient,
+  GoogleApiError,
+  SPREADSHEET_TABS,
+  SPREADSHEET_TITLE,
+  isTransientGoogleError,
+} from './google-sheet.client';
 
 describe('FetchGoogleSheetClient', () => {
   const client = new FetchGoogleSheetClient();
@@ -50,5 +56,46 @@ describe('FetchGoogleSheetClient', () => {
     expect(await client.canOpenSpreadsheet('at', 'gone')).toBe(false);
     respond(403, { error: { code: 403, status: 'PERMISSION_DENIED', errors: [{ reason: 'rateLimitExceeded' }] } });
     await expect(client.canOpenSpreadsheet('at', 'busy')).rejects.toMatchObject({ status: 403, reason: 'rateLimitExceeded' });
+  });
+
+  const errorInfo = (reason: string, metadata: Record<string, string> = {}) => ({
+    '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+    reason,
+    domain: 'googleapis.com',
+    metadata,
+  });
+
+  it.each([
+    ['a quota ErrorInfo', errorInfo('RATE_LIMIT_EXCEEDED', { quota_metric: 'sheets.googleapis.com/read_requests' }), 'RATE_LIMIT_EXCEEDED', true],
+    ['SERVICE_DISABLED', errorInfo('SERVICE_DISABLED', { service: 'sheets.googleapis.com' }), 'SERVICE_DISABLED', false],
+    ['ACCESS_TOKEN_SCOPE_INSUFFICIENT', errorInfo('ACCESS_TOKEN_SCOPE_INSUFFICIENT'), 'ACCESS_TOKEN_SCOPE_INSUFFICIENT', false],
+  ])('reads a PERMISSION_DENIED with %s as an error, not a missing sheet', async (_name, detail, reason, transient) => {
+    respond(403, { error: { code: 403, status: 'PERMISSION_DENIED', details: [{ '@type': 'type.googleapis.com/google.rpc.Help' }, detail] } });
+    const err = await client.canOpenSpreadsheet('at', 'present').catch((e) => e);
+    expect(err).toBeInstanceOf(GoogleApiError);
+    expect(err.toLog()).toEqual({ status: 403, reason });
+    expect(isTransientGoogleError(err)).toBe(transient);
+  });
+
+  it.each([
+    ['PERMISSION_DENIED with no reason', { status: 'PERMISSION_DENIED' }],
+    ['a lone legacy forbidden', { errors: [{ reason: 'forbidden' }] }],
+    ['a legacy notFound', { errors: [{ reason: 'notFound' }] }],
+  ])('reads a 403 %s as a sheet it cannot open', async (_name, error) => {
+    respond(403, { error: { code: 403, ...error } });
+    expect(await client.canOpenSpreadsheet('at', 'gone')).toBe(false);
+  });
+
+  it('reads a userRateLimitExceeded 403 and a 403 with no body as errors', async () => {
+    respond(403, { error: { code: 403, errors: [{ reason: 'forbidden' }, { reason: 'userRateLimitExceeded' }] } });
+    await expect(client.canOpenSpreadsheet('at', 'busy')).rejects.toMatchObject({ status: 403, reason: 'forbidden' });
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 403 }));
+    await expect(client.canOpenSpreadsheet('at', 'unknown')).rejects.toMatchObject({ status: 403, reason: 'unknown' });
+  });
+
+  it('counts a timeout, a 429 and a 5xx as transient, and a 400 or 401 as not', () => {
+    for (const status of [0, 429, 500, 503]) expect(isTransientGoogleError(new GoogleApiError(status, 'x'))).toBe(true);
+    for (const status of [400, 401, 404]) expect(isTransientGoogleError(new GoogleApiError(status, 'x'))).toBe(false);
+    expect(isTransientGoogleError(new Error('not Google'))).toBe(false);
   });
 });
