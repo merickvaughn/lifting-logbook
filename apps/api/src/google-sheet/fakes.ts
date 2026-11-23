@@ -18,16 +18,26 @@ export class FakeKeyWrapper implements IKeyWrapper {
   }
 }
 
+/** The first exchange's refresh token; each later one appends `-<n>`, so it contains this one. */
 export const FAKE_REFRESH_TOKEN = '1//fake-refresh-token-do-not-log';
 export const FAKE_ACCESS_TOKEN = 'ya29.fake-access-token-do-not-log';
 export const FAKE_CODE = '4/fake-authorization-code-do-not-log';
 
 type Call = { method: keyof IGoogleSheetClient; args: unknown[] };
 
+/** Fails the test on any call (decision 22). */
+export const failingKeyWrapper = (): IKeyWrapper => {
+  const fail = (method: string) => () => {
+    throw new Error(`KMS was called (${method}) before the lifter linked a sheet`);
+  };
+  return { wrap: fail('wrap'), unwrap: fail('unwrap') };
+};
+
 /** Records every call. Each method can be replaced per test. */
 export class FakeGoogleSheetClient implements IGoogleSheetClient {
   calls: Call[] = [];
   private sheets = 0;
+  private exchanges = 0;
   scope = DRIVE_FILE_SCOPE;
   openable = new Set<string>();
 
@@ -37,7 +47,13 @@ export class FakeGoogleSheetClient implements IGoogleSheetClient {
 
   async exchangeCode(c: OAuthClientCredentials, code: string, verifier: string): Promise<CodeExchangeResult> {
     this.record('exchangeCode', [c, code, verifier]);
-    return { accessToken: FAKE_ACCESS_TOKEN, refreshToken: FAKE_REFRESH_TOKEN, scope: this.scope };
+    this.exchanges += 1;
+    return { accessToken: FAKE_ACCESS_TOKEN, refreshToken: FakeGoogleSheetClient.refreshToken(this.exchanges), scope: this.scope };
+  }
+
+  /** The refresh token the `n`th exchange returns. */
+  static refreshToken(n: number): string {
+    return n === 1 ? FAKE_REFRESH_TOKEN : `${FAKE_REFRESH_TOKEN}-${n}`;
   }
 
   async refreshAccessToken(c: OAuthClientCredentials, refreshToken: string): Promise<string> {

@@ -3,17 +3,34 @@ import {
   GoogleSheetLinkRecord,
   IGoogleSheetLinkRepository,
 } from '../../ports/IGoogleSheetLinkRepository';
+import { StoredRow } from '../../ports/IUserDataExportRepository';
 
 export class InMemoryGoogleSheetLinkRepository implements IGoogleSheetLinkRepository {
-  private link: GoogleSheetLinkRecord | null = null;
+  private link: (GoogleSheetLinkRecord & { createdAt: Date }) | null = null;
   private request: GoogleOauthRequestRecord | null = null;
 
   async getLink(): Promise<GoogleSheetLinkRecord | null> {
-    return this.link && { ...this.link };
+    if (!this.link) return null;
+    const { createdAt: _createdAt, ...link } = this.link;
+    return link;
   }
 
   async saveLink(link: Omit<GoogleSheetLinkRecord, 'lastMirroredAt'>): Promise<void> {
-    this.link = { ...link, lastMirroredAt: this.link?.lastMirroredAt ?? null };
+    // As google_sheet_link_token_check does: a token exactly when the status can use one.
+    if ((link.status === 'needs_relink') !== (link.token === null)) {
+      throw new Error(`google_sheet_link_token_check: status ${link.status} with${link.token ? '' : 'out'} a token`);
+    }
+    const sameSheet = this.link?.spreadsheetId === link.spreadsheetId;
+    this.link = {
+      status: link.status,
+      spreadsheetId: link.spreadsheetId,
+      spreadsheetUrl: link.spreadsheetUrl,
+      grantedScope: link.grantedScope,
+      token: link.token,
+      lastErrorCode: link.lastErrorCode,
+      lastMirroredAt: sameSheet ? (this.link?.lastMirroredAt ?? null) : null,
+      createdAt: this.link?.createdAt ?? new Date(),
+    };
   }
 
   async deleteLink(): Promise<void> {
@@ -30,9 +47,10 @@ export class InMemoryGoogleSheetLinkRepository implements IGoogleSheetLinkReposi
     return request;
   }
 
-  /** For tests: sets a stored link's status, as a mirror run would (decisions 11-12). */
-  setStatusForTest(status: GoogleSheetLinkRecord['status']): void {
-    if (!this.link) throw new Error('no link');
-    this.link = { ...this.link, status, ...(status === 'needs_relink' && { token: null }) };
+  /** The columns Download My Data exports, as PrismaUserDataExportRepository selects them. */
+  exportRows(): StoredRow[] {
+    if (!this.link) return [];
+    const { status, spreadsheetUrl, lastMirroredAt, createdAt } = this.link;
+    return [{ status, spreadsheetUrl, lastMirroredAt, createdAt }];
   }
 }

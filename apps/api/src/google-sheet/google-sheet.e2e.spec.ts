@@ -4,19 +4,20 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from '../app.module';
-import { InMemoryGoogleSheetLinkRepository } from '../adapters/in-memory/google-sheet-link.adapter';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { IRepositoryFactory } from '../ports/factory';
+import { IGoogleSheetLinkRepository } from '../ports/IGoogleSheetLinkRepository';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
 import { DRIVE_FILE_SCOPE, GoogleApiError, IGoogleSheetClient } from './google-sheet.client';
 import { GOOGLE_PERMISSIONS_URL, GOOGLE_SHEET_CLIENT, GOOGLE_TOKEN_CIPHER } from './google-sheet.service';
-import { TokenCipher } from './token-cipher';
+import { IKeyWrapper, TokenCipher } from './token-cipher';
 import {
   FAKE_CODE,
   FAKE_REFRESH_TOKEN,
   FakeGoogleSheetClient,
   FakeKeyWrapper,
   failingGoogleClient,
+  failingKeyWrapper,
 } from './fakes';
 
 /**
@@ -24,15 +25,20 @@ import {
  * fake key wrapper, so nothing leaves the process.
  */
 
-const ENV = { GOOGLE_OAUTH_CLIENT_ID: 'client-id.apps.googleusercontent.com', GOOGLE_OAUTH_CLIENT_SECRET: 'fake-client-secret', GOOGLE_OAUTH_REDIRECT_URI: 'https://web.example/settings/data/google-sheet/callback' };
+const ENV = {
+  GOOGLE_OAUTH_CLIENT_ID: 'client-id.apps.googleusercontent.com',
+  GOOGLE_OAUTH_CLIENT_SECRET: 'fake-client-secret',
+  GOOGLE_OAUTH_REDIRECT_URI: 'https://web.example/settings/data/google-sheet/callback',
+  GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME: 'projects/p/locations/l/keyRings/r/cryptoKeys/google-oauth-token-kek',
+};
 const saved: Record<string, string | undefined> = {};
 
-async function boot(google: IGoogleSheetClient): Promise<NestFastifyApplication> {
+async function boot(google: IGoogleSheetClient, keys: IKeyWrapper = new FakeKeyWrapper()): Promise<NestFastifyApplication> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(GOOGLE_SHEET_CLIENT)
     .useValue(google)
     .overrideProvider(GOOGLE_TOKEN_CIPHER)
-    .useValue(new TokenCipher(new FakeKeyWrapper()))
+    .useValue(new TokenCipher(keys))
     .compile();
   const app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter(), { logger: false });
   app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
@@ -60,9 +66,20 @@ async function link(app: NestFastifyApplication, user: string) {
   return call(app, 'POST', '/callback', user, { code: FAKE_CODE, state });
 }
 
-const repoOf = async (app: NestFastifyApplication, user: string) =>
-  (await app.get<IRepositoryFactory>(REPOSITORY_FACTORY).forUser({ id: user } as never))
-    .googleSheetLink as InMemoryGoogleSheetLinkRepository;
+const repoOf = async (app: NestFastifyApplication, user: string): Promise<IGoogleSheetLinkRepository> =>
+  (await app.get<IRepositoryFactory>(REPOSITORY_FACTORY).forUser({ id: user } as never)).googleSheetLink;
+
+/** Sets a stored link's status through the port, as a mirror run would (decisions 11-12). */
+async function setStatus(app: NestFastifyApplication, user: string, status: 'needs_relink' | 'sheet_missing') {
+  const repo = await repoOf(app, user);
+  const link = (await repo.getLink())!;
+  await repo.saveLink(
+    status === 'needs_relink' ? { ...link, status, token: null, lastErrorCode: 'invalid_grant' } : { ...link, status },
+  );
+}
+
+const decrypted = async (app: NestFastifyApplication, user: string) =>
+  new TokenCipher(new FakeKeyWrapper()).decrypt(user, (await (await repoOf(app, user)).getLink())!.token!);
 
 describe('Google Sheet link (e2e, in-memory)', () => {
   let app: NestFastifyApplication;
@@ -134,6 +151,19 @@ describe('Google Sheet link (e2e, in-memory)', () => {
         process.env.GOOGLE_OAUTH_CLIENT_ID = ENV.GOOGLE_OAUTH_CLIENT_ID;
       }
     });
+
+    it('answers 503 google-sheet-unconfigured with no token key, before any Google or KMS call', async () => {
+      await app.close();
+      app = await boot(failingGoogleClient(), failingKeyWrapper());
+      delete process.env.GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME;
+      try {
+        expect((await call(app, 'POST', '/authorize', 'gs-no-key')).json()).toMatchObject({ error: 'google-sheet-unconfigured' });
+        expect((await call(app, 'POST', '/callback', 'gs-no-key', { code: FAKE_CODE, state: 'x' })).statusCode).toBe(503);
+        expect((await call(app, 'GET', '', 'gs-no-key')).json()).toMatchObject({ configured: false });
+      } finally {
+        process.env.GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME = ENV.GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME;
+      }
+    });
   });
 
   describe('callback', () => {
@@ -201,8 +231,19 @@ describe('Google Sheet link (e2e, in-memory)', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toMatchObject({ spreadsheetUrl: before.spreadsheetUrl });
       expect(google.calls.map((c) => c.method)).toEqual(['exchangeCode', 'canOpenSpreadsheet']);
-      const after = (await (await repoOf(app, 'gs-relink')).getLink())!;
-      expect(after.token!.ciphertext.equals(before.token!.ciphertext)).toBe(false);
+      expect(await decrypted(app, 'gs-relink')).toBe(FakeGoogleSheetClient.refreshToken(2));
+    });
+
+    it('re-linking after needs_relink stores the new token, keeps the sheet and clears the error', async () => {
+      await link(app, 'gs-relink-dead');
+      await setStatus(app, 'gs-relink-dead', 'needs_relink');
+      expect((await call(app, 'GET', '', 'gs-relink-dead')).json()).toMatchObject({ status: 'needs_relink' });
+      google.calls = [];
+      const res = await link(app, 'gs-relink-dead');
+      expect(res.json()).toMatchObject({ status: 'linked', spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/sheet-1/edit' });
+      expect(google.calls.map((c) => c.method)).toEqual(['exchangeCode', 'canOpenSpreadsheet']);
+      expect(await decrypted(app, 'gs-relink-dead')).toBe(FakeGoogleSheetClient.refreshToken(2));
+      expect((await (await repoOf(app, 'gs-relink-dead')).getLink())!.lastErrorCode).toBeNull();
     });
 
     it('re-linking creates a new sheet when the old one is gone', async () => {
@@ -211,6 +252,28 @@ describe('Google Sheet link (e2e, in-memory)', () => {
       const res = await link(app, 'gs-relink-gone');
       expect(res.json()).toMatchObject({ status: 'linked', spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/sheet-2/edit' });
       expect(google.calls.some((c) => c.method === 'revoke')).toBe(false);
+    });
+
+    it('re-linking keeps the sheet when Google is rate-limited or down, and fails on any other error', async () => {
+      await link(app, 'gs-relink-busy');
+      jest.spyOn(google, 'canOpenSpreadsheet').mockRejectedValueOnce(new GoogleApiError(429, 'RATE_LIMIT_EXCEEDED'));
+      expect((await link(app, 'gs-relink-busy')).json()).toMatchObject({ status: 'linked', spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/sheet-1/edit' });
+      jest.spyOn(google, 'canOpenSpreadsheet').mockRejectedValueOnce(new GoogleApiError(503, 'backendError'));
+      expect((await link(app, 'gs-relink-busy')).statusCode).toBe(200);
+      jest.spyOn(google, 'canOpenSpreadsheet').mockRejectedValueOnce(
+        new GoogleApiError(403, 'SERVICE_DISABLED', { googleStatus: 'PERMISSION_DENIED', errorInfo: ['SERVICE_DISABLED'] }),
+      );
+      expect((await link(app, 'gs-relink-busy')).statusCode).toBe(502);
+      expect(google.calls.filter((c) => c.method === 'createSpreadsheet')).toHaveLength(1);
+    });
+
+    it('creates no spreadsheet when encrypting the token fails', async () => {
+      await app.close();
+      google = new FakeGoogleSheetClient();
+      app = await boot(google, failingKeyWrapper());
+      expect((await link(app, 'gs-kms-down')).statusCode).toBe(500);
+      expect(google.calls.map((c) => c.method)).toEqual(['exchangeCode']);
+      expect((await call(app, 'GET', '', 'gs-kms-down')).json()).toMatchObject({ status: 'unlinked' });
     });
   });
 
@@ -241,7 +304,7 @@ describe('Google Sheet link (e2e, in-memory)', () => {
 
     it('creates a new sheet for a sheet_missing link with the stored token', async () => {
       await link(app, 'gs-missing');
-      (await repoOf(app, 'gs-missing')).setStatusForTest('sheet_missing');
+      await setStatus(app, 'gs-missing', 'sheet_missing');
       google.calls = [];
       const res = await call(app, 'POST', '/sheet', 'gs-missing');
       expect(res.statusCode).toBe(200);
@@ -250,6 +313,20 @@ describe('Google Sheet link (e2e, in-memory)', () => {
         ['refreshAccessToken', FAKE_REFRESH_TOKEN],
         ['createSpreadsheet', expect.any(String)],
       ]);
+    });
+
+    it('marks the link needs_relink with invalid_grant when Google access was removed', async () => {
+      await link(app, 'gs-missing-dead');
+      await setStatus(app, 'gs-missing-dead', 'sheet_missing');
+      jest.spyOn(google, 'refreshAccessToken').mockRejectedValueOnce(new GoogleApiError(400, 'invalid_grant'));
+      const res = await call(app, 'POST', '/sheet', 'gs-missing-dead');
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ error: 'google-sheet-needs-relink' });
+      expect(await (await repoOf(app, 'gs-missing-dead')).getLink()).toMatchObject({
+        status: 'needs_relink',
+        token: null,
+        lastErrorCode: 'invalid_grant',
+      });
     });
 
     it('refuses a new sheet for a link that is not missing', async () => {
@@ -290,9 +367,9 @@ describe('Google Sheet link (e2e, in-memory)', () => {
     });
   });
 
-  it('makes no Google call until the lifter authorizes and completes a callback (decision 22)', async () => {
+  it('makes no Google or KMS call until the lifter authorizes and completes a callback (decision 22)', async () => {
     await app.close();
-    app = await boot(failingGoogleClient());
+    app = await boot(failingGoogleClient(), failingKeyWrapper());
     const user = 'gs-untouched';
     expect((await call(app, 'GET', '', user)).statusCode).toBe(200);
     expect((await call(app, 'DELETE', '', user)).json()).toEqual({ revoked: true });

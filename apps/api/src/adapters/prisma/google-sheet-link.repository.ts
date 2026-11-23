@@ -24,6 +24,7 @@ export class PrismaGoogleSheetLinkRepository implements IGoogleSheetLinkReposito
         ciphertext && wrappedKey && nonce
           ? { ciphertext: Buffer.from(ciphertext), wrappedKey: Buffer.from(wrappedKey), nonce: Buffer.from(nonce) }
           : null,
+      lastErrorCode: row.lastErrorCode,
       lastMirroredAt: row.lastMirroredAt,
     };
   }
@@ -37,12 +38,18 @@ export class PrismaGoogleSheetLinkRepository implements IGoogleSheetLinkReposito
       refreshTokenCiphertext: link.token?.ciphertext ?? null,
       refreshTokenDekCiphertext: link.token?.wrappedKey ?? null,
       refreshTokenNonce: link.token?.nonce ?? null,
-      lastErrorCode: null,
+      lastErrorCode: link.lastErrorCode,
     };
+    const stored = await this.prisma.googleSheetLink.findUnique({
+      where: { userId: this.userId },
+      select: { spreadsheetId: true },
+    });
+    // A new spreadsheet holds nothing the mirror wrote, so its history starts over (decision 19).
+    const newSheet = stored !== null && stored.spreadsheetId !== link.spreadsheetId;
     await this.prisma.googleSheetLink.upsert({
       where: { userId: this.userId },
       create: { userId: this.userId, ...data },
-      update: data,
+      update: newSheet ? { ...data, lastMirroredAt: null, lastMirroredSeq: null, mirrorLeaseUntil: null } : data,
     });
   }
 
@@ -61,7 +68,9 @@ export class PrismaGoogleSheetLinkRepository implements IGoogleSheetLinkReposito
   async takeOauthRequest(): Promise<GoogleOauthRequestRecord | null> {
     const row = await this.prisma.googleOauthRequest.findUnique({ where: { userId: this.userId } });
     if (!row) return null;
-    await this.prisma.googleOauthRequest.deleteMany({ where: { userId: this.userId } });
+    // A concurrent callback that deleted it first took it: this one gets nothing (decision 5).
+    const { count } = await this.prisma.googleOauthRequest.deleteMany({ where: { userId: this.userId } });
+    if (count === 0) return null;
     return { stateHash: Buffer.from(row.stateHash), codeVerifier: row.codeVerifier, expiresAt: row.expiresAt };
   }
 }

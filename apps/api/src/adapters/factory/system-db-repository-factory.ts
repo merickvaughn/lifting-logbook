@@ -147,13 +147,14 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     const macrocycle = new InMemoryMacrocycleRepository();
     const trainingData = new InMemoryTrainingDataRepository();
     const supplement = new InMemorySupplementRepository();
+    const googleSheetLink = new InMemoryGoogleSheetLinkRepository();
     const bundle: RepositoryBundle = {
       dataSnapshot: new InMemoryDataSnapshotRepository(),
       trainingData,
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift,
       focus: new InMemoryFocusRepository(),
-      googleSheetLink: new InMemoryGoogleSheetLinkRepository(),
+      googleSheetLink,
       supplement,
       macrocycle,
       macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(),
@@ -174,6 +175,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
         customLift,
         userSettings,
         supplement,
+        googleSheetLink,
       ),
       userSettings,
       workout: new InMemoryWorkoutRepository(sharedRecords),

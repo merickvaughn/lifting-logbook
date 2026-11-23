@@ -53,13 +53,14 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       const macrocycle = new InMemoryMacrocycleRepository(preSeed ? [seedMacrocycleRow()] : []);
       const trainingData = new InMemoryTrainingDataRepository();
       const supplement = new InMemorySupplementRepository();
+      const googleSheetLink = new InMemoryGoogleSheetLinkRepository();
       const bundle: RepositoryBundle = {
         dataSnapshot: new InMemoryDataSnapshotRepository(),
         trainingData,
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift,
         focus: new InMemoryFocusRepository(),
-        googleSheetLink: new InMemoryGoogleSheetLinkRepository(),
+        googleSheetLink,
         macrocycle,
         macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(preSeed),
         macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
@@ -80,6 +81,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
           customLift,
           userSettings,
           supplement,
+          googleSheetLink,
         ),
         userSettings,
         workout: new InMemoryWorkoutRepository(sharedRecords),

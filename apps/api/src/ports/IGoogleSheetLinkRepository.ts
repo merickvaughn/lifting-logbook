@@ -16,6 +16,8 @@ export interface GoogleSheetLinkRecord {
   spreadsheetUrl: string;
   grantedScope: string;
   token: EncryptedToken | null;
+  /** A code only, e.g. `invalid_grant` (decision 11); null once the link works again. */
+  lastErrorCode: string | null;
   lastMirroredAt: Date | null;
 }
 
@@ -28,7 +30,11 @@ export interface GoogleOauthRequestRecord {
 
 export interface IGoogleSheetLinkRepository {
   getLink(): Promise<GoogleSheetLinkRecord | null>;
-  /** Creates or replaces the user's link, keeping its mirror history. */
+  /**
+   * Creates or replaces the user's link. It keeps the mirror's history (when it last ran, what it
+   * last wrote, its lease) for the same spreadsheet, and starts it over for a different one, which
+   * holds nothing yet. Rejects a token that doesn't match the status, as the table's check does.
+   */
   saveLink(link: Omit<GoogleSheetLinkRecord, 'lastMirroredAt'>): Promise<void>;
   deleteLink(): Promise<void>;
   /** Replaces any earlier attempt. */

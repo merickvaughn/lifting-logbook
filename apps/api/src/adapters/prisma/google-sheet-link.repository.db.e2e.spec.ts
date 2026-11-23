@@ -1,6 +1,6 @@
 // Real-Postgres E2E for the Google Sheet link tables (#1432, ADR-047). `appDb` connects as the
 // restricted lifting_app role, so forced row-level security applies; `owner` only seeds and cleans.
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaGoogleSheetLinkRepository } from './google-sheet-link.repository';
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
@@ -16,6 +16,14 @@ const USER_B = 'db-e2e-gsheet-b';
 const USERS = [USER_A, USER_B];
 
 const token = () => ({ ciphertext: Buffer.from('ct'), wrappedKey: Buffer.from('wk'), nonce: Buffer.alloc(12, 1) });
+const record = (spreadsheetId = 's') => ({
+  status: 'linked' as const,
+  spreadsheetId,
+  spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+  grantedScope: 'g',
+  token: token(),
+  lastErrorCode: null,
+});
 const link = (userId: string) => ({
   userId,
   status: 'linked' as const,
@@ -82,8 +90,8 @@ describeOrSkip('PrismaGoogleSheetLinkRepository (e2e, lifting_app role)', () => 
 
   it('stores, reads and deletes its own link and request', async () => {
     await asUser(USER_A, async (repo) => {
-      await repo.saveLink({ status: 'linked', spreadsheetId: 's', spreadsheetUrl: 'u', grantedScope: 'g', token: token() });
-      expect(await repo.getLink()).toMatchObject({ status: 'linked', token: token() });
+      await repo.saveLink(record());
+      expect(await repo.getLink()).toMatchObject({ status: 'linked', token: token(), lastErrorCode: null });
       await repo.putOauthRequest({ stateHash: Buffer.alloc(32, 3), codeVerifier: 'v', expiresAt: new Date() });
       expect(await repo.takeOauthRequest()).toMatchObject({ codeVerifier: 'v' });
       expect(await repo.takeOauthRequest()).toBeNull();
@@ -92,21 +100,66 @@ describeOrSkip('PrismaGoogleSheetLinkRepository (e2e, lifting_app role)', () => 
     });
   });
 
-  it('rejects a linked row with no ciphertext, and a needs_relink row with one', async () => {
-    await expect(
-      owner.googleSheetLink.create({
-        data: { ...link(USER_A), refreshTokenCiphertext: null, refreshTokenDekCiphertext: null, refreshTokenNonce: null },
-      }),
-    ).rejects.toThrow(/google_sheet_link_token_check/);
-    await expect(owner.googleSheetLink.create({ data: { ...link(USER_A), status: 'needs_relink' } })).rejects.toThrow(
-      /google_sheet_link_token_check/,
-    );
-    await expect(owner.googleSheetLink.create({ data: { ...link(USER_A), refreshTokenNonce: null } })).rejects.toThrow(
-      /google_sheet_link_token_check/,
-    );
+  it('records the error code with the status (decision 11)', async () => {
+    await asUser(USER_A, async (repo) => {
+      await repo.saveLink(record());
+      await repo.saveLink({ ...record(), status: 'needs_relink', token: null, lastErrorCode: 'invalid_grant' });
+      expect(await repo.getLink()).toMatchObject({ status: 'needs_relink', token: null, lastErrorCode: 'invalid_grant' });
+    });
+    expect(await owner.googleSheetLink.findUnique({ where: { userId: USER_A } })).toMatchObject({ lastErrorCode: 'invalid_grant' });
+    await owner.googleSheetLink.deleteMany({ where: { userId: USER_A } });
+  });
+
+  it("keeps the mirror's history for the same spreadsheet and starts it over for a new one", async () => {
+    await asUser(USER_A, (repo) => repo.saveLink(record('first')));
+    const mirrored = { lastMirroredAt: new Date('2026-11-01T00:00:00Z'), lastMirroredSeq: 7, mirrorLeaseUntil: new Date('2026-11-01T00:01:00Z') };
+    await owner.googleSheetLink.update({ where: { userId: USER_A }, data: mirrored });
+
+    await asUser(USER_A, (repo) => repo.saveLink(record('first')));
+    expect(await owner.googleSheetLink.findUnique({ where: { userId: USER_A } })).toMatchObject(mirrored);
+
+    await asUser(USER_A, (repo) => repo.saveLink(record('second')));
+    expect(await owner.googleSheetLink.findUnique({ where: { userId: USER_A } })).toMatchObject({
+      spreadsheetId: 'second',
+      lastMirroredAt: null,
+      lastMirroredSeq: null,
+      mirrorLeaseUntil: null,
+    });
+    await owner.googleSheetLink.deleteMany({ where: { userId: USER_A } });
+  });
+
+  it('gives a state to only one of two callbacks taking it at once (decision 5)', async () => {
     await asUser(USER_A, (repo) =>
-      repo.saveLink({ status: 'needs_relink', spreadsheetId: 's', spreadsheetUrl: 'u', grantedScope: 'g', token: null }),
+      repo.putOauthRequest({ stateHash: Buffer.alloc(32, 4), codeVerifier: 'once', expiresAt: new Date(Date.now() + 600_000) }),
     );
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let firstTook!: () => void;
+    const taken = new Promise<void>((resolve) => (firstTook = resolve));
+    // The first holds its delete uncommitted while the second reads the row and waits on its lock.
+    const first = asUser(USER_A, async (repo) => {
+      const request = await repo.takeOauthRequest();
+      firstTook();
+      await held;
+      return request;
+    });
+    await taken;
+    const second = asUser(USER_A, (repo) => repo.takeOauthRequest());
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    release();
+    const results = await Promise.all([first, second]);
+    expect(results.map((r) => r?.codeVerifier ?? null)).toEqual(['once', null]);
+  });
+
+  it('rejects a linked row with no ciphertext, and a needs_relink row with one, as lifting_app', async () => {
+    const insert = (data: Prisma.GoogleSheetLinkUncheckedCreateInput) =>
+      asUser(USER_A, (_repo, tx) => tx.googleSheetLink.create({ data }));
+    await expect(
+      insert({ ...link(USER_A), refreshTokenCiphertext: null, refreshTokenDekCiphertext: null, refreshTokenNonce: null }),
+    ).rejects.toThrow(/google_sheet_link_token_check/);
+    await expect(insert({ ...link(USER_A), status: 'needs_relink' })).rejects.toThrow(/google_sheet_link_token_check/);
+    await expect(insert({ ...link(USER_A), refreshTokenNonce: null })).rejects.toThrow(/google_sheet_link_token_check/);
+    await asUser(USER_A, (repo) => repo.saveLink({ ...record(), status: 'needs_relink', token: null, lastErrorCode: 'invalid_grant' }));
     expect(await owner.googleSheetLink.count({ where: { userId: USER_A, status: 'needs_relink' } })).toBe(1);
     await owner.googleSheetLink.deleteMany({ where: { userId: USER_A } });
   });
