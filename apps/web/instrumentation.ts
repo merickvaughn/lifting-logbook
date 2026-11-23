@@ -1,4 +1,5 @@
 import { registerOTel } from '@vercel/otel';
+import { buildOtelOptions } from './lib/otel-options';
 
 // Tag web telemetry with the deployment environment so it is distinguishable
 // from production in the shared free-tier Grafana Cloud stack, mirroring the API
@@ -17,10 +18,5 @@ function resolveDeploymentEnvironment(): string {
 }
 
 export function register() {
-  registerOTel({
-    serviceName: 'lifting-logbook-web',
-    attributes: {
-      'deployment.environment.name': resolveDeploymentEnvironment(),
-    },
-  });
+  registerOTel(buildOtelOptions(resolveDeploymentEnvironment()));
 }

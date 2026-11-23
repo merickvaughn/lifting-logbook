@@ -184,7 +184,8 @@ test('clear data asks first, and its confirm button works from the keyboard', as
   expect(clears).toEqual([]);
   await page.keyboard.press('Enter');
 
-  await expect(page.getByRole('status')).toContainText('Cleared 48 rows. The backup is kept until');
+  // Not getByRole('status') alone: the Google Sheet section keeps an empty status for its own notices.
+  await expect(page.getByRole('status').filter({ hasText: 'Cleared 48 rows. The backup is kept until' })).toBeVisible();
   expect(clears).toHaveLength(1);
   expect(JSON.parse(clears[0] ?? '{}')).toMatchObject({ counts: { liftRecords: 42, macrocycles: 2, trainingMaxes: 4 } });
   await expect(page.getByText(/From clearing your data on .*: 48 rows\./)).toBeVisible();

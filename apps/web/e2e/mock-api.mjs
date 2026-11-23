@@ -227,6 +227,13 @@ const CUSTOM_PROGRAM = {
   createdAt: '2026-01-01',
 };
 
+const GOOGLE_SHEET_LINKED = {
+  configured: true,
+  status: 'linked',
+  spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/mock-sheet/edit',
+  lastMirroredAt: '2026-11-22T15:30:00.000Z',
+};
+
 function createInitialState() {
   return {
     noCurrentMacrocycle: false,
@@ -235,6 +242,9 @@ function createInitialState() {
     snapshots: [],
     // /__reset?withClearError=true makes the clear fail with a 500.
     clearError: false,
+    // The linked Google Sheet (#1433; not `googleSheet`, the #1111 import flag below). /__reset?googleSheet=linked|unconfigured starts it linked,
+    // or as an API with no Google client.
+    sheetLink: { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null },
     trainingMaxes: structuredClone(INITIAL_TRAINING_MAXES),
     // Lifts with logged sets and no training max (#1246); /__reset?withMissingMax=true seeds one.
     missingMaxes: [],
@@ -803,6 +813,9 @@ const server = createServer(async (req, res) => {
     if (url.searchParams.get('withClearError') === 'true') {
       state.clearError = true;
     }
+    const googleSheet = url.searchParams.get('googleSheet');
+    if (googleSheet === 'linked') state.sheetLink = { ...GOOGLE_SHEET_LINKED };
+    if (googleSheet === 'unconfigured') state.sheetLink.configured = false;
     if (url.searchParams.get('withTrainingMaxImport') === 'true') {
       state.trainingMaxImport = {
         batch: { id: 'tm-import-1', program: '5-3-1', createdAt: '2026-11-21T18:04:09.000Z' },
@@ -1127,6 +1140,43 @@ const server = createServer(async (req, res) => {
     });
     res.end(emptyZip);
     return;
+  }
+
+  // -------------------------------------------------------------------------
+  // Link a Google Sheet (#1433). Stands in for the API's OAuth routes: `authorize` returns a
+  // Google URL for the spec to intercept, and the callback accepts only the code and state that
+  // URL carries.
+  // -------------------------------------------------------------------------
+  if (url.pathname.startsWith('/integrations/google-sheet')) {
+    const sheet = url.pathname.slice('/integrations/google-sheet'.length);
+    if (method === 'GET' && sheet === '') {
+      json(res, state.sheetLink);
+      return;
+    }
+    if (!state.sheetLink.configured) {
+      json(res, { statusCode: 503, error: 'google-sheet-unconfigured', message: 'Linking a Google Sheet is not set up here.' }, 503);
+      return;
+    }
+    if (method === 'POST' && sheet === '/authorize') {
+      json(res, { url: 'https://accounts.google.test/consent?state=mock-state' });
+      return;
+    }
+    if (method === 'POST' && sheet === '/callback') {
+      const body = await readBody(req);
+      if (rejectIfInvalidBody(res, body)) return;
+      if (body.code !== 'mock-code' || body.state !== 'mock-state') {
+        json(res, { statusCode: 400, error: 'google-sheet-state-invalid', message: 'This link attempt expired or is not yours. Try again.' }, 400);
+        return;
+      }
+      state.sheetLink = { ...GOOGLE_SHEET_LINKED, lastMirroredAt: null };
+      json(res, state.sheetLink);
+      return;
+    }
+    if (method === 'DELETE' && sheet === '') {
+      state.sheetLink = { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null };
+      json(res, { revoked: true });
+      return;
+    }
   }
 
   // -------------------------------------------------------------------------

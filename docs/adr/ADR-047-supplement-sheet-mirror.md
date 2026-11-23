@@ -244,6 +244,9 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     Cloud Run's own request log still records the URL, which is acceptable because the code is
     single-use, expires in minutes, and can't be redeemed without the client secret and the PKCE
     verifier.
+    The same query reaches `/sign-in` when the lifter's session has ended, because the middleware
+    redirects there with the callback URL in `redirect_url`. A span whose URL names the callback
+    path, plain or percent-encoded, is scrubbed the same way.
 
 ## Migration outline (approved by the owner, 2026-11-22)
 
