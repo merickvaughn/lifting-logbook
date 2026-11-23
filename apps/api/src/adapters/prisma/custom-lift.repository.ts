@@ -84,6 +84,10 @@ export class PrismaCustomLiftRepository implements ICustomLiftRepository {
       if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new CustomLiftConflictError(patch.name ?? owned.name);
       }
+      // The row can go between the ownership read and the write, such as on a double-tapped delete.
+      if (e instanceof PrismaClientKnownRequestError && e.code === 'P2025') {
+        throw new CustomLiftNotFoundError(id);
+      }
       throw e;
     }
   }
@@ -94,7 +98,11 @@ export class PrismaCustomLiftRepository implements ICustomLiftRepository {
     if (!owned) {
       throw new CustomLiftNotFoundError(id);
     }
-    await this.prisma.customLift.delete({ where: { id } });
+    // deleteMany reports a row gone since the read as count 0, rather than raising P2025.
+    const { count } = await this.prisma.customLift.deleteMany({ where: { id, userId: this.userId } });
+    if (count === 0) {
+      throw new CustomLiftNotFoundError(id);
+    }
   }
 
   private toCustomLift(row: CustomLiftRow): CustomLift {
