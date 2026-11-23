@@ -5372,10 +5372,9 @@ describe('ImportWizard Map columns: a required field the file has no column for 
     return user;
   }
 
-  /** The one control on the row standing for the column the file doesn't have. */
-  const missingFieldSelect = (): HTMLSelectElement =>
-    within(screen.getByText('(no match in CSV)').closest('tr') as HTMLElement)
-      .getByRole<HTMLSelectElement>('combobox');
+  /** The one control on the row standing for a field the file has no column for. */
+  const columnPickerFor = (label: string): HTMLSelectElement =>
+    screen.getByLabelText<HTMLSelectElement>(`Column for ${label}`);
 
   it('offers the file’s own columns on that row, not destination fields', async () => {
     await reachMapColumns();
@@ -5384,22 +5383,57 @@ describe('ImportWizard Map columns: a required field the file has no column for 
     expect(nextButton()).toBeDisabled();
     // A destination field picked here would supply no data and never reach the commit, so
     // the row must not offer one at all.
-    expect([...missingFieldSelect().options].map((o) => o.value)).toEqual(['', ...SPEC_NO_DROP_HEADERS]);
+    expect([...columnPickerFor('WT Decrement %').options].map((o) => o.value))
+      .toEqual(['', ...SPEC_NO_DROP_HEADERS]);
+  });
+
+  // The row stands for a field rather than a column, so the field has to be on screen: its
+  // name is otherwise nowhere a lifter can read it.
+  it('names the missing field in the row itself, not only in the control’s label', async () => {
+    await reachMapColumns();
+
+    const row = columnPickerFor('WT Decrement %').closest('tr') as HTMLElement;
+    expect(within(row).getByText(/WT Decrement % — no match in CSV/)).toBeInTheDocument();
   });
 
   it('enables Next once a column in the file is named for the field', async () => {
     const user = await reachMapColumns();
 
-    await user.selectOptions(missingFieldSelect(), 'Drop %');
+    await user.selectOptions(columnPickerFor('WT Decrement %'), 'Drop %');
 
     expect(screen.queryByText(UNMAPPED_ALERT)).not.toBeInTheDocument();
     expect(nextButton()).toBeEnabled();
   });
 
+  // "Required field not found in CSV" is still true of the file, but it is not what the row
+  // means once a column has been named for it.
+  it('says which column supplies the field once one is named', async () => {
+    const user = await reachMapColumns();
+    const row = columnPickerFor('WT Decrement %').closest('tr') as HTMLElement;
+
+    expect(within(row).getByText('Required field not found in CSV')).toBeInTheDocument();
+
+    await user.selectOptions(columnPickerFor('WT Decrement %'), 'Drop %');
+
+    expect(within(row).getByText('Supplied by Drop %')).toBeInTheDocument();
+    expect(within(row).queryByText('Required field not found in CSV')).not.toBeInTheDocument();
+  });
+
+  // A stand-in column feeds a different field from the one the row names, so saying only the
+  // header would leave the lifter to work out why the row cleared.
+  it('names the stand-in field when the drop arrives as Weight %', async () => {
+    const user = await reachMapColumns();
+    const row = columnPickerFor('WT Decrement %').closest('tr') as HTMLElement;
+
+    await user.selectOptions(screen.getByLabelText('Map column Drop %'), 'weightPct');
+
+    expect(within(row).getByText('Supplied by Drop % as Weight %')).toBeInTheDocument();
+  });
+
   it('sends the named column to the server as a real override', async () => {
     const user = await reachMapColumns();
 
-    await user.selectOptions(missingFieldSelect(), 'Drop %');
+    await user.selectOptions(columnPickerFor('WT Decrement %'), 'Drop %');
     await user.click(nextButton()); // Map columns → Review
     await screen.findByRole('heading', { name: 'Review' });
 
@@ -5418,5 +5452,75 @@ describe('ImportWizard Map columns: a required field the file has no column for 
 
     expect(screen.queryByText(UNMAPPED_ALERT)).not.toBeInTheDocument();
     expect(nextButton()).toBeEnabled();
+  });
+});
+
+// A file can lack more than one required field, and then the rows standing for them are the
+// only thing telling the lifter which is which, and which columns are still free (#1442).
+describe('ImportWizard Map columns: several required fields with no column (#1442)', () => {
+  // Training maxes need a lift, a weight and a date, and this file states only the date —
+  // so two rows stand for a missing field, with one spare column between them.
+  const TM_HEADERS = ['Date Updated', 'Memo'];
+
+  const tmCsv = (): File =>
+    new File([`${TM_HEADERS.join(',')}\n2026-01-01,anything\n`], 'tm.csv', { type: 'text/csv' });
+
+  const tmPreview = (): ImportPreviewResponse => ({
+    classification: {
+      type: 'training-maxes',
+      confidence: 0.9,
+      bucket: 'high',
+      reasons: ['Matched training-max columns'],
+      alternatives: [],
+    },
+    destination: 'training-maxes',
+    columnMappings: fuzzyColumnMapper(TM_HEADERS, 'training-maxes'),
+    preview: {
+      creates: 1,
+      updates: 0,
+      skips: 0,
+      unresolved: 0,
+      deltas: [{ key: 'squat', label: 'squat', kind: 'create', after: '300' }],
+    },
+    errors: [],
+  });
+
+  async function reachMapColumns() {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(tmPreview());
+
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await user.upload(screen.getByLabelText('CSV file'), tmCsv());
+    await user.click(screen.getByRole('button', { name: 'Analyze' }));
+    await waitFor(() => expect(screen.getByText('Training Maxes')).toBeInTheDocument());
+    await user.click(nextButton()); // Classify → Map columns
+    await screen.findByRole('heading', { name: 'Map columns' });
+    return user;
+  }
+
+  const columnPickerFor = (label: string): HTMLSelectElement =>
+    screen.getByLabelText<HTMLSelectElement>(`Column for ${label}`);
+
+  it('gives each missing field its own row, named', async () => {
+    await reachMapColumns();
+
+    expect(screen.getByText(/^Lift — no match in CSV$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Weight — no match in CSV$/)).toBeInTheDocument();
+    expect(columnPickerFor('Lift')).not.toBe(columnPickerFor('Weight'));
+  });
+
+  // Both rows write to one override map keyed by header, so a column named on both would
+  // leave only the later claim — emptying the first row with nothing said about it.
+  it('stops offering a column once another row has claimed it', async () => {
+    const user = await reachMapColumns();
+
+    expect([...columnPickerFor('Weight').options].map((o) => o.value)).toEqual(['', ...TM_HEADERS]);
+
+    await user.selectOptions(columnPickerFor('Lift'), 'Memo');
+
+    expect([...columnPickerFor('Weight').options].map((o) => o.value)).toEqual(['', 'Date Updated']);
+    // The claiming row keeps its own choice selectable, so it can still be changed back.
+    expect([...columnPickerFor('Lift').options].map((o) => o.value)).toEqual(['', ...TM_HEADERS]);
+    expect(columnPickerFor('Lift').value).toBe('Memo');
   });
 });

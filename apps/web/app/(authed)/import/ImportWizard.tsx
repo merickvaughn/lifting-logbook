@@ -532,6 +532,24 @@ export function ImportWizard({
     return '';
   }
 
+  // The columns a required field's row may offer: the file's own, less any already re-pointed
+  // at something else. Offering a claimed column would overwrite that claim on the next pick,
+  // silently emptying the row that made it — one column feeds one field.
+  function availableSourceHeaders(field: string): string[] {
+    return sourceHeaders.filter((h) => {
+      const claimedBy = columnOverrides.get(h);
+      return claimedBy === undefined || claimedBy === field;
+    });
+  }
+
+  // The column now feeding a sourceless required row — its own field, or one that stands in
+  // for it. What the row's Notes cell says once the lifter has named a column.
+  function supplierFor(m: ColumnMapping): { header: string; field: string } | undefined {
+    const wanted = [m.destinationField, ...(m.satisfiedBy ?? [])];
+    const hit = effectiveMappings.find((o) => o.sourceHeader && wanted.includes(o.destinationField));
+    return hit ? { header: hit.sourceHeader, field: hit.destinationField } : undefined;
+  }
+
   // Derived: column overrides as a plain Record for the commit call. Every key is a header
   // of the file, so all of them are sent — there is no longer a kind to filter out (#1442).
   const columnOverridesRecord: Record<string, string> = Object.fromEntries(columnOverrides);
@@ -2031,6 +2049,9 @@ export function ImportWizard({
                         // re-pointed the column: picking it again clears the override.
                         const original = preview.columnMappings?.[i] ?? m;
                         const isUnmappedRequired = m.required && !requirementMet(m);
+                        // Set only on a required row standing for a field the file has no
+                        // column for, once a column of the file has been named for it.
+                        const supplied = !m.sourceHeader && m.required ? supplierFor(m) : undefined;
 
                         return (
                           <tr
@@ -2041,7 +2062,12 @@ export function ImportWizard({
                               {m.sourceHeader ? (
                                 <span className={styles.sourceHeaderCell}>{m.sourceHeader}</span>
                               ) : (
-                                <span className={styles.unmappedSourceCell}>(no match in CSV)</span>
+                                // The row stands for the field, not a column of the file, so it
+                                // has to say which field — two missing fields otherwise give two
+                                // rows a lifter cannot tell apart (#1442).
+                                <span className={styles.unmappedSourceCell}>
+                                  {fieldLabel(destination, m.destinationField)} — no match in CSV
+                                </span>
                               )}
                               {m.required && (
                                 <span className={styles.requiredStar} aria-label="required">★</span>
@@ -2097,7 +2123,7 @@ export function ImportWizard({
                                   }}
                                 >
                                   <option value="">— choose a column —</option>
-                                  {sourceHeaders.map((h) => (
+                                  {availableSourceHeaders(m.destinationField).map((h) => (
                                     <option key={h} value={h}>{h}</option>
                                   ))}
                                 </select>
@@ -2109,8 +2135,18 @@ export function ImportWizard({
                               </span>
                             </td>
                             <td>
-                              {m.transformationNote && (
-                                <span className={styles.transformNote}>{m.transformationNote}</span>
+                              {supplied ? (
+                                // "Required field not found in CSV" is true of the file and
+                                // stale the moment the lifter names a column, so say which.
+                                <span className={styles.transformNote}>
+                                  Supplied by {supplied.header}
+                                  {supplied.field !== m.destinationField &&
+                                    ` as ${fieldLabel(destination, supplied.field)}`}
+                                </span>
+                              ) : (
+                                m.transformationNote && (
+                                  <span className={styles.transformNote}>{m.transformationNote}</span>
+                                )
                               )}
                             </td>
                           </tr>
