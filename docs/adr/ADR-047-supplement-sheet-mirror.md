@@ -221,6 +221,9 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     to 12; 409 for a held lease; 5xx for a Google 429 or 5xx, a KMS or database failure, or a
     timeout. Cloud Tasks retries those, and Google's calls get a 20 s timeout each. Once retries run
     out, the last error code stays on the row and Settings shows "Last sync failed" with Sync now.
+    Any other Google 4xx but a 408 (a 400, say) is terminal too, since a retry would send the same
+    request: the run stores `google_<status>` as the last error, releases the lease, logs at `error`
+    and answers 204. A 409 is expected contention, logged at `info` and never as a failure.
 
 ### What is sent to Google, and when
 

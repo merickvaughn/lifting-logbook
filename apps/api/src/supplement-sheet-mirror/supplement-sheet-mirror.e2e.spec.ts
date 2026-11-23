@@ -322,6 +322,7 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       ['a 500', new GoogleApiError(500, 'INTERNAL', { googleStatus: 'INTERNAL' })],
       ['a 503', new GoogleApiError(503, 'UNAVAILABLE', { googleStatus: 'UNAVAILABLE' })],
       ['a quota 403', new GoogleApiError(403, 'rateLimitExceeded', { legacy: ['rateLimitExceeded'] })],
+      ['a 408', new GoogleApiError(408, 'REQUEST_TIMEOUT')],
       ['a timeout', new GoogleApiError(0, 'timeout')],
     ])('answers 5xx for %s, keeps the sheet linked, and succeeds on the retry', async (_name, err) => {
       const user = await linkedUser();
@@ -346,6 +347,38 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       expect((await run(user)).statusCode).toBe(503);
       expect(google.calls).toEqual([]);
       expect((await link(user))?.status).toBe('linked');
+    });
+
+    it.each([
+      ['a 400', new GoogleApiError(400, 'INVALID_ARGUMENT', { googleStatus: 'INVALID_ARGUMENT' })],
+      ['a 413', new GoogleApiError(413, 'unknown')],
+    ])('records %s as the last error, logs it at error and answers 204, since a retry would send it again', async (_name, err) => {
+      const user = await linkedUser();
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      google.failNextBatch = err;
+
+      expect((await run(user)).statusCode).toBe(204);
+      expect(error).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'google_rejected', googleStatus: err.status }), expect.any(String));
+      expect(warn).not.toHaveBeenCalled();
+      expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: `google_${err.status}` });
+      // The lease was released: the next run writes.
+      expect((await run(user)).statusCode).toBe(204);
+      expect(google.batches).toHaveLength(1);
+    });
+
+    it('logs a held lease at info, even on the last attempt, and never as a failure', async () => {
+      const user = await linkedUser();
+      const spies = (['log', 'warn', 'error'] as const).map((level) => jest.spyOn(Logger.prototype, level).mockImplementation());
+      expect(await (await repos(user)).googleSheetLink.takeMirrorLease('sheet-1')).not.toBeNull();
+
+      const res = await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '7' });
+
+      expect(res.statusCode).toBe(409);
+      const [log, warn, error] = spies as [jest.SpyInstance, jest.SpyInstance, jest.SpyInstance];
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'lease_held', attempt: 7 }), expect.any(String));
+      expect(warn).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
     });
 
     it('clears the token, sets needs_relink and answers 204 on invalid_grant', async () => {

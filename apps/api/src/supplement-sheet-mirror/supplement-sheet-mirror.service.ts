@@ -35,6 +35,7 @@ type Outcome =
   | 'lease_lost'
   | 'needs_relink'
   | 'sheet_missing'
+  | 'google_rejected'
   | 'retry_google'
   | 'retry_internal';
 
@@ -84,7 +85,12 @@ export class SupplementSheetMirrorService {
         await this.mirror(user, record);
       } catch (err) {
         record.outcome ??= 'retry_internal';
-        this.logFailure(record);
+        // A held lease is expected contention, not a failure, whatever the attempt (decision 21).
+        if (record.outcome === 'lease_held') {
+          this.logger.log({ operation: 'sheet_mirror.run', ...record }, 'Supplement sheet mirror: another run holds the lease (#1443)');
+        } else {
+          this.logFailure(record);
+        }
         throw err instanceof HttpException ? err : fail(HttpStatus.SERVICE_UNAVAILABLE, 'sheet-mirror-failed', 'The mirror run failed.');
       } finally {
         this.finish(span, record);
@@ -221,9 +227,18 @@ export class SupplementSheetMirrorService {
         this.logger.error({ operation: 'sheet_mirror.run', ...record }, 'Supplement sheet mirror: the sheet is missing (#1443)');
         return;
       }
+      // Any other 4xx but a 408 rejects the request itself, which a retry would send unchanged, so
+      // it is terminal too (decision 21): the code stays on the link for Settings to show.
+      if (err.status >= 400 && err.status < 500 && err.status !== 408) {
+        record.outcome = 'google_rejected';
+        const code = `google_${err.status}`;
+        await this.db(user, (r) => r.googleSheetLink.releaseMirrorLease(lease, code));
+        this.logger.error({ operation: 'sheet_mirror.run', ...record }, 'Supplement sheet mirror: Google rejected the write (#1443)');
+        return;
+      }
     }
 
-    // A Google 429 or 5xx, a quota 403, a KMS or database failure or a timeout: Cloud Tasks retries.
+    // A Google 408, 429 or 5xx, a quota 403, a KMS or database failure or a timeout: Cloud Tasks retries.
     record.outcome = err instanceof GoogleApiError ? 'retry_google' : 'retry_internal';
     const code = err instanceof GoogleApiError ? `google_${err.status}` : 'mirror_failed';
     // allow-skewed: best effort; the run's own error is what's thrown, and a lease that isn't released expires after five minutes.
