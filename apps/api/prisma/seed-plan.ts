@@ -215,8 +215,9 @@ export async function writeSeedPlan(prisma: PrismaClient, plan: SeedPlan): Promi
   );
 }
 
-/** Supplement tables the seed reset leaves alone; see `resetSeedUser`. */
+/** Tables the seed reset leaves alone, the supplement tables and the Google link; see `resetSeedUser`. */
 export const SEED_KEPT_TABLES = [
+  'googleSheetLink',
   'supplementChange',
   'supplementDayType',
   'supplementDose',
@@ -239,6 +240,10 @@ export const SEED_KEPT_TABLES = [
  * role would be one more thing to get wrong, so all five stay as they are for both.
  * `writeSeedPlan` carries the caffeine cutoff, which the log also records, across the
  * `user_settings` row this deletes.
+ *
+ * `google_sheet_link` is kept too (#1432): deleting it without revoking its token would leave a
+ * live Google grant the app could no longer reach. Unlink, which revokes, is the way to remove it
+ * (ADR-047 decisions 10 and 14). A pending `google_oauth_request` holds no grant, so it goes.
  */
 export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void> {
   const where = { userId: SEED_USER_ID };
@@ -265,6 +270,5 @@ export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void>
   await tx.customProgram.deleteMany({ where });
   await tx.importBatch.deleteMany({ where });
   await tx.dataSnapshot.deleteMany({ where });
-  await tx.googleSheetLink.deleteMany({ where });
   await tx.googleOauthRequest.deleteMany({ where });
 }
