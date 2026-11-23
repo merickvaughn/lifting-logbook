@@ -242,9 +242,9 @@ function createInitialState() {
     snapshots: [],
     // /__reset?withClearError=true makes the clear fail with a 500.
     clearError: false,
-    // The linked Google Sheet (#1433). /__reset?googleSheet=linked|unconfigured starts it linked,
+    // The linked Google Sheet (#1433; not `googleSheet`, the #1111 import flag below). /__reset?googleSheet=linked|unconfigured starts it linked,
     // or as an API with no Google client.
-    googleSheet: { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null },
+    sheetLink: { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null },
     trainingMaxes: structuredClone(INITIAL_TRAINING_MAXES),
     // Lifts with logged sets and no training max (#1246); /__reset?withMissingMax=true seeds one.
     missingMaxes: [],
@@ -814,8 +814,8 @@ const server = createServer(async (req, res) => {
       state.clearError = true;
     }
     const googleSheet = url.searchParams.get('googleSheet');
-    if (googleSheet === 'linked') state.googleSheet = { ...GOOGLE_SHEET_LINKED };
-    if (googleSheet === 'unconfigured') state.googleSheet.configured = false;
+    if (googleSheet === 'linked') state.sheetLink = { ...GOOGLE_SHEET_LINKED };
+    if (googleSheet === 'unconfigured') state.sheetLink.configured = false;
     if (url.searchParams.get('withTrainingMaxImport') === 'true') {
       state.trainingMaxImport = {
         batch: { id: 'tm-import-1', program: '5-3-1', createdAt: '2026-11-21T18:04:09.000Z' },
@@ -1150,10 +1150,10 @@ const server = createServer(async (req, res) => {
   if (url.pathname.startsWith('/integrations/google-sheet')) {
     const sheet = url.pathname.slice('/integrations/google-sheet'.length);
     if (method === 'GET' && sheet === '') {
-      json(res, state.googleSheet);
+      json(res, state.sheetLink);
       return;
     }
-    if (!state.googleSheet.configured) {
+    if (!state.sheetLink.configured) {
       json(res, { statusCode: 503, error: 'google-sheet-unconfigured', message: 'Linking a Google Sheet is not set up here.' }, 503);
       return;
     }
@@ -1168,12 +1168,12 @@ const server = createServer(async (req, res) => {
         json(res, { statusCode: 400, error: 'google-sheet-state-invalid', message: 'This link attempt expired or is not yours. Try again.' }, 400);
         return;
       }
-      state.googleSheet = { ...GOOGLE_SHEET_LINKED, lastMirroredAt: null };
-      json(res, state.googleSheet);
+      state.sheetLink = { ...GOOGLE_SHEET_LINKED, lastMirroredAt: null };
+      json(res, state.sheetLink);
       return;
     }
     if (method === 'DELETE' && sheet === '') {
-      state.googleSheet = { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null };
+      state.sheetLink = { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null };
       json(res, { revoked: true });
       return;
     }
